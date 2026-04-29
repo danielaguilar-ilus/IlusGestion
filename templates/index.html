@@ -279,7 +279,7 @@
                   {% endif %}
                   {% if permissions.print and p.total_bultos > 0 %}
                   <a href="{{ url_for('product_detail', pid=p.app_product_id) }}"
-                     class="btn btn-sm btn-ilus" title="Ver producto e imprimir etiquetas">
+                     class="btn btn-sm btn-ilus no-mobile-print" title="Ver producto e imprimir etiquetas">
                     <i class="bi bi-printer me-1"></i>Imprimir
                   </a>
                   {% endif %}
@@ -465,7 +465,7 @@
         <a href="#" id="qmEditBtn" class="btn btn-dark-ilus">
           <i class="bi bi-pencil me-1"></i>Editar
         </a>
-        <a href="#" id="qmPrintBtn" class="btn btn-ilus fw-bold">
+        <a href="#" id="qmPrintBtn" class="btn btn-ilus fw-bold no-mobile-print">
           <i class="bi bi-printer me-1"></i>Imprimir etiquetas
         </a>
       </div>

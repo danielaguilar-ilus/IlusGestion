@@ -53,10 +53,10 @@
     {% set valid_count = bultos | selectattr('largo', 'gt', 0) | list | length %}
     {% if valid_count > 0 %}
     <div class="d-flex gap-2 flex-wrap">
-      <a href="{{ url_for('print_labels', pid=product.id) }}" class="btn btn-ilus fw-bold px-4 mobile-full">
+      <a href="{{ url_for('print_labels', pid=product.id) }}" class="btn btn-ilus fw-bold px-4 mobile-full no-mobile-print">
         <i class="bi bi-printer me-2"></i>Imprimir todas ({{ valid_count }})
       </a>
-      <a href="{{ url_for('print_setup', pid=product.id) }}" class="btn btn-dark-ilus px-3"
+      <a href="{{ url_for('print_setup', pid=product.id) }}" class="btn btn-dark-ilus px-3 no-mobile-print"
          title="Configurar cantidad de copias por bulto">
         <i class="bi bi-sliders me-1"></i>Configurar copias
       </a>
@@ -166,8 +166,8 @@
             <td class="text-center no-print">
               {% if ok %}
               <div class="d-flex gap-1 justify-content-center">
-                <a href="{{ url_for('print_labels', pid=product.id, bulto=b.bulto_num) }}" class="btn btn-sm btn-ilus" title="Ver e imprimir etiqueta"><i class="bi bi-printer me-1"></i>Imprimir</a>
-                <a href="{{ url_for('download_pdf', pid=product.id, bnum=b.bulto_num) }}" class="btn btn-sm btn-dark-ilus" title="Descargar etiqueta PDF"><i class="bi bi-file-earmark-pdf me-1"></i>PDF</a>
+                <a href="{{ url_for('print_labels', pid=product.id, bulto=b.bulto_num) }}" class="btn btn-sm btn-ilus no-mobile-print" title="Ver e imprimir etiqueta"><i class="bi bi-printer me-1"></i>Imprimir</a>
+                <a href="{{ url_for('download_pdf', pid=product.id, bnum=b.bulto_num) }}" class="btn btn-sm btn-dark-ilus no-mobile-print" title="Descargar etiqueta PDF"><i class="bi bi-file-earmark-pdf me-1"></i>PDF</a>
               </div>
               {% endif %}
             </td>

@@ -54,7 +54,7 @@ body {
 .sidebar-logo-img {
   display: block;
   width: 100%;
-  max-width: 190px;
+  max-width: 342px;
   height: auto;
   object-fit: contain;
   /* Logo en color sobre sidebar negro */
@@ -794,6 +794,9 @@ body {
    MOBILE  (max 767px)
 ══════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
+
+  /* Ocultar botones de imprimir y PDF en móvil */
+  .no-mobile-print { display: none !important; }
 
   /* Sidebar se convierte en drawer */
   .sidebar {

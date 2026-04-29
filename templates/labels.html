@@ -471,10 +471,10 @@
     <div class="d-flex gap-2 align-items-center">
       <!-- PDF de TODOS los bultos (ZIP con PDFs individuales) -->
       <a href="{{ url_for('download_all_pdf', pid=product.id) }}?{% for b in bultos %}qty_{{ b.bulto_num }}={{ qty_per_bulto.get(b.bulto_num, 1) }}{% if not loop.last %}&{% endif %}{% endfor %}"
-         class="btn btn-ilus fw-bold px-3" title="Descargar PDF de todos los bultos">
+         class="btn btn-ilus fw-bold px-3 no-mobile-print" title="Descargar PDF de todos los bultos">
         <i class="bi bi-file-earmark-pdf me-1"></i>PDF todo
       </a>
-      <button onclick="window.print()" class="btn btn-ilus fw-bold px-4">
+      <button onclick="window.print()" class="btn btn-ilus fw-bold px-4 no-mobile-print">
         <i class="bi bi-printer me-2"></i>Imprimir todo
       </button>
     </div>

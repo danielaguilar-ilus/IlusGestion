@@ -48,10 +48,12 @@ os.makedirs(COLABS_FOLDER, exist_ok=True)
 #  Cloudinary — almacenamiento de fotos en la nube
 # ─────────────────────────────────────────────
 _CLD_READY = False
+_cloudinary_uploader = None
 try:
-    import cloudinary, cloudinary.uploader  # noqa: E401
+    import cloudinary as _cld_module
+    import cloudinary.uploader as _cloudinary_uploader
     if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
-        cloudinary.config(
+        _cld_module.config(
             cloud_name = CLOUDINARY_CONFIG["cloud_name"],
             api_key    = CLOUDINARY_CONFIG["api_key"],
             api_secret = CLOUDINARY_CONFIG["api_secret"],
@@ -60,18 +62,18 @@ try:
         _CLD_READY = True
         print("[ILUS] Cloudinary configurado —", CLOUDINARY_CONFIG["cloud_name"])
     else:
-        print("[ILUS] Cloudinary no configurado — fotos se guardan localmente.")
-except ImportError:
-    print("[ILUS] Módulo cloudinary no instalado — fotos locales.")
+        print("[ILUS] Cloudinary sin credenciales — fotos locales.")
+except Exception as _cld_err:
+    print(f"[ILUS] Cloudinary no disponible: {_cld_err} — fotos locales.")
 
 
 def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
     """Sube a Cloudinary y devuelve la URL segura. Lanza excepción si falla."""
-    result = cloudinary.uploader.upload(
+    result = _cloudinary_uploader.upload(
         file_obj,
-        public_id   = public_id,
-        folder      = folder,
-        overwrite   = True,
+        public_id     = public_id,
+        folder        = folder,
+        overwrite     = True,
         resource_type = "image",
     )
     return result["secure_url"]
@@ -81,10 +83,9 @@ def _cloud_delete(url_or_filename: str) -> None:
     """Elimina de Cloudinary si es URL; del disco si es nombre local."""
     if url_or_filename.startswith("http"):
         try:
-            # Extraer public_id: todo lo que va después de /upload/vXXX/ sin extensión
             match = re.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", url_or_filename)
-            if match:
-                cloudinary.uploader.destroy(match.group(1))
+            if match and _cloudinary_uploader:
+                _cloudinary_uploader.destroy(match.group(1))
         except Exception as exc:
             print(f"[ILUS] Cloudinary delete error: {exc}")
     else:
