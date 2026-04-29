@@ -3,3 +3,4 @@ pymysql>=1.1.0
 DBUtils>=3.0.0
 playwright>=1.40.0
 cloudinary>=1.36.0
+requests>=2.31.0

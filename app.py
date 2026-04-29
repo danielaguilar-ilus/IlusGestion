@@ -3140,67 +3140,88 @@ def _nudo_variants(nudo_raw):
 
 def _cubicador_fetch(tido, nudo):
     """
-    Consulta el ERP externo y cruza con nuestra BD.
+    Consulta el ERP vía REST API y cruza con nuestra BD local.
     Retorna (header_dict, lineas_list) o lanza excepción.
     """
-    erp = get_erp_conn()
-    if not erp:
-        raise ConnectionError("No se pudo conectar al ERP. Intenta en unos momentos.")
+    import requests as _req
+    from datetime import datetime as _dt
+
+    ERP_API_URL   = ERP_CONFIG.get("api_url",   "https://lab.random.cl/ilus")
+    ERP_API_TOKEN = ERP_CONFIG.get("api_token", "")
+    auth_headers  = {"Authorization": f"Bearer {ERP_API_TOKEN}"}
 
     nudos = _nudo_variants(nudo)
 
+    # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
+    raw_header = None
+    raw_lineas = []
+    for nv in nudos:
+        try:
+            resp = _req.get(
+                f"{ERP_API_URL}/documentos/render",
+                params={"tido": tido, "nudo": nv, "empresa": "01"},
+                headers=auth_headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data") or []
+            if data:
+                raw_header = data[0].get("maeedo") or {}
+                raw_lineas = data[0].get("maeddo") or []
+                break
+        except _req.exceptions.RequestException as api_err:
+            raise ConnectionError(f"No se pudo conectar al ERP ({api_err}). Intenta en unos momentos.")
+
+    if not raw_header:
+        return None, []
+
+    # ── 2. Nombre del cliente (entidades) ──────────────────────────────
+    endo = (raw_header.get("ENDO") or "").strip()
+    cliente_nombre = ""
+    cliente_rut    = endo
+    if endo:
+        try:
+            ent = _req.get(
+                f"{ERP_API_URL}/entidades",
+                params={"rten": endo},
+                headers=auth_headers,
+                timeout=15,
+            )
+            ent.raise_for_status()
+            ent_data = ent.json().get("data") or []
+            if ent_data:
+                cliente_nombre = (ent_data[0].get("NOKOEN") or "").strip().title()
+                cliente_rut    = (ent_data[0].get("RTEN")   or endo).strip()
+        except Exception:
+            pass   # si falla entidades igual mostramos el doc
+
+    # ── 3. Formatear fecha ─────────────────────────────────────────────
+    fecha_raw = raw_header.get("FEEMDO", "")
     try:
-        with erp.cursor() as cur:
-            # ── Encabezado: probar variantes de NUDO ─────────────────
-            header = None
-            nudo_match = None
-            for nv in nudos:
-                cur.execute("""
-                    SELECT
-                        e.TIDO,
-                        TRIM(e.NUDO)   AS nudo,
-                        e.FEEMDO       AS fecha,
-                        e.VANEDO       AS valor_neto,
-                        e.VABRDO       AS valor_bruto,
-                        e.VAIVDO       AS valor_iva,
-                        c.NOKOEN       AS cliente_nombre,
-                        c.RTEN         AS cliente_rut
-                    FROM MAEEDO e
-                    LEFT JOIN MAEEN c ON c.KOEN = e.ENDO
-                    WHERE e.TIDO = %s AND e.NUDO = %s
-                    LIMIT 1
-                """, (tido, nv))
-                row = cur.fetchone()
-                if row:
-                    header = row
-                    nudo_match = nv
-                    break
+        fecha = _dt.fromisoformat(fecha_raw.replace("Z", "+00:00")).strftime("%d/%m/%Y")
+    except Exception:
+        fecha = fecha_raw
 
-            if not header:
-                return None, []
+    header = {
+        "tido":           raw_header.get("TIDO", tido),
+        "nudo":           raw_header.get("NUDO", nudo),
+        "fecha":          fecha,
+        "valor_neto":     float(raw_header.get("VANEDO") or 0),
+        "valor_iva":      float(raw_header.get("VAIVDO") or 0),
+        "valor_bruto":    float(raw_header.get("VABRDO") or 0),
+        "cliente_nombre": cliente_nombre,
+        "cliente_rut":    cliente_rut,
+    }
 
-            # ── Líneas del documento (solo líneas de producto real) ───
-            cur.execute("""
-                SELECT
-                    TRIM(d.KOPRCT)  AS sku,
-                    TRIM(d.NOKOPR)  AS descripcion_erp,
-                    d.CAPRCO1       AS cantidad,
-                    d.NULIDO        AS num_linea
-                FROM MAEDDO d
-                WHERE d.TIDO = %s AND d.NUDO = %s
-                  AND TRIM(COALESCE(d.KOPRCT, '')) != ''
-                ORDER BY d.NULIDO
-            """, (tido, nudo_match))
-            lineas_erp = cur.fetchall()
-    finally:
-        erp.close()
-
-    # ── Cruzar con BD de etiquetas ────────────────────────────────────
+    # ── 4. Cruzar líneas con BD local (bultos/peso) ────────────────────
     lineas = []
-    for l in lineas_erp:
-        sku          = (l.get("sku") or "").strip().upper()
-        descripcion  = (l.get("descripcion_erp") or "").strip()
-        qty          = float(l.get("cantidad") or 0)
+    for l in raw_lineas:
+        sku         = (l.get("KOPRCT") or "").strip().upper()
+        descripcion = (l.get("NOKOPR") or "").strip()
+        qty         = float(l.get("CAPRCO1") or 0)
+
+        if not sku:
+            continue
 
         app_data = mysql_fetchone(f"""
             SELECT
@@ -3217,9 +3238,9 @@ def _cubicador_fetch(tido, nudo):
             GROUP BY p.id, p.nombre
         """, (sku,))
 
-        tiene_ficha   = app_data is not None
-        total_bultos  = int(app_data["total_bultos"] if tiene_ficha else 0)
-        tiene_bultos  = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
+        tiene_ficha  = app_data is not None
+        total_bultos = int(app_data["total_bultos"] if tiene_ficha else 0)
+        tiene_bultos = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
 
         peso_kg_u  = float(app_data["peso_total"]  if tiene_ficha else 0)
         peso_vol_u = float(app_data["peso_vol"]     if tiene_ficha else 0)

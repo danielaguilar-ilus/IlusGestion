@@ -21,6 +21,7 @@ MYSQL_CONFIG = {
 #  NUNCA se escribe en estas tablas.
 # ─────────────────────────────────────────────
 ERP_CONFIG = {
+    # Conexión MySQL directa (ya no se usa en Cubicador — se usa la REST API)
     'host':            'cloud.random.cl',
     'port':            8058,
     'user':            'usr_sport',
@@ -28,6 +29,9 @@ ERP_CONFIG = {
     'database':        'rd095bd01',
     'table_products':  'MAEPR',           # KOPR=SKU, NOKOPR=Nombre
     'connect_timeout': 8,
+    # REST API Random ERP
+    'api_url':   'https://lab.random.cl/ilus',
+    'api_token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IkZFRjk5RjYzLTRGRTktRUIxMS05NDA2LUNBRDVEMTQ4ODkxMiIsInVzZXJuYW1lIjoiYWRtaW5AcmFuZG9tLmNsIiwiZXhwIjoyMDczOTI2Njk3LCJpYXQiOjE3NTg1NjY2OTd9.Yfiy1GgtdSTweUjPPBSr0k1bVnxxMu3DOjxW6arjmuY',
 }
 
 MAX_BULTOS = 27
