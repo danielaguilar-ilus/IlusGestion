@@ -1263,18 +1263,19 @@ def debug_cloudinary():
         return "No autorizado", 403
     lines = [
         f"<b>_CLD_READY:</b> {_CLD_READY}",
-        f"<b>_cloudinary_uploader:</b> {_cloudinary_uploader}",
         f"<b>cloud_name:</b> {CLOUDINARY_CONFIG.get('cloud_name', '—')}",
-        f"<b>api_key:</b> {str(CLOUDINARY_CONFIG.get('api_key','—'))[:6]}***",
     ]
-    # Intenta hacer un ping a Cloudinary
-    if _CLD_READY:
-        try:
-            import cloudinary.api as _cld_api
-            result = _cld_api.ping()
-            lines.append(f"<b>Ping Cloudinary:</b> {result}")
-        except Exception as e:
-            lines.append(f"<b>Ping error:</b> {e}")
+    # Últimas 5 fotos en la BD
+    try:
+        rows = mysql_fetchall(f"SELECT id, product_id, filename FROM `{PHOTOS_TABLE}` ORDER BY id DESC LIMIT 5")
+        lines.append("<br><b>Últimas fotos en BD:</b>")
+        for r in rows:
+            fn = r['filename']
+            lines.append(f"  id={r['id']} product={r['product_id']} filename=<code>{fn}</code>")
+            if fn.startswith("http"):
+                lines.append(f"  → <img src='{fn}' style='max-height:80px;border:1px solid red'>")
+    except Exception as e:
+        lines.append(f"<b>BD error:</b> {e}")
     return "<br>".join(lines)
 
 
