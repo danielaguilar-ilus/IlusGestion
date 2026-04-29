@@ -1416,7 +1416,24 @@ def index():
         return redirect(url_for("index", q=sku_norm))
 
     products = get_product_listing(q)
-    return render_template("index.html", products=products, q=q)
+
+    # Cobertura fotográfica — se calcula en Python para evitar problemas
+    # de tipos (Decimal vs int) al comparar desde MySQL
+    _fotos = [int(p.get("total_fotos") or 0) for p in products]
+    foto0  = sum(1 for f in _fotos if f == 0)
+    foto1  = sum(1 for f in _fotos if f == 1)
+    foto2  = sum(1 for f in _fotos if f >= 2)
+
+    return render_template("index.html", products=products, q=q,
+                           foto0=foto0, foto1=foto1, foto2=foto2)
+
+
+@app.route("/products/refresh-cache", methods=["POST"])
+@login_required
+def refresh_listing_cache():
+    """Limpia el caché del listado de productos para ver datos frescos."""
+    _invalidate_listing_cache()
+    return redirect(url_for("index"))
 
 
 # ─────────────────────────────────────────────

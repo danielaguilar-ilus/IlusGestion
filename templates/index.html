@@ -9,8 +9,8 @@
       <div class="sub">Catálogo directo desde ERP — MySQL</div>
     </div>
     <div class="d-flex gap-2">
-      <a href="{{ url_for('export_excel') }}" class="btn btn-outline-secondary fw-semibold px-3" title="Descargar base de datos en Excel">
-        <i class="bi bi-file-earmark-excel me-1" style="color:#1a7a1a"></i>Excel
+      <a href="{{ url_for('export_excel') }}" class="btn btn-ilus fw-bold px-3">
+        <i class="bi bi-file-earmark-excel me-1"></i>Excel
       </a>
       {% if permissions.create %}
       <a href="{{ url_for('new_product') }}" class="btn btn-ilus fw-bold px-3">
@@ -22,21 +22,30 @@
 </div>
 
 <div class="px-2 px-md-0">
-  {# ── Stats: Cobertura fotográfica ── #}
-  {% set total  = products|length %}
-  {% set foto0  = products|selectattr('total_fotos','equalto',0)|list|length %}
-  {% set foto1  = products|selectattr('total_fotos','equalto',1)|list|length %}
-  {% set foto2  = total - foto0 - foto1 %}
+  {# ── Stats: Cobertura fotográfica (foto0/foto1/foto2 vienen de Python) ── #}
+  {% set total   = products|length %}
   {% set cob_pct = ((foto1 + foto2) / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p0 = (foto0 / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p1 = (foto1 / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p2 = (foto2 / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p0      = (foto0 / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p1      = (foto1 / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p2      = (foto2 / total * 100)|round(1) if total > 0 else 0 %}
 
-  <div class="row g-2 mb-2">
+  {# Botón actualizar caché (pequeño, arriba a la derecha del bloque) #}
+  <div class="d-flex justify-content-end mb-1">
+    <form method="post" action="{{ url_for('refresh_listing_cache') }}" class="d-inline">
+      <button type="submit" class="btn btn-sm btn-outline-secondary px-2 py-0"
+              style="font-size:.72rem;border-radius:5px" title="Actualizar datos ahora">
+        <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+      </button>
+    </form>
+  </div>
 
-    {# Cobertura global (donut) #}
+  <div class="row g-2 mb-2" id="kpiCards">
+
+    {# Cobertura global (donut) — filtra: con foto (≥1) #}
     <div class="col-6 col-md-3">
-      <div class="stat-card" style="display:flex;align-items:center;gap:11px;padding:10px 13px">
+      <div class="stat-card kpi-card" id="kpiConFoto" data-filter="con_foto"
+           style="display:flex;align-items:center;gap:11px;padding:10px 13px;cursor:pointer"
+           title="Haz clic para filtrar productos con foto">
         <div style="
             width:54px;height:54px;border-radius:50%;flex-shrink:0;
             background:conic-gradient(#198754 0% {{ cob_pct }}%, #2d2d2d {{ cob_pct }}% 100%);
@@ -57,9 +66,11 @@
       </div>
     </div>
 
-    {# Sin fotos #}
+    {# Sin fotos — filtra: 0 fotos #}
     <div class="col-6 col-md-3">
-      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+      <div class="stat-card kpi-card" id="kpiFoto0" data-filter="0"
+           style="padding:10px 13px;position:relative;overflow:hidden;cursor:pointer"
+           title="Haz clic para filtrar productos sin foto">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <i class="bi bi-camera-slash" style="color:#cc2200;font-size:.85rem"></i>
           <span class="stat-label" style="font-size:.66rem">Sin foto</span>
@@ -72,9 +83,11 @@
       </div>
     </div>
 
-    {# 1 foto #}
+    {# 1 foto — filtra: exactamente 1 foto #}
     <div class="col-6 col-md-3">
-      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+      <div class="stat-card kpi-card" id="kpiFoto1" data-filter="1"
+           style="padding:10px 13px;position:relative;overflow:hidden;cursor:pointer"
+           title="Haz clic para filtrar productos con 1 foto">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <i class="bi bi-camera" style="color:#e0a800;font-size:.85rem"></i>
           <span class="stat-label" style="font-size:.66rem">1 foto</span>
@@ -87,9 +100,11 @@
       </div>
     </div>
 
-    {# 2 fotos #}
+    {# 2 fotos (mismo SKU con 2 fotos) — filtra: ≥2 fotos #}
     <div class="col-6 col-md-3">
-      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+      <div class="stat-card kpi-card" id="kpiFoto2" data-filter="2"
+           style="padding:10px 13px;position:relative;overflow:hidden;cursor:pointer"
+           title="Haz clic para filtrar productos con 2 fotos">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <i class="bi bi-camera-fill" style="color:#198754;font-size:.85rem"></i>
           <span class="stat-label" style="font-size:.66rem">2 fotos</span>
@@ -107,9 +122,24 @@
   {# Barra apilada de cobertura #}
   <div style="height:5px;border-radius:3px;overflow:hidden;display:flex;margin-bottom:14px"
        title="Rojo: sin foto · Amarillo: 1 foto · Verde: 2 fotos">
-    <div style="flex:{{ foto0 }};background:#cc2200" title="{{ foto0 }} sin foto"></div>
-    <div style="flex:{{ foto1 }};background:#e0a800" title="{{ foto1 }} con 1 foto"></div>
-    <div style="flex:{{ foto2 }};background:#198754" title="{{ foto2 }} con 2 fotos"></div>
+    <div style="flex:{{ foto0 if foto0 > 0 else 0 }};background:#cc2200" title="{{ foto0 }} sin foto"></div>
+    <div style="flex:{{ foto1 if foto1 > 0 else 0 }};background:#e0a800" title="{{ foto1 }} con 1 foto"></div>
+    <div style="flex:{{ foto2 if foto2 > 0 else 0 }};background:#198754" title="{{ foto2 }} con 2 fotos"></div>
+  </div>
+
+  {# Aviso filtro activo (se muestra/oculta por JS) #}
+  <div id="kpiFilterBanner" style="display:none;margin-bottom:8px">
+    <div style="background:#1a1a1a;border:1px solid #444;border-radius:7px;
+                padding:5px 12px;font-size:.78rem;color:#ccc;
+                display:flex;align-items:center;gap:10px">
+      <i class="bi bi-funnel-fill" style="color:var(--ilus-red)"></i>
+      <span id="kpiFilterLabel">Filtro activo</span>
+      <button type="button" onclick="clearKpiFilter()"
+              style="margin-left:auto;background:none;border:none;color:#888;
+                     font-size:.8rem;cursor:pointer;padding:0">
+        <i class="bi bi-x-lg"></i> Quitar filtro
+      </button>
+    </div>
   </div>
 
   {# ── Búsqueda ── #}
@@ -190,16 +220,6 @@
   <div class="ilus-card d-none d-md-block">
     <div class="ilus-card-header">
       <span><i class="bi bi-table me-2"></i>Productos</span>
-      <div class="d-flex align-items-center gap-2">
-        <span class="text-muted small fw-normal" id="rowCountLabel">{{ products|length }} registro(s)</span>
-        <select id="rowsPerPage" class="form-select form-select-sm"
-                style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px">
-          <option value="100" selected>100 filas</option>
-          <option value="200">200 filas</option>
-          <option value="500">500 filas</option>
-          <option value="all">Todo</option>
-        </select>
-      </div>
     </div>
     <div class="table-responsive">
       <table class="table ilus-table mb-0" id="productTable">
@@ -216,7 +236,7 @@
         </thead>
         <tbody>
           {% for p in products %}
-          <tr>
+          <tr data-fotos="{{ p.total_fotos|int }}">
             <td>
               <div class="fw-bold font-monospace">{{ p.sku }}</div>
               {% if p.codigo %}<div style="font-size:.7rem;color:#888">Cod: {{ p.codigo }}</div>{% endif %}
@@ -286,6 +306,21 @@
           {% endfor %}
         </tbody>
       </table>
+    </div>
+    {# ── Paginación (debajo de la tabla) ── #}
+    <div class="d-flex align-items-center justify-content-between px-3 py-2"
+         style="border-top:1px solid #2d2d2d;background:#161616;border-radius:0 0 10px 10px">
+      <span class="text-muted small" id="rowCountLabel">{{ products|length }} registro(s)</span>
+      <div class="d-flex align-items-center gap-2">
+        <span style="font-size:.75rem;color:#888">Mostrar:</span>
+        <select id="rowsPerPage" class="form-select form-select-sm"
+                style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px">
+          <option value="100" selected>100 filas</option>
+          <option value="200">200 filas</option>
+          <option value="500">500 filas</option>
+          <option value="all">Todo</option>
+        </select>
+      </div>
     </div>
   </div>
 
@@ -445,28 +480,83 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 /* ══════════════════════════════════════════
-   PAGINACIÓN DE TABLA (100 / 200 / 500 / Todo)
+   PAGINACIÓN + FILTRO KPI (100 / 200 / 500 / Todo)
 ══════════════════════════════════════════ */
-(function(){
+var _kpiFilter = null;   // null = todos | 'con_foto' | '0' | '1' | '2'
+
+function applyTableFilters() {
   var sel   = document.getElementById('rowsPerPage');
   var label = document.getElementById('rowCountLabel');
-  if (!sel) return;
+  var rows  = document.querySelectorAll('#productTable tbody tr');
+  if (!rows.length) return;
 
-  function applyPagination() {
-    var val  = sel.value;
-    var rows = document.querySelectorAll('#productTable tbody tr');
-    var max  = val === 'all' ? rows.length : parseInt(val, 10);
-    var shown = 0;
-    rows.forEach(function(row, i) {
-      var visible = i < max;
-      row.style.display = visible ? '' : 'none';
-      if (visible) shown++;
-    });
-    label.textContent = shown + ' de {{ products|length }} registro(s)';
+  var max = (!sel || sel.value === 'all') ? Infinity : parseInt(sel.value, 10);
+  var shown = 0;
+  var total = 0;
+
+  rows.forEach(function(row) {
+    var fotos = parseInt(row.dataset.fotos || '0', 10);
+    var pass  = true;
+    if      (_kpiFilter === 'con_foto') pass = fotos >= 1;
+    else if (_kpiFilter === '0')        pass = fotos === 0;
+    else if (_kpiFilter === '1')        pass = fotos === 1;
+    else if (_kpiFilter === '2')        pass = fotos >= 2;
+
+    total++;
+    if (pass && shown < max) {
+      row.style.display = '';
+      shown++;
+    } else {
+      row.style.display = 'none';
+    }
+  });
+
+  if (label) {
+    label.textContent = (_kpiFilter
+      ? shown + ' filtrados de {{ products|length }} registro(s)'
+      : shown + ' de {{ products|length }} registro(s)');
   }
+}
 
-  sel.addEventListener('change', applyPagination);
-  applyPagination();   // aplicar al cargar (100 por defecto)
+/* KPI cards cliqueables */
+document.querySelectorAll('.kpi-card').forEach(function(card) {
+  card.addEventListener('click', function() {
+    var f = card.dataset.filter;
+    if (_kpiFilter === f) {
+      clearKpiFilter();
+    } else {
+      _kpiFilter = f;
+      /* Highlight activo */
+      document.querySelectorAll('.kpi-card').forEach(function(c) {
+        c.style.outline = '';
+        c.style.boxShadow = '';
+      });
+      card.style.outline    = '2px solid var(--ilus-red)';
+      card.style.boxShadow  = '0 0 0 4px rgba(204,0,0,.15)';
+      /* Banner de filtro activo */
+      var labels = { 'con_foto':'Con foto (≥1)', '0':'Sin foto', '1':'1 foto', '2':'2 fotos (mismo SKU)' };
+      document.getElementById('kpiFilterLabel').textContent = 'Filtro activo: ' + (labels[f] || f);
+      document.getElementById('kpiFilterBanner').style.display = '';
+      applyTableFilters();
+    }
+  });
+});
+
+function clearKpiFilter() {
+  _kpiFilter = null;
+  document.querySelectorAll('.kpi-card').forEach(function(c) {
+    c.style.outline = '';
+    c.style.boxShadow = '';
+  });
+  document.getElementById('kpiFilterBanner').style.display = 'none';
+  applyTableFilters();
+}
+
+/* Selector de filas */
+(function(){
+  var sel = document.getElementById('rowsPerPage');
+  if (sel) sel.addEventListener('change', applyTableFilters);
+  applyTableFilters();   // aplicar al cargar (100 por defecto)
 })();
 
 /* ══════════════════════════════════════════
