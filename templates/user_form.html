@@ -80,6 +80,7 @@
           {% set current_role = (fd.role or user.role) if user else fd.get('role','editor') %}
           <select name="role" class="form-select">
             <option value="lector"     {% if current_role == 'lector'     %}selected{% endif %}>Lector (solo visualiza)</option>
+            <option value="vendedor"   {% if current_role == 'vendedor'   %}selected{% endif %}>Vendedor (cubicador)</option>
             <option value="editor"     {% if current_role == 'editor'     %}selected{% endif %}>Editor (crea y edita)</option>
             <option value="admin"      {% if current_role == 'admin'      %}selected{% endif %}>Administrador</option>
             {% if permissions.superadmin %}

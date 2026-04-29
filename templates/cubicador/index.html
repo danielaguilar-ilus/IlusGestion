@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}Cubicador — ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-calculator me-2" style="color:var(--ilus-red)"></i>Cubicador</h4>
+      <div class="sub">Cubicaje y peso de documentos de venta — ERP Random</div>
+    </div>
+  </div>
+</div>
+
+{# ── Formulario de búsqueda ── #}
+<div class="ilus-card mb-3">
+  <div class="ilus-card-header">
+    <span><i class="bi bi-search me-2"></i>Buscar documento</span>
+  </div>
+  <div class="card-body p-3">
+    <form method="post" class="row g-3 align-items-end" id="cubicadorForm">
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold small">Tipo de documento</label>
+        <select name="tido" class="form-select" id="tidoSelect">
+          {% for cod, nom in tipos_doc %}
+          <option value="{{ cod }}" {% if tido == cod %}selected{% endif %}>{{ nom }} ({{ cod }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold small">N° de documento</label>
+        <input type="text" name="nudo" class="form-control font-monospace"
+               value="{{ nudo }}" placeholder="Ej: 12345"
+               autocomplete="off" autocorrect="off" id="nudoInput"
+               required>
+      </div>
+      <div class="col-12 col-md-4">
+        <button type="submit" class="btn btn-ilus fw-bold w-100">
+          <i class="bi bi-search me-2"></i>Cubicar documento
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Error ── #}
+{% if error_msg %}
+<div class="ilus-info mb-3" style="border-left-color:#990000;background:#fff5f5">
+  <i class="bi bi-exclamation-triangle-fill me-2" style="color:var(--ilus-red)"></i>
+  <strong>{{ error_msg }}</strong>
+</div>
+{% endif %}
+
+{# ── Resultados ── #}
+{% if resultado %}
+{% set h      = resultado.header %}
+{% set lineas = resultado.lineas %}
+
+{# Cabecera del documento #}
+<div class="ilus-card mb-3">
+  <div class="ilus-card-header" style="background:var(--ilus-black)">
+    <span class="text-white fw-bold">
+      <i class="bi bi-file-earmark-text me-2" style="color:var(--ilus-red)"></i>
+      {{ tido }} N° {{ nudo }}
+    </span>
+    <span class="text-muted small fw-normal">{{ h.fecha }}</span>
+  </div>
+  <div class="card-body p-3">
+    <div class="row g-2">
+      <div class="col-md-5">
+        <div class="small text-muted fw-semibold text-uppercase" style="font-size:.68rem;letter-spacing:.5px">Cliente</div>
+        <div class="fw-bold" style="font-size:1rem">{{ h.cliente_nombre or '—' }}</div>
+        <div class="small text-muted">RUT: {{ h.cliente_rut or '—' }}</div>
+      </div>
+      <div class="col-md-7">
+        <div class="d-flex gap-3 flex-wrap">
+          <div>
+            <div class="small text-muted fw-semibold" style="font-size:.68rem">Neto</div>
+            <div class="fw-bold">${{ "{:,.0f}".format(h.valor_neto or 0) }}</div>
+          </div>
+          <div>
+            <div class="small text-muted fw-semibold" style="font-size:.68rem">IVA</div>
+            <div class="fw-bold">${{ "{:,.0f}".format(h.valor_iva or 0) }}</div>
+          </div>
+          <div>
+            <div class="small text-muted fw-semibold" style="font-size:.68rem">Bruto</div>
+            <div class="fw-bold" style="color:var(--ilus-red)">${{ "{:,.0f}".format(h.valor_bruto or 0) }}</div>
+          </div>
+          <div>
+            <div class="small text-muted fw-semibold" style="font-size:.68rem">Líneas</div>
+            <div class="fw-bold">{{ lineas|length }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if lineas %}
+{# Totales acumulados para el pie de tabla #}
+{% set ns = namespace(
+  tot_kg=0, tot_pv=0, tot_vol=0, tot_pred=0, tot_qty=0
+) %}
+{% for l in lineas %}
+  {% set ns.tot_kg   = ns.tot_kg   + l.peso_kg_tot %}
+  {% set ns.tot_pv   = ns.tot_pv   + l.peso_vol_tot %}
+  {% set ns.tot_vol  = ns.tot_vol  + l.vol_tot %}
+  {% set ns.tot_pred = ns.tot_pred + l.pred_tot %}
+  {% set ns.tot_qty  = ns.tot_qty  + l.cantidad %}
+{% endfor %}
+
+{# Tabla desktop #}
+<div class="ilus-card d-none d-md-block mb-3">
+  <div class="ilus-card-header">
+    <span><i class="bi bi-table me-2"></i>Detalle de cubicaje</span>
+    <span class="text-muted small fw-normal">{{ lineas|length }} línea(s)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0" id="cubicadorTable" style="font-size:.82rem">
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Descripción ERP</th>
+          <th class="text-center">Cant</th>
+          <th class="text-end">Kg/u</th>
+          <th class="text-end">PV/u</th>
+          <th class="text-end">Vol cm³/u</th>
+          <th class="text-end">Predom/u</th>
+          <th class="text-end" style="color:var(--ilus-red)">Total Predom</th>
+          <th class="text-center no-print">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in lineas %}
+        <tr>
+          {# SKU #}
+          <td>
+            <div class="fw-bold font-monospace">{{ l.sku }}</div>
+            {% if not l.tiene_ficha %}
+            <div style="font-size:.68rem;color:#888">
+              <i class="bi bi-exclamation-circle text-warning me-1"></i>Sin ficha
+            </div>
+            {% elif not l.tiene_bultos %}
+            <div style="font-size:.68rem;color:#888">
+              <i class="bi bi-info-circle me-1"></i>Sin bultos
+            </div>
+            {% endif %}
+          </td>
+
+          {# Descripción ERP + diferencia #}
+          <td>
+            <div>{{ l.descripcion_erp }}</div>
+            {% if l.diferencia %}
+            <div style="font-size:.7rem;color:#cc6600;margin-top:2px">
+              <i class="bi bi-arrow-left-right me-1"></i>
+              App: <em>{{ l.nombre_app }}</em>
+              <button type="button"
+                      class="btn btn-sm py-0 px-1 ms-1 btn-outline-warning sync-btn"
+                      style="font-size:.65rem;border-radius:4px"
+                      data-sku="{{ l.sku }}"
+                      data-nombre-erp="{{ l.descripcion_erp }}"
+                      title="Actualizar nombre en nuestra BD con el del ERP">
+                <i class="bi bi-arrow-repeat"></i> Sincronizar
+              </button>
+            </div>
+            {% endif %}
+          </td>
+
+          {# Cantidad #}
+          <td class="text-center fw-bold">{{ l.cantidad|int }}</td>
+
+          {# Kg por unidad #}
+          <td class="text-end">
+            {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_kg_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+
+          {# Peso vol por unidad #}
+          <td class="text-end">
+            {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+
+          {# Volumen cm³ por unidad #}
+          <td class="text-end">
+            {% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+
+          {# Predominante por unidad #}
+          <td class="text-end fw-semibold">
+            {% if l.tiene_bultos %}
+            <span style="color:{% if l.peso_kg_u >= l.peso_vol_u %}#CC0000{% else %}#1a7a1a{% endif %}">
+              {{ "%.3f"|format(l.pred_u) }}
+              <sup style="font-size:.6rem">{% if l.peso_kg_u >= l.peso_vol_u %}kg{% else %}pv{% endif %}</sup>
+            </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+
+          {# Total predominante (× qty) #}
+          <td class="text-end fw-bold" style="color:var(--ilus-red)">
+            {% if l.tiene_bultos %}{{ "%.3f"|format(l.pred_tot) }}{% else %}<span class="text-muted fw-normal">—</span>{% endif %}
+          </td>
+
+          {# Acciones #}
+          <td class="text-center no-print">
+            {% if l.tiene_ficha and l.app_id %}
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    title="Vista rápida del producto"
+                    onclick="quickView({{ l.app_id }})">
+              <i class="bi bi-eye"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+
+      {# Fila de totales #}
+      <tfoot>
+        <tr style="background:#1a1a1a;font-weight:700;font-size:.82rem">
+          <td colspan="2" class="text-end" style="color:#ccc">TOTALES</td>
+          <td class="text-center" style="color:#fff">{{ ns.tot_qty|int }}</td>
+          <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_kg) }}</td>
+          <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_pv) }}</td>
+          <td class="text-end" style="color:#fff">{{ "{:,.0f}".format(ns.tot_vol) }}</td>
+          <td></td>
+          <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ "%.3f"|format(ns.tot_pred) }}</td>
+          <td class="no-print"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{# Cards mobile #}
+<div class="d-md-none mb-3">
+  {% for l in lineas %}
+  <div class="ilus-card mb-2">
+    <div class="p-3">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <div class="fw-bold font-monospace">{{ l.sku }}</div>
+          <div class="small" style="color:#bbb">{{ l.descripcion_erp }}</div>
+        </div>
+        <span class="badge rounded-pill" style="background:var(--ilus-black);font-size:.72rem">
+          × {{ l.cantidad|int }}
+        </span>
+      </div>
+      {% if l.diferencia %}
+      <div class="small mb-2 p-2 rounded" style="background:#2a1a00;color:#e0a800;font-size:.72rem">
+        <i class="bi bi-arrow-left-right me-1"></i>App: {{ l.nombre_app }}
+        <button type="button" class="btn btn-sm py-0 px-1 ms-1 sync-btn"
+                style="font-size:.65rem;background:#e0a800;color:#000;border:none;border-radius:3px"
+                data-sku="{{ l.sku }}" data-nombre-erp="{{ l.descripcion_erp }}">
+          <i class="bi bi-arrow-repeat"></i>
+        </button>
+      </div>
+      {% endif %}
+      <div class="row g-1 text-center" style="font-size:.75rem">
+        <div class="col-3">
+          <div style="color:#888">Kg</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ "%.2f"|format(l.peso_kg_tot) }}{% else %}—{% endif %}</div>
+        </div>
+        <div class="col-3">
+          <div style="color:#888">PV</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ "%.2f"|format(l.peso_vol_tot) }}{% else %}—{% endif %}</div>
+        </div>
+        <div class="col-3">
+          <div style="color:#888">Vol cm³</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_tot) }}{% else %}—{% endif %}</div>
+        </div>
+        <div class="col-3">
+          <div style="color:var(--ilus-red);font-weight:700">Pred</div>
+          <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ "%.2f"|format(l.pred_tot) }}{% else %}—{% endif %}</div>
+        </div>
+      </div>
+      {% if l.tiene_ficha and l.app_id %}
+      <div class="mt-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary w-100"
+                onclick="quickView({{ l.app_id }})">
+          <i class="bi bi-eye me-1"></i>Ver ficha del producto
+        </button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {# Totales mobile #}
+  <div class="ilus-card" style="background:#1a1a1a;border-color:#333">
+    <div class="p-3">
+      <div class="fw-bold text-white mb-2 text-center">TOTALES DEL DOCUMENTO</div>
+      <div class="row g-2 text-center" style="font-size:.82rem">
+        <div class="col-6">
+          <div style="color:#888">Total Kg</div>
+          <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_kg) }}</div>
+        </div>
+        <div class="col-6">
+          <div style="color:#888">Total PV</div>
+          <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_pv) }}</div>
+        </div>
+        <div class="col-6">
+          <div style="color:#888">Vol cm³ total</div>
+          <div class="fw-bold text-white">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
+        </div>
+        <div class="col-6">
+          <div style="color:var(--ilus-red);font-weight:700">Predom total</div>
+          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.1rem">{{ "%.3f"|format(ns.tot_pred) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% else %}
+<div class="ilus-card">
+  <div class="empty-state">
+    <div class="empty-icon">📋</div>
+    <p>El documento no tiene líneas de producto.</p>
+  </div>
+</div>
+{% endif %}
+
+{% endif %}{# /resultado #}
+
+{# ── Modal vista rápida de producto (igual al de index) ── #}
+<div class="modal fade" id="quickModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <div>
+          <h5 class="modal-title mb-0 font-monospace" id="qmSku">—</h5>
+          <div class="small" id="qmNombre" style="color:#bbb"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0" id="qmBody">
+        <div class="text-center py-5">
+          <div class="spinner-border text-danger" role="status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Vista rápida de producto ── */
+var QUICK_TPL = "{{ url_for('product_quick', pid=0) }}";
+var EDIT_TPL  = "{{ url_for('edit_product',   pid=0) }}";
+var DETAIL_TPL= "{{ url_for('product_detail', pid=0) }}";
+var CAN_EDIT  = {{ 'true' if permissions.edit else 'false' }};
+var CAN_PRINT = {{ 'true' if permissions.print else 'false' }};
+
+function _stat(val, label, color) {
+  return '<div style="text-align:center;padding:12px 6px;border-right:1px solid #eee">'
+    + '<div style="font-size:1.4rem;font-weight:900;color:' + color + ';line-height:1">' + val + '</div>'
+    + '<div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">' + label + '</div>'
+    + '</div>';
+}
+
+function quickView(pid) {
+  var modal = new bootstrap.Modal(document.getElementById('quickModal'));
+  var body  = document.getElementById('qmBody');
+  var skuEl = document.getElementById('qmSku');
+  var nomEl = document.getElementById('qmNombre');
+
+  body.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-danger"></div></div>';
+  skuEl.textContent = '...';
+  nomEl.textContent = '';
+  modal.show();
+
+  fetch(QUICK_TPL.replace('/0/', '/' + pid + '/'))
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      skuEl.textContent = d.sku;
+      nomEl.textContent = d.nombre;
+
+      var photos = '';
+      if (d.photos && d.photos.length > 0) {
+        photos = '<div style="background:#111;padding:12px;display:flex;gap:10px;justify-content:center;align-items:center;min-height:180px;border-bottom:2px solid #CC0000">';
+        d.photos.forEach(function(url) {
+          photos += '<a href="' + url + '" target="_blank" style="display:block;flex:1;max-width:50%">'
+            + '<img src="' + url + '" style="width:100%;height:200px;object-fit:contain;border-radius:6px">'
+            + '</a>';
+        });
+        photos += '</div>';
+      } else {
+        photos = '<div style="background:#f5f5f5;height:80px;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:.85rem;border-bottom:1px solid #ddd">'
+          + '<i class="bi bi-image me-2"></i>Sin fotos</div>';
+      }
+
+      var stats = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-bottom:1px solid #eee">'
+        + _stat(d.total_bultos, 'Bultos', '#111111')
+        + _stat(d.peso_total.toFixed(2) + ' kg', 'Peso bruto', '#CC0000')
+        + _stat(d.pv_total.toFixed(2), 'Peso vol', '#1a7a1a')
+        + '</div>';
+
+      body.innerHTML = photos + stats;
+    })
+    .catch(function() {
+      body.innerHTML = '<div class="text-center py-4 text-muted">Error cargando datos.</div>';
+    });
+}
+
+/* ── Sincronizar nombre desde ERP ── */
+var SYNC_URL = "{{ url_for('cubicador_sync_nombre') }}";
+
+document.querySelectorAll('.sync-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var sku       = btn.dataset.sku;
+    var nombreErp = btn.dataset.nombreErp;
+    if (!confirm('¿Actualizar nombre de "' + sku + '" en nuestra BD con: "' + nombreErp + '"?')) return;
+
+    var fd = new FormData();
+    fd.append('sku', sku);
+    fd.append('nombre_erp', nombreErp);
+
+    fetch(SYNC_URL, { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          btn.closest('.small, div').innerHTML =
+            '<i class="bi bi-check-circle-fill text-success me-1"></i>Nombre actualizado';
+          btn.closest('tr') && btn.closest('tr').querySelector('.diferencia-label') &&
+            (btn.closest('tr').querySelector('.diferencia-label').style.display = 'none');
+        } else {
+          alert('Error: ' + (data.error || 'desconocido'));
+        }
+      })
+      .catch(function(){ alert('Error de red al sincronizar.'); });
+  });
+});
+</script>
+{% endblock %}

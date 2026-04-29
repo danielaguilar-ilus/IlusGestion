@@ -399,6 +399,7 @@ def permission_set(role):
       admin      — igual que superadmin menos preguntas genéricas
       editor     — crear/editar evaluaciones y colaboradores (sin borrar, sin admin)
       lector     — solo lectura
+      vendedor   — acceso al módulo Cubicador (solo lectura de productos)
     """
     base = {
         "view":       False,
@@ -409,17 +410,21 @@ def permission_set(role):
         "admin":      False,   # gestión usuarios / configuración
         "superadmin": False,   # preguntas genéricas + acciones irreversibles
         "hrm":        False,   # módulo colaboradores
+        "cubicador":  False,   # módulo cubicador de documentos
     }
     if role == "superadmin":
         return {k: True for k in base}
     if role == "admin":
         return {**base, "view": True, "edit": True, "print": True,
-                "create": True, "delete": True, "admin": True, "hrm": True}
+                "create": True, "delete": True, "admin": True, "hrm": True,
+                "cubicador": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "hrm": True}
     if role == "lector":
         return {**base, "view": True}
+    if role == "vendedor":
+        return {**base, "view": True, "cubicador": True}
     return base
 
 
@@ -1091,6 +1096,7 @@ def inject_globals():
                             "admin":      "Administrador",
                             "editor":     "Editor",
                             "lector":     "Lector",
+                            "vendedor":   "Vendedor",
                         }.get(g.user["role"] if g.user else "", "Usuario"),
     }
 
@@ -1997,7 +2003,7 @@ def new_user():
             errors.append("La clave es requerida.")
         if len(password) < 8:
             errors.append("La clave debe tener al menos 8 caracteres.")
-        if role not in {"superadmin", "admin", "editor", "lector"}:
+        if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
@@ -2043,7 +2049,7 @@ def edit_user(user_id):
             errors.append("El nombre y apellido son requeridos.")
         if password and len(password) < 8:
             errors.append("La clave debe tener al menos 8 caracteres.")
-        if role not in {"superadmin", "admin", "editor", "lector"}:
+        if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if mysql_fetchone(
             f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s AND id<>%s", (username, user_id)
@@ -3021,6 +3027,179 @@ def api_eval_estado(eid):
         """, (nuevo, current_username(), eid))
     conn.commit()
     return jsonify({"ok": True, "estado": nuevo})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  MÓDULO CUBICADOR
+#  Busca documentos de venta en el ERP Random y cruza con
+#  los datos de peso/volumen de la base de etiquetas.
+#  Solo visible para rol: vendedor, admin, superadmin
+# ═══════════════════════════════════════════════════════════════
+
+TIPOS_DOC_CUBICADOR = [
+    ("FCV", "Factura"),
+    ("BLV", "Boleta"),
+    ("NVV", "Nota de Venta"),
+    ("COV", "Cotización"),
+]
+
+
+def _cubicador_fetch(tido, nudo):
+    """
+    Consulta el ERP externo y cruza con nuestra BD.
+    Retorna (header_dict, lineas_list) o lanza excepción.
+    """
+    erp = get_erp_conn()
+    if not erp:
+        raise ConnectionError("No se pudo conectar al ERP. Intenta en unos momentos.")
+
+    try:
+        with erp.cursor() as cur:
+            # ── Encabezado + nombre cliente ──────────────────────────
+            cur.execute("""
+                SELECT
+                    e.TIDO,
+                    TRIM(e.NUDO)   AS nudo,
+                    e.FEEMDO       AS fecha,
+                    e.VANEDO       AS valor_neto,
+                    e.VABRDO       AS valor_bruto,
+                    e.VAIVDO       AS valor_iva,
+                    c.NOKOEN       AS cliente_nombre,
+                    c.RTEN         AS cliente_rut
+                FROM MAEEDO e
+                LEFT JOIN MAEEN c ON c.KOEN = e.ENDO
+                WHERE e.TIDO = %s AND TRIM(e.NUDO) = %s
+                LIMIT 1
+            """, (tido, str(nudo).strip()))
+            header = cur.fetchone()
+
+            if not header:
+                return None, []
+
+            # ── Líneas del documento (solo productos) ─────────────────
+            cur.execute("""
+                SELECT
+                    TRIM(d.KOPRCT)  AS sku,
+                    TRIM(d.NOKOPR)  AS descripcion_erp,
+                    d.CAPRCO1       AS cantidad,
+                    d.NULIDO        AS num_linea
+                FROM MAEDDO d
+                WHERE d.TIDO = %s AND TRIM(d.NUDO) = %s
+                  AND TRIM(COALESCE(d.KOPRCT, '')) != ''
+                  AND COALESCE(d.PRCT, '.f.') NOT IN ('.t.', 'T', '1')
+                ORDER BY d.NULIDO
+            """, (tido, str(nudo).strip()))
+            lineas_erp = cur.fetchall()
+    finally:
+        erp.close()
+
+    # ── Cruzar con BD de etiquetas ────────────────────────────────────
+    lineas = []
+    for l in lineas_erp:
+        sku          = (l.get("sku") or "").strip().upper()
+        descripcion  = (l.get("descripcion_erp") or "").strip()
+        qty          = float(l.get("cantidad") or 0)
+
+        app_data = mysql_fetchone(f"""
+            SELECT
+                p.id     AS app_id,
+                p.nombre AS nombre_app,
+                COALESCE(SUM(b.peso), 0)                                AS peso_total,
+                COALESCE(SUM(b.largo * b.ancho * b.alto), 0)            AS volumen_cm3,
+                ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4)
+                                                                        AS peso_vol
+            FROM `{PRODUCTS_TABLE}` p
+            LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+            WHERE UPPER(TRIM(p.sku)) = %s
+            GROUP BY p.id, p.nombre
+        """, (sku,))
+
+        tiene_ficha  = app_data is not None
+        tiene_bultos = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
+
+        peso_kg_u  = float(app_data["peso_total"]  if tiene_ficha else 0)
+        peso_vol_u = float(app_data["peso_vol"]     if tiene_ficha else 0)
+        vol_u      = float(app_data["volumen_cm3"]  if tiene_ficha else 0)
+        pred_u     = max(peso_kg_u, peso_vol_u)
+
+        nombre_app = (app_data["nombre_app"] if tiene_ficha else "") or ""
+        diferencia = tiene_ficha and nombre_app.strip().upper() != descripcion.upper()
+
+        lineas.append({
+            "sku":              sku,
+            "descripcion_erp":  descripcion,
+            "nombre_app":       nombre_app,
+            "cantidad":         qty,
+            "app_id":           app_data["app_id"] if tiene_ficha else None,
+            "tiene_ficha":      tiene_ficha,
+            "tiene_bultos":     tiene_bultos,
+            # Por unidad
+            "peso_kg_u":        round(peso_kg_u,  4),
+            "peso_vol_u":       round(peso_vol_u, 4),
+            "vol_u":            round(vol_u,      2),
+            "pred_u":           round(pred_u,     4),
+            # Totales (× cantidad)
+            "peso_kg_tot":      round(peso_kg_u  * qty, 4),
+            "peso_vol_tot":     round(peso_vol_u * qty, 4),
+            "vol_tot":          round(vol_u      * qty, 2),
+            "pred_tot":         round(pred_u     * qty, 4),
+            # Flag
+            "diferencia":       diferencia,
+        })
+
+    return header, lineas
+
+
+@app.route("/cubicador", methods=["GET", "POST"])
+@login_required
+def cubicador():
+    if not g.permissions.get("cubicador"):
+        flash("No tienes acceso al módulo Cubicador.", "danger")
+        return redirect(url_for("index"))
+
+    tido      = (request.form.get("tido") or request.args.get("tido") or "FCV").strip().upper()
+    nudo      = (request.form.get("nudo") or request.args.get("nudo") or "").strip()
+    resultado = None
+    error_msg = None
+
+    if request.method == "POST" and nudo:
+        try:
+            header, lineas = _cubicador_fetch(tido, nudo)
+            if header is None:
+                error_msg = f"No se encontró el documento {tido} N° {nudo} en el ERP."
+            else:
+                resultado = {"header": header, "lineas": lineas}
+        except ConnectionError as ce:
+            error_msg = str(ce)
+        except Exception as ex:
+            error_msg = f"Error al consultar el ERP: {ex}"
+
+    return render_template("cubicador/index.html",
+                           tipos_doc=TIPOS_DOC_CUBICADOR,
+                           tido=tido, nudo=nudo,
+                           resultado=resultado,
+                           error_msg=error_msg)
+
+
+@app.route("/cubicador/sync-nombre", methods=["POST"])
+@login_required
+def cubicador_sync_nombre():
+    """Actualiza el nombre de un producto en nuestra BD con el nombre del ERP."""
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "sin permiso"}), 403
+    sku        = request.form.get("sku", "").strip().upper()
+    nombre_erp = request.form.get("nombre_erp", "").strip()
+    if not sku or not nombre_erp:
+        return jsonify({"error": "datos incompletos"}), 400
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE `{PRODUCTS_TABLE}` SET nombre=%s WHERE UPPER(TRIM(sku))=%s",
+            (nombre_erp, sku)
+        )
+    conn.commit()
+    _invalidate_listing_cache()
+    return jsonify({"ok": True, "sku": sku, "nombre": nombre_erp})
 
 
 # ─────────────────────────────────────────────

@@ -104,6 +104,18 @@
       <span>Evaluaciones</span>
     </a>
 
+    {# ── CUBICADOR ── #}
+    {% if permissions.cubicador %}
+    <div class="sidebar-section-label mt-2">
+      <i class="bi bi-calculator me-1"></i>Despacho
+    </div>
+    <a href="{{ url_for('cubicador') }}"
+       class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
+      <i class="bi bi-boxes"></i>
+      <span>Cubicador</span>
+    </a>
+    {% endif %}
+
     {# ── SISTEMA ── #}
     {% if permissions.admin %}
     <div class="sidebar-section-label mt-2">
