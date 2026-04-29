@@ -22,16 +22,94 @@
 </div>
 
 <div class="px-2 px-md-0">
-  {# ── Stats ── #}
-  {% set total = products|length %}
-  {% set conf  = products|selectattr('estado','equalto','Confirmado')|list|length %}
-  {% set pend  = products|selectattr('estado','equalto','Pendiente')|list|length %}
-  {% set imp   = products|selectattr('estado','equalto','Impreso')|list|length %}
-  <div class="row g-2 mb-3">
-    <div class="col-6 col-md-3"><div class="stat-card blk"><div class="stat-num">{{ total }}</div><div class="stat-label">Total</div></div></div>
-    <div class="col-6 col-md-3"><div class="stat-card grn"><div class="stat-num">{{ conf }}</div><div class="stat-label">Confirmados</div></div></div>
-    <div class="col-6 col-md-3"><div class="stat-card amber"><div class="stat-num">{{ pend }}</div><div class="stat-label">Pendientes</div></div></div>
-    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="color:#1a4a8a">{{ imp }}</div><div class="stat-label">Impresos</div></div></div>
+  {# ── Stats: Cobertura fotográfica ── #}
+  {% set total  = products|length %}
+  {% set foto0  = products|selectattr('total_fotos','equalto',0)|list|length %}
+  {% set foto1  = products|selectattr('total_fotos','equalto',1)|list|length %}
+  {% set foto2  = total - foto0 - foto1 %}
+  {% set cob_pct = ((foto1 + foto2) / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p0 = (foto0 / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p1 = (foto1 / total * 100)|round(1) if total > 0 else 0 %}
+  {% set p2 = (foto2 / total * 100)|round(1) if total > 0 else 0 %}
+
+  <div class="row g-2 mb-2">
+
+    {# Cobertura global (donut) #}
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="display:flex;align-items:center;gap:11px;padding:10px 13px">
+        <div style="
+            width:54px;height:54px;border-radius:50%;flex-shrink:0;
+            background:conic-gradient(#198754 0% {{ cob_pct }}%, #2d2d2d {{ cob_pct }}% 100%);
+            display:flex;align-items:center;justify-content:center">
+          <div style="
+              width:36px;height:36px;border-radius:50%;
+              background:var(--ilus-black,#1a1a1a);
+              display:flex;align-items:center;justify-content:center;
+              font-size:.56rem;font-weight:700;color:#fff;line-height:1.15;text-align:center">
+            {{ cob_pct }}%
+          </div>
+        </div>
+        <div>
+          <div class="stat-num" style="font-size:1.45rem;line-height:1;color:#198754">{{ foto1 + foto2 }}</div>
+          <div class="stat-label" style="font-size:.66rem;margin-top:1px">Con foto</div>
+          <div style="font-size:.62rem;color:#666;margin-top:1px">de {{ total }} total</div>
+        </div>
+      </div>
+    </div>
+
+    {# Sin fotos #}
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <i class="bi bi-camera-slash" style="color:#cc2200;font-size:.85rem"></i>
+          <span class="stat-label" style="font-size:.66rem">Sin foto</span>
+        </div>
+        <div class="stat-num" style="color:#cc2200;font-size:1.5rem;line-height:1">{{ foto0 }}</div>
+        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p0 }}% del catálogo</div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
+          <div style="height:3px;width:{{ p0 }}%;background:#cc2200"></div>
+        </div>
+      </div>
+    </div>
+
+    {# 1 foto #}
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <i class="bi bi-camera" style="color:#e0a800;font-size:.85rem"></i>
+          <span class="stat-label" style="font-size:.66rem">1 foto</span>
+        </div>
+        <div class="stat-num" style="color:#e0a800;font-size:1.5rem;line-height:1">{{ foto1 }}</div>
+        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p1 }}% del catálogo</div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
+          <div style="height:3px;width:{{ p1 }}%;background:#e0a800"></div>
+        </div>
+      </div>
+    </div>
+
+    {# 2 fotos #}
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="padding:10px 13px;position:relative;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <i class="bi bi-camera-fill" style="color:#198754;font-size:.85rem"></i>
+          <span class="stat-label" style="font-size:.66rem">2 fotos</span>
+        </div>
+        <div class="stat-num" style="color:#198754;font-size:1.5rem;line-height:1">{{ foto2 }}</div>
+        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p2 }}% del catálogo</div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
+          <div style="height:3px;width:{{ p2 }}%;background:#198754"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  {# Barra apilada de cobertura #}
+  <div style="height:5px;border-radius:3px;overflow:hidden;display:flex;margin-bottom:14px"
+       title="Rojo: sin foto · Amarillo: 1 foto · Verde: 2 fotos">
+    <div style="flex:{{ foto0 }};background:#cc2200" title="{{ foto0 }} sin foto"></div>
+    <div style="flex:{{ foto1 }};background:#e0a800" title="{{ foto1 }} con 1 foto"></div>
+    <div style="flex:{{ foto2 }};background:#198754" title="{{ foto2 }} con 2 fotos"></div>
   </div>
 
   {# ── Búsqueda ── #}
