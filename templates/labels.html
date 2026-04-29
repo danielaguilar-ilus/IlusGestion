@@ -1,845 +1,408 @@
-{% extends "base.html" %}
-{% block title %}Etiquetas — {{ product.sku }}{% endblock %}
-
-{% block content %}
-<style>
-/* ══════════════════════════════════════════════════════
-   PÁGINA
-══════════════════════════════════════════════════════ */
-.lp-wrap    { display:flex; gap:24px; align-items:flex-start; padding-bottom:40px; }
-.lp-labels  { flex:1; min-width:0; overflow-x:auto; }
-.lp-sidebar { width:294px; flex-shrink:0; position:sticky; top:68px; }
-.group      { margin-bottom:24px; }
-.group-lbl  { font-size:.7rem; color:#888; margin-bottom:6px; }
-.copies     { display:flex; flex-wrap:wrap; gap:16px; }
-.copy-wrap  { display:flex; flex-direction:column; }
-.copy-foot  { width:567px; background:#222; color:#888; font-size:.58rem;
-              text-align:center; padding:2px 8px; border-radius:0 0 4px 4px; }
-
-/* Indicador de doblado */
-.fold-bar  { width:567px; display:flex; align-items:center;
-             justify-content:center; gap:8px; margin-bottom:3px; }
-.fold-bar span.fold-txt { font-size:.58rem; letter-spacing:3px;
-                          text-transform:uppercase; color:#999; }
-.fold-bar span.fold-arr { font-size:8px; color:#bbb; }
-
-/* ══════════════════════════════════════════════════════
-   LABEL  567 × 264 px  →  150 × 70 mm en impresión
-══════════════════════════════════════════════════════ */
-.label {
-  width: 567px;
-  height: 264px;
-  display: flex;
-  background: #fff;
-  border: 2.5px solid #000;
-  border-radius: 5px;
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0,0,0,.32);
-  font-family: Arial, Helvetica, sans-serif;
-  flex-shrink: 0;
-}
-
-/* Cada mitad */
-.half {
-  width: 50%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-}
-.half-a { border-right: 2px dashed #aaa; }
-
-/* ══════════════════════════════════════════════════════
-   HEADER  53 px ≈ 14 mm
-══════════════════════════════════════════════════════ */
-.hdr {
-  height: 53px;
-  flex-shrink: 0;
-  background: #000;
-  display: flex;
-  align-items: stretch;
-}
-
-/* ── Logo IZQUIERDO: Sports Health Solutions ── */
-.logo-shs {
-  order: 1;
-  flex: 0 0 40%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 5px 8px 5px 10px;
-  border-right: 1.5px solid #2c2c2c;
-}
-.shs-sports {
-  font-size: 12.5px;
-  font-weight: 900;
-  color: #fff;
-  line-height: 1.1;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-}
-.shs-health {
-  font-size: 12.5px;
-  font-weight: 900;
-  color: #fff;
-  line-height: 1.1;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-  background: none;
-  padding: 0;
-}
-.shs-solutions {
-  font-size: 6px;
-  font-weight: 400;
-  color: #999;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  margin-top: 2px;
-  font-style: italic;
-}
-
-/* ── Logo DERECHO: ILUS ── */
-.logo-ilus {
-  order: 2;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 8px;
-}
-.logo-ilus svg {
-  width: 28px;
-  height: 34px;
-  flex-shrink: 0;
-}
-/* Imagen logo ILUS — blanco y negro sobre fondo negro (+70% del actual) */
-.ilus-logo-img {
-  max-height: 192px;
-  max-width: 100%;
-  height: auto;
-  width: auto;
-  object-fit: contain;
-  display: block;
-  margin-left: 8px;              /* 2mm a la derecha dentro del contenedor */
-  filter: grayscale(1) brightness(0) invert(1);
-}
-.ilus-text {
-  font-size: 28px;
-  font-weight: 900;
-  color: #fff;
-  letter-spacing: 1px;
-  line-height: 1;
-}
-.ilus-text::after {
-  content: '.';
-  color: #fff;
-}
-
-/* ══════════════════════════════════════════════════════
-   META (BULTO / PESO)  +15%  →  32 px ≈ 8 mm
-══════════════════════════════════════════════════════ */
-.meta {
-  height: 32px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;   /* centrado */
-  gap: 0;
-  padding: 0 6px;
-  border-bottom: 1.5px solid #000;
-  background: #fff;
-  font-size: 10.5px;          /* +15% respecto a 9px */
-  font-weight: 700;
-  color: #000;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.meta-left  { display:flex; align-items:center; gap:6px; }
-.meta-right { display:flex; align-items:center; gap:5px; }
-/* Escala el ícono de caja +15% */
-.meta svg   { width:15px !important; height:15px !important; flex-shrink:0; }
-
-/* Separador | entre BULTO y PESO */
-.meta-left::after {
-  content: '|';
-  font-size: 18px;
-  font-weight: 300;
-  color: #bbb;
-  margin: 0 7px;
-  line-height: 1;
-}
-/* Separador | entre "PESO BRUTO" y "XX KG" */
-.meta-right > span::after {
-  content: '|';
-  font-size: 18px;
-  font-weight: 300;
-  color: #bbb;
-  margin: 0 5px;
-  line-height: 1;
-}
-
-/* ══════════════════════════════════════════════════════
-   NOMBRE PRODUCTO  36 px ≈ 9 mm
-══════════════════════════════════════════════════════ */
-.pname {
-  height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  border-bottom: 1.5px solid #000;
-  background: #fff;
-  overflow: hidden;
-}
-.pname-txt {
-  font-size: 14px;
-  font-weight: 900;
-  text-transform: uppercase;
-  color: #000;
-  letter-spacing: .3px;
-  line-height: 1.1;
-  width: 100%;
-}
-
-/* ══════════════════════════════════════════════════════
-   BODY
-══════════════════════════════════════════════════════ */
-.body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
-  background: #fff;
-}
-
-/* ── Dimensiones ── */
-.dims {
-  flex: 0 0 50%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;       /* agrupa las filas en el centro */
-  gap: 1px;                      /* separación mínima entre filas */
-  padding: 4px 6px 4px 0;
-  margin-left: -11px;
-  border-right: 1.5px solid #000;
-  overflow: hidden;
-}
-/* Cada fila: position:relative para anclar .dim-val */
-.dim-row {
-  display: flex;
-  align-items: center;
-  position: relative;            /* ancora el dim-val absoluto */
-  gap: 6px;
-  white-space: nowrap;
-  line-height: 1.3;
-}
-/* Ícono + etiqueta → 3mm a la derecha (11px) */
-.dim-ico {
-  width: 16px;
-  text-align: center;
-  font-size: 13px;
-  flex-shrink: 0;
-  color: #000;
-  line-height: 1.3;
-  margin-left: 11px;             /* 3mm derecha — solo etiquetas */
-}
-.dim-lbl {
-  font-size: 9px;
-  font-weight: 700;
-  color: #000;
-  min-width: 58px;
-  line-height: 1.3;
-}
-/* Valor: posición absoluta a la derecha → no se mueve con el ícono/etiqueta */
-.dim-val {
-  position: absolute;
-  right: 4px;
-  font-size: 10px;
-  font-weight: 900;
-  color: #000;
-  line-height: 1.3;
-}
-
-/* ── Columna código — 2mm más a la izquierda ── */
-.code-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px 2px 0;     /* 5px - 5px → 0, resto con margin */
-  margin-left: -3px;            /* -3px extra → total ~8px izq ≈ 2mm */
-  gap: 3px;
-  overflow: hidden;
-}
-.code-col .label__barcode,
-.code-col .barcode {
-  width: 100%;
-  flex-shrink: 0;
-}
-.code-col svg {
-  width: 100%;
-  max-width: 100%;
-  display: block;
-  flex-shrink: 0;
-}
-
-/* ── Caja SKU — desplazada a la derecha ── */
-.sku-box {
-  width: 100%;
-  flex-shrink: 0;
-  background: #000;
-  color: #fff;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;     /* alineación derecha */
-  justify-content: center;
-  min-height: 30px;          /* un poco más alta para que resalte */
-  padding: 3px 5px 3px 3px;
-  margin-left: -4px;
-  margin-top: 5px;           /* separación adicional del barcode */
-  box-sizing: border-box;
-}
-/* Oculta el texto "SKU" y lo reemplaza por "CÓDIGO / SKU" vía CSS */
-.sku-lbl {
-  display: block;
-  font-size: 0;
-  line-height: 0;
-}
-.sku-lbl::before {
-  content: 'CÓDIGO / SKU';
-  font-size: 5px;
-  font-weight: 700;
-  color: #aaa;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  line-height: 1.4;
-  text-align: right;
-}
-/* Autofit vía JS (maxFs 11 → minFs 6) */
-.sku-val {
-  display: block;
-  font-size: 11px;           /* un poco más grande */
-  font-weight: 900;
-  letter-spacing: .5px;
-  line-height: 1.1;
-  color: #fff;
-  text-align: right;         /* texto a la derecha */
-  word-break: break-all;
-  width: 100%;
-  overflow: hidden;
-}
-
-/* ── Fecha — alineada a la derecha, sin margen izquierdo ── */
-.fecha {
-  font-size: 7px;
-  font-weight: 600;
-  color: #666;
-  text-align: right;         /* a la derecha */
-  width: 100%;
-  flex-shrink: 0;
-  padding: 3px 3px 0 0;      /* sin padding izquierdo */
-  margin-left: -4px;
-  letter-spacing: .2px;
-  white-space: nowrap;
-  overflow: hidden;
-  line-height: 1.2;
-}
-
-/* ── Footer franjas ── */
-.lfoot {
-  height: 20px;
-  flex-shrink: 0;
-  border-top: 1.5px solid #000;
-  background: repeating-linear-gradient(
-    -45deg,
-    #000 0px, #000 6px,
-    #fff 6px, #fff 12px
-  );
-}
-
-/* ══════════════════════════════════════════════════════
-   PANEL INSTRUCCIONES
-══════════════════════════════════════════════════════ */
-.instr-card { background:#fff; border:1px solid #ddd; border-radius:8px; overflow:hidden; }
-.instr-head { background:#111; color:#fff; padding:11px 14px; font-size:.87rem;
-              font-weight:700; border-bottom:3px solid #CC0000;
-              display:flex; align-items:center; gap:8px; }
-.instr-body { padding:14px 15px; }
-.instr-sub  { font-size:.76rem; color:#555; margin-bottom:12px; }
-.step       { display:flex; gap:9px; margin-bottom:11px; align-items:flex-start; }
-.step-n     { width:21px; height:21px; border-radius:50%; background:#CC0000;
-              color:#fff; display:flex; align-items:center; justify-content:center;
-              font-size:.7rem; font-weight:700; flex-shrink:0; margin-top:1px; }
-.step-row   { display:flex; gap:8px; align-items:flex-start; flex:1; }
-.step-txt   { font-size:.77rem; color:#333; line-height:1.4; flex:1; }
-.step-ico   { width:52px; flex-shrink:0; }
-
-/* ══════════════════════════════════════════════════════
-   PRINT  150mm × 70mm
-══════════════════════════════════════════════════════ */
-@media print {
-  body, html { background:#fff !important; margin:0; padding:0; }
-  .page-header, .lp-sidebar, .copy-foot, .group-lbl,
-  .fold-bar, .no-print { display:none !important; }
-  .lp-wrap   { display:block; padding:0; }
-  .lp-labels { overflow:visible; }
-  .copies    { display:flex; flex-wrap:wrap; gap:5mm; }
-  .group     { break-inside:avoid; margin-bottom:6mm; }
-
-  .label {
-    width:150mm !important; height:70mm !important;
-    border:1pt solid #000 !important; border-radius:0 !important;
-    box-shadow:none !important;
-    -webkit-print-color-adjust:exact;
-    print-color-adjust:exact;
-  }
-  .half-a { border-right:1pt dashed #999 !important; }
-  .hdr     { height:14mm !important; }
-  .logo-shs { flex:0 0 40% !important; }
-  .shs-sports,.shs-health { font-size:9pt !important; }
-  .shs-solutions { font-size:4.5pt !important; }
-  .ilus-text { font-size:16pt !important; }
-  .ilus-logo-img {
-    max-height: 13mm !important;
-    height: auto !important;
-    width: auto !important;
-    margin-left: 2mm !important;         /* 2mm derecha en print */
-    filter: grayscale(1) brightness(0) invert(1) !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .meta   { height:8mm !important; font-size:8pt !important; padding:0 2mm !important; justify-content:center !important; }
-  .meta svg { width:4mm !important; height:4mm !important; }
-  .meta-left::after,.meta-right > span::after { font-size:12pt !important; margin:0 1.5mm !important; }
-  /* Dims: agrupadas al centro, interlineado 1.3 */
-  .dims   { flex:0 0 50% !important; justify-content:center !important;
-            gap:0.3mm !important;
-            padding:1.5mm 1.5mm 1.5mm 0 !important;
-            margin-left:-5mm !important; }
-  .dim-row { position:relative !important; line-height:1.3 !important; }
-  /* Etiquetas 3mm a la derecha */
-  .dim-ico { font-size:9pt !important; width:4mm !important;
-             line-height:1.3 !important; margin-left:3mm !important; }
-  .dim-lbl { font-size:6.5pt !important; min-width:14mm !important; line-height:1.3 !important; }
-  /* Valores anclados a la derecha */
-  .dim-val { position:absolute !important; right:1mm !important;
-             font-size:7pt !important; font-weight:900 !important; line-height:1.3 !important; }
-  /* Code-col: 2mm más a la izquierda */
-  .code-col { padding-left:0 !important; margin-left:-2mm !important; }
-  .pname  { height:9mm !important; padding:0 2mm !important; }
-  .pname-txt { font-size:9pt !important; }
-  /* Fecha a la derecha, sin margen izquierdo */
-  .fecha  { font-size:3.5pt !important; padding:0.5mm 0.8mm 0 0 !important;
-            text-align:right !important; color:#555 !important;
-            letter-spacing:0 !important; margin-left:0 !important; }
-  .sku-box { min-height:7mm !important; padding:0.5mm 1.5mm 0.5mm 1mm !important;
-             align-items:flex-end !important; margin-top:1.3mm !important; }
-  .sku-lbl::before { font-size:3.5pt !important; text-align:right !important; }
-  .sku-val { font-size:8pt !important; letter-spacing:0.5px !important;
-             text-align:right !important; }
-  .lfoot   { height:5mm !important; }
-}
-
-@media (max-width:960px) {
-  .lp-wrap  { flex-direction:column; }
-  .lp-sidebar { width:100%; position:static; }
-}
-</style>
-
-
-<!-- ══ Page header ══ -->
-<div class="page-header no-print">
-  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-    <div class="d-flex align-items-center gap-2 min-w-0">
-      <a href="{{ url_for('product_detail', pid=product.id) }}"
-         class="btn btn-sm btn-dark-ilus flex-shrink-0">
-        <i class="bi bi-arrow-left"></i>
-      </a>
-      <div class="min-w-0">
-        <h4 class="mb-0 text-truncate">
-          <i class="bi bi-printer me-2" style="color:var(--ilus-red)"></i>Etiquetas de envío
-        </h4>
-        <div class="sub font-monospace text-truncate">
-          {{ product.sku }} &mdash; {{ product.nombre }}
-        </div>
-      </div>
-    </div>
-    <div class="d-flex gap-2 align-items-center">
-      <!-- PDF de TODOS los bultos (ZIP con PDFs individuales) -->
-      <a href="{{ url_for('download_all_pdf', pid=product.id) }}?{% for b in bultos %}qty_{{ b.bulto_num }}={{ qty_per_bulto.get(b.bulto_num, 1) }}{% if not loop.last %}&{% endif %}{% endfor %}"
-         class="btn btn-ilus fw-bold px-3 no-mobile-print" title="Descargar PDF de todos los bultos">
-        <i class="bi bi-file-earmark-pdf me-1"></i>PDF todo
-      </a>
-      <button onclick="window.print()" class="btn btn-ilus fw-bold px-4 no-mobile-print">
-        <i class="bi bi-printer me-2"></i>Imprimir todo
-      </button>
-    </div>
-  </div>
-</div>
-
-
-<!-- ══ Layout ══ -->
-<div class="lp-wrap px-2 px-md-0">
-
-  <!-- Etiquetas -->
-  <div class="lp-labels">
-    {% for b in bultos %}
-    {% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
-    <div class="group">
-      <div class="group-lbl no-print">
-        Bulto {{ b.bulto_num }} / {{ total_bultos }} &mdash; {{ copies }} copia(s)
-      </div>
-      <div class="copies">
-        {% for copy in range(1, copies + 1) %}
-        <div class="copy-wrap">
-
-          <!-- Indicador doblado -->
-          <div class="fold-bar no-print">
-            <span class="fold-arr">&#9664;</span>
-            <span class="fold-txt">doblar aquí</span>
-            <span class="fold-arr">&#9654;</span>
-          </div>
-
-          <!-- ══════════════════════════════════════
-               ETIQUETA — Cara A | Cara B
-          ══════════════════════════════════════ -->
-          <div class="label">
-
-            {% for cara in ['A','B'] %}
-            <div class="half {% if cara=='A' %}half-a{% endif %}">
-
-              <!-- HEADER -->
-              <div class="hdr">
-
-                <!-- IZQUIERDA: Sports Health Solutions -->
-                <div class="logo-shs">
-                  <span class="shs-sports">SPORTS</span>
-                  <span class="shs-health">HEALTH</span>
-                  <span class="shs-solutions">SOLUTIONS</span>
-                </div>
-
-                <!-- DERECHA: ILUS — imagen estática -->
-                <div class="logo-ilus">
-                  <img src="{{ url_for('static', filename='Logo.png') }}"
-                       alt="ILUS" class="ilus-logo-img">
-                </div>
-
-              </div><!-- /hdr -->
-
-              <!-- META: BULTO | PESO BRUTO | KG -->
-              <div class="meta">
-                <div class="meta-left">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                       stroke="#000" stroke-width="2.2"
-                       stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
-                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                    <line x1="12" y1="22.08" x2="12" y2="12"/>
-                  </svg>
-                  <strong>BULTO {{ b.bulto_num }} DE {{ total_bultos }}</strong>
-                </div>
-                <div class="meta-right">
-                  <span>PESO BRUTO</span>
-                  <strong>{{ "%.0f"|format(b.peso) }} KG</strong>
-                </div>
-              </div>
-
-              <!-- NOMBRE PRODUCTO -->
-              <div class="pname">
-                <span class="pname-txt"
-                      id="pn_{{ b.bulto_num }}_{{ copy }}_{{ cara }}">{{ product.nombre }}</span>
-              </div>
-
-              <!-- BODY -->
-              <div class="body">
-
-                <!-- Dimensiones -->
-                <div class="dims">
-                  <div class="dim-row">
-                    <span class="dim-ico">&#8596;</span>
-                    <span class="dim-lbl">LARGO:</span>
-                    <span class="dim-val">{{ "%.0f"|format(b.largo) }} cm</span>
-                  </div>
-                  <div class="dim-row">
-                    <span class="dim-ico">&#8597;</span>
-                    <span class="dim-lbl">ALTO:</span>
-                    <span class="dim-val">{{ "%.0f"|format(b.alto) }} cm</span>
-                  </div>
-                  <div class="dim-row">
-                    <span class="dim-ico">&#9635;</span>
-                    <span class="dim-lbl">ANCHO:</span>
-                    <span class="dim-val">{{ "%.0f"|format(b.ancho) }} cm</span>
-                  </div>
-                  <div class="dim-row">
-                    <span class="dim-ico">&#128274;</span>
-                    <span class="dim-lbl">PESO VOL.:</span>
-                    <span class="dim-val">{{ "%.2f"|format(b.peso_vol) }} Vol</span>
-                  </div>
-                </div>
-
-                <!-- Barcode + SKU + Fecha -->
-                <div class="code-col">
-                  <svg id="bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}"></svg>
-                  <div class="sku-box">
-                    <span class="sku-lbl">SKU</span>
-                    <span class="sku-val"
-                          id="sv_{{ b.bulto_num }}_{{ copy }}_{{ cara }}">{{ product.sku }}</span>
-                  </div>
-                  <!-- Fecha: bajo el SKU, no interfiere con el lector de código -->
-                  <div class="fecha">{{ fecha }}</div>
-                </div>
-
-              </div><!-- /body -->
-
-              <!-- Footer -->
-              <footer class="lfoot"></footer>
-
-            </div><!-- /half -->
-            {% endfor %}
-
-          </div><!-- /label -->
-
-          <div class="copy-foot no-print">
-            Copia {{ copy }} de {{ copies }} &nbsp;·&nbsp;
-            Bulto {{ b.bulto_num }} / {{ total_bultos }}
-          </div>
-
-        </div><!-- /copy-wrap -->
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
-  </div><!-- /lp-labels -->
-
-
-  <!-- ══ Panel instrucciones ══ -->
-  <div class="lp-sidebar no-print">
-    <div class="instr-card">
-      <div class="instr-head">
-        <i class="bi bi-info-circle-fill"></i>Instrucciones de aplicación
-      </div>
-      <div class="instr-body">
-        <div class="instr-sub">
-          La etiqueta cubre <strong>2 caras frontales laterales</strong>.
-          Se dobla sobre la <strong>arista vertical</strong> de la caja.
-        </div>
-
-        <!-- Paso 1 -->
-        <div class="step">
-          <div class="step-n">1</div>
-          <div class="step-row">
-            <div class="step-txt">
-              Ubica la <strong>esquina frontal vertical</strong> de la caja —
-              a unos <strong>5–10 cm</strong> desde el borde superior.
-            </div>
-            <div class="step-ico">
-              <!-- Caja 3D: arista vertical derecha marcada en rojo -->
-              <svg viewBox="0 0 60 56" width="52">
-                <rect x="2" y="10" width="34" height="42" fill="#f0f0f0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="36,10 54,4 54,46 36,52" fill="#e0e0e0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="2,10 20,4 54,4 36,10" fill="#e8e8e8" stroke="#555" stroke-width="1.4"/>
-                <!-- Arista vertical destacada -->
-                <line x1="36" y1="10" x2="36" y2="52" stroke="#CC0000" stroke-width="3"/>
-                <circle cx="36" cy="28" r="4" fill="#CC0000"/>
-                <!-- Cota 5-10cm -->
-                <line x1="36" y1="10" x2="36" y2="21" stroke="#CC0000" stroke-width="1" stroke-dasharray="2,1"/>
-                <text x="38" y="17" font-size="5.5" fill="#CC0000" font-weight="700">5–10cm</text>
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        <!-- Paso 2 -->
-        <div class="step">
-          <div class="step-n">2</div>
-          <div class="step-row">
-            <div class="step-txt">
-              Dobla la etiqueta sobre la <strong>arista vertical</strong>
-              de la caja, asegurando que quede bien adherida y sin arrugas.
-            </div>
-            <div class="step-ico">
-              <!-- Caja con etiqueta doblada en arista vertical -->
-              <svg viewBox="0 0 60 56" width="52">
-                <rect x="2" y="10" width="34" height="42" fill="#f0f0f0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="36,10 54,4 54,46 36,52" fill="#e0e0e0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="2,10 20,4 54,4 36,10" fill="#e8e8e8" stroke="#555" stroke-width="1.4"/>
-                <!-- Cara A: panel izquierdo de la etiqueta sobre cara frontal -->
-                <rect x="22" y="10" width="14" height="30" fill="#111" rx="1"/>
-                <text x="29" y="27" font-size="7" fill="#fff" text-anchor="middle" font-weight="bold">A</text>
-                <!-- Cara B: panel derecho sobre cara lateral -->
-                <polygon points="36,10 48,6 48,36 36,40" fill="#333" rx="1"/>
-                <text x="42" y="26" font-size="7" fill="#fff" text-anchor="middle" font-weight="bold">B</text>
-                <!-- Línea punteada de doblez -->
-                <line x1="36" y1="10" x2="36" y2="52" stroke="#CC0000" stroke-width="1.5" stroke-dasharray="3,2"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        <!-- Paso 3 -->
-        <div class="step">
-          <div class="step-n">3</div>
-          <div class="step-row">
-            <div class="step-txt">
-              La etiqueta queda visible en <strong>ambas caras frontales</strong>
-              de la caja — el código de barras escaneable desde cualquier lado.
-            </div>
-            <div class="step-ico">
-              <!-- Vista final: ambas caras con etiqueta -->
-              <svg viewBox="0 0 60 56" width="52">
-                <rect x="2" y="10" width="34" height="42" fill="#f0f0f0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="36,10 54,4 54,46 36,52" fill="#e0e0e0" stroke="#555" stroke-width="1.4"/>
-                <polygon points="2,10 20,4 54,4 36,10" fill="#e8e8e8" stroke="#555" stroke-width="1.4"/>
-                <!-- Cara A en cara frontal (izquierda) -->
-                <rect x="12" y="10" width="24" height="32" fill="#111" rx="1"/>
-                <text x="24" y="23" font-size="6" fill="#fff" text-anchor="middle" font-weight="700">CARA A</text>
-                <!-- mini barras de código -->
-                <rect x="15" y="27" width="1.5" height="10" fill="#fff"/>
-                <rect x="18" y="27" width="2.5" height="10" fill="#fff"/>
-                <rect x="22" y="27" width="1.5" height="10" fill="#fff"/>
-                <rect x="25" y="27" width="3" height="10" fill="#fff"/>
-                <rect x="30" y="27" width="1.5" height="10" fill="#fff"/>
-                <!-- Cara B en cara lateral (derecha) -->
-                <polygon points="36,10 52,4.5 52,36.5 36,42" fill="#222" rx="1"/>
-                <text x="44" y="22" font-size="5.5" fill="#fff" text-anchor="middle" font-weight="700">CARA B</text>
-                <rect x="39" y="26" width="1.2" height="8" fill="#fff"/>
-                <rect x="41.5" y="26" width="2" height="8" fill="#fff"/>
-                <rect x="45" y="26" width="1.2" height="8" fill="#fff"/>
-                <rect x="47.5" y="26" width="2" height="8" fill="#fff"/>
-                <!-- Checks verdes -->
-                <circle cx="24" cy="46" r="4" fill="#1a7a1a"/>
-                <text x="24" y="48.5" font-size="7" fill="#fff" text-anchor="middle">✓</text>
-                <circle cx="44" cy="40" r="4" fill="#1a7a1a"/>
-                <text x="44" y="42.5" font-size="7" fill="#fff" text-anchor="middle">✓</text>
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        <!-- Alerta importante -->
-        <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;
-                    font-size:.75rem;color:#721c24;padding:8px 10px;
-                    display:flex;gap:7px;align-items:flex-start;margin-top:6px">
-          <i class="bi bi-exclamation-triangle-fill" style="flex-shrink:0;margin-top:1px;color:#CC0000"></i>
-          <span>Asegúrese de que el <strong>código de barras</strong> quede
-          <strong>visible y sin arrugas</strong> en ambas caras.</span>
-        </div>
-
-        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;
-                    font-size:.75rem;color:#555;padding:8px 10px;
-                    display:flex;gap:7px;align-items:flex-start;margin-top:6px">
-          <i class="bi bi-lightbulb-fill" style="color:#f9a825;flex-shrink:0;margin-top:1px"></i>
-          <span><strong>¿Por qué esta posición?</strong> Garantiza la mejor
-          visibilidad del código y la información del producto desde
-          ambas caras frontales, facilitando su escaneo en el pallet.</span>
-        </div>
-
-        <!-- NO aplicar en -->
-        <div style="margin-top:10px;font-size:.72rem;color:#888;font-weight:700;
-                    text-transform:uppercase;letter-spacing:.5px">No aplicar en:</div>
-        <div style="display:flex;gap:10px;margin-top:4px;font-size:.7rem;color:#999;text-align:center">
-          <div><i class="bi bi-x-circle-fill text-danger"></i><br>Parte superior</div>
-          <div><i class="bi bi-x-circle-fill text-danger"></i><br>Parte inferior</div>
-          <div><i class="bi bi-x-circle-fill text-danger"></i><br>Otras esquinas</div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-
-</div><!-- /lp-wrap -->
-{% endblock %}
-
-
-{% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-<script>
-(function(){
-  'use strict';
-
-  var SKU   = {{ product.sku | tojson }};
-  var FECHA = {{ fecha | tojson }};
-
-  /* ── Barcode width: 1.4 garantiza lectura, más compacto que 2 ── */
-  function barW(s){
-    if (s.length > 20) return 1.0;
-    if (s.length > 12) return 1.2;
-    return 1.4;
-  }
-
-  /* Auto-fit font-size para que el texto quepa en maxW */
-  function fit(el, maxW, maxFs, minFs){
-    if(!el) return;
-    el.style.whiteSpace = 'nowrap';
-    el.style.fontSize   = maxFs + 'px';
-    while(el.scrollWidth > maxW + 1 && parseFloat(el.style.fontSize) > minFs)
-      el.style.fontSize = (parseFloat(el.style.fontSize) - 0.2) + 'px';
-    if(el.scrollWidth > maxW + 1){
-      el.style.whiteSpace = 'normal';
-      el.style.wordBreak  = 'break-all';
-      el.style.lineHeight = '1.1';
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Etiquetas - {{ product.sku }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    :root {
+      --label-w: 100mm;
+      --label-h: 150mm;
+      --brand-red: #cc0000;
+      --ink: #111111;
+      --muted: #707070;
+      --paper: #ffffff;
+      --surface: #ececec;
+      --rule: #d9d9d9;
     }
-  }
 
-  document.addEventListener('DOMContentLoaded', function(){
-    var bw = barW(SKU);
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background: var(--surface); color: var(--ink); }
 
-    {% for b in bultos %}
-    {% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
-    {% for copy in range(1, copies + 1) %}
-    {% for cara in ['A','B'] %}
-    (function(){
-      var bcId = '#bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}';
-      var bcEl  = document.querySelector(bcId);
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #101010;
+      color: #fff;
+      border-bottom: 3px solid var(--brand-red);
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
 
-      /* ── Código de barras CODE128 — verificado, altura reducida ── */
-      try {
-        JsBarcode(bcId, SKU, {
-          format:       'CODE128',
-          width:        bw,
-          height:       52,          /* más alto para que resalte */
-          displayValue: false,
-          margin:       1,
-          background:   '#ffffff',
-          lineColor:    '#000000'
-        });
-        /* Auto-fit ancho: si el barcode desborda, reduce barWidth */
-        if(bcEl){
-          var parent = bcEl.closest('.code-col');
-          var avail  = parent ? parent.offsetWidth - 6 : 100;
-          var tries  = 0;
-          while(bcEl.getBoundingClientRect().width > avail && bw > 0.7 && tries < 15){
-            bw -= 0.1;
-            JsBarcode(bcId, SKU, {
-              format:'CODE128', width:bw, height:52,
-              displayValue:false, margin:1,
-              background:'#ffffff', lineColor:'#000000'
-            });
-            tries++;
-          }
-        }
-      } catch(e){ console.warn('Barcode error:', e); }
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
 
-      /* Auto-fit nombre del producto */
-      var pn = document.getElementById('pn_{{ b.bulto_num }}_{{ copy }}_{{ cara }}');
-      if(pn) fit(pn, pn.parentElement.offsetWidth - 16, 14, 8);
+    .toolbar-left a {
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+    }
 
-      /* Auto-fit SKU — rango 10→6 px (más compacto) */
-      var sv = document.getElementById('sv_{{ b.bulto_num }}_{{ copy }}_{{ cara }}');
-      if(sv){
-        var skuBox = sv.closest('.sku-box');
-        var maxW   = skuBox ? skuBox.offsetWidth - 6 : sv.parentElement.offsetWidth - 6;
-        fit(sv, maxW, 10, 6);
+    .toolbar-title {
+      min-width: 0;
+    }
+
+    .toolbar-title h1 {
+      margin: 0;
+      font-size: 1.35rem;
+    }
+
+    .toolbar-title p {
+      margin: 4px 0 0;
+      color: #c7c7c7;
+      font-size: .92rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-actions button {
+      border: none;
+      border-radius: 8px;
+      background: var(--brand-red);
+      color: #fff;
+      font-weight: 700;
+      padding: 11px 16px;
+      cursor: pointer;
+      font-size: .95rem;
+    }
+
+    .preview-wrap {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .label-page {
+      width: var(--label-w);
+      height: var(--label-h);
+      background: var(--paper);
+      box-shadow: 0 20px 40px rgba(0,0,0,.12);
+      border: 1px solid #cfcfcf;
+      position: relative;
+      overflow: hidden;
+      page-break-after: always;
+      break-after: page;
+      display: grid;
+      grid-template-rows: 18mm 14mm 1fr 34mm;
+    }
+
+    .label-header {
+      background: #0c0c0c;
+      color: #fff;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      padding: 6mm 7mm 5mm;
+      gap: 8mm;
+    }
+
+    .brand-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 2mm;
+    }
+
+    .brand-stack .brand-main {
+      font-size: 8mm;
+      font-weight: 900;
+      letter-spacing: .3mm;
+      line-height: 1;
+    }
+
+    .brand-stack .brand-sub {
+      font-size: 3.2mm;
+      letter-spacing: 1mm;
+      text-transform: uppercase;
+      color: #d2d2d2;
+    }
+
+    .header-logo img {
+      height: 11mm;
+      width: auto;
+      display: block;
+    }
+
+    .label-summary {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr .6fr;
+      align-items: center;
+      border-bottom: 1px solid var(--ink);
+      padding: 0 7mm;
+      font-weight: 800;
+      font-size: 5.2mm;
+    }
+
+    .label-summary > div {
+      padding: 0 4mm;
+      border-right: 1px solid #bfbfbf;
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .label-summary > div:last-child { border-right: none; }
+
+    .label-body {
+      padding: 7mm;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 5mm;
+    }
+
+    .product-name {
+      border: 1px solid var(--ink);
+      padding: 4.5mm 5mm;
+      font-size: 6.2mm;
+      font-weight: 900;
+      line-height: 1.08;
+      text-transform: uppercase;
+      min-height: 21mm;
+      display: flex;
+      align-items: center;
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: 38mm 1fr;
+      gap: 4mm;
+      align-items: stretch;
+    }
+
+    .metrics {
+      border: 1px solid var(--ink);
+      padding: 4.5mm 4.5mm 4mm;
+      display: grid;
+      align-content: start;
+      gap: 3.2mm;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4mm;
+      font-size: 4.8mm;
+      align-items: baseline;
+    }
+
+    .metric-row .metric-label {
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .metric-row .metric-value {
+      font-weight: 900;
+      font-size: 5.4mm;
+    }
+
+    .barcode-box {
+      border: 1px solid var(--ink);
+      padding: 5mm 4.5mm 4mm;
+      display: grid;
+      grid-template-rows: 1fr auto auto;
+      align-items: center;
+      justify-items: center;
+      gap: 2mm;
+    }
+
+    .barcode-box svg {
+      width: 100%;
+      height: 26mm;
+    }
+
+    .sku-label {
+      font-size: 3mm;
+      color: var(--muted);
+      letter-spacing: 1mm;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .sku-value {
+      width: 100%;
+      background: #0c0c0c;
+      color: #fff;
+      text-align: center;
+      padding: 3.5mm 2mm 3mm;
+      font-size: 7mm;
+      font-weight: 900;
+      letter-spacing: .4mm;
+    }
+
+    .label-footer {
+      border-top: 1px solid var(--ink);
+      padding: 4mm 7mm 4mm;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 6mm;
+    }
+
+    .footer-note {
+      font-size: 3.4mm;
+      line-height: 1.35;
+      color: #333;
+    }
+
+    .footer-date {
+      font-size: 3.2mm;
+      color: var(--muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .page-caption {
+      width: var(--label-w);
+      text-align: center;
+      color: #666;
+      font-size: .82rem;
+      margin-top: -8px;
+    }
+
+    @page {
+      size: 100mm 150mm;
+      margin: 0;
+    }
+
+    @media print {
+      html, body { background: #fff; }
+      .toolbar, .page-caption { display: none !important; }
+      .preview-wrap {
+        padding: 0;
+        gap: 0;
       }
-    })();
+      .label-page {
+        margin: 0;
+        box-shadow: none;
+        border: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .preview-wrap {
+        padding: 16px 10px 24px;
+      }
+      .label-page, .page-caption {
+        width: min(100%, var(--label-w));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <a href="{{ url_for('product_detail', pid=product.id) }}">Volver</a>
+      <div class="toolbar-title">
+        <h1>Etiquetas 100 x 150 mm</h1>
+        <p>{{ product.sku }} - {{ product.nombre }}</p>
+      </div>
+    </div>
+    <div class="toolbar-actions">
+      <button type="button" onclick="window.print()">PDF / Imprimir</button>
+    </div>
+  </div>
+
+  <div class="preview-wrap">
+    {% for b in bultos %}
+    {% set codigo = product.codigo if product.codigo else (b.bulto_num | string).zfill(3) %}
+    <div class="label-page">
+      <div class="label-header">
+        <div class="brand-stack">
+          <div class="brand-main">SPORTS HEALTH</div>
+          <div class="brand-sub">Solutions</div>
+        </div>
+        <div class="header-logo">
+          {% if has_logo %}
+          <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+          {% else %}
+          <div style="font-size:7mm;font-weight:900;">ILUS</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="label-summary">
+        <div>Bulto {{ b.bulto_num }} de {{ total_bultos }}</div>
+        <div>Peso Bruto</div>
+        <div>{{ "%.0f"|format(b.peso) }} KG</div>
+      </div>
+
+      <div class="label-body">
+        <div class="product-name">{{ product.nombre }}</div>
+        <div class="details-grid">
+          <div class="metrics">
+            <div class="metric-row">
+              <span class="metric-label">Largo</span>
+              <span class="metric-value">{{ "%.0f"|format(b.largo) }} cm</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Alto</span>
+              <span class="metric-value">{{ "%.0f"|format(b.alto) }} cm</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Ancho</span>
+              <span class="metric-value">{{ "%.0f"|format(b.ancho) }} cm</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Peso Vol.</span>
+              <span class="metric-value">{{ "%.2f"|format(b.peso_vol) }}</span>
+            </div>
+          </div>
+
+          <div class="barcode-box">
+            <svg id="bc_{{ b.bulto_num }}"></svg>
+            <div class="sku-label">Codigo / SKU</div>
+            <div class="sku-value">{{ codigo }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="label-footer">
+        <div class="footer-note">
+          Medidas en centimetros. Peso volumetrico calculado como
+          largo x alto x ancho / 4000.
+        </div>
+        <div class="footer-date">{{ fecha }}</div>
+      </div>
+    </div>
+    <div class="page-caption">Vista previa de impresion - Bulto {{ b.bulto_num }} / {{ total_bultos }}</div>
     {% endfor %}
-    {% endfor %}
-    {% endfor %}
-  });
-})();
-</script>
-{% endblock %}
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      {% for b in bultos %}
+      {% set codigo = product.codigo if product.codigo else (b.bulto_num | string).zfill(3) %}
+      JsBarcode("#bc_{{ b.bulto_num }}", "{{ codigo }}", {
+        format: "CODE128",
+        width: 2.1,
+        height: 84,
+        displayValue: false,
+        margin: 0,
+        background: "#ffffff",
+        lineColor: "#111111"
+      });
+      {% endfor %}
+    });
+  </script>
+</body>
+</html>
