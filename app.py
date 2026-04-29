@@ -488,9 +488,8 @@ def delete_photo_file(filename):
     _cloud_delete(filename)
 
 
-@app.template_global()
-def photo_src(filename, subfolder="uploads"):
-    """Devuelve la URL de la foto: directa si es Cloudinary, local si no."""
+def _photo_src(filename, subfolder="uploads"):
+    """URL de la foto: directa si es Cloudinary, estática local si no."""
     if not filename:
         return ""
     if filename.startswith("http"):
@@ -1158,6 +1157,7 @@ def inject_globals():
                             "lector":     "Lector",
                             "vendedor":   "Vendedor",
                         }.get(g.user["role"] if g.user else "", "Usuario"),
+        "photo_src":    _photo_src,
     }
 
 
@@ -1253,30 +1253,6 @@ def login():
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     return render_template("login.html", next_url=next_url, username="")
-
-
-@app.route("/debug/cloudinary")
-@login_required
-def debug_cloudinary():
-    """Ruta temporal de diagnóstico — solo superadmin."""
-    if not g.permissions.get("superadmin"):
-        return "No autorizado", 403
-    lines = [
-        f"<b>_CLD_READY:</b> {_CLD_READY}",
-        f"<b>cloud_name:</b> {CLOUDINARY_CONFIG.get('cloud_name', '—')}",
-    ]
-    # Últimas 5 fotos en la BD
-    try:
-        rows = mysql_fetchall(f"SELECT id, product_id, filename FROM `{PHOTOS_TABLE}` ORDER BY id DESC LIMIT 5")
-        lines.append("<br><b>Últimas fotos en BD:</b>")
-        for r in rows:
-            fn = r['filename']
-            lines.append(f"  id={r['id']} product={r['product_id']} filename=<code>{fn}</code>")
-            if fn.startswith("http"):
-                lines.append(f"  → <img src='{fn}' style='max-height:80px;border:1px solid red'>")
-    except Exception as e:
-        lines.append(f"<b>BD error:</b> {e}")
-    return "<br>".join(lines)
 
 
 @app.route("/logout", methods=["POST"])
@@ -1778,8 +1754,7 @@ def upload_photo(pid):
         )
     conn.commit()
 
-    destino = "nube ☁️" if filename.startswith("http") else "servidor local"
-    flash(f"Foto guardada en {destino}.", "success")
+    flash("Foto agregada correctamente.", "success")
     return redirect(url_for("product_detail", pid=pid))
 
 
