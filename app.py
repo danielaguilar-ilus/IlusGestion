@@ -1512,7 +1512,7 @@ def product_quick(pid):
     product, bultos, photos = get_full(pid)
     if not product:
         return jsonify({"error": "not found"}), 404
-    photo_urls = [url_for("static", filename=f"uploads/{ph['filename']}") for ph in photos]
+    photo_urls = [_photo_src(ph["filename"]) for ph in photos]
     return jsonify({
         "id":          product["id"],
         "sku":         product["sku"],
