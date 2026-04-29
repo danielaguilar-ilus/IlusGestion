@@ -1,0 +1,5 @@
+[build]
+nixpacks = "ghcr.io/railwayapp/railpack-builder:mise-2026.3.17"
+
+[build.apt]
+packages = ["chromium-browser"]
