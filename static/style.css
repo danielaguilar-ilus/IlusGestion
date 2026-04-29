@@ -601,7 +601,7 @@ body {
 }
 .login-hero-logo {
   display: block;
-  width: 155px;
+  width: 279px;       /* +80% de 155px */
   height: auto;
   object-fit: contain;
   margin-bottom: 26px;
@@ -652,7 +652,7 @@ body {
 }
 .login-mini-logo {
   display: block;
-  width: 78px;
+  width: 140px;       /* +80% de 78px */
   height: auto;
   object-fit: contain;
   margin-bottom: 30px;

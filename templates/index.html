@@ -110,10 +110,19 @@
   <div class="ilus-card d-none d-md-block">
     <div class="ilus-card-header">
       <span><i class="bi bi-table me-2"></i>Productos</span>
-      <span class="text-muted small fw-normal">{{ products|length }} registro(s)</span>
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-muted small fw-normal" id="rowCountLabel">{{ products|length }} registro(s)</span>
+        <select id="rowsPerPage" class="form-select form-select-sm"
+                style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px">
+          <option value="100" selected>100 filas</option>
+          <option value="200">200 filas</option>
+          <option value="500">500 filas</option>
+          <option value="all">Todo</option>
+        </select>
+      </div>
     </div>
     <div class="table-responsive">
-      <table class="table ilus-table mb-0">
+      <table class="table ilus-table mb-0" id="productTable">
         <thead>
           <tr>
             <th>SKU</th>
@@ -356,7 +365,83 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 /* ══════════════════════════════════════════
-   ESCÁNER DE CÓDIGO DE BARRAS
+   PAGINACIÓN DE TABLA (100 / 200 / 500 / Todo)
+══════════════════════════════════════════ */
+(function(){
+  var sel   = document.getElementById('rowsPerPage');
+  var label = document.getElementById('rowCountLabel');
+  if (!sel) return;
+
+  function applyPagination() {
+    var val  = sel.value;
+    var rows = document.querySelectorAll('#productTable tbody tr');
+    var max  = val === 'all' ? rows.length : parseInt(val, 10);
+    var shown = 0;
+    rows.forEach(function(row, i) {
+      var visible = i < max;
+      row.style.display = visible ? '' : 'none';
+      if (visible) shown++;
+    });
+    label.textContent = shown + ' de {{ products|length }} registro(s)';
+  }
+
+  sel.addEventListener('change', applyPagination);
+  applyPagination();   // aplicar al cargar (100 por defecto)
+})();
+
+/* ══════════════════════════════════════════
+   ESCÁNER FÍSICO DE CÓDIGO DE BARRAS
+   (pistola / lector USB — envía chars rápido + Enter)
+══════════════════════════════════════════ */
+(function(){
+  var searchInput = document.getElementById('searchInput');
+  var searchForm  = document.getElementById('searchForm');
+  if (!searchInput) return;
+
+  /* Submit con Enter en el campo de búsqueda */
+  searchInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      searchForm.submit();
+    }
+  });
+
+  /* Detección de pistola lectora:
+     - Acumula caracteres que llegan muy rápido (< 80ms entre teclas)
+     - Si el tiempo total para N caracteres es < N*80ms y hay ≥ 4 chars → auto-submit
+  */
+  var barcodeBuffer = '';
+  var lastKeyTime   = 0;
+  var SCANNER_SPEED = 80;   /* ms máx entre chars de scanner */
+
+  document.addEventListener('keypress', function(e) {
+    /* Solo si el foco NO está en un input/textarea/select */
+    var tag = document.activeElement ? document.activeElement.tagName : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    var now = Date.now();
+    if (now - lastKeyTime > 300) {
+      barcodeBuffer = '';  /* reset si pasó demasiado tiempo */
+    }
+    lastKeyTime = now;
+
+    if (e.key === 'Enter') {
+      if (barcodeBuffer.length >= 4) {
+        searchInput.value = barcodeBuffer.trim().toUpperCase();
+        barcodeBuffer = '';
+        searchForm.submit();
+      }
+      return;
+    }
+
+    if (e.key.length === 1) {
+      barcodeBuffer += e.key;
+    }
+  });
+})();
+
+/* ══════════════════════════════════════════
+   ESCÁNER DE CÓDIGO DE BARRAS (cámara)
 ══════════════════════════════════════════ */
 (function(){
   var html5QrCode  = null;
