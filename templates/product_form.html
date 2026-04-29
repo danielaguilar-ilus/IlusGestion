@@ -277,12 +277,11 @@
              alt="Foto {{ loop.index }}" loading="lazy">
       </a>
       {% if permissions.delete %}
-      <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}"
-            onsubmit="return confirm('¿Eliminar esta foto?')">
-        <button type="submit" class="photo-delete-btn" title="Eliminar foto">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </form>
+      <button type="button" class="photo-delete-btn"
+              data-bs-toggle="modal" data-bs-target="#delFotoModal{{ ph.id }}"
+              title="Eliminar foto">
+        <i class="bi bi-x-lg"></i>
+      </button>
       {% endif %}
     </div>
     {% endfor %}
@@ -310,13 +309,47 @@
     {% endif %}
   </div>
 </div>
+
+{# ── Modales de confirmación para eliminar cada foto ── #}
+{% if product and permissions.delete %}
+{% for ph in photo_list %}
+<div class="modal fade" id="delFotoModal{{ ph.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Eliminar foto {{ loop.index }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 mb-3 small">
+          <strong>Esta acción es permanente.</strong> La foto será eliminada del producto.
+        </div>
+        <p class="mb-1">Producto: <strong>{{ product.sku }}</strong></p>
+        <p class="mb-3">Escribe el SKU para confirmar la eliminación:</p>
+        <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}">
+          <input type="text" id="delFotoInput{{ ph.id }}" name="confirm_sku"
+                 class="form-control font-monospace text-uppercase mb-3"
+                 placeholder="{{ product.sku }}" autocomplete="off">
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-danger fw-bold" id="delFotoBtn{{ ph.id }}" disabled>
+              <i class="bi bi-trash me-1"></i>Eliminar foto
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
 {% endif %}
 
 {% endblock %}
 
 {% block scripts %}
 <script>
-/* ── Modal eliminar (edición, admin) ─────────────────────── */
+/* ── Modal eliminar producto (edición, admin) ─────────────── */
 {% if product and permissions.delete %}
 (function() {
   var skuReal = {{ product.sku | tojson }};
@@ -332,6 +365,24 @@
     });
   }
 })();
+
+/* ── Modales eliminar fotos — validación SKU ───────────────── */
+{% for ph in (photos if photos is defined else []) %}
+(function() {
+  var sku   = {{ product.sku | tojson }};
+  var inp   = document.getElementById('delFotoInput{{ ph.id }}');
+  var btn   = document.getElementById('delFotoBtn{{ ph.id }}');
+  var modal = document.getElementById('delFotoModal{{ ph.id }}');
+  if (!inp) return;
+  inp.addEventListener('input', function() {
+    btn.disabled = (inp.value.trim().toUpperCase() !== sku);
+  });
+  modal.addEventListener('hidden.bs.modal', function() {
+    inp.value  = '';
+    btn.disabled = true;
+  });
+})();
+{% endfor %}
 {% endif %}
 
 /* ─────────────────────────────────────────────────────────────
