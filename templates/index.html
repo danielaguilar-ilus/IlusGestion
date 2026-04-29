@@ -1,0 +1,559 @@
+{% extends "base.html" %}
+{% block title %}ILUS - Productos{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-boxes me-2" style="color:var(--ilus-red)"></i>Etiquetas</h4>
+      <div class="sub">Catálogo directo desde ERP — MySQL</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('export_excel') }}" class="btn btn-outline-secondary fw-semibold px-3" title="Descargar base de datos en Excel">
+        <i class="bi bi-file-earmark-excel me-1" style="color:#1a7a1a"></i>Excel
+      </a>
+      {% if permissions.create %}
+      <a href="{{ url_for('new_product') }}" class="btn btn-ilus fw-bold px-3">
+        <i class="bi bi-plus-lg me-1"></i>Nuevo
+      </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+  {# ── Stats ── #}
+  {% set total = products|length %}
+  {% set conf  = products|selectattr('estado','equalto','Confirmado')|list|length %}
+  {% set pend  = products|selectattr('estado','equalto','Pendiente')|list|length %}
+  {% set imp   = products|selectattr('estado','equalto','Impreso')|list|length %}
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3"><div class="stat-card blk"><div class="stat-num">{{ total }}</div><div class="stat-label">Total</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card grn"><div class="stat-num">{{ conf }}</div><div class="stat-label">Confirmados</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card amber"><div class="stat-num">{{ pend }}</div><div class="stat-label">Pendientes</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="color:#1a4a8a">{{ imp }}</div><div class="stat-label">Impresos</div></div></div>
+  </div>
+
+  {# ── Búsqueda ── #}
+  <form method="get" class="ilus-search mb-3" id="searchForm">
+    <div class="input-group shadow-sm">
+      <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+      <input type="text" name="q" value="{{ q }}" class="form-control border-start-0"
+             id="searchInput"
+             placeholder="Buscar por SKU o nombre..." autocomplete="off">
+      <button type="button" class="btn btn-outline-secondary px-3"
+              id="scanBtn" title="Escanear código de barras con la cámara">
+        <i class="bi bi-upc-scan"></i>
+      </button>
+      {% if q %}
+      <a href="{{ url_for('index') }}" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
+      {% endif %}
+    </div>
+  </form>
+
+  {# ── Modal escáner ── #}
+  <div class="modal fade" id="scannerModal" tabindex="-1" aria-labelledby="scannerModalLabel">
+    <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
+      <div class="modal-content border-0 shadow-lg overflow-hidden">
+
+        <div class="modal-header py-2 px-3"
+             style="background:var(--ilus-black);border-bottom:3px solid var(--ilus-red)">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-upc-scan" style="color:var(--ilus-red);font-size:1.1rem"></i>
+            <h6 class="modal-title mb-0 text-white fw-bold" id="scannerModalLabel">
+              Escanear código de barras
+            </h6>
+          </div>
+          <button type="button" class="btn-close btn-close-white ms-auto"
+                  data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+
+        <div class="modal-body p-0">
+          {# Visor de cámara #}
+          <div id="qr-reader" style="width:100%;background:#000;min-height:220px"></div>
+
+          {# Estado / ayuda #}
+          <div id="scanStatus" class="text-center py-3 px-3" style="font-size:.82rem;color:#555">
+            <i class="bi bi-camera me-1"></i>
+            Apunta la cámara al código de barras de la etiqueta
+          </div>
+
+          {# Separador o-ingresa-manual #}
+          <div class="d-flex align-items-center gap-2 px-3" style="color:#bbb;font-size:.78rem">
+            <hr style="flex:1;margin:0">
+            <span>o ingresa manualmente</span>
+            <hr style="flex:1;margin:0">
+          </div>
+
+          {# Campo manual dentro del modal #}
+          <div class="px-3 pt-2 pb-3">
+            <div class="input-group">
+              <input type="text" id="manualSku"
+                     class="form-control font-monospace text-uppercase"
+                     placeholder="Escribe el SKU aquí..."
+                     autocomplete="off" autocorrect="off" autocapitalize="characters"
+                     style="letter-spacing:.5px">
+              <button type="button" class="btn btn-ilus fw-bold px-3" id="manualSearchBtn">
+                <i class="bi bi-search me-1"></i>Buscar
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {% if products %}
+
+  {# ── Tabla desktop ── #}
+  <div class="ilus-card d-none d-md-block">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-table me-2"></i>Productos</span>
+      <span class="text-muted small fw-normal">{{ products|length }} registro(s)</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table ilus-table mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Nombre</th>
+            <th class="text-center">Bultos</th>
+            <th class="text-end">Peso (kg)</th>
+            <th class="text-end">Peso Vol</th>
+            <th class="text-center">Estado</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in products %}
+          <tr>
+            <td>
+              <div class="fw-bold font-monospace">{{ p.sku }}</div>
+              {% if p.codigo %}<div style="font-size:.7rem;color:#888">Cod: {{ p.codigo }}</div>{% endif %}
+              {% if p.total_fotos > 0 %}<div style="font-size:.7rem;color:#888"><i class="bi bi-images me-1"></i>{{ p.total_fotos }} foto(s)</div>{% endif %}
+            </td>
+            <td>
+              <div class="fw-semibold">{{ p.nombre }}</div>
+              <div class="small text-muted">Por: {{ p.created_by or '-' }}</div>
+            </td>
+            <td class="text-center">
+              {% if p.total_bultos > 0 %}
+              <span class="badge rounded-pill" style="background:var(--ilus-black)">{{ p.total_bultos }}</span>
+              {% else %}<span class="text-muted">-</span>{% endif %}
+            </td>
+            <td class="text-end fw-semibold">
+              {% if p.peso_total > 0 %}{{ "%.2f"|format(p.peso_total) }}{% else %}<span class="text-muted">-</span>{% endif %}
+            </td>
+            <td class="text-end fw-semibold" style="color:#1a7a1a">
+              {% if p.pv_total > 0 %}{{ "%.2f"|format(p.pv_total) }}{% else %}<span class="text-muted">-</span>{% endif %}
+            </td>
+            <td class="text-center">
+              {% if p.estado == 'Confirmado' %}<span class="ilus-badge badge-confirmado">Confirmado</span>
+              {% elif p.estado == 'Impreso'   %}<span class="ilus-badge badge-impreso">Impreso</span>
+              {% else %}<span class="ilus-badge badge-pendiente">Pendiente</span>{% endif %}
+            </td>
+            <td class="text-center">
+              <div class="d-flex gap-1 justify-content-center">
+                {% if p.app_product_id %}
+                  {# Botón vista rápida (modal) #}
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          title="Vista rápida"
+                          onclick="quickView({{ p.app_product_id }})">
+                    <i class="bi bi-eye"></i>
+                  </button>
+                  {% if permissions.edit %}
+                  <a href="{{ url_for('edit_product', pid=p.app_product_id) }}"
+                     class="btn btn-sm btn-outline-secondary" title="Editar">
+                    <i class="bi bi-pencil"></i>
+                  </a>
+                  {% endif %}
+                  {% if permissions.print and p.total_bultos > 0 %}
+                  <a href="{{ url_for('product_detail', pid=p.app_product_id) }}"
+                     class="btn btn-sm btn-ilus" title="Ver producto e imprimir etiquetas">
+                    <i class="bi bi-printer me-1"></i>Imprimir
+                  </a>
+                  {% endif %}
+                  {% if permissions.delete %}
+                  <button type="button" class="btn btn-sm btn-outline-danger"
+                          title="Eliminar producto"
+                          data-pid="{{ p.app_product_id }}"
+                          data-sku="{{ p.sku }}"
+                          data-nombre="{{ p.nombre }}"
+                          onclick="openDeleteModal(this.dataset.pid, this.dataset.sku, this.dataset.nombre)">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                  {% endif %}
+                {% endif %}
+                {% if permissions.create and not p.app_product_id %}
+                <a href="{{ url_for('prepare_product_from_erp', sku=p.sku) }}"
+                   class="btn btn-sm btn-ilus" title="Crear etiqueta">
+                  <i class="bi bi-plus-lg me-1"></i>Preparar
+                </a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ── Cards mobile ── #}
+  <div class="d-md-none">
+    {% for p in products %}
+    <div class="ilus-card mb-2">
+      <div class="p-3">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+          <div class="flex-grow-1 min-w-0">
+            <div class="fw-black font-monospace" style="font-size:1rem">{{ p.sku }}</div>
+            <div class="text-truncate fw-semibold text-muted" style="font-size:.85rem">{{ p.nombre }}</div>
+          </div>
+          {% if p.estado == 'Confirmado' %}<span class="ilus-badge badge-confirmado flex-shrink-0">Confirmado</span>
+          {% elif p.estado == 'Impreso'   %}<span class="ilus-badge badge-impreso flex-shrink-0">Impreso</span>
+          {% else %}<span class="ilus-badge badge-pendiente flex-shrink-0">Pendiente</span>{% endif %}
+        </div>
+        {# Datos clave #}
+        <div class="d-flex gap-3 mb-2" style="font-size:.8rem">
+          <span><i class="bi bi-boxes me-1 text-muted"></i>{{ p.total_bultos }} bulto(s)</span>
+          {% if p.peso_total > 0 %}<span><i class="bi bi-weight me-1 text-muted"></i>{{ "%.1f"|format(p.peso_total) }} kg</span>{% endif %}
+          {% if p.pv_total > 0  %}<span style="color:#1a7a1a"><i class="bi bi-box me-1"></i>PV {{ "%.2f"|format(p.pv_total) }}</span>{% endif %}
+        </div>
+        <div class="d-flex gap-2">
+          {% if p.app_product_id %}
+            <button type="button" class="btn btn-sm btn-dark-ilus flex-grow-1"
+                    onclick="quickView({{ p.app_product_id }})">
+              <i class="bi bi-eye me-1"></i>Ver
+            </button>
+            {% if permissions.print and p.total_bultos > 0 %}
+            <a href="{{ url_for('product_detail', pid=p.app_product_id) }}"
+               class="btn btn-sm btn-ilus fw-bold flex-grow-1">
+              <i class="bi bi-printer me-1"></i>Imprimir
+            </a>
+            {% endif %}
+            {% if permissions.edit %}
+            <a href="{{ url_for('edit_product', pid=p.app_product_id) }}"
+               class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-pencil"></i>
+            </a>
+            {% endif %}
+            {% if permissions.delete %}
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    data-pid="{{ p.app_product_id }}"
+                    data-sku="{{ p.sku }}"
+                    data-nombre="{{ p.nombre }}"
+                    onclick="openDeleteModal(this.dataset.pid, this.dataset.sku, this.dataset.nombre)">
+              <i class="bi bi-trash"></i>
+            </button>
+            {% endif %}
+          {% elif permissions.create %}
+          <a href="{{ url_for('prepare_product_from_erp', sku=p.sku) }}"
+             class="btn btn-sm btn-ilus flex-grow-1">
+            <i class="bi bi-plus-lg me-1"></i>Preparar
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="ilus-card">
+    <div class="empty-state">
+      <div class="empty-icon">📦</div>
+      <p>No se encontraron productos en el ERP.</p>
+      {% if permissions.create %}
+      <a href="{{ url_for('new_product') }}" class="btn btn-ilus px-4">
+        <i class="bi bi-plus-lg me-1"></i>Crear primer producto
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── FAB mobile ── #}
+{% if permissions.create %}
+<a href="{{ url_for('new_product') }}" class="fab-print no-print d-md-none" style="bottom:20px;right:16px">
+  <i class="bi bi-plus-lg"></i> Nuevo
+</a>
+{% endif %}
+
+{# ══════════════════════════════════════════
+   MODAL — Eliminar producto (solo admin)
+══════════════════════════════════════════ #}
+{% if permissions.delete %}
+<div class="modal fade" id="deleteQuickModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#8b0000;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Eliminar producto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger py-2 mb-3 small">
+          <strong>Acción permanente e irreversible.</strong>
+          Se eliminará el producto, todos sus bultos y fotos.
+        </div>
+        <p class="mb-1">Eliminar: <strong id="dqNombre">—</strong></p>
+        <p class="mb-3">Escribe el SKU <strong id="dqSkuLabel">—</strong> para confirmar:</p>
+        <form method="post" id="deleteQuickForm">
+          <input type="text" id="dqSkuInput" name="confirm_sku"
+                 class="form-control font-monospace text-uppercase mb-3"
+                 placeholder="Escribe el SKU..." autocomplete="off">
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-danger fw-bold" id="dqSubmitBtn" disabled>
+              <i class="bi bi-trash me-1"></i>Eliminar definitivamente
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ══════════════════════════════════════════
+   MODAL — Vista rápida de producto
+══════════════════════════════════════════ #}
+<div class="modal fade" id="quickModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow-lg">
+
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <div>
+          <h5 class="modal-title mb-0 font-monospace" id="qmSku">—</h5>
+          <div class="small text-muted" id="qmNombre" style="color:#bbb!important"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body p-0" id="qmBody">
+        <div class="text-center py-5">
+          <div class="spinner-border text-danger" role="status"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer bg-light border-top" id="qmFooter" style="display:none">
+        <a href="#" id="qmEditBtn" class="btn btn-dark-ilus">
+          <i class="bi bi-pencil me-1"></i>Editar
+        </a>
+        <a href="#" id="qmPrintBtn" class="btn btn-ilus fw-bold">
+          <i class="bi bi-printer me-1"></i>Imprimir etiquetas
+        </a>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+/* ══════════════════════════════════════════
+   ESCÁNER DE CÓDIGO DE BARRAS
+══════════════════════════════════════════ */
+(function(){
+  var html5QrCode  = null;
+  var scannerModal = document.getElementById('scannerModal');
+  var scanBtn      = document.getElementById('scanBtn');
+  var manualBtn    = document.getElementById('manualSearchBtn');
+  var manualInput  = document.getElementById('manualSku');
+  var searchInput  = document.getElementById('searchInput');
+  var searchForm   = document.getElementById('searchForm');
+  var statusEl     = document.getElementById('scanStatus');
+
+  /* Abrir modal al tocar el botón cámara */
+  scanBtn.addEventListener('click', function(){
+    new bootstrap.Modal(scannerModal).show();
+  });
+
+  /* Iniciar cámara cuando el modal está visible */
+  scannerModal.addEventListener('shown.bs.modal', function(){
+    statusEl.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-2"></div>Iniciando cámara…';
+
+    html5QrCode = new Html5Qrcode('qr-reader');
+
+    var config = {
+      fps: 12,
+      qrbox: { width: 300, height: 110 },   /* rectangular → óptimo para códigos 1D */
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E
+      ],
+      aspectRatio: 1.6
+    };
+
+    html5QrCode.start(
+      { facingMode: 'environment' },   /* cámara trasera en móvil */
+      config,
+      function onSuccess(decodedText){
+        /* ¡Código detectado! → llenar búsqueda y enviar */
+        searchInput.value = decodedText.trim();
+        bootstrap.Modal.getInstance(scannerModal).hide();
+        searchForm.submit();
+      },
+      function onError(){ /* ignorar errores de frame — son normales */ }
+    ).then(function(){
+      statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>'
+                         + 'Apunta la cámara al código de barras de la etiqueta';
+    }).catch(function(err){
+      statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
+                         + 'No se pudo acceder a la cámara. Usa el campo manual.';
+      console.warn('Scanner error:', err);
+    });
+  });
+
+  /* Detener cámara al cerrar el modal */
+  scannerModal.addEventListener('hide.bs.modal', function(){
+    if(html5QrCode){
+      html5QrCode.stop().catch(function(){});
+      html5QrCode.clear();
+      html5QrCode = null;
+    }
+    manualInput.value = '';
+    statusEl.innerHTML = '<i class="bi bi-camera me-1"></i>Apunta la cámara al código de barras de la etiqueta';
+  });
+
+  /* Búsqueda manual desde el modal */
+  function doManualSearch(){
+    var v = manualInput.value.trim();
+    if(!v) return;
+    searchInput.value = v;
+    bootstrap.Modal.getInstance(scannerModal).hide();
+    searchForm.submit();
+  }
+  manualBtn.addEventListener('click', doManualSearch);
+  manualInput.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); doManualSearch(); }
+  });
+
+  /* Auto-focus en el campo manual cuando el modal abre */
+  scannerModal.addEventListener('shown.bs.modal', function(){
+    /* pequeño delay para que el teclado no tape el visor en móvil */
+    setTimeout(function(){ manualInput.focus(); }, 600);
+  });
+})();
+
+/* ── Eliminar producto desde tabla (solo admin) ── */
+{% if permissions.delete %}
+var DELETE_TPL = "{{ url_for('delete_product', pid=0) }}";
+function openDeleteModal(pid, sku, nombre) {
+  document.getElementById('dqNombre').textContent  = nombre;
+  document.getElementById('dqSkuLabel').textContent = sku;
+  document.getElementById('dqSkuInput').value      = '';
+  document.getElementById('dqSubmitBtn').disabled  = true;
+  document.getElementById('deleteQuickForm').action = DELETE_TPL.replace('/0/', '/' + pid + '/');
+  new bootstrap.Modal(document.getElementById('deleteQuickModal')).show();
+}
+document.getElementById('dqSkuInput').addEventListener('input', function() {
+  var sku = document.getElementById('dqSkuLabel').textContent;
+  document.getElementById('dqSubmitBtn').disabled = (this.value.trim().toUpperCase() !== sku);
+});
+{% endif %}
+
+var EDIT_TPL   = "{{ url_for('edit_product',    pid=0) }}";
+var DETAIL_TPL = "{{ url_for('product_detail', pid=0) }}";
+var QUICK_TPL  = "{{ url_for('product_quick',  pid=0) }}";
+var CAN_EDIT   = {{ 'true' if permissions.edit  else 'false' }};
+var CAN_PRINT  = {{ 'true' if permissions.print else 'false' }};
+
+function _stat(val, label, color) {
+  return '<div style="text-align:center;padding:12px 6px;border-right:1px solid #eee">'
+    + '<div style="font-size:1.4rem;font-weight:900;color:' + color + ';line-height:1">' + val + '</div>'
+    + '<div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">' + label + '</div>'
+    + '</div>';
+}
+
+function quickView(pid) {
+  var modal  = new bootstrap.Modal(document.getElementById('quickModal'));
+  var body   = document.getElementById('qmBody');
+  var footer = document.getElementById('qmFooter');
+  var skuEl  = document.getElementById('qmSku');
+  var nomEl  = document.getElementById('qmNombre');
+
+  // Reset
+  body.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-danger"></div></div>';
+  footer.style.display = 'none';
+  skuEl.textContent = '...';
+  nomEl.textContent = '';
+  modal.show();
+
+  fetch(QUICK_TPL.replace('/0/', '/' + pid + '/'))
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      skuEl.textContent = d.sku;
+      nomEl.textContent = d.nombre;
+
+      // ── Fotos (primero y grande) ──
+      var photos = '';
+      if (d.photos && d.photos.length > 0) {
+        photos = '<div style="background:#111;padding:12px;display:flex;gap:10px;justify-content:center;align-items:center;min-height:180px;border-bottom:2px solid #CC0000">';
+        d.photos.forEach(function(url) {
+          photos += '<a href="' + url + '" target="_blank" style="display:block;flex:1;max-width:50%">'
+            + '<img src="' + url + '" style="width:100%;height:200px;object-fit:contain;border-radius:6px;cursor:zoom-in">'
+            + '</a>';
+        });
+        photos += '</div>';
+      } else {
+        photos = '<div style="background:#f5f5f5;height:80px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid #ddd;color:#aaa;font-size:.85rem">'
+          + '<i class="bi bi-image me-2"></i>Sin fotos registradas</div>';
+      }
+
+      // ── Stats: peso y peso volumétrico destacados ──
+      var stats = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-bottom:1px solid #eee">'
+        + _stat(d.total_bultos,           'Bultos',    '#111111')
+        + _stat(d.peso_total.toFixed(2) + ' kg', 'Peso bruto',   '#CC0000')
+        + _stat(d.pv_total.toFixed(2),    'Peso vol',  '#1a7a1a')
+        + '</div>';
+
+      // ── Tabla bultos ──
+      var table = '';
+      if (d.bultos && d.bultos.length > 0) {
+        table = '<div class="table-responsive"><table class="table ilus-table mb-0" style="font-size:.82rem">'
+          + '<thead><tr><th class="text-center">Bulto</th><th class="text-end">Largo</th><th class="text-end">Ancho</th><th class="text-end">Alto</th><th class="text-end">Peso kg</th><th class="text-end" style="color:#1a7a1a">Peso Vol</th></tr></thead><tbody>';
+        d.bultos.forEach(function(b) {
+          table += '<tr>'
+            + '<td class="fw-bold text-center">' + b.num + '</td>'
+            + '<td class="text-end">' + b.largo.toFixed(0) + ' cm</td>'
+            + '<td class="text-end">' + b.ancho.toFixed(0) + ' cm</td>'
+            + '<td class="text-end">' + b.alto.toFixed(0)  + ' cm</td>'
+            + '<td class="text-end fw-bold">' + b.peso.toFixed(2) + '</td>'
+            + '<td class="text-end fw-bold" style="color:#1a7a1a">' + b.peso_vol.toFixed(2) + '</td>'
+            + '</tr>';
+        });
+        table += '</tbody></table></div>';
+      }
+
+      // ── Auditoría ──
+      var info = '<div style="padding:8px 14px;background:#f8f8f8;border-top:1px solid #eee;font-size:.75rem;color:#888">'
+        + '<i class="bi bi-person me-1"></i>Creó: <b>' + d.created_by + '</b>'
+        + ' &nbsp;·&nbsp; <i class="bi bi-pencil me-1"></i>Último: <b>' + d.updated_by + '</b>'
+        + '</div>';
+
+      body.innerHTML = photos + stats + table + info;
+
+      // Footer con links
+      if (CAN_EDIT || (CAN_PRINT && d.total_bultos > 0)) {
+        document.getElementById('qmEditBtn').href  = EDIT_TPL.replace('/0/', '/' + pid + '/');
+        document.getElementById('qmPrintBtn').href = DETAIL_TPL.replace('/0/', '/' + pid + '/');
+        document.getElementById('qmEditBtn').style.display  = CAN_EDIT  ? '' : 'none';
+        document.getElementById('qmPrintBtn').style.display = (CAN_PRINT && d.total_bultos > 0) ? '' : 'none';
+        footer.style.display = '';
+      }
+    })
+    .catch(function() {
+      body.innerHTML = '<div class="p-4 text-danger text-center"><i class="bi bi-x-circle me-2"></i>No se pudo cargar el producto.</div>';
+    });
+}
+</script>
+{% endblock %}

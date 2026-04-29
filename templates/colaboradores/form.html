@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+{% block title %}{% if colab %}Editar{% else %}Nuevo{% endif %} Colaborador — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.foto-preview { width:90px; height:90px; border-radius:50%; object-fit:cover;
+                border:3px solid #e0e0e0; display:block; }
+.foto-placeholder { width:90px; height:90px; border-radius:50%; background:var(--ilus-black);
+                    color:#fff; display:flex; align-items:center; justify-content:center;
+                    font-size:2rem; font-weight:900; }
+.nuevo-hint { font-size:.75rem; color:#888; margin-top:3px; }
+.form-section-title {
+  font-size:.65rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:1.5px; color:#888; margin: 20px 0 8px;
+  padding-bottom:4px; border-bottom:1.5px solid #eee;
+}
+/* RUT válido / inválido */
+.rut-ok    { border-color:#1a7a1a !important; background:#f0fff4 !important; }
+.rut-error { border-color:#CC0000 !important; background:#fff5f5 !important; }
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('colab_index') }}" class="btn btn-sm btn-dark-ilus flex-shrink-0">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4>{% if colab %}Editar colaborador{% else %}Nuevo colaborador{% endif %}</h4>
+      <div class="sub">{% if colab %}{{ colab.nombre_completo }}{% else %}Completa los datos de la ficha{% endif %}</div>
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0" style="max-width:720px">
+<form method="post" enctype="multipart/form-data" autocomplete="off">
+
+  {# ══ DATOS PERSONALES ══ #}
+  <div class="ilus-card">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-person-badge me-2"></i>Datos personales</span>
+    </div>
+    <div class="p-4">
+
+      {# Foto #}
+      <div class="d-flex align-items-center gap-4 mb-4">
+        <div id="fotoWrap">
+          {% if colab and colab.foto_filename %}
+          <img src="{{ url_for('static', filename='uploads/colaboradores/' + colab.foto_filename) }}"
+               class="foto-preview" id="fotoPreview">
+          {% else %}
+          <div class="foto-placeholder" id="fotoPlaceholder">
+            {{ (fd.get('nombre_completo') or (colab.nombre_completo if colab else 'C'))[0].upper() }}
+          </div>
+          <img class="foto-preview d-none" id="fotoPreview">
+          {% endif %}
+        </div>
+        <div>
+          <label class="btn btn-outline-secondary btn-sm fw-semibold" for="fotoInput">
+            <i class="bi bi-camera me-1"></i>{% if colab and colab.foto_filename %}Cambiar foto{% else %}Subir foto{% endif %}
+          </label>
+          <input type="file" id="fotoInput" name="foto" accept="image/*" class="d-none"
+                 onchange="previewFoto(this)">
+          <div class="nuevo-hint">JPG, PNG o WEBP · Recomendado: cuadrada</div>
+        </div>
+      </div>
+
+      {# Nombre #}
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Nombre completo <span class="text-danger">*</span></label>
+        <input type="text" name="nombre_completo" class="form-control"
+               value="{{ fd.get('nombre_completo', colab.nombre_completo if colab else '') }}"
+               placeholder="Ej: Juan Andrés Pérez González" required maxlength="200">
+      </div>
+
+      <div class="row g-3">
+
+        {# RUT con formateador automático #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">RUT</label>
+          <input type="text" name="rut" id="rutInput" class="form-control font-monospace"
+                 value="{{ fd.get('rut', colab.rut if colab else '') }}"
+                 placeholder="12.345.678-9" maxlength="12"
+                 oninput="formatRut(this)" onblur="validarRut(this)">
+          <div class="nuevo-hint" id="rutHint">Formato: 12.345.678-9</div>
+        </div>
+
+        {# Género #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Género</label>
+          <select name="genero" class="form-select">
+            {% for key, label in generos.items() %}
+            <option value="{{ key }}"
+              {% if fd.get('genero', colab.genero if colab else 'no_especificado') == key %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {# Email #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Email</label>
+          <input type="email" name="email" class="form-control"
+                 value="{{ fd.get('email', colab.email if colab else '') }}"
+                 placeholder="colaborador@empresa.cl">
+        </div>
+
+        {# Teléfono #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Teléfono</label>
+          <input type="text" name="telefono" class="form-control"
+                 value="{{ fd.get('telefono', colab.telefono if colab else '') }}"
+                 placeholder="+56 9 1234 5678" maxlength="30">
+        </div>
+
+        {# Dirección #}
+        <div class="col-12">
+          <label class="form-label fw-semibold">Dirección</label>
+          <input type="text" name="direccion" class="form-control"
+                 value="{{ fd.get('direccion', colab.direccion if colab else '') }}"
+                 placeholder="Av. Principal 123">
+        </div>
+
+        {# Región #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Región <span class="text-danger">*</span></label>
+          <select name="region" id="regionSelect" class="form-select" required
+                  onchange="cargarComunas(this.value)">
+            <option value="">— Seleccionar región —</option>
+            {% for r in regiones %}
+            <option value="{{ r }}"
+              {% if fd.get('region', colab.region if colab else '') == r %}selected{% endif %}>
+              {{ r }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {# Comuna #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Comuna <span class="text-danger">*</span></label>
+          <select name="comuna" id="comunaSelect" class="form-select" required>
+            <option value="">— Seleccionar comuna —</option>
+            {# Se rellena por JS; en edición se precarga #}
+          </select>
+          <input type="hidden" id="comunaInit"
+                 value="{{ fd.get('comuna', colab.comuna if colab else '') }}">
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {# ══ DATOS LABORALES ══ #}
+  <div class="ilus-card mt-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-building me-2"></i>Datos laborales</span>
+    </div>
+    <div class="p-4">
+      <div class="row g-3">
+
+        {# Área #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Área / Departamento</label>
+          {% if areas %}
+          <select name="area_id" id="areaSelect" class="form-select mb-1"
+                  onchange="toggleNuevo('area', this.value)">
+            <option value="">— Seleccionar —</option>
+            {% for a in areas %}
+            <option value="{{ a.id }}"
+              {% if fd.get('area_id')|string == a.id|string or (colab and colab.area_id == a.id and not fd) %}selected{% endif %}>
+              {{ a.nombre }}
+            </option>
+            {% endfor %}
+            <option value="__new__">➕ Nueva área...</option>
+          </select>
+          {% endif %}
+          <input type="text" name="area_nueva" id="areaNueva"
+                 class="form-control {% if areas %}d-none{% endif %}"
+                 placeholder="Nombre del área nueva"
+                 value="{{ fd.get('area_nueva','') }}">
+          <div class="nuevo-hint">{% if not areas %}No hay áreas — escribe el nombre y se crea automáticamente.{% endif %}</div>
+        </div>
+
+        {# Cargo #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Cargo</label>
+          {% if cargos %}
+          <select name="cargo_id" id="cargoSelect" class="form-select mb-1"
+                  onchange="toggleNuevo('cargo', this.value)">
+            <option value="">— Seleccionar —</option>
+            {% for ca in cargos %}
+            <option value="{{ ca.id }}"
+              {% if fd.get('cargo_id')|string == ca.id|string or (colab and colab.cargo_id == ca.id and not fd) %}selected{% endif %}>
+              {{ ca.nombre }}{% if ca.area_nombre %} ({{ ca.area_nombre }}){% endif %}
+            </option>
+            {% endfor %}
+            <option value="__new__">➕ Nuevo cargo...</option>
+          </select>
+          {% endif %}
+          <input type="text" name="cargo_nuevo" id="cargoNuevo"
+                 class="form-control {% if cargos %}d-none{% endif %} mb-1"
+                 placeholder="Nombre del cargo nuevo"
+                 value="{{ fd.get('cargo_nuevo','') }}">
+          <div class="nuevo-hint">{% if not cargos %}No hay cargos — escribe el nombre.{% endif %}</div>
+        </div>
+
+        {# Descriptor cargo #}
+        <div class="col-12" id="descriptorWrap" {% if cargos %}style="display:none"{% endif %}>
+          <label class="form-label fw-semibold small text-muted">
+            Descriptor del cargo <span class="fw-normal">(opcional)</span>
+          </label>
+          <textarea name="cargo_descriptor" class="form-control" rows="2"
+                    placeholder="Descripción breve de las responsabilidades...">{{ fd.get('cargo_descriptor','') }}</textarea>
+        </div>
+
+        {# Fecha ingreso #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Fecha de ingreso</label>
+          <input type="date" name="fecha_ingreso" class="form-control"
+                 value="{{ fd.get('fecha_ingreso', (colab.fecha_ingreso | string)[:10] if colab and colab.fecha_ingreso else '') }}">
+        </div>
+
+        {# Estado #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Estado</label>
+          <select name="estado" class="form-select">
+            {% for key, label in estados.items() %}
+            <option value="{{ key }}"
+              {% if fd.get('estado', colab.estado if colab else 'activo') == key %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 mt-3 mb-5">
+    <button type="submit" class="btn btn-ilus fw-bold px-4">
+      <i class="bi bi-check-lg me-1"></i>
+      {% if colab %}Guardar cambios{% else %}Crear colaborador{% endif %}
+    </button>
+    <a href="{{ url_for('colab_index') }}" class="btn btn-outline-secondary">Cancelar</a>
+  </div>
+
+</form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ════════════════════════════════════════════════════
+   DATOS REGIONES Y COMUNAS DE CHILE
+════════════════════════════════════════════════════ */
+var CHILE = {
+  "Arica y Parinacota":  ["Arica","Camarones","Putre","General Lagos"],
+  "Tarapacá":            ["Iquique","Alto Hospicio","Pozo Almonte","Camiña","Colchane","Huara","Pica"],
+  "Antofagasta":         ["Antofagasta","Mejillones","Sierra Gorda","Taltal","Calama","Ollagüe","San Pedro de Atacama","Tocopilla","María Elena"],
+  "Atacama":             ["Copiapó","Caldera","Tierra Amarilla","Chañaral","Diego de Almagro","Vallenar","Alto del Carmen","Freirina","Huasco"],
+  "Coquimbo":            ["La Serena","Coquimbo","Andacollo","La Higuera","Paihuano","Vicuña","Illapel","Canela","Los Vilos","Salamanca","Ovalle","Combarbalá","Monte Patria","Punitaqui","Río Hurtado"],
+  "Valparaíso":          ["Valparaíso","Casablanca","Concón","Puchuncaví","Quintero","Viña del Mar","Isla de Pascua","Los Andes","Calle Larga","Rinconada","San Esteban","La Ligua","Cabildo","Papudo","Petorca","Zapallar","Quillota","Calera","Hijuelas","La Cruz","Nogales","San Antonio","Algarrobo","Cartagena","El Quisco","El Tabo","Santo Domingo","San Felipe","Catemu","Llaillay","Panquehue","Putaendo","Santa María","Quilpué","Limache","Olmué","Villa Alemana"],
+  "Metropolitana de Santiago": ["Santiago","Cerrillos","Cerro Navia","Conchalí","El Bosque","Estación Central","Huechuraba","Independencia","La Cisterna","La Florida","La Granja","La Pintana","La Reina","Las Condes","Lo Barnechea","Lo Espejo","Lo Prado","Macul","Maipú","Ñuñoa","Pedro Aguirre Cerda","Peñalolén","Providencia","Pudahuel","Quilicura","Quinta Normal","Recoleta","Renca","San Joaquín","San Miguel","San Ramón","Vitacura","Puente Alto","Pirque","San José de Maipo","Colina","Lampa","Tiltil","San Bernardo","Buin","Calera de Tango","Paine","Melipilla","Alhué","Curacaví","María Pinto","San Pedro","Talagante","El Monte","Isla de Maipo","Padre Hurtado","Peñaflor"],
+  "O'Higgins":           ["Rancagua","Codegua","Coinco","Coltauco","Doñihue","Graneros","Las Cabras","Machalí","Malloa","Mostazal","Olivar","Peumo","Pichidegua","Quinta de Tilcoco","Rengo","Requínoa","San Vicente","Pichilemu","La Estrella","Litueche","Marchihue","Navidad","Paredones","San Fernando","Chépica","Chimbarongo","Lolol","Nancagua","Palmilla","Peralillo","Placilla","Pumanque","Santa Cruz"],
+  "Maule":               ["Talca","Constitución","Curepto","Empedrado","Maule","Pelarco","Pencahue","Río Claro","San Clemente","San Rafael","Cauquenes","Chanco","Pelluhue","Curicó","Hualañé","Licantén","Molina","Rauco","Romeral","Sagrada Familia","Teno","Vichuquén","Linares","Colbún","Longaví","Parral","Retiro","San Javier","Villa Alegre","Yerbas Buenas"],
+  "Ñuble":               ["Chillán","Bulnes","Chillán Viejo","El Carmen","Pemuco","Pinto","Quillón","San Ignacio","Yungay","Cobquecura","Coelemu","Ninhue","Portezuelo","Quirihue","Ránquil","Treguaco","Coihueco","Ñiquén","San Carlos","San Fabián","San Nicolás"],
+  "Biobío":              ["Concepción","Coronel","Chiguayante","Florida","Hualqui","Lota","Penco","San Pedro de la Paz","Santa Juana","Talcahuano","Tomé","Hualpén","Lebu","Arauco","Cañete","Contulmo","Curanilahue","Los Álamos","Tirúa","Los Ángeles","Antuco","Cabrero","Laja","Mulchén","Nacimiento","Negrete","Quilaco","Quilleco","San Rosendo","Santa Bárbara","Tucapel","Yumbel","Alto Biobío"],
+  "La Araucanía":        ["Temuco","Carahue","Cunco","Curarrehue","Freire","Galvarino","Gorbea","Lautaro","Loncoche","Melipeuco","Nueva Imperial","Padre Las Casas","Perquenco","Pitrufquén","Pucón","Saavedra","Teodoro Schmidt","Toltén","Vilcún","Villarrica","Cholchol","Angol","Collipulli","Curacautín","Ercilla","Lonquimay","Los Sauces","Lumaco","Purén","Renaico","Traiguén","Victoria"],
+  "Los Ríos":            ["Valdivia","Corral","Futrono","La Unión","Lago Ranco","Lanco","Los Lagos","Máfil","Mariquina","Paillaco","Panguipulli","Río Bueno"],
+  "Los Lagos":           ["Puerto Montt","Calbuco","Cochamó","Fresia","Frutillar","Los Muermos","Llanquihue","Maullín","Puerto Varas","Castro","Ancud","Chonchi","Curaco de Vélez","Dalcahue","Puqueldón","Queilén","Quellón","Quemchi","Quinchao","Osorno","Puerto Octay","Purranque","Puyehue","Río Negro","San Juan de la Costa","San Pablo","Chaitén","Futaleufú","Hualaihué","Palena"],
+  "Aysén":               ["Coyhaique","Lago Verde","Aysén","Cisnes","Guaitecas","Cochrane","O'Higgins","Tortel","Chile Chico","Río Ibáñez"],
+  "Magallanes":          ["Punta Arenas","Laguna Blanca","Río Verde","San Gregorio","Cabo de Hornos","Antártica","Porvenir","Primavera","Timaukel","Puerto Natales","Torres del Paine"]
+};
+
+/* ── Selector dinámico Región → Comuna ── */
+function cargarComunas(region, valorInicial) {
+  var sel = document.getElementById('comunaSelect');
+  var comunas = CHILE[region] || [];
+  sel.innerHTML = '<option value="">— Seleccionar comuna —</option>';
+  comunas.forEach(function(c) {
+    var opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    if (c === valorInicial) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.disabled = !comunas.length;
+}
+
+/* Al cargar, precargar comunas si hay región guardada (modo edición) */
+document.addEventListener('DOMContentLoaded', function() {
+  var regionSel = document.getElementById('regionSelect');
+  var comunaInit = document.getElementById('comunaInit').value;
+  if (regionSel.value) {
+    cargarComunas(regionSel.value, comunaInit);
+  }
+});
+
+/* ════════════════════════════════════════════════════
+   FORMATEADOR Y VALIDADOR RUT CHILENO
+════════════════════════════════════════════════════ */
+function limpiarRut(r){ return r.replace(/[^0-9kK]/g,'').toUpperCase(); }
+
+function formatRut(input) {
+  var v = limpiarRut(input.value);
+  if (!v) { input.value = ''; return; }
+  var verif = v.slice(-1);
+  var body  = v.slice(0, -1);
+  body = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  input.value = body ? body + '-' + verif : verif;
+  input.classList.remove('rut-ok','rut-error');
+}
+
+function dvRut(body) {
+  var sum = 0, mul = 2;
+  for (var i = body.length - 1; i >= 0; i--) {
+    sum += parseInt(body[i]) * mul;
+    mul = mul === 7 ? 2 : mul + 1;
+  }
+  var r = 11 - (sum % 11);
+  return r === 11 ? '0' : r === 10 ? 'K' : String(r);
+}
+
+function validarRut(input) {
+  var v = limpiarRut(input.value);
+  var hint = document.getElementById('rutHint');
+  if (!v) {
+    input.classList.remove('rut-ok','rut-error');
+    hint.textContent = 'Formato: 12.345.678-9';
+    hint.style.color = '#888';
+    return;
+  }
+  var verif = v.slice(-1).toUpperCase();
+  var body  = v.slice(0, -1);
+  if (!body || isNaN(Number(body))) {
+    input.classList.add('rut-error'); input.classList.remove('rut-ok');
+    hint.textContent = 'RUT inválido'; hint.style.color = '#CC0000';
+    return;
+  }
+  if (dvRut(body) === verif) {
+    input.classList.add('rut-ok'); input.classList.remove('rut-error');
+    hint.textContent = '✓ RUT válido'; hint.style.color = '#1a7a1a';
+  } else {
+    input.classList.add('rut-error'); input.classList.remove('rut-ok');
+    hint.textContent = '✗ Dígito verificador incorrecto'; hint.style.color = '#CC0000';
+  }
+}
+
+/* ── Preview foto ── */
+function previewFoto(input){
+  if(!input.files || !input.files[0]) return;
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var preview     = document.getElementById('fotoPreview');
+    var placeholder = document.getElementById('fotoPlaceholder');
+    if(preview){ preview.src = e.target.result; preview.classList.remove('d-none'); }
+    if(placeholder) placeholder.classList.add('d-none');
+  };
+  reader.readAsDataURL(input.files[0]);
+}
+
+/* ── Toggle nuevo área/cargo ── */
+function toggleNuevo(tipo, val){
+  var inputEl = document.getElementById(tipo === 'area' ? 'areaNueva' : 'cargoNuevo');
+  var descWrap = document.getElementById('descriptorWrap');
+  if(val === '__new__'){
+    inputEl.classList.remove('d-none'); inputEl.required = true; inputEl.focus();
+    if(tipo === 'cargo' && descWrap) descWrap.style.display = '';
+  } else {
+    inputEl.classList.add('d-none'); inputEl.required = false;
+    if(tipo === 'cargo' && descWrap) descWrap.style.display = 'none';
+  }
+}
+</script>
+{% endblock %}

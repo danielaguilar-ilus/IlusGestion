@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}{{ product.sku }} - ILUS Etiquetas{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-start gap-2 flex-wrap">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-dark-ilus mt-1 no-print flex-shrink-0">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="flex-grow-1 min-w-0">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <h4 class="font-monospace mb-0 text-truncate">{{ product.sku }}</h4>
+        {% if product.estado == 'Confirmado' %}
+        <span class="ilus-badge badge-confirmado">Confirmado</span>
+        {% elif product.estado == 'Impreso' %}
+        <span class="ilus-badge badge-impreso">Impreso</span>
+        {% else %}
+        <span class="ilus-badge badge-pendiente">Pendiente</span>
+        {% endif %}
+      </div>
+      <div class="sub text-truncate">{{ product.nombre }}</div>
+    </div>
+    <div class="d-none d-md-flex gap-2 no-print">
+      {% if permissions.edit %}
+      <a href="{{ url_for('edit_product', pid=product.id) }}" class="btn btn-sm btn-dark-ilus">
+        <i class="bi bi-pencil me-1"></i>Editar
+      </a>
+      {% endif %}
+      {% if permissions.delete %}
+      <button id="delete-product" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteProductModal">
+        <i class="bi bi-trash"></i>
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="px-0 px-md-0">
+  <div class="row g-2 mb-3 px-2 px-md-0">
+    <div class="col-6 col-md-3"><div class="stat-card blk"><div class="stat-num">{{ total_bultos }}</div><div class="stat-label">Bultos</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card red"><div class="stat-num">{{ "%.1f"|format(peso_total) }}</div><div class="stat-label">Peso Total kg</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="color:#555;font-size:1.5rem">{{ "%.2f"|format(pv_total) }}</div><div class="stat-label">Peso Vol Total</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="font-size:.8rem;color:#333;padding-top:4px">{{ product.created_by or '-' }}<br>{{ product.updated_by or '-' }}</div><div class="stat-label">Creo / Ultimo</div></div></div>
+  </div>
+
+  {% if permissions.print and total_bultos > 0 %}
+  <div class="print-cta mb-3 mx-2 mx-md-0 no-print">
+    <div class="cta-icon"><i class="bi bi-printer-fill"></i></div>
+    <div class="cta-text flex-grow-1">
+      <h6>Imprimir etiquetas</h6>
+      <p>{{ total_bultos }} bulto(s) listos para impresion</p>
+    </div>
+    {% set valid_count = bultos | selectattr('largo', 'gt', 0) | list | length %}
+    {% if valid_count > 0 %}
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('print_labels', pid=product.id) }}" class="btn btn-ilus fw-bold px-4 mobile-full">
+        <i class="bi bi-printer me-2"></i>Imprimir todas ({{ valid_count }})
+      </a>
+      <a href="{{ url_for('print_setup', pid=product.id) }}" class="btn btn-dark-ilus px-3"
+         title="Configurar cantidad de copias por bulto">
+        <i class="bi bi-sliders me-1"></i>Configurar copias
+      </a>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="ilus-card mb-3 mx-2 mx-md-0">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-images me-2"></i>Fotos del producto <span class="badge bg-secondary ms-1">{{ photos|length }}/2</span></span>
+    </div>
+    <div class="photos-grid">
+      {% for ph in photos %}
+      <div class="photo-card">
+        <button type="button" class="photo-preview-btn" data-bs-toggle="modal" data-bs-target="#photoModal{{ ph.id }}">
+          <img src="{{ url_for('static', filename='uploads/' ~ ph.filename) }}" alt="Foto {{ loop.index }}" loading="lazy">
+        </button>
+        {% if permissions.delete %}
+        <button type="button" class="photo-delete-btn" data-bs-toggle="modal" data-bs-target="#deletePhotoModal{{ ph.id }}" title="Eliminar foto">
+          <i class="bi bi-x-lg"></i>
+        </button>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      {% if permissions.edit and can_add_photo %}
+      {# ── Desktop: zona drag/click ── #}
+      <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
+            enctype="multipart/form-data" id="photoFormDesk" class="d-none d-md-block">
+        <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
+               style="min-height:120px;cursor:pointer" for="photoInputDesk">
+          <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
+          <div class="up-text">Agregar foto<br><span style="color:#bbb;font-size:.7rem">JPG, PNG, WEBP, GIF</span></div>
+        </label>
+        <input type="file" name="photo" id="photoInputDesk" accept="image/*" style="display:none"
+               onchange="this.form.submit()">
+      </form>
+
+      {# ── Mobile: botones separados Cámara / Galería ── #}
+      <div class="d-flex d-md-none flex-column gap-2 p-2" style="min-width:140px">
+        {# Cámara (capture=environment) #}
+        <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
+              enctype="multipart/form-data" id="photoFormCam">
+          <label for="photoInputCam"
+                 class="btn btn-dark-ilus w-100 d-flex align-items-center justify-content-center gap-2 py-3"
+                 style="cursor:pointer;border-radius:8px;font-size:.9rem">
+            <i class="bi bi-camera-fill fs-5"></i>
+            <span>Tomar foto</span>
+          </label>
+          <input type="file" name="photo" id="photoInputCam"
+                 accept="image/*" capture="environment"
+                 style="display:none" onchange="this.form.submit()">
+        </form>
+        {# Galería #}
+        <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
+              enctype="multipart/form-data" id="photoFormGal">
+          <label for="photoInputGal"
+                 class="btn btn-outline-secondary w-100 d-flex align-items-center justify-content-center gap-2 py-3"
+                 style="cursor:pointer;border-radius:8px;font-size:.9rem">
+            <i class="bi bi-images fs-5"></i>
+            <span>Desde galería</span>
+          </label>
+          <input type="file" name="photo" id="photoInputGal"
+                 accept="image/*"
+                 style="display:none" onchange="this.form.submit()">
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="ilus-card mb-3 mx-2 mx-md-0">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-boxes me-2"></i>Detalle por bulto</span>
+      {% if permissions.edit %}
+      <a href="{{ url_for('edit_product', pid=product.id) }}" class="btn btn-sm btn-ilus no-print">
+        <i class="bi bi-pencil me-1"></i>Editar medidas
+      </a>
+      {% endif %}
+    </div>
+    {% if bultos %}
+    <div class="table-responsive">
+      <table class="table ilus-table mb-0" style="min-width:560px">
+        <thead>
+          <tr>
+            <th class="text-center" style="width:70px">Bulto</th>
+            <th class="text-end">Largo</th>
+            <th class="text-end">Ancho</th>
+            <th class="text-end">Alto</th>
+            <th class="text-end">Peso</th>
+            <th class="text-end">Peso Vol</th>
+            {% if permissions.print %}<th class="text-center no-print">Imprimir</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in bultos %}
+          {% set ok = b.largo > 0 and b.ancho > 0 and b.alto > 0 %}
+          <tr {% if not ok %}style="background:#fffbf5"{% endif %}>
+            <td class="text-center"><span class="fw-bold">{{ b.bulto_num }}</span></td>
+            <td class="text-end">{{ "%.0f"|format(b.largo) if b.largo > 0 else '-' }}</td>
+            <td class="text-end">{{ "%.0f"|format(b.ancho) if b.ancho > 0 else '-' }}</td>
+            <td class="text-end">{{ "%.0f"|format(b.alto) if b.alto > 0 else '-' }}</td>
+            <td class="text-end">{{ "%.2f"|format(b.peso) if b.peso > 0 else '-' }}</td>
+            <td class="text-end">{{ "%.2f"|format(b.peso_vol) if ok else '-' }}</td>
+            {% if permissions.print %}
+            <td class="text-center no-print">
+              {% if ok %}
+              <div class="d-flex gap-1 justify-content-center">
+                <a href="{{ url_for('print_labels', pid=product.id, bulto=b.bulto_num) }}" class="btn btn-sm btn-ilus" title="Ver e imprimir etiqueta"><i class="bi bi-printer me-1"></i>Imprimir</a>
+                <a href="{{ url_for('download_pdf', pid=product.id, bnum=b.bulto_num) }}" class="btn btn-sm btn-dark-ilus" title="Descargar etiqueta PDF"><i class="bi bi-file-earmark-pdf me-1"></i>PDF</a>
+              </div>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state py-4"><p>Sin bultos registrados.</p></div>
+    {% endif %}
+  </div>
+
+  {% if permissions.edit or permissions.delete %}
+  <div class="d-flex d-md-none gap-2 px-2 mb-3 no-print">
+    {% if permissions.edit %}
+    <a href="{{ url_for('edit_product', pid=product.id) }}" class="btn btn-dark-ilus flex-grow-1"><i class="bi bi-pencil me-1"></i>Editar producto</a>
+    {% endif %}
+    {% if permissions.delete %}
+    <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteProductModal"><i class="bi bi-trash"></i></button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% for ph in photos %}
+<div class="modal fade" id="photoModal{{ ph.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content bg-dark border-0">
+      <div class="modal-header border-0">
+        <h5 class="modal-title text-white">Vista de imagen</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center pt-0">
+        <img src="{{ url_for('static', filename='uploads/' ~ ph.filename) }}" alt="Foto ampliada" class="img-fluid rounded">
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if permissions.delete %}
+<div class="modal fade" id="deletePhotoModal{{ ph.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Eliminar foto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 mb-3 small">
+          <strong>Esta acción es permanente.</strong> La foto será eliminada del producto.
+        </div>
+        <p class="mb-1">Producto: <strong>{{ product.sku }}</strong></p>
+        <p class="mb-2">Escribe el SKU para confirmar la eliminación:</p>
+        <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}"
+              id="deletePhotoForm{{ ph.id }}">
+          <input type="text" id="photoSkuInput{{ ph.id }}" name="confirm_sku"
+                 class="form-control font-monospace text-uppercase mb-3"
+                 placeholder="{{ product.sku }}" autocomplete="off">
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-danger fw-bold" id="photoDeleteBtn{{ ph.id }}" disabled>
+              <i class="bi bi-trash me-1"></i>Eliminar foto
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% if permissions.delete %}
+<div class="modal fade no-print" id="deleteProductModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#8b0000;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Eliminar producto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger py-2 mb-3">
+          <strong>Esta acción es permanente e irreversible.</strong><br>
+          Se eliminarán el producto, todos sus bultos y fotos de la base de datos MySQL.
+        </div>
+        <p>Para confirmar, escribe el SKU <strong>{{ product.sku }}</strong> en el campo:</p>
+        <form method="post" action="{{ url_for('delete_product', pid=product.id) }}" id="deleteProductForm">
+          <input type="text" id="confirmSkuInput" name="confirm_sku"
+                 class="form-control font-monospace text-uppercase mb-3"
+                 placeholder="{{ product.sku }}" autocomplete="off">
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-danger fw-bold" id="confirmDeleteBtn" disabled>
+              <i class="bi bi-trash me-1"></i>Eliminar definitivamente
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% set valid_b = bultos | selectattr('largo', 'gt', 0) | list %}
+{% if permissions.print and valid_b %}
+<a href="{{ url_for('print_labels', pid=product.id) }}" class="fab-print no-print d-md-none">
+  <i class="bi bi-printer-fill"></i> Imprimir
+</a>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if permissions.delete %}
+<script>
+var skuReal = "{{ product.sku }}";
+
+// ── Eliminar producto: confirmar SKU ──
+document.getElementById('confirmSkuInput').addEventListener('input', function () {
+  document.getElementById('confirmDeleteBtn').disabled = (this.value.trim().toUpperCase() !== skuReal);
+});
+document.getElementById('deleteProductModal').addEventListener('hidden.bs.modal', function () {
+  document.getElementById('confirmSkuInput').value = '';
+  document.getElementById('confirmDeleteBtn').disabled = true;
+});
+
+// ── Eliminar foto: confirmar SKU ──
+{% for ph in photos %}
+(function() {
+  var inp = document.getElementById('photoSkuInput{{ ph.id }}');
+  var btn = document.getElementById('photoDeleteBtn{{ ph.id }}');
+  var modal = document.getElementById('deletePhotoModal{{ ph.id }}');
+  if (inp && btn) {
+    inp.addEventListener('input', function() {
+      btn.disabled = (inp.value.trim().toUpperCase() !== skuReal);
+    });
+  }
+  if (modal) {
+    modal.addEventListener('hidden.bs.modal', function() {
+      if (inp) { inp.value = ''; }
+      if (btn) { btn.disabled = true; }
+    });
+  }
+})();
+{% endfor %}
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Sincronizar ERP - ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-dark-ilus">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4><i class="bi bi-arrow-repeat me-2" style="color:var(--ilus-red)"></i>Sincronizacion con ERP</h4>
+      <div class="sub">MySQL remoto hacia base local</div>
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+  {% if result %}
+    {% if result.ok %}
+    <div class="row g-2 mb-3">
+      <div class="col-6 col-md-3"><div class="stat-card grn"><div class="stat-num">{{ result.nuevos }}</div><div class="stat-label">Nuevos</div></div></div>
+      <div class="col-6 col-md-3"><div class="stat-card amber"><div class="stat-num">{{ result.actualizados }}</div><div class="stat-label">Actualizados</div></div></div>
+      <div class="col-6 col-md-3"><div class="stat-card blk"><div class="stat-num">{{ result.sin_cambios }}</div><div class="stat-label">Sin cambios</div></div></div>
+      <div class="col-6 col-md-3"><div class="stat-card {% if result.errores > 0 %}red{% endif %}"><div class="stat-num">{{ result.errores }}</div><div class="stat-label">Errores</div></div></div>
+    </div>
+
+    {% set cambios_visibles = result.cambios | selectattr('tipo', 'ne', 'sin_cambio') | list %}
+    {% if cambios_visibles %}
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header">
+        <span><i class="bi bi-list-check me-2"></i>Cambios detectados</span>
+        <span class="text-muted small fw-normal">{{ cambios_visibles|length }} registro(s)</span>
+      </div>
+      <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+        <table class="table ilus-table mb-0" style="min-width:400px">
+          <thead>
+            <tr>
+              <th style="width:100px">Tipo</th>
+              <th>SKU</th>
+              <th>Detalle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in cambios_visibles %}
+            <tr>
+              <td>
+                {% if c.tipo == 'nuevo' %}
+                  <span class="ilus-badge badge-confirmado">Nuevo</span>
+                {% elif c.tipo == 'actualizado' %}
+                  <span class="ilus-badge badge-pendiente">Actualizado</span>
+                {% else %}
+                  <span class="ilus-badge" style="background:#dc3545;color:#fff">Error</span>
+                {% endif %}
+              </td>
+              <td class="font-monospace fw-bold">{{ c.sku }}</td>
+              <td class="small text-muted">
+                {% if c.tipo == 'nuevo' %}{{ c.nombre }}
+                {% elif c.tipo == 'actualizado' %}{{ c.cambios }}
+                {% else %}{{ c.error }}{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="ilus-info neutral mb-3">
+      <i class="bi bi-check-circle-fill me-2 text-success"></i>
+      Todo sincronizado, no hay diferencias entre ERP y base local.
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="ilus-info mb-3">
+      <i class="bi bi-x-circle-fill me-2"></i>
+      <strong>Error de conexion:</strong> {{ result.error }}
+    </div>
+    {% endif %}
+  {% endif %}
+
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-database-up me-2"></i>Sincronizar ahora</span>
+    </div>
+    <div class="p-4 text-center">
+      <p class="text-muted mb-3">
+        Se importaran los productos nuevos del ERP y se actualizaran nombres y estados sin sobrescribir las medidas locales.
+      </p>
+      <form method="post" id="syncForm">
+        <button type="submit" class="btn btn-ilus btn-lg fw-bold px-5" id="syncBtn"
+                onclick="this.innerHTML='<span class=\'spinner-border spinner-border-sm me-2\'></span>Sincronizando...';this.disabled=true;document.getElementById(\'syncForm\').submit()">
+          <i class="bi bi-arrow-repeat me-2"></i>Sincronizar con ERP
+        </button>
+      </form>
+      {% if last_sync %}
+      <div class="mt-2 text-muted small">Ultima sincronizacion: {{ last_sync }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if logs %}
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-clock-history me-2"></i>Historial de sincronizaciones</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table ilus-table mb-0">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th class="text-center">Nuevos</th>
+            <th class="text-center">Actualizados</th>
+            <th class="text-center">Sin cambios</th>
+            <th class="text-center">Errores</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td class="small">{{ log.sync_at }}</td>
+            <td class="text-center">{% if log.nuevos > 0 %}<b style="color:#1a7a1a">{{ log.nuevos }}</b>{% else %}0{% endif %}</td>
+            <td class="text-center">{% if log.actualizados > 0 %}<b style="color:#b35a00">{{ log.actualizados }}</b>{% else %}0{% endif %}</td>
+            <td class="text-center text-muted">{{ log.sin_cambios }}</td>
+            <td class="text-center">{% if log.errores > 0 %}<b style="color:var(--ilus-red)">{{ log.errores }}</b>{% else %}0{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

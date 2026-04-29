@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Colaboradores — ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-people-fill me-2" style="color:var(--ilus-red)"></i>Colaboradores</h4>
+      <div class="sub">Fichas del equipo ILUS Sport &amp; Health</div>
+    </div>
+    {% if permissions.hrm %}
+    <a href="{{ url_for('colab_nuevo') }}" class="btn btn-ilus fw-bold px-3">
+      <i class="bi bi-person-plus-fill me-1"></i>Nuevo colaborador
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+
+  {% if colaboradores %}
+
+  {# ── Stats rápidas ── #}
+  {% set activos   = colaboradores | selectattr('estado','equalto','activo')   | list | length %}
+  {% set inactivos = colaboradores | selectattr('estado','equalto','inactivo') | list | length %}
+  {% set licencia  = colaboradores | selectattr('estado','equalto','licencia') | list | length %}
+  <div class="row g-2 mb-3">
+    <div class="col-4"><div class="stat-card blk"><div class="stat-num">{{ colaboradores|length }}</div><div class="stat-label">Total</div></div></div>
+    <div class="col-4"><div class="stat-card grn"><div class="stat-num">{{ activos }}</div><div class="stat-label">Activos</div></div></div>
+    <div class="col-4"><div class="stat-card amber"><div class="stat-num">{{ licencia }}</div><div class="stat-label">Con licencia</div></div></div>
+  </div>
+
+  {# ── Grid de tarjetas ── #}
+  <div class="row g-3">
+    {% for col in colaboradores %}
+    <div class="col-12 col-sm-6 col-lg-4">
+      <div class="ilus-card h-100" style="border-radius:10px;overflow:hidden">
+
+        {# Banner superior con estado #}
+        <div style="height:6px;background:{% if col.estado=='activo' %}#28a745{% elif col.estado=='licencia' %}#ffc107{% else %}#6c757d{% endif %}"></div>
+
+        <div class="p-3">
+          <div class="d-flex align-items-center gap-3 mb-2">
+
+            {# Foto / avatar #}
+            {% if col.foto_filename %}
+            <img src="{{ url_for('static', filename='uploads/colaboradores/' + col.foto_filename) }}"
+                 alt="{{ col.nombre_completo }}"
+                 style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid #e0e0e0;flex-shrink:0">
+            {% else %}
+            <div style="width:54px;height:54px;border-radius:50%;background:var(--ilus-black);
+                        color:#fff;display:flex;align-items:center;justify-content:center;
+                        font-size:1.4rem;font-weight:900;flex-shrink:0;letter-spacing:-1px">
+              {{ col.nombre_completo[0].upper() }}
+            </div>
+            {% endif %}
+
+            <div class="min-w-0">
+              <div class="fw-bold text-truncate" style="font-size:.95rem">{{ col.nombre_completo }}</div>
+              <div class="small text-muted text-truncate">
+                {{ col.cargo_nombre or '—' }}
+              </div>
+              <div class="small text-muted text-truncate">
+                <i class="bi bi-building me-1"></i>{{ col.area_nombre or '—' }}
+              </div>
+            </div>
+          </div>
+
+          {# Info compacta #}
+          <div class="d-flex flex-column gap-1 mb-3" style="font-size:.78rem;color:#555">
+            {% if col.email %}
+            <span><i class="bi bi-envelope me-1 text-muted"></i>{{ col.email }}</span>
+            {% endif %}
+            {% if col.telefono %}
+            <span><i class="bi bi-telephone me-1 text-muted"></i>{{ col.telefono }}</span>
+            {% endif %}
+            {% if col.rut %}
+            <span><i class="bi bi-person-vcard me-1 text-muted"></i>{{ col.rut }}</span>
+            {% endif %}
+          </div>
+
+          {# Estado + acciones #}
+          <div class="d-flex align-items-center justify-content-between">
+            {% if col.estado == 'activo' %}
+            <span class="ilus-badge badge-confirmado">{{ estados.get(col.estado, col.estado) }}</span>
+            {% elif col.estado == 'licencia' %}
+            <span class="ilus-badge badge-pendiente">{{ estados.get(col.estado, col.estado) }}</span>
+            {% else %}
+            <span class="ilus-badge" style="background:#e9ecef;color:#6c757d;border:1px solid #dee2e6">{{ estados.get(col.estado, col.estado) }}</span>
+            {% endif %}
+            <div class="d-flex gap-1">
+              <a href="{{ url_for('colab_ficha', cid=col.id) }}"
+                 class="btn btn-sm btn-dark-ilus" title="Ver ficha">
+                <i class="bi bi-person-lines-fill"></i>
+              </a>
+              {% if permissions.hrm %}
+              <a href="{{ url_for('colab_editar', cid=col.id) }}"
+                 class="btn btn-sm btn-outline-secondary" title="Editar">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% endif %}
+              {% if permissions.delete %}
+              <form method="post" action="{{ url_for('colab_eliminar', cid=col.id) }}"
+                    onsubmit="return confirm('¿Eliminar a {{ col.nombre_completo }}? Esta acción no se puede deshacer.')">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
+                  <i class="bi bi-trash3"></i>
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="ilus-card">
+    <div class="empty-state">
+      <div class="empty-icon">👥</div>
+      <p>Aún no hay colaboradores registrados.</p>
+      {% if permissions.hrm %}
+      <a href="{{ url_for('colab_nuevo') }}" class="btn btn-ilus px-4">
+        <i class="bi bi-person-plus-fill me-1"></i>Agregar primer colaborador
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,759 @@
+{% extends "base.html" %}
+{% block title %}Constructor — {{ ev.nombre }}{% endblock %}
+
+{% block content %}
+<style>
+/* ═══════════════════════════════════════════
+   CONSTRUCTOR DE EVALUACIONES
+═══════════════════════════════════════════ */
+.ev-section {
+  background: #fff;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.ev-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-weight: 700;
+  font-size: .92rem;
+  color: #fff;
+  border-bottom: 2px solid rgba(0,0,0,.12);
+  flex-wrap: wrap;
+}
+.ev-section-header .sec-badge {
+  background: rgba(255,255,255,.18);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: .72rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+.ev-section-header .btn-add-preg {
+  background: rgba(255,255,255,.92);
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: background .15s;
+  color: #111;
+}
+.ev-section-header .btn-add-preg:hover { background: #fff; }
+
+/* Lista de preguntas */
+.ev-preg-list {
+  padding: 8px 12px 12px;
+  min-height: 50px;
+}
+.ev-empty-hint {
+  text-align: center;
+  padding: 20px 0 10px;
+  color: #aaa;
+  font-size: .82rem;
+  pointer-events: none;
+}
+
+/* Tarjeta de pregunta */
+.ev-preg-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #f8f9fa;
+  border: 1.5px solid #e9ecef;
+  border-radius: 8px;
+  padding: 10px 10px 10px 6px;
+  margin-bottom: 8px;
+  transition: box-shadow .15s, border-color .15s;
+  cursor: default;
+}
+.ev-preg-card:hover { border-color: #ccc; box-shadow: 0 2px 8px rgba(0,0,0,.09); }
+.ev-preg-card.sortable-ghost { opacity: .4; }
+.ev-preg-card.sortable-chosen { box-shadow: 0 4px 16px rgba(0,0,0,.18); border-color: #999; }
+
+.drag-handle {
+  cursor: grab;
+  color: #ccc;
+  font-size: 1.1rem;
+  padding: 2px 2px 0;
+  flex-shrink: 0;
+  margin-top: 1px;
+  user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+
+.preg-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #dee2e6;
+  color: #555;
+  font-size: .72rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.preg-body { flex: 1; min-width: 0; }
+.preg-texto {
+  font-size: .88rem;
+  font-weight: 600;
+  color: #222;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.preg-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.preg-chip {
+  font-size: .68rem;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-weight: 600;
+  background: #e9ecef;
+  color: #555;
+}
+.preg-chip.obligatoria { background: #fff3cd; color: #856404; }
+.preg-chip.tipo-chip   { background: #e8eaf6; color: #1a237e; }
+
+.preg-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.preg-actions .btn-icon {
+  border: none;
+  background: none;
+  color: #999;
+  font-size: .95rem;
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  line-height: 1;
+}
+.preg-actions .btn-icon:hover { background: #e9ecef; color: #333; }
+.preg-actions .btn-icon.del:hover { background: #fdecea; color: #c00; }
+.preg-actions .btn-sep { width: 1px; height: 16px; background: #dee2e6; margin: 0 2px; }
+
+/* Estado badge header */
+.ev-estado-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.estado-borrador  { background:#fff3cd; color:#856404; border:1.5px solid #ffc107; }
+.estado-publicada { background:#d4edda; color:#155724; border:1.5px solid #28a745; }
+.estado-archivada { background:#e9ecef; color:#6c757d; border:1.5px solid #adb5bd; }
+
+/* Toast notification */
+#evToast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  min-width: 240px;
+  max-width: 360px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: .85rem;
+  font-weight: 600;
+  display: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,.2);
+  animation: slideUp .25s ease;
+}
+@keyframes slideUp {
+  from { opacity:0; transform:translateY(12px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.toast-ok  { background:#d4edda; color:#155724; border-left:4px solid #28a745; }
+.toast-err { background:#fdecea; color:#8b0000; border-left:4px solid #dc3545; }
+
+/* Modal opciones múltiple */
+#opcionesArea { display: none; }
+</style>
+
+<!-- PAGE HEADER -->
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2 min-w-0">
+      <a href="{{ url_for('eval_index') }}" class="btn btn-sm btn-dark-ilus flex-shrink-0">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="min-w-0">
+        <h4 class="mb-0 text-truncate">
+          <i class="bi bi-sliders me-2" style="color:var(--ilus-red)"></i>{{ ev.nombre }}
+        </h4>
+        <div class="sub">
+          {{ tipos_eval.get(ev.tipo, ev.tipo) }} &mdash; {{ total_preguntas }} pregunta(s)
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <!-- Estado + acciones de estado -->
+      <span class="ev-estado-badge estado-{{ ev.estado }}" id="estadoBadge">
+        {% if ev.estado == 'borrador' %}
+          <i class="bi bi-pencil-square"></i>Borrador
+        {% elif ev.estado == 'publicada' %}
+          <i class="bi bi-check-circle-fill"></i>Publicada
+        {% else %}
+          <i class="bi bi-archive-fill"></i>Archivada
+        {% endif %}
+      </span>
+
+      {% if ev.estado == 'borrador' %}
+      <button class="btn btn-success fw-bold" onclick="cambiarEstado('publicada')">
+        <i class="bi bi-send-check me-1"></i>Publicar
+      </button>
+      {% elif ev.estado == 'publicada' %}
+      <button class="btn btn-outline-warning fw-semibold" onclick="cambiarEstado('borrador')"
+              title="Regresar a borrador para editar">
+        <i class="bi bi-pencil me-1"></i>Reabrir edición
+      </button>
+      <button class="btn btn-outline-secondary fw-semibold" onclick="cambiarEstado('archivada')"
+              title="Archivar — ya no se podrá modificar">
+        <i class="bi bi-archive me-1"></i>Archivar
+      </button>
+      {% endif %}
+
+      {% if ev.estado != 'archivada' %}
+      <a href="{{ url_for('eval_editar', eid=ev.id) }}" class="btn btn-dark-ilus">
+        <i class="bi bi-pencil me-1"></i>Editar info
+      </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div class="px-2 px-md-0">
+
+  <!-- ═══ SECCIONES ═══ -->
+  {% for sec_key, sec_info in secciones.items() %}
+  {% set preguntas = por_seccion[sec_key] %}
+  <div class="ev-section" id="sec-{{ sec_key }}">
+
+    <!-- Header de sección -->
+    <div class="ev-section-header" style="background:{{ sec_info.color }}">
+      <i class="bi {{ sec_info.icon }}"></i>
+      <span>{{ sec_info.label }}</span>
+      <span class="sec-badge" id="badge-{{ sec_key }}">{{ preguntas|length }} pregunta(s)</span>
+      {% if ev.estado != 'archivada' and permissions.edit %}
+      <button class="btn-add-preg" onclick="abrirModal(null, '{{ sec_key }}')">
+        <i class="bi bi-plus-lg"></i> Agregar pregunta
+      </button>
+      {% endif %}
+    </div>
+
+    <!-- Lista draggable -->
+    <div class="ev-preg-list" id="list-{{ sec_key }}" data-seccion="{{ sec_key }}">
+      {% if not preguntas %}
+      <div class="ev-empty-hint" id="empty-{{ sec_key }}">
+        <i class="bi bi-inbox me-1"></i>Sin preguntas — haz clic en "Agregar pregunta"
+      </div>
+      {% endif %}
+
+      {% for p in preguntas %}
+      <div class="ev-preg-card" data-id="{{ p.id }}" id="preg-{{ p.id }}">
+        <i class="bi bi-grip-vertical drag-handle" title="Arrastrar para reordenar"></i>
+        <span class="preg-num">{{ loop.index }}</span>
+        <div class="preg-body">
+          <div class="preg-texto">{{ p.texto }}</div>
+          <div class="preg-meta">
+            <span class="preg-chip tipo-chip">
+              <i class="bi bi-ui-checks me-1"></i>{{ tipos.get(p.tipo_respuesta, p.tipo_respuesta) }}
+            </span>
+            {% if p.es_obligatoria %}
+            <span class="preg-chip obligatoria"><i class="bi bi-asterisk me-1"></i>Obligatoria</span>
+            {% endif %}
+            {% if p.tipo_respuesta == 'multiple' and p.opciones %}
+            <span class="preg-chip">{{ p.opciones|length }} opciones</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if ev.estado != 'archivada' and permissions.edit %}
+        <div class="preg-actions">
+          <button class="btn-icon" onclick="moverPregunta({{ p.id }}, 'up')" title="Subir">
+            <i class="bi bi-chevron-up"></i>
+          </button>
+          <button class="btn-icon" onclick="moverPregunta({{ p.id }}, 'down')" title="Bajar">
+            <i class="bi bi-chevron-down"></i>
+          </button>
+          <div class="btn-sep"></div>
+          <button class="btn-icon" onclick="abrirModal({{ p.id }}, '{{ sec_key }}')" title="Editar">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn-icon del" onclick="eliminarPregunta({{ p.id }}, '{{ sec_key }}')" title="Eliminar">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+  {% endfor %}
+
+</div>
+
+<!-- ═══ MODAL AGREGAR / EDITAR PREGUNTA ═══ -->
+<div class="modal fade" id="pregModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow-lg">
+
+      <div class="modal-header py-2 px-4"
+           style="background:var(--ilus-black);border-bottom:3px solid var(--ilus-red)">
+        <h6 class="modal-title text-white fw-bold mb-0" id="modalTitle">
+          <i class="bi bi-plus-circle me-2"></i>Agregar pregunta
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body px-4 py-3">
+
+        <input type="hidden" id="mPregId" value="">
+        <input type="hidden" id="mSeccion" value="">
+
+        <!-- Sección (solo lectura informativa) -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold small text-muted text-uppercase letter-spacing-1">
+            Sección
+          </label>
+          <div id="mSeccionLabel" class="fw-bold" style="font-size:.92rem"></div>
+        </div>
+
+        <!-- Texto pregunta -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold">
+            Pregunta <span class="text-danger">*</span>
+          </label>
+          <textarea id="mTexto" class="form-control" rows="3"
+                    placeholder="Escribe la pregunta claramente..."></textarea>
+        </div>
+
+        <!-- Tipo de respuesta -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo de respuesta</label>
+          <select id="mTipo" class="form-select" onchange="onTipoChange(this.value)">
+            {% for key, label in tipos.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text" id="tipoHint"></div>
+        </div>
+
+        <!-- Opciones múltiple (solo visible cuando tipo = multiple) -->
+        <div class="mb-3" id="opcionesArea">
+          <label class="form-label fw-semibold">
+            Opciones <span class="text-muted fw-normal">(una por línea)</span>
+          </label>
+          <textarea id="mOpciones" class="form-control font-monospace" rows="4"
+                    placeholder="Opción A&#10;Opción B&#10;Opción C"></textarea>
+          <div class="form-text">Cada línea es una opción de respuesta.</div>
+        </div>
+
+        <!-- Obligatoria -->
+        <div class="form-check form-switch mb-1">
+          <input class="form-check-input" type="checkbox" id="mObligatoria" checked>
+          <label class="form-check-label fw-semibold" for="mObligatoria">
+            Pregunta obligatoria
+          </label>
+        </div>
+        <div class="text-muted small mb-3">
+          Las preguntas obligatorias deben responderse para completar la evaluación.
+        </div>
+
+      </div>
+
+      <div class="modal-footer bg-light border-top px-4 py-2">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" id="btnGuardarPreg" onclick="guardarPregunta()">
+          <i class="bi bi-check-lg me-1"></i>Guardar pregunta
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="evToast"></div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  var EID        = {{ ev.id }};
+  var EDITABLE   = {{ 'true' if ev.estado != 'archivada' and permissions.edit else 'false' }};
+  var ESTADO_ACT = '{{ ev.estado }}';
+
+  /* URLs base */
+  var URL_PREGUNTAS = '/api/evaluaciones/' + EID + '/preguntas';
+  var URL_REORDENAR = '/api/evaluaciones/' + EID + '/reordenar';
+  var URL_ESTADO    = '/api/evaluaciones/' + EID + '/estado';
+
+  /* Hints por tipo */
+  var HINTS = {
+    escala_1_5:  '1 = Muy deficiente · 5 = Excelente',
+    texto_libre: 'El evaluado escribe su respuesta libremente.',
+    multiple:    'Define las opciones de respuesta abajo.',
+    si_no:       'Respuesta binaria: Sí o No.',
+    porcentaje:  'El evaluado ingresa un valor entre 0 y 100%.',
+  };
+
+  var TIPOS_LABEL = {
+    {% for key, label in tipos.items() %}
+    '{{ key }}': '{{ label }}',
+    {% endfor %}
+  };
+
+  var SEC_LABELS = {
+    {% for key, info in secciones.items() %}
+    '{{ key }}': '{{ info.label }}',
+    {% endfor %}
+  };
+
+  /* ── Toast ─────────────────────────────────── */
+  var _toastTimer;
+  function toast(msg, tipo){
+    var el = document.getElementById('evToast');
+    el.className = 'toast-' + (tipo || 'ok');
+    el.innerHTML = '<i class="bi bi-' + (tipo === 'err' ? 'x-circle-fill' : 'check-circle-fill') + ' me-2"></i>' + msg;
+    el.style.display = 'block';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function(){ el.style.display = 'none'; }, 3200);
+  }
+
+  /* ── Modal ─────────────────────────────────── */
+  var _modal = new bootstrap.Modal(document.getElementById('pregModal'));
+
+  window.abrirModal = function(pregId, seccion){
+    document.getElementById('mPregId').value    = pregId || '';
+    document.getElementById('mSeccion').value   = seccion;
+    document.getElementById('mSeccionLabel').textContent = SEC_LABELS[seccion] || seccion;
+    document.getElementById('mTexto').value     = '';
+    document.getElementById('mOpciones').value  = '';
+    document.getElementById('mObligatoria').checked = true;
+    document.getElementById('mTipo').value      = 'escala_1_5';
+    onTipoChange('escala_1_5');
+
+    if(pregId){
+      /* Modo edición: rellenar con datos actuales */
+      document.getElementById('modalTitle').innerHTML =
+        '<i class="bi bi-pencil me-2"></i>Editar pregunta';
+      var card = document.getElementById('preg-' + pregId);
+      if(card){
+        document.getElementById('mTexto').value =
+          card.querySelector('.preg-texto').textContent.trim();
+        /* Tipo: leer del chip */
+        var tipoChip = card.querySelector('.tipo-chip');
+        if(tipoChip){
+          var chipTxt = tipoChip.textContent.trim();
+          Object.keys(TIPOS_LABEL).forEach(function(k){
+            if(TIPOS_LABEL[k] === chipTxt)
+              document.getElementById('mTipo').value = k;
+          });
+        }
+        onTipoChange(document.getElementById('mTipo').value);
+        /* Obligatoria */
+        document.getElementById('mObligatoria').checked =
+          !!card.querySelector('.obligatoria');
+        /* Opciones (si aplica) — las cargamos vía atributo data */
+        var opcionesData = card.dataset.opciones;
+        if(opcionesData){
+          try{
+            var arr = JSON.parse(opcionesData);
+            document.getElementById('mOpciones').value = arr.join('\n');
+          }catch(e){}
+        }
+      }
+    } else {
+      document.getElementById('modalTitle').innerHTML =
+        '<i class="bi bi-plus-circle me-2"></i>Agregar pregunta';
+    }
+    _modal.show();
+    setTimeout(function(){ document.getElementById('mTexto').focus(); }, 350);
+  };
+
+  window.onTipoChange = function(val){
+    document.getElementById('opcionesArea').style.display =
+      val === 'multiple' ? '' : 'none';
+    document.getElementById('tipoHint').textContent = HINTS[val] || '';
+  };
+
+  /* ── Guardar (crear o editar) ──────────────── */
+  window.guardarPregunta = function(){
+    var pregId  = document.getElementById('mPregId').value;
+    var seccion = document.getElementById('mSeccion').value;
+    var texto   = document.getElementById('mTexto').value.trim();
+    var tipo    = document.getElementById('mTipo').value;
+    var oblig   = document.getElementById('mObligatoria').checked ? '1' : '';
+    var opciones= document.getElementById('mOpciones').value;
+
+    if(!texto){
+      document.getElementById('mTexto').focus();
+      return toast('El texto de la pregunta es requerido.', 'err');
+    }
+
+    var fd = new FormData();
+    fd.append('texto', texto);
+    fd.append('tipo_respuesta', tipo);
+    fd.append('es_obligatoria', oblig);
+    if(tipo === 'multiple') fd.append('opciones', opciones);
+
+    var url, method = 'POST';
+    if(pregId){
+      url = '/api/preguntas/' + pregId;
+    } else {
+      fd.append('seccion', seccion);
+      url = URL_PREGUNTAS;
+    }
+
+    var btn = document.getElementById('btnGuardarPreg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+
+    fetch(url, { method: method, body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardar pregunta';
+        if(!data.ok) return toast(data.error || 'Error al guardar.', 'err');
+        _modal.hide();
+        if(pregId){
+          actualizarCard(data.pregunta);
+          toast('Pregunta actualizada.', 'ok');
+        } else {
+          agregarCard(data.pregunta, seccion);
+          toast('Pregunta agregada.', 'ok');
+        }
+      })
+      .catch(function(){
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardar pregunta';
+        toast('Error de conexión.', 'err');
+      });
+  };
+
+  /* ── Crear tarjeta HTML de pregunta ────────── */
+  function buildCard(p){
+    var seccion    = p.seccion;
+    var totalSec   = document.querySelectorAll('#list-' + seccion + ' .ev-preg-card').length;
+    var num        = totalSec + 1;
+    var tipoLabel  = TIPOS_LABEL[p.tipo_respuesta] || p.tipo_respuesta;
+    var opcionesJSON = (p.opciones && p.opciones.length)
+                     ? JSON.stringify(p.opciones) : '';
+
+    var actions = EDITABLE ? `
+      <div class="preg-actions">
+        <button class="btn-icon" onclick="moverPregunta(${p.id},'up')" title="Subir">
+          <i class="bi bi-chevron-up"></i></button>
+        <button class="btn-icon" onclick="moverPregunta(${p.id},'down')" title="Bajar">
+          <i class="bi bi-chevron-down"></i></button>
+        <div class="btn-sep"></div>
+        <button class="btn-icon" onclick="abrirModal(${p.id},'${seccion}')" title="Editar">
+          <i class="bi bi-pencil"></i></button>
+        <button class="btn-icon del" onclick="eliminarPregunta(${p.id},'${seccion}')" title="Eliminar">
+          <i class="bi bi-trash3"></i></button>
+      </div>` : '';
+
+    var div = document.createElement('div');
+    div.className   = 'ev-preg-card';
+    div.id          = 'preg-' + p.id;
+    div.dataset.id  = p.id;
+    if(opcionesJSON) div.dataset.opciones = opcionesJSON;
+    div.innerHTML   = `
+      <i class="bi bi-grip-vertical drag-handle" title="Arrastrar para reordenar"></i>
+      <span class="preg-num">${num}</span>
+      <div class="preg-body">
+        <div class="preg-texto">${escHtml(p.texto)}</div>
+        <div class="preg-meta">
+          <span class="preg-chip tipo-chip">
+            <i class="bi bi-ui-checks me-1"></i>${escHtml(tipoLabel)}
+          </span>
+          ${p.es_obligatoria
+            ? '<span class="preg-chip obligatoria"><i class="bi bi-asterisk me-1"></i>Obligatoria</span>'
+            : ''}
+          ${(p.tipo_respuesta === 'multiple' && p.opciones && p.opciones.length)
+            ? `<span class="preg-chip">${p.opciones.length} opciones</span>`
+            : ''}
+        </div>
+      </div>
+      ${actions}`;
+    return div;
+  }
+
+  function escHtml(s){
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function agregarCard(p, seccion){
+    var list  = document.getElementById('list-' + seccion);
+    var empty = document.getElementById('empty-' + seccion);
+    if(empty) empty.remove();
+    list.appendChild(buildCard(p));
+    renumerarSeccion(seccion);
+    actualizarBadge(seccion);
+  }
+
+  function actualizarCard(p){
+    var old = document.getElementById('preg-' + p.id);
+    if(!old) return;
+    var seccion = old.closest('[id^="list-"]').dataset.seccion;
+    var nuevo   = buildCard(p);
+    old.parentNode.replaceChild(nuevo, old);
+    renumerarSeccion(seccion);
+  }
+
+  /* ── Eliminar ───────────────────────────────── */
+  window.eliminarPregunta = function(pid, seccion){
+    if(!confirm('¿Eliminar esta pregunta? Esta acción no se puede deshacer.')) return;
+    fetch('/api/preguntas/' + pid + '/eliminar', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok) return toast(d.error || 'Error al eliminar.', 'err');
+        var card = document.getElementById('preg-' + pid);
+        if(card){
+          card.style.transition = 'opacity .25s';
+          card.style.opacity    = '0';
+          setTimeout(function(){
+            card.remove();
+            renumerarSeccion(seccion);
+            actualizarBadge(seccion);
+            mostrarEmptyHint(seccion);
+          }, 250);
+        }
+        toast('Pregunta eliminada.', 'ok');
+      })
+      .catch(function(){ toast('Error de conexión.', 'err'); });
+  };
+
+  /* ── Mover ↑ ↓ ─────────────────────────────── */
+  window.moverPregunta = function(pid, dir){
+    var fd = new FormData();
+    fd.append('direccion', dir);
+    fetch('/api/preguntas/' + pid + '/mover', { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok)    return toast(d.error || 'Error.', 'err');
+        if(!d.moved) return toast('Ya está en el límite.', 'ok');
+        /* Swap DOM */
+        var card  = document.getElementById('preg-' + pid);
+        var other = document.getElementById('preg-' + d.swapped_with);
+        if(!card || !other) return;
+        var parent = card.parentNode;
+        var cards  = Array.from(parent.querySelectorAll('.ev-preg-card'));
+        var iA = cards.indexOf(card);
+        var iB = cards.indexOf(other);
+        if(dir === 'up'){
+          parent.insertBefore(card, other);
+        } else {
+          parent.insertBefore(other, card);
+        }
+        var seccion = parent.dataset.seccion;
+        renumerarSeccion(seccion);
+      })
+      .catch(function(){ toast('Error de conexión.', 'err'); });
+  };
+
+  /* ── Cambiar estado evaluación ──────────────── */
+  window.cambiarEstado = function(nuevo){
+    var msgs = {
+      publicada: '¿Publicar la evaluación? Podrás revertirla a borrador si necesitas editar.',
+      borrador:  '¿Reabrir en modo borrador? Podrás editar las preguntas nuevamente.',
+      archivada: '¿Archivar la evaluación? Quedará en solo lectura de forma permanente.',
+    };
+    if(!confirm(msgs[nuevo] || '¿Confirmar cambio de estado?')) return;
+
+    var fd = new FormData();
+    fd.append('estado', nuevo);
+    fetch(URL_ESTADO, { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok) return toast(d.error, 'err');
+        toast('Estado actualizado a: ' + d.estado, 'ok');
+        setTimeout(function(){ location.reload(); }, 900);
+      })
+      .catch(function(){ toast('Error de conexión.', 'err'); });
+  };
+
+  /* ── Helpers DOM ────────────────────────────── */
+  function renumerarSeccion(seccion){
+    var cards = document.querySelectorAll('#list-' + seccion + ' .ev-preg-card');
+    cards.forEach(function(c, i){
+      var num = c.querySelector('.preg-num');
+      if(num) num.textContent = i + 1;
+    });
+  }
+
+  function actualizarBadge(seccion){
+    var n     = document.querySelectorAll('#list-' + seccion + ' .ev-preg-card').length;
+    var badge = document.getElementById('badge-' + seccion);
+    if(badge) badge.textContent = n + ' pregunta(s)';
+  }
+
+  function mostrarEmptyHint(seccion){
+    var list = document.getElementById('list-' + seccion);
+    if(!list.querySelector('.ev-preg-card')){
+      var div       = document.createElement('div');
+      div.className = 'ev-empty-hint';
+      div.id        = 'empty-' + seccion;
+      div.innerHTML = '<i class="bi bi-inbox me-1"></i>Sin preguntas — haz clic en "Agregar pregunta"';
+      list.appendChild(div);
+    }
+  }
+
+  /* ── Drag & Drop con SortableJS ─────────────── */
+  if(EDITABLE && typeof Sortable !== 'undefined'){
+    ['tecnica','operativa','conductual','cumplimiento'].forEach(function(sec){
+      var el = document.getElementById('list-' + sec);
+      if(!el) return;
+      Sortable.create(el, {
+        animation:    180,
+        handle:       '.drag-handle',
+        ghostClass:   'sortable-ghost',
+        chosenClass:  'sortable-chosen',
+        onEnd: function(evt){
+          var ids = Array.from(el.querySelectorAll('.ev-preg-card'))
+                        .map(function(c){ return parseInt(c.dataset.id); });
+          fetch(URL_REORDENAR, {
+            method:  'POST',
+            headers: {'Content-Type':'application/json'},
+            body:    JSON.stringify({ seccion: sec, orden: ids }),
+          })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if(d.ok) renumerarSeccion(sec);
+            else     toast('Error al guardar orden.', 'err');
+          })
+          .catch(function(){ toast('Error de conexión.', 'err'); });
+        },
+      });
+    });
+  }
+
+})();
+</script>
+{% endblock %}

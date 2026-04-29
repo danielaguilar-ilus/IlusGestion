@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Usuarios - ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-people me-2" style="color:var(--ilus-red)"></i>Usuarios</h4>
+      <div class="sub">CRUD de usuarios y roles desde MySQL</div>
+    </div>
+    <a href="{{ url_for('new_user') }}" class="btn btn-ilus fw-bold px-3">
+      <i class="bi bi-person-plus me-1"></i>Nuevo usuario
+    </a>
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+  <div class="ilus-card">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-shield-lock me-2"></i>Gestion de acceso</span>
+      <span class="text-muted small fw-normal">{{ users|length }} usuario(s)</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table ilus-table mb-0">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Nombre</th>
+            <th>Rol</th>
+            <th>Estado</th>
+            <th>Actualizado</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <td class="font-monospace">{{ user.username }}</td>
+            <td>{{ user.nombre }}</td>
+            <td>
+              {% if user.role == 'superadmin' %}
+                <span class="ilus-badge" style="background:var(--ilus-black);color:#fff;border:1.5px solid var(--ilus-red);font-size:.68rem;padding:2px 9px;border-radius:50px">
+                  <i class="bi bi-shield-lock-fill me-1"></i>Super Admin
+                </span>
+              {% elif user.role == 'admin' %}
+                <span class="ilus-badge badge-confirmado">Administrador</span>
+              {% elif user.role == 'editor' %}
+                <span class="ilus-badge badge-pendiente">Editor</span>
+              {% elif user.role == 'lector' %}
+                <span class="ilus-badge" style="background:#6c757d;color:#fff;font-size:.7rem;padding:2px 8px;border-radius:50px">Lector</span>
+              {% else %}
+                <span class="ilus-badge" style="background:#aaa;color:#fff;font-size:.7rem;padding:2px 8px;border-radius:50px">{{ user.role }}</span>
+              {% endif %}
+            </td>
+            <td>{% if user.active %}<span class="text-success fw-bold">Activo</span>{% else %}<span class="text-muted">Inactivo</span>{% endif %}</td>
+            <td class="small text-muted">{{ user.updated_at }}</td>
+            <td class="text-center">
+              <div class="d-flex justify-content-center gap-1">
+                <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                {% if current_user.id != user.id %}
+                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteUserModal{{ user.id }}"><i class="bi bi-trash"></i></button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% for user in users %}
+{% if current_user.id != user.id %}
+<div class="modal fade" id="deleteUserModal{{ user.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Eliminar usuario</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Eliminar a <strong>{{ user.nombre }}</strong> ({{ user.username }})?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <form method="post" action="{{ url_for('delete_user', user_id=user.id) }}">
+          <button type="submit" class="btn btn-outline-danger">Eliminar usuario</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endblock %}

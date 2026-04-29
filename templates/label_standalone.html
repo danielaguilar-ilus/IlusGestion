@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+/* ══════════════════════════════════════════════════
+   PAGE — una etiqueta por página, exactamente 150×70mm
+══════════════════════════════════════════════════ */
+@page {
+  size: 150mm 70mm;
+  margin: 0;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  width: 150mm; height: 70mm;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ══════════════════════════════════════════════════
+   LABEL  150mm × 70mm
+══════════════════════════════════════════════════ */
+.label {
+  width: 150mm;
+  height: 70mm;
+  display: flex;
+  background: #fff;
+  border: 1pt solid #000;
+  overflow: hidden;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Cada mitad */
+.half {
+  width: 50%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+.half-a { border-right: 1pt dashed #999; }
+
+/* ══════════════════════════════════════════════════
+   HEADER  14mm
+══════════════════════════════════════════════════ */
+.hdr {
+  height: 14mm;
+  flex-shrink: 0;
+  background: #000;
+  display: flex;
+  align-items: stretch;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Sports Health Solutions */
+.logo-shs {
+  flex: 0 0 40%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1.5mm 2mm 1.5mm 3mm;
+  border-right: 1.5pt solid #2c2c2c;
+}
+.shs-sports, .shs-health {
+  font-size: 9pt;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1.1;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.shs-solutions {
+  font-size: 4.5pt;
+  font-weight: 400;
+  color: #999;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  margin-top: 0.5mm;
+  font-style: italic;
+}
+
+/* ILUS logo */
+.logo-ilus {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1mm 2mm;
+}
+.ilus-logo-img {
+  max-height: 13mm;
+  max-width: 100%;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin-left: 2mm;
+  filter: grayscale(1) brightness(0) invert(1);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ══════════════════════════════════════════════════
+   META  8mm
+══════════════════════════════════════════════════ */
+.meta {
+  height: 8mm;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 2mm;
+  border-bottom: 1.5pt solid #000;
+  background: #fff;
+  font-size: 8pt;
+  font-weight: 700;
+  color: #000;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.meta-left  { display: flex; align-items: center; gap: 1.5mm; }
+.meta-right { display: flex; align-items: center; gap: 1.5mm; }
+.meta svg   { width: 4mm !important; height: 4mm !important; flex-shrink: 0; }
+.meta-left::after {
+  content: '|';
+  font-size: 12pt;
+  font-weight: 300;
+  color: #bbb;
+  margin: 0 1.5mm;
+  line-height: 1;
+}
+.meta-right > span::after {
+  content: '|';
+  font-size: 12pt;
+  font-weight: 300;
+  color: #bbb;
+  margin: 0 1.5mm;
+  line-height: 1;
+}
+
+/* ══════════════════════════════════════════════════
+   NOMBRE PRODUCTO  9mm
+══════════════════════════════════════════════════ */
+.pname {
+  height: 9mm;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 2mm;
+  border-bottom: 1.5pt solid #000;
+  background: #fff;
+  overflow: hidden;
+}
+.pname-txt {
+  font-size: 9pt;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: #000;
+  letter-spacing: .3px;
+  line-height: 1.1;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ══════════════════════════════════════════════════
+   BODY  (flex:1 — ocupa el resto)
+══════════════════════════════════════════════════ */
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* ── Dimensiones ── */
+.dims {
+  flex: 0 0 50%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3mm;
+  padding: 1.5mm 1.5mm 1.5mm 0;
+  margin-left: -5mm;
+  border-right: 1.5pt solid #000;
+  overflow: hidden;
+}
+.dim-row {
+  display: flex;
+  align-items: center;
+  position: relative;
+  gap: 1.5mm;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.dim-ico {
+  width: 4mm;
+  text-align: center;
+  font-size: 9pt;
+  flex-shrink: 0;
+  color: #000;
+  line-height: 1.3;
+  margin-left: 3mm;
+}
+.dim-lbl {
+  font-size: 6.5pt;
+  font-weight: 700;
+  color: #000;
+  min-width: 14mm;
+  line-height: 1.3;
+}
+.dim-val {
+  position: absolute;
+  right: 1mm;
+  font-size: 7pt;
+  font-weight: 900;
+  color: #000;
+  line-height: 1.3;
+}
+
+/* ── Columna código ── */
+.code-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1mm 2mm 1mm 0;
+  margin-left: -2mm;
+  gap: 0;
+  overflow: hidden;
+}
+.code-col svg {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ── Caja SKU ── */
+.sku-box {
+  width: 100%;
+  flex-shrink: 0;
+  background: #000;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 7mm;
+  padding: 0.5mm 1.5mm 0.5mm 1mm;
+  margin-left: -4px;
+  margin-top: 1.3mm;
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.sku-lbl {
+  display: block;
+  font-size: 0;
+  line-height: 0;
+}
+.sku-lbl::before {
+  content: 'CÓDIGO / SKU';
+  font-size: 3.5pt;
+  font-weight: 700;
+  color: #aaa;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  line-height: 1.4;
+  text-align: right;
+  display: block;
+}
+.sku-val {
+  display: block;
+  font-size: 8pt;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+  color: #fff;
+  text-align: right;
+  word-break: break-all;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* ── Fecha ── */
+.fecha {
+  font-size: 3.5pt;
+  font-weight: 600;
+  color: #555;
+  text-align: right;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0.5mm 0.8mm 0 0;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  line-height: 1.2;
+}
+
+/* ── Footer franjas ── */
+.lfoot {
+  height: 5mm;
+  flex-shrink: 0;
+  border-top: 1.5pt solid #000;
+  background: repeating-linear-gradient(
+    -45deg,
+    #000 0px, #000 4pt,
+    #fff 4pt, #fff 8pt
+  );
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+</style>
+</head>
+<body>
+
+{% for b in bultos %}
+{% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
+{% for copy in range(1, copies + 1) %}
+
+<div class="label">
+  {% for cara in ['A', 'B'] %}
+  <div class="half {% if cara == 'A' %}half-a{% endif %}">
+
+    <!-- HEADER -->
+    <div class="hdr">
+      <div class="logo-shs">
+        <span class="shs-sports">SPORTS</span>
+        <span class="shs-health">HEALTH</span>
+        <span class="shs-solutions">SOLUTIONS</span>
+      </div>
+      <div class="logo-ilus">
+        {% if logo_url %}
+        <img src="{{ logo_url }}" alt="ILUS" class="ilus-logo-img">
+        {% else %}
+        <span style="font-size:16pt;font-weight:900;color:#fff;letter-spacing:1px">ILUS.</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- META -->
+    <div class="meta">
+      <div class="meta-left">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        <strong>BULTO {{ b.bulto_num }} DE {{ total_bultos }}</strong>
+      </div>
+      <div class="meta-right">
+        <span>PESO BRUTO</span>
+        <strong>{{ "%.0f"|format(b.peso) }} KG</strong>
+      </div>
+    </div>
+
+    <!-- NOMBRE -->
+    <div class="pname">
+      <span class="pname-txt">{{ product.nombre }}</span>
+    </div>
+
+    <!-- BODY -->
+    <div class="body">
+
+      <!-- Dimensiones -->
+      <div class="dims">
+        <div class="dim-row">
+          <span class="dim-ico">&#8596;</span>
+          <span class="dim-lbl">LARGO:</span>
+          <span class="dim-val">{{ "%.0f"|format(b.largo) }} cm</span>
+        </div>
+        <div class="dim-row">
+          <span class="dim-ico">&#8597;</span>
+          <span class="dim-lbl">ALTO:</span>
+          <span class="dim-val">{{ "%.0f"|format(b.alto) }} cm</span>
+        </div>
+        <div class="dim-row">
+          <span class="dim-ico">&#9635;</span>
+          <span class="dim-lbl">ANCHO:</span>
+          <span class="dim-val">{{ "%.0f"|format(b.ancho) }} cm</span>
+        </div>
+        <div class="dim-row">
+          <span class="dim-ico">&#128274;</span>
+          <span class="dim-lbl">PESO VOL.:</span>
+          <span class="dim-val">{{ "%.2f"|format(b.peso_vol) }} Vol</span>
+        </div>
+      </div>
+
+      <!-- Barcode + SKU + Fecha -->
+      <div class="code-col">
+        <svg id="bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}"></svg>
+        <div class="sku-box">
+          <span class="sku-lbl">SKU</span>
+          <span class="sku-val">{{ product.sku }}</span>
+        </div>
+        <div class="fecha">{{ fecha }}</div>
+      </div>
+
+    </div><!-- /body -->
+
+    <footer class="lfoot"></footer>
+
+  </div><!-- /half -->
+  {% endfor %}
+</div><!-- /label -->
+
+{% endfor %}
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script>
+(function(){
+  var SKU = {{ product.sku | tojson }};
+
+  function barW(s){
+    if(s.length > 20) return 1.0;
+    if(s.length > 12) return 1.2;
+    return 1.4;
+  }
+
+  var bw = barW(SKU);
+
+  {% for b in bultos %}
+  {% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
+  {% for copy in range(1, copies + 1) %}
+  {% for cara in ['A','B'] %}
+  (function(){
+    var id  = '#bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}';
+    var el  = document.querySelector(id);
+    if(!el) return;
+    try {
+      JsBarcode(id, SKU, {
+        format:       'CODE128',
+        width:        bw,
+        height:       52,
+        displayValue: false,
+        margin:       1,
+        background:   '#ffffff',
+        lineColor:    '#000000'
+      });
+      /* Auto-fit si desborda */
+      var parent = el.closest('.code-col');
+      var avail  = parent ? parent.offsetWidth - 6 : 100;
+      var tries  = 0;
+      while(el.getBoundingClientRect().width > avail && bw > 0.7 && tries < 15){
+        bw -= 0.1;
+        JsBarcode(id, SKU, {
+          format:'CODE128', width:bw, height:52,
+          displayValue:false, margin:1,
+          background:'#ffffff', lineColor:'#000000'
+        });
+        tries++;
+      }
+    } catch(e){ console.warn('Barcode:', e); }
+  })();
+  {% endfor %}
+  {% endfor %}
+  {% endfor %}
+})();
+</script>
+
+</body>
+</html>

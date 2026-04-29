@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{% if user %}Editar usuario{% else %}Nuevo usuario{% endif %} - ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center gap-3">
+    <a href="{{ url_for('users_index') }}" class="btn btn-sm btn-dark-ilus no-print">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4><i class="bi bi-person-gear me-2" style="color:var(--ilus-red)"></i>
+        {% if user %}Editar usuario{% else %}Nuevo usuario{% endif %}
+      </h4>
+      <div class="sub">Define acceso, rol y estado del usuario</div>
+    </div>
+  </div>
+</div>
+
+{% if errors %}
+<div class="ilus-info mb-3" style="border-left-color:#990000;background:#fff5f5">
+  <strong><i class="bi bi-x-circle-fill me-2" style="color:var(--ilus-red)"></i>Corrige estos errores:</strong>
+  <ul class="mb-0 mt-1 ps-3">
+    {% for e in errors %}<li>{{ e|safe }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" novalidate>
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-person-vcard me-2"></i>Datos del usuario</span>
+    </div>
+    <div class="card-body p-3">
+      <div class="row g-3">
+
+        {# ── Correo electrónico ── #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold small">
+            Correo electrónico <span style="color:var(--ilus-red)">*</span>
+          </label>
+          <input type="email" name="username" class="form-control"
+                 value="{{ (fd.username or user.username) if user else fd.get('username','') }}"
+                 placeholder="nombre@empresa.cl"
+                 autocomplete="email"
+                 required
+                 pattern="[^@\s]+@[^@\s]+\.[^@\s]+"
+                 title="Ingresa un correo electrónico válido">
+          <div class="form-text">Se usa para iniciar sesión</div>
+        </div>
+
+        {# ── Nombre y apellido ── #}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold small">
+            Nombre y apellido <span style="color:var(--ilus-red)">*</span>
+          </label>
+          <input type="text" name="nombre" class="form-control"
+                 value="{{ (fd.nombre or user.nombre) if user else fd.get('nombre','') }}"
+                 placeholder="Ej: María González"
+                 required>
+        </div>
+
+        {# ── Clave ── #}
+        <div class="col-md-4">
+          <label class="form-label fw-semibold small">
+            Clave {% if user %}<span class="text-muted">(dejar vacío para no cambiar)</span>{% else %}<span style="color:var(--ilus-red)">*</span>{% endif %}
+          </label>
+          <div class="input-group">
+            <input type="password" name="password" id="passwordField" class="form-control"
+                   {% if not user %}required minlength="8"{% else %}minlength="8"{% endif %}
+                   placeholder="Mín. 8 caracteres">
+            <button type="button" class="btn btn-outline-secondary" id="togglePwd" tabindex="-1">
+              <i class="bi bi-eye" id="eyeIcon"></i>
+            </button>
+          </div>
+        </div>
+
+        {# ── Rol ── #}
+        <div class="col-md-4">
+          <label class="form-label fw-semibold small">Rol</label>
+          {% set current_role = (fd.role or user.role) if user else fd.get('role','editor') %}
+          <select name="role" class="form-select">
+            <option value="lector"     {% if current_role == 'lector'     %}selected{% endif %}>Lector (solo visualiza)</option>
+            <option value="editor"     {% if current_role == 'editor'     %}selected{% endif %}>Editor (crea y edita)</option>
+            <option value="admin"      {% if current_role == 'admin'      %}selected{% endif %}>Administrador</option>
+            {% if permissions.superadmin %}
+            <option value="superadmin" {% if current_role == 'superadmin' %}selected{% endif %}>⭐ Super Administrador</option>
+            {% endif %}
+          </select>
+        </div>
+
+        {# ── Estado ── #}
+        <div class="col-md-4">
+          <label class="form-label fw-semibold small">Estado</label>
+          {% set active_val = (fd.active or (1 if user and user.active else 0)) if user else fd.get('active','1') %}
+          <select name="active" class="form-select">
+            <option value="1" {% if active_val|string == '1' %}selected{% endif %}>Activo</option>
+            <option value="0" {% if active_val|string == '0' %}selected{% endif %}>Inactivo</option>
+          </select>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 justify-content-end">
+    <a href="{{ url_for('users_index') }}" class="btn btn-outline-secondary px-4">Cancelar</a>
+    <button type="submit" class="btn btn-ilus px-5 fw-bold">
+      <i class="bi bi-floppy2 me-1"></i>{% if user %}Guardar cambios{% else %}Crear usuario{% endif %}
+    </button>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Toggle mostrar/ocultar clave
+document.getElementById('togglePwd').addEventListener('click', function () {
+  var f = document.getElementById('passwordField');
+  var e = document.getElementById('eyeIcon');
+  if (f.type === 'password') {
+    f.type = 'text';
+    e.className = 'bi bi-eye-slash';
+  } else {
+    f.type = 'password';
+    e.className = 'bi bi-eye';
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}{{ c.nombre_completo }} — Ficha{% endblock %}
+
+{% block content %}
+<style>
+.ficha-hero {
+  background: var(--ilus-black);
+  border-bottom: 3px solid var(--ilus-red);
+  padding: 24px 28px 20px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+.ficha-avatar {
+  width: 84px; height: 84px; border-radius: 50%;
+  object-fit: cover; border: 3px solid rgba(255,255,255,.2);
+  flex-shrink: 0;
+}
+.ficha-avatar-placeholder {
+  width: 84px; height: 84px; border-radius: 50%;
+  background: #CC0000; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2.2rem; font-weight: 900; flex-shrink: 0;
+}
+.ficha-hero-info { flex: 1; min-width: 0; }
+.ficha-nombre { font-size: 1.35rem; font-weight: 900; color: #fff; margin-bottom: 2px; }
+.ficha-cargo  { font-size: .88rem; color: #bbb; margin-bottom: 4px; }
+.ficha-area   { font-size: .78rem; color: #888; }
+
+.ficha-kpi-bar {
+  display: flex; gap: 0; flex-wrap: wrap;
+  border-bottom: 1.5px solid #e0e0e0;
+  background: #fff;
+}
+.ficha-kpi {
+  flex: 1; min-width: 120px;
+  text-align: center; padding: 14px 8px;
+  border-right: 1px solid #eee;
+}
+.ficha-kpi:last-child { border-right: none; }
+.ficha-kpi-num   { font-size: 1.5rem; font-weight: 900; line-height: 1; }
+.ficha-kpi-label { font-size: .62rem; text-transform: uppercase;
+                   letter-spacing: 1px; color: #888; margin-top: 3px; }
+
+.ficha-section { padding: 0 28px 24px; }
+.ficha-field-label {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.2px; color: #999; margin-bottom: 2px;
+}
+.ficha-field-val {
+  font-size: .9rem; font-weight: 600; color: #222;
+  padding: 6px 0; border-bottom: 1px solid #f0f0f0;
+  min-height: 32px;
+}
+.ficha-field-val.empty { color: #bbb; font-weight: 400; font-style: italic; }
+
+.estado-dot {
+  display: inline-block;
+  width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 5px;
+}
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <a href="{{ url_for('colab_index') }}" class="btn btn-sm btn-dark-ilus flex-shrink-0">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div>
+        <h4 class="mb-0">Ficha de colaborador</h4>
+        <div class="sub">{{ c.nombre_completo }}</div>
+      </div>
+    </div>
+    {% if permissions.hrm %}
+    <a href="{{ url_for('colab_editar', cid=c.id) }}" class="btn btn-ilus fw-bold">
+      <i class="bi bi-pencil me-1"></i>Editar ficha
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="px-2 px-md-0" style="max-width:860px">
+<div class="ilus-card overflow-hidden">
+
+  {# ══ HERO ══ #}
+  <div class="ficha-hero">
+    {% if c.foto_filename %}
+    <img src="{{ url_for('static', filename='uploads/colaboradores/' + c.foto_filename) }}"
+         class="ficha-avatar" alt="{{ c.nombre_completo }}">
+    {% else %}
+    <div class="ficha-avatar-placeholder">{{ c.nombre_completo[0].upper() }}</div>
+    {% endif %}
+
+    <div class="ficha-hero-info">
+      <div class="ficha-nombre">{{ c.nombre_completo }}</div>
+      <div class="ficha-cargo">
+        <i class="bi bi-briefcase me-1" style="color:var(--ilus-red)"></i>
+        {{ c.cargo_nombre or 'Sin cargo asignado' }}
+      </div>
+      <div class="ficha-area">
+        <i class="bi bi-building me-1"></i>{{ c.area_nombre or 'Sin área asignada' }}
+      </div>
+    </div>
+
+    {# Estado badge #}
+    <div class="ms-auto">
+      {% if c.estado == 'activo' %}
+        <span class="ilus-badge badge-confirmado" style="font-size:.8rem;padding:5px 13px">
+          <span class="estado-dot" style="background:#28a745"></span>Activo
+        </span>
+      {% elif c.estado == 'licencia' %}
+        <span class="ilus-badge badge-pendiente" style="font-size:.8rem;padding:5px 13px">
+          <span class="estado-dot" style="background:#ffd040"></span>Con licencia
+        </span>
+      {% else %}
+        <span class="ilus-badge" style="font-size:.8rem;padding:5px 13px;background:#e9ecef;color:#6c757d;border:1px solid #dee2e6">
+          <span class="estado-dot" style="background:#6c757d"></span>Inactivo
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ══ KPIs rápidos ══ #}
+  <div class="ficha-kpi-bar">
+    <div class="ficha-kpi">
+      <div class="ficha-kpi-num" style="color:var(--ilus-black)">0</div>
+      <div class="ficha-kpi-label">Evaluaciones</div>
+    </div>
+    <div class="ficha-kpi">
+      <div class="ficha-kpi-num" style="color:#856404">0</div>
+      <div class="ficha-kpi-label">Llamados</div>
+    </div>
+    <div class="ficha-kpi">
+      <div class="ficha-kpi-num" style="color:#6c757d">0</div>
+      <div class="ficha-kpi-label">Documentos</div>
+    </div>
+    <div class="ficha-kpi">
+      <div class="ficha-kpi-num" style="color:var(--ilus-red)">—</div>
+      <div class="ficha-kpi-label">Última métrica</div>
+    </div>
+  </div>
+
+  {# ══ PESTAÑAS ══ #}
+  <ul class="nav nav-tabs px-3 pt-2" style="border-bottom:2px solid #eee">
+    <li class="nav-item">
+      <button class="nav-link active fw-semibold" id="tab-info" onclick="showTab('info')">
+        <i class="bi bi-person me-1"></i>Perfil
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" id="tab-hist" onclick="showTab('hist')">
+        <i class="bi bi-clock-history me-1"></i>Historial
+        <span class="badge bg-secondary ms-1" style="font-size:.6rem">Próx.</span>
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" id="tab-docs" onclick="showTab('docs')">
+        <i class="bi bi-file-earmark-text me-1"></i>Documentos
+        <span class="badge bg-secondary ms-1" style="font-size:.6rem">Próx.</span>
+      </button>
+    </li>
+  </ul>
+
+  {# ══ TAB: PERFIL ══ #}
+  <div id="pane-info" class="ficha-section pt-3">
+    <div class="row g-4">
+
+      <div class="col-md-6">
+        <div class="ficha-field-label">RUT / Identificación</div>
+        <div class="ficha-field-val {% if not c.rut %}empty{% endif %}">
+          {{ c.rut or 'Sin RUT registrado' }}
+        </div>
+
+        <div class="ficha-field-label mt-3">Email</div>
+        <div class="ficha-field-val {% if not c.email %}empty{% endif %}">
+          {% if c.email %}
+          <a href="mailto:{{ c.email }}" class="text-decoration-none">{{ c.email }}</a>
+          {% else %}Sin email registrado{% endif %}
+        </div>
+
+        <div class="ficha-field-label mt-3">Teléfono</div>
+        <div class="ficha-field-val {% if not c.telefono %}empty{% endif %}">
+          {% if c.telefono %}
+          <a href="tel:{{ c.telefono }}" class="text-decoration-none">{{ c.telefono }}</a>
+          {% else %}Sin teléfono registrado{% endif %}
+        </div>
+
+        <div class="ficha-field-label mt-3">Género</div>
+        <div class="ficha-field-val">{{ generos.get(c.genero, c.genero) }}</div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="ficha-field-label">Dirección</div>
+        <div class="ficha-field-val {% if not c.direccion %}empty{% endif %}">
+          {{ c.direccion or 'Sin dirección registrada' }}
+        </div>
+
+        <div class="ficha-field-label mt-3">Región</div>
+        <div class="ficha-field-val {% if not c.region %}empty{% endif %}">
+          {{ c.region or '—' }}
+        </div>
+
+        <div class="ficha-field-label mt-3">Comuna</div>
+        <div class="ficha-field-val {% if not c.comuna %}empty{% endif %}">
+          {{ c.comuna or '—' }}
+        </div>
+
+        <div class="ficha-field-label mt-3">Fecha de ingreso</div>
+        <div class="ficha-field-val {% if not c.fecha_ingreso %}empty{% endif %}">
+          {% if c.fecha_ingreso %}
+          <i class="bi bi-calendar3 me-1 text-muted"></i>
+          {{ c.fecha_ingreso | string | truncate(10, False, '') }}
+          {% else %}Sin fecha registrada{% endif %}
+        </div>
+
+        {% if c.cargo_descriptor %}
+        <div class="ficha-field-label mt-3">Descriptor del cargo</div>
+        <div class="ficha-field-val" style="white-space:pre-line;font-weight:400;font-size:.83rem;color:#444">
+          {{ c.cargo_descriptor }}
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+
+    {# Auditoría #}
+    <div class="mt-4 pt-3" style="border-top:1px solid #f0f0f0;font-size:.73rem;color:#bbb">
+      <i class="bi bi-person me-1"></i>Creado por: <strong>{{ c.created_by or '—' }}</strong>
+      &nbsp;·&nbsp;
+      <i class="bi bi-pencil me-1"></i>Actualizado por: <strong>{{ c.updated_by or '—' }}</strong>
+    </div>
+  </div>
+
+  {# ══ TAB: HISTORIAL ══ #}
+  <div id="pane-hist" class="ficha-section pt-3" style="display:none">
+    <div class="empty-state py-4">
+      <div class="empty-icon">📋</div>
+      <p class="text-muted">El módulo de historial (evaluaciones y llamados de atención)<br>estará disponible próximamente.</p>
+    </div>
+  </div>
+
+  {# ══ TAB: DOCUMENTOS ══ #}
+  <div id="pane-docs" class="ficha-section pt-3" style="display:none">
+    <div class="empty-state py-4">
+      <div class="empty-icon">📁</div>
+      <p class="text-muted">El módulo de documentos (contratos, anexos y registros)<br>estará disponible próximamente.</p>
+    </div>
+  </div>
+
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(tab){
+  ['info','hist','docs'].forEach(function(t){
+    document.getElementById('pane-' + t).style.display = (t === tab) ? '' : 'none';
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+  });
+}
+</script>
+{% endblock %}

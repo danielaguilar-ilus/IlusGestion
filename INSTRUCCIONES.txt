@@ -1,0 +1,50 @@
+====================================================
+  ILUS Sport and Health — Sistema de Etiquetas
+====================================================
+
+REQUISITO PREVIO: Python
+------------------------
+1. Ve a https://www.python.org/downloads/
+2. Descarga la versión más reciente (3.12 o superior)
+3. Ejecuta el instalador y MARCA la casilla:
+   ✅ "Add Python to PATH"  (¡importante!)
+4. Haz clic en "Install Now"
+
+INICIAR LA APLICACIÓN
+---------------------
+1. Haz doble clic en "start.bat"
+   - La primera vez instalará Flask automáticamente
+   - Se abrirá el navegador en http://localhost:5000
+2. Para detener: presiona Ctrl+C en la ventana negra
+
+USO DEL SISTEMA
+---------------
+• Nuevo Producto → ingresa SKU, nombre, estado y agrega bultos
+• Cada bulto tiene: Largo, Ancho, Alto y Peso
+  (El Peso Volumétrico se calcula automáticamente)
+• Un SKU ya creado NO puede duplicarse (validación automática)
+• No se puede imprimir si un bulto no tiene medidas completas
+
+ETIQUETAS E IMPRESIÓN
+----------------------
+• Vista previa → botón "Imprimir Etiquetas" en el producto
+• Se generan 2 copias de cada etiqueta
+• PEGADO EN ESQUINA: dobla la etiqueta por la mitad y pégala
+  en la arista del bulto → 1 etiqueta cubre 2 caras
+  Con 2 etiquetas en esquinas opuestas → 4 caras cubiertas
+
+IMPRESORA ZEBRA (ZPL)
+----------------------
+• En el detalle de cada bulto → botón "ZPL" para descargar
+• El archivo .zpl se envía directamente a la impresora Zebra
+• Comando desde CMD (reemplaza IP y archivo):
+  copy /b etiqueta.zpl \\<IP_IMPRESORA>\share
+• O usar Zebra Browser Print (extensión Chrome)
+
+BASE DE DATOS
+-------------
+• Se crea automáticamente en "etiquetas.db" (SQLite)
+• No requiere configuración adicional
+• Haz respaldo copiando ese archivo
+
+====================================================

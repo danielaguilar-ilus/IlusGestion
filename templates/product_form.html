@@ -1,0 +1,627 @@
+{% extends "base.html" %}
+{% block title %}{% if product %}Editar {{ product.sku }}{% else %}Nuevo Producto{% endif %} - ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center gap-3">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-dark-ilus no-print">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4><i class="bi bi-{% if product %}pencil{% else %}plus-circle{% endif %} me-2" style="color:var(--ilus-red)"></i>
+        {% if product %}Editar producto{% else %}Nuevo producto{% endif %}
+      </h4>
+      <div class="sub">
+        {% if product %}{{ product.sku }} — {{ product.nombre }}
+        {% else %}Busca en el ERP o ingresa SKU y nombre manualmente{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if errors %}
+<div class="ilus-info mb-3" style="border-left-color:#990000;background:#fff5f5">
+  <strong><i class="bi bi-x-circle-fill me-2" style="color:var(--ilus-red)"></i>Corrige estos errores:</strong>
+  <ul class="mb-0 mt-1 ps-3">
+    {% for e in errors %}<li>{{ e|safe }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" id="productForm" novalidate>
+
+  {# ══ BUSCADOR ERP (solo en crear) ══════════════════════════════════════ #}
+  {% if not product %}
+  <div class="ilus-card mb-3" id="searchCard" style="overflow:visible">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-search me-2"></i>Buscar en el ERP</span>
+      <span class="text-muted small fw-normal">Selecciona un producto para completar los campos</span>
+    </div>
+    <div class="p-3" style="overflow:visible">
+      <div class="typeahead-wrapper" style="position:relative">
+        {# Input de búsqueda #}
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0" id="searchIconWrap">
+            <i class="bi bi-search text-muted" id="searchIcon"></i>
+          </span>
+          <input type="text"
+                 id="productSearchInput"
+                 class="form-control border-start-0 ps-0"
+                 placeholder="Escribe nombre o SKU del producto…"
+                 autocomplete="off"
+                 spellcheck="false">
+          <button type="button" class="btn btn-outline-secondary d-none" id="clearSearchBtn" title="Limpiar">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        {# Dropdown de resultados #}
+        <div id="searchDropdown"
+             role="listbox"
+             style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;
+                    z-index:500;background:#fff;border:1px solid #ccc;
+                    border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.16);
+                    max-height:420px;overflow-y:auto">
+        </div>
+      </div>
+
+      {# Chip de selección actual #}
+      <div id="selectedChip" class="d-none mt-2 d-flex align-items-center gap-2 flex-wrap">
+        <span class="badge rounded-pill" style="background:var(--ilus-red);font-size:.8rem;padding:5px 10px">
+          <i class="bi bi-check-circle me-1"></i>
+          <span id="chipText"></span>
+        </span>
+        <span class="text-muted small">Puedes ajustar los campos a continuación antes de guardar.</span>
+      </div>
+
+      <div class="form-text mt-1">
+        <i class="bi bi-info-circle me-1 text-muted"></i>
+        La búsqueda cubre la base de datos ERP. También puedes escribir SKU y nombre manualmente.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ══ DATOS DEL PRODUCTO ═════════════════════════════════════════════════ #}
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-box-seam me-2"></i>Datos del producto</span>
+    </div>
+    <div class="card-body p-3">
+      <div class="row g-3">
+
+        {# SKU #}
+        <div class="col-md-3">
+          <label class="form-label fw-semibold small">
+            SKU <span style="color:var(--ilus-red)">*</span>
+          </label>
+          <input type="text"
+                 name="sku"
+                 id="skuInput"
+                 required
+                 class="form-control font-monospace text-uppercase"
+                 value="{{ (fd.sku or product.sku) if product else fd.get('sku','') }}"
+                 placeholder="Ej: 1121100987"
+                 {% if product %}readonly style="background:#f8f8f8"{% endif %}>
+          <div class="form-text">
+            {% if product %}
+              <i class="bi bi-lock-fill me-1 text-muted"></i>El SKU no puede cambiarse
+            {% else %}
+              Identificador único del producto
+            {% endif %}
+          </div>
+        </div>
+
+        {# Nombre #}
+        <div class="col-md-5">
+          <label class="form-label fw-semibold small">
+            Nombre / descripción <span style="color:var(--ilus-red)">*</span>
+          </label>
+          <input type="text"
+                 name="nombre"
+                 id="nombreInput"
+                 required
+                 class="form-control"
+                 value="{{ (fd.nombre or product.nombre) if product else fd.get('nombre','') }}"
+                 placeholder="Ej: Gymleco - Seated Row 10 Series">
+        </div>
+
+        {# Estado #}
+        <div class="col-md-2">
+          <label class="form-label fw-semibold small">Estado</label>
+          <select name="estado" class="form-select">
+            {% set cur = (fd.estado or product.estado) if product else fd.get('estado','Confirmado') %}
+            <option value="Pendiente"  {% if cur == 'Pendiente'  %}selected{% endif %}>Pendiente</option>
+            <option value="Confirmado" {% if cur == 'Confirmado' %}selected{% endif %}>Confirmado</option>
+            <option value="Impreso"    {% if cur == 'Impreso'    %}selected{% endif %}>Impreso</option>
+          </select>
+        </div>
+
+        {# Código (readonly, auto-incremental) #}
+        <div class="col-md-2">
+          <label class="form-label fw-semibold small">Código de impresión</label>
+          <input type="text"
+                 class="form-control font-monospace"
+                 value="{{ product.codigo if product else (auto_codigo or '—') }}"
+                 readonly
+                 style="background:#f0f0f0;cursor:default"
+                 tabindex="-1">
+          <div class="form-text">
+            <i class="bi bi-lock-fill me-1" style="color:#aaa"></i>
+            {% if product %}Asignado al crear{% else %}Se asignará al guardar{% endif %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {# ══ BULTOS ════════════════════════════════════════════════════════════= #}
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span>
+        <i class="bi bi-boxes me-2"></i>Bultos
+        <span id="bultoCountBadge" class="badge rounded-pill ms-1">0</span>
+      </span>
+      <div class="d-flex gap-2 align-items-center">
+        <span class="text-muted small fw-normal d-none d-md-inline">
+          Peso Vol = L × An × Al / 4000
+        </span>
+        <button type="button" class="btn btn-ilus btn-sm fw-bold" onclick="addBultoRow()">
+          <i class="bi bi-plus-lg me-1"></i>Agregar bulto
+        </button>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table mb-0" id="bultosTable">
+        <thead style="background:#222;color:#fff">
+          <tr>
+            <th class="text-center px-3" style="width:56px">N°</th>
+            <th>Largo (cm)</th>
+            <th>Ancho (cm)</th>
+            <th>Alto (cm)</th>
+            <th>Peso (kg)</th>
+            <th class="text-end pe-3">Peso Vol</th>
+            <th style="width:48px"></th>
+          </tr>
+        </thead>
+        <tbody id="bultosBody"></tbody>
+        <tfoot>
+          <tr id="totalsRow" style="display:none;background:#f7f7f7;border-top:2px solid #111">
+            <td colspan="3" class="text-end text-muted small pe-2 py-2">TOTALES</td>
+            <td></td>
+            <td class="fw-bold py-2" id="totalPeso">—</td>
+            <td class="fw-bold text-end pe-3 py-2" id="totalPV" style="color:var(--ilus-red)">—</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div id="emptyBultos" class="text-center text-muted py-5">
+      <div style="font-size:2.5rem;opacity:.3"><i class="bi bi-boxes"></i></div>
+      <div class="mt-2">Haz clic en <strong>Agregar bulto</strong> para ingresar las medidas</div>
+    </div>
+  </div>
+
+  {# ══ ACCIONES ══════════════════════════════════════════════════════════ #}
+  <div class="d-flex gap-2 justify-content-between mb-3 flex-wrap">
+    <div class="d-flex gap-2">
+      {% if product and permissions.delete %}
+      <button type="button" class="btn btn-outline-danger"
+              data-bs-toggle="modal" data-bs-target="#deleteModal"
+              title="Eliminar producto">
+        <i class="bi bi-trash me-1"></i>Eliminar
+      </button>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('index') }}" class="btn btn-outline-secondary px-4">Cancelar</a>
+      <button type="submit" class="btn btn-ilus px-5 fw-bold">
+        <i class="bi bi-floppy2 me-1"></i>
+        {% if product %}Guardar cambios{% else %}Crear producto{% endif %}
+      </button>
+    </div>
+  </div>
+</form>
+
+{# Modal eliminar — solo en edición, solo admin #}
+{% if product and permissions.delete %}
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#8b0000;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Eliminar producto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger py-2 mb-3">
+          <strong>Esta acción es permanente e irreversible.</strong><br>
+          Se eliminará el producto, todos sus bultos y fotos.
+        </div>
+        <p>Para confirmar, escribe el SKU <strong>{{ product.sku }}</strong>:</p>
+        <form method="post" action="{{ url_for('delete_product', pid=product.id) }}" id="deleteFormEdit">
+          <input type="text" id="confirmSkuEdit" name="confirm_sku"
+                 class="form-control font-monospace text-uppercase mb-3"
+                 placeholder="{{ product.sku }}" autocomplete="off">
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-danger fw-bold" id="confirmDeleteEdit" disabled>
+              <i class="bi bi-trash me-1"></i>Eliminar definitivamente
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ══ FOTOS (solo en edición) ════════════════════════════════════════════ #}
+{% if product and permissions.edit %}
+{% set can_add   = (photos is defined and photos|length < 2) or (photos is not defined) %}
+{% set photo_list = photos if photos is defined else [] %}
+<div class="ilus-card mt-1 mb-4">
+  <div class="ilus-card-header">
+    <span><i class="bi bi-images me-2"></i>Fotos del producto
+      <span class="badge bg-secondary ms-1">{{ photo_list|length }}/2</span>
+    </span>
+    <span class="text-muted small fw-normal">Se guardan al seleccionarlas</span>
+  </div>
+  <div class="photos-grid">
+    {% for ph in photo_list %}
+    <div class="photo-card">
+      <a href="{{ url_for('static', filename='uploads/' ~ ph.filename) }}" target="_blank" class="photo-preview-btn">
+        <img src="{{ url_for('static', filename='uploads/' ~ ph.filename) }}"
+             alt="Foto {{ loop.index }}" loading="lazy">
+      </a>
+      {% if permissions.delete %}
+      <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}"
+            onsubmit="return confirm('¿Eliminar esta foto?')">
+        <button type="submit" class="photo-delete-btn" title="Eliminar foto">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if can_add %}
+    <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
+          enctype="multipart/form-data" id="photoFormEdit">
+      <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
+             style="min-height:120px" for="photoInputEdit">
+        <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
+        <div class="up-text">
+          Agregar foto<br>
+          <span style="color:#bbb;font-size:.7rem">JPG, PNG, WEBP · máx. 2</span>
+        </div>
+        <input type="file" name="photo" id="photoInputEdit" accept="image/*"
+               onchange="document.getElementById('photoFormEdit').submit()">
+      </label>
+    </form>
+    {% else %}
+    <div class="d-flex flex-column align-items-center justify-content-center"
+         style="min-height:120px;border:2px dashed #ddd;border-radius:6px;background:#fafafa">
+      <i class="bi bi-check-circle text-success fs-4 mb-1"></i>
+      <div class="small text-muted">Límite de 2 fotos alcanzado</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Modal eliminar (edición, admin) ─────────────────────── */
+{% if product and permissions.delete %}
+(function() {
+  var skuReal = {{ product.sku | tojson }};
+  var inp = document.getElementById('confirmSkuEdit');
+  var btn = document.getElementById('confirmDeleteEdit');
+  if (inp && btn) {
+    inp.addEventListener('input', function() {
+      btn.disabled = (inp.value.trim().toUpperCase() !== skuReal);
+    });
+    document.getElementById('deleteModal').addEventListener('hidden.bs.modal', function() {
+      inp.value = '';
+      btn.disabled = true;
+    });
+  }
+})();
+{% endif %}
+
+/* ─────────────────────────────────────────────────────────────
+   Datos para el manejador de bultos (app.js)
+───────────────────────────────────────────────────────────── */
+const MAX_BULTOS     = {{ max_b }};
+const EXISTING_BULTOS = {{ (bultos | tojson) if (bultos is defined and bultos) else '[]' }};
+const FORM_DATA = {
+  {% if fd %}
+  {% for i in range(1, max_b + 1) %}
+  {% if fd.get('largo_' ~ i) %}
+  "{{ i }}": {
+    largo:"{{ fd.get('largo_' ~ i,'') }}",
+    ancho:"{{ fd.get('ancho_' ~ i,'') }}",
+    alto:"{{ fd.get('alto_' ~ i,'') }}",
+    peso:"{{ fd.get('peso_' ~ i,'') }}"
+  },
+  {% endif %}
+  {% endfor %}
+  {% endif %}
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Typeahead de búsqueda ERP — solo en modo CREAR
+───────────────────────────────────────────────────────────── */
+{% if not product %}
+(function () {
+  'use strict';
+
+  /* DOM refs */
+  var inp      = document.getElementById('productSearchInput');
+  var dropdown = document.getElementById('searchDropdown');
+  var skuFld   = document.getElementById('skuInput');
+  var nomFld   = document.getElementById('nombreInput');
+  var clearBtn = document.getElementById('clearSearchBtn');
+  var icon     = document.getElementById('searchIcon');
+  var chip     = document.getElementById('selectedChip');
+  var chipText = document.getElementById('chipText');
+
+  if (!inp) return;
+
+  var debounceTimer = null;
+  var currentQuery  = '';
+  var isSelected    = false;
+
+  /* ── State helpers ─────────────────────────── */
+  function setLoading(on) {
+    icon.className = on
+      ? 'spinner-border spinner-border-sm text-danger'
+      : 'bi bi-search text-muted';
+  }
+
+  function showDropdown(html) {
+    dropdown.innerHTML = html;
+    if (html) {
+      dropdown.style.display = 'block';
+      // Garantizar al menos 3 ítems visibles (≈ 58px c/u = 174px)
+      var itemCount = dropdown.querySelectorAll('.ta-item').length;
+      dropdown.style.minHeight = itemCount > 0 ? Math.min(itemCount, 3) * 62 + 'px' : '';
+    } else {
+      dropdown.style.display = 'none';
+    }
+  }
+
+  function hideDropdown() {
+    dropdown.style.display = 'none';
+  }
+
+  function lockFields() {
+    skuFld.setAttribute('readonly', '');
+    skuFld.style.background = '#f0f4f0';
+    skuFld.style.cursor = 'default';
+    nomFld.setAttribute('readonly', '');
+    nomFld.style.background = '#f0f4f0';
+    nomFld.style.cursor = 'default';
+  }
+
+  function unlockFields() {
+    skuFld.removeAttribute('readonly');
+    skuFld.style.background = '';
+    skuFld.style.cursor = '';
+    nomFld.removeAttribute('readonly');
+    nomFld.style.background = '';
+    nomFld.style.cursor = '';
+  }
+
+  function markSelected(sku, nombre) {
+    isSelected = true;
+    chipText.textContent = sku + ' — ' + nombre;
+    chip.classList.remove('d-none');
+    clearBtn.classList.remove('d-none');
+    lockFields();
+    hideDropdown();
+  }
+
+  function resetSelection() {
+    isSelected = false;
+    chip.classList.add('d-none');
+    clearBtn.classList.add('d-none');
+    inp.value = '';
+    skuFld.value = '';
+    nomFld.value = '';
+    unlockFields();
+    hideDropdown();
+  }
+
+  /* ── Badge según estado en la DB ─────────────────────────── */
+  function sourceBadge(exists) {
+    if (!exists) {
+      // NO está en la DB → disponible para crear
+      return '<span style="font-size:.65rem;background:#1a6b1a;color:#fff;'
+           + 'padding:2px 8px;border-radius:4px;flex-shrink:0;font-weight:700;'
+           + 'display:inline-flex;align-items:center;gap:4px">'
+           + '<i class="bi bi-plus-circle-fill" style="font-size:.65rem"></i>'
+           + 'No registrado</span>';
+    }
+    // YA está en la DB
+    return '<span style="font-size:.65rem;background:#555;color:#fff;'
+         + 'padding:2px 8px;border-radius:4px;flex-shrink:0;font-weight:700;'
+         + 'display:inline-flex;align-items:center;gap:4px">'
+         + '<i class="bi bi-check-circle-fill" style="font-size:.65rem"></i>'
+         + 'Ya registrado</span>';
+  }
+
+  /* ── Separador de grupo ───────────────────── */
+  function groupHeader(label, count, color) {
+    return '<div style="padding:5px 16px 4px;background:#f7f7f7;border-bottom:1px solid #e8e8e8;'
+         + 'display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:1">'
+         + '<span style="font-size:.68rem;font-weight:800;color:' + color + ';text-transform:uppercase;letter-spacing:.8px">'
+         + label + '</span>'
+         + '<span style="font-size:.65rem;background:' + color + ';color:#fff;'
+         + 'border-radius:10px;padding:0 7px;font-weight:700">' + count + '</span>'
+         + '</div>';
+  }
+
+  /* ── Build dropdown items ─────────────────── */
+  function buildResults(data) {
+    if (!data.length) {
+      return '<div style="padding:16px 18px;color:#888;font-size:.88rem;display:flex;align-items:center;gap:8px">'
+           + '<i class="bi bi-search" style="font-size:1rem"></i>&nbsp;Sin resultados para esta búsqueda</div>';
+    }
+
+    // Separar en dos grupos (el API ya los ordena, aquí confirmamos)
+    var nuevos    = data.filter(function(i){ return !i.already_exists; });
+    var existentes = data.filter(function(i){ return  i.already_exists; });
+
+    var html = '';
+
+    /* ── Grupo 1: No registrados (disponibles para crear) ── */
+    if (nuevos.length) {
+      html += groupHeader('Disponibles para crear', nuevos.length, '#1a6b1a');
+      nuevos.forEach(function(item) {
+        var idx = data.indexOf(item);
+        html += buildItem(item, idx, false);
+      });
+    }
+
+    /* ── Grupo 2: Ya registrados en la DB ── */
+    if (existentes.length) {
+      html += groupHeader('Ya registrados', existentes.length, '#555');
+      existentes.forEach(function(item) {
+        var idx = data.indexOf(item);
+        html += buildItem(item, idx, true);
+      });
+    }
+
+    return html;
+  }
+
+  /* ── Un ítem del dropdown ─────────────────── */
+  function buildItem(item, idx, dimmed) {
+    var rowBg = dimmed ? '#fafafa' : '#fff';
+    return '<div class="ta-item" data-idx="' + idx + '"'
+         + ' style="padding:11px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0;'
+         + 'display:flex;align-items:center;gap:12px;transition:background .12s;'
+         + 'min-height:54px;background:' + rowBg + ';opacity:' + (dimmed ? '.75' : '1') + '"'
+         + ' role="option">'
+         + '<div style="flex:1;min-width:0">'
+         + '<div style="font-weight:' + (dimmed ? '600' : '700') + ';font-size:.93rem;'
+         + 'line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+         + 'color:' + (dimmed ? '#666' : '#111') + '">'
+         + escHtml(item.nombre || '(sin nombre)') + '</div>'
+         + '<div style="font-size:.76rem;color:#999;font-family:monospace;margin-top:2px;letter-spacing:.3px">'
+         + 'SKU: ' + escHtml(item.sku) + '</div>'
+         + '</div>'
+         + '<div style="flex-shrink:0">' + sourceBadge(item.already_exists) + '</div>'
+         + '</div>';
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  /* ── Fetch ────────────────────────────────── */
+  function doSearch(q) {
+    currentQuery = q;
+    setLoading(true);
+    fetch('/api/product-search?q=' + encodeURIComponent(q))
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (data) {
+        setLoading(false);                    // siempre apagar spinner
+        if (inp.value.trim() !== q) return;  // respuesta stale: ignorar
+
+        showDropdown(buildResults(data));
+
+        /* attach click handlers */
+        dropdown.querySelectorAll('.ta-item').forEach(function (el, idx) {
+          el.addEventListener('mouseenter', function () { el.style.background = '#fdf4f4'; });
+          el.addEventListener('mouseleave', function () { el.style.background = ''; });
+          el.addEventListener('mousedown', function (e) {
+            e.preventDefault(); // prevent blur before click
+            var item = data[idx];
+            skuFld.value = item.sku.toUpperCase();
+            nomFld.value = item.nombre;
+            inp.value    = item.nombre + '  ·  ' + item.sku;
+            markSelected(item.sku, item.nombre);
+
+            /* Si el SKU ya existe, mostrar advertencia */
+            if (item.already_exists && item.source !== 'app') {
+              inp.style.borderColor = '#e67e00';
+              var warnId = 'skuWarn';
+              if (!document.getElementById(warnId)) {
+                var warn = document.createElement('div');
+                warn.id = warnId;
+                warn.style.cssText = 'color:#e67e00;font-size:.8rem;margin-top:4px';
+                warn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>'
+                               + 'Este SKU ya tiene una etiqueta creada.';
+                inp.closest('.typeahead-wrapper').appendChild(warn);
+              }
+            } else {
+              inp.style.borderColor = '';
+              var w = document.getElementById('skuWarn');
+              if (w) w.remove();
+            }
+          });
+        });
+      })
+      .catch(function () {
+        setLoading(false);
+        showDropdown('<div style="padding:12px 14px;color:#e67e00;font-size:.85rem">'
+                   + '<i class="bi bi-wifi-off me-1"></i>ERP no disponible en este momento</div>');
+      });
+  }
+
+  /* ── Events ───────────────────────────────── */
+  inp.addEventListener('input', function () {
+    var q = inp.value.trim();
+    clearBtn.classList.toggle('d-none', q.length === 0);
+    if (isSelected) { isSelected = false; chip.classList.add('d-none'); }
+    clearTimeout(debounceTimer);
+    if (q.length < 2) { hideDropdown(); setLoading(false); return; }
+    setLoading(true);
+    debounceTimer = setTimeout(function () { doSearch(q); }, 320);
+  });
+
+  clearBtn.addEventListener('click', resetSelection);
+
+  /* Close on outside click */
+  document.addEventListener('click', function (e) {
+    if (!dropdown.contains(e.target) && e.target !== inp) hideDropdown();
+  });
+
+  /* Keyboard nav */
+  inp.addEventListener('keydown', function (e) {
+    var items = dropdown.querySelectorAll('.ta-item');
+    var active = dropdown.querySelector('.ta-item.active');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      var next = active ? active.nextElementSibling : items[0];
+      if (active) active.classList.remove('active'), active.style.background = '';
+      if (next && next.classList.contains('ta-item')) {
+        next.classList.add('active'); next.style.background = '#fdf4f4';
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      var prev = active ? active.previousElementSibling : items[items.length - 1];
+      if (active) active.classList.remove('active'), active.style.background = '';
+      if (prev && prev.classList.contains('ta-item')) {
+        prev.classList.add('active'); prev.style.background = '#fdf4f4';
+      }
+    } else if (e.key === 'Enter' && active) {
+      e.preventDefault();
+      active.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    } else if (e.key === 'Escape') {
+      hideDropdown(); inp.blur();
+    }
+  });
+
+})();
+{% endif %}
+</script>
+{% endblock %}

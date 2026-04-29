@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% block title %}Preguntas Genéricas — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.pg-card {
+  background:#fff; border:1.5px solid #e0e0e0; border-radius:8px;
+  padding:10px 12px; margin-bottom:8px;
+  display:flex; align-items:flex-start; gap:10px;
+  transition:box-shadow .15s;
+}
+.pg-card:hover { box-shadow:0 2px 8px rgba(0,0,0,.09); }
+.pg-card.inactiva { opacity:.5; }
+.pg-body { flex:1; min-width:0; }
+.pg-texto { font-size:.88rem; font-weight:600; color:#222; margin-bottom:4px; }
+.pg-meta  { display:flex; gap:5px; flex-wrap:wrap; }
+.pg-chip  { font-size:.67rem; padding:2px 7px; border-radius:20px;
+            font-weight:600; background:#e9ecef; color:#555; }
+.pg-chip.tipo  { background:#e8eaf6; color:#1a237e; }
+.pg-chip.oblig { background:#fff3cd; color:#856404; }
+.pg-chip.inact { background:#f8d7da; color:#721c24; }
+.pg-actions { display:flex; gap:3px; flex-shrink:0; }
+.pg-btn { border:none; background:none; color:#999; font-size:.92rem;
+          padding:4px 7px; border-radius:5px; cursor:pointer;
+          transition:background .12s, color .12s; }
+.pg-btn:hover       { background:#e9ecef; color:#333; }
+.pg-btn.del:hover   { background:#fdecea; color:#c00; }
+.pg-btn.tog:hover   { background:#d4edda; color:#155724; }
+
+.sec-head {
+  display:flex; align-items:center; gap:9px;
+  padding:10px 14px; font-weight:700; font-size:.88rem;
+  color:#fff; border-radius:8px 8px 0 0; margin-top:18px;
+  justify-content:space-between;
+}
+.sec-head .btn-add-gen {
+  background:rgba(255,255,255,.9); border:none; border-radius:6px;
+  padding:4px 12px; font-size:.76rem; font-weight:700; cursor:pointer;
+  display:flex; align-items:center; gap:4px; color:#111;
+}
+.sec-wrap { border:1.5px solid #e0e0e0; border-radius:0 0 8px 8px;
+            border-top:none; padding:10px 10px 4px; background:#fff; }
+
+#pgToast {
+  position:fixed; bottom:24px; right:24px; z-index:9999;
+  min-width:240px; padding:12px 16px; border-radius:8px;
+  font-size:.85rem; font-weight:600; display:none;
+  box-shadow:0 4px 20px rgba(0,0,0,.2);
+}
+.toast-ok  { background:#d4edda; color:#155724; border-left:4px solid #28a745; }
+.toast-err { background:#fdecea; color:#8b0000; border-left:4px solid #dc3545; }
+#opcionesAreaG { display:none; }
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <div>
+      <h4>
+        <i class="bi bi-shield-lock-fill me-2" style="color:var(--ilus-red)"></i>
+        Preguntas Genéricas
+      </h4>
+      <div class="sub">
+        Banco de preguntas reutilizables para evaluaciones —
+        <strong>solo editable por Super Administrador</strong>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+
+  <div class="alert" style="background:#fff8e1;border:1.5px solid #ffe082;border-radius:8px;font-size:.82rem;color:#555;padding:10px 14px">
+    <i class="bi bi-lightbulb-fill me-2" style="color:#f9a825"></i>
+    Estas preguntas son <strong>plantillas permanentes</strong> que los administradores pueden usar al construir evaluaciones.
+    Solo el Super Administrador puede crearlas, editarlas o eliminarlas. Pueden activarse o desactivarse sin borrarlas.
+  </div>
+
+  {% for sec_key, sec_info in secciones.items() %}
+  {% set preguntas = por_seccion[sec_key] %}
+
+  <div class="sec-head" style="background:{{ sec_info.color }}; margin-top:16px">
+    <span>
+      <i class="bi {{ sec_info.icon }} me-2"></i>{{ sec_info.label }}
+      <span style="background:rgba(255,255,255,.18);border-radius:20px;padding:2px 10px;font-size:.72rem;margin-left:8px">
+        {{ preguntas|length }} pregunta(s)
+      </span>
+    </span>
+    <button class="btn-add-gen" onclick="abrirModalG(null, '{{ sec_key }}')">
+      <i class="bi bi-plus-lg"></i> Agregar
+    </button>
+  </div>
+
+  <div class="sec-wrap" id="pgList-{{ sec_key }}">
+    {% if not preguntas %}
+    <div style="text-align:center;padding:16px 0 8px;color:#aaa;font-size:.8rem">
+      Sin preguntas en esta sección
+    </div>
+    {% endif %}
+    {% for p in preguntas %}
+    <div class="pg-card {% if not p.activa %}inactiva{% endif %}" id="pgCard-{{ p.id }}">
+      <div class="pg-body">
+        <div class="pg-texto">{{ p.texto }}</div>
+        <div class="pg-meta">
+          <span class="pg-chip tipo">{{ tipos.get(p.tipo_respuesta, p.tipo_respuesta) }}</span>
+          {% if p.es_obligatoria %}<span class="pg-chip oblig"><i class="bi bi-asterisk me-1"></i>Obligatoria</span>{% endif %}
+          {% if not p.activa %}<span class="pg-chip inact"><i class="bi bi-pause-circle me-1"></i>Inactiva</span>{% endif %}
+          {% if p.tipo_respuesta == 'multiple' and p.opciones %}
+          <span class="pg-chip">{{ p.opciones|length }} opciones</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="pg-actions">
+        <button class="pg-btn tog" onclick="togglePG({{ p.id }}, {{ 1 if p.activa else 0 }})"
+                title="{{ 'Desactivar' if p.activa else 'Activar' }}">
+          <i class="bi bi-{{ 'pause-circle' if p.activa else 'play-circle' }}"></i>
+        </button>
+        <button class="pg-btn" onclick="abrirModalG({{ p.id }}, '{{ sec_key }}')" title="Editar">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="pg-btn del" onclick="eliminarPG({{ p.id }}, '{{ sec_key }}')" title="Eliminar">
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% endfor %}
+</div>
+
+{# ══ MODAL ══ #}
+<div class="modal fade" id="pgModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header py-2 px-4"
+           style="background:var(--ilus-black);border-bottom:3px solid var(--ilus-red)">
+        <h6 class="modal-title text-white fw-bold mb-0" id="pgModalTitle">
+          <i class="bi bi-plus-circle me-2"></i>Nueva pregunta genérica
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body px-4 py-3">
+        <input type="hidden" id="gPregId">
+        <input type="hidden" id="gSeccion">
+
+        <div class="mb-2">
+          <label class="form-label fw-semibold small text-muted text-uppercase">Sección</label>
+          <div id="gSecLabel" class="fw-bold" style="font-size:.9rem"></div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Pregunta <span class="text-danger">*</span></label>
+          <textarea id="gTexto" class="form-control" rows="3"
+                    placeholder="Escribe la pregunta de manera clara y objetiva..."></textarea>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo de respuesta</label>
+          <select id="gTipo" class="form-select" onchange="onTipoG(this.value)">
+            {% for key, label in tipos.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3" id="opcionesAreaG">
+          <label class="form-label fw-semibold">Opciones <span class="text-muted fw-normal">(una por línea)</span></label>
+          <textarea id="gOpciones" class="form-control font-monospace" rows="4"
+                    placeholder="Opción A&#10;Opción B&#10;Opción C"></textarea>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="gObligatoria" checked>
+              <label class="form-check-label fw-semibold" for="gObligatoria">Obligatoria</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="gActiva" checked>
+              <label class="form-check-label fw-semibold" for="gActiva">Activa (disponible para usar)</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer bg-light border-top px-4 py-2">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarPG()">
+          <i class="bi bi-check-lg me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="pgToast"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  'use strict';
+
+  var SEC_LABELS = {
+    {% for key, info in secciones.items() %}
+    '{{ key }}': '{{ info.label }}',
+    {% endfor %}
+  };
+  var TIPOS_LABEL = {
+    {% for key, label in tipos.items() %}
+    '{{ key }}': '{{ label }}',
+    {% endfor %}
+  };
+
+  var _modal = new bootstrap.Modal(document.getElementById('pgModal'));
+
+  var _toastTimer;
+  function toast(msg, tipo){
+    var el = document.getElementById('pgToast');
+    el.className = 'toast-' + (tipo || 'ok');
+    el.innerHTML = '<i class="bi bi-' + (tipo === 'err' ? 'x-circle-fill' : 'check-circle-fill') + ' me-2"></i>' + msg;
+    el.style.display = 'block';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function(){ el.style.display = 'none'; }, 3000);
+  }
+
+  window.abrirModalG = function(pid, sec){
+    document.getElementById('gPregId').value   = pid || '';
+    document.getElementById('gSeccion').value  = sec;
+    document.getElementById('gSecLabel').textContent = SEC_LABELS[sec] || sec;
+    document.getElementById('gTexto').value    = '';
+    document.getElementById('gOpciones').value = '';
+    document.getElementById('gTipo').value     = 'escala_1_5';
+    document.getElementById('gObligatoria').checked = true;
+    document.getElementById('gActiva').checked      = true;
+    onTipoG('escala_1_5');
+
+    document.getElementById('pgModalTitle').innerHTML = pid
+      ? '<i class="bi bi-pencil me-2"></i>Editar pregunta genérica'
+      : '<i class="bi bi-plus-circle me-2"></i>Nueva pregunta genérica';
+
+    if(pid){
+      var card = document.getElementById('pgCard-' + pid);
+      if(card){
+        document.getElementById('gTexto').value = card.querySelector('.pg-texto').textContent.trim();
+        var tipoChip = card.querySelector('.tipo');
+        if(tipoChip){
+          var txt = tipoChip.textContent.trim();
+          Object.keys(TIPOS_LABEL).forEach(function(k){
+            if(TIPOS_LABEL[k] === txt) document.getElementById('gTipo').value = k;
+          });
+        }
+        onTipoG(document.getElementById('gTipo').value);
+        document.getElementById('gObligatoria').checked = !!card.querySelector('.oblig');
+        document.getElementById('gActiva').checked      = !card.classList.contains('inactiva');
+      }
+    }
+    _modal.show();
+    setTimeout(function(){ document.getElementById('gTexto').focus(); }, 350);
+  };
+
+  window.onTipoG = function(val){
+    document.getElementById('opcionesAreaG').style.display = val === 'multiple' ? '' : 'none';
+  };
+
+  window.guardarPG = function(){
+    var pid     = document.getElementById('gPregId').value;
+    var seccion = document.getElementById('gSeccion').value;
+    var texto   = document.getElementById('gTexto').value.trim();
+    var tipo    = document.getElementById('gTipo').value;
+    var oblig   = document.getElementById('gObligatoria').checked ? '1' : '';
+    var activa  = document.getElementById('gActiva').checked ? '1' : '';
+    var opc     = document.getElementById('gOpciones').value;
+
+    if(!texto) return toast('El texto es requerido.', 'err');
+
+    var fd = new FormData();
+    if(pid)    fd.append('preg_id', pid);
+    fd.append('seccion',        seccion);
+    fd.append('texto',          texto);
+    fd.append('tipo_respuesta', tipo);
+    fd.append('es_obligatoria', oblig);
+    fd.append('activa',         activa);
+    if(tipo === 'multiple') fd.append('opciones', opc);
+
+    fetch('/admin/preguntas-genericas/guardar', { method:'POST', body:fd })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok) return toast(d.error || 'Error al guardar.', 'err');
+        _modal.hide();
+        toast(pid ? 'Pregunta actualizada.' : 'Pregunta creada.', 'ok');
+        setTimeout(function(){ location.reload(); }, 700);
+      })
+      .catch(function(){ toast('Error de conexión.', 'err'); });
+  };
+
+  window.togglePG = function(pid, activa){
+    fetch('/admin/preguntas-genericas/' + pid + '/toggle', { method:'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok) return toast(d.error, 'err');
+        var card = document.getElementById('pgCard-' + pid);
+        if(card){
+          card.classList.toggle('inactiva', !d.activa);
+          var btn = card.querySelector('.tog i');
+          if(btn) btn.className = d.activa ? 'bi bi-pause-circle' : 'bi bi-play-circle';
+        }
+        toast(d.activa ? 'Pregunta activada.' : 'Pregunta desactivada.', 'ok');
+      })
+      .catch(function(){ toast('Error.', 'err'); });
+  };
+
+  window.eliminarPG = function(pid, sec){
+    if(!confirm('¿Eliminar esta pregunta genérica? No se puede deshacer.')) return;
+    fetch('/admin/preguntas-genericas/' + pid + '/eliminar', { method:'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok) return toast(d.error, 'err');
+        var card = document.getElementById('pgCard-' + pid);
+        if(card){
+          card.style.transition = 'opacity .25s';
+          card.style.opacity = '0';
+          setTimeout(function(){ card.remove(); }, 250);
+        }
+        toast('Pregunta eliminada.', 'ok');
+      })
+      .catch(function(){ toast('Error.', 'err'); });
+  };
+
+})();
+</script>
+{% endblock %}

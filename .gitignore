@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Entorno virtual
+venv/
+env/
+.venv/
+ENV/
+
+# Flask / app
+instance/
+.webassets-cache
+*.db
+*.sqlite3
+
+# Variables de entorno (nunca subir contraseñas)
+.env
+.env.*
+
+# Archivos subidos por usuarios (fotos de colaboradores, etc.)
+static/uploads/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Playwright / Chromium (se instala en el servidor)
+# No subir los binarios de Chromium
+
+# Logs del servidor
+*.log
+server.out.log
+server.err.log
+
+# Carpeta de Claude (configuración local de IA)
+.claude/
+
+# Archivos de solo uso local
+run_local_server.bat
+run_local_server.ps1
+start.bat

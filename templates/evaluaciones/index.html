@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Evaluaciones — ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-clipboard2-pulse me-2" style="color:var(--ilus-red)"></i>Gestión de Evaluaciones</h4>
+      <div class="sub">Crea, configura y publica evaluaciones diagnósticas</div>
+    </div>
+    {% if permissions.edit %}
+    <a href="{{ url_for('eval_nueva') }}" class="btn btn-ilus fw-bold px-3">
+      <i class="bi bi-plus-lg me-1"></i>Nueva Evaluación
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+
+  {% if evals %}
+  <div class="ilus-card">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-table me-2"></i>Evaluaciones</span>
+      <span class="text-muted small fw-normal">{{ evals|length }} registro(s)</span>
+    </div>
+
+    {# ── Desktop ── #}
+    <div class="table-responsive d-none d-md-block">
+      <table class="table ilus-table mb-0">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th class="text-center">Tipo</th>
+            <th class="text-center">Preguntas</th>
+            <th class="text-center">Estado</th>
+            <th class="text-center">Creado por</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ev in evals %}
+          <tr>
+            <td>
+              <div class="fw-bold">{{ ev.nombre }}</div>
+              {% if ev.descripcion %}
+              <div class="small text-muted text-truncate" style="max-width:300px">{{ ev.descripcion }}</div>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              <span class="badge rounded-pill" style="background:#e8eaf6;color:#1a237e;font-size:.72rem">
+                {{ tipos.get(ev.tipo, ev.tipo) }}
+              </span>
+            </td>
+            <td class="text-center fw-bold">{{ ev.total_preguntas }}</td>
+            <td class="text-center">
+              {% if ev.estado == 'borrador' %}
+                <span class="ilus-badge" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">
+                  <i class="bi bi-pencil-square me-1"></i>Borrador
+                </span>
+              {% elif ev.estado == 'publicada' %}
+                <span class="ilus-badge badge-confirmado">
+                  <i class="bi bi-check-circle me-1"></i>Publicada
+                </span>
+              {% else %}
+                <span class="ilus-badge" style="background:#e9ecef;color:#6c757d;border:1px solid #dee2e6">
+                  <i class="bi bi-archive me-1"></i>Archivada
+                </span>
+              {% endif %}
+            </td>
+            <td class="text-center small text-muted">{{ ev.created_by or '—' }}</td>
+            <td class="text-center">
+              <div class="d-flex gap-1 justify-content-center">
+                <a href="{{ url_for('eval_constructor', eid=ev.id) }}"
+                   class="btn btn-sm btn-ilus" title="Abrir constructor">
+                  <i class="bi bi-sliders me-1"></i>Constructor
+                </a>
+                {% if permissions.edit and ev.estado != 'archivada' %}
+                <a href="{{ url_for('eval_editar', eid=ev.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="Editar datos">
+                  <i class="bi bi-pencil"></i>
+                </a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ── Mobile cards ── #}
+    <div class="d-md-none">
+      {% for ev in evals %}
+      <div class="p-3 border-bottom">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+          <div class="flex-grow-1">
+            <div class="fw-bold">{{ ev.nombre }}</div>
+            <div class="small text-muted">{{ tipos.get(ev.tipo, ev.tipo) }} · {{ ev.total_preguntas }} preguntas</div>
+          </div>
+          {% if ev.estado == 'borrador' %}
+            <span class="badge" style="background:#fff3cd;color:#856404">Borrador</span>
+          {% elif ev.estado == 'publicada' %}
+            <span class="badge bg-success">Publicada</span>
+          {% else %}
+            <span class="badge bg-secondary">Archivada</span>
+          {% endif %}
+        </div>
+        <div class="d-flex gap-2 mt-2">
+          <a href="{{ url_for('eval_constructor', eid=ev.id) }}" class="btn btn-sm btn-ilus flex-grow-1">
+            <i class="bi bi-sliders me-1"></i>Constructor
+          </a>
+          {% if permissions.edit and ev.estado != 'archivada' %}
+          <a href="{{ url_for('eval_editar', eid=ev.id) }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-pencil"></i>
+          </a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="ilus-card">
+    <div class="empty-state">
+      <div class="empty-icon">📋</div>
+      <p>No hay evaluaciones creadas aún.</p>
+      {% if permissions.edit %}
+      <a href="{{ url_for('eval_nueva') }}" class="btn btn-ilus px-4">
+        <i class="bi bi-plus-lg me-1"></i>Crear primera evaluación
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

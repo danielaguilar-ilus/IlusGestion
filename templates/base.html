@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ILUS — Etiquetas{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+
+{# ══════════════════════════════════════════════
+   MOBILE TOP BAR  (oculto en desktop)
+══════════════════════════════════════════════ #}
+{% if current_user %}
+<div class="mobile-topbar no-print">
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">
+    <i class="bi bi-list"></i>
+  </button>
+  {% if has_logo %}
+    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="mobile-logo">
+  {% else %}
+    <span class="mobile-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></span>
+  {% endif %}
+  <span class="mobile-user-label ms-auto">{{ current_user.nombre }}</span>
+</div>
+{% endif %}
+
+{# ══════════════════════════════════════════════
+   OVERLAY  (mobile: toca para cerrar)
+══════════════════════════════════════════════ #}
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+{# ══════════════════════════════════════════════
+   SIDEBAR LATERAL
+══════════════════════════════════════════════ #}
+{% if current_user %}
+<nav class="sidebar no-print" id="sidebar">
+
+  {# — Logo — #}
+  <div class="sidebar-logo-area">
+    <a href="{{ url_for('index') }}" class="sidebar-brand">
+      {% if has_logo %}
+        <img src="{{ url_for('static', filename='Logo.png') }}"
+             alt="ILUS" class="sidebar-logo-img">
+      {% else %}
+        <svg width="52" height="60" viewBox="0 0 34 42" fill="none" aria-label="ILUS">
+          <path d="M32,5 Q20,-1 6,3 Q10,9 16,11 Q23,9 32,5Z" fill="#CC0000"/>
+          <path d="M7,17 Q7,9 17,8 Q27,9 27,17 L28,32 Q26,38 17,40 Q8,38 6,32 Z" fill="#CC0000"/>
+          <path d="M6,32 Q4,38 6,42 L11,42 Q9,38 8,32 Z" fill="#990000"/>
+          <path d="M28,32 Q30,38 28,42 L23,42 Q25,38 26,32 Z" fill="#990000"/>
+          <path d="M18,23 Q24,21 28,23 L28,29 Q24,27 18,27 Z" fill="#0a0a0a"/>
+          <rect x="16" y="19" width="4" height="20" rx="1.5" fill="#880000"/>
+        </svg>
+        <div>
+          <div class="sidebar-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></div>
+          <div class="sidebar-brand-tag">Sport &amp; Health</div>
+        </div>
+      {% endif %}
+    </a>
+  </div>
+
+  {# — Navegacion — #}
+  <div class="sidebar-nav">
+
+    {# ── ETIQUETAS ── #}
+    <div class="sidebar-section-label">
+      <i class="bi bi-tags me-1"></i>Etiquetas
+    </div>
+
+    <a href="{{ url_for('index') }}"
+       class="sidebar-link{% if request.endpoint == 'index' %} active{% endif %}">
+      <i class="bi bi-boxes"></i>
+      <span>Productos</span>
+    </a>
+
+    {% if permissions.create %}
+    <a href="{{ url_for('new_product') }}"
+       class="sidebar-link{% if request.endpoint == 'new_product' %} active{% endif %}">
+      <i class="bi bi-plus-circle"></i>
+      <span>Nuevo producto</span>
+    </a>
+    {% endif %}
+
+    {# ── COLABORADORES ── #}
+    <div class="sidebar-section-label mt-2">
+      <i class="bi bi-people me-1"></i>Colaboradores
+    </div>
+    <a href="{{ url_for('colab_index') }}"
+       class="sidebar-link{% if request.endpoint in ['colab_index','colab_nuevo','colab_editar','colab_ficha'] %} active{% endif %}">
+      <i class="bi bi-people-fill"></i>
+      <span>Colaboradores</span>
+    </a>
+
+    {# ── GESTIÓN DE EVALUACIÓN ── #}
+    <div class="sidebar-section-label mt-2">
+      <i class="bi bi-clipboard2-pulse me-1"></i>Evaluación
+    </div>
+
+    <a href="{{ url_for('eval_index') }}"
+       class="sidebar-link{% if request.endpoint in ['eval_index','eval_nueva','eval_editar','eval_constructor'] %} active{% endif %}">
+      <i class="bi bi-clipboard2-check"></i>
+      <span>Evaluaciones</span>
+    </a>
+
+    {# ── SISTEMA ── #}
+    {% if permissions.admin %}
+    <div class="sidebar-section-label mt-2">
+      <i class="bi bi-gear me-1"></i>Sistema
+    </div>
+    <a href="{{ url_for('users_index') }}"
+       class="sidebar-link{% if request.endpoint in ['users_index','new_user','edit_user'] %} active{% endif %}">
+      <i class="bi bi-people"></i>
+      <span>Usuarios</span>
+    </a>
+    {% if permissions.superadmin %}
+    <a href="{{ url_for('preg_gen_index') }}"
+       class="sidebar-link{% if request.endpoint == 'preg_gen_index' %} active{% endif %}">
+      <i class="bi bi-shield-lock-fill"></i>
+      <span>Preguntas Genéricas</span>
+    </a>
+    {% endif %}
+    {% endif %}
+
+  </div>
+
+  {# — Footer: usuario + logout — #}
+  <div class="sidebar-footer">
+    <div class="sidebar-user">
+      <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
+      <div class="sidebar-user-info">
+        <div class="sidebar-user-name">{{ current_user.nombre }}</div>
+        <div class="sidebar-user-role">{{ role_label }}</div>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('logout') }}" class="mt-2">
+      <button type="submit" class="btn-sidebar-logout">
+        <i class="bi bi-box-arrow-left me-2"></i>Cerrar sesion
+      </button>
+    </form>
+    {% if last_sync %}
+    <div class="sidebar-sync-note">
+      <i class="bi bi-clock me-1"></i>Sync: {{ last_sync[:16] }}
+    </div>
+    {% endif %}
+  </div>
+
+</nav>
+{% endif %}
+
+{# ══════════════════════════════════════════════
+   CONTENIDO PRINCIPAL
+══════════════════════════════════════════════ #}
+<div class="main-wrapper{% if not current_user %} main-wrapper-login{% endif %}">
+
+  {# Flash messages #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flash-container no-print">
+      {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} alert-dismissible fade show py-2 mb-2
+                  {% if cat == 'success' %}ilus-flash-ok{% elif cat == 'warning' %}ilus-flash-warn{% elif cat == 'danger' %}ilus-flash-err{% endif %}"
+           role="alert">
+        <i class="bi bi-{% if cat == 'success' %}check-circle-fill{% elif cat == 'danger' %}x-circle-fill{% elif cat == 'warning' %}exclamation-triangle-fill{% else %}info-circle-fill{% endif %} me-2"></i>
+        {{ msg|safe }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+(function () {
+  // ── Sidebar toggle ──────────────────────────
+  var sidebar = document.getElementById('sidebar');
+  var overlay = document.getElementById('sidebarOverlay');
+  var toggle  = document.getElementById('sidebarToggle');
+  if (sidebar) {
+    function openSidebar()  { sidebar.classList.add('open');    overlay.classList.add('open'); }
+    function closeSidebar() { sidebar.classList.remove('open'); overlay.classList.remove('open'); }
+    if (toggle)  toggle.addEventListener('click', openSidebar);
+    if (overlay) overlay.addEventListener('click', closeSidebar);
+  }
+
+  // ── Auto-dismiss flash messages (3 s) ──────
+  setTimeout(function () {
+    document.querySelectorAll('.flash-container .alert').forEach(function (el) {
+      el.style.transition = 'opacity .6s';
+      el.style.opacity = '0';
+      setTimeout(function () { el.remove(); }, 650);
+    });
+  }, 3000);
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Iniciar Sesión — ILUS Sport & Health{% endblock %}
+
+{% block content %}
+<div class="login-wrap">
+
+  {# ══ PANEL IZQUIERDO: imagen hero ILUS ══ #}
+  <div class="login-hero">
+    <div class="login-hero-overlay"></div>
+    <div class="login-hero-content">
+      {% if has_logo %}
+      <img src="{{ url_for('static', filename='Logo.png') }}"
+           alt="ILUS Sport & Health" class="login-hero-logo">
+      {% else %}
+      <div class="login-hero-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
+      {% endif %}
+      <span class="login-hero-accent"></span>
+      <div class="login-hero-tagline">
+        Sistema de Gestión<br>
+        <strong>ILUS Sport &amp; Health</strong>
+      </div>
+      <div class="login-hero-sub">Etiquetas · Colaboradores · Evaluaciones</div>
+    </div>
+  </div>
+
+  {# ══ PANEL DERECHO: formulario ══ #}
+  <div class="login-side">
+    <div class="login-box">
+
+      {# Logo pequeño sobre el formulario #}
+      {% if has_logo %}
+      <img src="{{ url_for('static', filename='Logo.png') }}"
+           alt="ILUS" class="login-mini-logo">
+      {% else %}
+      <div class="login-mini-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
+      {% endif %}
+
+      <h2 class="login-title-main">Bienvenido</h2>
+      <p class="login-sub-main">Ingresa tus credenciales para continuar</p>
+
+      <form method="post" class="login-form" autocomplete="on">
+        <input type="hidden" name="next" value="{{ next_url }}">
+
+        <div class="lf-group">
+          <span class="lf-icon"><i class="bi bi-envelope"></i></span>
+          <input type="text" name="username" class="lf-input"
+                 placeholder="Correo electrónico" value="{{ username }}"
+                 autocomplete="username" required>
+        </div>
+
+        <div class="lf-group">
+          <span class="lf-icon"><i class="bi bi-lock"></i></span>
+          <input type="password" name="password" class="lf-input" id="pwdField"
+                 placeholder="Contraseña" autocomplete="current-password" required>
+          <button type="button" class="lf-eye" id="togglePwd" tabindex="-1"
+                  aria-label="Mostrar/ocultar contraseña">
+            <i class="bi bi-eye" id="eyeIcon"></i>
+          </button>
+        </div>
+
+        <button type="submit" class="btn-login">
+          <i class="bi bi-box-arrow-in-right me-2"></i>Iniciar Sesión
+        </button>
+      </form>
+
+      <div class="text-center mt-2 mb-1">
+        <a href="{{ url_for('forgot_password') }}"
+           style="color:#777;font-size:.8rem;text-decoration:none;transition:color .2s"
+           onmouseover="this.style.color='#CC0000'" onmouseout="this.style.color='#777'">
+          ¿Olvidaste tu contraseña?
+        </a>
+      </div>
+
+      <div class="login-footer-text">
+        ILUS Sport &amp; Health &copy; 2026 — Plataforma de Gestión Interna
+      </div>
+
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var btn  = document.getElementById('togglePwd');
+  var inp  = document.getElementById('pwdField');
+  var icon = document.getElementById('eyeIcon');
+  if(btn && inp){
+    btn.addEventListener('click', function(){
+      var show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      icon.className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+    });
+  }
+})();
+</script>
+{% endblock %}

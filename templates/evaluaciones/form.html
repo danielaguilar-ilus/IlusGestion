@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{% if ev %}Editar{% else %}Nueva{% endif %} Evaluación — ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('eval_index') }}" class="btn btn-sm btn-dark-ilus flex-shrink-0">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4>{% if ev %}Editar Evaluación{% else %}Nueva Evaluación{% endif %}</h4>
+      <div class="sub">{% if ev %}Modifica los datos generales{% else %}Completa los datos para comenzar{% endif %}</div>
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0" style="max-width:640px">
+  <div class="ilus-card">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-clipboard2-plus me-2"></i>Datos de la evaluación</span>
+    </div>
+    <div class="p-4">
+      <form method="post">
+        {# Nombre #}
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+          <input type="text" name="nombre" class="form-control"
+                 value="{{ fd.get('nombre', ev.nombre if ev else '') }}"
+                 placeholder="Ej: Evaluación Diagnóstica Q1 2026"
+                 required maxlength="200" autocomplete="off">
+          <div class="form-text">Nombre claro que identifique el período o propósito.</div>
+        </div>
+
+        {# Tipo #}
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo de evaluación</label>
+          <select name="tipo" class="form-select">
+            {% for key, label in tipos.items() %}
+            <option value="{{ key }}"
+              {% if fd.get('tipo', ev.tipo if ev else 'diagnostica') == key %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {# Descripción #}
+        <div class="mb-4">
+          <label class="form-label fw-semibold">Descripción <span class="text-muted fw-normal">(opcional)</span></label>
+          <textarea name="descripcion" class="form-control" rows="3"
+                    placeholder="Contexto, instrucciones generales o propósito de esta evaluación...">{{ fd.get('descripcion', ev.descripcion if ev else '') }}</textarea>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-ilus fw-bold px-4">
+            <i class="bi bi-{% if ev %}check-lg{% else %}arrow-right{% endif %} me-1"></i>
+            {% if ev %}Guardar cambios{% else %}Crear y agregar preguntas{% endif %}
+          </button>
+          <a href="{{ url_for('eval_index') }}" class="btn btn-outline-secondary">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

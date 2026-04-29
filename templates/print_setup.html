@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Configurar impresión — {{ product.sku }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-start gap-2 flex-wrap">
+    <a href="{{ url_for('product_detail', pid=product.id) }}" class="btn btn-sm btn-dark-ilus mt-1 flex-shrink-0">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="flex-grow-1 min-w-0">
+      <h4 class="mb-0"><i class="bi bi-printer me-2" style="color:var(--ilus-red)"></i>Configurar impresión</h4>
+      <div class="sub text-truncate">
+        <span class="font-monospace fw-bold">{{ product.sku }}</span> — {{ product.nombre }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="px-2 px-md-0">
+
+  {# Info del producto #}
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-box-seam me-2"></i>Resumen del producto</span>
+      {% if product.codigo %}
+      <span class="text-muted small">Código: <strong class="text-dark">{{ product.codigo }}</strong></span>
+      {% endif %}
+    </div>
+    <div class="p-3">
+      <div class="row g-2">
+        <div class="col-6 col-md-3">
+          <div class="stat-card blk">
+            <div class="stat-num">{{ bultos|length }}</div>
+            <div class="stat-label">Bulto(s)</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card red">
+            <div class="stat-num">{{ "%.1f"|format(peso_total) }}</div>
+            <div class="stat-label">Peso total kg</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card">
+            <div class="stat-num" style="font-size:1rem;color:#555;padding-top:6px">{{ product.sku }}</div>
+            <div class="stat-label">SKU (código de barras)</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card">
+            <div class="stat-num" style="font-size:1rem;color:#555;padding-top:6px">
+              {% if product.estado == 'Confirmado' %}<span class="ilus-badge badge-confirmado">Confirmado</span>
+              {% elif product.estado == 'Impreso' %}<span class="ilus-badge badge-impreso">Impreso</span>
+              {% else %}<span class="ilus-badge badge-pendiente">Pendiente</span>{% endif %}
+            </div>
+            <div class="stat-label">Estado</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Formulario de cantidades #}
+  <form id="printSetupForm" method="get" action="{{ url_for('print_labels', pid=product.id) }}">
+    {% if only_bulto %}
+    <input type="hidden" name="bulto" value="{{ only_bulto }}">
+    {% endif %}
+
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header">
+        <span><i class="bi bi-sliders me-2"></i>Copias por bulto</span>
+        <span class="text-muted small fw-normal">Define cuántas etiquetas imprimir de cada bulto</span>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table ilus-table mb-0" style="min-width:480px">
+          <thead>
+            <tr>
+              <th class="text-center" style="width:70px">Bulto</th>
+              <th class="text-end">Largo</th>
+              <th class="text-end">Ancho</th>
+              <th class="text-end">Alto</th>
+              <th class="text-end">Peso</th>
+              <th class="text-end">Peso Vol</th>
+              <th class="text-center" style="min-width:120px">Copias</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for b in bultos %}
+            <tr>
+              <td class="text-center fw-bold">{{ b.bulto_num }}</td>
+              <td class="text-end">{{ "%.0f"|format(b.largo) }} cm</td>
+              <td class="text-end">{{ "%.0f"|format(b.ancho) }} cm</td>
+              <td class="text-end">{{ "%.0f"|format(b.alto) }} cm</td>
+              <td class="text-end">{{ "%.2f"|format(b.peso) }} kg</td>
+              <td class="text-end">{{ "%.2f"|format(b.peso_vol) }}</td>
+              <td class="text-center">
+                <div class="d-flex align-items-center justify-content-center gap-1">
+                  <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0 qty-dec"
+                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6">−</button>
+                  <input type="number" id="qty_{{ b.bulto_num }}" name="qty_{{ b.bulto_num }}"
+                         value="1" min="1" max="10"
+                         class="form-control form-control-sm text-center fw-bold qty-input"
+                         style="width:54px;border-radius:6px">
+                  <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0 qty-inc"
+                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6">+</button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# Botones de acción #}
+    <div class="d-flex flex-wrap gap-2 mb-4">
+
+      <button type="submit" class="btn btn-ilus fw-bold px-4">
+        <i class="bi bi-printer me-2"></i>Ver etiquetas e imprimir
+      </button>
+
+      <button type="button" id="btnDownloadZip" class="btn btn-dark-ilus fw-semibold px-4">
+        <i class="bi bi-file-zip me-2"></i>Descargar ZIP de PDFs
+      </button>
+
+      <a href="{{ url_for('product_detail', pid=product.id) }}" class="btn btn-outline-secondary px-3">
+        Cancelar
+      </a>
+
+    </div>
+  </form>
+
+  {# Nota informativa #}
+  <div class="alert" style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;font-size:.85rem;color:#666">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>El código de barras</strong> en la etiqueta corresponde al <strong>SKU</strong> del producto
+    (<span class="font-monospace">{{ product.sku }}</span>).
+    El número grande bajo el código de barras es el <strong>código de impresión</strong>
+    {% if product.codigo %}(<strong>{{ product.codigo }}</strong>){% endif %}.
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// +/- buttons for copy qty
+document.querySelectorAll('.qty-dec, .qty-inc').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var inp = document.getElementById(btn.dataset.target);
+    var v = parseInt(inp.value) || 2;
+    if (btn.classList.contains('qty-dec')) v = Math.max(1, v - 1);
+    else v = Math.min(10, v + 1);
+    inp.value = v;
+  });
+});
+
+// Clamp on manual edit
+document.querySelectorAll('.qty-input').forEach(function(inp) {
+  inp.addEventListener('change', function() {
+    var v = parseInt(inp.value) || 1;
+    inp.value = Math.max(1, Math.min(10, v));
+  });
+});
+
+// Download ZIP — builds URL from form fields and redirects
+document.getElementById('btnDownloadZip').addEventListener('click', function() {
+  var base = {{ url_for('download_all_pdf', pid=product.id) | tojson }};
+  var params = new URLSearchParams();
+  {% if only_bulto %}
+  params.set('bulto', '{{ only_bulto }}');
+  {% endif %}
+  document.querySelectorAll('.qty-input').forEach(function(inp) {
+    params.set(inp.name, inp.value);
+  });
+  window.location.href = base + '?' + params.toString();
+});
+</script>
+{% endblock %}
