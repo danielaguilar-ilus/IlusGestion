@@ -29,9 +29,12 @@
       <div class="col-12 col-md-4">
         <label class="form-label fw-semibold small">N° de documento</label>
         <input type="text" name="nudo" class="form-control font-monospace"
-               value="{{ nudo }}" placeholder="Ej: 12345"
+               value="{{ nudo }}" placeholder="Ej: 9344  ó  FCV 9344"
                autocomplete="off" autocorrect="off" id="nudoInput"
                required>
+        <div class="form-text" style="font-size:.68rem">
+          Puedes escribir solo el número o el tipo + número (ej: FCV 9344)
+        </div>
       </div>
       <div class="col-12 col-md-4">
         <button type="submit" class="btn btn-ilus fw-bold w-100">
@@ -121,6 +124,7 @@
           <th>SKU</th>
           <th>Descripción ERP</th>
           <th class="text-center">Cant</th>
+          <th class="text-center">Bultos</th>
           <th class="text-end">Kg/u</th>
           <th class="text-end">PV/u</th>
           <th class="text-end">Vol cm³/u</th>
@@ -167,6 +171,19 @@
 
           {# Cantidad #}
           <td class="text-center fw-bold">{{ l.cantidad|int }}</td>
+
+          {# Bultos #}
+          <td class="text-center">
+            {% if l.tiene_ficha %}
+              {% if l.total_bultos > 0 %}
+                <span class="badge rounded-pill" style="background:var(--ilus-black)">{{ l.total_bultos }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            {% else %}
+              <span class="text-muted small">s/f</span>
+            {% endif %}
+          </td>
 
           {# Kg por unidad #}
           <td class="text-end">
@@ -217,6 +234,7 @@
         <tr style="background:#1a1a1a;font-weight:700;font-size:.82rem">
           <td colspan="2" class="text-end" style="color:#ccc">TOTALES</td>
           <td class="text-center" style="color:#fff">{{ ns.tot_qty|int }}</td>
+          <td></td>
           <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_kg) }}</td>
           <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_pv) }}</td>
           <td class="text-end" style="color:#fff">{{ "{:,.0f}".format(ns.tot_vol) }}</td>
@@ -239,9 +257,16 @@
           <div class="fw-bold font-monospace">{{ l.sku }}</div>
           <div class="small" style="color:#bbb">{{ l.descripcion_erp }}</div>
         </div>
-        <span class="badge rounded-pill" style="background:var(--ilus-black);font-size:.72rem">
-          × {{ l.cantidad|int }}
-        </span>
+        <div class="d-flex flex-column align-items-end gap-1">
+          <span class="badge rounded-pill" style="background:var(--ilus-black);font-size:.72rem">
+            × {{ l.cantidad|int }}
+          </span>
+          {% if l.total_bultos > 0 %}
+          <span class="badge rounded-pill bg-secondary" style="font-size:.68rem">
+            {{ l.total_bultos }} bulto(s)
+          </span>
+          {% endif %}
+        </div>
       </div>
       {% if l.diferencia %}
       <div class="small mb-2 p-2 rounded" style="background:#2a1a00;color:#e0a800;font-size:.72rem">

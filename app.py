@@ -3044,6 +3044,16 @@ TIPOS_DOC_CUBICADOR = [
 ]
 
 
+def _nudo_variants(nudo_raw):
+    """
+    El ERP guarda NUDO como string de 10 chars con ceros a la izquierda.
+    Devuelve lista de variantes a probar: ['0000009344', '9344', ...]
+    """
+    s = str(nudo_raw).strip()
+    padded = s.zfill(10)
+    return list(dict.fromkeys([padded, s]))   # únicos, preservando orden
+
+
 def _cubicador_fetch(tido, nudo):
     """
     Consulta el ERP externo y cruza con nuestra BD.
@@ -3053,30 +3063,39 @@ def _cubicador_fetch(tido, nudo):
     if not erp:
         raise ConnectionError("No se pudo conectar al ERP. Intenta en unos momentos.")
 
+    nudos = _nudo_variants(nudo)
+
     try:
         with erp.cursor() as cur:
-            # ── Encabezado + nombre cliente ──────────────────────────
-            cur.execute("""
-                SELECT
-                    e.TIDO,
-                    TRIM(e.NUDO)   AS nudo,
-                    e.FEEMDO       AS fecha,
-                    e.VANEDO       AS valor_neto,
-                    e.VABRDO       AS valor_bruto,
-                    e.VAIVDO       AS valor_iva,
-                    c.NOKOEN       AS cliente_nombre,
-                    c.RTEN         AS cliente_rut
-                FROM MAEEDO e
-                LEFT JOIN MAEEN c ON c.KOEN = e.ENDO
-                WHERE e.TIDO = %s AND TRIM(e.NUDO) = %s
-                LIMIT 1
-            """, (tido, str(nudo).strip()))
-            header = cur.fetchone()
+            # ── Encabezado: probar variantes de NUDO ─────────────────
+            header = None
+            nudo_match = None
+            for nv in nudos:
+                cur.execute("""
+                    SELECT
+                        e.TIDO,
+                        TRIM(e.NUDO)   AS nudo,
+                        e.FEEMDO       AS fecha,
+                        e.VANEDO       AS valor_neto,
+                        e.VABRDO       AS valor_bruto,
+                        e.VAIVDO       AS valor_iva,
+                        c.NOKOEN       AS cliente_nombre,
+                        c.RTEN         AS cliente_rut
+                    FROM MAEEDO e
+                    LEFT JOIN MAEEN c ON c.KOEN = e.ENDO
+                    WHERE e.TIDO = %s AND e.NUDO = %s
+                    LIMIT 1
+                """, (tido, nv))
+                row = cur.fetchone()
+                if row:
+                    header = row
+                    nudo_match = nv
+                    break
 
             if not header:
                 return None, []
 
-            # ── Líneas del documento (solo productos) ─────────────────
+            # ── Líneas del documento (solo líneas de producto real) ───
             cur.execute("""
                 SELECT
                     TRIM(d.KOPRCT)  AS sku,
@@ -3084,11 +3103,10 @@ def _cubicador_fetch(tido, nudo):
                     d.CAPRCO1       AS cantidad,
                     d.NULIDO        AS num_linea
                 FROM MAEDDO d
-                WHERE d.TIDO = %s AND TRIM(d.NUDO) = %s
+                WHERE d.TIDO = %s AND d.NUDO = %s
                   AND TRIM(COALESCE(d.KOPRCT, '')) != ''
-                  AND COALESCE(d.PRCT, '.f.') NOT IN ('.t.', 'T', '1')
                 ORDER BY d.NULIDO
-            """, (tido, str(nudo).strip()))
+            """, (tido, nudo_match))
             lineas_erp = cur.fetchall()
     finally:
         erp.close()
@@ -3104,6 +3122,7 @@ def _cubicador_fetch(tido, nudo):
             SELECT
                 p.id     AS app_id,
                 p.nombre AS nombre_app,
+                COUNT(DISTINCT b.id)                                    AS total_bultos,
                 COALESCE(SUM(b.peso), 0)                                AS peso_total,
                 COALESCE(SUM(b.largo * b.ancho * b.alto), 0)            AS volumen_cm3,
                 ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4)
@@ -3114,8 +3133,9 @@ def _cubicador_fetch(tido, nudo):
             GROUP BY p.id, p.nombre
         """, (sku,))
 
-        tiene_ficha  = app_data is not None
-        tiene_bultos = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
+        tiene_ficha   = app_data is not None
+        total_bultos  = int(app_data["total_bultos"] if tiene_ficha else 0)
+        tiene_bultos  = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
 
         peso_kg_u  = float(app_data["peso_total"]  if tiene_ficha else 0)
         peso_vol_u = float(app_data["peso_vol"]     if tiene_ficha else 0)
@@ -3130,6 +3150,7 @@ def _cubicador_fetch(tido, nudo):
             "descripcion_erp":  descripcion,
             "nombre_app":       nombre_app,
             "cantidad":         qty,
+            "total_bultos":     total_bultos,
             "app_id":           app_data["app_id"] if tiene_ficha else None,
             "tiene_ficha":      tiene_ficha,
             "tiene_bultos":     tiene_bultos,
@@ -3161,6 +3182,15 @@ def cubicador():
     nudo      = (request.form.get("nudo") or request.args.get("nudo") or "").strip()
     resultado = None
     error_msg = None
+
+    # ── Parsear formato combinado "FCV 9344" o "FCV9344" ──────────
+    import re as _re
+    for _cod, _ in TIPOS_DOC_CUBICADOR:
+        _m = _re.match(r'^' + _cod + r'\s*(\S+)$', nudo.upper())
+        if _m:
+            tido = _cod
+            nudo = _m.group(1)
+            break
 
     if request.method == "POST" and nudo:
         try:
