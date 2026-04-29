@@ -272,8 +272,8 @@
   <div class="photos-grid">
     {% for ph in photo_list %}
     <div class="photo-card">
-      <a href="{{ url_for('static', filename='uploads/' ~ ph.filename) }}" target="_blank" class="photo-preview-btn">
-        <img src="{{ url_for('static', filename='uploads/' ~ ph.filename) }}"
+      <a href="{{ photo_src(ph.filename) }}" target="_blank" class="photo-preview-btn">
+        <img src="{{ photo_src(ph.filename) }}"
              alt="Foto {{ loop.index }}" loading="lazy">
       </a>
       {% if permissions.delete %}

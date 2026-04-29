@@ -17,7 +17,7 @@ from flask import (Flask, Response, flash, g, jsonify, redirect,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG
+from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG
 
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
@@ -42,6 +42,56 @@ DEFAULT_USERS = (
 )
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(COLABS_FOLDER, exist_ok=True)
+
+# ─────────────────────────────────────────────
+#  Cloudinary — almacenamiento de fotos en la nube
+# ─────────────────────────────────────────────
+_CLD_READY = False
+try:
+    import cloudinary, cloudinary.uploader  # noqa: E401
+    if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+        cloudinary.config(
+            cloud_name = CLOUDINARY_CONFIG["cloud_name"],
+            api_key    = CLOUDINARY_CONFIG["api_key"],
+            api_secret = CLOUDINARY_CONFIG["api_secret"],
+            secure     = True,
+        )
+        _CLD_READY = True
+        print("[ILUS] Cloudinary configurado —", CLOUDINARY_CONFIG["cloud_name"])
+    else:
+        print("[ILUS] Cloudinary no configurado — fotos se guardan localmente.")
+except ImportError:
+    print("[ILUS] Módulo cloudinary no instalado — fotos locales.")
+
+
+def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
+    """Sube a Cloudinary y devuelve la URL segura. Lanza excepción si falla."""
+    result = cloudinary.uploader.upload(
+        file_obj,
+        public_id   = public_id,
+        folder      = folder,
+        overwrite   = True,
+        resource_type = "image",
+    )
+    return result["secure_url"]
+
+
+def _cloud_delete(url_or_filename: str) -> None:
+    """Elimina de Cloudinary si es URL; del disco si es nombre local."""
+    if url_or_filename.startswith("http"):
+        try:
+            # Extraer public_id: todo lo que va después de /upload/vXXX/ sin extensión
+            match = re.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", url_or_filename)
+            if match:
+                cloudinary.uploader.destroy(match.group(1))
+        except Exception as exc:
+            print(f"[ILUS] Cloudinary delete error: {exc}")
+    else:
+        path = os.path.join(UPLOAD_FOLDER, url_or_filename)
+        if os.path.exists(path):
+            os.remove(path)
+
 
 # ─────────────────────────────────────────────
 #  DB helpers
@@ -52,10 +102,10 @@ def get_erp_conn():
     Conexión de SOLO LECTURA al ERP externo (cloud.random.cl).
     Devuelve None si no se puede conectar (no interrumpe la app).
     NUNCA usar para escribir.
-    Timeout corto (3 s) para no bloquear el request.
     """
     import pymysql, pymysql.cursors
-    timeout = min(ERP_CONFIG.get("connect_timeout", 8), 3)
+    connect_timeout = ERP_CONFIG.get("connect_timeout", 10)
+    read_timeout    = ERP_CONFIG.get("read_timeout", 15)
     try:
         return pymysql.connect(
             host=ERP_CONFIG["host"],
@@ -63,9 +113,9 @@ def get_erp_conn():
             user=ERP_CONFIG["user"],
             password=ERP_CONFIG["password"],
             database=ERP_CONFIG["database"],
-            connect_timeout=timeout,
-            read_timeout=timeout,
-            write_timeout=timeout,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            write_timeout=read_timeout,
             charset="utf8mb4",
             cursorclass=pymysql.cursors.DictCursor,
             autocommit=True,
@@ -78,9 +128,9 @@ def get_erp_conn():
                 user=ERP_CONFIG["user"],
                 password=ERP_CONFIG["password"],
                 database=ERP_CONFIG["database"],
-                connect_timeout=timeout,
-                read_timeout=timeout,
-                write_timeout=timeout,
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout,
+                write_timeout=read_timeout,
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
             )
@@ -433,9 +483,18 @@ def allowed_file(filename):
 
 
 def delete_photo_file(filename):
-    path = os.path.join(UPLOAD_FOLDER, filename)
-    if os.path.exists(path):
-        os.remove(path)
+    """Elimina foto local o de Cloudinary según el contenido de filename."""
+    _cloud_delete(filename)
+
+
+@app.template_global()
+def photo_src(filename, subfolder="uploads"):
+    """Devuelve la URL de la foto: directa si es Cloudinary, local si no."""
+    if not filename:
+        return ""
+    if filename.startswith("http"):
+        return filename
+    return url_for("static", filename=f"{subfolder}/{filename}")
 
 
 # ─────────────────────────────────────────────
@@ -1665,9 +1724,18 @@ def upload_photo(pid):
         flash("Formato no permitido. Usa JPG, PNG, WEBP o GIF.", "danger")
         return redirect(url_for("product_detail", pid=pid))
 
-    ext      = file.filename.rsplit(".", 1)[1].lower()
-    filename = f"p{pid}_{int(datetime.now().timestamp())}.{ext}"
-    file.save(os.path.join(UPLOAD_FOLDER, filename))
+    ext       = file.filename.rsplit(".", 1)[1].lower()
+    ts        = int(datetime.now().timestamp())
+    if _CLD_READY:
+        try:
+            filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
+        except Exception as exc:
+            print(f"[ILUS] Cloudinary upload error: {exc}")
+            flash("Error al subir la foto a la nube. Intenta nuevamente.", "danger")
+            return redirect(url_for("product_detail", pid=pid))
+    else:
+        filename = f"p{pid}_{ts}.{ext}"
+        file.save(os.path.join(UPLOAD_FOLDER, filename))
 
     conn = get_db()
     with conn.cursor() as cur:
@@ -2262,15 +2330,22 @@ def _get_or_create_cargo(nombre_raw, descriptor_raw, area_id, conn):
 
 
 def _save_colab_foto(file, colab_id):
-    """Guarda la foto y devuelve el filename, o None si no hay archivo."""
+    """Sube la foto a Cloudinary (o disco local) y devuelve filename/URL, o None."""
     if not file or not file.filename:
         return None
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in ALLOWED_EXT:
         return None
-    fname = f"colab_{colab_id}.{ext}"
-    file.save(os.path.join(COLABS_FOLDER, fname))
-    return fname
+    if _CLD_READY:
+        try:
+            return _cloud_upload(file, public_id=f"colab_{colab_id}", folder="ilus/colabs")
+        except Exception as exc:
+            print(f"[ILUS] Cloudinary colab upload error: {exc}")
+            return None
+    else:
+        fname = f"colab_{colab_id}.{ext}"
+        file.save(os.path.join(COLABS_FOLDER, fname))
+        return fname
 
 
 # ── Listado colaboradores ─────────────────────────────────────

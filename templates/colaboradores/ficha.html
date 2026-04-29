@@ -87,7 +87,7 @@
   {# ══ HERO ══ #}
   <div class="ficha-hero">
     {% if c.foto_filename %}
-    <img src="{{ url_for('static', filename='uploads/colaboradores/' + c.foto_filename) }}"
+    <img src="{{ photo_src(c.foto_filename, 'uploads/colaboradores') }}"
          class="ficha-avatar" alt="{{ c.nombre_completo }}">
     {% else %}
     <div class="ficha-avatar-placeholder">{{ c.nombre_completo[0].upper() }}</div>

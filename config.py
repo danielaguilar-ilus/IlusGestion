@@ -33,6 +33,16 @@ ERP_CONFIG = {
 MAX_BULTOS = 27
 
 # ─────────────────────────────────────────────
+#  Cloudinary — almacenamiento de fotos en la nube
+#  Crea cuenta gratis en cloudinary.com y completa:
+# ─────────────────────────────────────────────
+CLOUDINARY_CONFIG = {
+    "cloud_name": "dbhlvyri8",
+    "api_key":    "987733531454622",
+    "api_secret": "1RpvVaUqMukNS84oorEVCtHwTQk",
+}
+
+# ─────────────────────────────────────────────
 #  Email (recuperación de contraseña)
 #  Ajusta SMTP_USER y SMTP_PASS con tu cuenta.
 # ─────────────────────────────────────────────

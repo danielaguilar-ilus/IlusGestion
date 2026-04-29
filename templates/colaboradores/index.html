@@ -44,7 +44,7 @@
 
             {# Foto / avatar #}
             {% if col.foto_filename %}
-            <img src="{{ url_for('static', filename='uploads/colaboradores/' + col.foto_filename) }}"
+            <img src="{{ photo_src(col.foto_filename, 'uploads/colaboradores') }}"
                  alt="{{ col.nombre_completo }}"
                  style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid #e0e0e0;flex-shrink:0">
             {% else %}

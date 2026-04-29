@@ -45,7 +45,7 @@
       <div class="d-flex align-items-center gap-4 mb-4">
         <div id="fotoWrap">
           {% if colab and colab.foto_filename %}
-          <img src="{{ url_for('static', filename='uploads/colaboradores/' + colab.foto_filename) }}"
+          <img src="{{ photo_src(colab.foto_filename, 'uploads/colaboradores') }}"
                class="foto-preview" id="fotoPreview">
           {% else %}
           <div class="foto-placeholder" id="fotoPlaceholder">
