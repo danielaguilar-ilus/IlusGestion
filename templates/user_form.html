@@ -83,7 +83,7 @@
             <option value="editor"     {% if current_role == 'editor'     %}selected{% endif %}>Editor (crea y edita)</option>
             <option value="admin"      {% if current_role == 'admin'      %}selected{% endif %}>Administrador</option>
             {% if permissions.superadmin %}
-            <option value="superadmin" {% if current_role == 'superadmin' %}selected{% endif %}>⭐ Super Administrador</option>
+            <option value="superadmin" {% if current_role == 'superadmin' %}selected{% endif %}>Super Administrador</option>
             {% endif %}
           </select>
         </div>

@@ -1964,7 +1964,7 @@ def new_user():
             errors.append("La clave es requerida.")
         if len(password) < 8:
             errors.append("La clave debe tener al menos 8 caracteres.")
-        if role not in {"admin", "editor", "lector"}:
+        if role not in {"superadmin", "admin", "editor", "lector"}:
             errors.append("Rol no valido.")
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
@@ -2010,7 +2010,7 @@ def edit_user(user_id):
             errors.append("El nombre y apellido son requeridos.")
         if password and len(password) < 8:
             errors.append("La clave debe tener al menos 8 caracteres.")
-        if role not in {"admin", "editor", "lector"}:
+        if role not in {"superadmin", "admin", "editor", "lector"}:
             errors.append("Rol no valido.")
         if mysql_fetchone(
             f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s AND id<>%s", (username, user_id)
