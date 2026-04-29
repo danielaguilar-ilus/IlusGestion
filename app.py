@@ -1255,6 +1255,29 @@ def login():
     return render_template("login.html", next_url=next_url, username="")
 
 
+@app.route("/debug/cloudinary")
+@login_required
+def debug_cloudinary():
+    """Ruta temporal de diagnóstico — solo superadmin."""
+    if not g.permissions.get("superadmin"):
+        return "No autorizado", 403
+    lines = [
+        f"<b>_CLD_READY:</b> {_CLD_READY}",
+        f"<b>_cloudinary_uploader:</b> {_cloudinary_uploader}",
+        f"<b>cloud_name:</b> {CLOUDINARY_CONFIG.get('cloud_name', '—')}",
+        f"<b>api_key:</b> {str(CLOUDINARY_CONFIG.get('api_key','—'))[:6]}***",
+    ]
+    # Intenta hacer un ping a Cloudinary
+    if _CLD_READY:
+        try:
+            import cloudinary.api as _cld_api
+            result = _cld_api.ping()
+            lines.append(f"<b>Ping Cloudinary:</b> {result}")
+        except Exception as e:
+            lines.append(f"<b>Ping error:</b> {e}")
+    return "<br>".join(lines)
+
+
 @app.route("/logout", methods=["POST"])
 @login_required
 def logout():
@@ -1730,14 +1753,22 @@ def upload_photo(pid):
     if _CLD_READY:
         try:
             filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
+            print(f"[ILUS] Foto subida a Cloudinary: {filename}")
         except Exception as exc:
             print(f"[ILUS] Cloudinary upload error: {exc}")
-            flash("Error al subir la foto a la nube. Intenta nuevamente.", "danger")
+            flash(f"Error al subir la foto a la nube: {exc}", "danger")
             return redirect(url_for("product_detail", pid=pid))
     else:
         filename = f"p{pid}_{ts}.{ext}"
-        file.save(os.path.join(UPLOAD_FOLDER, filename))
+        try:
+            file.save(os.path.join(UPLOAD_FOLDER, filename))
+            print(f"[ILUS] Foto guardada localmente: {filename}")
+        except Exception as exc:
+            print(f"[ILUS] Error guardando foto local: {exc}")
+            flash(f"Error al guardar la foto: {exc}", "danger")
+            return redirect(url_for("product_detail", pid=pid))
 
+    # Guardamos URL completa (Cloudinary) o nombre local
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
@@ -1746,7 +1777,8 @@ def upload_photo(pid):
         )
     conn.commit()
 
-    flash("Foto agregada.", "success")
+    destino = "nube ☁️" if filename.startswith("http") else "servidor local"
+    flash(f"Foto guardada en {destino}.", "success")
     return redirect(url_for("product_detail", pid=pid))
 
 
