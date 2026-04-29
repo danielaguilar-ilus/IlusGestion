@@ -1398,7 +1398,23 @@ def reset_password(token):
 @app.route("/")
 @login_required
 def index():
-    q = request.args.get("q", "").strip()
+    q     = request.args.get("q", "").strip()
+    exact = request.args.get("exact") == "1"
+
+    # ── Búsqueda exacta por escáner de código de barras ──────────
+    # Si viene con exact=1 (del scanner físico), busca el SKU exacto.
+    # Si encuentra exactamente un producto con ficha → va directo a él.
+    if exact and q:
+        sku_norm = q.upper()
+        hit = mysql_fetchone(
+            f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE sku=%s", (sku_norm,)
+        )
+        if hit:
+            return redirect(url_for("product_detail", pid=hit["id"]))
+        # No tiene ficha aún → intenta crear desde ERP y redirige al índice filtrado
+        flash(f"SKU {sku_norm} encontrado en ERP pero sin ficha. Usa 'Preparar' para crearlo.", "info")
+        return redirect(url_for("index", q=sku_norm))
+
     products = get_product_listing(q)
     return render_template("index.html", products=products, q=q)
 

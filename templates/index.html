@@ -36,6 +36,8 @@
 
   {# ── Búsqueda ── #}
   <form method="get" class="ilus-search mb-3" id="searchForm">
+    {# exact=1 lo activa el JS cuando detecta un scanner físico o cámara #}
+    <input type="hidden" name="exact" id="exactFlag" value="0">
     <div class="input-group shadow-sm">
       <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
       <input type="text" name="q" value="{{ q }}" class="form-control border-start-0"
@@ -396,45 +398,61 @@
 (function(){
   var searchInput = document.getElementById('searchInput');
   var searchForm  = document.getElementById('searchForm');
+  var exactFlag   = document.getElementById('exactFlag');
   if (!searchInput) return;
 
-  /* Submit con Enter en el campo de búsqueda */
+  /* Submit con Enter en el campo de búsqueda (búsqueda normal, no exacta) */
   searchInput.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      exactFlag.value = '0';   /* Enter manual → búsqueda normal (parcial) */
       searchForm.submit();
     }
   });
 
-  /* Detección de pistola lectora:
-     - Acumula caracteres que llegan muy rápido (< 80ms entre teclas)
-     - Si el tiempo total para N caracteres es < N*80ms y hay ≥ 4 chars → auto-submit
+  /* ── Pistola / lector USB ──────────────────────────────────────
+     El scanner envía caracteres muy rápido (< 50ms entre teclas)
+     seguidos de Enter. Cuando detectamos ese patrón:
+     → marcamos exact=1 → el servidor busca SKU exacto → redirige directo al producto
   */
   var barcodeBuffer = '';
   var lastKeyTime   = 0;
-  var SCANNER_SPEED = 80;   /* ms máx entre chars de scanner */
+  var keyTimes      = [];
 
   document.addEventListener('keypress', function(e) {
-    /* Solo si el foco NO está en un input/textarea/select */
+    /* Solo actúa si el foco NO está en ningún campo */
     var tag = document.activeElement ? document.activeElement.tagName : '';
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
     var now = Date.now();
-    if (now - lastKeyTime > 300) {
-      barcodeBuffer = '';  /* reset si pasó demasiado tiempo */
+    var gap = now - lastKeyTime;
+
+    if (gap > 500) {
+      /* Pasó demasiado tiempo → reset: empieza nuevo posible scan */
+      barcodeBuffer = '';
+      keyTimes      = [];
     }
     lastKeyTime = now;
 
     if (e.key === 'Enter') {
       if (barcodeBuffer.length >= 4) {
+        /* Calcula velocidad promedio entre teclas */
+        var avgGap = keyTimes.length > 1
+          ? keyTimes.reduce(function(a,b){return a+b;},0) / keyTimes.length
+          : 999;
+
         searchInput.value = barcodeBuffer.trim().toUpperCase();
-        barcodeBuffer = '';
+        /* Si los chars llegaron muy rápido (scanner) → búsqueda exacta */
+        exactFlag.value   = avgGap < 60 ? '1' : '0';
+        barcodeBuffer     = '';
+        keyTimes          = [];
         searchForm.submit();
       }
       return;
     }
 
     if (e.key.length === 1) {
+      if (barcodeBuffer.length > 0) keyTimes.push(gap);
       barcodeBuffer += e.key;
     }
   });
@@ -451,6 +469,7 @@
   var manualInput  = document.getElementById('manualSku');
   var searchInput  = document.getElementById('searchInput');
   var searchForm   = document.getElementById('searchForm');
+  var exactFlag    = document.getElementById('exactFlag');
   var statusEl     = document.getElementById('scanStatus');
 
   /* Abrir modal al tocar el botón cámara */
@@ -482,8 +501,9 @@
       { facingMode: 'environment' },   /* cámara trasera en móvil */
       config,
       function onSuccess(decodedText){
-        /* ¡Código detectado! → llenar búsqueda y enviar */
-        searchInput.value = decodedText.trim();
+        /* ¡Código detectado por cámara! → búsqueda exacta directa */
+        searchInput.value = decodedText.trim().toUpperCase();
+        exactFlag.value   = '1';    /* cámara → siempre exacto */
         bootstrap.Modal.getInstance(scannerModal).hide();
         searchForm.submit();
       },
@@ -509,11 +529,12 @@
     statusEl.innerHTML = '<i class="bi bi-camera me-1"></i>Apunta la cámara al código de barras de la etiqueta';
   });
 
-  /* Búsqueda manual desde el modal */
+  /* Búsqueda manual desde el modal → exacta (usuario escribió SKU completo) */
   function doManualSearch(){
-    var v = manualInput.value.trim();
+    var v = manualInput.value.trim().toUpperCase();
     if(!v) return;
     searchInput.value = v;
+    exactFlag.value   = '1';
     bootstrap.Modal.getInstance(scannerModal).hide();
     searchForm.submit();
   }
