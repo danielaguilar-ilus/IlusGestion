@@ -22,6 +22,14 @@ from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINAR
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
 
+@app.template_filter('fkg')
+def fkg_filter(value, decimals=3):
+    """Formato kg con coma decimal para lectura chilena: 34.0 → '34,000'"""
+    try:
+        return f"{float(value):.{decimals}f}".replace('.', ',')
+    except Exception:
+        return '—'
+
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER   = os.path.join(BASE_DIR, "static", "uploads")
 COLABS_FOLDER   = os.path.join(BASE_DIR, "static", "uploads", "colaboradores")
@@ -3244,9 +3252,14 @@ TIPOS_DOC_CUBICADOR = [
     ("GDV", "Guía de Despacho"),
     ("VD",  "Nota de Venta Directa"),
     ("WEB", "Nota de Venta Web"),
-    ("NVV", "Nota de Venta"),
     ("COV", "Cotización"),
 ]
+
+# VD y WEB usan TIDO=NVV en el ERP; el NUDO lleva el prefijo dentro (10 chars)
+_ERP_TIDO_NUDO_MAP = {
+    "VD":  ("NVV", lambda n: "VD"  + str(n).zfill(8)),
+    "WEB": ("NVV", lambda n: "WEB" + str(n).zfill(7)),
+}
 
 
 def _nudo_variants(nudo_raw):
@@ -3286,7 +3299,17 @@ def _cubicador_fetch(tido, nudo):
     from datetime import datetime as _dt
 
     TOKEN = ERP_CONFIG.get("api_token", "")
-    nudos = _nudo_variants(nudo)
+
+    # ── Mapear VD/WEB → TIDO=NVV con NUDO prefijado (ej. VD00008827) ──
+    display_tido = tido
+    if tido in _ERP_TIDO_NUDO_MAP:
+        erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
+        erp_nudo = nudo_fn(nudo)
+    else:
+        erp_tido = tido
+        erp_nudo = str(nudo).strip()
+
+    nudos = _nudo_variants(erp_nudo)
 
     # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
     raw_header = None
@@ -3295,7 +3318,7 @@ def _cubicador_fetch(tido, nudo):
         try:
             body = _erp_get(
                 "/documentos/render",
-                {"tido": tido, "nudo": nv, "empresa": "01"},
+                {"tido": erp_tido, "nudo": nv, "empresa": "01"},
                 TOKEN, timeout=12,
             )
             data = body.get("data") or []
@@ -3330,11 +3353,11 @@ def _cubicador_fetch(tido, nudo):
     except Exception:
         fecha = fecha_raw
 
-    _nudo_str = str(raw_header.get("NUDO", nudo) or nudo)
+    _nudo_str = str(raw_header.get("NUDO", erp_nudo) or erp_nudo)
     header = {
-        "tido":           raw_header.get("TIDO", tido),
-        "nudo":           _nudo_str,
-        "nudo_display":   _nudo_str.lstrip("0") or _nudo_str,
+        "tido":           display_tido,               # VD / WEB, no NVV
+        "nudo":           str(nudo),                  # número sin prefijo
+        "nudo_display":   str(nudo).lstrip("0") or str(nudo),
         "fecha":          fecha,
         "valor_neto":     float(raw_header.get("VANEDO") or 0),
         "valor_iva":      float(raw_header.get("VAIVDO") or 0),

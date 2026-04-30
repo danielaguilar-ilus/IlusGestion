@@ -268,10 +268,10 @@
           </td>
 
           <td class="text-end">
-            {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_kg_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if l.tiene_bultos %}{{ l.peso_kg_u|fkg }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="text-end">
-            {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if l.tiene_bultos %}{{ l.peso_vol_u|fkg }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="text-end">
             {% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
@@ -280,14 +280,14 @@
           <td class="text-end fw-semibold">
             {% if l.tiene_bultos %}
             <span style="color:{% if l.peso_kg_u >= l.peso_vol_u %}#CC0000{% else %}#1a7a1a{% endif %}">
-              {{ "%.3f"|format(l.pred_u) }}
+              {{ l.pred_u|fkg }}
               <sup style="font-size:.6rem">{% if l.peso_kg_u >= l.peso_vol_u %}kg{% else %}pv{% endif %}</sup>
             </span>
             {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
 
           <td class="text-end fw-bold" style="color:var(--ilus-red)">
-            {% if l.tiene_bultos %}{{ "%.3f"|format(l.pred_tot) }}{% else %}<span class="text-muted fw-normal">—</span>{% endif %}
+            {% if l.tiene_bultos %}{{ l.pred_tot|fkg }}{% else %}<span class="text-muted fw-normal">—</span>{% endif %}
           </td>
 
           <td class="text-center no-print">
@@ -308,11 +308,11 @@
           <td colspan="2" class="text-end" style="color:#888;font-size:.75rem;letter-spacing:.5px">TOTALES</td>
           <td class="text-center" style="color:#fff">{{ ns.tot_qty|int }}</td>
           <td class="text-center" style="color:#fff">{{ ns.tot_bultos }}</td>
-          <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_kg) }}</td>
-          <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_pv) }}</td>
+          <td class="text-end" style="color:#fff">{{ ns.tot_kg|fkg }}</td>
+          <td class="text-end" style="color:#fff">{{ ns.tot_pv|fkg }}</td>
           <td class="text-end" style="color:#fff">{{ "{:,.0f}".format(ns.tot_vol) }}</td>
           <td class="text-end" style="color:#888">—</td>
-          <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ "%.3f"|format(ns.tot_pred) }}</td>
+          <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ ns.tot_pred|fkg }}</td>
           <td class="no-print"></td>
         </tr>
       </tfoot>
@@ -341,12 +341,12 @@
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total Kg</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "%.3f"|format(ns.tot_kg) }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_kg|fkg }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total PV</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "%.3f"|format(ns.tot_pv) }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_pv|fkg }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
@@ -356,7 +356,7 @@
 
         <div class="text-center px-4 py-3 flex-fill" style="background:#1a1a1a;border-radius:0 0 8px 0">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#aaa;font-weight:600">Predom. Total</div>
-          <div class="fw-bold" style="font-size:1.6rem;color:var(--ilus-red);line-height:1.1">{{ "%.3f"|format(ns.tot_pred) }}</div>
+          <div class="fw-bold" style="font-size:1.6rem;color:var(--ilus-red);line-height:1.1">{{ ns.tot_pred|fkg }}</div>
           <div style="font-size:.62rem;color:#777">kg predominante</div>
         </div>
 
@@ -399,11 +399,11 @@
       <div class="row g-1 text-center" style="font-size:.75rem">
         <div class="col-3">
           <div style="color:#888">Kg</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ "%.2f"|format(l.peso_kg_tot) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_kg_tot|fkg(2) }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:#888">PV</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ "%.2f"|format(l.peso_vol_tot) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_vol_tot|fkg(2) }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:#888">Vol cm³</div>
@@ -411,7 +411,7 @@
         </div>
         <div class="col-3">
           <div style="color:var(--ilus-red);font-weight:700">Pred</div>
-          <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ "%.2f"|format(l.pred_tot) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ l.pred_tot|fkg(2) }}{% else %}—{% endif %}</div>
         </div>
       </div>
       {% if l.tiene_ficha and l.app_id %}
@@ -443,11 +443,11 @@
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Total Kg</div>
-          <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_kg) }}</div>
+          <div class="fw-bold text-white">{{ ns.tot_kg|fkg }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Total PV</div>
-          <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_pv) }}</div>
+          <div class="fw-bold text-white">{{ ns.tot_pv|fkg }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Vol cm³</div>
@@ -455,7 +455,7 @@
         </div>
         <div class="col-6">
           <div style="color:var(--ilus-red);font-weight:700;font-size:.7rem">Predom total</div>
-          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.15rem">{{ "%.3f"|format(ns.tot_pred) }}</div>
+          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.15rem">{{ ns.tot_pred|fkg }}</div>
         </div>
       </div>
     </div>
