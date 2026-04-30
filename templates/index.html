@@ -208,6 +208,11 @@
               </button>
             </div>
           </div>
+
+          {# Panel de resultado del escáner (AJAX) #}
+          <div id="scanResult" style="display:none;border-top:1px solid #eee">
+          </div>
+
         </div>
 
       </div>
@@ -590,47 +595,123 @@ function clearKpiFilter() {
     }
   });
 
+  /* ══════════════════════════════════════════════════════════════
+     LOOKUP AJAX — núcleo compartido por pistola USB y cámara
+     Sin reload de página: resultado instantáneo en el modal.
+  ══════════════════════════════════════════════════════════════ */
+  var SKU_LOOKUP_URL = "{{ url_for('sku_lookup') }}";
+  var PREPARE_BASE   = "{{ url_for('index') }}";   /* fallback */
+  var scanResultEl   = document.getElementById('scanResult');
+
+  function skuLookup(sku, onDone) {
+    scanResultEl.style.display = 'block';
+    scanResultEl.innerHTML =
+      '<div class="p-3 text-center" style="color:#888;font-size:.85rem">'
+      + '<span class="spinner-border spinner-border-sm me-2"></span>Buscando <strong>'
+      + sku + '</strong>…</div>';
+
+    fetch(SKU_LOOKUP_URL + '?sku=' + encodeURIComponent(sku))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.status === 'found_app') {
+          /* ✅ Tiene ficha en la app → abrir quickView sin recargar */
+          scanResultEl.innerHTML =
+            '<div class="p-3" style="background:#e8f5e9;border-left:4px solid #2e7d32">'
+            + '<div class="fw-bold" style="color:#1b5e20"><i class="bi bi-check-circle-fill me-2"></i>'
+            + d.sku + '</div>'
+            + '<div class="small text-muted">' + d.nombre + '</div>'
+            + '<a href="' + d.detail_url + '" class="btn btn-sm mt-2 fw-bold"'
+            + ' style="background:#1a7a1a;color:#fff"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha</a>'
+            + '</div>';
+          /* Abrir quickView directamente */
+          if (typeof quickView === 'function') {
+            bootstrap.Modal.getInstance(document.getElementById('scannerModal')).hide();
+            setTimeout(function(){ quickView(d.pid); }, 300);
+          }
+
+        } else if (d.status === 'found_erp') {
+          /* 🔶 Está en ERP pero sin ficha → ofrecer crearla */
+          scanResultEl.innerHTML =
+            '<div class="p-3" style="background:#fff8e1;border-left:4px solid #f9a825">'
+            + '<div class="fw-bold" style="color:#e65100"><i class="bi bi-exclamation-circle-fill me-2"></i>'
+            + d.sku + ' — sin ficha aún</div>'
+            + '<div class="small text-muted mb-2">' + d.nombre + '</div>'
+            + '<a href="' + d.prepare_url + '" class="btn btn-sm fw-bold"'
+            + ' style="background:#e65100;color:#fff"><i class="bi bi-plus-circle me-1"></i>Crear ficha desde ERP</a>'
+            + '<button type="button" class="btn btn-sm btn-outline-secondary ms-2"'
+            + ' onclick="skuSearchFallback(\'' + d.sku + '\')">Buscar en lista</button>'
+            + '</div>';
+
+        } else {
+          /* ❌ No encontrado en ningún lado */
+          scanResultEl.innerHTML =
+            '<div class="p-3" style="background:#fce4ec;border-left:4px solid #c62828">'
+            + '<div class="fw-bold" style="color:#b71c1c"><i class="bi bi-x-circle-fill me-2"></i>'
+            + 'SKU no encontrado: ' + d.sku + '</div>'
+            + '<div class="small text-muted mb-2">No existe en nuestra base ni en el ERP.</div>'
+            + '<button type="button" class="btn btn-sm btn-outline-secondary"'
+            + ' onclick="skuSearchFallback(\'' + d.sku + '\')">Buscar igual</button>'
+            + '</div>';
+        }
+        if (onDone) onDone(d);
+      })
+      .catch(function(){
+        scanResultEl.innerHTML =
+          '<div class="p-3 text-center" style="color:#e67e00;font-size:.85rem">'
+          + '<i class="bi bi-wifi-off me-2"></i>Error de conexión. Intenta de nuevo.</div>';
+      });
+  }
+
+  /* Fallback: búsqueda normal en la lista (recarga la página) */
+  window.skuSearchFallback = function(sku) {
+    searchInput.value = sku;
+    exactFlag.value   = '0';
+    bootstrap.Modal.getInstance(document.getElementById('scannerModal')).hide();
+    searchForm.submit();
+  };
+
   /* ── Pistola / lector USB ──────────────────────────────────────
-     El scanner envía caracteres muy rápido (< 50ms entre teclas)
-     seguidos de Enter. Cuando detectamos ese patrón:
-     → marcamos exact=1 → el servidor busca SKU exacto → redirige directo al producto
-  */
+     Detecta ráfaga de teclas rápida (<60ms avg) seguida de Enter.
+     Usa lookup AJAX — sin recargar la página.
+  ── */
   var barcodeBuffer = '';
   var lastKeyTime   = 0;
   var keyTimes      = [];
+  var scannerModal  = document.getElementById('scannerModal');
 
   document.addEventListener('keypress', function(e) {
-    /* Solo actúa si el foco NO está en ningún campo */
     var tag = document.activeElement ? document.activeElement.tagName : '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    /* Permitir si el foco está en el campo manual del modal */
+    var inManual = document.activeElement && document.activeElement.id === 'manualSku';
+    if (!inManual && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT')) return;
+    if (inManual) return;   /* el campo manual tiene su propio handler */
 
     var now = Date.now();
     var gap = now - lastKeyTime;
-
-    if (gap > 500) {
-      /* Pasó demasiado tiempo → reset: empieza nuevo posible scan */
-      barcodeBuffer = '';
-      keyTimes      = [];
-    }
+    if (gap > 500) { barcodeBuffer = ''; keyTimes = []; }
     lastKeyTime = now;
 
     if (e.key === 'Enter') {
       if (barcodeBuffer.length >= 4) {
-        /* Calcula velocidad promedio entre teclas */
         var avgGap = keyTimes.length > 1
-          ? keyTimes.reduce(function(a,b){return a+b;},0) / keyTimes.length
-          : 999;
+          ? keyTimes.reduce(function(a,b){return a+b;},0) / keyTimes.length : 999;
+        var sku = barcodeBuffer.trim().toUpperCase();
+        barcodeBuffer = ''; keyTimes = [];
 
-        searchInput.value = barcodeBuffer.trim().toUpperCase();
-        /* Si los chars llegaron muy rápido (scanner) → búsqueda exacta */
-        exactFlag.value   = avgGap < 60 ? '1' : '0';
-        barcodeBuffer     = '';
-        keyTimes          = [];
-        searchForm.submit();
+        if (avgGap < 60) {
+          /* Es pistola → lookup AJAX, abre el modal para mostrar resultado */
+          var modalInst = bootstrap.Modal.getOrCreateInstance(scannerModal);
+          modalInst.show();
+          setTimeout(function(){ skuLookup(sku); }, 200);
+        } else {
+          /* Escritura humana → búsqueda normal en lista */
+          searchInput.value = sku;
+          exactFlag.value   = '0';
+          searchForm.submit();
+        }
       }
       return;
     }
-
     if (e.key.length === 1) {
       if (barcodeBuffer.length > 0) keyTimes.push(gap);
       barcodeBuffer += e.key;
@@ -651,81 +732,84 @@ function clearKpiFilter() {
   var searchForm   = document.getElementById('searchForm');
   var exactFlag    = document.getElementById('exactFlag');
   var statusEl     = document.getElementById('scanStatus');
+  var scanResultEl = document.getElementById('scanResult');
 
-  /* Abrir modal al tocar el botón cámara */
+  function resetModal() {
+    if (scanResultEl) { scanResultEl.style.display = 'none'; scanResultEl.innerHTML = ''; }
+    manualInput.value = '';
+    statusEl.innerHTML = '<i class="bi bi-camera me-1"></i>Apunta la cámara al código de barras';
+  }
+
   scanBtn.addEventListener('click', function(){
+    resetModal();
     new bootstrap.Modal(scannerModal).show();
   });
 
-  /* Iniciar cámara cuando el modal está visible */
   scannerModal.addEventListener('shown.bs.modal', function(){
     statusEl.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-2"></div>Iniciando cámara…';
-
     html5QrCode = new Html5Qrcode('qr-reader');
 
     var config = {
-      fps: 12,
-      qrbox: { width: 300, height: 110 },   /* rectangular → óptimo para códigos 1D */
+      fps: 15,
+      qrbox: { width: 300, height: 120 },
       formatsToSupport: [
         Html5QrcodeSupportedFormats.CODE_128,
         Html5QrcodeSupportedFormats.CODE_39,
         Html5QrcodeSupportedFormats.EAN_13,
         Html5QrcodeSupportedFormats.EAN_8,
         Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.ITF,
       ],
-      aspectRatio: 1.6
+      aspectRatio: 1.7,
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     };
 
     html5QrCode.start(
-      { facingMode: 'environment' },   /* cámara trasera en móvil */
+      { facingMode: 'environment' },
       config,
       function onSuccess(decodedText){
-        /* ¡Código detectado por cámara! → búsqueda exacta directa */
-        searchInput.value = decodedText.trim().toUpperCase();
-        exactFlag.value   = '1';    /* cámara → siempre exacto */
-        bootstrap.Modal.getInstance(scannerModal).hide();
-        searchForm.submit();
+        /* Código detectado → detener cámara + lookup AJAX */
+        html5QrCode.pause();
+        statusEl.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Código detectado';
+        skuLookup(decodedText.trim().toUpperCase(), function(d){
+          /* Si encontró en app el modal ya se cerró; si no, mantener abierto */
+          if (d.status !== 'found_app') {
+            /* Vibración táctil en móvil para feedback */
+            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+          }
+        });
       },
-      function onError(){ /* ignorar errores de frame — son normales */ }
+      function onError(){ /* ignorar errores de frame */ }
     ).then(function(){
       statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>'
-                         + 'Apunta la cámara al código de barras de la etiqueta';
+                         + 'Apunta al código — detección automática';
     }).catch(function(err){
       statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
-                         + 'No se pudo acceder a la cámara. Usa el campo manual.';
-      console.warn('Scanner error:', err);
+                         + 'Cámara no disponible. Usa el campo manual.';
     });
   });
 
-  /* Detener cámara al cerrar el modal */
   scannerModal.addEventListener('hide.bs.modal', function(){
     if(html5QrCode){
       html5QrCode.stop().catch(function(){});
       html5QrCode.clear();
       html5QrCode = null;
     }
-    manualInput.value = '';
-    statusEl.innerHTML = '<i class="bi bi-camera me-1"></i>Apunta la cámara al código de barras de la etiqueta';
+    resetModal();
   });
 
-  /* Búsqueda manual desde el modal → exacta (usuario escribió SKU completo) */
   function doManualSearch(){
     var v = manualInput.value.trim().toUpperCase();
     if(!v) return;
-    searchInput.value = v;
-    exactFlag.value   = '1';
-    bootstrap.Modal.getInstance(scannerModal).hide();
-    searchForm.submit();
+    skuLookup(v);
   }
   manualBtn.addEventListener('click', doManualSearch);
   manualInput.addEventListener('keydown', function(e){
     if(e.key === 'Enter'){ e.preventDefault(); doManualSearch(); }
   });
 
-  /* Auto-focus en el campo manual cuando el modal abre */
   scannerModal.addEventListener('shown.bs.modal', function(){
-    /* pequeño delay para que el teclado no tape el visor en móvil */
     setTimeout(function(){ manualInput.focus(); }, 600);
   });
 })();
