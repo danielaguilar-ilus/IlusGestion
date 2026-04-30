@@ -3126,6 +3126,9 @@ def api_eval_estado(eid):
 TIPOS_DOC_CUBICADOR = [
     ("FCV", "Factura"),
     ("BLV", "Boleta"),
+    ("GBV", "Guía de Despacho"),
+    ("VD",  "G. Despacho Venta Directa"),
+    ("WEB", "G. Despacho Web"),
     ("NVV", "Nota de Venta"),
     ("COV", "Cotización"),
 ]

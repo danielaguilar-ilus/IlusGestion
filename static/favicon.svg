@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect x="1" y="1" width="30" height="30" rx="4" fill="#1a1a1a" stroke="#CC0000" stroke-width="1.5"/>
+  <text x="16" y="21" font-family="Arial,sans-serif" font-weight="900" font-size="14" fill="#CC0000" text-anchor="middle">IL</text>
+  <text x="16" y="29" font-family="Arial,sans-serif" font-weight="700" font-size="7" fill="#ffffff" text-anchor="middle" letter-spacing="1">US</text>
+</svg>

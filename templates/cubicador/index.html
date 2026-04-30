@@ -60,19 +60,21 @@
 
 {# Botones de exportación #}
 <div class="d-flex gap-2 mb-3 justify-content-end flex-wrap">
-  <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline">
+  <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline"
+        onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
     <input type="hidden" name="tido" value="{{ tido }}">
     <input type="hidden" name="nudo" value="{{ nudo }}">
     <button type="submit" class="btn btn-sm fw-semibold"
-            style="background:#1a7a1a;color:#fff;border:none;padding:6px 14px">
+            style="background:#1a7a1a;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-excel me-1"></i>Excel
     </button>
   </form>
-  <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline">
+  <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline"
+        onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
     <input type="hidden" name="tido" value="{{ tido }}">
     <input type="hidden" name="nudo" value="{{ nudo }}">
     <button type="submit" class="btn btn-sm fw-semibold"
-            style="background:#CC0000;color:#fff;border:none;padding:6px 14px">
+            style="background:#CC0000;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-pdf me-1"></i>PDF
     </button>
   </form>
@@ -264,6 +266,31 @@
         </tr>
       </tfoot>
     </table>
+  </div>
+</div>
+
+{# ── Totales resumen (desktop) ── #}
+<div class="d-none d-md-flex gap-3 mb-3 flex-wrap">
+  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
+    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Unidades</div>
+    <div class="fw-bold" style="font-size:1.35rem">{{ ns.tot_qty|int }}</div>
+  </div>
+  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
+    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Total Kg</div>
+    <div class="fw-bold" style="font-size:1.35rem">{{ "%.3f"|format(ns.tot_kg) }}</div>
+  </div>
+  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
+    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Total PV</div>
+    <div class="fw-bold" style="font-size:1.35rem">{{ "%.3f"|format(ns.tot_pv) }}</div>
+  </div>
+  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
+    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Vol cm³ total</div>
+    <div class="fw-bold" style="font-size:1.35rem">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
+  </div>
+  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#1a1a1a;border:1px solid #333;min-width:160px">
+    <div class="fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#aaa">Predom. Total</div>
+    <div class="fw-bold" style="font-size:1.5rem;color:var(--ilus-red)">{{ "%.3f"|format(ns.tot_pred) }}</div>
+    <div style="font-size:.65rem;color:#888">kg predominante</div>
   </div>
 </div>
 
