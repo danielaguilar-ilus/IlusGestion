@@ -604,33 +604,28 @@ function clearKpiFilter() {
   var scanResultEl   = document.getElementById('scanResult');
 
   function skuLookup(sku, onDone) {
-    scanResultEl.style.display = 'block';
-    scanResultEl.innerHTML =
-      '<div class="p-3 text-center" style="color:#888;font-size:.85rem">'
-      + '<span class="spinner-border spinner-border-sm me-2"></span>Buscando <strong>'
-      + sku + '</strong>…</div>';
+    /* Mostrar spinner en el panel de resultado (si el modal ya está abierto) */
+    var modalOpen = document.getElementById('scannerModal').classList.contains('show');
+    if (modalOpen) {
+      scanResultEl.style.display = 'block';
+      scanResultEl.innerHTML =
+        '<div class="p-3 text-center" style="color:#888;font-size:.85rem">'
+        + '<span class="spinner-border spinner-border-sm me-2"></span>Buscando <strong>'
+        + sku + '</strong>…</div>';
+    }
 
     fetch(SKU_LOOKUP_URL + '?sku=' + encodeURIComponent(sku))
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.status === 'found_app') {
-          /* ✅ Tiene ficha en la app → abrir quickView sin recargar */
-          scanResultEl.innerHTML =
-            '<div class="p-3" style="background:#e8f5e9;border-left:4px solid #2e7d32">'
-            + '<div class="fw-bold" style="color:#1b5e20"><i class="bi bi-check-circle-fill me-2"></i>'
-            + d.sku + '</div>'
-            + '<div class="small text-muted">' + d.nombre + '</div>'
-            + '<a href="' + d.detail_url + '" class="btn btn-sm mt-2 fw-bold"'
-            + ' style="background:#1a7a1a;color:#fff"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha</a>'
-            + '</div>';
-          /* Abrir quickView directamente */
-          if (typeof quickView === 'function') {
-            bootstrap.Modal.getInstance(document.getElementById('scannerModal')).hide();
-            setTimeout(function(){ quickView(d.pid); }, 300);
-          }
+          /* ✅ Encontrado → ir directo a la página de edición */
+          window.location.href = d.edit_url;
+          return;
 
         } else if (d.status === 'found_erp') {
-          /* 🔶 Está en ERP pero sin ficha → ofrecer crearla */
+          /* 🔶 En ERP pero sin ficha → abrir modal y ofrecer crearla */
+          if (!modalOpen) bootstrap.Modal.getOrCreateInstance(document.getElementById('scannerModal')).show();
+          scanResultEl.style.display = 'block';
           scanResultEl.innerHTML =
             '<div class="p-3" style="background:#fff8e1;border-left:4px solid #f9a825">'
             + '<div class="fw-bold" style="color:#e65100"><i class="bi bi-exclamation-circle-fill me-2"></i>'
@@ -644,6 +639,8 @@ function clearKpiFilter() {
 
         } else {
           /* ❌ No encontrado en ningún lado */
+          if (!modalOpen) bootstrap.Modal.getOrCreateInstance(document.getElementById('scannerModal')).show();
+          scanResultEl.style.display = 'block';
           scanResultEl.innerHTML =
             '<div class="p-3" style="background:#fce4ec;border-left:4px solid #c62828">'
             + '<div class="fw-bold" style="color:#b71c1c"><i class="bi bi-x-circle-fill me-2"></i>'
@@ -656,6 +653,8 @@ function clearKpiFilter() {
         if (onDone) onDone(d);
       })
       .catch(function(){
+        if (!modalOpen) bootstrap.Modal.getOrCreateInstance(document.getElementById('scannerModal')).show();
+        scanResultEl.style.display = 'block';
         scanResultEl.innerHTML =
           '<div class="p-3 text-center" style="color:#e67e00;font-size:.85rem">'
           + '<i class="bi bi-wifi-off me-2"></i>Error de conexión. Intenta de nuevo.</div>';
@@ -699,10 +698,8 @@ function clearKpiFilter() {
         barcodeBuffer = ''; keyTimes = [];
 
         if (avgGap < 60) {
-          /* Es pistola → lookup AJAX, abre el modal para mostrar resultado */
-          var modalInst = bootstrap.Modal.getOrCreateInstance(scannerModal);
-          modalInst.show();
-          setTimeout(function(){ skuLookup(sku); }, 200);
+          /* Es pistola → lookup AJAX directo; si encontrado navega, si no abre modal */
+          skuLookup(sku);
         } else {
           /* Escritura humana → búsqueda normal en lista */
           searchInput.value = sku;

@@ -1187,11 +1187,12 @@ def sku_lookup():
     )
     if hit:
         return jsonify({
-            "status":  "found_app",
-            "pid":     hit["id"],
-            "sku":     hit["sku"],
-            "nombre":  (hit["nombre"] or "").strip(),
+            "status":     "found_app",
+            "pid":        hit["id"],
+            "sku":        hit["sku"],
+            "nombre":     (hit["nombre"] or "").strip(),
             "detail_url": url_for("product_detail", pid=hit["id"]),
+            "edit_url":   url_for("edit_product",   pid=hit["id"]),
         })
 
     # ── 2. Buscar en tabla ERP local ─────────────────────────────────
