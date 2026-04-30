@@ -172,20 +172,23 @@ def _get_pool():
             import pymysql, pymysql.cursors
             from dbutils.pooled_db import PooledDB
             _db_pool = PooledDB(
-                creator     = pymysql,
-                mincached   = 2,           # conexiones siempre listas
-                maxcached   = 6,           # máximo en pool inactivo
-                maxconnections = 10,       # total permitido
-                blocking    = True,        # espera si están todas ocupadas
-                host        = MYSQL_CONFIG["host"],
-                port        = MYSQL_CONFIG["port"],
-                user        = MYSQL_CONFIG["user"],
-                password    = MYSQL_CONFIG["password"],
-                database    = MYSQL_CONFIG["database"],
-                connect_timeout = MYSQL_CONFIG.get("connect_timeout", 15),
-                charset     = "utf8mb4",
-                cursorclass = pymysql.cursors.DictCursor,
-                autocommit  = False,
+                creator        = pymysql,
+                mincached      = 1,           # conexiones siempre listas
+                maxcached      = 5,           # máximo en pool inactivo
+                maxconnections = 10,          # total permitido
+                blocking       = False,       # falla rápido si no hay conexión libre
+                ping           = 1,           # verifica conexión antes de entregar (reconecta si está muerta)
+                host           = MYSQL_CONFIG["host"],
+                port           = MYSQL_CONFIG["port"],
+                user           = MYSQL_CONFIG["user"],
+                password       = MYSQL_CONFIG["password"],
+                database       = MYSQL_CONFIG["database"],
+                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 15),
+                read_timeout   = 20,
+                write_timeout  = 20,
+                charset        = "utf8mb4",
+                cursorclass    = pymysql.cursors.DictCursor,
+                autocommit     = False,
             )
             print("[ILUS] Pool de conexiones MySQL activo (DBUtils).")
         except ImportError:
