@@ -652,10 +652,10 @@ body {
 }
 .login-mini-logo {
   display: block;
-  width: 140px;       /* +80% de 78px */
+  width: 210px;
   height: auto;
   object-fit: contain;
-  margin-bottom: 30px;
+  margin-bottom: 28px;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,.6));
 }
 .login-mini-brand {

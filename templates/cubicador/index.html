@@ -58,6 +58,26 @@
 {% set h      = resultado.header %}
 {% set lineas = resultado.lineas %}
 
+{# Botones de exportación #}
+<div class="d-flex gap-2 mb-3 justify-content-end flex-wrap">
+  <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline">
+    <input type="hidden" name="tido" value="{{ tido }}">
+    <input type="hidden" name="nudo" value="{{ nudo }}">
+    <button type="submit" class="btn btn-sm fw-semibold"
+            style="background:#1a7a1a;color:#fff;border:none;padding:6px 14px">
+      <i class="bi bi-file-earmark-excel me-1"></i>Excel
+    </button>
+  </form>
+  <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline">
+    <input type="hidden" name="tido" value="{{ tido }}">
+    <input type="hidden" name="nudo" value="{{ nudo }}">
+    <button type="submit" class="btn btn-sm fw-semibold"
+            style="background:#CC0000;color:#fff;border:none;padding:6px 14px">
+      <i class="bi bi-file-earmark-pdf me-1"></i>PDF
+    </button>
+  </form>
+</div>
+
 {# Cabecera del documento #}
 <div class="ilus-card mb-3">
   <div class="ilus-card-header" style="background:var(--ilus-black)">

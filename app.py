@@ -3164,7 +3164,7 @@ def _cubicador_fetch(tido, nudo):
                 f"{ERP_API_URL}/documentos/render",
                 params={"tido": tido, "nudo": nv, "empresa": "01"},
                 headers=auth_headers,
-                timeout=15,
+                timeout=(5, 10),   # 5s conectar, 10s leer
             )
             resp.raise_for_status()
             data = resp.json().get("data") or []
@@ -3188,7 +3188,7 @@ def _cubicador_fetch(tido, nudo):
                 f"{ERP_API_URL}/entidades",
                 params={"rten": endo},
                 headers=auth_headers,
-                timeout=15,
+                timeout=(5, 8),    # 5s conectar, 8s leer
             )
             ent.raise_for_status()
             ent_data = ent.json().get("data") or []
@@ -3317,6 +3317,272 @@ def cubicador():
                            tido=tido, nudo=nudo,
                            resultado=resultado,
                            error_msg=error_msg)
+
+
+@app.route("/cubicador/export/excel", methods=["POST"])
+@login_required
+def cubicador_export_excel():
+    """Descarga el resultado del cubicador como Excel (.xlsx)."""
+    if not g.permissions.get("cubicador"):
+        flash("No tienes acceso al módulo Cubicador.", "danger")
+        return redirect(url_for("index"))
+
+    tido = (request.form.get("tido") or "FCV").strip().upper()
+    nudo = (request.form.get("nudo") or "").strip()
+    if not nudo:
+        flash("Debes ingresar un número de documento.", "warning")
+        return redirect(url_for("cubicador"))
+
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except Exception as ex:
+        flash(f"Error al consultar el ERP: {ex}", "danger")
+        return redirect(url_for("cubicador", tido=tido, nudo=nudo))
+
+    if header is None:
+        flash(f"No se encontró el documento {tido} N° {nudo}.", "warning")
+        return redirect(url_for("cubicador"))
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{tido}{nudo}"
+
+    BLACK, RED, LGRAY = "1A1A1A", "CC0000", "F5F5F5"
+
+    def _hdr_cell(cell, val):
+        cell.value = val
+        cell.font = Font(bold=True, color="FFFFFF", size=9)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # ── Fila 1: título ───────────────────────────────────────────────
+    ws.merge_cells("A1:J1")
+    c = ws["A1"]
+    c.value = f"CUBICADOR ILUS  ·  {tido} N° {nudo}"
+    c.font = Font(bold=True, size=13, color="FFFFFF")
+    c.fill = PatternFill("solid", fgColor=BLACK)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    # ── Fila 2: info cliente / montos ────────────────────────────────
+    ws.merge_cells("A2:D2")
+    ws["A2"].value = f"{header.get('cliente_nombre','—')}   RUT {header.get('cliente_rut','—')}   {header.get('fecha','')}"
+    ws["A2"].font  = Font(size=9)
+    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+
+    ws.merge_cells("E2:J2")
+    ws["E2"].value = (
+        f"Neto: ${header.get('valor_neto',0):,.0f}   "
+        f"IVA: ${header.get('valor_iva',0):,.0f}   "
+        f"Bruto: ${header.get('valor_bruto',0):,.0f}"
+    )
+    ws["E2"].font  = Font(bold=True, size=9)
+    ws["E2"].alignment = Alignment(horizontal="right", vertical="center")
+    ws.row_dimensions[2].height = 18
+
+    # ── Fila 3: encabezados columnas ─────────────────────────────────
+    cols = ["SKU", "Descripción ERP", "Cant", "Bultos",
+            "Kg/u", "PV/u", "Vol cm³/u", "Predom/u", "Total Predom", "Tipo"]
+    for ci, h in enumerate(cols, 1):
+        _hdr_cell(ws.cell(row=3, column=ci), h)
+    ws.row_dimensions[3].height = 20
+
+    # ── Filas de datos ───────────────────────────────────────────────
+    for ri, l in enumerate(lineas, 4):
+        bg = LGRAY if ri % 2 == 0 else "FFFFFF"
+        vals = [
+            l["sku"],
+            l["descripcion_erp"],
+            int(l["cantidad"]),
+            l["total_bultos"] if l["tiene_ficha"] else "s/f",
+            l["peso_kg_u"]  if l["tiene_bultos"] else None,
+            l["peso_vol_u"] if l["tiene_bultos"] else None,
+            l["vol_u"]      if l["tiene_bultos"] else None,
+            l["pred_u"]     if l["tiene_bultos"] else None,
+            l["pred_tot"]   if l["tiene_bultos"] else None,
+            ("kg" if l["peso_kg_u"] >= l["peso_vol_u"] else "pv") if l["tiene_bultos"] else None,
+        ]
+        for ci, val in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=val)
+            cell.fill = PatternFill("solid", fgColor=bg)
+            cell.font  = Font(size=9, bold=(ci == 9), color=(RED if ci == 9 else "000000"))
+            cell.alignment = Alignment(
+                horizontal="center" if ci in (3, 4, 10) else ("right" if ci >= 5 else "left"),
+                vertical="center",
+            )
+            if ci in (5, 6, 7, 8, 9) and val is not None:
+                cell.number_format = "#,##0.000"
+
+    # ── Fila de totales ──────────────────────────────────────────────
+    tr = len(lineas) + 4
+    ws.merge_cells(f"A{tr}:B{tr}")
+    ws.cell(row=tr, column=1, value="TOTALES").font = Font(bold=True, color="FFFFFF", size=9)
+    ws.cell(row=tr, column=1).fill = PatternFill("solid", fgColor=BLACK)
+    ws.cell(row=tr, column=1).alignment = Alignment(horizontal="right")
+
+    totales = {
+        3: int(sum(l["cantidad"] for l in lineas)),
+        5: sum(l["peso_kg_tot"]  for l in lineas),
+        6: sum(l["peso_vol_tot"] for l in lineas),
+        7: sum(l["vol_tot"]      for l in lineas),
+        9: sum(l["pred_tot"]     for l in lineas),
+    }
+    for ci in range(1, 11):
+        cell = ws.cell(row=tr, column=ci)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        if ci in totales:
+            cell.value = totales[ci]
+            cell.font  = Font(bold=True, color=("CC0000" if ci == 9 else "FFFFFF"), size=9)
+            cell.alignment = Alignment(horizontal="center" if ci == 3 else "right")
+            if ci != 3:
+                cell.number_format = "#,##0.000"
+
+    # ── Anchos de columna ────────────────────────────────────────────
+    for ci, w in enumerate([14, 42, 7, 8, 10, 10, 12, 12, 14, 7], 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    ws.freeze_panes = "A4"
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"cubicador_{tido}_{nudo}.xlsx",
+    )
+
+
+@app.route("/cubicador/export/pdf", methods=["POST"])
+@login_required
+def cubicador_export_pdf():
+    """Descarga el resultado del cubicador como PDF."""
+    if not g.permissions.get("cubicador"):
+        flash("No tienes acceso al módulo Cubicador.", "danger")
+        return redirect(url_for("index"))
+
+    tido = (request.form.get("tido") or "FCV").strip().upper()
+    nudo = (request.form.get("nudo") or "").strip()
+    if not nudo:
+        flash("Debes ingresar un número de documento.", "warning")
+        return redirect(url_for("cubicador"))
+
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except Exception as ex:
+        flash(f"Error al consultar el ERP: {ex}", "danger")
+        return redirect(url_for("cubicador", tido=tido, nudo=nudo))
+
+    if header is None:
+        flash(f"No se encontró el documento {tido} N° {nudo}.", "warning")
+        return redirect(url_for("cubicador"))
+
+    tot_qty  = sum(l["cantidad"]     for l in lineas)
+    tot_kg   = sum(l["peso_kg_tot"]  for l in lineas)
+    tot_pv   = sum(l["peso_vol_tot"] for l in lineas)
+    tot_vol  = sum(l["vol_tot"]      for l in lineas)
+    tot_pred = sum(l["pred_tot"]     for l in lineas)
+
+    rows_html = ""
+    for i, l in enumerate(lineas):
+        bg = "#f7f7f7" if i % 2 == 0 else "#ffffff"
+        rows_html += f"""
+        <tr style="background:{bg}">
+          <td class="mono">{l['sku']}</td>
+          <td>{l['descripcion_erp']}</td>
+          <td class="c">{int(l['cantidad'])}</td>
+          <td class="c">{l['total_bultos'] if l['tiene_ficha'] else 's/f'}</td>
+          <td class="r">{f"{l['peso_kg_u']:.3f}"  if l['tiene_bultos'] else '—'}</td>
+          <td class="r">{f"{l['peso_vol_u']:.3f}" if l['tiene_bultos'] else '—'}</td>
+          <td class="r">{f"{l['vol_u']:,.0f}"      if l['tiene_bultos'] else '—'}</td>
+          <td class="r fw red">{f"{l['pred_tot']:.3f}" if l['tiene_bultos'] else '—'}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;padding:18px}}
+.hdr{{background:#1a1a1a;color:#fff;padding:12px 16px;border-radius:5px 5px 0 0;
+      display:flex;justify-content:space-between;align-items:center}}
+.hdr h1{{font-size:13pt}}.hdr .red{{color:#CC0000}}
+.meta{{background:#f3f3f3;padding:10px 16px;border:1px solid #ddd;
+       border-radius:0 0 5px 5px;display:flex;justify-content:space-between;margin-bottom:14px}}
+.meta .cn{{font-size:10pt;font-weight:bold}}
+.meta .rut{{font-size:7.5pt;color:#666;margin-top:2px}}
+.meta .montos span{{margin-left:14px;font-size:8pt}}
+.meta .bruto{{font-weight:bold;color:#CC0000}}
+table{{width:100%;border-collapse:collapse;font-size:7.8pt}}
+th{{background:#1a1a1a;color:#fff;padding:6px 5px;text-align:left;
+    font-size:7pt;text-transform:uppercase;letter-spacing:.3px}}
+td{{padding:5px;border-bottom:1px solid #ebebeb;vertical-align:middle}}
+.c{{text-align:center}}.r{{text-align:right}}
+.mono{{font-family:monospace;font-weight:bold}}.fw{{font-weight:bold}}.red{{color:#CC0000}}
+tfoot tr{{background:#1a1a1a!important;color:#fff;font-weight:bold}}
+tfoot td{{border:none;padding:7px 5px}}
+.foot{{margin-top:12px;font-size:6.5pt;color:#aaa;text-align:right}}
+</style></head><body>
+<div class="hdr">
+  <h1><span class="red">▐</span> {tido} N° {nudo} — Cubicador ILUS</h1>
+  <span style="font-size:7.5pt;color:#bbb">{header.get('fecha','')}</span>
+</div>
+<div class="meta">
+  <div>
+    <div class="cn">{header.get('cliente_nombre','—')}</div>
+    <div class="rut">RUT: {header.get('cliente_rut','—')}</div>
+  </div>
+  <div class="montos" style="text-align:right">
+    <span>Neto: <strong>${header.get('valor_neto',0):,.0f}</strong></span>
+    <span>IVA: <strong>${header.get('valor_iva',0):,.0f}</strong></span>
+    <span class="bruto">Bruto: <strong>${header.get('valor_bruto',0):,.0f}</strong></span>
+  </div>
+</div>
+<table>
+  <thead><tr>
+    <th>SKU</th><th>Descripción ERP</th>
+    <th class="c">Cant</th><th class="c">Bultos</th>
+    <th class="r">Kg/u</th><th class="r">PV/u</th>
+    <th class="r">Vol cm³</th>
+    <th class="r" style="color:#CC0000">Total Predom</th>
+  </tr></thead>
+  <tbody>{rows_html}</tbody>
+  <tfoot><tr>
+    <td colspan="2" style="text-align:right;color:#bbb">TOTALES</td>
+    <td class="c">{int(tot_qty)}</td>
+    <td></td>
+    <td class="r">{tot_kg:.3f}</td>
+    <td class="r">{tot_pv:.3f}</td>
+    <td class="r">{tot_vol:,.0f}</td>
+    <td class="r red" style="font-size:9pt">{tot_pred:.3f}</td>
+  </tr></tfoot>
+</table>
+<div class="foot">Generado por ILUS Sport &amp; Health · Sistema de Gestión</div>
+</body></html>"""
+
+    from playwright.sync_api import sync_playwright
+    from io import BytesIO as _BytesIO
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page    = browser.new_page()
+        page.set_content(html, wait_until="load")
+        pdf_bytes = page.pdf(
+            format="A4",
+            margin={"top": "14mm", "bottom": "14mm", "left": "14mm", "right": "14mm"},
+        )
+        browser.close()
+
+    return send_file(
+        _BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"cubicador_{tido}_{nudo}.pdf",
+    )
 
 
 @app.route("/cubicador/sync-nombre", methods=["POST"])
