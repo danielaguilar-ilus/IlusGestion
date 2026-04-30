@@ -3240,9 +3240,9 @@ def api_eval_estado(eid):
 TIPOS_DOC_CUBICADOR = [
     ("FCV", "Factura"),
     ("BLV", "Boleta"),
-    ("GBV", "Guía de Despacho"),
-    ("VD",  "G. Despacho Venta Directa"),
-    ("WEB", "G. Despacho Web"),
+    ("GDV", "Guía de Despacho"),
+    ("VD",  "Nota de Venta Directa"),
+    ("WEB", "Nota de Venta Web"),
     ("NVV", "Nota de Venta"),
     ("COV", "Cotización"),
 ]
@@ -3329,9 +3329,11 @@ def _cubicador_fetch(tido, nudo):
     except Exception:
         fecha = fecha_raw
 
+    _nudo_str = str(raw_header.get("NUDO", nudo) or nudo)
     header = {
         "tido":           raw_header.get("TIDO", tido),
-        "nudo":           raw_header.get("NUDO", nudo),
+        "nudo":           _nudo_str,
+        "nudo_display":   _nudo_str.lstrip("0") or _nudo_str,
         "fecha":          fecha,
         "valor_neto":     float(raw_header.get("VANEDO") or 0),
         "valor_iva":      float(raw_header.get("VAIVDO") or 0),
@@ -3403,6 +3405,60 @@ def _cubicador_fetch(tido, nudo):
     return header, lineas
 
 
+def _parse_docs_from_form(form):
+    """Parse tido_0/nudo_0, tido_1/nudo_1, … from a form. Returns [(tido, nudo), …]."""
+    import re as _re
+    docs = []
+    i = 0
+    while i < 20:   # safety cap
+        tido_i = (form.get(f"tido_{i}") or "").strip().upper()
+        nudo_i = (form.get(f"nudo_{i}") or "").strip()
+        if tido_i == "" and nudo_i == "":
+            break
+        if nudo_i:
+            for _cod, _ in TIPOS_DOC_CUBICADOR:
+                _m = _re.match(r"^" + _cod + r"\s*(\S+)$", nudo_i.upper())
+                if _m:
+                    tido_i = _cod
+                    nudo_i = _m.group(1)
+                    break
+            docs.append((tido_i or "FCV", nudo_i))
+        i += 1
+    return docs
+
+
+def _fetch_multi_docs(docs):
+    """Fetch each doc and merge lines by SKU. Returns (headers, merged_lineas, errors)."""
+    headers = []
+    merged  = {}      # sku → line dict
+    errors  = []
+
+    for tido_i, nudo_i in docs:
+        try:
+            hdr, lineas = _cubicador_fetch(tido_i, nudo_i)
+            if hdr is None:
+                errors.append(f"No se encontró {tido_i} N° {nudo_i} en el ERP.")
+            else:
+                headers.append(hdr)
+                for l in lineas:
+                    sku = l["sku"]
+                    if sku in merged:
+                        m = merged[sku]
+                        m["cantidad"]     += l["cantidad"]
+                        m["peso_kg_tot"]  += l["peso_kg_tot"]
+                        m["peso_vol_tot"] += l["peso_vol_tot"]
+                        m["vol_tot"]      += l["vol_tot"]
+                        m["pred_tot"]     += l["pred_tot"]
+                    else:
+                        merged[sku] = dict(l)
+        except ConnectionError as ce:
+            errors.append(str(ce))
+        except Exception as ex:
+            errors.append(f"Error {tido_i} N° {nudo_i}: {ex}")
+
+    return headers, list(merged.values()), errors
+
+
 @app.route("/cubicador", methods=["GET", "POST"])
 @login_required
 def cubicador():
@@ -3410,61 +3466,61 @@ def cubicador():
         flash("No tienes acceso al módulo Cubicador.", "danger")
         return redirect(url_for("index"))
 
-    tido      = (request.form.get("tido") or request.args.get("tido") or "FCV").strip().upper()
-    nudo      = (request.form.get("nudo") or request.args.get("nudo") or "").strip()
+    docs      = []
     resultado = None
     error_msg = None
 
-    # ── Parsear formato combinado "FCV 9344" o "FCV9344" ──────────
-    import re as _re
-    for _cod, _ in TIPOS_DOC_CUBICADOR:
-        _m = _re.match(r'^' + _cod + r'\s*(\S+)$', nudo.upper())
-        if _m:
-            tido = _cod
-            nudo = _m.group(1)
-            break
+    if request.method == "POST":
+        docs = _parse_docs_from_form(request.form)
+    else:
+        # GET: backward compat (?tido=FCV&nudo=9344)
+        _tido = (request.args.get("tido") or "FCV").strip().upper()
+        _nudo = (request.args.get("nudo") or "").strip()
+        if _nudo:
+            docs = [(_tido, _nudo)]
 
-    if request.method == "POST" and nudo:
-        try:
-            header, lineas = _cubicador_fetch(tido, nudo)
-            if header is None:
-                error_msg = f"No se encontró el documento {tido} N° {nudo} en el ERP."
-            else:
-                resultado = {"header": header, "lineas": lineas}
-        except ConnectionError as ce:
-            error_msg = str(ce)
-        except Exception as ex:
-            error_msg = f"Error al consultar el ERP: {ex}"
+    if docs:
+        headers, lineas, errors = _fetch_multi_docs(docs)
+        if errors:
+            error_msg = " · ".join(errors)
+        if headers:
+            resultado = {
+                "headers": headers,
+                "lineas":  lineas,
+                "docs":    docs,
+                "multi":   len(docs) > 1,
+            }
 
-    return render_template("cubicador/index.html",
-                           tipos_doc=TIPOS_DOC_CUBICADOR,
-                           tido=tido, nudo=nudo,
-                           resultado=resultado,
-                           error_msg=error_msg)
+    return render_template(
+        "cubicador/index.html",
+        tipos_doc=TIPOS_DOC_CUBICADOR,
+        docs=docs,
+        resultado=resultado,
+        error_msg=error_msg,
+    )
 
 
 @app.route("/cubicador/export/excel", methods=["POST"])
 @login_required
 def cubicador_export_excel():
-    """Descarga el resultado del cubicador como Excel (.xlsx)."""
+    """Descarga el resultado del cubicador como Excel (.xlsx) — soporta múltiples documentos."""
     if not g.permissions.get("cubicador"):
         flash("No tienes acceso al módulo Cubicador.", "danger")
         return redirect(url_for("index"))
 
-    tido = (request.form.get("tido") or "FCV").strip().upper()
-    nudo = (request.form.get("nudo") or "").strip()
-    if not nudo:
-        flash("Debes ingresar un número de documento.", "warning")
+    docs = _parse_docs_from_form(request.form)
+    if not docs:
+        flash("Debes ingresar al menos un documento.", "warning")
         return redirect(url_for("cubicador"))
 
     try:
-        header, lineas = _cubicador_fetch(tido, nudo)
+        headers, lineas, errors = _fetch_multi_docs(docs)
     except Exception as ex:
         flash(f"Error al consultar el ERP: {ex}", "danger")
-        return redirect(url_for("cubicador", tido=tido, nudo=nudo))
+        return redirect(url_for("cubicador"))
 
-    if header is None:
-        flash(f"No se encontró el documento {tido} N° {nudo}.", "warning")
+    if not headers:
+        flash(" · ".join(errors) if errors else "No se encontraron documentos.", "warning")
         return redirect(url_for("cubicador"))
 
     import openpyxl
@@ -3474,7 +3530,6 @@ def cubicador_export_excel():
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = f"{tido}{nudo}"
 
     BLACK, RED, LGRAY = "1A1A1A", "CC0000", "F5F5F5"
 
@@ -3485,39 +3540,55 @@ def cubicador_export_excel():
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     # ── Fila 1: título ───────────────────────────────────────────────
+    if len(docs) == 1:
+        tido0, nudo0 = docs[0]
+        ws.title    = f"{tido0}{nudo0}"[:31]
+        title_text  = f"CUBICADOR ILUS  ·  {tido0} N° {nudo0}"
+    else:
+        ws.title   = "Cubicador Múltiple"
+        title_text = f"CUBICADOR ILUS  ·  {len(docs)} documentos combinados"
+
     ws.merge_cells("A1:J1")
     c = ws["A1"]
-    c.value = f"CUBICADOR ILUS  ·  {tido} N° {nudo}"
-    c.font = Font(bold=True, size=13, color="FFFFFF")
-    c.fill = PatternFill("solid", fgColor=BLACK)
+    c.value = title_text
+    c.font  = Font(bold=True, size=13, color="FFFFFF")
+    c.fill  = PatternFill("solid", fgColor=BLACK)
     c.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
 
-    # ── Fila 2: info cliente / montos ────────────────────────────────
-    ws.merge_cells("A2:D2")
-    ws["A2"].value = f"{header.get('cliente_nombre','—')}   RUT {header.get('cliente_rut','—')}   {header.get('fecha','')}"
-    ws["A2"].font  = Font(size=9)
-    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+    # ── Filas 2…N: una por documento ────────────────────────────────
+    row_offset = 2
+    for hdr in headers:
+        ws.merge_cells(f"A{row_offset}:D{row_offset}")
+        ws[f"A{row_offset}"].value = (
+            f"{hdr['tido']} N° {hdr.get('nudo_display', hdr.get('nudo',''))}  ·  "
+            f"{hdr.get('cliente_nombre','—')}   RUT {hdr.get('cliente_rut','—')}   {hdr.get('fecha','')}"
+        )
+        ws[f"A{row_offset}"].font = Font(size=9)
+        ws[f"A{row_offset}"].alignment = Alignment(horizontal="left", vertical="center")
 
-    ws.merge_cells("E2:J2")
-    ws["E2"].value = (
-        f"Neto: ${header.get('valor_neto',0):,.0f}   "
-        f"IVA: ${header.get('valor_iva',0):,.0f}   "
-        f"Bruto: ${header.get('valor_bruto',0):,.0f}"
-    )
-    ws["E2"].font  = Font(bold=True, size=9)
-    ws["E2"].alignment = Alignment(horizontal="right", vertical="center")
-    ws.row_dimensions[2].height = 18
+        ws.merge_cells(f"E{row_offset}:J{row_offset}")
+        ws[f"E{row_offset}"].value = (
+            f"Neto: ${hdr.get('valor_neto',0):,.0f}   "
+            f"IVA: ${hdr.get('valor_iva',0):,.0f}   "
+            f"Bruto: ${hdr.get('valor_bruto',0):,.0f}"
+        )
+        ws[f"E{row_offset}"].font = Font(bold=True, size=9)
+        ws[f"E{row_offset}"].alignment = Alignment(horizontal="right", vertical="center")
+        ws.row_dimensions[row_offset].height = 18
+        row_offset += 1
 
-    # ── Fila 3: encabezados columnas ─────────────────────────────────
+    # ── Fila de encabezados de columna ───────────────────────────────
+    hdr_row = row_offset
     cols = ["SKU", "Descripción ERP", "Cant", "Bultos",
             "Kg/u", "PV/u", "Vol cm³/u", "Predom/u", "Total Predom", "Tipo"]
     for ci, h in enumerate(cols, 1):
-        _hdr_cell(ws.cell(row=3, column=ci), h)
-    ws.row_dimensions[3].height = 20
+        _hdr_cell(ws.cell(row=hdr_row, column=ci), h)
+    ws.row_dimensions[hdr_row].height = 20
+    row_offset += 1
 
     # ── Filas de datos ───────────────────────────────────────────────
-    for ri, l in enumerate(lineas, 4):
+    for ri, l in enumerate(lineas, row_offset):
         bg = LGRAY if ri % 2 == 0 else "FFFFFF"
         vals = [
             l["sku"],
@@ -3543,18 +3614,18 @@ def cubicador_export_excel():
                 cell.number_format = "#,##0.000"
 
     # ── Fila de totales ──────────────────────────────────────────────
-    tr = len(lineas) + 4
+    tr = row_offset + len(lineas)
     ws.merge_cells(f"A{tr}:B{tr}")
     ws.cell(row=tr, column=1, value="TOTALES").font = Font(bold=True, color="FFFFFF", size=9)
     ws.cell(row=tr, column=1).fill = PatternFill("solid", fgColor=BLACK)
     ws.cell(row=tr, column=1).alignment = Alignment(horizontal="right")
 
     totales = {
-        3: int(sum(l["cantidad"] for l in lineas)),
-        5: sum(l["peso_kg_tot"]  for l in lineas),
-        6: sum(l["peso_vol_tot"] for l in lineas),
-        7: sum(l["vol_tot"]      for l in lineas),
-        9: sum(l["pred_tot"]     for l in lineas),
+        3: int(sum(l["cantidad"]     for l in lineas)),
+        5: sum(l["peso_kg_tot"]      for l in lineas),
+        6: sum(l["peso_vol_tot"]     for l in lineas),
+        7: sum(l["vol_tot"]          for l in lineas),
+        9: sum(l["pred_tot"]         for l in lineas),
     }
     for ci in range(1, 11):
         cell = ws.cell(row=tr, column=ci)
@@ -3570,77 +3641,127 @@ def cubicador_export_excel():
     for ci, w in enumerate([14, 42, 7, 8, 10, 10, 12, 12, 14, 7], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    ws.freeze_panes = "A4"
+    ws.freeze_panes = f"A{hdr_row + 1}"
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
+
+    fname = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs) + ".xlsx"
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
-        download_name=f"cubicador_{tido}_{nudo}.xlsx",
+        download_name=fname[:80],
     )
 
 
 @app.route("/cubicador/export/pdf", methods=["POST"])
 @login_required
 def cubicador_export_pdf():
-    """Descarga el resultado del cubicador como PDF."""
+    """Descarga el resultado del cubicador como PDF elegante — soporta múltiples documentos."""
     if not g.permissions.get("cubicador"):
         flash("No tienes acceso al módulo Cubicador.", "danger")
         return redirect(url_for("index"))
 
-    tido = (request.form.get("tido") or "FCV").strip().upper()
-    nudo = (request.form.get("nudo") or "").strip()
-    if not nudo:
-        flash("Debes ingresar un número de documento.", "warning")
+    docs = _parse_docs_from_form(request.form)
+    if not docs:
+        flash("Debes ingresar al menos un documento.", "warning")
         return redirect(url_for("cubicador"))
 
     try:
-        header, lineas = _cubicador_fetch(tido, nudo)
+        headers, lineas, errors = _fetch_multi_docs(docs)
     except Exception as ex:
         flash(f"Error al consultar el ERP: {ex}", "danger")
-        return redirect(url_for("cubicador", tido=tido, nudo=nudo))
-
-    if header is None:
-        flash(f"No se encontró el documento {tido} N° {nudo}.", "warning")
         return redirect(url_for("cubicador"))
 
+    if not headers:
+        flash(" · ".join(errors) if errors else "No se encontraron documentos.", "warning")
+        return redirect(url_for("cubicador"))
+
+    # ── Logo ILUS ────────────────────────────────────────────────────
+    import os as _os
+    _logo_path = _os.path.join(_os.path.dirname(__file__), "static", "logo_pdf.txt")
+    try:
+        with open(_logo_path) as _f:
+            logo_b64 = _f.read().strip()
+        logo_tag = f'<img src="data:image/png;base64,{logo_b64}" style="height:46px;display:block">'
+    except Exception:
+        logo_tag = '<div style="font-size:18pt;font-weight:900;color:#CC0000;line-height:1">ILUS</div>'
+
+    from datetime import datetime as _dt
+    fecha_gen = _dt.now().strftime("%d/%m/%Y %H:%M")
+
+    # ── Título principal ─────────────────────────────────────────────
+    if len(docs) == 1 and headers:
+        h0 = headers[0]
+        main_title = f"{h0['tido']} N° {h0.get('nudo_display', h0.get('nudo',''))} — Cubicador ILUS"
+    else:
+        main_title = f"Cubicador ILUS · {len(docs)} documentos"
+
+    # ── Tarjetas de documentos ───────────────────────────────────────
+    docs_html = ""
+    for hdr in headers:
+        docs_html += f"""
+        <div class="doc-card">
+          <div class="doc-title">{hdr['tido']} N° {hdr.get('nudo_display', hdr.get('nudo',''))}</div>
+          <div class="doc-fecha">{hdr.get('fecha','')}</div>
+          <div class="doc-cliente">{hdr.get('cliente_nombre','—')}</div>
+          <div class="doc-rut">RUT {hdr.get('cliente_rut','—')}</div>
+          <div class="doc-bruto">${hdr.get('valor_bruto',0):,.0f}</div>
+        </div>"""
+
+    # ── Totales ──────────────────────────────────────────────────────
     tot_qty  = sum(l["cantidad"]     for l in lineas)
     tot_kg   = sum(l["peso_kg_tot"]  for l in lineas)
     tot_pv   = sum(l["peso_vol_tot"] for l in lineas)
     tot_vol  = sum(l["vol_tot"]      for l in lineas)
     tot_pred = sum(l["pred_tot"]     for l in lineas)
+    tot_bult = sum(l["total_bultos"] for l in lineas)
 
+    # ── Filas de la tabla ────────────────────────────────────────────
     rows_html = ""
     for i, l in enumerate(lineas):
         bg = "#f7f7f7" if i % 2 == 0 else "#ffffff"
+        sf = not l["tiene_bultos"]
         rows_html += f"""
         <tr style="background:{bg}">
           <td class="mono">{l['sku']}</td>
           <td>{l['descripcion_erp']}</td>
           <td class="c">{int(l['cantidad'])}</td>
           <td class="c">{l['total_bultos'] if l['tiene_ficha'] else 's/f'}</td>
-          <td class="r">{f"{l['peso_kg_u']:.3f}"  if l['tiene_bultos'] else '—'}</td>
-          <td class="r">{f"{l['peso_vol_u']:.3f}" if l['tiene_bultos'] else '—'}</td>
-          <td class="r">{f"{l['vol_u']:,.0f}"      if l['tiene_bultos'] else '—'}</td>
-          <td class="r fw red">{f"{l['pred_tot']:.3f}" if l['tiene_bultos'] else '—'}</td>
+          <td class="r">{'—' if sf else f"{l['peso_kg_u']:.3f}"}</td>
+          <td class="r">{'—' if sf else f"{l['peso_vol_u']:.3f}"}</td>
+          <td class="r">{'—' if sf else f"{l['vol_u']:,.0f}"}</td>
+          <td class="r fw red">{'—' if sf else f"{l['pred_tot']:.3f}"}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;padding:18px}}
-.hdr{{background:#1a1a1a;color:#fff;padding:12px 16px;border-radius:5px 5px 0 0;
-      display:flex;justify-content:space-between;align-items:center}}
-.hdr h1{{font-size:13pt}}.hdr .red{{color:#CC0000}}
-.meta{{background:#f3f3f3;padding:10px 16px;border:1px solid #ddd;
-       border-radius:0 0 5px 5px;display:flex;justify-content:space-between;margin-bottom:14px}}
-.meta .cn{{font-size:10pt;font-weight:bold}}
-.meta .rut{{font-size:7.5pt;color:#666;margin-top:2px}}
-.meta .montos span{{margin-left:14px;font-size:8pt}}
-.meta .bruto{{font-weight:bold;color:#CC0000}}
+body{{font-family:Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;padding:16px 18px}}
+
+/* ── Cabecera de página ── */
+.page-hdr{{background:#1a1a1a;padding:12px 16px;border-radius:6px 6px 0 0;
+           display:flex;justify-content:space-between;align-items:center}}
+.page-hdr .main-title{{font-size:12.5pt;color:#fff;font-weight:900;margin:0}}
+.page-hdr .sub{{font-size:7pt;color:#aaa;margin-top:3px}}
+.page-hdr .red-bar{{width:4px;background:#CC0000;height:36px;border-radius:2px;margin-right:10px;flex-shrink:0}}
+.page-hdr .left{{display:flex;align-items:center}}
+
+/* ── Franja de documentos ── */
+.docs-strip{{background:#f2f2f2;border:1px solid #ddd;border-top:none;
+             border-radius:0 0 6px 6px;padding:8px 14px;margin-bottom:14px;
+             display:flex;flex-wrap:wrap;gap:8px}}
+.doc-card{{background:#fff;border:1px solid #ddd;border-left:3px solid #CC0000;
+           border-radius:0 4px 4px 0;padding:7px 10px;flex:1;min-width:150px;max-width:250px}}
+.doc-title{{font-weight:900;font-size:8.5pt;color:#CC0000}}
+.doc-fecha{{font-size:6.8pt;color:#888;margin-bottom:4px}}
+.doc-cliente{{font-weight:700;font-size:8pt;color:#1a1a1a}}
+.doc-rut{{font-size:6.8pt;color:#888}}
+.doc-bruto{{font-size:9.5pt;font-weight:900;color:#1a1a1a;margin-top:4px}}
+
+/* ── Tabla ── */
 table{{width:100%;border-collapse:collapse;font-size:7.8pt}}
 th{{background:#1a1a1a;color:#fff;padding:6px 5px;text-align:left;
     font-size:7pt;text-transform:uppercase;letter-spacing:.3px}}
@@ -3649,23 +3770,35 @@ td{{padding:5px;border-bottom:1px solid #ebebeb;vertical-align:middle}}
 .mono{{font-family:monospace;font-weight:bold}}.fw{{font-weight:bold}}.red{{color:#CC0000}}
 tfoot tr{{background:#1a1a1a!important;color:#fff;font-weight:bold}}
 tfoot td{{border:none;padding:7px 5px}}
-.foot{{margin-top:12px;font-size:6.5pt;color:#aaa;text-align:right}}
+
+/* ── Barra de totales ── */
+.totals-bar{{margin-top:12px;background:#1a1a1a;border-radius:6px;
+             padding:10px 16px;display:flex;gap:0;align-items:center}}
+.t-item{{text-align:center;flex:1;padding:0 8px;border-right:1px solid #333}}
+.t-item:last-child{{border-right:none}}
+.t-label{{font-size:6pt;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}}
+.t-val{{font-size:11pt;font-weight:900;color:#fff;line-height:1.1}}
+.t-pred .t-val{{color:#CC0000;font-size:13pt}}
+
+/* ── Footer ── */
+.foot{{margin-top:10px;font-size:6.5pt;color:#aaa;text-align:right}}
 </style></head><body>
-<div class="hdr">
-  <h1><span class="red">▐</span> {tido} N° {nudo} — Cubicador ILUS</h1>
-  <span style="font-size:7.5pt;color:#bbb">{header.get('fecha','')}</span>
-</div>
-<div class="meta">
-  <div>
-    <div class="cn">{header.get('cliente_nombre','—')}</div>
-    <div class="rut">RUT: {header.get('cliente_rut','—')}</div>
+
+<div class="page-hdr">
+  <div class="left">
+    <div class="red-bar"></div>
+    <div>
+      <div class="main-title">{main_title}</div>
+      <div class="sub">Generado el {fecha_gen}</div>
+    </div>
   </div>
-  <div class="montos" style="text-align:right">
-    <span>Neto: <strong>${header.get('valor_neto',0):,.0f}</strong></span>
-    <span>IVA: <strong>${header.get('valor_iva',0):,.0f}</strong></span>
-    <span class="bruto">Bruto: <strong>${header.get('valor_bruto',0):,.0f}</strong></span>
-  </div>
+  <div>{logo_tag}</div>
 </div>
+
+<div class="docs-strip">
+  {docs_html}
+</div>
+
 <table>
   <thead><tr>
     <th>SKU</th><th>Descripción ERP</th>
@@ -3676,36 +3809,65 @@ tfoot td{{border:none;padding:7px 5px}}
   </tr></thead>
   <tbody>{rows_html}</tbody>
   <tfoot><tr>
-    <td colspan="2" style="text-align:right;color:#bbb">TOTALES</td>
+    <td colspan="2" style="text-align:right;color:#bbb;font-size:7pt;letter-spacing:.5px">TOTALES</td>
     <td class="c">{int(tot_qty)}</td>
-    <td></td>
+    <td class="c">{tot_bult}</td>
     <td class="r">{tot_kg:.3f}</td>
     <td class="r">{tot_pv:.3f}</td>
     <td class="r">{tot_vol:,.0f}</td>
     <td class="r red" style="font-size:9pt">{tot_pred:.3f}</td>
   </tr></tfoot>
 </table>
-<div class="foot">Generado por ILUS Sport &amp; Health · Sistema de Gestión</div>
+
+<div class="totals-bar">
+  <div class="t-item">
+    <div class="t-label">Unidades</div>
+    <div class="t-val">{int(tot_qty)}</div>
+  </div>
+  <div class="t-item">
+    <div class="t-label">Bultos</div>
+    <div class="t-val">{tot_bult}</div>
+  </div>
+  <div class="t-item">
+    <div class="t-label">Total Kg</div>
+    <div class="t-val">{tot_kg:.3f}</div>
+  </div>
+  <div class="t-item">
+    <div class="t-label">Total PV</div>
+    <div class="t-val">{tot_pv:.3f}</div>
+  </div>
+  <div class="t-item">
+    <div class="t-label">Vol cm³</div>
+    <div class="t-val">{tot_vol:,.0f}</div>
+  </div>
+  <div class="t-item t-pred">
+    <div class="t-label">Predominante</div>
+    <div class="t-val">{tot_pred:.3f}</div>
+  </div>
+</div>
+
+<div class="foot">ILUS Sport &amp; Health · Sistema de Gestión de Productos</div>
 </body></html>"""
 
     from playwright.sync_api import sync_playwright
     from io import BytesIO as _BytesIO
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        page    = browser.new_page()
+        browser   = pw.chromium.launch()
+        page      = browser.new_page()
         page.set_content(html, wait_until="load")
         pdf_bytes = page.pdf(
             format="A4",
-            margin={"top": "14mm", "bottom": "14mm", "left": "14mm", "right": "14mm"},
+            margin={"top": "12mm", "bottom": "12mm", "left": "14mm", "right": "14mm"},
         )
         browser.close()
 
+    fname = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs) + ".pdf"
     return send_file(
         _BytesIO(pdf_bytes),
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"cubicador_{tido}_{nudo}.pdf",
+        download_name=fname[:80],
     )
 
 

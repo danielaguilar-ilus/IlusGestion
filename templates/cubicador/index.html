@@ -11,36 +11,62 @@
   </div>
 </div>
 
-{# ── Formulario de búsqueda ── #}
+{# ── Formulario multi-documento ── #}
 <div class="ilus-card mb-3">
   <div class="ilus-card-header">
-    <span><i class="bi bi-search me-2"></i>Buscar documento</span>
+    <span><i class="bi bi-file-earmark-text me-2"></i>Documentos a cubicar</span>
+    <span class="text-muted small fw-normal">Puedes agregar varios documentos para combinarlos</span>
   </div>
   <div class="card-body p-3">
-    <form method="post" class="row g-3 align-items-end" id="cubicadorForm">
-      <div class="col-12 col-md-4">
-        <label class="form-label fw-semibold small">Tipo de documento</label>
-        <select name="tido" class="form-select" id="tidoSelect">
-          {% for cod, nom in tipos_doc %}
-          <option value="{{ cod }}" {% if tido == cod %}selected{% endif %}>{{ nom }} ({{ cod }})</option>
-          {% endfor %}
-        </select>
+    <form method="post" id="cubicadorForm">
+
+      {# Encabezados de columnas (solo en pantallas medianas+) #}
+      <div class="row g-2 mb-1 d-none d-sm-flex">
+        <div class="col-sm-4"><div class="form-label fw-semibold small mb-0">Tipo de documento</div></div>
+        <div class="col-sm-5"><div class="form-label fw-semibold small mb-0">N° de documento</div></div>
+        <div class="col-auto"><div style="width:34px"></div></div>
       </div>
-      <div class="col-12 col-md-4">
-        <label class="form-label fw-semibold small">N° de documento</label>
-        <input type="text" name="nudo" class="form-control font-monospace"
-               value="{{ nudo }}" placeholder="Ej: 9344  ó  FCV 9344"
-               autocomplete="off" autocorrect="off" id="nudoInput"
-               required>
-        <div class="form-text" style="font-size:.68rem">
-          Puedes escribir solo el número o el tipo + número (ej: FCV 9344)
+
+      <div id="docsContainer">
+        {% set form_docs = docs if docs else [('FCV', '')] %}
+        {% for i in range(form_docs|length) %}
+        {% set fdoc = form_docs[i] %}
+        <div class="doc-row row g-2 mb-2 align-items-center">
+          <div class="col-12 col-sm-4">
+            <select name="tido_{{ i }}" class="form-select form-select-sm">
+              {% for cod, nom in tipos_doc %}
+              <option value="{{ cod }}" {% if fdoc[0] == cod %}selected{% endif %}>{{ nom }} ({{ cod }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-sm-5">
+            <input type="text" name="nudo_{{ i }}"
+                   class="form-control form-control-sm font-monospace"
+                   value="{{ fdoc[1] }}"
+                   placeholder="Ej: 8598"
+                   autocomplete="off" autocorrect="off">
+          </div>
+          <div class="col-auto">
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger remove-doc-btn"
+                    title="Quitar este documento"
+                    {% if loop.first %}style="visibility:hidden"{% endif %}>
+              <i class="bi bi-x-lg"></i>
+            </button>
+          </div>
         </div>
+        {% endfor %}
       </div>
-      <div class="col-12 col-md-4">
-        <button type="submit" class="btn btn-ilus fw-bold w-100">
-          <i class="bi bi-search me-2"></i>Cubicar documento
+
+      <div class="d-flex gap-2 mt-2">
+        <button type="button" id="addDocBtn" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-plus-circle me-1"></i>Agregar documento
+        </button>
+        <button type="submit" class="btn btn-ilus fw-bold ms-auto px-4" id="submitBtn">
+          <i class="bi bi-calculator me-2"></i>Cubicar
         </button>
       </div>
+
     </form>
   </div>
 </div>
@@ -55,37 +81,75 @@
 
 {# ── Resultados ── #}
 {% if resultado %}
-{% set h      = resultado.header %}
-{% set lineas = resultado.lineas %}
+{% set headers = resultado.headers %}
+{% set lineas  = resultado.lineas %}
+{% set rdocs   = resultado.docs %}
+{% set multi   = resultado.multi %}
 
 {# Botones de exportación #}
 <div class="d-flex gap-2 mb-3 justify-content-end flex-wrap">
+
   <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline"
         onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
-    <input type="hidden" name="tido" value="{{ tido }}">
-    <input type="hidden" name="nudo" value="{{ nudo }}">
+    {% for i in range(rdocs|length) %}
+    <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
+    <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">
+    {% endfor %}
     <button type="submit" class="btn btn-sm fw-semibold"
             style="background:#1a7a1a;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-excel me-1"></i>Excel
     </button>
   </form>
+
   <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline"
         onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
-    <input type="hidden" name="tido" value="{{ tido }}">
-    <input type="hidden" name="nudo" value="{{ nudo }}">
+    {% for i in range(rdocs|length) %}
+    <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
+    <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">
+    {% endfor %}
     <button type="submit" class="btn btn-sm fw-semibold"
             style="background:#CC0000;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-pdf me-1"></i>PDF
     </button>
   </form>
+
 </div>
 
-{# Cabecera del documento #}
+{# ── Cabecera(s) de documento(s) ── #}
+{% if multi %}
+{# Vista multi: tarjetas compactas #}
+<div class="row g-2 mb-3">
+  {% for h in headers %}
+  <div class="col-12 col-sm-6 col-lg-4">
+    <div class="ilus-card h-100" style="border-left:3px solid var(--ilus-red)">
+      <div class="card-body p-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="fw-bold font-monospace" style="font-size:.9rem;color:var(--ilus-red)">
+              <i class="bi bi-file-earmark-text me-1"></i>{{ h.tido }} N° {{ h.nudo_display }}
+            </div>
+            <div style="font-size:.72rem;color:#888">{{ h.fecha }}</div>
+          </div>
+          <div class="fw-bold text-end" style="color:var(--ilus-red);font-size:1rem">
+            ${{ "{:,.0f}".format(h.valor_bruto or 0) }}
+          </div>
+        </div>
+        <div class="mt-1 fw-semibold" style="font-size:.88rem">{{ h.cliente_nombre or '—' }}</div>
+        <div class="small text-muted">RUT: {{ h.cliente_rut or '—' }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+{# Vista single: cabecera completa #}
+{% set h = headers[0] %}
 <div class="ilus-card mb-3">
   <div class="ilus-card-header" style="background:var(--ilus-black)">
     <span class="text-white fw-bold">
       <i class="bi bi-file-earmark-text me-2" style="color:var(--ilus-red)"></i>
-      {{ tido }} N° {{ nudo }}
+      {{ h.tido }} N° {{ h.nudo_display }}
     </span>
     <span class="text-muted small fw-normal">{{ h.fecha }}</span>
   </div>
@@ -111,7 +175,7 @@
             <div class="fw-bold" style="color:var(--ilus-red)">${{ "{:,.0f}".format(h.valor_bruto or 0) }}</div>
           </div>
           <div>
-            <div class="small text-muted fw-semibold" style="font-size:.68rem">Líneas</div>
+            <div class="small text-muted fw-semibold" style="font-size:.68rem">SKUs</div>
             <div class="fw-bold">{{ lineas|length }}</div>
           </div>
         </div>
@@ -119,12 +183,11 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {% if lineas %}
-{# Totales acumulados para el pie de tabla #}
-{% set ns = namespace(
-  tot_kg=0, tot_pv=0, tot_vol=0, tot_pred=0, tot_qty=0, tot_bultos=0
-) %}
+{# Acumuladores de totales #}
+{% set ns = namespace(tot_kg=0, tot_pv=0, tot_vol=0, tot_pred=0, tot_qty=0, tot_bultos=0) %}
 {% for l in lineas %}
   {% set ns.tot_kg     = ns.tot_kg     + l.peso_kg_tot %}
   {% set ns.tot_pv     = ns.tot_pv     + l.peso_vol_tot %}
@@ -134,11 +197,11 @@
   {% set ns.tot_bultos = ns.tot_bultos + l.total_bultos %}
 {% endfor %}
 
-{# Tabla desktop #}
+{# ── Tabla desktop ── #}
 <div class="ilus-card d-none d-md-block mb-3">
   <div class="ilus-card-header">
-    <span><i class="bi bi-table me-2"></i>Detalle de cubicaje</span>
-    <span class="text-muted small fw-normal">{{ lineas|length }} línea(s)</span>
+    <span><i class="bi bi-table me-2"></i>Detalle de cubicaje{% if multi %} combinado{% endif %}</span>
+    <span class="text-muted small fw-normal">{{ lineas|length }} SKU(s)</span>
   </div>
   <div class="table-responsive">
     <table class="table ilus-table mb-0" id="cubicadorTable" style="font-size:.82rem">
@@ -159,7 +222,6 @@
       <tbody>
         {% for l in lineas %}
         <tr>
-          {# SKU #}
           <td>
             <div class="fw-bold font-monospace">{{ l.sku }}</div>
             {% if not l.tiene_ficha %}
@@ -173,7 +235,6 @@
             {% endif %}
           </td>
 
-          {# Descripción ERP + diferencia #}
           <td>
             <div>{{ l.descripcion_erp }}</div>
             {% if l.diferencia %}
@@ -192,10 +253,8 @@
             {% endif %}
           </td>
 
-          {# Cantidad #}
           <td class="text-center fw-bold">{{ l.cantidad|int }}</td>
 
-          {# Bultos #}
           <td class="text-center">
             {% if l.tiene_ficha %}
               {% if l.total_bultos > 0 %}
@@ -208,22 +267,16 @@
             {% endif %}
           </td>
 
-          {# Kg por unidad #}
           <td class="text-end">
             {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_kg_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
-
-          {# Peso vol por unidad #}
           <td class="text-end">
             {% if l.tiene_bultos %}{{ "%.3f"|format(l.peso_vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
-
-          {# Volumen cm³ por unidad #}
           <td class="text-end">
             {% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
 
-          {# Predominante por unidad #}
           <td class="text-end fw-semibold">
             {% if l.tiene_bultos %}
             <span style="color:{% if l.peso_kg_u >= l.peso_vol_u %}#CC0000{% else %}#1a7a1a{% endif %}">
@@ -233,12 +286,10 @@
             {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
 
-          {# Total predominante (× qty) #}
           <td class="text-end fw-bold" style="color:var(--ilus-red)">
             {% if l.tiene_bultos %}{{ "%.3f"|format(l.pred_tot) }}{% else %}<span class="text-muted fw-normal">—</span>{% endif %}
           </td>
 
-          {# Acciones #}
           <td class="text-center no-print">
             {% if l.tiene_ficha and l.app_id %}
             <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -252,7 +303,6 @@
         {% endfor %}
       </tbody>
 
-      {# Fila de totales #}
       <tfoot>
         <tr style="background:#1a1a1a;font-weight:700;font-size:.82rem">
           <td colspan="2" class="text-end" style="color:#888;font-size:.75rem;letter-spacing:.5px">TOTALES</td>
@@ -274,10 +324,10 @@
 <div class="d-none d-md-block mb-3">
   <div class="ilus-card">
     <div class="ilus-card-header">
-      <span><i class="bi bi-sigma me-2"></i>Totales del documento</span>
+      <span><i class="bi bi-sigma me-2"></i>Totales{% if multi %} combinados{% endif %}</span>
     </div>
     <div class="card-body p-0">
-      <div class="d-flex flex-wrap" style="border-top:none">
+      <div class="d-flex flex-wrap">
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Unidades</div>
@@ -315,7 +365,7 @@
   </div>
 </div>
 
-{# Cards mobile #}
+{# ── Cards mobile ── #}
 <div class="d-md-none mb-3">
   {% for l in lineas %}
   <div class="ilus-card mb-2">
@@ -379,7 +429,9 @@
   {# Totales mobile #}
   <div class="ilus-card" style="background:#1a1a1a;border-color:#333">
     <div class="p-3">
-      <div class="fw-bold text-white mb-2 text-center" style="font-size:.8rem;letter-spacing:.5px">TOTALES DEL DOCUMENTO</div>
+      <div class="fw-bold text-white mb-2 text-center" style="font-size:.8rem;letter-spacing:.5px">
+        TOTALES{% if multi %} COMBINADOS{% endif %}
+      </div>
       <div class="row g-2 text-center" style="font-size:.82rem">
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Unidades</div>
@@ -421,7 +473,7 @@
 
 {% endif %}{# /resultado #}
 
-{# ── Modal vista rápida de producto (igual al de index) ── #}
+{# ── Modal vista rápida de producto ── #}
 <div class="modal fade" id="quickModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content border-0 shadow-lg">
@@ -445,12 +497,82 @@
 
 {% block scripts %}
 <script>
-/* ── Vista rápida de producto ── */
-var QUICK_TPL = "{{ url_for('product_quick', pid=0) }}";
-var EDIT_TPL  = "{{ url_for('edit_product',   pid=0) }}";
-var DETAIL_TPL= "{{ url_for('product_detail', pid=0) }}";
-var CAN_EDIT  = {{ 'true' if permissions.edit else 'false' }};
-var CAN_PRINT = {{ 'true' if permissions.print else 'false' }};
+/* ────────────────────────────────────────────────────────────
+   Formulario multi-documento
+──────────────────────────────────────────────────────────── */
+var docCount  = {{ docs|length if docs else 1 }};
+var tiposDoc  = {{ tipos_doc | tojson }};
+
+function makeTipoOptions(selectedCod) {
+  return tiposDoc.map(function(t) {
+    var sel = (t[0] === selectedCod) ? ' selected' : '';
+    return '<option value="' + t[0] + '"' + sel + '>' + t[1] + ' (' + t[0] + ')</option>';
+  }).join('');
+}
+
+function updateRemoveButtons() {
+  var rows = document.querySelectorAll('#docsContainer .doc-row');
+  rows.forEach(function(row, idx) {
+    var btn = row.querySelector('.remove-doc-btn');
+    if (btn) btn.style.visibility = (rows.length === 1 ? 'hidden' : 'visible');
+  });
+}
+
+document.getElementById('addDocBtn').addEventListener('click', function() {
+  var container = document.getElementById('docsContainer');
+  var i = docCount;
+  var div = document.createElement('div');
+  div.className = 'doc-row row g-2 mb-2 align-items-center';
+  div.innerHTML =
+    '<div class="col-12 col-sm-4">' +
+      '<select name="tido_' + i + '" class="form-select form-select-sm">' +
+        makeTipoOptions('FCV') +
+      '</select>' +
+    '</div>' +
+    '<div class="col-12 col-sm-5">' +
+      '<input type="text" name="nudo_' + i + '" class="form-control form-control-sm font-monospace" ' +
+             'placeholder="Ej: 8598" autocomplete="off" autocorrect="off">' +
+    '</div>' +
+    '<div class="col-auto">' +
+      '<button type="button" class="btn btn-sm btn-outline-danger remove-doc-btn" title="Quitar">' +
+        '<i class="bi bi-x-lg"></i>' +
+      '</button>' +
+    '</div>';
+  container.appendChild(div);
+  docCount++;
+
+  div.querySelector('.remove-doc-btn').addEventListener('click', function() {
+    div.remove();
+    updateRemoveButtons();
+  });
+
+  updateRemoveButtons();
+  div.querySelector('input').focus();
+});
+
+/* Listeners para filas ya renderizadas en el servidor */
+document.querySelectorAll('#docsContainer .remove-doc-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    btn.closest('.doc-row').remove();
+    updateRemoveButtons();
+  });
+});
+
+/* Spinner al enviar */
+document.getElementById('cubicadorForm').addEventListener('submit', function() {
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Cubicando…';
+});
+
+/* ────────────────────────────────────────────────────────────
+   Vista rápida de producto
+──────────────────────────────────────────────────────────── */
+var QUICK_TPL  = "{{ url_for('product_quick', pid=0) }}";
+var EDIT_TPL   = "{{ url_for('edit_product',   pid=0) }}";
+var DETAIL_TPL = "{{ url_for('product_detail', pid=0) }}";
+var CAN_EDIT   = {{ 'true' if permissions.edit else 'false' }};
+var CAN_PRINT  = {{ 'true' if permissions.print else 'false' }};
 
 function _stat(val, label, color) {
   return '<div style="text-align:center;padding:12px 6px;border-right:1px solid #eee">'
@@ -503,7 +625,9 @@ function quickView(pid) {
     });
 }
 
-/* ── Sincronizar nombre desde ERP ── */
+/* ────────────────────────────────────────────────────────────
+   Sincronizar nombre desde ERP
+──────────────────────────────────────────────────────────── */
 var SYNC_URL = "{{ url_for('cubicador_sync_nombre') }}";
 
 document.querySelectorAll('.sync-btn').forEach(function(btn) {
@@ -520,10 +644,8 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
       .then(function(r){ return r.json(); })
       .then(function(data) {
         if (data.ok) {
-          btn.closest('.small, div').innerHTML =
-            '<i class="bi bi-check-circle-fill text-success me-1"></i>Nombre actualizado';
-          btn.closest('tr') && btn.closest('tr').querySelector('.diferencia-label') &&
-            (btn.closest('tr').querySelector('.diferencia-label').style.display = 'none');
+          var wrap = btn.closest('.small, div[style]');
+          if (wrap) wrap.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Nombre actualizado';
         } else {
           alert('Error: ' + (data.error || 'desconocido'));
         }
