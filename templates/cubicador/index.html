@@ -123,14 +123,15 @@
 {% if lineas %}
 {# Totales acumulados para el pie de tabla #}
 {% set ns = namespace(
-  tot_kg=0, tot_pv=0, tot_vol=0, tot_pred=0, tot_qty=0
+  tot_kg=0, tot_pv=0, tot_vol=0, tot_pred=0, tot_qty=0, tot_bultos=0
 ) %}
 {% for l in lineas %}
-  {% set ns.tot_kg   = ns.tot_kg   + l.peso_kg_tot %}
-  {% set ns.tot_pv   = ns.tot_pv   + l.peso_vol_tot %}
-  {% set ns.tot_vol  = ns.tot_vol  + l.vol_tot %}
-  {% set ns.tot_pred = ns.tot_pred + l.pred_tot %}
-  {% set ns.tot_qty  = ns.tot_qty  + l.cantidad %}
+  {% set ns.tot_kg     = ns.tot_kg     + l.peso_kg_tot %}
+  {% set ns.tot_pv     = ns.tot_pv     + l.peso_vol_tot %}
+  {% set ns.tot_vol    = ns.tot_vol    + l.vol_tot %}
+  {% set ns.tot_pred   = ns.tot_pred   + l.pred_tot %}
+  {% set ns.tot_qty    = ns.tot_qty    + l.cantidad %}
+  {% set ns.tot_bultos = ns.tot_bultos + l.total_bultos %}
 {% endfor %}
 
 {# Tabla desktop #}
@@ -254,13 +255,13 @@
       {# Fila de totales #}
       <tfoot>
         <tr style="background:#1a1a1a;font-weight:700;font-size:.82rem">
-          <td colspan="2" class="text-end" style="color:#ccc">TOTALES</td>
+          <td colspan="2" class="text-end" style="color:#888;font-size:.75rem;letter-spacing:.5px">TOTALES</td>
           <td class="text-center" style="color:#fff">{{ ns.tot_qty|int }}</td>
-          <td></td>
+          <td class="text-center" style="color:#fff">{{ ns.tot_bultos }}</td>
           <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_kg) }}</td>
           <td class="text-end" style="color:#fff">{{ "%.3f"|format(ns.tot_pv) }}</td>
           <td class="text-end" style="color:#fff">{{ "{:,.0f}".format(ns.tot_vol) }}</td>
-          <td></td>
+          <td class="text-end" style="color:#888">—</td>
           <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ "%.3f"|format(ns.tot_pred) }}</td>
           <td class="no-print"></td>
         </tr>
@@ -269,28 +270,48 @@
   </div>
 </div>
 
-{# ── Totales resumen (desktop) ── #}
-<div class="d-none d-md-flex gap-3 mb-3 flex-wrap">
-  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
-    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Unidades</div>
-    <div class="fw-bold" style="font-size:1.35rem">{{ ns.tot_qty|int }}</div>
-  </div>
-  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
-    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Total Kg</div>
-    <div class="fw-bold" style="font-size:1.35rem">{{ "%.3f"|format(ns.tot_kg) }}</div>
-  </div>
-  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
-    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Total PV</div>
-    <div class="fw-bold" style="font-size:1.35rem">{{ "%.3f"|format(ns.tot_pv) }}</div>
-  </div>
-  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#f5f5f5;border:1px solid #ddd;min-width:130px">
-    <div class="small text-muted fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px">Vol cm³ total</div>
-    <div class="fw-bold" style="font-size:1.35rem">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
-  </div>
-  <div class="flex-fill text-center py-3 px-2 rounded" style="background:#1a1a1a;border:1px solid #333;min-width:160px">
-    <div class="fw-semibold" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#aaa">Predom. Total</div>
-    <div class="fw-bold" style="font-size:1.5rem;color:var(--ilus-red)">{{ "%.3f"|format(ns.tot_pred) }}</div>
-    <div style="font-size:.65rem;color:#888">kg predominante</div>
+{# ── Tarjeta de totales (desktop) ── #}
+<div class="d-none d-md-block mb-3">
+  <div class="ilus-card">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-sigma me-2"></i>Totales del documento</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="d-flex flex-wrap" style="border-top:none">
+
+        <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Unidades</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_qty|int }}</div>
+        </div>
+
+        <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Bultos</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_bultos }}</div>
+        </div>
+
+        <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total Kg</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "%.3f"|format(ns.tot_kg) }}</div>
+        </div>
+
+        <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total PV</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "%.3f"|format(ns.tot_pv) }}</div>
+        </div>
+
+        <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Vol cm³</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
+        </div>
+
+        <div class="text-center px-4 py-3 flex-fill" style="background:#1a1a1a;border-radius:0 0 8px 0">
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#aaa;font-weight:600">Predom. Total</div>
+          <div class="fw-bold" style="font-size:1.6rem;color:var(--ilus-red);line-height:1.1">{{ "%.3f"|format(ns.tot_pred) }}</div>
+          <div style="font-size:.62rem;color:#777">kg predominante</div>
+        </div>
+
+      </div>
+    </div>
   </div>
 </div>
 
@@ -358,23 +379,31 @@
   {# Totales mobile #}
   <div class="ilus-card" style="background:#1a1a1a;border-color:#333">
     <div class="p-3">
-      <div class="fw-bold text-white mb-2 text-center">TOTALES DEL DOCUMENTO</div>
+      <div class="fw-bold text-white mb-2 text-center" style="font-size:.8rem;letter-spacing:.5px">TOTALES DEL DOCUMENTO</div>
       <div class="row g-2 text-center" style="font-size:.82rem">
         <div class="col-6">
-          <div style="color:#888">Total Kg</div>
+          <div style="color:#888;font-size:.7rem">Unidades</div>
+          <div class="fw-bold text-white">{{ ns.tot_qty|int }}</div>
+        </div>
+        <div class="col-6">
+          <div style="color:#888;font-size:.7rem">Bultos</div>
+          <div class="fw-bold text-white">{{ ns.tot_bultos }}</div>
+        </div>
+        <div class="col-6">
+          <div style="color:#888;font-size:.7rem">Total Kg</div>
           <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_kg) }}</div>
         </div>
         <div class="col-6">
-          <div style="color:#888">Total PV</div>
+          <div style="color:#888;font-size:.7rem">Total PV</div>
           <div class="fw-bold text-white">{{ "%.3f"|format(ns.tot_pv) }}</div>
         </div>
         <div class="col-6">
-          <div style="color:#888">Vol cm³ total</div>
+          <div style="color:#888;font-size:.7rem">Vol cm³</div>
           <div class="fw-bold text-white">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
         </div>
         <div class="col-6">
-          <div style="color:var(--ilus-red);font-weight:700">Predom total</div>
-          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.1rem">{{ "%.3f"|format(ns.tot_pred) }}</div>
+          <div style="color:var(--ilus-red);font-weight:700;font-size:.7rem">Predom total</div>
+          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.15rem">{{ "%.3f"|format(ns.tot_pred) }}</div>
         </div>
       </div>
     </div>
