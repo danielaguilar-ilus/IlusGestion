@@ -766,16 +766,78 @@ function clearKpiFilter() {
       { facingMode: 'environment' },
       config,
       function onSuccess(decodedText){
-        /* Código detectado → detener cámara + lookup AJAX */
+        var sku = decodedText.trim().toUpperCase();
         html5QrCode.pause();
-        statusEl.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Código detectado';
-        skuLookup(decodedText.trim().toUpperCase(), function(d){
-          /* Si encontró en app el modal ya se cerró; si no, mantener abierto */
-          if (d.status !== 'found_app') {
-            /* Vibración táctil en móvil para feedback */
-            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-          }
-        });
+
+        /* Feedback inmediato visible — spinner en la barra de estado */
+        statusEl.innerHTML =
+          '<span class="spinner-border spinner-border-sm me-2 text-danger"></span>'
+          + 'Buscando <strong>' + sku + '</strong>…';
+        if (scanResultEl) { scanResultEl.style.display = 'none'; scanResultEl.innerHTML = ''; }
+
+        fetch(SKU_LOOKUP_URL + '?sku=' + encodeURIComponent(sku))
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.status === 'found_app') {
+              /* ✅ Encontrado → ir directo a editar */
+              statusEl.innerHTML =
+                '<i class="bi bi-check-circle-fill text-success me-1"></i>'
+                + 'Abriendo <strong>' + d.sku + '</strong>…';
+              window.location.href = d.edit_url;
+
+            } else if (d.status === 'found_erp') {
+              /* 🔶 En ERP pero sin ficha */
+              if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+              statusEl.innerHTML =
+                '<i class="bi bi-exclamation-circle-fill me-1" style="color:#e65100"></i>'
+                + '<strong>' + d.sku + '</strong> — sin ficha aún';
+              if (scanResultEl) {
+                scanResultEl.style.display = 'block';
+                scanResultEl.innerHTML =
+                  '<div class="p-3" style="background:#fff8e1;border-left:4px solid #f9a825">'
+                  + '<div class="small text-muted mb-2">' + d.nombre + '</div>'
+                  + '<a href="' + d.prepare_url + '" class="btn btn-sm fw-bold d-block mb-2"'
+                  + ' style="background:#e65100;color:#fff">'
+                  + '<i class="bi bi-plus-circle me-1"></i>Crear ficha desde ERP</a>'
+                  + '<button type="button" class="btn btn-sm btn-outline-secondary w-100" id="retryScan">'
+                  + '<i class="bi bi-camera me-1"></i>Escanear otro</button></div>';
+                document.getElementById('retryScan').onclick = function(){
+                  scanResultEl.style.display = 'none';
+                  statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
+                  html5QrCode.resume();
+                };
+              }
+
+            } else {
+              /* ❌ No encontrado */
+              if (navigator.vibrate) navigator.vibrate(300);
+              statusEl.innerHTML =
+                '<i class="bi bi-x-circle-fill text-danger me-1"></i>'
+                + 'No encontrado: <strong>' + sku + '</strong>';
+              if (scanResultEl) {
+                scanResultEl.style.display = 'block';
+                scanResultEl.innerHTML =
+                  '<div class="p-3" style="background:#fce4ec;border-left:4px solid #c62828">'
+                  + '<div class="small text-muted mb-2">No está en nuestra BD ni en el ERP.</div>'
+                  + '<button type="button" class="btn btn-sm btn-outline-secondary w-100" id="retryScan2">'
+                  + '<i class="bi bi-camera me-1"></i>Escanear otro</button></div>';
+                document.getElementById('retryScan2').onclick = function(){
+                  scanResultEl.style.display = 'none';
+                  statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
+                  html5QrCode.resume();
+                };
+              }
+            }
+          })
+          .catch(function(){
+            statusEl.innerHTML =
+              '<i class="bi bi-wifi-off me-1 text-warning"></i>'
+              + 'Error de red — <button class="btn btn-sm btn-link p-0" id="retryScan3">reintentar</button>';
+            document.getElementById('retryScan3').onclick = function(){
+              statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
+              html5QrCode.resume();
+            };
+          });
       },
       function onError(){ /* ignorar errores de frame */ }
     ).then(function(){
