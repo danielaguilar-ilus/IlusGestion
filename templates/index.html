@@ -720,6 +720,7 @@ function clearKpiFilter() {
    ESCÁNER DE CÓDIGO DE BARRAS (cámara)
 ══════════════════════════════════════════ */
 (function(){
+  var SKU_LOOKUP_URL = "{{ url_for('sku_lookup') }}";
   var html5QrCode  = null;
   var scannerModal = document.getElementById('scannerModal');
   var scanBtn      = document.getElementById('scanBtn');
