@@ -3144,18 +3144,33 @@ def _nudo_variants(nudo_raw):
     return list(dict.fromkeys([padded, s]))   # únicos, preservando orden
 
 
+def _erp_get(path, params, token, timeout=10):
+    """
+    GET a la REST API del ERP usando urllib (sin dependencias externas).
+    Retorna el JSON decodificado o lanza excepción.
+    """
+    import urllib.request as _urlreq
+    import urllib.parse   as _urlparse
+    import json           as _json_mod
+
+    url = ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus").rstrip("/") + path
+    qs  = _urlparse.urlencode(params)
+    req = _urlreq.Request(
+        f"{url}?{qs}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with _urlreq.urlopen(req, timeout=timeout) as resp:
+        return _json_mod.loads(resp.read().decode("utf-8"))
+
+
 def _cubicador_fetch(tido, nudo):
     """
     Consulta el ERP vía REST API y cruza con nuestra BD local.
     Retorna (header_dict, lineas_list) o lanza excepción.
     """
-    import requests as _req
     from datetime import datetime as _dt
 
-    ERP_API_URL   = ERP_CONFIG.get("api_url",   "https://lab.random.cl/ilus")
-    ERP_API_TOKEN = ERP_CONFIG.get("api_token", "")
-    auth_headers  = {"Authorization": f"Bearer {ERP_API_TOKEN}"}
-
+    TOKEN = ERP_CONFIG.get("api_token", "")
     nudos = _nudo_variants(nudo)
 
     # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
@@ -3163,19 +3178,17 @@ def _cubicador_fetch(tido, nudo):
     raw_lineas = []
     for nv in nudos:
         try:
-            resp = _req.get(
-                f"{ERP_API_URL}/documentos/render",
-                params={"tido": tido, "nudo": nv, "empresa": "01"},
-                headers=auth_headers,
-                timeout=(5, 10),   # 5s conectar, 10s leer
+            body = _erp_get(
+                "/documentos/render",
+                {"tido": tido, "nudo": nv, "empresa": "01"},
+                TOKEN, timeout=12,
             )
-            resp.raise_for_status()
-            data = resp.json().get("data") or []
+            data = body.get("data") or []
             if data:
                 raw_header = data[0].get("maeedo") or {}
                 raw_lineas = data[0].get("maeddo") or []
                 break
-        except _req.exceptions.RequestException as api_err:
+        except Exception as api_err:
             raise ConnectionError(f"No se pudo conectar al ERP ({api_err}). Intenta en unos momentos.")
 
     if not raw_header:
@@ -3187,14 +3200,8 @@ def _cubicador_fetch(tido, nudo):
     cliente_rut    = endo
     if endo:
         try:
-            ent = _req.get(
-                f"{ERP_API_URL}/entidades",
-                params={"rten": endo},
-                headers=auth_headers,
-                timeout=(5, 8),    # 5s conectar, 8s leer
-            )
-            ent.raise_for_status()
-            ent_data = ent.json().get("data") or []
+            ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=8)
+            ent_data = ent_body.get("data") or []
             if ent_data:
                 cliente_nombre = (ent_data[0].get("NOKOEN") or "").strip().title()
                 cliente_rut    = (ent_data[0].get("RTEN")   or endo).strip()
