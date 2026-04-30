@@ -1213,6 +1213,29 @@ def sku_lookup():
             "prepare_url": url_for("prepare_product_from_erp", sku=erp_hit["sku"]),
         })
 
+    # ── 3. REST API ERP — búsqueda exacta por código ─────────────────
+    try:
+        TOKEN = ERP_CONFIG.get("api_token", "")
+        body  = _erp_get(
+            "/productos",
+            {"kopr": sku, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true"},
+            TOKEN, timeout=6,
+        )
+        items = body.get("data") or []
+        if items:
+            p = items[0]
+            p_sku  = (p.get("KOPR") or "").strip().upper()
+            p_name = (p.get("NOKOPR") or "").strip()
+            if p_sku:
+                return jsonify({
+                    "status":      "found_erp",
+                    "sku":         p_sku,
+                    "nombre":      p_name,
+                    "prepare_url": url_for("prepare_product_from_erp", sku=p_sku),
+                })
+    except Exception:
+        pass
+
     return jsonify({"status": "not_found", "sku": sku})
 
 
@@ -1278,22 +1301,41 @@ def product_search():
     except Exception:
         pass
 
-    # ── 3. REST API ERP (fallback si hay pocos resultados) ───────────
-    if len(results) < 5 and len(q) >= 3:
+    # ── 3. REST API ERP /productos — fuente en tiempo real ───────────
+    if len(q) >= 2:
         try:
             TOKEN = ERP_CONFIG.get("api_token", "")
-            # Intentar buscar por SKU exacto en documentos recientes
-            body = _erp_get(
-                "/entidades",
-                {"q": q, "limit": 10},
-                TOKEN, timeout=4,
+            body  = _erp_get(
+                "/productos",
+                {
+                    "search":   q,           # busca en código Y descripción
+                    "empresa":  "01",
+                    "fields":   "KOPR,NOKOPR",
+                    "visible":  "true",
+                    "venta":    "true",      # solo productos de venta
+                },
+                TOKEN, timeout=6,
             )
-            # entidades devuelve clientes; si la API tiene productos los agregaríamos aquí
-            # Por ahora dejamos esto como placeholder para cuando se conozca el endpoint
+            existing_skus = {r["sku"] for r in results}
+            for p in (body.get("data") or []):
+                p_sku  = (p.get("KOPR") or "").strip().upper()
+                p_name = (p.get("NOKOPR") or "").strip()
+                if not p_sku or p_sku in seen:
+                    continue
+                already = p_sku in existing_skus
+                results.append({
+                    "sku":           p_sku,
+                    "nombre":        p_name,
+                    "source":        "erp-api",
+                    "already_exists": already,
+                })
+                seen.add(p_sku)
+                if len(results) >= 25:
+                    break
         except Exception:
-            pass
+            pass   # si la API no responde, igual devolvemos lo local
 
-    # Ordenar: exactos primero, luego por nombre; los no-existentes primero
+    # Ordenar: exactos primero, no-existentes primero, luego nombre
     results.sort(key=lambda x: (
         1 if x["already_exists"] else 0,
         0 if x["sku"] == q.upper() else 1,
