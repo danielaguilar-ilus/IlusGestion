@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+{% block title %}{{ manifiesto.correlativo }} — Manifiesto ILUS{% endblock %}
+
+{% block content %}
+
+{# ── Encabezado ── #}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4 class="font-monospace mb-0">
+      <i class="bi bi-clipboard-check me-2" style="color:var(--ilus-red)"></i>{{ manifiesto.correlativo }}
+    </h4>
+    <div class="sub">
+      {{ manifiesto.courier }} ·
+      {{ manifiesto.fecha.strftime('%d/%m/%Y') if manifiesto.fecha else '—' }} ·
+      {{ manifiesto.total_items or 0 }} items
+      {% if manifiesto.costo_total %} · ${{ "{:,.0f}".format(manifiesto.costo_total) }} total{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Manifiestos
+    </a>
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#estadoManModal">
+      <i class="bi bi-toggle-on me-1"></i>Estado
+    </button>
+    <button class="btn btn-sm btn-ilus" onclick="window.print()">
+      <i class="bi bi-printer me-1"></i>Imprimir
+    </button>
+  </div>
+</div>
+
+{# ── Badge de estado del manifiesto ── #}
+{% set mcolor = {
+  'En preparación':'warning',
+  'En curso':'primary',
+  'Cerrado':'secondary',
+  'Entregado completo':'success'
+}.get(manifiesto.estado, 'secondary') %}
+<div class="mb-3">
+  <span class="badge rounded-pill bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}" style="font-size:.85rem;padding:.4em .9em">
+    {{ manifiesto.estado }}
+  </span>
+  {% if manifiesto.notas %}
+  <span class="text-muted small ms-2">{{ manifiesto.notas }}</span>
+  {% endif %}
+</div>
+
+{# ── Resumen rápido ── #}
+{% set total_entregados = items|selectattr('estado_entrega','eq','Entregado')|list|length %}
+{% set total_fallidos   = items|selectattr('estado_entrega','eq','Entrega fallida')|list|length %}
+{% set total_ruta       = items|selectattr('estado_entrega','eq','En ruta')|list|length %}
+{% set total_items      = items|length %}
+<div class="row g-2 mb-3 no-print">
+  <div class="col-6 col-sm-3">
+    <div class="ilus-card p-2 text-center">
+      <div class="fw-bold fs-4" style="color:var(--ilus-red)">{{ total_items }}</div>
+      <div class="small text-muted">Total items</div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-3">
+    <div class="ilus-card p-2 text-center">
+      <div class="fw-bold fs-4 text-success">{{ total_entregados }}</div>
+      <div class="small text-muted">Entregados</div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-3">
+    <div class="ilus-card p-2 text-center">
+      <div class="fw-bold fs-4 text-primary">{{ total_ruta }}</div>
+      <div class="small text-muted">En ruta</div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-3">
+    <div class="ilus-card p-2 text-center">
+      <div class="fw-bold fs-4 text-danger">{{ total_fallidos }}</div>
+      <div class="small text-muted">Fallidos</div>
+    </div>
+  </div>
+</div>
+
+{# ── Tabla de items ── #}
+<div class="ilus-card mb-3">
+  <div class="ilus-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-box-seam me-1"></i>Ítems del manifiesto</span>
+  </div>
+
+  {# Desktop #}
+  <div class="d-none d-md-block table-responsive">
+    <table class="table ilus-table mb-0" style="font-size:.81rem">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Documento</th>
+          <th>Cliente</th>
+          <th>Dirección</th>
+          <th>Tipo</th>
+          <th class="text-end">Valor</th>
+          <th class="text-end">Envío $</th>
+          <th style="min-width:190px">Estado entrega</th>
+          <th class="no-print"></th>
+        </tr>
+      </thead>
+      <tbody id="itemsTableBody">
+        {% for item in items %}
+        {% set ecolor = {
+          'En preparación':'warning',
+          'Entregado a transporte':'info',
+          'En ruta':'primary',
+          'Entregado':'success',
+          'Entrega fallida':'danger',
+          'Devolución':'secondary'
+        }.get(item.estado_entrega, 'secondary') %}
+        <tr id="row-{{ item.id }}">
+          <td class="text-muted">{{ loop.index }}</td>
+          <td class="font-monospace fw-bold">{{ item.tido }} {{ item.nudo }}</td>
+          <td>
+            <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
+            <div class="small text-muted">{{ item.comuna or '' }}</div>
+          </td>
+          <td class="small text-muted" style="max-width:180px">{{ (item.direccion or '—')[:60] }}</td>
+          <td>
+            {% if item.clasificacion == 'retiro' %}
+            <span class="badge bg-info text-dark"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
+            {% else %}
+            <span class="badge bg-dark"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            {% if item.valor_bruto %}${{ "{:,.0f}".format(item.valor_bruto) }}{% else %}—{% endif %}
+          </td>
+          <td class="text-end">
+            {% if item.costo_zz %}
+            <span style="color:var(--ilus-red);font-weight:600">${{ "{:,.0f}".format(item.costo_zz) }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            <select class="form-select form-select-sm estado-select"
+                    data-item="{{ item.id }}"
+                    onchange="cambiarEstado({{ manifiesto.id }}, {{ item.id }}, this.value, this)">
+              {% for e in estados_entrega %}
+              <option value="{{ e }}" {% if item.estado_entrega == e %}selected{% endif %}>{{ e }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="no-print">
+            <button class="btn btn-sm btn-outline-danger" title="Quitar del manifiesto"
+                    onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+              <i class="bi bi-trash3"></i>
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" class="text-center py-4 text-muted">
+            <i class="bi bi-box me-2"></i>Sin ítems en este manifiesto
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Mobile cards #}
+  <div class="d-md-none">
+    {% for item in items %}
+    {% set ecolor = {
+      'En preparación':'warning',
+      'Entregado a transporte':'info',
+      'En ruta':'primary',
+      'Entregado':'success',
+      'Entrega fallida':'danger',
+      'Devolución':'secondary'
+    }.get(item.estado_entrega, 'secondary') %}
+    <div class="p-3 border-bottom" id="card-{{ item.id }}">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <div class="font-monospace fw-bold" style="font-size:.88rem">{{ item.tido }} {{ item.nudo }}</div>
+        <button class="btn btn-sm btn-outline-danger ms-2 no-print" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+      <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
+      <div class="small text-muted">{{ item.comuna or '' }} · {{ (item.direccion or '')[:50] }}</div>
+      <div class="mt-2">
+        {% if item.costo_zz %}
+        <span class="small fw-semibold" style="color:var(--ilus-red)">
+          Envío: ${{ "{:,.0f}".format(item.costo_zz) }}
+        </span>
+        {% endif %}
+      </div>
+      <div class="mt-2">
+        <select class="form-select form-select-sm estado-select"
+                data-item="{{ item.id }}"
+                onchange="cambiarEstado({{ manifiesto.id }}, {{ item.id }}, this.value, this)">
+          {% for e in estados_entrega %}
+          <option value="{{ e }}" {% if item.estado_entrega == e %}selected{% endif %}>{{ e }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center py-4 text-muted">Sin ítems</div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Historial ── #}
+<div class="ilus-card mb-4 no-print">
+  <div class="ilus-card-header">
+    <i class="bi bi-clock-history me-1"></i>Trazabilidad del manifiesto
+  </div>
+  <div class="p-3" style="font-size:.8rem">
+    {% for l in logs %}
+    {% set dt = l.created_at.strftime('%d/%m/%y %H:%M') if l.created_at else '—' %}
+    <div class="d-flex gap-2 py-1 border-bottom">
+      <span class="text-muted" style="min-width:105px;flex-shrink:0">{{ dt }}</span>
+      <span class="fw-semibold" style="min-width:80px;flex-shrink:0">{{ l.usuario or '?' }}</span>
+      <span>{{ l.accion }}</span>
+      {% if l.detalle %}<span class="text-muted">· {{ l.detalle }}</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="text-muted">Sin registros</div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Modal cambio estado manifiesto ── #}
+<div class="modal fade" id="estadoManModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:360px">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-toggle-on me-2"></i>Estado del manifiesto</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <select id="selectEstadoMan" class="form-select">
+          {% for e in estados_manifest %}
+          <option value="{{ e }}" {% if manifiesto.estado==e %}selected{% endif %}>{{ e }}</option>
+          {% endfor %}
+        </select>
+        <div id="estadoManMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="guardarEstadoManifiesto()">
+          Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Estilos impresión ── #}
+<style>
+@media print {
+  .sidebar, .mobile-topbar, .sidebar-overlay, .no-print,
+  .page-header .btn, .ilus-card-header .btn { display:none!important; }
+  .main-content { margin:0!important; padding:0!important; }
+  body { background:#fff!important; }
+  .ilus-card { box-shadow:none!important; border:1px solid #ccc!important; }
+  table { font-size:.75rem!important; }
+}
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+var MID = {{ manifiesto.id }};
+
+function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
+  selectEl.disabled = true;
+  fetch('/transporte/manifiestos/' + mid + '/items/' + itemId + '/estado', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({estado_entrega: nuevoEstado})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    selectEl.disabled = false;
+    if (d.ok) {
+      // Flash verde temporal en la fila
+      var row = document.getElementById('row-' + itemId) ||
+                document.getElementById('card-' + itemId);
+      if (row) {
+        row.style.transition = 'background .3s';
+        row.style.background = '#e8f5e9';
+        setTimeout(function(){ row.style.background = ''; }, 1000);
+      }
+      actualizarResumen();
+    } else {
+      alert('Error: ' + (d.error||'No se pudo guardar'));
+      location.reload();
+    }
+  })
+  .catch(function() {
+    selectEl.disabled = false;
+    alert('Error de conexión');
+  });
+}
+
+function quitarItem(mid, itemId) {
+  if (!confirm('¿Quitar este ítem del manifiesto?')) return;
+  fetch('/transporte/manifiestos/' + mid + '/items/' + itemId, {method:'DELETE'})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        var row  = document.getElementById('row-' + itemId);
+        var card = document.getElementById('card-' + itemId);
+        if (row)  row.remove();
+        if (card) card.remove();
+        actualizarResumen();
+      }
+    });
+}
+
+function actualizarResumen() {
+  // Re-count estados desde los selects actuales
+  var selects = document.querySelectorAll('.estado-select');
+  var counts = {};
+  selects.forEach(function(s){ counts[s.value] = (counts[s.value]||0)+1; });
+  var total = selects.length;
+  // Actualizar badge
+  var subtitles = document.querySelectorAll('.sub');
+  // simple: just reload page for accuracy
+  // Could do a lightweight DOM update here, but reload keeps it simple
+}
+
+function guardarEstadoManifiesto() {
+  var estado = document.getElementById('selectEstadoMan').value;
+  var msg    = document.getElementById('estadoManMsg');
+  fetch('/transporte/manifiestos/' + MID + '/estado', {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({estado: estado})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.ok) {
+      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+      setTimeout(function(){ location.reload(); }, 600);
+    } else {
+      msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
+    }
+  });
+}
+</script>
+{% endblock %}

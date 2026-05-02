@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+{% block title %}Couriers — ILUS Transporte{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3 px-3 px-md-4">
+
+  {# ── HEADER ── #}
+  <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+    <div>
+      <h4 class="mb-0 fw-bold"><i class="bi bi-building me-2 text-danger"></i>Couriers</h4>
+      <p class="text-muted small mb-0">Gestión de empresas de transporte y tarifas</p>
+    </div>
+    <button class="btn btn-danger ms-auto" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo courier
+    </button>
+  </div>
+
+  {# ── TABLA COURIERS ── #}
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="tablaCouriers">
+          <thead class="table-dark">
+            <tr>
+              <th style="min-width:160px">Nombre</th>
+              <th>Tipo</th>
+              <th>Contacto</th>
+              <th class="text-center">Tarifas</th>
+              <th class="text-center">Límites</th>
+              <th class="text-center">Estado</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in couriers %}
+            <tr id="rowC{{ c.id }}" class="{% if not c.activo %}opacity-50{% endif %}">
+              <td>
+                <div class="fw-semibold">{{ c.nombre }}</div>
+                {% if c.rut %}<div class="text-muted small">{{ c.rut }}</div>{% endif %}
+              </td>
+              <td>
+                <span class="badge
+                  {% if c.tipo=='nacional' %}bg-primary
+                  {% elif c.tipo=='regional' %}bg-info text-dark
+                  {% elif c.tipo=='local' %}bg-success
+                  {% else %}bg-secondary{% endif %}">
+                  {{ c.tipo|capitalize }}
+                </span>
+              </td>
+              <td>
+                <div class="small">
+                  {% if c.contacto %}<div>{{ c.contacto }}</div>{% endif %}
+                  {% if c.telefono %}<div class="text-muted">{{ c.telefono }}</div>{% endif %}
+                  {% if c.email %}<div class="text-muted">{{ c.email }}</div>{% endif %}
+                </div>
+              </td>
+              <td class="text-center">
+                <span class="badge bg-secondary" id="badgeTarifas{{ c.id }}">{{ c.total_tarifas }}</span>
+              </td>
+              <td class="text-center small text-muted">
+                {% if c.peso_max_bulto %}{{ c.peso_max_bulto|int }} kg/bulto<br>{% endif %}
+                {% if c.peso_max_guia %}{{ c.peso_max_guia|int }} kg/guía<br>{% endif %}
+                Div: {{ c.factor_vol|int }}
+              </td>
+              <td class="text-center">
+                <span class="badge {% if c.activo %}bg-success{% else %}bg-danger{% endif %}">
+                  {% if c.activo %}Activo{% else %}Inactivo{% endif %}
+                </span>
+              </td>
+              <td class="text-center">
+                <button class="btn btn-sm btn-outline-secondary me-1"
+                        onclick="abrirEditar({{ c|tojson }})">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger me-1"
+                        onclick="abrirTarifas({{ c.id }}, '{{ c.nombre }}')">
+                  <i class="bi bi-currency-dollar"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-warning"
+                        onclick="toggleActivo({{ c.id }}, {{ 0 if c.activo else 1 }})">
+                  <i class="bi bi-{% if c.activo %}eye-slash{% else %}eye{% endif %}"></i>
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-4">No hay couriers registrados aún.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>{# /container #}
+
+
+{# ══════════════════════════════════════════════
+   MODAL: NUEVO COURIER
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalNuevo" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-plus-lg me-2 text-danger"></i>Nuevo Courier</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" action="{{ url_for('tr_courier_nuevo') }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small">Nombre *</label>
+              <input name="nombre" required class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: Starken">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">RUT</label>
+              <input name="rut" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="76.XXX.XXX-X">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">Tipo</label>
+              <select name="tipo" class="form-select form-select-sm bg-dark text-light border-secondary">
+                <option value="nacional">Nacional</option>
+                <option value="regional">Regional</option>
+                <option value="local">Local</option>
+                <option value="internacional">Internacional</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">Contacto</label>
+              <input name="contacto" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">Teléfono</label>
+              <input name="telefono" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Email</label>
+              <input name="email" type="email" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">Peso máx/bulto (kg, 0=libre)</label>
+              <input name="peso_max_bulto" type="number" step="0.1" min="0" value="0"
+                     class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">Peso máx/guía (kg, 0=libre)</label>
+              <input name="peso_max_guia" type="number" step="0.1" min="0" value="0"
+                     class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">Vol máx/bulto (cm³, 0=libre)</label>
+              <input name="vol_max_bulto" type="number" step="1" min="0" value="0"
+                     class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">Divisor peso vol. (cm³/kg)</label>
+              <input name="factor_vol" type="number" step="1" min="1" value="5000"
+                     class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Notas</label>
+              <textarea name="notas" rows="2"
+                        class="form-control form-control-sm bg-dark text-light border-secondary"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-save me-1"></i>Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+
+{# ══════════════════════════════════════════════
+   MODAL: EDITAR COURIER
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalEditar" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2 text-warning"></i>Editar Courier</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="editarBody">
+        {# llenado por JS #}
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-warning" onclick="guardarEditar()">
+          <i class="bi bi-save me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+{# ══════════════════════════════════════════════
+   MODAL: TARIFAS
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTarifas" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="tituloTarifas">
+          <i class="bi bi-currency-dollar me-2 text-success"></i>Tarifas
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="cuerpoTarifas">
+        <div class="text-center py-4"><div class="spinner-border text-danger"></div></div>
+      </div>
+      <div class="modal-footer border-secondary d-flex justify-content-between">
+        <button class="btn btn-success btn-sm" onclick="abrirNuevaTarifa()">
+          <i class="bi bi-plus-lg me-1"></i>Agregar tarifa
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+{# ══════════════════════════════════════════════
+   MODAL: FORM TARIFA (inline dentro de tarifas)
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalFormTarifa" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="tituloFormTarifa">Nueva tarifa</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label small">Zona</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   id="ft_zona" placeholder="General / RM / Norte ...">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">Peso desde (kg)</label>
+            <input type="number" step="0.1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   id="ft_desde" value="0">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">Peso hasta (kg, 0=sin tope)</label>
+            <input type="number" step="0.1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   id="ft_hasta" value="0">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">Precio base ($)</label>
+            <input type="number" step="1" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   id="ft_base" value="0">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">$/kg extra (sobre peso desde)</label>
+            <input type="number" step="0.01" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   id="ft_kgextra" value="0">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">Moneda</label>
+            <select class="form-select form-select-sm bg-dark text-light border-secondary" id="ft_moneda">
+              <option value="CLP">CLP</option>
+              <option value="USD">USD</option>
+              <option value="UF">UF</option>
+            </select>
+          </div>
+          <div class="col-6 d-flex align-items-end">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="ft_activo" checked>
+              <label class="form-check-label small" for="ft_activo">Activo</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success" onclick="guardarTarifa()">
+          <i class="bi bi-save me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+/* ── estado global ── */
+let _editarId   = null;
+let _tarifaCoid = null;   // courier_id activo en modal tarifas
+let _tarifaEditId = null; // id tarifa en edición (null=nueva)
+let _modalTarifas, _modalEditar, _modalFormTarifa;
+
+document.addEventListener('DOMContentLoaded', () => {
+  _modalTarifas    = new bootstrap.Modal(document.getElementById('modalTarifas'));
+  _modalEditar     = new bootstrap.Modal(document.getElementById('modalEditar'));
+  _modalFormTarifa = new bootstrap.Modal(document.getElementById('modalFormTarifa'));
+});
+
+/* ════════════════════════════════
+   EDITAR COURIER
+════════════════════════════════ */
+function abrirEditar(c) {
+  _editarId = c.id;
+  const tipos = ['nacional','regional','local','internacional'];
+  document.getElementById('editarBody').innerHTML = `
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label small">Nombre *</label>
+        <input id="e_nombre" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.nombre)}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small">RUT</label>
+        <input id="e_rut" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.rut||'')}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Tipo</label>
+        <select id="e_tipo" class="form-select form-select-sm bg-dark text-light border-secondary">
+          ${tipos.map(t=>`<option value="${t}" ${c.tipo===t?'selected':''}>${cap(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Contacto</label>
+        <input id="e_contacto" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.contacto||'')}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Teléfono</label>
+        <input id="e_telefono" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.telefono||'')}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small">Email</label>
+        <input id="e_email" type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.email||'')}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Peso máx/bulto (kg, 0=libre)</label>
+        <input id="e_pmax_bulto" type="number" step="0.1" min="0"
+               class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${c.peso_max_bulto||0}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Peso máx/guía (kg, 0=libre)</label>
+        <input id="e_pmax_guia" type="number" step="0.1" min="0"
+               class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${c.peso_max_guia||0}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Vol máx/bulto (cm³, 0=libre)</label>
+        <input id="e_vmax" type="number" step="1" min="0"
+               class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${c.vol_max_bulto||0}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Divisor peso vol. (cm³/kg)</label>
+        <input id="e_factor" type="number" step="1" min="1"
+               class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${c.factor_vol||5000}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small">Notas</label>
+        <textarea id="e_notas" rows="2" class="form-control form-control-sm bg-dark text-light border-secondary">${esc(c.notas||'')}</textarea>
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="e_activo" ${c.activo?'checked':''}>
+          <label class="form-check-label" for="e_activo">Courier activo</label>
+        </div>
+      </div>
+    </div>
+  `;
+  _modalEditar.show();
+}
+
+async function guardarEditar() {
+  const body = {
+    nombre        : val('e_nombre'),
+    rut           : val('e_rut'),
+    tipo          : val('e_tipo'),
+    contacto      : val('e_contacto'),
+    telefono      : val('e_telefono'),
+    email         : val('e_email'),
+    peso_max_bulto: val('e_pmax_bulto'),
+    peso_max_guia : val('e_pmax_guia'),
+    vol_max_bulto : val('e_vmax'),
+    factor_vol    : val('e_factor'),
+    notas         : val('e_notas'),
+    activo        : document.getElementById('e_activo').checked,
+  };
+  if (!body.nombre) { alert('El nombre es obligatorio'); return; }
+  const r = await fetch(`/transporte/couriers/${_editarId}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    _modalEditar.hide();
+    location.reload();
+  } else {
+    alert('Error al guardar');
+  }
+}
+
+/* ════════════════════════════════
+   TOGGLE ACTIVO
+════════════════════════════════ */
+async function toggleActivo(id, nuevoValor) {
+  /* obtener datos actuales del courier */
+  const r = await fetch(`/transporte/couriers/${id}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  await fetch(`/transporte/couriers/${id}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({...d.courier, activo: nuevoValor})
+  });
+  location.reload();
+}
+
+/* ════════════════════════════════
+   TARIFAS
+════════════════════════════════ */
+async function abrirTarifas(courierId, nombre) {
+  _tarifaCoid  = courierId;
+  _tarifaEditId = null;
+  document.getElementById('tituloTarifas').innerHTML =
+    `<i class="bi bi-currency-dollar me-2 text-success"></i>Tarifas — ${esc(nombre)}`;
+  document.getElementById('cuerpoTarifas').innerHTML =
+    '<div class="text-center py-4"><div class="spinner-border text-danger"></div></div>';
+  _modalTarifas.show();
+  await refrescarTarifas();
+}
+
+async function refrescarTarifas() {
+  const r = await fetch(`/transporte/couriers/${_tarifaCoid}`);
+  if (!r.ok) { document.getElementById('cuerpoTarifas').innerHTML='<p class="text-danger">Error cargando tarifas</p>'; return; }
+  const d = await r.json();
+  renderTarifas(d.tarifas || []);
+  /* actualizar badge en tabla */
+  const b = document.getElementById(`badgeTarifas${_tarifaCoid}`);
+  if (b) b.textContent = (d.tarifas||[]).length;
+}
+
+function renderTarifas(tarifas) {
+  const fmt = n => parseFloat(n||0).toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0});
+  const fmtKg = n => parseFloat(n||0).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1});
+
+  if (!tarifas.length) {
+    document.getElementById('cuerpoTarifas').innerHTML =
+      '<p class="text-muted text-center py-3">Sin tarifas. Agrega una con el botón de abajo.</p>';
+    return;
+  }
+
+  let rows = tarifas.map(t => `
+    <tr class="${t.activo?'':'opacity-50'}">
+      <td>${esc(t.zona)}</td>
+      <td class="text-end">${fmtKg(t.peso_desde)}</td>
+      <td class="text-end">${t.peso_hasta?fmtKg(t.peso_hasta):'∞'}</td>
+      <td class="text-end fw-semibold">${t.moneda} ${fmt(t.precio_base)}</td>
+      <td class="text-end">${t.precio_kg_extra?fmt(t.precio_kg_extra)+'/'+'kg':'—'}</td>
+      <td class="text-center">
+        <span class="badge ${t.activo?'bg-success':'bg-secondary'}">${t.activo?'Sí':'No'}</span>
+      </td>
+      <td class="text-center">
+        <button class="btn btn-sm btn-outline-warning me-1" onclick="editarTarifa(${JSON.stringify(t).replace(/'/g,'&apos;')})">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="eliminarTarifa(${t.id})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+
+  document.getElementById('cuerpoTarifas').innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm table-dark align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Zona</th>
+            <th class="text-end">Desde (kg)</th>
+            <th class="text-end">Hasta (kg)</th>
+            <th class="text-end">Precio base</th>
+            <th class="text-end">$/kg extra</th>
+            <th class="text-center">Activo</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function abrirNuevaTarifa() {
+  _tarifaEditId = null;
+  document.getElementById('tituloFormTarifa').textContent = 'Nueva tarifa';
+  document.getElementById('ft_zona').value     = 'General';
+  document.getElementById('ft_desde').value    = '0';
+  document.getElementById('ft_hasta').value    = '0';
+  document.getElementById('ft_base').value     = '0';
+  document.getElementById('ft_kgextra').value  = '0';
+  document.getElementById('ft_moneda').value   = 'CLP';
+  document.getElementById('ft_activo').checked = true;
+  _modalFormTarifa.show();
+}
+
+function editarTarifa(t) {
+  _tarifaEditId = t.id;
+  document.getElementById('tituloFormTarifa').textContent = 'Editar tarifa';
+  document.getElementById('ft_zona').value     = t.zona;
+  document.getElementById('ft_desde').value    = t.peso_desde;
+  document.getElementById('ft_hasta').value    = t.peso_hasta;
+  document.getElementById('ft_base').value     = t.precio_base;
+  document.getElementById('ft_kgextra').value  = t.precio_kg_extra;
+  document.getElementById('ft_moneda').value   = t.moneda;
+  document.getElementById('ft_activo').checked = !!t.activo;
+  _modalFormTarifa.show();
+}
+
+async function guardarTarifa() {
+  const body = {
+    zona          : document.getElementById('ft_zona').value.trim(),
+    peso_desde    : document.getElementById('ft_desde').value,
+    peso_hasta    : document.getElementById('ft_hasta').value,
+    precio_base   : document.getElementById('ft_base').value,
+    precio_kg_extra: document.getElementById('ft_kgextra').value,
+    moneda        : document.getElementById('ft_moneda').value,
+    activo        : document.getElementById('ft_activo').checked,
+  };
+  const url = _tarifaEditId
+    ? `/transporte/couriers/${_tarifaCoid}/tarifas/${_tarifaEditId}`
+    : `/transporte/couriers/${_tarifaCoid}/tarifas`;
+  const method = _tarifaEditId ? 'PUT' : 'POST';
+  const r = await fetch(url, {
+    method, headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    _modalFormTarifa.hide();
+    await refrescarTarifas();
+  } else {
+    alert('Error al guardar tarifa');
+  }
+}
+
+async function eliminarTarifa(tid) {
+  if (!confirm('¿Eliminar esta tarifa?')) return;
+  const r = await fetch(`/transporte/couriers/${_tarifaCoid}/tarifas/${tid}`, {method:'DELETE'});
+  if (r.ok) await refrescarTarifas();
+  else alert('Error al eliminar');
+}
+
+/* ── helpers ── */
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function val(id){ return (document.getElementById(id)||{}).value||''; }
+function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+</script>
+{% endblock %}

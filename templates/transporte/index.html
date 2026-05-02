@@ -1,0 +1,2150 @@
+{% extends "base.html" %}
+{% block title %}Transporte y Distribución — ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-truck me-2" style="color:var(--ilus-red)"></i>Transporte y Distribución</h4>
+    <div class="sub">Monitor de compromisos pendientes de despacho</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addDocModal">
+      <i class="bi bi-plus-circle me-1"></i>Agregar uno
+    </button>
+    <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#syncModal">
+      <i class="bi bi-arrow-repeat me-1"></i>Sincronizar ERP
+    </button>
+    <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-ilus">
+      <i class="bi bi-clipboard-check me-1"></i>Manifiestos
+    </a>
+  </div>
+</div>
+
+{# ── Filtros ── #}
+<form method="get" class="ilus-card mb-3 p-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-sm-3">
+      <input type="text" name="q" value="{{ filtros.q }}" class="form-control form-control-sm"
+             placeholder="🔍 Cliente, N° doc, comuna…">
+    </div>
+    <div class="col-6 col-sm-2">
+      <select name="estado" class="form-select form-select-sm">
+        <option value="">Todos estados</option>
+        {% for e in estados %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-sm-2">
+      <select name="clasificacion" class="form-select form-select-sm">
+        <option value="">Despacho y retiro</option>
+        <option value="despacho" {% if filtros.clasificacion=='despacho' %}selected{% endif %}>Solo despacho</option>
+        <option value="retiro"   {% if filtros.clasificacion=='retiro'   %}selected{% endif %}>Solo retiro</option>
+      </select>
+    </div>
+    <div class="col-6 col-sm-2">
+      <input type="date" name="fecha_desde" value="{{ filtros.fecha_desde }}"
+             class="form-control form-control-sm" title="Fecha desde">
+    </div>
+    <div class="col-6 col-sm-2">
+      <input type="date" name="fecha_hasta" value="{{ filtros.fecha_hasta }}"
+             class="form-control form-control-sm" title="Fecha hasta">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
+      <a href="{{ url_for('transporte_index') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+    </div>
+  </div>
+  <div class="d-flex gap-2 mt-2 flex-wrap">
+    <small class="text-muted me-1">Rango rápido:</small>
+    <a href="?periodo=mes" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
+       style="font-size:.75rem">Último mes</a>
+    <a href="?periodo=3m"  class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
+       style="font-size:.75rem">3 meses</a>
+    <a href="?periodo=año" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
+       style="font-size:.75rem">Este año</a>
+    <a href="?periodo=todo" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
+       style="font-size:.75rem">Todo</a>
+  </div>
+</form>
+
+{# ── Pestañas de clasificación ── #}
+<ul class="nav nav-tabs mb-0" id="monitorTabs" style="border-bottom:none">
+  <li class="nav-item">
+    <button class="nav-link active fw-semibold py-2 px-3" data-clasif=""
+            onclick="filtrarTabMonitor(this,'')">
+      <i class="bi bi-grid me-1"></i>Todos
+      <span class="badge bg-secondary ms-1" id="cntTodos">…</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-semibold py-2 px-3" data-clasif="despacho"
+            onclick="filtrarTabMonitor(this,'despacho')">
+      <i class="bi bi-box-arrow-right me-1"></i>Despachos
+      <span class="badge bg-secondary ms-1" id="cntDespacho">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-semibold py-2 px-3" data-clasif="retiro"
+            onclick="filtrarTabMonitor(this,'retiro')">
+      <i class="bi bi-arrow-return-left me-1"></i>Retiros
+      <span class="badge bg-secondary ms-1" id="cntRetiro">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-semibold py-2 px-3" data-clasif="instalacion"
+            onclick="filtrarTabMonitor(this,'instalacion')">
+      <i class="bi bi-tools me-1"></i>Instalación
+      <span class="badge bg-secondary ms-1" id="cntInstalacion">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-semibold py-2 px-3" data-clasif="mantencion"
+            onclick="filtrarTabMonitor(this,'mantencion')">
+      <i class="bi bi-wrench me-1"></i>Mantención
+      <span class="badge bg-secondary ms-1" id="cntMantencion">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-semibold py-2 px-3" data-clasif="garantia"
+            onclick="filtrarTabMonitor(this,'garantia')">
+      <i class="bi bi-shield-check me-1"></i>Garantía
+      <span class="badge bg-secondary ms-1" id="cntGarantia">0</span>
+    </button>
+  </li>
+</ul>
+
+{# ── Tabla desktop ── #}
+<div class="ilus-card d-none d-md-block mb-3" style="border-top-left-radius:0">
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0" style="font-size:.82rem">
+      <thead>
+        <tr>
+          <th style="width:44px;padding:0!important;text-align:center;border-right:1px solid #eee"
+              title="Arrastra filas al manifiesto">
+            <i class="bi bi-grip-vertical text-muted" style="font-size:.75rem"></i>
+          </th>
+          <th>N° Documento</th>
+          <th>Fecha</th>
+          <th>Cliente</th>
+          <th>Comuna</th>
+          <th>Estado</th>
+          <th class="text-end">Costo ZZ</th>
+          <th class="text-center">Tipo</th>
+          <th class="text-center">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="monitorTbody">
+        <tr><td colspan="9" class="text-center py-4">
+          <div class="spinner-border spinner-border-sm text-danger me-2"></div>Cargando…
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="px-3 pb-2 pt-1 d-flex justify-content-between align-items-center"
+       style="font-size:.75rem;color:#888;border-top:1px solid #eee">
+    <span>Total visible: <strong id="monitorCount">…</strong></span>
+    <span><i class="bi bi-grip-vertical me-1"></i>Arrastra filas al panel para crear manifiesto</span>
+  </div>
+</div>
+
+{# ── Cards mobile ── #}
+<div id="monitorCards" class="d-md-none">
+  <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-danger"></div></div>
+</div>
+
+{# ══════════════════════════════════════════════
+   PANEL MANIFIESTO — fijo en desktop, overlay en mobile
+══════════════════════════════════════════════ #}
+<div id="dragPanel"
+     style="position:fixed;top:0;right:0;width:360px;max-width:100vw;height:100vh;
+            background:#0f0f0f;color:#fff;box-shadow:-6px 0 32px rgba(0,0,0,.6);
+            z-index:1055;transition:right .24s cubic-bezier(.4,0,.2,1);
+            overflow-y:auto;display:flex;flex-direction:column;
+            border-left:3px solid var(--ilus-red)">
+
+  {# ── Cabecera ── #}
+  <div style="background:#1a1a1a;padding:13px 14px 10px;border-bottom:1px solid #2a2a2a;flex-shrink:0">
+    <div class="d-flex justify-content-between align-items-center">
+      <div class="fw-bold" style="color:var(--ilus-red);font-size:.88rem;letter-spacing:.3px">
+        <i class="bi bi-clipboard-plus me-2"></i>Panel manifiesto
+      </div>
+      <div class="d-flex gap-1 align-items-center">
+        {# Badge contador de cola #}
+        <span id="dpBadge" style="display:none;
+              background:var(--ilus-red);color:#fff;border-radius:50px;
+              font-size:.65rem;font-weight:800;padding:2px 7px;min-width:22px;text-align:center">0</span>
+        {# Botón cerrar (sólo en mobile — en desktop se oculta vía CSS) #}
+        <button class="btn btn-sm btn-outline-secondary text-white border-secondary dp-close-btn"
+                onclick="closeDragPanel()" title="Cerrar panel">
+          <i class="bi bi-chevron-right"></i>
+        </button>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:#666;margin-top:4px">
+      <i class="bi bi-grip-vertical me-1"></i>Arrastra documentos · haz clic en
+      <i class="bi bi-clipboard-plus" style="color:#5cb85c"></i> en la fila
+    </div>
+  </div>
+
+  {# ── Cola de documentos ── #}
+  <div style="padding:10px 12px 4px;flex-shrink:0">
+    <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:1.2px;color:#555;margin-bottom:6px">
+      <i class="bi bi-list-check me-1"></i>Documentos en este manifiesto
+    </div>
+    <div id="dpQueueList" style="min-height:32px">
+      <div id="dpQueueEmpty" style="color:#444;font-style:italic;font-size:.74rem;padding:6px 0">
+        <i class="bi bi-inbox me-1" style="font-size:1.1rem;opacity:.4;display:block;text-align:center;margin-bottom:4px"></i>
+        Arrastra o presiona <i class="bi bi-clipboard-plus" style="color:#5cb85c"></i> para agregar
+      </div>
+    </div>
+  </div>
+
+  {# ── Acumulado de peso/volumen (aparece cuando hay ítems) ── #}
+  <div id="dpResumen" style="display:none;margin:2px 12px 4px;
+       background:#151515;border:1px solid #252525;border-radius:9px;padding:10px 12px;flex-shrink:0">
+    <div class="d-flex justify-content-between align-items-center mb-6px">
+      <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;color:#555;letter-spacing:1px">
+        <i class="bi bi-layers me-1"></i>Acumulado del manifiesto
+      </div>
+      <div id="dpResumenSpinner" style="display:none">
+        <div class="spinner-border spinner-border-sm" style="width:.7rem;height:.7rem;color:#666"></div>
+      </div>
+    </div>
+    <div class="d-flex gap-0" style="border-radius:7px;overflow:hidden;margin-top:6px">
+      <div style="flex:1;background:#1e1e1e;padding:7px 8px;border-right:1px solid #111">
+        <div style="font-size:.6rem;color:#666;text-transform:uppercase;letter-spacing:.7px">Peso real</div>
+        <div style="font-size:.92rem;font-weight:800;color:#ddd" id="dpPesoTotal">—</div>
+      </div>
+      <div style="flex:1;background:#1e1e1e;padding:7px 8px;border-right:1px solid #111">
+        <div style="font-size:.6rem;color:#666;text-transform:uppercase;letter-spacing:.7px">Vol. equiv.</div>
+        <div style="font-size:.92rem;font-weight:800;color:#ddd" id="dpVolTotal">—</div>
+      </div>
+      <div style="flex:1;background:#1a1a1a;padding:7px 8px">
+        <div style="font-size:.6rem;color:#999;text-transform:uppercase;letter-spacing:.7px">Facturable ★</div>
+        <div style="font-size:.92rem;font-weight:800;color:var(--ilus-red)" id="dpPesoFacturable">—</div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Prevale: comparativa tarifas ── #}
+  <div id="dpPrevale" style="display:none;margin:2px 12px 4px;
+       background:#0d1a0d;border:1px solid #1a3a1a;border-radius:9px;
+       padding:10px 12px;flex-shrink:0">
+    <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:1px;color:#2d6a2d;margin-bottom:6px">
+      <i class="bi bi-graph-up me-1"></i>Tarifa prevale (por courier)
+    </div>
+    <div id="dpPrevaleRows">
+      <div class="text-center" style="color:#444;font-size:.75rem">Calculando…</div>
+    </div>
+  </div>
+
+  {# ── Zona drop "crear nuevo" ── #}
+  <div id="dragDropZoneNuevo"
+       ondragover="event.preventDefault();this.classList.add('dp-drag-over')"
+       ondragleave="this.classList.remove('dp-drag-over')"
+       ondrop="dropEnZona(event,'nuevo')"
+       style="margin:6px 12px;border:2px dashed #272727;border-radius:9px;
+              padding:10px;text-align:center;transition:background .15s,border-color .15s;
+              flex-shrink:0;cursor:default">
+    <div style="font-size:.7rem;color:#444">
+      <i class="bi bi-box-arrow-in-down me-1"></i>Suelta aquí para
+      <strong style="color:var(--ilus-red)">crear nuevo manifiesto</strong>
+    </div>
+  </div>
+
+  {# ── Manifiestos activos ── #}
+  <div style="padding:4px 12px 0;flex-shrink:0">
+    <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:1.2px;color:#555;margin-bottom:4px">
+      <i class="bi bi-clipboard-check me-1"></i>Manifiestos activos — suelta o haz clic
+    </div>
+  </div>
+  <div class="flex-grow-1 px-2 pb-2" id="dragPanelBody">
+    <div class="text-center py-4" style="color:#555">
+      <div class="spinner-border spinner-border-sm text-danger mb-2"></div>
+      <div style="font-size:.75rem">Cargando manifiestos…</div>
+    </div>
+  </div>
+
+  {# ── Footer ── #}
+  <div style="padding:10px 12px;border-top:1px solid #1e1e1e;flex-shrink:0;background:#0a0a0a">
+    <div class="d-flex gap-2 align-items-center mb-2">
+      <input id="ddCourier" list="ddCourierList" class="form-control form-control-sm flex-grow-1"
+             style="background:#1a1a1a;border-color:#2a2a2a;color:#ddd;font-size:.78rem"
+             placeholder="Courier del nuevo manifiesto…">
+      <datalist id="ddCourierList"></datalist>
+    </div>
+    <div id="ddMsg" style="min-height:16px;font-size:.74rem;margin-bottom:6px"></div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm fw-bold flex-grow-1"
+              style="background:var(--ilus-red);color:#fff;font-size:.8rem"
+              onclick="dpCrearManifiesto()" id="dpBtnCrear" disabled>
+        <i class="bi bi-plus-circle me-1"></i>Crear manifiesto
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="dpLimpiarCola()"
+              title="Vaciar cola" style="border-color:#333;color:#aaa">
+        <i class="bi bi-trash3"></i>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+{# Overlay sólo en mobile #}
+<div id="dragOverlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1054"
+     onclick="closeDragPanel()"></div>
+
+<style>
+/* ── Panel: siempre visible en desktop ── */
+@media (min-width:768px) {
+  #dragPanel  { right:0 !important; box-shadow:none !important; }
+  #dragOverlay{ display:none !important; }
+  .dp-close-btn { display:none !important; }   /* no hay botón cerrar en desktop */
+  .main-wrapper { padding-right:366px; }        /* deja espacio para el panel */
+}
+@media (max-width:767.98px) {
+  #dragPanel { right:-380px; }   /* empieza oculto en mobile */
+}
+
+/* ── Zona de drop activa ── */
+.dp-drag-over { background:rgba(204,0,0,.14)!important;border-color:var(--ilus-red)!important; }
+
+/* ── Zonas de manifiestos ── */
+.dp-manifest-zone {
+  border:1.5px solid #222;border-radius:8px;padding:10px 12px;margin-bottom:6px;
+  transition:background .15s,border-color .15s;cursor:pointer;
+}
+.dp-manifest-zone:hover { background:rgba(0,123,255,.09);border-color:#0d6efd; }
+.dp-manifest-zone.dp-drag-over { background:rgba(0,123,255,.15);border-color:#0d6efd; }
+
+/* ── Ítem de cola ── */
+.dp-queue-item {
+  display:flex;align-items:flex-start;justify-content:space-between;
+  background:#1c1c1c;border:1px solid #252525;border-radius:7px;
+  padding:7px 10px;margin-bottom:5px;font-size:.78rem;
+  animation:dpSlideIn .18s ease;
+}
+@keyframes dpSlideIn {
+  from { opacity:0;transform:translateX(12px); }
+  to   { opacity:1;transform:translateX(0); }
+}
+.dp-queue-item.dp-removing {
+  animation:dpSlideOut .18s ease forwards;
+}
+@keyframes dpSlideOut {
+  to { opacity:0;transform:translateX(20px);max-height:0;margin:0;padding:0; }
+}
+
+/* ── Fila de prevale ── */
+.dp-prevale-row {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;border-bottom:1px solid #152015;font-size:.76rem;
+}
+.dp-prevale-row:last-child { border-bottom:none; }
+/* Pestañas monitor — sobreescribir azul de Bootstrap */
+#monitorTabs .nav-link {
+  color:#666; border:none; border-bottom:2px solid transparent;
+  padding:.5rem .85rem; font-size:.82rem; transition:color .12s;
+}
+#monitorTabs .nav-link:hover { color:#222; background:rgba(0,0,0,.03); border-bottom-color:#ccc; }
+#monitorTabs .nav-link.active {
+  color:var(--ilus-red)!important; font-weight:700;
+  border-bottom:2.5px solid var(--ilus-red)!important;
+  background:none; border-radius:0;
+}
+#monitorTabs .nav-link .badge { font-size:.62rem; vertical-align:middle; }
+/* ── Filas del monitor ── */
+.tr-monitor-row { transition:background .12s; }
+.tr-monitor-row:hover { background:rgba(204,0,0,.04) !important; }
+.tr-monitor-row td { vertical-align:middle; padding:10px 8px !important; }
+
+/* Handle de drag */
+.dp-drag-handle {
+  width:44px !important;
+  padding:0 !important;
+  text-align:center;
+  background:transparent;
+  transition:background .1s;
+  border-right:1px solid #f0f0f0 !important;
+}
+.dp-drag-handle:hover {
+  background:rgba(204,0,0,.08) !important;
+  cursor:grab !important;
+}
+.dp-drag-handle:active { cursor:grabbing !important; }
+
+/* Fila siendo arrastrada */
+.dp-row-dragging { opacity:.3; background:rgba(204,0,0,.06)!important;
+                   outline:2px dashed var(--ilus-red); cursor:grabbing!important; }
+
+/* Fila ya en cola de manifiesto */
+.dp-in-queue { background:rgba(204,0,0,.07)!important;
+               outline:1.5px solid rgba(204,0,0,.35);
+               position:relative; }
+.dp-in-queue .dp-drag-handle::after {
+  content:'\F26E'; font-family:'bootstrap-icons';
+  color:var(--ilus-red); font-size:.75rem; display:block;
+}
+
+/* Tabla — durante drag activo */
+body.dp-dragging-active #monitorTbody .tr-monitor-row { cursor:copy; }
+body.dp-dragging-active { cursor:grabbing; }
+/* Zonas de drop se iluminan */
+body.dp-dragging-active .dp-manifest-zone { border-color:#0d6efd!important;
+  background:rgba(0,123,255,.06)!important; cursor:copy; }
+body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!important;
+  background:rgba(204,0,0,.08)!important; cursor:copy; }
+</style>
+
+{# ── Panel lateral de edición ── #}
+<div id="trPanel" style="
+  position:fixed;top:0;right:-420px;width:420px;max-width:100vw;height:100vh;
+  background:#fff;box-shadow:-4px 0 20px rgba(0,0,0,.15);
+  z-index:1050;transition:right .25s ease;overflow-y:auto;display:flex;flex-direction:column">
+
+  <div style="background:var(--ilus-black);padding:14px 16px;
+              display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+    <div>
+      <div class="fw-bold text-white font-monospace" id="panelDocId">—</div>
+      <div class="small" id="panelCliente" style="color:#bbb"></div>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary text-white border-secondary"
+            onclick="closePanel()"><i class="bi bi-x-lg"></i></button>
+  </div>
+
+  <div class="p-3 flex-grow-1" id="panelBody">
+    <div class="text-center py-4 text-muted">Selecciona un compromiso</div>
+  </div>
+</div>
+<div id="panelOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1049"
+     onclick="closePanel()"></div>
+
+{# ── Modal agregar documento ── #}
+<div class="modal fade" id="addDocModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:400px">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Agregar documento desde ERP</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-4">
+            <label class="form-label small fw-semibold">Tipo</label>
+            <select id="addTido" class="form-select form-select-sm">
+              <option>FCV</option><option>BLV</option><option>NVV</option>
+              <option>VD</option><option>WEB</option><option>GDV</option>
+            </select>
+          </div>
+          <div class="col-8">
+            <label class="form-label small fw-semibold">N° documento</label>
+            <input type="text" id="addNudo" class="form-control form-control-sm font-monospace"
+                   placeholder="Ej: 20803">
+          </div>
+        </div>
+        <div id="addDocMsg" class="mt-2 small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="addDoc()" id="addDocBtn">
+          <i class="bi bi-download me-1"></i>Importar desde ERP
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════
+   MODAL VISTA DE DOCUMENTO
+══════════════════════════════════════════ #}
+<div class="modal fade" id="vistaModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;overflow:hidden">
+
+      {# — Encabezado oscuro con info del documento — #}
+      <div id="vistaHeader" style="background:var(--ilus-black);padding:20px 24px 16px;flex-shrink:0">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="d-flex align-items-center gap-3">
+            {% if has_logo %}
+            <img src="{{ url_for('static', filename='Logo.png') }}"
+                 style="height:162px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.5))">
+            {% else %}
+            <svg width="46" height="54" viewBox="0 0 34 42" fill="none" style="flex-shrink:0">
+              <path d="M32,5 Q20,-1 6,3 Q10,9 16,11 Q23,9 32,5Z" fill="#CC0000"/>
+              <path d="M7,17 Q7,9 17,8 Q27,9 27,17 L28,32 Q26,38 17,40 Q8,38 6,32 Z" fill="#CC0000"/>
+              <path d="M6,32 Q4,38 6,42 L11,42 Q9,38 8,32 Z" fill="#990000"/>
+              <path d="M28,32 Q30,38 28,42 L23,42 Q25,38 26,32 Z" fill="#990000"/>
+              <path d="M18,23 Q24,21 28,23 L28,29 Q24,27 18,27 Z" fill="#0a0a0a"/>
+              <rect x="16" y="19" width="4" height="20" rx="1.5" fill="#880000"/>
+            </svg>
+            {% endif %}
+            <div>
+              <div class="fw-bold text-white font-monospace" style="font-size:1.15rem" id="vistaDocNum">—</div>
+              <div style="color:#aaa;font-size:.82rem;margin-top:2px" id="vistaFecha"></div>
+            </div>
+          </div>
+          <button type="button" class="btn-close btn-close-white mt-1" data-bs-dismiss="modal"></button>
+        </div>
+        {# Tarjetas info cliente #}
+        <div class="row g-2 mt-2" id="vistaInfoCards">
+
+          {# Fila 1: datos principales — todos con mismo tamaño de fuente #}
+          <div class="col-12 col-sm-4">
+            <div style="background:rgba(255,255,255,.07);border-radius:8px;padding:10px 14px">
+              <div class="small" style="color:#888;font-size:.68rem;text-transform:uppercase;letter-spacing:1px">Cliente</div>
+              <div class="fw-semibold text-white" style="font-size:.88rem;line-height:1.3" id="vistaCliente">—</div>
+              <div style="color:#999;font-size:.73rem;margin-top:2px" id="vistaRut"></div>
+            </div>
+          </div>
+          <div class="col-6 col-sm-3">
+            <div style="background:rgba(255,255,255,.07);border-radius:8px;padding:10px 14px">
+              <div class="small" style="color:#888;font-size:.68rem;text-transform:uppercase;letter-spacing:1px">Comuna</div>
+              <div class="fw-semibold text-white" style="font-size:.88rem" id="vistaComuna">—</div>
+            </div>
+          </div>
+          <div class="col-6 col-sm-2">
+            <div style="background:rgba(255,255,255,.07);border-radius:8px;padding:10px 14px">
+              <div class="small" style="color:#888;font-size:.68rem;text-transform:uppercase;letter-spacing:1px">Envío</div>
+              <div class="fw-semibold" style="font-size:.88rem;color:#ff6b6b" id="vistaCosto">—</div>
+            </div>
+          </div>
+          <div class="col-12 col-sm-3">
+            <div style="background:rgba(255,255,255,.07);border-radius:8px;padding:10px 14px">
+              <div class="small" style="color:#888;font-size:.68rem;text-transform:uppercase;letter-spacing:1px">Tipo</div>
+              <div class="fw-semibold text-white" style="font-size:.88rem" id="vistaClasif">—</div>
+            </div>
+          </div>
+
+          {# Fila 2: dirección, teléfono, correo — aparecen solo si existen #}
+          <div class="col-12 col-sm-5" id="vistaDirBlock" style="display:none">
+            <div style="background:rgba(255,255,255,.05);border-radius:8px;padding:8px 14px">
+              <div style="color:#666;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">
+                <i class="bi bi-geo-alt me-1"></i>Dirección
+              </div>
+              <div style="color:#ccc;font-size:.78rem" id="vistaDir"></div>
+            </div>
+          </div>
+          <div class="col-6 col-sm-3" id="vistaTelBlock" style="display:none">
+            <div style="background:rgba(255,255,255,.05);border-radius:8px;padding:8px 14px">
+              <div style="color:#666;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">
+                <i class="bi bi-telephone me-1"></i>Teléfono
+              </div>
+              <div style="color:#ccc;font-size:.78rem" id="vistaTel"></div>
+            </div>
+          </div>
+          <div class="col-6 col-sm-4" id="vistaEmailBlock" style="display:none">
+            <div style="background:rgba(255,255,255,.05);border-radius:8px;padding:8px 14px">
+              <div style="color:#666;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">
+                <i class="bi bi-envelope me-1"></i>Correo
+              </div>
+              <div style="color:#ccc;font-size:.78rem;word-break:break-all" id="vistaEmail"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {# — Cuerpo con tabla de productos — #}
+      <div class="modal-body p-0">
+
+        {# Spinner de carga #}
+        <div id="vistaLoading" class="text-center py-5">
+          <div class="spinner-border text-danger mb-2"></div>
+          <div class="small text-muted">Consultando ERP…</div>
+        </div>
+
+        {# Tabla productos (oculta hasta cargar) #}
+        <div id="vistaTablaWrap" style="display:none">
+          <div class="table-responsive">
+            <table class="table mb-0" style="font-size:.8rem" id="vistaTabla">
+              <thead style="background:#f4f4f6;position:sticky;top:0;z-index:2">
+                <tr>
+                  <th style="width:52px"></th>
+                  <th>SKU</th>
+                  <th>Descripción</th>
+                  <th class="text-center">Cant.</th>
+                  <th class="text-center">Saldo</th>
+                  <th class="text-end">Kg/u</th>
+                  <th class="text-end">PV/u</th>
+                  <th class="text-end">Pred/u</th>
+                  <th class="text-end fw-bold">Total Pred</th>
+                </tr>
+              </thead>
+              <tbody id="vistaTbody"></tbody>
+              <tfoot id="vistaTfoot" style="background:#f8f9fa;font-weight:600;border-top:2px solid #dee2e6"></tfoot>
+            </table>
+          </div>
+
+          {# Mensaje sin datos de peso #}
+          <div id="vistaSinPeso" class="text-center py-3 small text-muted" style="display:none">
+            <i class="bi bi-exclamation-circle me-1"></i>
+            Productos sin ficha de bultos en el sistema — los pesos no están disponibles.
+          </div>
+
+          {# Sección líneas ZZ #}
+          <div id="vistaZZSection" style="display:none" class="border-top">
+            <div class="px-3 py-2 d-flex justify-content-between align-items-center"
+                 style="background:#f8f9fa">
+              <span class="small fw-semibold text-muted">
+                <i class="bi bi-truck me-1"></i>Servicios de envío / retiro
+              </span>
+              <span id="vistaZZCosto" class="fw-bold" style="color:var(--ilus-red)"></span>
+            </div>
+            <div id="vistaZZRows" class="px-3 pb-2" style="font-size:.78rem"></div>
+          </div>
+        </div>
+
+        {# ── Subir fotos (hasta 2) por producto ── #}
+        <div id="vistaFotoUpload" style="display:none;border-top:1px solid #e9ecef">
+          <div class="px-3 py-2 d-flex justify-content-between align-items-center"
+               style="background:#f8f9fa">
+            <span class="small fw-semibold text-muted">
+              <i class="bi bi-camera me-1"></i>Fotos del producto
+              <span class="badge bg-secondary ms-1" style="font-size:.65rem" id="vistaFotoCount">0/2</span>
+            </span>
+            <div class="d-flex align-items-center gap-2" id="vistaFotoActions">
+              <label class="btn btn-sm btn-outline-secondary py-0 px-2"
+                     style="font-size:.75rem;cursor:pointer" id="vistaFotoLabel">
+                <i class="bi bi-upload me-1"></i>Subir foto
+                <input type="file" id="vistaFotoInput" accept=".jpg,.jpeg,.png,.webp"
+                       style="display:none" onchange="subirFotoVistaInline(this)">
+              </label>
+            </div>
+          </div>
+          <div class="px-3 pb-3 pt-2 d-flex gap-2 flex-wrap" id="vistaFotoGallery"></div>
+        </div>
+
+        {# Error #}
+        <div id="vistaError" class="p-4" style="display:none">
+          <div class="alert alert-warning mb-0">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <span id="vistaErrorMsg">No se pudo cargar el detalle.</span>
+          </div>
+        </div>
+
+        {# ── COTIZADOR ── #}
+        <div id="vistaCotizador" style="display:none;border-top:1px solid #e9ecef">
+          <div class="px-3 py-2 d-flex justify-content-between align-items-center"
+               style="background:#f8f9fa">
+            <span class="small fw-semibold text-muted">
+              <i class="bi bi-calculator me-1"></i>Cotización de envío
+            </span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                    style="font-size:.75rem" onclick="closeCotizador()">
+              <i class="bi bi-x"></i>
+            </button>
+          </div>
+          <div id="vistaCotizadorRows" class="px-3 pb-3 pt-2" style="font-size:.8rem"></div>
+        </div>
+
+      </div>
+
+      {# Footer con acciones #}
+      <div class="modal-footer py-2 border-top d-flex justify-content-between">
+        <button class="btn btn-sm btn-outline-secondary" onclick="cotizarActual()" id="btnCotizar">
+          <i class="bi bi-calculator me-1"></i>Cotizar envío
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-dark" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{# Mini-modal editar medidas inline #}
+<div class="modal fade" id="editPesoModal" tabindex="-1" style="z-index:1090">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:520px">
+    <div class="modal-content">
+      <div class="modal-header py-2" style="background:var(--ilus-black);color:#fff">
+        <div>
+          <h6 class="modal-title small mb-0">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 20 20"
+                 fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                 class="me-2" style="vertical-align:-.12em">
+              <rect x="1" y="5" width="14" height="9" rx="2.5"/>
+              <line x1="4" y1="5" x2="4" y2="8.5"/>
+              <line x1="6.5" y1="5" x2="6.5" y2="7"/>
+              <line x1="9" y1="5" x2="9" y2="8.5"/>
+              <line x1="11.5" y1="5" x2="11.5" y2="7"/>
+              <circle cx="7" cy="9.5" r="2" stroke-width="1.2"/>
+              <rect x="15" y="6.5" width="4" height="6" rx="1"/>
+            </svg>Medidas
+          </h6>
+          <div id="editPesoNombreLabel" class="font-monospace"
+               style="font-size:.7rem;margin-top:3px;color:#bbb;max-width:320px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white btn-sm ms-auto" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pb-2">
+        <input type="hidden" id="editPesoSkuVal">
+        <input type="hidden" id="editPesoNombreVal">
+
+        {# ── Cabecera de columnas ── #}
+        <div class="row g-1 mb-1" style="font-size:.7rem;color:#999;font-weight:600">
+          <div class="col-1 text-center">#</div>
+          <div class="col">Largo (cm)</div>
+          <div class="col">Ancho (cm)</div>
+          <div class="col">Alto (cm)</div>
+          <div class="col">Peso (kg)</div>
+          <div class="col-1"></div>
+        </div>
+
+        {# ── Filas de bultos (dinámicas) ── #}
+        <div id="epBultosContainer"></div>
+
+        <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2"
+                style="font-size:.78rem" onclick="epAgregarBulto()">
+          <i class="bi bi-plus me-1"></i>Agregar bulto
+        </button>
+        <div id="epMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="epSaveBtn" onclick="guardarPesoInline()">
+          <i class="bi bi-floppy me-1"></i>Guardar medidas
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Lightbox de fotos #}
+<div class="modal fade" id="fotoModal" tabindex="-1" style="z-index:1080">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:520px">
+    <div class="modal-content bg-dark border-0">
+      <div class="modal-body p-2 text-center">
+        <img id="fotoModalImg" src="" alt="" style="max-width:100%;max-height:80vh;border-radius:8px">
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal Sincronizar ERP ── #}
+<div class="modal fade" id="syncModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:500px">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-arrow-repeat me-2"></i>Sincronizar desde ERP</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        {# Tabs: MySQL sync / Excel import #}
+        <ul class="nav nav-tabs mb-3" id="syncTabs">
+          <li class="nav-item">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabSync">
+              <i class="bi bi-database-check me-1"></i>Automático (ERP)
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabExcel">
+              <i class="bi bi-file-earmark-excel me-1"></i>Importar Excel
+            </button>
+          </li>
+        </ul>
+
+        <div class="tab-content">
+
+          {# Tab 1: Sync ERP #}
+          <div class="tab-pane fade show active" id="tabSync">
+            <p class="small text-muted mb-3">
+              Trae todos los documentos del ERP que tengan líneas de envío/retiro con
+              saldo pendiente en el rango de fechas indicado.
+            </p>
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <label class="form-label small fw-semibold">Desde</label>
+                <input type="date" id="syncDesde" class="form-control form-control-sm">
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-semibold">Hasta</label>
+                <input type="date" id="syncHasta" class="form-control form-control-sm">
+              </div>
+            </div>
+            <div class="d-flex gap-2 mb-3 flex-wrap">
+              <button class="btn btn-sm btn-outline-secondary" onclick="setSync(30)">Último mes</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="setSync(90)">3 meses</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="setSync(180)">6 meses</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="setSync(365)">1 año</button>
+            </div>
+            <button class="btn btn-ilus btn-sm fw-bold w-100" id="syncBtn" onclick="runSync()">
+              <i class="bi bi-arrow-repeat me-1"></i>Iniciar sincronización
+            </button>
+          </div>
+
+          {# Tab 2: Excel import #}
+          <div class="tab-pane fade" id="tabExcel">
+            <p class="small text-muted mb-2">
+              Sube un Excel o CSV exportado del ERP con los saldos pendientes.
+              Se detectan automáticamente las columnas del documento.
+            </p>
+            <div class="mb-3 p-2 rounded" style="background:#f8f9fa;font-size:.78rem">
+              <strong>Columnas reconocidas:</strong>
+              TIDO, NUDO, NOKOEN, FEEMDO, KOPRCT, CAPRCO1, CAPRAD1, PPPRNE, CMEN, ENDO
+              <br><span class="text-muted">(también acepta: Tipo, Numero, Cliente, Fecha, SKU, Cantidad, Despachado, Precio, Comuna, RUT)</span>
+            </div>
+            <input type="file" id="excelFile" class="form-control form-control-sm mb-3"
+                   accept=".xlsx,.xls,.csv">
+            <button class="btn btn-success btn-sm fw-bold w-100" id="excelBtn" onclick="runExcel()">
+              <i class="bi bi-upload me-1"></i>Importar archivo
+            </button>
+          </div>
+        </div>
+
+        {# Resultado #}
+        <div id="syncResult" class="mt-3" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Init ────────────────────────────────────────────────────────
+var _vistaModal = null;
+var _fotoModal  = null;
+var _vistaCurrentSku = null;   // SKU activo para upload de fotos
+
+document.addEventListener('DOMContentLoaded', function() {
+  _vistaModal = new bootstrap.Modal(document.getElementById('vistaModal'));
+  _fotoModal  = new bootstrap.Modal(document.getElementById('fotoModal'));
+  setSync(30);   // Pre-fill rango sync: último mes
+  cargarMonitor();
+  cargarDragPanel();   // panel siempre visible en desktop — carga manifiestos al abrir la página
+});
+
+function setSync(days) {
+  var hoy   = new Date();
+  var desde = new Date(hoy - days * 86400000);
+  document.getElementById('syncDesde').value = desde.toISOString().split('T')[0];
+  document.getElementById('syncHasta').value = hoy.toISOString().split('T')[0];
+}
+
+function runSync() {
+  var btn = document.getElementById('syncBtn');
+  var res = document.getElementById('syncResult');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando… (puede tardar)';
+  res.style.display = 'none';
+
+  fetch('/transporte/api/sync', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      fecha_desde: document.getElementById('syncDesde').value,
+      fecha_hasta: document.getElementById('syncHasta').value
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Iniciar sincronización';
+    res.style.display = '';
+    var errsHtml = '';
+    if (d.errores && d.errores.length) {
+      errsHtml = '<div class="mt-1 small text-danger">' +
+        d.errores.slice(0,5).map(function(e){ return '⚠ ' + e; }).join('<br>') +
+        '</div>';
+    }
+    if (d.importados > 0) {
+      res.innerHTML = '<div class="alert alert-success mb-0 py-2">' +
+        '<i class="bi bi-check-circle-fill me-1"></i>' +
+        '<strong>' + d.importados + ' documentos importados</strong> · ' + (d.rango||'') +
+        errsHtml +
+        '</div>';
+      setTimeout(function(){ location.reload(); }, 1500);
+    } else {
+      res.innerHTML = '<div class="alert alert-warning mb-0 py-2">' +
+        '<i class="bi bi-exclamation-triangle me-1"></i>' +
+        'Sin documentos importados en ese rango.' + errsHtml + '</div>';
+    }
+  })
+  .catch(function(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Iniciar sincronización';
+    res.style.display = '';
+    res.innerHTML = '<div class="alert alert-danger mb-0 py-2">Error de conexión: ' + e + '</div>';
+  });
+}
+
+function runExcel() {
+  var file = document.getElementById('excelFile').files[0];
+  if (!file) { alert('Selecciona un archivo'); return; }
+  var btn = document.getElementById('excelBtn');
+  var res = document.getElementById('syncResult');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
+  res.style.display = 'none';
+
+  var fd = new FormData();
+  fd.append('archivo', file);
+  fetch('/transporte/api/importar-excel', {method:'POST', body:fd})
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload me-1"></i>Importar archivo';
+    res.style.display = '';
+    if (d.error) {
+      res.innerHTML = '<div class="alert alert-danger mb-0 py-2">' + d.error + '</div>';
+      return;
+    }
+    var previewHtml = '';
+    if (d.preview && d.preview.length) {
+      previewHtml = '<div class="mt-2 small"><strong>Muestra:</strong> ' +
+        d.preview.map(function(p){
+          return p.tido + ' ' + p.nudo + ' — ' + p.cliente;
+        }).join(', ') + (d.importados > 5 ? '…' : '') + '</div>';
+    }
+    var errsHtml = d.errores && d.errores.length ?
+      '<div class="mt-1 small text-danger">' + d.errores.slice(0,3).join('<br>') + '</div>' : '';
+    if (d.importados > 0) {
+      res.innerHTML = '<div class="alert alert-success mb-0 py-2">' +
+        '<i class="bi bi-check-circle-fill me-1"></i>' +
+        '<strong>' + d.importados + ' documentos importados</strong>' +
+        previewHtml + errsHtml + '</div>';
+      setTimeout(function(){ location.reload(); }, 2000);
+    } else {
+      res.innerHTML = '<div class="alert alert-warning mb-0 py-2">' +
+        'Sin documentos con líneas ZZ y saldo en ese archivo.' + errsHtml + '</div>';
+    }
+  })
+  .catch(function(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload me-1"></i>Importar archivo';
+    res.innerHTML = '<div class="alert alert-danger">Error: ' + e + '</div>';
+    res.style.display = '';
+  });
+}
+
+// ── Modal de Vista de documento ─────────────────────────────────
+function openVista(cid) {
+  _cotizarCid = cid;
+  document.getElementById('vistaCotizador').style.display = 'none';
+  document.getElementById('btnCotizar').disabled = false;
+  document.getElementById('btnCotizar').innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
+  // Resetear estado
+  document.getElementById('vistaDocNum').textContent  = '…';
+  document.getElementById('vistaFecha').textContent   = '';
+  document.getElementById('vistaCliente').textContent = '';
+  document.getElementById('vistaRut').textContent     = '';
+  document.getElementById('vistaComuna').textContent  = '';
+  document.getElementById('vistaCosto').textContent   = '';
+  document.getElementById('vistaClasif').textContent  = '';
+  document.getElementById('vistaDir').textContent      = '';
+  document.getElementById('vistaTel').textContent      = '';
+  document.getElementById('vistaEmail').textContent    = '';
+  document.getElementById('vistaDirBlock').style.display   = 'none';
+  document.getElementById('vistaTelBlock').style.display   = 'none';
+  document.getElementById('vistaEmailBlock').style.display = 'none';
+  document.getElementById('vistaFotoUpload').style.display = 'none';
+  document.getElementById('vistaFotoGallery').innerHTML    = '';
+  document.getElementById('vistaLoading').style.display  = '';
+  document.getElementById('vistaTablaWrap').style.display = 'none';
+  document.getElementById('vistaError').style.display    = 'none';
+  document.getElementById('vistaSinPeso').style.display  = 'none';
+
+  _vistaModal.show();
+
+  fetch('/transporte/api/compromisos/' + cid + '/detalle')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      document.getElementById('vistaLoading').style.display = 'none';
+      if (!d.ok) {
+        document.getElementById('vistaErrorMsg').textContent = d.error || 'Error desconocido';
+        document.getElementById('vistaError').style.display = '';
+        return;
+      }
+      renderVista(d);
+    })
+    .catch(function(e) {
+      document.getElementById('vistaLoading').style.display = 'none';
+      document.getElementById('vistaErrorMsg').textContent = 'Error de conexión: ' + e;
+      document.getElementById('vistaError').style.display = '';
+    });
+}
+
+function renderVista(d) {
+  var c = d.compromiso;
+  var lineas = d.lineas || [];
+  var lineas_zz = d.lineas_zz || [];
+  var tot = d.totales || {};
+
+  // Encabezado
+  document.getElementById('vistaDocNum').textContent = c.tido + ' ' + c.nudo;
+  document.getElementById('vistaFecha').textContent  = c.fecha_emision || '';
+  document.getElementById('vistaCliente').textContent = c.cliente || '—';
+  document.getElementById('vistaRut').textContent     = c.rut    || '';
+  document.getElementById('vistaComuna').textContent  = c.comuna || '—';
+  document.getElementById('vistaCosto').textContent   =
+    c.costo_zz ? '$' + Math.round(c.costo_zz).toLocaleString('es-CL') : '—';
+  var clasifMap2 = {
+    retiro:'↩ Retiro', instalacion:'🔧 Instalación',
+    mantencion:'🔨 Mantención', garantia:'🛡 Garantía'
+  };
+  document.getElementById('vistaClasif').textContent  =
+    clasifMap2[c.clasificacion] || '📦 Despacho';
+
+  // Campos separados: dirección, teléfono, correo
+  if (c.direccion) {
+    document.getElementById('vistaDir').textContent = c.direccion;
+    document.getElementById('vistaDirBlock').style.display = '';
+  }
+  if (c.telefono) {
+    document.getElementById('vistaTel').textContent = c.telefono;
+    document.getElementById('vistaTelBlock').style.display = '';
+  }
+  if (c.email) {
+    document.getElementById('vistaEmail').textContent = c.email;
+    document.getElementById('vistaEmailBlock').style.display = '';
+  }
+
+  // Panel de fotos: SKU de la primera línea de producto
+  _vistaCurrentSku = null;
+  if (lineas.length) {
+    _vistaCurrentSku = lineas[0].sku || null;
+    renderFotoPanel(lineas[0]);
+  }
+
+  // Tabla de productos
+  var tbody = document.getElementById('vistaTbody');
+  tbody.innerHTML = '';
+  var sinPeso = true;
+
+  lineas.forEach(function(l, rowIdx) {
+    if (l.tiene_bultos) sinPeso = false;
+
+    // Miniatura de fotos
+    var fotosHtml = '';
+    if (l.fotos && l.fotos.length) {
+      fotosHtml = l.fotos.map(function(url) {
+        return '<img src="' + url + '" alt="" ' +
+          'style="width:36px;height:36px;object-fit:cover;border-radius:5px;cursor:pointer;' +
+          'border:1px solid #ddd;margin-right:2px" ' +
+          'onclick="verFoto(\'' + url + '\')" ' +
+          'onerror="this.style.display=\'none\'">';
+      }).join('');
+    } else {
+      fotosHtml = '<div style="width:36px;height:36px;background:#f0f0f0;border-radius:5px;' +
+        'display:flex;align-items:center;justify-content:center">' +
+        '<i class="bi bi-image text-muted" style="font-size:.65rem"></i></div>';
+    }
+
+    // Color de pred
+    var esPredKg  = l.peso_kg_u  >= l.peso_vol_u;
+    var kgClass   = esPredKg  ? 'fw-bold' : 'text-muted';
+    var pvClass   = !esPredKg ? 'fw-bold' : 'text-muted';
+    var predStyle = 'font-weight:700;color:var(--ilus-red)';
+
+    // Saldo
+    var saldo = (l.saldo !== undefined && l.saldo !== null) ? l.saldo : l.cantidad;
+    var saldoHtml = '<td class="text-center">' +
+      (saldo > 0 ? '<span class="fw-bold" style="color:var(--ilus-red)">' + saldo + '</span>'
+                 : '<span class="text-muted">0</span>') + '</td>';
+
+    // Botón editar medidas (solo si no tiene bultos)
+    var editBtn = '';
+    if (!l.tiene_bultos) {
+      var skuEsc    = (l.sku||'').replace(/'/g, "\\'");
+      var nombreEsc = (l.nombre_app || l.descripcion_erp || '').replace(/'/g, "\\'");
+      editBtn = '<button class="btn btn-xs btn-outline-secondary btn-sm py-0 px-1" ' +
+        'style="font-size:.7rem" title="Agregar medidas" ' +
+        'onclick="abrirEditPeso(\'' + skuEsc + '\',\'' + nombreEsc + '\',' + rowIdx + ')">' +
+        '<i class="bi bi-rulers"></i></button>';
+    }
+
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td style="padding:8px 10px">' + fotosHtml + '</td>' +
+      '<td class="font-monospace fw-bold" style="font-size:.77rem">' + (l.sku||'') + '</td>' +
+      '<td>' +
+        '<div class="fw-semibold" style="line-height:1.2;color:#212529">' + (l.nombre_app || l.descripcion_erp || '') + '</div>' +
+        (l.nombre_app && l.diferencia
+          ? '<div class="small text-muted" style="font-size:.7rem;font-style:italic">' + l.descripcion_erp + '</div>'
+          : '') +
+      '</td>' +
+      '<td class="text-center fw-bold">' + (l.cantidad||0) + '</td>' +
+      saldoHtml +
+      '<td class="text-end ' + kgClass + '">' + fmt3(l.peso_kg_u)  + '</td>' +
+      '<td class="text-end ' + pvClass + '">' + fmt3(l.peso_vol_u) + '</td>' +
+      '<td class="text-end">'  + fmt3(l.pred_u)     + '</td>' +
+      '<td class="text-end" style="' + predStyle + '">' + fmt3(l.pred_tot) + '</td>' +
+      '<td class="text-center">' + editBtn + '</td>';
+    tbody.appendChild(tr);
+  });
+
+  // Totales
+  var esTotKg = (tot.kg || 0) >= (tot.pv || 0);
+  var tfoot = document.getElementById('vistaTfoot');
+  tfoot.innerHTML =
+    '<tr>' +
+    '<td colspan="5" class="ps-3" style="font-size:.78rem;color:#666">TOTALES</td>' +
+    '<td class="text-end ' + (esTotKg  ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.kg)   + '</td>' +
+    '<td class="text-end ' + (!esTotKg ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.pv)   + '</td>' +
+    '<td class="text-end"></td>' +
+    '<td class="text-end" style="font-size:1rem;font-weight:800;color:var(--ilus-red)">' +
+      fmt3(tot.pred) + ' ' +
+      '<span style="font-size:.65rem;background:var(--ilus-red);color:#fff;' +
+      'padding:1px 5px;border-radius:99px;vertical-align:middle">' +
+      (esTotKg ? 'KG' : 'PV') + '</span>' +
+    '</td>' +
+    '<td></td>' +
+    '</tr>';
+
+  // Sección ZZ
+  var zzSection = document.getElementById('vistaZZSection');
+  var zzRows    = document.getElementById('vistaZZRows');
+  var zzCosto   = document.getElementById('vistaZZCosto');
+  if (lineas_zz && lineas_zz.length > 0) {
+    var costoEnvio = c.costo_zz_envio || 0;
+    if (costoEnvio) {
+      zzCosto.textContent = '$' + costoEnvio.toLocaleString('es-CL');
+    } else {
+      zzCosto.textContent = '';
+    }
+    zzRows.innerHTML = lineas_zz.map(function(z) {
+      var valNeto = (z.pred_u || 0) * (z.cantidad || 1);
+      var valFmt  = valNeto > 0
+        ? '<span class="fw-bold" style="color:var(--ilus-red)">$' + Math.round(valNeto).toLocaleString('es-CL') + '</span>'
+        : '<span class="text-muted">' + (z.cantidad||0) + ' u</span>';
+      return '<div class="d-flex justify-content-between align-items-center py-1 border-bottom">' +
+        '<span class="font-monospace text-muted" style="font-size:.75rem">' + (z.sku||'') + '</span>' +
+        '<span class="flex-grow-1 px-2">' + (z.descripcion_erp||z.nombre_app||'') + '</span>' +
+        valFmt +
+        '</div>';
+    }).join('');
+    zzSection.style.display = '';
+  } else {
+    zzSection.style.display = 'none';
+  }
+
+  if (sinPeso && lineas.length > 0) {
+    document.getElementById('vistaSinPeso').style.display = '';
+  }
+  document.getElementById('vistaTablaWrap').style.display = '';
+}
+
+var _editPesoModal = null;
+var _editPesoRowIndex = null;
+var _epBultoCount = 0;
+
+function abrirEditPeso(sku, nombre, rowIdx) {
+  if (!_editPesoModal) _editPesoModal = new bootstrap.Modal(document.getElementById('editPesoModal'));
+  document.getElementById('editPesoSku').textContent = sku;
+  document.getElementById('editPesoSkuVal').value    = sku;
+  document.getElementById('editPesoNombreVal').value = nombre || '';
+  document.getElementById('editPesoNombreLabel').textContent =
+    sku + (nombre ? ' — ' + nombre : '');
+  document.getElementById('epMsg').innerHTML = '';
+  // Limpiar y agregar 1 bulto vacío
+  _epBultoCount = 0;
+  document.getElementById('epBultosContainer').innerHTML = '';
+  epAgregarBulto();
+  _editPesoRowIndex = rowIdx;
+  _editPesoModal.show();
+}
+
+function epAgregarBulto(vals) {
+  _epBultoCount++;
+  var n = _epBultoCount;
+  var row = document.createElement('div');
+  row.className = 'row g-1 mb-1 ep-bulto-row';
+  row.dataset.bulto = n;
+  var v = vals || {};
+  row.innerHTML =
+    '<div class="col-1 d-flex align-items-center justify-content-center">' +
+      '<span class="badge bg-secondary" style="font-size:.65rem">' + n + '</span>' +
+    '</div>' +
+    '<div class="col"><input type="number" class="form-control form-control-sm ep-largo" placeholder="0" min="0" step="0.1" value="' + (v.largo||'') + '"></div>' +
+    '<div class="col"><input type="number" class="form-control form-control-sm ep-ancho" placeholder="0" min="0" step="0.1" value="' + (v.ancho||'') + '"></div>' +
+    '<div class="col"><input type="number" class="form-control form-control-sm ep-alto"  placeholder="0" min="0" step="0.1" value="' + (v.alto||'') + '"></div>' +
+    '<div class="col"><input type="number" class="form-control form-control-sm ep-peso"  placeholder="0" min="0" step="0.001" value="' + (v.peso||'') + '"></div>' +
+    '<div class="col-1 d-flex align-items-center justify-content-center">' +
+      (n > 1 ? '<button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="epEliminarBulto(this)" title="Eliminar"><i class="bi bi-x-lg"></i></button>' : '') +
+    '</div>';
+  document.getElementById('epBultosContainer').appendChild(row);
+}
+
+function epEliminarBulto(btn) {
+  var row = btn.closest('.ep-bulto-row');
+  if (row) row.remove();
+}
+
+function guardarPesoInline() {
+  var btn    = document.getElementById('epSaveBtn');
+  var msg    = document.getElementById('epMsg');
+  var sku    = document.getElementById('editPesoSkuVal').value;
+  var nombre = document.getElementById('editPesoNombreVal').value;
+
+  // Recoger todos los bultos
+  var bultos = [];
+  document.querySelectorAll('#epBultosContainer .ep-bulto-row').forEach(function(row) {
+    var l = parseFloat(row.querySelector('.ep-largo').value) || 0;
+    var a = parseFloat(row.querySelector('.ep-ancho').value) || 0;
+    var h = parseFloat(row.querySelector('.ep-alto').value)  || 0;
+    var p = parseFloat(row.querySelector('.ep-peso').value)  || 0;
+    if (l && a && h && p) bultos.push({largo:l, ancho:a, alto:h, peso:p});
+  });
+
+  if (!bultos.length) {
+    msg.innerHTML = '<span class="text-danger">Ingresa al menos un bulto completo (largo, ancho, alto y peso)</span>';
+    return;
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+
+  fetch('/transporte/api/inline-bulto', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({sku:sku, nombre:nombre, bultos:bultos})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Guardar medidas';
+    if (d.ok) {
+      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado (' + bultos.length + ' bulto' + (bultos.length>1?'s':'') + ')</span>';
+      // Actualizar fila en tabla
+      if (_editPesoRowIndex !== null) {
+        var rows = document.querySelectorAll('#vistaTbody tr');
+        if (rows[_editPesoRowIndex]) {
+          var tds = rows[_editPesoRowIndex].querySelectorAll('td');
+          if (tds[5]) tds[5].innerHTML = '<span class="fw-bold">' + fmt3(d.peso_kg) + '</span>';
+          if (tds[6]) tds[6].innerHTML = '<span class="fw-bold">' + fmt3(d.peso_vol) + '</span>';
+          if (tds[7]) tds[7].textContent = fmt3(d.pred);
+          if (tds[8]) tds[8].innerHTML = '<span style="font-weight:700;color:var(--ilus-red)">' + fmt3(d.pred) + '</span>';
+          if (tds[9]) tds[9].innerHTML = '';
+        }
+      }
+      setTimeout(function(){ if(_editPesoModal) _editPesoModal.hide(); }, 900);
+    } else {
+      msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
+    }
+  });
+}
+
+function fmt3(v) {
+  /* 1 decimal + separador de miles — ej: 1.134,2 kg */
+  if (v === null || v === undefined || v === 0) return '<span class="text-muted">—</span>';
+  return parseFloat(v).toLocaleString('es-CL', {minimumFractionDigits:1, maximumFractionDigits:1});
+}
+
+function verFoto(url) {
+  document.getElementById('fotoModalImg').src = url;
+  _fotoModal.show();
+}
+
+// ── Monitor principal ────────────────────────────────────────────
+var currentId = null;
+var _monitorData = [];  // cache de compromisos cargados
+var manifiestos = {{ manifiestos | tojson }};
+var ESTADOS = {{ estados | tojson }};
+var COURIERS = {{ couriers | tojson }};
+var ESTADO_COLORS = {
+  'Pendiente':'warning','En proceso':'primary','Despachado':'success',
+  'Problema':'danger','Pedido de vuelta':'danger','Prioridad':'danger',
+  'Preventa':'secondary','Indemnización':'danger','Garantía':'info',
+  'Logística inversa':'secondary','Indemnización revisada':'warning',
+  'Indemnización rechazada':'danger','Regalo':'info','Reentrega':'warning'
+};
+
+function cargarMonitor() {
+  // Leer parámetros del formulario de filtros
+  var params = new URLSearchParams(window.location.search);
+  var url = '/transporte/api/compromisos?' + params.toString();
+
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (!d.ok) return;
+      _monitorData = d.compromisos || [];
+      // Actualizar contador
+      var countEl = document.getElementById('monitorCount');
+      if (countEl) countEl.textContent = d.total;
+
+      // Renderizar tabla desktop
+      var tbody = document.getElementById('monitorTbody');
+      if (tbody) {
+        if (!_monitorData.length) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Sin compromisos pendientes</td></tr>';
+        } else {
+          tbody.innerHTML = _monitorData.map(function(c) {
+            var color = ESTADO_COLORS[c.estado] || 'secondary';
+            var darkText = color === 'warning' ? 'text-dark' : 'text-white';
+            var costoHtml = c.costo_zz
+              ? '$' + Math.round(c.costo_zz).toLocaleString('es-CL')
+              : '<span class="text-muted">—</span>';
+            /* NOTE: drag attributes added via initDragRows() after render */
+            var clasifMap = {
+              retiro:'<span class="badge bg-info text-dark"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>',
+              instalacion:'<span class="badge bg-warning text-dark"><i class="bi bi-tools me-1"></i>Instalación</span>',
+              mantencion:'<span class="badge bg-secondary"><i class="bi bi-wrench me-1"></i>Mantención</span>',
+              garantia:'<span class="badge bg-success"><i class="bi bi-shield-check me-1"></i>Garantía</span>',
+            };
+            var clasificHtml = clasifMap[c.clasificacion]
+              || '<span class="badge bg-dark"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>';
+            var lbl    = (c.tido+' '+c.nudo).replace(/"/g,'&quot;');
+            var cli    = (c.cliente||'').replace(/"/g,'&quot;');
+            var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\'");
+            var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
+            return '<tr class="tr-monitor-row" data-id="' + c.id + '" data-clasif="' + (c.clasificacion||'despacho') + '" ' +
+              'data-label="' + lbl + '" data-cliente="' + cli + '">' +
+
+              /* ── Handle de drag ── */
+              '<td class="dp-drag-handle" title="Arrastrar al manifiesto" ' +
+                  'ondragstart="_dragHandleStart(event,' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')" draggable="true">' +
+                '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+                            'width:36px;height:100%;cursor:grab;color:#aaa;gap:2px;padding:6px 0">' +
+                  '<i class="bi bi-grip-vertical" style="font-size:1.1rem"></i>' +
+                  '<span style="font-size:.55rem;letter-spacing:.5px;text-transform:uppercase;font-weight:700;' +
+                               'color:#ccc;line-height:1;margin-top:1px">drag</span>' +
+                '</div>' +
+              '</td>' +
+
+              /* ── N° / Folio ── */
+              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+                '<span class="fw-bold font-monospace" style="font-size:.88rem">' + c.tido + ' ' + c.nudo + '</span>' +
+              '</td>' +
+
+              /* ── Fecha ── */
+              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer;white-space:nowrap">' + (c.fecha||'—') + '</td>' +
+
+              /* ── Cliente ── */
+              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+                '<div class="fw-semibold">' + (c.cliente||'—') + '</div>' +
+                '<div class="small text-muted">' + (c.rut||'') + '</div>' +
+              '</td>' +
+
+              /* ── Comuna ── */
+              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' + (c.comuna||'—') + '</td>' +
+
+              /* ── Estado ── */
+              '<td><span class="badge rounded-pill bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span></td>' +
+
+              /* ── Costo ── */
+              '<td class="text-end">' + costoHtml + '</td>' +
+
+              /* ── Clasificación ── */
+              '<td class="text-center">' + clasificHtml + '</td>' +
+
+              /* ── Acciones ── */
+              '<td class="text-center" onclick="event.stopPropagation()">' +
+                '<div style="display:flex;gap:4px;justify-content:center;align-items:center">' +
+                  '<button class="btn btn-sm btn-outline-danger" title="Ver detalle" style="padding:3px 7px" ' +
+                    'onclick="openVista(' + c.id + ')"><i class="bi bi-eye"></i></button>' +
+                  '<button class="btn btn-sm btn-ilus fw-bold" title="Agregar al manifiesto" style="padding:3px 9px" ' +
+                    'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
+                    '<i class="bi bi-clipboard-plus me-1"></i><span style="font-size:.75rem">Manifiesto</span></button>' +
+                  '<button class="btn btn-sm btn-outline-secondary" title="Editar" style="padding:3px 7px" ' +
+                    'onclick="openPanel(' + c.id + ')"><i class="bi bi-pencil-square"></i></button>' +
+                '</div>' +
+              '</td>' +
+              '</tr>';
+          }).join('');
+        }
+      }
+
+      // Renderizar cards mobile
+      var cards = document.getElementById('monitorCards');
+      if (cards) {
+        if (!_monitorData.length) {
+          cards.innerHTML = '<div class="text-center py-4 text-muted">Sin compromisos pendientes</div>';
+        } else {
+          cards.innerHTML = _monitorData.map(function(c) {
+            var color = ESTADO_COLORS[c.estado] || 'secondary';
+            var darkText = color === 'warning' ? 'text-dark' : 'text-white';
+            return '<div class="ilus-card mb-2">' +
+              '<div class="p-3" onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+                '<div class="d-flex justify-content-between align-items-start">' +
+                  '<div class="fw-bold font-monospace" style="font-size:.82rem">' + c.tido + ' ' + c.nudo + '</div>' +
+                  '<span class="badge bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span>' +
+                '</div>' +
+                '<div class="fw-semibold mt-1">' + (c.cliente||'—') + '</div>' +
+                '<div class="small text-muted">' + (c.comuna||'') + ' · ' + (c.fecha||'') + '</div>' +
+              '</div>' +
+              '<div class="px-3 pb-2 d-flex gap-2" onclick="event.stopPropagation()">' +
+                '<button class="btn btn-sm btn-outline-danger w-50" onclick="openVista(' + c.id + ')">' +
+                  '<i class="bi bi-eye me-1"></i>Ver</button>' +
+                '<button class="btn btn-sm btn-outline-secondary w-50" onclick="openPanel(' + c.id + ')">' +
+                  '<i class="bi bi-pencil-square me-1"></i>Editar</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+      // Habilitar drag & drop en las filas
+      initDragRows();
+      // Actualizar contadores de pestañas
+      _actualizarContadoresTabs();
+      // Re-aplicar filtro de pestaña activa
+      if (_tabClasif) {
+        var rows = document.querySelectorAll('#monitorTbody tr[data-clasif]');
+        rows.forEach(function(tr) {
+          tr.style.display = tr.dataset.clasif === _tabClasif ? '' : 'none';
+        });
+      }
+    })
+    .catch(function(e) {
+      console.error('cargarMonitor error:', e);
+      var tbody = document.getElementById('monitorTbody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-danger">Error al cargar</td></tr>';
+    });
+}
+
+function openPanel(id) {
+  currentId = id;
+  document.getElementById('panelDocId').textContent = '...';
+  document.getElementById('panelCliente').textContent = '';
+  document.getElementById('panelBody').innerHTML =
+    '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-danger"></div></div>';
+  document.getElementById('trPanel').style.right = '0';
+  document.getElementById('panelOverlay').style.display = 'block';
+
+  // Cargar datos vía fetch de la fila en la tabla
+  var row = document.querySelector('tr[data-id="' + id + '"]') ||
+            document.querySelector('[data-id="' + id + '"]');
+
+  Promise.all([
+    fetch('/transporte/api/compromisos/' + id + '/lineas').then(r=>r.json()),
+    fetch('/transporte/api/compromisos/' + id + '/logs').then(r=>r.json()),
+  ]).then(function(results) {
+    var lineas = results[0];
+    var logs   = results[1];
+    renderPanel(id, lineas, logs, row);
+  }).catch(function() {
+    renderPanel(id, [], [], row);
+  });
+}
+
+function renderPanel(id, lineas, logs, row) {
+  // Obtener datos del commit desde la fila de la tabla (DOM scraping básico)
+  var tds = row ? row.querySelectorAll('td') : [];
+  var docNum  = tds[0] ? tds[0].textContent.trim() : '—';
+  var fecha   = tds[1] ? tds[1].textContent.trim() : '';
+  var cliente = tds[2] ? tds[2].querySelector('.fw-semibold')?.textContent.trim() : '';
+  var rut     = tds[2] ? tds[2].querySelector('.text-muted')?.textContent.trim() : '';
+  var comuna  = tds[3] ? tds[3].textContent.trim() : '';
+  var estadoEl= tds[4] ? tds[4].querySelector('.badge') : null;
+  var estado  = estadoEl ? estadoEl.textContent.trim() : 'Pendiente';
+  var costoDB = tds[5] ? tds[5].textContent.trim().replace(/[$., ]/g,'') || '0' : '0';
+  var clasif  = tds[6] ? (tds[6].textContent.includes('Retiro') ? 'retiro' : 'despacho') : 'despacho';
+
+  document.getElementById('panelDocId').textContent  = docNum;
+  document.getElementById('panelCliente').textContent = cliente;
+
+  // Opciones estado
+  var estadoOpts = ESTADOS.map(function(e) {
+    return '<option value="' + e + '"' + (e===estado?' selected':'') + '>' + e + '</option>';
+  }).join('');
+
+  // Líneas ZZ
+  var lineasHtml = lineas.length ? lineas.map(function(l) {
+    return '<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="font-size:.78rem">' +
+      '<div><div class="fw-bold">' + l.koprct + '</div>' +
+      '<div class="text-muted">' + (l.nokopr||'') + '</div></div>' +
+      '<div class="text-end"><div class="fw-bold" style="color:var(--ilus-red)">Saldo: ' + l.saldo + '</div>' +
+      '<div class="text-muted">' + l.cantidad + ' / ' + l.cant_despachada + ' desp.</div></div>' +
+      '</div>';
+  }).join('') : '<div class="text-muted small">Sin líneas ZZ</div>';
+
+  // Logs
+  var logsHtml = logs.slice(0,5).map(function(l) {
+    var dt = new Date(l.created_at);
+    var fmt = dt.toLocaleString('es-CL',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return '<div class="small py-1 border-bottom"><span class="text-muted">' + fmt + '</span> · ' +
+           '<strong>' + (l.usuario||'?') + '</strong> · ' + l.accion +
+           (l.detalle ? ' <span class="text-muted">(' + l.detalle + ')</span>' : '') + '</div>';
+  }).join('') || '<div class="text-muted small">Sin historial</div>';
+
+  // Manifiestos disponibles para asignar
+  var manifestOpts = '<option value="">— Sin manifiesto —</option>' +
+    manifiestos.map(function(m) {
+      return '<option value="' + m.id + '">' + m.correlativo + ' · ' + m.courier + '</option>';
+    }).join('');
+
+  // Campo fecha agenda (solo retiro)
+  var retiroBlock = clasif === 'retiro' ? `
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Fecha agenda retiro</label>
+      <input type="date" class="form-control form-control-sm" id="panelFechaAgenda">
+    </div>` : '';
+
+  document.getElementById('panelBody').innerHTML = `
+    <div class="mb-3">
+      <div class="small text-muted mb-1">${fecha} · ${comuna}</div>
+      <div class="small text-muted">${rut}</div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Estado</label>
+      <select class="form-select form-select-sm" id="panelEstado">${estadoOpts}</select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Costo ZZ envío <span class="text-muted">(editable)</span></label>
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">$</span>
+        <input type="number" class="form-control" id="panelCostoZZ" value="${parseInt(costoDB)||0}" min="0" step="100">
+      </div>
+    </div>
+
+    ${retiroBlock}
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Agregar a manifiesto</label>
+      <select class="form-select form-select-sm" id="panelManifiesto">${manifestOpts}</select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Notas</label>
+      <textarea class="form-control form-control-sm" id="panelNotas" rows="2"></textarea>
+    </div>
+
+    <button class="btn btn-ilus btn-sm fw-bold w-100 mb-3" onclick="savePanel()">
+      <i class="bi bi-floppy me-1"></i>Guardar cambios
+    </button>
+    <div id="panelMsg" class="small mb-3"></div>
+
+    <div class="mb-3">
+      <div class="fw-semibold small mb-2"><i class="bi bi-box me-1"></i>Líneas ZZ</div>
+      ${lineasHtml}
+    </div>
+
+    <div>
+      <div class="fw-semibold small mb-1"><i class="bi bi-clock-history me-1"></i>Historial</div>
+      ${logsHtml}
+    </div>`;
+}
+
+function savePanel() {
+  if (!currentId) return;
+  var data = {
+    estado:   document.getElementById('panelEstado')?.value,
+    costo_zz: parseFloat(document.getElementById('panelCostoZZ')?.value) || 0,
+    notas:    document.getElementById('panelNotas')?.value || '',
+  };
+  var fa = document.getElementById('panelFechaAgenda');
+  if (fa) data.fecha_agenda = fa.value || null;
+
+  fetch('/transporte/api/compromisos/' + currentId, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    var msg = document.getElementById('panelMsg');
+    if (d.ok) {
+      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+      // Agregar a manifiesto si se seleccionó
+      var mid = document.getElementById('panelManifiesto')?.value;
+      if (mid) {
+        fetch('/transporte/manifiestos/' + mid + '/items', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({commitment_id: currentId})
+        });
+      }
+      setTimeout(function(){ location.reload(); }, 800);
+    } else {
+      msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
+    }
+  });
+}
+
+function closePanel() {
+  document.getElementById('trPanel').style.right = '-420px';
+  document.getElementById('panelOverlay').style.display = 'none';
+  currentId = null;
+}
+
+// ── PESTAÑAS MONITOR ──────────────────────────────────────────────
+var _tabClasif = '';  // '' = todos
+
+function filtrarTabMonitor(btn, clasif) {
+  _tabClasif = clasif;
+  document.querySelectorAll('#monitorTabs button').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  var rows = document.querySelectorAll('#monitorTbody tr[data-clasif]');
+  var visible = 0;
+  rows.forEach(function(tr) {
+    var match = !clasif || tr.dataset.clasif === clasif;
+    tr.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  document.getElementById('monitorCount').textContent = visible;
+}
+
+function _actualizarContadoresTabs() {
+  var cnt = {despacho:0,retiro:0,instalacion:0,mantencion:0,garantia:0,total:0};
+  document.querySelectorAll('#monitorTbody tr[data-clasif]').forEach(function(tr) {
+    var c = tr.dataset.clasif || 'despacho';
+    cnt[c] = (cnt[c]||0)+1; cnt.total++;
+  });
+  ['despacho','retiro','instalacion','mantencion','garantia'].forEach(function(k) {
+    var el = document.getElementById('cnt'+k.charAt(0).toUpperCase()+k.slice(1));
+    if (el) el.textContent = cnt[k]||0;
+  });
+  var el = document.getElementById('cntTodos');
+  if (el) el.textContent = cnt.total;
+}
+
+// ── DRAG & DROP — Asignar a manifiesto ──────────────────────────
+var _dragCid   = null;   // commitment_id siendo arrastrado (arrastre activo)
+var _dragLabel = '';
+var _dpQueue   = [];     // cola de CIDs para el panel
+var _dpData    = {};     // {cid: {label, cliente}}
+var _manifestosActivos = null;
+
+// Inicia el drag desde el handle dedicado de la fila
+function _dragHandleStart(e, cid, label, cliente) {
+  e.stopPropagation();   // evita que el dragstart del <tr> se dispare también
+  _dragCid = cid;
+  e.dataTransfer.effectAllowed = 'copy';
+  e.dataTransfer.setData('text/plain', String(cid));
+  document.body.classList.add('dp-dragging-active');
+  var tr = e.currentTarget.closest('tr');
+  if (tr) setTimeout(function(){ tr.classList.add('dp-row-dragging'); }, 0);
+  _dpAddToQueue(cid, label, cliente);
+}
+
+// ── DRAG ROWS (arrastrabilidad de la fila completa) ────────────────
+function initDragRows() {
+  document.querySelectorAll('#monitorTbody tr[data-id]').forEach(function(tr) {
+    tr.setAttribute('draggable', 'true');
+    tr.style.cursor = 'default';  // el handle propio tiene cursor:grab
+
+    tr.addEventListener('dragstart', function(e) {
+      _dragCid = parseInt(tr.dataset.id);
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', String(_dragCid));
+      document.body.classList.add('dp-dragging-active');
+      setTimeout(function(){ tr.classList.add('dp-row-dragging'); }, 0);
+      // Abrir panel y añadir a la cola
+      _dpAddToQueue(_dragCid,
+        tr.dataset.label || (tr.querySelector('.font-monospace')?.textContent?.trim() || ''),
+        tr.dataset.cliente || ''
+      );
+    });
+    tr.addEventListener('dragend', function() {
+      tr.classList.remove('dp-row-dragging');
+      document.body.classList.remove('dp-dragging-active');
+      _dragCid = null;
+    });
+  });
+}
+
+/* Click en botón de la fila → añade a la cola y abre panel */
+function abrirDragPanelConCid(cid, docNum, cliente) {
+  _dpAddToQueue(cid, docNum, cliente);
+}
+
+// ── COLA (carrito de manifiestos) ────────────────────────────────
+function _dpAddToQueue(cid, label, cliente) {
+  cid = parseInt(cid);
+  if (_dpQueue.indexOf(cid) !== -1) { return; } // ya está
+  _dpQueue.push(cid);
+  _dpData[cid] = { label: label || ('ID ' + cid), cliente: cliente || '' };
+  _dpRenderCola();
+  // cargar manifiestos si aún no se cargaron
+  if (!_manifestosActivos) cargarDragPanel();
+}
+
+function dpLimpiarCola() {
+  _dpQueue = [];
+  _dpData  = {};
+  _dpRenderCola();
+  document.querySelectorAll('#monitorTbody tr.dp-in-queue').forEach(function(tr){
+    tr.classList.remove('dp-in-queue');
+  });
+}
+
+function _dpRenderCola() {
+  var list     = document.getElementById('dpQueueList');
+  var empty    = document.getElementById('dpQueueEmpty');
+  var resumen  = document.getElementById('dpResumen');
+  var prevale  = document.getElementById('dpPrevale');
+  var btnCrear = document.getElementById('dpBtnCrear');
+  var badge    = document.getElementById('dpBadge');
+
+  // Badge contador en cabecera
+  if (badge) {
+    badge.textContent = _dpQueue.length;
+    badge.style.display = _dpQueue.length ? 'inline-block' : 'none';
+  }
+
+  if (!_dpQueue.length) {
+    // Cola vacía
+    if (empty)   { empty.style.display = ''; }
+    // Quitar todos los ítems animados
+    Array.from(list.querySelectorAll('.dp-queue-item')).forEach(function(el){ el.remove(); });
+    if (resumen) resumen.style.display = 'none';
+    if (prevale) prevale.style.display = 'none';
+    if (btnCrear) btnCrear.disabled = true;
+    // Quitar resaltado tabla
+    document.querySelectorAll('#monitorTbody tr.dp-in-queue').forEach(function(tr){
+      tr.classList.remove('dp-in-queue');
+    });
+    return;
+  }
+
+  if (empty) empty.style.display = 'none';
+
+  // Renderizar ítems (sólo agregar los nuevos, no re-renderizar todos)
+  var existingIds = Array.from(list.querySelectorAll('.dp-queue-item[data-cid]'))
+                         .map(function(el){ return parseInt(el.dataset.cid); });
+
+  // Agregar ítems nuevos
+  _dpQueue.forEach(function(cid) {
+    if (existingIds.indexOf(cid) !== -1) return; // ya existe el elemento
+    var d = _dpData[cid] || {};
+    var el = document.createElement('div');
+    el.className = 'dp-queue-item';
+    el.dataset.cid = cid;
+    el.innerHTML =
+      '<div style="min-width:0;flex:1">' +
+        '<div class="fw-bold font-monospace" style="font-size:.8rem;color:#fff;' +
+             'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.label) + '</div>' +
+        (d.cliente ? '<div style="color:#777;font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.cliente) + '</div>' : '') +
+        '<div class="dp-item-peso" style="color:#555;font-size:.68rem;margin-top:1px">—</div>' +
+      '</div>' +
+      '<button onclick="dpRemoveItem(' + cid + ')" ' +
+              'style="background:none;border:none;color:#555;padding:0 0 0 8px;' +
+                     'cursor:pointer;font-size:1rem;flex-shrink:0;line-height:1" ' +
+              'title="Quitar del manifiesto" onmouseover="this.style.color=\'#f66\'" ' +
+              'onmouseout="this.style.color=\'#555\'">×</button>';
+    list.appendChild(el);
+  });
+
+  // Quitar ítems eliminados de la cola
+  Array.from(list.querySelectorAll('.dp-queue-item[data-cid]')).forEach(function(el) {
+    var cid = parseInt(el.dataset.cid);
+    if (_dpQueue.indexOf(cid) === -1) {
+      el.classList.add('dp-removing');
+      setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 200);
+    }
+  });
+
+  if (resumen) resumen.style.display = '';
+  if (prevale) prevale.style.display = '';
+  if (btnCrear) btnCrear.disabled = false;
+
+  // Resaltar filas en la tabla
+  document.querySelectorAll('#monitorTbody tr[data-id]').forEach(function(tr) {
+    tr.classList.toggle('dp-in-queue', _dpQueue.indexOf(parseInt(tr.dataset.id)) !== -1);
+  });
+
+  // Actualizar acumulado + prevale
+  _dpActualizarPrevale();
+}
+
+function dpRemoveItem(cid) {
+  cid = parseInt(cid);
+  var idx = _dpQueue.indexOf(cid);
+  if (idx !== -1) _dpQueue.splice(idx, 1);
+  delete _dpData[cid];
+  _dpRenderCola();
+  var tr = document.querySelector('#monitorTbody tr[data-id="' + cid + '"]');
+  if (tr) tr.classList.remove('dp-in-queue');
+}
+
+// ── PREVALE: acumulado + tarifas ─────────────────────────────────
+var _dpPrevaleTimer = null;
+async function _dpActualizarPrevale() {
+  if (!_dpQueue.length) return;
+  // Debounce 300ms para no hacer fetch en cada add rápido
+  clearTimeout(_dpPrevaleTimer);
+  _dpPrevaleTimer = setTimeout(async function() {
+    var spinner = document.getElementById('dpResumenSpinner');
+    var prevaleRows = document.getElementById('dpPrevaleRows');
+    if (spinner) spinner.style.display = '';
+    if (prevaleRows) prevaleRows.innerHTML =
+      '<div style="color:#2d5a2d;font-size:.72rem;text-align:center">Calculando…</div>';
+
+    try {
+      var r = await fetch('/transporte/api/cola/cotizar', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({commitment_ids: _dpQueue.slice()})
+      });
+      var d = await r.json();
+      if (!d.ok) return;
+
+      // Actualizar métricas acumuladas
+      var fmtKgLocal = function(v){ return parseFloat(v||0).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1})+' kg'; };
+      var pEl = document.getElementById('dpPesoTotal');
+      var vEl = document.getElementById('dpVolTotal');
+      var fEl = document.getElementById('dpPesoFacturable');
+      if (pEl) pEl.textContent = fmtKgLocal(d.peso_real);
+      if (vEl) vEl.textContent = fmtKgLocal(d.peso_vol);
+      if (fEl) fEl.textContent = fmtKgLocal(d.peso_pred);
+
+      // Actualizar pesos en ítems de la cola (si la API devuelve items)
+      if (d.items) {
+        Object.keys(d.items).forEach(function(cid) {
+          var el = document.querySelector('.dp-queue-item[data-cid="'+cid+'"] .dp-item-peso');
+          if (el) {
+            var it = d.items[cid];
+            el.textContent = (it.n || 0) + ' línea' + (it.n !== 1 ? 's' : '');
+          }
+        });
+      }
+
+      // Renderizar filas de prevale (couriers)
+      if (!prevaleRows) return;
+      if (!d.resultados || !d.resultados.length) {
+        prevaleRows.innerHTML = '<div style="color:#2d5a2d;font-size:.72rem">Sin couriers configurados</div>';
+        return;
+      }
+      var fmtCLP = function(v){ return v!=null ? '$'+Math.round(v).toLocaleString('es-CL') : '—'; };
+      var html = d.resultados.slice(0,4).map(function(res, i) {
+        var isBest = i===0 && res.costo!=null;
+        var hasWarn = res.advertencias && res.advertencias.length > 0;
+        var warnHtml = hasWarn
+          ? '<span title="'+esc(res.advertencias.join(', '))+'" ' +
+            'style="color:#f90;font-size:.65rem;margin-left:4px">⚠</span>' : '';
+        return '<div class="dp-prevale-row">' +
+          '<div style="display:flex;align-items:center;gap:4px;min-width:0">' +
+            (isBest ? '<span style="color:#5cb85c;font-size:.7rem">★</span>' : '<span style="font-size:.7rem;color:#2d5a2d">&nbsp;</span>') +
+            '<span style="font-size:.74rem;color:'+(isBest?'#7dba7d':'#4a8a4a')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">' +
+              esc(res.nombre) +
+            '</span>' +
+            warnHtml +
+          '</div>' +
+          '<span style="font-size:.78rem;font-weight:'+(isBest?'800':'600')+';color:'+(isBest?'#5cb85c':'#3a7a3a')+';white-space:nowrap">' +
+            (res.costo!=null ? fmtCLP(res.costo) : '<span style="color:#2d5a2d">Sin tarifa</span>') +
+          '</span>' +
+        '</div>';
+      }).join('');
+      prevaleRows.innerHTML = html;
+
+    } catch(e) {
+      if (prevaleRows) prevaleRows.innerHTML = '<div style="color:#c55;font-size:.72rem">Error al calcular</div>';
+    } finally {
+      if (spinner) spinner.style.display = 'none';
+    }
+  }, 320);
+}
+
+function _dpAbrirPanel() {
+  // En desktop el panel ya está visible; en mobile lo deslizamos
+  if (window.innerWidth < 768) {
+    document.getElementById('dragPanel').style.right = '0';
+    document.getElementById('dragOverlay').style.display = 'block';
+  }
+  if (!_manifestosActivos) cargarDragPanel();
+}
+
+function closeDragPanel() {
+  // Sólo cierra en mobile
+  if (window.innerWidth >= 768) return;
+  document.getElementById('dragPanel').style.right = '-380px';
+  document.getElementById('dragOverlay').style.display = 'none';
+  _dragCid = null;
+}
+
+// ── CARGAR Y RENDERIZAR MANIFIESTOS ──────────────────────────────
+async function cargarDragPanel(force) {
+  if (!force && _manifestosActivos) {
+    renderDragPanel(_manifestosActivos);
+    return;
+  }
+  document.getElementById('dragPanelBody').innerHTML =
+    '<div class="text-center py-3" style="color:#555">' +
+    '<div class="spinner-border spinner-border-sm text-danger"></div></div>';
+  try {
+    const r = await fetch('/transporte/api/manifiestos/activos');
+    _manifestosActivos = await r.json();
+    renderDragPanel(_manifestosActivos);
+  } catch(err) {
+    document.getElementById('dragPanelBody').innerHTML =
+      '<div class="p-2 small" style="color:#c55"><i class="bi bi-wifi-off me-1"></i>Error cargando</div>';
+  }
+}
+
+function renderDragPanel(lista) {
+  var BADGE = {'En preparación':'warning','En curso':'primary','Cerrado':'secondary','Entregado completo':'success'};
+  var html = '';
+
+  if (lista && lista.length) {
+    html = lista.map(function(m) {
+      var badge = BADGE[m.estado] || 'secondary';
+      var isDark = badge === 'warning';
+      return '<div class="dp-manifest-zone" ' +
+        'ondragover="event.preventDefault();this.classList.add(\'dp-drag-over\')" ' +
+        'ondragleave="this.classList.remove(\'dp-drag-over\')" ' +
+        'ondrop="dropEnManifiesto(event,' + m.id + ')" ' +
+        'onclick="asignarManual(' + m.id + ')">' +
+        '<div class="d-flex justify-content-between align-items-center">' +
+          '<div style="min-width:0;flex:1">' +
+            '<div class="fw-bold font-monospace text-white" style="font-size:.85rem">' + esc(m.correlativo) + '</div>' +
+            '<div style="color:#888;font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+              esc(m.courier || 'Sin courier') + '</div>' +
+          '</div>' +
+          '<div class="text-end ms-2" style="flex-shrink:0">' +
+            '<span class="badge bg-' + badge + (isDark?' text-dark':'') + '" style="font-size:.62rem">' + esc(m.estado) + '</span>' +
+            '<div style="color:#666;font-size:.68rem;margin-top:2px">' +
+              (m.total_items||0) + ' doc' + ((m.total_items||0)!==1?'s':'') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="margin-top:6px;font-size:.68rem;color:#444;border-top:1px solid #1e1e1e;padding-top:5px">' +
+          '<i class="bi bi-box-arrow-in-down me-1"></i>Suelta o haz clic para asignar aquí' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } else {
+    html = '<div class="text-center py-4" style="color:#444">' +
+      '<i class="bi bi-inbox" style="font-size:1.6rem;display:block;opacity:.35;margin-bottom:8px"></i>' +
+      '<div style="font-size:.78rem">Sin manifiestos activos</div>' +
+      '<div style="font-size:.7rem;color:#333;margin-top:3px">Crea uno con el botón de abajo</div>' +
+    '</div>';
+  }
+
+  document.getElementById('dragPanelBody').innerHTML = html;
+
+  // Rellenar datalist del courier (footer)
+  var dl = document.getElementById('ddCourierList');
+  if (dl) {
+    dl.innerHTML = (COURIERS||[]).map(function(c){
+      return '<option value="' + esc(c.nombre||c) + '">';
+    }).join('');
+  }
+}
+
+// ── DROP HANDLERS ─────────────────────────────────────────────────
+function dropEnZona(e, tipo) {
+  e.preventDefault();
+  document.getElementById('dragDropZoneNuevo').classList.remove('dp-drag-over');
+  var cid = parseInt(e.dataTransfer.getData('text/plain')) || _dragCid;
+  if (cid) _dpAddToQueue(cid, _dpData[cid]?.label||'', _dpData[cid]?.cliente||'');
+  if (tipo === 'nuevo') dpCrearManifiesto();
+}
+
+async function dropEnManifiesto(e, mid) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dp-drag-over');
+  // Si hay cola, asigna toda la cola; si no, el elemento arrastrado ahora
+  var cid = parseInt(e.dataTransfer.getData('text/plain')) || _dragCid;
+  if (cid && _dpQueue.indexOf(cid) === -1) _dpAddToQueue(cid, '', '');
+  if (!_dpQueue.length) return;
+  await _asignarAPI(_dpQueue.slice(), mid);
+}
+
+async function asignarManual(mid) {
+  if (!_dpQueue.length) return;
+  await _asignarAPI(_dpQueue.slice(), mid);
+}
+
+async function dpCrearManifiesto() {
+  if (!_dpQueue.length) return;
+  await _asignarAPI(_dpQueue.slice(), null);
+}
+
+async function _asignarAPI(cids, mid) {
+  var courier = (document.getElementById('ddCourier')?.value || '').trim() || 'Por asignar';
+  var msg = document.getElementById('ddMsg');
+  if (msg) msg.innerHTML = '<span style="color:#ffb700"><div class="spinner-border spinner-border-sm me-1" style="display:inline-block"></div>Asignando ' + cids.length + ' documento(s)…</span>';
+  if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = true;
+
+  try {
+    const r = await fetch('/transporte/api/manifiestos/asignar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({commitment_ids: cids, manifest_id: mid, courier: courier})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      _manifestosActivos = null;
+      var texto = mid
+        ? ('Asignado' + (cids.length>1?' (' + cids.length + ' docs)':'') + ' al manifiesto existente')
+        : ('Manifiesto <strong>' + esc(d.correlativo||'') + '</strong> creado con ' + cids.length + ' documento(s)');
+      if (msg) msg.innerHTML = '<span style="color:#5cb85c"><i class="bi bi-check-circle-fill me-1"></i>' + texto + '</span>';
+
+      // Quitar filas del monitor o marcar como asignadas
+      cids.forEach(function(cid) {
+        var tr = document.querySelector('#monitorTbody tr[data-id="' + cid + '"]');
+        if (tr) {
+          tr.style.transition = 'opacity .4s';
+          tr.style.opacity = '.3';
+          setTimeout(function(){ if(tr.parentNode) tr.parentNode.removeChild(tr); }, 500);
+        }
+      });
+      dpLimpiarCola();
+      // Recargar manifiestos tras breve pausa
+      setTimeout(function(){ cargarDragPanel(true); }, 900);
+    } else {
+      if (msg) msg.innerHTML = '<span style="color:#f66"><i class="bi bi-x-circle me-1"></i>' + esc(d.error||'Error desconocido') + '</span>';
+      if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = false;
+    }
+  } catch(err) {
+    if (msg) msg.innerHTML = '<span style="color:#f66">Error de conexión</span>';
+    if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = false;
+  }
+}
+
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── COTIZADOR ───────────────────────────────────────────────────
+var _cotizarCid = null;
+
+function cotizarActual() {
+  if (!_cotizarCid) return;
+  var btn = document.getElementById('btnCotizar');
+  var sec = document.getElementById('vistaCotizador');
+  var rows = document.getElementById('vistaCotizadorRows');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando…';
+  sec.style.display = '';
+  rows.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-danger"></div></div>';
+
+  fetch('/transporte/api/cotizar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({commitment_id: _cotizarCid})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
+    if (!d.ok) { rows.innerHTML='<div class="text-danger">Error al cotizar</div>'; return; }
+    if (!d.resultados || !d.resultados.length) {
+      rows.innerHTML='<div class="text-muted small">Sin couriers configurados con tarifas activas.</div>';
+      return;
+    }
+    var html = d.resultados.map(function(r, i) {
+      var isMejor = i===0 && r.costo !== null;
+      var fmtCLP = function(v){ return v!=null ? '$'+Math.round(v).toLocaleString('es-CL') : '—'; };
+      var advHtml = r.advertencias && r.advertencias.length
+        ? '<div class="mt-1">' + r.advertencias.map(function(a){
+            return '<span class="badge bg-warning text-dark me-1" style="font-size:.65rem">⚠ '+esc(a)+'</span>';
+          }).join('') + '</div>' : '';
+      return `
+        <div class="d-flex justify-content-between align-items-start py-2 border-bottom ${isMejor?'':''}">
+          <div>
+            <div class="fw-semibold" style="${isMejor?'color:var(--ilus-red)':''}">${esc(r.nombre)}</div>
+            <div class="text-muted" style="font-size:.72rem">
+              Real ${fmtKg(r.peso_real)} kg · Vol ${fmtKg(r.peso_vol)} kg · Pred <strong>${fmtKg(r.peso_pred)}</strong> kg
+            </div>
+            ${advHtml}
+          </div>
+          <div class="text-end ms-3">
+            <div class="fw-bold" style="${isMejor?'font-size:1.1rem;color:var(--ilus-red)':'font-size:.95rem'}">
+              ${r.costo!=null ? fmtCLP(r.costo) : '<span class="text-muted">Sin tarifa</span>'}
+            </div>
+            ${isMejor?'<div class="badge bg-success" style="font-size:.65rem">Más económico</div>':''}
+          </div>
+        </div>`;
+    }).join('');
+    rows.innerHTML = html;
+  })
+  .catch(function(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
+    rows.innerHTML = '<div class="text-danger small">Error: ' + e + '</div>';
+  });
+}
+
+function fmtKg(v) {
+  return parseFloat(v||0).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1});
+}
+
+function closeCotizador() {
+  document.getElementById('vistaCotizador').style.display = 'none';
+}
+
+// ── FOTOS INLINE EN MODAL DE VISTA ───────────────────────────────
+function renderFotoPanel(linea) {
+  var panel  = document.getElementById('vistaFotoUpload');
+  var gallery = document.getElementById('vistaFotoGallery');
+  var label  = document.getElementById('vistaFotoLabel');
+  var cnt    = document.getElementById('vistaFotoCount');
+  if (!panel || !linea) return;
+
+  var fotos  = linea.fotos || [];
+  var sku    = linea.sku || '';
+  _vistaCurrentSku = sku || null;
+
+  cnt.textContent = fotos.length + '/2';
+  gallery.innerHTML = fotos.map(function(url) {
+    return '<img src="' + url + '" alt="" ' +
+      'style="width:80px;height:80px;object-fit:cover;border-radius:8px;cursor:pointer;' +
+      'border:2px solid #ddd" onclick="verFoto(\'' + url + '\')" ' +
+      'onerror="this.style.display=\'none\'">';
+  }).join('');
+
+  if (fotos.length >= 2) {
+    label.style.display = 'none';
+  } else {
+    label.style.display = '';
+  }
+  panel.style.display = '';
+}
+
+async function subirFotoVistaInline(input) {
+  if (!input.files[0] || !_vistaCurrentSku) return;
+  var label = document.getElementById('vistaFotoLabel');
+  var orig  = label.innerHTML;
+  label.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Subiendo…';
+
+  var fd = new FormData();
+  fd.append('sku',  _vistaCurrentSku);
+  fd.append('foto', input.files[0]);
+
+  try {
+    var r = await fetch('/transporte/api/upload-foto', {method:'POST', body:fd});
+    var d = await r.json();
+    if (d.ok) {
+      // Refresh foto gallery
+      var gallery = document.getElementById('vistaFotoGallery');
+      var cnt     = document.getElementById('vistaFotoCount');
+      var img = document.createElement('img');
+      img.src = d.url;
+      img.alt = '';
+      img.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px;border:2px solid #ddd;cursor:pointer';
+      img.onclick = function(){ verFoto(d.url); };
+      gallery.appendChild(img);
+      var n = parseInt((cnt.textContent||'0').split('/')[0]) + 1;
+      cnt.textContent = n + '/2';
+      if (n >= 2) label.style.display = 'none';
+      else { label.innerHTML = orig; input.value = ''; }
+    } else {
+      alert('Error: ' + (d.error||'No se pudo subir'));
+      label.innerHTML = orig; input.value = '';
+    }
+  } catch(e) {
+    alert('Error de red al subir la foto');
+    label.innerHTML = orig; input.value = '';
+  }
+}
+
+function addDoc() {
+  var btn = document.getElementById('addDocBtn');
+  var msg = document.getElementById('addDocMsg');
+  var tido = document.getElementById('addTido').value;
+  var nudo = document.getElementById('addNudo').value.trim();
+  if (!nudo) { msg.innerHTML='<span class="text-danger">Ingresa el número</span>'; return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
+  msg.innerHTML = '';
+
+  var fd = new FormData();
+  fd.append('tido', tido); fd.append('nudo', nudo);
+  fetch('/transporte/api/agregar', {method:'POST', body:fd})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Importado correctamente</span>';
+        setTimeout(function(){ location.reload(); }, 800);
+      } else {
+        msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
+        btn.disabled=false; btn.innerHTML='<i class="bi bi-download me-1"></i>Importar desde ERP';
+      }
+    })
+    .catch(function() {
+      msg.innerHTML='<span class="text-danger">Error de conexión</span>';
+      btn.disabled=false; btn.innerHTML='<i class="bi bi-download me-1"></i>Importar desde ERP';
+    });
+}
+</script>
+{% endblock %}

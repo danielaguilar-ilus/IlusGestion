@@ -1,0 +1,1373 @@
+{% extends "base.html" %}
+{% block title %}Comunicaciones — ILUS{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3 px-3 px-md-4">
+
+  {# ── HEADER ── #}
+  <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+    <div>
+      <h4 class="mb-0 fw-bold">
+        <i class="bi bi-chat-dots me-2 text-danger"></i>Comunicaciones
+      </h4>
+      <p class="text-muted small mb-0">Email y WhatsApp — Solo Super Administrador</p>
+    </div>
+  </div>
+
+  {# ── TABS PRINCIPALES ── #}
+  <ul class="nav nav-tabs mb-4" id="commTabs">
+    <li class="nav-item">
+      <button class="nav-link active fw-semibold" data-bs-toggle="tab" data-bs-target="#tabEmail">
+        <i class="bi bi-envelope me-1"></i>Email
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabWA">
+        <i class="bi bi-whatsapp me-1"></i>WhatsApp
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabPlantillas"
+              onclick="cargarPlantillas()">
+        <i class="bi bi-layout-text-sidebar me-1"></i>Plantillas
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabLog">
+        <i class="bi bi-list-ul me-1"></i>Historial
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    {# ══════════════════════════════════════════════
+       TAB 1 — EMAIL
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade show active" id="tabEmail">
+      <div class="row g-4">
+
+        {# ── Columna izquierda: SMTP + Cliente ── #}
+        <div class="col-12 col-lg-6">
+
+          {# SMTP Config #}
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center"
+                 style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-server me-2 text-danger"></i>Configuración SMTP
+              </span>
+              <button class="btn btn-sm btn-outline-secondary text-white border-secondary"
+                      type="button" data-bs-toggle="collapse" data-bs-target="#smtpCollapse">
+                <i class="bi bi-chevron-down"></i>
+              </button>
+            </div>
+            <div class="collapse show" id="smtpCollapse">
+              <div class="card-body">
+                <div class="row g-3">
+                  <div class="col-md-8">
+                    <label class="form-label small fw-semibold">Servidor SMTP</label>
+                    <input id="smtpHost" class="form-control form-control-sm"
+                           value="{{ smtp_cfg.smtp_host or 'smtp.gmail.com' }}"
+                           placeholder="smtp.gmail.com">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label small fw-semibold">Puerto</label>
+                    <input id="smtpPort" type="number" class="form-control form-control-sm"
+                           value="{{ smtp_cfg.smtp_port or 587 }}">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Email (usuario)</label>
+                    <input id="smtpUser" type="email" class="form-control form-control-sm"
+                           value="{{ smtp_cfg.smtp_user or '' }}"
+                           placeholder="correo@dominio.cl">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Contraseña / App Password</label>
+                    <div class="input-group input-group-sm">
+                      <input id="smtpPass" type="password" class="form-control form-control-sm"
+                             placeholder="{% if smtp_cfg.smtp_pass %}••••••••{% else %}Ingresa contraseña{% endif %}">
+                      <button class="btn btn-outline-secondary btn-sm" type="button"
+                              onclick="togglePass('smtpPass',this)">
+                        <i class="bi bi-eye"></i>
+                      </button>
+                    </div>
+                    <div class="form-text">Para Gmail usa una <strong>App Password</strong> de 16 caracteres.</div>
+                  </div>
+                  <div class="col-md-7">
+                    <label class="form-label small fw-semibold">Nombre del remitente</label>
+                    <input id="smtpFromName" class="form-control form-control-sm"
+                           value="{{ smtp_cfg.from_name or 'ILUS Sport &amp; Health' }}">
+                  </div>
+                  <div class="col-md-5 d-flex align-items-end">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" id="smtpSecure"
+                             {% if smtp_cfg.secure %}checked{% endif %}>
+                      <label class="form-check-label small" for="smtpSecure">
+                        SSL/TLS (puerto 465)
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="d-flex gap-2 mt-3 flex-wrap">
+                  <button class="btn btn-danger btn-sm fw-bold" onclick="guardarSmtp()">
+                    <i class="bi bi-floppy me-1"></i>Guardar SMTP
+                  </button>
+                  <button class="btn btn-outline-secondary btn-sm" onclick="abrirTestEmail()">
+                    <i class="bi bi-send me-1"></i>Enviar correo de prueba
+                  </button>
+                </div>
+                <div id="smtpMsg" class="small mt-2"></div>
+              </div>
+            </div>
+          </div>
+
+          {# Config Cliente #}
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-building me-2 text-danger"></i>Identidad de empresa
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label small fw-semibold">Nombre de empresa</label>
+                  <input id="ccCompany" class="form-control form-control-sm"
+                         value="{{ client_cfg.company_name or 'ILUS Sport &amp; Health' }}">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Reply-To</label>
+                  <input id="ccReplyTo" type="email" class="form-control form-control-sm"
+                         value="{{ client_cfg.reply_to or '' }}" placeholder="reply@empresa.cl">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Email soporte</label>
+                  <input id="ccSupport" type="email" class="form-control form-control-sm"
+                         value="{{ client_cfg.support_email or '' }}" placeholder="soporte@empresa.cl">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Teléfono soporte</label>
+                  <input id="ccPhone" class="form-control form-control-sm"
+                         value="{{ client_cfg.support_phone or '' }}" placeholder="+56 2 XXXX XXXX">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Color corporativo</label>
+                  <div class="d-flex gap-2 align-items-center">
+                    <input type="color" id="ccColor" class="form-control form-control-color form-control-sm"
+                           value="{{ client_cfg.corp_color or '#CC0000' }}" style="width:48px;height:32px">
+                    <input type="text" id="ccColorText" class="form-control form-control-sm"
+                           value="{{ client_cfg.corp_color or '#CC0000' }}"
+                           oninput="document.getElementById('ccColor').value=this.value"
+                           style="max-width:90px">
+                  </div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold">URL de tracking</label>
+                  <input id="ccTracking" class="form-control form-control-sm"
+                         value="{{ client_cfg.tracking_url or '' }}"
+                         placeholder="https://tracking.empresa.cl">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">CC (con copia)</label>
+                  <input id="ccCC" class="form-control form-control-sm"
+                         value="{{ client_cfg.email_cc or '' }}" placeholder="cc@empresa.cl">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">BCC (copia oculta)</label>
+                  <input id="ccBCC" class="form-control form-control-sm"
+                         value="{{ client_cfg.email_bcc or '' }}" placeholder="bcc@empresa.cl">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold">Logo empresa (PNG/JPG/SVG)</label>
+                  <input type="file" id="ccLogoFile" class="form-control form-control-sm"
+                         accept=".png,.jpg,.jpeg,.webp,.svg">
+                  <div class="form-text">Se convierte a base64 y se incluye en los emails.</div>
+                  {% if client_cfg.logo_url %}
+                  <div class="mt-2">
+                    <img src="{{ client_cfg.logo_url }}" alt="Logo" style="max-height:50px;border-radius:6px;border:1px solid #dee2e6">
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+
+              <button class="btn btn-danger btn-sm fw-bold mt-3" onclick="guardarCliente()">
+                <i class="bi bi-floppy me-1"></i>Guardar identidad
+              </button>
+              <div id="ccMsg" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+
+        {# ── Columna derecha: Preview + Envío manual ── #}
+        <div class="col-12 col-lg-6">
+
+          {# Preview email #}
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-eye me-2 text-danger"></i>Preview del email
+              </span>
+            </div>
+            <div class="card-body p-0">
+              <iframe id="emailPreview" style="width:100%;height:380px;border:0;border-radius:0 0 .375rem .375rem"
+                      srcdoc="<p style='padding:16px;color:#999;font-size:13px'>Completa la identidad y haz clic en «Actualizar preview»</p>">
+              </iframe>
+            </div>
+            <div class="card-footer">
+              <button class="btn btn-sm btn-outline-secondary" onclick="actualizarPreview()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Actualizar preview
+              </button>
+            </div>
+          </div>
+
+          {# Envío manual #}
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-send me-2 text-danger"></i>Envío manual
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label small fw-semibold">Destinatario</label>
+                <input id="manTo" type="email" class="form-control form-control-sm" placeholder="cliente@email.cl">
+              </div>
+              <div class="mb-3">
+                <label class="form-label small fw-semibold">Asunto</label>
+                <input id="manSubject" class="form-control form-control-sm" placeholder="Asunto del correo">
+              </div>
+              <div class="mb-3">
+                <label class="form-label small fw-semibold">Plantilla</label>
+                <select id="manTemplate" class="form-select form-select-sm" onchange="seleccionarPlantilla()">
+                  <option value="">HTML personalizado</option>
+                  <option value="prueba">✅ Prueba de conexión</option>
+                </select>
+              </div>
+              <div id="manHtmlWrap" class="mb-3">
+                <label class="form-label small fw-semibold">Cuerpo HTML</label>
+                <textarea id="manHtml" class="form-control form-control-sm font-monospace"
+                          rows="5" placeholder="<h1>Hola</h1>..."></textarea>
+              </div>
+              <button class="btn btn-danger btn-sm fw-bold" onclick="enviarManual()">
+                <i class="bi bi-send-fill me-1"></i>Enviar ahora
+              </button>
+              <div id="manMsg" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ══════════════════════════════════════════════
+       TAB 2 — WHATSAPP
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tabWA">
+      <div class="row g-4">
+        <div class="col-12 col-lg-6">
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-whatsapp me-2 text-success"></i>Twilio — Configuración
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="alert alert-dark border-0 small mb-4" style="background:#1a1a2e">
+                <i class="bi bi-info-circle-fill me-2 text-info"></i>
+                <strong>Modo Sandbox Twilio:</strong> el destinatario debe enviar primero
+                <code>join &lt;código&gt;</code> al número sandbox
+                <strong>+1 415 523 8886</strong> para recibir mensajes.
+              </div>
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label small fw-semibold">Account SID</label>
+                  <input id="waSid" class="form-control form-control-sm font-monospace"
+                         value="{{ wa_cfg.account_sid or '' }}"
+                         placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                  <div class="form-text">Empieza con "AC". Puedes pegar la URL completa de Twilio.</div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold">Auth Token</label>
+                  <div class="input-group input-group-sm">
+                    <input id="waToken" type="password" class="form-control form-control-sm font-monospace"
+                           value="{{ wa_cfg.auth_token or '' }}" placeholder="Tu Auth Token">
+                    <button class="btn btn-outline-secondary btn-sm"
+                            onclick="togglePass('waToken',this)"><i class="bi bi-eye"></i></button>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Número Twilio (From)</label>
+                  <input id="waFrom" class="form-control form-control-sm"
+                         value="{{ wa_cfg.from_number or '' }}" placeholder="+14155238886">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">Tu número de negocio</label>
+                  <input id="waBiz" class="form-control form-control-sm"
+                         value="{{ wa_cfg.biz_number or '' }}" placeholder="+56912345678">
+                </div>
+              </div>
+              <div class="d-flex gap-2 mt-3 flex-wrap">
+                <button class="btn btn-danger btn-sm fw-bold" onclick="guardarWA()">
+                  <i class="bi bi-floppy me-1"></i>Guardar configuración
+                </button>
+                <button class="btn btn-outline-success btn-sm" onclick="abrirTestWA()">
+                  <i class="bi bi-whatsapp me-1"></i>Enviar mensaje de prueba
+                </button>
+              </div>
+              <div id="waMsg" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-info-circle me-2 text-info"></i>¿Cómo funciona?
+              </span>
+            </div>
+            <div class="card-body">
+              <ol class="small text-muted ps-3">
+                <li class="mb-2">Crea una cuenta en <a href="https://www.twilio.com" target="_blank">twilio.com</a></li>
+                <li class="mb-2">Ve a <strong>Messaging → Try it out → Send a WhatsApp message</strong></li>
+                <li class="mb-2">El destinatario envía el código join al <strong>+1 415 523 8886</strong></li>
+                <li class="mb-2">Ingresa aquí tu Account SID y Auth Token desde el Dashboard</li>
+                <li class="mb-2">Usa <strong>+14155238886</strong> como número From en sandbox</li>
+                <li>Para producción: verifica tu número en Twilio y actualiza el From</li>
+              </ol>
+              <div class="alert alert-warning small mt-3 mb-0 py-2">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Asegúrate de tener instalado <code>pip install twilio</code> en el servidor.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ══════════════════════════════════════════════
+       TAB 3 — PLANTILLAS POR ESTADO
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tabPlantillas">
+      <div class="row g-0" style="min-height:600px;border-radius:.5rem;overflow:hidden;border:1px solid #dee2e6">
+
+        {# Panel izquierdo: lista de estados #}
+        <div class="col-12 col-md-3" style="background:#111;border-right:1px solid #222">
+          <div style="padding:14px 16px 8px;color:#888;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px">
+            <i class="bi bi-diagram-3 me-1"></i>Estados
+          </div>
+          <div id="tplEstadoList">
+            <!-- renderizado por JS -->
+          </div>
+        </div>
+
+        {# Panel derecho: vista + editor #}
+        <div class="col-12 col-md-9" style="background:#fff">
+
+          {# Placeholder antes de seleccionar #}
+          <div id="tplEditorPlaceholder" class="d-flex flex-column align-items-center justify-content-center h-100 text-muted" style="min-height:400px">
+            <i class="bi bi-layout-text-sidebar-reverse" style="font-size:3rem;opacity:.3"></i>
+            <div class="mt-3" style="font-size:.9rem">Selecciona un estado para ver su plantilla</div>
+          </div>
+
+          {# ── Modo VISTA (solo lectura) ── #}
+          <div id="tplViewWrap" style="display:none;padding:24px">
+            {# Barra superior con estado + botones #}
+            <div class="d-flex align-items-start justify-content-between gap-2 mb-3 flex-wrap">
+              <div>
+                <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;
+                            letter-spacing:1.3px;color:var(--ilus-red);margin-bottom:2px"
+                     id="tvEstadoBadge"></div>
+                <h5 id="tvEstadoTitulo" class="mb-0 fw-bold"></h5>
+              </div>
+              <div class="d-flex gap-1 flex-wrap">
+                <div class="btn-group btn-group-sm me-2">
+                  <button id="tvBtnEmail" class="btn btn-danger btn-sm fw-semibold"
+                          onclick="tplCambiarCanal('email')">
+                    <i class="bi bi-envelope me-1"></i>Email
+                  </button>
+                  <button id="tvBtnWA" class="btn btn-outline-secondary btn-sm"
+                          onclick="tplCambiarCanal('whatsapp')">
+                    <i class="bi bi-whatsapp me-1"></i>WhatsApp
+                  </button>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" onclick="tplEnviarPrueba()"
+                        title="Enviar mensaje de prueba">
+                  <i class="bi bi-send me-1"></i>Prueba
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="tplVistaPreviaModal()"
+                        id="tvBtnPreview" title="Vista previa del email">
+                  <i class="bi bi-eye me-1"></i>Vista previa
+                </button>
+                <button class="btn btn-sm btn-outline-warning" onclick="tplRestaurar()"
+                        title="Restaurar plantilla original">
+                  <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar
+                </button>
+                <button class="btn btn-sm btn-danger fw-bold" onclick="tplActivarEdicion()"
+                        title="Editar esta plantilla">
+                  <i class="bi bi-pencil me-1"></i>Editar
+                </button>
+              </div>
+            </div>
+
+            {# Vista: Asunto (solo email) #}
+            <div id="tvAsuntoWrap" class="mb-3">
+              <div class="small text-muted fw-semibold mb-1">Asunto del email</div>
+              <div id="tvAsunto" class="form-control form-control-sm bg-light border-0"
+                   style="color:#333;cursor:default;min-height:34px"></div>
+            </div>
+
+            {# Vista: Cuerpo email (HTML fuente) o WhatsApp burbuja #}
+            <div>
+              <div class="d-flex align-items-center justify-content-between mb-1">
+                <div class="small text-muted fw-semibold" id="tvCuerpoLabel">Cuerpo del mensaje</div>
+                <span class="text-muted" style="font-size:.68rem" id="tvCuerpoHint"></span>
+              </div>
+
+              {# Email: muestra HTML fuente #}
+              <div id="tvCuerpo"
+                   style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:.375rem;
+                          padding:16px 18px;font-size:.82rem;line-height:1.6;
+                          white-space:pre-wrap;font-family:monospace;
+                          min-height:160px;color:#333;cursor:default"></div>
+
+              {# WhatsApp: muestra burbuja mockup #}
+              <div id="tvCuerpoWA" style="display:none">
+                <div style="background:#e5ddd5;border-radius:10px;overflow:hidden;max-width:440px">
+                  {# Header tipo WhatsApp #}
+                  <div style="background:#075e54;color:#fff;padding:10px 14px;
+                              display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600">
+                    <i class="bi bi-whatsapp" style="font-size:16px"></i>
+                    ILUS Sport &amp; Health
+                    <span style="margin-left:auto;font-size:10px;opacity:.7">en línea</span>
+                  </div>
+                  {# Chat area #}
+                  <div style="padding:14px 12px">
+                    <div style="background:#fff;border-radius:0 10px 10px 10px;
+                                padding:10px 14px;max-width:330px;
+                                box-shadow:0 1px 2px rgba(0,0,0,.15);font-size:13px;line-height:1.6">
+                      <div id="tvWABubble" style="color:#111"></div>
+                      <div style="text-align:right;color:#8696a0;font-size:10px;margin-top:6px">
+                        14:32 &nbsp;<i class="bi bi-check2-all" style="color:#53bdeb"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {# Variables disponibles (vista) #}
+            <div class="mt-3">
+              <div class="small text-muted mb-1 fw-semibold">
+                <i class="bi bi-braces me-1"></i>Variables disponibles:
+              </div>
+              <div id="tvVars" class="d-flex flex-wrap gap-1"></div>
+              <div class="small text-muted mt-1" style="font-size:.7rem">
+                Presiona <strong>Editar</strong> para insertar variables en la plantilla.
+              </div>
+            </div>
+
+            <div id="tvMsg" class="small mt-2"></div>
+          </div>
+
+          {# ── Modo EDICIÓN ── #}
+          <div id="tplEditorWrap" style="display:none;padding:24px">
+            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+              <h6 id="tplEstadoTitulo" class="mb-0 fw-bold"></h6>
+              <span class="badge bg-danger" id="tplCanalBadge"></span>
+              <div class="ms-auto d-flex gap-1">
+                <button class="btn btn-sm btn-outline-secondary" onclick="tplCancelarEdicion()">
+                  <i class="bi bi-x me-1"></i>Cancelar
+                </button>
+                <button class="btn btn-sm btn-danger fw-bold" onclick="tplGuardar()">
+                  <i class="bi bi-floppy me-1"></i>Guardar
+                </button>
+              </div>
+            </div>
+
+            {# Variables clicables #}
+            <div class="mb-3 p-2 rounded" style="background:#fff8f5;border:1px solid #f0d0c0">
+              <div class="small fw-semibold mb-1" style="color:#CC0000">
+                <i class="bi bi-braces me-1"></i>Haz clic en una variable para insertarla en el cursor:
+              </div>
+              <div id="tplVarsContainer" class="d-flex flex-wrap gap-1"></div>
+            </div>
+
+            {# Asunto (solo email) #}
+            <div id="tplAsuntoWrap" class="mb-3">
+              <label class="form-label small fw-semibold">Asunto del email</label>
+              <input id="tplAsunto" class="form-control form-control-sm"
+                     placeholder="Asunto del correo...">
+            </div>
+
+            {# Cuerpo #}
+            <div class="mb-3">
+              <div class="d-flex align-items-center justify-content-between mb-1">
+                <label class="form-label small fw-semibold mb-0" id="tplCuerpoLabel">Cuerpo</label>
+                <span id="tplCuerpoHint" class="text-muted" style="font-size:.7rem"></span>
+              </div>
+              <textarea id="tplCuerpo" class="form-control font-monospace"
+                        rows="14" style="font-size:.8rem;resize:vertical"
+                        placeholder="Contenido del mensaje..."></textarea>
+            </div>
+
+            <div id="tplMsg" class="small mb-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ══════════════════════════════════════════════
+       TAB 4 — HISTORIAL
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tabLog">
+      <div class="card shadow-sm border-0">
+        <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+          <span class="fw-bold">
+            <i class="bi bi-list-ul me-2 text-danger"></i>Historial de envíos (últimos 80)
+          </span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem">
+              <thead class="table-dark">
+                <tr>
+                  <th>Fecha</th>
+                  <th>Canal</th>
+                  <th>Destinatario</th>
+                  <th>Asunto / Body</th>
+                  <th class="text-center">Estado</th>
+                  <th>Enviado por</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for l in log_rows %}
+                <tr>
+                  <td class="text-muted" style="white-space:nowrap">
+                    {{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '—' }}
+                  </td>
+                  <td>
+                    {% if l.canal == 'email' %}
+                      <span class="badge bg-primary"><i class="bi bi-envelope me-1"></i>Email</span>
+                    {% else %}
+                      <span class="badge bg-success"><i class="bi bi-whatsapp me-1"></i>WA</span>
+                    {% endif %}
+                  </td>
+                  <td class="font-monospace" style="font-size:.75rem">{{ l.destinatario or '—' }}</td>
+                  <td>{{ (l.asunto or '—')[:60] }}</td>
+                  <td class="text-center">
+                    {% if l.estado == 'ok' %}
+                      <span class="badge bg-success">OK</span>
+                    {% else %}
+                      <span class="badge bg-danger" title="{{ l.detalle or '' }}">Error</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-muted" style="font-size:.75rem">{{ l.enviado_por or '—' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted py-4">Sin registros de envíos aún.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /tab-content #}
+</div>{# /container #}
+
+
+{# ══════════════════════════════════════════════
+   MODAL: Vista previa plantilla
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTplPreview" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-eye me-2 text-danger"></i>Vista previa — <span id="previewTitle"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="tplPreviewFrame" style="width:100%;height:520px;border:0"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════
+   MODAL: Enviar prueba plantilla
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTplPrueba" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:440px">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title"><i class="bi bi-send me-2 text-danger"></i>Enviar mensaje de prueba</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="tplPruebaEmailWrap" class="mb-3">
+          <label class="form-label small">Destinatario email</label>
+          <input id="tplPruebaEmail" type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 placeholder="correo@destino.cl">
+        </div>
+        <div id="tplPruebaWAWrap" class="mb-3" style="display:none">
+          <label class="form-label small">Número WhatsApp (con código país)</label>
+          <input id="tplPruebaWA" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 placeholder="+56912345678" value="+56">
+        </div>
+        <div id="tplPruebaMsg" class="small mt-1"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger btn-sm fw-bold" onclick="tplEnviarPruebaConfirm()">
+          <i class="bi bi-send me-1"></i>Enviar prueba
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════
+   MODAL: Test Email
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTestEmail" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title"><i class="bi bi-send me-2 text-danger"></i>Enviar email de prueba</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label small">Destinatario</label>
+        <input id="testEmailTo" type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+               placeholder="correo@destino.cl">
+        <div id="testEmailMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger btn-sm fw-bold" onclick="enviarTestEmail()">
+          <i class="bi bi-send me-1"></i>Enviar prueba
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════
+   MODAL: Test WhatsApp
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTestWA" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title"><i class="bi bi-whatsapp me-2 text-success"></i>Enviar WA de prueba</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label small">Número destinatario (con código de país)</label>
+        <input id="testWATo" class="form-control form-control-sm bg-dark text-light border-secondary"
+               placeholder="+56912345678" value="+56">
+        <div class="form-text text-muted small mt-1">El destinatario debe haber enviado el join code previamente.</div>
+        <div id="testWAMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success btn-sm fw-bold" onclick="enviarTestWA()">
+          <i class="bi bi-whatsapp me-1"></i>Enviar prueba
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+/* ── modales ── */
+let _modalTestEmail, _modalTestWA;
+document.addEventListener('DOMContentLoaded', () => {
+  _modalTestEmail  = new bootstrap.Modal(document.getElementById('modalTestEmail'));
+  _modalTestWA     = new bootstrap.Modal(document.getElementById('modalTestWA'));
+
+  document.getElementById('ccColor').addEventListener('input', function() {
+    document.getElementById('ccColorText').value = this.value;
+  });
+
+  document.getElementById('ccLogoFile').addEventListener('change', function() {
+    const f = this.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = e => { _logoBase64 = e.target.result; };
+    reader.readAsDataURL(f);
+  });
+});
+
+let _logoBase64 = '{{ client_cfg.logo_url or "" }}';
+
+/* ════════════════════════════════
+   SMTP
+════════════════════════════════ */
+async function guardarSmtp() {
+  const msg = document.getElementById('smtpMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const body = {
+    host    : val('smtpHost'),
+    port    : parseInt(val('smtpPort')) || 587,
+    user    : val('smtpUser'),
+    pass    : val('smtpPass'),
+    fromName: val('smtpFromName'),
+    secure  : document.getElementById('smtpSecure').checked,
+  };
+  if (!body.user) { msg.innerHTML='<span class="text-danger">Ingresa el email</span>'; return; }
+  if (body.pass === '') delete body.pass;
+  const r = await fetch('/comunicaciones/smtp/config', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
+    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+}
+
+function abrirTestEmail() {
+  document.getElementById('testEmailMsg').innerHTML = '';
+  _modalTestEmail.show();
+}
+
+async function enviarTestEmail() {
+  const to  = document.getElementById('testEmailTo').value.trim();
+  const msg = document.getElementById('testEmailMsg');
+  if (!to) { msg.innerHTML='<span class="text-danger">Ingresa destinatario</span>'; return; }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+  const r = await fetch('/comunicaciones/smtp/test', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to})
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado! Revisa tu bandeja.</span>'
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+}
+
+/* ════════════════════════════════
+   CLIENTE / IDENTIDAD
+════════════════════════════════ */
+async function guardarCliente() {
+  const msg = document.getElementById('ccMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const body = {
+    company_name : val('ccCompany'),
+    reply_to     : val('ccReplyTo'),
+    support_email: val('ccSupport'),
+    support_phone: val('ccPhone'),
+    corp_color   : val('ccColorText') || val('ccColor'),
+    tracking_url : val('ccTracking'),
+    email_cc     : val('ccCC'),
+    email_bcc    : val('ccBCC'),
+    logo_url     : _logoBase64 || '',
+  };
+  const r = await fetch('/comunicaciones/cliente/config', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
+    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+}
+
+/* ════════════════════════════════
+   PREVIEW EMAIL
+════════════════════════════════ */
+function actualizarPreview() {
+  const color   = val('ccColorText') || val('ccColor') || '#CC0000';
+  const company = val('ccCompany')   || 'ILUS Sport & Health';
+  const logo    = _logoBase64 || '';
+  const logoBlock = logo
+    ? `<img src="${logo}" alt="${company}" style="height:40px;margin-bottom:12px;object-fit:contain"><br>`
+    : '';
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#0c0907;font-family:'Segoe UI',Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0c0907;padding:24px 0">
+<tr><td align="center">
+  <table width="520" cellpadding="0" cellspacing="0"
+         style="background:#1a0f05;border-radius:12px;overflow:hidden;max-width:520px">
+    <tr><td style="background:linear-gradient(135deg,${color}dd,${color}88,#1a0f05);padding:28px;text-align:center">
+      ${logoBlock}
+      <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:3px">${company}</div>
+      <div style="color:#fff;font-size:16px;font-weight:700;margin-top:14px">Vista previa del encabezado</div>
+    </td></tr>
+    <tr><td style="background:#fff;padding:24px 28px">
+      <p style="font-size:14px;color:#1a1a1a">Este es el cuerpo del correo. El contenido real variará según la plantilla.</p>
+    </td></tr>
+    <tr><td style="background:#1a0f05;padding:16px 28px;text-align:center;color:#555;font-size:11px">
+      ${company} — Sistema de Comunicaciones
+    </td></tr>
+  </table>
+</td></tr>
+</table></body></html>`;
+  document.getElementById('emailPreview').srcdoc = html;
+}
+
+/* ════════════════════════════════
+   ENVÍO MANUAL
+════════════════════════════════ */
+function seleccionarPlantilla() {
+  const tpl  = val('manTemplate');
+  const wrap = document.getElementById('manHtmlWrap');
+  wrap.style.display = tpl ? 'none' : '';
+}
+
+async function enviarManual() {
+  const msg     = document.getElementById('manMsg');
+  const to      = val('manTo').trim();
+  const subject = val('manSubject').trim();
+  const tpl     = val('manTemplate');
+  let   html    = val('manHtml').trim();
+  if (!to || !subject) {
+    msg.innerHTML = '<span class="text-danger">Completa destinatario y asunto</span>';
+    return;
+  }
+  if (!tpl && !html) {
+    msg.innerHTML = '<span class="text-danger">Selecciona una plantilla o escribe HTML</span>';
+    return;
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+  let endpoint = '/comunicaciones/email/enviar';
+  let body = {to, subject, html};
+  if (tpl === 'prueba') { endpoint = '/comunicaciones/smtp/test'; body = {to}; }
+  const r = await fetch(endpoint, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado correctamente!</span>'
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+}
+
+/* ════════════════════════════════
+   WHATSAPP
+════════════════════════════════ */
+async function guardarWA() {
+  const msg = document.getElementById('waMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Guardando…';
+  const body = {
+    account_sid: val('waSid').trim(),
+    auth_token : val('waToken').trim(),
+    from_number: val('waFrom').trim(),
+    biz_number : val('waBiz').trim(),
+  };
+  if (!body.account_sid.toUpperCase().startsWith('AC')) {
+    msg.innerHTML = '<span class="text-danger">El Account SID debe empezar con "AC"</span>';
+    return;
+  }
+  const r = await fetch('/comunicaciones/whatsapp/config', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
+    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+}
+
+function abrirTestWA() {
+  document.getElementById('testWAMsg').innerHTML = '';
+  _modalTestWA.show();
+}
+
+async function enviarTestWA() {
+  const to  = document.getElementById('testWATo').value.trim();
+  const msg = document.getElementById('testWAMsg');
+  if (!to) { msg.innerHTML='<span class="text-danger">Ingresa el número</span>'; return; }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Enviando…';
+  const r = await fetch('/comunicaciones/whatsapp/test', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({to})
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado! SID: ${esc(d.msg_sid||'')}</span>`
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+}
+
+/* ════════════════════════════════════════════════════
+   PLANTILLAS POR ESTADO
+════════════════════════════════════════════════════ */
+const TPL_ESTADOS = [
+  { key:'programado',    label:'Pedido programado',        icon:'bi-box-seam',         grupo:'despacho',
+    color:'#28a745', desc:'Se envía cuando el pedido queda ingresado y programado' },
+  { key:'en_ruta',       label:'En ruta',                  icon:'bi-truck',             grupo:'despacho',
+    color:'#007bff', desc:'Se envía cuando el pedido sale de bodega hacia el courier' },
+  { key:'en_camino',     label:'En camino (próximo)',       icon:'bi-geo-alt',           grupo:'despacho',
+    color:'#17a2b8', desc:'Se envía cuando el pedido está en reparto, llegará hoy' },
+  { key:'entregado',     label:'Entregado',                 icon:'bi-check-circle',      grupo:'despacho',
+    color:'#20c997', desc:'Se envía cuando el pedido fue entregado exitosamente' },
+  { key:'fallido',       label:'Fallido / No entregado',   icon:'bi-x-circle',          grupo:'despacho',
+    color:'#dc3545', desc:'Se envía cuando el courier no pudo entregar el pedido' },
+  { key:'inicio_sesion', label:'Inicio de sesión',          icon:'bi-box-arrow-in-right',grupo:'sistema',
+    color:'#6f42c1', desc:'Se envía cuando alguien inicia sesión en la cuenta' },
+  { key:'cambio_pass',   label:'Cambio de contraseña',     icon:'bi-key',               grupo:'sistema',
+    color:'#fd7e14', desc:'Se envía cuando se cambia o crea la contraseña del usuario' },
+];
+
+const TPL_VARS = {
+  despacho: [
+    { v:'{{nombre_cliente}}',    label:'Nombre cliente' },
+    { v:'{{id_pedido}}',         label:'ID Pedido' },
+    { v:'{{courier}}',           label:'Courier' },
+    { v:'{{numero_seguimiento}}',label:'N° Seguimiento' },
+    { v:'{{direccion_entrega}}', label:'Dirección entrega' },
+    { v:'{{fecha_entrega}}',     label:'Fecha estimada' },
+    { v:'{{costo_envio}}',       label:'Costo envío' },
+    { v:'{{motivo_falla}}',      label:'Motivo falla' },
+  ],
+  sistema: [
+    { v:'{{nombre_usuario}}', label:'Nombre usuario' },
+    { v:'{{email_usuario}}',  label:'Email usuario' },
+    { v:'{{fecha_hora}}',     label:'Fecha y hora' },
+    { v:'{{ip_acceso}}',      label:'IP de acceso' },
+  ],
+};
+
+// ── Helper: construye el HTML completo del email con diseño oficial ILUS ──
+function _buildEmailHtml(titulo, cuerpo) {
+  // Logo: usa la imagen configurada (base64) o cae al CDN oficial
+  const logoSrc = _logoBase64 ||
+    'https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png';
+  const comp = '{{ client_cfg.company_name or "ILUS Sport &amp; Health" }}';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif">
+
+<div style="max-width:650px;margin:30px auto;background:#ffffff;border-radius:10px;
+            overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08)">
+
+  <!-- HEADER: negro + logo -->
+  <div style="background:#000;padding:25px;text-align:center">
+    <img src="${logoSrc}" alt="${comp}"
+         style="height:50px;display:block;margin:0 auto;max-width:220px">
+  </div>
+
+  <!-- TÍTULO: banda oscura -->
+  <div style="background:#111;color:#fff;text-align:center;padding:30px 25px">
+    <h1 style="margin:0;font-size:22px;font-weight:700">${titulo}</h1>
+  </div>
+
+  <!-- CONTENIDO -->
+  <div style="padding:30px;font-size:14px;color:#444;line-height:22px">
+    ${cuerpo}
+  </div>
+
+  <!-- FOOTER: negro -->
+  <div style="background:#000;padding:25px;text-align:center">
+    <div style="color:#DC143C;font-size:13px;font-weight:bold">ILUS FITNESS</div>
+    <div style="color:#777;font-size:11px;margin-top:6px">
+      Equipamiento profesional para alto rendimiento
+    </div>
+    <div style="margin-top:15px;font-size:11px;color:#555">
+      Este correo fue generado automáticamente.<br>
+      Para soporte, utiliza nuestros canales oficiales.
+    </div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
+// ── Plantillas por defecto — HTML inline para email, texto WA con formato ──
+const TPL_DEFAULTS = {
+
+  // ─── PEDIDO PROGRAMADO ───────────────────────────────────────────────────
+  programado: {
+    email: {
+      asunto: 'Tu pedido {{id_pedido}} ha sido programado — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu pedido ha sido <strong>programado exitosamente</strong> y está siendo preparado en nuestra bodega. Te notificaremos cuando salga a despacho.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #CC0000;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; <span style="color:#CC0000;font-weight:700">{{id_pedido}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entrega estimada:</strong>&nbsp; {{fecha_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Costo despacho:</strong>&nbsp; {{costo_envio}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Te enviaremos un nuevo aviso cuando tu pedido salga de bodega con el número de seguimiento.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '📦 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ha sido programado exitosamente ✅\n\n🔖 *N° Pedido:* {{id_pedido}}\n🚛 *Courier:* {{courier}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Dirección:* {{direccion_entrega}}\n💰 *Costo despacho:* {{costo_envio}}\n\nTe avisaremos cuando salga de bodega. ¡Gracias por elegirnos! 💪'
+    }
+  },
+
+  // ─── EN RUTA ─────────────────────────────────────────────────────────────
+  en_ruta: {
+    email: {
+      asunto: 'Tu pedido {{id_pedido}} está en ruta — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Buenas noticias! Tu pedido <strong>{{id_pedido}}</strong> ya salió de bodega y está en camino contigo a través de <strong>{{courier}}</strong>.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #007bff;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; <span style="color:#007bff;font-weight:700">{{numero_seguimiento}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entrega estimada:</strong>&nbsp; {{fecha_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Puedes rastrear tu envío usando el N° de seguimiento en el sitio web del courier.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🚚 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ya está *en ruta* 🟢\n\n🔖 *N° Pedido:* {{id_pedido}}\n🏢 *Courier:* {{courier}}\n🔍 *N° Seguimiento:* {{numero_seguimiento}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Destino:* {{direccion_entrega}}\n\nPuedes rastrear tu envío con el número de seguimiento. ¡Ya falta poco! 📦'
+    }
+  },
+
+  // ─── EN CAMINO (PRÓXIMO) ─────────────────────────────────────────────────
+  en_camino: {
+    email: {
+      asunto: '¡Tu pedido {{id_pedido}} llega HOY! — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Tu pedido <strong>{{id_pedido}}</strong> está en reparto y llegará <strong style="color:#CC0000">HOY</strong> a tu domicilio! Asegúrate de que alguien pueda recibirlo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #17a2b8;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección de entrega:</strong>&nbsp; <strong>{{direccion_entrega}}</strong></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">⚠️ <strong>Importante:</strong> Si no hay nadie para recibir el pedido, el courier podría reprogramar la entrega al día siguiente hábil.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛵 *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* está *EN REPARTO* y llegará *HOY* 🎉\n\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\n⚠️ Asegúrate de que alguien pueda recibir el pedido. ¡Ya está llegando!'
+    }
+  },
+
+  // ─── ENTREGADO ───────────────────────────────────────────────────────────
+  entregado: {
+    email: {
+      asunto: '✅ Pedido {{id_pedido}} entregado con éxito — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Excelente! Tu pedido <strong>{{id_pedido}}</strong> ha sido <strong style="color:#20c997">entregado exitosamente</strong>. Esperamos que disfrutes tu equipamiento al máximo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #20c997;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entregado en:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">¡Gracias por confiar en <strong>ILUS Sport &amp; Health</strong>! Estamos siempre disponibles si necesitas apoyo con tu equipo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '✅ *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* fue *entregado exitosamente* 🎊\n\n📍 *Entregado en:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\nGracias por confiar en ILUS Sport & Health. ¡Que disfrutes tu equipamiento! 💪🏋️'
+    }
+  },
+
+  // ─── FALLIDO / NO ENTREGADO ──────────────────────────────────────────────
+  fallido: {
+    email: {
+      asunto: '⚠️ No pudimos entregar tu pedido {{id_pedido}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Lamentamos informarte que no fue posible entregar tu pedido <strong>{{id_pedido}}</strong> en el intento realizado.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #dc3545;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Motivo:</strong>&nbsp; <span style="color:#dc3545;font-weight:600">{{motivo_falla}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección intentada:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">Nuestro equipo se pondrá en contacto contigo para coordinar una nueva fecha de entrega. Disculpa los inconvenientes ocasionados.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '⚠️ *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, lamentamos informarte que no pudimos entregar tu pedido *{{id_pedido}}*.\n\n❌ *Motivo:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
+    }
+  },
+
+  // ─── INICIO DE SESIÓN ────────────────────────────────────────────────────
+  inicio_sesion: {
+    email: {
+      asunto: '🔐 Nuevo inicio de sesión detectado — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Hemos detectado un nuevo inicio de sesión en tu cuenta del sistema de gestión ILUS.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6f42c1;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de acceso:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 Si reconoces esta actividad, puedes ignorar este mensaje. Si <strong>no fuiste tú</strong>, cambia tu contraseña de inmediato y contacta al administrador del sistema.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔐 *ILUS — Alerta de seguridad*\n\nHola *{{nombre_usuario}}*, se detectó un inicio de sesión en tu cuenta.\n\n🕐 *Fecha:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n📧 *Cuenta:* {{email_usuario}}\n\nSi fuiste tú, ignora este mensaje.\nSi *no fuiste tú*, cambia tu contraseña de inmediato. 🚨'
+    }
+  },
+
+  // ─── CAMBIO DE CONTRASEÑA ────────────────────────────────────────────────
+  cambio_pass: {
+    email: {
+      asunto: '🔑 Tu contraseña fue actualizada — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">La contraseña de tu cuenta en el sistema de gestión ILUS fue <strong>actualizada exitosamente</strong>.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 Si realizaste este cambio, no es necesaria ninguna acción. Si <strong>no reconoces este cambio</strong>, contacta al administrador del sistema de inmediato.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, tu contraseña fue actualizada el *{{fecha_hora}}*.\n\n📧 *Cuenta:* {{email_usuario}}\n\nSi realizaste este cambio, no es necesaria ninguna acción.\nSi *no fuiste tú*, contacta al administrador de inmediato. 🚨'
+    }
+  },
+
+};
+
+let _tplData   = {};
+let _tplLoaded = false;
+let _tplEstado = null;
+let _tplCanal  = 'email';
+let _tplModeEdit = false;
+let _modalTplPreview, _modalTplPrueba;
+
+document.addEventListener('DOMContentLoaded', () => {
+  _modalTplPreview = new bootstrap.Modal(document.getElementById('modalTplPreview'));
+  _modalTplPrueba  = new bootstrap.Modal(document.getElementById('modalTplPrueba'));
+});
+
+async function cargarPlantillas() {
+  if (_tplLoaded) return;
+  try {
+    const r = await fetch('/comunicaciones/templates');
+    _tplData = await r.json();
+  } catch(e) { _tplData = {}; }
+  _tplLoaded = true;
+  renderTplEstados();
+}
+
+function renderTplEstados() {
+  const list = document.getElementById('tplEstadoList');
+  let html = '';
+  let lastGrupo = '';
+  TPL_ESTADOS.forEach(e => {
+    if (e.grupo !== lastGrupo) {
+      const gLabel = e.grupo === 'despacho' ? 'Despacho' : 'Sistema';
+      const gIcon  = e.grupo === 'despacho' ? 'bi-truck' : 'bi-gear';
+      html += `<div style="padding:10px 16px 4px;color:#555;font-size:.58rem;font-weight:700;
+                           text-transform:uppercase;letter-spacing:1.2px">
+                 <i class="bi ${gIcon} me-1"></i>${gLabel}</div>`;
+      lastGrupo = e.grupo;
+    }
+    const isActive = _tplEstado === e.key;
+    html += `<button onclick="tplSeleccionar('${e.key}')"
+               style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 18px;
+                      background:${isActive?'rgba(204,0,0,.18)':'transparent'};border:none;
+                      border-left:3px solid ${isActive?'var(--ilus-red)':'transparent'};
+                      color:${isActive?'#fff':'#aaa'};font-size:.84rem;font-weight:600;
+                      text-align:left;cursor:pointer;transition:.12s">
+               <i class="bi ${e.icon}" style="font-size:.9rem;flex-shrink:0;color:${e.color}"></i>
+               ${esc(e.label)}
+             </button>`;
+  });
+  list.innerHTML = html;
+}
+
+function tplSeleccionar(key) {
+  _tplEstado   = key;
+  _tplCanal    = 'email';
+  _tplModeEdit = false;
+  renderTplEstados();
+  tplMostrarVista();
+}
+
+// ── VISTA (solo lectura) ───────────────────────────────
+function tplMostrarVista() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta) return;
+  document.getElementById('tplEditorPlaceholder').style.display = 'none';
+  document.getElementById('tplEditorWrap').style.display  = 'none';
+  document.getElementById('tplViewWrap').style.display    = '';
+
+  document.getElementById('tvEstadoBadge').textContent = meta.grupo === 'despacho' ? 'Despacho' : 'Sistema';
+  document.getElementById('tvEstadoTitulo').textContent = meta.label;
+  document.getElementById('tvMsg').innerHTML = '';
+
+  // Botones canal
+  document.getElementById('tvBtnEmail').className =
+    'btn btn-sm fw-semibold ' + (_tplCanal==='email' ? 'btn-danger' : 'btn-outline-secondary');
+  document.getElementById('tvBtnWA').className =
+    'btn btn-sm ' + (_tplCanal==='whatsapp' ? 'btn-success' : 'btn-outline-secondary');
+  document.getElementById('tvBtnPreview').style.display = _tplCanal==='email' ? '' : 'none';
+
+  // Asunto
+  const asuntoWrap = document.getElementById('tvAsuntoWrap');
+  asuntoWrap.style.display = _tplCanal === 'email' ? '' : 'none';
+
+  // Cuerpo label / hint
+  document.getElementById('tvCuerpoLabel').textContent =
+    _tplCanal==='email' ? 'Código fuente HTML del email' : 'Vista previa WhatsApp';
+  document.getElementById('tvCuerpoHint').textContent =
+    _tplCanal==='email' ? 'Usa "Vista previa" para ver el email renderizado'
+                       : '*negrita* · _cursiva_ · emojis';
+
+  // Valores — primero DB, si vacío usar defaults de fábrica
+  const dbVal   = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
+  const defVal  = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const saved   = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+  document.getElementById('tvAsunto').textContent = saved.asunto || '';
+
+  if (_tplCanal === 'email') {
+    // Email: muestra código fuente HTML
+    document.getElementById('tvCuerpo').style.display   = '';
+    document.getElementById('tvCuerpoWA').style.display = 'none';
+    document.getElementById('tvCuerpo').textContent = saved.cuerpo || '';
+  } else {
+    // WhatsApp: muestra burbuja renderizada
+    document.getElementById('tvCuerpo').style.display   = 'none';
+    document.getElementById('tvCuerpoWA').style.display = '';
+    // Convierte formato WhatsApp a HTML básico
+    const waHtml = (saved.cuerpo || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\n/g,'<br>')
+      .replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>')
+      .replace(/_([^_\n]+)_/g,'<em>$1</em>');
+    document.getElementById('tvWABubble').innerHTML = waHtml;
+  }
+
+  // Variables disponibles — con colores por grupo
+  const vars = TPL_VARS[meta.grupo] || [];
+  document.getElementById('tvVars').innerHTML = vars.map(v =>
+    `<span style="background:#fff8f5;border:1px solid #f0c0a0;border-radius:4px;padding:2px 9px;
+                  font-size:.72rem;font-family:monospace;color:#CC0000">
+       ${esc(v.v)}<span style="font-size:.65rem;color:#888;font-family:sans-serif;margin-left:4px">${esc(v.label)}</span>
+     </span>`
+  ).join('');
+}
+
+// ── ACTIVAR EDICIÓN ───────────────────────────────────
+function tplActivarEdicion() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta) return;
+  document.getElementById('tplViewWrap').style.display  = 'none';
+  document.getElementById('tplEditorWrap').style.display = '';
+
+  document.getElementById('tplEstadoTitulo').textContent = meta.label;
+  document.getElementById('tplCanalBadge').textContent   = _tplCanal === 'email' ? '📧 Email' : '💬 WhatsApp';
+  document.getElementById('tplMsg').innerHTML = '';
+
+  // Variables clicables (con color ILUS)
+  const vars = TPL_VARS[meta.grupo] || [];
+  document.getElementById('tplVarsContainer').innerHTML = vars.map(v =>
+    `<button type="button" onclick="tplInsertarVar('${v.v}')"
+       style="background:#fff8f5;border:1px solid #f0c0a0;border-radius:4px;padding:3px 9px;
+              font-size:.73rem;font-family:monospace;color:#CC0000;cursor:pointer;
+              transition:background .1s" onmouseover="this.style.background='#ffe8dc'"
+       onmouseout="this.style.background='#fff8f5'">
+       ${esc(v.v)}<span style="font-size:.65rem;color:#888;font-family:sans-serif;margin-left:4px">${esc(v.label)}</span>
+     </button>`
+  ).join('');
+
+  // Asunto
+  document.getElementById('tplAsuntoWrap').style.display = _tplCanal === 'email' ? '' : 'none';
+  document.getElementById('tplCuerpoLabel').textContent =
+    _tplCanal === 'email' ? 'Cuerpo HTML del email' : 'Texto del mensaje WhatsApp';
+  document.getElementById('tplCuerpoHint').textContent =
+    _tplCanal==='email' ? 'Escribe HTML con estilos inline. Las variables {{var}} se reemplazan al enviar.'
+                       : 'Texto plano. *negrita* · _cursiva_ · emoji. Las variables {{var}} se reemplazan al enviar.';
+
+  const dbVal2  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
+  const defVal2 = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const saved2  = (dbVal2 && (dbVal2.asunto || dbVal2.cuerpo)) ? dbVal2 : defVal2;
+  document.getElementById('tplAsunto').value = saved2.asunto || '';
+  document.getElementById('tplCuerpo').value = saved2.cuerpo || '';
+}
+
+function tplCancelarEdicion() {
+  document.getElementById('tplEditorWrap').style.display = 'none';
+  tplMostrarVista();
+}
+
+function tplCambiarCanal(canal) {
+  _tplCanal = canal;
+  if (document.getElementById('tplEditorWrap').style.display !== 'none') {
+    tplActivarEdicion();
+  } else {
+    tplMostrarVista();
+  }
+}
+
+function tplInsertarVar(v) {
+  const ta = document.getElementById('tplCuerpo');
+  const s  = ta.selectionStart || 0;
+  const e  = ta.selectionEnd   || 0;
+  ta.value = ta.value.substring(0,s) + v + ta.value.substring(e);
+  ta.selectionStart = ta.selectionEnd = s + v.length;
+  ta.focus();
+}
+
+async function tplGuardar() {
+  const msg = document.getElementById('tplMsg');
+  if (!_tplEstado) return;
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const body = {
+    asunto: _tplCanal === 'email' ? val('tplAsunto') : '',
+    cuerpo: val('tplCuerpo'),
+  };
+  const r = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.ok) {
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    if (!_tplData[_tplEstado][_tplCanal]) _tplData[_tplEstado][_tplCanal] = {};
+    _tplData[_tplEstado][_tplCanal].asunto = body.asunto;
+    _tplData[_tplEstado][_tplCanal].cuerpo = body.cuerpo;
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+    setTimeout(() => { tplCancelarEdicion(); }, 1200);
+  } else {
+    msg.innerHTML = `<span class="text-danger">${esc(d.error||'Error al guardar')}</span>`;
+  }
+}
+
+async function tplRestaurar() {
+  if (!_tplEstado) return;
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!confirm(`¿Restaurar la plantilla "${meta.label}" — ${_tplCanal} a su versión original?`)) return;
+  const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
+  const r   = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(def)
+  });
+  const d = await r.json();
+  if (d.ok) {
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    _tplData[_tplEstado][_tplCanal] = { asunto: def.asunto, cuerpo: def.cuerpo };
+    tplMostrarVista();
+    document.getElementById('tvMsg').innerHTML =
+      '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Plantilla restaurada</span>';
+    setTimeout(() => document.getElementById('tvMsg').innerHTML = '', 3000);
+  }
+}
+
+function tplVistaPreviaModal() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta || _tplCanal !== 'email') return;
+
+  // Usa la versión DB si existe, si no el default
+  const dbVal  = ((_tplData[_tplEstado] || {})['email']) || null;
+  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})['email']) || {};
+  const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+  const cuerpo = saved.cuerpo || '';
+  const asunto = saved.asunto || meta.label;
+
+  document.getElementById('previewTitle').textContent = asunto;
+
+  // Construye el HTML completo con el wrapper ILUS y lo pone en el iframe
+  const frame = document.getElementById('tplPreviewFrame');
+  frame.srcdoc = _buildEmailHtml(asunto, cuerpo);
+  _modalTplPreview.show();
+}
+
+function tplEnviarPrueba() {
+  if (!_tplEstado) return;
+  document.getElementById('tplPruebaEmailWrap').style.display = _tplCanal==='email' ? '' : 'none';
+  document.getElementById('tplPruebaWAWrap').style.display    = _tplCanal==='whatsapp' ? '' : 'none';
+  document.getElementById('tplPruebaMsg').innerHTML = '';
+  _modalTplPrueba.show();
+}
+
+async function tplEnviarPruebaConfirm() {
+  const msg  = document.getElementById('tplPruebaMsg');
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+
+  // Usa DB si existe, si no el default de fábrica
+  const dbVal  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
+  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+
+  if (_tplCanal === 'email') {
+    const to = document.getElementById('tplPruebaEmail').value.trim();
+    if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el email destinatario</span>'; return; }
+
+    // Envuelve el fragmento HTML del cuerpo en el diseño completo ILUS
+    const asunto  = saved.asunto || meta.label;
+    const htmlFull = _buildEmailHtml(asunto, saved.cuerpo || '');
+
+    const r = await fetch('/comunicaciones/email/enviar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ to, subject: asunto, html: htmlFull })
+    });
+    const d = await r.json();
+    msg.innerHTML = d.ok
+      ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Email enviado con diseño ILUS!</span>'
+      : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
+
+  } else {
+    const to = document.getElementById('tplPruebaWA').value.trim();
+    if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el número con código de país (+56...)</span>'; return; }
+    const r = await fetch('/comunicaciones/whatsapp/test', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ to, body: saved.cuerpo || meta.label })
+    });
+    const d = await r.json();
+    msg.innerHTML = d.ok
+      ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡WhatsApp enviado!</span>'
+      : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
+  }
+}
+
+/* ── helpers ── */
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function val(id){ return (document.getElementById(id)||{}).value||''; }
+function togglePass(id, btn) {
+  const inp = document.getElementById(id);
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.querySelector('i').className = 'bi bi-eye' + (show ? '-slash' : '');
+}
+</script>
+{% endblock %}

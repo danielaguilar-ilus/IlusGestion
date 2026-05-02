@@ -56,9 +56,18 @@
             <td class="small text-muted">{{ user.updated_at }}</td>
             <td class="text-center">
               <div class="d-flex justify-content-center gap-1">
-                <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"
+                   title="Editar"><i class="bi bi-pencil"></i></a>
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        title="Reenviar invitación por email"
+                        onclick="reenviarInvitacion({{ user.id }}, '{{ user.nombre }}', '{{ user.username }}', this)">
+                  <i class="bi bi-envelope-arrow-up"></i>
+                </button>
                 {% if current_user.id != user.id %}
-                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteUserModal{{ user.id }}"><i class="bi bi-trash"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal"
+                        data-bs-target="#deleteUserModal{{ user.id }}" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
                 {% endif %}
               </div>
             </td>
@@ -69,6 +78,31 @@
     </div>
   </div>
 </div>
+
+{% block scripts %}
+<script>
+async function reenviarInvitacion(uid, nombre, email, btn) {
+  if (!confirm(`¿Reenviar invitación por email a ${nombre} (${email})?`)) return;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  try {
+    const r = await fetch(`/admin/users/${uid}/invite`, {method:'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      btn.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+      setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+    } else {
+      alert('Error: ' + (d.error || 'No se pudo enviar'));
+      btn.innerHTML = orig; btn.disabled = false;
+    }
+  } catch(e) {
+    alert('Error de red');
+    btn.innerHTML = orig; btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}
 
 {% for user in users %}
 {% if current_user.id != user.id %}

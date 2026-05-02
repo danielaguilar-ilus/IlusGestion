@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Manifiestos — Transporte ILUS{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-clipboard-check me-2" style="color:var(--ilus-red)"></i>Manifiestos de Despacho</h4>
+    <div class="sub">Registro de despachos agrupados por courier</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('transporte_index') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Monitor
+    </a>
+    <button class="btn btn-sm btn-ilus fw-bold" data-bs-toggle="modal" data-bs-target="#newManModal">
+      <i class="bi bi-plus-circle me-1"></i>Nuevo manifiesto
+    </button>
+  </div>
+</div>
+
+{# ── Filtros ── #}
+<form method="get" class="ilus-card mb-3 p-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-6 col-sm-4">
+      <select name="courier" class="form-select form-select-sm">
+        <option value="">Todos los courier</option>
+        {% for c in couriers %}
+        <option value="{{ c }}" {% if filtros.courier==c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-sm-4">
+      <select name="estado" class="form-select form-select-sm">
+        <option value="">Todos los estados</option>
+        {% for e in estados_manifest %}
+        <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
+      <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+    </div>
+  </div>
+</form>
+
+{# ── Tabla desktop ── #}
+<div class="ilus-card d-none d-md-block mb-3">
+  <div class="ilus-card-header">
+    <span>Manifiestos <span class="badge bg-secondary ms-1">{{ manifiestos|length }}</span></span>
+  </div>
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0" style="font-size:.82rem">
+      <thead>
+        <tr>
+          <th>Correlativo</th>
+          <th>Fecha</th>
+          <th>Courier</th>
+          <th class="text-center">Items</th>
+          <th class="text-end">Costo total</th>
+          <th>Estado</th>
+          <th>Notas</th>
+          <th class="text-center">Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in manifiestos %}
+        {% set mcolor = {
+          'En preparación':'warning',
+          'En curso':'primary',
+          'Cerrado':'secondary',
+          'Entregado completo':'success'
+        }.get(m.estado, 'secondary') %}
+        <tr class="tr-hoverable">
+          <td class="fw-bold font-monospace">{{ m.correlativo }}</td>
+          <td>{{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '—' }}</td>
+          <td>{{ m.courier }}</td>
+          <td class="text-center">
+            <span class="badge bg-dark rounded-pill">{{ m.total_items or 0 }}</span>
+          </td>
+          <td class="text-end">
+            {% if m.costo_total %}
+              <span style="color:var(--ilus-red);font-weight:600">
+                ${{ "{:,.0f}".format(m.costo_total) }}
+              </span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge rounded-pill bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}">
+              {{ m.estado }}
+            </span>
+          </td>
+          <td class="text-muted small">{{ (m.notas or '')[:40] }}{{ '…' if (m.notas or '')|length > 40 }}</td>
+          <td class="text-center">
+            <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}"
+               class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-eye me-1"></i>Ver
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-center py-4 text-muted">
+            <i class="bi bi-clipboard-x me-2"></i>Sin manifiestos
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Cards mobile ── #}
+<div class="d-md-none">
+  {% for m in manifiestos %}
+  {% set mcolor = {
+    'En preparación':'warning',
+    'En curso':'primary',
+    'Cerrado':'secondary',
+    'Entregado completo':'success'
+  }.get(m.estado, 'secondary') %}
+  <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}" class="text-decoration-none">
+    <div class="ilus-card mb-2">
+      <div class="p-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="fw-bold font-monospace">{{ m.correlativo }}</div>
+          <span class="badge bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}">{{ m.estado }}</span>
+        </div>
+        <div class="mt-1 fw-semibold">{{ m.courier }}</div>
+        <div class="small text-muted mt-1">
+          {{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '' }} ·
+          {{ m.total_items or 0 }} items
+          {% if m.costo_total %} · ${{ "{:,.0f}".format(m.costo_total) }}{% endif %}
+        </div>
+      </div>
+    </div>
+  </a>
+  {% else %}
+  <div class="text-center py-4 text-muted">Sin manifiestos</div>
+  {% endfor %}
+</div>
+
+{# ── Modal nuevo manifiesto ── #}
+<div class="modal fade" id="newManModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-clipboard-plus me-2"></i>Nuevo Manifiesto</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Courier <span class="text-danger">*</span></label>
+          <select id="newCourier" class="form-select form-select-sm">
+            <option value="">— selecciona —</option>
+            {% for c in couriers %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Fecha despacho <span class="text-danger">*</span></label>
+          <input type="date" id="newFecha" class="form-control form-control-sm">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Notas</label>
+          <textarea id="newNotas" class="form-control form-control-sm" rows="2"
+                    placeholder="Ej: Zona norte, peso máx 200kg…"></textarea>
+        </div>
+        <div id="newManMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="newManBtn" onclick="crearManifiesto()">
+          <i class="bi bi-check-circle me-1"></i>Crear manifiesto
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Preselect today's date
+document.addEventListener('DOMContentLoaded', function() {
+  var today = new Date().toISOString().split('T')[0];
+  document.getElementById('newFecha').value = today;
+});
+
+function crearManifiesto() {
+  var courier = document.getElementById('newCourier').value.trim();
+  var fecha   = document.getElementById('newFecha').value.trim();
+  var notas   = document.getElementById('newNotas').value.trim();
+  var msg     = document.getElementById('newManMsg');
+
+  if (!courier) { msg.innerHTML='<span class="text-danger">Selecciona un courier</span>'; return; }
+  if (!fecha)   { msg.innerHTML='<span class="text-danger">Indica la fecha</span>'; return; }
+
+  var btn = document.getElementById('newManBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+  msg.innerHTML = '';
+
+  var fd = new FormData();
+  fd.append('courier', courier);
+  fd.append('fecha', fecha);
+  fd.append('notas', notas);
+
+  fetch('/transporte/manifiestos/nuevo', {method:'POST', body:fd})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Creado ' + d.correlativo + '</span>';
+        setTimeout(function(){ window.location.href = '/transporte/manifiestos/' + d.id; }, 700);
+      } else {
+        msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Crear manifiesto';
+      }
+    })
+    .catch(function() {
+      msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Crear manifiesto';
+    });
+}
+</script>
+{% endblock %}

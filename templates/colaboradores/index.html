@@ -30,88 +30,125 @@
     <div class="col-4"><div class="stat-card amber"><div class="stat-num">{{ licencia }}</div><div class="stat-label">Con licencia</div></div></div>
   </div>
 
-  {# ── Grid de tarjetas ── #}
-  <div class="row g-3">
+  {# ── Grid de tarjetas — blancas, grandes, legibles ── #}
+  <div class="row g-4">
     {% for col in colaboradores %}
-    <div class="col-12 col-sm-6 col-lg-4">
-      <div class="ilus-card h-100" style="border-radius:10px;overflow:hidden">
+    <div class="col-12 col-sm-6 col-xl-4">
 
-        {# Banner superior con estado #}
-        <div style="height:6px;background:{% if col.estado=='activo' %}#28a745{% elif col.estado=='licencia' %}#ffc107{% else %}#6c757d{% endif %}"></div>
+      {# Barra de color por estado arriba #}
+      {% set estado_color = '#28a745' if col.estado=='activo' else ('#ffc107' if col.estado=='licencia' else '#6c757d') %}
 
-        <div class="p-3">
-          <div class="d-flex align-items-center gap-3 mb-2">
+      <div style="background:#fff;border-radius:14px;overflow:hidden;
+                  box-shadow:0 2px 12px rgba(0,0,0,.08);border:1px solid #eee;
+                  height:100%;display:flex;flex-direction:column">
 
-            {# Foto / avatar #}
+        {# Banda de color superior (8px) #}
+        <div style="height:8px;background:{{ estado_color }};flex-shrink:0"></div>
+
+        <div style="padding:22px 20px 16px;flex:1;display:flex;flex-direction:column">
+
+          {# Cabecera: foto + nombre + cargo + área #}
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+
+            {# Foto / avatar grande #}
             {% if col.foto_filename %}
             <img src="{{ photo_src(col.foto_filename, 'uploads/colaboradores') }}"
                  alt="{{ col.nombre_completo }}"
-                 style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid #e0e0e0;flex-shrink:0">
+                 style="width:70px;height:70px;border-radius:50%;object-fit:cover;
+                        border:3px solid {{ estado_color }};flex-shrink:0">
             {% else %}
-            <div style="width:54px;height:54px;border-radius:50%;background:var(--ilus-black);
-                        color:#fff;display:flex;align-items:center;justify-content:center;
-                        font-size:1.4rem;font-weight:900;flex-shrink:0;letter-spacing:-1px">
+            <div style="width:70px;height:70px;border-radius:50%;
+                        background:var(--ilus-black);color:#fff;
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:1.8rem;font-weight:900;flex-shrink:0;
+                        border:3px solid {{ estado_color }}">
               {{ col.nombre_completo[0].upper() }}
             </div>
             {% endif %}
 
-            <div class="min-w-0">
-              <div class="fw-bold text-truncate" style="font-size:.95rem">{{ col.nombre_completo }}</div>
-              <div class="small text-muted text-truncate">
+            <div style="min-width:0;flex:1">
+              <div style="font-size:1.05rem;font-weight:800;color:#111;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                {{ col.nombre_completo }}
+              </div>
+              <div style="font-size:.88rem;color:#555;margin-top:2px;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                 {{ col.cargo_nombre or '—' }}
               </div>
-              <div class="small text-muted text-truncate">
+              <div style="font-size:.82rem;color:#888;margin-top:1px;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                 <i class="bi bi-building me-1"></i>{{ col.area_nombre or '—' }}
               </div>
             </div>
           </div>
 
-          {# Info compacta #}
-          <div class="d-flex flex-column gap-1 mb-3" style="font-size:.78rem;color:#555">
+          {# Separador #}
+          <div style="border-top:1px solid #f0f0f0;margin-bottom:14px"></div>
+
+          {# Info de contacto #}
+          <div style="display:flex;flex-direction:column;gap:8px;
+                      font-size:.85rem;color:#444;flex:1">
             {% if col.email %}
-            <span><i class="bi bi-envelope me-1 text-muted"></i>{{ col.email }}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <i class="bi bi-envelope" style="color:#888;font-size:1rem;width:16px;flex-shrink:0"></i>
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ col.email }}</span>
+            </div>
             {% endif %}
             {% if col.telefono %}
-            <span><i class="bi bi-telephone me-1 text-muted"></i>{{ col.telefono }}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <i class="bi bi-telephone" style="color:#888;font-size:1rem;width:16px;flex-shrink:0"></i>
+              <span>{{ col.telefono }}</span>
+            </div>
             {% endif %}
             {% if col.rut %}
-            <span><i class="bi bi-person-vcard me-1 text-muted"></i>{{ col.rut }}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <i class="bi bi-person-vcard" style="color:#888;font-size:1rem;width:16px;flex-shrink:0"></i>
+              <span>{{ col.rut }}</span>
+            </div>
             {% endif %}
           </div>
 
-          {# Estado + acciones #}
-          <div class="d-flex align-items-center justify-content-between">
-            {% if col.estado == 'activo' %}
-            <span class="ilus-badge badge-confirmado">{{ estados.get(col.estado, col.estado) }}</span>
-            {% elif col.estado == 'licencia' %}
-            <span class="ilus-badge badge-pendiente">{{ estados.get(col.estado, col.estado) }}</span>
-            {% else %}
-            <span class="ilus-badge" style="background:#e9ecef;color:#6c757d;border:1px solid #dee2e6">{{ estados.get(col.estado, col.estado) }}</span>
-            {% endif %}
-            <div class="d-flex gap-1">
+          {# Footer de la tarjeta: badge estado + botones acción #}
+          <div style="display:flex;align-items:center;justify-content:space-between;
+                      margin-top:16px;padding-top:14px;border-top:1px solid #f0f0f0">
+
+            {# Badge estado #}
+            <span style="display:inline-flex;align-items:center;gap:5px;
+                         padding:4px 12px;border-radius:50px;font-size:.78rem;font-weight:700;
+                         background:{{ estado_color }}22;color:{{ estado_color }};
+                         border:1px solid {{ estado_color }}55">
+              <span style="width:7px;height:7px;border-radius:50%;background:{{ estado_color }};display:inline-block"></span>
+              {{ estados.get(col.estado, col.estado) }}
+            </span>
+
+            {# Botones #}
+            <div style="display:flex;gap:6px">
               <a href="{{ url_for('colab_ficha', cid=col.id) }}"
-                 class="btn btn-sm btn-dark-ilus" title="Ver ficha">
-                <i class="bi bi-person-lines-fill"></i>
+                 class="btn btn-sm btn-dark-ilus" title="Ver ficha"
+                 style="padding:6px 10px;font-size:.8rem">
+                <i class="bi bi-person-lines-fill me-1"></i>Ficha
               </a>
               {% if permissions.hrm %}
               <a href="{{ url_for('colab_editar', cid=col.id) }}"
-                 class="btn btn-sm btn-outline-secondary" title="Editar">
+                 class="btn btn-sm btn-outline-secondary" title="Editar"
+                 style="padding:6px 9px">
                 <i class="bi bi-pencil"></i>
               </a>
               {% endif %}
               {% if permissions.delete %}
               <form method="post" action="{{ url_for('colab_eliminar', cid=col.id) }}"
                     onsubmit="return confirm('¿Eliminar a {{ col.nombre_completo }}? Esta acción no se puede deshacer.')">
-                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"
+                        style="padding:6px 9px">
                   <i class="bi bi-trash3"></i>
                 </button>
               </form>
               {% endif %}
             </div>
-          </div>
-        </div>
 
-      </div>
+          </div>
+        </div>{# /padding #}
+      </div>{# /card #}
     </div>
     {% endfor %}
   </div>

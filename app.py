@@ -421,12 +421,185 @@ def init_resets_table():
     conn.commit()
 
 
+def init_transporte_tables():
+    """Crea tablas del módulo Transporte y Distribución."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_commitments (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    tido            VARCHAR(5)   NOT NULL,
+                    nudo            VARCHAR(15)  NOT NULL,
+                    endo            VARCHAR(20)  NOT NULL DEFAULT '',
+                    fecha_emision   DATE,
+                    fecha_entrega   DATE,
+                    cliente_nombre  VARCHAR(200),
+                    cliente_rut     VARCHAR(20),
+                    comuna          VARCHAR(100),
+                    direccion       VARCHAR(300),
+                    telefono        VARCHAR(50),
+                    email           VARCHAR(150),
+                    valor_neto      DECIMAL(14,2) DEFAULT 0,
+                    valor_bruto     DECIMAL(14,2) DEFAULT 0,
+                    costo_zz        DECIMAL(10,2) DEFAULT 0,
+                    tiene_saldo     TINYINT(1) DEFAULT 1,
+                    guia_numero     VARCHAR(20),
+                    estado          VARCHAR(50) DEFAULT 'Pendiente',
+                    clasificacion   ENUM('despacho','retiro','instalacion','mantencion','garantia') DEFAULT 'despacho',
+                    fecha_agenda    DATE,
+                    notas           TEXT,
+                    erp_synced_at   DATETIME,
+                    created_by      VARCHAR(190),
+                    updated_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_doc (tido, nudo),
+                    INDEX idx_saldo    (tiene_saldo),
+                    INDEX idx_estado   (estado),
+                    INDEX idx_fecha    (fecha_emision),
+                    INDEX idx_clasif   (clasificacion)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migrar columna clasificacion si ya existía con ENUM antiguo
+            try:
+                cur.execute("""ALTER TABLE transport_commitments
+                    MODIFY COLUMN clasificacion
+                    ENUM('despacho','retiro','instalacion','mantencion','garantia')
+                    DEFAULT 'despacho'""")
+            except Exception:
+                pass
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_commitment_lines (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    commitment_id   INT NOT NULL,
+                    koprct          VARCHAR(30) NOT NULL,
+                    nokopr          VARCHAR(300),
+                    cantidad        DECIMAL(12,3) DEFAULT 0,
+                    cant_despachada DECIMAL(12,3) DEFAULT 0,
+                    saldo           DECIMAL(12,3) DEFAULT 0,
+                    bodega          VARCHAR(10),
+                    peso_unitario   DECIMAL(10,3) DEFAULT 0,
+                    volumen_unitario DECIMAL(14,2) DEFAULT 0,
+                    FOREIGN KEY (commitment_id)
+                        REFERENCES transport_commitments(id) ON DELETE CASCADE,
+                    INDEX idx_comm (commitment_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_manifests (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    correlativo     VARCHAR(20) UNIQUE,
+                    fecha           DATE NOT NULL,
+                    courier         VARCHAR(80) NOT NULL,
+                    estado          ENUM('En preparación','En curso','Cerrado','Entregado completo')
+                                    DEFAULT 'En preparación',
+                    total_items     INT DEFAULT 0,
+                    peso_total      DECIMAL(10,3) DEFAULT 0,
+                    vol_total       DECIMAL(14,2) DEFAULT 0,
+                    peso_pred_total DECIMAL(10,3) DEFAULT 0,
+                    costo_total     DECIMAL(12,2) DEFAULT 0,
+                    notas           TEXT,
+                    created_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_manifest_items (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    manifest_id     INT NOT NULL,
+                    commitment_id   INT NOT NULL,
+                    orden           INT DEFAULT 0,
+                    estado_entrega  ENUM(
+                        'En preparación','Entregado a transporte',
+                        'En ruta','Entregado','Entrega fallida','Devolución'
+                    ) DEFAULT 'En preparación',
+                    added_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (manifest_id)
+                        REFERENCES transport_manifests(id) ON DELETE CASCADE,
+                    FOREIGN KEY (commitment_id)
+                        REFERENCES transport_commitments(id),
+                    UNIQUE KEY uq_item (manifest_id, commitment_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_logs (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    entity_type ENUM('commitment','manifest','manifest_item') NOT NULL,
+                    entity_id   INT NOT NULL,
+                    accion      VARCHAR(80) NOT NULL,
+                    detalle     TEXT,
+                    usuario     VARCHAR(190),
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_entity (entity_type, entity_id),
+                    INDEX idx_user   (usuario)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── COURIERS ──────────────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_couriers (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre          VARCHAR(120) NOT NULL,
+                    rut             VARCHAR(20),
+                    contacto        VARCHAR(120),
+                    telefono        VARCHAR(50),
+                    email           VARCHAR(150),
+                    tipo            ENUM('nacional','regional','local','internacional') DEFAULT 'nacional',
+                    activo          TINYINT(1) DEFAULT 1,
+                    notas           TEXT,
+                    logo_url        VARCHAR(400),
+                    peso_max_bulto  DECIMAL(10,2) DEFAULT 0   COMMENT 'kg máx por bulto (0=sin límite)',
+                    peso_max_guia   DECIMAL(10,2) DEFAULT 0   COMMENT 'kg máx por guía (0=sin límite)',
+                    vol_max_bulto   DECIMAL(12,2) DEFAULT 0   COMMENT 'cm³ máx por bulto (0=sin límite)',
+                    factor_vol      DECIMAL(10,4) DEFAULT 5000 COMMENT 'divisor peso volumétrico (cm³/kg)',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_courier_tarifas (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    courier_id      INT NOT NULL,
+                    zona            VARCHAR(80) NOT NULL DEFAULT 'General',
+                    peso_desde      DECIMAL(10,3) NOT NULL DEFAULT 0,
+                    peso_hasta      DECIMAL(10,3) NOT NULL DEFAULT 0   COMMENT '0=sin tope',
+                    precio_base     DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    precio_kg_extra DECIMAL(10,2) DEFAULT 0   COMMENT 'precio por kg sobre peso_desde',
+                    moneda          CHAR(3) DEFAULT 'CLP',
+                    activo          TINYINT(1) DEFAULT 1,
+                    FOREIGN KEY (courier_id)
+                        REFERENCES transport_couriers(id) ON DELETE CASCADE,
+                    INDEX idx_courier (courier_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── DEFAULT COURIERS (solo si la tabla está vacía) ─────────
+            cur.execute("SELECT COUNT(*) AS n FROM transport_couriers")
+            row = cur.fetchone()
+            if (row or {}).get('n', 1) == 0:
+                _defaults = [
+                    ('FedEx',                'internacional'),
+                    ('Transportes Melling',  'nacional'),
+                    ('Transporte Felca',     'regional'),
+                    ('Envíame',              'nacional'),
+                ]
+                for _nom, _tipo in _defaults:
+                    cur.execute(
+                        "INSERT INTO transport_couriers (nombre, tipo) VALUES (%s, %s)",
+                        (_nom, _tipo)
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def init_db():
     """Inicializa el esquema MySQL. Sin SQLite — todo va a MySQL."""
     init_mysql_schema()
     init_hrm_tables()
     init_eval_tables()
     init_resets_table()
+    init_transporte_tables()
     ensure_erp_table_index()
 
 
@@ -474,12 +647,13 @@ def permission_set(role):
         "hrm":        False,   # módulo colaboradores
         "cubicador":  False,   # módulo cubicador de documentos
     }
+    base["transporte"] = False   # módulo Transporte y Distribución
     if role == "superadmin":
         return {k: True for k in base}
     if role == "admin":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "delete": True, "admin": True, "hrm": True,
-                "cubicador": True}
+                "cubicador": True, "transporte": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "hrm": True}
@@ -1291,12 +1465,12 @@ def product_search():
             f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
                        TRIM(COALESCE(`Nombre`,'')) AS nombre
                 FROM `{ERP_TABLE}`
-                WHERE UPPER(TRIM(`SKU`)) LIKE %s OR `Nombre` LIKE %s
+                WHERE UPPER(TRIM(`SKU`)) LIKE %s OR UPPER(`Nombre`) LIKE %s
                 ORDER BY
                   CASE WHEN UPPER(TRIM(`SKU`)) = %s THEN 0 ELSE 1 END,
                   `Nombre`
-                LIMIT 15""",
-            (like_u, like_p, q.upper()),
+                LIMIT 20""",
+            (like_u, like_u, q.upper()),
         )
         existing_skus = {r["sku"] for r in results}
         for r in rows2:
@@ -1317,11 +1491,11 @@ def product_search():
             body  = _erp_get(
                 "/productos",
                 {
-                    "search":   q,           # busca en código Y descripción
-                    "empresa":  "01",
-                    "fields":   "KOPR,NOKOPR",
-                    "visible":  "true",
-                    "venta":    "true",      # solo productos de venta
+                    "search":  q,            # busca en código Y descripción
+                    "empresa": "01",
+                    "fields":  "KOPR,NOKOPR",
+                    "visible": "true",
+                    "venta":   "true",       # solo productos de venta (excluye servicios)
                 },
                 TOKEN, timeout=6,
             )
@@ -1343,6 +1517,23 @@ def product_search():
                     break
         except Exception:
             pass   # si la API no responde, igual devolvemos lo local
+
+    # ── Verificación final: consulta batch a app_products para todos los SKUs ──
+    # Esto corrige casos donde la búsqueda por nombre falló (acentos/case) pero
+    # el SKU SÍ existe en la BD (evita mostrar "No registrado" cuando ya está).
+    if results:
+        try:
+            all_skus = list({r["sku"] for r in results})
+            ph = ",".join(["%s"] * len(all_skus))
+            verified = mysql_fetchall(
+                f"SELECT UPPER(TRIM(sku)) AS sku FROM `{PRODUCTS_TABLE}` WHERE UPPER(TRIM(sku)) IN ({ph})",
+                tuple(all_skus),
+            )
+            verified_set = {r["sku"] for r in (verified or [])}
+            for r in results:
+                r["already_exists"] = r["sku"] in verified_set
+        except Exception:
+            pass  # si falla la verificación, dejamos los valores anteriores
 
     # Ordenar: exactos primero, no-existentes primero, luego nombre
     results.sort(key=lambda x: (
@@ -1390,108 +1581,210 @@ def logout():
 
 
 # ─────────────────────────────────────────────
-#  Recuperación de contraseña
+#  Plantilla maestra ILUS para todos los correos
 # ─────────────────────────────────────────────
 
-def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
-    """Envía el correo HTML de recuperación. Retorna True si tuvo éxito."""
-    cfg = EMAIL_CONFIG
-    subject = "Recuperar contraseña — ILUS Sport & Health"
+def _ilus_email_html(
+    titulo: str,
+    subtitulo: str = "",
+    saludo: str = "",
+    parrafos: list = None,          # lista de strings HTML
+    btn_primario_txt: str = "",
+    btn_primario_url: str = "",
+    btn_secundario_txt: str = "",
+    btn_secundario_url: str = "",
+    info_lineas: list = None,       # lista de (icono, clave, valor)
+) -> str:
+    """
+    Genera HTML de correo con el diseño oficial ILUS:
+    Header negro con logo → banda oscura título/subtítulo → cuerpo blanco → botones → footer negro.
+    """
+    # ── Logo y empresa desde config (base64 o URL) ──────────────────────────
+    try:
+        cc       = _get_client_cfg()
+        logo_src = cc.get("logo_url") or ""
+        company  = cc.get("company_name") or "ILUS Sport &amp; Health"
+    except Exception:
+        logo_src = ""
+        company  = "ILUS Sport &amp; Health"
+    if not logo_src:
+        logo_src = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
 
-    html_body = f"""<!DOCTYPE html>
+    # ── Info box ─────────────────────────────────────────────────────────────
+    info_html = ""
+    if info_lineas:
+        rows_html = "".join(
+            f'<p style="margin:0 0 4px;font-size:13px;color:#333">'
+            f'<strong>{k}:</strong> {v}</p>'
+            for _, k, v in info_lineas
+        )
+        info_html = (
+            f'<div style="background:#f8f8f8;border-left:4px solid #DC143C;'
+            f'padding:15px 18px;margin:20px 0;border-radius:6px">'
+            f'{rows_html}</div>'
+        )
+
+    # ── Párrafos ─────────────────────────────────────────────────────────────
+    saludo_html = (
+        f'<p style="font-size:14px;color:#444;line-height:22px;margin:0 0 14px">'
+        f'Hola <strong>{saludo}</strong>,</p>'
+    ) if saludo else ""
+
+    body_html = "".join(
+        f'<p style="font-size:14px;color:#444;line-height:22px;margin:0 0 14px">{p}</p>'
+        for p in (parrafos or [])
+    )
+
+    # ── Botones ──────────────────────────────────────────────────────────────
+    btn1 = ""
+    if btn_primario_txt and btn_primario_url:
+        btn1 = (
+            f'<a href="{btn_primario_url}" style="display:inline-block;background:#DC143C;'
+            f'color:#ffffff;padding:12px 25px;text-decoration:none;font-size:13px;'
+            f'border-radius:5px;margin:5px;font-weight:bold">{btn_primario_txt}</a>'
+        )
+    btn2 = ""
+    if btn_secundario_txt and btn_secundario_url:
+        btn2 = (
+            f'<a href="{btn_secundario_url}" style="display:inline-block;background:#000;'
+            f'color:#ffffff;padding:12px 25px;text-decoration:none;font-size:13px;'
+            f'border-radius:5px;margin:5px;font-weight:bold">{btn_secundario_txt}</a>'
+        )
+    btns_html = (
+        f'<div style="padding:0 30px 30px;text-align:center">{btn1}{btn2}</div>'
+    ) if (btn1 or btn2) else ""
+
+    return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Recuperar contraseña</title>
+<title>{titulo}</title>
 </head>
-<body style="margin:0;padding:0;background:#f4f4f4;font-family:'Segoe UI',Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:40px 0">
-    <tr><td align="center">
-      <table width="520" cellpadding="0" cellspacing="0"
-             style="background:#fff;border-radius:12px;overflow:hidden;
-                    box-shadow:0 4px 24px rgba(0,0,0,.10);max-width:520px;width:100%">
+<body style="margin:0;padding:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif">
 
-        <!-- Cabecera roja -->
-        <tr>
-          <td style="background:#CC0000;padding:28px 32px;text-align:center">
-            <div style="font-size:26px;font-weight:900;letter-spacing:3px;color:#fff;
-                        font-family:'Segoe UI',Arial,sans-serif">ILUS</div>
-            <div style="font-size:11px;color:rgba(255,255,255,.75);letter-spacing:2px;
-                        text-transform:uppercase;margin-top:2px">Sport &amp; Health</div>
-          </td>
-        </tr>
+<div style="max-width:650px;margin:30px auto;background:#ffffff;border-radius:10px;
+            overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08)">
 
-        <!-- Cuerpo -->
-        <tr>
-          <td style="padding:36px 40px 28px">
-            <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#111">
-              Recuperar contraseña
-            </p>
-            <p style="margin:0 0 22px;font-size:14px;color:#555;line-height:1.6">
-              Hola <strong>{to_name}</strong>, recibimos una solicitud para restablecer
-              la contraseña de tu cuenta en el sistema ILUS.
-            </p>
-            <p style="margin:0 0 28px;font-size:14px;color:#555;line-height:1.6">
-              Haz clic en el botón a continuación para crear una nueva contraseña.
-              Este enlace es válido por <strong>60 minutos</strong>.
-            </p>
+  <!-- HEADER: negro + logo -->
+  <div style="background:#000;padding:25px;text-align:center">
+    <img src="{logo_src}" alt="{company}"
+         style="height:50px;display:block;margin:0 auto;max-width:220px">
+  </div>
 
-            <!-- Botón -->
-            <table cellpadding="0" cellspacing="0" width="100%">
-              <tr>
-                <td align="center">
-                  <a href="{reset_url}"
-                     style="display:inline-block;background:#CC0000;color:#fff;
-                            text-decoration:none;font-size:15px;font-weight:700;
-                            padding:14px 38px;border-radius:8px;letter-spacing:.3px">
-                    Restablecer contraseña
-                  </a>
-                </td>
-              </tr>
-            </table>
+  <!-- TÍTULO: banda oscura -->
+  <div style="background:#111;color:#fff;text-align:center;padding:30px 25px">
+    <h1 style="margin:0;font-size:22px;font-weight:700">{titulo}</h1>
+    {f'<p style="margin-top:8px;font-size:13px;color:#bbb;margin-bottom:0">{subtitulo}</p>' if subtitulo else ''}
+  </div>
 
-            <p style="margin:28px 0 8px;font-size:12px;color:#888;line-height:1.6">
-              Si no solicitaste este cambio, puedes ignorar este correo —
-              tu contraseña seguirá siendo la misma.
-            </p>
-            <p style="margin:0;font-size:11px;color:#bbb;word-break:break-all">
-              O copia este enlace en tu navegador:<br>
-              <a href="{reset_url}" style="color:#CC0000;text-decoration:none">{reset_url}</a>
-            </p>
-          </td>
-        </tr>
+  <!-- CONTENIDO -->
+  <div style="padding:30px">
+    {saludo_html}
+    {body_html}
+    {info_html}
+  </div>
 
-        <!-- Pie -->
-        <tr>
-          <td style="background:#f8f8f8;padding:16px 40px;border-top:1px solid #eee;
-                     text-align:center;font-size:11px;color:#aaa">
-            ILUS Sport &amp; Health &mdash; Sistema de Gestión Interno &mdash; 2026
-          </td>
-        </tr>
+  <!-- BOTONES -->
+  {btns_html}
 
-      </table>
-    </td></tr>
-  </table>
+  <!-- FOOTER: negro -->
+  <div style="background:#000;padding:25px;text-align:center">
+    <div style="color:#DC143C;font-size:13px;font-weight:bold">ILUS FITNESS</div>
+    <div style="color:#777;font-size:11px;margin-top:6px">
+      Equipamiento profesional para alto rendimiento
+    </div>
+    <div style="margin-top:15px;font-size:11px;color:#555">
+      Este correo fue generado automáticamente.<br>
+      Para soporte, utiliza nuestros canales oficiales.
+    </div>
+  </div>
+
+</div>
 </body>
 </html>"""
 
+
+def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
+    """Envía un correo HTML usando la configuración SMTP dinámica (o EMAIL_CONFIG de respaldo)."""
+    # Prioridad: config guardada en BD → EMAIL_CONFIG hardcoded
+    try:
+        dyn = _get_smtp_cfg()
+    except Exception:
+        dyn = {}
+    cfg = dyn if dyn.get("smtp_host") and dyn.get("smtp_user") else EMAIL_CONFIG
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = f"{cfg['from_name']} <{cfg['from_addr']}>"
+        msg["From"]    = f"{cfg.get('from_name','ILUS Sport & Health')} <{cfg.get('from_addr', cfg.get('smtp_user',''))}>"
         msg["To"]      = to_addr
         msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-        with smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=15) as srv:
-            srv.ehlo()
-            srv.starttls()
-            srv.login(cfg["smtp_user"], cfg["smtp_pass"])
-            srv.sendmail(cfg["from_addr"], [to_addr], msg.as_string())
+        port   = int(cfg.get("smtp_port", 587))
+        secure = bool(cfg.get("secure"))
+        from_addr = cfg.get("from_addr") or cfg.get("smtp_user", "")
+        if secure:
+            with smtplib.SMTP_SSL(cfg["smtp_host"], port, timeout=15) as srv:
+                srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+                srv.sendmail(from_addr, [to_addr], msg.as_string())
+        else:
+            with smtplib.SMTP(cfg["smtp_host"], port, timeout=15) as srv:
+                srv.ehlo(); srv.starttls()
+                srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+                srv.sendmail(from_addr, [to_addr], msg.as_string())
         return True
     except Exception as exc:
-        print(f"[ILUS][EMAIL] Error al enviar correo: {exc}")
+        print(f"[ILUS][EMAIL] Error al enviar a {to_addr}: {exc}")
         return False
+
+
+# ─────────────────────────────────────────────
+#  Recuperación de contraseña
+# ─────────────────────────────────────────────
+
+def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
+    """Envía el correo HTML de recuperación con diseño ILUS unificado."""
+    html_body = _ilus_email_html(
+        titulo          = "Recuperar contraseña",
+        subtitulo       = "Sistema de Gestión ILUS Sport &amp; Health",
+        saludo          = f"Hola, {to_name}",
+        parrafos        = [
+            "Recibimos una solicitud para restablecer la contraseña de tu cuenta en el sistema ILUS.",
+            "Haz clic en el botón a continuación para crear una nueva contraseña. "
+            "Este enlace es válido por <strong>60 minutos</strong>.",
+            f'Si no solicitaste este cambio, puedes ignorar este correo — '
+            f'tu contraseña seguirá siendo la misma.<br>'
+            f'<span style="font-size:11px;color:#bbb">O copia: '
+            f'<a href="{reset_url}" style="color:#CC0000">{reset_url}</a></span>',
+        ],
+        btn_primario_txt = "Restablecer contraseña",
+        btn_primario_url = reset_url,
+    )
+    return _send_ilus_email(to_addr, "Recuperar contraseña — ILUS Sport & Health", html_body)
+
+
+def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_name: str = "ILUS") -> bool:
+    """Envía correo de invitación a nuevo usuario para que cree su contraseña."""
+    html_body = _ilus_email_html(
+        titulo           = "Bienvenido a ILUS",
+        subtitulo        = "Sistema de Gestión ILUS Sport &amp; Health",
+        saludo           = f"Hola, {to_name}",
+        parrafos         = [
+            f"<strong>{creator_name}</strong> ha creado una cuenta para ti en el "
+            f"<strong>Sistema de Gestión ILUS</strong>.",
+            "Para ingresar por primera vez, establece tu contraseña personal "
+            "haciendo clic en el botón a continuación.",
+            "Este enlace es válido por <strong>24 horas</strong>. "
+            "Si no esperabas esta invitación, puedes ignorar este correo.",
+        ],
+        btn_primario_txt = "🔐 Crear mi contraseña",
+        btn_primario_url = set_url,
+        info_lineas      = [("", "Tu email de acceso", to_addr)],
+    )
+    return _send_ilus_email(
+        to_addr,
+        "Bienvenido a ILUS — Crea tu contraseña de acceso",
+        html_body,
+    )
 
 
 @app.route("/auth/olvidar-contrasena", methods=["GET", "POST"])
@@ -2189,11 +2482,12 @@ def users_index():
 @require_permission("admin")
 def new_user():
     if request.method == "POST":
-        username = request.form.get("username", "").strip().lower()
-        nombre   = request.form.get("nombre",   "").strip()
-        password = request.form.get("password", "")
-        role     = request.form.get("role",     "editor")
-        active   = 1 if request.form.get("active") == "1" else 0
+        username    = request.form.get("username", "").strip().lower()
+        nombre      = request.form.get("nombre",   "").strip()
+        role        = request.form.get("role",      "editor")
+        active      = 1 if request.form.get("active") == "1" else 0
+        send_invite = request.form.get("send_invite") == "1"
+        wa_number   = request.form.get("wa_number", "").strip()
 
         errors = []
         if not username:
@@ -2202,10 +2496,6 @@ def new_user():
             errors.append("El correo no tiene un formato válido.")
         if not nombre:
             errors.append("El nombre y apellido son requeridos.")
-        if not password:
-            errors.append("La clave es requerida.")
-        if len(password) < 8:
-            errors.append("La clave debe tener al menos 8 caracteres.")
         if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if get_auth_user_by_username(username):
@@ -2214,15 +2504,61 @@ def new_user():
         if errors:
             return render_template("user_form.html", errors=errors, user=None, fd=request.form)
 
+        # Crear usuario con contraseña placeholder (bloqueada hasta que use el enlace)
+        placeholder_hash = generate_password_hash(secrets.token_hex(32))
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
                 f"INSERT INTO `{AUTH_TABLE}` (username,nombre,password_hash,role,active) VALUES (%s,%s,%s,%s,%s)",
-                (username, nombre, generate_password_hash(password), role, active),
+                (username, nombre, placeholder_hash, role, active),
             )
         conn.commit()
 
-        flash("Usuario creado.", "success")
+        # Generar token de invitación (usa la misma tabla de resets, válido 24h)
+        if send_invite:
+            try:
+                token     = secrets.token_urlsafe(40)
+                expires   = datetime.now() + timedelta(hours=24)
+                new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
+                conn2     = get_db()
+                with conn2.cursor() as cur2:
+                    cur2.execute(
+                        f"INSERT INTO `{RESETS_TABLE}` (user_id,token,expires_at) VALUES (%s,%s,%s)",
+                        (new_uid, token, expires)
+                    )
+                conn2.commit()
+                set_url   = url_for("reset_password", token=token, _external=True)
+                creator   = g.user["nombre"] if g.user else "ILUS"
+                sent      = _send_invitation_email(username, nombre, set_url, creator)
+
+                # Enviar WhatsApp si se indicó número
+                if wa_number:
+                    try:
+                        wa_cfg = _get_wa_cfg()
+                        if wa_cfg.get("account_sid") and wa_cfg.get("auth_token"):
+                            wa_msg = (
+                                f"👋 Hola {nombre}, te damos la bienvenida al sistema ILUS.\n\n"
+                                f"Recibiste un email en *{username}* con un enlace para crear tu contraseña. "
+                                f"Presiona el botón del correo y sigue los pasos para ingresar.\n\n"
+                                f"📧 Revisa también tu carpeta de Spam si no lo encuentras.\n"
+                                f"⏰ El enlace es válido por 24 horas."
+                            )
+                            _send_whatsapp(
+                                wa_cfg["account_sid"], wa_cfg["auth_token"],
+                                wa_cfg["from_number"], wa_number, wa_msg
+                            )
+                    except Exception as _we:
+                        print(f"[ILUS][INVITE-WA] {_we}")
+
+                if sent:
+                    flash(f"Usuario creado. Invitación enviada a {username}.", "success")
+                else:
+                    flash(f"Usuario creado, pero no se pudo enviar el email. Configura SMTP en Comunicaciones.", "warning")
+            except Exception as _ie:
+                flash(f"Usuario creado, pero falló el envío de invitación: {_ie}", "warning")
+        else:
+            flash("Usuario creado. Recuerda establecer la contraseña o enviar la invitación después.", "success")
+
         return redirect(url_for("users_index"))
 
     return render_template("user_form.html", errors=[], user=None, fd={})
@@ -2300,6 +2636,33 @@ def delete_user(user_id):
 
     flash("Usuario eliminado.", "warning")
     return redirect(url_for("users_index"))
+
+
+@app.route("/admin/users/<int:user_id>/invite", methods=["POST"])
+@require_permission("admin")
+def invite_user(user_id):
+    """Envía (o reenvía) el correo de invitación para crear contraseña."""
+    user = get_auth_user_by_id(user_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    try:
+        token   = secrets.token_urlsafe(40)
+        expires = datetime.now() + timedelta(hours=24)
+        conn    = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO `{RESETS_TABLE}` (user_id,token,expires_at) VALUES (%s,%s,%s)",
+                (user_id, token, expires)
+            )
+        conn.commit()
+        set_url = url_for("reset_password", token=token, _external=True)
+        creator = g.user["nombre"] if g.user else "ILUS"
+        sent    = _send_invitation_email(user["username"], user["nombre"], set_url, creator)
+        if sent:
+            return jsonify({"ok": True})
+        return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP en Comunicaciones."}), 500
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 # ══════════════════════════════════════════════════════════════
@@ -3250,12 +3613,15 @@ TIPOS_DOC_CUBICADOR = [
     ("FCV", "Factura"),
     ("BLV", "Boleta"),
     ("GDV", "Guía de Despacho"),
+    ("NVV", "Nota de Venta"),
+    ("NVI", "Nota de Venta Internet"),
     ("VD",  "Nota de Venta Directa"),
     ("WEB", "Nota de Venta Web"),
     ("COV", "Cotización"),
 ]
 
 # VD y WEB usan TIDO=NVV en el ERP; el NUDO lleva el prefijo dentro (10 chars)
+# NVI puede mapear a NVV también dependiendo del ERP
 _ERP_TIDO_NUDO_MAP = {
     "VD":  ("NVV", lambda n: "VD"  + str(n).zfill(8)),
     "WEB": ("NVV", lambda n: "WEB" + str(n).zfill(7)),
@@ -3364,6 +3730,15 @@ def _cubicador_fetch(tido, nudo):
         "valor_bruto":    float(raw_header.get("VABRDO") or 0),
         "cliente_nombre": cliente_nombre,
         "cliente_rut":    cliente_rut,
+        "comuna":         (raw_header.get("NOKOZO") or raw_header.get("CMEN") or
+                           raw_header.get("NOKOCOMU") or raw_header.get("NOKOCOMUNADE") or
+                           raw_header.get("NOKOMUENDE") or raw_header.get("NOKOMUNEN") or
+                           raw_header.get("NOKCOMENDESP") or "").strip(),
+        "direccion":      (raw_header.get("DIENDESP") or raw_header.get("DIENDE") or
+                           raw_header.get("OBDO") or "").strip(),
+        "telefono":       "",
+        "email":          "",
+        "all_fields":     list(raw_header.keys()),  # para debug
     }
 
     # ── 4. Cruzar líneas con BD local (bultos/peso) ────────────────────
@@ -3371,7 +3746,10 @@ def _cubicador_fetch(tido, nudo):
     for l in raw_lineas:
         sku         = (l.get("KOPRCT") or "").strip().upper()
         descripcion = (l.get("NOKOPR") or "").strip()
-        qty         = float(l.get("CAPRCO1") or 0)
+        qty          = float(l.get("CAPRCO1") or 0)
+        qty_desp     = float(l.get("CAPRAD1") or 0)
+        saldo_linea  = max(qty - qty_desp, 0)
+        es_zz        = sku.upper() in {s.upper() for s in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}}
 
         if not sku:
             continue
@@ -3424,6 +3802,10 @@ def _cubicador_fetch(tido, nudo):
             "pred_tot":         round(pred_u     * qty, 4),
             # Flag
             "diferencia":       diferencia,
+            # Saldo / despacho
+            "cantidad_despachada": qty_desp,
+            "saldo":               saldo_linea,
+            "es_zz":               es_zz,
         })
 
     return header, lineas
@@ -3916,6 +4298,2209 @@ def cubicador_sync_nombre():
     return jsonify({"ok": True, "sku": sku, "nombre": nombre_erp})
 
 
+# ═══════════════════════════════════════════════════════════════
+#  MÓDULO: TRANSPORTE Y DISTRIBUCIÓN
+# ═══════════════════════════════════════════════════════════════
+
+ZZ_SKUS = {'ZZenvio', 'ZZINGREPUESTO', 'ZZSERVTEC', 'ZZRetiro', 'ZZINSTALACION', 'ZZINGARREQUIP'}
+
+ESTADOS_COMPROMISO = [
+    'Pendiente', 'En proceso', 'Despachado', 'Problema',
+    'Pedido de vuelta', 'Preventa', 'Indemnización', 'Garantía',
+    'Logística inversa', 'Prioridad', 'Indemnización revisada',
+    'Indemnización rechazada', 'Regalo', 'Reentrega',
+]
+COURIERS = [
+    'FedEx', 'Envíame', 'Transportes Milling', 'Starken',
+    'Daniel Pulgar', 'Servicio Técnico', 'Transportes Felca', 'Dropit', 'Clickex',
+]
+ESTADOS_ENTREGA = [
+    'En preparación', 'Entregado a transporte',
+    'En ruta', 'Entregado', 'Entrega fallida', 'Devolución',
+]
+
+ESTADO_COLORS = {
+    'Pendiente':              'warning',
+    'En proceso':             'primary',
+    'Despachado':             'success',
+    'Problema':               'danger',
+    'Pedido de vuelta':       'danger',
+    'Preventa':               'secondary',
+    'Indemnización':          'danger',
+    'Garantía':               'info',
+    'Logística inversa':      'secondary',
+    'Prioridad':              'danger',
+    'Indemnización revisada': 'warning',
+    'Indemnización rechazada':'danger',
+    'Regalo':                 'info',
+    'Reentrega':              'warning',
+}
+
+
+def _tr_log(entity_type, entity_id, accion, detalle=""):
+    """Registra un evento de trazabilidad en transport_logs."""
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO transport_logs (entity_type,entity_id,accion,detalle,usuario) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (entity_type, entity_id, accion, detalle, current_username())
+            )
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _parse_obdo(obdo: str) -> dict:
+    """Parsea texto libre OBDO: 'Dirección - teléfono - email'"""
+    import re as _re
+    result = {"direccion": "", "telefono": "", "email": ""}
+    if not obdo:
+        return result
+    email_m = _re.search(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', obdo)
+    if email_m:
+        result["email"] = email_m.group(0)
+        obdo = obdo.replace(email_m.group(0), "")
+    phone_m = _re.search(r'\b[\+56]*\s*[29]\d{7,8}\b', obdo)
+    if phone_m:
+        result["telefono"] = phone_m.group(0).strip()
+        obdo = obdo.replace(phone_m.group(0), "")
+    result["direccion"] = _re.sub(r'[-–]+\s*$', '', obdo).strip(' -–')
+    return result
+
+
+def _clasif_from_skus(skus):
+    """Determina la clasificación de un compromiso según sus SKUs ZZ."""
+    skus = [s.strip().upper() for s in skus if s]
+    if not skus: return "despacho"
+    if all(s == "ZZRETIRO" for s in skus): return "retiro"
+    if any(s == "ZZINSTALACION" for s in skus): return "instalacion"
+    if any(s in ("ZZSERVTEC", "ZZINGREPUESTO", "ZZINGARREQUIP") for s in skus): return "mantencion"
+    return "despacho"
+
+
+def _tr_fetch_from_erp(tido, nudo):
+    """
+    Obtiene un documento del ERP vía API y lo guarda/actualiza en transport_commitments.
+    Usa la misma lógica de _cubicador_fetch pero orientada a transporte.
+    Retorna el id del commitment o None.
+    """
+    from datetime import datetime as _dt
+    TOKEN  = ERP_CONFIG.get("api_token", "")
+    nudos  = _nudo_variants(nudo)
+
+    # Mapear VD/WEB → NVV igual que cubicador
+    if tido in _ERP_TIDO_NUDO_MAP:
+        erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
+        erp_nudo = nudo_fn(nudo)
+        nudos = _nudo_variants(erp_nudo)
+    else:
+        erp_tido = tido
+
+    raw_header, raw_lineas = None, []
+    for nv in nudos:
+        try:
+            body = _erp_get("/documentos/render",
+                            {"tido": erp_tido, "nudo": nv, "empresa": "01"},
+                            TOKEN, timeout=12)
+            data = body.get("data") or []
+            if data:
+                raw_header = data[0].get("maeedo") or {}
+                raw_lineas = data[0].get("maeddo") or []
+                break
+        except Exception as e:
+            raise ConnectionError(f"ERP no responde: {e}")
+
+    if not raw_header:
+        return None, "No encontrado en ERP"
+
+    # Filtrar sólo líneas ZZ
+    zz_lines = [l for l in raw_lineas
+                if (l.get("KOPRCT") or "").strip().upper() in {s.upper() for s in ZZ_SKUS}]
+    if not zz_lines:
+        return None, "Documento sin líneas ZZ"
+
+    # Calcular saldo
+    saldo_total = sum(
+        float(l.get("CAPRCO1") or 0) - float(l.get("CAPRAD1") or 0)
+        for l in zz_lines
+    )
+    tiene_saldo = 1 if saldo_total > 0 else 0
+
+    # Parsear OBDO
+    obdo_str = (raw_header.get("OBDO") or raw_header.get("TEXTO1") or "").strip()
+    parsed   = _parse_obdo(obdo_str)
+    direccion = parsed["direccion"] or (raw_header.get("DIENDESP") or "").strip()
+
+    # Nombre cliente
+    endo = (raw_header.get("ENDO") or "").strip()
+    cliente_nombre = (raw_header.get("NOKOEN") or "").strip().title()
+    if not cliente_nombre and endo:
+        try:
+            ent = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=6)
+            ed  = (ent.get("data") or [{}])[0]
+            cliente_nombre = (ed.get("NOKOEN") or "").strip().title()
+        except Exception:
+            pass
+
+    # Fecha
+    from datetime import datetime as _dt
+    def _parse_date(s):
+        if not s: return None
+        try: return _dt.fromisoformat(s.replace("Z", "+00:00")).date()
+        except: return None
+
+    fecha_em  = _parse_date(raw_header.get("FEEMDO"))
+    fecha_ent = _parse_date(raw_header.get("FEER"))
+
+    # Clasificación — basado en los SKUs ZZ predominantes
+    skus_upper = [(l.get("KOPRCT") or "").strip().upper() for l in zz_lines]
+    clasificacion = _clasif_from_skus(skus_upper)
+
+    # Costo ZZ (suma de PPPRNE de líneas ZZ)
+    costo_zz = sum(float(l.get("PPPRNE") or 0) for l in zz_lines)
+
+    # Guía (si CAPRAD1 >= CAPRCO1 en todas → tiene guía)
+    guia_numero = (raw_header.get("NUDO_GIA") or raw_header.get("NUDGIA") or "").strip() or None
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO transport_commitments
+                  (tido,nudo,endo,fecha_emision,fecha_entrega,cliente_nombre,cliente_rut,
+                   comuna,direccion,telefono,email,valor_neto,valor_bruto,costo_zz,
+                   tiene_saldo,guia_numero,clasificacion,erp_synced_at,created_by,updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)
+                ON DUPLICATE KEY UPDATE
+                  fecha_emision=VALUES(fecha_emision), fecha_entrega=VALUES(fecha_entrega),
+                  cliente_nombre=VALUES(cliente_nombre), cliente_rut=VALUES(cliente_rut),
+                  comuna=VALUES(comuna), direccion=VALUES(direccion),
+                  telefono=VALUES(telefono), email=VALUES(email),
+                  valor_neto=VALUES(valor_neto), valor_bruto=VALUES(valor_bruto),
+                  costo_zz=CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
+                  tiene_saldo=VALUES(tiene_saldo), guia_numero=VALUES(guia_numero),
+                  clasificacion=VALUES(clasificacion), erp_synced_at=NOW(),
+                  updated_by=VALUES(updated_by)
+            """, (
+                tido, str(nudo), endo, fecha_em, fecha_ent,
+                cliente_nombre, endo,
+                (raw_header.get("CMEN") or raw_header.get("NOKOZO") or
+                 raw_header.get("NOKOCOMU") or raw_header.get("NOKOCOMUNADE") or
+                 raw_header.get("NOKOMUENDE") or raw_header.get("NOKOMUNEN") or
+                 raw_header.get("NOKCOMENDESP") or "").strip(),
+                direccion, parsed["telefono"], parsed["email"],
+                float(raw_header.get("VANEDO") or 0),
+                float(raw_header.get("VABRDO") or 0),
+                costo_zz, tiene_saldo, guia_numero, clasificacion,
+                current_username(), current_username()
+            ))
+            comm_id = cur.lastrowid or mysql_fetchone(
+                "SELECT id FROM transport_commitments WHERE tido=%s AND nudo=%s",
+                (tido, str(nudo))
+            )["id"]
+
+            # Líneas ZZ
+            cur.execute("DELETE FROM transport_commitment_lines WHERE commitment_id=%s", (comm_id,))
+            for l in zz_lines:
+                cant  = float(l.get("CAPRCO1") or 0)
+                cantd = float(l.get("CAPRAD1")  or 0)
+                cur.execute("""
+                    INSERT INTO transport_commitment_lines
+                      (commitment_id,koprct,nokopr,cantidad,cant_despachada,saldo,bodega)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                """, (comm_id,
+                      (l.get("KOPRCT") or "").strip().upper(),
+                      (l.get("NOKOPR") or "").strip(),
+                      cant, cantd, cant - cantd,
+                      (l.get("BOSULIDO") or "").strip()))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return comm_id, None
+
+
+# ── SYNC MASIVO ERP → TRANSPORTE ────────────────────────────────
+
+def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
+    """
+    Sincronización masiva desde el ERP vía MySQL directo.
+    Trae todos los documentos con líneas ZZ y saldo pendiente en el rango.
+    Retorna (count_ok, list_errors).
+    """
+    conn_erp = get_erp_conn()
+    if not conn_erp:
+        return 0, ["No se pudo conectar al ERP (MySQL)"]
+
+    zz_list      = list(ZZ_SKUS)
+    zz_in        = ",".join(["%s"] * len(zz_list))
+    TIDOS_VALIDOS = ("FCV", "BLV", "GDV", "NVV", "NVI", "COV")
+    tido_in      = ",".join(["%s"] * len(TIDOS_VALIDOS))
+
+    try:
+        with conn_erp.cursor() as cur:
+            cur.execute(f"""
+                SELECT
+                    h.TIDO, h.NUDO, h.ENDO, h.FEEMDO, h.FEER,
+                    h.NOKOEN,
+                    COALESCE(h.OBDO, h.TEXTO1, '') AS OBDO,
+                    COALESCE(h.DIENDESP, '')        AS DIENDESP,
+                    COALESCE(h.VANEDO, 0)           AS VANEDO,
+                    COALESCE(h.VABRDO, 0)           AS VABRDO,
+                    COALESCE(h.NOKOZO, h.CMEN, h.NOKOCOMU, h.NOKOCOMUNADE,
+                             h.NOKOMUENDE, h.NOKOMUNEN, h.NOKCOMENDESP, '') AS COMUNA,
+                    COALESCE(h.NUDGIA, '')           AS NUDGIA,
+                    SUM(GREATEST(d.CAPRCO1 - COALESCE(d.CAPRAD1, 0), 0)) AS saldo_zz,
+                    SUM(COALESCE(d.PPPRNE, 0))       AS costo_zz_sum,
+                    GROUP_CONCAT(DISTINCT UPPER(d.KOPRCT) ORDER BY d.KOPRCT) AS zz_skus
+                FROM MAEEDO h
+                JOIN MAEDDO d ON d.TIDO = h.TIDO AND d.NUDO = h.NUDO
+                WHERE d.KOPRCT IN ({zz_in})
+                  AND h.TIDO IN ({tido_in})
+                  AND h.FEEMDO BETWEEN %s AND %s
+                  AND (d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)) > 0
+                GROUP BY h.TIDO, h.NUDO
+                HAVING saldo_zz > 0
+                ORDER BY h.FEEMDO DESC
+                LIMIT 500
+            """, zz_list + list(TIDOS_VALIDOS) + [fecha_desde, fecha_hasta])
+            rows = cur.fetchall()
+    except Exception as exc:
+        return 0, [f"Error al consultar ERP: {exc}"]
+    finally:
+        conn_erp.close()
+
+    count, errs = 0, []
+    local_conn = get_mysql()
+    try:
+        for row in rows:
+            try:
+                tido  = (row.get("TIDO") or "").strip()
+                nudo  = (row.get("NUDO") or "").strip()
+                endo  = (row.get("ENDO") or "").strip()
+                nombre = (row.get("NOKOEN") or "").strip().title()
+                obdo  = (row.get("OBDO") or "").strip()
+                parsed = _parse_obdo(obdo)
+                dir_  = parsed["direccion"] or (row.get("DIENDESP") or "").strip()
+                tel   = parsed["telefono"]
+                mail  = parsed["email"]
+                comuna = (row.get("COMUNA") or "").strip()
+                vneto  = float(row.get("VANEDO") or 0)
+                vbruto = float(row.get("VABRDO") or 0)
+                costo_zz = float(row.get("costo_zz_sum") or 0)
+                guia  = (row.get("NUDGIA") or "").strip() or None
+                zz_present = (row.get("zz_skus") or "").upper()
+                _zz_list_bulk = [s.strip() for s in zz_present.split(",") if s.strip()]
+                clasif = _clasif_from_skus(_zz_list_bulk) if _zz_list_bulk else "despacho"
+
+                def _pd(val):
+                    if not val: return None
+                    if hasattr(val, "date"): return val.date()
+                    try:
+                        from datetime import datetime as _dt
+                        return _dt.fromisoformat(str(val).replace("Z", "")).date()
+                    except Exception:
+                        return None
+
+                fecha_em  = _pd(row.get("FEEMDO"))
+                fecha_ent = _pd(row.get("FEER"))
+
+                with local_conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO transport_commitments
+                          (tido,nudo,endo,fecha_emision,fecha_entrega,
+                           cliente_nombre,cliente_rut,
+                           comuna,direccion,telefono,email,
+                           valor_neto,valor_bruto,costo_zz,
+                           tiene_saldo,guia_numero,clasificacion,
+                           erp_synced_at,created_by,updated_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,NOW(),'sync','sync')
+                        ON DUPLICATE KEY UPDATE
+                          fecha_emision =VALUES(fecha_emision),
+                          fecha_entrega =VALUES(fecha_entrega),
+                          cliente_nombre=VALUES(cliente_nombre),
+                          cliente_rut   =VALUES(cliente_rut),
+                          comuna        =VALUES(comuna),
+                          direccion     =VALUES(direccion),
+                          telefono      =VALUES(telefono),
+                          email         =VALUES(email),
+                          valor_neto    =VALUES(valor_neto),
+                          valor_bruto   =VALUES(valor_bruto),
+                          costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
+                          tiene_saldo   =1,
+                          guia_numero   =VALUES(guia_numero),
+                          clasificacion =VALUES(clasificacion),
+                          erp_synced_at =NOW()
+                    """, (tido, nudo, endo, fecha_em, fecha_ent,
+                          nombre, endo, comuna, dir_, tel, mail,
+                          vneto, vbruto, costo_zz, guia, clasif))
+                local_conn.commit()
+                count += 1
+            except Exception as e2:
+                errs.append(f"{row.get('TIDO')} {row.get('NUDO')}: {e2}")
+    finally:
+        local_conn.close()
+
+    return count, errs or None
+
+
+def _tr_import_from_excel(file_bytes, filename):
+    """
+    Importa documentos desde un Excel/CSV exportado del ERP.
+    Detecta columnas automáticamente.
+    Retorna (count_ok, list_errors, preview_rows).
+    """
+    import io
+
+    # ── intentar openpyxl (xlsx) o csv ──
+    rows_raw = []
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        ws = wb.active
+        headers = [str(c.value or "").strip().upper() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows_raw.append(dict(zip(headers, [str(v or "").strip() for v in row])))
+    except Exception:
+        # Fallback: CSV
+        import csv
+        decoded = file_bytes.decode("utf-8-sig", errors="replace")
+        reader  = csv.DictReader(io.StringIO(decoded))
+        for row in reader:
+            rows_raw.append({k.strip().upper(): str(v or "").strip() for k, v in row.items()})
+
+    if not rows_raw:
+        return 0, ["Archivo vacío o formato no reconocido"], []
+
+    # ── mapeo flexible de columnas ──
+    COL_MAP = {
+        "tido":   ["TIDO", "TIPO", "TIPO DOCUMENTO", "TIPODOC", "TIPO DOC"],
+        "nudo":   ["NUDO", "NUMERO", "N°", "NDOC", "NUM DOC", "NUMERO DOC", "FOLIO"],
+        "nombre": ["NOKOEN", "NOMBRE", "CLIENTE", "RAZON SOCIAL", "NOMBRE CLIENTE"],
+        "fecha":  ["FEEMDO", "FECHA", "FECHA EMISION", "FECHA EMISIÓN", "FECHA DOC"],
+        "sku":    ["KOPRCT", "SKU", "CODIGO", "CÓDIGO", "PRODUCTO"],
+        "cant":   ["CAPRCO1", "CANTIDAD", "QTY", "CANT", "CANT PEDIDA"],
+        "cantd":  ["CAPRAD1", "DESPACHADO", "DESPACHO", "CANT DESPACHADA", "ENTREGADO"],
+        "costo":  ["PPPRNE", "PRECIO", "VALOR", "COSTO", "MONTO"],
+        "comuna": ["CMEN", "NOKOZO", "COMUNA", "CIUDAD"],
+        "dir":    ["DIENDESP", "DIRECCION", "DIRECCIÓN", "OBDO"],
+        "rut":    ["ENDO", "RUT", "RUTEN", "RUT CLIENTE"],
+    }
+
+    def find_col(row, candidates):
+        for c in candidates:
+            if c in row:
+                return row[c]
+        return ""
+
+    # Agrupar por TIDO+NUDO
+    from collections import defaultdict
+    docs = defaultdict(lambda: {"lineas": [], "header": {}})
+    skipped = 0
+    for row in rows_raw:
+        tido  = find_col(row, COL_MAP["tido"]).upper().strip()
+        nudo  = find_col(row, COL_MAP["nudo"]).strip()
+        sku   = find_col(row, COL_MAP["sku"]).upper().strip()
+        if not tido or not nudo:
+            skipped += 1
+            continue
+        key = (tido, nudo)
+        docs[key]["header"] = row
+        if sku in {s.upper() for s in ZZ_SKUS}:
+            docs[key]["lineas"].append(row)
+
+    # Filtrar docs que tienen al menos una línea ZZ con saldo
+    count, errs, preview = 0, [], []
+    local_conn = get_mysql()
+    try:
+        for (tido, nudo), doc in docs.items():
+            if not doc["lineas"]:
+                continue  # sin líneas ZZ → ignorar
+            hrow = doc["header"]
+            nombre  = find_col(hrow, COL_MAP["nombre"]).title()
+            fecha_s = find_col(hrow, COL_MAP["fecha"])
+            comuna  = find_col(hrow, COL_MAP["comuna"])
+            dir_    = find_col(hrow, COL_MAP["dir"])
+            rut     = find_col(hrow, COL_MAP["rut"])
+            costo   = sum(
+                _safe_float(find_col(l, COL_MAP["costo"]))
+                for l in doc["lineas"]
+            )
+            saldo   = sum(
+                max(_safe_float(find_col(l, COL_MAP["cant"])) -
+                    _safe_float(find_col(l, COL_MAP["cantd"])), 0)
+                for l in doc["lineas"]
+            )
+            if saldo <= 0:
+                continue
+            zz_skus = {find_col(l, COL_MAP["sku"]).upper() for l in doc["lineas"]}
+            clasif  = "retiro" if zz_skus == {"ZZRETIRO"} else "despacho"
+
+            # Parsear fecha
+            fecha_em = None
+            if fecha_s:
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
+                    try:
+                        from datetime import datetime as _dt
+                        fecha_em = _dt.strptime(fecha_s[:10], fmt).date()
+                        break
+                    except Exception:
+                        continue
+
+            try:
+                with local_conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO transport_commitments
+                          (tido,nudo,endo,fecha_emision,cliente_nombre,cliente_rut,
+                           comuna,direccion,costo_zz,tiene_saldo,clasificacion,
+                           erp_synced_at,created_by,updated_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,NOW(),'excel','excel')
+                        ON DUPLICATE KEY UPDATE
+                          fecha_emision =VALUES(fecha_emision),
+                          cliente_nombre=VALUES(cliente_nombre),
+                          cliente_rut   =VALUES(cliente_rut),
+                          comuna        =VALUES(comuna),
+                          direccion     =VALUES(direccion),
+                          costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
+                          tiene_saldo   =1,
+                          clasificacion =VALUES(clasificacion),
+                          erp_synced_at =NOW()
+                    """, (tido, nudo, rut, fecha_em, nombre, rut,
+                          comuna, dir_, costo, clasif))
+                local_conn.commit()
+                count += 1
+                if len(preview) < 5:
+                    preview.append({"tido": tido, "nudo": nudo, "cliente": nombre,
+                                    "clasif": clasif, "saldo_lineas": saldo})
+            except Exception as e2:
+                errs.append(f"{tido} {nudo}: {e2}")
+    finally:
+        local_conn.close()
+
+    return count, errs or None, preview
+
+
+def _safe_float(v):
+    try:
+        return float(str(v).replace(",", ".").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+# ── RUTAS TRANSPORTE ─────────────────────────────────────────────
+
+def _tr_required(fn):
+    """Decorator: requiere permiso transporte."""
+    from functools import wraps
+    @wraps(fn)
+    @login_required
+    def wrapper(*a, **kw):
+        if not g.permissions.get("transporte"):
+            flash("Sin acceso al módulo Transporte.", "danger")
+            return redirect(url_for("index"))
+        return fn(*a, **kw)
+    return wrapper
+
+
+@app.route("/transporte/api/sync", methods=["POST"])
+@_tr_required
+def tr_sync():
+    """Sincronización masiva desde ERP MySQL. Recibe fecha_desde y fecha_hasta."""
+    data = request.get_json(silent=True) or {}
+    fecha_desde = data.get("fecha_desde") or ""
+    fecha_hasta = data.get("fecha_hasta") or ""
+
+    # Validar fechas
+    from datetime import datetime as _dt, date as _date, timedelta as _td
+    try:
+        fd = _dt.strptime(fecha_desde, "%Y-%m-%d").date()
+        fh = _dt.strptime(fecha_hasta, "%Y-%m-%d").date()
+    except Exception:
+        # Default: últimos 60 días
+        fh = _date.today()
+        fd = fh - _td(days=60)
+
+    count, errs = _tr_bulk_sync_erp_mysql(str(fd), str(fh))
+    _tr_log("commitment", 0, "sync_masivo",
+            f"ERP MySQL {fd}→{fh}: {count} importados, {len(errs or [])} errores")
+    return jsonify({
+        "ok": True,
+        "importados": count,
+        "errores": (errs or [])[:10],
+        "rango": f"{fd.strftime('%d/%m/%Y')} → {fh.strftime('%d/%m/%Y')}",
+    })
+
+
+@app.route("/transporte/api/compromisos")
+@_tr_required
+def tr_compromisos_json():
+    """Versión JSON del monitor para carga AJAX."""
+    from datetime import date as _date, timedelta as _td
+    periodo = request.args.get("periodo", "")
+    hoy = _date.today()
+    _def_desde = (hoy - _td(days=30)).strftime("%Y-%m-%d")
+    _def_hasta = hoy.strftime("%Y-%m-%d")
+    if periodo == "mes":   fecha_desde, fecha_hasta = _def_desde, _def_hasta
+    elif periodo == "3m":  fecha_desde, fecha_hasta = (hoy-_td(days=90)).strftime("%Y-%m-%d"), _def_hasta
+    elif periodo == "año": fecha_desde, fecha_hasta = hoy.strftime("%Y-01-01"), _def_hasta
+    elif periodo == "todo": fecha_desde = fecha_hasta = ""
+    else:
+        fecha_desde = request.args.get("fecha_desde", _def_desde).strip()
+        fecha_hasta = request.args.get("fecha_hasta", _def_hasta).strip()
+
+    estado = request.args.get("estado","")
+    clasif = request.args.get("clasificacion","")
+    q      = request.args.get("q","").strip()
+
+    where, params = ["tiene_saldo=1"], []
+    if estado: where.append("estado=%s"); params.append(estado)
+    if clasif: where.append("clasificacion=%s"); params.append(clasif)
+    if q:
+        where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s)")
+        qp = f"%{q}%"; params += [qp,qp,qp,qp]
+    if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
+    if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
+
+    rows = mysql_fetchall(
+        "SELECT * FROM transport_commitments WHERE " + " AND ".join(where) +
+        " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
+    )
+
+    result = []
+    for r in rows:
+        result.append({
+            "id":           r["id"],
+            "tido":         r["tido"],
+            "nudo":         r["nudo"],
+            "fecha":        r["fecha_emision"].strftime("%d/%m/%Y") if r["fecha_emision"] else "",
+            "cliente":      r["cliente_nombre"] or "—",
+            "rut":          r["cliente_rut"] or "",
+            "comuna":       r["comuna"] or "—",
+            "estado":       r["estado"] or "Pendiente",
+            "costo_zz":     float(r["costo_zz"] or 0),
+            "clasificacion":r["clasificacion"] or "despacho",
+        })
+    return jsonify({"ok": True, "compromisos": result, "total": len(result)})
+
+
+@app.route("/transporte/api/inline-bulto", methods=["POST"])
+@_tr_required
+def tr_inline_bulto():
+    """Guarda medidas de un producto inline desde el modal de detalle.
+    Acepta 'bultos': [{largo,ancho,alto,peso}, ...] o campos sueltos (compat.).
+    """
+    data   = request.get_json(silent=True) or {}
+    sku    = (data.get("sku") or "").strip().upper()
+    nombre = (data.get("nombre") or "").strip()
+
+    if not sku:
+        return jsonify({"error": "Falta el SKU"}), 400
+
+    # Aceptar lista de bultos O campos sueltos (retrocompat.)
+    bultos_raw = data.get("bultos") or []
+    if not bultos_raw:
+        # compatibilidad con versión anterior (campos individuales)
+        if data.get("largo"):
+            bultos_raw = [{
+                "largo": data.get("largo"), "ancho": data.get("ancho"),
+                "alto":  data.get("alto"),  "peso":  data.get("peso"),
+            }]
+
+    bultos = []
+    for b in bultos_raw:
+        l = float(b.get("largo") or 0)
+        a = float(b.get("ancho") or 0)
+        h = float(b.get("alto")  or 0)
+        p = float(b.get("peso")  or 0)
+        if l and a and h and p:
+            bultos.append((l, a, h, p))
+
+    if not bultos:
+        return jsonify({"error": "Debes ingresar al menos un bulto con todos sus campos"}), 400
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # Buscar o crear producto
+            cur.execute(f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(TRIM(sku))=%s LIMIT 1", (sku,))
+            row = cur.fetchone()
+            if row:
+                pid = row["id"]
+            else:
+                cur.execute(
+                    f"INSERT INTO `{PRODUCTS_TABLE}` (sku, nombre, estado, created_by, updated_by) "
+                    f"VALUES (%s,%s,'activo',%s,%s)",
+                    (sku, nombre or sku, current_username(), current_username())
+                )
+                pid = cur.lastrowid
+
+            # Reemplazar bultos existentes
+            cur.execute(f"DELETE FROM `{BULTOS_TABLE}` WHERE product_id=%s", (pid,))
+            for idx, (l, a, h, p) in enumerate(bultos, start=1):
+                cur.execute(
+                    f"INSERT INTO `{BULTOS_TABLE}` (product_id, bulto_num, largo, ancho, alto, peso) "
+                    f"VALUES (%s,%s,%s,%s,%s,%s)",
+                    (pid, idx, l, a, h, p)
+                )
+        conn.commit()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Calcular y retornar totales agregados de todos los bultos
+    total_kg  = round(sum(b[3] for b in bultos), 4)
+    total_pv  = round(sum(b[0] * b[1] * b[2] for b in bultos) / 4000.0, 4)
+    pred      = round(max(total_kg, total_pv), 4)
+    return jsonify({
+        "ok":      True,
+        "peso_kg": total_kg,
+        "peso_vol": total_pv,
+        "pred":    pred,
+    })
+
+
+@app.route("/transporte/api/upload-foto", methods=["POST"])
+@_tr_required
+def tr_upload_foto():
+    """Sube hasta 2 fotos a un producto (por SKU) desde el modal de transporte."""
+    sku = (request.form.get("sku") or "").strip().upper()
+    if not sku:
+        return jsonify({"error": "Falta el SKU"}), 400
+    file = request.files.get("foto")
+    if not file or not file.filename:
+        return jsonify({"error": "Sin archivo"}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Formato no permitido (JPG, PNG, WEBP)"}), 400
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(TRIM(sku))=%s LIMIT 1", (sku,))
+            row = cur.fetchone()
+            if row:
+                pid = row["id"]
+            else:
+                cur.execute(
+                    f"INSERT INTO `{PRODUCTS_TABLE}` (sku,nombre,estado,created_by,updated_by) VALUES (%s,%s,'activo',%s,%s)",
+                    (sku, sku, current_username(), current_username()),
+                )
+                pid = cur.lastrowid
+
+            cur.execute(f"SELECT COUNT(*) AS n FROM `{PHOTOS_TABLE}` WHERE product_id=%s", (pid,))
+            n = (cur.fetchone() or {}).get("n", 0)
+            if n >= MAX_PHOTOS:
+                return jsonify({"error": f"Máximo {MAX_PHOTOS} fotos por producto"}), 400
+
+            ext = secure_filename(file.filename).rsplit(".", 1)[-1].lower()
+            ts  = int(datetime.now().timestamp())
+            if _CLD_READY:
+                try:
+                    filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
+                except Exception as exc:
+                    return jsonify({"error": f"Error Cloudinary: {exc}"}), 500
+            else:
+                filename = f"p{pid}_{ts}.{ext}"
+                file.save(os.path.join(UPLOAD_FOLDER, filename))
+
+            cur.execute(
+                f"INSERT INTO `{PHOTOS_TABLE}` (product_id,filename,orden) VALUES (%s,%s,%s)",
+                (pid, filename, n + 1),
+            )
+        conn.commit()
+        return jsonify({"ok": True, "url": _photo_src(filename), "total": n + 1})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/transporte/api/importar-excel", methods=["POST"])
+@_tr_required
+def tr_importar_excel():
+    """Importa documentos desde un Excel/CSV exportado del ERP."""
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"error": "Sin archivo"}), 400
+    ext = f.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("xlsx", "xls", "csv"):
+        return jsonify({"error": "Solo se aceptan .xlsx, .xls o .csv"}), 400
+    data = f.read()
+    count, errs, preview = _tr_import_from_excel(data, f.filename)
+    _tr_log("commitment", 0, "importar_excel",
+            f"Archivo {f.filename}: {count} importados")
+    return jsonify({
+        "ok": True,
+        "importados": count,
+        "errores": (errs or [])[:10],
+        "preview": preview,
+    })
+
+
+@app.route("/transporte/")
+@_tr_required
+def transporte_index():
+    from datetime import date as _date, timedelta as _td
+
+    periodo = request.args.get("periodo", "")
+    hoy     = _date.today()
+
+    # Fechas por defecto: último mes
+    _default_desde = (hoy - _td(days=30)).strftime("%Y-%m-%d")
+    _default_hasta = hoy.strftime("%Y-%m-%d")
+
+    if periodo == "mes":
+        fecha_desde, fecha_hasta = _default_desde, _default_hasta
+    elif periodo == "3m":
+        fecha_desde = (hoy - _td(days=90)).strftime("%Y-%m-%d")
+        fecha_hasta = _default_hasta
+    elif periodo == "año":
+        fecha_desde = hoy.strftime("%Y-01-01")
+        fecha_hasta = _default_hasta
+    elif periodo == "todo":
+        fecha_desde, fecha_hasta = "", ""
+    else:
+        fecha_desde = request.args.get("fecha_desde", _default_desde).strip()
+        fecha_hasta = request.args.get("fecha_hasta", _default_hasta).strip()
+
+    filtros = {
+        "estado":        request.args.get("estado", ""),
+        "clasificacion": request.args.get("clasificacion", ""),
+        "q":             request.args.get("q", "").strip(),
+        "fecha_desde":   fecha_desde,
+        "fecha_hasta":   fecha_hasta,
+    }
+
+    where, params = ["tiene_saldo=1"], []
+    if filtros["estado"]:
+        where.append("estado=%s"); params.append(filtros["estado"])
+    if filtros["clasificacion"]:
+        where.append("clasificacion=%s"); params.append(filtros["clasificacion"])
+    if filtros["q"]:
+        where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s)")
+        q = f"%{filtros['q']}%"; params += [q, q, q, q]
+    if filtros["fecha_desde"]:
+        where.append("fecha_emision >= %s"); params.append(filtros["fecha_desde"])
+    if filtros["fecha_hasta"]:
+        where.append("fecha_emision <= %s"); params.append(filtros["fecha_hasta"])
+
+    sql = ("SELECT * FROM transport_commitments WHERE " +
+           " AND ".join(where) + " ORDER BY fecha_emision DESC LIMIT 500")
+    compromisos = mysql_fetchall(sql, tuple(params))
+
+    # Manifiestos activos para asignación rápida
+    manifiestos = mysql_fetchall(
+        "SELECT id,correlativo,courier,estado FROM transport_manifests "
+        "WHERE estado IN ('En preparación','En curso') ORDER BY id DESC"
+    )
+    return render_template(
+        "transporte/index.html",
+        compromisos=compromisos,
+        filtros=filtros,
+        estados=ESTADOS_COMPROMISO,
+        estado_colors=ESTADO_COLORS,
+        couriers=COURIERS,
+        manifiestos=manifiestos,
+    )
+
+
+@app.route("/transporte/api/agregar", methods=["POST"])
+@_tr_required
+def tr_agregar():
+    """Agrega un documento al monitor desde el ERP."""
+    tido = (request.form.get("tido") or "FCV").strip().upper()
+    nudo = (request.form.get("nudo") or "").strip()
+    if not nudo:
+        return jsonify({"error": "Ingresa el número de documento"}), 400
+    comm_id, err = _tr_fetch_from_erp(tido, nudo)
+    if err:
+        return jsonify({"error": err}), 404
+    _tr_log("commitment", comm_id, "agregado",
+            f"Documento {tido} {nudo} importado desde ERP")
+    return jsonify({"ok": True, "id": comm_id})
+
+
+@app.route("/transporte/api/compromisos/<int:cid>", methods=["PUT"])
+@_tr_required
+def tr_update_compromiso(cid):
+    """Actualiza campos operativos: estado, costo_zz, notas, fecha_agenda."""
+    data   = request.get_json(silent=True) or {}
+    campos = {}
+    if "estado" in data and data["estado"] in ESTADOS_COMPROMISO:
+        campos["estado"] = data["estado"]
+    if "costo_zz" in data:
+        try: campos["costo_zz"] = float(data["costo_zz"])
+        except: pass
+    if "notas" in data:
+        campos["notas"] = data["notas"]
+    if "fecha_agenda" in data:
+        campos["fecha_agenda"] = data["fecha_agenda"] or None
+    if not campos:
+        return jsonify({"error": "sin campos válidos"}), 400
+
+    campos["updated_by"] = current_username()
+    sets   = ", ".join(f"{k}=%s" for k in campos)
+    vals   = list(campos.values()) + [cid]
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE transport_commitments SET {sets} WHERE id=%s", vals)
+    conn.commit()
+
+    detalle = "; ".join(f"{k}={v}" for k, v in data.items() if k != "notas")
+    _tr_log("commitment", cid, "actualizado", detalle)
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/detalle")
+@_tr_required
+def tr_detalle(cid):
+    """
+    Detalle completo de un compromiso para el modal de vista.
+    Llama a _cubicador_fetch para obtener líneas con pesos y cruza con fotos locales.
+    """
+    c = mysql_fetchone("SELECT * FROM transport_commitments WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"error": "No encontrado"}), 404
+
+    tido = (c["tido"] or "").strip()
+    nudo = (c["nudo"] or "").strip()
+
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except Exception as e:
+        return jsonify({"error": f"ERP no disponible: {e}"}), 503
+
+    if not header:
+        return jsonify({"error": "Documento no encontrado en ERP"}), 404
+
+    # Separar líneas ZZ de líneas de producto
+    ZZ_UP = {s.upper() for s in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}}
+    lineas_prod = []
+    lineas_zz   = []
+    for l in lineas:
+        if l.get("es_zz") or l["sku"].upper() in ZZ_UP:
+            lineas_zz.append(l)
+        elif l.get("saldo", l["cantidad"]) > 0:
+            # Solo incluir líneas con saldo pendiente
+            lineas_prod.append(l)
+
+    # Adjuntar fotos solo a líneas de producto
+    for l in lineas_prod:
+        app_id = l.get("app_id")
+        photos = []
+        if app_id:
+            ph_rows = mysql_fetchall(
+                f"SELECT filename FROM `{PHOTOS_TABLE}` WHERE product_id=%s ORDER BY orden LIMIT 3",
+                (app_id,)
+            )
+            photos = [_photo_src(p["filename"]) for p in ph_rows if p["filename"]]
+        l["fotos"] = photos
+
+    # Totales solo de líneas con saldo
+    tot_kg   = round(sum(l["peso_kg_tot"]  for l in lineas_prod), 3)
+    tot_pv   = round(sum(l["peso_vol_tot"] for l in lineas_prod), 3)
+    tot_pred = round(sum(l["pred_tot"]     for l in lineas_prod), 3)
+    pred_tipo = "kg" if tot_kg >= tot_pv else "pv"
+
+    # ZZenvio cost
+    costo_zz_envio = sum(
+        float(l.get("pred_u") or 0) for l in lineas_zz
+        if l["sku"].upper() == "ZZENVIO"
+    )
+
+    # Commune: prefer DB stored, then ERP header
+    comuna = c["comuna"] or header.get("comuna") or ""
+    if not comuna:
+        # Try to extract from direccion
+        dir_val = c["direccion"] or header.get("direccion") or ""
+        if " - " in dir_val:
+            parts = [p.strip() for p in dir_val.split(" - ")]
+            if parts:
+                comuna = parts[0].split(",")[-1].strip()
+
+    return jsonify({
+        "ok": True,
+        "debug_fields": header.get("all_fields", []),
+        "compromiso": {
+            "id":            c["id"],
+            "tido":          tido,
+            "nudo":          nudo,
+            "cliente":       c["cliente_nombre"] or header.get("cliente_nombre") or "—",
+            "rut":           c["cliente_rut"] or header.get("cliente_rut") or "",
+            "comuna":        comuna,
+            "direccion":     c["direccion"] or header.get("direccion") or "",
+            "telefono":      c["telefono"] or header.get("telefono") or "",
+            "email":         c["email"] or header.get("email") or "",
+            "costo_zz":      float(c["costo_zz"] or 0),
+            "costo_zz_envio":costo_zz_envio,
+            "clasificacion": c["clasificacion"] or "despacho",
+            "fecha_emision": c["fecha_emision"].strftime("%d/%m/%Y") if c["fecha_emision"] else "",
+            "estado":        c["estado"] or "",
+        },
+        "lineas": lineas_prod,
+        "lineas_zz": lineas_zz,
+        "totales": {
+            "kg":   tot_kg,
+            "pv":   tot_pv,
+            "pred": tot_pred,
+            "pred_tipo": pred_tipo,
+        },
+    })
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/lineas")
+@_tr_required
+def tr_lineas(cid):
+    lineas = mysql_fetchall(
+        "SELECT * FROM transport_commitment_lines WHERE commitment_id=%s", (cid,)
+    )
+    return jsonify([dict(l) for l in lineas])
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/logs")
+@_tr_required
+def tr_commitment_logs(cid):
+    logs = mysql_fetchall(
+        "SELECT * FROM transport_logs WHERE entity_type='commitment' AND entity_id=%s "
+        "ORDER BY created_at DESC LIMIT 50", (cid,)
+    )
+    return jsonify([dict(l) for l in logs])
+
+
+# ── MANIFIESTOS ──────────────────────────────────────────────────
+
+@app.route("/transporte/manifiestos")
+@_tr_required
+def tr_manifiestos():
+    filtros = {
+        "courier": request.args.get("courier", ""),
+        "estado":  request.args.get("estado", ""),
+    }
+    where, params = ["1=1"], []
+    if filtros["courier"]:
+        where.append("courier=%s"); params.append(filtros["courier"])
+    if filtros["estado"]:
+        where.append("estado=%s"); params.append(filtros["estado"])
+    manifiestos = mysql_fetchall(
+        "SELECT * FROM transport_manifests WHERE " + " AND ".join(where) +
+        " ORDER BY fecha DESC, id DESC", tuple(params)
+    )
+    return render_template(
+        "transporte/manifiestos.html",
+        manifiestos=manifiestos,
+        filtros=filtros,
+        couriers=COURIERS,
+        estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
+    )
+
+
+@app.route("/transporte/manifiestos/nuevo", methods=["POST"])
+@_tr_required
+def tr_crear_manifiesto():
+    courier = request.form.get("courier", "").strip()
+    fecha   = request.form.get("fecha", "").strip()
+    notas   = request.form.get("notas", "").strip()
+    if not courier or not fecha:
+        return jsonify({"error": "courier y fecha son obligatorios"}), 400
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # Correlativo auto: MAN-YYYY-NNNN
+            cur.execute(
+                "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+                "WHERE YEAR(created_at)=YEAR(NOW())"
+            )
+            n = (cur.fetchone() or {}).get("n", 1)
+            from datetime import datetime as _dt
+            corr = f"MAN-{_dt.now().year}-{int(n):04d}"
+            cur.execute(
+                "INSERT INTO transport_manifests (correlativo,fecha,courier,notas,created_by) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (corr, fecha, courier, notas, current_username())
+            )
+            mid = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+
+    _tr_log("manifest", mid, "creado", f"courier={courier} fecha={fecha}")
+    return jsonify({"ok": True, "id": mid, "correlativo": corr})
+
+
+@app.route("/transporte/manifiestos/<int:mid>")
+@_tr_required
+def tr_manifiesto_detalle(mid):
+    manifiesto = mysql_fetchone(
+        "SELECT * FROM transport_manifests WHERE id=%s", (mid,)
+    )
+    if not manifiesto:
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("tr_manifiestos"))
+
+    items = mysql_fetchall("""
+        SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
+               c.direccion, c.valor_bruto, c.costo_zz, c.clasificacion
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.manifest_id=%s
+        ORDER BY mi.orden, mi.id
+    """, (mid,))
+
+    logs = mysql_fetchall(
+        "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
+        "ORDER BY created_at DESC LIMIT 30", (mid,)
+    )
+    return render_template(
+        "transporte/manifiesto_detalle.html",
+        manifiesto=manifiesto,
+        items=items,
+        logs=logs,
+        estados_entrega=ESTADOS_ENTREGA,
+        estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
+        couriers=COURIERS,
+    )
+
+
+@app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
+@_tr_required
+def tr_agregar_item(mid):
+    cid = request.get_json(silent=True, force=True).get("commitment_id")
+    if not cid:
+        return jsonify({"error": "commitment_id requerido"}), 400
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
+                "VALUES (%s,%s)", (mid, cid)
+            )
+            # Recalcular totales
+            cur.execute("""
+                UPDATE transport_manifests m SET
+                  total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=m.id),
+                  costo_total=(SELECT COALESCE(SUM(c.costo_zz),0)
+                               FROM transport_manifest_items mi
+                               JOIN transport_commitments c ON c.id=mi.commitment_id
+                               WHERE mi.manifest_id=m.id)
+                WHERE m.id=%s
+            """, (mid,))
+        conn.commit()
+    finally:
+        conn.close()
+    _tr_log("manifest", mid, "item agregado", f"commitment_id={cid}")
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>", methods=["DELETE"])
+@_tr_required
+def tr_quitar_item(mid, item_id):
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM transport_manifest_items WHERE id=%s AND manifest_id=%s",
+            (item_id, mid)
+        )
+        cur.execute(
+            "UPDATE transport_manifests SET "
+            "total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=%s) "
+            "WHERE id=%s", (mid, mid)
+        )
+    conn.commit()
+    _tr_log("manifest", mid, "item eliminado", f"item_id={item_id}")
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>/estado", methods=["PUT"])
+@_tr_required
+def tr_estado_entrega(mid, item_id):
+    estado = (request.get_json(silent=True) or {}).get("estado_entrega", "")
+    if estado not in ESTADOS_ENTREGA:
+        return jsonify({"error": "estado inválido"}), 400
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE transport_manifest_items SET estado_entrega=%s WHERE id=%s AND manifest_id=%s",
+            (estado, item_id, mid)
+        )
+    conn.commit()
+    _tr_log("manifest_item", item_id, "estado_entrega", estado)
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/manifiestos/<int:mid>/estado", methods=["PUT"])
+@_tr_required
+def tr_estado_manifiesto(mid):
+    estado = (request.get_json(silent=True) or {}).get("estado", "")
+    validos = ["En preparación", "En curso", "Cerrado", "Entregado completo"]
+    if estado not in validos:
+        return jsonify({"error": "estado inválido"}), 400
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("UPDATE transport_manifests SET estado=%s WHERE id=%s", (estado, mid))
+    conn.commit()
+    _tr_log("manifest", mid, "estado cambiado", estado)
+    return jsonify({"ok": True})
+
+
+# ── MANIFIESTOS: asignar compromiso desde drag-drop ──────────────────────────
+
+@app.route("/transporte/api/manifiestos/asignar", methods=["POST"])
+@_tr_required
+def tr_asignar_a_manifiesto():
+    """Asigna uno o más compromisos a un manifiesto (crea si mid=None)."""
+    data         = request.get_json(silent=True) or {}
+    commitment_ids = data.get("commitment_ids", [])
+    mid          = data.get("manifest_id")     # None → crear nuevo
+
+    if not commitment_ids:
+        return jsonify({"error": "sin compromisos"}), 400
+
+    conn = get_db()
+    with conn.cursor() as cur:
+        # crear manifiesto nuevo si no se indicó uno
+        if not mid:
+            courier = data.get("courier", "Por asignar")
+            fecha   = data.get("fecha") or __import__("datetime").date.today().isoformat()
+            cur.execute(
+                "SELECT COALESCE(MAX(CAST(SUBSTRING(correlativo,4) AS UNSIGNED)),0)+1 FROM transport_manifests"
+            )
+            num = cur.fetchone()[0] or 1
+            correlativo = f"MAN{num:04d}"
+            cur.execute(
+                """INSERT INTO transport_manifests (correlativo, fecha, courier, created_by)
+                   VALUES (%s,%s,%s,%s)""",
+                (correlativo, fecha, courier, current_user.correo),
+            )
+            mid = cur.lastrowid
+        else:
+            correlativo = None
+
+        added, dupes = 0, 0
+        for cid in commitment_ids:
+            try:
+                cur.execute(
+                    """INSERT IGNORE INTO transport_manifest_items
+                       (manifest_id, commitment_id) VALUES (%s,%s)""",
+                    (mid, cid),
+                )
+                if cur.rowcount:
+                    added += 1
+                else:
+                    dupes += 1
+            except Exception:
+                dupes += 1
+
+        # recalcular total_items
+        cur.execute(
+            "UPDATE transport_manifests SET total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=%s) WHERE id=%s",
+            (mid, mid),
+        )
+
+    conn.commit()
+    return jsonify({"ok": True, "manifest_id": mid, "correlativo": correlativo, "added": added, "duplicados": dupes})
+
+
+# ── COURIERS ─────────────────────────────────────────────────────────────────
+
+@app.route("/transporte/couriers")
+@_tr_required
+def tr_couriers():
+    couriers = mysql_fetchall(
+        """SELECT c.*,
+           COUNT(t.id) AS total_tarifas
+           FROM transport_couriers c
+           LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
+           GROUP BY c.id ORDER BY c.activo DESC, c.nombre""",
+        ()
+    )
+    return render_template("transporte/couriers.html", couriers=couriers)
+
+
+@app.route("/transporte/couriers/nuevo", methods=["POST"])
+@_tr_required
+def tr_courier_nuevo():
+    d = request.form
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO transport_couriers
+               (nombre,rut,contacto,telefono,email,tipo,notas,
+                peso_max_bulto,peso_max_guia,vol_max_bulto,factor_vol)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                d.get("nombre","").strip(),
+                d.get("rut","").strip(),
+                d.get("contacto","").strip(),
+                d.get("telefono","").strip(),
+                d.get("email","").strip(),
+                d.get("tipo","nacional"),
+                d.get("notas","").strip(),
+                float(d.get("peso_max_bulto") or 0),
+                float(d.get("peso_max_guia") or 0),
+                float(d.get("vol_max_bulto") or 0),
+                float(d.get("factor_vol") or 5000),
+            ),
+        )
+    conn.commit()
+    flash("Courier creado correctamente.", "success")
+    return redirect(url_for("tr_couriers"))
+
+
+@app.route("/transporte/couriers/<int:cid>", methods=["GET"])
+@_tr_required
+def tr_courier_detalle(cid):
+    courier = mysql_fetchone(
+        "SELECT * FROM transport_couriers WHERE id=%s", (cid,)
+    )
+    if not courier:
+        flash("Courier no encontrado.", "danger")
+        return redirect(url_for("tr_couriers"))
+    tarifas = mysql_fetchall(
+        "SELECT * FROM transport_courier_tarifas WHERE courier_id=%s ORDER BY zona,peso_desde",
+        (cid,),
+    )
+    return jsonify({"courier": dict(courier), "tarifas": [dict(t) for t in tarifas]})
+
+
+@app.route("/transporte/couriers/<int:cid>", methods=["PUT"])
+@_tr_required
+def tr_courier_editar(cid):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE transport_couriers SET
+               nombre=%s, rut=%s, contacto=%s, telefono=%s, email=%s,
+               tipo=%s, notas=%s, activo=%s,
+               peso_max_bulto=%s, peso_max_guia=%s, vol_max_bulto=%s, factor_vol=%s
+               WHERE id=%s""",
+            (
+                d.get("nombre","").strip(),
+                d.get("rut","").strip(),
+                d.get("contacto","").strip(),
+                d.get("telefono","").strip(),
+                d.get("email","").strip(),
+                d.get("tipo","nacional"),
+                d.get("notas","").strip(),
+                1 if d.get("activo", True) else 0,
+                float(d.get("peso_max_bulto") or 0),
+                float(d.get("peso_max_guia") or 0),
+                float(d.get("vol_max_bulto") or 0),
+                float(d.get("factor_vol") or 5000),
+                cid,
+            ),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/couriers/<int:cid>", methods=["DELETE"])
+@_tr_required
+def tr_courier_eliminar(cid):
+    conn = get_db()
+    with conn.cursor() as cur:
+        # desactivar en lugar de borrar (preserva historial)
+        cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+# ── TARIFAS DE COURIER ────────────────────────────────────────────────────────
+
+@app.route("/transporte/couriers/<int:cid>/tarifas", methods=["POST"])
+@_tr_required
+def tr_tarifa_nueva(cid):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO transport_courier_tarifas
+               (courier_id,zona,peso_desde,peso_hasta,precio_base,precio_kg_extra,moneda)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                cid,
+                d.get("zona","General").strip(),
+                float(d.get("peso_desde") or 0),
+                float(d.get("peso_hasta") or 0),
+                float(d.get("precio_base") or 0),
+                float(d.get("precio_kg_extra") or 0),
+                d.get("moneda","CLP"),
+            ),
+        )
+        tid = cur.lastrowid
+    conn.commit()
+    return jsonify({"ok": True, "id": tid})
+
+
+@app.route("/transporte/couriers/<int:cid>/tarifas/<int:tid>", methods=["PUT"])
+@_tr_required
+def tr_tarifa_editar(cid, tid):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE transport_courier_tarifas SET
+               zona=%s,peso_desde=%s,peso_hasta=%s,
+               precio_base=%s,precio_kg_extra=%s,moneda=%s,activo=%s
+               WHERE id=%s AND courier_id=%s""",
+            (
+                d.get("zona","General").strip(),
+                float(d.get("peso_desde") or 0),
+                float(d.get("peso_hasta") or 0),
+                float(d.get("precio_base") or 0),
+                float(d.get("precio_kg_extra") or 0),
+                d.get("moneda","CLP"),
+                1 if d.get("activo", True) else 0,
+                tid, cid,
+            ),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/couriers/<int:cid>/tarifas/<int:tid>", methods=["DELETE"])
+@_tr_required
+def tr_tarifa_eliminar(cid, tid):
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM transport_courier_tarifas WHERE id=%s AND courier_id=%s",
+            (tid, cid),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+# ── COTIZADOR: calcular costo de envío ────────────────────────────────────────
+
+@app.route("/transporte/api/cotizar", methods=["POST"])
+@_tr_required
+def tr_cotizar():
+    """
+    Calcula el costo estimado de envío con cada courier activo.
+    Body JSON: {commitment_id, courier_id (opcional, si no devuelve todos)}
+    """
+    data = request.get_json(silent=True) or {}
+    cid  = data.get("commitment_id")
+    solo_courier = data.get("courier_id")
+
+    if not cid:
+        return jsonify({"error": "commitment_id requerido"}), 400
+
+    # peso y volumen totales del compromiso usando las mismas tablas que _cubicador_fetch
+    row = mysql_fetchone(
+        f"""SELECT
+           COALESCE(SUM(l.saldo * bk.peso_total),0)          AS peso_real,
+           COALESCE(SUM(l.saldo * bk.volumen_cm3),0)          AS vol_total
+           FROM transport_commitment_lines l
+           LEFT JOIN (
+               SELECT UPPER(TRIM(p.sku)) AS sku,
+                      COALESCE(SUM(b.peso),0) AS peso_total,
+                      COALESCE(SUM(b.largo * b.ancho * b.alto),0) AS volumen_cm3
+               FROM `{PRODUCTS_TABLE}` p
+               LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id=p.id
+               GROUP BY p.sku
+           ) bk ON bk.sku=UPPER(TRIM(l.koprct))
+           WHERE l.commitment_id=%s AND l.saldo>0""",
+        (cid,),
+    )
+    peso_real = float(row["peso_real"] or 0) if row else 0
+    vol_total = float(row["vol_total"] or 0) if row else 0
+
+    couriers = mysql_fetchall(
+        """SELECT c.*, GROUP_CONCAT(
+               CONCAT_WS('|',t.zona,t.peso_desde,t.peso_hasta,t.precio_base,t.precio_kg_extra)
+               ORDER BY t.zona,t.peso_desde SEPARATOR ';;'
+           ) AS tarifas_raw
+           FROM transport_couriers c
+           LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
+           WHERE c.activo=1 {}
+           GROUP BY c.id""".format("AND c.id=%s" if solo_courier else ""),
+        (solo_courier,) if solo_courier else (),
+    )
+
+    resultados = []
+    for co in couriers:
+        factor_vol = float(co["factor_vol"] or 5000)
+        peso_vol   = vol_total / factor_vol if vol_total else 0
+        peso_pred  = max(peso_real, peso_vol)
+
+        # validar restricciones
+        advertencias = []
+        if co["peso_max_bulto"] and peso_real > float(co["peso_max_bulto"]):
+            advertencias.append(f"Excede peso máx por bulto ({co['peso_max_bulto']} kg)")
+        if co["peso_max_guia"] and peso_pred > float(co["peso_max_guia"]):
+            advertencias.append(f"Excede peso máx por guía ({co['peso_max_guia']} kg)")
+
+        # calcular tarifa
+        costo = None
+        zona_aplicada = None
+        zona_req = data.get("zona", "General")
+        if co["tarifas_raw"]:
+            for bloque in co["tarifas_raw"].split(";;"):
+                partes = bloque.split("|")
+                if len(partes) < 5:
+                    continue
+                zona_t, pd, ph, pb, pke = partes
+                pd, ph, pb, pke = float(pd), float(ph), float(pb), float(pke)
+                if zona_t not in (zona_req, "General"):
+                    continue
+                if pd <= peso_pred and (ph == 0 or peso_pred <= ph):
+                    extra = max(0, peso_pred - pd) * pke if pke else 0
+                    costo = pb + extra
+                    zona_aplicada = zona_t
+                    break
+
+        resultados.append({
+            "courier_id"   : co["id"],
+            "nombre"       : co["nombre"],
+            "peso_real"    : round(peso_real, 3),
+            "peso_vol"     : round(peso_vol, 3),
+            "peso_pred"    : round(peso_pred, 3),
+            "costo"        : round(costo, 0) if costo is not None else None,
+            "zona"         : zona_aplicada,
+            "advertencias" : advertencias,
+        })
+
+    resultados.sort(key=lambda x: (x["costo"] is None, x["costo"] or 999999))
+    return jsonify({"ok": True, "resultados": resultados})
+
+
+# ── COTIZAR COLA (batch: varios commitment_ids) ───────────────────────────────
+
+@app.route("/transporte/api/cola/cotizar", methods=["POST"])
+@_tr_required
+def tr_cola_cotizar():
+    """
+    Calcula peso/volumen acumulado para un array de commitment_ids
+    y devuelve cotización con todos los couriers activos.
+    Usado por el panel manifiesto para mostrar prevale en tiempo real.
+    """
+    data = request.get_json(silent=True) or {}
+    cids = [int(c) for c in (data.get("commitment_ids") or []) if str(c).isdigit()]
+
+    if not cids:
+        return jsonify({"ok": True, "peso_real": 0, "vol_total": 0,
+                        "peso_vol": 0, "peso_pred": 0, "resultados": []})
+
+    ph = ",".join(["%s"] * len(cids))
+
+    # Peso y volumen acumulados de todos los compromisos
+    row = mysql_fetchone(
+        f"""SELECT
+               COALESCE(SUM(l.saldo * bk.peso_total), 0) AS peso_real,
+               COALESCE(SUM(l.saldo * bk.vol_cm3),   0) AS vol_total
+           FROM transport_commitment_lines l
+           LEFT JOIN (
+               SELECT UPPER(TRIM(p.sku)) AS sku,
+                      COALESCE(SUM(b.peso), 0)                     AS peso_total,
+                      COALESCE(SUM(b.largo * b.ancho * b.alto), 0) AS vol_cm3
+               FROM `{PRODUCTS_TABLE}` p
+               LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+               GROUP BY p.sku
+           ) bk ON bk.sku = UPPER(TRIM(l.koprct))
+           WHERE l.commitment_id IN ({ph}) AND l.saldo > 0""",
+        tuple(cids),
+    )
+    peso_real = float(row["peso_real"] or 0) if row else 0
+    vol_total = float(row["vol_total"] or 0) if row else 0
+
+    # Couriers activos con sus tarifas
+    couriers = mysql_fetchall(
+        """SELECT c.*,
+               GROUP_CONCAT(
+                   CONCAT_WS('|', t.zona, t.peso_desde, t.peso_hasta,
+                             t.precio_base, t.precio_kg_extra)
+                   ORDER BY t.zona, t.peso_desde SEPARATOR ';;'
+               ) AS tarifas_raw
+           FROM transport_couriers c
+           LEFT JOIN transport_courier_tarifas t ON t.courier_id = c.id AND t.activo = 1
+           WHERE c.activo = 1
+           GROUP BY c.id
+           ORDER BY c.nombre""",
+        (),
+    )
+
+    zona_req = data.get("zona", "General")
+    resultados = []
+    factor_base = 5000  # factor volumen por defecto
+
+    for co in couriers:
+        factor_vol = float(co["factor_vol"] or 5000)
+        factor_base = factor_vol  # usar último valor para resumen
+        peso_vol  = vol_total / factor_vol if vol_total else 0
+        peso_pred = max(peso_real, peso_vol)
+
+        advertencias = []
+        if co["peso_max_guia"] and peso_pred > float(co["peso_max_guia"]):
+            advertencias.append(f"Excede máx/guía ({co['peso_max_guia']} kg)")
+
+        costo = None
+        if co["tarifas_raw"]:
+            for bloque in co["tarifas_raw"].split(";;"):
+                partes = bloque.split("|")
+                if len(partes) < 5:
+                    continue
+                zona_t, pd, ph2, pb, pke = partes
+                pd, ph2, pb, pke = float(pd), float(ph2), float(pb), float(pke)
+                if zona_t not in (zona_req, "General"):
+                    continue
+                if pd <= peso_pred and (ph2 == 0 or peso_pred <= ph2):
+                    extra = max(0, peso_pred - pd) * pke if pke else 0
+                    costo = pb + extra
+                    break
+
+        resultados.append({
+            "courier_id"   : co["id"],
+            "nombre"       : co["nombre"],
+            "peso_max_guia": float(co["peso_max_guia"] or 0),
+            "costo"        : round(costo, 0) if costo is not None else None,
+            "advertencias" : advertencias,
+        })
+
+    resultados.sort(key=lambda x: (x["costo"] is None, x["costo"] or 999_999))
+
+    peso_vol_def  = vol_total / factor_base if vol_total else 0
+    peso_pred_def = max(peso_real, peso_vol_def)
+
+    # Conteo de ítems por compromiso (para mostrar en el panel)
+    items_rows = mysql_fetchall(
+        f"""SELECT commitment_id,
+               COUNT(*)                    AS n_lineas,
+               COALESCE(SUM(saldo), 0)     AS total_saldo
+           FROM transport_commitment_lines
+           WHERE commitment_id IN ({",".join(["%s"]*len(cids))}) AND saldo > 0
+           GROUP BY commitment_id""",
+        tuple(cids),
+    )
+    items_by_cid = {r["commitment_id"]: {"n": int(r["n_lineas"]), "saldo": int(r["total_saldo"])}
+                    for r in items_rows}
+
+    return jsonify({
+        "ok"        : True,
+        "peso_real" : round(peso_real, 2),
+        "vol_total" : round(vol_total, 0),
+        "peso_vol"  : round(peso_vol_def, 2),
+        "peso_pred" : round(peso_pred_def, 2),
+        "resultados": resultados,
+        "items"     : items_by_cid,
+    })
+
+
+# ── MANIFIESTOS: listar activos para panel drag-drop ─────────────────────────
+
+@app.route("/transporte/api/manifiestos/activos")
+@_tr_required
+def tr_manifiestos_activos():
+    rows = mysql_fetchall(
+        """SELECT m.id, m.correlativo, m.fecha, m.courier,
+                  m.estado, m.total_items
+           FROM transport_manifests m
+           WHERE m.estado IN ('En preparación','En curso')
+           ORDER BY m.fecha DESC, m.id DESC LIMIT 50""",
+        (),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════
+#  MÓDULO: COMUNICACIONES (solo superadmin)
+#  Email (SMTP dinámico) + WhatsApp (Twilio)
+# ══════════════════════════════════════════════════════════════
+
+def init_comunicaciones_tables():
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_smtp_config (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    smtp_host   VARCHAR(200) DEFAULT 'smtp.gmail.com',
+                    smtp_port   INT DEFAULT 587,
+                    smtp_user   VARCHAR(200),
+                    smtp_pass   VARCHAR(500),
+                    from_name   VARCHAR(200) DEFAULT 'ILUS Sport & Health',
+                    from_addr   VARCHAR(200),
+                    secure      TINYINT(1) DEFAULT 0,
+                    updated_by  VARCHAR(190),
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_client_config (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    company_name    VARCHAR(200) DEFAULT 'ILUS Sport & Health',
+                    reply_to        VARCHAR(200),
+                    support_email   VARCHAR(200),
+                    support_phone   VARCHAR(50),
+                    tracking_url    VARCHAR(400),
+                    logo_url        MEDIUMTEXT,
+                    corp_color      VARCHAR(20) DEFAULT '#CC0000',
+                    email_cc        VARCHAR(500),
+                    email_bcc       VARCHAR(500),
+                    updated_by      VARCHAR(190),
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_whatsapp_config (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    account_sid     VARCHAR(120),
+                    auth_token      VARCHAR(250),
+                    from_number     VARCHAR(50),
+                    biz_number      VARCHAR(50),
+                    updated_by      VARCHAR(190),
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_log (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    canal           ENUM('email','whatsapp') NOT NULL,
+                    destinatario    VARCHAR(300),
+                    asunto          VARCHAR(500),
+                    estado          ENUM('ok','error') NOT NULL,
+                    detalle         TEXT,
+                    enviado_por     VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_canal (canal),
+                    INDEX idx_fecha (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── PLANTILLAS POR ESTADO ─────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_templates (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    estado      VARCHAR(60) NOT NULL,
+                    canal       ENUM('email','whatsapp') NOT NULL,
+                    asunto      VARCHAR(300),
+                    cuerpo      MEDIUMTEXT,
+                    activo      TINYINT(1) DEFAULT 1,
+                    updated_by  VARCHAR(190),
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_estado_canal (estado, canal)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Insertar plantillas por defecto si la tabla está vacía
+            cur.execute("SELECT COUNT(*) AS n FROM comm_templates")
+            tpl_row = cur.fetchone()
+            if (tpl_row or {}).get('n', 1) == 0:
+                _ESTADOS = [
+                    ('programado',       'Pedido programado'),
+                    ('en_ruta',          'Pedido en ruta'),
+                    ('en_camino',        'En camino — próxima entrega'),
+                    ('entregado',        'Pedido entregado'),
+                    ('fallido',          'Intento de entrega fallido'),
+                    ('inicio_sesion',    'Inicio de sesión en tu cuenta'),
+                    ('cambio_pass',      'Cambio de contraseña'),
+                ]
+                _EMAIL_DEFAULTS = {
+                    'programado':    ('Tu pedido {{id_pedido}} fue programado',
+                                     'Hola {{nombre_cliente}}, tu pedido <strong>{{id_pedido}}</strong> ha sido programado y está siendo preparado. Te avisaremos cuando salga a despacho.'),
+                    'en_ruta':       ('Tu pedido {{id_pedido}} está en ruta',
+                                     'Hola {{nombre_cliente}}, tu pedido <strong>{{id_pedido}}</strong> ya salió de bodega y está en camino con {{courier}}. N° de seguimiento: <strong>{{numero_seguimiento}}</strong>.'),
+                    'en_camino':     ('¡Tu pedido llega hoy! — {{id_pedido}}',
+                                     'Hola {{nombre_cliente}}, tu pedido <strong>{{id_pedido}}</strong> está en reparto y llegará hoy a <em>{{direccion_entrega}}</em>.'),
+                    'entregado':     ('Pedido {{id_pedido}} entregado ✓',
+                                     'Hola {{nombre_cliente}}, tu pedido <strong>{{id_pedido}}</strong> fue entregado exitosamente. ¡Gracias por tu confianza en ILUS!'),
+                    'fallido':       ('No pudimos entregar tu pedido {{id_pedido}}',
+                                     'Hola {{nombre_cliente}}, intentamos entregar tu pedido <strong>{{id_pedido}}</strong> pero no fue posible. Nos pondremos en contacto para coordinar una nueva entrega.'),
+                    'inicio_sesion': ('Nuevo inicio de sesión en tu cuenta',
+                                     'Hola {{nombre_usuario}}, detectamos un inicio de sesión en tu cuenta el {{fecha_hora}}. Si no fuiste tú, contáctanos de inmediato.'),
+                    'cambio_pass':   ('Tu contraseña fue cambiada',
+                                     'Hola {{nombre_usuario}}, tu contraseña fue actualizada el {{fecha_hora}}. Si no realizaste este cambio, contáctanos inmediatamente.'),
+                }
+                _WA_DEFAULTS = {
+                    'programado':    '🟡 *ILUS* — Hola {{nombre_cliente}}, tu pedido *{{id_pedido}}* fue programado y está en preparación.',
+                    'en_ruta':       '🚚 *ILUS* — Tu pedido *{{id_pedido}}* salió de bodega con {{courier}}. Seguimiento: {{numero_seguimiento}}',
+                    'en_camino':     '📦 *ILUS* — ¡Tu pedido *{{id_pedido}}* llega hoy! Dirección: {{direccion_entrega}}',
+                    'entregado':     '✅ *ILUS* — Tu pedido *{{id_pedido}}* fue entregado. ¡Gracias {{nombre_cliente}}!',
+                    'fallido':       '❌ *ILUS* — No pudimos entregar tu pedido *{{id_pedido}}*. Te contactaremos para reagendar.',
+                    'inicio_sesion': '🔐 *ILUS* — Inicio de sesión detectado en tu cuenta el {{fecha_hora}}.',
+                    'cambio_pass':   '🔑 *ILUS* — Tu contraseña fue cambiada el {{fecha_hora}}.',
+                }
+                for estado_key, _ in _ESTADOS:
+                    # Email template
+                    asunto, cuerpo = _EMAIL_DEFAULTS.get(estado_key, ('', ''))
+                    cur.execute(
+                        "INSERT INTO comm_templates (estado, canal, asunto, cuerpo) VALUES (%s,'email',%s,%s)",
+                        (estado_key, asunto, cuerpo)
+                    )
+                    # WhatsApp template
+                    wa_body = _WA_DEFAULTS.get(estado_key, '')
+                    cur.execute(
+                        "INSERT INTO comm_templates (estado, canal, asunto, cuerpo) VALUES (%s,'whatsapp',%s,%s)",
+                        (estado_key, '', wa_body)
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Helpers de config ─────────────────────────────────────────
+
+def _get_smtp_cfg():
+    """Config SMTP: primero DB, luego config.py como fallback."""
+    try:
+        row = mysql_fetchone(
+            "SELECT * FROM comm_smtp_config ORDER BY id DESC LIMIT 1"
+        )
+        if row and row.get("smtp_user"):
+            return {
+                "smtp_host": row["smtp_host"] or "smtp.gmail.com",
+                "smtp_port": int(row["smtp_port"] or 587),
+                "smtp_user": row["smtp_user"],
+                "smtp_pass": row["smtp_pass"] or "",
+                "from_name": row["from_name"] or "ILUS Sport & Health",
+                "from_addr": row["from_addr"] or row["smtp_user"],
+                "secure":    bool(row.get("secure")),
+            }
+    except Exception:
+        pass
+    return dict(EMAIL_CONFIG)
+
+
+def _get_client_cfg():
+    try:
+        row = mysql_fetchone(
+            "SELECT * FROM comm_client_config ORDER BY id DESC LIMIT 1"
+        )
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return {"company_name": "ILUS Sport & Health", "corp_color": "#CC0000"}
+
+
+def _get_wa_cfg():
+    try:
+        row = mysql_fetchone(
+            "SELECT * FROM comm_whatsapp_config ORDER BY id DESC LIMIT 1"
+        )
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return {}
+
+
+def _comm_log_entry(canal, dest, asunto, estado, detalle=""):
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO comm_log (canal,destinatario,asunto,estado,detalle,enviado_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (canal, dest[:300], (asunto or "")[:500], estado,
+                 (detalle or "")[:2000], current_username()),
+            )
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _send_email_dinamico(to, subject, html_body, cfg=None):
+    """Envía email usando config SMTP dinámica (DB o config.py)."""
+    import ssl as _ssl
+    cfg = cfg or _get_smtp_cfg()
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{cfg['from_name']} <{cfg.get('from_addr', cfg['smtp_user'])}>"
+    msg["To"]      = to
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    host   = cfg["smtp_host"]
+    port   = int(cfg.get("smtp_port", 587))
+    secure = cfg.get("secure", False)
+    if secure:
+        ctx = _ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=15) as srv:
+            srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), [to], msg.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), [to], msg.as_string())
+
+
+def _send_whatsapp(account_sid, auth_token, from_num, to_num, body):
+    """Envía WhatsApp vía Twilio. Lanza RuntimeError si twilio no está instalado."""
+    import re as _re
+    try:
+        from twilio.rest import Client as _TwilioClient
+    except ImportError:
+        raise RuntimeError(
+            "El paquete 'twilio' no está instalado. "
+            "Ejecuta: pip install twilio"
+        )
+    m = _re.search(r'(AC[a-f0-9]{32})', account_sid or "", _re.I)
+    if m:
+        account_sid = m.group(1)
+    if not account_sid.upper().startswith("AC"):
+        raise ValueError("El Account SID debe comenzar con 'AC'")
+    if auth_token in ("[AuthToken]", "", None):
+        raise ValueError("Ingresa un Auth Token válido")
+    from_num = from_num if from_num.startswith("whatsapp:") else f"whatsapp:{from_num}"
+    to_num   = to_num   if to_num.startswith("whatsapp:")   else f"whatsapp:{to_num}"
+    client   = _TwilioClient(account_sid, auth_token)
+    msg      = client.messages.create(from_=from_num, to=to_num, body=body)
+    return msg.sid
+
+
+# ── Templates de email ────────────────────────────────────────
+
+def _email_wrapper(inner, company="ILUS Sport & Health"):
+    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Comunicación — {company}</title></head>
+<body style="margin:0;padding:0;background:#0c0907;font-family:'Segoe UI',Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0c0907;padding:32px 0">
+<tr><td align="center">{inner}</td></tr>
+</table></body></html>"""
+
+
+def _email_card(header_html, body_html, footer_html="", width=580):
+    return f"""
+<table width="{width}" cellpadding="0" cellspacing="0"
+       style="background:#1a0f05;border-radius:14px;overflow:hidden;
+              max-width:{width}px;width:100%">
+  <tr><td>{header_html}</td></tr>
+  <tr><td style="background:#fff">{body_html}</td></tr>
+  {"<tr><td>" + footer_html + "</td></tr>" if footer_html else ""}
+</table>"""
+
+
+def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS"):
+    logo_block = ""
+    if logo_url:
+        logo_block = f'<img src="{logo_url}" alt="{company}" style="height:40px;margin-bottom:12px;object-fit:contain"><br>'
+    return f"""
+<table width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td style="background:linear-gradient(135deg,{corp_color}dd,{corp_color}88,#1a0f05);
+               padding:32px;text-align:center">
+      {logo_block}
+      <div style="font-size:28px;font-weight:900;color:#fff;letter-spacing:3px">{company}<span style="color:{corp_color}">.</span></div>
+      <div style="font-size:11px;color:rgba(255,255,255,.65);letter-spacing:2px;text-transform:uppercase;margin-top:3px">Sport &amp; Health</div>
+      <div style="color:#fff;font-size:18px;font-weight:700;margin-top:18px">{title}</div>
+      {"<div style='color:rgba(255,255,255,.8);font-size:13px;margin-top:6px'>" + subtitle + "</div>" if subtitle else ""}
+    </td>
+  </tr>
+</table>"""
+
+
+def _email_body_section(content):
+    return f'<div style="padding:28px 32px">{content}</div>'
+
+
+def _email_footer_ilus(company="ILUS Sport & Health"):
+    return f"""
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#1a0f05">
+  <tr>
+    <td style="padding:20px 32px;text-align:center;
+               color:#555;font-size:11px;border-top:1px solid #2a1a0a">
+      {company} — Sistema de Comunicaciones<br>
+      <span style="color:#333">Este es un mensaje automático, no responder directamente.</span>
+    </td>
+  </tr>
+</table>"""
+
+
+def _email_info_box(rows, corp_color="#CC0000"):
+    """rows = [['Label', 'Valor'], ...]"""
+    items = "".join(
+        f"<tr><td style='padding:6px 0;color:#888;font-size:12px;width:38%'>{r[0]}</td>"
+        f"<td style='padding:6px 0;font-size:13px;font-weight:600;color:#1a1a1a'>{r[1]}</td></tr>"
+        for r in rows
+    )
+    return f"""
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#fff8f5;border-left:4px solid {corp_color};
+              border-radius:4px;padding:12px 16px;margin:16px 0">
+  <tr><td><table width="100%" cellpadding="0" cellspacing="0">{items}</table></td></tr>
+</table>"""
+
+
+def _email_btn(text, url, corp_color="#CC0000"):
+    return f"""
+<table cellpadding="0" cellspacing="0" style="margin:20px 0">
+  <tr>
+    <td style="border-radius:8px;background:{corp_color};padding:12px 28px;text-align:center">
+      <a href="{url}" style="color:#fff;font-size:14px;font-weight:700;
+                             text-decoration:none;display:block">{text}</a>
+    </td>
+  </tr>
+</table>"""
+
+
+def tpl_email_prueba(sender_name, company="ILUS Sport & Health", corp_color="#CC0000"):
+    header = _email_header_ilus("✅ Conexión SMTP verificada", "Prueba de correo", corp_color)
+    body   = _email_body_section(f"""
+      <p style="font-size:15px;color:#1a1a1a;margin:0 0 16px">
+        ¡Hola! Este correo confirma que la configuración SMTP está funcionando correctamente.
+      </p>
+      {_email_info_box([
+          ["Enviado por", sender_name],
+          ["Servidor", "SMTP dinámico — ILUS Comunicaciones"],
+      ], corp_color)}
+      <p style="font-size:12px;color:#999;margin:20px 0 0">
+        Si recibiste este mensaje, la integración de email está activa y lista para usar.
+      </p>""")
+    footer = _email_footer_ilus(company)
+    return _email_wrapper(_email_card(header, body, footer), company)
+
+
+def tpl_email_estado_pedido(data):
+    """Template: actualización de estado a cliente."""
+    cc    = _get_client_cfg()
+    color = cc.get("corp_color", "#CC0000")
+    co    = cc.get("company_name", "ILUS Sport & Health")
+    logo  = cc.get("logo_url", "")
+    estado_badge = {
+        "En preparación": "🔵", "En ruta": "🚚", "Entregado": "✅",
+        "Entrega fallida": "❌", "Pendiente": "⏳",
+    }.get(data.get("status", ""), "📦")
+    header = _email_header_ilus(
+        f"{estado_badge} {data.get('status','Actualización')}",
+        f"Pedido #{data.get('trackingCode','')}", color, logo, co
+    )
+    rows = [
+        ["Tracking", data.get("trackingCode", "—")],
+        ["Estado",   data.get("status", "—")],
+    ]
+    if data.get("eta"):
+        rows.append(["Entrega estimada", data["eta"]])
+    if data.get("conductorName"):
+        rows.append(["Conductor", data["conductorName"]])
+    if data.get("conductorPhone"):
+        rows.append(["Teléfono conductor", data["conductorPhone"]])
+    btn = _email_btn("Rastrear pedido", data.get("trackingUrl", "#"), color) if data.get("trackingUrl") else ""
+    body = _email_body_section(
+        f"<p style='font-size:15px;color:#1a1a1a;margin:0 0 16px'>"
+        f"Hola <strong>{data.get('customerName','')}</strong>, te informamos sobre el estado de tu pedido.</p>"
+        + _email_info_box(rows, color) + btn
+    )
+    return _email_wrapper(_email_card(header, body, _email_footer_ilus(co)), co)
+
+
+# ── RUTAS: COMUNICACIONES ─────────────────────────────────────
+
+@app.route("/comunicaciones/")
+@_require_superadmin
+def comm_index():
+    smtp_cfg  = _get_smtp_cfg()
+    client_cfg = _get_client_cfg()
+    wa_cfg    = _get_wa_cfg()
+    log_rows  = []
+    try:
+        log_rows = mysql_fetchall(
+            "SELECT * FROM comm_log ORDER BY created_at DESC LIMIT 80"
+        )
+    except Exception:
+        pass
+    # Ocultar contraseña
+    smtp_cfg_safe = {k: ("••••••••" if k == "smtp_pass" and v else v)
+                     for k, v in smtp_cfg.items()}
+    return render_template(
+        "comunicaciones/index.html",
+        smtp_cfg=smtp_cfg_safe,
+        client_cfg=client_cfg,
+        wa_cfg=wa_cfg,
+        log_rows=log_rows,
+    )
+
+
+@app.route("/comunicaciones/smtp/config", methods=["POST"])
+@_require_superadmin
+def comm_smtp_save():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM comm_smtp_config")
+        cur.execute(
+            """INSERT INTO comm_smtp_config
+               (smtp_host,smtp_port,smtp_user,smtp_pass,from_name,from_addr,secure,updated_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                d.get("host", "smtp.gmail.com"),
+                int(d.get("port", 587)),
+                (d.get("user") or "").strip(),
+                (d.get("pass") or "").strip(),
+                (d.get("fromName") or "ILUS Sport & Health").strip(),
+                (d.get("user") or "").strip(),
+                1 if d.get("secure") else 0,
+                current_username(),
+            ),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/comunicaciones/smtp/test", methods=["POST"])
+@_require_superadmin
+def comm_smtp_test():
+    d  = request.get_json(silent=True) or {}
+    to = (d.get("to") or "").strip()
+    if not to:
+        return jsonify({"error": "Ingresa un destinatario"}), 400
+    html = _ilus_email_html(
+        titulo           = "✅ Prueba SMTP",
+        subtitulo        = "Verificación de conexión — ILUS Comunicaciones",
+        saludo           = "¡Conexión verificada!",
+        parrafos         = [
+            "Este correo confirma que la configuración SMTP está funcionando correctamente.",
+            "Si lo recibiste, la integración de email está activa y lista para usar.",
+        ],
+        info_lineas      = [
+            ("", "Enviado por", current_username()),
+            ("", "Servidor",    "SMTP dinámico — ILUS Comunicaciones"),
+        ],
+    )
+    try:
+        _send_ilus_email(to, "🧪 Prueba SMTP — ILUS Comunicaciones", html)
+        _comm_log_entry("email", to, "Prueba SMTP", "ok")
+        return jsonify({"ok": True})
+    except Exception as exc:
+        _comm_log_entry("email", to, "Prueba SMTP", "error", str(exc))
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/comunicaciones/email/enviar", methods=["POST"])
+@_require_superadmin
+def comm_email_enviar():
+    d       = request.get_json(silent=True) or {}
+    to      = (d.get("to") or "").strip()
+    subject = (d.get("subject") or "").strip()
+    html    = (d.get("html") or "").strip()
+    if not all([to, subject, html]):
+        return jsonify({"error": "Faltan campos: to, subject, html"}), 400
+    try:
+        _send_email_dinamico(to, subject, html)
+        _comm_log_entry("email", to, subject, "ok")
+        return jsonify({"ok": True})
+    except Exception as exc:
+        _comm_log_entry("email", to, subject, "error", str(exc))
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/comunicaciones/cliente/config", methods=["POST"])
+@_require_superadmin
+def comm_client_save():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM comm_client_config")
+        cur.execute(
+            """INSERT INTO comm_client_config
+               (company_name,reply_to,support_email,support_phone,
+                tracking_url,logo_url,corp_color,email_cc,email_bcc,updated_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                (d.get("company_name") or "ILUS Sport & Health").strip(),
+                (d.get("reply_to") or "").strip(),
+                (d.get("support_email") or "").strip(),
+                (d.get("support_phone") or "").strip(),
+                (d.get("tracking_url") or "").strip(),
+                (d.get("logo_url") or "").strip(),
+                (d.get("corp_color") or "#CC0000").strip(),
+                (d.get("email_cc") or "").strip(),
+                (d.get("email_bcc") or "").strip(),
+                current_username(),
+            ),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/comunicaciones/whatsapp/config", methods=["POST"])
+@_require_superadmin
+def comm_wa_save():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM comm_whatsapp_config")
+        cur.execute(
+            """INSERT INTO comm_whatsapp_config
+               (account_sid,auth_token,from_number,biz_number,updated_by)
+               VALUES (%s,%s,%s,%s,%s)""",
+            (
+                (d.get("account_sid") or "").strip(),
+                (d.get("auth_token") or "").strip(),
+                (d.get("from_number") or "").strip(),
+                (d.get("biz_number") or "").strip(),
+                current_username(),
+            ),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/comunicaciones/whatsapp/test", methods=["POST"])
+@_require_superadmin
+def comm_wa_test():
+    d     = request.get_json(silent=True) or {}
+    saved = _get_wa_cfg()
+    sid   = (d.get("account_sid") or saved.get("account_sid") or "").strip()
+    tok   = (d.get("auth_token")  or saved.get("auth_token")  or "").strip()
+    frm   = (d.get("from_number") or saved.get("from_number") or "").strip()
+    to    = (d.get("to") or "").strip()
+    if not all([sid, tok, frm, to]):
+        return jsonify({"error": "Completa: Account SID, Auth Token, From y destinatario"}), 400
+    body = (f"✅ Prueba de WhatsApp — ILUS Comunicaciones\n"
+            f"Enviado por: {current_username()}")
+    try:
+        msg_sid = _send_whatsapp(sid, tok, frm, to, body)
+        _comm_log_entry("whatsapp", to, "Prueba WA", "ok", msg_sid)
+        return jsonify({"ok": True, "msg_sid": msg_sid})
+    except Exception as exc:
+        _comm_log_entry("whatsapp", to, "Prueba WA", "error", str(exc))
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/comunicaciones/templates", methods=["GET"])
+@_require_superadmin
+def comm_templates_get():
+    """Devuelve todas las plantillas agrupadas por estado."""
+    rows = mysql_fetchall(
+        "SELECT * FROM comm_templates ORDER BY estado, canal"
+    ) or []
+    data = {}
+    for r in rows:
+        est = r["estado"]
+        if est not in data:
+            data[est] = {}
+        data[est][r["canal"]] = {
+            "id":     r["id"],
+            "asunto": r.get("asunto") or "",
+            "cuerpo": r.get("cuerpo") or "",
+            "activo": r.get("activo", 1),
+        }
+    return jsonify(data)
+
+
+@app.route("/comunicaciones/templates/<estado>/<canal>", methods=["PUT"])
+@_require_superadmin
+def comm_template_save(estado, canal):
+    """Guarda/actualiza una plantilla para estado + canal."""
+    if canal not in ("email", "whatsapp"):
+        return jsonify({"error": "Canal inválido"}), 400
+    d      = request.get_json(silent=True) or {}
+    asunto = d.get("asunto", "")
+    cuerpo = d.get("cuerpo", "")
+    user   = current_username()
+    conn   = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO comm_templates (estado, canal, asunto, cuerpo, updated_by)
+               VALUES (%s,%s,%s,%s,%s)
+               ON DUPLICATE KEY UPDATE
+                 asunto=VALUES(asunto), cuerpo=VALUES(cuerpo), updated_by=VALUES(updated_by)""",
+            (estado, canal, asunto, cuerpo, user)
+        )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
 # ─────────────────────────────────────────────
 #  Arranque — inicializar tablas al cargar módulo
 #  (funciona con `python app.py` Y `flask run`)
@@ -3926,6 +6511,19 @@ try:
     print("[ILUS] Tablas inicializadas correctamente.")
 except Exception as _init_err:
     print(f"[ILUS][WARN] init_db: {_init_err}")
+
+# init_transporte_tables usa get_mysql() (sin app context), siempre funciona
+try:
+    init_transporte_tables()
+    print("[ILUS] Tablas de transporte OK.")
+except Exception as _tr_init_err:
+    print(f"[ILUS][WARN] init_transporte_tables: {_tr_init_err}")
+
+try:
+    init_comunicaciones_tables()
+    print("[ILUS] Tablas de comunicaciones OK.")
+except Exception as _comm_init_err:
+    print(f"[ILUS][WARN] init_comunicaciones_tables: {_comm_init_err}")
 
 if __name__ == "__main__":
     print("=" * 45)
