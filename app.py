@@ -2740,6 +2740,8 @@ def new_user():
         active      = 1 if request.form.get("active") == "1" else 0
         send_invite = request.form.get("send_invite") == "1"
         wa_number   = request.form.get("wa_number", "").strip()
+        manual_password = request.form.get("manual_password", "")
+        is_superadmin = bool(g.permissions.get("superadmin")) if getattr(g, "permissions", None) else False
 
         errors = []
         if not username:
@@ -2750,6 +2752,10 @@ def new_user():
             errors.append("El nombre y apellido son requeridos.")
         if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
+        if manual_password and not is_superadmin:
+            errors.append("Solo un superadministrador puede definir clave manual.")
+        if manual_password and len(manual_password) < 8:
+            errors.append("La clave manual debe tener al menos 8 caracteres.")
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
 
@@ -2757,7 +2763,7 @@ def new_user():
             return render_template("user_form.html", errors=errors, user=None, fd=request.form)
 
         # Crear usuario con contraseña placeholder (bloqueada hasta que use el enlace)
-        placeholder_hash = generate_password_hash(secrets.token_hex(32))
+        placeholder_hash = generate_password_hash(manual_password or secrets.token_hex(32))
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
@@ -2767,7 +2773,7 @@ def new_user():
         conn.commit()
 
         # Generar token de invitación (usa la misma tabla de resets, válido 24h)
-        if send_invite:
+        if send_invite and not manual_password:
             try:
                 new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
                 token, _expires = _issue_password_token(new_uid, minutes=1440)
@@ -2804,6 +2810,8 @@ def new_user():
         else:
             flash("Usuario creado. Recuerda establecer la contraseña o enviar la invitación después.", "success")
 
+        if manual_password:
+            flash("Clave manual asignada por superadmin.", "info")
         return redirect(url_for("users_index"))
 
     return render_template("user_form.html", errors=[], user=None, fd={})
@@ -2820,6 +2828,8 @@ def edit_user(user_id):
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         nombre   = request.form.get("nombre",   "").strip()
+        manual_password = request.form.get("manual_password", "")
+        is_superadmin = bool(g.permissions.get("superadmin")) if getattr(g, "permissions", None) else False
         role     = request.form.get("role",     "editor")
         active   = 1 if request.form.get("active") == "1" else 0
 
@@ -2832,6 +2842,10 @@ def edit_user(user_id):
             errors.append("El nombre y apellido son requeridos.")
         if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
+        if manual_password and not is_superadmin:
+            errors.append("Solo un superadministrador puede definir clave manual.")
+        if manual_password and len(manual_password) < 8:
+            errors.append("La clave manual debe tener al menos 8 caracteres.")
         if mysql_fetchone(
             f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s AND id<>%s", (username, user_id)
         ):
@@ -2842,17 +2856,23 @@ def edit_user(user_id):
 
         conn = get_db()
         with conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,role=%s,active=%s WHERE id=%s",
-                (username, nombre, role, active, user_id),
-            )
+            if manual_password:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,password_hash=%s,role=%s,active=%s WHERE id=%s",
+                    (username, nombre, generate_password_hash(manual_password), role, active, user_id),
+                )
+            else:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,role=%s,active=%s WHERE id=%s",
+                    (username, nombre, role, active, user_id),
+                )
         conn.commit()
 
         # Invalida caché de session si se editó el usuario actual
         if g.user and g.user["id"] == user_id:
             session.pop("_uc", None)
 
-        flash("Usuario actualizado.", "success")
+        flash("Usuario actualizado. Clave manual asignada." if manual_password else "Usuario actualizado.", "success")
         return redirect(url_for("users_index"))
 
     return render_template("user_form.html", errors=[], user=user, fd={})
@@ -7603,7 +7623,7 @@ def mant_clientes_autocomplete():
     q_like = f"%{q}%"
     locales = mysql_fetchall(
         """SELECT id, razon_social, rut, contacto_email, estado,
-                  region, comuna, direccion, contacto_telefono
+                  ciudad AS region, comuna, direccion, contacto_tel AS telefono
            FROM mant_clientes
            WHERE razon_social LIKE %s OR rut LIKE %s
            ORDER BY razon_social LIMIT 15""",
@@ -7621,7 +7641,7 @@ def mant_clientes_autocomplete():
             "region":       r.get("region",""),
             "comuna":       r.get("comuna",""),
             "direccion":    r.get("direccion",""),
-            "telefono":     r.get("contacto_telefono",""),
+            "telefono":     r.get("telefono",""),
             "estado":       r.get("estado",""),
             "origen":       "local",
         })
@@ -8704,6 +8724,61 @@ def mant_productos_buscar():
     return jsonify(resultados)
 
 
+# ── BÚSQUEDA DOCUMENTO ERP (como cubicador) ───────────────────────────
+
+@app.route("/mantenciones/api/documento")
+@_mant_required
+def mant_documento_erp():
+    """
+    Busca un documento ERP por tipo + número usando la REST API (igual que cubicador).
+    Devuelve header y líneas de productos.
+    GET ?tido=FCV&nudo=12345
+    """
+    tido = request.args.get("tido", "").strip().upper()
+    nudo = request.args.get("nudo", "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "Ingresa tipo y número de documento"}), 400
+
+    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","VD","WEB","FCO"}
+    if tido not in TIDOS_VALIDOS:
+        return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
+
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except ConnectionError as ce:
+        return jsonify({"error": str(ce)}), 503
+    except Exception as e:
+        return jsonify({"error": f"Error al consultar ERP: {e}"}), 500
+
+    if not header:
+        return jsonify({"error": f"Documento {tido} {nudo} no encontrado en el ERP"}), 404
+
+    # Formatear líneas para el wizard
+    items = []
+    for l in lineas:
+        sku  = (l.get("sku") or l.get("KOPRCT") or "").strip().upper()
+        nom  = (l.get("descripcion") or l.get("nombre") or l.get("NOKOPR") or "").strip()
+        qty  = int(float(l.get("cantidad") or l.get("qty") or 1))
+        if not nom:
+            continue
+        # Excluir SKUs de servicio/flete
+        if sku.upper() in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}:
+            continue
+        items.append({"sku": sku, "nombre": nom, "cantidad": qty})
+
+    return jsonify({
+        "ok":           True,
+        "tido":         header.get("tido", tido),
+        "nudo":         header.get("nudo_display", nudo),
+        "fecha":        header.get("fecha",""),
+        "cliente":      header.get("cliente_nombre",""),
+        "rut":          header.get("cliente_rut",""),
+        "direccion":    header.get("direccion",""),
+        "comuna":       header.get("comuna",""),
+        "items":        items,
+    })
+
+
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
 
 @app.route("/mantenciones/api/buscar-erp", methods=["POST"])
@@ -8715,10 +8790,13 @@ def mant_buscar_erp():
     if not q:
         return jsonify({"error": "Término de búsqueda requerido"}), 400
     ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
+    erp_conn = get_erp_conn()
+    if not erp_conn:
+        return jsonify({
+            "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
+            "documentos": [], "sin_conexion": True
+        }), 200
     try:
-        erp_conn = get_erp_conn()
-        if not erp_conn:
-            return jsonify({"error": "Sin conexión al ERP en este momento", "documentos": []}), 503
         with erp_conn.cursor() as cur:
             cur.execute(
                 f"""SELECT DISTINCT
@@ -8732,14 +8810,13 @@ def mant_buscar_erp():
                        d.CANTD        AS cantidad
                     FROM `{ERP_SALES}` d
                     WHERE (TRIM(d.NRAZON) LIKE %s OR TRIM(d.NRUC) LIKE %s)
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO')
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV')
                     ORDER BY d.FEMIS DESC
                     LIMIT 100""",
                 (f"%{q}%", f"%{q}%")
             )
             rows = cur.fetchall()
         erp_conn.close()
-        # Agrupar por documento
         docs = {}
         for r in rows:
             key = f"{r['tipo_doc']} {r['num_doc']}"
@@ -8759,7 +8836,10 @@ def mant_buscar_erp():
             })
         return jsonify({"ok": True, "documentos": list(docs.values())})
     except Exception as e:
-        return jsonify({"error": str(e), "documentos": []}), 500
+        return jsonify({
+            "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
+            "documentos": [], "sin_conexion": True
+        }), 200
 
 
 # ─────────────────────────────────────────────

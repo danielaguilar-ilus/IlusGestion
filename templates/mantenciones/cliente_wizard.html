@@ -514,54 +514,102 @@
 <div class="modal fade" id="modalErpEq" tabindex="-1">
   <div class="modal-dialog modal-xl">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Agregar equipos desde ERP</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-text me-2"></i>Importar equipos desde ERP</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body p-0">
 
         <!-- Tabs -->
-        <ul class="nav nav-tabs mb-3" id="erpEqTabs">
-          <li class="nav-item">
-            <button class="nav-link active" id="tabDocBtn" onclick="erpEqSetTab('doc')">
-              <i class="bi bi-file-earmark-text me-1"></i>Por cliente / documento
-            </button>
-          </li>
-          <li class="nav-item">
-            <button class="nav-link" id="tabProdBtn" onclick="erpEqSetTab('prod')">
-              <i class="bi bi-box-seam me-1"></i>Por producto (SKU / descripción)
-            </button>
-          </li>
-        </ul>
-
-        <!-- Panel: por documento -->
-        <div id="panelDoc">
-          <div class="d-flex gap-2 mb-3">
-            <input type="text" id="erpEqQ" class="form-control" placeholder="RUT o razón social del cliente…"
-                   onkeydown="if(event.key==='Enter') buscarErpEq()">
-            <button class="btn btn-ilus" onclick="buscarErpEq()"><i class="bi bi-search"></i></button>
-          </div>
-          <div id="erpEqRes"><div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un RUT o nombre para buscar</div></div>
+        <div style="background:#f8f9fa;border-bottom:1px solid #dee2e6;padding:0 20px">
+          <ul class="nav nav-tabs border-0" id="erpEqTabs">
+            <li class="nav-item">
+              <button class="nav-link active fw-semibold" id="tabDocBtn" onclick="erpEqSetTab('doc')" style="font-size:.83rem">
+                <i class="bi bi-receipt me-1"></i>Por número de documento
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link fw-semibold" id="tabClientBtn" onclick="erpEqSetTab('client')" style="font-size:.83rem">
+                <i class="bi bi-building me-1"></i>Por cliente (RUT / nombre)
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link fw-semibold" id="tabProdBtn" onclick="erpEqSetTab('prod')" style="font-size:.83rem">
+                <i class="bi bi-box-seam me-1"></i>Por producto (SKU)
+              </button>
+            </li>
+          </ul>
         </div>
 
-        <!-- Panel: por producto -->
-        <div id="panelProd" style="display:none">
-          <div class="d-flex gap-2 mb-2">
-            <input type="text" id="erpProdQ" class="form-control" placeholder="SKU o descripción del producto…"
-                   oninput="erpProdDebounce()" onkeydown="if(event.key==='Enter') buscarErpProd()">
-            <button class="btn btn-ilus" onclick="buscarErpProd()"><i class="bi bi-search"></i></button>
-          </div>
-          <div class="text-muted small mb-3" style="font-size:.75rem">
-            <i class="bi bi-info-circle me-1"></i>Busca directamente en el catálogo ERP. Selecciona los productos y defíneles cantidad antes de importar.
-          </div>
-          <div id="erpProdRes"><div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa al menos 2 caracteres para buscar</div></div>
-        </div>
+        <div style="padding:20px">
 
+          <!-- Panel: por documento (REST API — siempre funciona) -->
+          <div id="panelDoc">
+            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Ingresa el tipo y número del documento ERP (factura, boleta, nota de venta, etc.). Se traerán los productos de ese documento.</p>
+            <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
+              <div>
+                <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo</label>
+                <select id="docTido" class="form-select form-select-sm" style="width:90px">
+                  <option value="FCV">FCV</option>
+                  <option value="BLV">BLV</option>
+                  <option value="NVI">NVI</option>
+                  <option value="NVV">NVV</option>
+                  <option value="GDV">GDV</option>
+                  <option value="VD">VD</option>
+                </select>
+              </div>
+              <div style="flex:1;min-width:140px">
+                <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Número</label>
+                <input type="text" id="docNudo" class="form-control form-control-sm font-monospace"
+                       placeholder="ej: 12345"
+                       onkeydown="if(event.key==='Enter') buscarDocErp()">
+              </div>
+              <button class="btn btn-ilus btn-sm px-4" onclick="buscarDocErp()">
+                <i class="bi bi-search me-1"></i>Buscar
+              </button>
+            </div>
+            <div id="docErpRes">
+              <div class="text-center text-muted py-5" style="font-size:.85rem">
+                <i class="bi bi-receipt" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+                Ingresa tipo y número para traer los productos del documento
+              </div>
+            </div>
+          </div>
+
+          <!-- Panel: por cliente -->
+          <div id="panelClient" style="display:none">
+            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Busca por RUT o razón social. Se listarán los documentos del cliente (requiere conexión directa al ERP).</p>
+            <div class="d-flex gap-2 mb-3">
+              <input type="text" id="erpEqQ" class="form-control form-control-sm" placeholder="RUT o razón social del cliente…"
+                     onkeydown="if(event.key==='Enter') buscarErpEq()">
+              <button class="btn btn-ilus btn-sm" onclick="buscarErpEq()"><i class="bi bi-search"></i></button>
+            </div>
+            <div id="erpEqRes">
+              <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un RUT o nombre para buscar</div>
+            </div>
+          </div>
+
+          <!-- Panel: por producto -->
+          <div id="panelProd" style="display:none">
+            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Busca directamente en el catálogo ERP por SKU o nombre del producto.</p>
+            <div class="d-flex gap-2 mb-3">
+              <input type="text" id="erpProdQ" class="form-control form-control-sm" placeholder="SKU o descripción (ej: Leg Extension, Keiser, 001122BP…)"
+                     oninput="erpProdDebounce()" onkeydown="if(event.key==='Enter') buscarErpProd()">
+              <button class="btn btn-ilus btn-sm" onclick="buscarErpProd()"><i class="bi bi-search"></i></button>
+            </div>
+            <div id="erpProdRes">
+              <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa al menos 2 caracteres para buscar</div>
+            </div>
+          </div>
+
+        </div>
       </div>
       <div class="modal-footer">
         <span class="text-muted small me-auto" id="erpEqCount">0 seleccionadas</span>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus fw-bold" onclick="importarEq()"><i class="bi bi-box-arrow-in-down me-1"></i>Importar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="importarEq()">
+          <i class="bi bi-box-arrow-in-down me-1"></i>Importar seleccionadas
+        </button>
       </div>
     </div>
   </div>
@@ -957,13 +1005,14 @@ function leerEquipos() {
 
 // ══ ERP modal equipos ════════════════════════════════════════
 
-// ── Tab switcher ─────────────────────────────────────────────
+// ── Tab switcher (3 tabs) ─────────────────────────────────────
 function erpEqSetTab(tab) {
-  const isDoc = tab === 'doc';
-  document.getElementById('tabDocBtn').classList.toggle('active', isDoc);
-  document.getElementById('tabProdBtn').classList.toggle('active', !isDoc);
-  document.getElementById('panelDoc').style.display  = isDoc ? '' : 'none';
-  document.getElementById('panelProd').style.display = isDoc ? 'none' : '';
+  ['doc','client','prod'].forEach(t => {
+    const btn = document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)+'Btn');
+    const panel = document.getElementById('panel'+t.charAt(0).toUpperCase()+t.slice(1));
+    if(btn)   btn.classList.toggle('active', t===tab);
+    if(panel) panel.style.display = t===tab ? '' : 'none';
+  });
 }
 
 // ── Tab "Por documento" ───────────────────────────────────────
@@ -1026,10 +1075,100 @@ function importarEq(){
   });
 }
 function abrirErpEquipos(){
-  // Pre-llenar búsqueda por cliente y abrir en tab documento
   erpEqSetTab('doc');
-  document.getElementById('erpEqQ').value=document.getElementById('s1_rut').value||document.getElementById('s1_razon').value;
+  // Pre-llenar número de documento si el RUT del cliente ya está completado
+  document.getElementById('docNudo').value = '';
+  erpEqSel = {};
+  document.getElementById('erpEqCount').textContent = '0 seleccionadas';
+  document.getElementById('docErpRes').innerHTML = `
+    <div class="text-center text-muted py-5" style="font-size:.85rem">
+      <i class="bi bi-receipt" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+      Ingresa tipo y número para traer los productos del documento
+    </div>`;
   new bootstrap.Modal(document.getElementById('modalErpEq')).show();
+}
+
+// ── Buscar por documento REST API ────────────────────────────
+async function buscarDocErp() {
+  const tido = document.getElementById('docTido').value;
+  const nudo = document.getElementById('docNudo').value.trim();
+  const cont = document.getElementById('docErpRes');
+  if(!nudo) { cont.innerHTML='<div class="text-center text-warning py-3">Ingresa el número de documento</div>'; return; }
+
+  cont.innerHTML=`<div class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP para ${tido} ${nudo}…</div>`;
+
+  try {
+    const r = await fetch(`/mantenciones/api/documento?tido=${tido}&nudo=${encodeURIComponent(nudo)}`);
+    const data = await r.json();
+
+    if(!data.ok) {
+      cont.innerHTML=`<div class="text-center text-danger py-3"><i class="bi bi-exclamation-triangle me-1"></i>${data.error||'Documento no encontrado'}</div>`;
+      return;
+    }
+
+    if(!data.items?.length) {
+      cont.innerHTML='<div class="text-center text-muted py-3">Este documento no tiene líneas de producto importables.</div>';
+      return;
+    }
+
+    // Header del documento
+    let html = `<div class="alert alert-success py-2 mb-3" style="font-size:.82rem">
+      <strong><i class="bi bi-check-circle me-1"></i>${data.tido} ${data.nudo}</strong>
+      ${data.fecha ? ` — ${data.fecha}` : ''}
+      ${data.cliente ? ` &nbsp;·&nbsp; <strong>${data.cliente}</strong>` : ''}
+      ${data.rut ? ` (${data.rut})` : ''}
+    </div>`;
+
+    html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.82rem">
+      <thead class="table-light"><tr>
+        <th style="width:36px"></th>
+        <th style="width:110px">SKU</th>
+        <th>Producto</th>
+        <th style="width:60px;text-align:center">Cant.</th>
+      </tr></thead><tbody>`;
+
+    data.items.forEach((it, i) => {
+      const key = `doc-${tido}-${nudo}-${i}`;
+      const ld = JSON.stringify({
+        sku: it.sku, nombre: it.nombre, cantidad: it.cantidad,
+        doc_origen: `${tido} ${nudo}`, doc_fecha: data.fecha
+      }).replace(/"/g,'&quot;');
+      html += `<tr>
+        <td><input type="checkbox" class="form-check-input" onchange="erpEqToggle('${key}',${ld},this.checked)"></td>
+        <td class="font-monospace text-primary fw-bold">${it.sku||'—'}</td>
+        <td>${it.nombre}</td>
+        <td class="text-center">${it.cantidad}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+
+    // Botón "seleccionar todos"
+    html = `<div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="docSelAll('${tido}','${nudo}',${data.items.length})">
+        <i class="bi bi-check2-all me-1"></i>Seleccionar todos
+      </button>
+    </div>` + html;
+
+    cont.innerHTML = html;
+
+    // Pre-llenar datos del cliente si están vacíos
+    if(data.cliente && !document.getElementById('s1_razon').value) {
+      document.getElementById('s1_razon').value = data.cliente;
+    }
+    if(data.rut && !document.getElementById('s1_rut').value) {
+      document.getElementById('s1_rut').value = data.rut;
+    }
+
+  } catch(e) {
+    cont.innerHTML=`<div class="text-center text-danger py-3">Error de red: ${e.message}</div>`;
+  }
+}
+
+function docSelAll(tido, nudo, count) {
+  const cont = document.getElementById('docErpRes');
+  cont.querySelectorAll('input[type=checkbox]').forEach(chk => {
+    if(!chk.checked) chk.click();
+  });
 }
 
 // ══ BUSCADOR INLINE DE EQUIPOS (paso 2) ══════════════════════
