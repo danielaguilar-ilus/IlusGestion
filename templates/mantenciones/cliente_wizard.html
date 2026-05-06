@@ -63,6 +63,26 @@
 .eq-input      { border:1px solid #e0e0e0;border-radius:5px;padding:4px 7px;
                  font-size:.78rem;width:100%; }
 .eq-input:focus{ border-color:var(--ilus-red);outline:none; }
+/* ══ Autocomplete mejorado ═════════════════════════════════ */
+.ac-meta       { font-size:.71rem;color:#888;margin-top:1px; }
+.ac-meta strong { color:#444;font-weight:600; }
+.ac-item:hover .ac-meta { color:#666; }
+/* ══ Buscador equipo inline ════════════════════════════════ */
+.eq-search-wrap { position:relative;margin-bottom:10px; }
+.eq-search-input{ border:1.5px solid #ddd;border-radius:8px;padding:8px 12px 8px 36px;
+                  font-size:.84rem;width:100%;transition:border-color .2s;background:#fff; }
+.eq-search-input:focus { border-color:var(--ilus-red);outline:none;box-shadow:0 0 0 3px rgba(204,0,0,.08); }
+.eq-search-icon { position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#bbb;font-size:.95rem; }
+.eq-prod-drop   { position:absolute;top:100%;left:0;right:0;background:#fff;
+                  border:1px solid #ddd;border-radius:0 0 10px 10px;
+                  box-shadow:0 8px 24px rgba(0,0,0,.13);z-index:998;max-height:300px;
+                  overflow-y:auto;display:none; }
+.eq-prod-item   { padding:10px 14px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .1s; }
+.eq-prod-item:hover,.eq-prod-item.active { background:#f0f4ff; }
+.eq-prod-item:last-child { border-bottom:none; }
+.eq-prod-name   { font-weight:700;font-size:.85rem;color:#222; }
+.eq-prod-sub    { font-size:.71rem;color:#888;margin-top:1px; }
+.eq-prod-sku    { font-family:monospace;font-weight:600;color:#0066cc; }
 /* ══ Adjuntos ══════════════════════════════════════════════ */
 .adj-chip      { display:inline-flex;align-items:center;gap:6px;background:#f0f0f0;
                  border-radius:20px;padding:4px 10px;font-size:.75rem;margin:3px; }
@@ -270,11 +290,23 @@
     <div class="sec-title mb-0"><i class="bi bi-bicycle me-1"></i>Equipos / Activos del cliente</div>
     <div class="d-flex gap-2">
       <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpEquipos()">
-        <i class="bi bi-search me-1"></i>Buscar ERP
+        <i class="bi bi-file-earmark-text me-1"></i>Asignar desde documento
       </button>
-      <button class="btn btn-sm btn-ilus" onclick="agregarFilaEquipo()">
-        <i class="bi bi-plus"></i> Fila
+      <button class="btn btn-sm btn-outline-secondary" onclick="agregarFilaEquipo()">
+        <i class="bi bi-plus"></i> Fila manual
       </button>
+    </div>
+  </div>
+
+  {# Buscador inline de productos ERP #}
+  <div class="mb-3">
+    <label class="form-label fw-semibold" style="font-size:.8rem">Buscar y agregar equipo:</label>
+    <div class="eq-search-wrap">
+      <i class="bi bi-search eq-search-icon"></i>
+      <input type="text" id="eqSearchInput" class="eq-search-input" autocomplete="off"
+             placeholder="Escribe SKU o nombre del producto (ej: Leg Extension, Keiser, 001122BP…)"
+             oninput="eqSearchDebounce()" onkeydown="eqSearchKeydown(event)">
+      <div class="eq-prod-drop" id="eqProdDrop"></div>
     </div>
   </div>
   <div class="table-responsive">
@@ -597,18 +629,26 @@ async function acBuscar() {
     </div>`;
     return;
   }
-  drop.innerHTML = acResults.map((c,i) => `
+  drop.innerHTML = acResults.map((c,i) => {
+    // Construir línea de meta: RUT | Región | Comuna
+    const meta = [
+      c.rut ? `RUT: ${c.rut}` : null,
+      c.region ? `Región: ${c.region}` : null,
+      c.comuna ? `Comuna: ${c.comuna}` : null,
+    ].filter(Boolean).join(' | ');
+    return `
     <div class="ac-item" onclick="acSeleccionar(${i})">
-      <div class="d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-start justify-content-between gap-2">
         <div>
           <div class="ac-name">${c.razon_social}</div>
-          <div class="ac-rut">${c.rut||'—'}</div>
+          ${meta ? `<div class="ac-meta">${meta}</div>` : ''}
         </div>
-        <span class="ac-badge ${c.origen==='local'?'ac-local':'ac-erp'}">
+        <span class="ac-badge ${c.origen==='local'?'ac-local':'ac-erp'}" style="white-space:nowrap;margin-top:2px">
           ${c.origen==='local'?'<i class="bi bi-database me-1"></i>Registrado':'<i class="bi bi-cloud me-1"></i>ERP'}
         </span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function acSeleccionar(i) {
@@ -618,12 +658,19 @@ function acSeleccionar(i) {
   document.getElementById('s1_rut').value             = c.rut||'';
   document.getElementById('s1_contacto_email').value  = c.email||'';
   document.getElementById('ac_input').value           = `${c.razon_social}${c.rut?' ('+c.rut+')':''}`;
+  // Rellenar región, comuna, dirección y teléfono si el ERP los entregó
+  if(c.region)    { const el=document.getElementById('s1_region');    if(el) el.value=c.region; }
+  if(c.comuna)    { const el=document.getElementById('s1_comuna');    if(el) el.value=c.comuna; }
+  if(c.direccion) { const el=document.getElementById('s1_direccion'); if(el) el.value=c.direccion; }
+  if(c.telefono)  { const el=document.getElementById('s1_contacto_tel'); if(el) el.value=c.telefono; }
   document.getElementById('ac_dropdown').style.display = 'none';
   const st = document.getElementById('busq_status');
+  const filled = [c.region,c.comuna,c.direccion].filter(Boolean);
   if(c.id) {
     st.innerHTML = `<div class="erp-info"><i class="bi bi-info-circle me-1"></i>Cliente ya registrado en mantenciones — se creará uno nuevo o puedes <a href="/mantenciones/clientes/${c.id}">ver su ficha</a>.</div>`;
   } else {
-    st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>Datos autocompletados desde ERP</div>`;
+    const extra = filled.length ? ` · ${filled.join(' · ')}` : '';
+    st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>Datos autocompletados desde ERP${extra}</div>`;
   }
   st.style.display='';
 }
@@ -972,6 +1019,77 @@ function abrirErpEquipos(){
   document.getElementById('erpEqQ').value=document.getElementById('s1_rut').value||document.getElementById('s1_razon').value;
   new bootstrap.Modal(document.getElementById('modalErpEq')).show();
 }
+
+// ══ BUSCADOR INLINE DE EQUIPOS (paso 2) ══════════════════════
+let eqSearchTimer = null;
+let eqSearchResults = [];
+let eqSearchIdx = -1;
+
+function eqSearchDebounce() {
+  clearTimeout(eqSearchTimer);
+  const q = document.getElementById('eqSearchInput').value.trim();
+  const drop = document.getElementById('eqProdDrop');
+  if(q.length < 2) { drop.style.display='none'; return; }
+  drop.innerHTML='<div class="eq-prod-item text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
+  drop.style.display='';
+  eqSearchTimer = setTimeout(eqSearchFetch, 300);
+}
+
+async function eqSearchFetch() {
+  const q = document.getElementById('eqSearchInput').value.trim();
+  if(q.length < 2) return;
+  try {
+    const r = await fetch(`/mantenciones/api/productos/buscar?q=${encodeURIComponent(q)}`);
+    eqSearchResults = await r.json();
+    eqSearchIdx = -1;
+    renderEqSearchDrop();
+  } catch(e) {
+    document.getElementById('eqProdDrop').innerHTML=
+      '<div class="eq-prod-item text-muted small">Error al buscar</div>';
+  }
+}
+
+function renderEqSearchDrop() {
+  const drop = document.getElementById('eqProdDrop');
+  if(!eqSearchResults.length) {
+    drop.innerHTML='<div class="eq-prod-item text-muted small">Sin resultados</div>';
+    return;
+  }
+  drop.innerHTML = eqSearchResults.map((p,i)=>`
+    <div class="eq-prod-item${i===eqSearchIdx?' active':''}" onclick="eqSearchSeleccionar(${i})">
+      <div class="eq-prod-name">${p.nombre||'—'}</div>
+      <div class="eq-prod-sub">
+        <span class="eq-prod-sku">${p.sku||''}</span>
+        ${p.tipo ? ` | Tipo: ${p.tipo}` : ' | Tipo: N/A'}
+      </div>
+    </div>`).join('');
+  drop.style.display='';
+}
+
+function eqSearchSeleccionar(i) {
+  const p = eqSearchResults[i];
+  if(!p) return;
+  agregarFilaEquipo({ nombre: p.nombre||'', sku: p.sku||'', cantidad:1 });
+  document.getElementById('eqSearchInput').value='';
+  document.getElementById('eqProdDrop').style.display='none';
+  eqSearchResults=[];
+}
+
+function eqSearchKeydown(e) {
+  const drop = document.getElementById('eqProdDrop');
+  const items = drop.querySelectorAll('.eq-prod-item');
+  if(!items.length) return;
+  if(e.key==='ArrowDown') { eqSearchIdx=Math.min(eqSearchIdx+1,items.length-1); renderEqSearchDrop(); e.preventDefault(); }
+  else if(e.key==='ArrowUp') { eqSearchIdx=Math.max(eqSearchIdx-1,-1); renderEqSearchDrop(); e.preventDefault(); }
+  else if(e.key==='Enter' && eqSearchIdx>=0) { eqSearchSeleccionar(eqSearchIdx); e.preventDefault(); }
+  else if(e.key==='Escape') { drop.style.display='none'; }
+}
+
+// Cerrar dropdown al hacer click fuera
+document.addEventListener('click', e2 => {
+  if(!document.getElementById('eqSearchInput')?.contains(e2.target))
+    document.getElementById('eqProdDrop').style.display='none';
+});
 
 // ── Tab "Por producto" ────────────────────────────────────────
 let erpProdTimer = null;

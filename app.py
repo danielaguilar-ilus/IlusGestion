@@ -6604,16 +6604,29 @@ def _smtp_cfg_from_request(data=None):
     data = data or {}
     prev = _get_smtp_cfg()
     smtp_pass = (data.get("pass") or "").strip()
+    is_masked = smtp_pass.startswith("â€¢") or smtp_pass == "••••••••" or set(smtp_pass or "") == {"•"}
+    bullet = chr(8226)
+    is_masked = is_masked or smtp_pass == (bullet * 8) or set(smtp_pass or "") == {bullet}
+    if is_masked:
+        smtp_pass = ""
     if not smtp_pass or smtp_pass == "••••••••":
         smtp_pass = prev.get("smtp_pass") or ""
+    host = (data.get("host") or prev.get("smtp_host") or "smtp.gmail.com").strip()
+    port = int(data.get("port") or prev.get("smtp_port") or 587)
+    secure = bool(data.get("secure")) if "secure" in data else bool(prev.get("secure"))
+    if "gmail.com" in host.lower():
+        if port == 587 and secure:
+            secure = False
+        elif port == 465 and not secure:
+            secure = True
     return {
-        "smtp_host": (data.get("host") or prev.get("smtp_host") or "smtp.gmail.com").strip(),
-        "smtp_port": int(data.get("port") or prev.get("smtp_port") or 587),
+        "smtp_host": host,
+        "smtp_port": port,
         "smtp_user": (data.get("user") or prev.get("smtp_user") or "").strip(),
         "smtp_pass": smtp_pass,
         "from_name": (data.get("fromName") or prev.get("from_name") or "ILUS Sport & Health").strip(),
         "from_addr": (data.get("fromAddr") or prev.get("from_addr") or data.get("user") or prev.get("smtp_user") or "").strip(),
-        "secure": bool(data.get("secure")) if "secure" in data else bool(prev.get("secure")),
+        "secure": secure,
     }
 
 
@@ -6920,16 +6933,17 @@ def comm_index():
 @_require_superadmin
 def comm_smtp_save():
     d = request.get_json(silent=True) or {}
-    prev = _get_smtp_cfg()
-    smtp_pass = (d.get("pass") or "").strip()
+    cfg = _smtp_cfg_from_request(d)
+    prev = cfg
+    smtp_pass = cfg["smtp_pass"]
     if not smtp_pass or smtp_pass == "••••••••":
         smtp_pass = prev.get("smtp_pass") or ""
-    host = (d.get("host") or "smtp.gmail.com").strip()
-    port = int(d.get("port") or 587)
-    user = (d.get("user") or "").strip()
-    from_name = (d.get("fromName") or "ILUS Sport & Health").strip()
-    from_addr = (d.get("fromAddr") or user).strip()
-    secure = 1 if d.get("secure") else 0
+    host = cfg["smtp_host"]
+    port = cfg["smtp_port"]
+    user = cfg["smtp_user"]
+    from_name = cfg["from_name"]
+    from_addr = (cfg["from_addr"] or user).strip()
+    secure = 1 if cfg["secure"] else 0
     if not user:
         return jsonify({"error": "Ingresa el email usuario SMTP"}), 400
     if not smtp_pass:
@@ -6953,7 +6967,10 @@ def comm_smtp_save():
         )
         cur.execute("DELETE FROM comm_smtp_config WHERE id <> 1")
     conn.commit()
-    return jsonify({"ok": True, "smtp": _safe_smtp_cfg({
+    warning = ""
+    if "gmail.com" in host.lower() and port == 587 and d.get("secure"):
+        warning = "Para Gmail con puerto 587 se usa STARTTLS; se desmarco SSL/TLS automaticamente."
+    return jsonify({"ok": True, "warning": warning, "smtp": _safe_smtp_cfg({
         "smtp_host": host,
         "smtp_port": port,
         "smtp_user": user,
@@ -7130,8 +7147,27 @@ def comm_wa_test():
         _comm_log_entry("whatsapp", to, "Prueba WA", "ok", msg_sid)
         return jsonify({"ok": True, "msg_sid": msg_sid})
     except Exception as exc:
-        _comm_log_entry("whatsapp", to, "Prueba WA", "error", str(exc))
-        return jsonify({"error": str(exc)}), 500
+        detail = str(exc)
+        code = getattr(exc, "code", None) or getattr(exc, "status", None)
+        more_info = getattr(exc, "more_info", "") or ""
+        suggestions = []
+        if "not installed" in detail.lower() or "twilio" in detail.lower() and "instal" in detail.lower():
+            suggestions.append("Instala Twilio en el mismo Python que ejecuta la app y reinicia el servidor.")
+        if str(code) in {"21211", "21614"} or "not a valid phone number" in detail.lower():
+            suggestions.append("Revisa que el destinatario tenga formato internacional, por ejemplo +56912345678.")
+        if str(code) in {"63015", "63016"} or "sandbox" in detail.lower():
+            suggestions.append("En sandbox, el destinatario debe enviar primero el codigo join al numero +1 415 523 8886.")
+        if str(code) in {"20003", "20404"} or "authenticate" in detail.lower() or "credentials" in detail.lower():
+            suggestions.append("Revisa Account SID y Auth Token desde el Dashboard de Twilio.")
+        if frm.startswith("whatsapp:+14155238886"):
+            suggestions.append("Estas usando sandbox Twilio; confirma que el telefono destino ya se unio al sandbox.")
+        _comm_log_entry("whatsapp", to, "Prueba WA", "error", detail)
+        return jsonify({
+            "error": detail,
+            "code": code,
+            "more_info": more_info,
+            "suggestions": suggestions,
+        }), 500
 
 
 @app.route("/comunicaciones/templates", methods=["GET"])
@@ -7561,7 +7597,8 @@ def mant_clientes_autocomplete():
     # 1) Buscar en clientes locales (siempre disponible)
     q_like = f"%{q}%"
     locales = mysql_fetchall(
-        """SELECT id, razon_social, rut, contacto_email, estado
+        """SELECT id, razon_social, rut, contacto_email, estado,
+                  region, comuna, direccion, contacto_telefono
            FROM mant_clientes
            WHERE razon_social LIKE %s OR rut LIKE %s
            ORDER BY razon_social LIMIT 15""",
@@ -7576,6 +7613,10 @@ def mant_clientes_autocomplete():
             "razon_social": r["razon_social"],
             "rut":          rut,
             "email":        r.get("contacto_email",""),
+            "region":       r.get("region",""),
+            "comuna":       r.get("comuna",""),
+            "direccion":    r.get("direccion",""),
+            "telefono":     r.get("contacto_telefono",""),
             "estado":       r.get("estado",""),
             "origen":       "local",
         })
@@ -7593,11 +7634,20 @@ def mant_clientes_autocomplete():
                 continue
             if rut and rut in ids_rut_vistos:
                 continue
+            # Capturar región, comuna, dirección y teléfono si el ERP los entrega
+            region  = (e.get("NOKOREG")  or e.get("NOKOREGIO") or e.get("REGION") or "").strip()
+            comuna  = (e.get("NOKOCOMU") or e.get("NOKOCOMUNADE") or e.get("COMUNA") or e.get("NOKOMUNNE") or "").strip()
+            dir_    = (e.get("DIEN")     or e.get("DIRESP") or e.get("DIENDESP") or e.get("DIENDE") or "").strip()
+            tel     = (e.get("FOEN")     or e.get("FONOEN") or e.get("TELEN")  or "").strip()
             resultados.append({
                 "id":           None,
                 "razon_social": nombre,
                 "rut":          rut,
                 "email":        (e.get("EMAIL") or e.get("COREN") or "").strip(),
+                "region":       region,
+                "comuna":       comuna,
+                "direccion":    dir_,
+                "telefono":     tel,
                 "estado":       "",
                 "origen":       "erp",
             })
@@ -7614,6 +7664,10 @@ def mant_clientes_autocomplete():
                 "razon_social": r["razon_social"],
                 "rut":          rut,
                 "email":        "",
+                "region":       "",
+                "comuna":       "",
+                "direccion":    "",
+                "telefono":     "",
                 "estado":       "",
                 "origen":       "erp",
             })
@@ -8627,15 +8681,16 @@ def mant_productos_buscar():
     try:
         body = _erp_get(
             "/productos",
-            {"search": q, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true"},
+            {"search": q, "empresa": "01", "fields": "KOPR,NOKOPR,NOKOTI", "visible": "true"},
             TOKEN, timeout=8,
         )
         for p in (body.get("data") or []):
-            sku   = (p.get("KOPR")   or "").strip().upper()
+            sku    = (p.get("KOPR")   or "").strip().upper()
             nombre = (p.get("NOKOPR") or "").strip()
+            tipo   = (p.get("NOKOTI") or p.get("TIPO") or "").strip()
             if not sku or sku in seen:
                 continue
-            resultados.append({"sku": sku, "nombre": nombre})
+            resultados.append({"sku": sku, "nombre": nombre, "tipo": tipo})
             seen.add(sku)
             if len(resultados) >= 25:
                 break
