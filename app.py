@@ -6606,7 +6606,12 @@ def _smtp_cfg_from_request(data=None):
     smtp_pass = (data.get("pass") or "").strip()
     is_masked = smtp_pass.startswith("â€¢") or smtp_pass == "••••••••" or set(smtp_pass or "") == {"•"}
     bullet = chr(8226)
-    is_masked = is_masked or smtp_pass == (bullet * 8) or set(smtp_pass or "") == {bullet}
+    is_masked = (
+        is_masked
+        or smtp_pass == (bullet * 8)
+        or set(smtp_pass or "") == {bullet}
+        or (bool(smtp_pass) and not any(ch.isalnum() for ch in smtp_pass))
+    )
     if is_masked:
         smtp_pass = ""
     if not smtp_pass or smtp_pass == "••••••••":

@@ -28,20 +28,22 @@
                  color:#888;background:#f8f9fa;transition:all .15s;border:none; }
 .entry-tab.active { background:var(--ilus-red);color:#fff; }
 /* ══ Autocomplete ══════════════════════════════════════════ */
-.ac-wrap       { position:relative; }
-.ac-dropdown   { position:absolute;top:100%;left:0;right:0;background:#fff;
-                 border:1px solid #ddd;border-radius:0 0 10px 10px;
-                 box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:999;max-height:280px;
-                 overflow-y:auto;display:none; }
-.ac-item       { padding:10px 14px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .1s; }
-.ac-item:hover { background:#f0f4ff; }
+.ac-wrap       { position:relative;z-index:100; }
+.ac-dropdown   { position:absolute;top:calc(100% + 2px);left:0;right:0;background:#fff;
+                 border:1px solid #c8d0e0;border-radius:10px;
+                 box-shadow:0 10px 32px rgba(0,0,0,.15);z-index:1050;max-height:320px;
+                 overflow-y:auto; }
+.ac-item       { padding:11px 15px;cursor:pointer;border-bottom:1px solid #f0f2f5;transition:background .1s; }
+.ac-item:hover,.ac-item.active { background:#f0f5ff; }
 .ac-item:last-child { border-bottom:none; }
-.ac-name       { font-weight:700;font-size:.85rem;color:#222; }
+.ac-name       { font-weight:700;font-size:.87rem;color:#1a1a2e; }
 .ac-rut        { font-size:.72rem;color:#888;font-family:monospace; }
-.ac-badge      { font-size:.6rem;padding:1px 7px;border-radius:50px;font-weight:700; }
+.ac-meta       { font-size:.72rem;color:#666;margin-top:2px; }
+.ac-meta strong{ color:#333;font-weight:600; }
+.ac-badge      { font-size:.6rem;padding:2px 8px;border-radius:50px;font-weight:700; }
 .ac-local      { background:#e3f2fd;color:#0066cc; }
 .ac-erp        { background:#e8f5e9;color:#1a7a1a; }
-.ac-loading    { padding:12px 14px;text-align:center;color:#888;font-size:.8rem; }
+.ac-loading    { padding:13px 15px;text-align:center;color:#888;font-size:.8rem; }
 /* ══ Drop zone contrato ════════════════════════════════════ */
 .drop-zone     { border:2px dashed #ddd;border-radius:12px;padding:32px 20px;
                  text-align:center;cursor:pointer;transition:all .2s;background:#fafafa; }
@@ -617,10 +619,16 @@ async function acBuscar() {
   const q = document.getElementById('ac_input').value.trim();
   const drop = document.getElementById('ac_dropdown');
   if(q.length < 2) { drop.style.display='none'; return; }
-  drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
-  drop.style.display = '';
-  const r = await fetch(`/mantenciones/api/clientes/autocomplete?q=${encodeURIComponent(q)}`);
-  acResults = await r.json();
+  drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando en ERP…</div>';
+  drop.style.display = 'block';   // ← IMPORTANTE: forzar visible (CSS tiene display:none)
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/autocomplete?q=${encodeURIComponent(q)}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    acResults = await r.json();
+  } catch(err) {
+    drop.innerHTML = `<div class="ac-loading text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error al buscar (${err.message})</div>`;
+    return;
+  }
   acIdx = -1;
   if(!acResults.length) {
     drop.innerHTML = `<div class="ac-loading text-muted">
@@ -632,18 +640,18 @@ async function acBuscar() {
   drop.innerHTML = acResults.map((c,i) => {
     // Construir línea de meta: RUT | Región | Comuna
     const meta = [
-      c.rut ? `RUT: ${c.rut}` : null,
-      c.region ? `Región: ${c.region}` : null,
-      c.comuna ? `Comuna: ${c.comuna}` : null,
-    ].filter(Boolean).join(' | ');
+      c.rut    ? `RUT: <strong>${c.rut}</strong>` : null,
+      c.region ? `Región: ${c.region}`             : null,
+      c.comuna ? `Comuna: ${c.comuna}`             : null,
+    ].filter(Boolean).join(' &nbsp;|&nbsp; ');
     return `
     <div class="ac-item" onclick="acSeleccionar(${i})">
       <div class="d-flex align-items-start justify-content-between gap-2">
-        <div>
+        <div style="min-width:0">
           <div class="ac-name">${c.razon_social}</div>
           ${meta ? `<div class="ac-meta">${meta}</div>` : ''}
         </div>
-        <span class="ac-badge ${c.origen==='local'?'ac-local':'ac-erp'}" style="white-space:nowrap;margin-top:2px">
+        <span class="ac-badge ${c.origen==='local'?'ac-local':'ac-erp'}" style="white-space:nowrap;margin-top:2px;flex-shrink:0">
           ${c.origen==='local'?'<i class="bi bi-database me-1"></i>Registrado':'<i class="bi bi-cloud me-1"></i>ERP'}
         </span>
       </div>
@@ -659,20 +667,24 @@ function acSeleccionar(i) {
   document.getElementById('s1_contacto_email').value  = c.email||'';
   document.getElementById('ac_input').value           = `${c.razon_social}${c.rut?' ('+c.rut+')':''}`;
   // Rellenar región, comuna, dirección y teléfono si el ERP los entregó
-  if(c.region)    { const el=document.getElementById('s1_region');    if(el) el.value=c.region; }
-  if(c.comuna)    { const el=document.getElementById('s1_comuna');    if(el) el.value=c.comuna; }
-  if(c.direccion) { const el=document.getElementById('s1_direccion'); if(el) el.value=c.direccion; }
+  if(c.region)    { const el=document.getElementById('s1_ciudad');       if(el) el.value=c.region; }
+  if(c.comuna)    { const el=document.getElementById('s1_comuna');       if(el) el.value=c.comuna; }
+  if(c.direccion) { const el=document.getElementById('s1_direccion');    if(el) el.value=c.direccion; }
   if(c.telefono)  { const el=document.getElementById('s1_contacto_tel'); if(el) el.value=c.telefono; }
   document.getElementById('ac_dropdown').style.display = 'none';
+  // Mostrar badge de confirmación
   const st = document.getElementById('busq_status');
-  const filled = [c.region,c.comuna,c.direccion].filter(Boolean);
+  const filled = [c.region, c.comuna, c.direccion].filter(Boolean);
   if(c.id) {
-    st.innerHTML = `<div class="erp-info"><i class="bi bi-info-circle me-1"></i>Cliente ya registrado en mantenciones — se creará uno nuevo o puedes <a href="/mantenciones/clientes/${c.id}">ver su ficha</a>.</div>`;
+    st.innerHTML = `<div class="erp-info"><i class="bi bi-info-circle me-1"></i>
+      Cliente ya registrado — <a href="/mantenciones/clientes/${c.id}">ver ficha</a>.
+      Los datos del formulario están prellenados con la info del ERP.</div>`;
   } else {
-    const extra = filled.length ? ` · ${filled.join(' · ')}` : '';
-    st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>Datos autocompletados desde ERP${extra}</div>`;
+    const tags = filled.map(v=>`<span class="badge bg-light text-dark border" style="font-weight:500">${v}</span>`).join(' ');
+    st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>
+      <strong>Datos cargados desde ERP</strong>${tags ? ' — '+tags : ''}</div>`;
   }
-  st.style.display='';
+  st.style.display='block';
 }
 
 function acKeydown(e) {
@@ -714,7 +726,7 @@ async function dirBuscar() {
   const drop = document.getElementById('dir_dropdown');
   if(q.length < 4) return;
   drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando dirección…</div>';
-  drop.style.display = '';
+  drop.style.display = 'block';
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q+', Chile')}&countrycodes=cl&addressdetails=1&limit=6&accept-language=es`;
     const r = await fetch(url, { headers: { 'Accept-Language': 'es', 'User-Agent': 'ILUSApp/1.0' } });
@@ -1031,7 +1043,7 @@ function eqSearchDebounce() {
   const drop = document.getElementById('eqProdDrop');
   if(q.length < 2) { drop.style.display='none'; return; }
   drop.innerHTML='<div class="eq-prod-item text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
-  drop.style.display='';
+  drop.style.display='block';
   eqSearchTimer = setTimeout(eqSearchFetch, 300);
 }
 
@@ -1063,7 +1075,7 @@ function renderEqSearchDrop() {
         ${p.tipo ? ` | Tipo: ${p.tipo}` : ' | Tipo: N/A'}
       </div>
     </div>`).join('');
-  drop.style.display='';
+  drop.style.display='block';
 }
 
 function eqSearchSeleccionar(i) {
