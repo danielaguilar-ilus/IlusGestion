@@ -110,45 +110,61 @@
     </div>
   </div>
 
-  {# ── Panel referencia de roles ── #}
-  <div class="col-12 col-xl-4">
-    <div class="r-card">
+  {# ── Matriz de permisos ── #}
+  <div class="col-12">
+    <div class="r-card mt-2">
       <div class="r-card-header">
-        <span class="r-card-title"><i class="bi bi-info-circle me-1"></i>Referencia de roles</span>
+        <span class="r-card-title"><i class="bi bi-grid-3x3-gap me-1"></i>Matriz de acceso por rol</span>
+        <span class="text-muted" style="font-size:.74rem">✅ Acceso completo &nbsp;·&nbsp; 👁 Solo lectura &nbsp;·&nbsp; — Sin acceso</span>
       </div>
-      <div style="padding:16px 18px">
-        {% set dot_colors = {
-          'superadmin':'#dc2626',
-          'admin':'#d97706',
-          'ejecutivo':'#2563eb',
-          'editor':'#7c3aed',
-          'lector':'#6b7280',
-          'vendedor':'#16a34a'
-        } %}
-        {% for r in roles %}
-        <div class="ref-card">
-          <div class="ref-dot" style="background:{{ dot_colors[r.value] }}"></div>
-          <div>
-            <div class="fw-bold" style="font-size:.83rem">{{ r.label }}</div>
-            <div style="font-size:.76rem;color:#6b7280;margin-top:2px">{{ r.desc }}</div>
-            <span class="role-pill role-{{ r.value }} mt-1" style="font-size:.62rem">{{ r.value }}</span>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div class="r-card mt-3" style="background:linear-gradient(135deg,#faf5ff,#eff6ff)">
-      <div style="padding:16px 18px">
-        <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed;margin-bottom:8px">
-          <i class="bi bi-info-circle me-1"></i>Importante
-        </div>
-        <ul style="font-size:.79rem;color:#374151;margin:0;padding-left:16px;line-height:1.7">
-          <li>El cambio de rol es inmediato.</li>
-          <li>No puedes cambiar tu propio rol si no eres Super Admin.</li>
-          <li>Los roles de acceso restringen qué módulos puede ver cada usuario.</li>
-          <li>El rol <strong>superadmin</strong> tiene acceso total e irreversible.</li>
-        </ul>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem">
+          <thead style="background:#f8fafc">
+            <tr>
+              <th style="min-width:150px;padding-left:20px">Módulo / Función</th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-superadmin">SuperAdmin</span></th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-admin">Admin</span></th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-ejecutivo">Ejecutivo</span></th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-editor">Editor</span></th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-lector">Lector</span></th>
+              <th class="text-center" style="width:100px"><span class="role-pill role-vendedor">Vendedor</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set M = [
+              ('🏷️ Etiquetas',          'Ver productos',          True,True,False,True,True,True),
+              ('🏷️ Etiquetas',          'Crear/editar productos', True,True,False,True,False,False),
+              ('🚛 Transporte',          'Cubicador',              True,True,False,True,False,True),
+              ('🚛 Transporte',          'Monitor / Manifiestos',  True,True,False,True,False,False),
+              ('🔧 Mantenciones',        'Dashboard',              True,True,True,False,False,False),
+              ('🔧 Mantenciones',        'Clientes / Fichas',      True,True,True,False,False,False),
+              ('🔧 Mantenciones',        'Calendario',             True,True,True,False,False,False),
+              ('🔧 Mantenciones',        'Análisis',               True,True,True,False,False,False),
+              ('👥 Colaboradores',       'Ver / Editar',           True,True,False,True,False,False),
+              ('📋 Evaluaciones',        'Ver / Crear',            True,True,False,True,False,False),
+              ('💬 Comunicaciones',      'Email / WhatsApp',       True,True,False,False,False,False),
+              ('⚙️ Ajustes',             'Usuarios',               True,True,False,False,False,False),
+              ('⚙️ Ajustes',             'Roles y permisos',       True,True,False,False,False,False),
+              ('⚙️ Ajustes',             'Preguntas Genéricas',    True,False,False,False,False,False),
+            ] %}
+            {% set last_mod = namespace(v='') %}
+            {% for modulo,funcion,sa,ad,ej,ed,lc,vd in M %}
+            {% set show_mod = modulo != last_mod.v %}
+            {% set last_mod.v = modulo %}
+            <tr{% if show_mod %} style="border-top:2px solid #f1f5f9"{% endif %}>
+              <td style="padding-left:20px">
+                {% if show_mod %}<div style="font-weight:700;color:#374151">{{ modulo }}</div>{% endif %}
+                <div style="color:#6b7280;font-size:.76rem;padding-left:12px">{{ funcion }}</div>
+              </td>
+              {% for v in [sa,ad,ej,ed,lc,vd] %}
+              <td class="text-center">
+                {% if v %}<span style="color:#16a34a;font-size:1rem">✅</span>{% else %}<span style="color:#d1d5db;font-size:.85rem">—</span>{% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

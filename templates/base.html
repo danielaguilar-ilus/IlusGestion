@@ -84,51 +84,20 @@
       {% endif %}
     </div>
 
-    {# ── COLABORADORES ── #}
-    <button class="sg-toggle" data-sg="colabs">
-      <i class="bi bi-people"></i>Colaboradores
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-colabs">
-      <a href="{{ url_for('colab_index') }}"
-         class="sidebar-link{% if request.endpoint in ['colab_index','colab_nuevo','colab_editar','colab_ficha'] %} active{% endif %}">
-        <i class="bi bi-people-fill"></i><span>Colaboradores</span>
-      </a>
-    </div>
-
-    {# ── EVALUACIÓN ── #}
-    <button class="sg-toggle" data-sg="eval">
-      <i class="bi bi-clipboard2-pulse"></i>Evaluación
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-eval">
-      <a href="{{ url_for('eval_index') }}"
-         class="sidebar-link{% if request.endpoint in ['eval_index','eval_nueva','eval_editar','eval_constructor'] %} active{% endif %}">
-        <i class="bi bi-clipboard2-check"></i><span>Evaluaciones</span>
-      </a>
-    </div>
-
-    {# ── DESPACHO ── #}
-    {% if permissions.cubicador %}
-    <button class="sg-toggle" data-sg="despacho">
-      <i class="bi bi-calculator"></i>Despacho
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-despacho">
-      <a href="{{ url_for('cubicador') }}"
-         class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
-        <i class="bi bi-boxes"></i><span>Cubicador</span>
-      </a>
-    </div>
-    {% endif %}
-
-    {# ── TRANSPORTE ── #}
-    {% if permissions.transporte %}
+    {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
+    {% if permissions.cubicador or permissions.transporte %}
     <button class="sg-toggle" data-sg="transporte">
       <i class="bi bi-truck"></i>Transporte
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
     <div class="sg-items" id="sg-transporte">
+      {% if permissions.cubicador %}
+      <a href="{{ url_for('cubicador') }}"
+         class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
+        <i class="bi bi-calculator"></i><span>Cubicador</span>
+      </a>
+      {% endif %}
+      {% if permissions.transporte %}
       <a href="{{ url_for('transporte_index') }}"
          class="sidebar-link{% if request.endpoint in ['transporte_index'] %} active{% endif %}">
         <i class="bi bi-display"></i><span>Monitor</span>
@@ -141,20 +110,7 @@
          class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
         <i class="bi bi-building"></i><span>Couriers</span>
       </a>
-    </div>
-    {% endif %}
-
-    {# ── COMUNICACIONES ── #}
-    {% if permissions.superadmin %}
-    <button class="sg-toggle" data-sg="comms">
-      <i class="bi bi-chat-dots"></i>Comunicaciones
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-comms">
-      <a href="{{ url_for('comm_index') }}"
-         class="sidebar-link{% if request.endpoint and request.endpoint.startswith('comm_') %} active{% endif %}">
-        <i class="bi bi-envelope-paper"></i><span>Email &amp; WhatsApp</span>
-      </a>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -184,21 +140,42 @@
     </div>
     {% endif %}
 
-    {# ── SISTEMA ── #}
-    {% if permissions.admin %}
-    <button class="sg-toggle" data-sg="sistema">
-      <i class="bi bi-gear"></i>Sistema
+    {# ── AJUSTES — arriba del footer (admin/hrm) ── #}
+    {% if permissions.admin or permissions.hrm %}
+    <div class="sg-separator"></div>
+    <button class="sg-toggle sg-ajustes" data-sg="ajustes">
+      <i class="bi bi-gear-wide-connected"></i>Ajustes
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
-    <div class="sg-items" id="sg-sistema">
+    <div class="sg-items" id="sg-ajustes">
+      {% if permissions.hrm %}
+      <a href="{{ url_for('colab_index') }}"
+         class="sidebar-link{% if request.endpoint in ['colab_index','colab_nuevo','colab_editar','colab_ficha'] %} active{% endif %}">
+        <i class="bi bi-people-fill"></i><span>Colaboradores</span>
+      </a>
+      <a href="{{ url_for('eval_index') }}"
+         class="sidebar-link{% if request.endpoint in ['eval_index','eval_nueva','eval_editar','eval_constructor'] %} active{% endif %}">
+        <i class="bi bi-clipboard2-check"></i><span>Evaluaciones</span>
+      </a>
+      {% endif %}
+      {% if permissions.admin %}
+      <a href="{{ url_for('comm_index') }}"
+         class="sidebar-link{% if request.endpoint and request.endpoint.startswith('comm_') %} active{% endif %}">
+        <i class="bi bi-chat-dots"></i><span>Comunicaciones</span>
+      </a>
       <a href="{{ url_for('users_index') }}"
          class="sidebar-link{% if request.endpoint in ['users_index','new_user','edit_user'] %} active{% endif %}">
-        <i class="bi bi-people"></i><span>Usuarios</span>
+        <i class="bi bi-person-badge"></i><span>Usuarios</span>
       </a>
+      <a href="{{ url_for('admin_roles') }}"
+         class="sidebar-link{% if request.endpoint in ['admin_roles','admin_roles_update'] %} active{% endif %}">
+        <i class="bi bi-shield-lock"></i><span>Roles y permisos</span>
+      </a>
+      {% endif %}
       {% if permissions.superadmin %}
       <a href="{{ url_for('preg_gen_index') }}"
          class="sidebar-link{% if request.endpoint == 'preg_gen_index' %} active{% endif %}">
-        <i class="bi bi-shield-lock-fill"></i><span>Preguntas Genéricas</span>
+        <i class="bi bi-shield-fill-check"></i><span>Preguntas Genéricas</span>
       </a>
       {% endif %}
     </div>

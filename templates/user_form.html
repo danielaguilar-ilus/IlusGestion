@@ -57,6 +57,18 @@
                  required>
         </div>
 
+        <div class="col-md-6">
+          <label class="form-label fw-semibold small">
+            Telefono WhatsApp <span class="text-muted">(opcional)</span>
+          </label>
+          <input type="text" name="phone" class="form-control"
+                 value="{{ (fd.phone or user.phone or '') if user else fd.get('phone','') }}"
+                 placeholder="+56912345678"
+                 autocomplete="tel"
+                 pattern="^\+?[0-9\s\-]{7,20}$">
+          <div class="form-text">Se usa para avisos de acceso, creacion y cambio de clave.</div>
+        </div>
+
         {% if user %}
         <div class="col-12">
           <div class="alert mb-0 d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3"
@@ -94,7 +106,7 @@
               </button>
             </div>
             <div class="form-text">
-              Usa esto cuando SMTP no pueda enviar correos. Luego puedes solicitar cambio de contrasena por email cuando el correo este funcionando.
+              Usa esto cuando SMTP no pueda enviar correos. El sistema avisara por email/WhatsApp con el enlace del portal, sin compartir la clave.
             </div>
           </div>
         </div>
@@ -164,6 +176,7 @@
                  placeholder="+56912345678"
                  pattern="^\+?[0-9\s\-]{7,20}$">
           <div class="form-text">
+            Si lo dejas vacio, se usara el telefono del usuario.
             Requiere WhatsApp configurado en
             <a href="{{ url_for('comm_index') }}" target="_blank">Comunicaciones</a>.
           </div>

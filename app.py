@@ -422,12 +422,17 @@ def init_mysql_schema():
                     username     VARCHAR(190) NOT NULL UNIQUE,
                     nombre       VARCHAR(190) NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
+                    phone        VARCHAR(40)  DEFAULT NULL,
                     role         VARCHAR(20)  NOT NULL DEFAULT 'editor',
                     active       TINYINT(1)   NOT NULL DEFAULT 1,
                     created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            try:
+                cur.execute(f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN phone VARCHAR(40) DEFAULT NULL AFTER password_hash")
+            except Exception:
+                pass
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS `{PRODUCTS_TABLE}` (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -748,7 +753,7 @@ def permission_set(role):
                 "edit": True, "create": True, "print": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
-                "create": True, "hrm": True}
+                "create": True, "hrm": True, "cubicador": True, "transporte": True}
     if role == "lector":
         return {**base, "view": True}
     if role == "vendedor":
@@ -780,14 +785,14 @@ def _photo_src(filename, subfolder="uploads"):
 
 def get_auth_user_by_id(user_id):
     return mysql_fetchone(
-        f"SELECT id,username,nombre,password_hash,role,active FROM `{AUTH_TABLE}` WHERE id=%s",
+        f"SELECT id,username,nombre,password_hash,phone,role,active FROM `{AUTH_TABLE}` WHERE id=%s",
         (user_id,),
     )
 
 
 def get_auth_user_by_username(username):
     return mysql_fetchone(
-        f"SELECT id,username,nombre,password_hash,role,active FROM `{AUTH_TABLE}` WHERE username=%s",
+        f"SELECT id,username,nombre,password_hash,phone,role,active FROM `{AUTH_TABLE}` WHERE username=%s",
         (username,),
     )
 
@@ -1947,6 +1952,95 @@ def _send_password_access_email(
     return sent
 
 
+def _portal_login_url():
+    return url_for("login", _external=True)
+
+
+def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, *, actor_name: str = "ILUS") -> bool:
+    """Notifica que el acceso al portal fue habilitado, sin compartir la clave."""
+    html_body = _ilus_email_html(
+        titulo="Acceso al portal ILUS habilitado",
+        subtitulo="Ya puedes ingresar a la aplicacion",
+        saludo=f"Hola, {to_name}",
+        parrafos=[
+            f"<strong>{actor_name}</strong> habilito tus credenciales de acceso al portal ILUS.",
+            "Por seguridad, este correo no incluye tu contraseña. Usa la clave entregada por el administrador "
+            "o solicita un cambio de contraseña desde el portal cuando el correo este disponible.",
+            "Presiona el boton para ir a la aplicacion.",
+        ],
+        btn_primario_txt="Ingresar al portal",
+        btn_primario_url=login_url,
+        info_lineas=[
+            ("", "Cuenta", to_addr),
+            ("", "Portal", login_url),
+        ],
+    )
+    sent = _send_ilus_email(to_addr, "ILUS - Acceso al portal habilitado", html_body)
+    if not sent and not getattr(g, "_last_email_error", ""):
+        g._last_email_error = "No se pudo enviar la notificacion de acceso por email."
+    return sent
+
+
+def _notify_user_access(username: str, nombre: str, phone: str = "", *, mode: str = "manual", action_url: str = "") -> dict:
+    """Envia notificaciones email/WhatsApp sobre acceso o creacion de clave."""
+    actor = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
+    login_url = _portal_login_url()
+    result = {"email": None, "whatsapp": None, "errors": []}
+
+    try:
+        if mode == "token" and action_url:
+            result["email"] = _send_invitation_email(username, nombre, action_url, actor)
+        else:
+            result["email"] = _send_access_notification_email(username, nombre, login_url, actor_name=actor)
+        if not result["email"]:
+            result["errors"].append(getattr(g, "_last_email_error", "") or "No se pudo enviar email.")
+    except Exception as exc:
+        result["email"] = False
+        result["errors"].append(f"Email: {exc}")
+
+    if phone:
+        try:
+            wa_cfg = _get_wa_cfg()
+            if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
+                if mode == "token" and action_url:
+                    body = (
+                        f"Hola {nombre}, ILUS habilito tu acceso al portal.\n\n"
+                        f"Crea tu contrasena aqui: {action_url}\n"
+                        f"El enlace es de un solo uso y vence pronto.\n\n"
+                        f"Portal: {login_url}"
+                    )
+                else:
+                    body = (
+                        f"Hola {nombre}, ILUS habilito tus credenciales de acceso al portal.\n\n"
+                        f"Ingresa aqui: {login_url}\n"
+                        f"Por seguridad, este mensaje no incluye tu contrasena."
+                    )
+                sid = _send_whatsapp(wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"], phone, body)
+                result["whatsapp"] = sid
+            else:
+                result["whatsapp"] = False
+                result["errors"].append("WhatsApp no esta configurado.")
+        except Exception as exc:
+            result["whatsapp"] = False
+            result["errors"].append(f"WhatsApp: {exc}")
+    return result
+
+
+def _access_notification_flash(result: dict, *, token_mode: bool = False) -> tuple[str, str]:
+    """Construye un mensaje corto para el admin segun los canales que respondieron."""
+    channels = []
+    if result.get("email"):
+        channels.append("email")
+    if result.get("whatsapp"):
+        channels.append("WhatsApp")
+    if channels:
+        action = "enlace seguro enviado" if token_mode else "notificacion de acceso enviada"
+        return f"{action.capitalize()} por {', '.join(channels)}.", "success"
+    errors = [str(e) for e in result.get("errors", []) if e]
+    detail = " ".join(errors[:2]) or "Revisa SMTP o WhatsApp en Comunicaciones."
+    return f"Usuario guardado, pero no salio la notificacion. {detail}", "warning"
+
+
 # ─────────────────────────────────────────────
 #  Recuperación de contraseña
 # ─────────────────────────────────────────────
@@ -2736,6 +2830,7 @@ def new_user():
     if request.method == "POST":
         username    = request.form.get("username", "").strip().lower()
         nombre      = request.form.get("nombre",   "").strip()
+        phone       = request.form.get("phone",    "").strip()
         role        = request.form.get("role",      "editor")
         active      = 1 if request.form.get("active") == "1" else 0
         send_invite = request.form.get("send_invite") == "1"
@@ -2750,7 +2845,9 @@ def new_user():
             errors.append("El correo no tiene un formato válido.")
         if not nombre:
             errors.append("El nombre y apellido son requeridos.")
-        if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
+        if phone and not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
+            errors.append("El telefono WhatsApp debe usar formato internacional, por ejemplo +56912345678.")
+        if role not in {"superadmin", "admin", "ejecutivo", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
@@ -2767,8 +2864,8 @@ def new_user():
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
-                f"INSERT INTO `{AUTH_TABLE}` (username,nombre,password_hash,role,active) VALUES (%s,%s,%s,%s,%s)",
-                (username, nombre, placeholder_hash, role, active),
+                f"INSERT INTO `{AUTH_TABLE}` (username,nombre,password_hash,phone,role,active) VALUES (%s,%s,%s,%s,%s,%s)",
+                (username, nombre, placeholder_hash, phone or None, role, active),
             )
         conn.commit()
 
@@ -2778,37 +2875,18 @@ def new_user():
                 new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
                 token, _expires = _issue_password_token(new_uid, minutes=1440)
                 set_url   = url_for("reset_password", token=token, _external=True)
-                creator   = g.user["nombre"] if g.user else "ILUS"
-                sent      = _send_invitation_email(username, nombre, set_url, creator)
-
-                # Enviar WhatsApp si se indicó número
-                if wa_number:
-                    try:
-                        wa_cfg = _get_wa_cfg()
-                        if wa_cfg.get("account_sid") and wa_cfg.get("auth_token"):
-                            wa_msg = (
-                                f"👋 Hola {nombre}, te damos la bienvenida al sistema ILUS.\n\n"
-                                f"Recibiste un email en *{username}* con un enlace para crear tu contraseña. "
-                                f"Presiona el botón del correo y sigue los pasos para ingresar.\n\n"
-                                f"📧 Revisa también tu carpeta de Spam si no lo encuentras.\n"
-                                f"⏰ El enlace es válido por 24 horas."
-                            )
-                            _send_whatsapp(
-                                wa_cfg["account_sid"], wa_cfg["auth_token"],
-                                wa_cfg["from_number"], wa_number, wa_msg
-                            )
-                    except Exception as _we:
-                        print(f"[ILUS][INVITE-WA] {_we}")
-
-                if sent:
-                    flash(f"Usuario creado. Invitación enviada a {username}.", "success")
-                else:
-                    detalle = getattr(g, "_last_email_error", "") or "Revisa la configuracion SMTP en Comunicaciones."
-                    flash(f"Usuario creado, pero no se pudo enviar el correo para crear contraseña. {detalle}", "warning")
+                result = _notify_user_access(username, nombre, wa_number or phone, mode="token", action_url=set_url)
+                msg, level = _access_notification_flash(result, token_mode=True)
+                flash(f"Usuario creado. {msg}", level)
             except Exception as _ie:
-                flash(f"Usuario creado, pero falló el envío de invitación: {_ie}", "warning")
+                flash(f"Usuario creado, pero fallo el envio de invitacion: {_ie}", "warning")
         else:
-            flash("Usuario creado. Recuerda establecer la contraseña o enviar la invitación después.", "success")
+            if manual_password:
+                result = _notify_user_access(username, nombre, wa_number or phone, mode="manual")
+                msg, level = _access_notification_flash(result, token_mode=False)
+                flash(f"Usuario creado con clave manual. {msg}", level)
+            else:
+                flash("Usuario creado. Recuerda establecer la contrasena o enviar la invitacion despues.", "success")
 
         if manual_password:
             flash("Clave manual asignada por superadmin.", "info")
@@ -2828,6 +2906,7 @@ def edit_user(user_id):
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         nombre   = request.form.get("nombre",   "").strip()
+        phone    = request.form.get("phone",    "").strip()
         manual_password = request.form.get("manual_password", "")
         is_superadmin = bool(g.permissions.get("superadmin")) if getattr(g, "permissions", None) else False
         role     = request.form.get("role",     "editor")
@@ -2840,7 +2919,9 @@ def edit_user(user_id):
             errors.append("El correo no tiene un formato válido.")
         if not nombre:
             errors.append("El nombre y apellido son requeridos.")
-        if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
+        if phone and not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
+            errors.append("El telefono WhatsApp debe usar formato internacional, por ejemplo +56912345678.")
+        if role not in {"superadmin", "admin", "ejecutivo", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
@@ -2858,13 +2939,13 @@ def edit_user(user_id):
         with conn.cursor() as cur:
             if manual_password:
                 cur.execute(
-                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,password_hash=%s,role=%s,active=%s WHERE id=%s",
-                    (username, nombre, generate_password_hash(manual_password), role, active, user_id),
+                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,password_hash=%s,phone=%s,role=%s,active=%s WHERE id=%s",
+                    (username, nombre, generate_password_hash(manual_password), phone or None, role, active, user_id),
                 )
             else:
                 cur.execute(
-                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,role=%s,active=%s WHERE id=%s",
-                    (username, nombre, role, active, user_id),
+                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,phone=%s,role=%s,active=%s WHERE id=%s",
+                    (username, nombre, phone or None, role, active, user_id),
                 )
         conn.commit()
 
@@ -2872,7 +2953,12 @@ def edit_user(user_id):
         if g.user and g.user["id"] == user_id:
             session.pop("_uc", None)
 
-        flash("Usuario actualizado. Clave manual asignada." if manual_password else "Usuario actualizado.", "success")
+        if manual_password:
+            result = _notify_user_access(username, nombre, phone, mode="manual")
+            msg, level = _access_notification_flash(result, token_mode=False)
+            flash(f"Usuario actualizado con clave manual. {msg}", level)
+        else:
+            flash("Usuario actualizado.", "success")
         return redirect(url_for("users_index"))
 
     return render_template("user_form.html", errors=[], user=user, fd={})
@@ -2904,11 +2990,12 @@ def invite_user(user_id):
     try:
         token, _expires = _issue_password_token(user_id, minutes=1440)
         set_url = url_for("reset_password", token=token, _external=True)
-        creator = g.user["nombre"] if g.user else "ILUS"
-        sent    = _send_invitation_email(user["username"], user["nombre"], set_url, creator)
-        if sent:
-            return jsonify({"ok": True})
-        return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP en Comunicaciones."}), 500
+        result = _notify_user_access(user["username"], user["nombre"], user.get("phone") or "", mode="token", action_url=set_url)
+        if result.get("email") or result.get("whatsapp"):
+            msg, _level = _access_notification_flash(result, token_mode=True)
+            return jsonify({"ok": True, "message": msg})
+        detalle = " ".join(result.get("errors") or []) or "Revisa la configuracion SMTP o WhatsApp en Comunicaciones."
+        return jsonify({"error": f"No se pudo enviar la invitacion. {detalle}"}), 500
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -2967,15 +3054,12 @@ def user_password_link(user_id):
     try:
         token, _expires = _issue_password_token(user_id, minutes=60)
         reset_url = url_for("reset_password", token=token, _external=True)
-        actor = g.user["nombre"] if g.user else "ILUS"
-        sent = _send_password_access_email(
-            user["username"], user["nombre"], reset_url,
-            actor_name=actor, mode="reset", minutes=60
-        )
-        if sent:
-            return jsonify({"ok": True, "message": "Enlace seguro enviado."})
-        detalle = getattr(g, "_last_email_error", "") or "Revisa la configuracion SMTP en Comunicaciones."
-        return jsonify({"error": f"No se pudo enviar el email. {detalle}"}), 500
+        result = _notify_user_access(user["username"], user["nombre"], user.get("phone") or "", mode="token", action_url=reset_url)
+        if result.get("email") or result.get("whatsapp"):
+            msg, _level = _access_notification_flash(result, token_mode=True)
+            return jsonify({"ok": True, "message": msg})
+        detalle = " ".join(result.get("errors") or []) or "Revisa la configuracion SMTP o WhatsApp en Comunicaciones."
+        return jsonify({"error": f"No se pudo enviar el enlace seguro. {detalle}"}), 500
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -8348,17 +8432,19 @@ def mant_contrato_update(ctid):
 @app.route("/mantenciones/api/contratos/<int:ctid>/archivo")
 @_mant_required
 def mant_contrato_archivo(ctid):
+    """Sirve el archivo del contrato. Todos los usuarios mant pueden VER; solo superadmin descarga."""
     from flask import send_from_directory
-    # Solo superadmin puede descargar archivos de contratos (datos confidenciales)
-    if not g.permissions.get("superadmin"):
+    ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
+    if not ct or not ct.get("archivo_path"):
+        return "Archivo no encontrado", 404
+    as_dl = request.args.get("download") == "1"
+    # Descargar: solo superadmin
+    if as_dl and not g.permissions.get("superadmin"):
         return ("Acceso restringido — solo el Superadministrador puede "
                 "descargar archivos de contratos."), 403
-    ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
-    if not ct:
-        return "No encontrado", 404
     return send_from_directory(MANT_UPLOADS, ct["archivo_path"],
-                               as_attachment=False,
-                               download_name=ct["archivo_nombre"])
+                               as_attachment=as_dl,
+                               download_name=ct["archivo_nombre"] if as_dl else None)
 
 
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
@@ -8897,6 +8983,97 @@ def mant_buscar_erp():
         return jsonify({
             "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
             "documentos": [], "sin_conexion": True
+        }), 200
+
+
+# ── DOCUMENTOS ERP POR RUT (auto-search en tab Equipos) ─────────────────
+@app.route("/mantenciones/api/clientes/<int:cid>/documentos-erp")
+@_mant_required
+def mant_documentos_por_rut(cid):
+    """
+    Busca en ERP todos los documentos (FCV/BLV/GDV) del cliente identificado por su RUT.
+    Primero intenta MySQL directo; si falla, devuelve instrucción para búsqueda manual.
+    GET /mantenciones/api/clientes/<cid>/documentos-erp
+    """
+    cliente = mysql_fetchone("SELECT rut, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente or not cliente.get("rut"):
+        return jsonify({"sin_rut": True, "documentos": []})
+
+    rut = cliente["rut"].strip()
+    # Normalizar RUT: sin puntos ni guión para búsqueda flexible
+    rut_norm = rut.replace(".","").replace("-","").replace(" ","")
+
+    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
+    erp_conn = get_erp_conn()
+    if not erp_conn:
+        return jsonify({
+            "sin_conexion": True,
+            "rut": rut,
+            "documentos": [],
+            "msg": "Conexión al ERP no disponible desde Railway. "
+                   "Usa la búsqueda por número de documento."
+        }), 200
+
+    try:
+        with erp_conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT DISTINCT
+                       TRIM(d.NRAZON) AS razon_social,
+                       TRIM(d.NRUC)   AS rut,
+                       TRIM(d.TIDO)   AS tipo_doc,
+                       TRIM(d.NUDO)   AS num_doc,
+                       d.FEMIS        AS fecha,
+                       TRIM(d.NOMBR)  AS producto,
+                       TRIM(d.KOPRCT) AS sku,
+                       d.CANTD        AS cantidad
+                    FROM `{ERP_SALES}` d
+                    WHERE d.TIDO IN ('FCV','BLV','GDV','VD','WEB','NVI','NVV')
+                      AND (
+                        TRIM(d.NRUC) = %s
+                        OR REPLACE(REPLACE(REPLACE(TRIM(d.NRUC),'.',''),'-',''),' ','') = %s
+                      )
+                    ORDER BY d.FEMIS DESC
+                    LIMIT 200""",
+                (rut, rut_norm)
+            )
+            rows = cur.fetchall()
+        erp_conn.close()
+
+        docs = {}
+        for r in rows:
+            key = f"{r['tipo_doc']}|{r['num_doc']}"
+            if key not in docs:
+                docs[key] = {
+                    "razon_social": r["razon_social"] or "",
+                    "rut":          r["rut"] or "",
+                    "tipo_doc":     r["tipo_doc"],
+                    "num_doc":      str(r["num_doc"] or "").lstrip("0") or str(r["num_doc"]),
+                    "num_doc_raw":  str(r["num_doc"] or ""),
+                    "fecha":        str(r["fecha"])[:10] if r["fecha"] else "",
+                    "lineas":       []
+                }
+            nom = (r["producto"] or "").strip()
+            sku = (r["sku"] or "").strip().upper()
+            if nom or sku:
+                docs[key]["lineas"].append({
+                    "sku":      sku,
+                    "nombre":   nom or sku,
+                    "cantidad": int(float(r["cantidad"] or 1)),
+                })
+
+        return jsonify({
+            "ok":         True,
+            "rut":        rut,
+            "cliente":    cliente["razon_social"],
+            "documentos": list(docs.values())
+        })
+    except Exception as e:
+        erp_conn and erp_conn.close()
+        return jsonify({
+            "sin_conexion": True,
+            "rut": rut,
+            "documentos": [],
+            "msg": "No se pudo conectar al ERP. Usa la búsqueda por número de documento."
         }), 200
 
 

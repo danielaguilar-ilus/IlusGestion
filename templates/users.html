@@ -26,6 +26,7 @@
           <tr>
             <th>Usuario</th>
             <th>Nombre</th>
+            <th>WhatsApp</th>
             <th>Rol</th>
             <th>Estado</th>
             <th>Actualizado</th>
@@ -37,6 +38,7 @@
           <tr>
             <td class="font-monospace">{{ user.username }}</td>
             <td>{{ user.nombre }}</td>
+            <td class="small text-muted">{{ user.phone or '-' }}</td>
             <td>
               {% if user.role == 'superadmin' %}
                 <span class="ilus-badge" style="background:var(--ilus-black);color:#fff;border:1.5px solid var(--ilus-red);font-size:.68rem;padding:2px 9px;border-radius:50px">
@@ -59,7 +61,7 @@
                 <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"
                    title="Editar"><i class="bi bi-pencil"></i></a>
                 <button type="button" class="btn btn-sm btn-outline-primary"
-                        title="Solicitar cambio de contraseña por email"
+                        title="Solicitar cambio de contrasena por email/WhatsApp"
                         onclick="enviarPasswordLink({{ user.id }}, '{{ user.nombre }}', '{{ user.username }}', this)">
                   <i class="bi bi-envelope-lock"></i>
                 </button>
@@ -82,7 +84,7 @@
 {% block scripts %}
 <script>
 async function enviarPasswordLink(uid, nombre, email, btn) {
-  if (!confirm(`Solicitar cambio de contraseña por email a ${nombre} (${email})?`)) return;
+  if (!confirm(`Solicitar cambio de contrasena por email/WhatsApp a ${nombre} (${email})?`)) return;
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';

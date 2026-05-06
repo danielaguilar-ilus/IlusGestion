@@ -105,10 +105,10 @@ body {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 10px 18px 10px 15px;
-  color: #e8e8e8;
+  padding: 9px 18px 9px 18px;
+  color: #d4d4d4;
   text-decoration: none;
-  font-size: .95rem;
+  font-size: .875rem;
   font-weight: 500;
   border-left: 3px solid transparent;
   transition: background .12s, color .12s, border-color .12s;
@@ -130,28 +130,41 @@ body {
 .sg-toggle {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   width: 100%;
-  padding: 9px 16px 9px 14px;
+  padding: 10px 16px 10px 14px;
   background: none;
   border: none;
   border-left: 3px solid transparent;
-  color: #666;
-  font-size: .63rem;
+  color: #c0c0c0;
+  font-size: .72rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.2px;
   cursor: pointer;
   text-align: left;
-  transition: color .14s, background .14s;
-  margin-top: 4px;
+  transition: color .14s, background .14s, border-color .14s;
+  margin-top: 2px;
 }
-.sg-toggle i { font-size: .72rem; opacity: .75; flex-shrink: 0; }
-.sg-toggle:hover { color: #bbb; background: rgba(255,255,255,.04); }
-.sg-toggle.sg-open { color: #e0e0e0; background: rgba(255,255,255,.04); border-left-color: var(--ilus-red); }
+.sg-toggle i { font-size: .88rem; opacity: .85; flex-shrink: 0; color: inherit; }
+.sg-toggle:hover { color: #fff; background: rgba(255,255,255,.07); border-left-color: rgba(204,0,0,.4); }
+.sg-toggle.sg-open { color: #fff; background: rgba(204,0,0,.1); border-left-color: var(--ilus-red); }
 .sg-toggle.sg-open i { opacity: 1; }
-.sg-chevron { margin-left: auto; font-size: .65rem !important; opacity: .55 !important; transition: transform .2s; }
-.sg-toggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: .85 !important; }
+.sg-chevron { margin-left: auto; font-size: .68rem !important; opacity: .6 !important; transition: transform .2s; }
+.sg-toggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: 1 !important; }
+
+/* Separador visual entre grupos del sidebar */
+.sg-separator {
+  height: 1px;
+  background: rgba(255,255,255,.07);
+  margin: 8px 14px;
+}
+
+/* Sección Ajustes — estilo especial */
+.sg-toggle.sg-ajustes { color: #94a3b8; }
+.sg-toggle.sg-ajustes i { color: #94a3b8; }
+.sg-toggle.sg-ajustes:hover { color: #fff; background: rgba(148,163,184,.1); border-left-color: #94a3b8; }
+.sg-toggle.sg-ajustes.sg-open { color: #e2e8f0; background: rgba(148,163,184,.1); border-left-color: #64748b; }
 
 .sg-items {
   overflow: hidden;
@@ -192,10 +205,27 @@ body {
   text-overflow: ellipsis;
 }
 .sidebar-user-role {
-  color: #777;
+  color: #94a3b8;
   font-size: .66rem;
   text-transform: uppercase;
   letter-spacing: .6px;
+}
+
+/* ── Ajustes link arriba del footer ─── */
+.sidebar-ajustes-link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  color: #94a3b8;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-top: 1px solid rgba(255,255,255,.07);
+  text-decoration: none;
+  transition: color .14s, background .14s;
 }
 .btn-sidebar-logout {
   display: block;

@@ -388,6 +388,27 @@
    TAB: EQUIPOS
 ══════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-equipos">
+
+  {# — Card: Documentos ERP por RUT (auto-search) — #}
+  {% if cliente.rut %}
+  <div class="f-card mb-3" id="erpRutCard">
+    <div class="f-card-header" style="cursor:pointer" onclick="toggleErpRutPanel()">
+      <span class="f-card-title"><i class="bi bi-receipt me-1"></i>Documentos ERP para RUT {{ cliente.rut }}</span>
+      <div class="d-flex align-items-center gap-2">
+        <span id="erpRutBadge" class="badge bg-secondary" style="font-size:.65rem">—</span>
+        <i class="bi bi-chevron-down" id="erpRutChevron" style="font-size:.7rem;transition:transform .2s"></i>
+      </div>
+    </div>
+    <div id="erpRutPanel" style="display:none">
+      <div class="f-card-body" id="erpRutContent">
+        <div class="text-center text-muted py-3" style="font-size:.82rem">
+          <span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP…
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="f-card">
     <div class="f-card-header">
       <span class="f-card-title"><i class="bi bi-bicycle me-1"></i>Equipos / Máquinas</span>
@@ -485,10 +506,15 @@
         </div>
         <div class="d-flex gap-1 flex-shrink-0">
           {% if ct.archivo_path %}
-          <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}" target="_blank"
-             class="btn btn-xs btn-outline-secondary" title="Ver archivo">
-            <i class="bi bi-eye"></i>
+          <button class="btn btn-xs btn-outline-primary" onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}')" title="Ver contrato">
+            <i class="bi bi-eye me-1"></i>Ver
+          </button>
+          {% if current_user and current_user.role == 'superadmin' %}
+          <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}?download=1"
+             class="btn btn-xs btn-outline-secondary" title="Descargar archivo">
+            <i class="bi bi-download"></i>
           </a>
+          {% endif %}
           {% endif %}
           <button class="btn btn-xs btn-outline-secondary" onclick="toggleAiPanel({{ ct.id }})" title="Mostrar/ocultar análisis IA">
             <i class="bi bi-stars"></i>
@@ -711,6 +737,38 @@
 {# ═══════════════════════════════════════════════════════════════
    MODALES
 ═══════════════════════════════════════════════════════════════ #}
+
+{# ── Modal: Ver contrato (PDF viewer) ── #}
+<div class="modal fade" id="modalVerContrato" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+    <div class="modal-content" style="height:90vh">
+      <div class="modal-header py-2" style="background:#1a1a2e">
+        <h6 class="modal-title text-white mb-0" id="modalVerContratoTitulo">
+          <i class="bi bi-file-earmark-text me-2"></i>Contrato
+        </h6>
+        <div class="d-flex align-items-center gap-2 ms-auto">
+          <a id="btnDescargarContrato" class="btn btn-sm btn-outline-light" style="display:none"
+             href="#" target="_blank" download>
+            <i class="bi bi-download me-1"></i>Descargar
+          </a>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+      </div>
+      <div class="modal-body p-0" style="flex:1;overflow:hidden">
+        <iframe id="contratoFrame" src="" style="width:100%;height:100%;border:none"
+                title="Visor de contrato"></iframe>
+        <div id="contratoNoViewer" style="display:none" class="d-flex flex-column align-items-center justify-content-center h-100 text-muted gap-3">
+          <i class="bi bi-file-earmark-word" style="font-size:3rem;color:#2563eb"></i>
+          <div class="fw-semibold">Archivo Word — no puede visualizarse en el navegador</div>
+          <div style="font-size:.82rem">Descarga el archivo para verlo en Microsoft Word</div>
+          <a id="btnDescWord" href="#" class="btn btn-ilus" download>
+            <i class="bi bi-download me-1"></i>Descargar contrato
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ── Modal: Editar cliente ── #}
 <div class="modal fade" id="modalEditarCliente" tabindex="-1">
@@ -1652,5 +1710,153 @@ function renderPlan(p, clienteNombre) {
 
   document.getElementById('planResultado').innerHTML = html;
 }
+
+// ─── Ver contrato (PDF viewer) ──────────────────────────────
+function verContrato(ctid, nombre, tipo) {
+  const url = `/mantenciones/api/contratos/${ctid}/archivo`;
+  const titulo = document.getElementById('modalVerContratoTitulo');
+  const frame  = document.getElementById('contratoFrame');
+  const noView = document.getElementById('contratoNoViewer');
+  const btnDl  = document.getElementById('btnDescargarContrato');
+  const btnWord= document.getElementById('btnDescWord');
+  titulo.innerHTML = `<i class="bi bi-file-earmark-text me-2"></i>${nombre || 'Contrato'}`;
+
+  const isPdf = (tipo === 'pdf');
+  frame.style.display  = isPdf ? '' : 'none';
+  noView.style.display = isPdf ? 'none' : '';
+
+  if (isPdf) {
+    frame.src = url;
+    // Mostrar botón descarga solo si superadmin (variable de Jinja)
+    const esSuperadmin = {{ 'true' if current_user and current_user.role == 'superadmin' else 'false' }};
+    if (esSuperadmin) {
+      btnDl.style.display = '';
+      btnDl.href = url + '?download=1';
+    }
+  } else {
+    btnWord.href = url + '?download=1';
+  }
+  new bootstrap.Modal(document.getElementById('modalVerContrato')).show();
+}
+
+// ─── ERP por RUT — sección Equipos ──────────────────────────
+let erpRutLoaded = false;
+let erpRutOpen   = false;
+const CID_CLIENTE = {{ cliente.id }};
+
+async function cargarDocumentosErpRut() {
+  if (erpRutLoaded) return;
+  erpRutLoaded = true;
+  const cont = document.getElementById('erpRutContent');
+  if (!cont) return;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID_CLIENTE}/documentos-erp`);
+    const data = await r.json();
+    const badge = document.getElementById('erpRutBadge');
+
+    if (data.sin_rut) {
+      cont.innerHTML = '<div class="text-muted small py-2 px-1">Este cliente no tiene RUT registrado.</div>';
+      return;
+    }
+    if (data.sin_conexion || !data.ok) {
+      cont.innerHTML = `<div class="alert alert-warning py-2 mb-0" style="font-size:.8rem">
+        <i class="bi bi-exclamation-triangle me-1"></i>${data.msg || 'No hay conexión al ERP.'}
+        <br><small>Puedes buscar por número de documento usando el botón "Importar ERP".</small>
+      </div>`;
+      badge.textContent = '—';
+      badge.className = 'badge bg-warning text-dark';
+      return;
+    }
+
+    const docs = data.documentos || [];
+    if (!docs.length) {
+      cont.innerHTML = `<div class="text-center text-muted py-3 small">Sin documentos encontrados para RUT ${data.rut}</div>`;
+      badge.textContent = '0';
+      return;
+    }
+
+    badge.textContent = `${docs.length} doc.`;
+    badge.className = 'badge bg-success';
+
+    // Agrupar por tipo de documento
+    const porTipo = {};
+    docs.forEach(d => {
+      if (!porTipo[d.tipo_doc]) porTipo[d.tipo_doc] = [];
+      porTipo[d.tipo_doc].push(d);
+    });
+
+    const tipoIconos = { FCV:'bi-receipt', BLV:'bi-receipt-cutoff', GDV:'bi-box-seam', VD:'bi-shop', NVI:'bi-file-earmark', NVV:'bi-file-earmark-text' };
+
+    let html = `<div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem">
+      <thead class="table-light"><tr>
+        <th>Tipo</th><th>Nº Doc</th><th>Fecha</th><th>Productos</th><th style="width:80px"></th>
+      </tr></thead><tbody>`;
+    docs.forEach(d => {
+      const nLineas = d.lineas?.length || 0;
+      const icono = tipoIconos[d.tipo_doc] || 'bi-file-earmark';
+      html += `<tr>
+        <td><span class="badge bg-primary" style="font-size:.65rem">${d.tipo_doc}</span></td>
+        <td class="font-monospace fw-bold">${d.num_doc}</td>
+        <td class="text-muted">${d.fecha || '—'}</td>
+        <td>${nLineas} línea${nLineas!==1?'s':''}</td>
+        <td>
+          <button class="btn btn-xs btn-ilus" onclick="importarDocErpRut('${d.tipo_doc}','${d.num_doc_raw}')">
+            <i class="bi bi-download me-1"></i>Importar
+          </button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    cont.innerHTML = html;
+
+  } catch(e) {
+    const cont2 = document.getElementById('erpRutContent');
+    if(cont2) cont2.innerHTML = `<div class="text-danger small py-2">Error al consultar ERP: ${e.message}</div>`;
+  }
+}
+
+function toggleErpRutPanel() {
+  const panel   = document.getElementById('erpRutPanel');
+  const chevron = document.getElementById('erpRutChevron');
+  erpRutOpen = !erpRutOpen;
+  panel.style.display = erpRutOpen ? '' : 'none';
+  chevron.style.transform = erpRutOpen ? 'rotate(180deg)' : '';
+  if (erpRutOpen) cargarDocumentosErpRut();
+}
+
+async function importarDocErpRut(tido, nudo) {
+  // Abre el modal ERP con los datos pre-cargados
+  const modal = document.getElementById('modalErp');
+  if (!modal) { alert('Abre el modal ERP manualmente'); return; }
+  // Pre-llenar el tab de documento
+  const tabDocBtn = document.getElementById('fTabDocBtn');
+  if (tabDocBtn) { fSetTab('doc'); }
+  const fDocTido = document.getElementById('fDocTido');
+  const fDocNudo = document.getElementById('fDocNudo');
+  if (fDocTido) fDocTido.value = tido;
+  if (fDocNudo) fDocNudo.value = nudo;
+  new bootstrap.Modal(modal).show();
+  // Buscar automáticamente
+  setTimeout(fBuscarDoc, 300);
+}
+
+// Auto-cargar RUT docs cuando se cambia al tab equipos
+document.querySelectorAll('.ftab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tab === 'equipos') {
+      // Abrir el panel y cargar si tiene RUT
+      const panel = document.getElementById('erpRutPanel');
+      if (panel && !erpRutLoaded) {
+        setTimeout(() => {
+          erpRutOpen = true;
+          panel.style.display = '';
+          const chevron = document.getElementById('erpRutChevron');
+          if (chevron) chevron.style.transform = 'rotate(180deg)';
+          cargarDocumentosErpRut();
+        }, 150);
+      }
+    }
+  });
+});
 </script>
 {% endblock %}
