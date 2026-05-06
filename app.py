@@ -1731,12 +1731,12 @@ def _ilus_email_html(
 
     # ── Párrafos ─────────────────────────────────────────────────────────────
     saludo_html = (
-        f'<p style="font-size:14px;color:#444;line-height:22px;margin:0 0 14px">'
+        f'<p style="font-size:14px;color:#111827;line-height:1.6;margin:0 0 14px">'
         f'Hola <strong>{saludo}</strong>,</p>'
     ) if saludo else ""
 
     body_html = "".join(
-        f'<p style="font-size:14px;color:#444;line-height:22px;margin:0 0 14px">{p}</p>'
+        f'<p style="font-size:14px;color:#111827;line-height:1.6;margin:0 0 14px">{p}</p>'
         for p in (parrafos or [])
     )
 
@@ -1766,25 +1766,25 @@ def _ilus_email_html(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{titulo}</title>
 </head>
-<body style="margin:0;padding:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif">
+<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
 
-<div style="max-width:650px;margin:30px auto;background:#ffffff;border-radius:10px;
-            overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08)">
+<div style="max-width:580px;margin:28px auto;background:#ffffff;border-radius:10px;
+            overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)">
 
   <!-- HEADER: negro + logo -->
-  <div style="background:#000;padding:25px;text-align:center">
+  <div style="background:#000;padding:24px 28px;text-align:center">
     <img src="{logo_src}" alt="{company}"
-         style="height:50px;display:block;margin:0 auto;max-width:220px">
+         style="height:48px;display:block;margin:0 auto;max-width:230px;width:auto;object-fit:contain">
   </div>
 
   <!-- TÍTULO: banda oscura -->
-  <div style="background:#111;color:#fff;text-align:center;padding:30px 25px">
-    <h1 style="margin:0;font-size:22px;font-weight:700">{titulo}</h1>
-    {f'<p style="margin-top:8px;font-size:13px;color:#bbb;margin-bottom:0">{subtitulo}</p>' if subtitulo else ''}
+  <div style="background:#111;color:#fff;text-align:center;padding:28px 32px;border-top:1px solid #202020">
+    <h1 style="margin:0;font-size:22px;line-height:1.25;font-weight:800">{titulo}</h1>
+    {f'<p style="margin-top:8px;font-size:13px;line-height:1.45;color:#f3f4f6;margin-bottom:0">{subtitulo}</p>' if subtitulo else ''}
   </div>
 
   <!-- CONTENIDO -->
-  <div style="padding:30px">
+  <div style="padding:32px 30px">
     {saludo_html}
     {body_html}
     {info_html}
@@ -1794,12 +1794,12 @@ def _ilus_email_html(
   {btns_html}
 
   <!-- FOOTER: negro -->
-  <div style="background:#000;padding:25px;text-align:center">
-    <div style="color:#DC143C;font-size:13px;font-weight:bold">ILUS FITNESS</div>
-    <div style="color:#777;font-size:11px;margin-top:6px">
+  <div style="background:#000;padding:24px 32px;text-align:center">
+    <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{company}</div>
+    <div style="color:#9ca3af;font-size:11px;margin-top:5px">
       Equipamiento profesional para alto rendimiento
     </div>
-    <div style="margin-top:15px;font-size:11px;color:#555">
+    <div style="margin-top:14px;font-size:11px;line-height:1.6;color:#6b7280">
       Este correo fue generado automáticamente.<br>
       Para soporte, utiliza nuestros canales oficiales.
     </div>
@@ -1840,6 +1840,83 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
     except Exception as exc:
         print(f"[ILUS][EMAIL] Error al enviar a {to_addr}: {exc}")
         return False
+
+
+def _password_strength_errors(password: str) -> list[str]:
+    """Politica minima para claves creadas desde enlaces publicos."""
+    errors = []
+    if len(password or "") < 12:
+        errors.append("La contraseña debe tener al menos 12 caracteres.")
+    if not re.search(r"[a-z]", password or ""):
+        errors.append("Incluye al menos una letra minuscula.")
+    if not re.search(r"[A-Z]", password or ""):
+        errors.append("Incluye al menos una letra mayuscula.")
+    if not re.search(r"\d", password or ""):
+        errors.append("Incluye al menos un numero.")
+    if not re.search(r"[^A-Za-z0-9]", password or ""):
+        errors.append("Incluye al menos un simbolo.")
+    return errors
+
+
+def _issue_password_token(user_id: int, minutes: int = 60) -> tuple[str, datetime]:
+    """Crea un token de un solo uso e invalida enlaces anteriores del usuario."""
+    token = secrets.token_urlsafe(64)
+    expires = datetime.utcnow() + timedelta(minutes=minutes)
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE user_id=%s AND used=0",
+            (user_id,),
+        )
+        cur.execute(
+            f"INSERT INTO `{RESETS_TABLE}` (user_id, token, expires_at) VALUES (%s,%s,%s)",
+            (user_id, token, expires),
+        )
+    conn.commit()
+    return token, expires
+
+
+def _send_password_access_email(
+    to_addr: str,
+    to_name: str,
+    action_url: str,
+    *,
+    actor_name: str = "ILUS",
+    mode: str = "reset",
+    minutes: int = 60,
+) -> bool:
+    """Envia correo ILUS para crear o cambiar clave mediante token seguro."""
+    is_setup = mode == "setup"
+    titulo = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
+    subject = "ILUS - Crea tu contraseña de acceso" if is_setup else "ILUS - Cambio seguro de contraseña"
+    button = "Crear mi contraseña" if is_setup else "Cambiar contraseña"
+    intro = (
+        f"<strong>{actor_name}</strong> creo una cuenta para ti en el sistema ILUS."
+        if is_setup
+        else f"<strong>{actor_name}</strong> solicito un cambio de contraseña para tu cuenta ILUS."
+    )
+    html_body = _ilus_email_html(
+        titulo=titulo,
+        subtitulo="Acceso seguro con enlace de un solo uso",
+        saludo=f"Hola, {to_name}",
+        parrafos=[
+            intro,
+            "Por seguridad, la contraseña no se envia ni se escribe manualmente. "
+            "Debes definirla desde el boton de este correo.",
+            f"Este enlace vence en <strong>{minutes} minutos</strong>, solo puede usarse una vez "
+            "y reemplaza cualquier enlace anterior.",
+            f'Si no esperabas este correo, ignoralo o avisa al administrador.<br>'
+            f'<span style="font-size:11px;color:#777">Enlace directo: '
+            f'<a href="{action_url}" style="color:#CC0000">{action_url}</a></span>',
+        ],
+        btn_primario_txt=button,
+        btn_primario_url=action_url,
+        info_lineas=[
+            ("", "Cuenta", to_addr),
+            ("", "Solicitado por", actor_name),
+        ],
+    )
+    return _send_ilus_email(to_addr, subject, html_body)
 
 
 # ─────────────────────────────────────────────
@@ -1892,6 +1969,20 @@ def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_nam
     )
 
 
+def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
+    """Version vigente: cambio de clave con token seguro."""
+    return _send_password_access_email(
+        to_addr, to_name, reset_url, actor_name="ILUS", mode="reset", minutes=60
+    )
+
+
+def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_name: str = "ILUS") -> bool:
+    """Version vigente: alta de usuario con token seguro."""
+    return _send_password_access_email(
+        to_addr, to_name, set_url, actor_name=creator_name, mode="setup", minutes=1440
+    )
+
+
 @app.route("/auth/olvidar-contrasena", methods=["GET", "POST"])
 def forgot_password():
     if g.user:
@@ -1907,20 +1998,7 @@ def forgot_password():
             if EMAIL_RE.match(email_input):
                 user = get_auth_user_by_username(email_input)
                 if user and user.get("active"):
-                    token   = secrets.token_urlsafe(48)
-                    expires = datetime.utcnow() + timedelta(minutes=60)
-                    conn = get_db()
-                    # Invalidar tokens anteriores del mismo usuario
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE user_id=%s AND used=0",
-                            (user["id"],)
-                        )
-                        cur.execute(
-                            f"INSERT INTO `{RESETS_TABLE}` (user_id, token, expires_at) VALUES (%s,%s,%s)",
-                            (user["id"], token, expires)
-                        )
-                    conn.commit()
+                    token, _expires = _issue_password_token(user["id"], minutes=60)
 
                     reset_url = url_for("reset_password", token=token, _external=True)
                     _send_recovery_email(user["username"], user["nombre"], reset_url)
@@ -1956,11 +2034,16 @@ def reset_password(token):
     if request.method == "POST":
         pw1 = request.form.get("password", "")
         pw2 = request.form.get("password2", "")
-        if len(pw1) < 8:
+        if False:
             flash("La contraseña debe tener al menos 8 caracteres.", "danger")
             return render_template("reset_password.html", token=token, nombre=row["nombre"])
         if pw1 != pw2:
             flash("Las contraseñas no coinciden.", "danger")
+            return render_template("reset_password.html", token=token, nombre=row["nombre"])
+
+        strength_errors = _password_strength_errors(pw1)
+        if strength_errors:
+            flash(" ".join(strength_errors), "danger")
             return render_template("reset_password.html", token=token, nombre=row["nombre"])
 
         new_hash = generate_password_hash(pw1)
@@ -2658,16 +2741,8 @@ def new_user():
         # Generar token de invitación (usa la misma tabla de resets, válido 24h)
         if send_invite:
             try:
-                token     = secrets.token_urlsafe(40)
-                expires   = datetime.now() + timedelta(hours=24)
                 new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
-                conn2     = get_db()
-                with conn2.cursor() as cur2:
-                    cur2.execute(
-                        f"INSERT INTO `{RESETS_TABLE}` (user_id,token,expires_at) VALUES (%s,%s,%s)",
-                        (new_uid, token, expires)
-                    )
-                conn2.commit()
+                token, _expires = _issue_password_token(new_uid, minutes=1440)
                 set_url   = url_for("reset_password", token=token, _external=True)
                 creator   = g.user["nombre"] if g.user else "ILUS"
                 sent      = _send_invitation_email(username, nombre, set_url, creator)
@@ -2716,7 +2791,6 @@ def edit_user(user_id):
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         nombre   = request.form.get("nombre",   "").strip()
-        password = request.form.get("password", "")
         role     = request.form.get("role",     "editor")
         active   = 1 if request.form.get("active") == "1" else 0
 
@@ -2727,8 +2801,6 @@ def edit_user(user_id):
             errors.append("El correo no tiene un formato válido.")
         if not nombre:
             errors.append("El nombre y apellido son requeridos.")
-        if password and len(password) < 8:
-            errors.append("La clave debe tener al menos 8 caracteres.")
         if role not in {"superadmin", "admin", "editor", "lector", "vendedor"}:
             errors.append("Rol no valido.")
         if mysql_fetchone(
@@ -2741,16 +2813,10 @@ def edit_user(user_id):
 
         conn = get_db()
         with conn.cursor() as cur:
-            if password:
-                cur.execute(
-                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,password_hash=%s,role=%s,active=%s WHERE id=%s",
-                    (username, nombre, generate_password_hash(password), role, active, user_id),
-                )
-            else:
-                cur.execute(
-                    f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,role=%s,active=%s WHERE id=%s",
-                    (username, nombre, role, active, user_id),
-                )
+            cur.execute(
+                f"UPDATE `{AUTH_TABLE}` SET username=%s,nombre=%s,role=%s,active=%s WHERE id=%s",
+                (username, nombre, role, active, user_id),
+            )
         conn.commit()
 
         # Invalida caché de session si se editó el usuario actual
@@ -2787,15 +2853,7 @@ def invite_user(user_id):
     if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
     try:
-        token   = secrets.token_urlsafe(40)
-        expires = datetime.now() + timedelta(hours=24)
-        conn    = get_db()
-        with conn.cursor() as cur:
-            cur.execute(
-                f"INSERT INTO `{RESETS_TABLE}` (user_id,token,expires_at) VALUES (%s,%s,%s)",
-                (user_id, token, expires)
-            )
-        conn.commit()
+        token, _expires = _issue_password_token(user_id, minutes=1440)
         set_url = url_for("reset_password", token=token, _external=True)
         creator = g.user["nombre"] if g.user else "ILUS"
         sent    = _send_invitation_email(user["username"], user["nombre"], set_url, creator)
@@ -2809,6 +2867,28 @@ def invite_user(user_id):
 # ══════════════════════════════════════════════════════════════
 #  MÓDULO: HRM — COLABORADORES
 # ══════════════════════════════════════════════════════════════
+
+@app.route("/admin/users/<int:user_id>/password-link", methods=["POST"])
+@require_permission("admin")
+def user_password_link(user_id):
+    """Envia un enlace seguro para que el usuario cambie su propia clave."""
+    user = get_auth_user_by_id(user_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    try:
+        token, _expires = _issue_password_token(user_id, minutes=60)
+        reset_url = url_for("reset_password", token=token, _external=True)
+        actor = g.user["nombre"] if g.user else "ILUS"
+        sent = _send_password_access_email(
+            user["username"], user["nombre"], reset_url,
+            actor_name=actor, mode="reset", minutes=60
+        )
+        if sent:
+            return jsonify({"ok": True, "message": "Enlace seguro enviado."})
+        return jsonify({"error": "No se pudo enviar el email. Revisa la configuracion SMTP en Comunicaciones."}), 500
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
 
 HRM_AREAS_TABLE  = "hrm_areas"
 HRM_CARGOS_TABLE = "hrm_cargos"
@@ -3336,6 +3416,8 @@ def preg_gen_eliminar(pid):
         cur.execute(f"DELETE FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid,))
     conn.commit()
     return jsonify({"ok": True})
+
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -6174,6 +6256,219 @@ def init_comunicaciones_tables():
 
 # ── Helpers de config ─────────────────────────────────────────
 
+def _comm_template_defaults():
+    def despacho_body(intro, rows, note="", color="#CC0000"):
+        row_html = "\n".join(
+            "<tr><td style='padding:6px 0;font-size:13px;color:#555'>"
+            f"<strong style='color:#222'>{label}:</strong>&nbsp; {value}</td></tr>"
+            for label, value in rows
+        )
+        note_html = (
+            f"<p style='margin:18px 0 0;font-size:13px;color:#777;line-height:1.55'>{note}</p>"
+            if note else ""
+        )
+        return (
+            f"<p style='margin:0 0 16px;font-size:15px;color:{color};font-weight:700'>Hola, {{{{nombre_cliente}}}}</p>\n"
+            f"<p style='margin:0 0 14px;font-size:14px;color:#444;line-height:1.65'>{intro}</p>\n"
+            f"<table cellpadding='0' cellspacing='0' width='100%' style='background:#f5f5f7;border-left:4px solid {color};"
+            "border-radius:4px;padding:14px 18px;margin:18px 0'>\n"
+            f"{row_html}\n</table>\n{note_html}"
+        )
+
+    def sistema_body(intro, rows, note="", color="#CC0000"):
+        row_html = "\n".join(
+            "<tr><td style='padding:6px 0;font-size:13px;color:#555'>"
+            f"<strong style='color:#222'>{label}:</strong>&nbsp; {value}</td></tr>"
+            for label, value in rows
+        )
+        note_html = (
+            f"<div style='background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;"
+            f"font-size:13px;color:#664d03;margin-top:16px'>{note}</div>"
+            if note else ""
+        )
+        return (
+            f"<p style='margin:0 0 16px;font-size:15px;color:{color};font-weight:700'>Hola, {{{{nombre_usuario}}}}</p>\n"
+            f"<p style='margin:0 0 14px;font-size:14px;color:#444;line-height:1.65'>{intro}</p>\n"
+            f"<table cellpadding='0' cellspacing='0' width='100%' style='background:#f5f5f7;border-left:4px solid {color};"
+            "border-radius:4px;padding:14px 18px;margin:18px 0'>\n"
+            f"{row_html}\n</table>\n{note_html}"
+        )
+
+    return {
+        "programado": {
+            "email": (
+                "Tu pedido {{id_pedido}} ha sido programado - ILUS",
+                despacho_body(
+                    "Tu pedido ha sido <strong>programado exitosamente</strong> y esta siendo preparado en nuestra bodega.",
+                    [
+                        ("Nro. pedido", "{{id_pedido}}"),
+                        ("Courier", "{{courier}}"),
+                        ("Entrega estimada", "{{fecha_entrega}}"),
+                        ("Direccion", "{{direccion_entrega}}"),
+                        ("Costo despacho", "{{costo_envio}}"),
+                    ],
+                    "Te avisaremos cuando salga de bodega con su numero de seguimiento.",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue programado correctamente.\n\nCourier: {{courier}}\nEntrega estimada: {{fecha_entrega}}\nDireccion: {{direccion_entrega}}\nCosto despacho: {{costo_envio}}\n\nTe avisaremos cuando salga de bodega.",
+            ),
+        },
+        "en_ruta": {
+            "email": (
+                "Tu pedido {{id_pedido}} esta en ruta - ILUS",
+                despacho_body(
+                    "Tu pedido <strong>{{id_pedido}}</strong> ya salio de bodega y esta en camino contigo.",
+                    [
+                        ("Nro. pedido", "{{id_pedido}}"),
+                        ("Courier", "{{courier}}"),
+                        ("Nro. seguimiento", "{{numero_seguimiento}}"),
+                        ("Entrega estimada", "{{fecha_entrega}}"),
+                        ("Direccion", "{{direccion_entrega}}"),
+                    ],
+                    "Puedes rastrear tu envio usando el numero de seguimiento del courier.",
+                    "#007bff",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* ya esta en ruta.\n\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\nEntrega estimada: {{fecha_entrega}}\nDestino: {{direccion_entrega}}",
+            ),
+        },
+        "en_camino": {
+            "email": (
+                "Tu pedido {{id_pedido}} llega hoy - ILUS",
+                despacho_body(
+                    "Tu pedido <strong>{{id_pedido}}</strong> esta en reparto y llegara hoy a tu domicilio.",
+                    [
+                        ("Nro. pedido", "{{id_pedido}}"),
+                        ("Courier", "{{courier}}"),
+                        ("Direccion de entrega", "{{direccion_entrega}}"),
+                        ("Nro. seguimiento", "{{numero_seguimiento}}"),
+                    ],
+                    "Asegurate de que alguien pueda recibir el pedido.",
+                    "#17a2b8",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* esta en reparto y llegara hoy.\n\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nAsegurate de que alguien pueda recibirlo.",
+            ),
+        },
+        "entregado": {
+            "email": (
+                "Pedido {{id_pedido}} entregado con exito - ILUS",
+                despacho_body(
+                    "Tu pedido <strong>{{id_pedido}}</strong> fue <strong>entregado exitosamente</strong>.",
+                    [
+                        ("Nro. pedido", "{{id_pedido}}"),
+                        ("Entregado en", "{{direccion_entrega}}"),
+                        ("Courier", "{{courier}}"),
+                        ("Nro. seguimiento", "{{numero_seguimiento}}"),
+                    ],
+                    "Gracias por confiar en ILUS Sport & Health. Estamos disponibles si necesitas apoyo con tu equipo.",
+                    "#20c997",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue entregado exitosamente.\n\nEntregado en: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nGracias por confiar en ILUS.",
+            ),
+        },
+        "fallido": {
+            "email": (
+                "No pudimos entregar tu pedido {{id_pedido}} - ILUS",
+                despacho_body(
+                    "Lamentamos informarte que no fue posible entregar tu pedido <strong>{{id_pedido}}</strong> en el intento realizado.",
+                    [
+                        ("Nro. pedido", "{{id_pedido}}"),
+                        ("Motivo", "{{motivo_falla}}"),
+                        ("Courier", "{{courier}}"),
+                        ("Direccion intentada", "{{direccion_entrega}}"),
+                    ],
+                    "Nuestro equipo se pondra en contacto para coordinar una nueva fecha de entrega.",
+                    "#dc3545",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, no pudimos entregar tu pedido *{{id_pedido}}*.\n\nMotivo: {{motivo_falla}}\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\n\nNos comunicaremos contigo para reagendar la entrega.",
+            ),
+        },
+        "inicio_sesion": {
+            "email": (
+                "Nuevo inicio de sesion detectado - ILUS",
+                sistema_body(
+                    "Detectamos un nuevo inicio de sesion en tu cuenta del sistema ILUS.",
+                    [
+                        ("Cuenta", "{{email_usuario}}"),
+                        ("Fecha y hora", "{{fecha_hora}}"),
+                        ("IP de acceso", "{{ip_acceso}}"),
+                    ],
+                    "Si reconoces esta actividad, puedes ignorar este mensaje. Si no fuiste tu, cambia tu contrasena y contacta al administrador.",
+                    "#6f42c1",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS - Alerta de seguridad*\n\nHola *{{nombre_usuario}}*, se detecto un inicio de sesion en tu cuenta.\n\nFecha: {{fecha_hora}}\nIP: {{ip_acceso}}\nCuenta: {{email_usuario}}\n\nSi no fuiste tu, cambia tu contrasena de inmediato.",
+            ),
+        },
+        "cambio_pass": {
+            "email": (
+                "Tu contrasena fue actualizada - ILUS",
+                sistema_body(
+                    "La contrasena de tu cuenta en el sistema ILUS fue actualizada exitosamente.",
+                    [
+                        ("Cuenta", "{{email_usuario}}"),
+                        ("Fecha y hora", "{{fecha_hora}}"),
+                    ],
+                    "Si no reconoces este cambio, contacta al administrador de inmediato.",
+                    "#fd7e14",
+                ),
+            ),
+            "whatsapp": (
+                "",
+                "*ILUS - Cambio de contrasena*\n\nHola *{{nombre_usuario}}*, tu contrasena fue actualizada el *{{fecha_hora}}*.\n\nCuenta: {{email_usuario}}\n\nSi no realizaste este cambio, contacta al administrador.",
+            ),
+        },
+    }
+
+
+def _comm_seed_default_templates(overwrite=False):
+    try:
+        user = current_username() or "system"
+    except Exception:
+        user = "system"
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for estado, channels in _comm_template_defaults().items():
+                for canal, (asunto, cuerpo) in channels.items():
+                    if overwrite:
+                        cur.execute(
+                            """INSERT INTO comm_templates (estado, canal, asunto, cuerpo, updated_by)
+                               VALUES (%s,%s,%s,%s,%s)
+                               ON DUPLICATE KEY UPDATE
+                                 asunto=VALUES(asunto),
+                                 cuerpo=VALUES(cuerpo),
+                                 updated_by=VALUES(updated_by),
+                                 activo=1""",
+                            (estado, canal, asunto, cuerpo, user),
+                        )
+                    else:
+                        cur.execute(
+                            """INSERT IGNORE INTO comm_templates
+                               (estado, canal, asunto, cuerpo, updated_by)
+                               VALUES (%s,%s,%s,%s,%s)""",
+                            (estado, canal, asunto, cuerpo, user),
+                        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _get_smtp_cfg():
     """Config SMTP: primero DB, luego config.py como fallback."""
     try:
@@ -6193,6 +6488,13 @@ def _get_smtp_cfg():
     except Exception:
         pass
     return dict(EMAIL_CONFIG)
+
+
+def _safe_smtp_cfg(cfg=None):
+    cfg = dict(cfg or _get_smtp_cfg())
+    if cfg.get("smtp_pass"):
+        cfg["smtp_pass"] = "••••••••"
+    return cfg
 
 
 def _get_client_cfg():
@@ -6238,10 +6540,19 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
     """Envía email usando config SMTP dinámica (DB o config.py)."""
     import ssl as _ssl
     cfg = cfg or _get_smtp_cfg()
+    cc = _get_client_cfg()
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = f"{cfg['from_name']} <{cfg.get('from_addr', cfg['smtp_user'])}>"
     msg["To"]      = to
+    recipients = [to]
+    if cc.get("reply_to"):
+        msg["Reply-To"] = cc["reply_to"]
+    cc_addrs = [a.strip() for a in (cc.get("email_cc") or "").replace(";", ",").split(",") if a.strip()]
+    bcc_addrs = [a.strip() for a in (cc.get("email_bcc") or "").replace(";", ",").split(",") if a.strip()]
+    if cc_addrs:
+        msg["Cc"] = ", ".join(cc_addrs)
+    recipients.extend(cc_addrs + bcc_addrs)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
     host   = cfg["smtp_host"]
     port   = int(cfg.get("smtp_port", 587))
@@ -6250,13 +6561,25 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
         ctx = _ssl.create_default_context()
         with smtplib.SMTP_SSL(host, port, context=ctx, timeout=15) as srv:
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
-            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), [to], msg.as_string())
+            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), recipients, msg.as_string())
     else:
         with smtplib.SMTP(host, port, timeout=15) as srv:
             srv.ehlo()
             srv.starttls()
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
-            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), [to], msg.as_string())
+            srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), recipients, msg.as_string())
+
+
+def _comm_render_email_document(title, body_html, subtitle=""):
+    """Renderiza un fragmento HTML dentro del diseÃ±o corporativo actual."""
+    cc = _get_client_cfg()
+    color = cc.get("corp_color") or "#CC0000"
+    company = cc.get("company_name") or "ILUS Sport & Health"
+    logo = cc.get("logo_url") or ""
+    header = _email_header_ilus(title, subtitle, color, logo, company)
+    body = _email_body_section(body_html)
+    footer = _email_footer_ilus(company)
+    return _email_wrapper(_email_card(header, body, footer), company)
 
 
 def _send_whatsapp(account_sid, auth_token, from_num, to_num, body):
@@ -6287,9 +6610,10 @@ def _send_whatsapp(account_sid, auth_token, from_num, to_num, body):
 
 def _email_wrapper(inner, company="ILUS Sport & Health"):
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
-<title>Comunicación — {company}</title></head>
-<body style="margin:0;padding:0;background:#0c0907;font-family:'Segoe UI',Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0c0907;padding:32px 0">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comunicacion - {company}</title></head>
+<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f2f4;padding:28px 12px">
 <tr><td align="center">{inner}</td></tr>
 </table></body></html>"""
 
@@ -6297,8 +6621,8 @@ def _email_wrapper(inner, company="ILUS Sport & Health"):
 def _email_card(header_html, body_html, footer_html="", width=580):
     return f"""
 <table width="{width}" cellpadding="0" cellspacing="0"
-       style="background:#1a0f05;border-radius:14px;overflow:hidden;
-              max-width:{width}px;width:100%">
+       style="background:#ffffff;border-radius:10px;overflow:hidden;
+              max-width:{width}px;width:100%;box-shadow:0 6px 20px rgba(15,23,42,.10)">
   <tr><td>{header_html}</td></tr>
   <tr><td style="background:#fff">{body_html}</td></tr>
   {"<tr><td>" + footer_html + "</td></tr>" if footer_html else ""}
@@ -6306,37 +6630,39 @@ def _email_card(header_html, body_html, footer_html="", width=580):
 
 
 def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS"):
-    logo_block = ""
-    if logo_url:
-        logo_block = f'<img src="{logo_url}" alt="{company}" style="height:40px;margin-bottom:12px;object-fit:contain"><br>'
+    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
     return f"""
 <table width="100%" cellpadding="0" cellspacing="0">
   <tr>
-    <td style="background:linear-gradient(135deg,{corp_color}dd,{corp_color}88,#1a0f05);
-               padding:32px;text-align:center">
-      {logo_block}
-      <div style="font-size:28px;font-weight:900;color:#fff;letter-spacing:3px">{company}<span style="color:{corp_color}">.</span></div>
-      <div style="font-size:11px;color:rgba(255,255,255,.65);letter-spacing:2px;text-transform:uppercase;margin-top:3px">Sport &amp; Health</div>
-      <div style="color:#fff;font-size:18px;font-weight:700;margin-top:18px">{title}</div>
-      {"<div style='color:rgba(255,255,255,.8);font-size:13px;margin-top:6px'>" + subtitle + "</div>" if subtitle else ""}
+    <td style="background:#000;padding:24px 28px;text-align:center">
+      <img src="{logo_url}" alt="{company}"
+           style="height:48px;max-width:230px;width:auto;display:block;margin:0 auto;object-fit:contain">
+    </td>
+  </tr>
+  <tr>
+    <td style="background:#111;padding:28px 32px;text-align:center;border-top:1px solid #202020">
+      <div style="color:#ffffff;font-size:22px;line-height:1.25;font-weight:800">{title}</div>
+      {"<div style='color:#f3f4f6;font-size:13px;line-height:1.45;margin-top:8px'>" + subtitle + "</div>" if subtitle else ""}
     </td>
   </tr>
 </table>"""
 
 
 def _email_body_section(content):
-    return f'<div style="padding:28px 32px">{content}</div>'
+    return f'<div style="padding:32px 30px;font-size:14px;line-height:1.6;color:#111827">{content}</div>'
 
 
 def _email_footer_ilus(company="ILUS Sport & Health"):
     return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#1a0f05">
+       style="background:#000">
   <tr>
-    <td style="padding:20px 32px;text-align:center;
-               color:#555;font-size:11px;border-top:1px solid #2a1a0a">
-      {company} — Sistema de Comunicaciones<br>
-      <span style="color:#333">Este es un mensaje automático, no responder directamente.</span>
+    <td style="padding:24px 32px;text-align:center;color:#6b7280;font-size:11px;line-height:1.6">
+      <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{company}</div>
+      <div style="color:#9ca3af;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
+      <div style="color:#6b7280;margin-top:14px">
+        Este correo fue generado automaticamente. Para soporte, utiliza nuestros canales oficiales.
+      </div>
     </td>
   </tr>
 </table>"""
@@ -6435,41 +6761,66 @@ def comm_index():
     except Exception:
         pass
     # Ocultar contraseña
-    smtp_cfg_safe = {k: ("••••••••" if k == "smtp_pass" and v else v)
-                     for k, v in smtp_cfg.items()}
-    return render_template(
+    smtp_cfg_safe = _safe_smtp_cfg(smtp_cfg)
+    resp = make_response(render_template(
         "comunicaciones/index.html",
         smtp_cfg=smtp_cfg_safe,
         client_cfg=client_cfg,
         wa_cfg=wa_cfg,
         log_rows=log_rows,
-    )
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/comunicaciones/smtp/config", methods=["POST"])
 @_require_superadmin
 def comm_smtp_save():
     d = request.get_json(silent=True) or {}
+    prev = _get_smtp_cfg()
+    smtp_pass = (d.get("pass") or "").strip()
+    if not smtp_pass or smtp_pass == "••••••••":
+        smtp_pass = prev.get("smtp_pass") or ""
+    host = (d.get("host") or "smtp.gmail.com").strip()
+    port = int(d.get("port") or 587)
+    user = (d.get("user") or "").strip()
+    from_name = (d.get("fromName") or "ILUS Sport & Health").strip()
+    from_addr = (d.get("fromAddr") or user).strip()
+    secure = 1 if d.get("secure") else 0
+    if not user:
+        return jsonify({"error": "Ingresa el email usuario SMTP"}), 400
+    if not smtp_pass:
+        return jsonify({"error": "Ingresa y guarda la App Password"}), 400
     conn = get_db()
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM comm_smtp_config")
         cur.execute(
             """INSERT INTO comm_smtp_config
-               (smtp_host,smtp_port,smtp_user,smtp_pass,from_name,from_addr,secure,updated_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                d.get("host", "smtp.gmail.com"),
-                int(d.get("port", 587)),
-                (d.get("user") or "").strip(),
-                (d.get("pass") or "").strip(),
-                (d.get("fromName") or "ILUS Sport & Health").strip(),
-                (d.get("user") or "").strip(),
-                1 if d.get("secure") else 0,
-                current_username(),
-            ),
+               (id,smtp_host,smtp_port,smtp_user,smtp_pass,from_name,from_addr,secure,updated_by)
+               VALUES (1,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON DUPLICATE KEY UPDATE
+                 smtp_host=VALUES(smtp_host),
+                 smtp_port=VALUES(smtp_port),
+                 smtp_user=VALUES(smtp_user),
+                 smtp_pass=VALUES(smtp_pass),
+                 from_name=VALUES(from_name),
+                 from_addr=VALUES(from_addr),
+                 secure=VALUES(secure),
+                 updated_by=VALUES(updated_by)""",
+            (host, port, user, smtp_pass, from_name, from_addr, secure, current_username()),
         )
+        cur.execute("DELETE FROM comm_smtp_config WHERE id <> 1")
     conn.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "smtp": _safe_smtp_cfg({
+        "smtp_host": host,
+        "smtp_port": port,
+        "smtp_user": user,
+        "smtp_pass": smtp_pass,
+        "from_name": from_name,
+        "from_addr": from_addr,
+        "secure": bool(secure),
+    })})
 
 
 @app.route("/comunicaciones/smtp/test", methods=["POST"])
@@ -6508,6 +6859,8 @@ def comm_email_enviar():
     to      = (d.get("to") or "").strip()
     subject = (d.get("subject") or "").strip()
     html    = (d.get("html") or "").strip()
+    if d.get("wrap"):
+        html = _comm_render_email_document(subject, html, "Comunicaciones")
     if not all([to, subject, html]):
         return jsonify({"error": "Faltan campos: to, subject, html"}), 400
     try:
@@ -6517,6 +6870,29 @@ def comm_email_enviar():
     except Exception as exc:
         _comm_log_entry("email", to, subject, "error", str(exc))
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/comunicaciones/email/preview", methods=["POST"])
+@_require_superadmin
+def comm_email_preview():
+    d = request.get_json(silent=True) or {}
+    title = (d.get("title") or "Vista previa de comunicacion").strip()
+    body = (d.get("html") or "").strip() or (
+        "<p style='margin:0 0 14px;font-size:14px;color:#111827;line-height:1.65'>"
+        "Hola <strong>{{nombre_cliente}}</strong>, este es un ejemplo del mensaje que recibira el destinatario usando la plantilla oficial ILUS.</p>"
+        "<table cellpadding='0' cellspacing='0' width='100%' style='background:#f5f5f7;border-left:4px solid #CC0000;border-radius:4px;padding:14px 18px;margin:18px 0'>"
+        "<tr><td style='padding:5px 0;font-size:13px;color:#555'><strong style='color:#222'>Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>"
+        "<tr><td style='padding:5px 0;font-size:13px;color:#555'><strong style='color:#222'>Estado:</strong>&nbsp; En ruta</td></tr>"
+        "<tr><td style='padding:5px 0;font-size:13px;color:#555'><strong style='color:#222'>Courier:</strong>&nbsp; {{courier}}</td></tr>"
+        "</table>"
+    )
+    resp = jsonify({"ok": True, "html": _comm_render_email_document(
+        title,
+        body,
+        "Gestion de solicitudes y seguimiento"
+    )})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/comunicaciones/cliente/config", methods=["POST"])
@@ -6545,7 +6921,7 @@ def comm_client_save():
             ),
         )
     conn.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "client": _get_client_cfg()})
 
 
 @app.route("/comunicaciones/whatsapp/config", methods=["POST"])
@@ -6584,6 +6960,7 @@ def comm_wa_test():
         return jsonify({"error": "Completa: Account SID, Auth Token, From y destinatario"}), 400
     body = (f"✅ Prueba de WhatsApp — ILUS Comunicaciones\n"
             f"Enviado por: {current_username()}")
+    body = (d.get("body") or "").strip() or body
     try:
         msg_sid = _send_whatsapp(sid, tok, frm, to, body)
         _comm_log_entry("whatsapp", to, "Prueba WA", "ok", msg_sid)
@@ -6600,6 +6977,12 @@ def comm_templates_get():
     rows = mysql_fetchall(
         "SELECT * FROM comm_templates ORDER BY estado, canal"
     ) or []
+    legacy_tokens = ("Dropit", "direccion_origen", "direccion_destino", "link_tracking", "nombre_conductor")
+    if any(any(tok in ((r.get("asunto") or "") + " " + (r.get("cuerpo") or "")) for tok in legacy_tokens) for r in rows):
+        _comm_seed_default_templates(overwrite=True)
+        rows = mysql_fetchall(
+            "SELECT * FROM comm_templates ORDER BY estado, canal"
+        ) or []
     data = {}
     for r in rows:
         est = r["estado"]
@@ -6634,6 +7017,14 @@ def comm_template_save(estado, canal):
             (estado, canal, asunto, cuerpo, user)
         )
     conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/comunicaciones/templates/restaurar-todo", methods=["POST"])
+@_require_superadmin
+def comm_templates_restore_all():
+    """Restaura todas las plantillas a la base oficial ILUS."""
+    _comm_seed_default_templates(overwrite=True)
     return jsonify({"ok": True})
 
 
@@ -6953,56 +7344,281 @@ def mant_cliente_wizard():
     return render_template("mantenciones/cliente_wizard.html")
 
 
-@app.route("/mantenciones/api/erp-rut", methods=["POST"])
-@_mant_required
-def mant_erp_rut_lookup():
-    """Busca un cliente en el ERP por RUT exacto y devuelve sus datos básicos."""
-    d   = request.get_json(silent=True) or {}
-    rut = d.get("rut", "").strip().replace(" ", "")
-    if not rut:
-        return jsonify({"error": "RUT requerido"}), 400
+def _erp_buscar_clientes(q, limit=20):
+    """
+    Busca clientes en el ERP por RUT o razón social.
+    Usa la tabla de ventas/documentos del ERP (NRAZON, NRUC).
+    Devuelve lista de dicts con razon_social, rut, productos comprados.
+    Maneja graciosamente si el ERP no está disponible.
+    """
+    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")  # tabla de ventas Random ERP
+    q_like = f"%{q}%"
+    erp_conn = get_erp_conn()
+    if not erp_conn:
+        return []
     try:
-        erp_conn = get_erp()
         with erp_conn.cursor() as cur:
             cur.execute(
                 f"""SELECT DISTINCT
-                       d.NRAZON AS razon_social,
-                       d.NRUC   AS rut,
-                       d.DIR1   AS direccion,
-                       d.COMU   AS comuna,
-                       d.EMAIL  AS email
-                    FROM `{ERP_TABLE}` d
-                    WHERE d.NRUC = %s
-                    LIMIT 1""",
-                (rut,)
+                       TRIM(d.NRAZON) AS razon_social,
+                       TRIM(d.NRUC)   AS rut
+                    FROM `{ERP_SALES}` d
+                    WHERE (TRIM(d.NRAZON) LIKE %s OR TRIM(d.NRUC) LIKE %s)
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO')
+                    ORDER BY d.NRAZON
+                    LIMIT {int(limit)}""",
+                (q_like, q_like)
             )
-            row = cur.fetchone()
-        erp_conn.close()
-        if not row:
-            # Intentar búsqueda parcial
-            erp_conn2 = get_erp()
-            with erp_conn2.cursor() as cur2:
-                cur2.execute(
-                    f"""SELECT DISTINCT d.NRAZON, d.NRUC, d.DIR1 AS direccion,
-                               d.COMU AS comuna, d.EMAIL AS email
-                        FROM `{ERP_TABLE}` d
-                        WHERE d.NRUC LIKE %s LIMIT 1""",
-                    (f"%{rut.split('-')[0]}%",)
-                )
-                row = cur2.fetchone()
-            erp_conn2.close()
-        if not row:
-            return jsonify({"encontrado": False})
+            rows = cur.fetchall()
+        return [{"razon_social": r["razon_social"], "rut": r["rut"]} for r in rows if r.get("razon_social")]
+    except Exception:
+        return []
+    finally:
+        try: erp_conn.close()
+        except: pass
+
+
+@app.route("/mantenciones/api/clientes/autocomplete")
+@_mant_required
+def mant_clientes_autocomplete():
+    """
+    Autocomplete unificado: busca en clientes locales (mant_clientes) + ERP.
+    Devuelve lista ordenada con origen (local/erp) para mostrar en dropdown.
+    """
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+
+    # 1) Buscar en clientes locales (siempre disponible)
+    q_like = f"%{q}%"
+    locales = mysql_fetchall(
+        """SELECT id, razon_social, rut, contacto_email, estado
+           FROM mant_clientes
+           WHERE razon_social LIKE %s OR rut LIKE %s
+           ORDER BY razon_social LIMIT 15""",
+        (q_like, q_like)
+    )
+    resultados = []
+    ids_rut_vistos = set()
+    for r in locales:
+        rut = (r.get("rut") or "").strip()
+        resultados.append({
+            "id":           r["id"],
+            "razon_social": r["razon_social"],
+            "rut":          rut,
+            "email":        r.get("contacto_email",""),
+            "estado":       r.get("estado",""),
+            "origen":       "local",
+        })
+        if rut: ids_rut_vistos.add(rut)
+
+    # 2) Buscar en ERP (solo si hay conexión)
+    erp_rows = _erp_buscar_clientes(q, limit=15)
+    for r in erp_rows:
+        rut = (r.get("rut") or "").strip()
+        if rut in ids_rut_vistos:
+            continue  # ya está en locales, no duplicar
+        resultados.append({
+            "id":           None,
+            "razon_social": r["razon_social"],
+            "rut":          rut,
+            "email":        "",
+            "estado":       "",
+            "origen":       "erp",
+        })
+        if rut: ids_rut_vistos.add(rut)
+
+    # Ordenar locales primero, luego ERP
+    resultados.sort(key=lambda x: (0 if x["origen"]=="local" else 1, x["razon_social"].lower()))
+    return jsonify(resultados[:20])
+
+
+@app.route("/mantenciones/api/erp-rut", methods=["POST"])
+@_mant_required
+def mant_erp_rut_lookup():
+    """Busca un cliente en el ERP/local por RUT y devuelve sus datos básicos."""
+    d   = request.get_json(silent=True) or {}
+    rut = d.get("rut", "").strip()
+    if not rut:
+        return jsonify({"error": "RUT requerido"}), 400
+
+    # 1) Buscar en clientes locales primero
+    local = mysql_fetchone(
+        "SELECT * FROM mant_clientes WHERE rut=%s OR rut LIKE %s LIMIT 1",
+        (rut, f"%{rut.split('-')[0]}%")
+    )
+    if local:
+        return jsonify({
+            "encontrado":    True,
+            "origen":        "local",
+            "id":            local["id"],
+            "razon_social":  local["razon_social"],
+            "rut":           local["rut"] or rut,
+            "direccion":     local.get("direccion",""),
+            "comuna":        local.get("comuna",""),
+            "ciudad":        local.get("ciudad",""),
+            "email":         local.get("contacto_email",""),
+            "contacto":      local.get("contacto_nombre",""),
+            "tel":           local.get("contacto_tel",""),
+        })
+
+    # 2) Buscar en ERP
+    rows = _erp_buscar_clientes(rut, limit=3)
+    if rows:
+        r = rows[0]
         return jsonify({
             "encontrado":   True,
-            "razon_social": row.get("razon_social",""),
-            "rut":          row.get("rut",""),
-            "direccion":    row.get("direccion",""),
-            "comuna":       row.get("comuna",""),
-            "email":        row.get("email",""),
+            "origen":       "erp",
+            "id":           None,
+            "razon_social": r["razon_social"],
+            "rut":          r["rut"],
+            "direccion":    "",
+            "comuna":       "",
+            "ciudad":       "",
+            "email":        "",
         })
+
+    return jsonify({"encontrado": False})
+
+
+@app.route("/mantenciones/api/agente-contrato", methods=["POST"])
+@_mant_required
+def mant_agente_contrato():
+    """
+    AGENTE IA DE CONTRATOS — lee un PDF/Word de contrato de mantención y extrae:
+    - Datos del CLIENTE: RUT, razón social, dirección, contacto
+    - Análisis del CONTRATO: tipo, vigencia, SLA, cláusulas, costos, riesgos
+    - Equipos mencionados en el contrato
+    Luego cruza el RUT detectado con el ERP/local para enriquecer la respuesta.
+    """
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"error": "Sin archivo"}), 400
+
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in ("pdf", "doc", "docx"):
+        return jsonify({"error": "Solo PDF o Word"}), 400
+
+    # Guardar temporalmente
+    tmp_path = os.path.join(MANT_UPLOADS, f"tmp_{int(time.time())}_{secure_filename(f.filename)}")
+    f.save(tmp_path)
+
+    texto = ""
+    try:
+        if ext == "pdf":
+            import pdfplumber
+            with pdfplumber.open(tmp_path) as pdf:
+                texto = "\n".join(p.extract_text() or "" for p in pdf.pages[:20])
+        elif ext in ("doc","docx"):
+            import docx as _docx
+            doc = _docx.Document(tmp_path)
+            texto = "\n".join(p.text for p in doc.paragraphs)
     except Exception as e:
-        return jsonify({"error": str(e), "encontrado": False}), 500
+        try: os.remove(tmp_path)
+        except: pass
+        return jsonify({"error": f"No se pudo leer el archivo: {e}"}), 500
+    finally:
+        try: os.remove(tmp_path)
+        except: pass
+
+    if not texto.strip():
+        return jsonify({"error": "No se pudo extraer texto del documento"}), 422
+
+    prompt_agente = """Eres un agente especializado en análisis de contratos de mantención de equipos fitness en Chile.
+Tu tarea es leer el contrato y extraer TODA la información relevante en formato JSON estructurado.
+
+IMPORTANTE: Debes responder ÚNICAMENTE con el JSON, sin texto adicional.
+
+Estructura requerida:
+{
+  "cliente": {
+    "razon_social": "nombre legal completo o null",
+    "rut": "RUT con formato XX.XXX.XXX-X o null",
+    "direccion": "dirección completa o null",
+    "comuna": "comuna o null",
+    "ciudad": "ciudad o null",
+    "contacto_nombre": "nombre del contacto o null",
+    "contacto_email": "email o null",
+    "contacto_tel": "teléfono o null"
+  },
+  "contrato": {
+    "nombre": "nombre o título del contrato",
+    "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Mixto|Otro",
+    "vigencia_inicio": "YYYY-MM-DD o null",
+    "vigencia_fin": "YYYY-MM-DD o null",
+    "es_indefinido": true_o_false,
+    "frecuencia_meses": número_entero_o_null,
+    "sla_horas": número_entero_o_null,
+    "monto_mensual": número_o_null,
+    "costo_por_mant": número_o_null,
+    "costo_total": número_o_null,
+    "incluye_mant_gratis": true_o_false,
+    "incluye_repuestos": true_o_false,
+    "cobertura_descripcion": "descripción de qué cubre el contrato",
+    "nivel_riesgo": "alto|medio|bajo",
+    "score": número_0_a_100,
+    "resumen": "2-3 oraciones resumiendo el contrato",
+    "clausulas_criticas": ["clausula1", "clausula2"],
+    "alertas": ["alerta1", "alerta2"],
+    "mejoras_prioritarias": ["mejora1", "mejora2"]
+  },
+  "equipos": [
+    {
+      "nombre": "nombre del equipo",
+      "sku": "código o null",
+      "cantidad": número_entero,
+      "notas": "observaciones o null"
+    }
+  ]
+}
+
+Sé riguroso extrayendo fechas, montos y cláusulas. Si un dato no está en el contrato, usa null.
+Para el score: 100=contrato excelente para el prestador, 0=contrato muy desfavorable o riesgoso."""
+
+    prompt_usuario = f"""Analiza este contrato de mantención de equipos fitness:
+
+{texto[:8000]}
+
+Extrae TODA la información del cliente, condiciones contractuales, equipos mencionados y análisis de riesgos."""
+
+    try:
+        import anthropic as _anthropic
+        cliente_ia = _anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY",""))
+        msg = cliente_ia.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=2000,
+            system=prompt_agente,
+            messages=[{"role":"user","content":prompt_usuario}]
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"): raw = raw[4:]
+        resultado = json.loads(raw)
+    except Exception as e:
+        return jsonify({"error": f"Error en análisis IA: {e}"}), 500
+
+    # Cruzar RUT detectado con ERP/local para enriquecer
+    rut_detectado = (resultado.get("cliente") or {}).get("rut","")
+    erp_data = {}
+    if rut_detectado:
+        local = mysql_fetchone(
+            "SELECT * FROM mant_clientes WHERE rut LIKE %s LIMIT 1",
+            (f"%{rut_detectado.split('-')[0]}%",)
+        )
+        if local:
+            erp_data = {"origen":"local","id":local["id"],
+                        "razon_social":local["razon_social"],
+                        "rut":local["rut"],"estado":local["estado"]}
+        else:
+            rows = _erp_buscar_clientes(rut_detectado.split("-")[0], limit=1)
+            if rows:
+                erp_data = {"origen":"erp","id":None,
+                            "razon_social":rows[0]["razon_social"],
+                            "rut":rows[0]["rut"]}
+
+    resultado["_erp_match"] = erp_data
+    return jsonify({"ok": True, "resultado": resultado})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/generar-calendario", methods=["POST"])
@@ -7726,22 +8342,25 @@ def mant_buscar_erp():
     q   = d.get("q", "").strip()
     if not q:
         return jsonify({"error": "Término de búsqueda requerido"}), 400
+    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
     try:
-        erp_conn = get_erp()
+        erp_conn = get_erp_conn()
+        if not erp_conn:
+            return jsonify({"error": "Sin conexión al ERP en este momento", "documentos": []}), 503
         with erp_conn.cursor() as cur:
             cur.execute(
                 f"""SELECT DISTINCT
-                       d.NRAZON AS razon_social,
-                       d.NRUC AS rut,
-                       d.TIDO AS tipo_doc,
-                       d.NUDO AS num_doc,
-                       d.FEMIS AS fecha,
-                       d.NOMBR AS producto,
-                       d.KOPRCT AS sku,
-                       d.CANTD AS cantidad
-                    FROM `{ERP_TABLE}` d
-                    WHERE (d.NRAZON LIKE %s OR d.NRUC LIKE %s)
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB')
+                       TRIM(d.NRAZON) AS razon_social,
+                       TRIM(d.NRUC)   AS rut,
+                       TRIM(d.TIDO)   AS tipo_doc,
+                       TRIM(d.NUDO)   AS num_doc,
+                       d.FEMIS        AS fecha,
+                       TRIM(d.NOMBR)  AS producto,
+                       TRIM(d.KOPRCT) AS sku,
+                       d.CANTD        AS cantidad
+                    FROM `{ERP_SALES}` d
+                    WHERE (TRIM(d.NRAZON) LIKE %s OR TRIM(d.NRUC) LIKE %s)
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO')
                     ORDER BY d.FEMIS DESC
                     LIMIT 100""",
                 (f"%{q}%", f"%{q}%")
@@ -7768,7 +8387,7 @@ def mant_buscar_erp():
             })
         return jsonify({"ok": True, "documentos": list(docs.values())})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "documentos": []}), 500
 
 
 # ─────────────────────────────────────────────

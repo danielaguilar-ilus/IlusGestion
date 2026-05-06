@@ -28,7 +28,7 @@
     </li>
     <li class="nav-item">
       <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabPlantillas"
-              onclick="cargarPlantillas()">
+              onclick="cargarPlantillas(true)">
         <i class="bi bi-layout-text-sidebar me-1"></i>Plantillas
       </button>
     </li>
@@ -86,7 +86,9 @@
                     <label class="form-label small fw-semibold">Contraseña / App Password</label>
                     <div class="input-group input-group-sm">
                       <input id="smtpPass" type="password" class="form-control form-control-sm"
-                             placeholder="{% if smtp_cfg.smtp_pass %}••••••••{% else %}Ingresa contraseña{% endif %}">
+                             value="{% if smtp_cfg.smtp_pass %}••••••••{% endif %}"
+                             data-has-secret="{% if smtp_cfg.smtp_pass %}1{% else %}0{% endif %}"
+                             placeholder="{% if smtp_cfg.smtp_pass %}Guardada{% else %}Ingresa contraseña{% endif %}">
                       <button class="btn btn-outline-secondary btn-sm" type="button"
                               onclick="togglePass('smtpPass',this)">
                         <i class="bi bi-eye"></i>
@@ -98,6 +100,12 @@
                     <label class="form-label small fw-semibold">Nombre del remitente</label>
                     <input id="smtpFromName" class="form-control form-control-sm"
                            value="{{ smtp_cfg.from_name or 'ILUS Sport &amp; Health' }}">
+                  </div>
+                  <div class="col-md-5">
+                    <label class="form-label small fw-semibold">Email remitente</label>
+                    <input id="smtpFromAddr" type="email" class="form-control form-control-sm"
+                           value="{{ smtp_cfg.from_addr or smtp_cfg.smtp_user or '' }}"
+                           placeholder="correo@dominio.cl">
                   </div>
                   <div class="col-md-5 d-flex align-items-end">
                     <div class="form-check">
@@ -112,10 +120,10 @@
 
                 <div class="d-flex gap-2 mt-3 flex-wrap">
                   <button class="btn btn-danger btn-sm fw-bold" onclick="guardarSmtp()">
-                    <i class="bi bi-floppy me-1"></i>Guardar SMTP
+                    <i class="bi bi-floppy me-1"></i>Guardar configuración
                   </button>
                   <button class="btn btn-outline-secondary btn-sm" onclick="abrirTestEmail()">
-                    <i class="bi bi-send me-1"></i>Enviar correo de prueba
+                    <i class="bi bi-plug me-1"></i>Probar conexión
                   </button>
                 </div>
                 <div id="smtpMsg" class="small mt-2"></div>
@@ -356,6 +364,12 @@
           <div style="padding:14px 16px 8px;color:#888;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px">
             <i class="bi bi-diagram-3 me-1"></i>Estados
           </div>
+          <div class="px-3 pb-2">
+            <button class="btn btn-sm btn-outline-light w-100" onclick="tplRestaurarTodo()"
+                    title="Reemplaza todas las plantillas guardadas por la version oficial ILUS">
+              <i class="bi bi-arrow-clockwise me-1"></i>Restaurar todo ILUS
+            </button>
+          </div>
           <div id="tplEstadoList">
             <!-- renderizado por JS -->
           </div>
@@ -365,7 +379,7 @@
         <div class="col-12 col-md-9" style="background:#fff">
 
           {# Placeholder antes de seleccionar #}
-          <div id="tplEditorPlaceholder" class="d-flex flex-column align-items-center justify-content-center h-100 text-muted" style="min-height:400px">
+          <div id="tplEditorPlaceholder" class="text-muted" style="min-height:400px;display:flex;flex-direction:column;align-items:center;justify-content:center">
             <i class="bi bi-layout-text-sidebar-reverse" style="font-size:3rem;opacity:.3"></i>
             <div class="mt-3" style="font-size:.9rem">Selecciona un estado para ver su plantilla</div>
           </div>
@@ -430,6 +444,9 @@
                           padding:16px 18px;font-size:.82rem;line-height:1.6;
                           white-space:pre-wrap;font-family:monospace;
                           min-height:160px;color:#333;cursor:default"></div>
+              <iframe id="tvEmailPreview"
+                      title="Vista visual del email"
+                      style="display:none;width:100%;height:520px;border:1px solid #dee2e6;border-radius:.5rem;background:#f1f2f4"></iframe>
 
               {# WhatsApp: muestra burbuja mockup #}
               <div id="tvCuerpoWA" style="display:none">
@@ -473,7 +490,7 @@
           {# ── Modo EDICIÓN ── #}
           <div id="tplEditorWrap" style="display:none;padding:24px">
             <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-              <h6 id="tplEstadoTitulo" class="mb-0 fw-bold"></h6>
+              <h6 id="tplEditorEstadoTitulo" class="mb-0 fw-bold"></h6>
               <span class="badge bg-danger" id="tplCanalBadge"></span>
               <div class="ms-auto d-flex gap-1">
                 <button class="btn btn-sm btn-outline-secondary" onclick="tplCancelarEdicion()">
@@ -506,9 +523,28 @@
                 <label class="form-label small fw-semibold mb-0" id="tplCuerpoLabel">Cuerpo</label>
                 <span id="tplCuerpoHint" class="text-muted" style="font-size:.7rem"></span>
               </div>
+              <div id="tplVisualWrap" style="display:none">
+                <div id="tplCuerpoVisual"
+                     contenteditable="true"
+                     spellcheck="true"
+                     style="background:#fff;border:1px solid #dee2e6;border-radius:.5rem;
+                            padding:22px 24px;min-height:240px;line-height:1.6;color:#111827;
+                            box-shadow:inset 0 1px 2px rgba(0,0,0,.04);outline:none"></div>
+                <div class="small text-muted mt-1">
+                  Edita el contenido como texto visual. Las variables con llaves dobles se conservan y se reemplazan al enviar.
+                </div>
+                <details class="mt-3">
+                  <summary class="small fw-semibold text-muted" style="cursor:pointer">HTML avanzado</summary>
+                  <textarea id="tplCuerpoHtml" class="form-control font-monospace mt-2"
+                            rows="10" style="font-size:.8rem;resize:vertical"
+                            placeholder="HTML del mensaje..."></textarea>
+                </details>
+              </div>
+              <div id="tplTextoWrap">
               <textarea id="tplCuerpo" class="form-control font-monospace"
                         rows="14" style="font-size:.8rem;resize:vertical"
                         placeholder="Contenido del mensaje..."></textarea>
+              </div>
             </div>
 
             <div id="tplMsg" class="small mb-2"></div>
@@ -691,6 +727,8 @@ let _modalTestEmail, _modalTestWA;
 document.addEventListener('DOMContentLoaded', () => {
   _modalTestEmail  = new bootstrap.Modal(document.getElementById('modalTestEmail'));
   _modalTestWA     = new bootstrap.Modal(document.getElementById('modalTestWA'));
+  poblarPlantillasManual();
+  actualizarPreview();
 
   document.getElementById('ccColor').addEventListener('input', function() {
     document.getElementById('ccColorText').value = this.value;
@@ -713,16 +751,18 @@ let _logoBase64 = '{{ client_cfg.logo_url or "" }}';
 async function guardarSmtp() {
   const msg = document.getElementById('smtpMsg');
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const passInput = document.getElementById('smtpPass');
   const body = {
     host    : val('smtpHost'),
     port    : parseInt(val('smtpPort')) || 587,
     user    : val('smtpUser'),
-    pass    : val('smtpPass'),
+    pass    : passInput.value,
     fromName: val('smtpFromName'),
+    fromAddr: val('smtpFromAddr'),
     secure  : document.getElementById('smtpSecure').checked,
   };
   if (!body.user) { msg.innerHTML='<span class="text-danger">Ingresa el email</span>'; return; }
-  if (body.pass === '') delete body.pass;
+  if (!body.fromAddr) body.fromAddr = body.user;
   const r = await fetch('/comunicaciones/smtp/config', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   });
@@ -730,6 +770,20 @@ async function guardarSmtp() {
   msg.innerHTML = d.ok
     ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
     : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+  if (d.ok) {
+    if (d.smtp) {
+      document.getElementById('smtpHost').value = d.smtp.smtp_host || body.host;
+      document.getElementById('smtpPort').value = d.smtp.smtp_port || body.port;
+      document.getElementById('smtpUser').value = d.smtp.smtp_user || body.user;
+      document.getElementById('smtpFromName').value = d.smtp.from_name || body.fromName;
+      document.getElementById('smtpFromAddr').value = d.smtp.from_addr || body.fromAddr;
+      document.getElementById('smtpSecure').checked = !!d.smtp.secure;
+    }
+    passInput.value = '••••••••';
+    passInput.dataset.hasSecret = '1';
+    passInput.placeholder = 'Guardada';
+    actualizarPreview();
+  }
 }
 
 function abrirTestEmail() {
@@ -775,12 +829,30 @@ async function guardarCliente() {
   msg.innerHTML = d.ok
     ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
     : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+  if (d.ok) actualizarPreview();
 }
 
 /* ════════════════════════════════
    PREVIEW EMAIL
 ════════════════════════════════ */
-function actualizarPreview() {
+async function actualizarPreview() {
+  const frame = document.getElementById('emailPreview');
+  if (frame) {
+    frame.srcdoc = '<p style="padding:16px;color:#777;font-size:13px">Generando preview...</p>';
+    const sample = '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Hola <strong>{{nombre_cliente}}</strong>, este es un ejemplo del diseÃ±o que usarÃ¡n las notificaciones automÃ¡ticas.</p><table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #CC0000;border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Pedido:</strong>&nbsp; {{id_pedido}}</td></tr><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Estado:</strong>&nbsp; En ruta</td></tr><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr></table>';
+    try {
+      const r = await fetch('/comunicaciones/email/preview', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ title:'Vista previa de comunicaciÃ³n', html: sample })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        frame.srcdoc = d.html;
+        return;
+      }
+    } catch(e) {}
+  }
   const color   = val('ccColorText') || val('ccColor') || '#CC0000';
   const company = val('ccCompany')   || 'ILUS Sport & Health';
   const logo    = _logoBase64 || '';
@@ -816,7 +888,29 @@ function actualizarPreview() {
 function seleccionarPlantilla() {
   const tpl  = val('manTemplate');
   const wrap = document.getElementById('manHtmlWrap');
-  wrap.style.display = tpl ? 'none' : '';
+  wrap.style.display = '';
+  if (!tpl || tpl === 'prueba') return;
+  const saved = obtenerPlantilla(tpl, 'email');
+  document.getElementById('manSubject').value = saved.asunto || '';
+  document.getElementById('manHtml').value = saved.cuerpo || '';
+}
+
+function poblarPlantillasManual() {
+  const select = document.getElementById('manTemplate');
+  if (!select || select.dataset.loaded === '1') return;
+  TPL_ESTADOS.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.key;
+    opt.textContent = e.label;
+    select.appendChild(opt);
+  });
+  select.dataset.loaded = '1';
+}
+
+function obtenerPlantilla(estado, canal) {
+  const dbVal = ((_tplData[estado] || {})[canal]) || null;
+  const defVal = ((TPL_DEFAULTS[estado] || {})[canal]) || {};
+  return (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
 }
 
 async function enviarManual() {
@@ -835,7 +929,7 @@ async function enviarManual() {
   }
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
   let endpoint = '/comunicaciones/email/enviar';
-  let body = {to, subject, html};
+  let body = {to, subject, html, wrap:true};
   if (tpl === 'prueba') { endpoint = '/comunicaciones/smtp/test'; body = {to}; }
   const r = await fetch(endpoint, {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
@@ -934,39 +1028,40 @@ function _buildEmailHtml(titulo, cuerpo) {
   // Logo: usa la imagen configurada (base64) o cae al CDN oficial
   const logoSrc = _logoBase64 ||
     'https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png';
-  const comp = '{{ client_cfg.company_name or "ILUS Sport &amp; Health" }}';
+  const comp = val('ccCompany') || '{{ client_cfg.company_name or "ILUS Sport &amp; Health" }}';
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif">
+<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
 
-<div style="max-width:650px;margin:30px auto;background:#ffffff;border-radius:10px;
-            overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08)">
+<div style="max-width:580px;margin:28px auto;background:#ffffff;border-radius:10px;
+            overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)">
 
   <!-- HEADER: negro + logo -->
-  <div style="background:#000;padding:25px;text-align:center">
+  <div style="background:#000;padding:24px 28px;text-align:center">
     <img src="${logoSrc}" alt="${comp}"
-         style="height:50px;display:block;margin:0 auto;max-width:220px">
+         style="height:48px;display:block;margin:0 auto;max-width:230px;width:auto;object-fit:contain">
   </div>
 
   <!-- TÍTULO: banda oscura -->
-  <div style="background:#111;color:#fff;text-align:center;padding:30px 25px">
-    <h1 style="margin:0;font-size:22px;font-weight:700">${titulo}</h1>
+  <div style="background:#111;color:#fff;text-align:center;padding:28px 32px;border-top:1px solid #202020">
+    <h1 style="margin:0;font-size:22px;line-height:1.25;font-weight:800">${titulo}</h1>
+    <div style="color:#f3f4f6;font-size:13px;line-height:1.45;margin-top:8px">Gestión de solicitudes y seguimiento</div>
   </div>
 
   <!-- CONTENIDO -->
-  <div style="padding:30px;font-size:14px;color:#444;line-height:22px">
+  <div style="padding:32px 30px;font-size:14px;color:#111827;line-height:1.6">
     ${cuerpo}
   </div>
 
   <!-- FOOTER: negro -->
-  <div style="background:#000;padding:25px;text-align:center">
-    <div style="color:#DC143C;font-size:13px;font-weight:bold">ILUS FITNESS</div>
-    <div style="color:#777;font-size:11px;margin-top:6px">
+  <div style="background:#000;padding:24px 32px;text-align:center">
+    <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">${comp}</div>
+    <div style="color:#9ca3af;font-size:11px;margin-top:5px">
       Equipamiento profesional para alto rendimiento
     </div>
-    <div style="margin-top:15px;font-size:11px;color:#555">
+    <div style="margin-top:14px;font-size:11px;line-height:1.6;color:#6b7280">
       Este correo fue generado automáticamente.<br>
       Para soporte, utiliza nuestros canales oficiales.
     </div>
@@ -1075,16 +1170,47 @@ let _modalTplPreview, _modalTplPrueba;
 document.addEventListener('DOMContentLoaded', () => {
   _modalTplPreview = new bootstrap.Modal(document.getElementById('modalTplPreview'));
   _modalTplPrueba  = new bootstrap.Modal(document.getElementById('modalTplPrueba'));
+  const visual = document.getElementById('tplCuerpoVisual');
+  const htmlSrc = document.getElementById('tplCuerpoHtml');
+  if (visual && htmlSrc) {
+    visual.addEventListener('input', () => { htmlSrc.value = visual.innerHTML; });
+    htmlSrc.addEventListener('input', () => { visual.innerHTML = htmlSrc.value; });
+  }
+  cargarPlantillas();
 });
 
-async function cargarPlantillas() {
-  if (_tplLoaded) return;
+function tplSetVisible(id, visible, displayValue='block') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (visible) {
+    el.hidden = false;
+    el.style.setProperty('display', displayValue, 'important');
+  } else {
+    el.hidden = true;
+    el.style.setProperty('display', 'none', 'important');
+  }
+}
+
+async function cargarPlantillas(force=false) {
+  if (_tplLoaded && !force) {
+    if (!_tplEstado && TPL_ESTADOS.length) tplSeleccionar(TPL_ESTADOS[0].key);
+    return;
+  }
+  if (force) {
+    _tplLoaded = false;
+    _tplData = {};
+  }
   try {
-    const r = await fetch('/comunicaciones/templates');
-    _tplData = await r.json();
-  } catch(e) { _tplData = {}; }
+    const r = await fetch('/comunicaciones/templates?t=' + Date.now(), { cache:'no-store' });
+    _tplData = r.ok ? await r.json() : {};
+  } catch(e) {
+    console.warn('No se pudo leer comm_templates; se usaran defaults locales', e);
+    _tplData = {};
+  }
   _tplLoaded = true;
   renderTplEstados();
+  if (!_tplEstado && TPL_ESTADOS.length) tplSeleccionar(TPL_ESTADOS[0].key);
+  else if (_tplEstado) tplMostrarVista();
 }
 
 function renderTplEstados() {
@@ -1126,9 +1252,9 @@ function tplSeleccionar(key) {
 function tplMostrarVista() {
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
   if (!meta) return;
-  document.getElementById('tplEditorPlaceholder').style.display = 'none';
-  document.getElementById('tplEditorWrap').style.display  = 'none';
-  document.getElementById('tplViewWrap').style.display    = '';
+  tplSetVisible('tplEditorPlaceholder', false);
+  tplSetVisible('tplEditorWrap', false);
+  tplSetVisible('tplViewWrap', true, 'block');
 
   document.getElementById('tvEstadoBadge').textContent = meta.grupo === 'despacho' ? 'Despacho' : 'Sistema';
   document.getElementById('tvEstadoTitulo').textContent = meta.label;
@@ -1147,9 +1273,9 @@ function tplMostrarVista() {
 
   // Cuerpo label / hint
   document.getElementById('tvCuerpoLabel').textContent =
-    _tplCanal==='email' ? 'Código fuente HTML del email' : 'Vista previa WhatsApp';
+    _tplCanal==='email' ? 'Vista visual del email' : 'Vista previa WhatsApp';
   document.getElementById('tvCuerpoHint').textContent =
-    _tplCanal==='email' ? 'Usa "Vista previa" para ver el email renderizado'
+    _tplCanal==='email' ? 'Así verá el cliente la comunicación'
                        : '*negrita* · _cursiva_ · emojis';
 
   // Valores — primero DB, si vacío usar defaults de fábrica
@@ -1160,12 +1286,14 @@ function tplMostrarVista() {
 
   if (_tplCanal === 'email') {
     // Email: muestra código fuente HTML
-    document.getElementById('tvCuerpo').style.display   = '';
+    document.getElementById('tvCuerpo').style.display   = 'none';
+    document.getElementById('tvEmailPreview').style.display = '';
     document.getElementById('tvCuerpoWA').style.display = 'none';
-    document.getElementById('tvCuerpo').textContent = saved.cuerpo || '';
+    document.getElementById('tvEmailPreview').srcdoc = _buildEmailHtml(saved.asunto || meta.label, saved.cuerpo || '');
   } else {
     // WhatsApp: muestra burbuja renderizada
     document.getElementById('tvCuerpo').style.display   = 'none';
+    document.getElementById('tvEmailPreview').style.display = 'none';
     document.getElementById('tvCuerpoWA').style.display = '';
     // Convierte formato WhatsApp a HTML básico
     const waHtml = (saved.cuerpo || '')
@@ -1190,10 +1318,11 @@ function tplMostrarVista() {
 function tplActivarEdicion() {
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
   if (!meta) return;
-  document.getElementById('tplViewWrap').style.display  = 'none';
-  document.getElementById('tplEditorWrap').style.display = '';
+  tplSetVisible('tplEditorPlaceholder', false);
+  tplSetVisible('tplViewWrap', false);
+  tplSetVisible('tplEditorWrap', true, 'block');
 
-  document.getElementById('tplEstadoTitulo').textContent = meta.label;
+  document.getElementById('tplEditorEstadoTitulo').textContent = meta.label;
   document.getElementById('tplCanalBadge').textContent   = _tplCanal === 'email' ? '📧 Email' : '💬 WhatsApp';
   document.getElementById('tplMsg').innerHTML = '';
 
@@ -1212,26 +1341,33 @@ function tplActivarEdicion() {
   // Asunto
   document.getElementById('tplAsuntoWrap').style.display = _tplCanal === 'email' ? '' : 'none';
   document.getElementById('tplCuerpoLabel').textContent =
-    _tplCanal === 'email' ? 'Cuerpo HTML del email' : 'Texto del mensaje WhatsApp';
+    _tplCanal === 'email' ? 'Contenido visual del email' : 'Texto del mensaje WhatsApp';
   document.getElementById('tplCuerpoHint').textContent =
-    _tplCanal==='email' ? 'Escribe HTML con estilos inline. Las variables {{var}} se reemplazan al enviar.'
+    _tplCanal==='email' ? 'Edita el mensaje visual; el HTML se actualiza por detrás.'
                        : 'Texto plano. *negrita* · _cursiva_ · emoji. Las variables {{var}} se reemplazan al enviar.';
 
   const dbVal2  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
   const defVal2 = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
   const saved2  = (dbVal2 && (dbVal2.asunto || dbVal2.cuerpo)) ? dbVal2 : defVal2;
   document.getElementById('tplAsunto').value = saved2.asunto || '';
-  document.getElementById('tplCuerpo').value = saved2.cuerpo || '';
+  document.getElementById('tplVisualWrap').style.display = _tplCanal === 'email' ? '' : 'none';
+  document.getElementById('tplTextoWrap').style.display = _tplCanal === 'email' ? 'none' : '';
+  if (_tplCanal === 'email') {
+    document.getElementById('tplCuerpoVisual').innerHTML = saved2.cuerpo || '';
+    document.getElementById('tplCuerpoHtml').value = saved2.cuerpo || '';
+  } else {
+    document.getElementById('tplCuerpo').value = saved2.cuerpo || '';
+  }
 }
 
 function tplCancelarEdicion() {
-  document.getElementById('tplEditorWrap').style.display = 'none';
+  tplSetVisible('tplEditorWrap', false);
   tplMostrarVista();
 }
 
 function tplCambiarCanal(canal) {
   _tplCanal = canal;
-  if (document.getElementById('tplEditorWrap').style.display !== 'none') {
+  if (!document.getElementById('tplEditorWrap').hidden) {
     tplActivarEdicion();
   } else {
     tplMostrarVista();
@@ -1239,6 +1375,12 @@ function tplCambiarCanal(canal) {
 }
 
 function tplInsertarVar(v) {
+  if (_tplCanal === 'email') {
+    document.getElementById('tplCuerpoVisual').focus();
+    document.execCommand('insertText', false, v);
+    document.getElementById('tplCuerpoHtml').value = document.getElementById('tplCuerpoVisual').innerHTML;
+    return;
+  }
   const ta = document.getElementById('tplCuerpo');
   const s  = ta.selectionStart || 0;
   const e  = ta.selectionEnd   || 0;
@@ -1253,7 +1395,9 @@ async function tplGuardar() {
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
   const body = {
     asunto: _tplCanal === 'email' ? val('tplAsunto') : '',
-    cuerpo: val('tplCuerpo'),
+    cuerpo: _tplCanal === 'email'
+      ? document.getElementById('tplCuerpoVisual').innerHTML
+      : val('tplCuerpo'),
   };
   const r = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
@@ -1289,6 +1433,24 @@ async function tplRestaurar() {
       '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Plantilla restaurada</span>';
     setTimeout(() => document.getElementById('tvMsg').innerHTML = '', 3000);
   }
+}
+
+async function tplRestaurarTodo() {
+  if (!confirm('Esto reemplazara todas las plantillas guardadas por la base oficial ILUS. Continuar?')) return;
+  const r = await fetch('/comunicaciones/templates/restaurar-todo', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'}
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    alert(d.error || 'No se pudieron restaurar las plantillas');
+    return;
+  }
+  _tplLoaded = false;
+  _tplData = {};
+  await cargarPlantillas();
+  if (_tplEstado) tplMostrarVista();
+  alert('Plantillas ILUS restauradas correctamente');
 }
 
 function tplVistaPreviaModal() {
