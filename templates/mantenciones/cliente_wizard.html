@@ -177,16 +177,29 @@
         <input type="text" id="s1_rut" class="form-control font-monospace" placeholder="12.345.678-9">
       </div>
       <div class="col-12 col-md-6">
-        <label class="form-label fw-semibold">Dirección</label>
-        <input type="text" id="s1_direccion" class="form-control">
+        <label class="form-label fw-semibold">
+          Dirección
+          <span id="dir_validating" class="ms-1" style="display:none">
+            <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+          </span>
+          <span id="dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+        </label>
+        <div class="ac-wrap">
+          <input type="text" id="s1_direccion" class="form-control" autocomplete="off"
+                 placeholder="Escribe la dirección y elige de la lista…"
+                 oninput="dirDebounce();document.getElementById('dir_ok').style.display='none';['s1_comuna','s1_ciudad'].forEach(id=>{var el=document.getElementById(id);el.style.borderColor='';el.style.background='';})"
+                 onkeydown="dirKeydown(event)">
+          <div class="ac-dropdown" id="dir_dropdown"></div>
+        </div>
+        <div class="form-text text-muted" style="font-size:.7rem"><i class="bi bi-geo-alt me-1"></i>Sugerencias automáticas de direcciones en Chile</div>
       </div>
       <div class="col-6 col-md-3">
         <label class="form-label fw-semibold">Comuna</label>
-        <input type="text" id="s1_comuna" class="form-control">
+        <input type="text" id="s1_comuna" class="form-control" placeholder="Auto-completa al elegir dirección">
       </div>
       <div class="col-6 col-md-3">
-        <label class="form-label fw-semibold">Ciudad</label>
-        <input type="text" id="s1_ciudad" class="form-control">
+        <label class="form-label fw-semibold">Ciudad / Región</label>
+        <input type="text" id="s1_ciudad" class="form-control" placeholder="Auto-completa al elegir dirección">
       </div>
       <div class="col-12"><hr class="my-0"><div class="small fw-bold text-muted">Contacto principal</div></div>
       <div class="col-12 col-sm-4">
@@ -520,7 +533,10 @@ async function acBuscar() {
   acResults = await r.json();
   acIdx = -1;
   if(!acResults.length) {
-    drop.innerHTML = `<div class="ac-loading text-muted">Sin resultados para "${q}"</div>`;
+    drop.innerHTML = `<div class="ac-loading text-muted">
+      <i class="bi bi-search me-1"></i>Sin resultados para "<strong>${q}</strong>"<br>
+      <span style="font-size:.72rem">Ingresa los datos manualmente o verifica el RUT/nombre.</span>
+    </div>`;
     return;
   }
   drop.innerHTML = acResults.map((c,i) => `
@@ -569,7 +585,92 @@ document.addEventListener('click', e => {
   if(!document.getElementById('ac_input').contains(e.target)) {
     document.getElementById('ac_dropdown').style.display='none';
   }
+  if(!document.getElementById('s1_direccion').contains(e.target)) {
+    document.getElementById('dir_dropdown').style.display='none';
+  }
 });
+
+// ══ DIRECCIÓN INTELIGENTE (Nominatim OSM — Chile) ════════════
+let dirTimer = null;
+let dirResults = [];
+let dirIdx = -1;
+
+function dirDebounce() {
+  clearTimeout(dirTimer);
+  const q = document.getElementById('s1_direccion').value.trim();
+  if(q.length < 4) { document.getElementById('dir_dropdown').style.display='none'; return; }
+  document.getElementById('dir_validating').style.display='';
+  document.getElementById('dir_ok').style.display='none';
+  dirTimer = setTimeout(dirBuscar, 500);
+}
+
+async function dirBuscar() {
+  const q = document.getElementById('s1_direccion').value.trim();
+  const drop = document.getElementById('dir_dropdown');
+  if(q.length < 4) return;
+  drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando dirección…</div>';
+  drop.style.display = '';
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q+', Chile')}&countrycodes=cl&addressdetails=1&limit=6&accept-language=es`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'es', 'User-Agent': 'ILUSApp/1.0' } });
+    dirResults = await r.json();
+    dirIdx = -1;
+    document.getElementById('dir_validating').style.display='none';
+    if(!dirResults.length) {
+      drop.innerHTML = `<div class="ac-loading text-muted"><i class="bi bi-geo me-1"></i>No se encontró la dirección en Chile. Puedes igresarla manualmente.</div>`;
+      return;
+    }
+    drop.innerHTML = dirResults.map((d,i) => {
+      const addr = d.address || {};
+      const calle = [addr.road, addr.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0];
+      const comuna = addr.suburb || addr.city_district || addr.municipality || addr.county || '';
+      const ciudad = addr.city || addr.town || addr.state || '';
+      return `<div class="ac-item" onclick="dirSeleccionar(${i})">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi bi-geo-alt-fill text-danger mt-1" style="font-size:.8rem;flex-shrink:0"></i>
+          <div>
+            <div class="ac-name" style="font-size:.83rem">${calle}</div>
+            <div class="ac-rut">${[comuna, ciudad].filter(Boolean).join(', ')}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(err) {
+    document.getElementById('dir_validating').style.display='none';
+    drop.style.display='none';
+  }
+}
+
+function dirSeleccionar(i) {
+  const d = dirResults[i];
+  if(!d) return;
+  const addr = d.address || {};
+  const calle = [addr.road, addr.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0];
+  const comuna = addr.suburb || addr.city_district || addr.municipality || addr.county || '';
+  const ciudad = addr.city || addr.town || addr.state || '';
+
+  document.getElementById('s1_direccion').value = calle || d.display_name.split(',').slice(0,2).join(',').trim();
+  if(comuna) document.getElementById('s1_comuna').value = comuna;
+  if(ciudad) document.getElementById('s1_ciudad').value = ciudad;
+  document.getElementById('dir_dropdown').style.display='none';
+  document.getElementById('dir_ok').style.display='';
+  document.getElementById('dir_validating').style.display='none';
+
+  // Feedback visual en campos autollenados
+  ['s1_comuna','s1_ciudad'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el.value) { el.style.borderColor='#1a7a1a'; el.style.background='#f1f8e9'; }
+  });
+}
+
+function dirKeydown(e) {
+  const drop = document.getElementById('dir_dropdown');
+  const items = drop.querySelectorAll('.ac-item');
+  if(e.key==='ArrowDown') { dirIdx=Math.min(dirIdx+1,items.length-1); items.forEach((el,i)=>el.style.background=i===dirIdx?'#f0f4ff':''); e.preventDefault(); }
+  else if(e.key==='ArrowUp') { dirIdx=Math.max(dirIdx-1,-1); items.forEach((el,i)=>el.style.background=i===dirIdx?'#f0f4ff':''); e.preventDefault(); }
+  else if(e.key==='Enter' && dirIdx>=0) { dirSeleccionar(dirIdx); e.preventDefault(); }
+  else if(e.key==='Escape') drop.style.display='none';
+}
 
 // ══ AGENTE IA — cargar desde contrato ════════════════════════
 function onDropIA(e) {
