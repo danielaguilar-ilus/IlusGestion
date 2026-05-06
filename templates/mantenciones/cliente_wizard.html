@@ -481,16 +481,48 @@
   <div class="modal-dialog modal-xl">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Buscar equipos en ERP</h5>
+        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Agregar equipos desde ERP</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="d-flex gap-2 mb-3">
-          <input type="text" id="erpEqQ" class="form-control" placeholder="RUT o razón social…"
-                 onkeydown="if(event.key==='Enter') buscarErpEq()">
-          <button class="btn btn-ilus" onclick="buscarErpEq()"><i class="bi bi-search"></i></button>
+
+        <!-- Tabs -->
+        <ul class="nav nav-tabs mb-3" id="erpEqTabs">
+          <li class="nav-item">
+            <button class="nav-link active" id="tabDocBtn" onclick="erpEqSetTab('doc')">
+              <i class="bi bi-file-earmark-text me-1"></i>Por cliente / documento
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" id="tabProdBtn" onclick="erpEqSetTab('prod')">
+              <i class="bi bi-box-seam me-1"></i>Por producto (SKU / descripción)
+            </button>
+          </li>
+        </ul>
+
+        <!-- Panel: por documento -->
+        <div id="panelDoc">
+          <div class="d-flex gap-2 mb-3">
+            <input type="text" id="erpEqQ" class="form-control" placeholder="RUT o razón social del cliente…"
+                   onkeydown="if(event.key==='Enter') buscarErpEq()">
+            <button class="btn btn-ilus" onclick="buscarErpEq()"><i class="bi bi-search"></i></button>
+          </div>
+          <div id="erpEqRes"><div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un RUT o nombre para buscar</div></div>
         </div>
-        <div id="erpEqRes"><div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un término para buscar</div></div>
+
+        <!-- Panel: por producto -->
+        <div id="panelProd" style="display:none">
+          <div class="d-flex gap-2 mb-2">
+            <input type="text" id="erpProdQ" class="form-control" placeholder="SKU o descripción del producto…"
+                   oninput="erpProdDebounce()" onkeydown="if(event.key==='Enter') buscarErpProd()">
+            <button class="btn btn-ilus" onclick="buscarErpProd()"><i class="bi bi-search"></i></button>
+          </div>
+          <div class="text-muted small mb-3" style="font-size:.75rem">
+            <i class="bi bi-info-circle me-1"></i>Busca directamente en el catálogo ERP. Selecciona los productos y defíneles cantidad antes de importar.
+          </div>
+          <div id="erpProdRes"><div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa al menos 2 caracteres para buscar</div></div>
+        </div>
+
       </div>
       <div class="modal-footer">
         <span class="text-muted small me-auto" id="erpEqCount">0 seleccionadas</span>
@@ -865,6 +897,17 @@ function leerEquipos() {
 }
 
 // ══ ERP modal equipos ════════════════════════════════════════
+
+// ── Tab switcher ─────────────────────────────────────────────
+function erpEqSetTab(tab) {
+  const isDoc = tab === 'doc';
+  document.getElementById('tabDocBtn').classList.toggle('active', isDoc);
+  document.getElementById('tabProdBtn').classList.toggle('active', !isDoc);
+  document.getElementById('panelDoc').style.display  = isDoc ? '' : 'none';
+  document.getElementById('panelProd').style.display = isDoc ? 'none' : '';
+}
+
+// ── Tab "Por documento" ───────────────────────────────────────
 async function buscarErpEq() {
   const q=document.getElementById('erpEqQ').value.trim();
   if(!q) return;
@@ -924,8 +967,76 @@ function importarEq(){
   });
 }
 function abrirErpEquipos(){
+  // Pre-llenar búsqueda por cliente y abrir en tab documento
+  erpEqSetTab('doc');
   document.getElementById('erpEqQ').value=document.getElementById('s1_rut').value||document.getElementById('s1_razon').value;
   new bootstrap.Modal(document.getElementById('modalErpEq')).show();
+}
+
+// ── Tab "Por producto" ────────────────────────────────────────
+let erpProdTimer = null;
+function erpProdDebounce() {
+  clearTimeout(erpProdTimer);
+  erpProdTimer = setTimeout(buscarErpProd, 350);
+}
+
+async function buscarErpProd() {
+  const q = document.getElementById('erpProdQ').value.trim();
+  const cont = document.getElementById('erpProdRes');
+  if(q.length < 2) {
+    cont.innerHTML='<div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa al menos 2 caracteres para buscar</div>';
+    return;
+  }
+  cont.innerHTML='<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-1"></span>Buscando en catálogo ERP…</div>';
+  try {
+    const r = await fetch(`/mantenciones/api/productos/buscar?q=${encodeURIComponent(q)}`);
+    const data = await r.json();
+    if(!data.length) {
+      cont.innerHTML='<div class="text-center text-muted py-3">Sin resultados para "'+q+'"</div>';
+      return;
+    }
+    let html='<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.82rem">';
+    html+='<thead><tr><th></th><th>SKU</th><th>Descripción</th><th style="width:70px">Cant.</th></tr></thead><tbody>';
+    data.forEach((p,i)=>{
+      const key=`prod-${i}-${p.sku}`;
+      const ld=JSON.stringify({sku:p.sku,nombre:p.nombre,cantidad:1,doc_origen:'',doc_fecha:''}).replace(/"/g,'&quot;');
+      html+=`<tr>
+        <td><input type="checkbox" onchange="erpProdToggle('${key}',this)"></td>
+        <td class="font-monospace text-primary fw-bold">${p.sku}</td>
+        <td>${p.nombre||'—'}</td>
+        <td><input type="number" id="qty-${key}" value="1" min="1" max="999" class="form-control form-control-sm text-center p-1"
+             style="width:60px" data-sku="${p.sku}" data-nombre="${p.nombre.replace(/"/g,'&quot;')}"></td>
+      </tr>`;
+    });
+    html+='</tbody></table></div>';
+    cont.innerHTML=html;
+  } catch(e) {
+    cont.innerHTML='<div class="text-center text-danger py-3">Error al buscar: '+e.message+'</div>';
+  }
+}
+
+function erpProdToggle(key, chk) {
+  const qtyEl = document.getElementById('qty-'+key);
+  if(chk.checked) {
+    const qty = parseInt(qtyEl?.value)||1;
+    erpEqSel[key] = {
+      sku:        chk.closest('tr').querySelector('.font-monospace').textContent.trim(),
+      nombre:     qtyEl?.dataset.nombre || '',
+      cantidad:   qty,
+      doc_origen: '',
+      doc_fecha:  ''
+    };
+  } else {
+    delete erpEqSel[key];
+  }
+  // Actualizar cantidad al cambiar el input
+  if(qtyEl && !qtyEl._bound) {
+    qtyEl._bound = true;
+    qtyEl.addEventListener('change', ()=>{
+      if(erpEqSel[key]) erpEqSel[key].cantidad = parseInt(qtyEl.value)||1;
+    });
+  }
+  document.getElementById('erpEqCount').textContent=`${Object.keys(erpEqSel).length} seleccionadas`;
 }
 
 // ══ PASO 3 — CONTRATO ════════════════════════════════════════

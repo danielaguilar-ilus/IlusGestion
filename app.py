@@ -1846,6 +1846,10 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
                 srv.sendmail(from_addr, [to_addr], msg.as_string())
         return True
     except Exception as exc:
+        try:
+            g._last_email_error = str(exc)
+        except Exception:
+            pass
         print(f"[ILUS][EMAIL] Error al enviar a {to_addr}: {exc}")
         return False
 
@@ -1894,6 +1898,19 @@ def _send_password_access_email(
     minutes: int = 60,
 ) -> bool:
     """Envia correo ILUS para crear o cambiar clave mediante token seguro."""
+    try:
+        diag = _smtp_connection_diagnose(_get_smtp_cfg())
+        if not diag.get("ok"):
+            detail = diag.get("message") or "No se pudo validar la conexion SMTP."
+            suggestions = diag.get("suggestions") or []
+            if suggestions:
+                detail += " " + " ".join(suggestions[:3])
+            g._last_email_error = detail
+            return False
+    except Exception as exc:
+        g._last_email_error = f"No se pudo validar SMTP antes de enviar: {exc}"
+        return False
+
     is_setup = mode == "setup"
     titulo = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
     subject = "ILUS - Crea tu contraseña de acceso" if is_setup else "ILUS - Cambio seguro de contraseña"
@@ -1924,7 +1941,10 @@ def _send_password_access_email(
             ("", "Solicitado por", actor_name),
         ],
     )
-    return _send_ilus_email(to_addr, subject, html_body)
+    sent = _send_ilus_email(to_addr, subject, html_body)
+    if not sent and not getattr(g, "_last_email_error", ""):
+        g._last_email_error = "El servidor SMTP rechazo el envio. Revisa la configuracion en Comunicaciones."
+    return sent
 
 
 # ─────────────────────────────────────────────
@@ -2777,7 +2797,8 @@ def new_user():
                 if sent:
                     flash(f"Usuario creado. Invitación enviada a {username}.", "success")
                 else:
-                    flash(f"Usuario creado, pero no se pudo enviar el email. Configura SMTP en Comunicaciones.", "warning")
+                    detalle = getattr(g, "_last_email_error", "") or "Revisa la configuracion SMTP en Comunicaciones."
+                    flash(f"Usuario creado, pero no se pudo enviar el correo para crear contraseña. {detalle}", "warning")
             except Exception as _ie:
                 flash(f"Usuario creado, pero falló el envío de invitación: {_ie}", "warning")
         else:
@@ -2893,7 +2914,8 @@ def user_password_link(user_id):
         )
         if sent:
             return jsonify({"ok": True, "message": "Enlace seguro enviado."})
-        return jsonify({"error": "No se pudo enviar el email. Revisa la configuracion SMTP en Comunicaciones."}), 500
+        detalle = getattr(g, "_last_email_error", "") or "Revisa la configuracion SMTP en Comunicaciones."
+        return jsonify({"error": f"No se pudo enviar el email. {detalle}"}), 500
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -6578,6 +6600,117 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
             srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), recipients, msg.as_string())
 
 
+def _smtp_cfg_from_request(data=None):
+    data = data or {}
+    prev = _get_smtp_cfg()
+    smtp_pass = (data.get("pass") or "").strip()
+    if not smtp_pass or smtp_pass == "••••••••":
+        smtp_pass = prev.get("smtp_pass") or ""
+    return {
+        "smtp_host": (data.get("host") or prev.get("smtp_host") or "smtp.gmail.com").strip(),
+        "smtp_port": int(data.get("port") or prev.get("smtp_port") or 587),
+        "smtp_user": (data.get("user") or prev.get("smtp_user") or "").strip(),
+        "smtp_pass": smtp_pass,
+        "from_name": (data.get("fromName") or prev.get("from_name") or "ILUS Sport & Health").strip(),
+        "from_addr": (data.get("fromAddr") or prev.get("from_addr") or data.get("user") or prev.get("smtp_user") or "").strip(),
+        "secure": bool(data.get("secure")) if "secure" in data else bool(prev.get("secure")),
+    }
+
+
+def _smtp_connection_diagnose(cfg):
+    """Valida conexion SMTP y login sin enviar ningun correo."""
+    import socket
+    import ssl as _ssl
+
+    host = (cfg.get("smtp_host") or "").strip()
+    port = int(cfg.get("smtp_port") or 0)
+    user = (cfg.get("smtp_user") or "").strip()
+    password = cfg.get("smtp_pass") or ""
+    secure = bool(cfg.get("secure"))
+
+    checks = []
+    suggestions = []
+    if not host:
+        return {"ok": False, "stage": "config", "message": "Falta el servidor SMTP.", "suggestions": ["Ingresa smtp.gmail.com para Gmail."]}
+    if not port:
+        return {"ok": False, "stage": "config", "message": "Falta el puerto SMTP.", "suggestions": ["Usa 587 con STARTTLS o 465 con SSL."]}
+    if not user:
+        return {"ok": False, "stage": "config", "message": "Falta el email usuario SMTP.", "suggestions": ["Ingresa la cuenta que autentica el correo."]}
+    if not password:
+        return {"ok": False, "stage": "config", "message": "Falta la contraseña / App Password.", "suggestions": ["Guarda una App Password de Gmail de 16 caracteres."]}
+
+    gmail = "gmail.com" in host.lower()
+    if gmail and secure and port != 465:
+        suggestions.append("Para Gmail con SSL/TLS marcado usa puerto 465, o desmarca SSL/TLS y usa puerto 587.")
+    if gmail and not secure and port != 587:
+        suggestions.append("Para Gmail con STARTTLS normalmente se usa puerto 587 y SSL/TLS desmarcado.")
+    if gmail and " " in password:
+        suggestions.append("Gmail permite mostrar la App Password con espacios, pero si falla prueba guardarla sin espacios.")
+
+    try:
+        if secure:
+            checks.append(f"Conectando con SSL a {host}:{port}")
+            ctx = _ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as srv:
+                checks.append("Servidor SSL respondio correctamente")
+                srv.ehlo()
+                checks.append("Autenticando usuario SMTP")
+                srv.login(user, password)
+        else:
+            checks.append(f"Conectando a {host}:{port}")
+            with smtplib.SMTP(host, port, timeout=10) as srv:
+                srv.ehlo()
+                if srv.has_extn("starttls"):
+                    checks.append("STARTTLS disponible; negociando cifrado")
+                    ctx = _ssl.create_default_context()
+                    srv.starttls(context=ctx)
+                    srv.ehlo()
+                else:
+                    checks.append("El servidor no anuncia STARTTLS")
+                    suggestions.append("Si el servidor exige cifrado, activa SSL/TLS con puerto 465 o usa puerto 587 con STARTTLS.")
+                checks.append("Autenticando usuario SMTP")
+                srv.login(user, password)
+        checks.append("Credenciales aceptadas. La aplicacion puede enviar correos.")
+        return {
+            "ok": True,
+            "stage": "auth",
+            "message": "Conexion SMTP verificada. Host, puerto, cifrado y credenciales estan correctos.",
+            "checks": checks,
+            "suggestions": suggestions,
+        }
+    except smtplib.SMTPAuthenticationError as exc:
+        code = getattr(exc, "smtp_code", "")
+        detail = (getattr(exc, "smtp_error", b"") or b"").decode("utf-8", "ignore")
+        hints = [
+            "Revisa que el email usuario sea correcto.",
+            "Si usas Gmail, no uses tu clave normal: crea una App Password de 16 caracteres.",
+            "Verifica que la verificacion en 2 pasos este activa en la cuenta Gmail.",
+        ]
+        return {"ok": False, "stage": "auth", "message": f"Autenticacion rechazada por el servidor SMTP ({code}).", "detail": detail, "checks": checks, "suggestions": hints + suggestions}
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, socket.timeout, TimeoutError) as exc:
+        hints = [
+            "Revisa host y puerto.",
+            "Para Gmail usa 587 sin SSL/TLS marcado, o 465 con SSL/TLS marcado.",
+            "Si esta en Railway o hosting, confirma que el proveedor permita conexiones SMTP salientes.",
+        ]
+        return {"ok": False, "stage": "connect", "message": "No se pudo conectar correctamente al servidor SMTP.", "detail": str(exc), "checks": checks, "suggestions": hints + suggestions}
+    except _ssl.SSLError as exc:
+        hints = [
+            "Hay una mezcla incorrecta entre puerto y tipo de cifrado.",
+            "Para 587 desmarca SSL/TLS; para 465 marca SSL/TLS.",
+        ]
+        return {"ok": False, "stage": "tls", "message": "Error de SSL/TLS al negociar la conexion.", "detail": str(exc), "checks": checks, "suggestions": hints + suggestions}
+    except OSError as exc:
+        hints = [
+            "El host o puerto no responde desde esta aplicacion.",
+            "Revisa si el firewall o el hosting bloquea SMTP saliente.",
+            "Prueba Gmail con smtp.gmail.com puerto 587 y SSL/TLS desmarcado.",
+        ]
+        return {"ok": False, "stage": "network", "message": "Error de red conectando al SMTP.", "detail": str(exc), "checks": checks, "suggestions": hints + suggestions}
+    except smtplib.SMTPException as exc:
+        return {"ok": False, "stage": "smtp", "message": "El servidor SMTP respondio con un error.", "detail": str(exc), "checks": checks, "suggestions": suggestions}
+
+
 def _comm_render_email_document(title, body_html, subtitle=""):
     """Renderiza un fragmento HTML dentro del diseÃ±o corporativo actual."""
     cc = _get_client_cfg()
@@ -6834,6 +6967,29 @@ def comm_smtp_save():
 @app.route("/comunicaciones/smtp/test", methods=["POST"])
 @_require_superadmin
 def comm_smtp_test():
+    d = request.get_json(silent=True) or {}
+    cfg = _smtp_cfg_from_request(d)
+    try:
+        result = _smtp_connection_diagnose(cfg)
+        _comm_log_entry(
+            "email",
+            cfg.get("smtp_user") or "",
+            "Diagnostico SMTP",
+            "ok" if result.get("ok") else "error",
+            result.get("message", ""),
+        )
+        return jsonify(result), (200 if result.get("ok") else 422)
+    except Exception as exc:
+        _comm_log_entry("email", cfg.get("smtp_user") or "", "Diagnostico SMTP", "error", str(exc))
+        return jsonify({
+            "ok": False,
+            "stage": "internal",
+            "message": "No se pudo ejecutar el diagnostico SMTP.",
+            "detail": str(exc),
+        }), 500
+
+
+def _comm_smtp_test_send_legacy():
     d  = request.get_json(silent=True) or {}
     to = (d.get("to") or "").strip()
     if not to:
@@ -7425,21 +7581,43 @@ def mant_clientes_autocomplete():
         })
         if rut: ids_rut_vistos.add(rut)
 
-    # 2) Buscar en ERP (solo si hay conexión)
-    erp_rows = _erp_buscar_clientes(q, limit=15)
-    for r in erp_rows:
-        rut = (r.get("rut") or "").strip()
-        if rut in ids_rut_vistos:
-            continue  # ya está en locales, no duplicar
-        resultados.append({
-            "id":           None,
-            "razon_social": r["razon_social"],
-            "rut":          rut,
-            "email":        "",
-            "estado":       "",
-            "origen":       "erp",
-        })
-        if rut: ids_rut_vistos.add(rut)
+    # 2) Buscar en ERP vía REST API /entidades (funciona desde Railway)
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    try:
+        body     = _erp_get("/entidades", {"search": q, "empresa": "01", "limit": "30"}, TOKEN, timeout=8)
+        ent_list = body.get("data") or (body if isinstance(body, list) else [])
+        for e in ent_list[:25]:
+            rut    = (e.get("RTEN")   or "").strip()
+            nombre = (e.get("NOKOEN") or "").strip()
+            if not nombre:
+                continue
+            if rut and rut in ids_rut_vistos:
+                continue
+            resultados.append({
+                "id":           None,
+                "razon_social": nombre,
+                "rut":          rut,
+                "email":        (e.get("EMAIL") or e.get("COREN") or "").strip(),
+                "estado":       "",
+                "origen":       "erp",
+            })
+            if rut: ids_rut_vistos.add(rut)
+    except Exception:
+        # Fallback: MySQL directo si REST falla (p.ej. entorno local)
+        erp_rows = _erp_buscar_clientes(q, limit=15)
+        for r in erp_rows:
+            rut = (r.get("rut") or "").strip()
+            if rut in ids_rut_vistos:
+                continue
+            resultados.append({
+                "id":           None,
+                "razon_social": r["razon_social"],
+                "rut":          rut,
+                "email":        "",
+                "estado":       "",
+                "origen":       "erp",
+            })
+            if rut: ids_rut_vistos.add(rut)
 
     # Ordenar locales primero, luego ERP
     resultados.sort(key=lambda x: (0 if x["origen"]=="local" else 1, x["razon_social"].lower()))
@@ -8428,6 +8606,42 @@ def api_uf_actual():
         return jsonify({"uf": uf_val, "fecha": fecha, "ok": True})
     except Exception as e:
         return jsonify({"uf": None, "error": str(e), "ok": False})
+
+
+# ── BÚSQUEDA PRODUCTOS ERP ───────────────────────────────────────────
+
+@app.route("/mantenciones/api/productos/buscar")
+@_mant_required
+def mant_productos_buscar():
+    """
+    Typeahead de productos ERP por SKU o descripción.
+    Usa la REST API (funciona desde Railway).
+    Devuelve [{sku, nombre}].
+    """
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    resultados = []
+    seen = set()
+    try:
+        body = _erp_get(
+            "/productos",
+            {"search": q, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true"},
+            TOKEN, timeout=8,
+        )
+        for p in (body.get("data") or []):
+            sku   = (p.get("KOPR")   or "").strip().upper()
+            nombre = (p.get("NOKOPR") or "").strip()
+            if not sku or sku in seen:
+                continue
+            resultados.append({"sku": sku, "nombre": nombre})
+            seen.add(sku)
+            if len(resultados) >= 25:
+                break
+    except Exception:
+        pass  # Si REST falla devolvemos lista vacía (mejor que 500)
+    return jsonify(resultados)
 
 
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
