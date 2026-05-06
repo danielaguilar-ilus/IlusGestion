@@ -1,0 +1,1074 @@
+{% extends "base.html" %}
+{% block title %}Nuevo cliente — Wizard{% endblock %}
+
+{% block content %}
+<style>
+/* ══ Wizard progress bar ════════════════════════════════════ */
+.wz-progress   { display:flex;align-items:center;gap:0;margin-bottom:28px;position:relative; }
+.wz-step       { display:flex;flex-direction:column;align-items:center;flex:1;position:relative;z-index:1; }
+.wz-step-circle{ width:38px;height:38px;border-radius:50%;border:2px solid #ddd;
+                 background:#fff;display:flex;align-items:center;justify-content:center;
+                 font-size:.8rem;font-weight:800;color:#aaa;transition:all .3s; }
+.wz-step.done .wz-step-circle  { background:#1a7a1a;border-color:#1a7a1a;color:#fff; }
+.wz-step.active .wz-step-circle{ background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
+                                  box-shadow:0 0 0 4px rgba(204,0,0,.15); }
+.wz-step-label { font-size:.7rem;color:#aaa;margin-top:5px;font-weight:600;text-align:center; }
+.wz-step.active .wz-step-label { color:var(--ilus-red);font-weight:700; }
+.wz-step.done .wz-step-label   { color:#1a7a1a; }
+.wz-line       { flex:1;height:2px;background:#eee;margin-top:-22px;z-index:0; }
+.wz-line.done  { background:#1a7a1a; }
+/* ══ Cards wizard ══════════════════════════════════════════ */
+.wz-card       { background:#fff;border-radius:14px;border:1px solid #eee;
+                 box-shadow:0 3px 14px rgba(0,0,0,.07);padding:28px 32px; }
+.wz-section-title { font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.9px;
+                    color:#888;padding-bottom:8px;border-bottom:1px solid #f0f0f0;margin-bottom:18px; }
+/* ══ ERP lookup ═══════════════════════════════════════════ */
+.erp-found     { background:#e8f5e9;border:1px solid #c8e6c9;border-radius:8px;padding:12px 14px;
+                 display:flex;align-items:center;gap:10px;font-size:.83rem; }
+.erp-notfound  { background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;padding:10px 14px;
+                 font-size:.8rem;color:#e65100; }
+/* ══ Tabla equipos ═════════════════════════════════════════ */
+.eq-table th   { font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;
+                 color:#888;background:#f8f9fa;font-weight:700; }
+.eq-table td   { font-size:.8rem;vertical-align:middle; }
+.eq-input      { border:1px solid #e0e0e0;border-radius:6px;padding:4px 8px;
+                 font-size:.78rem;width:100%; }
+.eq-input:focus{ border-color:var(--ilus-red);outline:none;box-shadow:0 0 0 2px rgba(204,0,0,.1); }
+.estado-operativo  { color:#1a7a1a;font-weight:700; }
+.estado-critico    { color:#cc0000;font-weight:700; }
+.estado-mantencion { color:#f57c00;font-weight:700; }
+/* ══ Contrato dropzone ═════════════════════════════════════ */
+.drop-zone     { border:2px dashed #ddd;border-radius:12px;padding:36px;text-align:center;
+                 cursor:pointer;transition:all .2s;background:#fafafa; }
+.drop-zone:hover,.drop-zone.drag-over { border-color:var(--ilus-red);background:#fff8f8; }
+.drop-zone.has-file { border-color:#1a7a1a;background:#f1f8e9; }
+/* ══ AI panel ══════════════════════════════════════════════ */
+.ai-resultado  { background:linear-gradient(135deg,#f3e5f5 0%,#e8eaf6 100%);
+                 border-radius:12px;padding:20px 22px;margin-top:16px; }
+.ai-header     { display:flex;align-items:center;justify-content:between;gap:10px;margin-bottom:16px; }
+.semaforo      { display:inline-flex;align-items:center;gap:6px;padding:4px 14px;border-radius:50px;
+                 font-size:.75rem;font-weight:800; }
+.semaforo-alto { background:#fdecea;color:#c62828; }
+.semaforo-medio{ background:#fff3e0;color:#e65100; }
+.semaforo-bajo { background:#e8f5e9;color:#1a7a1a; }
+.score-circle  { width:56px;height:56px;border-radius:50%;display:flex;align-items:center;
+                 justify-content:center;font-size:1rem;font-weight:900;color:#fff;flex-shrink:0; }
+.ai-field-group{ margin-bottom:14px; }
+.ai-field-label{ font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+                 color:#7c3aed;margin-bottom:4px; }
+.ai-editable   { width:100%;border:1px solid #d8b4fe;border-radius:6px;padding:6px 10px;
+                 font-size:.82rem;background:#fff;color:#333;transition:border-color .2s; }
+.ai-editable:focus { border-color:#7c3aed;outline:none;box-shadow:0 0 0 2px rgba(124,58,237,.1); }
+.ai-tag        { display:inline-flex;align-items:center;gap:4px;background:#fff;border-radius:6px;
+                 padding:3px 9px;margin:2px;font-size:.72rem;box-shadow:0 1px 3px rgba(0,0,0,.1); }
+.adj-item      { display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8f9fa;
+                 border-radius:8px;margin-bottom:6px;font-size:.8rem; }
+/* ══ Resumen final ════════════════════════════════════════ */
+.resumen-section { border-radius:10px;border:1px solid #eee;padding:16px 18px;margin-bottom:12px; }
+.cal-preview-row { display:flex;align-items:center;gap:10px;padding:6px 0;
+                   border-bottom:1px solid #f5f5f5;font-size:.78rem; }
+.cal-preview-row:last-child { border-bottom:none; }
+/* ══ Botones navegación ═══════════════════════════════════ */
+.wz-nav        { display:flex;justify-content:space-between;align-items:center;margin-top:24px;
+                 padding-top:16px;border-top:1px solid #f0f0f0; }
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h4 class="mb-0"><i class="bi bi-building-add me-2" style="color:var(--ilus-red)"></i>Nuevo cliente de mantención</h4>
+      <div class="sub">Configuración inteligente en 4 pasos</div>
+    </div>
+  </div>
+</div>
+
+{# ══ Progress bar ═════════════════════════════════════════════════════= #}
+<div class="wz-progress mb-4">
+  <div class="wz-step active" id="dot-1">
+    <div class="wz-step-circle"><i class="bi bi-building"></i></div>
+    <div class="wz-step-label">Cliente</div>
+  </div>
+  <div class="wz-line" id="line-1"></div>
+  <div class="wz-step" id="dot-2">
+    <div class="wz-step-circle"><i class="bi bi-bicycle"></i></div>
+    <div class="wz-step-label">Equipos</div>
+  </div>
+  <div class="wz-line" id="line-2"></div>
+  <div class="wz-step" id="dot-3">
+    <div class="wz-step-circle"><i class="bi bi-file-earmark-text"></i></div>
+    <div class="wz-step-label">Contrato</div>
+  </div>
+  <div class="wz-line" id="line-3"></div>
+  <div class="wz-step" id="dot-4">
+    <div class="wz-step-circle"><i class="bi bi-check-lg"></i></div>
+    <div class="wz-step-label">Resumen</div>
+  </div>
+</div>
+
+{# ══ PASO 1 — DATOS CLIENTE ═══════════════════════════════════════════ #}
+<div id="step-1">
+<div class="wz-card">
+  <div class="wz-section-title"><i class="bi bi-search me-1"></i>Buscar en ERP por RUT</div>
+  <div class="row g-2 mb-3">
+    <div class="col-12 col-sm-5">
+      <div class="input-group">
+        <input type="text" id="s1_rut_buscar" class="form-control font-monospace"
+               placeholder="12.345.678-9" oninput="formatRut(this)"
+               onkeydown="if(event.key==='Enter') buscarRut()">
+        <button class="btn btn-ilus" onclick="buscarRut()" id="btnBuscarRut">
+          <i class="bi bi-search me-1"></i>Buscar ERP
+        </button>
+      </div>
+    </div>
+    <div class="col-12 col-sm-7">
+      <div id="erp_status" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="wz-section-title"><i class="bi bi-building me-1"></i>Datos del cliente</div>
+  <div class="row g-3">
+    <div class="col-12 col-md-8">
+      <label class="form-label fw-semibold">Razón social <span class="text-danger">*</span></label>
+      <input type="text" id="s1_razon" class="form-control" placeholder="Empresa o persona" required>
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-semibold">RUT</label>
+      <input type="text" id="s1_rut" class="form-control font-monospace" placeholder="12.345.678-9">
+    </div>
+    <div class="col-12 col-md-6">
+      <label class="form-label fw-semibold">Dirección</label>
+      <input type="text" id="s1_direccion" class="form-control">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label fw-semibold">Comuna</label>
+      <input type="text" id="s1_comuna" class="form-control">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label fw-semibold">Ciudad</label>
+      <input type="text" id="s1_ciudad" class="form-control">
+    </div>
+    <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Contacto principal</div></div>
+    <div class="col-12 col-sm-4">
+      <label class="form-label fw-semibold">Nombre contacto</label>
+      <input type="text" id="s1_contacto_nombre" class="form-control">
+    </div>
+    <div class="col-6 col-sm-4">
+      <label class="form-label fw-semibold">Teléfono</label>
+      <input type="text" id="s1_contacto_tel" class="form-control" placeholder="+56 9">
+    </div>
+    <div class="col-6 col-sm-4">
+      <label class="form-label fw-semibold">Email</label>
+      <input type="email" id="s1_contacto_email" class="form-control">
+    </div>
+    <div class="col-6">
+      <label class="form-label fw-semibold">Estado</label>
+      <select id="s1_estado" class="form-select">
+        <option value="activo">Activo</option>
+        <option value="prospecto">Prospecto</option>
+        <option value="inactivo">Inactivo</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <label class="form-label fw-semibold">Notas internas</label>
+      <textarea id="s1_notas" class="form-control" rows="2" placeholder="Información relevante del cliente…"></textarea>
+    </div>
+  </div>
+  <div class="wz-nav">
+    <span class="text-muted small">Paso 1 de 4</span>
+    <button class="btn btn-ilus fw-bold px-5" onclick="irPaso2()">
+      Siguiente <i class="bi bi-arrow-right ms-1"></i>
+    </button>
+  </div>
+</div>
+</div>
+
+{# ══ PASO 2 — EQUIPOS ═════════════════════════════════════════════════ #}
+<div id="step-2" style="display:none">
+<div class="wz-card">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="wz-section-title mb-0"><i class="bi bi-bicycle me-1"></i>Equipos / Activos del cliente</div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpEquipos()">
+        <i class="bi bi-search me-1"></i>Buscar en ERP
+      </button>
+      <button class="btn btn-sm btn-ilus" onclick="agregarFilaEquipo()">
+        <i class="bi bi-plus"></i> Agregar fila
+      </button>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table eq-table align-middle" style="min-width:700px">
+      <thead><tr>
+        <th style="width:28%">Nombre equipo</th>
+        <th style="width:10%">SKU</th>
+        <th style="width:12%">N° Serie</th>
+        <th style="width:10%">Ubicación</th>
+        <th style="width:10%">Estado</th>
+        <th style="width:9%">F. Instalación</th>
+        <th style="width:5%">Cant.</th>
+        <th style="width:4%"></th>
+      </tr></thead>
+      <tbody id="equiposTbody">
+        <tr id="eq-placeholder">
+          <td colspan="8" class="text-center text-muted py-4" style="font-size:.82rem">
+            <i class="bi bi-bicycle" style="font-size:1.4rem;opacity:.3;display:block;margin-bottom:6px"></i>
+            Sin equipos — agrega uno o búscalos en el ERP
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="text-muted small mt-1"><i class="bi bi-info-circle me-1"></i>Puedes saltar este paso si no tienes la información ahora.</div>
+
+  <div class="wz-nav">
+    <button class="btn btn-outline-secondary" onclick="irPaso(1)">
+      <i class="bi bi-arrow-left me-1"></i> Anterior
+    </button>
+    <button class="btn btn-ilus fw-bold px-5" onclick="irPaso3()">
+      Siguiente <i class="bi bi-arrow-right ms-1"></i>
+    </button>
+  </div>
+</div>
+</div>
+
+{# ══ PASO 3 — CONTRATO ════════════════════════════════════════════════ #}
+<div id="step-3" style="display:none">
+<div class="wz-card">
+  <div class="wz-section-title"><i class="bi bi-file-earmark-text me-1"></i>Contrato de mantención</div>
+  <div class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Este paso es opcional. Puedes subir el contrato ahora o más tarde desde la ficha del cliente.</div>
+
+  {# Dropzone contrato principal #}
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('ct_archivo').click()"
+       ondragover="event.preventDefault();this.classList.add('drag-over')"
+       ondragleave="this.classList.remove('drag-over')"
+       ondrop="onDrop(event)">
+    <div id="dropContent">
+      <i class="bi bi-cloud-upload" style="font-size:2rem;color:#ccc;display:block;margin-bottom:8px"></i>
+      <div class="fw-bold" style="color:#666">Arrastra el contrato aquí o haz clic</div>
+      <div class="small text-muted mt-1">PDF, Word (.doc, .docx) — máx. 20 MB</div>
+    </div>
+  </div>
+  <input type="file" id="ct_archivo" accept=".pdf,.doc,.docx" class="d-none" onchange="onArchivoSeleccionado()">
+
+  {# Adjuntos adicionales #}
+  <div class="mt-3">
+    <div class="small fw-bold text-muted mb-2">Adjuntos adicionales (hasta 4)</div>
+    <div id="adjuntosLista"></div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('adj_input').click()">
+      <i class="bi bi-paperclip me-1"></i>Agregar adjunto
+    </button>
+    <input type="file" id="adj_input" class="d-none" multiple onchange="agregarAdjuntos(this)">
+  </div>
+
+  {# Metadatos del contrato #}
+  <div id="ct_meta" style="display:none;margin-top:20px">
+    <div class="wz-section-title"><i class="bi bi-sliders me-1"></i>Metadatos del contrato</div>
+    <div class="row g-3">
+      <div class="col-12 col-sm-6">
+        <label class="form-label fw-semibold">Nombre del contrato</label>
+        <input type="text" id="ct_nombre" class="form-control" placeholder="Ej: Contrato mantención 2025">
+      </div>
+      <div class="col-12 col-sm-6">
+        <label class="form-label fw-semibold">Monto mensual ($)</label>
+        <input type="number" id="ct_monto_mensual" class="form-control" placeholder="0" step="1000" min="0">
+      </div>
+      <div class="col-6">
+        <label class="form-label fw-semibold">Fecha inicio</label>
+        <input type="date" id="ct_inicio" class="form-control">
+      </div>
+      <div class="col-6">
+        <label class="form-label fw-semibold">Fecha vencimiento</label>
+        <input type="date" id="ct_vencimiento" class="form-control">
+      </div>
+      <div class="col-6 col-sm-3">
+        <label class="form-label fw-semibold">Frecuencia (meses)</label>
+        <input type="number" id="ct_frecuencia" class="form-control" placeholder="3" min="1">
+      </div>
+      <div class="col-6 col-sm-3 d-flex align-items-end">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="ct_indefinido">
+          <label class="form-check-label fw-semibold" for="ct_indefinido">Indefinido</label>
+        </div>
+      </div>
+    </div>
+
+    {# Botón analizar IA #}
+    <div class="d-flex align-items-center gap-3 mt-3">
+      <button class="btn fw-bold px-4" style="background:#7c3aed;color:#fff;border:none"
+              id="btnAnalizar" onclick="analizarConIA()">
+        <i class="bi bi-stars me-1"></i>Analizar contrato con IA
+      </button>
+      <span class="text-muted small">Claude leerá el PDF y extraerá toda la información relevante</span>
+    </div>
+  </div>
+
+  {# Panel resultado IA — editable #}
+  <div id="ai_panel" style="display:none">
+    <div class="ai-resultado">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+        <div class="d-flex align-items-center gap-3">
+          <div class="score-circle" id="ai_score_circle" style="background:#888">—</div>
+          <div>
+            <div class="fw-bold" style="font-size:.9rem;color:#333">Análisis completado</div>
+            <div id="ai_semaforo"></div>
+          </div>
+        </div>
+        <div class="text-muted small"><i class="bi bi-pencil me-1"></i>Todos los campos son editables</div>
+      </div>
+
+      <div class="row g-3">
+        {# Columna izquierda #}
+        <div class="col-12 col-md-6">
+          <div class="ai-field-group">
+            <div class="ai-field-label">Tipo de contrato</div>
+            <input type="text" id="ai_tipo_contrato" class="ai-editable">
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Nivel de riesgo</div>
+            <select id="ai_nivel_riesgo" class="ai-editable">
+              <option value="bajo">🟢 Bajo</option>
+              <option value="medio">🟡 Medio</option>
+              <option value="alto">🔴 Alto</option>
+            </select>
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">Vigencia inicio</div>
+                <input type="date" id="ai_vigencia_inicio" class="ai-editable">
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">Vigencia fin</div>
+                <input type="date" id="ai_vigencia_fin" class="ai-editable">
+              </div>
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">Frecuencia mant. (meses)</div>
+                <input type="number" id="ai_frecuencia" class="ai-editable" min="1">
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">SLA horas respuesta</div>
+                <input type="number" id="ai_sla" class="ai-editable" min="0">
+              </div>
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">Costo mensual ($)</div>
+                <input type="number" id="ai_costo_mensual" class="ai-editable" min="0" step="1000">
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="ai-field-group">
+                <div class="ai-field-label">Costo por visita ($)</div>
+                <input type="number" id="ai_costo_por_mant" class="ai-editable" min="0" step="1000">
+              </div>
+            </div>
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Costo total contrato ($)</div>
+            <input type="number" id="ai_costo_total" class="ai-editable" min="0" step="10000">
+          </div>
+          <div class="d-flex gap-3 mt-2">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="ai_incl_mant">
+              <label class="form-check-label" for="ai_incl_mant" style="font-size:.78rem">Mantenciones gratis</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="ai_incl_rep">
+              <label class="form-check-label" for="ai_incl_rep" style="font-size:.78rem">Incluye repuestos</label>
+            </div>
+          </div>
+        </div>
+
+        {# Columna derecha #}
+        <div class="col-12 col-md-6">
+          <div class="ai-field-group">
+            <div class="ai-field-label">Resumen del contrato</div>
+            <textarea id="ai_resumen" class="ai-editable" rows="3" style="resize:vertical"></textarea>
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Cobertura (qué incluye)</div>
+            <textarea id="ai_cobertura" class="ai-editable" rows="2" style="resize:vertical"></textarea>
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Cláusulas críticas</div>
+            <textarea id="ai_clausulas" class="ai-editable" rows="3" style="resize:vertical"></textarea>
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Alertas detectadas</div>
+            <div id="ai_alertas_tags" class="mb-1"></div>
+            <textarea id="ai_alertas_txt" class="ai-editable" rows="2" style="resize:vertical;font-size:.75rem"
+                      placeholder="Una alerta por línea…"></textarea>
+          </div>
+          <div class="ai-field-group">
+            <div class="ai-field-label">Mejoras sugeridas</div>
+            <textarea id="ai_mejoras" class="ai-editable" rows="2" style="resize:vertical"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wz-nav">
+    <button class="btn btn-outline-secondary" onclick="irPaso(2)">
+      <i class="bi bi-arrow-left me-1"></i> Anterior
+    </button>
+    <button class="btn btn-ilus fw-bold px-5" onclick="irPaso4()">
+      Siguiente <i class="bi bi-arrow-right ms-1"></i>
+    </button>
+  </div>
+</div>
+</div>
+
+{# ══ PASO 4 — RESUMEN ═════════════════════════════════════════════════ #}
+<div id="step-4" style="display:none">
+<div class="wz-card">
+  <div class="wz-section-title"><i class="bi bi-clipboard2-check me-1"></i>Resumen y confirmación</div>
+
+  <div class="row g-3">
+    {# Resumen cliente #}
+    <div class="col-12 col-md-6">
+      <div class="resumen-section">
+        <div class="fw-bold mb-2" style="font-size:.8rem;color:#666"><i class="bi bi-building me-1"></i>CLIENTE</div>
+        <div id="res_cliente"></div>
+      </div>
+    </div>
+    {# Resumen equipos #}
+    <div class="col-12 col-md-6">
+      <div class="resumen-section">
+        <div class="fw-bold mb-2" style="font-size:.8rem;color:#666"><i class="bi bi-bicycle me-1"></i>EQUIPOS</div>
+        <div id="res_equipos"></div>
+      </div>
+    </div>
+    {# Resumen contrato + AI #}
+    <div class="col-12">
+      <div class="resumen-section">
+        <div class="fw-bold mb-2" style="font-size:.8rem;color:#666"><i class="bi bi-file-earmark-text me-1"></i>CONTRATO</div>
+        <div id="res_contrato"></div>
+      </div>
+    </div>
+  </div>
+
+  {# Generar calendario #}
+  <div class="resumen-section mt-2" id="cal_section" style="display:none">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <div class="fw-bold" style="font-size:.8rem;color:#666"><i class="bi bi-calendar-check me-1"></i>CALENDARIO AUTOMÁTICO</div>
+      <div class="d-flex gap-2 align-items-center">
+        <select id="cal_tipo" class="form-select form-select-sm" style="width:auto">
+          <option value="preventiva">Preventiva</option>
+          <option value="correctiva">Correctiva</option>
+          <option value="inspeccion">Inspección</option>
+        </select>
+        <input type="number" id="cal_meses" class="form-control form-control-sm" style="width:80px" value="12" min="3" max="24">
+        <label class="form-label mb-0 small">meses</label>
+        <button class="btn btn-sm btn-outline-secondary" onclick="previewCalendario()">
+          <i class="bi bi-eye me-1"></i>Vista previa
+        </button>
+      </div>
+    </div>
+    <div id="cal_preview"></div>
+    <div class="form-check mt-2">
+      <input class="form-check-input" type="checkbox" id="cal_generar" checked>
+      <label class="form-check-label fw-semibold" for="cal_generar" style="font-size:.82rem">
+        Generar visitas automáticamente al guardar
+      </label>
+    </div>
+  </div>
+
+  <div class="wz-nav">
+    <button class="btn btn-outline-secondary" onclick="irPaso(3)">
+      <i class="bi bi-arrow-left me-1"></i> Anterior
+    </button>
+    <button class="btn btn-ilus fw-bold px-5" id="btnFinalizar" onclick="finalizar()">
+      <i class="bi bi-floppy me-1"></i>Guardar y finalizar
+    </button>
+  </div>
+</div>
+</div>
+
+{# ══ Modal ERP — importar equipos ═════════════════════════════════════ #}
+<div class="modal fade" id="modalErpEquipos" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Buscar equipos en ERP</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex gap-2 mb-3">
+          <input type="text" id="erpEqQ" class="form-control" placeholder="RUT o razón social…"
+                 onkeydown="if(event.key==='Enter') buscarErpEquipos()">
+          <button class="btn btn-ilus px-4" onclick="buscarErpEquipos()"><i class="bi bi-search"></i></button>
+        </div>
+        <div id="erpEqResultado">
+          <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un término para buscar</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="text-muted small me-auto" id="erpEqSelCount">0 líneas seleccionadas</span>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="importarEquiposErp()">
+          <i class="bi bi-box-arrow-in-down me-1"></i>Importar seleccionadas
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ══ Estado global wizard ═══════════════════════════════════════════════
+const WZ = {
+  paso:      1,
+  cid:       null,   // cliente creado
+  ctid:      null,   // contrato subido
+  equipos:   [],     // filas de equipos
+  adjuntos:  [],     // archivos adjuntos pendientes
+  aiData:    null,   // resultado IA
+  calPreview:[],
+};
+
+// ══ PROGRESS BAR ════════════════════════════════════════════════════════
+function actualizarProgress(paso) {
+  [1,2,3,4].forEach(i => {
+    const dot  = document.getElementById(`dot-${i}`);
+    dot.classList.remove('active','done');
+    if (i < paso)       dot.classList.add('done');
+    else if (i === paso) dot.classList.add('active');
+  });
+  [1,2,3].forEach(i => {
+    const line = document.getElementById(`line-${i}`);
+    if (i < paso) line.classList.add('done');
+    else          line.classList.remove('done');
+  });
+}
+
+function irPaso(n) {
+  document.getElementById(`step-${WZ.paso}`).style.display = 'none';
+  WZ.paso = n;
+  document.getElementById(`step-${n}`).style.display = '';
+  actualizarProgress(n);
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+// ══ PASO 1 ═══════════════════════════════════════════════════════════
+function formatRut(input) {
+  let v = input.value.replace(/[^0-9kK]/g,'');
+  if (v.length > 1) v = v.slice(0,-1) + '-' + v.slice(-1);
+  if (v.length > 5) v = v.slice(0,-5) + '.' + v.slice(-5);
+  if (v.length > 9) v = v.slice(0,-9) + '.' + v.slice(-9);
+  input.value = v.toUpperCase();
+}
+
+async function buscarRut() {
+  const rut = document.getElementById('s1_rut_buscar').value.trim();
+  if (!rut) return;
+  const btn = document.getElementById('btnBuscarRut');
+  const st  = document.getElementById('erp_status');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>';
+  st.style.display = '';
+  st.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/erp-rut', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({rut})
+    });
+    const data = await r.json();
+    if (data.encontrado) {
+      document.getElementById('s1_rut').value            = data.rut || rut;
+      document.getElementById('s1_razon').value          = data.razon_social || '';
+      document.getElementById('s1_direccion').value      = data.direccion || '';
+      document.getElementById('s1_comuna').value         = data.comuna || '';
+      document.getElementById('s1_contacto_email').value = data.email || '';
+      st.innerHTML = `<div class="erp-found">
+        <i class="bi bi-check-circle-fill text-success"></i>
+        <span><strong>${data.razon_social}</strong> encontrado en ERP — datos autocompletados</span>
+      </div>`;
+    } else {
+      document.getElementById('s1_rut').value = rut;
+      st.innerHTML = `<div class="erp-notfound">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        RUT no encontrado en el ERP — completa los datos manualmente
+      </div>`;
+    }
+  } catch(e) {
+    st.innerHTML = `<div class="erp-notfound"><i class="bi bi-wifi-off me-1"></i>Sin conexión al ERP</div>`;
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-search me-1"></i>Buscar ERP';
+}
+
+function irPaso2() {
+  if (!document.getElementById('s1_razon').value.trim()) {
+    alert('La Razón Social es obligatoria'); return;
+  }
+  irPaso(2);
+}
+
+// ══ PASO 2 — EQUIPOS ══════════════════════════════════════════════════
+let eqCounter = 0;
+function agregarFilaEquipo(datos={}) {
+  const tbody = document.getElementById('equiposTbody');
+  const placeholder = document.getElementById('eq-placeholder');
+  if (placeholder) placeholder.remove();
+  eqCounter++;
+  const id = `eq-${eqCounter}`;
+  const estadoOpts = ['operativo','critico','en_mantencion'];
+  const tr = document.createElement('tr');
+  tr.id = id;
+  tr.innerHTML = `
+    <td><input class="eq-input" data-field="nombre" value="${datos.nombre||''}" placeholder="Nombre equipo"></td>
+    <td><input class="eq-input font-monospace" data-field="sku" value="${datos.sku||''}"></td>
+    <td><input class="eq-input" data-field="serie" value="${datos.serie||''}"></td>
+    <td><input class="eq-input" data-field="ubicacion" value="${datos.ubicacion||''}" placeholder="Ej: Sala cardio"></td>
+    <td>
+      <select class="eq-input" data-field="estado_op">
+        ${estadoOpts.map(e=>`<option value="${e}" ${(datos.estado_op||'operativo')===e?'selected':''}>${e.replace('_',' ')}</option>`).join('')}
+      </select>
+    </td>
+    <td><input type="date" class="eq-input" data-field="fecha_instalacion" value="${datos.fecha_instalacion||''}"></td>
+    <td><input type="number" class="eq-input text-center" data-field="cantidad" value="${datos.cantidad||1}" min="1" style="width:52px"></td>
+    <td>
+      <button class="btn btn-xs btn-outline-danger" onclick="this.closest('tr').remove()">
+        <i class="bi bi-trash"></i>
+      </button>
+    </td>`;
+  tbody.appendChild(tr);
+}
+
+function leerEquipos() {
+  const rows = document.querySelectorAll('#equiposTbody tr:not(#eq-placeholder)');
+  return Array.from(rows).map(tr => {
+    const obj = {};
+    tr.querySelectorAll('[data-field]').forEach(el => {
+      obj[el.dataset.field] = el.value;
+    });
+    return obj;
+  }).filter(o => o.nombre && o.nombre.trim());
+}
+
+function irPaso3() {
+  WZ.equipos = leerEquipos();
+  // Pre-fill ERP search with client RUT
+  document.getElementById('erpEqQ').value = document.getElementById('s1_rut').value ||
+                                             document.getElementById('s1_razon').value;
+  irPaso(3);
+}
+
+// ══ ERP Modal — Equipos ════════════════════════════════════════════════
+let erpEqSel = {};
+async function buscarErpEquipos() {
+  const q = document.getElementById('erpEqQ').value.trim();
+  if (!q) return;
+  const cont = document.getElementById('erpEqResultado');
+  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
+  const r = await fetch('/mantenciones/api/buscar-erp', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({q})
+  });
+  const data = await r.json();
+  if (data.error || !data.documentos || !data.documentos.length) {
+    cont.innerHTML = '<div class="text-center text-muted py-4">Sin resultados</div>'; return;
+  }
+  erpEqSel = {};
+  actualizarContadorErpEq();
+  let html = '<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.8rem"><thead><tr><th></th><th>Doc</th><th>Fecha</th><th>SKU</th><th>Producto</th><th>Cant.</th></tr></thead><tbody>';
+  data.documentos.forEach(doc => {
+    html += `<tr class="table-secondary"><td colspan="6" class="fw-bold text-muted" style="font-size:.72rem">${doc.tipo_doc} ${doc.num_doc} — ${doc.razon_social} (${doc.fecha})</td></tr>`;
+    doc.lineas.forEach((l,idx) => {
+      const key = `${doc.tipo_doc}-${doc.num_doc}-${idx}`;
+      const ld  = JSON.stringify({...l, doc_origen:`${doc.tipo_doc} ${doc.num_doc}`, fecha:doc.fecha}).replace(/"/g,'&quot;');
+      html += `<tr><td><input type="checkbox" onchange="erpEqToggle('${key}',${ld},this.checked)"></td>
+        <td class="text-muted">${doc.tipo_doc} ${doc.num_doc}</td>
+        <td class="text-muted">${doc.fecha}</td>
+        <td class="font-monospace">${l.sku||'—'}</td>
+        <td>${l.nombre||'—'}</td>
+        <td>${l.cantidad||1}</td></tr>`;
+    });
+  });
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
+}
+function erpEqToggle(key,l,checked) {
+  if (checked) erpEqSel[key]=l; else delete erpEqSel[key];
+  actualizarContadorErpEq();
+}
+function actualizarContadorErpEq() {
+  document.getElementById('erpEqSelCount').textContent = `${Object.keys(erpEqSel).length} líneas seleccionadas`;
+}
+function importarEquiposErp() {
+  Object.values(erpEqSel).forEach(l => {
+    agregarFilaEquipo({nombre:l.nombre||l.producto||'', sku:l.sku||'',
+                       cantidad:l.cantidad||1, doc_origen:l.doc_origen||''});
+  });
+  bootstrap.Modal.getInstance(document.getElementById('modalErpEquipos')).hide();
+}
+function abrirErpEquipos() {
+  new bootstrap.Modal(document.getElementById('modalErpEquipos')).show();
+}
+
+// ══ PASO 3 — CONTRATO + IA ════════════════════════════════════════════
+function onArchivoSeleccionado() {
+  const f = document.getElementById('ct_archivo').files[0];
+  if (f) mostrarArchivoSeleccionado(f);
+}
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) { document.getElementById('ct_archivo').files; mostrarArchivoSeleccionado(f); }
+}
+function mostrarArchivoSeleccionado(f) {
+  const zone = document.getElementById('dropZone');
+  zone.classList.add('has-file');
+  document.getElementById('dropContent').innerHTML = `
+    <i class="bi bi-file-earmark-check" style="font-size:2rem;color:#1a7a1a;display:block;margin-bottom:8px"></i>
+    <div class="fw-bold" style="color:#1a7a1a">${f.name}</div>
+    <div class="small text-muted">${(f.size/1024/1024).toFixed(2)} MB — haz clic para cambiar</div>`;
+  document.getElementById('ct_meta').style.display = '';
+  if (!document.getElementById('ct_nombre').value)
+    document.getElementById('ct_nombre').value = f.name.replace(/\.[^.]+$/,'');
+}
+
+const adjFiles = [];
+function agregarAdjuntos(input) {
+  for (const f of Array.from(input.files)) {
+    if (adjFiles.length >= 4) { alert('Máximo 4 adjuntos'); break; }
+    adjFiles.push(f);
+    renderAdjuntos();
+  }
+  input.value = '';
+}
+function renderAdjuntos() {
+  const cont = document.getElementById('adjuntosLista');
+  cont.innerHTML = adjFiles.map((f,i) => `
+    <div class="adj-item">
+      <i class="bi bi-paperclip text-muted"></i>
+      <span class="flex-1">${f.name}</span>
+      <span class="text-muted small">${(f.size/1024).toFixed(0)} KB</span>
+      <button class="btn btn-xs btn-outline-danger" onclick="adjFiles.splice(${i},1);renderAdjuntos()">
+        <i class="bi bi-x"></i>
+      </button>
+    </div>`).join('');
+}
+
+async function analizarConIA() {
+  const archivo = document.getElementById('ct_archivo').files[0];
+  if (!archivo) { alert('Sube un archivo primero'); return; }
+  const btn = document.getElementById('btnAnalizar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando con IA…';
+
+  // Necesitamos crear el cliente y contrato primero para llamar al endpoint
+  // Paso 1: crear cliente temporal
+  if (!WZ.cid) {
+    const creado = await crearCliente();
+    if (!creado) { btn.disabled=false; btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar contrato con IA'; return; }
+  }
+  // Paso 2: subir contrato
+  if (!WZ.ctid) {
+    const subido = await subirContrato();
+    if (!subido) { btn.disabled=false; btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar contrato con IA'; return; }
+  }
+  // Paso 3: analizar
+  const r = await fetch(`/mantenciones/api/contratos/${WZ.ctid}/analizar`, { method:'POST' });
+  const data = await r.json();
+  if (!data.ok) {
+    alert(data.error || 'Error en análisis');
+    btn.disabled=false; btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar contrato con IA'; return;
+  }
+  WZ.aiData = data.resultado;
+  mostrarResultadoIA(data.resultado);
+  btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Análisis completado — vuelve a analizar';
+  btn.disabled  = false;
+}
+
+function mostrarResultadoIA(r) {
+  document.getElementById('ai_panel').style.display = '';
+  // Score circle
+  const score = r.score || 0;
+  const scoreColor = score >= 70 ? '#1a7a1a' : score >= 40 ? '#e65100' : '#cc0000';
+  const circle = document.getElementById('ai_score_circle');
+  circle.textContent = score;
+  circle.style.background = scoreColor;
+  // Semáforo
+  const riesgo = r.nivel_riesgo || 'medio';
+  const sem = {alto:'🔴 Riesgo Alto', medio:'🟡 Riesgo Medio', bajo:'🟢 Riesgo Bajo'};
+  const semCls = {alto:'semaforo-alto', medio:'semaforo-medio', bajo:'semaforo-bajo'};
+  document.getElementById('ai_semaforo').innerHTML =
+    `<span class="semaforo ${semCls[riesgo]}">${sem[riesgo]}</span>`;
+  // Campos editables
+  document.getElementById('ai_tipo_contrato').value  = r.tipo_contrato || '';
+  document.getElementById('ai_nivel_riesgo').value   = riesgo;
+  document.getElementById('ai_vigencia_inicio').value= r.vigencia_inicio || '';
+  document.getElementById('ai_vigencia_fin').value   = r.vigencia_fin || '';
+  document.getElementById('ai_frecuencia').value     = r.frecuencia_sugerida_meses || '';
+  document.getElementById('ai_sla').value            = r.sla_horas || '';
+  document.getElementById('ai_costo_mensual').value  = r.costo_mensual || '';
+  document.getElementById('ai_costo_por_mant').value = r.costo_por_mant || '';
+  document.getElementById('ai_costo_total').value    = r.costo_total || '';
+  document.getElementById('ai_incl_mant').checked    = !!r.incluye_mant_gratis;
+  document.getElementById('ai_incl_rep').checked     = !!r.incluye_repuestos;
+  document.getElementById('ai_resumen').value        = r.resumen || '';
+  document.getElementById('ai_cobertura').value      = r.cobertura_descripcion || '';
+  document.getElementById('ai_clausulas').value      = (r.clausulas_criticas||[]).join('\n');
+  document.getElementById('ai_alertas_txt').value    = (r.alertas||[]).join('\n');
+  document.getElementById('ai_mejoras').value        = (r.mejoras_prioritarias||[]).join('\n');
+  // Tags de alertas
+  document.getElementById('ai_alertas_tags').innerHTML =
+    (r.alertas||[]).map(a=>`<span class="ai-tag"><i class="bi bi-bell me-1" style="color:#cc0000"></i>${a}</span>`).join('');
+  // Scroll al panel
+  document.getElementById('ai_panel').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function leerAiEditado() {
+  if (!WZ.ctid) return;
+  return {
+    ai_tipo_contrato:  document.getElementById('ai_tipo_contrato').value,
+    nivel_riesgo:      document.getElementById('ai_nivel_riesgo').value,
+    ai_vigencia_inicio:document.getElementById('ai_vigencia_inicio').value || null,
+    ai_vigencia_fin:   document.getElementById('ai_vigencia_fin').value || null,
+    frecuencia_meses:  parseInt(document.getElementById('ai_frecuencia').value)||0,
+    sla_horas:         parseInt(document.getElementById('ai_sla').value)||0,
+    monto_mensual:     parseFloat(document.getElementById('ai_costo_mensual').value)||0,
+    costo_por_mant:    parseFloat(document.getElementById('ai_costo_por_mant').value)||0,
+    costo_total:       parseFloat(document.getElementById('ai_costo_total').value)||0,
+    incluye_mant_gratis:document.getElementById('ai_incl_mant').checked ? 1 : 0,
+    incluye_repuestos: document.getElementById('ai_incl_rep').checked ? 1 : 0,
+    ai_resumen:        document.getElementById('ai_resumen').value,
+    ai_cobertura:      document.getElementById('ai_cobertura').value,
+    ai_clausulas:      document.getElementById('ai_clausulas').value,
+    ai_editable:       '1',
+  };
+}
+
+async function irPaso4() {
+  // Guardar edits IA si hay contrato
+  if (WZ.ctid) {
+    const edits = leerAiEditado();
+    if (edits) await fetch(`/mantenciones/api/contratos/${WZ.ctid}/ai-editar`,
+      { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(edits) });
+  }
+  construirResumen();
+  irPaso(4);
+}
+
+// ══ PASO 4 — RESUMEN ══════════════════════════════════════════════════
+function construirResumen() {
+  // Cliente
+  const razon    = document.getElementById('s1_razon').value;
+  const rut      = document.getElementById('s1_rut').value;
+  const dir      = document.getElementById('s1_direccion').value;
+  const com      = document.getElementById('s1_comuna').value;
+  const ctNombre = document.getElementById('s1_contacto_nombre').value;
+  const ctEmail  = document.getElementById('s1_contacto_email').value;
+  document.getElementById('res_cliente').innerHTML = `
+    <div class="fw-bold" style="font-size:.95rem">${razon}</div>
+    ${rut ? `<div class="small text-muted font-monospace">${rut}</div>` : ''}
+    ${dir||com ? `<div class="small text-muted">${dir}${com?', '+com:''}</div>` : ''}
+    ${ctNombre ? `<div class="small text-muted"><i class="bi bi-person me-1"></i>${ctNombre}${ctEmail?' · '+ctEmail:''}</div>` : ''}
+  `;
+  // Equipos
+  const eqs = leerEquipos();
+  document.getElementById('res_equipos').innerHTML = eqs.length
+    ? eqs.map(e => `<div class="small mb-1"><i class="bi bi-bicycle me-1 text-muted"></i>
+        <strong>${e.nombre}</strong>${e.sku?' · '+e.sku:''}
+        <span class="badge bg-secondary ms-1" style="font-size:.6rem">${e.estado_op||'operativo'}</span></div>`).join('')
+    : '<div class="small text-muted">Sin equipos registrados</div>';
+  // Contrato
+  const ctName = document.getElementById('ct_nombre').value;
+  const archivo = document.getElementById('ct_archivo').files[0];
+  if (archivo || WZ.ctid) {
+    const freq   = document.getElementById('ai_frecuencia').value || document.getElementById('ct_frecuencia').value;
+    const riesgo = document.getElementById('ai_nivel_riesgo')?.value || 'medio';
+    const scoreEl= document.getElementById('ai_score_circle');
+    const score  = scoreEl ? scoreEl.textContent : '—';
+    const semCls = {alto:'danger', medio:'warning', bajo:'success'};
+    document.getElementById('res_contrato').innerHTML = `
+      <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+        <span class="fw-bold">${ctName || archivo?.name || 'Contrato'}</span>
+        <span class="badge bg-${semCls[riesgo]||'secondary'}">${riesgo}</span>
+        ${score !== '—' ? `<span class="badge bg-secondary">Score ${score}/100</span>` : ''}
+      </div>
+      ${freq ? `<div class="small text-muted"><i class="bi bi-calendar-check me-1"></i>Frecuencia de mantención: cada <strong>${freq} meses</strong></div>` : ''}
+    `;
+    // Mostrar sección calendario si hay frecuencia
+    if (freq) {
+      document.getElementById('cal_section').style.display = '';
+      previewCalendario();
+    }
+  } else {
+    document.getElementById('res_contrato').innerHTML = '<div class="small text-muted">Sin contrato adjunto</div>';
+  }
+}
+
+async function previewCalendario() {
+  if (!WZ.ctid && !document.getElementById('ct_archivo').files[0]) return;
+  const tipo  = document.getElementById('cal_tipo').value;
+  const meses = parseInt(document.getElementById('cal_meses').value)||12;
+  // Si ya hay cliente creado, usar endpoint; si no, generar preview local
+  if (WZ.cid) {
+    const r = await fetch(`/mantenciones/api/clientes/${WZ.cid}/generar-calendario`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ dry_run:true, tipo, meses })
+    });
+    const data = await r.json();
+    WZ.calPreview = data.preview || [];
+  } else {
+    // Preview local basado en frecuencia
+    const freq = parseInt(document.getElementById('ai_frecuencia').value||document.getElementById('ct_frecuencia').value||3);
+    WZ.calPreview = generarPreviewLocal(freq, meses, tipo);
+  }
+  renderCalPreview();
+}
+
+function generarPreviewLocal(freq, meses, tipo) {
+  const lista = [];
+  let d = new Date();
+  for (let i=0; lista.length < Math.ceil(meses/freq); i++) {
+    lista.push({fecha: d.toISOString().slice(0,10), tipo});
+    let mes = d.getMonth() + freq;
+    let anio = d.getFullYear() + Math.floor(mes/12);
+    d = new Date(anio, mes%12, 1);
+  }
+  return lista;
+}
+
+function renderCalPreview() {
+  const cont = document.getElementById('cal_preview');
+  if (!WZ.calPreview.length) { cont.innerHTML=''; return; }
+  const TIPO_CLR = {preventiva:'#1a7a1a',correctiva:'#cc0000',garantia:'#0066cc',inspeccion:'#f57c00'};
+  cont.innerHTML = `<div class="small text-muted mb-2">${WZ.calPreview.length} visita(s) a programar:</div>` +
+    WZ.calPreview.slice(0,8).map(v => `
+      <div class="cal-preview-row">
+        <div style="width:10px;height:10px;border-radius:50%;background:${TIPO_CLR[v.tipo]||'#888'};flex-shrink:0"></div>
+        <div class="fw-semibold">${v.fecha}</div>
+        <div class="text-muted">${v.tipo}</div>
+        <div class="badge bg-light text-secondary" style="font-size:.65rem">Programada</div>
+      </div>`).join('') +
+    (WZ.calPreview.length > 8 ? `<div class="small text-muted mt-1">+ ${WZ.calPreview.length-8} más…</div>` : '');
+}
+
+// ══ GUARDAR — funciones de API ═════════════════════════════════════════
+async function crearCliente() {
+  const fd = new FormData();
+  fd.append('razon_social',    document.getElementById('s1_razon').value.trim());
+  fd.append('rut',             document.getElementById('s1_rut').value.trim());
+  fd.append('direccion',       document.getElementById('s1_direccion').value.trim());
+  fd.append('comuna',          document.getElementById('s1_comuna').value.trim());
+  fd.append('ciudad',          document.getElementById('s1_ciudad').value.trim());
+  fd.append('contacto_nombre', document.getElementById('s1_contacto_nombre').value.trim());
+  fd.append('contacto_tel',    document.getElementById('s1_contacto_tel').value.trim());
+  fd.append('contacto_email',  document.getElementById('s1_contacto_email').value.trim());
+  fd.append('estado',          document.getElementById('s1_estado').value);
+  fd.append('notas',           document.getElementById('s1_notas').value.trim());
+  const r = await fetch('/mantenciones/clientes/nuevo', {
+    method: 'POST',
+    headers: { 'X-Wizard': '1' },
+    body: fd
+  });
+  const data = await r.json();
+  if (data.ok) { WZ.cid = data.id; return true; }
+  alert('Error al crear cliente'); return false;
+}
+
+async function subirContrato() {
+  const archivo = document.getElementById('ct_archivo').files[0];
+  if (!archivo) return true; // Sin contrato, OK
+  if (!WZ.cid) return false;
+  const fd = new FormData();
+  fd.append('archivo', archivo);
+  fd.append('nombre', document.getElementById('ct_nombre').value.trim() || archivo.name);
+  fd.append('fecha_inicio', document.getElementById('ct_inicio').value);
+  fd.append('fecha_vencimiento', document.getElementById('ct_vencimiento').value);
+  fd.append('es_indefinido', document.getElementById('ct_indefinido').checked ? '1' : '');
+  fd.append('monto_mensual', document.getElementById('ct_monto_mensual').value||'0');
+  fd.append('frecuencia_meses', document.getElementById('ct_frecuencia').value||'0');
+  const r = await fetch(`/mantenciones/api/clientes/${WZ.cid}/contratos`, { method:'POST', body:fd });
+  const data = await r.json();
+  if (data.ok) { WZ.ctid = data.id; return true; }
+  alert('Error al subir contrato'); return false;
+}
+
+async function subirMaquinas() {
+  const eqs = leerEquipos();
+  for (const eq of eqs) {
+    await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        nombre:            eq.nombre,
+        sku:               eq.sku,
+        serie:             eq.serie,
+        cantidad:          parseInt(eq.cantidad)||1,
+        ubicacion_cliente: eq.ubicacion,
+        estado_op:         eq.estado_op,
+        fecha_instalacion: eq.fecha_instalacion||null,
+      })
+    });
+  }
+}
+
+async function subirAdjuntos() {
+  for (const f of adjFiles) {
+    const fd = new FormData();
+    fd.append('archivo', f);
+    await fetch(`/mantenciones/api/contratos/${WZ.ctid}/adjuntos`, { method:'POST', body:fd });
+  }
+}
+
+async function finalizar() {
+  const btn = document.getElementById('btnFinalizar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try {
+    // 1. Crear cliente si no existe
+    if (!WZ.cid) {
+      const ok = await crearCliente();
+      if (!ok) { btn.disabled=false; btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar'; return; }
+    }
+    // 2. Subir máquinas
+    await subirMaquinas();
+    // 3. Subir contrato si no está subido
+    if (!WZ.ctid) await subirContrato();
+    // 4. Adjuntos
+    if (WZ.ctid && adjFiles.length) await subirAdjuntos();
+    // 5. Guardar edits IA
+    if (WZ.ctid) {
+      const edits = leerAiEditado();
+      if (edits) await fetch(`/mantenciones/api/contratos/${WZ.ctid}/ai-editar`,
+        { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(edits) });
+    }
+    // 6. Generar calendario
+    if (WZ.cid && document.getElementById('cal_generar')?.checked) {
+      const tipo  = document.getElementById('cal_tipo').value;
+      const meses = parseInt(document.getElementById('cal_meses').value)||12;
+      await fetch(`/mantenciones/api/clientes/${WZ.cid}/generar-calendario`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ dry_run:false, tipo, meses })
+      });
+    }
+    // 7. Ir a la ficha
+    window.location.href = `/mantenciones/clientes/${WZ.cid}`;
+  } catch(e) {
+    btn.disabled=false;
+    btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';
+    alert('Error inesperado: ' + e.message);
+  }
+}
+</script>
+{% endblock %}

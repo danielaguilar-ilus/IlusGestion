@@ -6774,6 +6774,54 @@ def init_mantenciones_tables():
                     INDEX idx_entidad (entidad, entidad_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+
+            # ── Adjuntos de contrato (hasta 4 extra) ───────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_adjuntos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    contrato_id     INT NOT NULL,
+                    nombre_original VARCHAR(300),
+                    archivo_path    VARCHAR(500),
+                    tipo            VARCHAR(50),
+                    created_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (contrato_id) REFERENCES mant_contratos(id) ON DELETE CASCADE,
+                    INDEX idx_contrato (contrato_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Columnas extra mant_maquinas (migracion) ───────────
+            for col_sql in [
+                "ALTER TABLE mant_maquinas ADD COLUMN ubicacion_cliente VARCHAR(200)",
+                "ALTER TABLE mant_maquinas ADD COLUMN fecha_instalacion DATE",
+                "ALTER TABLE mant_maquinas ADD COLUMN estado_op ENUM('operativo','critico','en_mantencion') DEFAULT 'operativo'",
+            ]:
+                try:
+                    cur.execute(col_sql)
+                except Exception:
+                    pass  # columna ya existe
+
+            # ── Columnas extra mant_contratos (migracion) ──────────
+            for col_sql in [
+                "ALTER TABLE mant_contratos ADD COLUMN sla_horas INT",
+                "ALTER TABLE mant_contratos ADD COLUMN incluye_repuestos TINYINT(1) DEFAULT 0",
+                "ALTER TABLE mant_contratos ADD COLUMN incluye_mant_gratis TINYINT(1) DEFAULT 0",
+                "ALTER TABLE mant_contratos ADD COLUMN costo_por_mant DECIMAL(12,2)",
+                "ALTER TABLE mant_contratos ADD COLUMN costo_total DECIMAL(12,2)",
+                "ALTER TABLE mant_contratos ADD COLUMN nivel_riesgo ENUM('alto','medio','bajo')",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_tipo_contrato VARCHAR(200)",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_clausulas TEXT",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_mejoras TEXT",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_cobertura TEXT",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_editable TEXT COMMENT 'JSON campos editados por usuario'",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_inicio DATE",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_fin DATE",
+            ]:
+                try:
+                    cur.execute(col_sql)
+                except Exception:
+                    pass  # columna ya existe
+
         conn.commit()
     finally:
         conn.close()
@@ -6898,6 +6946,209 @@ def mant_clientes():
     )
 
 
+@app.route("/mantenciones/clientes/wizard")
+@_mant_required
+def mant_cliente_wizard():
+    """Wizard inteligente de 4 pasos para crear cliente de mantención."""
+    return render_template("mantenciones/cliente_wizard.html")
+
+
+@app.route("/mantenciones/api/erp-rut", methods=["POST"])
+@_mant_required
+def mant_erp_rut_lookup():
+    """Busca un cliente en el ERP por RUT exacto y devuelve sus datos básicos."""
+    d   = request.get_json(silent=True) or {}
+    rut = d.get("rut", "").strip().replace(" ", "")
+    if not rut:
+        return jsonify({"error": "RUT requerido"}), 400
+    try:
+        erp_conn = get_erp()
+        with erp_conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT DISTINCT
+                       d.NRAZON AS razon_social,
+                       d.NRUC   AS rut,
+                       d.DIR1   AS direccion,
+                       d.COMU   AS comuna,
+                       d.EMAIL  AS email
+                    FROM `{ERP_TABLE}` d
+                    WHERE d.NRUC = %s
+                    LIMIT 1""",
+                (rut,)
+            )
+            row = cur.fetchone()
+        erp_conn.close()
+        if not row:
+            # Intentar búsqueda parcial
+            erp_conn2 = get_erp()
+            with erp_conn2.cursor() as cur2:
+                cur2.execute(
+                    f"""SELECT DISTINCT d.NRAZON, d.NRUC, d.DIR1 AS direccion,
+                               d.COMU AS comuna, d.EMAIL AS email
+                        FROM `{ERP_TABLE}` d
+                        WHERE d.NRUC LIKE %s LIMIT 1""",
+                    (f"%{rut.split('-')[0]}%",)
+                )
+                row = cur2.fetchone()
+            erp_conn2.close()
+        if not row:
+            return jsonify({"encontrado": False})
+        return jsonify({
+            "encontrado":   True,
+            "razon_social": row.get("razon_social",""),
+            "rut":          row.get("rut",""),
+            "direccion":    row.get("direccion",""),
+            "comuna":       row.get("comuna",""),
+            "email":        row.get("email",""),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "encontrado": False}), 500
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/generar-calendario", methods=["POST"])
+@_mant_required
+def mant_generar_calendario(cid):
+    """
+    Genera visitas de mantención automáticas basadas en el contrato activo del cliente.
+    Devuelve preview (dry_run=true) o guarda en DB.
+    """
+    d        = request.get_json(silent=True) or {}
+    dry_run  = d.get("dry_run", True)
+    desde_str= d.get("desde")     # YYYY-MM-DD
+    meses    = int(d.get("meses", 12))
+    tipo     = d.get("tipo", "preventiva")
+    tecnico  = d.get("tecnico", "")
+
+    # Obtener frecuencia del contrato activo
+    ct = mysql_fetchone(
+        """SELECT * FROM mant_contratos
+           WHERE cliente_id=%s AND estado IN ('vigente','indefinido')
+           ORDER BY created_at DESC LIMIT 1""",
+        (cid,)
+    )
+    cliente = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not ct:
+        return jsonify({"error": "Sin contrato activo para este cliente"}), 404
+
+    frecuencia = ct.get("ai_frecuencia_sug") or ct.get("frecuencia_meses") or 3
+    desde = datetime.strptime(desde_str, "%Y-%m-%d").date() if desde_str else datetime.now().date()
+
+    visitas_preview = []
+    fecha_actual = desde
+    while fecha_actual <= desde + timedelta(days=meses * 30):
+        visitas_preview.append({
+            "fecha":    str(fecha_actual),
+            "titulo":   f"Mantención {tipo.capitalize()} — {cliente['razon_social'] if cliente else ''}",
+            "tipo":     tipo,
+            "tecnico":  tecnico,
+            "contrato_id": ct["id"],
+        })
+        # Siguiente visita
+        mes = fecha_actual.month + frecuencia
+        anio = fecha_actual.year
+        while mes > 12:
+            mes -= 12
+            anio += 1
+        try:
+            fecha_actual = fecha_actual.replace(year=anio, month=mes)
+        except ValueError:
+            fecha_actual = fecha_actual.replace(year=anio, month=mes, day=28)
+
+    if dry_run:
+        return jsonify({"ok": True, "preview": visitas_preview, "frecuencia": frecuencia})
+
+    # Guardar visitas
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for v in visitas_preview:
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (cliente_id,contrato_id,titulo,fecha_programada,tipo,estado,created_by)
+                       VALUES (%s,%s,%s,%s,%s,'programada',%s)""",
+                    (cid, v["contrato_id"], v["titulo"], v["fecha"], v["tipo"], current_username())
+                )
+        conn.commit()
+        _mant_log("cliente", cid, "calendario_generado", f"{len(visitas_preview)} visitas")
+        return jsonify({"ok": True, "creadas": len(visitas_preview)})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/ai-editar", methods=["PUT"])
+@_mant_required
+def mant_contrato_ai_editar(ctid):
+    """Guarda los campos del análisis IA editados manualmente por el usuario."""
+    d = request.get_json(silent=True) or {}
+    editable_fields = [
+        "nombre", "fecha_inicio", "fecha_vencimiento", "es_indefinido",
+        "monto_mensual", "monto_anual", "frecuencia_meses", "notas", "estado",
+        "sla_horas", "incluye_repuestos", "incluye_mant_gratis",
+        "costo_por_mant", "costo_total", "nivel_riesgo",
+        "ai_tipo_contrato", "ai_cobertura", "ai_vigencia_inicio", "ai_vigencia_fin",
+    ]
+    sets = [f"{f}=%s" for f in editable_fields if f in d]
+    vals = [d[f] for f in editable_fields if f in d]
+    # Guardar snapshot editable como JSON también
+    sets.append("ai_editable=%s")
+    vals.append(json.dumps(d, ensure_ascii=False))
+    if not sets:
+        return jsonify({"error": "Sin campos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_contratos SET {','.join(sets)} WHERE id=%s", vals + [ctid])
+        conn.commit()
+        _mant_log("contrato", ctid, "ai_editado_manual")
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["POST"])
+@_mant_required
+def mant_adjunto_subir(ctid):
+    """Sube un archivo adjunto adicional al contrato (hasta 4)."""
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"error": "Sin archivo"}), 400
+    # Verificar límite
+    existing = mysql_fetchall("SELECT id FROM mant_adjuntos WHERE contrato_id=%s", (ctid,))
+    if len(existing) >= 4:
+        return jsonify({"error": "Máximo 4 adjuntos por contrato"}), 400
+    ext  = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "bin"
+    fname = secure_filename(f"adj_{ctid}_{int(time.time())}_{f.filename}")
+    fpath = os.path.join(MANT_UPLOADS, fname)
+    f.save(fpath)
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_adjuntos (contrato_id,nombre_original,archivo_path,tipo,created_by) VALUES (%s,%s,%s,%s,%s)",
+                (ctid, f.filename, fname, ext, current_username())
+            )
+            aid = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok": True, "id": aid, "nombre": f.filename})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/adjuntos/<int:aid>")
+@_mant_required
+def mant_adjunto_ver(aid):
+    """Descarga un adjunto — solo superadmin puede descargar."""
+    from flask import send_from_directory
+    if not g.permissions.get("superadmin"):
+        return "Acceso restringido — solo Superadmin puede descargar archivos de contratos.", 403
+    adj = mysql_fetchone("SELECT * FROM mant_adjuntos WHERE id=%s", (aid,))
+    if not adj:
+        return "No encontrado", 404
+    return send_from_directory(MANT_UPLOADS, adj["archivo_path"],
+                               as_attachment=False,
+                               download_name=adj["nombre_original"])
+
+
 @app.route("/mantenciones/clientes/nuevo", methods=["GET", "POST"])
 @_mant_required
 def mant_cliente_nuevo():
@@ -6921,10 +7172,26 @@ def mant_cliente_nuevo():
                 cid = cur.lastrowid
             conn.commit()
             _mant_log("cliente", cid, "creado", d.get("razon_social",""))
+            # Si viene del wizard (header especial), devolver JSON
+            if request.headers.get("X-Wizard") == "1":
+                return jsonify({"ok": True, "id": cid})
             return redirect(url_for("mant_ficha", cid=cid))
         finally:
             conn.close()
     return render_template("mantenciones/cliente_form.html", cliente=None)
+
+
+@app.route("/mantenciones/api/ultimo-cliente")
+@_mant_required
+def mant_ultimo_cliente():
+    """Devuelve el último cliente creado por el usuario actual (para el wizard)."""
+    row = mysql_fetchone(
+        "SELECT id, razon_social FROM mant_clientes WHERE created_by=%s ORDER BY created_at DESC LIMIT 1",
+        (current_username(),)
+    )
+    if not row:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify({"id": row["id"], "razon_social": row["razon_social"]})
 
 
 @app.route("/mantenciones/clientes/<int:cid>")
@@ -6984,11 +7251,16 @@ def mant_maquina_add(cid):
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_maquinas
-                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
+                    ubicacion_cliente,estado_op,fecha_instalacion,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("sku",""), d.get("nombre",""), d.get("serie",""),
                  d.get("doc_origen",""), d.get("doc_fecha") or None,
-                 int(d.get("cantidad",1)), d.get("notas",""), current_username())
+                 int(d.get("cantidad",1)), d.get("notas",""),
+                 d.get("ubicacion_cliente",""),
+                 d.get("estado_op","operativo"),
+                 d.get("fecha_instalacion") or None,
+                 current_username())
             )
             mid = cur.lastrowid
         conn.commit()
@@ -7085,6 +7357,10 @@ def mant_contrato_update(ctid):
 @_mant_required
 def mant_contrato_archivo(ctid):
     from flask import send_from_directory
+    # Solo superadmin puede descargar archivos de contratos (datos confidenciales)
+    if not g.permissions.get("superadmin"):
+        return ("Acceso restringido — solo el Superadministrador puede "
+                "descargar archivos de contratos."), 403
     ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
     if not ct:
         return "No encontrado", 404
@@ -7143,20 +7419,30 @@ def mant_contrato_analizar(ctid):
 
     prompt_sistema = """Eres un experto jurídico y técnico en contratos de mantención
 de equipos de fitness para gimnasios y centros deportivos en Chile (ILUS Fitness).
-Analiza el contrato de mantención con criterio profesional y responde SIEMPRE
-en formato JSON con exactamente esta estructura:
+Analiza el contrato con criterio profesional. Responde SIEMPRE en JSON con esta estructura EXACTA:
 {
-  "resumen": "string de 2-3 oraciones resumiendo el contrato",
-  "score": número_0_a_100,
+  "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Inspección|Otro",
+  "resumen": "2-3 oraciones resumiendo el contrato",
+  "score": 0-100,
+  "nivel_riesgo": "alto|medio|bajo",
+  "vigencia_inicio": "YYYY-MM-DD o null",
+  "vigencia_fin": "YYYY-MM-DD o null",
+  "es_indefinido": true_o_false,
+  "frecuencia_sugerida_meses": número_entero,
+  "sla_horas": número_entero_o_null,
+  "incluye_mant_gratis": true_o_false,
+  "incluye_repuestos": true_o_false,
+  "cobertura_descripcion": "descripción de qué cubre el contrato",
+  "costo_mensual": número_o_null,
+  "costo_por_mant": número_o_null,
+  "costo_total": número_o_null,
+  "clausulas_criticas": ["clausula1","clausula2",...],
   "puntos_criticos": ["punto1","punto2",...],
   "alertas": ["alerta1","alerta2",...],
-  "frecuencia_sugerida_meses": número,
-  "monto_mensual_sugerido": número_o_null,
-  "fecha_vencimiento_detectada": "YYYY-MM-DD o null",
-  "es_indefinido": true_o_false,
   "mejoras_prioritarias": ["mejora1","mejora2","mejora3"]
 }
-Sé específico sobre clausulas de maquinaria fitness (treadmills, bikes, etc.)."""
+Sé específico sobre equipos fitness (treadmills, bikes, elípticas, pesas, etc.).
+Detecta SLA, penalidades, cláusulas de exclusión y riesgos operativos para el prestador."""
 
     prompt_usuario = f"""Analiza este contrato de mantención:
 
@@ -7189,30 +7475,51 @@ Devuelve SOLO el JSON, sin texto adicional."""
     except Exception as e:
         return jsonify({"error": f"Error IA: {str(e)}"}), 500
 
-    # Guardar resultado en DB
+    # Guardar resultado en DB (estructura expandida)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE mant_contratos SET
                    ai_analizado=1, ai_fecha=%s,
-                   ai_resumen=%s, ai_puntos_criticos=%s, ai_alertas=%s,
+                   ai_resumen=%s,
+                   ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
+                   ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
                    ai_frecuencia_sug=%s, ai_score=%s,
+                   ai_vigencia_inicio=%s, ai_vigencia_fin=%s,
+                   nivel_riesgo=%s,
+                   sla_horas=%s,
+                   incluye_mant_gratis=%s, incluye_repuestos=%s,
+                   costo_por_mant=%s, costo_total=%s,
                    frecuencia_meses=COALESCE(NULLIF(frecuencia_meses,0),%s),
-                   es_indefinido=COALESCE(es_indefinido,%s)
+                   es_indefinido=COALESCE(NULLIF(es_indefinido,0),%s),
+                   monto_mensual=COALESCE(NULLIF(monto_mensual,0),%s)
                    WHERE id=%s""",
                 (datetime.now(),
                  resultado.get("resumen",""),
-                 json.dumps(resultado.get("puntos_criticos",[]), ensure_ascii=False),
-                 json.dumps(resultado.get("alertas",[]), ensure_ascii=False),
+                 json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
+                 json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),
+                 json.dumps(resultado.get("mejoras_prioritarias",[]),ensure_ascii=False),
+                 json.dumps(resultado.get("clausulas_criticas",[]), ensure_ascii=False),
+                 resultado.get("cobertura_descripcion",""),
+                 resultado.get("tipo_contrato",""),
                  resultado.get("frecuencia_sugerida_meses"),
                  resultado.get("score"),
+                 resultado.get("vigencia_inicio") or None,
+                 resultado.get("vigencia_fin") or None,
+                 resultado.get("nivel_riesgo","medio"),
+                 resultado.get("sla_horas") or None,
+                 1 if resultado.get("incluye_mant_gratis") else 0,
+                 1 if resultado.get("incluye_repuestos") else 0,
+                 resultado.get("costo_por_mant") or None,
+                 resultado.get("costo_total") or None,
                  resultado.get("frecuencia_sugerida_meses"),
                  1 if resultado.get("es_indefinido") else 0,
+                 resultado.get("costo_mensual") or None,
                  ctid)
             )
         conn.commit()
-        _mant_log("contrato", ctid, "analizado_ia", f"score={resultado.get('score')}")
+        _mant_log("contrato", ctid, "analizado_ia", f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}")
         return jsonify({"ok": True, "resultado": resultado})
     finally:
         conn.close()
