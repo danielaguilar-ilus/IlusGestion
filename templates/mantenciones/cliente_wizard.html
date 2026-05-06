@@ -133,18 +133,43 @@
   {# — Panel: carga desde contrato (IA) — #}
   <div id="panel-contrato" style="display:none">
     <div class="sec-title"><i class="bi bi-stars me-1"></i>Agente IA — extrae todo el contrato automáticamente</div>
-    <p class="text-muted small mb-3">Sube el contrato PDF o Word. La IA leerá el documento completo y extraerá los datos del cliente, cláusulas, costos, frecuencias y equipos mencionados.</p>
-    <div class="drop-zone" id="dropZoneIA" onclick="document.getElementById('ia_archivo').click()"
+    <p class="text-muted small mb-3">Sube el contrato PDF, Word o <strong>toma una foto</strong> con tu celular. La IA leerá el documento completo y extraerá datos del cliente, cláusulas, costos, frecuencias y equipos.</p>
+
+    {# Botones de entrada: Archivo vs Cámara (visible en móvil) #}
+    <div class="d-flex gap-2 mb-3">
+      <button type="button" class="btn btn-outline-secondary flex-fill"
+              onclick="document.getElementById('ia_archivo').click()">
+        <i class="bi bi-file-earmark-arrow-up me-1"></i>Subir archivo
+        <div class="small opacity-50" style="font-size:.67rem">PDF · Word · Imagen</div>
+      </button>
+      <button type="button" class="btn btn-outline-secondary flex-fill" id="btnCamara"
+              onclick="document.getElementById('ia_camara').click()">
+        <i class="bi bi-camera me-1"></i>Foto del contrato
+        <div class="small opacity-50" style="font-size:.67rem">Ideal desde celular</div>
+      </button>
+    </div>
+
+    <div class="drop-zone" id="dropZoneIA"
+         onclick="document.getElementById('ia_archivo').click()"
          ondragover="event.preventDefault();this.classList.add('drag-over')"
          ondragleave="this.classList.remove('drag-over')"
          ondrop="onDropIA(event)">
       <div id="dropIAContent">
         <i class="bi bi-cloud-upload" style="font-size:2.2rem;color:#ccc;display:block;margin-bottom:8px"></i>
-        <div class="fw-bold" style="color:#666">Arrastra el contrato aquí o haz clic</div>
-        <div class="small text-muted mt-1">PDF o Word — el agente IA identificará todo</div>
+        <div class="fw-bold" style="color:#666">Arrastra el contrato aquí o usa los botones</div>
+        <div class="small text-muted mt-1">PDF · Word · JPG · PNG</div>
       </div>
     </div>
-    <input type="file" id="ia_archivo" accept=".pdf,.doc,.docx" class="d-none" onchange="lanzarAgente()">
+
+    {# Input archivo (PDF/Word/Imagen) #}
+    <input type="file" id="ia_archivo"
+           accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,image/*"
+           class="d-none" onchange="lanzarAgente()">
+    {# Input cámara (solo foto directa) #}
+    <input type="file" id="ia_camara"
+           accept="image/*" capture="environment"
+           class="d-none" onchange="lanzarAgente('camara')">
+
     <div id="ia_status" class="mt-3" style="display:none"></div>
     <div id="ia_match" class="mt-2" style="display:none"></div>
   </div>
@@ -677,26 +702,51 @@ function onDropIA(e) {
   e.preventDefault();
   document.getElementById('dropZoneIA').classList.remove('drag-over');
   const f = e.dataTransfer.files[0];
-  if(f) { document.getElementById('ia_archivo').files; disparaAgente(f); }
+  if(f) disparaAgente(f);
 }
-function lanzarAgente() {
-  const f = document.getElementById('ia_archivo').files[0];
+function lanzarAgente(fuente) {
+  const inputId = fuente === 'camara' ? 'ia_camara' : 'ia_archivo';
+  const f = document.getElementById(inputId).files[0];
   if(f) disparaAgente(f);
 }
 
+const _IMG_EXTS = ['jpg','jpeg','png','webp'];
+function _esImagen(archivo) {
+  const ext = archivo.name.split('.').pop().toLowerCase();
+  return _IMG_EXTS.includes(ext) || archivo.type.startsWith('image/');
+}
+
 async function disparaAgente(archivo) {
+  const esImg = _esImagen(archivo);
   const zone = document.getElementById('dropZoneIA');
   zone.classList.add('has-file');
-  document.getElementById('dropIAContent').innerHTML = `
-    <i class="bi bi-file-earmark-check" style="font-size:2rem;color:#1a7a1a;display:block;margin-bottom:8px"></i>
-    <div class="fw-bold" style="color:#1a7a1a">${archivo.name}</div>
-    <div class="small text-muted">${(archivo.size/1024/1024).toFixed(2)} MB</div>`;
+
+  // Preview de imagen si es foto
+  if(esImg) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      document.getElementById('dropIAContent').innerHTML = `
+        <img src="${ev.target.result}" style="max-height:160px;max-width:100%;border-radius:8px;object-fit:contain" alt="Contrato">
+        <div class="fw-bold mt-2" style="color:#1a7a1a;font-size:.82rem"><i class="bi bi-camera-fill me-1"></i>${archivo.name}</div>
+        <div class="small text-muted">${(archivo.size/1024/1024).toFixed(2)} MB — foto del contrato</div>`;
+    };
+    reader.readAsDataURL(archivo);
+  } else {
+    document.getElementById('dropIAContent').innerHTML = `
+      <i class="bi bi-file-earmark-check" style="font-size:2rem;color:#1a7a1a;display:block;margin-bottom:8px"></i>
+      <div class="fw-bold" style="color:#1a7a1a">${archivo.name}</div>
+      <div class="small text-muted">${(archivo.size/1024/1024).toFixed(2)} MB</div>`;
+  }
 
   const status = document.getElementById('ia_status');
   status.style.display='';
   status.innerHTML = `<div class="erp-info">
     <span class="spinner-border spinner-border-sm me-2"></span>
-    <strong>Agente IA trabajando…</strong> Leyendo el contrato y extrayendo información del cliente, cláusulas, costos y equipos.
+    <strong>Agente IA trabajando…</strong>
+    ${esImg
+      ? ' Analizando la foto del contrato con visión IA — extrayendo cliente, cláusulas y equipos.'
+      : ' Leyendo el documento y extrayendo datos del cliente, cláusulas, costos y equipos.'
+    }
   </div>`;
 
   const fd = new FormData();

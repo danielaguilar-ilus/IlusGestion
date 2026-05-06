@@ -1,3 +1,5 @@
+import os
+
 # ─────────────────────────────────────────────
 #  Base de datos principal (Clever Cloud — MySQL)
 #  Aquí viven TODAS las tablas de la aplicación.
@@ -35,6 +37,12 @@ ERP_CONFIG = {
 }
 
 MAX_BULTOS = 27
+
+# ─────────────────────────────────────────────
+#  IA — Anthropic Claude (análisis de contratos)
+#  Obtén tu clave en: https://console.anthropic.com
+# ─────────────────────────────────────────────
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ─────────────────────────────────────────────
 #  Cloudinary — almacenamiento de fotos en la nube

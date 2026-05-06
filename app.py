@@ -18,6 +18,14 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG
+try:
+    from config import ANTHROPIC_API_KEY as _ANTHROPIC_KEY_CFG
+except ImportError:
+    _ANTHROPIC_KEY_CFG = ""
+
+def _get_ai_key():
+    """Resuelve la API key de Anthropic: env var > config.py"""
+    return os.environ.get("ANTHROPIC_API_KEY") or _ANTHROPIC_KEY_CFG or ""
 
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
@@ -7481,53 +7489,67 @@ def mant_erp_rut_lookup():
     return jsonify({"encontrado": False})
 
 
+_MANT_IMG_EXTS = ("jpg", "jpeg", "png", "webp")
+
 @app.route("/mantenciones/api/agente-contrato", methods=["POST"])
 @_mant_required
 def mant_agente_contrato():
     """
-    AGENTE IA DE CONTRATOS — lee un PDF/Word de contrato de mantención y extrae:
+    AGENTE IA DE CONTRATOS — lee PDF, Word o FOTO (cámara móvil) y extrae:
     - Datos del CLIENTE: RUT, razón social, dirección, contacto
     - Análisis del CONTRATO: tipo, vigencia, SLA, cláusulas, costos, riesgos
     - Equipos mencionados en el contrato
-    Luego cruza el RUT detectado con el ERP/local para enriquecer la respuesta.
+    Soporta: PDF, DOCX, JPG, PNG (foto del contrato desde celular).
     """
     f = request.files.get("archivo")
     if not f or not f.filename:
         return jsonify({"error": "Sin archivo"}), 400
 
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
-    if ext not in ("pdf", "doc", "docx"):
-        return jsonify({"error": "Solo PDF o Word"}), 400
+    if ext not in ("pdf", "doc", "docx") + _MANT_IMG_EXTS:
+        return jsonify({"error": "Formato no válido. Usa PDF, Word o imagen (JPG/PNG)."}), 400
+
+    # Verificar API key antes de procesar el archivo
+    ai_key = _get_ai_key()
+    if not ai_key:
+        return jsonify({"error": (
+            "⚠️ API de IA no configurada. "
+            "Agrega tu ANTHROPIC_API_KEY en Railway → Variables de entorno."
+        )}), 503
 
     # Guardar temporalmente
     tmp_path = os.path.join(MANT_UPLOADS, f"tmp_{int(time.time())}_{secure_filename(f.filename)}")
     f.save(tmp_path)
 
     texto = ""
+    img_b64 = None
+    img_media_type = None
+    is_image = ext in _MANT_IMG_EXTS
+
     try:
-        if ext == "pdf":
+        if is_image:
+            with open(tmp_path, "rb") as img_f:
+                img_b64 = base64.b64encode(img_f.read()).decode()
+            img_media_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
+        elif ext == "pdf":
             import pdfplumber
             with pdfplumber.open(tmp_path) as pdf:
                 texto = "\n".join(p.extract_text() or "" for p in pdf.pages[:20])
-        elif ext in ("doc","docx"):
+        elif ext in ("doc", "docx"):
             import docx as _docx
             doc = _docx.Document(tmp_path)
             texto = "\n".join(p.text for p in doc.paragraphs)
     except Exception as e:
-        try: os.remove(tmp_path)
-        except: pass
         return jsonify({"error": f"No se pudo leer el archivo: {e}"}), 500
     finally:
         try: os.remove(tmp_path)
         except: pass
 
-    if not texto.strip():
-        return jsonify({"error": "No se pudo extraer texto del documento"}), 422
+    if not is_image and not texto.strip():
+        return jsonify({"error": "No se pudo extraer texto del documento. Prueba subir el PDF o una foto del contrato."}), 422
 
-    prompt_agente = """Eres un agente especializado en análisis de contratos de mantención de equipos fitness en Chile.
-Tu tarea es leer el contrato y extraer TODA la información relevante en formato JSON estructurado.
-
-IMPORTANTE: Debes responder ÚNICAMENTE con el JSON, sin texto adicional.
+    prompt_agente = """Eres un agente experto en análisis de contratos de mantención de equipos fitness en Chile (ILUS Fitness).
+Tu tarea es extraer TODA la información del contrato y responder ÚNICAMENTE con JSON estructurado, sin texto adicional.
 
 Estructura requerida:
 {
@@ -7537,59 +7559,111 @@ Estructura requerida:
     "direccion": "dirección completa o null",
     "comuna": "comuna o null",
     "ciudad": "ciudad o null",
-    "contacto_nombre": "nombre del contacto o null",
+    "region": "región o null",
+    "contacto_nombre": "nombre del contacto principal o null",
+    "contacto_cargo": "cargo del contacto o null",
     "contacto_email": "email o null",
     "contacto_tel": "teléfono o null"
   },
+  "prestador": {
+    "razon_social": "empresa prestadora (usualmente ILUS) o null",
+    "rut": "RUT prestador o null",
+    "contacto_nombre": "técnico/representante o null"
+  },
   "contrato": {
     "nombre": "nombre o título del contrato",
+    "numero": "número de contrato o null",
     "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Mixto|Otro",
     "vigencia_inicio": "YYYY-MM-DD o null",
     "vigencia_fin": "YYYY-MM-DD o null",
     "es_indefinido": true_o_false,
+    "renovacion_automatica": true_o_false,
+    "dias_aviso_termino": número_entero_o_null,
     "frecuencia_meses": número_entero_o_null,
-    "sla_horas": número_entero_o_null,
+    "visitas_anuales": número_entero_o_null,
+    "horario_atencion": "descripción horario o null",
+    "sla_horas": número_o_null,
+    "tiempo_respuesta_urgente_horas": número_o_null,
     "monto_mensual": número_o_null,
     "costo_por_mant": número_o_null,
     "costo_total": número_o_null,
+    "moneda": "CLP|UF|USD",
+    "forma_pago": "descripción o null",
     "incluye_mant_gratis": true_o_false,
     "incluye_repuestos": true_o_false,
-    "cobertura_descripcion": "descripción de qué cubre el contrato",
+    "limite_repuestos": "descripción límite de repuestos o null",
+    "cobertura_descripcion": "qué cubre el contrato exactamente",
+    "exclusiones": ["exclusión1", "exclusión2"],
+    "penalidades": "descripción de penalidades por incumplimiento o null",
     "nivel_riesgo": "alto|medio|bajo",
     "score": número_0_a_100,
-    "resumen": "2-3 oraciones resumiendo el contrato",
-    "clausulas_criticas": ["clausula1", "clausula2"],
-    "alertas": ["alerta1", "alerta2"],
-    "mejoras_prioritarias": ["mejora1", "mejora2"]
+    "resumen": "2-3 oraciones resumiendo el contrato para el prestador",
+    "clausulas_criticas": ["clausula crítica 1", "clausula crítica 2"],
+    "alertas": ["alerta operativa 1", "alerta operativa 2"],
+    "mejoras_prioritarias": ["mejora sugerida 1", "mejora sugerida 2"]
   },
   "equipos": [
     {
-      "nombre": "nombre del equipo",
+      "nombre": "nombre del equipo fitness",
+      "marca": "marca o null",
+      "modelo": "modelo o null",
       "sku": "código o null",
       "cantidad": número_entero,
+      "ubicacion": "sala/piso/zona o null",
       "notas": "observaciones o null"
+    }
+  ],
+  "instalaciones": [
+    {
+      "nombre": "nombre de la instalación/sede o null",
+      "direccion": "dirección o null",
+      "comuna": "comuna o null"
     }
   ]
 }
 
-Sé riguroso extrayendo fechas, montos y cláusulas. Si un dato no está en el contrato, usa null.
-Para el score: 100=contrato excelente para el prestador, 0=contrato muy desfavorable o riesgoso."""
+Criterios de evaluación:
+- score 80-100: contrato muy favorable para el prestador (buenas tarifas, SLA razonable, cobertura clara)
+- score 50-79: contrato aceptable con algunas condiciones a revisar
+- score 20-49: contrato desfavorable (tarifas bajas, SLA exigente, sin límite de repuestos)
+- score 0-19: contrato de alto riesgo financiero u operativo
 
-    prompt_usuario = f"""Analiza este contrato de mantención de equipos fitness:
+Si el documento es una fotografía del contrato, extrae la información visible con la misma rigurosidad.
+Si un dato no aparece en el documento, usa null. No inventes información."""
 
-{texto[:8000]}
+    prompt_usuario = f"""Analiza este contrato de mantención de equipos fitness y extrae TODA la información:
 
-Extrae TODA la información del cliente, condiciones contractuales, equipos mencionados y análisis de riesgos."""
+{texto[:8000] if not is_image else '[Contrato en imagen adjunta — analiza todo el texto visible]'}
+
+Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionados, cláusulas críticas, riesgos y alertas operativas."""
 
     try:
         import anthropic as _anthropic
-        cliente_ia = _anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY",""))
-        msg = cliente_ia.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=2000,
-            system=prompt_agente,
-            messages=[{"role":"user","content":prompt_usuario}]
-        )
+        cliente_ia = _anthropic.Anthropic(api_key=ai_key)
+
+        if is_image:
+            # Análisis por visión (foto del contrato desde celular)
+            msg = cliente_ia.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=2500,
+                system=prompt_agente,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": img_media_type,
+                        "data": img_b64
+                    }},
+                    {"type": "text", "text": prompt_usuario}
+                ]}]
+            )
+        else:
+            msg = cliente_ia.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=2500,
+                system=prompt_agente,
+                messages=[{"role": "user", "content": prompt_usuario}]
+            )
+
         raw = msg.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -8070,11 +8144,12 @@ TEXTO DEL CONTRATO:
 
 Devuelve SOLO el JSON, sin texto adicional."""
 
+    ai_key = _get_ai_key()
+    if not ai_key:
+        return jsonify({"error": "⚠️ API de IA no configurada. Agrega ANTHROPIC_API_KEY en Railway."}), 503
     try:
         import anthropic as _anthropic
-        client = _anthropic.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY", "")
-        )
+        client = _anthropic.Anthropic(api_key=ai_key)
         msg = client.messages.create(
             model   = "claude-opus-4-5",
             max_tokens = 1500,
