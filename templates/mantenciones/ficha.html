@@ -1,0 +1,909 @@
+{% extends "base.html" %}
+{% block title %}{{ cliente.razon_social }} — Mantenciones{% endblock %}
+
+{% block content %}
+<style>
+/* ── Ficha layout ───────────────────────── */
+.ficha-header   { background:#fff;border-radius:12px;border:1px solid #eee;
+                  box-shadow:0 2px 8px rgba(0,0,0,.06);padding:20px 24px;margin-bottom:20px; }
+.ficha-section  { background:#fff;border-radius:12px;border:1px solid #eee;
+                  box-shadow:0 2px 8px rgba(0,0,0,.06);padding:20px 24px;margin-bottom:16px; }
+.ficha-section-title { font-size:.8rem;font-weight:700;text-transform:uppercase;
+                        letter-spacing:.8px;color:#888;margin-bottom:14px;
+                        padding-bottom:8px;border-bottom:1px solid #f0f0f0; }
+/* Máquinas */
+.maq-row   { display:flex;align-items:center;gap:12px;padding:10px 0;
+             border-bottom:1px solid #f5f5f5; }
+.maq-row:last-child { border-bottom:none; }
+.maq-icon  { width:36px;height:36px;border-radius:8px;background:#f0f4ff;
+             display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+/* Contratos */
+.ct-card   { border:1px solid #eee;border-radius:10px;padding:14px 16px;
+             margin-bottom:10px;transition:box-shadow .15s; }
+.ct-card:hover { box-shadow:0 3px 12px rgba(0,0,0,.1); }
+.score-bar { height:6px;border-radius:4px;background:#eee;overflow:hidden; }
+.score-fill { height:100%;border-radius:4px;transition:width .5s; }
+/* Visitas */
+.visita-row { display:flex;align-items:center;gap:12px;padding:9px 0;
+              border-bottom:1px solid #f5f5f5; }
+.visita-row:last-child { border-bottom:none; }
+.tipo-dot  { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
+/* Log */
+.log-item  { display:flex;gap:10px;padding:6px 0;font-size:.78rem;color:#666; }
+.log-time  { color:#aaa;font-size:.72rem;white-space:nowrap; }
+/* Badge estado */
+.badge-activo    { background:#e8f5e9;color:#1a7a1a;padding:2px 10px;border-radius:50px;font-size:.68rem;font-weight:700; }
+.badge-prospecto { background:#fff3e0;color:#e65100;padding:2px 10px;border-radius:50px;font-size:.68rem;font-weight:700; }
+.badge-inactivo  { background:#f5f5f5;color:#666;padding:2px 10px;border-radius:50px;font-size:.68rem;font-weight:700; }
+.badge-programada{ background:#e3f2fd;color:#0066cc;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-completada{ background:#e8f5e9;color:#1a7a1a;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-cancelada { background:#f5f5f5;color:#666;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-reagendada{ background:#fff3e0;color:#e65100;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-vigente   { background:#e8f5e9;color:#1a7a1a;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-por_vencer{ background:#fff3e0;color:#e65100;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-vencido   { background:#fdecea;color:#c62828;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+.badge-indefinido{ background:#ede7f6;color:#512da8;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700; }
+/* AI panel */
+.ai-panel { background:linear-gradient(135deg,#f3e5f5,#e8eaf6);
+            border-radius:10px;padding:14px 16px;margin-top:10px;font-size:.82rem; }
+.ai-chip  { display:inline-block;background:#fff;border-radius:6px;
+            padding:3px 9px;margin:2px;font-size:.72rem;box-shadow:0 1px 3px rgba(0,0,0,.1); }
+/* Botones pequeños */
+.btn-xs   { font-size:.72rem;padding:2px 8px;border-radius:6px; }
+/* Tipo visita colores */
+.tipo-preventiva { background:#1a7a1a; }
+.tipo-correctiva { background:#cc0000; }
+.tipo-garantia   { background:#0066cc; }
+.tipo-inspeccion { background:#f57c00; }
+</style>
+
+{# ── Breadcrumb + botones ───────────────────────────────────────── #}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div>
+        <h4 class="mb-0"><i class="bi bi-building-check me-2" style="color:var(--ilus-red)"></i>{{ cliente.razon_social }}</h4>
+        <div class="sub">{{ cliente.rut or '' }}{% if cliente.comuna %} · {{ cliente.comuna }}{% endif %}</div>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarCliente()">
+        <i class="bi bi-pencil me-1"></i>Editar
+      </button>
+      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Nueva visita
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+{# ══════════════════════════════════════════════════════════════════════
+   COLUMNA IZQUIERDA: info + máquinas + contratos
+══════════════════════════════════════════════════════════════════════ #}
+<div class="col-12 col-lg-8">
+
+  {# ── Info general cliente ── #}
+  <div class="ficha-section">
+    <div class="ficha-section-title"><i class="bi bi-info-circle me-1"></i>Información del cliente</div>
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Estado</div>
+        <span class="badge-{{ cliente.estado }}">{{ cliente.estado.title() }}</span>
+      </div>
+      {% if cliente.contacto_nombre %}
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Contacto</div>
+        <div class="fw-semibold" style="font-size:.85rem">{{ cliente.contacto_nombre }}</div>
+      </div>
+      {% endif %}
+      {% if cliente.contacto_tel %}
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Teléfono</div>
+        <a href="tel:{{ cliente.contacto_tel }}" class="fw-semibold text-decoration-none" style="font-size:.85rem">
+          {{ cliente.contacto_tel }}
+        </a>
+      </div>
+      {% endif %}
+      {% if cliente.contacto_email %}
+      <div class="col-6 col-md-3">
+        <div class="small text-muted">Email</div>
+        <a href="mailto:{{ cliente.contacto_email }}" class="fw-semibold text-decoration-none" style="font-size:.85rem">
+          {{ cliente.contacto_email }}
+        </a>
+      </div>
+      {% endif %}
+      {% if cliente.direccion %}
+      <div class="col-12">
+        <div class="small text-muted">Dirección</div>
+        <div style="font-size:.85rem">{{ cliente.direccion }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}{% if cliente.ciudad %}, {{ cliente.ciudad }}{% endif %}</div>
+      </div>
+      {% endif %}
+      {% if cliente.notas %}
+      <div class="col-12">
+        <div class="small text-muted">Notas internas</div>
+        <div style="font-size:.82rem;color:#555;background:#f8f9fa;border-radius:6px;padding:8px 10px">{{ cliente.notas }}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── MÁQUINAS ── #}
+  <div class="ficha-section">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="ficha-section-title mb-0"><i class="bi bi-bicycle me-1"></i>Equipos / Máquinas</div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-xs btn-outline-secondary" onclick="abrirErpModal()">
+          <i class="bi bi-search me-1"></i>Buscar en ERP
+        </button>
+        <button class="btn btn-xs btn-ilus" onclick="abrirMaquinaManual()">
+          <i class="bi bi-plus"></i> Manual
+        </button>
+      </div>
+    </div>
+    <div id="maqListado">
+    {% if maquinas %}
+      {% for m in maquinas %}
+      <div class="maq-row" id="maq-{{ m.id }}">
+        <div class="maq-icon"><i class="bi bi-bicycle" style="color:#0066cc"></i></div>
+        <div style="flex:1;min-width:0">
+          <div class="fw-semibold text-truncate" style="font-size:.85rem">{{ m.nombre }}</div>
+          <div class="small text-muted">
+            {% if m.sku %}SKU: {{ m.sku }} · {% endif %}
+            {% if m.serie %}Serie: {{ m.serie }} · {% endif %}
+            {% if m.cantidad > 1 %}{{ m.cantidad }} unid.{% endif %}
+            {% if m.doc_origen %}· Doc: {{ m.doc_origen }}{% endif %}
+          </div>
+        </div>
+        {% if m.notas %}
+        <div class="small text-muted d-none d-md-block" style="max-width:160px;text-truncate">{{ m.notas[:60] }}</div>
+        {% endif %}
+        <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-center py-4 text-muted" id="maqEmpty">
+        <i class="bi bi-bicycle" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:6px"></i>
+        Sin equipos registrados
+      </div>
+    {% endif %}
+    </div>
+  </div>
+
+  {# ── CONTRATOS ── #}
+  <div class="ficha-section">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="ficha-section-title mb-0"><i class="bi bi-file-earmark-text me-1"></i>Contratos de mantención</div>
+      <button class="btn btn-xs btn-ilus" onclick="abrirContratoModal()">
+        <i class="bi bi-upload me-1"></i>Subir contrato
+      </button>
+    </div>
+    <div id="ctListado">
+    {% if contratos %}
+      {% for ct in contratos %}
+      <div class="ct-card" id="ct-{{ ct.id }}">
+        <div class="d-flex align-items-start gap-3">
+          <div style="width:38px;height:38px;border-radius:8px;flex-shrink:0;
+                      background:{{ '#fde8e8' if ct.estado=='vencido' else '#e8f5e9' if ct.estado in ('vigente','indefinido') else '#f5f5f5' }};
+                      display:flex;align-items:center;justify-content:center">
+            <i class="bi bi-file-earmark-{{ 'pdf' if ct.archivo_tipo=='pdf' else 'word' if ct.archivo_tipo=='word' else 'text' }}"
+               style="font-size:1rem;color:{{ '#cc0000' if ct.archivo_tipo=='pdf' else '#0066cc' if ct.archivo_tipo=='word' else '#888' }}"></i>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <span class="fw-bold" style="font-size:.88rem">{{ ct.nombre or 'Contrato' }}</span>
+              <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
+              {% if ct.ai_analizado %}
+              <span style="background:#ede7f6;color:#512da8;padding:1px 7px;border-radius:50px;font-size:.62rem;font-weight:700">
+                <i class="bi bi-stars"></i> IA score {{ ct.ai_score or '?' }}
+              </span>
+              {% endif %}
+            </div>
+            <div class="small text-muted mt-1">
+              {% if ct.fecha_inicio %}Inicio: {{ ct.fecha_inicio.strftime('%d/%m/%Y') if ct.fecha_inicio else '—' }}{% endif %}
+              {% if ct.es_indefinido %} · <strong style="color:#512da8">Indefinido</strong>{% elif ct.fecha_vencimiento %} · Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>{% endif %}
+              {% if ct.monto_mensual %} · ${{ "{:,.0f}".format(ct.monto_mensual).replace(",",".") }}/mes{% endif %}
+              {% if ct.frecuencia_meses %} · Frec. {{ ct.frecuencia_meses }}m{% endif %}
+            </div>
+          </div>
+          <div class="d-flex gap-1 flex-shrink-0">
+            {% if ct.archivo_path %}
+            <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}" target="_blank"
+               class="btn btn-xs btn-outline-secondary" title="Ver archivo">
+              <i class="bi bi-eye"></i>
+            </a>
+            {% endif %}
+            <button class="btn btn-xs btn-outline-secondary" onclick="toggleAiPanel({{ ct.id }})"
+                    title="{% if ct.ai_analizado %}Ver análisis IA{% else %}Analizar con IA{% endif %}">
+              <i class="bi bi-stars"></i>
+            </button>
+          </div>
+        </div>
+
+        {# AI panel (oculto por defecto) #}
+        <div id="ai-{{ ct.id }}" style="display:none">
+          {% if ct.ai_analizado %}
+          <div class="ai-panel mt-2">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <span style="font-size:.75rem;font-weight:700;color:#512da8"><i class="bi bi-stars me-1"></i>Análisis IA</span>
+              {% if ct.ai_score %}
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="score-bar" style="width:80px">
+                  <div class="score-fill" style="width:{{ ct.ai_score }}%;background:{{ '#1a7a1a' if ct.ai_score>=70 else '#e65100' if ct.ai_score>=40 else '#cc0000' }}"></div>
+                </div>
+                <span style="font-weight:800;color:#333">{{ ct.ai_score }}/100</span>
+              </div>
+              {% endif %}
+            </div>
+            {% if ct.ai_resumen %}<p style="margin:0 0 8px;color:#333">{{ ct.ai_resumen }}</p>{% endif %}
+            {% if ct.ai_puntos_criticos %}
+            <div class="mb-2">
+              <div style="font-size:.72rem;font-weight:700;color:#666;margin-bottom:4px">PUNTOS CRÍTICOS</div>
+              {% for p in ct.ai_puntos_criticos|from_json %}
+              <div class="ai-chip"><i class="bi bi-exclamation-circle me-1" style="color:#e65100"></i>{{ p }}</div>
+              {% endfor %}
+            </div>
+            {% endif %}
+            {% if ct.ai_alertas %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:#666;margin-bottom:4px">ALERTAS</div>
+              {% for a in ct.ai_alertas|from_json %}
+              <div class="ai-chip"><i class="bi bi-bell me-1" style="color:#cc0000"></i>{{ a }}</div>
+              {% endfor %}
+            </div>
+            {% endif %}
+            <div class="text-muted mt-2" style="font-size:.68rem">
+              Analizado: {{ ct.ai_fecha.strftime('%d/%m/%Y %H:%M') if ct.ai_fecha else '—' }}
+              <button class="btn btn-xs btn-outline-secondary ms-2" onclick="analizarContrato({{ ct.id }}, this)">
+                <i class="bi bi-arrow-clockwise me-1"></i>Re-analizar
+              </button>
+            </div>
+          </div>
+          {% else %}
+          <div class="ai-panel mt-2 text-center py-2">
+            <p class="mb-2" style="color:#555;font-size:.82rem">Este contrato aún no ha sido analizado por IA.</p>
+            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none"
+                    onclick="analizarContrato({{ ct.id }}, this)">
+              <i class="bi bi-stars me-1"></i>Analizar con Claude
+            </button>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-center py-4 text-muted" id="ctEmpty">
+        <i class="bi bi-file-earmark-x" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:6px"></i>
+        Sin contratos subidos
+      </div>
+    {% endif %}
+    </div>
+  </div>
+
+</div>{# /col izquierda #}
+
+{# ══════════════════════════════════════════════════════════════════════
+   COLUMNA DERECHA: visitas + log
+══════════════════════════════════════════════════════════════════════ #}
+<div class="col-12 col-lg-4">
+
+  {# ── VISITAS ── #}
+  <div class="ficha-section">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="ficha-section-title mb-0"><i class="bi bi-calendar-check me-1"></i>Visitas</div>
+      <button class="btn btn-xs btn-ilus" onclick="abrirNuevaVisita()">
+        <i class="bi bi-plus"></i>
+      </button>
+    </div>
+    {% if visitas %}
+    <div>
+    {% for v in visitas %}
+    <div class="visita-row">
+      <div class="tipo-dot tipo-{{ v.tipo }}"></div>
+      <div style="flex:1;min-width:0">
+        <div class="fw-semibold text-truncate" style="font-size:.82rem">
+          {{ v.titulo or v.tipo.capitalize() }}
+        </div>
+        <div class="small text-muted">
+          {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+          {% if v.tecnico %} · {{ v.tecnico }}{% endif %}
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-1">
+        <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span>
+        <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v|tojson|forceescape }})" title="Editar">
+          <i class="bi bi-pencil" style="font-size:.65rem"></i>
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-3 text-muted" style="font-size:.82rem">
+      <i class="bi bi-calendar-x" style="font-size:1.4rem;opacity:.3;display:block;margin-bottom:6px"></i>
+      Sin visitas registradas
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── LOG ── #}
+  <div class="ficha-section">
+    <div class="ficha-section-title"><i class="bi bi-clock-history me-1"></i>Actividad reciente</div>
+    {% if logs %}
+    {% for l in logs %}
+    <div class="log-item">
+      <div style="width:28px;height:28px;border-radius:50%;background:#f5f5f5;
+                  display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="bi bi-{{ 'pencil' if l.accion=='editado' else 'plus-circle' if l.accion in ('agregada','creada','subido') else 'stars' if l.accion=='analizado_ia' else 'activity' }}"
+           style="font-size:.7rem;color:#888"></i>
+      </div>
+      <div>
+        <span class="fw-semibold">{{ l.accion.replace('_',' ').capitalize() }}</span>
+        {% if l.detalle %} — {{ l.detalle }}{% endif %}
+        {% if l.usuario %} <span style="color:#bbb">por {{ l.usuario }}</span>{% endif %}
+        <div class="log-time">{{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '' }}</div>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center py-2 text-muted" style="font-size:.78rem">Sin actividad registrada</div>
+    {% endif %}
+  </div>
+
+</div>{# /col derecha #}
+</div>{# /row #}
+
+
+{# ═══════════════════════════════════════════════════════════════
+   MODALES
+═══════════════════════════════════════════════════════════════ #}
+
+{# ── Modal: Editar cliente ── #}
+<div class="modal fade" id="modalEditarCliente" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar cliente</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Razón social <span class="text-danger">*</span></label>
+            <input type="text" id="ec_razon" class="form-control" value="{{ cliente.razon_social }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">RUT</label>
+            <input type="text" id="ec_rut" class="form-control font-monospace" value="{{ cliente.rut or '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Estado</label>
+            <select id="ec_estado" class="form-select">
+              {% for e in ['activo','prospecto','inactivo'] %}
+              <option value="{{ e }}" {% if cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Contacto</div></div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label fw-semibold">Nombre contacto</label>
+            <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Teléfono</label>
+            <input type="text" id="ec_contacto_tel" class="form-control" value="{{ cliente.contacto_tel or '' }}">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
+          </div>
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Ubicación</div></div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Dirección</label>
+            <input type="text" id="ec_direccion" class="form-control" value="{{ cliente.direccion or '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Comuna</label>
+            <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Ciudad</label>
+            <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Notas internas</label>
+            <textarea id="ec_notas" class="form-control" rows="2">{{ cliente.notas or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarCliente()">
+          <i class="bi bi-floppy me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Buscar en ERP ── #}
+<div class="modal fade" id="modalErp" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Buscar equipos en ERP</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex gap-2 mb-3">
+          <input type="text" id="erpQ" class="form-control" placeholder="RUT o razón social del cliente…"
+                 value="{{ cliente.rut or cliente.razon_social }}"
+                 onkeydown="if(event.key==='Enter') buscarErp()">
+          <button class="btn btn-ilus px-4" onclick="buscarErp()"><i class="bi bi-search"></i></button>
+        </div>
+        <div id="erpResultado" style="min-height:80px">
+          <div class="text-center text-muted py-4" style="font-size:.85rem">
+            <i class="bi bi-search" style="font-size:1.5rem;opacity:.3;display:block;margin-bottom:6px"></i>
+            Ingresa un término para buscar
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="text-muted small me-auto" id="erpSelCount">0 líneas seleccionadas</div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="importarDesdeErp()">
+          <i class="bi bi-box-arrow-in-down me-1"></i>Importar seleccionadas
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Máquina manual ── #}
+<div class="modal fade" id="modalMaqManual" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-bicycle me-2"></i>Agregar equipo manual</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Nombre del equipo <span class="text-danger">*</span></label>
+            <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">SKU</label>
+            <input type="text" id="mm_sku" class="form-control font-monospace">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">N° Serie</label>
+            <input type="text" id="mm_serie" class="form-control">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Cantidad</label>
+            <input type="number" id="mm_cantidad" class="form-control" value="1" min="1">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Doc. origen</label>
+            <input type="text" id="mm_doc" class="form-control" placeholder="FCV-1234">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Notas</label>
+            <textarea id="mm_notas" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="guardarMaquinaManual()">
+          <i class="bi bi-plus-circle me-1"></i>Agregar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Subir contrato ── #}
+<div class="modal fade" id="modalContrato" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Subir contrato</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Nombre del contrato</label>
+            <input type="text" id="ct_nombre" class="form-control" placeholder="Ej: Contrato mantención 2025">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Archivo (PDF o Word) <span class="text-danger">*</span></label>
+            <input type="file" id="ct_archivo" class="form-control" accept=".pdf,.doc,.docx">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Fecha inicio</label>
+            <input type="date" id="ct_inicio" class="form-control">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Fecha vencimiento</label>
+            <input type="date" id="ct_vencimiento" class="form-control">
+          </div>
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="ct_indefinido"
+                     onchange="document.getElementById('ct_vencimiento').disabled=this.checked">
+              <label class="form-check-label fw-semibold" for="ct_indefinido">Contrato indefinido</label>
+            </div>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Monto mensual ($)</label>
+            <input type="number" id="ct_monto_mensual" class="form-control" placeholder="0" min="0" step="1000">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Frecuencia (meses)</label>
+            <input type="number" id="ct_frecuencia" class="form-control" placeholder="3" min="0">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Notas</label>
+            <textarea id="ct_notas" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="subirContrato()">
+          <i class="bi bi-upload me-1"></i>Subir
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Nueva / Editar visita ── #}
+<div class="modal fade" id="modalVisita" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalVisitaTitulo"><i class="bi bi-calendar-plus me-2"></i>Nueva visita</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="vi_id" value="">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Título</label>
+            <input type="text" id="vi_titulo" class="form-control" placeholder="Ej: Mantención preventiva Q1">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Tipo <span class="text-danger">*</span></label>
+            <select id="vi_tipo" class="form-select">
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="garantia">Garantía</option>
+              <option value="inspeccion">Inspección</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Estado</label>
+            <select id="vi_estado" class="form-select">
+              <option value="programada">Programada</option>
+              <option value="completada">Completada</option>
+              <option value="reagendada">Reagendada</option>
+              <option value="cancelada">Cancelada</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Fecha <span class="text-danger">*</span></label>
+            <input type="date" id="vi_fecha" class="form-control">
+          </div>
+          <div class="col-3">
+            <label class="form-label fw-semibold">Hora inicio</label>
+            <input type="time" id="vi_hora_inicio" class="form-control">
+          </div>
+          <div class="col-3">
+            <label class="form-label fw-semibold">Hora fin</label>
+            <input type="time" id="vi_hora_fin" class="form-control">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Técnico</label>
+            <input type="text" id="vi_tecnico" class="form-control" placeholder="Nombre del técnico">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Costo visita ($)</label>
+            <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Descripción / Notas</label>
+            <textarea id="vi_descripcion" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-danger me-auto" id="btnEliminarVisita"
+                style="display:none" onclick="eliminarVisita()">
+          <i class="bi bi-trash me-1"></i>Eliminar
+        </button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="guardarVisita()">
+          <i class="bi bi-floppy me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CID = {{ cliente.id }};
+
+// ─── Modales ─────────────────────────────────────────────
+function abrirEditarCliente() {
+  new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
+}
+function abrirErpModal() {
+  new bootstrap.Modal(document.getElementById('modalErp')).show();
+}
+function abrirMaquinaManual() {
+  ['mm_nombre','mm_sku','mm_serie','mm_doc','mm_notas'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('mm_cantidad').value = 1;
+  new bootstrap.Modal(document.getElementById('modalMaqManual')).show();
+}
+function abrirContratoModal() {
+  new bootstrap.Modal(document.getElementById('modalContrato')).show();
+}
+function abrirNuevaVisita() {
+  document.getElementById('vi_id').value = '';
+  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
+  ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('vi_tipo').value = 'preventiva';
+  document.getElementById('vi_estado').value = 'programada';
+  document.getElementById('vi_fecha').value = '';
+  document.getElementById('vi_hora_inicio').value = '';
+  document.getElementById('vi_hora_fin').value = '';
+  document.getElementById('vi_costo').value = '';
+  document.getElementById('btnEliminarVisita').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+function editarVisita(v) {
+  document.getElementById('vi_id').value = v.id;
+  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-check me-2"></i>Editar visita';
+  document.getElementById('vi_titulo').value = v.titulo || '';
+  document.getElementById('vi_tipo').value = v.tipo || 'preventiva';
+  document.getElementById('vi_estado').value = v.estado || 'programada';
+  document.getElementById('vi_fecha').value = v.fecha_programada ? v.fecha_programada.slice(0,10) : '';
+  document.getElementById('vi_hora_inicio').value = v.hora_inicio || '';
+  document.getElementById('vi_hora_fin').value = v.hora_fin || '';
+  document.getElementById('vi_tecnico').value = v.tecnico || '';
+  document.getElementById('vi_costo').value = v.costo || '';
+  document.getElementById('vi_descripcion').value = v.descripcion || '';
+  document.getElementById('btnEliminarVisita').style.display = '';
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+// ─── Guardar cliente (PUT) ────────────────────────────────
+async function guardarCliente() {
+  const data = {
+    razon_social:     document.getElementById('ec_razon').value.trim(),
+    rut:              document.getElementById('ec_rut').value.trim(),
+    estado:           document.getElementById('ec_estado').value,
+    contacto_nombre:  document.getElementById('ec_contacto_nombre').value.trim(),
+    contacto_tel:     document.getElementById('ec_contacto_tel').value.trim(),
+    contacto_email:   document.getElementById('ec_contacto_email').value.trim(),
+    direccion:        document.getElementById('ec_direccion').value.trim(),
+    comuna:           document.getElementById('ec_comuna').value.trim(),
+    ciudad:           document.getElementById('ec_ciudad').value.trim(),
+    notas:            document.getElementById('ec_notas').value.trim(),
+  };
+  if (!data.razon_social) { alert('Razón social requerida'); return; }
+  const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (r.ok) { location.reload(); }
+  else { alert('Error al guardar'); }
+}
+
+// ─── ERP búsqueda ─────────────────────────────────────────
+let erpSeleccionadas = {};  // key: "tipo-num-sku" → obj
+
+async function buscarErp() {
+  const q = document.getElementById('erpQ').value.trim();
+  if (!q) return;
+  const cont = document.getElementById('erpResultado');
+  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
+  const r = await fetch('/mantenciones/api/buscar-erp', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({q})
+  });
+  const data = await r.json();
+  if (data.error) { cont.innerHTML = `<div class="alert alert-warning">${data.error}</div>`; return; }
+  if (!data.documentos || data.documentos.length === 0) {
+    cont.innerHTML = '<div class="text-center text-muted py-4">Sin resultados</div>';
+    return;
+  }
+  erpSeleccionadas = {};
+  actualizarContadorErp();
+
+  let html = '<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.8rem"><thead><tr><th></th><th>Doc</th><th>Fecha</th><th>SKU</th><th>Producto</th><th>Cant.</th></tr></thead><tbody>';
+  data.documentos.forEach(doc => {
+    html += `<tr class="table-secondary"><td colspan="6" class="fw-bold text-muted" style="font-size:.72rem">${doc.tipo_doc} ${doc.num_doc} — ${doc.razon_social} (${doc.fecha})</td></tr>`;
+    doc.lineas.forEach((l, idx) => {
+      const key = `${doc.tipo_doc}-${doc.num_doc}-${idx}`;
+      // Enriquecer con info del doc padre para importación
+      const lineaEnriquecida = Object.assign({}, l, {
+        doc_origen: `${doc.tipo_doc} ${doc.num_doc}`,
+        fecha: doc.fecha,
+        producto: l.nombre
+      });
+      html += `<tr>
+        <td><input type="checkbox" class="erp-chk" data-key="${key}"
+             onchange="erpToggle('${key}', ${JSON.stringify(lineaEnriquecida).replace(/"/g,'&quot;')}, this.checked)"></td>
+        <td class="text-muted">${doc.tipo_doc} ${doc.num_doc}</td>
+        <td class="text-muted">${doc.fecha}</td>
+        <td class="font-monospace">${l.sku||'—'}</td>
+        <td>${l.nombre||'—'}</td>
+        <td>${l.cantidad||1}</td>
+      </tr>`;
+    });
+  });
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
+}
+
+function erpToggle(key, linea, checked) {
+  if (checked) erpSeleccionadas[key] = linea;
+  else delete erpSeleccionadas[key];
+  actualizarContadorErp();
+}
+function actualizarContadorErp() {
+  const n = Object.keys(erpSeleccionadas).length;
+  document.getElementById('erpSelCount').textContent = `${n} línea(s) seleccionada(s)`;
+}
+
+async function importarDesdeErp() {
+  const lineas = Object.values(erpSeleccionadas);
+  if (!lineas.length) { alert('Selecciona al menos una línea'); return; }
+  let importadas = 0;
+  for (const l of lineas) {
+    await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        sku: l.sku || '',
+        nombre: l.producto || '',
+        doc_origen: l.doc_origen || '',
+        doc_fecha: l.fecha || '',
+        cantidad: parseInt(l.cantidad) || 1,
+      })
+    });
+    importadas++;
+  }
+  bootstrap.Modal.getInstance(document.getElementById('modalErp')).hide();
+  location.reload();
+}
+
+// ─── Agregar máquina manual ───────────────────────────────
+async function guardarMaquinaManual() {
+  const nombre = document.getElementById('mm_nombre').value.trim();
+  if (!nombre) { alert('Nombre requerido'); return; }
+  const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      nombre,
+      sku:      document.getElementById('mm_sku').value.trim(),
+      serie:    document.getElementById('mm_serie').value.trim(),
+      cantidad: parseInt(document.getElementById('mm_cantidad').value) || 1,
+      doc_origen: document.getElementById('mm_doc').value.trim(),
+      notas:    document.getElementById('mm_notas').value.trim(),
+    })
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalMaqManual')).hide();
+    location.reload();
+  } else { alert('Error al guardar'); }
+}
+
+async function eliminarMaquina(mid, btn) {
+  if (!confirm('¿Eliminar este equipo?')) return;
+  btn.disabled = true;
+  const r = await fetch(`/mantenciones/api/maquinas/${mid}`, { method: 'DELETE' });
+  if (r.ok) {
+    const row = document.getElementById(`maq-${mid}`);
+    if (row) { row.style.transition='opacity .3s'; row.style.opacity='0'; setTimeout(()=>row.remove(),300); }
+  } else { btn.disabled = false; alert('Error al eliminar'); }
+}
+
+// ─── Subir contrato ───────────────────────────────────────
+async function subirContrato() {
+  const archivo = document.getElementById('ct_archivo').files[0];
+  if (!archivo) { alert('Selecciona un archivo'); return; }
+  const fd = new FormData();
+  fd.append('archivo', archivo);
+  fd.append('nombre', document.getElementById('ct_nombre').value.trim() || archivo.name);
+  fd.append('fecha_inicio', document.getElementById('ct_inicio').value);
+  fd.append('fecha_vencimiento', document.getElementById('ct_vencimiento').value);
+  fd.append('es_indefinido', document.getElementById('ct_indefinido').checked ? '1' : '');
+  fd.append('monto_mensual', document.getElementById('ct_monto_mensual').value || '0');
+  fd.append('frecuencia_meses', document.getElementById('ct_frecuencia').value || '0');
+  fd.append('notas', document.getElementById('ct_notas').value.trim());
+  const r = await fetch(`/mantenciones/api/clientes/${CID}/contratos`, { method:'POST', body:fd });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
+    location.reload();
+  } else { alert('Error al subir contrato'); }
+}
+
+// ─── Panel IA contrato ────────────────────────────────────
+function toggleAiPanel(ctid) {
+  const el = document.getElementById(`ai-${ctid}`);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function analizarContrato(ctid, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando…';
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
+    const data = await r.json();
+    if (data.ok) { location.reload(); }
+    else { alert(data.error || 'Error en análisis'); btn.disabled=false; btn.innerHTML=orig; }
+  } catch(e) { btn.disabled=false; btn.innerHTML=orig; alert('Error de conexión'); }
+}
+
+// ─── Visitas ──────────────────────────────────────────────
+async function guardarVisita() {
+  const vid = document.getElementById('vi_id').value;
+  const fecha = document.getElementById('vi_fecha').value;
+  if (!fecha) { alert('Fecha requerida'); return; }
+  const data = {
+    cliente_id:      CID,
+    titulo:          document.getElementById('vi_titulo').value.trim(),
+    tipo:            document.getElementById('vi_tipo').value,
+    estado:          document.getElementById('vi_estado').value,
+    fecha_programada: fecha,
+    hora_inicio:     document.getElementById('vi_hora_inicio').value || null,
+    hora_fin:        document.getElementById('vi_hora_fin').value || null,
+    tecnico:         document.getElementById('vi_tecnico').value.trim(),
+    costo:           parseFloat(document.getElementById('vi_costo').value) || 0,
+    descripcion:     document.getElementById('vi_descripcion').value.trim(),
+  };
+  let url = '/mantenciones/api/visitas', method = 'POST';
+  if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
+  const r = await fetch(url, {
+    method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    location.reload();
+  } else { alert('Error al guardar visita'); }
+}
+
+async function eliminarVisita() {
+  const vid = document.getElementById('vi_id').value;
+  if (!vid || !confirm('¿Eliminar esta visita?')) return;
+  const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    location.reload();
+  }
+}
+</script>
+{% endblock %}

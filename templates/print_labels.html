@@ -1,0 +1,1130 @@
+{% extends "base.html" %}
+{% block title %}Etiquetas - {{ product.sku }}{% endblock %}
+
+{% block content %}
+{% set format_key = fmt or label_format.key %}
+{% set logo_src = logo_url or url_for('static', filename='Logo.png') %}
+{% set pdf_base_url = url_for('labels_pdf_preview', pid=product.id) %}
+
+<style>
+:root {
+  --label-w: {{ label_format.w }};
+  --label-h: {{ label_format.h }};
+  --red: #e40000;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.label-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 26px;
+  background: #101010;
+  border-bottom: 4px solid var(--red);
+}
+
+.label-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+}
+
+.label-title h1 {
+  margin: 0;
+  font-size: 1.36rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.label-subtitle {
+  margin-top: 2px;
+  color: #e8e8e8;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: .82rem;
+}
+
+.toolbar-actions,
+.format-switch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.format-switch {
+  gap: 6px;
+  padding: 4px;
+  background: #191919;
+  border: 1px solid #333;
+  border-radius: 8px;
+}
+
+.format-chip,
+.print-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-weight: 850;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.format-chip {
+  color: #ddd;
+  background: transparent;
+  font-size: .82rem;
+}
+
+.format-chip.is-active,
+.print-btn {
+  color: #fff;
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.print-btn {
+  cursor: pointer;
+}
+
+.print-btn.secondary {
+  background: #191919;
+  border-color: #3a3a3a;
+}
+
+.print-shell {
+  min-height: calc(100vh - 88px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 28px;
+  padding: 22px 26px 44px;
+  background: #efefef;
+}
+
+.print-main {
+  min-width: 0;
+  min-height: calc(100vh - 154px);
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-heading {
+  margin: 0 0 18px;
+  color: #222;
+}
+
+.preview-heading h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.preview-heading p {
+  margin: 0;
+  color: #666;
+  font-size: .86rem;
+}
+
+.labels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+
+.print-guidance {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: auto;
+  overflow: hidden;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0,0,0,.06);
+}
+
+.guide-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 74px;
+  padding: 12px 18px;
+  border-right: 1px solid #ececec;
+}
+
+.guide-item:last-child {
+  border-right: 0;
+}
+
+.guide-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #111;
+  font-size: 1.75rem;
+}
+
+.guide-item strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #111;
+  font-size: .84rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.guide-item span {
+  display: block;
+  color: #555;
+  font-size: .78rem;
+  line-height: 1.35;
+}
+
+.print-notes {
+  display: none;
+  margin-top: 18px;
+  padding: 18px 20px;
+  border-left: 4px solid var(--red);
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  box-shadow: 0 10px 28px rgba(0,0,0,.05);
+}
+
+.print-notes h3 {
+  margin: 0 0 10px;
+  font-size: .92rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.print-notes ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #555;
+  font-size: .82rem;
+}
+
+.label-group {
+  width: max-content;
+}
+
+.group-meta {
+  margin: 0 0 8px;
+  color: #777;
+  font-size: .78rem;
+}
+
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  display: grid;
+  grid-template-rows: var(--hdr-h) var(--meta-h) var(--prod-h) minmax(0, 1fr) var(--stripe-h);
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: var(--label-border) solid #000;
+  border-radius: 2mm;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  box-shadow: 0 14px 34px rgba(0,0,0,.22);
+  isolation: isolate;
+}
+
+.label-head {
+  display: grid;
+  grid-template-columns: 44% 1px minmax(0, 1fr);
+  align-items: stretch;
+  background: #000;
+  color: #fff;
+}
+
+.sports-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--sports-pad-y) 1mm var(--sports-pad-bottom);
+  overflow: hidden;
+  text-align: center;
+  line-height: .88;
+}
+
+.sports-brand strong {
+  display: block;
+  font-size: var(--sports-size);
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.sports-brand span {
+  display: block;
+  margin-top: var(--solutions-gap);
+  color: #fff;
+  font-size: var(--solutions-size);
+  font-weight: 800;
+  letter-spacing: var(--solutions-spacing);
+}
+
+.brand-sep {
+  align-self: center;
+  width: .34mm;
+  height: 62%;
+  background: #fff;
+}
+
+.ilus-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 .6mm;
+  overflow: hidden;
+}
+
+.ilus-logo {
+  max-width: 104%;
+  max-height: 112%;
+  display: block;
+  object-fit: contain;
+  transform: translateY(var(--ilus-lift)) scale(var(--ilus-scale));
+  filter: grayscale(1) brightness(0) invert(1);
+  image-rendering: crisp-edges;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .85fr) minmax(0, .45fr);
+  align-items: center;
+  border-bottom: .32mm solid #000;
+  background: #fff;
+  font-size: var(--meta-size);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.meta-cell {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  min-width: 0;
+  padding: 0 var(--cell-pad);
+  border-right: .24mm solid #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.meta-cell:last-child {
+  border-right: 0;
+}
+
+.box-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
+}
+
+.product-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: .45mm var(--product-pad-x, var(--pad-x));
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+}
+
+.product-name {
+  display: -webkit-box;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(var(--prod-h) - .7mm);
+  text-align: center;
+  overflow: hidden;
+  color: #000;
+  font-size: var(--product-size);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1.02;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-decoration: none;
+}
+
+.label-body {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr) var(--date-rail-w);
+  min-height: 0;
+}
+
+.dims {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dim-gap);
+  padding: 0 var(--pad-x);
+  border-right: .32mm solid #000;
+  overflow: hidden;
+}
+
+.dim-item {
+  display: grid;
+  grid-template-columns: var(--dim-icon-w) var(--dim-label-w) minmax(var(--dim-value-w), 1fr);
+  align-items: baseline;
+  column-gap: var(--gap-sm);
+  min-width: 0;
+  color: #000;
+  font-size: var(--dim-size);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dim-icon {
+  font-size: var(--dim-icon-size);
+  line-height: 1;
+  text-align: center;
+  font-family: "Segoe UI Symbol", Arial, sans-serif;
+  font-weight: 900;
+}
+
+.dim-label {
+  overflow: visible;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.dim-value {
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 850;
+  text-overflow: ellipsis;
+}
+
+.barcode-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: var(--barcode-gap);
+  min-width: 0;
+  padding: var(--barcode-pad-y) 1.5mm .9mm;
+  overflow: hidden;
+}
+
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.barcode {
+  width: var(--barcode-w);
+  height: var(--barcode-h);
+  max-height: var(--barcode-h);
+}
+
+.sku-box {
+  align-self: end;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: var(--sku-h);
+  border: .28mm solid #000;
+  background: #fff;
+}
+
+.sku-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--sku-title-h);
+  background: #000;
+  color: #fff;
+  font-size: var(--sku-title-size);
+  font-weight: 900;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.sku-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: .35mm 1mm;
+  overflow: hidden;
+  color: #000;
+  background: #fff;
+  font-size: var(--sku-size);
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: .24mm solid #000;
+  background: #fff;
+  overflow: hidden;
+}
+
+.date-rail span {
+  display: block;
+  font-size: var(--date-size);
+  font-weight: 750;
+  line-height: 1;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+}
+
+.hazard-stripe {
+  background: repeating-linear-gradient(135deg, #000 0 3.2mm, #fff 3.2mm 5.8mm);
+  border-top: .32mm solid #000;
+}
+
+.label-150x100 {
+  --label-border: .38mm;
+  --hdr-h: 24mm;
+  --meta-h: 12mm;
+  --prod-h: 18mm;
+  --stripe-h: 8mm;
+  --pad-x: 4mm;
+  --product-pad-x: 1.8mm;
+  --cell-pad: 1.5mm;
+  --gap-sm: 1.1mm;
+  --sports-size: 7.2mm;
+  --solutions-size: 2.45mm;
+  --solutions-spacing: .9mm;
+  --solutions-gap: 1mm;
+  --sports-pad-y: 2.8mm;
+  --sports-pad-bottom: 2mm;
+  --ilus-scale: 1.25;
+  --ilus-lift: -1.85mm;
+  --meta-size: 4.3mm;
+  --product-size: 8mm;
+  --icon-size: 5.5mm;
+  --dim-icon-w: 6mm;
+  --dim-label-w: 11mm;
+  --dim-value-w: 10mm;
+  --dim-icon-size: 5mm;
+  --dim-size: 3.75mm;
+  --dim-gap: 2.6mm;
+  --barcode-pad-y: 1.2mm;
+  --barcode-gap: 2mm;
+  --barcode-w: 98%;
+  --barcode-h: 16mm;
+  --sku-h: 16mm;
+  --sku-title-h: 5mm;
+  --sku-title-size: 3mm;
+  --sku-size: 8.4mm;
+  --date-size: 2.8mm;
+  --date-rail-w: 5mm;
+}
+
+.label-100x50 {
+  --label-border: .28mm;
+  --hdr-h: 11.5mm;
+  --meta-h: 6.5mm;
+  --prod-h: 8mm;
+  --stripe-h: 4mm;
+  --pad-x: 1.8mm;
+  --cell-pad: .7mm;
+  --gap-sm: .42mm;
+  --sports-size: 3.45mm;
+  --solutions-size: 1.22mm;
+  --solutions-spacing: .32mm;
+  --solutions-gap: .35mm;
+  --sports-pad-y: .95mm;
+  --sports-pad-bottom: .55mm;
+  --ilus-scale: 1.32;
+  --ilus-lift: -.7mm;
+  --meta-size: 2.18mm;
+  --product-size: 3.55mm;
+  --icon-size: 2.9mm;
+  --dim-icon-w: 3mm;
+  --dim-label-w: 5.9mm;
+  --dim-value-w: 5.9mm;
+  --dim-icon-size: 2.5mm;
+  --dim-size: 1.86mm;
+  --dim-gap: 1.05mm;
+  --barcode-pad-y: .3mm;
+  --barcode-gap: .4mm;
+  --barcode-w: 94%;
+  --barcode-h: 7.2mm;
+  --sku-h: 9.2mm;
+  --sku-title-h: 2.8mm;
+  --sku-title-size: 1.35mm;
+  --sku-size: 4.35mm;
+  --date-size: 1.45mm;
+  --date-rail-w: 3mm;
+}
+
+.copy-foot {
+  width: var(--label-w);
+  margin-top: 7px;
+  padding: 5px 10px;
+  border-radius: 0 0 6px 6px;
+  background: #232323;
+  color: #aaa;
+  font-size: .72rem;
+  text-align: center;
+}
+
+.print-panel {
+  position: sticky;
+  top: 88px;
+  align-self: start;
+  padding: 20px;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(0,0,0,.08);
+}
+
+.print-panel h3 {
+  margin: 0 0 18px;
+  font-size: .92rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.panel-section {
+  padding: 16px 0;
+  border-top: 1px solid #ededed;
+}
+
+.panel-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.panel-label {
+  margin-bottom: 10px;
+  color: #444;
+  font-size: .82rem;
+  font-weight: 900;
+}
+
+.radio-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #e4e4e4;
+  border-radius: 7px;
+  color: #202020;
+  text-decoration: none;
+}
+
+.radio-link + .radio-link {
+  margin-top: 8px;
+}
+
+.radio-dot {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #c8c8c8;
+  border-radius: 50%;
+}
+
+.radio-link.is-active {
+  border-color: var(--red);
+  background: #fff6f6;
+}
+
+.radio-link.is-active .radio-dot {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 4px #fff;
+  background: var(--red);
+}
+
+.panel-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.hint-box {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #ffd57b;
+  border-radius: 7px;
+  background: #fff8e7;
+  color: #4c3a08;
+  font-size: .82rem;
+  line-height: 1.45;
+}
+
+.pdf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,.58);
+}
+
+.pdf-modal.is-open {
+  display: flex;
+}
+
+.pdf-dialog {
+  width: min(920px, 96vw);
+  height: min(780px, 92vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(0,0,0,.35);
+}
+
+.pdf-head,
+.pdf-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.pdf-foot {
+  justify-content: flex-end;
+  border-top: 1px solid #e5e5e5;
+  border-bottom: 0;
+}
+
+.pdf-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.pdf-close {
+  border: 0;
+  background: transparent;
+  color: #777;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pdf-frame-wrap {
+  min-height: 0;
+  padding: 16px;
+  background: #2a2a2a;
+}
+
+.pdf-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #2a2a2a;
+}
+
+@media (max-width: 1180px) {
+  .print-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .print-panel {
+    position: static;
+  }
+
+  .print-guidance,
+  .print-notes ul {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@page {
+  size: {{ label_format.w }} {{ label_format.h }};
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    width: {{ label_format.w }};
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .labels-list,
+  .labels-list * {
+    visibility: visible !important;
+  }
+
+  .app-sidebar,
+  .label-toolbar,
+  .print-panel,
+  .preview-heading,
+  .print-guidance,
+  .print-notes,
+  .group-meta,
+  .copy-foot,
+  .pdf-modal,
+  .no-print {
+    display: none !important;
+  }
+
+  .print-shell,
+  .print-main,
+  .labels-list,
+  .label-group {
+    display: block !important;
+    width: {{ label_format.w }} !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  .label {
+    width: {{ label_format.w }} !important;
+    height: {{ label_format.h }} !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .label-group:last-child .label {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
+</style>
+
+<div class="label-toolbar no-print">
+  <div class="label-title">
+    <a href="{{ url_for('product_detail', pid=product.id) }}" class="text-white text-decoration-none" title="Volver">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h1><i class="bi bi-printer text-danger"></i> Impresion de etiquetas</h1>
+      <div class="label-subtitle">{{ product.sku }} - {{ product.nombre }}</div>
+    </div>
+  </div>
+
+  <div class="toolbar-actions">
+    <button type="button" class="print-btn secondary js-preview-pdf" data-pdf-url="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}">
+      <i class="bi bi-eye"></i> Vista previa PDF
+    </button>
+    <a class="print-btn" href="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}&download=1">
+      <i class="bi bi-filetype-pdf"></i> Descargar PDF
+    </a>
+    <button type="button" class="print-btn" onclick="window.print()">
+      <i class="bi bi-printer"></i> Imprimir pagina
+    </button>
+  </div>
+</div>
+
+<div class="print-shell">
+  <main class="print-main">
+    <div class="preview-heading no-print">
+      <h2>Vista previa de etiqueta {{ label_format.label }}</h2>
+      <p>Diseno de una sola cara, listo para PDF e impresion en blanco y negro.</p>
+    </div>
+
+    <div class="labels-list" id="labelsList">
+      {% for b in bultos %}
+        {% for copy in range(qty_per_bulto[b.bulto_num]) %}
+          <section class="label-group">
+            <div class="group-meta no-print">Bulto {{ b.bulto_num }} / {{ total_bultos }} - copia {{ copy + 1 }} de {{ qty_per_bulto[b.bulto_num] }}</div>
+            <article class="label label-{{ format_key }}" data-label>
+              <header class="label-head">
+                <div class="sports-brand">
+                  <strong>SPORTS</strong>
+                  <strong>HEALTH</strong>
+                  <span>SOLUTIONS</span>
+                </div>
+                <div class="brand-sep"></div>
+                <div class="ilus-brand">
+                  <img class="ilus-logo" src="{{ logo_src }}" alt="ILUS">
+                </div>
+              </header>
+
+              <div class="meta-row">
+                <div class="meta-cell">
+                  <svg class="box-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <path d="M21 8l-9-5-9 5 9 5 9-5z"></path>
+                    <path d="M3 8v8l9 5 9-5V8"></path>
+                    <path d="M12 13v8"></path>
+                  </svg>
+                  <span>Bulto {{ b.bulto_num }} de {{ total_bultos }}</span>
+                </div>
+                <div class="meta-cell"><span>Peso bruto</span></div>
+                <div class="meta-cell"><span>{{ "%.0f"|format(b.kg|float) }} KG</span></div>
+              </div>
+
+              <div class="product-row">
+                <span class="product-name">{{ product.nombre }}</span>
+              </div>
+
+              <div class="label-body">
+                <div class="dims">
+                  <div class="dim-item"><span class="dim-icon">&#8596;</span><span class="dim-label">Largo:</span><span class="dim-value">{{ "%.0f"|format(b.largo_cm|float) }} cm</span></div>
+                  <div class="dim-item"><span class="dim-icon">&#8597;</span><span class="dim-label">Alto:</span><span class="dim-value">{{ "%.0f"|format(b.alto_cm|float) }} cm</span></div>
+                  <div class="dim-item"><span class="dim-icon">&#9634;</span><span class="dim-label">Ancho:</span><span class="dim-value">{{ "%.0f"|format(b.ancho_cm|float) }} cm</span></div>
+                  <div class="dim-item"><span class="dim-icon">&#9873;</span><span class="dim-label">Pvol:</span><span class="dim-value">{{ "%.2f"|format(b.peso_vol|float) }} Vol</span></div>
+                </div>
+
+                <div class="barcode-panel">
+                  <div class="barcode-wrap">
+                    <svg class="barcode"
+                         id="barcode-{{ b.bulto_num }}-{{ copy }}"
+                         data-code="{{ product.sku }}"></svg>
+                  </div>
+                  <div class="sku-box">
+                    <div class="sku-title">Codigo / SKU</div>
+                    <div class="sku-value">{{ product.sku }}</div>
+                  </div>
+                </div>
+
+                <div class="date-rail"><span>{{ fecha }}</span></div>
+              </div>
+
+              <div class="hazard-stripe"></div>
+            </article>
+            <div class="copy-foot no-print">Copia {{ copy + 1 }} de {{ qty_per_bulto[b.bulto_num] }} - Bulto {{ b.bulto_num }} / {{ total_bultos }}</div>
+          </section>
+        {% endfor %}
+      {% endfor %}
+    </div>
+
+    <section class="print-guidance no-print" aria-label="Buenas practicas de impresion">
+      <div class="guide-item">
+        <svg class="guide-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 20 20 4"></path><path d="m7 17 2 2"></path><path d="m10 14 2 2"></path><path d="m13 11 2 2"></path><path d="m16 8 2 2"></path></svg>
+        <div><strong>Medida exacta</strong><span>{{ label_format.label }} generado como PDF real, sin estirar.</span></div>
+      </div>
+      <div class="guide-item">
+        <svg class="guide-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M6 2h8l4 4v16H6z"></path><path d="M14 2v5h5"></path><path d="M8 15h8"></path><path d="M8 18h5"></path></svg>
+        <div><strong>PDF previsualizable</strong><span>Revisa el archivo final antes de enviar a la impresora.</span></div>
+      </div>
+      <div class="guide-item">
+        <svg class="guide-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 7V4h3"></path><path d="M17 4h3v3"></path><path d="M20 17v3h-3"></path><path d="M7 20H4v-3"></path><path d="M8 8v8"></path><path d="M11 8v8"></path><path d="M14 8v8"></path><path d="M17 8v8"></path></svg>
+        <div><strong>Codigo escaneable</strong><span>Barras nitidas en SVG, sin repetir el SKU bajo el codigo.</span></div>
+      </div>
+      <div class="guide-item">
+        <svg class="guide-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 9V3h10v6"></path><path d="M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"></path><path d="M7 14h10v7H7z"></path></svg>
+        <div><strong>Escala 100%</strong><span>Imprime sin ajustar a pagina para conservar milimetros.</span></div>
+      </div>
+    </section>
+
+    <section class="print-notes no-print">
+      <h3>Recomendaciones de impresion</h3>
+      <ul>
+        <li>Usa papel configurado como {{ label_format.label }}.</li>
+        <li>Activa graficos de fondo si Chrome lo solicita.</li>
+        <li>Valida el PDF antes de imprimir lotes grandes.</li>
+      </ul>
+    </section>
+  </main>
+
+  <aside class="print-panel no-print">
+    <h3>Configuracion de impresion</h3>
+
+    <div class="panel-section">
+      <div class="panel-label">Tamano de etiqueta</div>
+      <a class="radio-link {% if format_key == '150x100' %}is-active{% endif %}" href="{{ url_for('print_labels_alt', pid=product.id, fmt='150x100') }}">
+        <span class="radio-dot"></span>
+        <span><strong>150 x 100 mm</strong><br><small>Etiqueta grande</small></span>
+      </a>
+      <a class="radio-link {% if format_key == '100x50' %}is-active{% endif %}" href="{{ url_for('print_labels_alt', pid=product.id, fmt='100x50') }}">
+        <span class="radio-dot"></span>
+        <span><strong>100 x 50 mm</strong><br><small>Etiqueta pequena</small></span>
+      </a>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Acciones</div>
+      <div class="panel-actions">
+        <button type="button" class="print-btn secondary js-preview-pdf" data-pdf-url="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}">
+          <i class="bi bi-eye"></i> Vista previa PDF
+        </button>
+        <a class="print-btn" href="{{ pdf_base_url }}?fmt={{ format_key }}{% if request.args.get('bulto') %}&bulto={{ request.args.get('bulto') }}{% endif %}{% for b in bultos %}&qty_{{ b.bulto_num }}={{ qty_per_bulto[b.bulto_num] }}{% endfor %}&download=1">
+          <i class="bi bi-download"></i> Descargar PDF
+        </a>
+        <button type="button" class="print-btn" onclick="window.print()">
+          <i class="bi bi-printer"></i> Imprimir pagina
+        </button>
+      </div>
+      <div class="hint-box">
+        Para imprimir fisicamente, usa escala 100% o "Sin escala". Para revisar antes, abre la vista previa PDF.
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="pdf-modal no-print" id="pdfModal" aria-hidden="true">
+  <div class="pdf-dialog" role="dialog" aria-modal="true" aria-labelledby="pdfTitle">
+    <div class="pdf-head">
+      <h3 id="pdfTitle">Vista previa PDF</h3>
+      <button type="button" class="pdf-close js-close-pdf" aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="pdf-frame-wrap">
+      <iframe class="pdf-frame" id="pdfFrame" title="Vista previa PDF"></iframe>
+    </div>
+    <div class="pdf-foot">
+      <a class="print-btn secondary" id="pdfOpen" target="_blank" rel="noopener">Abrir PDF</a>
+      <a class="print-btn" id="pdfDownload">Descargar PDF</a>
+      <button type="button" class="print-btn secondary js-close-pdf">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const formatKey = "{{ format_key }}";
+
+  function fitText(el, minPx) {
+    if (!el) return;
+    let size = parseFloat(getComputedStyle(el).fontSize) || 14;
+    el.style.fontSize = size + "px";
+    for (let i = 0; i < 80; i += 1) {
+      const tooWide = el.scrollWidth > el.clientWidth;
+      const tooTall = el.scrollHeight > el.clientHeight;
+      if ((!tooWide && !tooTall) || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function fitTextToBox(el, maxPx, minPx) {
+    if (!el) return;
+    if (formatKey !== "100x50") {
+      let size = maxPx;
+      el.style.fontSize = size + "px";
+      el.style.lineHeight = "1.02";
+      for (let i = 0; i < 120; i += 1) {
+        const tooTall = el.scrollHeight > el.clientHeight + 1;
+        if (!tooTall || size <= minPx) break;
+        size -= 0.5;
+        el.style.fontSize = size + "px";
+      }
+      return;
+    }
+
+    let size = maxPx;
+    el.style.fontSize = size + "px";
+    el.style.lineHeight = "1.02";
+    for (let i = 0; i < 100; i += 1) {
+      const tooTall = el.scrollHeight > el.clientHeight + 1;
+      if (!tooTall || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function renderBarcode(barcode) {
+    const code = barcode.dataset.code || "";
+    const wrap = barcode.closest(".barcode-wrap");
+    const wrapWidth = wrap ? wrap.clientWidth : 140;
+    const density = formatKey === "100x50" ? 11.5 : 9.4;
+    const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
+    const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
+    const height = formatKey === "100x50" ? 27 : 50;
+
+    JsBarcode(barcode, code, {
+      format: "CODE128",
+      displayValue: false,
+      lineColor: "#000",
+      background: "#fff",
+      width: lineWidth,
+      height,
+      margin: 0
+    });
+    barcode.dataset.rendered = "1";
+  }
+
+  document.querySelectorAll(".barcode").forEach((barcode) => {
+    try {
+      renderBarcode(barcode);
+    } catch (error) {
+      console.error("No se pudo generar el codigo de barras", error);
+    }
+  });
+
+  document.querySelectorAll(".product-name").forEach((el) => {
+    fitTextToBox(el, formatKey === "100x50" ? 12.5 : 52, formatKey === "100x50" ? 6.5 : 13);
+  });
+
+  document.querySelectorAll(".sku-value").forEach((el) => {
+    fitText(el, formatKey === "100x50" ? 9 : 18);
+  });
+
+  const modal = document.getElementById("pdfModal");
+  const frame = document.getElementById("pdfFrame");
+  const openLink = document.getElementById("pdfOpen");
+  const downloadLink = document.getElementById("pdfDownload");
+
+  function openPdf(url) {
+    const src = url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now();
+    frame.src = src;
+    openLink.href = src;
+    downloadLink.href = url + (url.includes("?") ? "&" : "?") + "download=1";
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+  }
+
+  function closePdf() {
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    frame.src = "about:blank";
+  }
+
+  document.querySelectorAll(".js-preview-pdf").forEach((btn) => {
+    btn.addEventListener("click", () => openPdf(btn.dataset.pdfUrl));
+  });
+
+  document.querySelectorAll(".js-close-pdf").forEach((btn) => {
+    btn.addEventListener("click", closePdf);
+  });
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closePdf();
+  });
+});
+</script>
+{% endblock %}

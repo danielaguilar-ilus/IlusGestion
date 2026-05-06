@@ -2,473 +2,532 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etiqueta {{ product.sku }}</title>
 <style>
-/* ══════════════════════════════════════════════════
-   PAGE — una etiqueta por página, exactamente 150×70mm
-══════════════════════════════════════════════════ */
+:root {
+  --label-w: {{ label_format.w }};
+  --label-h: {{ label_format.h }};
+}
+
 @page {
-  size: 150mm 70mm;
+  size: {{ label_format.w }} {{ label_format.h }};
   margin: 0;
 }
-*, *::before, *::after { box-sizing: border-box; }
-html, body {
-  margin: 0; padding: 0;
-  width: 150mm; height: 70mm;
-  background: #fff;
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}
 
-/* ══════════════════════════════════════════════════
-   LABEL  150mm × 70mm
-══════════════════════════════════════════════════ */
-.label {
-  width: 150mm;
-  height: 70mm;
-  display: flex;
-  background: #fff;
-  border: 1pt solid #000;
-  overflow: hidden;
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/* Cada mitad */
-.half {
-  width: 50%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-}
-.half-a { border-right: 1pt dashed #999; }
-
-/* ══════════════════════════════════════════════════
-   HEADER  14mm
-══════════════════════════════════════════════════ */
-.hdr {
-  height: 14mm;
-  flex-shrink: 0;
-  background: #000;
-  display: flex;
-  align-items: stretch;
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}
-
-/* Sports Health Solutions */
-.logo-shs {
-  flex: 0 0 40%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 1.5mm 2mm 1.5mm 3mm;
-  border-right: 1.5pt solid #2c2c2c;
-}
-.shs-sports, .shs-health {
-  font-size: 9pt;
-  font-weight: 900;
-  color: #fff;
-  line-height: 1.1;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-}
-.shs-solutions {
-  font-size: 4.5pt;
-  font-weight: 400;
-  color: #999;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  margin-top: 0.5mm;
-  font-style: italic;
-}
-
-/* ILUS logo */
-.logo-ilus {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1mm 2mm;
-}
-.ilus-logo-img {
-  max-height: 13mm;
-  max-width: 100%;
-  height: auto;
-  width: auto;
-  object-fit: contain;
-  display: block;
-  margin-left: 2mm;
-  filter: grayscale(1) brightness(0) invert(1);
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}
-
-/* ══════════════════════════════════════════════════
-   META  8mm
-══════════════════════════════════════════════════ */
-.meta {
-  height: 8mm;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 0 2mm;
-  border-bottom: 1.5pt solid #000;
-  background: #fff;
-  font-size: 8pt;
-  font-weight: 700;
-  color: #000;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.meta-left  { display: flex; align-items: center; gap: 1.5mm; }
-.meta-right { display: flex; align-items: center; gap: 1.5mm; }
-.meta svg   { width: 4mm !important; height: 4mm !important; flex-shrink: 0; }
-.meta-left::after {
-  content: '|';
-  font-size: 12pt;
-  font-weight: 300;
-  color: #bbb;
-  margin: 0 1.5mm;
-  line-height: 1;
-}
-.meta-right > span::after {
-  content: '|';
-  font-size: 12pt;
-  font-weight: 300;
-  color: #bbb;
-  margin: 0 1.5mm;
-  line-height: 1;
-}
-
-/* ══════════════════════════════════════════════════
-   NOMBRE PRODUCTO  9mm
-══════════════════════════════════════════════════ */
-.pname {
-  height: 9mm;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 2mm;
-  border-bottom: 1.5pt solid #000;
-  background: #fff;
-  overflow: hidden;
-}
-.pname-txt {
-  font-size: 9pt;
-  font-weight: 900;
-  text-transform: uppercase;
-  color: #000;
-  letter-spacing: .3px;
-  line-height: 1.1;
-  width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ══════════════════════════════════════════════════
-   BODY  (flex:1 — ocupa el resto)
-══════════════════════════════════════════════════ */
-.body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
-  background: #fff;
-}
-
-/* ── Dimensiones ── */
-.dims {
-  flex: 0 0 50%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.3mm;
-  padding: 1.5mm 1.5mm 1.5mm 0;
-  margin-left: -5mm;
-  border-right: 1.5pt solid #000;
-  overflow: hidden;
-}
-.dim-row {
-  display: flex;
-  align-items: center;
-  position: relative;
-  gap: 1.5mm;
-  white-space: nowrap;
-  line-height: 1.3;
-}
-.dim-ico {
-  width: 4mm;
-  text-align: center;
-  font-size: 9pt;
-  flex-shrink: 0;
-  color: #000;
-  line-height: 1.3;
-  margin-left: 3mm;
-}
-.dim-lbl {
-  font-size: 6.5pt;
-  font-weight: 700;
-  color: #000;
-  min-width: 14mm;
-  line-height: 1.3;
-}
-.dim-val {
-  position: absolute;
-  right: 1mm;
-  font-size: 7pt;
-  font-weight: 900;
-  color: #000;
-  line-height: 1.3;
-}
-
-/* ── Columna código ── */
-.code-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 1mm 2mm 1mm 0;
-  margin-left: -2mm;
-  gap: 0;
-  overflow: hidden;
-}
-.code-col svg {
-  width: 100%;
-  max-width: 100%;
-  display: block;
-  flex-shrink: 0;
-}
-
-/* ── Caja SKU ── */
-.sku-box {
-  width: 100%;
-  flex-shrink: 0;
-  background: #000;
-  color: #fff;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  min-height: 7mm;
-  padding: 0.5mm 1.5mm 0.5mm 1mm;
-  margin-left: -4px;
-  margin-top: 1.3mm;
+*, *::before, *::after {
   box-sizing: border-box;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
-.sku-lbl {
-  display: block;
-  font-size: 0;
-  line-height: 0;
+
+html,
+body {
+  width: {{ label_format.w }};
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: #fff;
 }
-.sku-lbl::before {
-  content: 'CÓDIGO / SKU';
-  font-size: 3.5pt;
-  font-weight: 700;
-  color: #aaa;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  line-height: 1.4;
-  text-align: right;
-  display: block;
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
 }
-.sku-val {
-  display: block;
-  font-size: 8pt;
-  font-weight: 900;
-  letter-spacing: 0.5px;
-  line-height: 1.1;
+
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  display: grid;
+  grid-template-rows: var(--hdr-h) var(--meta-h) var(--prod-h) minmax(0, 1fr) var(--stripe-h);
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: var(--label-border) solid #000;
+  border-radius: 0;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  page-break-after: always;
+  break-after: page;
+  isolation: isolate;
+}
+
+.label:last-child {
+  page-break-after: auto;
+  break-after: auto;
+}
+
+.label-head {
+  display: grid;
+  grid-template-columns: 44% 1px minmax(0, 1fr);
+  align-items: stretch;
+  background: #000;
   color: #fff;
-  text-align: right;
-  word-break: break-all;
-  width: 100%;
+}
+
+.sports-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--sports-pad-y) 1mm var(--sports-pad-bottom);
+  overflow: hidden;
+  text-align: center;
+  line-height: .88;
+}
+
+.sports-brand strong {
+  display: block;
+  font-size: var(--sports-size);
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.sports-brand span {
+  display: block;
+  margin-top: var(--solutions-gap);
+  color: #fff;
+  font-size: var(--solutions-size);
+  font-weight: 800;
+  letter-spacing: var(--solutions-spacing);
+}
+
+.brand-sep {
+  align-self: center;
+  width: .34mm;
+  height: 62%;
+  background: #fff;
+}
+
+.ilus-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 .6mm;
   overflow: hidden;
 }
 
-/* ── Fecha ── */
-.fecha {
-  font-size: 3.5pt;
-  font-weight: 600;
-  color: #555;
-  text-align: right;
-  width: 100%;
-  flex-shrink: 0;
-  padding: 0.5mm 0.8mm 0 0;
-  letter-spacing: 0;
+.ilus-logo {
+  max-width: 104%;
+  max-height: 112%;
+  display: block;
+  object-fit: contain;
+  transform: translateY(var(--ilus-lift)) scale(var(--ilus-scale));
+  filter: grayscale(1) brightness(0) invert(1);
+  image-rendering: crisp-edges;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .85fr) minmax(0, .45fr);
+  align-items: center;
+  border-bottom: .32mm solid #000;
+  background: #fff;
+  font-size: var(--meta-size);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.meta-cell {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  min-width: 0;
+  padding: 0 var(--cell-pad);
+  border-right: .24mm solid #aaa;
   white-space: nowrap;
   overflow: hidden;
-  line-height: 1.2;
 }
 
-/* ── Footer franjas ── */
-.lfoot {
-  height: 5mm;
-  flex-shrink: 0;
-  border-top: 1.5pt solid #000;
-  background: repeating-linear-gradient(
-    -45deg,
-    #000 0px, #000 4pt,
-    #fff 4pt, #fff 8pt
-  );
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
+.meta-cell:last-child {
+  border-right: 0;
+}
+
+.box-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
+}
+
+.product-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: .45mm var(--product-pad-x, var(--pad-x));
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+}
+
+.product-name {
+  display: -webkit-box;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(var(--prod-h) - .7mm);
+  text-align: center;
+  overflow: hidden;
+  color: #000;
+  font-size: var(--product-size);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1.02;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-decoration: none;
+}
+
+.label-body {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr) var(--date-rail-w);
+  min-height: 0;
+}
+
+.dims {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dim-gap);
+  padding: 0 var(--pad-x);
+  border-right: .32mm solid #000;
+  overflow: hidden;
+}
+
+.dim-item {
+  display: grid;
+  grid-template-columns: var(--dim-icon-w) var(--dim-label-w) minmax(var(--dim-value-w), 1fr);
+  align-items: baseline;
+  column-gap: var(--gap-sm);
+  min-width: 0;
+  color: #000;
+  font-size: var(--dim-size);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dim-icon {
+  font-size: var(--dim-icon-size);
+  line-height: 1;
+  text-align: center;
+  font-family: "Segoe UI Symbol", Arial, sans-serif;
+  font-weight: 900;
+}
+
+.dim-label {
+  overflow: visible;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.dim-value {
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 850;
+  text-overflow: ellipsis;
+}
+
+.barcode-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: var(--barcode-gap);
+  min-width: 0;
+  padding: var(--barcode-pad-y) 1.5mm .9mm;
+  overflow: hidden;
+}
+
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.barcode {
+  width: var(--barcode-w);
+  height: var(--barcode-h);
+  max-height: var(--barcode-h);
+}
+
+.sku-box {
+  align-self: end;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: var(--sku-h);
+  border: .28mm solid #000;
+  background: #fff;
+}
+
+.sku-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--sku-title-h);
+  background: #000;
+  color: #fff;
+  font-size: var(--sku-title-size);
+  font-weight: 900;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.sku-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: .35mm 1mm;
+  overflow: hidden;
+  color: #000;
+  background: #fff;
+  font-size: var(--sku-size);
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: .24mm solid #000;
+  background: #fff;
+  overflow: hidden;
+}
+
+.date-rail span {
+  display: block;
+  font-size: var(--date-size);
+  font-weight: 750;
+  line-height: 1;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+}
+
+.hazard-stripe {
+  background: repeating-linear-gradient(135deg, #000 0 3.2mm, #fff 3.2mm 5.8mm);
+  border-top: .32mm solid #000;
+}
+
+.label-150x100 {
+  --label-border: .38mm;
+  --hdr-h: 24mm;
+  --meta-h: 12mm;
+  --prod-h: 18mm;
+  --stripe-h: 8mm;
+  --pad-x: 4mm;
+  --product-pad-x: 1.8mm;
+  --cell-pad: 1.5mm;
+  --gap-sm: 1.1mm;
+  --sports-size: 7.2mm;
+  --solutions-size: 2.45mm;
+  --solutions-spacing: .9mm;
+  --solutions-gap: 1mm;
+  --sports-pad-y: 2.8mm;
+  --sports-pad-bottom: 2mm;
+  --ilus-scale: 1.25;
+  --ilus-lift: -1.85mm;
+  --meta-size: 4.3mm;
+  --product-size: 8mm;
+  --icon-size: 5.5mm;
+  --dim-icon-w: 6mm;
+  --dim-label-w: 11mm;
+  --dim-value-w: 10mm;
+  --dim-icon-size: 5mm;
+  --dim-size: 3.75mm;
+  --dim-gap: 2.6mm;
+  --barcode-pad-y: 1.2mm;
+  --barcode-gap: 2mm;
+  --barcode-w: 98%;
+  --barcode-h: 16mm;
+  --sku-h: 16mm;
+  --sku-title-h: 5mm;
+  --sku-title-size: 3mm;
+  --sku-size: 8.4mm;
+  --date-size: 2.8mm;
+  --date-rail-w: 5mm;
+}
+
+.label-100x50 {
+  --label-border: .28mm;
+  --hdr-h: 11.5mm;
+  --meta-h: 6.5mm;
+  --prod-h: 8mm;
+  --stripe-h: 4mm;
+  --pad-x: 1.8mm;
+  --cell-pad: .7mm;
+  --gap-sm: .42mm;
+  --sports-size: 3.45mm;
+  --solutions-size: 1.22mm;
+  --solutions-spacing: .32mm;
+  --solutions-gap: .35mm;
+  --sports-pad-y: .95mm;
+  --sports-pad-bottom: .55mm;
+  --ilus-scale: 1.32;
+  --ilus-lift: -.7mm;
+  --meta-size: 2.18mm;
+  --product-size: 3.55mm;
+  --icon-size: 2.9mm;
+  --dim-icon-w: 3mm;
+  --dim-label-w: 5.9mm;
+  --dim-value-w: 5.9mm;
+  --dim-icon-size: 2.5mm;
+  --dim-size: 1.86mm;
+  --dim-gap: 1.05mm;
+  --barcode-pad-y: .3mm;
+  --barcode-gap: .4mm;
+  --barcode-w: 94%;
+  --barcode-h: 7.2mm;
+  --sku-h: 9.2mm;
+  --sku-title-h: 2.8mm;
+  --sku-title-size: 1.35mm;
+  --sku-size: 4.35mm;
+  --date-size: 1.45mm;
+  --date-rail-w: 3mm;
 }
 </style>
 </head>
 <body>
-
+{% set format_key = fmt or label_format.key %}
+{% set logo_src = logo_url or url_for('static', filename='Logo.png') %}
 {% for b in bultos %}
-{% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
-{% for copy in range(1, copies + 1) %}
-
-<div class="label">
-  {% for cara in ['A', 'B'] %}
-  <div class="half {% if cara == 'A' %}half-a{% endif %}">
-
-    <!-- HEADER -->
-    <div class="hdr">
-      <div class="logo-shs">
-        <span class="shs-sports">SPORTS</span>
-        <span class="shs-health">HEALTH</span>
-        <span class="shs-solutions">SOLUTIONS</span>
+  <article class="label label-{{ format_key }}">
+    <header class="label-head">
+      <div class="sports-brand">
+        <strong>SPORTS</strong>
+        <strong>HEALTH</strong>
+        <span>SOLUTIONS</span>
       </div>
-      <div class="logo-ilus">
-        {% if logo_url %}
-        <img src="{{ logo_url }}" alt="ILUS" class="ilus-logo-img">
-        {% else %}
-        <span style="font-size:16pt;font-weight:900;color:#fff;letter-spacing:1px">ILUS.</span>
-        {% endif %}
+      <div class="brand-sep"></div>
+      <div class="ilus-brand">
+        <img class="ilus-logo" src="{{ logo_src }}" alt="ILUS">
       </div>
-    </div>
+    </header>
 
-    <!-- META -->
-    <div class="meta">
-      <div class="meta-left">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-             stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
-          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-          <line x1="12" y1="22.08" x2="12" y2="12"/>
+    <div class="meta-row">
+      <div class="meta-cell">
+        <svg class="box-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M21 8l-9-5-9 5 9 5 9-5z"></path>
+          <path d="M3 8v8l9 5 9-5V8"></path>
+          <path d="M12 13v8"></path>
         </svg>
-        <strong>BULTO {{ b.bulto_num }} DE {{ total_bultos }}</strong>
+        <span>Bulto {{ b.bulto_num }} de {{ total_bultos }}</span>
       </div>
-      <div class="meta-right">
-        <span>PESO BRUTO</span>
-        <strong>{{ "%.0f"|format(b.peso) }} KG</strong>
-      </div>
+      <div class="meta-cell"><span>Peso bruto</span></div>
+      <div class="meta-cell"><span>{{ "%.0f"|format(b.kg|float) }} KG</span></div>
     </div>
 
-    <!-- NOMBRE -->
-    <div class="pname">
-      <span class="pname-txt">{{ product.nombre }}</span>
+    <div class="product-row">
+      <span class="product-name">{{ product.nombre }}</span>
     </div>
 
-    <!-- BODY -->
-    <div class="body">
-
-      <!-- Dimensiones -->
+    <div class="label-body">
       <div class="dims">
-        <div class="dim-row">
-          <span class="dim-ico">&#8596;</span>
-          <span class="dim-lbl">LARGO:</span>
-          <span class="dim-val">{{ "%.0f"|format(b.largo) }} cm</span>
-        </div>
-        <div class="dim-row">
-          <span class="dim-ico">&#8597;</span>
-          <span class="dim-lbl">ALTO:</span>
-          <span class="dim-val">{{ "%.0f"|format(b.alto) }} cm</span>
-        </div>
-        <div class="dim-row">
-          <span class="dim-ico">&#9635;</span>
-          <span class="dim-lbl">ANCHO:</span>
-          <span class="dim-val">{{ "%.0f"|format(b.ancho) }} cm</span>
-        </div>
-        <div class="dim-row">
-          <span class="dim-ico">&#128274;</span>
-          <span class="dim-lbl">PESO VOL.:</span>
-          <span class="dim-val">{{ "%.2f"|format(b.peso_vol) }} Vol</span>
-        </div>
+        <div class="dim-item"><span class="dim-icon">&#8596;</span><span class="dim-label">Largo:</span><span class="dim-value">{{ "%.0f"|format(b.largo_cm|float) }} cm</span></div>
+        <div class="dim-item"><span class="dim-icon">&#8597;</span><span class="dim-label">Alto:</span><span class="dim-value">{{ "%.0f"|format(b.alto_cm|float) }} cm</span></div>
+        <div class="dim-item"><span class="dim-icon">&#9634;</span><span class="dim-label">Ancho:</span><span class="dim-value">{{ "%.0f"|format(b.ancho_cm|float) }} cm</span></div>
+        <div class="dim-item"><span class="dim-icon">&#9873;</span><span class="dim-label">Pvol:</span><span class="dim-value">{{ "%.2f"|format(b.peso_vol|float) }} Vol</span></div>
       </div>
 
-      <!-- Barcode + SKU + Fecha -->
-      <div class="code-col">
-        <svg id="bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}"></svg>
+      <div class="barcode-panel">
+        <div class="barcode-wrap">
+          <svg class="barcode" id="barcode-{{ loop.index0 }}" data-code="{{ product.sku }}"></svg>
+        </div>
         <div class="sku-box">
-          <span class="sku-lbl">SKU</span>
-          <span class="sku-val">{{ product.sku }}</span>
+          <div class="sku-title">Codigo / SKU</div>
+          <div class="sku-value">{{ product.sku }}</div>
         </div>
-        <div class="fecha">{{ fecha }}</div>
       </div>
 
-    </div><!-- /body -->
+      <div class="date-rail"><span>{{ fecha }}</span></div>
+    </div>
 
-    <footer class="lfoot"></footer>
-
-  </div><!-- /half -->
-  {% endfor %}
-</div><!-- /label -->
-
-{% endfor %}
+    <div class="hazard-stripe"></div>
+  </article>
 {% endfor %}
 
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script>
-(function(){
-  var SKU = {{ product.sku | tojson }};
+document.addEventListener("DOMContentLoaded", function () {
+  const formatKey = "{{ format_key }}";
 
-  function barW(s){
-    if(s.length > 20) return 1.0;
-    if(s.length > 12) return 1.2;
-    return 1.4;
+  function fitText(el, minPx) {
+    if (!el) return;
+    let size = parseFloat(getComputedStyle(el).fontSize) || 14;
+    el.style.fontSize = size + "px";
+    for (let i = 0; i < 80; i += 1) {
+      const tooWide = el.scrollWidth > el.clientWidth;
+      const tooTall = el.scrollHeight > el.clientHeight;
+      if ((!tooWide && !tooTall) || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
   }
 
-  var bw = barW(SKU);
-
-  {% for b in bultos %}
-  {% set copies = qty_per_bulto.get(b.bulto_num, 1) %}
-  {% for copy in range(1, copies + 1) %}
-  {% for cara in ['A','B'] %}
-  (function(){
-    var id  = '#bc_{{ b.bulto_num }}_{{ copy }}_{{ cara }}';
-    var el  = document.querySelector(id);
-    if(!el) return;
-    try {
-      JsBarcode(id, SKU, {
-        format:       'CODE128',
-        width:        bw,
-        height:       52,
-        displayValue: false,
-        margin:       1,
-        background:   '#ffffff',
-        lineColor:    '#000000'
-      });
-      /* Auto-fit si desborda */
-      var parent = el.closest('.code-col');
-      var avail  = parent ? parent.offsetWidth - 6 : 100;
-      var tries  = 0;
-      while(el.getBoundingClientRect().width > avail && bw > 0.7 && tries < 15){
-        bw -= 0.1;
-        JsBarcode(id, SKU, {
-          format:'CODE128', width:bw, height:52,
-          displayValue:false, margin:1,
-          background:'#ffffff', lineColor:'#000000'
-        });
-        tries++;
+  function fitTextToBox(el, maxPx, minPx) {
+    if (!el) return;
+    if (formatKey !== "100x50") {
+      let size = maxPx;
+      el.style.fontSize = size + "px";
+      el.style.lineHeight = "1.02";
+      for (let i = 0; i < 120; i += 1) {
+        const tooTall = el.scrollHeight > el.clientHeight + 1;
+        if (!tooTall || size <= minPx) break;
+        size -= 0.5;
+        el.style.fontSize = size + "px";
       }
-    } catch(e){ console.warn('Barcode:', e); }
-  })();
-  {% endfor %}
-  {% endfor %}
-  {% endfor %}
-})();
-</script>
+      return;
+    }
 
+    let size = maxPx;
+    el.style.fontSize = size + "px";
+    el.style.lineHeight = "1.02";
+    for (let i = 0; i < 100; i += 1) {
+      const tooTall = el.scrollHeight > el.clientHeight + 1;
+      if (!tooTall || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function renderBarcode(barcode) {
+    const code = barcode.dataset.code || "";
+    const wrap = barcode.closest(".barcode-wrap");
+    const wrapWidth = wrap ? wrap.clientWidth : 140;
+    const density = formatKey === "100x50" ? 11.5 : 9.4;
+    const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
+    const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
+    const height = formatKey === "100x50" ? 27 : 50;
+
+    JsBarcode(barcode, code, {
+      format: "CODE128",
+      displayValue: false,
+      lineColor: "#000",
+      background: "#fff",
+      width: lineWidth,
+      height,
+      margin: 0
+    });
+    barcode.dataset.rendered = "1";
+  }
+
+  document.querySelectorAll(".barcode").forEach((barcode) => {
+    renderBarcode(barcode);
+  });
+
+  document.querySelectorAll(".product-name").forEach((el) => {
+    fitTextToBox(el, formatKey === "100x50" ? 12.5 : 52, formatKey === "100x50" ? 6.5 : 13);
+  });
+
+  document.querySelectorAll(".sku-value").forEach((el) => {
+    fitText(el, formatKey === "100x50" ? 9 : 18);
+  });
+});
+</script>
 </body>
 </html>

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Clientes Mantenciones — ILUS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-building-check me-2" style="color:var(--ilus-red)"></i>Clientes de Mantención</h4>
+      <div class="sub">{{ clientes|length }} cliente(s) encontrado(s)</div>
+    </div>
+    <a href="{{ url_for('mant_cliente_nuevo') }}" class="btn btn-ilus fw-bold px-3">
+      <i class="bi bi-building-add me-1"></i>Nuevo cliente
+    </a>
+  </div>
+</div>
+
+<form method="get" class="ilus-card mb-3 p-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-sm-5">
+      <input type="text" name="q" value="{{ filtros.q }}" class="form-control form-control-sm"
+             placeholder="🔍 Razón social, RUT, email…">
+    </div>
+    <div class="col-auto">
+      <select name="estado" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        <option value="activo"    {% if filtros.estado=='activo'    %}selected{% endif %}>Activos</option>
+        <option value="prospecto" {% if filtros.estado=='prospecto' %}selected{% endif %}>Prospectos</option>
+        <option value="inactivo"  {% if filtros.estado=='inactivo'  %}selected{% endif %}>Inactivos</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
+      <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+    </div>
+  </div>
+</form>
+
+{% if clientes %}
+<div class="row g-3">
+  {% for c in clientes %}
+  <div class="col-12 col-sm-6 col-xl-4">
+    <a href="{{ url_for('mant_ficha', cid=c.id) }}" class="text-decoration-none">
+      <div style="background:#fff;border-radius:12px;border:1px solid #eee;
+                  box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;
+                  transition:box-shadow .15s;height:100%"
+           onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,.13)'"
+           onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,.06)'">
+        <div class="d-flex align-items-start gap-3">
+          <div style="width:42px;height:42px;border-radius:50%;flex-shrink:0;
+                      background:{{ '#e8f5e9' if c.estado=='activo' else '#f5f5f5' }};
+                      display:flex;align-items:center;justify-content:center">
+            <i class="bi bi-building" style="font-size:1.1rem;color:{{ '#1a7a1a' if c.estado=='activo' else '#888' }}"></i>
+          </div>
+          <div style="min-width:0;flex:1">
+            <div class="fw-bold text-dark text-truncate" style="font-size:.92rem">{{ c.razon_social }}</div>
+            <div class="small text-muted font-monospace">{{ c.rut or '—' }}</div>
+            {% if c.contacto_nombre %}
+            <div class="small text-muted mt-1"><i class="bi bi-person me-1"></i>{{ c.contacto_nombre }}</div>
+            {% endif %}
+            {% if c.comuna %}<div class="small text-muted"><i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}</div>{% endif %}
+          </div>
+          <span class="badge-estado badge-{{ c.estado }}" style="display:inline-block;padding:3px 10px;border-radius:50px;font-size:.65rem;font-weight:700;
+            background:{{ '#e8f5e9' if c.estado=='activo' else ('#fff3e0' if c.estado=='prospecto' else '#f5f5f5') }};
+            color:{{ '#1a7a1a' if c.estado=='activo' else ('#e65100' if c.estado=='prospecto' else '#666') }}">
+            {{ c.estado.title() }}
+          </span>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ilus-card">
+  <div class="empty-state">
+    <div class="empty-icon">🏢</div>
+    <p>No hay clientes registrados aún.</p>
+    <a href="{{ url_for('mant_cliente_nuevo') }}" class="btn btn-ilus px-4">
+      <i class="bi bi-building-add me-1"></i>Agregar primer cliente
+    </a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

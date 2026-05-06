@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.mant-kpi { background:#fff;border-radius:12px;padding:18px 20px;
+            box-shadow:0 2px 10px rgba(0,0,0,.07);border:1px solid #eee;
+            display:flex;flex-direction:column;gap:4px; }
+.mant-kpi .kpi-num  { font-size:2rem;font-weight:900;line-height:1; }
+.mant-kpi .kpi-lbl  { font-size:.75rem;color:#888;text-transform:uppercase;letter-spacing:.8px; }
+.mant-kpi.red .kpi-num  { color:var(--ilus-red); }
+.mant-kpi.grn .kpi-num  { color:#1a7a1a; }
+.mant-kpi.amb .kpi-num  { color:#e65100; }
+.mant-kpi.blu .kpi-num  { color:#0066cc; }
+
+.mant-table { font-size:.83rem; }
+.mant-table thead th { background:#f8f9fa;font-weight:700;font-size:.72rem;
+                        text-transform:uppercase;letter-spacing:.5px;color:#666; }
+.badge-estado { display:inline-block;padding:2px 9px;border-radius:50px;
+                font-size:.68rem;font-weight:700; }
+.badge-programada { background:#e3f2fd;color:#0066cc; }
+.badge-completada  { background:#e8f5e9;color:#1a7a1a; }
+.badge-cancelada   { background:#f5f5f5;color:#666; }
+.badge-reagendada  { background:#fff3e0;color:#e65100; }
+.badge-vigente    { background:#e8f5e9;color:#1a7a1a; }
+.badge-por_vencer { background:#fff3e0;color:#e65100; }
+.badge-vencido    { background:#fdecea;color:#c62828; }
+.badge-indefinido { background:#ede7f6;color:#512da8; }
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-wrench-adjustable me-2" style="color:var(--ilus-red)"></i>Mantenciones</h4>
+      <div class="sub">Dashboard operacional — ILUS Fitness</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('mant_cliente_nuevo') }}" class="btn btn-ilus fw-bold px-3">
+        <i class="bi bi-building-add me-1"></i>Nuevo cliente
+      </a>
+      <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-calendar3 me-1"></i>Calendario
+      </a>
+    </div>
+  </div>
+</div>
+
+{# ── KPIs ── #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="mant-kpi grn">
+      <div class="kpi-num">{{ kpi_clientes }}</div>
+      <div class="kpi-lbl"><i class="bi bi-building me-1"></i>Clientes activos</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="mant-kpi blu">
+      <div class="kpi-num">{{ kpi_contratos }}</div>
+      <div class="kpi-lbl"><i class="bi bi-file-earmark-text me-1"></i>Contratos vigentes</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="mant-kpi {% if kpi_vencen > 0 %}amb{% else %}grn{% endif %}">
+      <div class="kpi-num">{{ kpi_vencen }}</div>
+      <div class="kpi-lbl"><i class="bi bi-exclamation-triangle me-1"></i>Vencen pronto</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="mant-kpi red">
+      <div class="kpi-num">${{ "{:,.0f}".format(kpi_ingresos).replace(",",".") }}</div>
+      <div class="kpi-lbl"><i class="bi bi-currency-dollar me-1"></i>MRR contratos</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  {# ── Próximas visitas ── #}
+  <div class="col-12 col-lg-7">
+    <div class="ilus-card h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="fw-bold" style="font-size:.9rem">
+          <i class="bi bi-calendar-check me-2" style="color:var(--ilus-red)"></i>Próximas visitas (30 días)
+        </div>
+        <a href="{{ url_for('mant_calendario') }}" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2" style="font-size:.75rem">Ver calendario</a>
+      </div>
+      {% if prox_visitas %}
+      <div class="table-responsive">
+        <table class="table mant-table mb-0">
+          <thead><tr>
+            <th>Fecha</th><th>Cliente</th><th>Tipo</th><th>Técnico</th><th>Estado</th>
+          </tr></thead>
+          <tbody>
+          {% for v in prox_visitas %}
+          <tr>
+            <td class="fw-semibold text-nowrap">{{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}</td>
+            <td>
+              <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" class="text-decoration-none fw-semibold">
+                {{ v.razon_social }}
+              </a>
+              {% if v.titulo %}<div class="small text-muted">{{ v.titulo }}</div>{% endif %}
+            </td>
+            <td><span class="badge bg-secondary" style="font-size:.65rem">{{ v.tipo }}</span></td>
+            <td class="text-muted small">{{ v.tecnico or '—' }}</td>
+            <td><span class="badge-estado badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-4 text-muted">
+        <i class="bi bi-calendar-x" style="font-size:1.8rem;opacity:.4;display:block;margin-bottom:8px"></i>
+        Sin visitas programadas para los próximos 30 días
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Alertas contratos ── #}
+  <div class="col-12 col-lg-5">
+    <div class="ilus-card h-100">
+      <div class="fw-bold mb-3" style="font-size:.9rem">
+        <i class="bi bi-exclamation-triangle me-2" style="color:#e65100"></i>Alertas de contratos
+      </div>
+      {% if alertas %}
+        {% for ct in alertas %}
+        <div class="d-flex justify-content-between align-items-start mb-3 pb-3 border-bottom">
+          <div style="min-width:0;flex:1">
+            <a href="{{ url_for('mant_ficha', cid=ct.cliente_id) }}" class="fw-semibold text-decoration-none d-block text-truncate">
+              {{ ct.razon_social }}
+            </a>
+            <div class="small text-muted">{{ ct.nombre or 'Contrato' }}</div>
+            <div class="small" style="color:#888">
+              {% if ct.fecha_vencimiento %}
+                Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>
+              {% endif %}
+            </div>
+          </div>
+          <span class="badge-estado badge-{{ ct.estado }} ms-2 flex-shrink-0">{{ ct.estado.replace('_',' ').title() }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-center py-4 text-muted">
+          <i class="bi bi-check-circle" style="font-size:1.8rem;color:#1a7a1a;opacity:.6;display:block;margin-bottom:8px"></i>
+          Sin alertas críticas de contratos
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Clientes sin visita reciente ── #}
+  {% if sin_visita %}
+  <div class="col-12">
+    <div class="ilus-card">
+      <div class="fw-bold mb-3" style="font-size:.9rem">
+        <i class="bi bi-clock-history me-2" style="color:#0066cc"></i>Clientes sin visita reciente (+180 días)
+      </div>
+      <div class="row g-2">
+        {% for c in sin_visita %}
+        <div class="col-12 col-sm-6 col-md-4">
+          <a href="{{ url_for('mant_ficha', cid=c.id) }}"
+             class="d-flex align-items-center gap-3 p-3 rounded-3 text-decoration-none"
+             style="background:#f8f9fa;border:1px solid #eee">
+            <div style="width:38px;height:38px;border-radius:50%;background:#0066cc22;
+                        display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <i class="bi bi-building" style="color:#0066cc"></i>
+            </div>
+            <div style="min-width:0">
+              <div class="fw-semibold text-truncate" style="color:#111;font-size:.85rem">{{ c.razon_social }}</div>
+              <div class="small text-muted">
+                Última: {{ c.ultima_visita.strftime('%d/%m/%Y') if c.ultima_visita else 'Nunca' }}
+              </div>
+            </div>
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

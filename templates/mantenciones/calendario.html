@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% block title %}Calendario Mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+/* ── Calendario custom ─────────────────────────── */
+.cal-wrap    { background:#fff;border-radius:12px;border:1px solid #eee;
+               box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 20px; }
+.cal-nav     { display:flex;align-items:center;gap:12px; }
+.cal-nav h5  { margin:0;font-size:1rem;font-weight:800;min-width:200px;text-align:center; }
+.cal-grid    { display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:12px; }
+.cal-dow     { text-align:center;font-size:.68rem;font-weight:700;text-transform:uppercase;
+               letter-spacing:.6px;color:#aaa;padding:6px 0; }
+.cal-day     { min-height:90px;border-radius:8px;padding:6px;position:relative;
+               background:#fafafa;border:1px solid #f0f0f0;cursor:pointer;
+               transition:background .12s; }
+.cal-day:hover { background:#f0f4ff; }
+.cal-day.other-month { opacity:.35; }
+.cal-day.today { border-color:var(--ilus-red)!important;background:#fff8f8; }
+.cal-day-num { font-size:.78rem;font-weight:700;color:#333;margin-bottom:4px; }
+.cal-day.today .cal-day-num { color:var(--ilus-red); }
+.cal-event   { font-size:.65rem;border-radius:4px;padding:2px 5px;margin-bottom:2px;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;
+               cursor:pointer;font-weight:600; }
+.cal-event:hover { opacity:.85; }
+.cal-more    { font-size:.62rem;color:#888;margin-top:2px; }
+/* Sidebar eventos */
+.evt-panel   { background:#fff;border-radius:12px;border:1px solid #eee;
+               box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px; }
+.evt-item    { padding:10px 0;border-bottom:1px solid #f5f5f5;cursor:pointer;
+               transition:background .1s; }
+.evt-item:last-child { border-bottom:none; }
+.evt-item:hover { background:#f8f9fa;border-radius:6px;padding-left:6px; }
+.evt-dot     { width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:3px; }
+/* Filtros */
+.tipo-btn    { font-size:.72rem;padding:3px 10px;border-radius:50px;border:1px solid #ddd;
+               cursor:pointer;transition:all .15s;background:#fff;color:#555; }
+.tipo-btn.active { color:#fff!important;border-color:transparent; }
+/* Leyenda */
+.leyenda-dot { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px; }
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-calendar3 me-2" style="color:var(--ilus-red)"></i>Calendario de mantenciones</h4>
+      <div class="sub">Visitas programadas y completadas</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-ilus fw-bold" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Nueva visita
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+{# ── Calendario ── #}
+<div class="col-12 col-lg-9">
+  <div class="cal-wrap">
+    {# Barra superior: nav + filtros #}
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <div class="cal-nav">
+        <button class="btn btn-sm btn-outline-secondary" onclick="calNav(-1)"><i class="bi bi-chevron-left"></i></button>
+        <h5 id="calTitulo">—</h5>
+        <button class="btn btn-sm btn-outline-secondary" onclick="calNav(1)"><i class="bi bi-chevron-right"></i></button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="calIrHoy()">Hoy</button>
+      </div>
+      <div class="d-flex gap-1 flex-wrap">
+        <button class="tipo-btn active" data-tipo="all" style="background:#555;border-color:#555;color:#fff" onclick="filtroTipo('all',this)">Todos</button>
+        <button class="tipo-btn" data-tipo="preventiva" onclick="filtroTipo('preventiva',this)" style="color:#1a7a1a">Preventiva</button>
+        <button class="tipo-btn" data-tipo="correctiva" onclick="filtroTipo('correctiva',this)" style="color:#cc0000">Correctiva</button>
+        <button class="tipo-btn" data-tipo="garantia"   onclick="filtroTipo('garantia',this)"   style="color:#0066cc">Garantía</button>
+        <button class="tipo-btn" data-tipo="inspeccion" onclick="filtroTipo('inspeccion',this)" style="color:#f57c00">Inspección</button>
+      </div>
+    </div>
+    {# Días de semana header #}
+    <div class="cal-grid">
+      {% for d in ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'] %}
+      <div class="cal-dow">{{ d }}</div>
+      {% endfor %}
+    </div>
+    {# Grid días #}
+    <div class="cal-grid" id="calGrid">
+      <div class="text-center text-muted py-5 col-span-7" style="grid-column:1/-1">
+        <span class="spinner-border spinner-border-sm me-2"></span>Cargando…
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Panel lateral: filtro cliente + lista día ── #}
+<div class="col-12 col-lg-3">
+  <div class="evt-panel mb-3">
+    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888;margin-bottom:8px">Filtrar cliente</div>
+    <select id="filtroCliente" class="form-select form-select-sm" onchange="calRender()">
+      <option value="">Todos los clientes</option>
+      {% for c in clientes %}
+      <option value="{{ c.id }}">{{ c.razon_social }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="evt-panel">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888" id="diaSelLabel">
+        Visitas del mes
+      </div>
+      <span class="badge bg-secondary" id="diaSelCount" style="font-size:.65rem">—</span>
+    </div>
+    <div id="diaEvtLista" style="max-height:380px;overflow-y:auto">
+      <div class="text-center text-muted py-3" style="font-size:.8rem">
+        Haz clic en un día para ver sus visitas
+      </div>
+    </div>
+    {# Leyenda #}
+    <div class="mt-3 pt-3 border-top">
+      <div class="small text-muted fw-bold mb-1">Tipos</div>
+      <div class="d-flex flex-column gap-1" style="font-size:.72rem">
+        <div><span class="leyenda-dot" style="background:#1a7a1a"></span>Preventiva</div>
+        <div><span class="leyenda-dot" style="background:#cc0000"></span>Correctiva</div>
+        <div><span class="leyenda-dot" style="background:#0066cc"></span>Garantía</div>
+        <div><span class="leyenda-dot" style="background:#f57c00"></span>Inspección</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>{# /row #}
+
+{# ── Modal: Nueva / editar visita ── #}
+<div class="modal fade" id="modalVisita" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalVisitaTitulo"><i class="bi bi-calendar-plus me-2"></i>Nueva visita</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="vi_id" value="">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Cliente <span class="text-danger">*</span></label>
+            <select id="vi_cliente" class="form-select">
+              <option value="">— Seleccionar —</option>
+              {% for c in clientes %}
+              <option value="{{ c.id }}">{{ c.razon_social }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Título</label>
+            <input type="text" id="vi_titulo" class="form-control" placeholder="Ej: Mantención preventiva Q2">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Tipo <span class="text-danger">*</span></label>
+            <select id="vi_tipo" class="form-select">
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="garantia">Garantía</option>
+              <option value="inspeccion">Inspección</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Estado</label>
+            <select id="vi_estado" class="form-select">
+              <option value="programada">Programada</option>
+              <option value="completada">Completada</option>
+              <option value="reagendada">Reagendada</option>
+              <option value="cancelada">Cancelada</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Fecha <span class="text-danger">*</span></label>
+            <input type="date" id="vi_fecha" class="form-control">
+          </div>
+          <div class="col-3">
+            <label class="form-label fw-semibold">Inicio</label>
+            <input type="time" id="vi_hora_inicio" class="form-control">
+          </div>
+          <div class="col-3">
+            <label class="form-label fw-semibold">Fin</label>
+            <input type="time" id="vi_hora_fin" class="form-control">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Técnico</label>
+            <input type="text" id="vi_tecnico" class="form-control">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Costo ($)</label>
+            <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Descripción</label>
+            <textarea id="vi_descripcion" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-danger me-auto" id="btnEliminar" style="display:none"
+                onclick="eliminarVisita()"><i class="bi bi-trash me-1"></i>Eliminar</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="guardarVisita()">
+          <i class="bi bi-floppy me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ══ Estado global ══════════════════════════════════════════
+let calAnio  = new Date().getFullYear();
+let calMes   = new Date().getMonth(); // 0-based
+let calEventos = [];  // todos los eventos del mes cargado
+let filtroTipoActivo = 'all';
+let diaSeleccionado  = null;
+
+const TIPO_COLOR = {
+  preventiva: '#1a7a1a',
+  correctiva: '#cc0000',
+  garantia:   '#0066cc',
+  inspeccion: '#f57c00',
+};
+const ESTADO_COLOR = {
+  completada: '#6c757d',
+  cancelada:  '#999999',
+  reagendada: '#ff9800',
+};
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+               'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// ══ Carga de eventos ════════════════════════════════════════
+async function calCargarEventos() {
+  const desde = `${calAnio}-${String(calMes+1).padStart(2,'0')}-01`;
+  const fin   = new Date(calAnio, calMes+1, 0);
+  const hasta = `${calAnio}-${String(calMes+1).padStart(2,'0')}-${fin.getDate()}`;
+  const cid   = document.getElementById('filtroCliente').value;
+  let url = `/mantenciones/api/visitas?start=${desde}&end=${hasta}`;
+  if (cid) url += `&cliente_id=${cid}`;
+  const r = await fetch(url);
+  calEventos = await r.json();
+  calRender();
+}
+
+// ══ Render del grid ════════════════════════════════════════
+function calRender() {
+  document.getElementById('calTitulo').textContent = `${MESES[calMes]} ${calAnio}`;
+  const grid    = document.getElementById('calGrid');
+  const hoy     = new Date();
+  const primero = new Date(calAnio, calMes, 1);
+  // lunes=0, domingo=6
+  let startDow = primero.getDay() - 1; // 0=lun
+  if (startDow < 0) startDow = 6;
+  const totalDias = new Date(calAnio, calMes+1, 0).getDate();
+
+  // Filtrar eventos
+  const cid = document.getElementById('filtroCliente').value;
+  const eventos = calEventos.filter(e => {
+    if (filtroTipoActivo !== 'all' && e.extendedProps.tipo !== filtroTipoActivo) return false;
+    if (cid && String(e.extendedProps.cliente_id) !== cid) return false;
+    return true;
+  });
+
+  // Indexar por día
+  const evtPorDia = {};
+  eventos.forEach(e => {
+    const d = parseInt(e.start.slice(8, 10));
+    if (!evtPorDia[d]) evtPorDia[d] = [];
+    evtPorDia[d].push(e);
+  });
+
+  let html = '';
+  // Celdas vacías al inicio
+  for (let i = 0; i < startDow; i++) {
+    html += `<div class="cal-day other-month"><div class="cal-day-num"></div></div>`;
+  }
+  for (let d = 1; d <= totalDias; d++) {
+    const esHoy = (d === hoy.getDate() && calMes === hoy.getMonth() && calAnio === hoy.getFullYear());
+    const dayEvts = evtPorDia[d] || [];
+    const MAX_SHOW = 3;
+    let evtsHtml = '';
+    dayEvts.slice(0, MAX_SHOW).forEach(e => {
+      const color = ESTADO_COLOR[e.extendedProps.estado] || TIPO_COLOR[e.extendedProps.tipo] || '#888';
+      const label = e.extendedProps.razon_social || e.title;
+      evtsHtml += `<div class="cal-event" style="background:${color}" title="${e.title}"
+                        onclick="abrirEvento(event, ${e.id})">${label}</div>`;
+    });
+    if (dayEvts.length > MAX_SHOW) {
+      evtsHtml += `<div class="cal-more">+${dayEvts.length - MAX_SHOW} más</div>`;
+    }
+    html += `<div class="cal-day${esHoy?' today':''}" onclick="selDia(${d})">
+               <div class="cal-day-num">${d}</div>
+               ${evtsHtml}
+             </div>`;
+  }
+  // Celdas vacías al final (completar semana)
+  const total = startDow + totalDias;
+  const resto = total % 7 === 0 ? 0 : 7 - (total % 7);
+  for (let i = 0; i < resto; i++) {
+    html += `<div class="cal-day other-month"><div class="cal-day-num"></div></div>`;
+  }
+  grid.innerHTML = html;
+
+  // Actualizar sidebar
+  actualizarSidebar(eventos);
+}
+
+function actualizarSidebar(eventos) {
+  const lista  = document.getElementById('diaEvtLista');
+  const count  = document.getElementById('diaSelCount');
+  const label  = document.getElementById('diaSelLabel');
+  const filtro = diaSeleccionado;
+  const mostrar = filtro
+    ? eventos.filter(e => parseInt(e.start.slice(8,10)) === filtro)
+    : eventos;
+  label.textContent = filtro ? `Día ${filtro}/${calMes+1}` : 'Visitas del mes';
+  count.textContent = mostrar.length;
+  if (!mostrar.length) {
+    lista.innerHTML = '<div class="text-center text-muted py-3" style="font-size:.8rem">Sin visitas</div>';
+    return;
+  }
+  lista.innerHTML = mostrar.map(e => {
+    const color  = ESTADO_COLOR[e.extendedProps.estado] || TIPO_COLOR[e.extendedProps.tipo] || '#888';
+    const estado = e.extendedProps.estado.replace('_',' ');
+    const tec    = e.extendedProps.tecnico ? `· ${e.extendedProps.tecnico}` : '';
+    const fecha  = e.start ? e.start.slice(8,10) + '/' + e.start.slice(5,7) : '—';
+    return `<div class="evt-item" onclick="abrirEvento(event, ${e.id})">
+      <div class="d-flex gap-2">
+        <div class="evt-dot" style="background:${color}"></div>
+        <div style="min-width:0">
+          <div class="fw-semibold text-truncate" style="font-size:.82rem">${e.extendedProps.razon_social}</div>
+          <div class="small text-muted">${fecha} ${tec}</div>
+          <div style="font-size:.68rem;color:${color};font-weight:700">${e.extendedProps.tipo} · ${estado}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selDia(d) {
+  diaSeleccionado = (diaSeleccionado === d) ? null : d;
+  const cid = document.getElementById('filtroCliente').value;
+  const eventos = calEventos.filter(e => {
+    if (filtroTipoActivo !== 'all' && e.extendedProps.tipo !== filtroTipoActivo) return false;
+    if (cid && String(e.extendedProps.cliente_id) !== cid) return false;
+    return true;
+  });
+  actualizarSidebar(eventos);
+}
+
+// ══ Navegación ══════════════════════════════════════════════
+function calNav(dir) {
+  calMes += dir;
+  if (calMes > 11) { calMes = 0; calAnio++; }
+  if (calMes < 0)  { calMes = 11; calAnio--; }
+  diaSeleccionado = null;
+  calCargarEventos();
+}
+function calIrHoy() {
+  const h = new Date();
+  calAnio = h.getFullYear();
+  calMes  = h.getMonth();
+  diaSeleccionado = null;
+  calCargarEventos();
+}
+
+// ══ Filtro tipo ════════════════════════════════════════════
+function filtroTipo(tipo, btn) {
+  filtroTipoActivo = tipo;
+  document.querySelectorAll('.tipo-btn').forEach(b => {
+    const t = b.dataset.tipo;
+    b.classList.remove('active');
+    b.style.background = '';
+    b.style.borderColor = '';
+    b.style.color = t === 'preventiva' ? '#1a7a1a'
+                  : t === 'correctiva' ? '#cc0000'
+                  : t === 'garantia'   ? '#0066cc'
+                  : t === 'inspeccion' ? '#f57c00'
+                  : '#555';
+  });
+  btn.classList.add('active');
+  const color = tipo === 'preventiva' ? '#1a7a1a'
+              : tipo === 'correctiva' ? '#cc0000'
+              : tipo === 'garantia'   ? '#0066cc'
+              : tipo === 'inspeccion' ? '#f57c00'
+              : '#555';
+  btn.style.background  = color;
+  btn.style.borderColor = color;
+  btn.style.color       = '#fff';
+  calRender();
+}
+
+// ══ Abrir evento (para editar) ═════════════════════════════
+function abrirEvento(evt, eid) {
+  evt.stopPropagation();
+  const e = calEventos.find(x => x.id == eid);
+  if (!e) return;
+  document.getElementById('vi_id').value = e.id;
+  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-check me-2"></i>Editar visita';
+  document.getElementById('vi_cliente').value   = e.extendedProps.cliente_id || '';
+  document.getElementById('vi_titulo').value    = e.title ? e.title.split(' — ').slice(1).join(' — ') : '';
+  document.getElementById('vi_tipo').value      = e.extendedProps.tipo || 'preventiva';
+  document.getElementById('vi_estado').value    = e.extendedProps.estado || 'programada';
+  document.getElementById('vi_fecha').value     = e.start ? e.start.slice(0,10) : '';
+  document.getElementById('vi_hora_inicio').value = '';
+  document.getElementById('vi_hora_fin').value    = '';
+  document.getElementById('vi_tecnico').value   = e.extendedProps.tecnico || '';
+  document.getElementById('vi_costo').value     = e.extendedProps.costo || '';
+  document.getElementById('vi_descripcion').value = '';
+  document.getElementById('btnEliminar').style.display = '';
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+// ══ Nueva visita ════════════════════════════════════════════
+function abrirNuevaVisita() {
+  document.getElementById('vi_id').value = '';
+  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
+  ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('vi_cliente').value  = document.getElementById('filtroCliente').value || '';
+  document.getElementById('vi_tipo').value     = 'preventiva';
+  document.getElementById('vi_estado').value   = 'programada';
+  document.getElementById('vi_fecha').value    = diaSeleccionado
+    ? `${calAnio}-${String(calMes+1).padStart(2,'0')}-${String(diaSeleccionado).padStart(2,'0')}`
+    : '';
+  document.getElementById('vi_hora_inicio').value = '';
+  document.getElementById('vi_hora_fin').value    = '';
+  document.getElementById('vi_costo').value    = '';
+  document.getElementById('btnEliminar').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+// ══ Guardar visita ══════════════════════════════════════════
+async function guardarVisita() {
+  const vid    = document.getElementById('vi_id').value;
+  const cid    = document.getElementById('vi_cliente').value;
+  const fecha  = document.getElementById('vi_fecha').value;
+  if (!cid)   { alert('Selecciona un cliente'); return; }
+  if (!fecha) { alert('Fecha requerida'); return; }
+  const data = {
+    cliente_id:       parseInt(cid),
+    titulo:           document.getElementById('vi_titulo').value.trim(),
+    tipo:             document.getElementById('vi_tipo').value,
+    estado:           document.getElementById('vi_estado').value,
+    fecha_programada: fecha,
+    hora_inicio:      document.getElementById('vi_hora_inicio').value || null,
+    hora_fin:         document.getElementById('vi_hora_fin').value || null,
+    tecnico:          document.getElementById('vi_tecnico').value.trim(),
+    costo:            parseFloat(document.getElementById('vi_costo').value) || 0,
+    descripcion:      document.getElementById('vi_descripcion').value.trim(),
+  };
+  let url = '/mantenciones/api/visitas', method = 'POST';
+  if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
+  const r = await fetch(url, {
+    method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    calCargarEventos();
+  } else { alert('Error al guardar visita'); }
+}
+
+async function eliminarVisita() {
+  const vid = document.getElementById('vi_id').value;
+  if (!vid || !confirm('¿Eliminar esta visita?')) return;
+  const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    calCargarEventos();
+  }
+}
+
+// ══ Iniciar ════════════════════════════════════════════════
+calCargarEventos();
+</script>
+{% endblock %}

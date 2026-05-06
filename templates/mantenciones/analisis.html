@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Análisis Mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.an-card    { background:#fff;border-radius:12px;border:1px solid #eee;
+              box-shadow:0 2px 8px rgba(0,0,0,.06);padding:20px 22px;height:100%; }
+.an-title   { font-size:.75rem;font-weight:700;text-transform:uppercase;
+              letter-spacing:.7px;color:#888;margin-bottom:14px;
+              padding-bottom:8px;border-bottom:1px solid #f0f0f0; }
+.an-kpi     { font-size:2rem;font-weight:900;line-height:1; }
+.an-sub     { font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.6px; }
+/* Barras de chart */
+.bar-row    { display:flex;align-items:center;gap:10px;margin-bottom:8px; }
+.bar-label  { font-size:.75rem;color:#555;width:80px;text-align:right;flex-shrink:0; }
+.bar-track  { flex:1;height:14px;background:#f0f0f0;border-radius:4px;overflow:hidden; }
+.bar-fill   { height:100%;border-radius:4px;transition:width .5s; }
+.bar-val    { font-size:.72rem;font-weight:700;color:#333;width:60px;flex-shrink:0; }
+/* Tabla por vencer */
+.vencer-row { display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f5f5f5; }
+.vencer-row:last-child { border-bottom:none; }
+.dias-pill  { font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:50px; }
+/* Donut fake */
+.donut-wrap { position:relative;display:flex;align-items:center;justify-content:center; }
+</style>
+
+<div class="page-header">
+  <div>
+    <h4><i class="bi bi-graph-up-arrow me-2" style="color:var(--ilus-red)"></i>Análisis económico</h4>
+    <div class="sub">Proyecciones, MRR y rendimiento de contratos</div>
+  </div>
+</div>
+
+{# ── KPIs top ── #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="an-card d-flex flex-column gap-1">
+      <div class="an-sub"><i class="bi bi-currency-dollar me-1"></i>MRR activo</div>
+      <div class="an-kpi" style="color:var(--ilus-red)">${{ "{:,.0f}".format(mrr).replace(",",".") }}</div>
+      <div style="font-size:.7rem;color:#aaa">Ingresos mensuales recurrentes</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="an-card d-flex flex-column gap-1">
+      <div class="an-sub"><i class="bi bi-calendar-year me-1"></i>ARR proyectado</div>
+      <div class="an-kpi" style="color:#1a7a1a">${{ "{:,.0f}".format(mrr*12).replace(",",".") }}</div>
+      <div style="font-size:.7rem;color:#aaa">MRR × 12 meses</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="an-card d-flex flex-column gap-1">
+      <div class="an-sub"><i class="bi bi-file-check me-1"></i>Contratos</div>
+      <div class="an-kpi" style="color:#0066cc">{{ por_vencer|length }}</div>
+      <div style="font-size:.7rem;color:#aaa">Con vencimiento próximo</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="an-card d-flex flex-column gap-1">
+      <div class="an-sub"><i class="bi bi-tools me-1"></i>Visitas (6m)</div>
+      <div class="an-kpi" style="color:#f57c00">{{ visitas_mes|sum(attribute='total') }}</div>
+      <div style="font-size:.7rem;color:#aaa">{{ visitas_mes|sum(attribute='completadas') }} completadas</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+{# ── Ingresos por mes ── #}
+<div class="col-12 col-lg-7">
+  <div class="an-card">
+    <div class="an-title"><i class="bi bi-bar-chart me-1"></i>Ingresos por contratos — últimos 12 meses</div>
+    {% if ingresos_mes %}
+    {% set max_ing = ingresos_mes|map(attribute='total_mensual')|map('float')|max %}
+    {% for r in ingresos_mes %}
+    {% set mes_label = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][r.mes-1] %}
+    <div class="bar-row">
+      <div class="bar-label">{{ mes_label }} {{ r.anio }}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:{{ ((r.total_mensual|float / max_ing * 100) if max_ing > 0 else 0)|round|int }}%;background:var(--ilus-red)"></div>
+      </div>
+      <div class="bar-val">${{ "{:,.0f}".format(r.total_mensual|float).replace(",",".") }}</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center text-muted py-4">
+      <i class="bi bi-bar-chart" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:6px"></i>
+      Sin datos de ingresos aún
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Top clientes ── #}
+<div class="col-12 col-lg-5">
+  <div class="an-card">
+    <div class="an-title"><i class="bi bi-trophy me-1"></i>Top clientes por MRR</div>
+    {% if top_clientes %}
+    {% set max_mrr = top_clientes[0].mrr|float if top_clientes else 1 %}
+    {% for c in top_clientes %}
+    <div class="bar-row">
+      <div class="bar-label" style="width:120px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+           title="{{ c.razon_social }}">{{ c.razon_social[:18] }}{% if c.razon_social|length > 18 %}…{% endif %}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:{{ ((c.mrr|float / max_mrr * 100) if max_mrr > 0 else 0)|round|int }}%;background:#0066cc"></div>
+      </div>
+      <div class="bar-val">${{ "{:,.0f}".format(c.mrr|float).replace(",",".") }}</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center text-muted py-4">Sin clientes activos</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Visitas por mes ── #}
+<div class="col-12 col-lg-6">
+  <div class="an-card">
+    <div class="an-title"><i class="bi bi-calendar-check me-1"></i>Visitas — últimos 6 meses</div>
+    {% if visitas_mes %}
+    {% set max_v = visitas_mes|map(attribute='total')|max %}
+    {% for r in visitas_mes %}
+    {% set mes_label = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][r.mes-1] %}
+    <div class="bar-row">
+      <div class="bar-label">{{ mes_label }}</div>
+      <div class="bar-track" style="position:relative">
+        <div class="bar-fill" style="width:{{ ((r.total / max_v * 100) if max_v > 0 else 0)|round|int }}%;background:#e8f5e9">
+        </div>
+        <div style="position:absolute;top:0;left:0;height:100%;
+                    width:{{ ((r.completadas / max_v * 100) if max_v > 0 else 0)|round|int }}%;
+                    background:#1a7a1a;border-radius:4px"></div>
+      </div>
+      <div class="bar-val">{{ r.total }}<span class="text-muted" style="font-size:.68rem"> ({{ r.completadas }}✓)</span></div>
+    </div>
+    {% endfor %}
+    <div style="font-size:.7rem;color:#aaa;margin-top:6px">
+      <span style="display:inline-block;width:10px;height:10px;background:#1a7a1a;border-radius:2px"></span> Completadas
+      <span style="display:inline-block;width:10px;height:10px;background:#e8f5e9;border-radius:2px;margin-left:8px"></span> Total
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4">Sin datos de visitas</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Contratos por vencer ── #}
+<div class="col-12 col-lg-6">
+  <div class="an-card">
+    <div class="an-title"><i class="bi bi-clock-history me-1"></i>Contratos por vencer</div>
+    {% if por_vencer %}
+    {% for ct in por_vencer %}
+    {% set dias = ct.dias_restantes %}
+    <div class="vencer-row">
+      <div style="flex:1;min-width:0">
+        <a href="{{ url_for('mant_ficha', cid=ct.cliente_id) }}" class="fw-semibold text-decoration-none text-truncate d-block" style="font-size:.85rem">
+          {{ ct.razon_social }}
+        </a>
+        <div class="small text-muted">{{ ct.nombre or 'Contrato' }} · Vence {{ ct.fecha_vencimiento.strftime('%d/%m/%Y') if ct.fecha_vencimiento else '—' }}</div>
+      </div>
+      <div>
+        {% if dias is not none %}
+        <span class="dias-pill" style="background:{{ '#fdecea' if dias < 15 else '#fff3e0' if dias < 60 else '#e8f5e9' }};
+              color:{{ '#c62828' if dias < 15 else '#e65100' if dias < 60 else '#1a7a1a' }}">
+          {{ dias }}d
+        </span>
+        {% endif %}
+        {% if ct.monto_mensual %}
+        <div class="text-muted" style="font-size:.68rem;text-align:center">
+          ${{ "{:,.0f}".format(ct.monto_mensual|float).replace(",",".") }}/m
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center py-4 text-muted">
+      <i class="bi bi-check-circle" style="font-size:1.6rem;color:#1a7a1a;opacity:.5;display:block;margin-bottom:6px"></i>
+      Sin contratos próximos a vencer
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Proyección 6 meses ── #}
+<div class="col-12">
+  <div class="an-card">
+    <div class="an-title"><i class="bi bi-graph-up me-1"></i>Proyección de ingresos — próximos 6 meses (basado en MRR actual)</div>
+    <div class="row g-3">
+      {% set hoy_dt = namespace(year=2026, month=5) %}
+      {% for i in range(6) %}
+      {% set mes_idx = (4 + i) % 12 %}
+      {% set anio_inc = (4 + i) // 12 %}
+      {% set mes_nombre = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][mes_idx] %}
+      <div class="col-6 col-md-2">
+        <div style="background:#f8f9fa;border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:.7rem;color:#888;text-transform:uppercase;letter-spacing:.5px">{{ mes_nombre }} {{ 2026 + anio_inc }}</div>
+          <div style="font-size:1.1rem;font-weight:800;color:var(--ilus-red);margin-top:4px">
+            ${{ "{:,.0f}".format(mrr).replace(",",".") }}
+          </div>
+          <div style="font-size:.65rem;color:#aaa">MRR proyectado</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="text-muted mt-3" style="font-size:.72rem">
+      <i class="bi bi-info-circle me-1"></i>
+      Proyección basada en MRR actual de contratos vigentes e indefinidos.
+      No incluye contratos nuevos ni posibles renovaciones.
+    </div>
+  </div>
+</div>
+
+</div>{# /row #}
+{% endblock %}

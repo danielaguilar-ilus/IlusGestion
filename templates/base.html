@@ -158,6 +158,32 @@
     </div>
     {% endif %}
 
+    {# ── MANTENCIONES ── #}
+    {% if permissions.mantenciones %}
+    <button class="sg-toggle" data-sg="mant">
+      <i class="bi bi-wrench-adjustable"></i>Mantenciones
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-mant">
+      <a href="{{ url_for('mant_index') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
+        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+      </a>
+      <a href="{{ url_for('mant_clientes') }}"
+         class="sidebar-link{% if request.endpoint in ['mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
+        <i class="bi bi-building-check"></i><span>Clientes</span>
+      </a>
+      <a href="{{ url_for('mant_calendario') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_calendario' %} active{% endif %}">
+        <i class="bi bi-calendar3"></i><span>Calendario</span>
+      </a>
+      <a href="{{ url_for('mant_analisis') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_analisis' %} active{% endif %}">
+        <i class="bi bi-graph-up-arrow"></i><span>Análisis</span>
+      </a>
+    </div>
+    {% endif %}
+
     {# ── SISTEMA ── #}
     {% if permissions.admin %}
     <button class="sg-toggle" data-sg="sistema">

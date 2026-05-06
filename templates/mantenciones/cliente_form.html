@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{% if cliente %}Editar{% else %}Nuevo{% endif %} cliente — Mantenciones{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
+    <h4 class="mb-0"><i class="bi bi-building-add me-2" style="color:var(--ilus-red)"></i>
+      {% if cliente %}Editar cliente{% else %}Nuevo cliente de mantención{% endif %}
+    </h4>
+  </div>
+</div>
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <div class="ilus-card">
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Razón social <span class="text-danger">*</span></label>
+            <input type="text" name="razon_social" class="form-control" required
+                   value="{{ cliente.razon_social if cliente else '' }}" placeholder="Empresa o persona">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">RUT</label>
+            <input type="text" name="rut" class="form-control font-monospace"
+                   value="{{ cliente.rut if cliente else '' }}" placeholder="12.345.678-9">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Estado</label>
+            <select name="estado" class="form-select">
+              {% for e in ['activo','prospecto','inactivo'] %}
+              <option value="{{ e }}" {% if cliente and cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Contacto</div></div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label fw-semibold">Nombre contacto</label>
+            <input type="text" name="contacto_nombre" class="form-control"
+                   value="{{ cliente.contacto_nombre if cliente else '' }}">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Teléfono</label>
+            <input type="text" name="contacto_tel" class="form-control"
+                   value="{{ cliente.contacto_tel if cliente else '' }}" placeholder="+56 9">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" name="contacto_email" class="form-control"
+                   value="{{ cliente.contacto_email if cliente else '' }}">
+          </div>
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Ubicación</div></div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Dirección</label>
+            <input type="text" name="direccion" class="form-control"
+                   value="{{ cliente.direccion if cliente else '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Comuna</label>
+            <input type="text" name="comuna" class="form-control"
+                   value="{{ cliente.comuna if cliente else '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Ciudad</label>
+            <input type="text" name="ciudad" class="form-control"
+                   value="{{ cliente.ciudad if cliente else '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Notas internas</label>
+            <textarea name="notas" class="form-control" rows="3">{{ cliente.notas if cliente else '' }}</textarea>
+          </div>
+          <div class="col-12 d-flex gap-2 justify-content-end">
+            <a href="{{ url_for('mant_clientes') }}" class="btn btn-outline-secondary">Cancelar</a>
+            <button type="submit" class="btn btn-ilus fw-bold px-4">
+              <i class="bi bi-floppy me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

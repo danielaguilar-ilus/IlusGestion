@@ -12,7 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import wraps
 
-from flask import (Flask, Response, flash, g, jsonify, redirect,
+from flask import (Flask, Response, flash, g, jsonify, make_response, redirect,
                    render_template, request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -21,6 +21,84 @@ from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINAR
 
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
+
+# ══════════════════════════════════════════════════════════════
+#  PLAYWRIGHT BROWSER POOL — instancia única reutilizada
+#  Evita el overhead de launch/close (~700ms) por cada PDF.
+#  Thread-safe: un Lock protege el acceso concurrente.
+# ══════════════════════════════════════════════════════════════
+_pw_lock     = threading.Lock()
+_pw_ctx      = None   # sync_playwright() context manager
+_pw_browser  = None   # Browser instance reutilizado
+
+
+def _pw_browser_get():
+    """Devuelve el browser compartido; lo lanza si aún no existe o murió."""
+    global _pw_ctx, _pw_browser
+    with _pw_lock:
+        # Verificar si el browser sigue vivo
+        if _pw_browser is not None:
+            try:
+                _ = _pw_browser.contexts  # ping liviano
+                return _pw_browser
+            except Exception:
+                # Murió — limpiar
+                try:
+                    _pw_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+                _pw_ctx = _pw_browser = None
+
+        # Lanzar nuevo browser
+        from playwright.sync_api import sync_playwright
+        _pw_ctx     = sync_playwright()
+        pw          = _pw_ctx.__enter__()
+        _pw_browser = pw.chromium.launch(
+            args=["--no-sandbox", "--disable-dev-shm-usage",
+                  "--disable-gpu", "--disable-extensions"]
+        )
+        return _pw_browser
+
+
+def _pw_pdf(html: str, *, width: str = None, height: str = None,
+            page_format: str = None, margin: dict = None,
+            wait_fn: str = None, wait_timeout: int = 5000) -> bytes:
+    """
+    Genera PDF con el browser pool compartido.
+    - width/height → tamaño personalizado (etiquetas)
+    - page_format  → 'A4', 'Letter', etc.
+    - wait_fn      → JS expression string para page.wait_for_function()
+    - margin       → dict top/right/bottom/left en mm ('0mm')
+    """
+    browser = _pw_browser_get()
+    page    = browser.new_page()
+    try:
+        page.set_content(html, wait_until="domcontentloaded")
+        if wait_fn:
+            try:
+                page.wait_for_function(wait_fn, timeout=wait_timeout)
+            except Exception:
+                pass   # timeout: seguimos con lo que hay
+        pdf_kw = dict(print_background=True)
+        mrg = margin or {"top": "0mm", "right": "0mm",
+                         "bottom": "0mm", "left": "0mm"}
+        if width and height:
+            pdf_kw.update(width=width, height=height, margin=mrg)
+        elif page_format:
+            pdf_kw.update(format=page_format, margin=mrg)
+        return page.pdf(**pdf_kw)
+    finally:
+        page.close()
+
+@app.template_filter('from_json')
+def from_json_filter(value):
+    """Parsea un string JSON almacenado en DB; devuelve lista/dict o []."""
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except Exception:
+        return []
 
 @app.template_filter('fkg')
 def fkg_filter(value, decimals=3):
@@ -632,28 +710,34 @@ def permission_set(role):
     Roles del sistema:
       superadmin — acceso total + preguntas genéricas + gestión avanzada
       admin      — igual que superadmin menos preguntas genéricas
+      ejecutivo  — acceso al módulo Mantenciones (vista + edición) solamente
       editor     — crear/editar evaluaciones y colaboradores (sin borrar, sin admin)
       lector     — solo lectura
       vendedor   — acceso al módulo Cubicador (solo lectura de productos)
     """
     base = {
-        "view":       False,
-        "edit":       False,
-        "print":      False,
-        "create":     False,
-        "delete":     False,
-        "admin":      False,   # gestión usuarios / configuración
-        "superadmin": False,   # preguntas genéricas + acciones irreversibles
-        "hrm":        False,   # módulo colaboradores
-        "cubicador":  False,   # módulo cubicador de documentos
+        "view":          False,
+        "edit":          False,
+        "print":         False,
+        "create":        False,
+        "delete":        False,
+        "admin":         False,   # gestión usuarios / configuración
+        "superadmin":    False,   # preguntas genéricas + acciones irreversibles
+        "hrm":           False,   # módulo colaboradores
+        "cubicador":     False,   # módulo cubicador de documentos
+        "transporte":    False,   # módulo Transporte y Distribución
+        "mantenciones":  False,   # módulo Mantenciones (superadmin + ejecutivo)
     }
-    base["transporte"] = False   # módulo Transporte y Distribución
     if role == "superadmin":
         return {k: True for k in base}
     if role == "admin":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "delete": True, "admin": True, "hrm": True,
-                "cubicador": True, "transporte": True}
+                "cubicador": True, "transporte": True, "mantenciones": True}
+    if role == "ejecutivo":
+        # Sólo mantenciones — sin acceso al resto del sistema
+        return {**base, "mantenciones": True, "view": True,
+                "edit": True, "create": True, "print": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "hrm": True}
@@ -984,53 +1068,73 @@ def _logo_data_url():
     return ""
 
 
-def build_label_pdf(product, bulto, total_bultos):
+def _label_format(fmt):
+    formats = {
+        "150x100": {"key": "150x100", "w": "150mm", "h": "100mm", "label": "150 x 100 mm"},
+        "100x50": {"key": "100x50", "w": "100mm", "h": "50mm", "label": "100 x 50 mm"},
+    }
+    return formats.get(fmt, formats["150x100"])
+
+
+def _label_bulto_data(bulto):
+    data = dict(bulto)
+    largo = float(data.get("largo_cm") or data.get("largo") or 0)
+    ancho = float(data.get("ancho_cm") or data.get("ancho") or 0)
+    alto = float(data.get("alto_cm") or data.get("alto") or 0)
+    kg = float(data.get("kg") or data.get("peso") or data.get("peso_bruto") or 0)
+    data.update({
+        "largo": largo,
+        "ancho": ancho,
+        "alto": alto,
+        "largo_cm": largo,
+        "ancho_cm": ancho,
+        "alto_cm": alto,
+        "kg": kg,
+        "peso": kg,
+        "peso_vol": calc_pv(largo, ancho, alto),
+    })
+    return data
+
+
+def build_labels_pdf(product, label_bultos, total_bultos, fmt="150x100"):
     """
-    Genera el PDF de una etiqueta usando Playwright (Chromium headless).
+    Genera un PDF con una o mas etiquetas usando Playwright (Chromium headless).
     El resultado es pixel-perfect idéntico al HTML preview porque usa
     el mismo template label_standalone.html y el mismo @media print CSS.
     Si Playwright no está instalado, lanza ImportError con instrucción de instalación.
     """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise ImportError(
-            "Playwright no instalado. Ejecuta:\n"
-            "  pip install playwright\n"
-            "  playwright install chromium"
-        )
-
-    fecha   = datetime.now().strftime("%d-%m-%Y %H:%M")
-    enrich_b = {**dict(bulto), "peso_vol": calc_pv(
-        bulto["largo"], bulto["ancho"], bulto["alto"])}
+    fecha        = datetime.now().strftime("%d-%m-%Y %H:%M")
+    label_format = _label_format(fmt)
+    enriched     = [_label_bulto_data(b) for b in label_bultos]
 
     html = render_template(
         "label_standalone.html",
         product      = product,
-        bultos       = [enrich_b],
+        bultos       = enriched,
         total_bultos = total_bultos,
         fecha        = fecha,
-        qty_per_bulto= {int(bulto["bulto_num"]): 1},
+        qty_per_bulto= {},
         logo_url     = _logo_data_url(),
+        fmt          = label_format["key"],
+        label_format = label_format,
     )
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        page    = browser.new_page()
-        # set_content carga el HTML; wait_until='load' espera que el JS del barcode se ejecute
-        page.set_content(html, wait_until="load")
-        # Pausa extra para que JsBarcode termine de dibujar los SVGs
-        page.wait_for_timeout(900)
-        pdf_bytes = page.pdf(
-            width            = "150mm",
-            height           = "70mm",
-            print_background = True,
-            margin           = {"top": "0mm", "right": "0mm",
-                                "bottom": "0mm", "left": "0mm"},
-        )
-        browser.close()
+    # Usa el browser pool — sin overhead de launch/close
+    return _pw_pdf(
+        html,
+        width  = label_format["w"],
+        height = label_format["h"],
+        wait_fn = (
+            "() => {"
+            "  const codes = Array.from(document.querySelectorAll('.barcode'));"
+            "  return codes.length > 0 && codes.every(c => c.dataset.rendered === '1');"
+            "}"
+        ),
+    )
 
-    return pdf_bytes
+
+def build_label_pdf(product, bulto, total_bultos, fmt="150x100"):
+    return build_labels_pdf(product, [bulto], total_bultos, fmt)
 
 
 # ── Mantener la antigua firma por compatibilidad ── (ya no usa reportlab)
@@ -1338,6 +1442,7 @@ def inject_globals():
         "role_label":   {
                             "superadmin": "Super Administrador",
                             "admin":      "Administrador",
+                            "ejecutivo":  "Ejecutivo",
                             "editor":     "Editor",
                             "lector":     "Lector",
                             "vendedor":   "Vendedor",
@@ -2210,16 +2315,17 @@ def delete_photo(pid, photo_id):
 #  Impresión — HTML
 # ─────────────────────────────────────────────
 
-@app.route("/products/<int:pid>/labels")
-@require_permission("print")
-def print_labels(pid):
+def _render_labels_view(pid, template_name):
     only = request.args.get("bulto", type=int)
+    fmt = request.args.get("fmt", "150x100")
+    label_format = _label_format(fmt)
     product, bultos, _ = get_full(pid)
     if not product:
         flash("Producto no encontrado.", "danger")
         return redirect(url_for("index"))
 
-    valid = [b for b in bultos if float(b["largo"]) > 0 and float(b["ancho"]) > 0 and float(b["alto"]) > 0]
+    enriched_bultos = [_label_bulto_data(b) for b in bultos]
+    valid = [b for b in enriched_bultos if b["largo"] > 0 and b["ancho"] > 0 and b["alto"] > 0]
     if not valid:
         flash("Ningun bulto tiene medidas completas.", "danger")
         return redirect(url_for("product_detail", pid=pid))
@@ -2233,9 +2339,31 @@ def print_labels(pid):
         qty_per_bulto[int(b["bulto_num"])] = max(1, min(qty, 10))
 
     fecha = datetime.now().strftime("%d-%m-%Y %H:%M")
-    return render_template("labels.html", product=product, bultos=valid,
-                           total_bultos=len(bultos), fecha=fecha,
-                           qty_per_bulto=qty_per_bulto)
+    response = make_response(render_template(template_name, product=product, bultos=valid,
+                                             total_bultos=len(bultos), fecha=fecha,
+                                             qty_per_bulto=qty_per_bulto,
+                                             fmt=label_format["key"],
+                                             label_format=label_format,
+                                             logo_url=_logo_data_url()))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@app.route("/products/<int:pid>/labels")
+@require_permission("print")
+def print_labels(pid):
+    return _render_labels_view(pid, "print_labels.html")
+
+
+@app.route("/print/labels")
+@require_permission("print")
+def print_labels_alt():
+    pid = request.args.get("pid", type=int)
+    if not pid:
+        flash("Selecciona un producto para imprimir etiquetas.", "warning")
+        return redirect(url_for("index"))
+    return _render_labels_view(pid, "print_labels.html")
 
 
 @app.route("/products/<int:pid>/print-setup")
@@ -2266,13 +2394,24 @@ def print_setup(pid):
 @app.route("/products/<int:pid>/download-all-pdf")
 @require_permission("print")
 def download_all_pdf(pid):
-    """Descarga todos los bultos seleccionados como un ZIP de PDFs."""
-    import zipfile
+    """Descarga las etiquetas seleccionadas como un PDF multipagina."""
+    return _labels_pdf_response(pid, force_download=True)
+
+
+@app.route("/products/<int:pid>/labels-preview.pdf")
+@require_permission("print")
+def labels_pdf_preview(pid):
+    """PDF inline para previsualizacion en modal."""
+    return _labels_pdf_response(pid, force_download=request.args.get("download") == "1")
+
+
+def _labels_pdf_response(pid, force_download=False):
     product, bultos, _ = get_full(pid)
     if not product:
         return "Producto no encontrado", 404
 
-    valid = [b for b in bultos if float(b["largo"]) > 0 and float(b["ancho"]) > 0 and float(b["alto"]) > 0]
+    valid = [_label_bulto_data(b) for b in bultos]
+    valid = [b for b in valid if b["largo"] > 0 and b["ancho"] > 0 and b["alto"] > 0]
     only = request.args.get("bulto", type=int)
     if only:
         valid = [b for b in valid if int(b["bulto_num"]) == only]
@@ -2280,26 +2419,28 @@ def download_all_pdf(pid):
     if not valid:
         return "Sin bultos con medidas completas", 404
 
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for b in valid:
-            qty = request.args.get(f"qty_{b['bulto_num']}", 1, type=int)
-            qty = max(1, min(qty, 10))
-            for copy_n in range(1, qty + 1):
-                try:
-                    pdf_bytes = build_label_pdf(product, b, len(bultos))
-                    fname = f"ILUS_{product['sku']}_B{int(b['bulto_num']):02d}_C{copy_n}.pdf"
-                    zf.writestr(fname, pdf_bytes)
-                except Exception:
-                    pass
+    selected = []
+    for b in valid:
+        qty = request.args.get(f"qty_{b['bulto_num']}", 1, type=int)
+        qty = max(1, min(qty, 10))
+        for _ in range(qty):
+            selected.append(dict(b))
 
-    zip_buf.seek(0)
+    try:
+        pdf_bytes = build_labels_pdf(product, selected, len(bultos), request.args.get("fmt", "150x100"))
+    except Exception as exc:
+        return f"Error generando PDF: {exc}", 500
+
     fecha = datetime.now().strftime("%Y%m%d_%H%M")
-    zip_name = f"ILUS_{product['sku']}_{fecha}.zip"
+    filename = f"ILUS_{product['sku']}_{fecha}.pdf"
+    disposition = "attachment" if force_download else "inline"
     return Response(
-        zip_buf.read(),
-        mimetype="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
     )
 
 
@@ -2318,7 +2459,7 @@ def download_pdf(pid, bnum):
         return "Bulto sin medidas completas", 404
 
     try:
-        pdf_bytes = build_label_pdf(product, bulto, len(bultos))
+        pdf_bytes = build_label_pdf(product, bulto, len(bultos), request.args.get("fmt", "150x100"))
     except Exception as exc:
         return f"Error generando PDF: {exc}", 500
 
@@ -4255,18 +4396,13 @@ tfoot td{{border:none;padding:7px 5px}}
 <div class="foot">ILUS Sport &amp; Health · Sistema de Gestión de Productos</div>
 </body></html>"""
 
-    from playwright.sync_api import sync_playwright
     from io import BytesIO as _BytesIO
 
-    with sync_playwright() as pw:
-        browser   = pw.chromium.launch()
-        page      = browser.new_page()
-        page.set_content(html, wait_until="load")
-        pdf_bytes = page.pdf(
-            format="A4",
-            margin={"top": "12mm", "bottom": "12mm", "left": "14mm", "right": "14mm"},
-        )
-        browser.close()
+    pdf_bytes = _pw_pdf(
+        html,
+        page_format = "A4",
+        margin = {"top": "12mm", "bottom": "12mm", "left": "14mm", "right": "14mm"},
+    )
 
     fname = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs) + ".pdf"
     return send_file(
@@ -6501,13 +6637,841 @@ def comm_template_save(estado, canal):
     return jsonify({"ok": True})
 
 
+# ══════════════════════════════════════════════════════════════
+#  MÓDULO: MANTENCIONES
+#  Acceso: superadmin + ejecutivo
+# ══════════════════════════════════════════════════════════════
+
+def _mant_required(view):
+    """Decorador: requiere permiso 'mantenciones'."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not g.get("permissions", {}).get("mantenciones"):
+            return redirect(url_for("index"))
+        return view(*args, **kwargs)
+    return login_required(wrapped)
+
+
+def init_mantenciones_tables():
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # ── Clientes de mantención ──────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_clientes (
+                    id               INT AUTO_INCREMENT PRIMARY KEY,
+                    razon_social     VARCHAR(200) NOT NULL,
+                    rut              VARCHAR(20),
+                    contacto_nombre  VARCHAR(200),
+                    contacto_tel     VARCHAR(50),
+                    contacto_email   VARCHAR(200),
+                    direccion        TEXT,
+                    comuna           VARCHAR(100),
+                    ciudad           VARCHAR(100),
+                    notas            TEXT,
+                    estado           ENUM('activo','inactivo','prospecto') DEFAULT 'activo',
+                    created_by       VARCHAR(190),
+                    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                                     ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_rut    (rut),
+                    INDEX idx_estado (estado)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── Máquinas por cliente (de docs ERP) ─────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_maquinas (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id   INT NOT NULL,
+                    sku          VARCHAR(100),
+                    nombre       VARCHAR(400),
+                    serie        VARCHAR(100),
+                    doc_origen   VARCHAR(80),
+                    doc_fecha    DATE,
+                    cantidad     INT DEFAULT 1,
+                    notas        TEXT,
+                    estado       ENUM('activo','baja','garantia') DEFAULT 'activo',
+                    created_by   VARCHAR(190),
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE,
+                    INDEX idx_cliente (cliente_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── Contratos ───────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_contratos (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id          INT NOT NULL,
+                    nombre              VARCHAR(200),
+                    archivo_nombre      VARCHAR(300),
+                    archivo_path        VARCHAR(500),
+                    archivo_tipo        ENUM('pdf','word','otro') DEFAULT 'pdf',
+                    fecha_inicio        DATE,
+                    fecha_vencimiento   DATE,
+                    es_indefinido       TINYINT(1) DEFAULT 0,
+                    monto_mensual       DECIMAL(12,2),
+                    monto_anual         DECIMAL(12,2),
+                    frecuencia_meses    INT COMMENT 'Frecuencia mantencion en meses',
+                    notas               TEXT,
+                    ai_analizado        TINYINT(1) DEFAULT 0,
+                    ai_fecha            DATETIME,
+                    ai_resumen          TEXT,
+                    ai_puntos_criticos  TEXT COMMENT 'JSON array',
+                    ai_alertas          TEXT COMMENT 'JSON array',
+                    ai_frecuencia_sug   INT,
+                    ai_score            INT COMMENT '0-100 calidad contrato',
+                    estado              ENUM('vigente','vencido','por_vencer','indefinido')
+                                        DEFAULT 'vigente',
+                    created_by          VARCHAR(190),
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE,
+                    INDEX idx_cliente     (cliente_id),
+                    INDEX idx_vencimiento (fecha_vencimiento)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── Visitas / agenda ────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visitas (
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id        INT NOT NULL,
+                    contrato_id       INT,
+                    titulo            VARCHAR(200),
+                    fecha_programada  DATE NOT NULL,
+                    fecha_realizada   DATE,
+                    hora_inicio       TIME,
+                    hora_fin          TIME,
+                    tecnico           VARCHAR(200),
+                    tipo              ENUM('preventiva','correctiva','garantia','inspeccion')
+                                      DEFAULT 'preventiva',
+                    estado            ENUM('programada','completada','cancelada','reagendada')
+                                      DEFAULT 'programada',
+                    descripcion       TEXT,
+                    observaciones     TEXT,
+                    costo             DECIMAL(10,2),
+                    created_by        VARCHAR(190),
+                    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+                                      ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cliente_id)  REFERENCES mant_clientes(id)  ON DELETE CASCADE,
+                    FOREIGN KEY (contrato_id) REFERENCES mant_contratos(id) ON DELETE SET NULL,
+                    INDEX idx_cliente (cliente_id),
+                    INDEX idx_fecha   (fecha_programada),
+                    INDEX idx_estado  (estado)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── Log de actividad ────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_logs (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    entidad     ENUM('cliente','maquina','contrato','visita') NOT NULL,
+                    entidad_id  INT NOT NULL,
+                    accion      VARCHAR(100) NOT NULL,
+                    detalle     TEXT,
+                    usuario     VARCHAR(190),
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_entidad (entidad, entidad_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _mant_log(entidad, entidad_id, accion, detalle=""):
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (entidad, entidad_id, accion, detalle, current_username())
+            )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _mant_actualizar_estado_contratos():
+    """Actualiza automáticamente el estado de los contratos según fechas."""
+    try:
+        conn = get_mysql()
+        hoy = datetime.now().date()
+        pronto = hoy + timedelta(days=60)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE mant_contratos SET estado =
+                  CASE
+                    WHEN es_indefinido = 1 THEN 'indefinido'
+                    WHEN fecha_vencimiento IS NULL THEN 'vigente'
+                    WHEN fecha_vencimiento < %s THEN 'vencido'
+                    WHEN fecha_vencimiento <= %s THEN 'por_vencer'
+                    ELSE 'vigente'
+                  END
+                WHERE estado NOT IN ('vencido')
+                   OR fecha_vencimiento >= %s
+            """, (hoy, pronto, hoy))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+# ── DECORATOR de acceso ────────────────────────────────────────────────
+
+# ── RUTAS PRINCIPALES ─────────────────────────────────────────────────
+
+@app.route("/mantenciones")
+@_mant_required
+def mant_index():
+    _mant_actualizar_estado_contratos()
+    hoy   = datetime.now().date()
+    pronto = hoy + timedelta(days=60)
+
+    # KPIs
+    clientes    = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_clientes WHERE estado='activo'", ()) or {}
+    contratos   = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado IN ('vigente','indefinido')", ()) or {}
+    vencen      = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado='por_vencer'", ()) or {}
+    prox_visitas = mysql_fetchall(
+        "SELECT v.*, c.razon_social FROM mant_visitas v "
+        "JOIN mant_clientes c ON c.id=v.cliente_id "
+        "WHERE v.estado='programada' AND v.fecha_programada BETWEEN %s AND %s "
+        "ORDER BY v.fecha_programada LIMIT 10",
+        (hoy, hoy + timedelta(days=30))
+    )
+    alertas_contratos = mysql_fetchall(
+        "SELECT ct.*, cl.razon_social FROM mant_contratos ct "
+        "JOIN mant_clientes cl ON cl.id=ct.cliente_id "
+        "WHERE ct.estado IN ('por_vencer','vencido') ORDER BY ct.fecha_vencimiento LIMIT 8",
+        ()
+    )
+    sin_visita = mysql_fetchall(
+        """SELECT c.id, c.razon_social,
+                  MAX(v.fecha_realizada) AS ultima_visita
+           FROM mant_clientes c
+           LEFT JOIN mant_visitas v ON v.cliente_id=c.id AND v.estado='completada'
+           WHERE c.estado='activo'
+           GROUP BY c.id
+           HAVING ultima_visita IS NULL OR ultima_visita < %s
+           ORDER BY ultima_visita LIMIT 6""",
+        (hoy - timedelta(days=180),)
+    )
+    # Ingresos del mes
+    ingresos_mes = mysql_fetchone(
+        "SELECT COALESCE(SUM(monto_mensual),0) AS total FROM mant_contratos "
+        "WHERE estado IN ('vigente','indefinido')", ()
+    ) or {}
+
+    return render_template("mantenciones/index.html",
+        kpi_clientes   = clientes.get("n", 0),
+        kpi_contratos  = contratos.get("n", 0),
+        kpi_vencen     = vencen.get("n", 0),
+        kpi_ingresos   = float(ingresos_mes.get("total", 0)),
+        prox_visitas   = [dict(r) for r in prox_visitas],
+        alertas        = [dict(r) for r in alertas_contratos],
+        sin_visita     = [dict(r) for r in sin_visita],
+        hoy            = hoy,
+    )
+
+
+@app.route("/mantenciones/clientes")
+@_mant_required
+def mant_clientes():
+    q      = request.args.get("q", "").strip()
+    estado = request.args.get("estado", "activo")
+    where, params = [], []
+    if estado:
+        where.append("estado=%s"); params.append(estado)
+    if q:
+        where.append("(razon_social LIKE %s OR rut LIKE %s OR contacto_email LIKE %s)")
+        qp = f"%{q}%"; params += [qp, qp, qp]
+    sql = "SELECT * FROM mant_clientes"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY razon_social LIMIT 200"
+    rows = mysql_fetchall(sql, tuple(params))
+    return render_template("mantenciones/clientes.html",
+        clientes = [dict(r) for r in rows],
+        filtros  = {"q": q, "estado": estado},
+    )
+
+
+@app.route("/mantenciones/clientes/nuevo", methods=["GET", "POST"])
+@_mant_required
+def mant_cliente_nuevo():
+    if request.method == "POST":
+        d = request.form
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO mant_clientes
+                       (razon_social,rut,contacto_nombre,contacto_tel,contacto_email,
+                        direccion,comuna,ciudad,notas,estado,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (d.get("razon_social","").strip(), d.get("rut","").strip(),
+                     d.get("contacto_nombre","").strip(), d.get("contacto_tel","").strip(),
+                     d.get("contacto_email","").strip(), d.get("direccion","").strip(),
+                     d.get("comuna","").strip(), d.get("ciudad","").strip(),
+                     d.get("notas","").strip(), d.get("estado","activo"),
+                     current_username())
+                )
+                cid = cur.lastrowid
+            conn.commit()
+            _mant_log("cliente", cid, "creado", d.get("razon_social",""))
+            return redirect(url_for("mant_ficha", cid=cid))
+        finally:
+            conn.close()
+    return render_template("mantenciones/cliente_form.html", cliente=None)
+
+
+@app.route("/mantenciones/clientes/<int:cid>")
+@_mant_required
+def mant_ficha(cid):
+    cliente   = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return redirect(url_for("mant_clientes"))
+    maquinas  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
+    contratos = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
+    visitas   = mysql_fetchall(
+        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 50", (cid,)
+    )
+    logs      = mysql_fetchall(
+        "SELECT * FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s ORDER BY created_at DESC LIMIT 20", (cid,)
+    )
+    return render_template("mantenciones/ficha.html",
+        cliente   = dict(cliente),
+        maquinas  = [dict(r) for r in maquinas],
+        contratos = [dict(r) for r in contratos],
+        visitas   = [dict(r) for r in visitas],
+        logs      = [dict(r) for r in logs],
+        hoy       = datetime.now().date(),
+    )
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>", methods=["PUT"])
+@_mant_required
+def mant_cliente_update(cid):
+    d = request.get_json(silent=True) or {}
+    fields = ["razon_social","rut","contacto_nombre","contacto_tel","contacto_email",
+              "direccion","comuna","ciudad","notas","estado"]
+    sets   = [f"{f}=%s" for f in fields if f in d]
+    vals   = [d[f] for f in fields if f in d]
+    if not sets:
+        return jsonify({"error": "Sin campos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_clientes SET {','.join(sets)} WHERE id=%s",
+                        vals + [cid])
+        conn.commit()
+        _mant_log("cliente", cid, "editado")
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+# ── MÁQUINAS ──────────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/clientes/<int:cid>/maquinas", methods=["POST"])
+@_mant_required
+def mant_maquina_add(cid):
+    d = request.get_json(silent=True) or {}
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_maquinas
+                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, d.get("sku",""), d.get("nombre",""), d.get("serie",""),
+                 d.get("doc_origen",""), d.get("doc_fecha") or None,
+                 int(d.get("cantidad",1)), d.get("notas",""), current_username())
+            )
+            mid = cur.lastrowid
+        conn.commit()
+        _mant_log("maquina", mid, "agregada", d.get("nombre",""))
+        return jsonify({"ok": True, "id": mid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>", methods=["DELETE"])
+@_mant_required
+def mant_maquina_del(mid):
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+# ── CONTRATOS ─────────────────────────────────────────────────────────
+
+MANT_UPLOADS = os.path.join(BASE_DIR, "static", "uploads", "mantenciones")
+os.makedirs(MANT_UPLOADS, exist_ok=True)
+
+ALLOWED_CONTRATO = {"pdf", "doc", "docx"}
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
+@_mant_required
+def mant_contrato_subir(cid):
+    f = request.files.get("archivo")
+    d = request.form
+    if not f or not f.filename:
+        return jsonify({"error": "Sin archivo"}), 400
+    ext = f.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_CONTRATO:
+        return jsonify({"error": "Tipo no permitido"}), 400
+
+    fname  = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
+    fpath  = os.path.join(MANT_UPLOADS, fname)
+    f.save(fpath)
+
+    tipo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_contratos
+                   (cliente_id,nombre,archivo_nombre,archivo_path,archivo_tipo,
+                    fecha_inicio,fecha_vencimiento,es_indefinido,
+                    monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, d.get("nombre","Contrato"), f.filename, fname, tipo,
+                 d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
+                 1 if d.get("es_indefinido") else 0,
+                 float(d.get("monto_mensual",0) or 0),
+                 float(d.get("monto_anual",0) or 0),
+                 int(d.get("frecuencia_meses",0) or 0),
+                 d.get("notas",""), current_username())
+            )
+            ctid = cur.lastrowid
+        conn.commit()
+        _mant_log("contrato", ctid, "subido", f.filename)
+        return jsonify({"ok": True, "id": ctid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>", methods=["PUT"])
+@_mant_required
+def mant_contrato_update(ctid):
+    d = request.get_json(silent=True) or {}
+    allowed = ["nombre","fecha_inicio","fecha_vencimiento","es_indefinido",
+               "monto_mensual","monto_anual","frecuencia_meses","notas","estado"]
+    sets = [f"{f}=%s" for f in allowed if f in d]
+    vals = [d[f] for f in allowed if f in d]
+    if not sets:
+        return jsonify({"error": "Sin campos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_contratos SET {','.join(sets)} WHERE id=%s",
+                        vals + [ctid])
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/archivo")
+@_mant_required
+def mant_contrato_archivo(ctid):
+    from flask import send_from_directory
+    ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
+    if not ct:
+        return "No encontrado", 404
+    return send_from_directory(MANT_UPLOADS, ct["archivo_path"],
+                               as_attachment=False,
+                               download_name=ct["archivo_nombre"])
+
+
+# ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/analizar", methods=["POST"])
+@_mant_required
+def mant_contrato_analizar(ctid):
+    """
+    Llama a Claude API para analizar el contrato de mantención.
+    Extrae: puntos críticos, frecuencia sugerida, alertas, score.
+    """
+    ct = mysql_fetchone("SELECT ct.*, cl.razon_social FROM mant_contratos ct "
+                        "JOIN mant_clientes cl ON cl.id=ct.cliente_id "
+                        "WHERE ct.id=%s", (ctid,))
+    if not ct:
+        return jsonify({"error": "Contrato no encontrado"}), 404
+
+    # Leer texto del contrato si es PDF
+    texto_contrato = ""
+    fpath = os.path.join(MANT_UPLOADS, ct["archivo_path"] or "")
+    if os.path.exists(fpath):
+        ext = ct["archivo_path"].rsplit(".", 1)[-1].lower()
+        if ext == "pdf":
+            try:
+                import pdfplumber
+                with pdfplumber.open(fpath) as pdf:
+                    texto_contrato = "\n".join(
+                        p.extract_text() or "" for p in pdf.pages[:15]
+                    )
+            except Exception:
+                pass
+        elif ext in ("doc", "docx"):
+            try:
+                import docx
+                doc = docx.Document(fpath)
+                texto_contrato = "\n".join(p.text for p in doc.paragraphs)
+            except Exception:
+                pass
+
+    # Datos del contrato para enriquecer el prompt
+    datos_extra = (
+        f"Cliente: {ct['razon_social']}\n"
+        f"Fecha inicio: {ct['fecha_inicio']}\n"
+        f"Fecha vencimiento: {ct['fecha_vencimiento']}\n"
+        f"Monto mensual: ${ct['monto_mensual']}\n"
+        f"Frecuencia declarada: {ct['frecuencia_meses']} meses\n"
+    )
+    if not texto_contrato:
+        texto_contrato = "(Texto no extraíble — análisis basado en metadatos)"
+
+    prompt_sistema = """Eres un experto jurídico y técnico en contratos de mantención
+de equipos de fitness para gimnasios y centros deportivos en Chile (ILUS Fitness).
+Analiza el contrato de mantención con criterio profesional y responde SIEMPRE
+en formato JSON con exactamente esta estructura:
+{
+  "resumen": "string de 2-3 oraciones resumiendo el contrato",
+  "score": número_0_a_100,
+  "puntos_criticos": ["punto1","punto2",...],
+  "alertas": ["alerta1","alerta2",...],
+  "frecuencia_sugerida_meses": número,
+  "monto_mensual_sugerido": número_o_null,
+  "fecha_vencimiento_detectada": "YYYY-MM-DD o null",
+  "es_indefinido": true_o_false,
+  "mejoras_prioritarias": ["mejora1","mejora2","mejora3"]
+}
+Sé específico sobre clausulas de maquinaria fitness (treadmills, bikes, etc.)."""
+
+    prompt_usuario = f"""Analiza este contrato de mantención:
+
+METADATOS:
+{datos_extra}
+
+TEXTO DEL CONTRATO:
+{texto_contrato[:6000]}
+
+Devuelve SOLO el JSON, sin texto adicional."""
+
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", "")
+        )
+        msg = client.messages.create(
+            model   = "claude-opus-4-5",
+            max_tokens = 1500,
+            system  = prompt_sistema,
+            messages = [{"role": "user", "content": prompt_usuario}]
+        )
+        raw = msg.content[0].text.strip()
+        # Limpiar posibles bloques de código
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        resultado = json.loads(raw)
+    except Exception as e:
+        return jsonify({"error": f"Error IA: {str(e)}"}), 500
+
+    # Guardar resultado en DB
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE mant_contratos SET
+                   ai_analizado=1, ai_fecha=%s,
+                   ai_resumen=%s, ai_puntos_criticos=%s, ai_alertas=%s,
+                   ai_frecuencia_sug=%s, ai_score=%s,
+                   frecuencia_meses=COALESCE(NULLIF(frecuencia_meses,0),%s),
+                   es_indefinido=COALESCE(es_indefinido,%s)
+                   WHERE id=%s""",
+                (datetime.now(),
+                 resultado.get("resumen",""),
+                 json.dumps(resultado.get("puntos_criticos",[]), ensure_ascii=False),
+                 json.dumps(resultado.get("alertas",[]), ensure_ascii=False),
+                 resultado.get("frecuencia_sugerida_meses"),
+                 resultado.get("score"),
+                 resultado.get("frecuencia_sugerida_meses"),
+                 1 if resultado.get("es_indefinido") else 0,
+                 ctid)
+            )
+        conn.commit()
+        _mant_log("contrato", ctid, "analizado_ia", f"score={resultado.get('score')}")
+        return jsonify({"ok": True, "resultado": resultado})
+    finally:
+        conn.close()
+
+
+# ── VISITAS / AGENDA ──────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/visitas", methods=["GET"])
+@_mant_required
+def mant_visitas_api():
+    """Devuelve visitas para el calendario (formato FullCalendar)."""
+    desde = request.args.get("start", "")
+    hasta = request.args.get("end", "")
+    cid   = request.args.get("cliente_id")
+    where, params = [], []
+    if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
+    if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
+    if cid:   where.append("v.cliente_id=%s"); params.append(int(cid))
+    sql = ("SELECT v.*, c.razon_social FROM mant_visitas v "
+           "JOIN mant_clientes c ON c.id=v.cliente_id")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY v.fecha_programada LIMIT 500"
+    rows = mysql_fetchall(sql, tuple(params))
+
+    COLORS = {"preventiva":"#1a7a1a","correctiva":"#cc0000",
+              "garantia":"#0066cc","inspeccion":"#f57c00"}
+    ESTADO_CLR = {"completada":"#6c757d","cancelada":"#999","reagendada":"#ff9800"}
+    events = []
+    for r in rows:
+        color = ESTADO_CLR.get(r["estado"], COLORS.get(r["tipo"],"#555"))
+        events.append({
+            "id":    r["id"],
+            "title": f"{r['razon_social']} — {r['titulo'] or r['tipo'].capitalize()}",
+            "start": str(r["fecha_programada"]),
+            "color": color,
+            "extendedProps": {
+                "cliente_id":   r["cliente_id"],
+                "razon_social": r["razon_social"],
+                "tipo":         r["tipo"],
+                "estado":       r["estado"],
+                "tecnico":      r["tecnico"] or "",
+                "costo":        float(r["costo"] or 0),
+            }
+        })
+    return jsonify(events)
+
+
+@app.route("/mantenciones/api/visitas", methods=["POST"])
+@_mant_required
+def mant_visita_crear():
+    d = request.get_json(silent=True) or {}
+    if not d.get("cliente_id") or not d.get("fecha_programada"):
+        return jsonify({"error": "cliente_id y fecha_programada requeridos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                    tecnico,tipo,estado,descripcion,costo,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (d["cliente_id"], d.get("contrato_id") or None,
+                 d.get("titulo","Mantención"), d["fecha_programada"],
+                 d.get("hora_inicio") or None, d.get("hora_fin") or None,
+                 d.get("tecnico",""), d.get("tipo","preventiva"),
+                 d.get("estado","programada"), d.get("descripcion",""),
+                 float(d.get("costo",0) or 0), current_username())
+            )
+            vid = cur.lastrowid
+        conn.commit()
+        _mant_log("visita", vid, "creada", d.get("titulo",""))
+        return jsonify({"ok": True, "id": vid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>", methods=["PUT"])
+@_mant_required
+def mant_visita_update(vid):
+    d = request.get_json(silent=True) or {}
+    allowed = ["titulo","fecha_programada","fecha_realizada","hora_inicio","hora_fin",
+               "tecnico","tipo","estado","descripcion","observaciones","costo","contrato_id"]
+    sets = [f"{f}=%s" for f in allowed if f in d]
+    vals = [d[f] for f in allowed if f in d]
+    if not sets:
+        return jsonify({"error": "Sin campos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
+                        vals + [vid])
+        conn.commit()
+        _mant_log("visita", vid, "actualizada")
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
+@_mant_required
+def mant_visita_del(vid):
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+# ── CALENDARIO ────────────────────────────────────────────────────────
+
+@app.route("/mantenciones/calendario")
+@_mant_required
+def mant_calendario():
+    clientes = mysql_fetchall(
+        "SELECT id, razon_social FROM mant_clientes WHERE estado='activo' ORDER BY razon_social",
+        ()
+    )
+    return render_template("mantenciones/calendario.html",
+        clientes = [dict(r) for r in clientes]
+    )
+
+
+# ── ANÁLISIS ECONÓMICO ────────────────────────────────────────────────
+
+@app.route("/mantenciones/analisis")
+@_mant_required
+def mant_analisis():
+    # Ingresos por contrato (12 meses)
+    ingresos_mes = mysql_fetchall(
+        """SELECT YEAR(fecha_inicio) AS anio, MONTH(fecha_inicio) AS mes,
+                  COALESCE(SUM(monto_mensual),0) AS total_mensual,
+                  COUNT(*) AS n_contratos
+           FROM mant_contratos
+           WHERE estado IN ('vigente','indefinido')
+             AND fecha_inicio >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+           GROUP BY anio, mes ORDER BY anio, mes""",
+        ()
+    )
+    # Proyección próximos 6 meses
+    activos_total = mysql_fetchone(
+        "SELECT COALESCE(SUM(monto_mensual),0) AS mrr FROM mant_contratos "
+        "WHERE estado IN ('vigente','indefinido')", ()
+    ) or {}
+    mrr = float(activos_total.get("mrr", 0))
+
+    # Visitas por mes (últimos 6)
+    visitas_mes = mysql_fetchall(
+        """SELECT YEAR(fecha_programada) AS anio, MONTH(fecha_programada) AS mes,
+                  COUNT(*) AS total,
+                  SUM(estado='completada') AS completadas,
+                  COALESCE(SUM(costo),0) AS ingresos_visitas
+           FROM mant_visitas
+           WHERE fecha_programada >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+           GROUP BY anio, mes ORDER BY anio, mes""",
+        ()
+    )
+    # Top clientes por valor
+    top_clientes = mysql_fetchall(
+        """SELECT c.razon_social,
+                  COALESCE(SUM(ct.monto_mensual),0) AS mrr,
+                  COUNT(ct.id) AS n_contratos,
+                  COUNT(v.id) AS n_visitas
+           FROM mant_clientes c
+           LEFT JOIN mant_contratos ct ON ct.cliente_id=c.id
+                     AND ct.estado IN ('vigente','indefinido')
+           LEFT JOIN mant_visitas v ON v.cliente_id=c.id
+           WHERE c.estado='activo'
+           GROUP BY c.id ORDER BY mrr DESC LIMIT 10""",
+        ()
+    )
+    # Contratos por vencer
+    por_vencer = mysql_fetchall(
+        """SELECT ct.*, cl.razon_social,
+                  DATEDIFF(ct.fecha_vencimiento, CURDATE()) AS dias_restantes
+           FROM mant_contratos ct
+           JOIN mant_clientes cl ON cl.id=ct.cliente_id
+           WHERE ct.estado IN ('por_vencer','vigente')
+             AND ct.fecha_vencimiento IS NOT NULL
+             AND ct.es_indefinido=0
+           ORDER BY ct.fecha_vencimiento LIMIT 15""",
+        ()
+    )
+
+    return render_template("mantenciones/analisis.html",
+        ingresos_mes = [dict(r) for r in ingresos_mes],
+        mrr          = mrr,
+        visitas_mes  = [dict(r) for r in visitas_mes],
+        top_clientes = [dict(r) for r in top_clientes],
+        por_vencer   = [dict(r) for r in por_vencer],
+    )
+
+
+# ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/buscar-erp", methods=["POST"])
+@_mant_required
+def mant_buscar_erp():
+    """Busca cliente/documentos en el ERP por RUT o razón social."""
+    d   = request.get_json(silent=True) or {}
+    q   = d.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Término de búsqueda requerido"}), 400
+    try:
+        erp_conn = get_erp()
+        with erp_conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT DISTINCT
+                       d.NRAZON AS razon_social,
+                       d.NRUC AS rut,
+                       d.TIDO AS tipo_doc,
+                       d.NUDO AS num_doc,
+                       d.FEMIS AS fecha,
+                       d.NOMBR AS producto,
+                       d.KOPRCT AS sku,
+                       d.CANTD AS cantidad
+                    FROM `{ERP_TABLE}` d
+                    WHERE (d.NRAZON LIKE %s OR d.NRUC LIKE %s)
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB')
+                    ORDER BY d.FEMIS DESC
+                    LIMIT 100""",
+                (f"%{q}%", f"%{q}%")
+            )
+            rows = cur.fetchall()
+        erp_conn.close()
+        # Agrupar por documento
+        docs = {}
+        for r in rows:
+            key = f"{r['tipo_doc']} {r['num_doc']}"
+            if key not in docs:
+                docs[key] = {
+                    "razon_social": r["razon_social"],
+                    "rut":          r["rut"],
+                    "tipo_doc":     r["tipo_doc"],
+                    "num_doc":      r["num_doc"],
+                    "fecha":        str(r["fecha"]) if r["fecha"] else "",
+                    "lineas":       []
+                }
+            docs[key]["lineas"].append({
+                "sku":      r["sku"],
+                "nombre":   r["producto"],
+                "cantidad": int(r["cantidad"] or 1),
+            })
+        return jsonify({"ok": True, "documentos": list(docs.values())})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ─────────────────────────────────────────────
 #  Arranque — inicializar tablas al cargar módulo
 #  (funciona con `python app.py` Y `flask run`)
 # ─────────────────────────────────────────────
 
 try:
-    init_db()
+    with app.app_context():
+        init_db()
     print("[ILUS] Tablas inicializadas correctamente.")
 except Exception as _init_err:
     print(f"[ILUS][WARN] init_db: {_init_err}")
@@ -6524,6 +7488,12 @@ try:
     print("[ILUS] Tablas de comunicaciones OK.")
 except Exception as _comm_init_err:
     print(f"[ILUS][WARN] init_comunicaciones_tables: {_comm_init_err}")
+
+try:
+    init_mantenciones_tables()
+    print("[ILUS] Tablas de mantenciones OK.")
+except Exception as _mant_init_err:
+    print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
 
 if __name__ == "__main__":
     print("=" * 45)
