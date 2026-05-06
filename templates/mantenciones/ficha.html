@@ -4,9 +4,7 @@
 {% block content %}
 <style>
 /* ── Variables ───────────────────────────────────── */
-:root{--rad:12px;--shadow:0 2px 12px rgba(0,0,0,.07);--border:#eaecf0;}
-/* ── Layout ──────────────────────────────────────── */
-.ficha-col{display:flex;flex-direction:column;gap:16px;}
+:root{--rad:12px;--shadow:0 2px 12px rgba(0,0,0,.07);--border:#eaecf0;--ilus-red:#e63946;}
 /* ── Cards ───────────────────────────────────────── */
 .f-card{background:#fff;border-radius:var(--rad);border:1px solid var(--border);
         box-shadow:var(--shadow);overflow:hidden;}
@@ -26,7 +24,7 @@
 .kpi-sub{font-size:.72rem;color:#6b7280;margin-top:2px;}
 /* ── Cliente header ──────────────────────────────── */
 .cli-header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);
-            border-radius:var(--rad);padding:22px 24px;margin-bottom:20px;
+            border-radius:var(--rad);padding:22px 24px;margin-bottom:0;
             box-shadow:0 4px 20px rgba(0,0,0,.15);}
 .cli-avatar{width:52px;height:52px;border-radius:50%;background:var(--ilus-red);
             display:flex;align-items:center;justify-content:center;
@@ -35,6 +33,21 @@
 .cli-meta{font-size:.78rem;color:#94a3b8;margin-top:3px;}
 .cli-badge{font-size:.62rem;padding:2px 9px;border-radius:50px;font-weight:700;
            display:inline-flex;align-items:center;gap:4px;}
+/* ── Tabs ────────────────────────────────────────── */
+.ficha-tabs-wrap{background:#fff;border-bottom:2px solid var(--border);
+                 position:sticky;top:56px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.04);}
+.ficha-tabs{display:flex;gap:0;padding:0 8px;overflow-x:auto;scrollbar-width:none;}
+.ficha-tabs::-webkit-scrollbar{display:none;}
+.ftab-btn{background:none;border:none;outline:none;padding:12px 18px;
+          font-size:.83rem;font-weight:600;color:#6b7280;cursor:pointer;
+          border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap;
+          transition:color .15s,border-color .15s;}
+.ftab-btn:hover{color:#374151;}
+.ftab-btn.active{color:#e63946;border-bottom-color:#e63946;}
+.ftab-btn i{margin-right:5px;}
+/* ── Tab panes ───────────────────────────────────── */
+.ftab-pane{display:none;padding:20px 0;}
+.ftab-pane.active{display:block;}
 /* ── Equipos ─────────────────────────────────────── */
 .eq-item{display:flex;align-items:flex-start;gap:12px;padding:11px 0;
          border-bottom:1px solid #f3f4f6;}
@@ -114,32 +127,67 @@
 .score-fill{height:100%;border-radius:4px;transition:width .6s ease;}
 .empty-state{text-align:center;padding:28px 16px;color:#9ca3af;}
 .empty-state i{font-size:2rem;opacity:.3;display:block;margin-bottom:8px;}
+/* ── IA & Plan ───────────────────────────────────── */
+.plan-hero{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);
+           border-radius:var(--rad);padding:28px 24px;color:#fff;position:relative;overflow:hidden;}
+.plan-hero::before{content:'';position:absolute;top:-40px;right:-40px;width:200px;height:200px;
+                   border-radius:50%;background:rgba(230,57,70,.12);pointer-events:none;}
+.plan-hero-icon{font-size:2.5rem;margin-bottom:8px;display:block;}
+.plan-hero-title{font-size:1.2rem;font-weight:900;margin-bottom:6px;}
+.plan-hero-sub{font-size:.84rem;color:#94a3b8;line-height:1.5;}
+.plan-result-card{background:#fff;border-radius:var(--rad);border:1px solid var(--border);
+                  box-shadow:var(--shadow);overflow:hidden;margin-top:20px;}
+.plan-section{padding:16px 20px;border-bottom:1px solid var(--border);}
+.plan-section:last-child{border-bottom:none;}
+.plan-section-title{font-size:.68rem;font-weight:800;text-transform:uppercase;
+                    letter-spacing:.8px;margin-bottom:10px;}
+.health-ring{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;
+             align-items:center;justify-content:center;flex-shrink:0;
+             font-weight:900;color:#fff;line-height:1.1;}
+.health-num{font-size:1.4rem;}
+.health-label{font-size:.55rem;text-transform:uppercase;letter-spacing:.5px;opacity:.85;}
+.rec-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f9fafb;}
+.rec-item:last-child{border-bottom:none;}
+.rec-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;}
+.rec-ok{background:#16a34a;}.rec-atencion{background:#ea580c;}.rec-urgente{background:#dc2626;}
+.proj-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f9fafb;font-size:.8rem;}
+.proj-row:last-child{border-bottom:none;}
+.proj-mes{font-weight:700;min-width:72px;color:#374151;}
+.proj-tipo{font-size:.65rem;padding:1px 7px;border-radius:50px;font-weight:700;}
+.proj-preventiva{background:#dcfce7;color:#166534;}
+.proj-correctiva{background:#fee2e2;color:#991b1b;}
+.alerta-item{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+             padding:8px 12px;margin-bottom:6px;font-size:.8rem;color:#7f1d1d;
+             display:flex;align-items:flex-start;gap:8px;}
+.alerta-item:last-child{margin-bottom:0;}
+.oport-item{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+            padding:8px 12px;margin-bottom:6px;font-size:.8rem;color:#14532d;
+            display:flex;align-items:flex-start;gap:8px;}
+.oport-item:last-child{margin-bottom:0;}
+.prop-card{border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;
+           transition:box-shadow .15s;}
+.prop-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.07);}
+.prop-impacto-alto{border-left:4px solid #dc2626;}
+.prop-impacto-medio{border-left:4px solid #ea580c;}
+.prop-impacto-bajo{border-left:4px solid #16a34a;}
+.vis-prox-card{background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;
+               border-radius:10px;padding:14px 16px;}
 </style>
 
-{# ── Breadcrumb + acciones ───────────────────────────────────────── #}
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus">
-      <i class="bi bi-arrow-left"></i>
-    </a>
-    <nav aria-label="breadcrumb" style="font-size:.78rem">
-      <span class="text-muted">Mantenciones / Clientes /</span>
-      <span class="fw-semibold ms-1">{{ cliente.razon_social }}</span>
-    </nav>
-  </div>
-  <div class="d-flex gap-2">
-    <button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarCliente()">
-      <i class="bi bi-pencil me-1"></i>Editar
-    </button>
-    <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
-      <i class="bi bi-calendar-plus me-1"></i>Nueva visita
-    </button>
-  </div>
+{# ── Breadcrumb ─────────────────────────────────────── #}
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <nav aria-label="breadcrumb" style="font-size:.78rem">
+    <span class="text-muted">Mantenciones / Clientes /</span>
+    <span class="fw-semibold ms-1">{{ cliente.razon_social }}</span>
+  </nav>
 </div>
 
-{# ── Header cliente ──────────────────────────────────────────────── #}
-<div class="cli-header mb-3">
-  <div class="d-flex align-items-center gap-3">
+{# ── Header cliente ────────────────────────────────── #}
+<div class="cli-header mb-0" style="border-radius:var(--rad) var(--rad) 0 0">
+  <div class="d-flex align-items-center gap-3 flex-wrap">
     <div class="cli-avatar">{{ cliente.razon_social[0].upper() }}</div>
     <div style="flex:1;min-width:0">
       <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -153,64 +201,212 @@
         {% if cliente.contacto_email %}<a href="mailto:{{ cliente.contacto_email }}" class="text-decoration-none" style="color:#94a3b8"><i class="bi bi-envelope me-1"></i>{{ cliente.contacto_email }}</a>{% endif %}
       </div>
     </div>
-  </div>
-</div>
-
-{# ── KPIs ────────────────────────────────────────────────────────── #}
-<div class="kpi-bar">
-  <div class="kpi-item">
-    <div class="kpi-num" style="color:#2563eb">{{ maquinas|length }}</div>
-    <div class="kpi-label">Equipos</div>
-  </div>
-  <div class="kpi-item">
-    {% set ct_vigentes = contratos|selectattr('estado','in',['vigente','indefinido'])|list %}
-    <div class="kpi-num" style="color:#16a34a">{{ ct_vigentes|length }}</div>
-    <div class="kpi-label">Contratos vigentes</div>
-  </div>
-  <div class="kpi-item">
-    {% set vis_prox = visitas|selectattr('estado','eq','programada')|list %}
-    <div class="kpi-num" style="color:#ea580c">{{ vis_prox|length }}</div>
-    <div class="kpi-label">Visitas pendientes</div>
-    {% if vis_prox %}
-    <div class="kpi-sub">Próx: {{ vis_prox[0].fecha_programada.strftime('%d/%m') if vis_prox[0].fecha_programada else '—' }}</div>
-    {% endif %}
-  </div>
-  {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
-  {% if ct_analizados %}
-  <div class="kpi-item">
-    <div class="kpi-num" style="color:#7c3aed">{{ ct_analizados[0].ai_score or '—' }}</div>
-    <div class="kpi-label">Score IA contrato</div>
-    <div class="kpi-sub" style="color:{{ '#166534' if (ct_analizados[0].ai_score or 0)>=70 else '#b45309' if (ct_analizados[0].ai_score or 0)>=40 else '#991b1b' }}">
-      {{ '🟢 Bajo riesgo' if (ct_analizados[0].ai_score or 0)>=70 else '🟡 Riesgo medio' if (ct_analizados[0].ai_score or 0)>=40 else '🔴 Alto riesgo' }}
+    <div class="d-flex gap-2 flex-shrink-0">
+      <button class="btn btn-sm btn-outline-secondary" style="color:#94a3b8;border-color:#334155" onclick="abrirEditarCliente()">
+        <i class="bi bi-pencil me-1"></i>Editar cliente
+      </button>
+      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Nueva visita
+      </button>
     </div>
   </div>
-  {% endif %}
 </div>
 
-{# ── Main layout ─────────────────────────────────────────────────── #}
-<div class="row g-3">
+{# ── Tabs ─────────────────────────────────────────── #}
+<div class="ficha-tabs-wrap" style="border-radius:0 0 0 0">
+  <div class="ficha-tabs">
+    <button class="ftab-btn active" data-tab="resumen" onclick="switchTab('resumen')">
+      <i class="bi bi-grid-1x2"></i>Resumen
+    </button>
+    <button class="ftab-btn" data-tab="equipos" onclick="switchTab('equipos')">
+      <i class="bi bi-bicycle"></i>Equipos
+      <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ maquinas|length }}</span>
+    </button>
+    <button class="ftab-btn" data-tab="contrato" onclick="switchTab('contrato')">
+      <i class="bi bi-file-earmark-text"></i>Contrato
+      <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ contratos|length }}</span>
+    </button>
+    <button class="ftab-btn" data-tab="ia" onclick="switchTab('ia')">
+      <i class="bi bi-stars"></i>IA &amp; Plan
+    </button>
+  </div>
+</div>
 
-{# ══ COLUMNA IZQUIERDA ═══════════════════════════════════════════ #}
-<div class="col-12 col-lg-8">
-<div class="ficha-col">
+{# ══════════════════════════════════════════════════════
+   TAB: RESUMEN
+══════════════════════════════════════════════════════ #}
+<div class="ftab-pane active" id="tab-resumen">
 
-  {# ── Equipos / Máquinas ── #}
+  {# ── KPIs ── #}
+  <div class="kpi-bar">
+    <div class="kpi-item">
+      <div class="kpi-num" style="color:#2563eb">{{ maquinas|length }}</div>
+      <div class="kpi-label">Equipos</div>
+    </div>
+    <div class="kpi-item">
+      {% set ct_vigentes = contratos|selectattr('estado','in',['vigente','indefinido'])|list %}
+      <div class="kpi-num" style="color:#16a34a">{{ ct_vigentes|length }}</div>
+      <div class="kpi-label">Contratos vigentes</div>
+    </div>
+    <div class="kpi-item">
+      {% set vis_prox = visitas|selectattr('estado','eq','programada')|list %}
+      <div class="kpi-num" style="color:#ea580c">{{ vis_prox|length }}</div>
+      <div class="kpi-label">Visitas pendientes</div>
+      {% if vis_prox %}
+      <div class="kpi-sub">Próx: {{ vis_prox[0].fecha_programada.strftime('%d/%m') if vis_prox[0].fecha_programada else '—' }}</div>
+      {% endif %}
+    </div>
+    {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
+    {% if ct_analizados %}
+    <div class="kpi-item">
+      <div class="kpi-num" style="color:#7c3aed">{{ ct_analizados[0].ai_score or '—' }}</div>
+      <div class="kpi-label">Score IA contrato</div>
+      <div class="kpi-sub" style="color:{{ '#166534' if (ct_analizados[0].ai_score or 0)>=70 else '#b45309' if (ct_analizados[0].ai_score or 0)>=40 else '#991b1b' }}">
+        {{ 'Bajo riesgo' if (ct_analizados[0].ai_score or 0)>=70 else 'Riesgo medio' if (ct_analizados[0].ai_score or 0)>=40 else 'Alto riesgo' }}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="row g-3">
+    {# ── Columna izquierda: Contacto + Notas ── #}
+    <div class="col-12 col-lg-6">
+
+      {% if cliente.contacto_nombre or cliente.direccion %}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-person me-1"></i>Contacto</span>
+        </div>
+        <div class="f-card-body">
+          {% if cliente.contacto_nombre %}
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <div style="width:30px;height:30px;border-radius:50%;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
+              <i class="bi bi-person" style="font-size:.8rem;color:#6b7280"></i>
+            </div>
+            <div>
+              <div class="fw-semibold" style="font-size:.84rem">{{ cliente.contacto_nombre }}</div>
+              {% if cliente.contacto_tel %}<div class="small text-muted">{{ cliente.contacto_tel }}</div>{% endif %}
+            </div>
+          </div>
+          {% endif %}
+          {% if cliente.direccion %}
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-geo-alt text-muted mt-1" style="font-size:.8rem;flex-shrink:0"></i>
+            <div style="font-size:.8rem;color:#374151">
+              {{ cliente.direccion }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}{% if cliente.ciudad %}, {{ cliente.ciudad }}{% endif %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if cliente.notas %}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-sticky me-1"></i>Notas internas</span>
+        </div>
+        <div class="f-card-body">
+          <p style="font-size:.83rem;color:#374151;margin:0;line-height:1.55">{{ cliente.notas }}</p>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+
+    {# ── Columna derecha: Visitas + Actividad ── #}
+    <div class="col-12 col-lg-6">
+
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-calendar-check me-1"></i>Visitas recientes</span>
+          <button class="btn btn-xs btn-ilus" onclick="abrirNuevaVisita()"><i class="bi bi-plus"></i></button>
+        </div>
+        <div class="f-card-body">
+        {% if visitas %}
+          {% for v in visitas[:5] %}
+          <div class="vis-item">
+            <div class="vis-dot vis-tipo-{{ v.tipo }}"></div>
+            <div style="flex:1;min-width:0">
+              <div class="fw-semibold text-truncate" style="font-size:.81rem">{{ v.titulo or v.tipo.capitalize() }}</div>
+              <div class="small text-muted">
+                {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+                {% if v.tecnico %} · {{ v.tecnico }}{% endif %}
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-1">
+              <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span>
+              <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v|tojson|forceescape }})">
+                <i class="bi bi-pencil" style="font-size:.62rem"></i>
+              </button>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state" style="padding:20px">
+            <i class="bi bi-calendar-x" style="font-size:1.5rem"></i>
+            <div style="font-size:.8rem">Sin visitas registradas</div>
+          </div>
+        {% endif %}
+        </div>
+      </div>
+
+      <div class="f-card">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-clock-history me-1"></i>Actividad reciente</span>
+        </div>
+        <div class="f-card-body">
+        {% if logs %}
+          {% for l in logs %}
+          <div class="log-item">
+            <div style="width:26px;height:26px;border-radius:50%;background:#f3f4f6;
+                        display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <i class="bi bi-{{ 'pencil' if l.accion=='editado' else 'plus-circle' if l.accion in ('agregada','creada','subido') else 'stars' if l.accion=='analizado_ia' else 'activity' }}"
+                 style="font-size:.66rem;color:#9ca3af"></i>
+            </div>
+            <div>
+              <span class="fw-semibold">{{ l.accion.replace('_',' ').capitalize() }}</span>
+              {% if l.detalle %} — <span style="color:#6b7280">{{ l.detalle }}</span>{% endif %}
+              {% if l.usuario %} <span style="color:#d1d5db">por {{ l.usuario }}</span>{% endif %}
+              <div class="log-time">{{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '' }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state" style="padding:16px">
+            <div style="font-size:.78rem">Sin actividad registrada</div>
+          </div>
+        {% endif %}
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════════════
+   TAB: EQUIPOS
+══════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-equipos">
   <div class="f-card">
     <div class="f-card-header">
       <span class="f-card-title"><i class="bi bi-bicycle me-1"></i>Equipos / Máquinas</span>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 flex-wrap">
+        <input type="text" id="eqBuscar" class="form-control form-control-sm"
+               style="width:180px" placeholder="Buscar equipo…"
+               oninput="filtrarEquipos(this.value)">
         <button class="btn btn-xs btn-outline-secondary" onclick="abrirErpModal()">
-          <i class="bi bi-search me-1"></i>Buscar en ERP
+          <i class="bi bi-search me-1"></i>Importar ERP
         </button>
         <button class="btn btn-xs btn-ilus" onclick="abrirMaquinaManual()">
-          <i class="bi bi-plus"></i> Manual
+          <i class="bi bi-plus me-1"></i>Agregar manual
         </button>
       </div>
     </div>
     <div class="f-card-body" id="maqListado">
     {% if maquinas %}
       {% for m in maquinas %}
-      <div class="eq-item" id="maq-{{ m.id }}">
+      <div class="eq-item" id="maq-{{ m.id }}" data-eq-name="{{ m.nombre|lower }}">
         <div class="eq-icon"><i class="bi bi-bicycle"></i></div>
         <div style="flex:1;min-width:0">
           <div class="eq-name">{{ m.nombre }}</div>
@@ -222,7 +418,6 @@
               <span><i class="bi bi-receipt me-1" style="font-size:.65rem"></i>{{ m.doc_origen }}</span>
             {% endif %}
             {% if m.doc_fecha %}
-              {# Calcular garantía #}
               {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 999 %}
               {% if dias_doc <= 180 %}
                 <span class="gar-ok"><i class="bi bi-shield-check me-1"></i>Garantía {{ 180 - dias_doc }}d restantes</span>
@@ -240,311 +435,277 @@
       </div>
       {% endfor %}
     {% else %}
-      <div class="empty-state">
+      <div class="empty-state" id="eqEmptyState">
         <i class="bi bi-bicycle"></i>
         <div class="fw-semibold mb-1">Sin equipos registrados</div>
-        <div style="font-size:.78rem">Usa "Buscar en ERP" para importar desde una FCV o BLV</div>
+        <div style="font-size:.78rem">Usa "Importar ERP" para traer desde una FCV o BLV, o agrega uno manualmente</div>
       </div>
     {% endif %}
     </div>
   </div>
+</div>
 
-  {# ── Contratos ── #}
-  <div class="f-card">
-    <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-file-earmark-text me-1"></i>Contratos de mantención</span>
-      <button class="btn btn-xs btn-ilus" onclick="abrirContratoModal()">
-        <i class="bi bi-upload me-1"></i>Subir contrato
-      </button>
-    </div>
-    <div class="f-card-body" id="ctListado">
-    {% if contratos %}
-      {% for ct in contratos %}
-      <div class="ct-card {{ 'riesgo-alto' if ct.nivel_riesgo=='alto' else 'riesgo-bajo' if ct.nivel_riesgo=='bajo' else '' }}" id="ct-{{ ct.id }}">
-        <div class="ct-card-head">
-          <div class="ct-icon-wrap" style="background:{{ '#fde8e8' if ct.estado=='vencido' else '#dcfce7' if ct.estado in ('vigente','indefinido') else '#f3f4f6' }}">
-            <i class="bi bi-file-earmark-{{ 'pdf' if ct.archivo_tipo=='pdf' else 'word' if ct.archivo_tipo=='word' else 'text' }}"
-               style="color:{{ '#dc2626' if ct.archivo_tipo=='pdf' else '#2563eb' if ct.archivo_tipo=='word' else '#6b7280' }}"></i>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <span class="ct-name">{{ ct.nombre or 'Contrato' }}</span>
-              <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
-              {% if ct.nivel_riesgo %}
-              <span class="cli-badge" style="background:{{ '#fee2e2' if ct.nivel_riesgo=='alto' else '#fef9c3' if ct.nivel_riesgo=='medio' else '#dcfce7' }};color:{{ '#991b1b' if ct.nivel_riesgo=='alto' else '#854d0e' if ct.nivel_riesgo=='medio' else '#166534' }}">
-                {{ '🔴' if ct.nivel_riesgo=='alto' else '🟡' if ct.nivel_riesgo=='medio' else '🟢' }} {{ ct.nivel_riesgo.title() }}
-              </span>
-              {% endif %}
-            </div>
-            <div class="ct-dates">
-              {% if ct.fecha_inicio %}📅 {{ ct.fecha_inicio.strftime('%d/%m/%Y') }}{% endif %}
-              {% if ct.es_indefinido %} → <strong style="color:#7c3aed">Indefinido</strong>{% elif ct.fecha_vencimiento %} → Vence <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>{% endif %}
-              {% if ct.monto_mensual %} &nbsp;·&nbsp; 💰 ${{ "{:,.0f}".format(ct.monto_mensual).replace(",",".") }}/mes{% endif %}
-              {% if ct.frecuencia_meses %} &nbsp;·&nbsp; 🔄 c/{{ ct.frecuencia_meses }} meses{% endif %}
-              {% if ct.sla_horas %} &nbsp;·&nbsp; ⏱ SLA {{ ct.sla_horas }}h{% endif %}
-            </div>
-          </div>
-          <div class="d-flex gap-1 flex-shrink-0">
-            {% if ct.archivo_path %}
-            <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}" target="_blank"
-               class="btn btn-xs btn-outline-secondary" title="Ver archivo">
-              <i class="bi bi-eye"></i>
-            </a>
+{# ══════════════════════════════════════════════════════
+   TAB: CONTRATO
+══════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-contrato">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h6 class="mb-0 fw-bold text-muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.5px">Contratos de mantención</h6>
+    <button class="btn btn-sm btn-ilus" onclick="abrirContratoModal()">
+      <i class="bi bi-upload me-1"></i>Subir nuevo contrato
+    </button>
+  </div>
+
+  <div id="ctListado">
+  {% if contratos %}
+    {% for ct in contratos %}
+    <div class="ct-card {{ 'riesgo-alto' if ct.nivel_riesgo=='alto' else 'riesgo-bajo' if ct.nivel_riesgo=='bajo' else '' }}" id="ct-{{ ct.id }}">
+      <div class="ct-card-head">
+        <div class="ct-icon-wrap" style="background:{{ '#fde8e8' if ct.estado=='vencido' else '#dcfce7' if ct.estado in ('vigente','indefinido') else '#f3f4f6' }}">
+          <i class="bi bi-file-earmark-{{ 'pdf' if ct.archivo_tipo=='pdf' else 'word' if ct.archivo_tipo=='word' else 'text' }}"
+             style="color:{{ '#dc2626' if ct.archivo_tipo=='pdf' else '#2563eb' if ct.archivo_tipo=='word' else '#6b7280' }}"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="ct-name">{{ ct.nombre or 'Contrato' }}</span>
+            <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
+            {% if ct.nivel_riesgo %}
+            <span class="cli-badge" style="background:{{ '#fee2e2' if ct.nivel_riesgo=='alto' else '#fef9c3' if ct.nivel_riesgo=='medio' else '#dcfce7' }};color:{{ '#991b1b' if ct.nivel_riesgo=='alto' else '#854d0e' if ct.nivel_riesgo=='medio' else '#166534' }}">
+              {{ ct.nivel_riesgo.title() }}
+            </span>
             {% endif %}
-            <button class="btn btn-xs btn-outline-secondary" onclick="toggleAiPanel({{ ct.id }})" title="Análisis IA">
-              <i class="bi bi-stars"></i>
-            </button>
+          </div>
+          <div class="ct-dates">
+            {% if ct.fecha_inicio %}📅 {{ ct.fecha_inicio.strftime('%d/%m/%Y') }}{% endif %}
+            {% if ct.es_indefinido %} → <strong style="color:#7c3aed">Indefinido</strong>{% elif ct.fecha_vencimiento %} → Vence <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>{% endif %}
+            {% if ct.monto_mensual %} &nbsp;·&nbsp; 💰 ${{ "{:,.0f}".format(ct.monto_mensual).replace(",",".") }}/mes{% endif %}
+            {% if ct.frecuencia_meses %} &nbsp;·&nbsp; 🔄 c/{{ ct.frecuencia_meses }} meses{% endif %}
+            {% if ct.sla_horas %} &nbsp;·&nbsp; ⏱ SLA {{ ct.sla_horas }}h{% endif %}
           </div>
         </div>
+        <div class="d-flex gap-1 flex-shrink-0">
+          {% if ct.archivo_path %}
+          <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}" target="_blank"
+             class="btn btn-xs btn-outline-secondary" title="Ver archivo">
+            <i class="bi bi-eye"></i>
+          </a>
+          {% endif %}
+          <button class="btn btn-xs btn-outline-secondary" onclick="toggleAiPanel({{ ct.id }})" title="Mostrar/ocultar análisis IA">
+            <i class="bi bi-stars"></i>
+          </button>
+          <button class="btn btn-xs btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Analizar con IA">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
 
-        {# ── AI Panel — visible si analizado ── #}
-        <div id="ai-{{ ct.id }}" {% if not ct.ai_analizado %}style="display:none"{% endif %}>
-          {% if ct.ai_analizado %}
-          <div class="ai-panel">
-            {# Header con score #}
-            <div class="d-flex align-items-center gap-3 mb-3">
-              <div class="ai-score-ring" style="background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}">
-                {{ ct.ai_score or '?' }}
-              </div>
-              <div>
-                <div style="font-size:.78rem;font-weight:800;color:#7c3aed"><i class="bi bi-stars me-1"></i>Análisis IA — {{ ct.ai_tipo_contrato or 'Contrato' }}</div>
-                <div class="score-bar mt-1" style="width:160px">
-                  <div class="score-fill" style="width:{{ ct.ai_score or 0 }}%;background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}"></div>
-                </div>
-              </div>
-              <div class="ms-auto text-end">
-                <div style="font-size:.68rem;color:#9ca3af">Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y') if ct.ai_fecha else '—' }}</div>
-                <button class="btn btn-xs btn-outline-secondary mt-1" onclick="analizarContrato({{ ct.id }}, this)">
-                  <i class="bi bi-arrow-clockwise me-1"></i>Re-analizar
-                </button>
-              </div>
+      {# ── AI Panel — siempre visible si analizado ── #}
+      <div id="ai-{{ ct.id }}" {% if not ct.ai_analizado %}style="display:none"{% endif %}>
+        {% if ct.ai_analizado %}
+        <div class="ai-panel">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="ai-score-ring" style="background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}">
+              {{ ct.ai_score or '?' }}
             </div>
-
-            {# Resumen #}
-            {% if ct.ai_resumen %}
-            <p style="font-size:.82rem;color:#374151;margin-bottom:12px;line-height:1.5;
-                      background:#fff;border-radius:8px;padding:10px 12px;border-left:3px solid #7c3aed">
-              {{ ct.ai_resumen }}
-            </p>
-            {% endif %}
-
-            {# Campos clave #}
-            <div class="ai-field-grid mb-3">
-              {% if ct.costo_por_mant %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">Costo por mantención</div>
-                <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_por_mant).replace(",",".") }}</div>
-              </div>
-              {% endif %}
-              {% if ct.costo_total %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">Costo total contrato</div>
-                <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_total).replace(",",".") }}</div>
-              </div>
-              {% endif %}
-              {% if ct.sla_horas %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">SLA respuesta</div>
-                <div class="ai-field-value">⏱ {{ ct.sla_horas }} horas</div>
-              </div>
-              {% endif %}
-              {% if ct.ai_frecuencia_sug %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">Frecuencia sugerida</div>
-                <div class="ai-field-value">🔄 cada {{ ct.ai_frecuencia_sug }} meses</div>
-              </div>
-              {% endif %}
-              {% if ct.incluye_mant_gratis %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">Mantenciones</div>
-                <div class="ai-field-value" style="color:#166534">✓ Incluidas gratis</div>
-              </div>
-              {% endif %}
-              {% if ct.incluye_repuestos %}
-              <div class="ai-field-item">
-                <div class="ai-field-label">Repuestos</div>
-                <div class="ai-field-value" style="color:#166534">✓ Incluidos</div>
-              </div>
-              {% endif %}
-            </div>
-
-            {# Cobertura #}
-            {% if ct.ai_cobertura %}
-            <div class="mb-3">
-              <div class="ai-section-title">Cobertura</div>
-              <div style="font-size:.79rem;color:#374151;background:#fff;border-radius:6px;padding:8px 10px">{{ ct.ai_cobertura }}</div>
-            </div>
-            {% endif %}
-
-            {# Cláusulas críticas #}
-            {% if ct.ai_clausulas %}
-            <div class="mb-3">
-              <div class="ai-section-title">⚖️ Cláusulas críticas</div>
-              {% for c in ct.ai_clausulas|from_json %}
-              <div class="ai-chip"><i class="bi bi-file-text me-1" style="color:#2563eb"></i>{{ c }}</div>
-              {% endfor %}
-            </div>
-            {% endif %}
-
-            {# Puntos críticos #}
-            {% if ct.ai_puntos_criticos %}
-            <div class="mb-3">
-              <div class="ai-section-title">⚠️ Puntos críticos</div>
-              {% for p in ct.ai_puntos_criticos|from_json %}
-              <div class="ai-chip"><i class="bi bi-exclamation-circle me-1" style="color:#ea580c"></i>{{ p }}</div>
-              {% endfor %}
-            </div>
-            {% endif %}
-
-            {# Alertas #}
-            {% if ct.ai_alertas %}
-            <div class="mb-3">
-              <div class="ai-section-title">🔔 Alertas</div>
-              {% for a in ct.ai_alertas|from_json %}
-              <div class="ai-chip"><i class="bi bi-bell me-1" style="color:#dc2626"></i>{{ a }}</div>
-              {% endfor %}
-            </div>
-            {% endif %}
-
-            {# Mejoras #}
-            {% if ct.ai_mejoras %}
             <div>
-              <div class="ai-section-title">💡 Mejoras sugeridas</div>
-              {% for m in ct.ai_mejoras|from_json %}
-              <div class="ai-chip"><i class="bi bi-lightbulb me-1" style="color:#7c3aed"></i>{{ m }}</div>
-              {% endfor %}
+              <div style="font-size:.78rem;font-weight:800;color:#7c3aed"><i class="bi bi-stars me-1"></i>Análisis IA — {{ ct.ai_tipo_contrato or 'Contrato' }}</div>
+              <div class="score-bar mt-1" style="width:160px">
+                <div class="score-fill" style="width:{{ ct.ai_score or 0 }}%;background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}"></div>
+              </div>
+            </div>
+            <div class="ms-auto text-end">
+              <div style="font-size:.68rem;color:#9ca3af">Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y') if ct.ai_fecha else '—' }}</div>
+              <button class="btn btn-xs btn-outline-secondary mt-1" onclick="analizarContrato({{ ct.id }}, this)">
+                <i class="bi bi-arrow-clockwise me-1"></i>Re-analizar
+              </button>
+            </div>
+          </div>
+
+          {% if ct.ai_resumen %}
+          <p style="font-size:.82rem;color:#374151;margin-bottom:12px;line-height:1.5;
+                    background:#fff;border-radius:8px;padding:10px 12px;border-left:3px solid #7c3aed">
+            {{ ct.ai_resumen }}
+          </p>
+          {% endif %}
+
+          <div class="ai-field-grid mb-3">
+            {% if ct.costo_por_mant %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">Costo por mantención</div>
+              <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_por_mant).replace(",",".") }}</div>
             </div>
             {% endif %}
-
+            {% if ct.costo_total %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">Costo total contrato</div>
+              <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_total).replace(",",".") }}</div>
+            </div>
+            {% endif %}
+            {% if ct.sla_horas %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">SLA respuesta</div>
+              <div class="ai-field-value">⏱ {{ ct.sla_horas }} horas</div>
+            </div>
+            {% endif %}
+            {% if ct.ai_frecuencia_sug %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">Frecuencia sugerida</div>
+              <div class="ai-field-value">🔄 cada {{ ct.ai_frecuencia_sug }} meses</div>
+            </div>
+            {% endif %}
+            {% if ct.incluye_mant_gratis %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">Mantenciones</div>
+              <div class="ai-field-value" style="color:#166534">✓ Incluidas gratis</div>
+            </div>
+            {% endif %}
+            {% if ct.incluye_repuestos %}
+            <div class="ai-field-item">
+              <div class="ai-field-label">Repuestos</div>
+              <div class="ai-field-value" style="color:#166534">✓ Incluidos</div>
+            </div>
+            {% endif %}
           </div>
-          {% else %}
-          <div class="ai-panel text-center py-3">
-            <p class="mb-2" style="color:#6b7280;font-size:.82rem">Este contrato aún no ha sido analizado.</p>
-            <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none"
-                    onclick="analizarContrato({{ ct.id }}, this)">
-              <i class="bi bi-stars me-1"></i>Analizar con Claude
-            </button>
+
+          {% if ct.ai_cobertura %}
+          <div class="mb-3">
+            <div class="ai-section-title">Cobertura</div>
+            <div style="font-size:.79rem;color:#374151;background:#fff;border-radius:6px;padding:8px 10px">{{ ct.ai_cobertura }}</div>
           </div>
           {% endif %}
+
+          {% if ct.ai_clausulas %}
+          <div class="mb-3">
+            <div class="ai-section-title">⚖️ Cláusulas críticas</div>
+            {% for c in ct.ai_clausulas|from_json %}
+            <div class="ai-chip"><i class="bi bi-file-text me-1" style="color:#2563eb"></i>{{ c }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if ct.ai_puntos_criticos %}
+          <div class="mb-3">
+            <div class="ai-section-title">⚠️ Puntos críticos</div>
+            {% for p in ct.ai_puntos_criticos|from_json %}
+            <div class="ai-chip"><i class="bi bi-exclamation-circle me-1" style="color:#ea580c"></i>{{ p }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if ct.ai_alertas %}
+          <div class="mb-3">
+            <div class="ai-section-title">🔔 Alertas</div>
+            {% for a in ct.ai_alertas|from_json %}
+            <div class="ai-chip"><i class="bi bi-bell me-1" style="color:#dc2626"></i>{{ a }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if ct.ai_mejoras %}
+          <div>
+            <div class="ai-section-title">💡 Mejoras sugeridas</div>
+            {% for m in ct.ai_mejoras|from_json %}
+            <div class="ai-chip"><i class="bi bi-lightbulb me-1" style="color:#7c3aed"></i>{{ m }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
         </div>
+        {% else %}
+        <div class="ai-panel text-center py-3">
+          <p class="mb-2" style="color:#6b7280;font-size:.82rem">Este contrato aún no ha sido analizado.</p>
+          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none"
+                  onclick="analizarContrato({{ ct.id }}, this)">
+            <i class="bi bi-stars me-1"></i>Analizar con Claude
+          </button>
+        </div>
+        {% endif %}
       </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty-state">
-        <i class="bi bi-file-earmark-x"></i>
-        <div class="fw-semibold mb-1">Sin contratos subidos</div>
-        <div style="font-size:.78rem">Sube el contrato para que la IA lo analice automáticamente</div>
-      </div>
-    {% endif %}
+
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">
+      <i class="bi bi-file-earmark-x"></i>
+      <div class="fw-semibold mb-1">Sin contratos subidos</div>
+      <div style="font-size:.78rem">Sube el contrato para que la IA lo analice automáticamente</div>
+    </div>
+  {% endif %}
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════════════
+   TAB: IA & PLAN
+══════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-ia">
+
+  {# Hero card ─────────────────────────────────────────── #}
+  <div class="plan-hero mb-4">
+    <span class="plan-hero-icon">🤖</span>
+    <div class="plan-hero-title">Plan de Mejora con IA</div>
+    <div class="plan-hero-sub">
+      Genera un análisis profundo con proyecciones a 12 meses, recomendaciones por equipo,
+      alertas críticas y oportunidades comerciales — impulsado por Claude AI.
+    </div>
+    <div class="mt-3 d-flex gap-2 flex-wrap">
+      <button class="btn btn-ilus fw-bold px-4" id="btnGenerarPlan" onclick="generarPlanMejora()">
+        <i class="bi bi-stars me-2"></i>Generar Plan de Mejora
+      </button>
+      {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
+      {% if ct_analizados %}
+      <span style="font-size:.78rem;color:#94a3b8;align-self:center">
+        <i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>
+        {{ ct_analizados|length }} contrato(s) analizado(s) disponibles
+      </span>
+      {% else %}
+      <span style="font-size:.78rem;color:#f59e0b;align-self:center">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Sin contratos analizados — el plan será menos detallado
+      </span>
+      {% endif %}
     </div>
   </div>
 
-</div>{# /ficha-col #}
-</div>{# /col izquierda #}
-
-{# ══ COLUMNA DERECHA ══════════════════════════════════════════════ #}
-<div class="col-12 col-lg-4">
-<div class="ficha-col">
-
-  {# ── Información contacto ── #}
-  {% if cliente.contacto_nombre or cliente.direccion %}
-  <div class="f-card">
+  {# Resumen IA de contratos existentes ──────────────── #}
+  {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
+  {% if ct_analizados %}
+  <div class="f-card mb-4">
     <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-person me-1"></i>Contacto</span>
+      <span class="f-card-title"><i class="bi bi-stars me-1"></i>Análisis IA de contratos</span>
     </div>
     <div class="f-card-body">
-      {% if cliente.contacto_nombre %}
-      <div class="d-flex align-items-center gap-2 mb-2">
-        <div style="width:30px;height:30px;border-radius:50%;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
-          <i class="bi bi-person" style="font-size:.8rem;color:#6b7280"></i>
+      {% for ct in ct_analizados %}
+      <div class="d-flex align-items-center gap-3 mb-3 {% if not loop.last %}pb-3{% endif %}" {% if not loop.last %}style="border-bottom:1px solid var(--border)"{% endif %}>
+        <div class="ai-score-ring" style="background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }};width:44px;height:44px;font-size:.9rem">
+          {{ ct.ai_score or '?' }}
         </div>
-        <div>
-          <div class="fw-semibold" style="font-size:.84rem">{{ cliente.contacto_nombre }}</div>
-          {% if cliente.contacto_tel %}<div class="small text-muted">{{ cliente.contacto_tel }}</div>{% endif %}
+        <div style="flex:1;min-width:0">
+          <div class="fw-bold" style="font-size:.85rem">{{ ct.nombre or 'Contrato' }}</div>
+          <div style="font-size:.76rem;color:#6b7280">{{ ct.ai_tipo_contrato or '' }} · Score {{ ct.ai_score or '—' }}/100</div>
+          {% if ct.ai_resumen %}
+          <p style="font-size:.77rem;color:#374151;margin:4px 0 0;line-height:1.45">{{ ct.ai_resumen[:160] }}{% if ct.ai_resumen|length > 160 %}…{% endif %}</p>
+          {% endif %}
         </div>
+        <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
       </div>
-      {% endif %}
-      {% if cliente.direccion %}
-      <div class="d-flex align-items-start gap-2">
-        <i class="bi bi-geo-alt text-muted mt-1" style="font-size:.8rem;flex-shrink:0"></i>
-        <div style="font-size:.8rem;color:#374151">
-          {{ cliente.direccion }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}{% if cliente.ciudad %}, {{ cliente.ciudad }}{% endif %}
-        </div>
-      </div>
-      {% endif %}
+      {% endfor %}
     </div>
   </div>
   {% endif %}
 
-  {# ── Visitas ── #}
-  <div class="f-card">
-    <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-calendar-check me-1"></i>Visitas</span>
-      <button class="btn btn-xs btn-ilus" onclick="abrirNuevaVisita()"><i class="bi bi-plus"></i></button>
-    </div>
-    <div class="f-card-body">
-    {% if visitas %}
-      {% for v in visitas %}
-      <div class="vis-item">
-        <div class="vis-dot vis-tipo-{{ v.tipo }}"></div>
-        <div style="flex:1;min-width:0">
-          <div class="fw-semibold text-truncate" style="font-size:.81rem">{{ v.titulo or v.tipo.capitalize() }}</div>
-          <div class="small text-muted">
-            {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
-            {% if v.tecnico %} · {{ v.tecnico }}{% endif %}
-          </div>
-        </div>
-        <div class="d-flex align-items-center gap-1">
-          <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span>
-          <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v|tojson|forceescape }})">
-            <i class="bi bi-pencil" style="font-size:.62rem"></i>
-          </button>
-        </div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty-state" style="padding:20px">
-        <i class="bi bi-calendar-x" style="font-size:1.5rem"></i>
-        <div style="font-size:.8rem">Sin visitas registradas</div>
-      </div>
-    {% endif %}
-    </div>
+  {# Área de resultado del plan ────────────────────────── #}
+  <div id="planSpinner" style="display:none" class="text-center py-5">
+    <div class="spinner-border text-danger mb-3" style="width:3rem;height:3rem"></div>
+    <div class="fw-semibold text-muted">Generando plan de mejora con Claude AI…</div>
+    <div class="text-muted mt-2" style="font-size:.82rem">Esto puede tomar hasta 30 segundos</div>
   </div>
 
-  {# ── Actividad reciente ── #}
-  <div class="f-card">
-    <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-clock-history me-1"></i>Actividad reciente</span>
-    </div>
-    <div class="f-card-body">
-    {% if logs %}
-      {% for l in logs %}
-      <div class="log-item">
-        <div style="width:26px;height:26px;border-radius:50%;background:#f3f4f6;
-                    display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          <i class="bi bi-{{ 'pencil' if l.accion=='editado' else 'plus-circle' if l.accion in ('agregada','creada','subido') else 'stars' if l.accion=='analizado_ia' else 'activity' }}"
-             style="font-size:.66rem;color:#9ca3af"></i>
-        </div>
-        <div>
-          <span class="fw-semibold">{{ l.accion.replace('_',' ').capitalize() }}</span>
-          {% if l.detalle %} — <span style="color:#6b7280">{{ l.detalle }}</span>{% endif %}
-          {% if l.usuario %} <span style="color:#d1d5db">por {{ l.usuario }}</span>{% endif %}
-          <div class="log-time">{{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '' }}</div>
-        </div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty-state" style="padding:16px">
-        <div style="font-size:.78rem">Sin actividad registrada</div>
-      </div>
-    {% endif %}
-    </div>
+  <div id="planResultado" style="display:none">
+    <!-- Renderizado dinámicamente por JS -->
   </div>
 
-</div>{# /ficha-col #}
-</div>{# /col derecha #}
-
-</div>{# /row #}
+</div>
+{# /ftab-pane ia #}
 
 
 {# ═══════════════════════════════════════════════════════════════
@@ -894,7 +1055,35 @@
 <script>
 const CID = {{ cliente.id }};
 
-// ─── Modales ─────────────────────────────────────────────
+// ─── Tabs con localStorage ─────────────────────────────────────
+const TAB_KEY = `ficha_tab_${CID}`;
+function switchTab(name) {
+  document.querySelectorAll('.ftab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.ftab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+  document.querySelector(`.ftab-btn[data-tab="${name}"]`).classList.add('active');
+  localStorage.setItem(TAB_KEY, name);
+}
+(function() {
+  const saved = localStorage.getItem(TAB_KEY);
+  if (saved && document.getElementById(`tab-${saved}`)) switchTab(saved);
+})();
+
+// ─── Filtro de equipos ─────────────────────────────────────────
+function filtrarEquipos(q) {
+  const norm = q.toLowerCase().trim();
+  let anyVisible = false;
+  document.querySelectorAll('#maqListado .eq-item').forEach(el => {
+    const name = el.getAttribute('data-eq-name') || '';
+    const show = !norm || name.includes(norm);
+    el.style.display = show ? '' : 'none';
+    if (show) anyVisible = true;
+  });
+  const empty = document.getElementById('eqEmptyState');
+  if (empty) empty.style.display = anyVisible ? 'none' : '';
+}
+
+// ─── Modales ─────────────────────────────────────────
 function abrirEditarCliente() {
   new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
 }
@@ -1005,7 +1194,6 @@ async function fBuscarDoc() {
       return;
     }
 
-    // Alerta si el documento pertenece a un cliente diferente
     const rutCliente = '{{ cliente.rut | default("") | e }}';
     let mismatchAlert = '';
     if(data.rut && rutCliente && data.rut.replace(/[.\-]/g,'') !== rutCliente.replace(/[.\-]/g,'')) {
@@ -1017,7 +1205,6 @@ async function fBuscarDoc() {
       </div>`;
     }
 
-    // Calcular garantía (6 meses desde fecha doc)
     let garantiaInfo = '';
     if (data.fecha) {
       const partes = data.fecha.split('/');
@@ -1062,7 +1249,6 @@ async function fBuscarDoc() {
 
     data.items.forEach((it, i) => {
       const key = `fdoc-${tido}-${nudo}-${i}`;
-      // Calcular garantía individual
       let garBadge = '';
       if (data.fecha) {
         const partes = data.fecha.split('/');
@@ -1299,6 +1485,172 @@ async function eliminarVisita() {
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     location.reload();
   }
+}
+
+// ─── Plan de Mejora IA ────────────────────────────────────
+async function generarPlanMejora() {
+  const btn = document.getElementById('btnGenerarPlan');
+  const spinner = document.getElementById('planSpinner');
+  const resultado = document.getElementById('planResultado');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generando…';
+  spinner.style.display = '';
+  resultado.style.display = 'none';
+
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/plan-mejora`, { method: 'POST' });
+    const data = await r.json();
+
+    spinner.style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Re-generar Plan';
+
+    if (!data.ok) {
+      resultado.style.display = '';
+      resultado.innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'Error al generar plan'}</div>`;
+      return;
+    }
+
+    renderPlan(data.plan, data.cliente);
+    resultado.style.display = '';
+
+  } catch(e) {
+    spinner.style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar Plan de Mejora';
+    resultado.style.display = '';
+    resultado.innerHTML = `<div class="alert alert-danger">Error de conexión: ${e.message}</div>`;
+  }
+}
+
+function renderPlan(p, clienteNombre) {
+  const estadoColor = {bueno:'#16a34a', regular:'#ea580c', critico:'#dc2626'}[p.estado_flota] || '#6b7280';
+  const healthBg = p.indice_salud >= 70 ? '#16a34a' : p.indice_salud >= 40 ? '#ea580c' : '#dc2626';
+  const impactoColor = {alto:'#dc2626', medio:'#ea580c', bajo:'#16a34a'};
+  const catIcon = {contrato:'bi-file-earmark-text', equipo:'bi-bicycle', proceso:'bi-gear', costos:'bi-currency-dollar'};
+
+  let html = `<div class="plan-result-card">`;
+
+  // ── Resumen ejecutivo ──
+  html += `<div class="plan-section" style="background:linear-gradient(135deg,#f8faff,#f0fdf4)">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <div class="health-ring" style="background:${healthBg}">
+        <span class="health-num">${p.indice_salud}</span>
+        <span class="health-label">Salud</span>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+          <span style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed">Plan generado por IA</span>
+          <span style="background:${estadoColor};color:#fff;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">${(p.estado_flota||'').toUpperCase()}</span>
+        </div>
+        <p style="font-size:.84rem;color:#374151;margin:0;line-height:1.55">${p.resumen_ejecutivo || ''}</p>
+      </div>
+    </div>
+  </div>`;
+
+  // ── Próxima visita sugerida ──
+  if (p.proxima_visita) {
+    const pv = p.proxima_visita;
+    const prioColor = {alta:'#dc2626', media:'#ea580c', baja:'#16a34a'}[pv.prioridad] || '#6b7280';
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#2563eb"><i class="bi bi-calendar-event me-1"></i>Próxima visita sugerida</div>
+      <div class="vis-prox-card">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <div style="text-align:center;min-width:80px">
+            <div style="font-size:1.3rem;font-weight:900;color:#1d4ed8">${pv.fecha_sugerida || '—'}</div>
+            <div style="font-size:.62rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">${pv.tipo || ''}</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.82rem;color:#374151">${pv.razon || ''}</div>
+            <div class="d-flex gap-2 mt-1 flex-wrap">
+              <span style="background:${prioColor};color:#fff;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">Prioridad ${(pv.prioridad||'').toUpperCase()}</span>
+              ${pv.duracion_horas ? `<span style="font-size:.72rem;color:#6b7280"><i class="bi bi-clock me-1"></i>${pv.duracion_horas}h estimadas</span>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── Alertas críticas ──
+  if (p.alertas_criticas?.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>Alertas críticas</div>
+      ${p.alertas_criticas.map(a => `<div class="alerta-item"><i class="bi bi-exclamation-circle-fill flex-shrink-0"></i>${a}</div>`).join('')}
+    </div>`;
+  }
+
+  // ── Recomendaciones por equipo ──
+  if (p.recomendaciones_equipos?.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#2563eb"><i class="bi bi-bicycle me-1"></i>Recomendaciones por equipo</div>`;
+    p.recomendaciones_equipos.forEach(rec => {
+      const dc = {ok:'rec-ok', atencion:'rec-atencion', urgente:'rec-urgente'}[rec.estado] || 'rec-ok';
+      html += `<div class="rec-item">
+        <div class="rec-dot ${dc}" style="margin-top:4px"></div>
+        <div style="flex:1;min-width:0">
+          <div class="fw-semibold" style="font-size:.82rem">${rec.equipo}</div>
+          <div style="font-size:.78rem;color:#374151;margin-top:2px">${rec.accion}</div>
+        </div>
+        <span style="font-size:.65rem;background:#f3f4f6;color:#374151;padding:1px 7px;border-radius:50px;font-weight:600;white-space:nowrap">${rec.plazo}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── Proyección 12 meses ──
+  if (p.proyeccion_12_meses?.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#7c3aed"><i class="bi bi-bar-chart-line me-1"></i>Proyección 12 meses</div>
+      <div style="max-height:280px;overflow-y:auto">`;
+    p.proyeccion_12_meses.forEach(m => {
+      const tipoCls = `proj-${m.tipo_visita}`;
+      html += `<div class="proj-row">
+        <span class="proj-mes">${m.mes}</span>
+        <span class="proj-tipo ${tipoCls}">${m.tipo_visita}</span>
+        <span style="flex:1;font-size:.79rem;color:#374151">${m.descripcion}</span>
+        ${m.costo_estimado ? `<span style="font-size:.72rem;font-weight:700;color:#374151;white-space:nowrap">$${Number(m.costo_estimado).toLocaleString('es-CL')}</span>` : ''}
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // ── Propuestas de mejora ──
+  if (p.propuestas_mejora?.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#7c3aed"><i class="bi bi-lightbulb me-1"></i>Propuestas de mejora</div>`;
+    p.propuestas_mejora.forEach(prop => {
+      const ic = catIcon[prop.categoria] || 'bi-lightbulb';
+      const col = impactoColor[prop.impacto] || '#6b7280';
+      html += `<div class="prop-card prop-impacto-${prop.impacto}">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi ${ic}" style="color:${col};font-size:.9rem;flex-shrink:0;margin-top:2px"></i>
+          <div style="flex:1">
+            <div class="fw-bold" style="font-size:.83rem">${prop.titulo}</div>
+            <div style="font-size:.78rem;color:#374151;margin-top:3px">${prop.descripcion}</div>
+            <div class="mt-1">
+              <span style="background:${col};color:#fff;font-size:.6rem;padding:1px 7px;border-radius:50px;font-weight:700">Impacto ${prop.impacto}</span>
+              <span style="font-size:.68rem;color:#9ca3af;margin-left:6px">${prop.categoria}</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── Oportunidades comerciales ──
+  if (p.oportunidades_comerciales?.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>
+      ${p.oportunidades_comerciales.map(o => `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`).join('')}
+    </div>`;
+  }
+
+  html += `</div>`; // /plan-result-card
+
+  document.getElementById('planResultado').innerHTML = html;
 }
 </script>
 {% endblock %}

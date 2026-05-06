@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Gestión de Roles — ILUS{% endblock %}
+
+{% block content %}
+<style>
+:root{--rad:12px;--shadow:0 2px 12px rgba(0,0,0,.07);--border:#eaecf0;}
+.r-card{background:#fff;border-radius:var(--rad);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;}
+.r-card-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;background:#fafbfc;}
+.r-card-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin:0;}
+.role-pill{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;padding:2px 10px;border-radius:50px;}
+.role-superadmin{background:#fee2e2;color:#991b1b;}
+.role-admin{background:#fef9c3;color:#854d0e;}
+.role-ejecutivo{background:#dbeafe;color:#1d4ed8;}
+.role-editor{background:#ede9fe;color:#5b21b6;}
+.role-lector{background:#f3f4f6;color:#374151;}
+.role-vendedor{background:#dcfce7;color:#166534;}
+.ref-card{border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:8px;
+          display:flex;align-items:flex-start;gap:12px;transition:box-shadow .15s;}
+.ref-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.08);}
+.ref-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;}
+.toast-stack{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+.ilus-toast{background:#1a1a2e;color:#fff;padding:10px 18px;border-radius:8px;font-size:.83rem;
+            box-shadow:0 4px 16px rgba(0,0,0,.18);pointer-events:all;
+            animation:slideIn .25s ease;min-width:220px;}
+.ilus-toast.success{border-left:4px solid #16a34a;}
+.ilus-toast.error{border-left:4px solid #dc2626;}
+@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+</style>
+
+{# ── Breadcrumb ── #}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('users_index') }}" class="btn btn-sm btn-dark-ilus">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <nav aria-label="breadcrumb" style="font-size:.78rem">
+      <span class="text-muted">Administración /</span>
+      <span class="fw-semibold ms-1">Gestión de Roles</span>
+    </nav>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  {# ── Tabla de usuarios ── #}
+  <div class="col-12 col-xl-8">
+    <div class="r-card">
+      <div class="r-card-header">
+        <span class="r-card-title"><i class="bi bi-people me-1"></i>Usuarios y roles</span>
+        <span class="text-muted" style="font-size:.77rem">{{ users|length }} usuario(s)</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" style="font-size:.84rem">
+          <thead class="table-light">
+            <tr>
+              <th style="padding:10px 20px">Usuario</th>
+              <th>Rol actual</th>
+              <th style="width:220px">Cambiar rol</th>
+              <th style="width:80px">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for u in users %}
+          <tr id="user-row-{{ u.id }}">
+            <td style="padding:10px 20px">
+              <div class="d-flex align-items-center gap-2">
+                <div style="width:34px;height:34px;border-radius:50%;background:#f3f4f6;
+                            display:flex;align-items:center;justify-content:center;
+                            font-weight:700;font-size:.8rem;color:#374151;flex-shrink:0">
+                  {{ (u.nombre or u.username)[0].upper() }}
+                </div>
+                <div>
+                  <div class="fw-semibold" style="font-size:.85rem">{{ u.nombre or '—' }}</div>
+                  <div class="text-muted" style="font-size:.72rem">{{ u.username }}</div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <span class="role-pill role-{{ u.role }}" id="role-badge-{{ u.id }}">
+                <i class="bi bi-shield-fill"></i>{{ u.role }}
+              </span>
+            </td>
+            <td>
+              <div class="d-flex gap-1 align-items-center">
+                <select class="form-select form-select-sm" id="role-sel-{{ u.id }}"
+                        style="font-size:.78rem;max-width:160px">
+                  {% for r in roles %}
+                  <option value="{{ r.value }}" {% if u.role == r.value %}selected{% endif %}>
+                    {{ r.label }}
+                  </option>
+                  {% endfor %}
+                </select>
+                <button class="btn btn-sm btn-ilus px-2" onclick="cambiarRol({{ u.id }})" title="Guardar">
+                  <i class="bi bi-check-lg"></i>
+                </button>
+              </div>
+            </td>
+            <td>
+              {% if u.active %}
+              <span style="background:#dcfce7;color:#166534;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Activo</span>
+              {% else %}
+              <span style="background:#f3f4f6;color:#6b7280;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Inactivo</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Panel referencia de roles ── #}
+  <div class="col-12 col-xl-4">
+    <div class="r-card">
+      <div class="r-card-header">
+        <span class="r-card-title"><i class="bi bi-info-circle me-1"></i>Referencia de roles</span>
+      </div>
+      <div style="padding:16px 18px">
+        {% set dot_colors = {
+          'superadmin':'#dc2626',
+          'admin':'#d97706',
+          'ejecutivo':'#2563eb',
+          'editor':'#7c3aed',
+          'lector':'#6b7280',
+          'vendedor':'#16a34a'
+        } %}
+        {% for r in roles %}
+        <div class="ref-card">
+          <div class="ref-dot" style="background:{{ dot_colors[r.value] }}"></div>
+          <div>
+            <div class="fw-bold" style="font-size:.83rem">{{ r.label }}</div>
+            <div style="font-size:.76rem;color:#6b7280;margin-top:2px">{{ r.desc }}</div>
+            <span class="role-pill role-{{ r.value }} mt-1" style="font-size:.62rem">{{ r.value }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="r-card mt-3" style="background:linear-gradient(135deg,#faf5ff,#eff6ff)">
+      <div style="padding:16px 18px">
+        <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed;margin-bottom:8px">
+          <i class="bi bi-info-circle me-1"></i>Importante
+        </div>
+        <ul style="font-size:.79rem;color:#374151;margin:0;padding-left:16px;line-height:1.7">
+          <li>El cambio de rol es inmediato.</li>
+          <li>No puedes cambiar tu propio rol si no eres Super Admin.</li>
+          <li>Los roles de acceso restringen qué módulos puede ver cada usuario.</li>
+          <li>El rol <strong>superadmin</strong> tiene acceso total e irreversible.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{# ── Toast stack ── #}
+<div class="toast-stack" id="toastStack"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ROLES_META = {{ roles | tojson }};
+
+async function cambiarRol(uid) {
+  const sel = document.getElementById(`role-sel-${uid}`);
+  const newRole = sel.value;
+  const badge   = document.getElementById(`role-badge-${uid}`);
+
+  // Confirmación
+  const label = ROLES_META.find(r => r.value === newRole)?.label || newRole;
+  if (!confirm(`¿Cambiar el rol de este usuario a "${label}"?\n\nEste cambio es inmediato.`)) return;
+
+  try {
+    const r = await fetch(`/admin/roles/${uid}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role: newRole})
+    });
+    const data = await r.json();
+
+    if (data.ok) {
+      // Actualizar badge visual
+      badge.className = `role-pill role-${newRole}`;
+      badge.innerHTML = `<i class="bi bi-shield-fill"></i>${newRole}`;
+      showToast(`Rol actualizado a "${label}"`, 'success');
+    } else {
+      showToast(data.error || 'Error al actualizar rol', 'error');
+      // Restaurar select al valor anterior reflejado en el badge
+    }
+  } catch(e) {
+    showToast('Error de conexión', 'error');
+  }
+}
+
+function showToast(msg, type='success') {
+  const stack = document.getElementById('toastStack');
+  const t = document.createElement('div');
+  t.className = `ilus-toast ${type}`;
+  t.innerHTML = `<i class="bi bi-${type==='success' ? 'check-circle-fill' : 'exclamation-circle-fill'} me-2"></i>${msg}`;
+  stack.appendChild(t);
+  setTimeout(() => { t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 300); }, 3200);
+}
+</script>
+{% endblock %}

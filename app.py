@@ -2914,6 +2914,46 @@ def invite_user(user_id):
 
 
 # ══════════════════════════════════════════════════════════════
+#  MÓDULO: ROLES
+# ══════════════════════════════════════════════════════════════
+
+@app.route("/admin/roles")
+@require_permission("admin")
+def admin_roles():
+    users = mysql_fetchall(f"SELECT id,username,nombre,role,active FROM `{AUTH_TABLE}` ORDER BY nombre", ())
+    roles = [
+        {"value":"superadmin","label":"Super Administrador","desc":"Acceso total al sistema","color":"danger"},
+        {"value":"admin","label":"Administrador","desc":"Gestión usuarios + todos los módulos","color":"warning"},
+        {"value":"ejecutivo","label":"Ejecutivo","desc":"Solo módulo Mantenciones","color":"info"},
+        {"value":"editor","label":"Editor","desc":"Crear/editar evaluaciones y colaboradores","color":"primary"},
+        {"value":"lector","label":"Lector","desc":"Solo lectura","color":"secondary"},
+        {"value":"vendedor","label":"Vendedor","desc":"Módulo Cubicador (productos)","color":"success"},
+    ]
+    return render_template("admin_roles.html", users=[dict(u) for u in users], roles=roles)
+
+
+@app.route("/admin/roles/<int:uid>", methods=["PUT"])
+@require_permission("admin")
+def admin_roles_update(uid):
+    d = request.get_json(silent=True) or {}
+    role = d.get("role", "")
+    VALID = {"superadmin", "admin", "ejecutivo", "editor", "lector", "vendedor"}
+    if role not in VALID:
+        return jsonify({"error": "Rol no válido"}), 400
+    # Superadmin no puede cambiar su propio rol
+    if g.user and g.user["id"] == uid and not g.permissions.get("superadmin"):
+        return jsonify({"error": "No puedes cambiar tu propio rol"}), 403
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE `{AUTH_TABLE}` SET role=%s WHERE id=%s", (role, uid))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
 #  MÓDULO: HRM — COLABORADORES
 # ══════════════════════════════════════════════════════════════
 
@@ -8890,6 +8930,139 @@ try:
     print("[ILUS] Tablas de mantenciones OK.")
 except Exception as _mant_init_err:
     print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
+
+# ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/clientes/<int:cid>/plan-mejora", methods=["POST"])
+@_mant_required
+def mant_plan_mejora(cid):
+    """
+    Genera un plan de mejora y proyecciones para el próximo ciclo usando Claude AI.
+    Considera: equipos del cliente, contratos vigentes, análisis IA previos.
+    """
+    cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+
+    maquinas  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s AND estado!='baja'", (cid,))
+    contratos = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s", (cid,))
+    visitas   = mysql_fetchall(
+        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 10", (cid,)
+    )
+
+    ai_key = _get_ai_key()
+    if not ai_key:
+        return jsonify({"error": "API de IA no configurada"}), 503
+
+    # Construir contexto del cliente
+    equipos_txt = "\n".join([
+        f"- {m['nombre']} (SKU: {m.get('sku','N/A')}, Cant: {m.get('cantidad',1)}, "
+        f"Doc: {m.get('doc_origen','')}, Fecha: {m.get('doc_fecha','')}, Estado: {m.get('estado_op','operativo')})"
+        for m in maquinas
+    ]) or "Sin equipos registrados"
+
+    ct_vigentes = [c for c in contratos if c.get("estado") in ("vigente", "indefinido")]
+    contratos_txt = "\n".join([
+        f"- {c['nombre']} | Tipo: {c.get('ai_tipo_contrato','N/A')} | "
+        f"Monto: ${c.get('monto_mensual',0):,.0f}/mes | Frecuencia: cada {c.get('frecuencia_meses','?')} meses | "
+        f"SLA: {c.get('sla_horas','?')}h | Score IA: {c.get('ai_score','N/A')} | "
+        f"Incluye repuestos: {'Sí' if c.get('incluye_repuestos') else 'No'} | "
+        f"Vencimiento: {c.get('fecha_vencimiento','indefinido')}"
+        for c in ct_vigentes
+    ]) or "Sin contratos vigentes"
+
+    ai_mejoras_txt = ""
+    for c in contratos:
+        if c.get("ai_mejoras"):
+            try:
+                mejoras = json.loads(c["ai_mejoras"])
+                ai_mejoras_txt += f"\nMejoras del contrato {c['nombre']}: " + "; ".join(mejoras)
+            except Exception:
+                pass
+        if c.get("ai_puntos_criticos"):
+            try:
+                puntos = json.loads(c["ai_puntos_criticos"])
+                ai_mejoras_txt += f"\nPuntos críticos: " + "; ".join(puntos)
+            except Exception:
+                pass
+
+    from datetime import date
+    hoy = date.today()
+
+    prompt = f"""Eres un experto en gestión de mantenimiento de equipos fitness para ILUS Fitness Chile.
+Analiza la siguiente información del cliente y genera un PLAN DE MEJORA Y PROYECCIÓN para el próximo ciclo de mantención.
+Responde ÚNICAMENTE con JSON estructurado, sin texto adicional.
+
+CLIENTE: {cliente['razon_social']} | RUT: {cliente.get('rut','')} | Ciudad: {cliente.get('ciudad','')}
+FECHA HOY: {hoy}
+
+EQUIPOS ({len(maquinas)} en total):
+{equipos_txt}
+
+CONTRATOS VIGENTES:
+{contratos_txt}
+
+ANÁLISIS IA PREVIO:
+{ai_mejoras_txt or 'No disponible'}
+
+Estructura JSON requerida:
+{{
+  "resumen_ejecutivo": "2-3 oraciones del estado actual y oportunidades",
+  "estado_flota": "bueno|regular|critico",
+  "indice_salud": número_0_a_100,
+  "proxima_visita": {{
+    "fecha_sugerida": "YYYY-MM-DD",
+    "tipo": "preventiva|correctiva|inspeccion",
+    "duracion_horas": número,
+    "prioridad": "alta|media|baja",
+    "razon": "por qué urgente"
+  }},
+  "recomendaciones_equipos": [
+    {{
+      "equipo": "nombre del equipo",
+      "estado": "ok|atencion|urgente",
+      "accion": "acción específica a tomar",
+      "plazo": "inmediato|30 días|60 días|90 días"
+    }}
+  ],
+  "proyeccion_12_meses": [
+    {{
+      "mes": "YYYY-MM",
+      "tipo_visita": "preventiva|correctiva",
+      "descripcion": "qué se hará",
+      "costo_estimado": número_o_null
+    }}
+  ],
+  "propuestas_mejora": [
+    {{
+      "titulo": "título de la propuesta",
+      "descripcion": "detalle de qué mejorar",
+      "impacto": "alto|medio|bajo",
+      "categoria": "contrato|equipo|proceso|costos"
+    }}
+  ],
+  "alertas_criticas": ["alerta 1", "alerta 2"],
+  "oportunidades_comerciales": ["oportunidad 1", "oportunidad 2"]
+}}"""
+
+    try:
+        import anthropic as _anthropic
+        ai  = _anthropic.Anthropic(api_key=ai_key)
+        msg = ai.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        plan = json.loads(raw)
+        return jsonify({"ok": True, "plan": plan, "cliente": cliente["razon_social"]})
+    except Exception as e:
+        return jsonify({"error": f"Error IA: {e}"}), 500
+
 
 if __name__ == "__main__":
     print("=" * 45)
