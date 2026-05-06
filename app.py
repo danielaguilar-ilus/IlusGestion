@@ -7355,12 +7355,13 @@ def mant_cliente_wizard():
 def _erp_buscar_clientes(q, limit=20):
     """
     Busca clientes en el ERP por RUT o razón social.
-    Usa la tabla de ventas/documentos del ERP (NRAZON, NRUC).
-    Devuelve lista de dicts con razon_social, rut, productos comprados.
-    Maneja graciosamente si el ERP no está disponible.
+    Normaliza el RUT (con/sin puntos) para máxima compatibilidad.
     """
-    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")  # tabla de ventas Random ERP
-    q_like = f"%{q}%"
+    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
+    # Normalizar RUT: buscar con y sin puntos
+    q_like       = f"%{q}%"
+    q_sin_puntos = q.replace(".", "").replace(" ", "")
+    q_sin_like   = f"%{q_sin_puntos}%"
     erp_conn = get_erp_conn()
     if not erp_conn:
         return []
@@ -7371,11 +7372,15 @@ def _erp_buscar_clientes(q, limit=20):
                        TRIM(d.NRAZON) AS razon_social,
                        TRIM(d.NRUC)   AS rut
                     FROM `{ERP_SALES}` d
-                    WHERE (TRIM(d.NRAZON) LIKE %s OR TRIM(d.NRUC) LIKE %s)
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO')
+                    WHERE (
+                        TRIM(d.NRAZON) LIKE %s
+                        OR TRIM(d.NRUC)   LIKE %s
+                        OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
+                    )
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV')
                     ORDER BY d.NRAZON
                     LIMIT {int(limit)}""",
-                (q_like, q_like)
+                (q_like, q_like, q_sin_like)
             )
             rows = cur.fetchall()
         return [{"razon_social": r["razon_social"], "rut": r["rut"]} for r in rows if r.get("razon_social")]
@@ -8405,6 +8410,24 @@ def mant_analisis():
         top_clientes = [dict(r) for r in top_clientes],
         por_vencer   = [dict(r) for r in por_vencer],
     )
+
+
+@app.route("/api/uf-actual")
+def api_uf_actual():
+    """Devuelve el valor actual de la UF desde mindicador.cl"""
+    try:
+        import urllib.request as _ur
+        req = _ur.Request(
+            "https://mindicador.cl/api/uf",
+            headers={"User-Agent": "ILUSApp/1.0"}
+        )
+        with _ur.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        uf_val = float(data["serie"][0]["valor"])
+        fecha  = data["serie"][0]["fecha"][:10]
+        return jsonify({"uf": uf_val, "fecha": fecha, "ok": True})
+    except Exception as e:
+        return jsonify({"uf": None, "error": str(e), "ok": False})
 
 
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────

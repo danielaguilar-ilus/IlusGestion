@@ -280,15 +280,16 @@
   <div class="table-responsive">
     <table class="table eq-table align-middle mb-1" style="min-width:680px">
       <thead><tr>
-        <th style="width:30%">Nombre equipo</th>
-        <th style="width:10%">SKU</th>
-        <th style="width:12%">N° Serie</th>
-        <th style="width:14%">Ubicación</th>
-        <th style="width:12%">Estado operativo</th>
-        <th style="width:11%">F. Instalación</th>
-        <th style="width:5%">Cant.</th>
-        <th style="width:4%"></th>
-      </tr></thead>
+          <th style="width:27%">Nombre equipo</th>
+          <th style="width:9%">SKU</th>
+          <th style="width:10%">N° Serie</th>
+          <th style="width:12%">Ubicación</th>
+          <th style="width:11%">Estado</th>
+          <th style="width:10%">F. Instalación</th>
+          <th style="width:4%">Cant.</th>
+          <th style="width:10%">Origen</th>
+          <th style="width:3%"></th>
+        </tr></thead>
       <tbody id="equiposTbody">
         <tr id="eq-placeholder"><td colspan="8" class="text-center text-muted py-4" style="font-size:.82rem">
           <i class="bi bi-bicycle" style="font-size:1.4rem;opacity:.3;display:block;margin-bottom:6px"></i>
@@ -781,10 +782,13 @@ async function disparaAgente(archivo) {
     // Llenar panel IA
     poblarPanelIA(ct);
 
-    // Guardar archivo para paso 3
-    const dt = new DataTransfer();
-    dt.items.add(archivo);
-    document.getElementById('ct_archivo').files = dt.files;
+    // Guardar archivo para paso 3 (WZ.archivoContrato es más fiable que DataTransfer en móvil)
+    WZ.archivoContrato = archivo;
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(archivo);
+      document.getElementById('ct_archivo').files = dt.files;
+    } catch(e) { /* Safari/iOS no soporta DataTransfer constructor, usar WZ.archivoContrato */ }
     mostrarArchivoCargado(archivo);
 
     // Equipos detectados
@@ -827,8 +831,12 @@ function agregarFilaEquipo(datos={}) {
   const id = `eq-${eqCounter}`;
   const tr = document.createElement('tr');
   tr.id=id;
+  const docOrigen = datos.doc_origen || datos.doc_origen || '';
+  const docBadge = docOrigen
+    ? `<span style="font-size:.62rem;color:#0066cc;font-family:monospace;white-space:nowrap">${docOrigen}</span>`
+    : `<span style="font-size:.62rem;color:#888;font-style:italic">Manual</span>`;
   tr.innerHTML=`
-    <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||''||datos.producto||'')}" placeholder="Nombre equipo"></td>
+    <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||datos.producto||'')}" placeholder="Nombre equipo"></td>
     <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}"></td>
     <td><input class="eq-input" data-field="serie" value="${esc(datos.serie||'')}"></td>
     <td><input class="eq-input" data-field="ubicacion" value="${esc(datos.ubicacion||'')}"></td>
@@ -838,7 +846,12 @@ function agregarFilaEquipo(datos={}) {
       <option value="en_mantencion" ${datos.estado_op==='en_mantencion'?'selected':''}>En mantención</option>
     </select></td>
     <td><input type="date" class="eq-input" data-field="fecha_instalacion" value="${esc(datos.fecha_instalacion||'')}"></td>
-    <td><input type="number" class="eq-input text-center" data-field="cantidad" value="${datos.cantidad||1}" min="1" style="width:52px"></td>
+    <td><input type="number" class="eq-input text-center" data-field="cantidad" value="${datos.cantidad||1}" min="1" style="width:44px"></td>
+    <td>
+      <input type="hidden" data-field="doc_origen" value="${esc(docOrigen)}">
+      <input type="hidden" data-field="doc_fecha"  value="${esc(datos.doc_fecha||datos.fecha||'')}">
+      ${docBadge}
+    </td>
     <td><button class="btn btn-xs btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-trash"></i></button></td>`;
   tbody.appendChild(tr);
 }
@@ -879,8 +892,36 @@ function erpEqToggle(key,l,checked){
   document.getElementById('erpEqCount').textContent=`${Object.keys(erpEqSel).length} seleccionadas`;
 }
 function importarEq(){
-  Object.values(erpEqSel).forEach(l=>agregarFilaEquipo({nombre:l.nombre||'',sku:l.sku||'',cantidad:l.cantidad||1}));
-  bootstrap.Modal.getInstance(document.getElementById('modalErpEq')).hide();
+  const modal = bootstrap.Modal.getInstance(document.getElementById('modalErpEq'));
+  modal.hide();
+  Object.values(erpEqSel).forEach(l => {
+    const qty = parseInt(l.cantidad) || 1;
+    const docOrig = [l.doc_origen || '', l.tipo_doc ? `${l.tipo_doc} ${l.num_doc||''}`.trim() : ''].filter(Boolean)[0] || '';
+    const base = {
+      nombre: l.nombre || l.producto || '',
+      sku: l.sku || '',
+      cantidad: 1,
+      doc_origen: docOrig,
+      doc_fecha: l.fecha || l.doc_fecha || ''
+    };
+    // Si cantidad > 1 y NO es disco/accesorio bulk, preguntar
+    const esBulk = /disco|plate|pesa|dumbbell|kg\b/i.test(base.nombre);
+    if(qty > 1 && !esBulk) {
+      const expandir = confirm(
+        `"${base.nombre}" tiene cantidad ${qty}.\n\n` +
+        `¿Crear ${qty} líneas individuales (una por equipo)?\n` +
+        `→ Sí: ${qty} filas con cantidad 1\n` +
+        `→ No: 1 fila con cantidad ${qty}`
+      );
+      if(expandir) {
+        for(let i=0;i<qty;i++) agregarFilaEquipo({...base, cantidad:1});
+      } else {
+        agregarFilaEquipo({...base, cantidad:qty});
+      }
+    } else {
+      agregarFilaEquipo({...base, cantidad:qty});
+    }
+  });
 }
 function abrirErpEquipos(){
   document.getElementById('erpEqQ').value=document.getElementById('s1_rut').value||document.getElementById('s1_razon').value;
@@ -967,6 +1008,27 @@ function poblarPanelIA(r){
   document.getElementById('ai_alertas').value        = Array.isArray(alertas)?alertas.join('\n'):alertas;
   const mejoras=(r.mejoras_prioritarias||[]);
   document.getElementById('ai_mejoras').value        = Array.isArray(mejoras)?mejoras.join('\n'):mejoras;
+  // Mostrar valor referencial en CLP si el contrato es en UF
+  if((r.moneda||'').toUpperCase()==='UF' || (r.monto_mensual||0)>0&&(r.monto_mensual||0)<500) {
+    const costoUF = parseFloat(r.costo_mensual||r.monto_mensual||0);
+    if(costoUF>0 && costoUF<10000) { // probablemente en UF si es < 10000
+      fetch('/api/uf-actual').then(r=>r.json()).then(uf=>{
+        if(uf.ok&&uf.uf) {
+          const clp = Math.round(costoUF * uf.uf);
+          const existing = document.getElementById('ai_uf_ref');
+          if(!existing) {
+            const div=document.createElement('div');
+            div.id='ai_uf_ref';
+            div.className='erp-info mt-2';
+            div.style.fontSize='.78rem';
+            div.innerHTML=`<i class="bi bi-calculator me-1"></i><strong>${costoUF} UF</strong> = <strong>$${clp.toLocaleString('es-CL')}</strong> CLP (UF al ${uf.fecha}: $${Math.round(uf.uf).toLocaleString('es-CL')})`;
+            document.getElementById('ai_costo_mensual').closest('.ai-box')?.prepend(div)
+              || document.getElementById('ai_panel').prepend(div);
+          }
+        }
+      }).catch(()=>{});
+    }
+  }
   document.getElementById('ai_panel').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
@@ -1095,7 +1157,7 @@ async function crearCliente(){
   alert('Error al crear cliente');return false;
 }
 async function subirContrato(){
-  const arch=document.getElementById('ct_archivo').files[0];
+  const arch = WZ.archivoContrato || document.getElementById('ct_archivo').files[0];
   if(!arch)return true;
   if(!WZ.cid)return false;
   const fd=new FormData();
@@ -1115,8 +1177,17 @@ async function subirMaquinas(){
   const eqs=leerEquipos();
   for(const eq of eqs){
     await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({nombre:eq.nombre,sku:eq.sku,serie:eq.serie,cantidad:parseInt(eq.cantidad)||1,
-      ubicacion_cliente:eq.ubicacion,estado_op:eq.estado_op,fecha_instalacion:eq.fecha_instalacion||null})});
+    body:JSON.stringify({
+      nombre:         eq.nombre,
+      sku:            eq.sku,
+      serie:          eq.serie,
+      cantidad:       parseInt(eq.cantidad)||1,
+      ubicacion_cliente: eq.ubicacion,
+      estado_op:      eq.estado_op,
+      fecha_instalacion: eq.fecha_instalacion||null,
+      doc_origen:     eq.doc_origen||'',
+      doc_fecha:      eq.doc_fecha||null
+    })});
   }
 }
 
