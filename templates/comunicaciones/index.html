@@ -122,7 +122,7 @@
                   <button class="btn btn-danger btn-sm fw-bold" onclick="guardarSmtp()">
                     <i class="bi bi-floppy me-1"></i>Guardar configuración
                   </button>
-                  <button class="btn btn-outline-secondary btn-sm" onclick="abrirTestEmail()">
+                  <button class="btn btn-outline-secondary btn-sm" onclick="probarSmtpConexion(this)">
                     <i class="bi bi-plug me-1"></i>Probar conexión
                   </button>
                 </div>
@@ -768,7 +768,7 @@ async function guardarSmtp() {
   });
   const d = await r.json();
   msg.innerHTML = d.ok
-    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
+    ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>${d.warning ? `<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle me-1"></i>${esc(d.warning)}</div>` : ''}`
     : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
   if (d.ok) {
     if (d.smtp) {
@@ -791,13 +791,63 @@ function abrirTestEmail() {
   _modalTestEmail.show();
 }
 
+async function probarSmtpConexion(btn) {
+  const msg = document.getElementById('smtpMsg');
+  const original = btn ? btn.innerHTML : '';
+  const passInput = document.getElementById('smtpPass');
+  const body = {
+    host    : val('smtpHost'),
+    port    : parseInt(val('smtpPort')) || 587,
+    user    : val('smtpUser'),
+    pass    : passInput.value,
+    fromName: val('smtpFromName'),
+    fromAddr: val('smtpFromAddr'),
+    secure  : document.getElementById('smtpSecure').checked,
+  };
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Probando';
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Validando host, puerto, cifrado y credenciales SMTP...';
+  try {
+    const r = await fetch('/comunicaciones/smtp/test', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    const suggestions = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
+    const checks = (d.checks || []).map(x => `<li>${esc(x)}</li>`).join('');
+    if (d.ok) {
+      msg.innerHTML = `
+        <div class="alert alert-success py-2 px-3 mb-0">
+          <div class="fw-bold"><i class="bi bi-check-circle me-1"></i>${esc(d.message || 'Conexion SMTP correcta')}</div>
+          ${checks ? `<ul class="mb-0 mt-1 ps-3">${checks}</ul>` : ''}
+        </div>`;
+    } else {
+      msg.innerHTML = `
+        <div class="alert alert-danger py-2 px-3 mb-0">
+          <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || d.error || 'No se pudo validar SMTP')}</div>
+          ${d.detail ? `<div class="small mt-1">${esc(d.detail)}</div>` : ''}
+          ${suggestions ? `<div class="fw-semibold mt-2">Que revisar:</div><ul class="mb-0 ps-3">${suggestions}</ul>` : ''}
+        </div>`;
+    }
+  } catch(e) {
+    msg.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0"><i class="bi bi-x-circle me-1"></i>No se pudo ejecutar la prueba de conexion.</div>';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+}
+
 async function enviarTestEmail() {
   const to  = document.getElementById('testEmailTo').value.trim();
   const msg = document.getElementById('testEmailMsg');
-  if (!to) { msg.innerHTML='<span class="text-danger">Ingresa destinatario</span>'; return; }
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
   const r = await fetch('/comunicaciones/smtp/test', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to})
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})
   });
   const d = await r.json();
   msg.innerHTML = d.ok
@@ -979,9 +1029,10 @@ async function enviarTestWA() {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({to})
   });
   const d = await r.json();
+  const waSuggestions = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
   msg.innerHTML = d.ok
     ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado! SID: ${esc(d.msg_sid||'')}</span>`
-    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+    : `<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</div>${waSuggestions ? `<div class="text-warning mt-2">Que revisar:<ul class="mb-0 ps-3">${waSuggestions}</ul></div>` : ''}`;
 }
 
 /* ════════════════════════════════════════════════════

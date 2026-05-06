@@ -1107,7 +1107,13 @@ async function buscarDocErp() {
     }
 
     if(!data.items?.length) {
-      cont.innerHTML='<div class="text-center text-muted py-3">Este documento no tiene líneas de producto importables.</div>';
+      let msg = 'Este documento no tiene líneas de producto importables.';
+      if(data.total_lineas > 0) {
+        msg += ` (${data.total_lineas} línea(s) en el ERP, todas son servicios o fletes)`;
+      } else {
+        msg += ' (El documento no tiene líneas de detalle en el ERP)';
+      }
+      cont.innerHTML=`<div class="text-center text-muted py-3">${msg}</div>`;
       return;
     }
 

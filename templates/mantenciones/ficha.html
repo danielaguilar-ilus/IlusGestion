@@ -995,20 +995,26 @@ async function fBuscarDoc() {
       return;
     }
     if (!data.items?.length) {
-      cont.innerHTML = '<div class="text-center text-muted py-3">Este documento no tiene productos importables.</div>';
+      let noItemsMsg = 'Este documento no tiene productos importables.';
+      if (data.total_lineas > 0) {
+        noItemsMsg += ` (${data.total_lineas} línea(s) en el ERP, todas corresponden a servicios o fletes)`;
+      } else {
+        noItemsMsg += ' (El documento no tiene líneas de detalle en el ERP)';
+      }
+      cont.innerHTML = `<div class="text-center text-muted py-3">${noItemsMsg}</div>`;
       return;
     }
 
     // Alerta si el documento pertenece a un cliente diferente
     const rutCliente = '{{ cliente.rut | default("") | e }}';
+    let mismatchAlert = '';
     if(data.rut && rutCliente && data.rut.replace(/[.\-]/g,'') !== rutCliente.replace(/[.\-]/g,'')) {
-      const alertHtml = `<div class="alert alert-warning d-flex align-items-start gap-2 mt-2" style="font-size:.82rem">
+      mismatchAlert = `<div class="alert alert-warning d-flex align-items-start gap-2 mt-2 mb-3" style="font-size:.82rem">
         <i class="bi bi-exclamation-triangle-fill text-warning mt-1"></i>
         <div><strong>Atención:</strong> Este documento pertenece a <strong>${data.cliente||data.rut}</strong> (${data.rut}),
-        que es diferente al cliente actual <strong>{{ cliente.razon_social | e }}</strong> (${rutCliente}).
+        diferente al cliente actual <strong>{{ cliente.razon_social | e }}</strong> (${rutCliente}).
         Los equipos se asignarán igualmente a <strong>{{ cliente.razon_social | e }}</strong>.</div>
       </div>`;
-      cont.innerHTML = alertHtml + cont.innerHTML;
     }
 
     // Calcular garantía (6 meses desde fecha doc)
@@ -1028,7 +1034,8 @@ async function fBuscarDoc() {
       }
     }
 
-    let html = `<div class="alert alert-success py-2 px-3 mb-3 d-flex align-items-center flex-wrap gap-2" style="font-size:.82rem">
+    let html = mismatchAlert;
+    html += `<div class="alert alert-success py-2 px-3 mb-3 d-flex align-items-center flex-wrap gap-2" style="font-size:.82rem">
       <div>
         <strong><i class="bi bi-receipt me-1"></i>${data.tido} ${data.nudo}</strong>
         ${data.fecha ? ` &nbsp;·&nbsp; 📅 ${data.fecha}` : ''}

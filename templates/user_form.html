@@ -78,6 +78,28 @@
         </div>
         {% endif %}
 
+        {% if permissions.superadmin %}
+        <div class="col-12">
+          <div class="p-3 rounded" style="background:#fff8f8;border:1px solid #f0c2c2;border-left:4px solid var(--ilus-red)">
+            <label class="form-label fw-semibold small mb-1">
+              <i class="bi bi-key-fill me-1 text-danger"></i>
+              Clave manual de emergencia <span class="text-muted">(solo superadmin)</span>
+            </label>
+            <div class="input-group">
+              <input type="password" name="manual_password" id="manualPasswordField" class="form-control"
+                     minlength="8" autocomplete="new-password"
+                     placeholder="{% if user %}Dejar vacio para no cambiar{% else %}Opcional: define una clave inicial{% endif %}">
+              <button type="button" class="btn btn-outline-secondary" onclick="togglePass('manualPasswordField', this)">
+                <i class="bi bi-eye"></i>
+              </button>
+            </div>
+            <div class="form-text">
+              Usa esto cuando SMTP no pueda enviar correos. Luego puedes solicitar cambio de contrasena por email cuando el correo este funcionando.
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
         <div class="col-md-4">
           <label class="form-label fw-semibold small">Rol</label>
           {% set current_role = (fd.role or user.role) if user else fd.get('role','editor') %}
@@ -116,6 +138,10 @@
         <i class="bi bi-info-circle-fill me-2 text-danger"></i>
         El nuevo usuario <strong>no necesita contrasena ahora</strong>. Se le enviara un correo con un enlace
         seguro para que el mismo cree su propia contrasena de acceso.
+        <div class="mt-2" style="color:#f3b4b4">
+          Antes de crear usuarios, valida SMTP en Comunicaciones con <strong>Probar conexion</strong>.
+          Si falla, el usuario se crea, pero el correo de clave no saldra.
+        </div>
       </div>
 
       <div class="form-check form-switch mb-3">
@@ -171,6 +197,14 @@ function toggleInviteOptions() {
       ? '<i class="bi bi-envelope-check me-1"></i>Crear usuario y enviar correo de clave'
       : '<i class="bi bi-person-plus me-1"></i>Crear usuario sin correo de clave';
   }
+}
+
+function togglePass(id, btn) {
+  var input = document.getElementById(id);
+  if (!input) return;
+  var icon = btn ? btn.querySelector('i') : null;
+  input.type = input.type === 'password' ? 'text' : 'password';
+  if (icon) icon.className = input.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
 }
 
 async function enviarCambioClave(uid, btn) {

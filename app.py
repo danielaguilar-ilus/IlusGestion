@@ -8754,19 +8754,26 @@ def mant_documento_erp():
         return jsonify({"error": f"Documento {tido} {nudo} no encontrado en el ERP"}), 404
 
     # Formatear líneas para el wizard
+    # NOTA: _cubicador_fetch devuelve el campo "descripcion_erp" (no "descripcion")
+    _ZZ_SKUS = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
     items = []
+    filtradas = 0
+    total_lineas = len(lineas)
     for l in lineas:
         sku  = (l.get("sku") or l.get("KOPRCT") or "").strip().upper()
-        nom  = (l.get("descripcion") or l.get("nombre") or l.get("NOKOPR") or "").strip()
+        nom  = (l.get("descripcion_erp") or l.get("descripcion") or l.get("nombre") or l.get("NOKOPR") or "").strip()
         qty  = int(float(l.get("cantidad") or l.get("qty") or 1))
-        if not nom:
+        if not nom and not sku:
+            filtradas += 1
             continue
-        # Excluir SKUs de servicio/flete
-        if sku.upper() in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}:
+        # Excluir SKUs de servicio/flete (ya marcados con es_zz por _cubicador_fetch)
+        if l.get("es_zz") or sku.upper() in _ZZ_SKUS:
+            filtradas += 1
             continue
-        items.append({"sku": sku, "nombre": nom, "cantidad": qty})
+        items.append({"sku": sku, "nombre": nom or sku, "cantidad": max(qty, 1)})
 
-    return jsonify({
+    debug = request.args.get("debug") == "1"
+    resp = {
         "ok":           True,
         "tido":         header.get("tido", tido),
         "nudo":         header.get("nudo_display", nudo),
@@ -8776,7 +8783,18 @@ def mant_documento_erp():
         "direccion":    header.get("direccion",""),
         "comuna":       header.get("comuna",""),
         "items":        items,
-    })
+        "total_lineas": total_lineas,
+        "filtradas":    filtradas,
+    }
+    if debug:
+        resp["raw_lineas"] = [{
+            "sku":   l.get("sku") or l.get("KOPRCT",""),
+            "desc":  l.get("descripcion_erp") or l.get("descripcion",""),
+            "qty":   l.get("cantidad",0),
+            "es_zz": l.get("es_zz",False),
+            "keys":  list(l.keys())[:12],
+        } for l in lineas[:20]]
+    return jsonify(resp)
 
 
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
