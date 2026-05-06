@@ -436,22 +436,82 @@
 <div class="modal fade" id="modalErp" tabindex="-1">
   <div class="modal-dialog modal-xl">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Buscar equipos en ERP</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-text me-2"></i>Importar equipos desde ERP</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
-        <div class="d-flex gap-2 mb-3">
-          <input type="text" id="erpQ" class="form-control" placeholder="RUT o razón social del cliente…"
-                 value="{{ cliente.rut or cliente.razon_social }}"
-                 onkeydown="if(event.key==='Enter') buscarErp()">
-          <button class="btn btn-ilus px-4" onclick="buscarErp()"><i class="bi bi-search"></i></button>
+      <div class="modal-body p-0">
+
+        <!-- Tabs -->
+        <div style="background:#f8f9fa;border-bottom:1px solid #dee2e6;padding:0 20px">
+          <ul class="nav nav-tabs border-0">
+            <li class="nav-item">
+              <button class="nav-link active fw-semibold" id="fTabDocBtn" onclick="fSetTab('doc')" style="font-size:.83rem">
+                <i class="bi bi-receipt me-1"></i>Por número de documento
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link fw-semibold" id="fTabRutBtn" onclick="fSetTab('rut')" style="font-size:.83rem">
+                <i class="bi bi-building me-1"></i>Por RUT / cliente
+              </button>
+            </li>
+          </ul>
         </div>
-        <div id="erpResultado" style="min-height:80px">
-          <div class="text-center text-muted py-4" style="font-size:.85rem">
-            <i class="bi bi-search" style="font-size:1.5rem;opacity:.3;display:block;margin-bottom:6px"></i>
-            Ingresa un término para buscar
+
+        <div style="padding:20px">
+
+          {# ── Panel documento (REST API) ── #}
+          <div id="fPanelDoc">
+            <p class="text-muted small mb-3">
+              <i class="bi bi-info-circle me-1"></i>
+              Ingresa el tipo y número del documento ERP. Se traerán todos los productos con fecha, SKU y cantidad.
+              <strong>La fecha del documento sirve para calcular garantía (6 meses).</strong>
+            </p>
+            <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
+              <div>
+                <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo doc.</label>
+                <select id="fDocTido" class="form-select form-select-sm" style="width:90px">
+                  <option value="FCV">FCV</option>
+                  <option value="BLV">BLV</option>
+                  <option value="NVI">NVI</option>
+                  <option value="NVV">NVV</option>
+                  <option value="GDV">GDV</option>
+                  <option value="VD">VD</option>
+                </select>
+              </div>
+              <div style="flex:1;min-width:140px">
+                <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Número</label>
+                <input type="text" id="fDocNudo" class="form-control form-control-sm font-monospace"
+                       placeholder="ej: 12345"
+                       onkeydown="if(event.key==='Enter') fBuscarDoc()">
+              </div>
+              <button class="btn btn-ilus btn-sm px-4" onclick="fBuscarDoc()">
+                <i class="bi bi-search me-1"></i>Buscar
+              </button>
+            </div>
+            <div id="fDocRes">
+              <div class="text-center text-muted py-5" style="font-size:.85rem">
+                <i class="bi bi-receipt" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+                Ingresa tipo y número para ver los productos del documento
+              </div>
+            </div>
           </div>
+
+          {# ── Panel por RUT (MySQL directo) ── #}
+          <div id="fPanelRut" style="display:none">
+            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Busca por RUT o razón social. Requiere conexión directa al ERP.</p>
+            <div class="d-flex gap-2 mb-3">
+              <input type="text" id="erpQ" class="form-control form-control-sm"
+                     placeholder="RUT o razón social…"
+                     value="{{ cliente.rut or '' }}"
+                     onkeydown="if(event.key==='Enter') buscarErp()">
+              <button class="btn btn-ilus btn-sm" onclick="buscarErp()"><i class="bi bi-search"></i></button>
+            </div>
+            <div id="erpResultado">
+              <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un término para buscar</div>
+            </div>
+          </div>
+
         </div>
       </div>
       <div class="modal-footer">
@@ -718,42 +778,163 @@ async function guardarCliente() {
   else { alert('Error al guardar'); }
 }
 
-// ─── ERP búsqueda ─────────────────────────────────────────
-let erpSeleccionadas = {};  // key: "tipo-num-sku" → obj
+// ─── ERP — tabs ──────────────────────────────────────────────
+function fSetTab(tab) {
+  document.getElementById('fTabDocBtn').classList.toggle('active', tab==='doc');
+  document.getElementById('fTabRutBtn').classList.toggle('active', tab==='rut');
+  document.getElementById('fPanelDoc').style.display = tab==='doc' ? '' : 'none';
+  document.getElementById('fPanelRut').style.display = tab==='rut' ? '' : 'none';
+}
 
+// ─── ERP — buscar por documento (REST API) ────────────────────
+let erpSeleccionadas = {};
+
+async function fBuscarDoc() {
+  const tido = document.getElementById('fDocTido').value;
+  const nudo = document.getElementById('fDocNudo').value.trim();
+  const cont = document.getElementById('fDocRes');
+  if (!nudo) {
+    cont.innerHTML = '<div class="text-center text-warning py-3">Ingresa el número de documento</div>';
+    return;
+  }
+  cont.innerHTML = `<div class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP — ${tido} ${nudo}…</div>`;
+
+  try {
+    const r = await fetch(`/mantenciones/api/documento?tido=${tido}&nudo=${encodeURIComponent(nudo)}`);
+    const data = await r.json();
+
+    if (!data.ok) {
+      cont.innerHTML = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'Documento no encontrado'}</div>`;
+      return;
+    }
+    if (!data.items?.length) {
+      cont.innerHTML = '<div class="text-center text-muted py-3">Este documento no tiene productos importables.</div>';
+      return;
+    }
+
+    // Calcular garantía (6 meses desde fecha doc)
+    let garantiaInfo = '';
+    if (data.fecha) {
+      const partes = data.fecha.split('/');
+      if (partes.length === 3) {
+        const fechaDoc = new Date(partes[2], partes[1]-1, partes[0]);
+        const garantiaFin = new Date(fechaDoc);
+        garantiaFin.setMonth(garantiaFin.getMonth() + 6);
+        const hoy = new Date();
+        const enGarantia = hoy <= garantiaFin;
+        const diasRestantes = Math.ceil((garantiaFin - hoy) / 86400000);
+        garantiaInfo = enGarantia
+          ? `<span class="badge bg-success ms-2"><i class="bi bi-shield-check me-1"></i>En garantía — ${diasRestantes} días restantes (vence ${garantiaFin.toLocaleDateString('es-CL')})</span>`
+          : `<span class="badge bg-secondary ms-2"><i class="bi bi-shield-x me-1"></i>Garantía vencida (venció ${garantiaFin.toLocaleDateString('es-CL')})</span>`;
+      }
+    }
+
+    let html = `<div class="alert alert-success py-2 px-3 mb-3 d-flex align-items-center flex-wrap gap-2" style="font-size:.82rem">
+      <div>
+        <strong><i class="bi bi-receipt me-1"></i>${data.tido} ${data.nudo}</strong>
+        ${data.fecha ? ` &nbsp;·&nbsp; 📅 ${data.fecha}` : ''}
+        ${data.cliente ? ` &nbsp;·&nbsp; <strong>${data.cliente}</strong>` : ''}
+        ${data.rut ? ` (${data.rut})` : ''}
+        ${garantiaInfo}
+      </div>
+    </div>`;
+
+    html += `<div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="fSelAll()">
+        <i class="bi bi-check2-all me-1"></i>Seleccionar todos
+      </button>
+    </div>`;
+
+    html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.82rem">
+      <thead class="table-light"><tr>
+        <th style="width:36px"></th>
+        <th style="width:110px">SKU</th>
+        <th>Producto / Descripción</th>
+        <th style="width:70px;text-align:center">Cant.</th>
+        <th style="width:100px;text-align:center">Garantía</th>
+      </tr></thead><tbody>`;
+
+    data.items.forEach((it, i) => {
+      const key = `fdoc-${tido}-${nudo}-${i}`;
+      // Calcular garantía individual
+      let garBadge = '';
+      if (data.fecha) {
+        const partes = data.fecha.split('/');
+        if (partes.length === 3) {
+          const fechaDoc = new Date(partes[2], partes[1]-1, partes[0]);
+          const garantiaFin = new Date(fechaDoc); garantiaFin.setMonth(garantiaFin.getMonth()+6);
+          const enGar = new Date() <= garantiaFin;
+          garBadge = enGar
+            ? '<span class="badge bg-success" style="font-size:.6rem">✓ Garantía</span>'
+            : '<span class="badge bg-light text-secondary border" style="font-size:.6rem">Vencida</span>';
+        }
+      }
+      const ld = JSON.stringify({
+        sku: it.sku, nombre: it.nombre, cantidad: it.cantidad,
+        doc_origen: `${tido} ${nudo}`, doc_fecha: data.fecha,
+        en_garantia: garBadge.includes('Garantía')
+      }).replace(/"/g,'&quot;');
+      html += `<tr>
+        <td><input type="checkbox" class="form-check-input erp-chk"
+             onchange="erpToggle('${key}',${ld},this.checked)"></td>
+        <td class="font-monospace text-primary fw-bold">${it.sku || '—'}</td>
+        <td>${it.nombre}</td>
+        <td class="text-center">${it.cantidad}</td>
+        <td class="text-center">${garBadge}</td>
+      </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    cont.innerHTML = html;
+
+    erpSeleccionadas = {};
+    actualizarContadorErp();
+
+  } catch(e) {
+    cont.innerHTML = `<div class="alert alert-danger">Error de conexión: ${e.message}</div>`;
+  }
+}
+
+function fSelAll() {
+  document.getElementById('fDocRes').querySelectorAll('input[type=checkbox]').forEach(chk => {
+    if (!chk.checked) chk.click();
+  });
+}
+
+// ─── ERP — buscar por RUT/cliente (MySQL) ────────────────────
 async function buscarErp() {
   const q = document.getElementById('erpQ').value.trim();
   if (!q) return;
   const cont = document.getElementById('erpResultado');
   cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
   const r = await fetch('/mantenciones/api/buscar-erp', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({q})
   });
   const data = await r.json();
+  if (data.sin_conexion) {
+    cont.innerHTML = `<div class="alert alert-warning">
+      <i class="bi bi-exclamation-triangle me-1"></i>${data.error}
+      <br><small>Usa la pestaña <strong>"Por número de documento"</strong> para importar equipos.</small>
+    </div>`;
+    return;
+  }
   if (data.error) { cont.innerHTML = `<div class="alert alert-warning">${data.error}</div>`; return; }
-  if (!data.documentos || data.documentos.length === 0) {
-    cont.innerHTML = '<div class="text-center text-muted py-4">Sin resultados</div>';
+  if (!data.documentos?.length) {
+    cont.innerHTML = '<div class="text-center text-muted py-4">Sin resultados para ese RUT o nombre.</div>';
     return;
   }
   erpSeleccionadas = {};
   actualizarContadorErp();
-
   let html = '<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.8rem"><thead><tr><th></th><th>Doc</th><th>Fecha</th><th>SKU</th><th>Producto</th><th>Cant.</th></tr></thead><tbody>';
   data.documentos.forEach(doc => {
     html += `<tr class="table-secondary"><td colspan="6" class="fw-bold text-muted" style="font-size:.72rem">${doc.tipo_doc} ${doc.num_doc} — ${doc.razon_social} (${doc.fecha})</td></tr>`;
     doc.lineas.forEach((l, idx) => {
       const key = `${doc.tipo_doc}-${doc.num_doc}-${idx}`;
-      // Enriquecer con info del doc padre para importación
-      const lineaEnriquecida = Object.assign({}, l, {
-        doc_origen: `${doc.tipo_doc} ${doc.num_doc}`,
-        fecha: doc.fecha,
-        producto: l.nombre
-      });
+      const le = {...l, doc_origen:`${doc.tipo_doc} ${doc.num_doc}`, fecha:doc.fecha, producto:l.nombre};
       html += `<tr>
-        <td><input type="checkbox" class="erp-chk" data-key="${key}"
-             onchange="erpToggle('${key}', ${JSON.stringify(lineaEnriquecida).replace(/"/g,'&quot;')}, this.checked)"></td>
+        <td><input type="checkbox" class="erp-chk form-check-input"
+             onchange="erpToggle('${key}',${JSON.stringify(le).replace(/"/g,'&quot;')},this.checked)"></td>
         <td class="text-muted">${doc.tipo_doc} ${doc.num_doc}</td>
         <td class="text-muted">${doc.fecha}</td>
         <td class="font-monospace">${l.sku||'—'}</td>
@@ -779,20 +960,28 @@ function actualizarContadorErp() {
 async function importarDesdeErp() {
   const lineas = Object.values(erpSeleccionadas);
   if (!lineas.length) { alert('Selecciona al menos una línea'); return; }
-  let importadas = 0;
+  const btn = document.querySelector('#modalErp .btn-ilus.fw-bold');
+  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Importando…'; }
   for (const l of lineas) {
+    const qty = parseInt(l.cantidad) || 1;
+    const nombre = l.nombre || l.producto || '';
+    const esBulk = /disco|plate|pesa|dumbbell|kg\b/i.test(nombre);
+    if (qty > 1 && !esBulk) {
+      const expandir = confirm(`"${nombre}" tiene cantidad ${qty}.\n\n¿Crear ${qty} equipos individuales?\n→ Sí: ${qty} filas con cantidad 1\n→ No: 1 fila con cantidad ${qty}`);
+      if (expandir) {
+        for (let i = 0; i < qty; i++) {
+          await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ sku:l.sku||'', nombre, doc_origen:l.doc_origen||'', doc_fecha:l.doc_fecha||l.fecha||'', cantidad:1 })
+          });
+        }
+        continue;
+      }
+    }
     await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        sku: l.sku || '',
-        nombre: l.producto || '',
-        doc_origen: l.doc_origen || '',
-        doc_fecha: l.fecha || '',
-        cantidad: parseInt(l.cantidad) || 1,
-      })
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ sku:l.sku||'', nombre, doc_origen:l.doc_origen||'', doc_fecha:l.doc_fecha||l.fecha||'', cantidad:qty })
     });
-    importadas++;
   }
   bootstrap.Modal.getInstance(document.getElementById('modalErp')).hide();
   location.reload();
