@@ -10143,19 +10143,150 @@ def mant_ficha(cid):
         return redirect(url_for("mant_clientes"))
     maquinas  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
     contratos = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-    visitas   = mysql_fetchall(
-        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 50", (cid,)
+    # Visitas: traer TODAS las del último año para calcular gráficos correctamente
+    visitas_full = mysql_fetchall(
+        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC", (cid,)
     )
     logs      = mysql_fetchall(
         "SELECT * FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s ORDER BY created_at DESC LIMIT 20", (cid,)
     )
+
+    # ── ESTADÍSTICAS PARA SIDEBAR / GRÁFICOS ──────────────────────────────
+    hoy = datetime.now().date()
+    fecha_corte_12m = hoy - timedelta(days=365)
+
+    visitas_12m = [v for v in visitas_full if v.get("fecha_programada") and v["fecha_programada"] >= fecha_corte_12m]
+    visitas_realizadas = [v for v in visitas_12m if v.get("estado") == "completada"]
+    visitas_programadas_30d = [
+        v for v in visitas_full
+        if v.get("estado") == "programada"
+        and v.get("fecha_programada")
+        and hoy <= v["fecha_programada"] <= (hoy + timedelta(days=30))
+    ]
+    visitas_correctivas = [v for v in visitas_12m if v.get("tipo") == "correctiva"]
+
+    total_programadas_12m  = len([v for v in visitas_12m if v.get("estado") in ("programada","completada","reagendada")])
+    total_realizadas_12m   = len(visitas_realizadas)
+    cumplimiento_pct       = round(100 * total_realizadas_12m / total_programadas_12m) if total_programadas_12m else 0
+
+    # Mantenciones por mes (últimos 12 meses) — para barra
+    import calendar
+    months_es = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+    mant_por_mes = []
+    for i in range(11, -1, -1):
+        ref_year  = hoy.year
+        ref_month = hoy.month - i
+        while ref_month <= 0:
+            ref_month += 12
+            ref_year  -= 1
+        cnt = sum(1 for v in visitas_12m
+                  if v.get("fecha_programada")
+                  and v["fecha_programada"].month == ref_month
+                  and v["fecha_programada"].year  == ref_year
+                  and v.get("estado") == "completada")
+        mant_por_mes.append({
+            "mes":   months_es[ref_month-1],
+            "year":  ref_year,
+            "count": cnt,
+        })
+
+    # Estado de equipos (donut)
+    eq_activos      = len([m for m in maquinas if (m.get("estado") or "activo") == "activo"])
+    eq_advertencia  = len([m for m in maquinas if m.get("estado") == "advertencia"])
+    eq_inactivos    = len([m for m in maquinas if m.get("estado") == "inactivo"])
+    eq_total        = max(1, len(maquinas))
+
+    # Próxima visita
+    prox_visita = next((v for v in visitas_full
+                        if v.get("estado") == "programada"
+                        and v.get("fecha_programada")
+                        and v["fecha_programada"] >= hoy), None)
+    # Última visita realizada
+    ult_visita = next((v for v in visitas_full
+                       if v.get("estado") == "completada"
+                       and v.get("fecha_programada")
+                       and v["fecha_programada"] <= hoy), None)
+    dias_desde_ultima = (hoy - ult_visita["fecha_programada"]).days if ult_visita else None
+    dias_hasta_prox   = (prox_visita["fecha_programada"] - hoy).days if prox_visita else None
+
+    # Alertas inteligentes (calculadas server-side)
+    alertas_smart = []
+    # 1. Equipos con garantía próxima a vencer
+    for m in maquinas:
+        if m.get("doc_fecha"):
+            dias_doc = (hoy - m["doc_fecha"]).days
+            if 150 <= dias_doc <= 180:
+                alertas_smart.append({
+                    "tipo": "warning",
+                    "icon": "shield-exclamation",
+                    "titulo": f"{m['nombre']} — Garantía próxima a vencer",
+                    "detalle": f"Quedan {180 - dias_doc} días de garantía",
+                })
+    # 2. Contratos por vencer
+    for ct in contratos:
+        if ct.get("fecha_vencimiento") and not ct.get("es_indefinido"):
+            dias_v = (ct["fecha_vencimiento"] - hoy).days
+            if 0 < dias_v <= 60:
+                alertas_smart.append({
+                    "tipo": "warning",
+                    "icon": "file-earmark-text",
+                    "titulo": f"Contrato vence en {dias_v} días",
+                    "detalle": ct.get("nombre") or "Contrato sin nombre",
+                })
+            elif dias_v <= 0:
+                alertas_smart.append({
+                    "tipo": "danger",
+                    "icon": "file-earmark-x",
+                    "titulo": "Contrato VENCIDO",
+                    "detalle": ct.get("nombre") or "Contrato sin nombre",
+                })
+    # 3. Mucho tiempo sin visita
+    if dias_desde_ultima is not None and dias_desde_ultima > 90:
+        alertas_smart.append({
+            "tipo": "warning",
+            "icon": "calendar-x",
+            "titulo": f"Sin visita hace {dias_desde_ultima} días",
+            "detalle": "Considera programar una mantención preventiva",
+        })
+    # 4. Próxima mantención cercana
+    if dias_hasta_prox is not None and 0 <= dias_hasta_prox <= 7:
+        alertas_smart.append({
+            "tipo": "info",
+            "icon": "calendar-check",
+            "titulo": f"Próxima visita en {dias_hasta_prox} día{'s' if dias_hasta_prox != 1 else ''}",
+            "detalle": prox_visita.get("titulo") or prox_visita.get("tipo","").title(),
+        })
+
+    stats = {
+        "realizadas_12m":          total_realizadas_12m,
+        "programadas_30d":         len(visitas_programadas_30d),
+        "incidencias_abiertas":    len([v for v in visitas_full if v.get("tipo") == "correctiva" and v.get("estado") == "programada"]),
+        "cumplimiento_pct":        cumplimiento_pct,
+        "mant_por_mes":            mant_por_mes,
+        "max_mes":                 max((m["count"] for m in mant_por_mes), default=1) or 1,
+        "eq_activos":              eq_activos,
+        "eq_advertencia":          eq_advertencia,
+        "eq_inactivos":            eq_inactivos,
+        "eq_total":                len(maquinas),
+        "eq_pct_activos":          round(100 * eq_activos / eq_total),
+        "eq_pct_advertencia":      round(100 * eq_advertencia / eq_total),
+        "eq_pct_inactivos":        round(100 * eq_inactivos / eq_total),
+        "ult_visita_fecha":        ult_visita["fecha_programada"] if ult_visita else None,
+        "ult_visita_dias":         dias_desde_ultima,
+        "prox_visita_fecha":       prox_visita["fecha_programada"] if prox_visita else None,
+        "prox_visita_dias":        dias_hasta_prox,
+        "alertas_smart":           alertas_smart,
+        "total_correctivas_12m":   len(visitas_correctivas),
+    }
+
     return render_template("mantenciones/ficha.html",
         cliente   = dict(cliente),
         maquinas  = [dict(r) for r in maquinas],
         contratos = [dict(r) for r in contratos],
-        visitas   = [dict(r) for r in visitas],
+        visitas   = [dict(r) for r in visitas_full[:50]],
         logs      = [dict(r) for r in logs],
-        hoy       = datetime.now().date(),
+        hoy       = hoy,
+        stats     = stats,
     )
 
 

@@ -172,6 +172,139 @@
 .prop-impacto-bajo{border-left:4px solid #16a34a;}
 .vis-prox-card{background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;
                border-radius:10px;padding:14px 16px;}
+
+/* ──────────────────────────────────────────────────────────────────
+   ESTILOS NUEVOS — Resumen rediseñado
+─────────────────────────────────────────────────────────────────── */
+/* Cells de KPI superiores (estado, tipo, última visita...) */
+.kpi-cell{
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 14px;
+  height:100%;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
+  display:flex;flex-direction:column;justify-content:center;
+}
+.kpi-cell-label{
+  font-size:.62rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.6px;color:#9ca3af;margin-bottom:5px;line-height:1;
+}
+.kpi-cell-val{
+  font-size:1.35rem;font-weight:900;color:#0f172a;line-height:1.1;
+}
+.kpi-cell-sub{font-size:.66rem;color:#9ca3af;margin-top:2px;font-weight:600;}
+
+/* Info principal — grid de filas */
+.info-grid{display:flex;flex-direction:column;gap:6px;}
+.info-row{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+  padding:7px 0;border-bottom:1px dashed #f3f4f6;
+}
+.info-row:last-child{border-bottom:none;}
+.info-lbl{
+  font-size:.7rem;font-weight:700;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.4px;flex-shrink:0;min-width:110px;
+}
+.info-val{
+  font-size:.84rem;color:#111827;font-weight:600;text-align:right;
+  word-break:break-word;
+}
+
+/* Lista de actividad */
+.actividad-lista{display:flex;flex-direction:column;}
+.act-row{
+  display:flex;align-items:flex-start;gap:11px;
+  padding:10px 0;border-bottom:1px solid #f3f4f6;
+}
+.act-row:last-child{border-bottom:none;}
+.act-icon{
+  width:34px;height:34px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.85rem;flex-shrink:0;
+}
+
+/* Equipos destacados — cards con barra de progreso */
+.eq-destacado{
+  background:#fafbfc;border:1px solid var(--border);
+  border-radius:10px;padding:12px 14px;height:100%;
+  transition:box-shadow .15s,border-color .15s;
+}
+.eq-destacado:hover{border-color:#cbd5e1;box-shadow:0 2px 10px rgba(0,0,0,.07);}
+.eq-d-name{font-weight:700;font-size:.86rem;color:#0f172a;}
+.eq-d-meta{font-size:.7rem;color:#6b7280;font-family:monospace;}
+.progress-thin{
+  height:5px;background:#f3f4f6;border-radius:3px;overflow:hidden;margin-top:3px;
+}
+.progress-thin-fill{height:100%;border-radius:3px;transition:width .5s;}
+
+/* Indicadores compactos en sidebar */
+.ind-num{font-size:1.5rem;font-weight:900;line-height:1;}
+.ind-lbl{
+  font-size:.62rem;color:#6b7280;margin-top:5px;line-height:1.3;font-weight:600;
+}
+
+/* Bar chart CSS para mantenciones por mes */
+.bar-chart{
+  display:flex;align-items:flex-end;justify-content:space-between;
+  gap:3px;height:130px;
+}
+.bar-col{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  gap:4px;min-width:0;
+}
+.bar-bar-wrap{
+  width:100%;height:100%;display:flex;align-items:flex-end;
+  background:transparent;
+}
+.bar-bar{
+  width:100%;background:linear-gradient(180deg,#22c55e,#16a34a);
+  border-radius:3px 3px 0 0;min-height:3px;
+  transition:height .6s cubic-bezier(.4,0,.2,1);
+}
+.bar-label{
+  font-size:.62rem;color:#9ca3af;font-weight:700;
+  text-transform:uppercase;letter-spacing:.3px;
+}
+
+/* Alertas inteligentes en sidebar */
+.alerta-smart{
+  display:flex;gap:9px;align-items:flex-start;
+  padding:9px 11px;margin-bottom:7px;border-radius:8px;
+  font-size:.78rem;
+}
+.alerta-smart:last-child{margin-bottom:0;}
+.alerta-smart i{font-size:1rem;flex-shrink:0;margin-top:1px;}
+.alerta-smart-warning{background:#fffbeb;border:1px solid #fde68a;color:#78350f;}
+.alerta-smart-warning i{color:#d97706;}
+.alerta-smart-danger{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d;}
+.alerta-smart-danger i{color:#dc2626;}
+.alerta-smart-info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;}
+.alerta-smart-info i{color:#2563eb;}
+.alerta-smart-success{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;}
+.alerta-smart-success i{color:#16a34a;}
+
+/* Acciones rápidas inferior */
+.acciones-rapidas-bar{
+  background:#fff;border:1px solid var(--border);border-radius:12px;
+  padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.ar-titulo{
+  font-size:.7rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.6px;color:#dc2626;margin-bottom:9px;
+}
+.ar-buttons{display:flex;flex-wrap:wrap;gap:8px;}
+.ar-btn{
+  background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+  padding:7px 14px;font-size:.78rem;font-weight:600;color:#374151;
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  transition:all .15s;
+}
+.ar-btn:hover{
+  background:#fafbfc;border-color:#cbd5e1;
+  transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+.ar-btn i{font-size:.9rem;color:#6b7280;}
 </style>
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
@@ -185,35 +318,54 @@
   </nav>
 </div>
 
-{# ── Header cliente ────────────────────────────────── #}
-<div class="cli-header mb-0" style="border-radius:var(--rad) var(--rad) 0 0">
-  <div class="d-flex align-items-center gap-3 flex-wrap">
-    <div class="cli-avatar">{{ cliente.razon_social[0].upper() }}</div>
-    <div style="flex:1;min-width:0">
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <div class="cli-name">{{ cliente.razon_social }}</div>
-        <span class="cli-badge badge-{{ cliente.estado }}">{{ cliente.estado.title() }}</span>
+{# ─────────────────────────────────────────────────────────
+   HEADER CLIENTE — Limpio, profesional, info clave visible
+   ───────────────────────────────────────────────────────── #}
+<div class="cli-header mb-0" style="border-radius:var(--rad) var(--rad) 0 0;padding:24px 28px">
+  <div class="d-flex align-items-start gap-3 flex-wrap">
+
+    {# Avatar grande con inicial #}
+    <div class="cli-avatar" style="width:64px;height:64px;font-size:1.5rem;border-radius:14px">
+      {{ cliente.razon_social[0].upper() }}
+    </div>
+
+    {# Info principal #}
+    <div style="flex:1;min-width:280px">
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+        <h4 class="mb-0" style="font-size:1.4rem;font-weight:900;color:#fff;line-height:1.15">
+          {{ cliente.razon_social }}
+        </h4>
+        <span class="cli-badge badge-{{ cliente.estado }}" style="font-size:.65rem">{{ cliente.estado.title() }}</span>
       </div>
-      <div class="cli-meta">
-        {% if cliente.rut %}<span class="me-3"><i class="bi bi-card-text me-1"></i>{{ cliente.rut }}</span>{% endif %}
-        {% if cliente.get('region') %}<span class="me-3"><i class="bi bi-map me-1"></i>{{ cliente.region }}</span>{% endif %}
-        {% if cliente.ciudad %}<span class="me-3"><i class="bi bi-geo-alt me-1"></i>{{ cliente.ciudad }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}</span>{% endif %}
-        {% if cliente.contacto_tel %}<span class="me-3"><i class="bi bi-telephone me-1"></i>{{ cliente.contacto_tel }}</span>{% endif %}
-        {% if cliente.contacto_email %}<a href="mailto:{{ cliente.contacto_email }}" class="text-decoration-none" style="color:#94a3b8"><i class="bi bi-envelope me-1"></i>{{ cliente.contacto_email }}</a>{% endif %}
+      {# Info en grid: RUT | ID | Creado #}
+      <div style="display:flex;flex-wrap:wrap;gap:0 22px;font-size:.78rem;color:#94a3b8;margin-bottom:8px">
+        {% if cliente.rut %}<span><i class="bi bi-card-text me-1" style="color:#64748b"></i>RUT <strong style="color:#cbd5e1">{{ cliente.rut }}</strong></span>{% endif %}
+        <span><i class="bi bi-hash me-1" style="color:#64748b"></i>ID Cliente <strong style="color:#cbd5e1">{{ '%06d' % cliente.id }}</strong></span>
+        {% if cliente.created_at %}<span><i class="bi bi-calendar-plus me-1" style="color:#64748b"></i>Creado <strong style="color:#cbd5e1">{{ cliente.created_at.strftime('%d/%m/%Y') }}</strong></span>{% endif %}
       </div>
-      <div style="margin-top:5px;font-size:.68rem;color:#64748b;display:flex;flex-wrap:wrap;gap:0 18px">
+      {# Línea de ubicación + contacto #}
+      <div style="display:flex;flex-wrap:wrap;gap:0 22px;font-size:.78rem;color:#94a3b8">
+        {% if cliente.ciudad %}<span><i class="bi bi-geo-alt me-1" style="color:#64748b"></i>{% if cliente.comuna %}{{ cliente.comuna }}, {% endif %}{{ cliente.ciudad }}</span>{% endif %}
+        {% if cliente.contacto_nombre %}<span><i class="bi bi-person me-1" style="color:#64748b"></i>{{ cliente.contacto_nombre }}</span>{% endif %}
+        {% if cliente.contacto_tel %}<span><i class="bi bi-telephone me-1" style="color:#64748b"></i><a href="tel:{{ cliente.contacto_tel }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_tel }}</a></span>{% endif %}
+        {% if cliente.contacto_email %}<span><i class="bi bi-envelope me-1" style="color:#64748b"></i><a href="mailto:{{ cliente.contacto_email }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_email }}</a></span>{% endif %}
+      </div>
+      {# Auditoría #}
+      {% if cliente.created_by or cliente.get('updated_by') %}
+      <div style="margin-top:8px;font-size:.66rem;color:#64748b;display:flex;flex-wrap:wrap;gap:0 18px">
         {% if cliente.created_by %}
-        <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Cargado por <strong>{{ cliente.created_by }}</strong>{% if cliente.created_at %} el {{ cliente.created_at.strftime('%d/%m/%Y') }}{% endif %}</span>
+        <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Cargado por <strong>{{ cliente.created_by }}</strong></span>
         {% endif %}
         {% if cliente.get('updated_by') and cliente.updated_by != cliente.created_by %}
         <span><i class="bi bi-person-check me-1" style="opacity:.6"></i>Actualizado por <strong>{{ cliente.updated_by }}</strong>{% if cliente.updated_at %} el {{ cliente.updated_at.strftime('%d/%m/%Y') }}{% endif %}</span>
-        {% elif cliente.get('updated_by') and cliente.updated_at %}
-        <span><i class="bi bi-clock me-1" style="opacity:.6"></i>Última edición {{ cliente.updated_at.strftime('%d/%m/%Y') }}</span>
         {% endif %}
       </div>
+      {% endif %}
     </div>
-    <div class="d-flex gap-2 flex-shrink-0">
-      <button class="btn btn-sm btn-outline-secondary" style="color:#94a3b8;border-color:#334155" onclick="abrirEditarCliente()">
+
+    {# Botones de acción #}
+    <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
+      <button class="btn btn-sm btn-outline-secondary" style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)" onclick="abrirEditarCliente()">
         <i class="bi bi-pencil me-1"></i>Editar cliente
       </button>
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
@@ -243,156 +395,412 @@
   </div>
 </div>
 
-{# ══════════════════════════════════════════════════════
-   TAB: RESUMEN
-══════════════════════════════════════════════════════ #}
+{# ══════════════════════════════════════════════════════════════════
+   TAB: RESUMEN — Diseño nuevo: KPIs + Sidebar con gráficos
+══════════════════════════════════════════════════════════════════ #}
 <div class="ftab-pane active" id="tab-resumen">
 
-  {# ── KPIs ── #}
-  <div class="kpi-bar">
-    <div class="kpi-item">
-      <div class="kpi-num" style="color:#2563eb">{{ maquinas|length }}</div>
-      <div class="kpi-label">Equipos</div>
-    </div>
-    <div class="kpi-item">
-      {% set ct_vigentes = contratos|selectattr('estado','in',['vigente','indefinido'])|list %}
-      <div class="kpi-num" style="color:#16a34a">{{ ct_vigentes|length }}</div>
-      <div class="kpi-label">Contratos vigentes</div>
-    </div>
-    <div class="kpi-item">
-      {% set vis_prox = visitas|selectattr('estado','eq','programada')|list %}
-      <div class="kpi-num" style="color:#ea580c">{{ vis_prox|length }}</div>
-      <div class="kpi-label">Visitas pendientes</div>
-      {% if vis_prox %}
-      <div class="kpi-sub">Próx: {{ vis_prox[0].fecha_programada.strftime('%d/%m') if vis_prox[0].fecha_programada else '—' }}</div>
-      {% endif %}
-    </div>
-    {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
-    {% if ct_analizados %}
-    <div class="kpi-item">
-      <div class="kpi-num" style="color:#7c3aed">{{ ct_analizados[0].ai_score or '—' }}</div>
-      <div class="kpi-label">Score IA contrato</div>
-      <div class="kpi-sub" style="color:{{ '#166534' if (ct_analizados[0].ai_score or 0)>=70 else '#b45309' if (ct_analizados[0].ai_score or 0)>=40 else '#991b1b' }}">
-        {{ 'Bajo riesgo' if (ct_analizados[0].ai_score or 0)>=70 else 'Riesgo medio' if (ct_analizados[0].ai_score or 0)>=40 else 'Alto riesgo' }}
-      </div>
-    </div>
-    {% endif %}
-  </div>
-
   <div class="row g-3">
-    {# ── Columna izquierda: Contacto + Notas ── #}
-    <div class="col-12 col-lg-6">
+    {# ─────────────────────────────────────────────────────────────
+       COLUMNA PRINCIPAL (8/12)
+       ───────────────────────────────────────────────────────────── #}
+    <div class="col-12 col-xl-8">
 
-      {% if cliente.contacto_nombre or cliente.direccion %}
+      {# ── ESTADO + TIPO + VISITAS — Cards grandes destacadas ── #}
+      <div class="row g-2 mb-3">
+        <div class="col-6 col-md-2">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Estado</div>
+            <div class="kpi-cell-val" style="color:{{ '#16a34a' if cliente.estado=='activo' else '#854d0e' if cliente.estado=='prospecto' else '#6b7280' }}">
+              {{ cliente.estado.title() }}
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Tipo cliente</div>
+            <div class="kpi-cell-val" style="font-size:.95rem;color:#111">
+              {{ (cliente.tipo or 'Comercial').title() if cliente.get('tipo') else 'Comercial' }}
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Última visita</div>
+            <div class="kpi-cell-val" style="font-size:.95rem">
+              {% if stats.ult_visita_fecha %}
+                {{ stats.ult_visita_fecha.strftime('%d/%m/%Y') }}
+                <div class="kpi-cell-sub">Hace {{ stats.ult_visita_dias }} día{{ 's' if stats.ult_visita_dias != 1 else '' }}</div>
+              {% else %}
+                —<div class="kpi-cell-sub">Sin visitas</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Próxima visita</div>
+            <div class="kpi-cell-val" style="font-size:.95rem">
+              {% if stats.prox_visita_fecha %}
+                {{ stats.prox_visita_fecha.strftime('%d/%m/%Y') }}
+                <div class="kpi-cell-sub" style="color:{{ '#dc2626' if stats.prox_visita_dias<=3 else '#ea580c' if stats.prox_visita_dias<=7 else '#16a34a' }}">
+                  En {{ stats.prox_visita_dias }} día{{ 's' if stats.prox_visita_dias != 1 else '' }}
+                </div>
+              {% else %}
+                <span class="text-muted">No programada</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-md-1">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Equipos</div>
+            <div class="kpi-cell-val" style="color:#2563eb">{{ maquinas|length }}</div>
+            <div class="kpi-cell-sub">Activos: {{ stats.eq_activos }}</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-1">
+          <div class="kpi-cell">
+            <div class="kpi-cell-label">Mantenc.</div>
+            <div class="kpi-cell-val" style="color:#7c3aed">{{ stats.realizadas_12m }}</div>
+            <div class="kpi-cell-sub">12 meses</div>
+          </div>
+        </div>
+      </div>
+
+      {# ── INFORMACIÓN PRINCIPAL ── #}
       <div class="f-card mb-3">
         <div class="f-card-header">
-          <span class="f-card-title"><i class="bi bi-person me-1"></i>Contacto</span>
+          <span class="f-card-title"><i class="bi bi-info-circle me-1"></i>Información principal</span>
+          <button class="btn btn-xs btn-outline-secondary" onclick="abrirEditarCliente()">
+            <i class="bi bi-pencil me-1"></i>Editar
+          </button>
         </div>
         <div class="f-card-body">
-          {% if cliente.contacto_nombre %}
-          <div class="d-flex align-items-center gap-2 mb-2">
-            <div style="width:30px;height:30px;border-radius:50%;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
-              <i class="bi bi-person" style="font-size:.8rem;color:#6b7280"></i>
+          <div class="info-grid">
+            <div class="info-row">
+              <span class="info-lbl">Razón social</span>
+              <span class="info-val">{{ cliente.razon_social }}</span>
             </div>
-            <div>
-              <div class="fw-semibold" style="font-size:.84rem">{{ cliente.contacto_nombre }}</div>
-              {% if cliente.contacto_tel %}<div class="small text-muted">{{ cliente.contacto_tel }}</div>{% endif %}
+            {% if cliente.rut %}
+            <div class="info-row">
+              <span class="info-lbl">RUT</span>
+              <span class="info-val font-monospace">{{ cliente.rut }}</span>
             </div>
+            {% endif %}
+            {% if cliente.contacto_email %}
+            <div class="info-row">
+              <span class="info-lbl">Email</span>
+              <a href="mailto:{{ cliente.contacto_email }}" class="info-val text-decoration-none">{{ cliente.contacto_email }}</a>
+            </div>
+            {% endif %}
+            {% if cliente.contacto_tel %}
+            <div class="info-row">
+              <span class="info-lbl">Teléfono</span>
+              <a href="tel:{{ cliente.contacto_tel }}" class="info-val text-decoration-none">{{ cliente.contacto_tel }}</a>
+            </div>
+            {% endif %}
+            {% if cliente.direccion or cliente.ciudad %}
+            <div class="info-row">
+              <span class="info-lbl">Dirección</span>
+              <span class="info-val">
+                {% if cliente.direccion %}{{ cliente.direccion }}{% endif %}
+                {% if cliente.comuna %}{% if cliente.direccion %}, {% endif %}{{ cliente.comuna }}{% endif %}
+                {% if cliente.ciudad %}{% if cliente.direccion or cliente.comuna %}, {% endif %}{{ cliente.ciudad }}{% endif %}
+                {% if cliente.region %} · {{ cliente.region }}{% endif %}
+              </span>
+            </div>
+            {% endif %}
+          </div>
+          {% if cliente.notas %}
+          <div class="mt-3 p-3 rounded-3" style="background:#fffbeb;border:1px solid #fde68a">
+            <div class="info-lbl mb-1"><i class="bi bi-sticky me-1"></i>Notas internas</div>
+            <p style="font-size:.83rem;color:#78350f;margin:0;line-height:1.55">{{ cliente.notas }}</p>
           </div>
           {% endif %}
-          {% if cliente.direccion %}
-          <div class="d-flex align-items-start gap-2">
-            <i class="bi bi-geo-alt text-muted mt-1" style="font-size:.8rem;flex-shrink:0"></i>
-            <div style="font-size:.8rem;color:#374151">
-              {{ cliente.direccion }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}{% if cliente.ciudad %}, {{ cliente.ciudad }}{% endif %}
-            </div>
-          </div>
-          {% endif %}
         </div>
       </div>
-      {% endif %}
 
-      {% if cliente.notas %}
+      {# ── ACTIVIDAD RECIENTE — Lista combinada visitas + logs ── #}
       <div class="f-card mb-3">
-        <div class="f-card-header">
-          <span class="f-card-title"><i class="bi bi-sticky me-1"></i>Notas internas</span>
-        </div>
-        <div class="f-card-body">
-          <p style="font-size:.83rem;color:#374151;margin:0;line-height:1.55">{{ cliente.notas }}</p>
-        </div>
-      </div>
-      {% endif %}
-
-    </div>
-
-    {# ── Columna derecha: Visitas + Actividad ── #}
-    <div class="col-12 col-lg-6">
-
-      <div class="f-card mb-3">
-        <div class="f-card-header">
-          <span class="f-card-title"><i class="bi bi-calendar-check me-1"></i>Visitas recientes</span>
-          <button class="btn btn-xs btn-ilus" onclick="abrirNuevaVisita()"><i class="bi bi-plus"></i></button>
-        </div>
-        <div class="f-card-body">
-        {% if visitas %}
-          {% for v in visitas[:5] %}
-          <div class="vis-item">
-            <div class="vis-dot vis-tipo-{{ v.tipo }}"></div>
-            <div style="flex:1;min-width:0">
-              <div class="fw-semibold text-truncate" style="font-size:.81rem">{{ v.titulo or v.tipo.capitalize() }}</div>
-              <div class="small text-muted">
-                {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
-                {% if v.tecnico %} · {{ v.tecnico }}{% endif %}
-              </div>
-            </div>
-            <div class="d-flex align-items-center gap-1">
-              <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span>
-              <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v|tojson|forceescape }})">
-                <i class="bi bi-pencil" style="font-size:.62rem"></i>
-              </button>
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-          <div class="empty-state" style="padding:20px">
-            <i class="bi bi-calendar-x" style="font-size:1.5rem"></i>
-            <div style="font-size:.8rem">Sin visitas registradas</div>
-          </div>
-        {% endif %}
-        </div>
-      </div>
-
-      <div class="f-card">
         <div class="f-card-header">
           <span class="f-card-title"><i class="bi bi-clock-history me-1"></i>Actividad reciente</span>
+          <button class="btn btn-xs btn-link" onclick="switchTab('equipos')" style="font-size:.72rem">Ver todo →</button>
         </div>
         <div class="f-card-body">
-        {% if logs %}
-          {% for l in logs %}
-          <div class="log-item">
-            <div style="width:26px;height:26px;border-radius:50%;background:#f3f4f6;
-                        display:flex;align-items:center;justify-content:center;flex-shrink:0">
-              <i class="bi bi-{{ 'pencil' if l.accion=='editado' else 'plus-circle' if l.accion in ('agregada','creada','subido') else 'stars' if l.accion=='analizado_ia' else 'activity' }}"
-                 style="font-size:.66rem;color:#9ca3af"></i>
-            </div>
-            <div>
-              <span class="fw-semibold">{{ l.accion.replace('_',' ').capitalize() }}</span>
-              {% if l.detalle %} — <span style="color:#6b7280">{{ l.detalle }}</span>{% endif %}
-              {% if l.usuario %} <span style="color:#d1d5db">por {{ l.usuario }}</span>{% endif %}
-              <div class="log-time">{{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '' }}</div>
-            </div>
-          </div>
+          {% set actividad = [] %}
+          {% for v in visitas[:6] %}
+            {% set _ = actividad.append({
+              'tipo':   'visita',
+              'fecha':  v.fecha_programada,
+              'titulo': v.titulo or (v.tipo.capitalize() + ' - ' + (v.tecnico or 'sin asignar')),
+              'estado': v.estado,
+              'subtipo': v.tipo,
+              'usuario': v.tecnico,
+            }) %}
           {% endfor %}
-        {% else %}
-          <div class="empty-state" style="padding:16px">
-            <div style="font-size:.78rem">Sin actividad registrada</div>
-          </div>
-        {% endif %}
+          {% for l in logs[:4] %}
+            {% set _ = actividad.append({
+              'tipo':   'log',
+              'fecha':  l.created_at,
+              'titulo': l.accion.replace('_',' ').capitalize(),
+              'detalle': l.detalle,
+              'usuario': l.usuario,
+            }) %}
+          {% endfor %}
+          {% if actividad %}
+            <div class="actividad-lista">
+              {% for a in (actividad|sort(attribute='fecha',reverse=True))[:8] %}
+              <div class="act-row">
+                <div class="act-icon" style="background:{% if a.tipo=='visita' %}{{ '#dcfce7' if a.estado=='completada' else '#dbeafe' if a.estado=='programada' else '#f3f4f6' }}{% else %}#f3f4f6{% endif %};color:{% if a.tipo=='visita' %}{{ '#166534' if a.estado=='completada' else '#1d4ed8' }}{% else %}#6b7280{% endif %}">
+                  <i class="bi bi-{% if a.tipo=='visita' %}{{ 'check-circle' if a.estado=='completada' else 'calendar-check' if a.estado=='programada' else 'calendar' }}{% else %}{{ 'pencil' if 'edit' in (a.titulo|lower) else 'plus' }}{% endif %}"></i>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="fw-semibold" style="font-size:.84rem">{{ a.titulo }}</span>
+                    {% if a.estado %}<span class="badge-{{ a.estado }}">{{ a.estado.replace('_',' ').title() }}</span>{% endif %}
+                  </div>
+                  <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">
+                    {% if a.usuario %}Por {{ a.usuario }}{% if a.detalle %} · {{ a.detalle }}{% endif %}{% endif %}
+                  </div>
+                </div>
+                <div style="font-size:.72rem;color:#9ca3af;text-align:right;flex-shrink:0">
+                  {% if a.fecha %}
+                    {{ a.fecha.strftime('%d/%m/%Y') }}
+                    {% if a.fecha.strftime('%H:%M') != '00:00' %}<div>{{ a.fecha.strftime('%H:%M') }}</div>{% endif %}
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="empty-state" style="padding:20px">
+              <i class="bi bi-clock"></i>
+              <div style="font-size:.8rem">Sin actividad registrada</div>
+            </div>
+          {% endif %}
         </div>
       </div>
 
+      {# ── EQUIPOS DESTACADOS — primeros 4 con barra de progreso ── #}
+      {% if maquinas %}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-bicycle me-1"></i>Equipos destacados</span>
+          <button class="btn btn-xs btn-link" onclick="switchTab('equipos')" style="font-size:.72rem">Ver todos →</button>
+        </div>
+        <div class="f-card-body">
+          <div class="row g-2">
+            {% for m in maquinas[:4] %}
+            {% set garantia_pct = 0 %}
+            {% if m.doc_fecha %}
+              {% set dias_doc = (hoy - m.doc_fecha).days %}
+              {% set garantia_pct = ((180 - dias_doc) * 100 // 180) if dias_doc < 180 else 0 %}
+            {% endif %}
+            <div class="col-12 col-md-6">
+              <div class="eq-destacado">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                  <div class="eq-d-name">{{ m.nombre }}</div>
+                  <span class="cli-badge" style="background:#dcfce7;color:#166534">Activo</span>
+                </div>
+                <div class="eq-d-meta">
+                  {% if m.sku %}<span>ID: {{ m.sku }}</span>{% endif %}
+                  {% if m.serie %}<span> · Serie: {{ m.serie }}</span>{% endif %}
+                </div>
+                {% if m.doc_fecha %}
+                <div class="d-flex align-items-center justify-content-between mt-2">
+                  <span class="info-lbl">Garantía</span>
+                  <span class="fw-semibold" style="font-size:.7rem;color:{{ '#16a34a' if garantia_pct>30 else '#ea580c' if garantia_pct>0 else '#9ca3af' }}">
+                    {{ garantia_pct if garantia_pct>0 else 0 }}%
+                  </span>
+                </div>
+                <div class="progress-thin">
+                  <div class="progress-thin-fill" style="width:{{ garantia_pct }}%;background:{{ '#16a34a' if garantia_pct>30 else '#ea580c' if garantia_pct>0 else '#e5e7eb' }}"></div>
+                </div>
+                <div style="font-size:.66rem;color:#9ca3af;margin-top:4px">
+                  Última mantención: {{ m.doc_fecha.strftime('%d/%m/%Y') }}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>{# /col-xl-8 #}
+
+    {# ─────────────────────────────────────────────────────────────
+       SIDEBAR (4/12) — Gráficos, alertas, notas
+       ───────────────────────────────────────────────────────────── #}
+    <div class="col-12 col-xl-4">
+
+      {# ── INDICADORES CLAVE ── #}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-bar-chart me-1"></i>Indicadores (12 meses)</span>
+        </div>
+        <div class="f-card-body" style="padding:14px 18px">
+          <div class="row g-2 text-center">
+            <div class="col-3">
+              <div class="ind-num" style="color:#0f172a">{{ stats.realizadas_12m }}</div>
+              <div class="ind-lbl">Mantenciones realizadas</div>
+            </div>
+            <div class="col-3">
+              <div class="ind-num" style="color:#2563eb">{{ stats.programadas_30d }}</div>
+              <div class="ind-lbl">Programadas próx. 30 días</div>
+            </div>
+            <div class="col-3">
+              <div class="ind-num" style="color:{{ '#dc2626' if stats.incidencias_abiertas else '#16a34a' }}">{{ stats.incidencias_abiertas }}</div>
+              <div class="ind-lbl">Incidencias abiertas</div>
+            </div>
+            <div class="col-3">
+              <div class="ind-num" style="color:{{ '#16a34a' if stats.cumplimiento_pct>=80 else '#ea580c' if stats.cumplimiento_pct>=60 else '#dc2626' }}">{{ stats.cumplimiento_pct }}%</div>
+              <div class="ind-lbl">Cumplimiento preventivo</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── MANTENCIONES POR MES — Bar chart CSS puro ── #}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-graph-up me-1"></i>Mantenciones por mes</span>
+        </div>
+        <div class="f-card-body" style="padding:16px 18px">
+          <div class="bar-chart">
+            {% for m in stats.mant_por_mes %}
+            <div class="bar-col" title="{{ m.mes }} {{ m.year }}: {{ m.count }} mantenciones">
+              <div class="bar-bar-wrap">
+                <div class="bar-bar" style="height:{{ (m.count * 100 // stats.max_mes) if stats.max_mes else 0 }}%"></div>
+              </div>
+              <div class="bar-label">{{ m.mes }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      {# ── ESTADO DE EQUIPOS — Donut SVG ── #}
+      {% if maquinas %}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-pie-chart me-1"></i>Estado de equipos</span>
+        </div>
+        <div class="f-card-body" style="padding:16px 18px">
+          <div class="d-flex align-items-center gap-3">
+            {# Donut SVG - 3 colores #}
+            {% set ofs1 = stats.eq_pct_activos %}
+            {% set ofs2 = stats.eq_pct_activos + stats.eq_pct_advertencia %}
+            <svg viewBox="0 0 36 36" style="width:90px;height:90px;flex-shrink:0">
+              <circle cx="18" cy="18" r="15.915" fill="none" stroke="#f3f4f6" stroke-width="3.5"></circle>
+              {% if stats.eq_pct_activos > 0 %}
+              <circle cx="18" cy="18" r="15.915" fill="none" stroke="#16a34a" stroke-width="3.5"
+                      stroke-dasharray="{{ stats.eq_pct_activos }} {{ 100-stats.eq_pct_activos }}"
+                      stroke-dashoffset="25" transform="rotate(-90 18 18)" stroke-linecap="round"></circle>
+              {% endif %}
+              {% if stats.eq_pct_advertencia > 0 %}
+              <circle cx="18" cy="18" r="15.915" fill="none" stroke="#ea580c" stroke-width="3.5"
+                      stroke-dasharray="{{ stats.eq_pct_advertencia }} {{ 100-stats.eq_pct_advertencia }}"
+                      stroke-dashoffset="{{ 25 - stats.eq_pct_activos }}" transform="rotate(-90 18 18)" stroke-linecap="round"></circle>
+              {% endif %}
+              {% if stats.eq_pct_inactivos > 0 %}
+              <circle cx="18" cy="18" r="15.915" fill="none" stroke="#dc2626" stroke-width="3.5"
+                      stroke-dasharray="{{ stats.eq_pct_inactivos }} {{ 100-stats.eq_pct_inactivos }}"
+                      stroke-dashoffset="{{ 25 - ofs2 }}" transform="rotate(-90 18 18)" stroke-linecap="round"></circle>
+              {% endif %}
+              <text x="18" y="20.5" text-anchor="middle" style="font-size:8px;font-weight:900;fill:#0f172a">{{ stats.eq_total }}</text>
+            </svg>
+            <div style="flex:1;font-size:.78rem">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <span style="width:9px;height:9px;background:#16a34a;border-radius:2px"></span>
+                <span class="fw-semibold">{{ stats.eq_activos }} Activos</span>
+                <span class="text-muted ms-auto">({{ stats.eq_pct_activos }}%)</span>
+              </div>
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <span style="width:9px;height:9px;background:#ea580c;border-radius:2px"></span>
+                <span class="fw-semibold">{{ stats.eq_advertencia }} Advertencia</span>
+                <span class="text-muted ms-auto">({{ stats.eq_pct_advertencia }}%)</span>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <span style="width:9px;height:9px;background:#dc2626;border-radius:2px"></span>
+                <span class="fw-semibold">{{ stats.eq_inactivos }} Inactivos</span>
+                <span class="text-muted ms-auto">({{ stats.eq_pct_inactivos }}%)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ── ALERTAS Y RECOMENDACIONES ── #}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-exclamation-triangle me-1"></i>Alertas y recomendaciones</span>
+        </div>
+        <div class="f-card-body" style="padding:12px 16px">
+          {% if stats.alertas_smart %}
+            {% for al in stats.alertas_smart %}
+            <div class="alerta-smart alerta-smart-{{ al.tipo }}">
+              <i class="bi bi-{{ al.icon }}"></i>
+              <div>
+                <div class="fw-semibold" style="font-size:.78rem">{{ al.titulo }}</div>
+                <div style="font-size:.7rem;opacity:.85">{{ al.detalle }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="alerta-smart alerta-smart-success">
+              <i class="bi bi-check-circle-fill"></i>
+              <div>
+                <div class="fw-semibold" style="font-size:.78rem">Todo en orden</div>
+                <div style="font-size:.7rem;opacity:.85">No hay alertas activas para este cliente</div>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {# ── NOTAS DEL CLIENTE — sticky ── #}
+      {% if cliente.notas %}
+      <div class="f-card mb-3">
+        <div class="f-card-header" style="background:#fffbeb;border-bottom-color:#fde68a">
+          <span class="f-card-title" style="color:#92400e"><i class="bi bi-sticky-fill me-1"></i>Notas del cliente</span>
+        </div>
+        <div class="f-card-body" style="background:#fffbeb">
+          <p style="font-size:.81rem;color:#78350f;margin:0;line-height:1.55">{{ cliente.notas }}</p>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>{# /col-xl-4 #}
+  </div>{# /row #}
+
+  {# ── ACCIONES RÁPIDAS — barra inferior ── #}
+  <div class="acciones-rapidas-bar mt-3">
+    <div class="ar-titulo">
+      <i class="bi bi-lightning-charge-fill me-1"></i>Acciones rápidas
+    </div>
+    <div class="ar-buttons">
+      <button class="ar-btn" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus"></i> Nueva visita
+      </button>
+      <button class="ar-btn" onclick="abrirNuevaVisita('preventiva')">
+        <i class="bi bi-tools"></i> Programar mantención
+      </button>
+      <button class="ar-btn" onclick="switchTab('contrato'); setTimeout(()=>abrirContratoModal(), 200)">
+        <i class="bi bi-file-earmark-arrow-up"></i> Subir documento
+      </button>
+      <button class="ar-btn" onclick="switchTab('ia')">
+        <i class="bi bi-stars"></i> Generar plan IA
+      </button>
+      <button class="ar-btn" onclick="window.print()">
+        <i class="bi bi-printer"></i> Imprimir ficha
+      </button>
     </div>
   </div>
+
 </div>
 
 {# ══════════════════════════════════════════════════════
