@@ -196,9 +196,20 @@
       </div>
       <div class="cli-meta">
         {% if cliente.rut %}<span class="me-3"><i class="bi bi-card-text me-1"></i>{{ cliente.rut }}</span>{% endif %}
+        {% if cliente.get('region') %}<span class="me-3"><i class="bi bi-map me-1"></i>{{ cliente.region }}</span>{% endif %}
         {% if cliente.ciudad %}<span class="me-3"><i class="bi bi-geo-alt me-1"></i>{{ cliente.ciudad }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}</span>{% endif %}
         {% if cliente.contacto_tel %}<span class="me-3"><i class="bi bi-telephone me-1"></i>{{ cliente.contacto_tel }}</span>{% endif %}
         {% if cliente.contacto_email %}<a href="mailto:{{ cliente.contacto_email }}" class="text-decoration-none" style="color:#94a3b8"><i class="bi bi-envelope me-1"></i>{{ cliente.contacto_email }}</a>{% endif %}
+      </div>
+      <div style="margin-top:5px;font-size:.68rem;color:#64748b;display:flex;flex-wrap:wrap;gap:0 18px">
+        {% if cliente.created_by %}
+        <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Cargado por <strong>{{ cliente.created_by }}</strong>{% if cliente.created_at %} el {{ cliente.created_at.strftime('%d/%m/%Y') }}{% endif %}</span>
+        {% endif %}
+        {% if cliente.get('updated_by') and cliente.updated_by != cliente.created_by %}
+        <span><i class="bi bi-person-check me-1" style="opacity:.6"></i>Actualizado por <strong>{{ cliente.updated_by }}</strong>{% if cliente.updated_at %} el {{ cliente.updated_at.strftime('%d/%m/%Y') }}{% endif %}</span>
+        {% elif cliente.get('updated_by') and cliente.updated_at %}
+        <span><i class="bi bi-clock me-1" style="opacity:.6"></i>Última edición {{ cliente.updated_at.strftime('%d/%m/%Y') }}</span>
+        {% endif %}
       </div>
     </div>
     <div class="d-flex gap-2 flex-shrink-0">
@@ -814,11 +825,15 @@
             <label class="form-label fw-semibold">Dirección</label>
             <input type="text" id="ec_direccion" class="form-control" value="{{ cliente.direccion or '' }}">
           </div>
-          <div class="col-6">
+          <div class="col-4">
+            <label class="form-label fw-semibold">Región</label>
+            <input type="text" id="ec_region" class="form-control" value="{{ cliente.get('region') or '' }}" placeholder="Ej: Metropolitana">
+          </div>
+          <div class="col-4">
             <label class="form-label fw-semibold">Comuna</label>
             <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
           </div>
-          <div class="col-6">
+          <div class="col-4">
             <label class="form-label fw-semibold">Ciudad</label>
             <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
           </div>
@@ -1198,6 +1213,7 @@ async function guardarCliente() {
     contacto_tel:     document.getElementById('ec_contacto_tel').value.trim(),
     contacto_email:   document.getElementById('ec_contacto_email').value.trim(),
     direccion:        document.getElementById('ec_direccion').value.trim(),
+    region:           document.getElementById('ec_region').value.trim(),
     comuna:           document.getElementById('ec_comuna').value.trim(),
     ciudad:           document.getElementById('ec_ciudad').value.trim(),
     notas:            document.getElementById('ec_notas').value.trim(),

@@ -28,7 +28,7 @@
                  color:#888;background:#f8f9fa;transition:all .15s;border:none; }
 .entry-tab.active { background:var(--ilus-red);color:#fff; }
 /* ══ Autocomplete ══════════════════════════════════════════ */
-.ac-wrap       { position:relative;z-index:100; }
+.ac-wrap       { position:relative; }   /* sin z-index propio — previene stacking-context sobre campos inferiores */
 .ac-dropdown   { position:absolute;top:calc(100% + 2px);left:0;right:0;background:#fff;
                  border:1px solid #c8d0e0;border-radius:10px;
                  box-shadow:0 10px 32px rgba(0,0,0,.15);z-index:1050;max-height:320px;
@@ -714,25 +714,82 @@ function acSeleccionar(i) {
   document.getElementById('s1_rut').value             = c.rut||'';
   document.getElementById('s1_contacto_email').value  = c.email||'';
   document.getElementById('ac_input').value           = `${c.razon_social}${c.rut?' ('+c.rut+')':''}`;
-  // Rellenar región, comuna, dirección y teléfono si el ERP los entregó
   if(c.region)    { const el=document.getElementById('s1_ciudad');       if(el) el.value=c.region; }
   if(c.comuna)    { const el=document.getElementById('s1_comuna');       if(el) el.value=c.comuna; }
   if(c.direccion) { const el=document.getElementById('s1_direccion');    if(el) el.value=c.direccion; }
   if(c.telefono)  { const el=document.getElementById('s1_contacto_tel'); if(el) el.value=c.telefono; }
   document.getElementById('ac_dropdown').style.display = 'none';
-  // Mostrar badge de confirmación
+
+  // Badge inicial mientras cargamos el enriquecimiento
   const st = document.getElementById('busq_status');
-  const filled = [c.region, c.comuna, c.direccion].filter(Boolean);
-  if(c.id) {
-    st.innerHTML = `<div class="erp-info"><i class="bi bi-info-circle me-1"></i>
-      Cliente ya registrado — <a href="/mantenciones/clientes/${c.id}">ver ficha</a>.
-      Los datos del formulario están prellenados con la info del ERP.</div>`;
-  } else {
-    const tags = filled.map(v=>`<span class="badge bg-light text-dark border" style="font-weight:500">${v}</span>`).join(' ');
-    st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>
-      <strong>Datos cargados desde ERP</strong>${tags ? ' — '+tags : ''}</div>`;
-  }
+  st.innerHTML = `<div class="erp-info">
+    <span class="spinner-border spinner-border-sm me-2" style="width:.8rem;height:.8rem"></span>
+    Consultando ERP para datos completos…</div>`;
   st.style.display='block';
+
+  // Enriquecimiento completo desde /entidades si tenemos RUT
+  if(c.rut) {
+    _enriquecerDesdeErp(c.rut, c.id);
+  } else {
+    _mostrarBadgeBasico(c);
+  }
+}
+
+async function _enriquecerDesdeErp(rut, localId) {
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/enriquecer?rut=${encodeURIComponent(rut)}`);
+    const d = await r.json();
+    const st = document.getElementById('busq_status');
+
+    if(!d.encontrado) {
+      st.innerHTML = `<div class="erp-warn"><i class="bi bi-exclamation-triangle me-1"></i>
+        RUT no encontrado en el ERP. Completa los datos manualmente.</div>`;
+      return;
+    }
+
+    // Sobrescribir campos con datos de alta calidad del ERP
+    const fill = (id, val) => { const el=document.getElementById(id); if(el && val) el.value=val; };
+    fill('s1_razon',         d.razon_social);
+    fill('s1_contacto_email',d.email);
+    fill('s1_contacto_tel',  d.telefono);
+    fill('s1_direccion',     d.direccion);
+    fill('s1_comuna',        d.comuna);
+    fill('s1_ciudad',        d.region);  // "Ciudad/Región" = nombre de región
+    if(d.observaciones) {
+      const obs = document.getElementById('s1_notas');
+      if(obs && !obs.value.trim()) obs.value = d.observaciones;
+    }
+
+    const infoPills = [
+      d.region   ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">${d.region}</span>` : '',
+      d.comuna   ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border">${d.comuna}</span>` : '',
+      d.telefono ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border">${d.telefono}</span>` : '',
+      d.email    ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.62rem">${d.email}</span>` : '',
+      d.giro     ? `<span class="badge bg-light text-muted border">${d.giro}</span>` : '',
+    ].filter(Boolean).join(' ');
+
+    if(localId) {
+      st.innerHTML = `<div class="erp-info"><i class="bi bi-info-circle me-1"></i>
+        Cliente ya registrado en el sistema — <a href="/mantenciones/clientes/${localId}" class="fw-bold">ver ficha</a>.
+        Datos ERP precargados: ${infoPills}</div>`;
+    } else {
+      st.innerHTML = `<div class="erp-ok">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="bi bi-check-circle-fill text-success"></i>
+          <strong>Datos completos desde ERP</strong>
+        </div>
+        <div>${infoPills}</div></div>`;
+    }
+  } catch(err) {
+    console.warn('Enriquecimiento ERP falló:', err);
+    _mostrarBadgeBasico(null);
+  }
+}
+
+function _mostrarBadgeBasico(c) {
+  const st = document.getElementById('busq_status');
+  st.innerHTML = `<div class="erp-ok"><i class="bi bi-check-circle me-1 text-success"></i>
+    <strong>Datos cargados</strong> — Completa los campos que falten.</div>`;
 }
 
 function acKeydown(e) {
@@ -1532,6 +1589,7 @@ async function crearCliente(){
   fd.append('direccion',       document.getElementById('s1_direccion').value.trim());
   fd.append('comuna',          document.getElementById('s1_comuna').value.trim());
   fd.append('ciudad',          document.getElementById('s1_ciudad').value.trim());
+  fd.append('region',          document.getElementById('s1_ciudad').value.trim()); // Ciudad/Región = región ERP
   fd.append('contacto_nombre', document.getElementById('s1_contacto_nombre').value.trim());
   fd.append('contacto_tel',    document.getElementById('s1_contacto_tel').value.trim());
   fd.append('contacto_email',  document.getElementById('s1_contacto_email').value.trim());

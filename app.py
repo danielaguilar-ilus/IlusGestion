@@ -109,10 +109,36 @@ def from_json_filter(value):
         return []
 
 @app.template_filter('fkg')
-def fkg_filter(value, decimals=3):
-    """Formato kg con coma decimal para lectura chilena: 34.0 → '34,000'"""
+def fkg_filter(value, decimals=1):
+    """Formato kg estilo chileno: 2926.0 → '2.926,0' (punto miles, coma decimal, 1 decimal)"""
     try:
-        return f"{float(value):.{decimals}f}".replace('.', ',')
+        n = float(value)
+        formatted = f"{n:.{decimals}f}"          # "2926.0"
+        int_part, dec_part = formatted.split('.')
+        neg = int_part.startswith('-')
+        int_abs = int_part.lstrip('-')
+        # Agregar punto como separador de miles
+        with_sep = ""
+        for i, ch in enumerate(reversed(int_abs)):
+            if i > 0 and i % 3 == 0:
+                with_sep = '.' + with_sep
+            with_sep = ch + with_sep
+        return ('-' if neg else '') + with_sep + ',' + dec_part
+    except Exception:
+        return '—'
+
+@app.template_filter('fvol')
+def fvol_filter(value):
+    """Formato volumen cm³ estilo chileno: 5673482 → '5.673.482' (punto miles, sin decimal)"""
+    try:
+        n = int(round(float(value)))
+        s = str(abs(n))
+        with_sep = ""
+        for i, ch in enumerate(reversed(s)):
+            if i > 0 and i % 3 == 0:
+                with_sep = '.' + with_sep
+            with_sep = ch + with_sep
+        return ('-' if n < 0 else '') + with_sep
     except Exception:
         return '—'
 
@@ -1823,6 +1849,40 @@ def _ilus_email_html(
 </html>"""
 
 
+def _smtp_ipv4(host: str) -> str:
+    """Devuelve una IP v4 del host SMTP para evitar fallas por IPv6 en algunos hosting."""
+    import socket
+
+    infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+    if not infos:
+        return host
+    return infos[0][4][0]
+
+
+class _IPv4SMTP(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        import socket
+
+        ip = _smtp_ipv4(host)
+        return socket.create_connection((ip, port), timeout, self.source_address)
+
+
+class _IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        import socket
+
+        ip = _smtp_ipv4(host)
+        sock = socket.create_connection((ip, port), timeout, self.source_address)
+        return self.context.wrap_socket(sock, server_hostname=self._host)
+
+
+def _open_smtp_client(host: str, port: int, secure: bool, timeout: int = 15, context=None):
+    """Abre SMTP forzando IPv4, pero conserva el hostname para TLS/SNI."""
+    if secure:
+        return _IPv4SMTP_SSL(host, port, context=context, timeout=timeout)
+    return _IPv4SMTP(host, port, timeout=timeout)
+
+
 def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
     """Envía un correo HTML usando la configuración SMTP dinámica (o EMAIL_CONFIG de respaldo)."""
     # Prioridad: config guardada en BD → EMAIL_CONFIG hardcoded
@@ -1841,11 +1901,11 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
         secure = bool(cfg.get("secure"))
         from_addr = cfg.get("from_addr") or cfg.get("smtp_user", "")
         if secure:
-            with smtplib.SMTP_SSL(cfg["smtp_host"], port, timeout=15) as srv:
+            with _open_smtp_client(cfg["smtp_host"], port, True, timeout=15) as srv:
                 srv.login(cfg["smtp_user"], cfg["smtp_pass"])
                 srv.sendmail(from_addr, [to_addr], msg.as_string())
         else:
-            with smtplib.SMTP(cfg["smtp_host"], port, timeout=15) as srv:
+            with _open_smtp_client(cfg["smtp_host"], port, False, timeout=15) as srv:
                 srv.ehlo(); srv.starttls()
                 srv.login(cfg["smtp_user"], cfg["smtp_pass"])
                 srv.sendmail(from_addr, [to_addr], msg.as_string())
@@ -4025,6 +4085,210 @@ _ERP_TIDO_NUDO_MAP = {
 }
 
 
+def _normalize_phone_cl(raw: str) -> str:
+    """
+    Normaliza números de teléfono chilenos al formato +56XXXXXXXXX (12 chars).
+    Casos soportados:
+      +56936535760  →  +56936535760  (ya correcto)
+      +569 3653 5760 → +56936535760  (espacios)
+      56936535760    → +56936535760  (sin +)
+      936535760      → +56936535760  (solo 9 dígitos, celular)
+      9 3653 5760    → +56936535760  (empieza en 9 con espacios)
+      236535760      → +56236535760  (fijo, 8 dígitos con código)
+    """
+    if not raw:
+        return ""
+    # Eliminar espacios, guiones, paréntesis, puntos
+    p = re.sub(r'[\s\-\(\)\.]+', '', raw.strip())
+    if not p:
+        return ""
+    # Ya tiene + al inicio
+    if p.startswith('+'):
+        digits = p[1:]
+        # +56XXXXXXXXX → correcto
+        if digits.startswith('56') and len(digits) == 11:
+            return '+' + digits
+        # +569XXXXXXXX (con 9 extra) → +56XXXXXXXXX
+        if digits.startswith('569') and len(digits) == 12:
+            return '+56' + digits[2:]
+        # Cualquier otro +XX… → devolver tal cual
+        return p
+    # Empieza con 56 sin +
+    if p.startswith('56') and len(p) == 11:
+        return '+' + p
+    # Empieza con 9 (celular nacional, 9 dígitos)
+    if p.startswith('9') and len(p) == 9:
+        return '+56' + p
+    # Empieza con 9 y tiene 8 dígitos (sin el 9 de área)
+    if p.startswith('9') and len(p) == 8:
+        return '+569' + p
+    # Número fijo de 8 dígitos (sin código ciudad)
+    if p.isdigit() and len(p) == 8:
+        return '+562' + p
+    # Fallback: agregar +56 y entregar lo que hay
+    return '+56' + p
+
+
+# ── Mapa de códigos ERP (CIEN_región, CMEN_comuna) → nombre de comuna ──────
+# CIEN: código de región de 3 dígitos (ej. "013"=RM, "005"=Valparaíso)
+# CMEN: código de 3 chars (ej. "LOB"=Lo Barnechea, "VAL"=Valdivia/Valparaíso)
+_CMEN_MAP: dict[str, dict[str, str]] = {
+    # ── Región Metropolitana (013) ──────────────────────────────
+    "013": {
+        "STG":"Santiago",    "PRO":"Providencia",  "LAC":"Las Condes",   "VIT":"Vitacura",
+        "NUN":"Ñuñoa",       "LAF":"La Florida",   "MAI":"Maipú",        "PUD":"Pudahuel",
+        "QUI":"Quilicura",   "REN":"Renca",         "CNV":"Cerro Navia",  "ECE":"Estación Central",
+        "PEN":"Peñalolén",   "MAC":"Macul",         "SJO":"San Joaquín",  "LGR":"La Granja",
+        "LPI":"La Pintana",  "EBO":"El Bosque",    "SBE":"San Bernardo", "BUI":"Buin",
+        "PIR":"Pirque",      "CAL":"Calera de Tango","TAL":"Talagante",  "PAI":"Paine",
+        "IMA":"Isla de Maipo","MEL":"Melipilla",   "COL":"Colina",       "LAM":"Lampa",
+        "TIL":"Tiltil",      "PEF":"Peñaflor",     "CUR":"Curacaví",    "PCH":"Padre Hurtado",
+        "ELM":"El Monte",    "LOB":"Lo Barnechea", "HUA":"Huechuraba",  "REC":"Recoleta",
+        "IND":"Independencia","LOP":"Lo Prado",    "QNO":"Quinta Normal","LOE":"Lo Espejo",
+        "SMI":"San Miguel",  "LCI":"La Cisterna",  "PAG":"Pedro Aguirre Cerda",
+        "SRA":"San Ramón",   "LRE":"La Reina",     "PUA":"Puente Alto",  "CON":"Conchalí",
+        "MPD":"María Pinto", "ALH":"Alhué",         "SJM":"San José de Maipo",
+    },
+    # ── Valparaíso (005) ───────────────────────────────────────
+    "005": {
+        "VAL":"Valparaíso",  "VDM":"Viña del Mar", "CON":"Concón",      "QUI":"Quilpué",
+        "VLA":"Villa Alemana","SAN":"San Antonio",  "QLL":"Quillota",    "LAC":"La Calera",
+        "LAN":"Los Andes",   "SFE":"San Felipe",   "LIM":"Limache",     "OLM":"Olmué",
+        "CAB":"Cabildo",     "LLI":"La Ligua",     "ZAP":"Zapallar",    "PAP":"Papudo",
+        "QTE":"Quintero",    "PCU":"Puchuncaví",   "CAS":"Casablanca",  "SES":"San Esteban",
+        "LLY":"Llaillay",    "PUT":"Putaendo",      "SMR":"Santa María", "ALG":"Algarrobo",
+        "CTG":"Cartagena",   "SDO":"Santo Domingo", "EQU":"El Quisco",   "ETA":"El Tabo",
+        "RIN":"Rinconada",   "CAL":"Calle Larga",  "JSF":"Juan Fernández","IPA":"Isla de Pascua",
+    },
+    # ── O'Higgins (006) ────────────────────────────────────────
+    "006": {
+        "RAN":"Rancagua",    "GRA":"Graneros",     "MOS":"Mostazal",    "COD":"Codegua",
+        "OLI":"Olivar",      "COL":"Coltauco",     "DON":"Doñihue",     "REN":"Rengo",
+        "REQ":"Requínoa",    "SFE":"San Fernando", "CHI":"Chimbarongo", "STA":"Santa Cruz",
+        "NAN":"Nancagua",    "PAL":"Palmilla",      "PIC":"Pichilemu",   "LOL":"Lolol",
+        "MAR":"Marchihue",   "PAR":"Paredones",    "SVC":"San Vicente", "LCA":"Las Cabras",
+        "PEU":"Peumo",       "PID":"Pichidegua",   "MAL":"Malloa",      "MCL":"Machalí",
+    },
+    # ── Maule (007) ────────────────────────────────────────────
+    "007": {
+        "TAL":"Talca",       "CUR":"Curicó",        "LIN":"Linares",     "CON":"Constitución",
+        "CAU":"Cauquenes",   "MOL":"Molina",        "TEN":"Teno",        "ROM":"Romeral",
+        "HUA":"Hualañé",     "LIC":"Licantén",      "RAU":"Rauco",       "SCL":"San Clemente",
+        "PEN":"Pencahue",    "MAU":"Maule",          "CUR":"Curepto",     "EMP":"Empedrado",
+        "SJV":"San Javier",  "VLA":"Villa Alegre",  "YER":"Yerbas Buenas","COL":"Colbún",
+        "LON":"Longaví",     "PAR":"Parral",         "RET":"Retiro",
+    },
+    # ── Biobío (008) ───────────────────────────────────────────
+    "008": {
+        "CON":"Concepción",  "TAL":"Talcahuano",   "HUA":"Hualpén",    "SAN":"San Pedro de la Paz",
+        "COR":"Coronel",     "LOT":"Lota",          "TOM":"Tomé",        "PEN":"Penco",
+        "CHI":"Chiguayante", "HUL":"Hualqui",       "SJU":"Santa Juana", "FLO":"Florida",
+        "ARA":"Arauco",      "CAN":"Cañete",        "LEB":"Lebu",        "LOS":"Los Álamos",
+        "CRN":"Curanilahue", "LAJ":"Laja",          "NAC":"Nacimiento",  "MUL":"Mulchén",
+        "NEG":"Negrete",     "LAA":"Los Ángeles",   "YUM":"Yumbel",      "CAB":"Cabrero",
+        "SRO":"San Rosendo", "NTL":"Nacimiento",
+        "CHI":"Chillán",     "CHV":"Chillán Viejo", "BUL":"Bulnes",      "SCA":"San Carlos",
+        "SFB":"San Fabián",  "SNN":"San Nicolás",   "NIH":"Ninhue",      "COE":"Coelemu",
+        "PEM":"Pemuco",      "ELC":"El Carmen",     "PIN":"Pinto",       "COI":"Coihueco",
+        "YUN":"Yungay",      "SIG":"San Ignacio",
+    },
+    # ── Araucanía (009) ────────────────────────────────────────
+    "009": {
+        "TEM":"Temuco",      "PDL":"Padre las Casas","VIL":"Villarrica", "PUC":"Pucón",
+        "ANG":"Angol",       "VIC":"Victoria",       "LAU":"Lautaro",     "FRE":"Freire",
+        "GOR":"Gorbea",      "LON":"Loncoche",       "CUR":"Curacautín", "LON":"Lonquimay",
+        "MEL":"Melipeuco",   "CUN":"Cunco",          "VLC":"Vilcún",     "PER":"Perquenco",
+        "GAL":"Galvarino",   "COL":"Collipulli",     "ERC":"Ercilla",    "PUR":"Purén",
+        "TRA":"Traiguén",    "REN":"Renaico",        "PIT":"Pitrufquén", "TOL":"Toltén",
+        "CAR":"Carahue",     "NEI":"Nueva Imperial", "CHO":"Cholchol",   "SAA":"Saavedra",
+    },
+    # ── Los Ríos (016) ─────────────────────────────────────────
+    "016": {
+        "VAL":"Valdivia",    "LUN":"La Unión",       "RBO":"Río Bueno",  "LRA":"Lago Ranco",
+        "FUT":"Futrono",     "PAN":"Panguipulli",    "LLA":"Los Lagos",  "COR":"Corral",
+        "MAR":"Mariquina",   "LAN":"Lanco",          "MAF":"Máfil",      "PAI":"Paillaco",
+    },
+    # ── Los Lagos (010) ────────────────────────────────────────
+    "010": {
+        "PMO":"Puerto Montt","PVA":"Puerto Varas",   "OSO":"Osorno",     "CAS":"Castro",
+        "ANC":"Ancud",       "QUE":"Quellón",        "CAL":"Calbuco",    "MAU":"Maullín",
+        "LMU":"Los Muermos", "FRU":"Frutillar",      "LLA":"Llanquihue", "PUR":"Purranque",
+        "POC":"Puerto Octay","FRE":"Fresia",          "SPB":"San Pablo",  "PUY":"Puyehue",
+        "RNE":"Río Negro",   "SJC":"San Juan de la Costa",
+        "CHA":"Chaitén",     "FUL":"Futaleufú",      "PAL":"Palena",     "HUL":"Hualaihué",
+    },
+    # ── Aysén (011) ────────────────────────────────────────────
+    "011": {
+        "COY":"Coyhaique",   "PAY":"Puerto Aysén",   "CCH":"Chile Chico","COC":"Cochrane",
+        "OHI":"O'Higgins",   "TOR":"Tortel",          "CIS":"Cisnes",     "LVE":"Lago Verde",
+        "RIB":"Río Ibáñez",
+    },
+    # ── Magallanes (012) ───────────────────────────────────────
+    "012": {
+        "PUA":"Punta Arenas","PNA":"Puerto Natales", "POR":"Porvenir",   "PRI":"Primavera",
+        "TIM":"Timaukel",    "LBL":"Laguna Blanca",  "RVE":"Río Verde",  "SGR":"San Gregorio",
+        "CAH":"Cabo de Hornos",
+    },
+    # ── Tarapacá (001) ─────────────────────────────────────────
+    "001": {
+        "IQU":"Iquique",     "ALH":"Alto Hospicio",  "POZ":"Pozo Almonte","PIC":"Pica",
+        "COL":"Colchane",    "CAM":"Camiña",          "HUA":"Huara",
+    },
+    # ── Arica y Parinacota (015) ───────────────────────────────
+    "015": {
+        "ARI":"Arica",       "CAM":"Camarones",      "PUT":"Putre",       "GLA":"General Lagos",
+    },
+    # ── Antofagasta (002) ──────────────────────────────────────
+    "002": {
+        "ANT":"Antofagasta", "CAL":"Calama",          "TOC":"Tocopilla",  "MEJ":"Mejillones",
+        "TAL":"Taltal",       "SPA":"San Pedro de Atacama","OLL":"Ollagüe","MRE":"María Elena",
+    },
+    # ── Atacama (003) ──────────────────────────────────────────
+    "003": {
+        "COP":"Copiapó",     "CLD":"Caldera",         "CHA":"Chañaral",  "DIA":"Diego de Almagro",
+        "VAL":"Vallenar",    "FRE":"Freirina",         "HUA":"Huasco",    "ALC":"Alto del Carmen",
+        "TIA":"Tierra Amarilla",
+    },
+    # ── Coquimbo (004) ─────────────────────────────────────────
+    "004": {
+        "LSE":"La Serena",   "COQ":"Coquimbo",        "OVA":"Ovalle",    "ILL":"Illapel",
+        "LVI":"Los Vilos",   "SAL":"Salamanca",        "CAN":"Canela",    "MPT":"Monte Patria",
+        "PUN":"Punitaqui",   "VIC":"Vicuña",           "ANT":"Andacollo", "PAI":"Paihuano",
+        "COM":"Combarbalá",  "LHG":"La Higuera",
+    },
+}
+
+
+def _cmen_to_comuna(cien: str, cmen: str) -> str:
+    """
+    Convierte el código de región (CIEN) + código de comuna (CMEN) del ERP
+    a nombre de comuna legible. Ej: ('016','VAL') → 'Valdivia'
+    Si no hay match, retorna el CMEN tal cual (sirve como seed para autocomplete).
+    """
+    if not cmen:
+        return ""
+    region_map = _CMEN_MAP.get(str(cien).zfill(3), {})
+    nombre = region_map.get(cmen.upper().strip())
+    if nombre:
+        return nombre
+    # Fallback: buscar en todas las regiones (por si el CIEN viene mal)
+    for rmap in _CMEN_MAP.values():
+        if cmen.upper().strip() in rmap:
+            return rmap[cmen.upper().strip()]
+    return cmen   # retorna el código como seed
+
+
+# Mapa CIEN → nombre de región
+_REGION_NOMBRES: dict = {
+    "001": "Tarapacá",          "002": "Antofagasta",         "003": "Atacama",
+    "004": "Coquimbo",          "005": "Valparaíso",          "006": "O'Higgins",
+    "007": "Maule",             "008": "Biobío",              "009": "Araucanía",
+    "010": "Los Lagos",         "011": "Aysén",               "012": "Magallanes",
+    "013": "Metropolitana",     "014": "Los Ríos",            "015": "Arica y Parinacota",
+    "016": "Los Ríos",
+}
+
+
 def _nudo_variants(nudo_raw):
     """
     El ERP guarda NUDO como string de 10 chars con ceros a la izquierda.
@@ -4095,17 +4359,40 @@ def _cubicador_fetch(tido, nudo):
     if not raw_header:
         return None, []
 
-    # ── 2. Nombre del cliente (entidades) ──────────────────────────────
+    # ── 2. Datos completos del cliente (entidades) ─────────────────────
     endo = (raw_header.get("ENDO") or "").strip()
-    cliente_nombre = ""
-    cliente_rut    = endo
+    cliente_nombre  = ""
+    cliente_rut     = endo
+    cliente_email   = ""
+    cliente_telefono = ""
+    cliente_direccion_base = ""
+    cliente_cmen    = ""
+    cliente_cien    = ""
+    cliente_obs     = ""
+    cliente_comuna_nombre = ""
+
     if endo:
         try:
             ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=8)
             ent_data = ent_body.get("data") or []
             if ent_data:
-                cliente_nombre = (ent_data[0].get("NOKOEN") or "").strip().title()
-                cliente_rut    = (ent_data[0].get("RTEN")   or endo).strip()
+                e = ent_data[0]
+                cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
+                cliente_rut      = (e.get("RTEN")   or endo).strip()
+                # Email: preferir principal, caer en comercial
+                cliente_email    = (e.get("EMAIL") or e.get("EMAILCOMER") or "").strip()
+                # Teléfono: normalizar a formato +56XXXXXXXXX
+                raw_fono = (e.get("FOEN") or e.get("FAEN") or "").strip()
+                cliente_telefono = _normalize_phone_cl(raw_fono)
+                # Dirección base del cliente (no la de despacho)
+                cliente_direccion_base = (e.get("DIEN") or "").strip().title()
+                # Código de región y comuna
+                cliente_cien     = (e.get("CIEN") or "").strip()
+                cliente_cmen     = (e.get("CMEN") or "").strip()
+                # Observaciones
+                cliente_obs      = (e.get("OBEN") or "").strip()
+                # Resolver nombre de comuna desde código
+                cliente_comuna_nombre = _cmen_to_comuna(cliente_cien, cliente_cmen)
         except Exception:
             pass   # si falla entidades igual mostramos el doc
 
@@ -4116,26 +4403,36 @@ def _cubicador_fetch(tido, nudo):
     except Exception:
         fecha = fecha_raw
 
+    # Dirección de despacho (del documento, tiene prioridad sobre la del cliente)
+    dir_despacho = (raw_header.get("DIENDESP") or raw_header.get("DIENDE") or
+                    raw_header.get("OBDO") or "").strip()
+    # Si el doc no trae dirección de despacho, usar la del cliente
+    direccion_final = dir_despacho or cliente_direccion_base
+
+    # Comuna del doc (tiene prioridad); si no, la del cliente
+    comuna_doc = (raw_header.get("NOKOZO") or raw_header.get("NOKOCOMU") or
+                  raw_header.get("NOKOCOMUNADE") or raw_header.get("NOKOMUENDE") or
+                  raw_header.get("NOKOMUNEN") or raw_header.get("NOKCOMENDESP") or "").strip()
+    comuna_final = comuna_doc or cliente_comuna_nombre
+
     _nudo_str = str(raw_header.get("NUDO", erp_nudo) or erp_nudo)
     header = {
-        "tido":           display_tido,               # VD / WEB, no NVV
-        "nudo":           str(nudo),                  # número sin prefijo
-        "nudo_display":   str(nudo).lstrip("0") or str(nudo),
-        "fecha":          fecha,
-        "valor_neto":     float(raw_header.get("VANEDO") or 0),
-        "valor_iva":      float(raw_header.get("VAIVDO") or 0),
-        "valor_bruto":    float(raw_header.get("VABRDO") or 0),
-        "cliente_nombre": cliente_nombre,
-        "cliente_rut":    cliente_rut,
-        "comuna":         (raw_header.get("NOKOZO") or raw_header.get("CMEN") or
-                           raw_header.get("NOKOCOMU") or raw_header.get("NOKOCOMUNADE") or
-                           raw_header.get("NOKOMUENDE") or raw_header.get("NOKOMUNEN") or
-                           raw_header.get("NOKCOMENDESP") or "").strip(),
-        "direccion":      (raw_header.get("DIENDESP") or raw_header.get("DIENDE") or
-                           raw_header.get("OBDO") or "").strip(),
-        "telefono":       "",
-        "email":          "",
-        "all_fields":     list(raw_header.keys()),  # para debug
+        "tido":             display_tido,
+        "nudo":             str(nudo),
+        "nudo_display":     str(nudo).lstrip("0") or str(nudo),
+        "fecha":            fecha,
+        "valor_neto":       float(raw_header.get("VANEDO") or 0),
+        "valor_iva":        float(raw_header.get("VAIVDO") or 0),
+        "valor_bruto":      float(raw_header.get("VABRDO") or 0),
+        "cliente_nombre":   cliente_nombre,
+        "cliente_rut":      cliente_rut,
+        # Campos de contacto enriquecidos desde /entidades
+        "email":            cliente_email,
+        "telefono":         cliente_telefono,
+        "direccion":        direccion_final,
+        "comuna":           comuna_final,
+        "observaciones":    cliente_obs,
+        "all_fields":       list(raw_header.keys()),   # para debug
     }
 
     # ── 4. Cruzar líneas con BD local (bultos/peso) ────────────────────
@@ -4203,6 +4500,8 @@ def _cubicador_fetch(tido, nudo):
             "cantidad_despachada": qty_desp,
             "saldo":               saldo_linea,
             "es_zz":               es_zz,
+            # Valor neto de línea (para ZZ Envío)
+            "vaneli":              float(l.get("VANELI") or 0),
         })
 
     return header, lineas
@@ -4414,7 +4713,7 @@ def cubicador_export_excel():
                 vertical="center",
             )
             if ci in (5, 6, 7, 8, 9) and val is not None:
-                cell.number_format = "#,##0.000"
+                cell.number_format = "#,##0.0"
 
     # ── Fila de totales ──────────────────────────────────────────────
     tr = row_offset + len(lineas)
@@ -4438,7 +4737,7 @@ def cubicador_export_excel():
             cell.font  = Font(bold=True, color=("CC0000" if ci == 9 else "FFFFFF"), size=9)
             cell.alignment = Alignment(horizontal="center" if ci == 3 else "right")
             if ci != 3:
-                cell.number_format = "#,##0.000"
+                cell.number_format = "#,##0.0"
 
     # ── Anchos de columna ────────────────────────────────────────────
     for ci, w in enumerate([14, 42, 7, 8, 10, 10, 12, 12, 14, 7], 1):
@@ -4511,7 +4810,7 @@ def cubicador_export_pdf():
           <div class="doc-fecha">{hdr.get('fecha','')}</div>
           <div class="doc-cliente">{hdr.get('cliente_nombre','—')}</div>
           <div class="doc-rut">RUT {hdr.get('cliente_rut','—')}</div>
-          <div class="doc-bruto">${hdr.get('valor_bruto',0):,.0f}</div>
+          <div class="doc-bruto">${fvol_filter(hdr.get('valor_bruto',0))}</div>
         </div>"""
 
     # ── Totales ──────────────────────────────────────────────────────
@@ -4533,10 +4832,10 @@ def cubicador_export_pdf():
           <td>{l['descripcion_erp']}</td>
           <td class="c">{int(l['cantidad'])}</td>
           <td class="c">{l['total_bultos'] if l['tiene_ficha'] else 's/f'}</td>
-          <td class="r">{'—' if sf else f"{l['peso_kg_u']:.3f}"}</td>
-          <td class="r">{'—' if sf else f"{l['peso_vol_u']:.3f}"}</td>
-          <td class="r">{'—' if sf else f"{l['vol_u']:,.0f}"}</td>
-          <td class="r fw red">{'—' if sf else f"{l['pred_tot']:.3f}"}</td>
+          <td class="r">{'—' if sf else fkg_filter(l['peso_kg_u'])}</td>
+          <td class="r">{'—' if sf else fkg_filter(l['peso_vol_u'])}</td>
+          <td class="r">{'—' if sf else fvol_filter(l['vol_u'])}</td>
+          <td class="r fw red">{'—' if sf else fkg_filter(l['pred_tot'])}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -4615,10 +4914,10 @@ tfoot td{{border:none;padding:7px 5px}}
     <td colspan="2" style="text-align:right;color:#bbb;font-size:7pt;letter-spacing:.5px">TOTALES</td>
     <td class="c">{int(tot_qty)}</td>
     <td class="c">{tot_bult}</td>
-    <td class="r">{tot_kg:.3f}</td>
-    <td class="r">{tot_pv:.3f}</td>
-    <td class="r">{tot_vol:,.0f}</td>
-    <td class="r red" style="font-size:9pt">{tot_pred:.3f}</td>
+    <td class="r">{fkg_filter(tot_kg)}</td>
+    <td class="r">{fkg_filter(tot_pv)}</td>
+    <td class="r">{fvol_filter(tot_vol)}</td>
+    <td class="r red" style="font-size:9pt">{fkg_filter(tot_pred)}</td>
   </tr></tfoot>
 </table>
 
@@ -4633,19 +4932,19 @@ tfoot td{{border:none;padding:7px 5px}}
   </div>
   <div class="t-item">
     <div class="t-label">Total Kg</div>
-    <div class="t-val">{tot_kg:.3f}</div>
+    <div class="t-val">{fkg_filter(tot_kg)}</div>
   </div>
   <div class="t-item">
     <div class="t-label">Total PV</div>
-    <div class="t-val">{tot_pv:.3f}</div>
+    <div class="t-val">{fkg_filter(tot_pv)}</div>
   </div>
   <div class="t-item">
     <div class="t-label">Vol cm³</div>
-    <div class="t-val">{tot_vol:,.0f}</div>
+    <div class="t-val">{fvol_filter(tot_vol)}</div>
   </div>
   <div class="t-item t-pred">
     <div class="t-label">Predominante</div>
-    <div class="t-val">{tot_pred:.3f}</div>
+    <div class="t-val">{fkg_filter(tot_pred)}</div>
   </div>
 </div>
 
@@ -4688,6 +4987,348 @@ def cubicador_sync_nombre():
     conn.commit()
     _invalidate_listing_cache()
     return jsonify({"ok": True, "sku": sku, "nombre": nombre_erp})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  MÓDULO: ASIGNAR Y COTIZAR
+# ═══════════════════════════════════════════════════════════════
+
+# ── Credenciales FedEx Rate API ─────────────────────────────────
+FEDEX_RATE_CLIENT_ID     = "l74e144461994249a0abc124abef203e10"
+FEDEX_RATE_CLIENT_SECRET = "2ce7d089fbf642e89c0748389cfda22d"
+FEDEX_ACCOUNT            = "204155375"
+FEDEX_ORIGIN_POSTAL      = "9276181"
+FEDEX_ORIGIN_CITY        = "Maipu"
+FEDEX_OAUTH_URL          = "https://apis.fedex.com/oauth/token"
+FEDEX_RATE_URL           = "https://apis.fedex.com/rate/v1/rates/quotes"
+
+# Cache del token OAuth (dura ~3600 s)
+_fedex_token_cache = {"token": None, "expires_at": 0}
+_fedex_token_lock  = threading.Lock()
+
+
+def _fedex_get_token() -> str:
+    """Obtiene un Bearer token de FedEx (con cache para evitar re-autenticar en cada request)."""
+    import requests as _req
+    with _fedex_token_lock:
+        now = time.time()
+        if _fedex_token_cache["token"] and now < _fedex_token_cache["expires_at"] - 30:
+            return _fedex_token_cache["token"]
+        resp = _req.post(
+            FEDEX_OAUTH_URL,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     FEDEX_RATE_CLIENT_ID,
+                "client_secret": FEDEX_RATE_CLIENT_SECRET,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        j = resp.json()
+        _fedex_token_cache["token"]      = j["access_token"]
+        _fedex_token_cache["expires_at"] = now + int(j.get("expires_in", 3600))
+        return _fedex_token_cache["token"]
+
+
+def _fedex_calc_rate(peso_pred_kg: float, postal_destino: str,
+                     es_residencial: bool = False) -> dict:
+    """
+    Llama a la FedEx Rate API y devuelve dict con tarifa, tiempo de tránsito, etc.
+    Peso facturable = max(peso_pred_kg, 0.5) redondeado a 1 decimal.
+    """
+    import requests as _req
+    token     = _fedex_get_token()
+    peso_fact = max(round(peso_pred_kg, 1), 0.5)
+
+    body = {
+        "accountNumber": {"value": FEDEX_ACCOUNT},
+        "requestedShipment": {
+            "shipper": {
+                "address": {
+                    "city":                FEDEX_ORIGIN_CITY,
+                    "postalCode":          FEDEX_ORIGIN_POSTAL,
+                    "countryCode":         "CL",
+                    "streetLines":         ["Aurora de Chile 2486"],
+                    "residential":         False,
+                    "stateOrProvinceCode": "",
+                }
+            },
+            "recipient": {
+                "address": {
+                    "city":                "",
+                    "postalCode":          str(postal_destino),
+                    "countryCode":         "CL",
+                    "streetLines":         [""],
+                    "residential":         es_residencial,
+                    "stateOrProvinceCode": "",
+                }
+            },
+            "pickupType":      "DROPOFF_AT_FEDEX_LOCATION",
+            "packagingType":   "YOUR_PACKAGING",
+            "rateRequestType": ["ACCOUNT", "LIST"],
+            "requestedPackageLineItems": [{
+                "groupPackageCount": 1,
+                "physicalPackaging": "YOUR_PACKAGING",
+                "weight": {"units": "KG", "value": peso_fact},
+            }],
+        },
+        "carrierCodes":            ["FDXE"],
+        "returnLocalizedDateTime": True,
+        "webSiteCountryCode":      "CL",
+    }
+
+    resp = _req.post(
+        FEDEX_RATE_URL,
+        json=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+            "X-locale":      "es_CL",
+        },
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data  = resp.json()
+    rates = data.get("output", {}).get("rateReplyDetails", [])
+    if not rates:
+        return {"error": "Sin tarifas disponibles en respuesta FedEx"}
+
+    # Elegir primer rate con detalles
+    best = next((r for r in rates if r.get("ratedShipmentDetails")), rates[0])
+    rated_details = best.get("ratedShipmentDetails", [{}])
+    detail = (
+        next((d for d in rated_details if d.get("rateType") == "ACCOUNT"), None)
+        or next((d for d in rated_details if d.get("rateType") == "LIST"), None)
+        or (rated_details[0] if rated_details else {})
+    )
+
+    total  = float(detail.get("totalNetCharge", detail.get("totalNetFedExCharge", 0)))
+    moneda = detail.get("currency", "CLP")
+
+    recargos_raw = detail.get("shipmentRateDetail", {}).get("surCharges", [])
+    recargos = [
+        {"nombre": rc.get("description", rc.get("type", "")), "monto": float(rc.get("amount", 0))}
+        for rc in recargos_raw
+    ]
+
+    transit_raw = best.get("operationalDetail", {}).get("transitTime", "")
+    transit_map = {
+        "ONE_DAY":    "1 día hábil",
+        "TWO_DAYS":   "2 días hábiles",
+        "THREE_DAYS": "3 días hábiles",
+        "FOUR_DAYS":  "4 días hábiles",
+        "FIVE_DAYS":  "5 días hábiles",
+    }
+
+    return {
+        "servicio":        best.get("serviceType", "FEDEX_GROUND"),
+        "tarifa":          total,
+        "moneda":          moneda,
+        "tiempo_transito": transit_map.get(transit_raw, transit_raw or "—"),
+        "peso_facturable": peso_fact,
+        "recargos":        recargos,
+    }
+
+
+# Mapa comunas CL → código postal (expandible)
+_COMUNA_POSTAL = {
+    "SANTIAGO": "8320000", "PROVIDENCIA": "7500000", "LAS CONDES": "7550000",
+    "VITACURA": "7630000", "NUNOA": "7750000", "LA FLORIDA": "8240000",
+    "MAIPU": "9276181", "PUDAHUEL": "9020000", "QUILICURA": "8711000",
+    "RENCA": "8580000", "CERRO NAVIA": "9000000", "ESTACION CENTRAL": "9110000",
+    "PENALOLEN": "7941000", "MACUL": "7901000", "SAN JOAQUIN": "8810000",
+    "LA GRANJA": "8890000", "LA PINTANA": "8310000", "EL BOSQUE": "8080000",
+    "SAN BERNARDO": "8060000", "BUIN": "9620000", "PIRQUE": "9650000",
+    "TALAGANTE": "9760000", "PAINE": "9680000", "MELIPILLA": "9810000",
+    "COLINA": "8500000", "LAMPA": "9520000", "PENARFLOR": "9760000",
+    "CURACAVI": "9860000", "VALPARAISO": "2340000", "VINA DEL MAR": "2520000",
+    "CONCON": "2521000", "QUILPUE": "2430000", "VILLA ALEMANA": "2490000",
+    "SAN ANTONIO": "2830000", "RANCAGUA": "2820000", "TALCA": "3460000",
+    "CURICO": "3340000", "LINARES": "3580000", "CHILLAN": "3780000",
+    "CONCEPCION": "4030000", "TALCAHUANO": "4040000", "LOS ANGELES": "4440000",
+    "TEMUCO": "4780000", "VALDIVIA": "5090000", "OSORNO": "5290000",
+    "PUERTO MONTT": "5480000", "PUERTO VARAS": "5550000",
+    "COYHAIQUE": "5950000", "PUNTA ARENAS": "6200000",
+    "IQUIQUE": "1100000", "ARICA": "1000000", "ANTOFAGASTA": "1240000",
+    "CALAMA": "1390000", "COPIAPO": "1530000", "LA SERENA": "1700000",
+    "COQUIMBO": "1780000",
+}
+
+
+def _comuna_to_postal(comuna: str):
+    """Convierte nombre de comuna a código postal CL. Devuelve None si no se conoce."""
+    if not comuna:
+        return None
+    key = (comuna.strip().upper()
+           .replace("Ñ","N").replace("Á","A").replace("É","E")
+           .replace("Í","I").replace("Ó","O").replace("Ú","U"))
+    return _COMUNA_POSTAL.get(key)
+
+
+@app.route("/asignar", methods=["GET"])
+@login_required
+def asignar_cotizar():
+    """Página principal del módulo Asignar y Cotizar."""
+    if not g.permissions.get("cubicador"):
+        flash("No tienes acceso al módulo Asignar y Cotizar.", "danger")
+        return redirect(url_for("index"))
+    return render_template("cubicador/asignar.html")
+
+
+@app.route("/api/asignar/documento", methods=["POST"])
+@login_required
+def api_asignar_documento():
+    """
+    Busca un documento en el ERP y devuelve header + líneas con datos de cubicaje.
+    POST JSON: { tido, nudo }
+    Campos de respuesta alineados con lo que usa asignar.html.
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    data = request.get_json(silent=True) or {}
+    tido = (data.get("tido") or "FCV").strip().upper()
+    nudo = str(data.get("nudo") or "").strip()
+
+    if not nudo:
+        return jsonify({"error": "Número de documento requerido"}), 400
+
+    try:
+        hdr, lineas = _cubicador_fetch(tido, nudo)
+    except ConnectionError as ce:
+        return jsonify({"error": str(ce)}), 503
+    except Exception as ex:
+        return jsonify({"error": f"Error al consultar ERP: {ex}"}), 500
+
+    if hdr is None:
+        return jsonify({"error": f"No se encontró {tido} N° {nudo} en el ERP"}), 404
+
+    # Extraer valor de ZZ Envío (tarifa de despacho cargada en el documento)
+    zzenvio_valor = 0.0
+    for l in lineas:
+        if l["sku"].upper() == "ZZENVIO":
+            zzenvio_valor = float(l.get("vaneli", 0))
+            break
+
+    lineas_out = []
+    tot_qty = tot_kg = tot_pv = tot_vol = tot_pred = tot_bultos = 0.0
+
+    for l in lineas:
+        if l.get("es_zz"):
+            continue
+        qty          = l["cantidad"]
+        peso_kg_u    = l["peso_kg_u"]
+        peso_vol_u   = l["peso_vol_u"]
+        pred_u       = l["pred_u"]
+        pred_tot     = l["pred_tot"]
+        bultos_u     = int(l["total_bultos"])
+        bultos_total = bultos_u * int(qty) if l["tiene_bultos"] else 0
+
+        tot_qty    += qty
+        tot_kg     += l["peso_kg_tot"]
+        tot_pv     += l["peso_vol_tot"]
+        tot_vol    += l["vol_tot"]
+        tot_pred   += pred_tot
+        tot_bultos += bultos_total
+
+        lineas_out.append({
+            # Nombres exactos que lee asignar.html
+            "sku":             l["sku"],
+            "descripcion_erp": l["descripcion_erp"] or l["nombre_app"],
+            "cantidad":        qty,
+            "total_bultos":    bultos_u,          # bultos por unidad
+            "bultos_tot":      bultos_total,       # bultos totales
+            "tiene_ficha":     l["tiene_ficha"],
+            "tiene_bultos":    l["tiene_bultos"],
+            "peso_kg_u":       round(peso_kg_u,  3),
+            "peso_vol_u":      round(peso_vol_u, 3),
+            "vol_u":           round(l["vol_u"], 1),   # cm³/u
+            "pred_u":          round(pred_u,     3),
+            "pred_tot":        round(pred_tot,   3),
+        })
+
+    postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
+
+    return jsonify({
+        "ok":     True,
+        "header": {**hdr, "postal_destino": postal_destino},
+        "lineas": lineas_out,
+        "totales": {
+            "total_qty":    int(tot_qty),
+            "total_bultos": int(tot_bultos),
+            "peso_kg":      round(tot_kg,   3),
+            "peso_pv":      round(tot_pv,   3),
+            "vol_cm3":      round(tot_vol,  1),
+            "peso_pred":    round(tot_pred, 3),
+        },
+        "tipos_doc":     TIPOS_DOC_CUBICADOR,
+        "zzenvio_valor": round(zzenvio_valor, 0),
+    })
+
+
+@app.route("/api/asignar/tarifa-fedex", methods=["POST"])
+@login_required
+def api_asignar_tarifa_fedex():
+    """
+    Consulta la tarifa FedEx para el envío.
+    POST JSON: { peso_pred, zona_id, es_residencial, es_remoto, valor_neto }
+      zona_id: 1=RM, 2=V/VI/VII, 3=VIII/IX, 4=XIV/X, 5=XI/XII, 6=I/II/III/IV
+    Responde: { ok, costo_total, detalle:{servicio, tiempo_transito, peso_facturable, recargos} }
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    data       = request.get_json(silent=True) or {}
+    peso_pred  = float(data.get("peso_pred", 0) or 0)
+    zona_id    = str(data.get("zona_id", "1")).strip()
+    es_resid   = bool(data.get("es_residencial", False))
+    es_remoto  = bool(data.get("es_remoto", False))
+    valor_neto = float(data.get("valor_neto", 0) or 0)
+
+    if peso_pred <= 0:
+        return jsonify({"error": "Peso predominante debe ser mayor a 0"}), 400
+
+    # Mapear zona_id → postal de referencia para la API FedEx
+    _ZONA_POSTAL = {
+        "1": "8320000",   # RM Santiago
+        "2": "2340000",   # Valparaíso
+        "3": "4030000",   # Concepción
+        "4": "5480000",   # Puerto Montt
+        "5": "6200000",   # Punta Arenas
+        "6": "1240000",   # Antofagasta
+    }
+    postal_dest = _ZONA_POSTAL.get(zona_id, "8320000")
+
+    try:
+        result = _fedex_calc_rate(peso_pred, postal_dest, es_residencial=es_resid)
+        if "error" in result:
+            return jsonify({"error": result["error"]}), 422
+
+        costo_base = result["tarifa"]
+        # Recargos adicionales según opciones marcadas
+        recargo_resid  = 4200 if es_resid  else 0
+        recargo_remoto = 6800 if es_remoto else 0
+        costo_total    = costo_base + recargo_resid + recargo_remoto
+
+        return jsonify({
+            "ok":          True,
+            "costo_total": round(costo_total, 0),
+            "detalle": {
+                "servicio":        result["servicio"],
+                "tiempo_transito": result["tiempo_transito"],
+                "peso_facturable": result["peso_facturable"],
+                "costo_base":      round(costo_base, 0),
+                "recargo_resid":   recargo_resid,
+                "recargo_remoto":  recargo_remoto,
+                "recargos_fedex":  result.get("recargos", []),
+                "moneda":          result["moneda"],
+                "zona_id":         zona_id,
+            },
+        })
+    except Exception as ex:
+        import traceback
+        print(f"[FEDEX ERROR] {ex}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Error FedEx API: {str(ex)}"}), 502
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -6733,11 +7374,11 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
     secure = cfg.get("secure", False)
     if secure:
         ctx = _ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=15) as srv:
+        with _open_smtp_client(host, port, True, timeout=15, context=ctx) as srv:
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
             srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), recipients, msg.as_string())
     else:
-        with smtplib.SMTP(host, port, timeout=15) as srv:
+        with _open_smtp_client(host, port, False, timeout=15) as srv:
             srv.ehlo()
             srv.starttls()
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
@@ -6810,17 +7451,20 @@ def _smtp_connection_diagnose(cfg):
         suggestions.append("Gmail permite mostrar la App Password con espacios, pero si falla prueba guardarla sin espacios.")
 
     try:
+        ipv4 = _smtp_ipv4(host)
+        if ipv4 and ipv4 != host:
+            checks.append(f"DNS IPv4 resuelto: {ipv4}")
         if secure:
             checks.append(f"Conectando con SSL a {host}:{port}")
             ctx = _ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as srv:
+            with _open_smtp_client(host, port, True, timeout=10, context=ctx) as srv:
                 checks.append("Servidor SSL respondio correctamente")
                 srv.ehlo()
                 checks.append("Autenticando usuario SMTP")
                 srv.login(user, password)
         else:
             checks.append(f"Conectando a {host}:{port}")
-            with smtplib.SMTP(host, port, timeout=10) as srv:
+            with _open_smtp_client(host, port, False, timeout=10) as srv:
                 srv.ehlo()
                 if srv.has_extn("starttls"):
                     checks.append("STARTTLS disponible; negociando cifrado")
@@ -7418,6 +8062,15 @@ def init_mantenciones_tables():
                     INDEX idx_estado (estado)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Migraciones: añadir columnas nuevas si todavía no existen
+            for _mig_sql in [
+                "ALTER TABLE mant_clientes ADD COLUMN updated_by VARCHAR(190)",
+                "ALTER TABLE mant_clientes ADD COLUMN region VARCHAR(100)",
+            ]:
+                try:
+                    cur.execute(_mig_sql)
+                except Exception:
+                    pass   # ya existe → ignorar
             # ── Máquinas por cliente (de docs ERP) ─────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_maquinas (
@@ -8236,14 +8889,15 @@ def mant_cliente_nuevo():
                 cur.execute(
                     """INSERT INTO mant_clientes
                        (razon_social,rut,contacto_nombre,contacto_tel,contacto_email,
-                        direccion,comuna,ciudad,notas,estado,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        direccion,comuna,ciudad,region,notas,estado,created_by,updated_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (d.get("razon_social","").strip(), d.get("rut","").strip(),
                      d.get("contacto_nombre","").strip(), d.get("contacto_tel","").strip(),
                      d.get("contacto_email","").strip(), d.get("direccion","").strip(),
                      d.get("comuna","").strip(), d.get("ciudad","").strip(),
+                     d.get("region","").strip(),
                      d.get("notas","").strip(), d.get("estado","activo"),
-                     current_username())
+                     current_username(), current_username())
                 )
                 cid = cur.lastrowid
             conn.commit()
@@ -8255,6 +8909,46 @@ def mant_cliente_nuevo():
         finally:
             conn.close()
     return render_template("mantenciones/cliente_form.html", cliente=None)
+
+
+@app.route("/mantenciones/api/clientes/enriquecer")
+@_mant_required
+def mant_enriquecer_cliente():
+    """
+    Consulta /entidades del ERP por RUT exacto y devuelve datos normalizados.
+    GET /mantenciones/api/clientes/enriquecer?rut=77.123.456-7
+    Usa _normalize_phone_cl y _cmen_to_comuna para máxima calidad.
+    """
+    rut = (request.args.get("rut") or "").strip()
+    if not rut:
+        return jsonify({"error": "RUT requerido"}), 400
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    try:
+        body = _erp_get("/entidades", {"rten": rut}, TOKEN, timeout=8)
+        data = body.get("data") or []
+        if not data:
+            return jsonify({"encontrado": False, "rut": rut})
+        e    = data[0]
+        cien = (e.get("CIEN") or "").strip()
+        cmen = (e.get("CMEN") or "").strip()
+        raw_tel = (e.get("FOEN") or e.get("FAEN") or "").strip()
+        region  = _REGION_NOMBRES.get(str(cien).zfill(3), "")
+        return jsonify({
+            "encontrado":    True,
+            "razon_social":  (e.get("NOKOEN") or "").strip().title(),
+            "rut":           (e.get("RTEN")   or rut).strip(),
+            "email":         (e.get("EMAIL")  or e.get("EMAILCOMER") or "").strip(),
+            "telefono":      _normalize_phone_cl(raw_tel),
+            "direccion":     (e.get("DIEN")   or "").strip().title(),
+            "comuna":        _cmen_to_comuna(cien, cmen),
+            "region":        region,
+            "giro":          (e.get("GIEN")   or "").strip(),
+            "observaciones": (e.get("OBEN")   or "").strip(),
+            "cien":          cien,
+            "cmen":          cmen,
+        })
+    except Exception as ex:
+        return jsonify({"error": str(ex), "encontrado": False}), 503
 
 
 @app.route("/mantenciones/api/ultimo-cliente")
@@ -8299,11 +8993,14 @@ def mant_ficha(cid):
 def mant_cliente_update(cid):
     d = request.get_json(silent=True) or {}
     fields = ["razon_social","rut","contacto_nombre","contacto_tel","contacto_email",
-              "direccion","comuna","ciudad","notas","estado"]
+              "direccion","comuna","ciudad","region","notas","estado"]
     sets   = [f"{f}=%s" for f in fields if f in d]
     vals   = [d[f] for f in fields if f in d]
     if not sets:
         return jsonify({"error": "Sin campos"}), 400
+    # Auditoría: quién actualizó
+    sets.append("updated_by=%s")
+    vals.append(current_username())
     conn = get_mysql()
     try:
         with conn.cursor() as cur:

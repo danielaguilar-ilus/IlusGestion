@@ -131,7 +131,7 @@
             <div style="font-size:.72rem;color:#888">{{ h.fecha }}</div>
           </div>
           <div class="fw-bold text-end" style="color:var(--ilus-red);font-size:1rem">
-            ${{ "{:,.0f}".format(h.valor_bruto or 0) }}
+            ${{ (h.valor_bruto or 0)|fvol }}
           </div>
         </div>
         <div class="mt-1 fw-semibold" style="font-size:.88rem">{{ h.cliente_nombre or '—' }}</div>
@@ -164,15 +164,15 @@
         <div class="d-flex gap-3 flex-wrap">
           <div>
             <div class="small text-muted fw-semibold" style="font-size:.68rem">Neto</div>
-            <div class="fw-bold">${{ "{:,.0f}".format(h.valor_neto or 0) }}</div>
+            <div class="fw-bold">${{ (h.valor_neto or 0)|fvol }}</div>
           </div>
           <div>
             <div class="small text-muted fw-semibold" style="font-size:.68rem">IVA</div>
-            <div class="fw-bold">${{ "{:,.0f}".format(h.valor_iva or 0) }}</div>
+            <div class="fw-bold">${{ (h.valor_iva or 0)|fvol }}</div>
           </div>
           <div>
             <div class="small text-muted fw-semibold" style="font-size:.68rem">Bruto</div>
-            <div class="fw-bold" style="color:var(--ilus-red)">${{ "{:,.0f}".format(h.valor_bruto or 0) }}</div>
+            <div class="fw-bold" style="color:var(--ilus-red)">${{ (h.valor_bruto or 0)|fvol }}</div>
           </div>
           <div>
             <div class="small text-muted fw-semibold" style="font-size:.68rem">SKUs</div>
@@ -274,7 +274,7 @@
             {% if l.tiene_bultos %}{{ l.peso_vol_u|fkg }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="text-end">
-            {% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_u) }}{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if l.tiene_bultos %}{{ l.vol_u|fvol }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
 
           <td class="text-end fw-semibold">
@@ -310,7 +310,7 @@
           <td class="text-center" style="color:#fff">{{ ns.tot_bultos }}</td>
           <td class="text-end" style="color:#fff">{{ ns.tot_kg|fkg }}</td>
           <td class="text-end" style="color:#fff">{{ ns.tot_pv|fkg }}</td>
-          <td class="text-end" style="color:#fff">{{ "{:,.0f}".format(ns.tot_vol) }}</td>
+          <td class="text-end" style="color:#fff">{{ ns.tot_vol|fvol }}</td>
           <td class="text-end" style="color:#888">—</td>
           <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ ns.tot_pred|fkg }}</td>
           <td class="no-print"></td>
@@ -351,7 +351,7 @@
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Vol cm³</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_vol|fvol }}</div>
         </div>
 
         <div class="text-center px-4 py-3 flex-fill" style="background:#1a1a1a;border-radius:0 0 8px 0">
@@ -399,19 +399,19 @@
       <div class="row g-1 text-center" style="font-size:.75rem">
         <div class="col-3">
           <div style="color:#888">Kg</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_kg_tot|fkg(2) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_kg_tot|fkg }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:#888">PV</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_vol_tot|fkg(2) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_vol_tot|fkg }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:#888">Vol cm³</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ "{:,.0f}".format(l.vol_tot) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.vol_tot|fvol }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:var(--ilus-red);font-weight:700">Pred</div>
-          <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ l.pred_tot|fkg(2) }}{% else %}—{% endif %}</div>
+          <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ l.pred_tot|fkg }}{% else %}—{% endif %}</div>
         </div>
       </div>
       {% if l.tiene_ficha and l.app_id %}
@@ -451,7 +451,7 @@
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Vol cm³</div>
-          <div class="fw-bold text-white">{{ "{:,.0f}".format(ns.tot_vol) }}</div>
+          <div class="fw-bold text-white">{{ ns.tot_vol|fvol }}</div>
         </div>
         <div class="col-6">
           <div style="color:var(--ilus-red);font-weight:700;font-size:.7rem">Predom total</div>

@@ -96,6 +96,10 @@
          class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
         <i class="bi bi-calculator"></i><span>Cubicador</span>
       </a>
+      <a href="{{ url_for('asignar_cotizar') }}"
+         class="sidebar-link{% if request.endpoint == 'asignar_cotizar' %} active{% endif %}">
+        <i class="bi bi-send-check"></i><span>Asignar y Cotizar</span>
+      </a>
       {% endif %}
       {% if permissions.transporte %}
       <a href="{{ url_for('transporte_index') }}"

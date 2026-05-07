@@ -1,0 +1,1205 @@
+{% extends "base.html" %}
+{% block title %}Asignar y Cotizar — ILUS{% endblock %}
+
+{% block content %}
+<style>
+/* ══ VARIABLES ════════════════════════════════════════════════ */
+:root{
+  --c-bg:     #111;
+  --c-card:   #1c1c1c;
+  --c-card2:  #202020;
+  --c-border: #2e2e2e;
+  --c-muted:  #666;
+  --c-text:   #e8e8e8;
+  --c-sub:    #999;
+  --c-red:    #CC0000;
+  --c-green:  #16a34a;
+  --radius:   10px;
+}
+
+/* ══ LAYOUT ══════════════════════════════════════════════════ */
+.ac-wrap{ display:grid; grid-template-columns:1fr 370px; gap:16px; align-items:start; }
+@media(max-width:1100px){ .ac-wrap{ grid-template-columns:1fr; } }
+
+/* ══ CARDS ══════════════════════════════════════════════════ */
+.ac-card{
+  background:var(--c-card);
+  border:1px solid var(--c-border);
+  border-radius:var(--radius);
+  overflow:hidden;
+  margin-bottom:16px;
+}
+.ac-card-hdr{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:11px 18px;
+  border-bottom:1px solid var(--c-border);
+  background:#181818;
+}
+.sec-title{
+  display:flex; align-items:center; gap:10px;
+  font-size:.8rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:.9px; color:#fff;
+}
+.sec-num{
+  width:24px; height:24px; border-radius:50%;
+  background:var(--c-red); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:.68rem; font-weight:900; flex-shrink:0;
+}
+.ac-card-body{ padding:18px; }
+
+/* ══ BUSCAR ══════════════════════════════════════════════════ */
+.search-row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.search-row select,
+.search-row input[type=text]{
+  background:#141414; border:1px solid var(--c-border); color:var(--c-text);
+  border-radius:8px; padding:10px 14px; font-size:.9rem;
+  transition:border-color .2s;
+}
+.search-row select:focus,
+.search-row input:focus{ border-color:var(--c-red); outline:none; }
+.search-row select{ min-width:170px; }
+.search-row input{ flex:1; min-width:160px; }
+.btn-buscar{
+  background:var(--c-red); color:#fff; border:none;
+  border-radius:8px; padding:10px 22px; font-size:.88rem; font-weight:700;
+  cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:8px;
+  transition:background .15s;
+}
+.btn-buscar:hover{ background:#aa0000; }
+
+/* ══ DATOS CLIENTE — GRID ════════════════════════════════════ */
+.client-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:0;
+  border:1px solid var(--c-border);
+  border-radius:9px;
+  overflow:hidden;
+}
+.client-cell{
+  padding:12px 16px;
+  border-right:1px solid var(--c-border);
+  border-bottom:1px solid var(--c-border);
+  position:relative;
+}
+.client-cell:nth-child(3n){ border-right:none; }
+.client-cell:nth-last-child(-n+3){ border-bottom:none; }
+.client-cell.span2{ grid-column:span 2; }
+.client-cell.span3{ grid-column:span 3; border-right:none; }
+.client-lbl{
+  font-size:.67rem; text-transform:uppercase; letter-spacing:.9px;
+  color:#777; font-weight:700; margin-bottom:5px;
+  display:flex; align-items:center; gap:5px;
+}
+.client-lbl .req{ color:var(--c-red); font-size:.7rem; }
+.client-lbl .editable-ico{ color:#444; font-size:.65rem; }
+
+/* Valores de solo lectura */
+.client-val{
+  font-size:.95rem; font-weight:700; color:var(--c-text);
+  word-break:break-word; line-height:1.3;
+}
+.client-val.big{ font-size:1.05rem; font-weight:800; }
+.client-val.red{ color:var(--c-red); }
+.client-val.green{ color:#22c55e; }
+
+/* Inputs editables inline */
+.client-input{
+  background:transparent;
+  border:none;
+  border-bottom:1.5px solid #333;
+  color:var(--c-text);
+  font-size:.95rem;
+  font-weight:600;
+  width:100%;
+  padding:2px 0 4px;
+  outline:none;
+  transition:border-color .2s;
+  line-height:1.3;
+}
+.client-input:hover{ border-bottom-color:#555; }
+.client-input:focus{ border-bottom-color:var(--c-red); }
+.client-input::placeholder{ color:#444; font-weight:400; font-size:.85rem; }
+.client-input.required-empty{ border-bottom-color:#ff4444 !important; }
+
+/* Autocomplete container */
+.autocomplete-wrap{ position:relative; }
+.autocomplete-wrap .ac-dropdown{
+  position:absolute; top:100%; left:0; right:0; z-index:999;
+  background:#1a1a1a; border:1px solid var(--c-border);
+  border-top:none; border-radius:0 0 8px 8px;
+  max-height:220px; overflow-y:auto;
+  box-shadow:0 8px 24px rgba(0,0,0,.5);
+  display:none;
+}
+.ac-dropdown.open{ display:block; }
+.ac-option{
+  padding:9px 14px; font-size:.88rem; color:var(--c-sub);
+  cursor:pointer; transition:background .1s;
+}
+.ac-option:hover, .ac-option.focused{ background:#262626; color:#fff; }
+.ac-option mark{ background:none; color:var(--c-red); font-weight:800; }
+
+/* ══ TABLA CUBICAJE ══════════════════════════════════════════ */
+.cube-table{ width:100%; border-collapse:collapse; font-size:.85rem; }
+.cube-table thead th{
+  background:#181818; color:#888;
+  padding:9px 12px; text-align:left;
+  font-size:.68rem; font-weight:800;
+  text-transform:uppercase; letter-spacing:.5px;
+  border-bottom:1px solid var(--c-border);
+  white-space:nowrap;
+}
+.cube-table td{
+  padding:9px 12px; border-bottom:1px solid #222;
+  color:var(--c-text); font-size:.88rem;
+  vertical-align:middle;
+}
+.cube-table tbody tr:hover td{ background:rgba(255,255,255,.025); }
+.cube-table .mono{ font-family:monospace; font-size:.8rem; font-weight:700; color:var(--c-red); }
+.cube-table .tr{ text-align:right; }
+.cube-table .tc{ text-align:center; }
+.cube-table .pred-tot{ font-weight:900; color:var(--c-red); font-size:.92rem; }
+.cube-table .pred-u{ font-weight:700; color:#999; }
+.cube-table .sf{ color:#3a3a3a; font-size:.75rem; }
+.pill-kg{ background:#0d2010; color:#4ade80; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
+.pill-pv{ background:#0d0d25; color:#818cf8; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
+.pill-sf{ background:#1e1e1e; color:#444; padding:2px 8px; border-radius:50px; font-size:.67rem; }
+.bultos-badge{
+  width:24px; height:24px; border-radius:50%;
+  background:#282828; color:#ccc;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:.68rem; font-weight:800;
+}
+
+/* ══ BARRA TOTALES ═══════════════════════════════════════════ */
+.totals-bar{
+  display:flex; align-items:stretch;
+  background:#181818; border:1px solid var(--c-border);
+  border-radius:9px; overflow:hidden; margin-top:14px;
+}
+.tot-cell{
+  flex:1; text-align:center; padding:12px 8px;
+  border-right:1px solid var(--c-border);
+}
+.tot-cell:last-child{ border-right:none; background:#1a0000; }
+.tot-lbl{ font-size:.6rem; text-transform:uppercase; letter-spacing:.6px; color:#555; font-weight:700; margin-bottom:4px; }
+.tot-val{ font-size:1.1rem; font-weight:900; color:#fff; line-height:1.1; }
+.tot-val.red{ color:var(--c-red); font-size:1.25rem; }
+
+/* ══ AVISO CALCULAR ══════════════════════════════════════════ */
+.aviso-calcular{
+  display:flex; align-items:center; gap:10px;
+  background:#1a1000; border:1px solid #3a2500;
+  border-radius:8px; padding:10px 14px;
+  font-size:.82rem; color:#f59e0b; margin-bottom:12px;
+}
+
+/* ══ FLUJO LOGÍSTICO ═════════════════════════════════════════ */
+.flow-track{ display:flex; align-items:center; justify-content:space-between; padding:6px 0; }
+.flow-step{ display:flex; flex-direction:column; align-items:center; gap:6px; flex:1; }
+.flow-icon{
+  width:42px; height:42px; border-radius:50%;
+  border:2px solid var(--c-border);
+  display:flex; align-items:center; justify-content:center;
+  font-size:1rem; color:#444; background:#181818;
+  transition:all .2s;
+}
+.flow-icon.active{ border-color:var(--c-red); color:var(--c-red); background:rgba(204,0,0,.1); }
+.flow-icon.done{ border-color:#16a34a; color:#16a34a; background:rgba(22,163,74,.1); }
+.flow-lbl{ font-size:.65rem; color:#444; font-weight:600; text-align:center; line-height:1.2; }
+.flow-lbl.active{ color:var(--c-red); }
+.flow-lbl.done{ color:#16a34a; }
+.flow-line{ flex:1; height:2px; background:var(--c-border); margin:0 4px; margin-bottom:22px; }
+.flow-line.done{ background:#16a34a; }
+
+/* ══ PANEL DERECHO ═══════════════════════════════════════════ */
+.resumen-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.res-cell{ background:#181818; border-radius:8px; padding:11px 14px; }
+.res-lbl{ font-size:.62rem; text-transform:uppercase; letter-spacing:.7px; color:#555; font-weight:700; margin-bottom:4px; }
+.res-val{ font-size:.92rem; font-weight:800; color:#fff; }
+.res-val.red{ color:var(--c-red); }
+.res-val.green{ color:#22c55e; }
+.badge-cubicado{
+  background:#16a34a; color:#fff;
+  font-size:.62rem; font-weight:800; padding:3px 10px;
+  border-radius:50px; text-transform:uppercase; letter-spacing:.5px;
+}
+
+/* ══ COURIERS ════════════════════════════════════════════════ */
+.courier-list{ display:flex; flex-direction:column; gap:8px; }
+.courier-item{
+  display:flex; align-items:center; gap:10px;
+  padding:11px 14px; border-radius:9px;
+  border:1px solid var(--c-border);
+  cursor:pointer; transition:all .15s;
+  background:#181818;
+}
+.courier-item:hover{ border-color:#444; background:#1e1e1e; }
+.courier-item.selected{ border-color:var(--c-red); background:rgba(204,0,0,.07); }
+.courier-radio{
+  width:17px; height:17px; border-radius:50%;
+  border:2px solid #444; flex-shrink:0;
+  transition:all .15s; margin-top:1px;
+}
+.courier-item.selected .courier-radio{
+  border-color:var(--c-red); background:var(--c-red);
+  box-shadow:0 0 0 3px rgba(204,0,0,.2);
+}
+.courier-info{ flex:1; }
+.courier-name{ font-size:.82rem; font-weight:700; color:#fff; }
+.courier-svc{ font-size:.68rem; color:#555; }
+.courier-price{ font-size:1rem; font-weight:900; color:#fff; text-align:right; white-space:nowrap; }
+.courier-price.loading{ color:#333; animation:pulse 1s infinite; }
+.courier-etd{ font-size:.64rem; color:#555; text-align:right; }
+.btn-detalle{
+  background:#242424; border:none; color:#666; border-radius:5px;
+  padding:3px 9px; font-size:.65rem; cursor:pointer;
+  transition:all .15s; white-space:nowrap;
+}
+.btn-detalle:hover{ background:#2e2e2e; color:#ccc; }
+.btn-seleccionar{
+  width:100%; padding:12px; border:none;
+  background:var(--c-red); color:#fff;
+  border-radius:9px; font-size:.9rem; font-weight:800;
+  cursor:pointer; text-transform:uppercase; letter-spacing:.5px;
+  transition:background .15s; margin-top:10px;
+}
+.btn-seleccionar:hover{ background:#aa0000; }
+
+/* Zona bloqueada (sin comuna) */
+.courier-locked{
+  pointer-events:none; opacity:.35; filter:blur(.5px);
+}
+
+/* ══ ACCIONES ════════════════════════════════════════════════ */
+.actions-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.btn-accion{
+  display:flex; align-items:center; justify-content:center; gap:7px;
+  padding:11px 8px; border-radius:9px; font-size:.8rem; font-weight:700;
+  cursor:pointer; transition:all .15s; border:none; text-decoration:none;
+}
+.btn-accion.outline{ background:transparent; border:1px solid var(--c-border); color:#999; }
+.btn-accion.outline:hover{ border-color:#555; color:#fff; }
+.btn-accion.primary{ background:var(--c-red); color:#fff; }
+.btn-accion.primary:hover{ background:#aa0000; }
+.btn-accion.dark{ background:#242424; color:#fff; }
+.btn-accion.dark:hover{ background:#2e2e2e; }
+
+/* ══ MISC ════════════════════════════════════════════════════ */
+.spin-ico{
+  display:inline-block; width:14px; height:14px;
+  border:2px solid rgba(255,255,255,.2);
+  border-top-color:#fff; border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{ to{transform:rotate(360deg)} }
+@keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
+.empty-state{ text-align:center; padding:40px 20px; color:#3a3a3a; }
+.empty-state i{ font-size:2.5rem; margin-bottom:10px; display:block; }
+.empty-state p{ font-size:.85rem; }
+.btn-refresh{
+  background:transparent; border:1px solid var(--c-border); color:#555;
+  border-radius:6px; padding:4px 11px; font-size:.7rem; cursor:pointer;
+  display:flex; align-items:center; gap:5px; transition:all .15s;
+}
+.btn-refresh:hover{ border-color:#555; color:#aaa; }
+.ac-alert{
+  background:#1a0000; border:1px solid #440000; border-radius:8px;
+  color:#ff6b6b; padding:11px 15px; font-size:.83rem; margin-bottom:12px;
+}
+.tel-hint{ font-size:.65rem; color:#555; margin-top:3px; }
+.tel-hint.ok{ color:#22c55e; }
+.tel-hint.err{ color:#ff6b6b; }
+
+/* Zona auto-tag */
+.zona-tag{
+  font-size:.65rem; font-weight:800; padding:2px 8px;
+  border-radius:50px; background:#1a1a2e; color:#818cf8;
+  margin-left:auto; white-space:nowrap;
+}
+</style>
+
+{# ── Página header ── #}
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <div>
+    <h5 class="mb-0 fw-bold text-white" style="font-size:1.05rem">
+      <i class="bi bi-send-check me-2" style="color:var(--ilus-red)"></i>Asignar y Cotizar
+    </h5>
+    <div class="text-muted" style="font-size:.75rem">Cubicaje · Couriers · Manifiesto</div>
+  </div>
+</div>
+
+<div class="ac-wrap">
+
+  {# ════ COLUMNA IZQUIERDA ════════════════════════════════════ #}
+  <div class="left-panel">
+
+    {# ── 1. Buscar ── #}
+    <div class="ac-card">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">1</span>Buscar Documento ERP</div>
+      </div>
+      <div class="ac-card-body">
+        <div id="alertBuscar" class="ac-alert" style="display:none"></div>
+        <div class="search-row">
+          <select id="docTipo">
+            <option value="FCV">Factura (FCV)</option>
+            <option value="BLV">Boleta (BLV)</option>
+            <option value="NVI">N. Venta Internet (NVI)</option>
+            <option value="NVV">N. Venta (NVV)</option>
+            <option value="VD">N. Venta Directa (VD)</option>
+            <option value="WEB">N. Venta Web (WEB)</option>
+            <option value="COV">Cotización (COV)</option>
+          </select>
+          <input type="text" id="docNudo" placeholder="N° de documento (ej: 10599)"
+                 onkeydown="if(event.key==='Enter') buscarDoc()">
+          <button class="btn-buscar" onclick="buscarDoc()" id="btnBuscar">
+            <span class="spin-ico" id="spinBuscar" style="display:none"></span>
+            <i class="bi bi-search" id="icoBuscar"></i>
+            <span id="txtBuscar">Buscar en ERP</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {# ── 2. Datos del Documento ── #}
+    <div class="ac-card" id="cardDatos" style="display:none">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">2</span>Datos del Documento</div>
+        <span style="font-size:.68rem;color:#555">
+          <i class="bi bi-pencil-square me-1"></i>Campos editables activos
+        </span>
+      </div>
+      <div class="ac-card-body">
+        <div class="client-grid" id="clientGrid">
+
+          {# Row 1: Cliente, RUT, Fecha #}
+          <div class="client-cell">
+            <div class="client-lbl">Cliente</div>
+            <div class="client-val big" id="cli-nombre">—</div>
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">RUT</div>
+            <div class="client-val" id="cli-rut">—</div>
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">Fecha Documento</div>
+            <div class="client-val" id="cli-fecha">—</div>
+          </div>
+
+          {# Row 2: Email, Teléfono, Valor Neto #}
+          <div class="client-cell">
+            <div class="client-lbl">Email <i class="bi bi-pencil editable-ico"></i></div>
+            <input class="client-input" type="email" id="cli-email" placeholder="email@ejemplo.com">
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">Teléfono <i class="bi bi-pencil editable-ico"></i></div>
+            <input class="client-input" type="tel" id="cli-tel" placeholder="+56 9 XXXX XXXX"
+                   oninput="validarTelefono(this)">
+            <div class="tel-hint" id="tel-hint"></div>
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">Valor Neto</div>
+            <div class="client-val green" id="cli-neto">—</div>
+          </div>
+
+          {# Row 3: Dirección (span2), Seguro #}
+          <div class="client-cell span2">
+            <div class="client-lbl">Dirección <i class="bi bi-pencil editable-ico"></i></div>
+            <input class="client-input" type="text" id="cli-dir" placeholder="Calle, número, depto…">
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">Seguro (1,2%)</div>
+            <div class="client-val red" id="cli-seguro">—</div>
+          </div>
+
+          {# Row 4: Comuna (requerida), Total SKUs, Bultos (editable) #}
+          <div class="client-cell">
+            <div class="client-lbl">
+              <span class="req">*</span> Comuna destino <i class="bi bi-pencil editable-ico"></i>
+            </div>
+            <div class="autocomplete-wrap">
+              <input class="client-input" type="text" id="cli-comuna"
+                     placeholder="Escribir para buscar…"
+                     autocomplete="off"
+                     oninput="acFilter(this.value)"
+                     onkeydown="acKeydown(event)"
+                     onfocus="acFilter(this.value)">
+              <div class="ac-dropdown" id="acDropdown"></div>
+            </div>
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">ZZ Envío</div>
+            <div class="client-val green" id="cli-skus">—</div>
+          </div>
+          <div class="client-cell">
+            <div class="client-lbl">Total Bultos <i class="bi bi-pencil editable-ico"></i></div>
+            <input class="client-input" type="number" id="cli-bultos" min="1" placeholder="0"
+                   oninput="sincronizarBultos(this.value)">
+          </div>
+
+          {# Row 5: Observaciones (span3) #}
+          <div class="client-cell span3" style="border-bottom:none">
+            <div class="client-lbl">Observaciones <i class="bi bi-pencil editable-ico"></i></div>
+            <textarea class="client-input" id="cli-obs" rows="3"
+                      placeholder="Instrucciones de entrega, referencias, etc."
+                      style="resize:vertical;min-height:64px;line-height:1.45"></textarea>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    {# ── 3. Detalle de Cubicaje ── #}
+    <div class="ac-card" id="cardCubaje" style="display:none">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">3</span>Detalle de Cubicaje</div>
+        <button class="btn-detalle" onclick="exportarExcel()" style="padding:5px 12px;font-size:.7rem">
+          <i class="bi bi-file-earmark-excel me-1"></i>Exportar
+        </button>
+      </div>
+      <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+        <table class="cube-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Descripción ERP</th>
+              <th class="tc">Cant.</th>
+              <th class="tc">Bultos/u</th>
+              <th class="tr">KG Real/u</th>
+              <th class="tr">KG Vol/u</th>
+              <th class="tr" style="font-size:.6rem">Vol. cm³/u</th>
+              <th class="tr">Predom./u</th>
+              <th class="tr">Total Predom.</th>
+              <th class="tc">Tipo</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyCubaje"></tbody>
+        </table>
+      </div>
+
+      {# Barra de totales #}
+      <div class="totals-bar" id="totalsBar" style="display:none">
+        <div class="tot-cell">
+          <div class="tot-lbl">Unidades</div>
+          <div class="tot-val" id="tot-qty">—</div>
+        </div>
+        <div class="tot-cell">
+          <div class="tot-lbl">Bultos</div>
+          <div class="tot-val" id="tot-bult">—</div>
+        </div>
+        <div class="tot-cell">
+          <div class="tot-lbl">KG Real</div>
+          <div class="tot-val" id="tot-kg">—</div>
+        </div>
+        <div class="tot-cell">
+          <div class="tot-lbl">KG Vol.</div>
+          <div class="tot-val" id="tot-pv">—</div>
+        </div>
+        <div class="tot-cell">
+          <div class="tot-lbl">Vol. cm³</div>
+          <div class="tot-val" style="font-size:.92rem" id="tot-vol">—</div>
+        </div>
+        <div class="tot-cell">
+          <div class="tot-lbl">Predominante</div>
+          <div class="tot-val red" id="tot-pred">—</div>
+          <div style="font-size:.62rem;color:#660000;margin-top:2px">kg total</div>
+        </div>
+      </div>
+    </div>
+
+    {# ── 5. Flujo Logístico ── #}
+    <div class="ac-card" id="cardFlujo" style="display:none">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">5</span>Flujo Logístico</div>
+      </div>
+      <div class="ac-card-body">
+        <div class="flow-track">
+          <div class="flow-step">
+            <div class="flow-icon active"><i class="bi bi-file-earmark-text"></i></div>
+            <div class="flow-lbl active">Pendiente</div>
+          </div>
+          <div class="flow-line"></div>
+          <div class="flow-step">
+            <div class="flow-icon"><i class="bi bi-box-seam"></i></div>
+            <div class="flow-lbl">En preparación</div>
+          </div>
+          <div class="flow-line"></div>
+          <div class="flow-step">
+            <div class="flow-icon"><i class="bi bi-truck"></i></div>
+            <div class="flow-lbl">Asignado a courier</div>
+          </div>
+          <div class="flow-line"></div>
+          <div class="flow-step">
+            <div class="flow-icon"><i class="bi bi-geo-alt"></i></div>
+            <div class="flow-lbl">En ruta</div>
+          </div>
+          <div class="flow-line"></div>
+          <div class="flow-step">
+            <div class="flow-icon"><i class="bi bi-check-circle"></i></div>
+            <div class="flow-lbl">Entregado</div>
+          </div>
+          <div class="flow-line"></div>
+          <div class="flow-step">
+            <div class="flow-icon"><i class="bi bi-x-circle"></i></div>
+            <div class="flow-lbl">Fallido</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /left-panel -->
+
+  {# ════ COLUMNA DERECHA ══════════════════════════════════════ #}
+  <div class="right-panel">
+
+    {# Resumen del Documento #}
+    <div class="ac-card">
+      <div class="ac-card-hdr">
+        <div class="sec-title" style="font-size:.74rem">Resumen del Documento</div>
+        <span class="badge-cubicado" id="badgeCubicado" style="display:none">Cubicado</span>
+      </div>
+      <div class="ac-card-body">
+        <div class="empty-state" id="emptyResumen">
+          <i class="bi bi-file-earmark-text"></i>
+          <p>Busca un documento ERP para comenzar</p>
+        </div>
+        <div id="resumenContent" style="display:none">
+          <div class="resumen-grid">
+            <div class="res-cell">
+              <div class="res-lbl">Documento</div>
+              <div class="res-val red" id="res-doc">—</div>
+            </div>
+            <div class="res-cell">
+              <div class="res-lbl">Fecha</div>
+              <div class="res-val" id="res-fecha">—</div>
+            </div>
+            <div class="res-cell">
+              <div class="res-lbl">ZZ Envío</div>
+              <div class="res-val green" id="res-skus">—</div>
+            </div>
+            <div class="res-cell">
+              <div class="res-lbl">Bultos</div>
+              <div class="res-val" id="res-bultos">—</div>
+            </div>
+            <div class="res-cell">
+              <div class="res-lbl">Valor Neto</div>
+              <div class="res-val green" id="res-neto">—</div>
+            </div>
+            <div class="res-cell">
+              <div class="res-lbl">Seguro (1,2%)</div>
+              <div class="res-val" id="res-seguro">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# 4. Cotización de Couriers #}
+    <div class="ac-card" id="cardCouriers" style="display:none">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">4</span>Cotización de Couriers</div>
+        <button class="btn-refresh" onclick="actualizarTarifas()" id="btnRefresh">
+          <i class="bi bi-arrow-clockwise"></i>Actualizar
+        </button>
+      </div>
+      <div class="ac-card-body">
+
+        {# Aviso cuando no hay comuna #}
+        <div class="aviso-calcular" id="avisoComuna" style="display:none">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <span>Selecciona la <strong>comuna destino</strong> para calcular tarifas</span>
+        </div>
+
+        {# Zona detectada automáticamente #}
+        <div id="zonaDetectadaWrap" style="display:none;margin-bottom:12px">
+          <div style="font-size:.67rem;text-transform:uppercase;letter-spacing:.7px;color:#555;font-weight:700;margin-bottom:6px">
+            Zona FedEx detectada
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="zonaDetectadaTag" class="zona-tag">—</span>
+            <span id="zonaDetectadaNombre" style="font-size:.8rem;color:#888">—</span>
+          </div>
+          <div class="d-flex gap-3 mt-2">
+            <label style="font-size:.74rem;color:#777;display:flex;align-items:center;gap:7px;cursor:pointer">
+              <input type="checkbox" id="chkResid" onchange="actualizarTarifas()">
+              🏠 Residencial (+$4.200)
+            </label>
+            <label style="font-size:.74rem;color:#777;display:flex;align-items:center;gap:7px;cursor:pointer">
+              <input type="checkbox" id="chkRemoto" onchange="actualizarTarifas()">
+              📍 Área remota (+$6.800)
+            </label>
+          </div>
+        </div>
+
+        <div class="courier-list" id="courierList"></div>
+      </div>
+    </div>
+
+    {# 6. Acciones #}
+    <div class="ac-card" id="cardAcciones" style="display:none">
+      <div class="ac-card-hdr">
+        <div class="sec-title"><span class="sec-num">6</span>Acciones</div>
+      </div>
+      <div class="ac-card-body">
+        <div class="actions-grid">
+          <button class="btn-accion primary" onclick="enviarManifiesto()">
+            <i class="bi bi-send"></i>Manifiesto
+          </button>
+          <button class="btn-accion outline" onclick="imprimir()">
+            <i class="bi bi-printer"></i>Imprimir
+          </button>
+          <button class="btn-accion dark" onclick="exportarExcel()">
+            <i class="bi bi-file-earmark-excel"></i>Excel
+          </button>
+          <button class="btn-accion outline" onclick="exportarPdf()">
+            <i class="bi bi-file-earmark-pdf"></i>PDF
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /right-panel -->
+</div><!-- /ac-wrap -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ════════════════════════════════════════════════════════════
+//  ESTADO GLOBAL
+// ════════════════════════════════════════════════════════════
+let _docData      = null;
+let _courierSel   = null;
+let _precioFedex  = null;
+let _zonaActual   = null;   // '1'..'6'
+let _preciosManuales = { starken:null, blue:null, chilexpress:null, felca:null, milling:null };
+
+// ════════════════════════════════════════════════════════════
+//  FORMATO NUMÉRICO CHILENO
+// ════════════════════════════════════════════════════════════
+function fCl(n, dec=1){
+  if(n==null||isNaN(n)) return '—';
+  const r = parseFloat(parseFloat(n).toFixed(dec));
+  const [ip, dp='0'] = r.toFixed(dec).split('.');
+  const neg=ip.startsWith('-'), abs=ip.replace('-','');
+  let s='';
+  for(let i=0;i<abs.length;i++){
+    if(i>0&&(abs.length-i)%3===0) s+='.';
+    s+=abs[i];
+  }
+  return (neg?'-':'')+s+','+dp;
+}
+function fVol(n){
+  if(n==null||isNaN(n)) return '—';
+  const v=Math.round(parseFloat(n));
+  let s='', abs=Math.abs(v).toString();
+  for(let i=0;i<abs.length;i++){
+    if(i>0&&(abs.length-i)%3===0) s+='.';
+    s+=abs[i];
+  }
+  return (v<0?'-':'')+s;
+}
+function fClp(n){
+  if(n==null||isNaN(n)) return '—';
+  return '$'+fVol(Math.round(parseFloat(n)));
+}
+
+// ════════════════════════════════════════════════════════════
+//  COMUNAS CHILENAS (todas las comunas del territorio nacional)
+// ════════════════════════════════════════════════════════════
+// Formato: [nombre, zona_fedex]
+// Zonas: 1=RM, 2=V/VI/VII, 3=VIII/IX, 4=XIV/X, 5=XI/XII, 6=I/II/III/IV
+const COMUNAS = [
+  // Región Metropolitana — Zona 1
+  ['Santiago','1'],['Providencia','1'],['Las Condes','1'],['Vitacura','1'],['Ñuñoa','1'],
+  ['La Florida','1'],['Maipú','1'],['Pudahuel','1'],['Quilicura','1'],['Renca','1'],
+  ['Cerro Navia','1'],['Estación Central','1'],['Peñalolén','1'],['Macul','1'],
+  ['San Joaquín','1'],['La Granja','1'],['La Pintana','1'],['El Bosque','1'],
+  ['San Bernardo','1'],['Buin','1'],['Pirque','1'],['Calera de Tango','1'],
+  ['Talagante','1'],['Paine','1'],['Isla de Maipo','1'],['Melipilla','1'],
+  ['Colina','1'],['Lampa','1'],['Tiltil','1'],['Peñaflor','1'],['Curacaví','1'],
+  ['María Pinto','1'],['Alhué','1'],['Padre Hurtado','1'],['El Monte','1'],
+  ['Lo Barnechea','1'],['Huechuraba','1'],['Recoleta','1'],['Independencia','1'],
+  ['Lo Prado','1'],['Quinta Normal','1'],['Lo Espejo','1'],['San Miguel','1'],
+  ['La Cisterna','1'],['Pedro Aguirre Cerda','1'],['San Ramón','1'],['La Reina','1'],
+  ['Puente Alto','1'],['San José de Maipo','1'],['Conchalí','1'],
+  // Región de Valparaíso — Zona 2
+  ['Valparaíso','2'],['Viña del Mar','2'],['Concón','2'],['Quilpué','2'],
+  ['Villa Alemana','2'],['San Antonio','2'],['Quillota','2'],['La Calera','2'],
+  ['Los Andes','2'],['San Felipe','2'],['Limache','2'],['Olmué','2'],
+  ['Cabildo','2'],['Petorca','2'],['La Ligua','2'],['Zapallar','2'],
+  ['Papudo','2'],['Puchuncaví','2'],['Quintero','2'],['Casablanca','2'],
+  ['El Quisco','2'],['El Tabo','2'],['Cartagena','2'],['Santo Domingo','2'],
+  ['Algarrobo','2'],['San Esteban','2'],['Catemu','2'],['Llaillay','2'],['Putaendo','2'],
+  ['Santa María','2'],['Panquehue','2'],['Calle Larga','2'],['Rinconada','2'],
+  ['Isla de Pascua','2'],['Juan Fernández','2'],
+  // Región de O'Higgins — Zona 2
+  ['Rancagua','2'],['Machalí','2'],['Graneros','2'],['Mostazal','2'],['Codegua','2'],
+  ['Olivar','2'],['Coinco','2'],['Coltauco','2'],['Doñihue','2'],['Las Cabras','2'],
+  ['Peumo','2'],['Pichidegua','2'],['San Vicente','2'],['Rengo','2'],['Requínoa','2'],
+  ['Malloa','2'],['Quinta de Tilcoco','2'],['San Fernando','2'],['Chimbarongo','2'],
+  ['Nancagua','2'],['Placilla','2'],['Palmilla','2'],['Peralillo','2'],
+  ['Santa Cruz','2'],['Lolol','2'],['Pumanque','2'],['Marchihue','2'],
+  ['Paredones','2'],['Pichilemu','2'],['Litueche','2'],['La Estrella','2'],
+  ['Navidad','2'],['Peumo','2'],
+  // Región del Maule — Zona 2
+  ['Talca','2'],['Curicó','2'],['Linares','2'],['Constitución','2'],['Cauquenes','2'],
+  ['Molina','2'],['Teno','2'],['Romeral','2'],['Sagrada Familia','2'],['Hualañé','2'],
+  ['Licantén','2'],['Vichuquén','2'],['Rauco','2'],['San Clemente','2'],
+  ['Pencahue','2'],['Río Claro','2'],['San Rafael','2'],['Pelarco','2'],
+  ['Maule','2'],['Curepto','2'],['Empedrado','2'],['San Javier','2'],['Villa Alegre','2'],
+  ['Yerbas Buenas','2'],['Colbún','2'],['Longaví','2'],['Parral','2'],['Retiro','2'],
+  ['Villa Alemana','2'],
+  // Región del Biobío — Zona 3
+  ['Concepción','3'],['Talcahuano','3'],['Hualpén','3'],['San Pedro de la Paz','3'],
+  ['Coronel','3'],['Lota','3'],['Tomé','3'],['Penco','3'],['Chiguayante','3'],
+  ['Hualqui','3'],['Santa Juana','3'],['Florida','3'],['Arauco','3'],['Cañete','3'],
+  ['Lebu','3'],['Los Álamos','3'],['Curanilahue','3'],['Contulmo','3'],['Tirúa','3'],
+  ['Los Ángeles','3'],['Chillán','3'],['Nacimiento','3'],['Negrete','3'],['Mulchén','3'],
+  ['Quilaco','3'],['Quilleco','3'],['Santa Bárbara','3'],['Antuco','3'],['Tucapel','3'],
+  ['Yumbel','3'],['Cabrero','3'],['Laja','3'],['San Rosendo','3'],['Chillán Viejo','3'],
+  ['Bulnes','3'],['Cobquecura','3'],['Coelemu','3'],['Ñiquén','3'],['San Carlos','3'],
+  ['San Fabián','3'],['San Nicolás','3'],['Ninhue','3'],['Portezuelo','3'],
+  ['Quirihue','3'],['Ranquil','3'],['Treguaco','3'],['Pemuco','3'],['El Carmen','3'],
+  ['Pinto','3'],['Coihueco','3'],['Yungay','3'],['San Ignacio','3'],
+  // Región de La Araucanía — Zona 3
+  ['Temuco','3'],['Padre las Casas','3'],['Villarrica','3'],['Pucón','3'],['Angol','3'],
+  ['Victoria','3'],['Lautaro','3'],['Freire','3'],['Gorbea','3'],['Loncoche','3'],
+  ['Panguipulli','3'],['Curacautín','3'],['Lonquimay','3'],['Melipeuco','3'],
+  ['Cunco','3'],['Vilcún','3'],['Perquenco','3'],['Galvarino','3'],['Collipulli','3'],
+  ['Ercilla','3'],['Los Sauces','3'],['Lumaco','3'],['Purén','3'],['Traiguén','3'],
+  ['Lebu','3'],['Renaico','3'],['Pitrufquén','3'],['Toltén','3'],['Teodoro Schmidt','3'],
+  ['Saavedra','3'],['Carahue','3'],['Nueva Imperial','3'],['Puerto Saavedra','3'],
+  ['Cholchol','3'],
+  // Región de Los Ríos — Zona 4
+  ['Valdivia','4'],['La Unión','4'],['Río Bueno','4'],['Lago Ranco','4'],
+  ['Futrono','4'],['Panguipulli','4'],['Los Lagos','4'],['Corral','4'],['Mariquina','4'],
+  ['Lanco','4'],['Máfil','4'],['Paillaco','4'],
+  // Región de Los Lagos — Zona 4
+  ['Puerto Montt','4'],['Puerto Varas','4'],['Osorno','4'],['Castro','4'],['Ancud','4'],
+  ['Quellón','4'],['Calbuco','4'],['Maullín','4'],['Los Muermos','4'],['Frutillar','4'],
+  ['Llanquihue','4'],['Purranque','4'],['Puerto Octay','4'],['Fresia','4'],['Nancagua','4'],
+  ['San Pablo','4'],['Puyehue','4'],['Río Negro','4'],['Puerto Aysén','4'],
+  ['San Juan de la Costa','4'],['Chaitén','4'],['Futaleufú','4'],['Palena','4'],
+  ['Hualaihué','4'],['Quemchi','4'],['Dalcahue','4'],['Curaco de Vélez','4'],
+  ['Puqueldón','4'],['Chonchi','4'],['Queilén','4'],['Quinchao','4'],
+  // Región de Aysén — Zona 5
+  ['Coyhaique','5'],['Puerto Aysén','5'],['Chile Chico','5'],['Cochrane','5'],
+  ['O\'Higgins','5'],['Tortel','5'],['Cisnes','5'],['Guaitecas','5'],['Lago Verde','5'],
+  ['Río Ibáñez','5'],['Puerto Cisnes','5'],
+  // Región de Magallanes — Zona 5
+  ['Punta Arenas','5'],['Puerto Natales','5'],['Porvenir','5'],['Primavera','5'],
+  ['Timaukel','5'],['Laguna Blanca','5'],['Río Verde','5'],['San Gregorio','5'],
+  ['Cabo de Hornos','5'],['Antártica','5'],
+  // Región de Tarapacá — Zona 6
+  ['Iquique','6'],['Alto Hospicio','6'],['Pozo Almonte','6'],['Pica','6'],
+  ['Colchane','6'],['Camiña','6'],['Huara','6'],
+  // Región de Arica y Parinacota — Zona 6
+  ['Arica','6'],['Camarones','6'],['Putre','6'],['General Lagos','6'],
+  // Región de Antofagasta — Zona 6
+  ['Antofagasta','6'],['Calama','6'],['Tocopilla','6'],['Mejillones','6'],
+  ['Taltal','6'],['San Pedro de Atacama','6'],['Ollagüe','6'],['María Elena','6'],
+  // Región de Atacama — Zona 6
+  ['Copiapó','6'],['Caldera','6'],['Chañaral','6'],['Diego de Almagro','6'],
+  ['Vallenar','6'],['Freirina','6'],['Huasco','6'],['Alto del Carmen','6'],['Tierra Amarilla','6'],
+  // Región de Coquimbo — Zona 6
+  ['La Serena','6'],['Coquimbo','6'],['Ovalle','6'],['Illapel','6'],['Los Vilos','6'],
+  ['Salamanca','6'],['Canela','6'],['Monte Patria','6'],['Punitaqui','6'],['Río Hurtado','6'],
+  ['Vicuña','6'],['Paihuano','6'],['La Higuera','6'],['Paiguano','6'],['Andacollo','6'],
+  ['Combarbalá','6'],
+];
+
+// Mapa rápido nombre→zona (normalizado)
+const COMUNAS_ZONA_MAP = {};
+const COMUNAS_NOMBRES = [];
+for(const [nom, zona] of COMUNAS){
+  COMUNAS_NOMBRES.push(nom);
+  COMUNAS_ZONA_MAP[nom.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')] = {nombre:nom, zona};
+}
+
+const ZONA_NOMBRES = {
+  '1':'Col. 1 — Región Metropolitana',
+  '2':'Col. 2 — V, VI, VII Región',
+  '3':'Col. 3 — VIII, IX Región',
+  '4':'Col. 4 — XIV, X Región',
+  '5':'Col. 5 — XI, XII Región',
+  '6':'Col. 6 — I, II, III, IV Región',
+};
+
+function comunaNormalizada(s){
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
+}
+function getZona(comunaStr){
+  const key = comunaNormalizada(comunaStr);
+  return COMUNAS_ZONA_MAP[key]?.zona || null;
+}
+
+// ════════════════════════════════════════════════════════════
+//  AUTOCOMPLETE COMUNAS
+// ════════════════════════════════════════════════════════════
+let _acIdx = -1;
+
+function acFilter(val){
+  const dd = document.getElementById('acDropdown');
+  if(!val || val.length < 1){ dd.classList.remove('open'); return; }
+  const q = comunaNormalizada(val);
+  const matches = COMUNAS_NOMBRES.filter(n => comunaNormalizada(n).includes(q)).slice(0,10);
+  if(!matches.length){ dd.classList.remove('open'); return; }
+  dd.innerHTML = matches.map((m,i)=>{
+    const hi = m.replace(new RegExp('('+val.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')', 'gi'),'<mark>$1</mark>');
+    return `<div class="ac-option" data-val="${m}" onmousedown="acSelect('${m.replace(/'/g,"\\'")}')">${hi}</div>`;
+  }).join('');
+  _acIdx = -1;
+  dd.classList.add('open');
+}
+
+function acSelect(val){
+  document.getElementById('cli-comuna').value = val;
+  document.getElementById('acDropdown').classList.remove('open');
+  onComunaChange(val);
+}
+
+function acKeydown(e){
+  const dd = document.getElementById('acDropdown');
+  const opts = dd.querySelectorAll('.ac-option');
+  if(!opts.length) return;
+  if(e.key==='ArrowDown'){ e.preventDefault(); _acIdx=Math.min(_acIdx+1,opts.length-1); acHighlight(opts); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); _acIdx=Math.max(_acIdx-1,-1); acHighlight(opts); }
+  else if(e.key==='Enter'&&_acIdx>=0){
+    e.preventDefault();
+    acSelect(opts[_acIdx].dataset.val);
+  } else if(e.key==='Escape'){
+    dd.classList.remove('open');
+  }
+}
+function acHighlight(opts){
+  opts.forEach((o,i)=>o.classList.toggle('focused',i===_acIdx));
+  if(_acIdx>=0) opts[_acIdx].scrollIntoView({block:'nearest'});
+}
+
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.autocomplete-wrap')) document.getElementById('acDropdown').classList.remove('open');
+});
+
+function onComunaChange(val){
+  const zona = getZona(val);
+  _zonaActual = zona;
+  if(zona){
+    document.getElementById('zonaDetectadaWrap').style.display='';
+    document.getElementById('avisoComuna').style.display='none';
+    document.getElementById('zonaDetectadaTag').textContent = 'Col. '+zona;
+    document.getElementById('zonaDetectadaNombre').textContent = ZONA_NOMBRES[zona]||'';
+    // Desbloquear couriers
+    document.getElementById('courierList').classList.remove('courier-locked');
+    // Calcular automáticamente
+    actualizarTarifas();
+  } else {
+    document.getElementById('zonaDetectadaWrap').style.display='none';
+    document.getElementById('avisoComuna').style.display='';
+    document.getElementById('courierList').classList.add('courier-locked');
+    _precioFedex = null;
+    renderCouriers(null);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  VALIDAR TELÉFONO
+// ════════════════════════════════════════════════════════════
+function validarTelefono(input){
+  const v = input.value.replace(/\s/g,'');
+  const hint = document.getElementById('tel-hint');
+  const ok = /^\+56\d{9}$/.test(v);
+  hint.textContent = !v ? '' : ok ? '✓ Formato válido' : 'Formato: +56 9 XXXX XXXX';
+  hint.className = 'tel-hint ' + (!v?'': ok?'ok':'err');
+  input.classList.toggle('required-empty', !ok && v.length>0);
+}
+
+// ════════════════════════════════════════════════════════════
+//  SINCRONIZAR BULTOS
+// ════════════════════════════════════════════════════════════
+function sincronizarBultos(val){
+  // Actualiza el resumen panel
+  const n = parseInt(val)||0;
+  const rb = document.getElementById('res-bultos');
+  if(rb) rb.textContent = n;
+}
+
+// ════════════════════════════════════════════════════════════
+//  BUSCAR DOCUMENTO
+// ════════════════════════════════════════════════════════════
+async function buscarDoc(){
+  const tido = document.getElementById('docTipo').value;
+  const nudo = document.getElementById('docNudo').value.trim();
+  if(!nudo){ showAlert('alertBuscar','Ingresa el número de documento'); return; }
+  hideAlert('alertBuscar');
+  setBuscarLoading(true);
+  try {
+    const r = await fetch('/api/asignar/documento',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tido, nudo})
+    });
+    const d = await r.json();
+    if(!r.ok||d.error){ showAlert('alertBuscar', d.error||'Error al consultar ERP'); return; }
+    _docData = d;
+    renderDoc(d);
+  } catch(e){
+    showAlert('alertBuscar','Error de conexión: '+e.message);
+  } finally {
+    setBuscarLoading(false);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  RENDER DOCUMENTO
+// ════════════════════════════════════════════════════════════
+function renderDoc(d){
+  const h = d.header, tot = d.totales;
+
+  // ── Datos del documento (campos de solo lectura)
+  setText('cli-nombre', h.cliente_nombre || '⚠ Sin nombre en ERP');
+  setText('cli-rut',    h.cliente_rut    || '—');
+  setText('cli-fecha',  h.fecha          || '—');
+  setText('cli-neto',   fClp(h.valor_neto));
+  setText('cli-skus',   d.zzenvio_valor > 0 ? fClp(d.zzenvio_valor) : '—');
+  setText('cli-seguro', fClp(h.valor_neto * 0.012));
+
+  // ── Campos editables — pre-rellena con datos del ERP (editables por usuario)
+  setInput('cli-email', h.email     || '');
+  setInput('cli-tel',   h.telefono  || '');
+  setInput('cli-dir',   h.direccion || '');
+  setInput('cli-obs',   h.observaciones || '');
+
+  // Bultos calculados (editable)
+  setInput('cli-bultos', tot.total_bultos || 0);
+  sincronizarBultos(tot.total_bultos || 0);
+
+  // Comuna (si el ERP trae una, precargarla)
+  const comunaErp = h.comuna || '';
+  if(comunaErp){
+    const input = document.getElementById('cli-comuna');
+    input.value = comunaErp;
+    onComunaChange(comunaErp);
+  } else {
+    // Sin comuna — mostrar aviso
+    document.getElementById('avisoComuna').style.display='';
+    document.getElementById('courierList').classList.add('courier-locked');
+  }
+
+  show('cardDatos');
+
+  // ── Tabla cubicaje
+  const tbody = document.getElementById('tbodyCubaje');
+  let rows = '';
+  for(const l of d.lineas){
+    const sf = !l.tiene_bultos;
+    const tipo = sf
+      ? '<span class="pill-sf">s/f</span>'
+      : l.peso_kg_u >= l.peso_vol_u
+        ? '<span class="pill-kg">REAL</span>'
+        : '<span class="pill-pv">VOL</span>';
+    const bultosCell = sf
+      ? '<span style="color:#2a2a2a">—</span>'
+      : `<span class="bultos-badge">${l.total_bultos}</span>`;
+
+    rows += `<tr>
+      <td class="mono">${l.sku}</td>
+      <td style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
+      <td class="tc">${parseInt(l.cantidad)}</td>
+      <td class="tc">${bultosCell}</td>
+      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
+      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
+      <td class="tr" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
+      <td class="tr pred-u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
+      <td class="tr pred-tot">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
+      <td class="tc">${tipo}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = rows;
+
+  // ── Totales barra
+  setText('tot-qty',  tot.total_qty  ?? '—');
+  setText('tot-bult', tot.total_bultos ?? '—');
+  setText('tot-kg',   fCl(tot.peso_kg));
+  setText('tot-pv',   fCl(tot.peso_pv));
+  setText('tot-vol',  fVol(tot.vol_cm3));
+  setText('tot-pred', fCl(tot.peso_pred));
+
+  show('cardCubaje');
+  show('totalsBar');
+  show('cardFlujo');
+
+  // ── Resumen panel derecho
+  setText('res-doc',    `${h.tido} N°${h.nudo_display}`);
+  setText('res-fecha',  h.fecha || '—');
+  setText('res-skus',   d.zzenvio_valor > 0 ? fClp(d.zzenvio_valor) : '—');
+  setText('res-bultos', tot.total_bultos ?? '—');
+  setText('res-neto',   fClp(h.valor_neto));
+  setText('res-seguro', fClp(h.valor_neto * 0.012));
+  hide('emptyResumen');
+  show('resumenContent');
+  show('badgeCubicado');
+  show('cardCouriers');
+  show('cardAcciones');
+}
+
+// ════════════════════════════════════════════════════════════
+//  COURIERS
+// ════════════════════════════════════════════════════════════
+const COURIERS_FIJOS = [
+  {id:'fedex',      nombre:'FedEx',          logo:'<b style="color:#4D148C;font-size:.9rem">Fed<span style="color:#FF6200">Ex</span></b>', svc:'Priority Overnight', etd:'24 horas'},
+  {id:'starken',    nombre:'Starken',         logo:'<b style="color:#e53e3e;font-size:.9rem">★ Starken</b>',                               svc:'Regular',            etd:'24 - 48 horas'},
+  {id:'blue',       nombre:'Blue Express',    logo:'<b style="color:#2563eb;font-size:.9rem">blue</b>',                                    svc:'Estándar',           etd:'48 - 72 horas'},
+  {id:'chilexpress',nombre:'Chilexpress',     logo:'<b style="color:#e5a900;font-size:.82rem">//chilexpress</b>',                          svc:'Estándar',           etd:'24 - 72 horas'},
+  {id:'felca',      nombre:'Trans. Felca',    logo:'<b style="color:#888;font-size:.82rem">Trans. Felca</b>',                              svc:'Terrestre',          etd:'48 - 72 horas'},
+  {id:'milling',    nombre:'Trans. Milling',  logo:'<b style="color:#888;font-size:.82rem">Trans. Milling</b>',                            svc:'Terrestre',          etd:'48 - 72 horas'},
+];
+
+async function actualizarTarifas(){
+  if(!_docData || !_zonaActual) return;
+  const resid  = document.getElementById('chkResid').checked;
+  const remoto = document.getElementById('chkRemoto').checked;
+
+  renderCouriers(null); // loading state
+
+  try {
+    const r = await fetch('/api/asignar/tarifa-fedex',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        peso_pred:      _docData.totales.peso_pred,
+        zona_id:        _zonaActual,
+        es_residencial: resid,
+        es_remoto:      remoto,
+        valor_neto:     _docData.header.valor_neto,
+      })
+    });
+    const d = await r.json();
+    _precioFedex = d.ok ? d.costo_total : null;
+  } catch(e){
+    _precioFedex = null;
+  }
+  renderCouriers(_precioFedex);
+}
+
+function renderCouriers(fedexPrice){
+  const list = document.getElementById('courierList');
+  let html = '';
+  for(const c of COURIERS_FIJOS){
+    const isFedex = c.id === 'fedex';
+    const precio  = isFedex ? fedexPrice : _preciosManuales[c.id];
+    let priceHtml;
+    if(isFedex){
+      if(fedexPrice == null){
+        priceHtml = '<span class="courier-price loading">Calculando…</span>';
+      } else {
+        const zzVal = (_docData && _docData.zzenvio_valor) ? _docData.zzenvio_valor : 0;
+        let profitHtml = '';
+        if(zzVal > 0){
+          const diff = zzVal - fedexPrice;
+          const pct  = Math.abs(diff / zzVal * 100).toFixed(1);
+          const color = diff >= 0 ? 'var(--c-green,#22c55e)' : 'var(--c-red,#CC0000)';
+          const icon  = diff >= 0 ? '▲' : '▼';
+          const txt   = diff >= 0 ? `ganando ${fClp(diff)}` : `perdiendo ${fClp(-diff)}`;
+          profitHtml = `<div style="font-size:.67rem;color:${color};font-weight:700;margin-top:4px;letter-spacing:.3px">${icon} ${pct}% ${txt}</div>`;
+        }
+        priceHtml = `<div class="courier-price">${fClp(fedexPrice)}</div>${profitHtml}`;
+      }
+    } else {
+      priceHtml = `
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="color:#555;font-size:.72rem">$</span>
+          <input type="number" placeholder="—" value="${precio||''}"
+            onmousedown="event.stopPropagation()"
+            onclick="event.stopPropagation()"
+            onchange="_preciosManuales['${c.id}']=this.value?parseFloat(this.value):null;renderCouriers(_precioFedex)"
+            style="width:88px;background:#141414;border:1px solid var(--c-border);
+                   border-radius:6px;color:#fff;padding:5px 8px;font-size:.85rem;
+                   font-weight:700;text-align:right;outline:none">
+        </div>`;
+    }
+    const sel = _courierSel === c.id;
+    html += `
+    <div class="courier-item${sel?' selected':''}" onclick="setCourier('${c.id}')">
+      <div class="courier-radio"></div>
+      <div style="min-width:85px">${c.logo}</div>
+      <div class="courier-info">
+        <div class="courier-name">${c.nombre}</div>
+        <div class="courier-svc">${c.svc}</div>
+        <div class="courier-etd">${c.etd}</div>
+      </div>
+      <div style="text-align:right;min-width:90px">${priceHtml}</div>
+    </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function setCourier(id){
+  _courierSel = id;
+  renderCouriers(_precioFedex);
+}
+
+// ════════════════════════════════════════════════════════════
+//  VALIDACIÓN MANIFIESTO
+// ════════════════════════════════════════════════════════════
+function validarParaManifiesto(){
+  if(!_docData){ alert('Carga un documento primero.'); return false; }
+
+  const campos = [
+    { id:'cli-email',  nombre:'Email',       tipo:'input' },
+    { id:'cli-tel',    nombre:'Teléfono',     tipo:'input' },
+    { id:'cli-dir',    nombre:'Dirección',    tipo:'input' },
+    { id:'cli-bultos', nombre:'Total Bultos', tipo:'input' },
+    { id:'cli-comuna', nombre:'Comuna',       tipo:'input' },
+  ];
+  const vacios = campos.filter(c => !(document.getElementById(c.id)?.value||'').trim());
+  if(vacios.length){
+    alert('⚠ Completa los siguientes campos antes de enviar al manifiesto:\n\n' +
+      vacios.map(c=>'• '+c.nombre).join('\n'));
+    document.getElementById(vacios[0].id)?.focus();
+    return false;
+  }
+  // Validar teléfono
+  const tel = document.getElementById('cli-tel').value.replace(/\s/g,'');
+  if(!/^\+56\d{9}$/.test(tel)){
+    alert('⚠ El teléfono debe estar en formato +56 9 XXXX XXXX (9 dígitos después del +56).');
+    document.getElementById('cli-tel').focus();
+    return false;
+  }
+  if(!_courierSel){
+    alert('⚠ Selecciona un courier antes de enviar al manifiesto.');
+    return false;
+  }
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════
+//  ACCIONES
+// ════════════════════════════════════════════════════════════
+function enviarManifiesto(){
+  if(!validarParaManifiesto()) return;
+  alert('Función Manifiesto — próximamente disponible.');
+}
+function imprimir()      { window.print(); }
+function exportarExcel() { if(!_docData) return; alert('Generando Excel…'); }
+function exportarPdf()   { if(!_docData) return; alert('Generando PDF…'); }
+
+// ════════════════════════════════════════════════════════════
+//  HELPERS UI
+// ════════════════════════════════════════════════════════════
+function show(id){ const e=document.getElementById(id); if(e) e.style.display=''; }
+function hide(id){ const e=document.getElementById(id); if(e) e.style.display='none'; }
+function showAlert(id,msg){ const e=document.getElementById(id); if(e){e.textContent=msg;e.style.display='';} }
+function hideAlert(id){ const e=document.getElementById(id); if(e) e.style.display='none'; }
+function setText(id,val){ const e=document.getElementById(id); if(e) e.textContent=val; }
+function setInput(id,val){ const e=document.getElementById(id); if(e) e.value=val; }
+function setBuscarLoading(on){
+  document.getElementById('btnBuscar').disabled = on;
+  document.getElementById('spinBuscar').style.display = on?'':'none';
+  document.getElementById('icoBuscar').style.display  = on?'none':'';
+  document.getElementById('txtBuscar').textContent    = on?'Consultando ERP…':'Buscar en ERP';
+}
+</script>
+{% endblock %}
