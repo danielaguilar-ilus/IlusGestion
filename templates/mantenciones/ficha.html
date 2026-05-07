@@ -488,6 +488,44 @@
 .proy-arrow{
   display:flex;align-items:center;color:#cbd5e1;font-size:.9rem;flex-shrink:0;
 }
+/* ─ Grid 12 meses (más compacto) ─ */
+.ct-proy-12 .proy-cell{min-width:66px;padding:8px 4px;}
+.ct-proy-12 .proy-cell-mes{font-size:.62rem;}
+.ct-proy-12 .proy-cell-icon{font-size:1.1rem;margin:4px 0 2px;}
+.ct-proy-12 .proy-cell-tipo{font-size:.58rem;}
+.proy-btn-agendar{
+  display:block;width:22px;height:22px;border-radius:50%;
+  background:#16a34a;color:#fff;border:none;cursor:pointer;
+  margin:4px auto 0;font-size:.75rem;line-height:22px;text-align:center;
+  transition:background .15s,transform .1s;
+}
+.proy-btn-agendar:hover{background:#15803d;transform:scale(1.15);}
+/* ─ Acciones contextuales ─ */
+.ct-acciones-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:10px;}
+.ct-accion{
+  display:flex;align-items:center;gap:12px;
+  background:#fff;border:2px solid var(--border);border-radius:10px;
+  padding:12px 14px;cursor:pointer;text-align:left;
+  transition:border-color .15s,box-shadow .15s,transform .1s;
+  width:100%;
+}
+.ct-accion:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.08);}
+.ct-accion i{font-size:1.3rem;flex-shrink:0;}
+.ct-accion-titulo{font-size:.82rem;font-weight:700;color:#111;line-height:1.2;}
+.ct-accion-sub{font-size:.7rem;color:#6b7280;margin-top:2px;line-height:1.3;}
+.ct-accion-primary{border-color:#2563eb;background:#eff6ff;}
+.ct-accion-primary i{color:#2563eb;}
+.ct-accion-warning{border-color:#f59e0b;background:#fffbeb;}
+.ct-accion-warning i{color:#d97706;}
+.ct-accion-info{border-color:#06b6d4;background:#ecfeff;}
+.ct-accion-info i{color:#0891b2;}
+.ct-accion-neutral{border-color:#e5e7eb;background:#f9fafb;}
+.ct-accion-neutral i{color:#6b7280;}
+/* ─ Modal gestión contrato ─ */
+.gc-section-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin:16px 0 8px;}
+.gc-clausula-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;background:#f8fafc;border-radius:8px;padding:10px 12px;}
+.gc-clausula-row textarea{resize:vertical;min-height:60px;}
+.gc-tag{font-size:.65rem;padding:2px 8px;border-radius:50px;font-weight:700;}
 </style>
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
@@ -1171,10 +1209,23 @@
          ═════════════════════════════════════════════════════ #}
       <div class="ct-pro-ai">
 
+        {# ── Alerta si el análisis está desactualizado (> 90 días) ── #}
+        {% if ct.ai_fecha and (hoy - ct.ai_fecha).days > 90 %}
+        <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3" style="font-size:.8rem;border-radius:8px">
+          <i class="bi bi-arrow-clockwise" style="font-size:1rem"></i>
+          <div style="flex:1">
+            <strong>Análisis de hace {{ (hoy - ct.ai_fecha).days }} días.</strong>
+            Si el contrato fue renovado o modificado, re-analiza para actualizar.
+          </div>
+          <button class="btn btn-sm btn-warning fw-semibold" onclick="analizarContrato({{ ct.id }}, this)">
+            Re-analizar
+          </button>
+        </div>
+        {% endif %}
+
         {# ── Banner de score con dial circular grande ── #}
         <div class="ct-score-banner">
           <div class="ct-score-dial">
-            {# Dial SVG circular #}
             <svg viewBox="0 0 100 100" style="width:130px;height:130px">
               <circle cx="50" cy="50" r="44" fill="none" stroke="#f3f4f6" stroke-width="8"></circle>
               <circle cx="50" cy="50" r="44" fill="none" stroke="{{ score_color }}" stroke-width="8"
@@ -1195,7 +1246,8 @@
             <p class="ct-score-resumen">{{ ct.ai_resumen }}</p>
             {% endif %}
             <div class="ct-score-meta">
-              <i class="bi bi-clock me-1"></i>Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y a las %H:%M') if ct.ai_fecha else '—' }}
+              <i class="bi bi-clock me-1"></i>Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y') if ct.ai_fecha else '—' }}
+              {% if ct.ai_usuario %}<span class="ms-2"><i class="bi bi-person me-1"></i>{{ ct.ai_usuario }}</span>{% endif %}
             </div>
           </div>
         </div>
@@ -1356,30 +1408,112 @@
         </div>
 
         {# ══════════════════════════════════════════════════════
-           PROYECCIÓN A 6 MESES — Timeline visual
+           ACCIONES CONTEXTUALES — botones inteligentes
+           ══════════════════════════════════════════════════════ #}
+        <div class="ct-acciones mt-3">
+          <div class="ct-section-h">
+            <i class="bi bi-lightning-charge-fill"></i>Acciones recomendadas
+          </div>
+          <div class="ct-acciones-grid">
+
+            {# Próxima visita: si hay frecuencia, calcular cuándo toca #}
+            {% set freq_v = ct.ai_frecuencia_sug or ct.frecuencia_meses %}
+            {% if freq_v %}
+              {% if stats.ult_visita_fecha %}
+                {% set dias_sig = freq_v * 30 - stats.ult_visita_dias %}
+                {% set fecha_sig_ok = dias_sig > 0 %}
+              {% else %}
+                {% set dias_sig = 0 %}
+                {% set fecha_sig_ok = false %}
+              {% endif %}
+            <button class="ct-accion ct-accion-primary" onclick="agendarDesdeContrato({{ ct.id }}, {{ freq_v }})">
+              <i class="bi bi-calendar-plus"></i>
+              <div>
+                <div class="ct-accion-titulo">Agendar próxima visita</div>
+                <div class="ct-accion-sub">
+                  {% if fecha_sig_ok %}En ~{{ dias_sig }} días (cada {{ freq_v }} meses)
+                  {% else %}Programar primera mantención{% endif %}
+                </div>
+              </div>
+            </button>
+            {% endif %}
+
+            {# Sin SLA definido #}
+            {% if not ct.sla_horas %}
+            <button class="ct-accion ct-accion-warning" onclick="abrirGestionContrato({{ ct.id }})">
+              <i class="bi bi-stopwatch"></i>
+              <div>
+                <div class="ct-accion-titulo">Definir SLA de respuesta</div>
+                <div class="ct-accion-sub">Sin SLA — defínelo para proteger el servicio</div>
+              </div>
+            </button>
+            {% endif %}
+
+            {# Sin cobertura de repuestos #}
+            {% if not ct.incluye_repuestos %}
+            <button class="ct-accion ct-accion-info" onclick="abrirGestionContrato({{ ct.id }})">
+              <i class="bi bi-box-seam"></i>
+              <div>
+                <div class="ct-accion-titulo">Cobertura de repuestos</div>
+                <div class="ct-accion-sub">Repuestos excluidos — considera renegociar</div>
+              </div>
+            </button>
+            {% endif %}
+
+            {# Sin inventario de equipos #}
+            {% if not maquinas %}
+            <button class="ct-accion ct-accion-warning" onclick="switchTab('equipos');document.getElementById('btnImportarErp') && document.getElementById('btnImportarErp').click()">
+              <i class="bi bi-bicycle"></i>
+              <div>
+                <div class="ct-accion-titulo">Registrar equipos</div>
+                <div class="ct-accion-sub">Sin inventario — importa desde ERP o agrega manual</div>
+              </div>
+            </button>
+            {% endif %}
+
+            {# Gestión del contrato (siempre disponible) #}
+            <button class="ct-accion ct-accion-neutral" onclick="abrirGestionContrato({{ ct.id }})">
+              <i class="bi bi-pencil-square"></i>
+              <div>
+                <div class="ct-accion-titulo">Gestionar contrato</div>
+                <div class="ct-accion-sub">Editar variables, cláusulas y condiciones</div>
+              </div>
+            </button>
+
+          </div>
+        </div>
+
+        {# ══════════════════════════════════════════════════════
+           PROYECCIÓN A 12 MESES — Timeline con botones agendar
            ══════════════════════════════════════════════════════ #}
         {% if ct.ai_frecuencia_sug or ct.frecuencia_meses %}
         {% set freq = ct.ai_frecuencia_sug or ct.frecuencia_meses %}
-        {% set ult_fecha = stats.ult_visita_fecha or ct.fecha_inicio or hoy %}
         <div class="ct-proyeccion mt-3">
-          <div class="ct-section-h">
-            <i class="bi bi-graph-up-arrow"></i>Proyección a 6 meses · Frecuencia recomendada cada {{ freq }} meses
+          <div class="ct-section-h d-flex align-items-center justify-content-between">
+            <span><i class="bi bi-graph-up-arrow"></i>Proyección 12 meses · cada {{ freq }} meses</span>
+            {% if ct.monto_mensual %}
+            <span style="font-size:.72rem;color:#166534;font-weight:700">
+              <i class="bi bi-cash me-1"></i>Inversión 12m: ${{ "{:,.0f}".format((ct.monto_mensual or 0)*12).replace(",",".") }}
+            </span>
+            {% endif %}
           </div>
-          <div class="ct-proyeccion-grid">
+          <div class="ct-proyeccion-grid ct-proy-12">
             {% set proy_meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] %}
-            {% for i in range(7) %}
+            {% for i in range(13) %}
               {% set mes_idx = (hoy.month - 1 + i) % 12 %}
               {% set anio_offset = (hoy.month - 1 + i) // 12 %}
               {% set mes_nombre = proy_meses[mes_idx] %}
-              {% set anio_corto = (hoy.year + anio_offset) % 100 %}
-              {# Determinar si toca mantención: hay una visita programada/realizada en este mes? #}
+              {% set anio_actual = hoy.year + anio_offset %}
+              {% set anio_corto = anio_actual % 100 %}
               {% set tipo_mes = 'libre' %}
               {% if i == 0 %}{% set tipo_mes = 'actual' %}{% endif %}
-              {% if i % freq == 0 and i > 0 %}{% set tipo_mes = 'mantencion' %}{% endif %}
-              {% if dias_v < (i*30) and dias_v > 0 and not ct.es_indefinido %}{% set tipo_mes = 'vencimiento' %}{% endif %}
+              {% if i > 0 and i % freq == 0 %}{% set tipo_mes = 'mantencion' %}{% endif %}
+              {% if dias_v > 0 and dias_v < (i*30) and not ct.es_indefinido %}{% set tipo_mes = 'vencimiento' %}{% endif %}
+              {# Fecha ISO para el botón agendar #}
+              {% set mes_num = mes_idx + 1 %}
 
               <div class="proy-cell proy-cell-{{ tipo_mes }}">
-                <div class="proy-cell-mes">{{ mes_nombre }} '{{ anio_corto }}</div>
+                <div class="proy-cell-mes">{{ mes_nombre }} '{{ "%02d"|format(anio_corto) }}</div>
                 <div class="proy-cell-icon">
                   {% if tipo_mes == 'actual' %}<i class="bi bi-geo-alt-fill"></i>
                   {% elif tipo_mes == 'mantencion' %}<i class="bi bi-tools"></i>
@@ -1391,25 +1525,24 @@
                   {% if tipo_mes == 'actual' %}Hoy
                   {% elif tipo_mes == 'mantencion' %}Preventiva
                   {% elif tipo_mes == 'vencimiento' %}Vence
-                  {% else %}—
-                  {% endif %}
+                  {% else %}—{% endif %}
                 </div>
+                {% if tipo_mes == 'mantencion' %}
+                <button class="proy-btn-agendar"
+                        onclick="agendarDesdeProyeccion('{{ anio_actual }}-{{ '%02d'|format(mes_num) }}-15', {{ ct.id }})"
+                        title="Agendar esta mantención">
+                  <i class="bi bi-plus"></i>
+                </button>
+                {% endif %}
               </div>
               {% if not loop.last %}<div class="proy-arrow"><i class="bi bi-chevron-right"></i></div>{% endif %}
             {% endfor %}
           </div>
-          <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
-            <div style="font-size:.72rem;color:#6b7280">
-              <span class="me-3"><span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:50%;margin-right:4px"></span>Hoy</span>
-              <span class="me-3"><span style="display:inline-block;width:10px;height:10px;background:#16a34a;border-radius:50%;margin-right:4px"></span>Preventiva sugerida</span>
-              <span><span style="display:inline-block;width:10px;height:10px;background:#dc2626;border-radius:50%;margin-right:4px"></span>Vencimiento contrato</span>
-            </div>
-            {% if ct.monto_mensual and freq %}
-            {% set ahorro_proyectado = (ct.monto_mensual or 0) * 6 %}
-            <div style="font-size:.78rem;color:#166534;font-weight:700">
-              <i class="bi bi-cash me-1"></i>Inversión estimada 6m: ${{ "{:,.0f}".format(ahorro_proyectado).replace(",",".") }}
-            </div>
-            {% endif %}
+          <div style="font-size:.7rem;color:#6b7280;margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">
+            <span><span style="display:inline-block;width:9px;height:9px;background:#7c3aed;border-radius:50%;margin-right:4px"></span>Hoy</span>
+            <span><span style="display:inline-block;width:9px;height:9px;background:#16a34a;border-radius:50%;margin-right:4px"></span>Preventiva sugerida</span>
+            <span><span style="display:inline-block;width:9px;height:9px;background:#dc2626;border-radius:50%;margin-right:4px"></span>Vencimiento</span>
+            <span style="margin-left:auto;color:#2563eb;font-weight:600"><i class="bi bi-plus-circle me-1"></i>Click en "+" para agendar</span>
           </div>
         </div>
         {% endif %}
@@ -1447,22 +1580,22 @@
       Genera un análisis profundo con proyecciones a 12 meses, recomendaciones por equipo,
       alertas críticas y oportunidades comerciales — impulsado por Claude AI.
     </div>
-    <div class="mt-3 d-flex gap-2 flex-wrap">
+    <div class="mt-3 d-flex gap-2 flex-wrap align-items-center">
       <button class="btn btn-ilus fw-bold px-4" id="btnGenerarPlan" onclick="generarPlanMejora()">
         <i class="bi bi-stars me-2"></i>Generar Plan de Mejora
       </button>
+      {# Estado dinámico — se actualiza vía JS después de analizar sin recargar #}
       {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
-      {% if ct_analizados %}
-      <span style="font-size:.78rem;color:#94a3b8;align-self:center">
-        <i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>
-        {{ ct_analizados|length }} contrato(s) analizado(s) disponibles
+      <span id="planCtStatus" style="font-size:.78rem;align-self:center">
+        {% if ct_analizados %}
+        <span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>{{ ct_analizados|length }} contrato(s) analizado(s)</span>
+        {% else %}
+        <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Sin contratos analizados — analiza uno primero para un plan más detallado</span>
+        {% endif %}
       </span>
-      {% else %}
-      <span style="font-size:.78rem;color:#f59e0b;align-self:center">
-        <i class="bi bi-exclamation-triangle me-1"></i>
-        Sin contratos analizados — el plan será menos detallado
-      </span>
-      {% endif %}
+      <a href="#" onclick="switchTab('contrato');return false" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-right me-1"></i>Ir a contratos
+      </a>
     </div>
   </div>
 
@@ -1511,6 +1644,104 @@
 {# ═══════════════════════════════════════════════════════════════
    MODALES
 ═══════════════════════════════════════════════════════════════ #}
+
+{# ── Modal: Gestión de contrato — variables, cláusulas ── #}
+<div class="modal fade" id="modalGestionContrato" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#1a1a2e">
+        <div>
+          <h5 class="modal-title text-white mb-0 fw-bold">
+            <i class="bi bi-pencil-square me-2"></i>Gestión de contrato
+          </h5>
+          <div class="text-muted" id="gcNombreContrato" style="font-size:.75rem;color:#94a3b8!important"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="gcCtid">
+
+        {# ── Pestaña interna ── #}
+        <ul class="nav nav-tabs mb-3" id="gcTabs">
+          <li class="nav-item">
+            <button class="nav-link active" onclick="gcSetTab('vars',this)">
+              <i class="bi bi-sliders me-1"></i>Variables del contrato
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" onclick="gcSetTab('clausulas',this)">
+              <i class="bi bi-journal-text me-1"></i>Cláusulas personalizadas
+            </button>
+          </li>
+        </ul>
+
+        {# ── Tab: Variables ── #}
+        <div id="gcTabVars">
+          <p class="text-muted small">Edita los valores clave del contrato. Esta información complementa el análisis IA y queda registrada.</p>
+          <div class="row g-3">
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">SLA de respuesta (horas)</label>
+              <input type="number" id="gcSla" class="form-control form-control-sm" placeholder="Ej: 24" min="1">
+              <div class="form-text">Tiempo máximo de respuesta ante falla</div>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Frecuencia mantenciones (meses)</label>
+              <input type="number" id="gcFrecuencia" class="form-control form-control-sm" placeholder="Ej: 3" min="1" max="24">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Nivel de riesgo</label>
+              <select id="gcRiesgo" class="form-select form-select-sm">
+                <option value="bajo">Bajo</option>
+                <option value="medio">Medio</option>
+                <option value="alto">Alto</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Monto mensual ($)</label>
+              <input type="number" id="gcMonto" class="form-control form-control-sm" placeholder="0" min="0">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Monto anual ($)</label>
+              <input type="number" id="gcMontoAnual" class="form-control form-control-sm" placeholder="0" min="0">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">Variables adicionales (campo libre)</label>
+              <div id="gcVarsExtra"></div>
+              <button class="btn btn-sm btn-outline-secondary mt-2" onclick="gcAddVar()">
+                <i class="bi bi-plus me-1"></i>Agregar variable
+              </button>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">Notas internas</label>
+              <textarea id="gcNotas" class="form-control form-control-sm" rows="3" placeholder="Observaciones, acuerdos verbales, contactos clave…"></textarea>
+            </div>
+          </div>
+        </div>
+
+        {# ── Tab: Cláusulas ── #}
+        <div id="gcTabClausulas" style="display:none">
+          <p class="text-muted small">Registra cláusulas propias o edita las detectadas por IA. Quedan guardadas junto al contrato.</p>
+          <div id="gcClausulasLista"></div>
+          <button class="btn btn-sm btn-outline-primary mt-2" onclick="gcAddClausula()">
+            <i class="bi bi-plus-circle me-1"></i>Agregar cláusula
+          </button>
+        </div>
+
+        <div id="gcGuardandoSpin" style="display:none" class="text-center py-3">
+          <div class="spinner-border spinner-border-sm text-primary"></div>
+          <span class="ms-2 small">Guardando…</span>
+        </div>
+      </div>
+      <div class="modal-footer gap-2">
+        <div class="me-auto text-muted small" id="gcUltGuardado"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-ilus fw-bold" onclick="gcGuardar()">
+          <i class="bi bi-floppy me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ── Modal: Ver contrato (PDF viewer) ── #}
 <div class="modal fade" id="modalVerContrato" tabindex="-1">
@@ -2277,13 +2508,23 @@ function toggleAiPanel(ctid) {
 async function analizarContrato(ctid, btn) {
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando…';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando con IA…';
   try {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
-    if (data.ok) { location.reload(); }
-    else { alert(data.error || 'Error en análisis'); btn.disabled=false; btn.innerHTML=orig; }
-  } catch(e) { btn.disabled=false; btn.innerHTML=orig; alert('Error de conexión'); }
+    if (data.ok) {
+      _planTabActualizarStatus(true);
+      location.reload();
+    } else {
+      alert('Error en análisis IA:\n' + (data.error || 'Error desconocido'));
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    alert('Error de conexión: ' + e.message);
+  }
 }
 
 // ─── Visitas ──────────────────────────────────────────────
@@ -2441,13 +2682,21 @@ function renderPlan(p, clienteNombre) {
     html += `<div class="plan-section">
       <div class="plan-section-title" style="color:#7c3aed"><i class="bi bi-bar-chart-line me-1"></i>Proyección 12 meses</div>
       <div style="max-height:280px;overflow-y:auto">`;
-    p.proyeccion_12_meses.forEach(m => {
+    p.proyeccion_12_meses.forEach((m, idx) => {
       const tipoCls = `proj-${m.tipo_visita}`;
+      // Calcular fecha ISO aproximada para este mes
+      const ahora = new Date();
+      ahora.setMonth(ahora.getMonth() + idx);
+      const fechaISO = ahora.toISOString().split('T')[0];
+      const esAgendable = m.tipo_visita && m.tipo_visita !== 'ninguna';
       html += `<div class="proj-row">
         <span class="proj-mes">${m.mes}</span>
         <span class="proj-tipo ${tipoCls}">${m.tipo_visita}</span>
         <span style="flex:1;font-size:.79rem;color:#374151">${m.descripcion}</span>
-        ${m.costo_estimado ? `<span style="font-size:.72rem;font-weight:700;color:#374151;white-space:nowrap">$${Number(m.costo_estimado).toLocaleString('es-CL')}</span>` : ''}
+        ${m.costo_estimado ? `<span style="font-size:.72rem;font-weight:700;color:#374151;white-space:nowrap;margin-right:6px">$${Number(m.costo_estimado).toLocaleString('es-CL')}</span>` : ''}
+        ${esAgendable ? `<button onclick="agendarDesdeProyeccion('${fechaISO}', null)"
+          style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:2px 10px;font-size:.65rem;font-weight:700;cursor:pointer;white-space:nowrap">
+          <i class="bi bi-calendar-plus"></i> Agendar</button>` : ''}
       </div>`;
     });
     html += `</div></div>`;
@@ -2637,5 +2886,206 @@ document.querySelectorAll('.ftab-btn').forEach(btn => {
     }
   });
 });
+
+// ─── Agendar desde proyección de contrato ─────────────────────
+function agendarDesdeProyeccion(fechaISO, ctid) {
+  // Pre-rellena el modal de visita con la fecha sugerida
+  document.getElementById('vi_id').value = '';
+  document.getElementById('vi_fecha').value = fechaISO;
+  document.getElementById('vi_tipo').value = 'preventiva';
+  document.getElementById('vi_estado').value = 'programada';
+  document.getElementById('vi_titulo').value = 'Mantención preventiva programada';
+  document.getElementById('vi_descripcion').value = '';
+  const modal = new bootstrap.Modal(document.getElementById('modalVisita'));
+  modal.show();
+}
+
+function agendarDesdeContrato(ctid, freqMeses) {
+  // Calcula la fecha sugerida basada en hoy + frecuencia
+  const hoy = new Date();
+  hoy.setMonth(hoy.getMonth() + freqMeses);
+  const fechaISO = hoy.toISOString().split('T')[0];
+  agendarDesdeProyeccion(fechaISO, ctid);
+}
+
+// ─── Gestión de contrato — variables y cláusulas ──────────────
+let _gcCtid = null;
+let _gcClausulas = [];
+let _gcVarsExtra = {};
+
+async function abrirGestionContrato(ctid) {
+  _gcCtid = ctid;
+  document.getElementById('gcCtid').value = ctid;
+  // Limpiar
+  document.getElementById('gcSla').value = '';
+  document.getElementById('gcFrecuencia').value = '';
+  document.getElementById('gcMonto').value = '';
+  document.getElementById('gcMontoAnual').value = '';
+  document.getElementById('gcNotas').value = '';
+  document.getElementById('gcRiesgo').value = 'medio';
+  document.getElementById('gcVarsExtra').innerHTML = '';
+  document.getElementById('gcClausulasLista').innerHTML = '';
+  document.getElementById('gcUltGuardado').textContent = '';
+  _gcClausulas = [];
+  _gcVarsExtra = {};
+
+  // Cargar nombre del contrato desde el DOM
+  const ctDiv = document.getElementById(`ct-${ctid}`);
+  const nombre = ctDiv ? ctDiv.querySelector('h5')?.textContent?.trim() || 'Contrato' : 'Contrato';
+  document.getElementById('gcNombreContrato').textContent = nombre;
+
+  // Mostrar modal
+  new bootstrap.Modal(document.getElementById('modalGestionContrato')).show();
+
+  // Cargar datos desde servidor
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/clausulas`);
+    const data = await r.json();
+    if (data.campos) {
+      document.getElementById('gcSla').value        = data.campos.sla_horas || '';
+      document.getElementById('gcFrecuencia').value = data.campos.frecuencia_meses || '';
+      document.getElementById('gcMonto').value      = data.campos.monto_mensual || '';
+      document.getElementById('gcMontoAnual').value = data.campos.monto_anual || '';
+      document.getElementById('gcNotas').value      = data.campos.notas || '';
+      document.getElementById('gcRiesgo').value     = data.campos.nivel_riesgo || 'medio';
+    }
+    _gcClausulas = data.clausulas || [];
+    _gcVarsExtra = data.variables || {};
+    gcRenderClausulas();
+    gcRenderVarsExtra();
+  } catch(e) { console.warn('Error cargando datos contrato', e); }
+}
+
+function gcSetTab(tab, btn) {
+  document.getElementById('gcTabVars').style.display      = tab === 'vars'      ? '' : 'none';
+  document.getElementById('gcTabClausulas').style.display = tab === 'clausulas' ? '' : 'none';
+  document.querySelectorAll('#gcTabs .nav-link').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function gcRenderClausulas() {
+  const cont = document.getElementById('gcClausulasLista');
+  if (!_gcClausulas.length) {
+    cont.innerHTML = '<div class="text-muted small py-2">Sin cláusulas registradas todavía.</div>';
+    return;
+  }
+  cont.innerHTML = _gcClausulas.map((c, i) => `
+    <div class="gc-clausula-row">
+      <div style="flex:1">
+        <div class="d-flex gap-2 mb-2">
+          <input type="text" class="form-control form-control-sm" placeholder="Título cláusula" value="${c.titulo||''}"
+                 onchange="_gcClausulas[${i}].titulo=this.value">
+          <select class="form-select form-select-sm" style="max-width:130px" onchange="_gcClausulas[${i}].tipo=this.value">
+            <option value="obligacion" ${c.tipo==='obligacion'?'selected':''}>Obligación</option>
+            <option value="exclusion" ${c.tipo==='exclusion'?'selected':''}>Exclusión</option>
+            <option value="penalidad" ${c.tipo==='penalidad'?'selected':''}>Penalidad</option>
+            <option value="garantia" ${c.tipo==='garantia'?'selected':''}>Garantía</option>
+            <option value="otro" ${c.tipo==='otro'?'selected':''}>Otro</option>
+          </select>
+          <button class="btn btn-sm btn-outline-danger" onclick="_gcClausulas.splice(${i},1);gcRenderClausulas()">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+        <textarea class="form-control form-control-sm" rows="2" placeholder="Texto de la cláusula…"
+                  onchange="_gcClausulas[${i}].texto=this.value">${c.texto||''}</textarea>
+      </div>
+    </div>`).join('');
+}
+
+function gcAddClausula() {
+  _gcClausulas.push({ titulo:'', texto:'', tipo:'obligacion' });
+  gcRenderClausulas();
+  // Scroll al último
+  const cont = document.getElementById('gcClausulasLista');
+  cont.lastElementChild?.scrollIntoView({ behavior:'smooth' });
+}
+
+function gcRenderVarsExtra() {
+  const cont = document.getElementById('gcVarsExtra');
+  const entries = Object.entries(_gcVarsExtra);
+  if (!entries.length) { cont.innerHTML=''; return; }
+  cont.innerHTML = entries.map(([k,v], i) => `
+    <div class="d-flex gap-2 mb-2 align-items-center">
+      <input type="text" class="form-control form-control-sm" style="max-width:180px"
+             placeholder="Nombre variable" value="${k}"
+             data-idx="${i}" data-role="key" onchange="gcUpdateVar(this)">
+      <input type="text" class="form-control form-control-sm"
+             placeholder="Valor" value="${v}"
+             data-idx="${i}" data-role="val" onchange="gcUpdateVar(this)">
+      <button class="btn btn-sm btn-outline-danger" onclick="gcDelVar('${k}')">
+        <i class="bi bi-dash"></i>
+      </button>
+    </div>`).join('');
+}
+
+function gcAddVar() {
+  const key = `Variable ${Object.keys(_gcVarsExtra).length + 1}`;
+  _gcVarsExtra[key] = '';
+  gcRenderVarsExtra();
+}
+
+function gcUpdateVar(input) {
+  const entries = Object.entries(_gcVarsExtra);
+  const idx = parseInt(input.dataset.idx);
+  const [oldKey, oldVal] = entries[idx];
+  if (input.dataset.role === 'key') {
+    delete _gcVarsExtra[oldKey];
+    _gcVarsExtra[input.value] = oldVal;
+  } else {
+    _gcVarsExtra[oldKey] = input.value;
+  }
+}
+
+function gcDelVar(key) {
+  delete _gcVarsExtra[key];
+  gcRenderVarsExtra();
+}
+
+async function gcGuardar() {
+  const spin = document.getElementById('gcGuardandoSpin');
+  spin.style.display = '';
+  const variables = {
+    sla_horas:       parseInt(document.getElementById('gcSla').value) || null,
+    frecuencia_meses: parseInt(document.getElementById('gcFrecuencia').value) || null,
+    monto_mensual:   parseFloat(document.getElementById('gcMonto').value) || null,
+    monto_anual:     parseFloat(document.getElementById('gcMontoAnual').value) || null,
+    notas:           document.getElementById('gcNotas').value,
+    nivel_riesgo:    document.getElementById('gcRiesgo').value,
+    ..._gcVarsExtra,
+  };
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${_gcCtid}/clausulas`, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ clausulas: _gcClausulas, variables })
+    });
+    const data = await r.json();
+    spin.style.display = 'none';
+    if (data.ok) {
+      const ahora = new Date().toLocaleString('es-CL');
+      document.getElementById('gcUltGuardado').textContent = `Guardado ${ahora}`;
+      // Indicar éxito sin cerrar modal
+      const btn = document.querySelector('#modalGestionContrato .btn-ilus');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Guardado';
+      btn.classList.add('btn-success');
+      setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('btn-success'); }, 2000);
+    } else {
+      alert(data.error || 'Error al guardar');
+    }
+  } catch(e) {
+    spin.style.display = 'none';
+    alert('Error de conexión: ' + e.message);
+  }
+}
+
+// ─── Actualizar estado Plan tab sin recargar ──────────────────
+function _planTabActualizarStatus(ctAnalizado) {
+  const el = document.getElementById('planCtStatus');
+  if (!el) return;
+  if (ctAnalizado) {
+    el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Contrato analizado — plan completo disponible</span>';
+  }
+}
 </script>
 {% endblock %}

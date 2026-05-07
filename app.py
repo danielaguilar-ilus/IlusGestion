@@ -339,6 +339,13 @@ def mysql_fetchall(query, params=None):
         return cur.fetchall()
 
 
+def mysql_execute(query, params=None):
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(query, params or ())
+    conn.commit()
+
+
 # ─────────────────────────────────────────────
 #  Schema init
 # ─────────────────────────────────────────────
@@ -9563,6 +9570,10 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_contratos ADD COLUMN ai_editable TEXT COMMENT 'JSON campos editados por usuario'",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_inicio DATE",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_fin DATE",
+                # v2 — trazabilidad y gestión avanzada
+                "ALTER TABLE mant_contratos ADD COLUMN ai_usuario VARCHAR(190)",
+                "ALTER TABLE mant_contratos ADD COLUMN clausulas_custom TEXT COMMENT 'JSON clausulas personalizadas del contrato'",
+                "ALTER TABLE mant_contratos ADD COLUMN variables_extra TEXT COMMENT 'JSON variables adicionales editadas por usuario'",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -10782,13 +10793,13 @@ Devuelve SOLO el JSON, sin texto adicional."""
     except Exception as e:
         return jsonify({"error": f"Error IA: {str(e)}"}), 500
 
-    # Guardar resultado en DB (estructura expandida)
+    # Guardar resultado en DB (estructura expandida + trazabilidad de usuario)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE mant_contratos SET
-                   ai_analizado=1, ai_fecha=%s,
+                   ai_analizado=1, ai_fecha=%s, ai_usuario=%s,
                    ai_resumen=%s,
                    ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
                    ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
@@ -10803,6 +10814,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
                    monto_mensual=COALESCE(NULLIF(monto_mensual,0),%s)
                    WHERE id=%s""",
                 (datetime.now(),
+                 current_username(),
                  resultado.get("resumen",""),
                  json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
                  json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),
@@ -10828,8 +10840,75 @@ Devuelve SOLO el JSON, sin texto adicional."""
         conn.commit()
         _mant_log("contrato", ctid, "analizado_ia", f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}")
         return jsonify({"ok": True, "resultado": resultado})
+    except Exception as db_err:
+        conn.rollback()
+        print(f"[MANT] ERROR guardando análisis contrato {ctid}: {db_err}")
+        return jsonify({"error": f"IA OK pero error guardando: {db_err}"}), 500
     finally:
         conn.close()
+
+
+# ── GESTIÓN CONTRATO — cláusulas y variables personalizadas ──────────
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/clausulas", methods=["PUT"])
+@_mant_required
+def mant_contrato_clausulas(ctid):
+    """Guarda cláusulas personalizadas y variables adicionales del contrato."""
+    d = request.get_json(silent=True) or {}
+    clausulas = d.get("clausulas", [])   # lista de {titulo, texto, tipo}
+    variables = d.get("variables", {})   # dict campo→valor
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Actualizar también campos directos si vienen
+            extra_sets, extra_vals = [], []
+            for campo in ("sla_horas", "frecuencia_meses", "monto_mensual",
+                          "monto_anual", "notas", "nivel_riesgo"):
+                if campo in variables:
+                    extra_sets.append(f"{campo}=%s")
+                    extra_vals.append(variables.pop(campo) or None)
+            sets = ["clausulas_custom=%s", "variables_extra=%s"] + extra_sets
+            vals = [
+                json.dumps(clausulas, ensure_ascii=False),
+                json.dumps(variables, ensure_ascii=False),
+            ] + extra_vals + [ctid]
+            cur.execute(
+                f"UPDATE mant_contratos SET {','.join(sets)} WHERE id=%s", vals
+            )
+        conn.commit()
+        _mant_log("contrato", ctid, "clausulas_actualizadas",
+                  f"{len(clausulas)} cláusulas, {len(variables)} variables")
+        return jsonify({"ok": True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/clausulas", methods=["GET"])
+@_mant_required
+def mant_contrato_clausulas_get(ctid):
+    """Devuelve cláusulas personalizadas y variables de un contrato."""
+    ct = mysql_fetchone(
+        "SELECT clausulas_custom, variables_extra, sla_horas, frecuencia_meses, "
+        "monto_mensual, monto_anual, notas, nivel_riesgo FROM mant_contratos WHERE id=%s",
+        (ctid,)
+    )
+    if not ct:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify({
+        "clausulas": json.loads(ct.get("clausulas_custom") or "[]"),
+        "variables": json.loads(ct.get("variables_extra") or "{}"),
+        "campos": {
+            "sla_horas": ct.get("sla_horas"),
+            "frecuencia_meses": ct.get("frecuencia_meses"),
+            "monto_mensual": ct.get("monto_mensual"),
+            "monto_anual": ct.get("monto_anual"),
+            "notas": ct.get("notas",""),
+            "nivel_riesgo": ct.get("nivel_riesgo","medio"),
+        }
+    })
 
 
 # ── VISITAS / AGENDA ──────────────────────────────────────────────────
@@ -11324,6 +11403,13 @@ def mant_documentos_por_rut(cid):
 #  Arranque — inicializar tablas al cargar módulo
 #  (funciona con `python app.py` Y `flask run`)
 # ─────────────────────────────────────────────
+
+try:
+    from pickups_module import register_pickup_routes
+    register_pickup_routes(app, globals())
+    print("[ILUS] Modulo de retiros registrado.")
+except Exception as _pickup_reg_err:
+    print(f"[ILUS][WARN] register_pickup_routes: {_pickup_reg_err}")
 
 try:
     with app.app_context():
