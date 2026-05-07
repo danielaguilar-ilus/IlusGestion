@@ -1884,39 +1884,64 @@ def _open_smtp_client(host: str, port: int, secure: bool, timeout: int = 15, con
 
 
 def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
-    """Envía un correo HTML usando la configuración SMTP dinámica (o EMAIL_CONFIG de respaldo)."""
-    # Prioridad: config guardada en BD → EMAIL_CONFIG hardcoded
+    """
+    Envía un correo HTML usando la configuración SMTP dinámica.
+    Prioridad: env vars Railway → BD → config.py
+    Intenta puerto configurado; si falla con timeout/connection, prueba el alternativo.
+    """
     try:
-        dyn = _get_smtp_cfg()
+        cfg = _get_smtp_cfg()
     except Exception:
-        dyn = {}
-    cfg = dyn if dyn.get("smtp_host") and dyn.get("smtp_user") else EMAIL_CONFIG
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = f"{cfg.get('from_name','ILUS Sport & Health')} <{cfg.get('from_addr', cfg.get('smtp_user',''))}>"
-        msg["To"]      = to_addr
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
-        port   = int(cfg.get("smtp_port", 587))
-        secure = bool(cfg.get("secure"))
-        from_addr = cfg.get("from_addr") or cfg.get("smtp_user", "")
-        if secure:
-            with _open_smtp_client(cfg["smtp_host"], port, True, timeout=15) as srv:
-                srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+        cfg = dict(EMAIL_CONFIG)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{cfg.get('from_name','ILUS Sport & Health')} <{cfg.get('from_addr', cfg.get('smtp_user',''))}>"
+    msg["To"]      = to_addr
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    host      = cfg["smtp_host"]
+    port      = int(cfg.get("smtp_port", 587))
+    secure    = bool(cfg.get("secure"))
+    user      = cfg["smtp_user"]
+    passwd    = cfg.get("smtp_pass", "")
+    from_addr = cfg.get("from_addr") or user
+
+    def _try_send(p, sec, timeout=25):
+        if sec:
+            with _open_smtp_client(host, p, True, timeout=timeout) as srv:
+                srv.login(user, passwd)
                 srv.sendmail(from_addr, [to_addr], msg.as_string())
         else:
-            with _open_smtp_client(cfg["smtp_host"], port, False, timeout=15) as srv:
-                srv.ehlo(); srv.starttls()
-                srv.login(cfg["smtp_user"], cfg["smtp_pass"])
+            with _open_smtp_client(host, p, False, timeout=timeout) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(user, passwd)
                 srv.sendmail(from_addr, [to_addr], msg.as_string())
-        return True
-    except Exception as exc:
+
+    # Intentos: puerto configurado → puerto alternativo automático
+    attempts = [(port, secure)]
+    if port == 587 and not secure:
+        attempts.append((465, True))   # fallback SSL si STARTTLS falla
+    elif port == 465 and secure:
+        attempts.append((587, False))  # fallback STARTTLS si SSL falla
+
+    last_exc = None
+    for p, sec in attempts:
         try:
-            g._last_email_error = str(exc)
-        except Exception:
-            pass
-        print(f"[ILUS][EMAIL] Error al enviar a {to_addr}: {exc}")
-        return False
+            _try_send(p, sec)
+            print(f"[ILUS][EMAIL] Enviado a {to_addr} via :{p} (source={cfg.get('_source','?')})")
+            return True
+        except Exception as exc:
+            last_exc = exc
+            print(f"[ILUS][EMAIL] Intento :{p} falló — {exc}")
+
+    try:
+        g._last_email_error = str(last_exc)
+    except Exception:
+        pass
+    print(f"[ILUS][EMAIL] Todos los intentos fallaron para {to_addr}: {last_exc}")
+    return False
 
 
 def _password_strength_errors(password: str) -> list[str]:
@@ -7285,7 +7310,28 @@ def _comm_seed_default_templates(overwrite=False):
 
 
 def _get_smtp_cfg():
-    """Config SMTP: primero DB, luego config.py como fallback."""
+    """
+    Config SMTP — prioridad:
+      1. Variables de entorno Railway (SMTP_HOST / SMTP_USER / SMTP_PASS …)
+      2. Fila guardada en BD (comm_smtp_config)
+      3. EMAIL_CONFIG de config.py
+    Las env vars garantizan que la config sobreviva cualquier redeploy o reset de BD.
+    """
+    # ── 1. Variables de entorno (máxima prioridad) ───────────────────────
+    env_user = os.environ.get("SMTP_USER", "").strip()
+    env_pass = os.environ.get("SMTP_PASS", "").strip()
+    if env_user and env_pass:
+        return {
+            "smtp_host": os.environ.get("SMTP_HOST", "smtp.gmail.com").strip(),
+            "smtp_port": int(os.environ.get("SMTP_PORT", "587")),
+            "smtp_user": env_user,
+            "smtp_pass": env_pass,
+            "from_name": os.environ.get("SMTP_FROM_NAME", "ILUS Sport & Health").strip(),
+            "from_addr": os.environ.get("SMTP_FROM_ADDR", env_user).strip(),
+            "secure":    os.environ.get("SMTP_SECURE", "").lower() in ("1","true","yes"),
+            "_source":   "env",
+        }
+    # ── 2. Fila en BD ───────────────────────────────────────────────────
     try:
         row = mysql_fetchone(
             "SELECT * FROM comm_smtp_config ORDER BY id DESC LIMIT 1"
@@ -7299,10 +7345,14 @@ def _get_smtp_cfg():
                 "from_name": row["from_name"] or "ILUS Sport & Health",
                 "from_addr": row["from_addr"] or row["smtp_user"],
                 "secure":    bool(row.get("secure")),
+                "_source":   "db",
             }
     except Exception:
         pass
-    return dict(EMAIL_CONFIG)
+    # ── 3. config.py ────────────────────────────────────────────────────
+    cfg = dict(EMAIL_CONFIG)
+    cfg["_source"] = "config"
+    return cfg
 
 
 def _safe_smtp_cfg(cfg=None):
