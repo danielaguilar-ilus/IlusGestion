@@ -10141,15 +10141,49 @@ def mant_ficha(cid):
     cliente   = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return redirect(url_for("mant_clientes"))
-    maquinas  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-    contratos = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-    # Visitas: traer TODAS las del último año para calcular gráficos correctamente
-    visitas_full = mysql_fetchall(
+
+    # ── Helper: normaliza datetime/date de MySQL a datetime.date ──────────
+    def _d(val):
+        """Convierte datetime o date a date para comparaciones seguras."""
+        if val is None:
+            return None
+        return val.date() if hasattr(val, 'date') else val
+
+    # ── Normaliza filas de DB para evitar mezcla datetime/date ───────────
+    def _norm_maquina(row):
+        r = dict(row)
+        for k in ('doc_fecha', 'fecha_instalacion', 'created_at', 'updated_at'):
+            if k in r:
+                r[k] = _d(r[k])
+        return r
+
+    def _norm_contrato(row):
+        r = dict(row)
+        for k in ('fecha_inicio', 'fecha_vencimiento', 'created_at', 'updated_at'):
+            if k in r:
+                r[k] = _d(r[k])
+        return r
+
+    def _norm_visita(row):
+        r = dict(row)
+        r['fecha_programada'] = _d(r.get('fecha_programada'))
+        if 'created_at' in r:
+            r['created_at'] = _d(r['created_at'])
+        return r
+
+    maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
+    contratos_raw = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
+    visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC", (cid,)
     )
-    logs      = mysql_fetchall(
+    logs = mysql_fetchall(
         "SELECT * FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s ORDER BY created_at DESC LIMIT 20", (cid,)
     )
+
+    # Normalizar todas las fechas a datetime.date
+    maquinas     = [_norm_maquina(r)  for r in maquinas_raw]
+    contratos    = [_norm_contrato(r) for r in contratos_raw]
+    visitas_full = [_norm_visita(r)   for r in visitas_raw]
 
     # ── ESTADÍSTICAS PARA SIDEBAR / GRÁFICOS ──────────────────────────────
     hoy = datetime.now().date()
@@ -10214,32 +10248,38 @@ def mant_ficha(cid):
     # 1. Equipos con garantía próxima a vencer
     for m in maquinas:
         if m.get("doc_fecha"):
-            dias_doc = (hoy - m["doc_fecha"]).days
-            if 150 <= dias_doc <= 180:
-                alertas_smart.append({
-                    "tipo": "warning",
-                    "icon": "shield-exclamation",
-                    "titulo": f"{m['nombre']} — Garantía próxima a vencer",
-                    "detalle": f"Quedan {180 - dias_doc} días de garantía",
-                })
+            try:
+                dias_doc = (hoy - m["doc_fecha"]).days
+                if 150 <= dias_doc <= 180:
+                    alertas_smart.append({
+                        "tipo": "warning",
+                        "icon": "shield-exclamation",
+                        "titulo": f"{m['nombre']} — Garantía próxima a vencer",
+                        "detalle": f"Quedan {180 - dias_doc} días de garantía",
+                    })
+            except Exception:
+                pass
     # 2. Contratos por vencer
     for ct in contratos:
         if ct.get("fecha_vencimiento") and not ct.get("es_indefinido"):
-            dias_v = (ct["fecha_vencimiento"] - hoy).days
-            if 0 < dias_v <= 60:
-                alertas_smart.append({
-                    "tipo": "warning",
-                    "icon": "file-earmark-text",
-                    "titulo": f"Contrato vence en {dias_v} días",
-                    "detalle": ct.get("nombre") or "Contrato sin nombre",
-                })
-            elif dias_v <= 0:
-                alertas_smart.append({
-                    "tipo": "danger",
-                    "icon": "file-earmark-x",
-                    "titulo": "Contrato VENCIDO",
-                    "detalle": ct.get("nombre") or "Contrato sin nombre",
-                })
+            try:
+                dias_v = (ct["fecha_vencimiento"] - hoy).days
+                if 0 < dias_v <= 60:
+                    alertas_smart.append({
+                        "tipo": "warning",
+                        "icon": "file-earmark-text",
+                        "titulo": f"Contrato vence en {dias_v} días",
+                        "detalle": ct.get("nombre") or "Contrato sin nombre",
+                    })
+                elif dias_v <= 0:
+                    alertas_smart.append({
+                        "tipo": "danger",
+                        "icon": "file-earmark-x",
+                        "titulo": "Contrato VENCIDO",
+                        "detalle": ct.get("nombre") or "Contrato sin nombre",
+                    })
+            except Exception:
+                pass
     # 3. Mucho tiempo sin visita
     if dias_desde_ultima is not None and dias_desde_ultima > 90:
         alertas_smart.append({
@@ -10279,12 +10319,18 @@ def mant_ficha(cid):
         "total_correctivas_12m":   len(visitas_correctivas),
     }
 
+    # Normaliza logs (created_at puede ser datetime, necesita ser date para sort mixto)
+    def _norm_log(row):
+        r = dict(row)
+        r['created_at'] = _d(r.get('created_at'))
+        return r
+
     return render_template("mantenciones/ficha.html",
         cliente   = dict(cliente),
-        maquinas  = [dict(r) for r in maquinas],
-        contratos = [dict(r) for r in contratos],
-        visitas   = [dict(r) for r in visitas_full[:50]],
-        logs      = [dict(r) for r in logs],
+        maquinas  = maquinas,
+        contratos = contratos,
+        visitas   = visitas_full[:50],
+        logs      = [_norm_log(r) for r in logs],
         hoy       = hoy,
         stats     = stats,
     )
