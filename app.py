@@ -10868,8 +10868,14 @@ def mant_documentos_por_rut(cid):
         return jsonify({"sin_rut": True, "documentos": []})
 
     rut = cliente["rut"].strip()
-    # Normalizar RUT: sin puntos ni guión para búsqueda flexible
-    rut_norm = rut.replace(".","").replace("-","").replace(" ","")
+    # Normalización agresiva del RUT — soluciona el bug de matching:
+    #  - 12.345.678-9   → 123456789
+    #  - 12345678-K     → 12345678K
+    #  - 12345678 - k   → 12345678K
+    #  - "76.123.456-0" → 761234560
+    rut_norm  = re.sub(r"[^0-9kK]", "", rut).upper()  # solo dígitos + K en upper
+    # Solo el número (sin dígito verificador) para fallback de búsqueda parcial
+    rut_solo  = rut_norm[:-1] if rut_norm and len(rut_norm) > 1 else rut_norm
 
     ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
     erp_conn = get_erp_conn()
@@ -10884,6 +10890,9 @@ def mant_documentos_por_rut(cid):
 
     try:
         with erp_conn.cursor() as cur:
+            # Normalizamos AMBOS lados (cliente y ERP) con la misma función SQL,
+            # case-insensitive y eliminando todos los caracteres no alfanuméricos.
+            # Esto resuelve los casos: puntos, guiones, espacios al medio, tabs, k/K.
             cur.execute(
                 f"""SELECT DISTINCT
                        TRIM(d.NRAZON) AS razon_social,
@@ -10897,12 +10906,12 @@ def mant_documentos_por_rut(cid):
                     FROM `{ERP_SALES}` d
                     WHERE d.TIDO IN ('FCV','BLV','GDV','VD','WEB','NVI','NVV')
                       AND (
-                        TRIM(d.NRUC) = %s
-                        OR REPLACE(REPLACE(REPLACE(TRIM(d.NRUC),'.',''),'-',''),' ','') = %s
+                          UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(d.NRUC,''),'.',''),'-',''),' ',''),CHAR(9),''),CHAR(13),'')) = %s
+                       OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(d.NRUC,''),'.',''),'-',''),' ',''),CHAR(9),''),CHAR(13),'')) = %s
                       )
                     ORDER BY d.FEMIS DESC
                     LIMIT 200""",
-                (rut, rut_norm)
+                (rut_norm, rut_solo)
             )
             rows = cur.fetchall()
         erp_conn.close()
