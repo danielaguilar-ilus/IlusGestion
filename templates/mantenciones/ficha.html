@@ -305,6 +305,189 @@
   transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.08);
 }
 .ar-btn i{font-size:.9rem;color:#6b7280;}
+
+/* ──────────────────────────────────────────────────────────────────
+   CONTRATO PRO — Rediseño completo
+─────────────────────────────────────────────────────────────────── */
+.contrato-pro{
+  background:#fff;border:1px solid var(--border);border-radius:14px;
+  margin-bottom:18px;overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.ct-pro-header{
+  padding:18px 22px;border-bottom:1px solid var(--border);
+  background:linear-gradient(180deg,#fafbfc,#fff);
+}
+.ct-pro-icon{
+  width:54px;height:54px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.5rem;flex-shrink:0;
+  border:1px solid #e5e7eb;
+}
+
+/* Estado: contrato no analizado */
+.ct-pro-noai{
+  text-align:center;padding:40px 24px;
+  background:linear-gradient(135deg,#faf5ff,#eff6ff);
+}
+.ct-pro-noai-icon{
+  width:64px;height:64px;border-radius:16px;
+  background:linear-gradient(135deg,#7c3aed,#3b82f6);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:1.8rem;color:#fff;margin-bottom:14px;
+  box-shadow:0 6px 20px rgba(124,58,237,.3);
+}
+
+/* Análisis IA — contenedor */
+.ct-pro-ai{padding:20px 22px;}
+
+/* Banner del score con dial */
+.ct-score-banner{
+  display:flex;align-items:center;gap:24px;
+  background:linear-gradient(135deg,#0f172a,#1e293b);
+  color:#fff;border-radius:12px;padding:20px 24px;margin-bottom:18px;
+  flex-wrap:wrap;
+}
+.ct-score-dial{
+  display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0;
+}
+.ct-score-label{
+  font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.6px;
+}
+.ct-score-info{flex:1;min-width:240px;}
+.ct-score-tag{
+  display:inline-block;background:rgba(124,58,237,.2);color:#c4b5fd;
+  padding:4px 11px;border-radius:50px;font-size:.7rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;
+}
+.ct-score-resumen{
+  font-size:.86rem;line-height:1.55;color:#e2e8f0;margin:0 0 8px 0;
+}
+.ct-score-meta{font-size:.7rem;color:#94a3b8;}
+
+/* Grid de KPIs económicos */
+.ct-kpi-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:10px;margin-bottom:18px;
+}
+.ct-kpi{
+  background:#fff;border:1px solid var(--border);border-radius:10px;
+  padding:12px 14px;display:flex;align-items:center;gap:11px;
+  transition:box-shadow .15s,transform .15s;
+}
+.ct-kpi:hover{box-shadow:0 4px 12px rgba(0,0,0,.07);transform:translateY(-1px);}
+.ct-kpi-icon{
+  width:38px;height:38px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;flex-shrink:0;
+}
+.ct-kpi-num{
+  font-size:1.05rem;font-weight:800;line-height:1.1;color:#0f172a;
+}
+.ct-kpi-lbl{
+  font-size:.66rem;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.4px;font-weight:600;margin-top:2px;
+}
+
+/* Cobertura */
+.ct-cobertura{
+  background:#f8fafc;border:1px solid var(--border);border-radius:10px;
+  padding:14px 18px;margin-bottom:18px;
+}
+.ct-section-h{
+  font-size:.74rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.6px;color:#475569;margin-bottom:10px;
+  display:flex;align-items:center;gap:7px;
+}
+.ct-section-h i{color:#7c3aed;font-size:1rem;}
+.ct-cobertura-text{
+  font-size:.85rem;color:#374151;line-height:1.55;
+}
+
+/* Bloques de información (alertas/cláusulas/mejoras) */
+.ct-block{
+  border-radius:10px;border:1px solid;margin-bottom:10px;overflow:hidden;
+}
+.ct-block-h{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 14px;font-size:.78rem;font-weight:800;
+  border-bottom:1px solid;
+}
+.ct-block-h i:first-child{font-size:1rem;}
+.ct-block-count{
+  margin-left:auto;background:#fff;padding:2px 9px;border-radius:50px;
+  font-size:.7rem;font-weight:800;
+}
+.ct-block-body{padding:8px 14px;}
+.ct-block-item{
+  display:flex;align-items:flex-start;gap:9px;
+  padding:7px 0;font-size:.8rem;line-height:1.5;
+  border-bottom:1px dashed rgba(0,0,0,.06);
+}
+.ct-block-item:last-child{border-bottom:none;}
+.ct-block-item i{flex-shrink:0;margin-top:2px;font-size:.85rem;}
+
+.ct-block-danger{background:#fef2f2;border-color:#fecaca;}
+.ct-block-danger .ct-block-h{background:#fee2e2;border-bottom-color:#fecaca;color:#7f1d1d;}
+.ct-block-danger .ct-block-h i:first-child{color:#dc2626;}
+
+.ct-block-warning{background:#fffbeb;border-color:#fde68a;}
+.ct-block-warning .ct-block-h{background:#fef3c7;border-bottom-color:#fde68a;color:#78350f;}
+.ct-block-warning .ct-block-h i:first-child{color:#d97706;}
+
+.ct-block-info{background:#eff6ff;border-color:#bfdbfe;}
+.ct-block-info .ct-block-h{background:#dbeafe;border-bottom-color:#bfdbfe;color:#1e3a8a;}
+.ct-block-info .ct-block-h i:first-child{color:#2563eb;}
+
+.ct-block-success{background:#f0fdf4;border-color:#bbf7d0;}
+.ct-block-success .ct-block-h{background:#dcfce7;border-bottom-color:#bbf7d0;color:#14532d;}
+.ct-block-success .ct-block-h i:first-child{color:#16a34a;}
+
+/* Proyección 6 meses — Timeline */
+.ct-proyeccion{
+  background:#fff;border:1px solid var(--border);border-radius:10px;
+  padding:16px 18px;
+}
+.ct-proyeccion-grid{
+  display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:8px 2px;
+}
+.proy-cell{
+  flex:1;min-width:84px;text-align:center;padding:12px 8px;
+  border-radius:8px;border:2px solid transparent;
+  transition:transform .15s;flex-shrink:0;
+}
+.proy-cell:hover{transform:translateY(-2px);}
+.proy-cell-mes{
+  font-size:.7rem;font-weight:800;color:#64748b;
+  text-transform:uppercase;letter-spacing:.3px;
+}
+.proy-cell-icon{
+  font-size:1.4rem;margin:6px 0 4px;
+}
+.proy-cell-tipo{
+  font-size:.66rem;font-weight:700;
+}
+.proy-cell-actual{
+  background:#ede9fe;border-color:#c4b5fd;
+}
+.proy-cell-actual .proy-cell-icon{color:#7c3aed;}
+.proy-cell-actual .proy-cell-tipo{color:#5b21b6;}
+.proy-cell-mantencion{
+  background:#dcfce7;border-color:#86efac;
+}
+.proy-cell-mantencion .proy-cell-icon{color:#16a34a;}
+.proy-cell-mantencion .proy-cell-tipo{color:#14532d;}
+.proy-cell-vencimiento{
+  background:#fee2e2;border-color:#fca5a5;
+}
+.proy-cell-vencimiento .proy-cell-icon{color:#dc2626;}
+.proy-cell-vencimiento .proy-cell-tipo{color:#7f1d1d;}
+.proy-cell-libre{background:#fafbfc;border-color:#f3f4f6;}
+.proy-cell-libre .proy-cell-icon{color:#cbd5e1;}
+.proy-cell-libre .proy-cell-tipo{color:#94a3b8;}
+.proy-arrow{
+  display:flex;align-items:center;color:#cbd5e1;font-size:.9rem;flex-shrink:0;
+}
 </style>
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
@@ -885,12 +1068,15 @@
   </div>
 </div>
 
-{# ══════════════════════════════════════════════════════
-   TAB: CONTRATO
-══════════════════════════════════════════════════════ #}
+{# ══════════════════════════════════════════════════════════════════
+   TAB: CONTRATO — Rediseño profesional con visualizaciones ricas
+══════════════════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-contrato">
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <h6 class="mb-0 fw-bold text-muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.5px">Contratos de mantención</h6>
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1 fw-bold" style="font-size:1rem">Contratos de mantención</h5>
+      <p class="text-muted mb-0" style="font-size:.78rem">Sube el PDF y la IA extrae toda la información clave automáticamente</p>
+    </div>
     <button class="btn btn-sm btn-ilus" onclick="abrirContratoModal()">
       <i class="bi bi-upload me-1"></i>Subir nuevo contrato
     </button>
@@ -899,181 +1085,350 @@
   <div id="ctListado">
   {% if contratos %}
     {% for ct in contratos %}
-    <div class="ct-card {{ 'riesgo-alto' if ct.nivel_riesgo=='alto' else 'riesgo-bajo' if ct.nivel_riesgo=='bajo' else '' }}" id="ct-{{ ct.id }}">
-      <div class="ct-card-head">
-        <div class="ct-icon-wrap" style="background:{{ '#fde8e8' if ct.estado=='vencido' else '#dcfce7' if ct.estado in ('vigente','indefinido') else '#f3f4f6' }}">
-          <i class="bi bi-file-earmark-{{ 'pdf' if ct.archivo_tipo=='pdf' else 'word' if ct.archivo_tipo=='word' else 'text' }}"
-             style="color:{{ '#dc2626' if ct.archivo_tipo=='pdf' else '#2563eb' if ct.archivo_tipo=='word' else '#6b7280' }}"></i>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div class="d-flex align-items-center gap-2 flex-wrap">
-            <span class="ct-name">{{ ct.nombre or 'Contrato' }}</span>
-            <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
-            {% if ct.nivel_riesgo %}
-            <span class="cli-badge" style="background:{{ '#fee2e2' if ct.nivel_riesgo=='alto' else '#fef9c3' if ct.nivel_riesgo=='medio' else '#dcfce7' }};color:{{ '#991b1b' if ct.nivel_riesgo=='alto' else '#854d0e' if ct.nivel_riesgo=='medio' else '#166534' }}">
-              {{ ct.nivel_riesgo.title() }}
-            </span>
+    {% set score = ct.ai_score or 0 %}
+    {% set score_color = '#16a34a' if score>=70 else '#ea580c' if score>=40 else '#dc2626' %}
+    {% set score_text = 'Excelente' if score>=80 else 'Bueno' if score>=60 else 'Regular' if score>=40 else 'Crítico' %}
+    {% set dias_v = ((ct.fecha_vencimiento - hoy).days if ct.fecha_vencimiento and not ct.es_indefinido else 9999) %}
+
+    <div class="contrato-pro" id="ct-{{ ct.id }}">
+
+      {# ═════════════════════════════════════════════════════
+         HEADER DEL CONTRATO — Limpio con datos clave
+         ═════════════════════════════════════════════════════ #}
+      <div class="ct-pro-header">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <div class="ct-pro-icon" style="background:linear-gradient(135deg,{{ score_color }}15,{{ score_color }}08)">
+            <i class="bi bi-file-earmark-{{ 'pdf' if ct.archivo_tipo=='pdf' else 'word' if ct.archivo_tipo=='word' else 'text' }}" style="color:{{ score_color }}"></i>
+          </div>
+          <div style="flex:1;min-width:280px">
+            <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+              <h5 class="mb-0" style="font-size:1.05rem;font-weight:800">{{ ct.nombre or 'Contrato' }}</h5>
+              <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
+              {% if ct.nivel_riesgo %}
+              <span class="cli-badge" style="background:{{ '#fee2e2' if ct.nivel_riesgo=='alto' else '#fef9c3' if ct.nivel_riesgo=='medio' else '#dcfce7' }};color:{{ '#991b1b' if ct.nivel_riesgo=='alto' else '#854d0e' if ct.nivel_riesgo=='medio' else '#166534' }}">
+                Riesgo {{ ct.nivel_riesgo.title() }}
+              </span>
+              {% endif %}
+              {% if dias_v <= 60 and dias_v > 0 %}
+              <span class="cli-badge" style="background:#fef3c7;color:#92400e">⚠ Vence en {{ dias_v }}d</span>
+              {% elif dias_v <= 0 and not ct.es_indefinido and ct.fecha_vencimiento %}
+              <span class="cli-badge" style="background:#fee2e2;color:#991b1b">⚠ VENCIDO</span>
+              {% endif %}
+            </div>
+            <div style="font-size:.76rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 16px">
+              {% if ct.fecha_inicio %}
+              <span><i class="bi bi-calendar3 me-1"></i>Inicio: <strong>{{ ct.fecha_inicio.strftime('%d/%m/%Y') }}</strong></span>
+              {% endif %}
+              {% if ct.es_indefinido %}
+              <span><i class="bi bi-infinity me-1"></i>Vigencia: <strong style="color:#7c3aed">Indefinido</strong></span>
+              {% elif ct.fecha_vencimiento %}
+              <span><i class="bi bi-calendar-x me-1"></i>Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong></span>
+              {% endif %}
+              {% if ct.frecuencia_meses %}
+              <span><i class="bi bi-arrow-repeat me-1"></i>Frecuencia: <strong>cada {{ ct.frecuencia_meses }} meses</strong></span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="d-flex gap-1 flex-shrink-0 align-items-center">
+            {% if ct.archivo_path %}
+            <button class="btn btn-sm btn-outline-primary" onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}')">
+              <i class="bi bi-eye me-1"></i>Ver PDF
+            </button>
+            {% if current_user and current_user.role == 'superadmin' %}
+            <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}?download=1"
+               class="btn btn-sm btn-outline-secondary" title="Descargar">
+              <i class="bi bi-download"></i>
+            </a>
             {% endif %}
+            {% endif %}
+            <button class="btn btn-sm btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Re-analizar con IA">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
           </div>
-          <div class="ct-dates">
-            {% if ct.fecha_inicio %}📅 {{ ct.fecha_inicio.strftime('%d/%m/%Y') }}{% endif %}
-            {% if ct.es_indefinido %} → <strong style="color:#7c3aed">Indefinido</strong>{% elif ct.fecha_vencimiento %} → Vence <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>{% endif %}
-            {% if ct.monto_mensual %} &nbsp;·&nbsp; 💰 ${{ "{:,.0f}".format(ct.monto_mensual).replace(",",".") }}/mes{% endif %}
-            {% if ct.frecuencia_meses %} &nbsp;·&nbsp; 🔄 c/{{ ct.frecuencia_meses }} meses{% endif %}
-            {% if ct.sla_horas %} &nbsp;·&nbsp; ⏱ SLA {{ ct.sla_horas }}h{% endif %}
-          </div>
-        </div>
-        <div class="d-flex gap-1 flex-shrink-0">
-          {% if ct.archivo_path %}
-          <button class="btn btn-xs btn-outline-primary" onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}')" title="Ver contrato">
-            <i class="bi bi-eye me-1"></i>Ver
-          </button>
-          {% if current_user and current_user.role == 'superadmin' %}
-          <a href="{{ url_for('mant_contrato_archivo', ctid=ct.id) }}?download=1"
-             class="btn btn-xs btn-outline-secondary" title="Descargar archivo">
-            <i class="bi bi-download"></i>
-          </a>
-          {% endif %}
-          {% endif %}
-          <button class="btn btn-xs btn-outline-secondary" onclick="toggleAiPanel({{ ct.id }})" title="Mostrar/ocultar análisis IA">
-            <i class="bi bi-stars"></i>
-          </button>
-          <button class="btn btn-xs btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Analizar con IA">
-            <i class="bi bi-arrow-clockwise"></i>
-          </button>
         </div>
       </div>
 
-      {# ── AI Panel — siempre visible si analizado ── #}
-      <div id="ai-{{ ct.id }}" {% if not ct.ai_analizado %}style="display:none"{% endif %}>
-        {% if ct.ai_analizado %}
-        <div class="ai-panel">
-          <div class="d-flex align-items-center gap-3 mb-3">
-            <div class="ai-score-ring" style="background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}">
-              {{ ct.ai_score or '?' }}
+      {# Si NO está analizado: CTA grande para analizar #}
+      {% if not ct.ai_analizado %}
+      <div class="ct-pro-noai">
+        <div class="ct-pro-noai-icon">
+          <i class="bi bi-stars"></i>
+        </div>
+        <h5 style="font-size:1rem;font-weight:800;margin-bottom:6px">Analiza este contrato con IA</h5>
+        <p style="color:#6b7280;font-size:.84rem;margin-bottom:14px">
+          Claude leerá el PDF completo y extraerá automáticamente: cláusulas críticas, riesgos,
+          cobertura, frecuencia recomendada, costos, alertas y propuestas de mejora.
+        </p>
+        <button class="btn fw-bold px-4" style="background:#7c3aed;color:#fff;border:none"
+                onclick="analizarContrato({{ ct.id }}, this)">
+          <i class="bi bi-stars me-2"></i>Analizar contrato
+        </button>
+      </div>
+      {% else %}
+
+      {# ═════════════════════════════════════════════════════
+         ANÁLISIS IA — DASHBOARD COMPLETO
+         ═════════════════════════════════════════════════════ #}
+      <div class="ct-pro-ai">
+
+        {# ── Banner de score con dial circular grande ── #}
+        <div class="ct-score-banner">
+          <div class="ct-score-dial">
+            {# Dial SVG circular #}
+            <svg viewBox="0 0 100 100" style="width:130px;height:130px">
+              <circle cx="50" cy="50" r="44" fill="none" stroke="#f3f4f6" stroke-width="8"></circle>
+              <circle cx="50" cy="50" r="44" fill="none" stroke="{{ score_color }}" stroke-width="8"
+                      stroke-dasharray="{{ score * 2.764 }} {{ 276.4 - (score * 2.764) }}"
+                      stroke-dashoffset="69.1" transform="rotate(-90 50 50)"
+                      stroke-linecap="round"
+                      style="filter:drop-shadow(0 2px 4px {{ score_color }}33)"></circle>
+              <text x="50" y="48" text-anchor="middle" style="font-size:24px;font-weight:900;fill:#0f172a">{{ score }}</text>
+              <text x="50" y="62" text-anchor="middle" style="font-size:9px;font-weight:600;fill:#9ca3af">de 100</text>
+            </svg>
+            <div class="ct-score-label" style="color:{{ score_color }}">{{ score_text }}</div>
+          </div>
+          <div class="ct-score-info">
+            <div class="ct-score-tag">
+              <i class="bi bi-stars me-1"></i>Análisis IA · {{ ct.ai_tipo_contrato or 'Contrato Mant.' }}
+            </div>
+            {% if ct.ai_resumen %}
+            <p class="ct-score-resumen">{{ ct.ai_resumen }}</p>
+            {% endif %}
+            <div class="ct-score-meta">
+              <i class="bi bi-clock me-1"></i>Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y a las %H:%M') if ct.ai_fecha else '—' }}
+            </div>
+          </div>
+        </div>
+
+        {# ── KPIs económicos en grid de cards grandes ── #}
+        <div class="ct-kpi-grid">
+          {% if ct.monto_mensual %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-cash-stack"></i></div>
+            <div>
+              <div class="ct-kpi-num">${{ "{:,.0f}".format(ct.monto_mensual).replace(",",".") }}</div>
+              <div class="ct-kpi-lbl">Monto mensual</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if ct.costo_total %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-wallet2"></i></div>
+            <div>
+              <div class="ct-kpi-num">${{ "{:,.0f}".format(ct.costo_total).replace(",",".") }}</div>
+              <div class="ct-kpi-lbl">Costo total contrato</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if ct.costo_por_mant %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:#fef3c7;color:#92400e"><i class="bi bi-tools"></i></div>
+            <div>
+              <div class="ct-kpi-num">${{ "{:,.0f}".format(ct.costo_por_mant).replace(",",".") }}</div>
+              <div class="ct-kpi-lbl">Costo por mantención</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if ct.sla_horas %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:#ede9fe;color:#6d28d9"><i class="bi bi-stopwatch"></i></div>
+            <div>
+              <div class="ct-kpi-num">{{ ct.sla_horas }}h</div>
+              <div class="ct-kpi-lbl">SLA de respuesta</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if ct.ai_frecuencia_sug %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:#fce7f3;color:#9f1239"><i class="bi bi-calendar-week"></i></div>
+            <div>
+              <div class="ct-kpi-num">{{ ct.ai_frecuencia_sug }}m</div>
+              <div class="ct-kpi-lbl">Frecuencia sugerida</div>
+            </div>
+          </div>
+          {% endif %}
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:{{ '#dcfce7' if ct.incluye_mant_gratis else '#f3f4f6' }};color:{{ '#166534' if ct.incluye_mant_gratis else '#6b7280' }}">
+              <i class="bi bi-{{ 'check-circle-fill' if ct.incluye_mant_gratis else 'x-circle' }}"></i>
             </div>
             <div>
-              <div style="font-size:.78rem;font-weight:800;color:#7c3aed"><i class="bi bi-stars me-1"></i>Análisis IA — {{ ct.ai_tipo_contrato or 'Contrato' }}</div>
-              <div class="score-bar mt-1" style="width:160px">
-                <div class="score-fill" style="width:{{ ct.ai_score or 0 }}%;background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }}"></div>
-              </div>
-            </div>
-            <div class="ms-auto text-end">
-              <div style="font-size:.68rem;color:#9ca3af">Analizado {{ ct.ai_fecha.strftime('%d/%m/%Y') if ct.ai_fecha else '—' }}</div>
-              <button class="btn btn-xs btn-outline-secondary mt-1" onclick="analizarContrato({{ ct.id }}, this)">
-                <i class="bi bi-arrow-clockwise me-1"></i>Re-analizar
-              </button>
+              <div class="ct-kpi-num" style="font-size:.95rem;color:{{ '#166534' if ct.incluye_mant_gratis else '#6b7280' }}">{{ 'Incluidas' if ct.incluye_mant_gratis else 'No incluidas' }}</div>
+              <div class="ct-kpi-lbl">Mantenciones gratis</div>
             </div>
           </div>
-
-          {% if ct.ai_resumen %}
-          <p style="font-size:.82rem;color:#374151;margin-bottom:12px;line-height:1.5;
-                    background:#fff;border-radius:8px;padding:10px 12px;border-left:3px solid #7c3aed">
-            {{ ct.ai_resumen }}
-          </p>
-          {% endif %}
-
-          <div class="ai-field-grid mb-3">
-            {% if ct.costo_por_mant %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">Costo por mantención</div>
-              <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_por_mant).replace(",",".") }}</div>
+          <div class="ct-kpi">
+            <div class="ct-kpi-icon" style="background:{{ '#dcfce7' if ct.incluye_repuestos else '#f3f4f6' }};color:{{ '#166534' if ct.incluye_repuestos else '#6b7280' }}">
+              <i class="bi bi-{{ 'check-circle-fill' if ct.incluye_repuestos else 'x-circle' }}"></i>
             </div>
-            {% endif %}
-            {% if ct.costo_total %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">Costo total contrato</div>
-              <div class="ai-field-value">💰 ${{ "{:,.0f}".format(ct.costo_total).replace(",",".") }}</div>
+            <div>
+              <div class="ct-kpi-num" style="font-size:.95rem;color:{{ '#166534' if ct.incluye_repuestos else '#6b7280' }}">{{ 'Incluidos' if ct.incluye_repuestos else 'Excluidos' }}</div>
+              <div class="ct-kpi-lbl">Repuestos</div>
             </div>
-            {% endif %}
-            {% if ct.sla_horas %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">SLA respuesta</div>
-              <div class="ai-field-value">⏱ {{ ct.sla_horas }} horas</div>
-            </div>
-            {% endif %}
-            {% if ct.ai_frecuencia_sug %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">Frecuencia sugerida</div>
-              <div class="ai-field-value">🔄 cada {{ ct.ai_frecuencia_sug }} meses</div>
-            </div>
-            {% endif %}
-            {% if ct.incluye_mant_gratis %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">Mantenciones</div>
-              <div class="ai-field-value" style="color:#166534">✓ Incluidas gratis</div>
-            </div>
-            {% endif %}
-            {% if ct.incluye_repuestos %}
-            <div class="ai-field-item">
-              <div class="ai-field-label">Repuestos</div>
-              <div class="ai-field-value" style="color:#166534">✓ Incluidos</div>
-            </div>
-            {% endif %}
           </div>
-
-          {% if ct.ai_cobertura %}
-          <div class="mb-3">
-            <div class="ai-section-title">Cobertura</div>
-            <div style="font-size:.79rem;color:#374151;background:#fff;border-radius:6px;padding:8px 10px">{{ ct.ai_cobertura }}</div>
-          </div>
-          {% endif %}
-
-          {% if ct.ai_clausulas %}
-          <div class="mb-3">
-            <div class="ai-section-title">⚖️ Cláusulas críticas</div>
-            {% for c in ct.ai_clausulas|from_json %}
-            <div class="ai-chip"><i class="bi bi-file-text me-1" style="color:#2563eb"></i>{{ c }}</div>
-            {% endfor %}
-          </div>
-          {% endif %}
-
-          {% if ct.ai_puntos_criticos %}
-          <div class="mb-3">
-            <div class="ai-section-title">⚠️ Puntos críticos</div>
-            {% for p in ct.ai_puntos_criticos|from_json %}
-            <div class="ai-chip"><i class="bi bi-exclamation-circle me-1" style="color:#ea580c"></i>{{ p }}</div>
-            {% endfor %}
-          </div>
-          {% endif %}
-
-          {% if ct.ai_alertas %}
-          <div class="mb-3">
-            <div class="ai-section-title">🔔 Alertas</div>
-            {% for a in ct.ai_alertas|from_json %}
-            <div class="ai-chip"><i class="bi bi-bell me-1" style="color:#dc2626"></i>{{ a }}</div>
-            {% endfor %}
-          </div>
-          {% endif %}
-
-          {% if ct.ai_mejoras %}
-          <div>
-            <div class="ai-section-title">💡 Mejoras sugeridas</div>
-            {% for m in ct.ai_mejoras|from_json %}
-            <div class="ai-chip"><i class="bi bi-lightbulb me-1" style="color:#7c3aed"></i>{{ m }}</div>
-            {% endfor %}
-          </div>
-          {% endif %}
-
         </div>
-        {% else %}
-        <div class="ai-panel text-center py-3">
-          <p class="mb-2" style="color:#6b7280;font-size:.82rem">Este contrato aún no ha sido analizado.</p>
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none"
-                  onclick="analizarContrato({{ ct.id }}, this)">
-            <i class="bi bi-stars me-1"></i>Analizar con Claude
-          </button>
+
+        {# ── COBERTURA — texto destacado ── #}
+        {% if ct.ai_cobertura %}
+        <div class="ct-cobertura">
+          <div class="ct-section-h">
+            <i class="bi bi-shield-check"></i>Cobertura del contrato
+          </div>
+          <div class="ct-cobertura-text">{{ ct.ai_cobertura }}</div>
         </div>
         {% endif %}
-      </div>
 
-    </div>
+        {# ── DOS COLUMNAS: ALERTAS CRÍTICAS + CLÁUSULAS ── #}
+        <div class="row g-3">
+
+          {# Columna izquierda — Partes críticas y alertas #}
+          <div class="col-12 col-lg-6">
+            {% if ct.ai_alertas %}
+            <div class="ct-block ct-block-danger">
+              <div class="ct-block-h">
+                <i class="bi bi-exclamation-triangle-fill"></i>Alertas críticas
+                <span class="ct-block-count">{{ (ct.ai_alertas|from_json)|length }}</span>
+              </div>
+              <div class="ct-block-body">
+                {% for a in ct.ai_alertas|from_json %}
+                <div class="ct-block-item">
+                  <i class="bi bi-bell-fill" style="color:#dc2626"></i>
+                  <span>{{ a }}</span>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            {% if ct.ai_puntos_criticos %}
+            <div class="ct-block ct-block-warning">
+              <div class="ct-block-h">
+                <i class="bi bi-exclamation-circle-fill"></i>Puntos críticos a revisar
+                <span class="ct-block-count">{{ (ct.ai_puntos_criticos|from_json)|length }}</span>
+              </div>
+              <div class="ct-block-body">
+                {% for p in ct.ai_puntos_criticos|from_json %}
+                <div class="ct-block-item">
+                  <i class="bi bi-eye-fill" style="color:#ea580c"></i>
+                  <span>{{ p }}</span>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+
+          {# Columna derecha — Cláusulas + Mejoras #}
+          <div class="col-12 col-lg-6">
+            {% if ct.ai_clausulas %}
+            <div class="ct-block ct-block-info">
+              <div class="ct-block-h">
+                <i class="bi bi-journal-text"></i>Cláusulas relevantes
+                <span class="ct-block-count">{{ (ct.ai_clausulas|from_json)|length }}</span>
+              </div>
+              <div class="ct-block-body">
+                {% for c in ct.ai_clausulas|from_json %}
+                <div class="ct-block-item">
+                  <i class="bi bi-file-text-fill" style="color:#2563eb"></i>
+                  <span>{{ c }}</span>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            {% if ct.ai_mejoras %}
+            <div class="ct-block ct-block-success">
+              <div class="ct-block-h">
+                <i class="bi bi-lightbulb-fill"></i>Propuestas de mejora
+                <span class="ct-block-count">{{ (ct.ai_mejoras|from_json)|length }}</span>
+              </div>
+              <div class="ct-block-body">
+                {% for m in ct.ai_mejoras|from_json %}
+                <div class="ct-block-item">
+                  <i class="bi bi-arrow-up-right-circle-fill" style="color:#16a34a"></i>
+                  <span>{{ m }}</span>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        {# ══════════════════════════════════════════════════════
+           PROYECCIÓN A 6 MESES — Timeline visual
+           ══════════════════════════════════════════════════════ #}
+        {% if ct.ai_frecuencia_sug or ct.frecuencia_meses %}
+        {% set freq = ct.ai_frecuencia_sug or ct.frecuencia_meses %}
+        {% set ult_fecha = stats.ult_visita_fecha or ct.fecha_inicio or hoy %}
+        <div class="ct-proyeccion mt-3">
+          <div class="ct-section-h">
+            <i class="bi bi-graph-up-arrow"></i>Proyección a 6 meses · Frecuencia recomendada cada {{ freq }} meses
+          </div>
+          <div class="ct-proyeccion-grid">
+            {% set proy_meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] %}
+            {% for i in range(7) %}
+              {% set mes_idx = (hoy.month - 1 + i) % 12 %}
+              {% set anio_offset = (hoy.month - 1 + i) // 12 %}
+              {% set mes_nombre = proy_meses[mes_idx] %}
+              {% set anio_corto = (hoy.year + anio_offset) % 100 %}
+              {# Determinar si toca mantención: hay una visita programada/realizada en este mes? #}
+              {% set tipo_mes = 'libre' %}
+              {% if i == 0 %}{% set tipo_mes = 'actual' %}{% endif %}
+              {% if i % freq == 0 and i > 0 %}{% set tipo_mes = 'mantencion' %}{% endif %}
+              {% if dias_v < (i*30) and dias_v > 0 and not ct.es_indefinido %}{% set tipo_mes = 'vencimiento' %}{% endif %}
+
+              <div class="proy-cell proy-cell-{{ tipo_mes }}">
+                <div class="proy-cell-mes">{{ mes_nombre }} '{{ anio_corto }}</div>
+                <div class="proy-cell-icon">
+                  {% if tipo_mes == 'actual' %}<i class="bi bi-geo-alt-fill"></i>
+                  {% elif tipo_mes == 'mantencion' %}<i class="bi bi-tools"></i>
+                  {% elif tipo_mes == 'vencimiento' %}<i class="bi bi-calendar-x-fill"></i>
+                  {% else %}<i class="bi bi-circle"></i>
+                  {% endif %}
+                </div>
+                <div class="proy-cell-tipo">
+                  {% if tipo_mes == 'actual' %}Hoy
+                  {% elif tipo_mes == 'mantencion' %}Preventiva
+                  {% elif tipo_mes == 'vencimiento' %}Vence
+                  {% else %}—
+                  {% endif %}
+                </div>
+              </div>
+              {% if not loop.last %}<div class="proy-arrow"><i class="bi bi-chevron-right"></i></div>{% endif %}
+            {% endfor %}
+          </div>
+          <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+            <div style="font-size:.72rem;color:#6b7280">
+              <span class="me-3"><span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:50%;margin-right:4px"></span>Hoy</span>
+              <span class="me-3"><span style="display:inline-block;width:10px;height:10px;background:#16a34a;border-radius:50%;margin-right:4px"></span>Preventiva sugerida</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:#dc2626;border-radius:50%;margin-right:4px"></span>Vencimiento contrato</span>
+            </div>
+            {% if ct.monto_mensual and freq %}
+            {% set ahorro_proyectado = (ct.monto_mensual or 0) * 6 %}
+            <div style="font-size:.78rem;color:#166534;font-weight:700">
+              <i class="bi bi-cash me-1"></i>Inversión estimada 6m: ${{ "{:,.0f}".format(ahorro_proyectado).replace(",",".") }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+      </div>{# /ct-pro-ai #}
+      {% endif %}
+
+    </div>{# /contrato-pro #}
     {% endfor %}
   {% else %}
-    <div class="empty-state">
-      <i class="bi bi-file-earmark-x"></i>
-      <div class="fw-semibold mb-1">Sin contratos subidos</div>
-      <div style="font-size:.78rem">Sube el contrato para que la IA lo analice automáticamente</div>
+    <div class="empty-state" style="background:#fff;border:2px dashed #e5e7eb;border-radius:12px;padding:40px 20px">
+      <i class="bi bi-file-earmark-x" style="font-size:3rem;opacity:.3"></i>
+      <div class="fw-bold mt-2 mb-1" style="font-size:1rem;color:#374151">Sin contratos subidos</div>
+      <div style="font-size:.84rem;color:#6b7280;max-width:400px;margin:0 auto">
+        Sube el PDF del contrato y la IA extraerá automáticamente cláusulas, riesgos, costos y proyecciones.
+      </div>
+      <button class="btn btn-ilus mt-3 fw-bold" onclick="abrirContratoModal()">
+        <i class="bi bi-upload me-1"></i>Subir primer contrato
+      </button>
     </div>
   {% endif %}
   </div>
