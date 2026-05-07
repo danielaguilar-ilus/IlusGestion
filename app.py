@@ -30,6 +30,13 @@ def _get_ai_key():
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
 
+
+@app.template_filter("hm")
+def _jinja_hm(value):
+    if value is None:
+        return ""
+    return str(value)[:5]
+
 # ══════════════════════════════════════════════════════════════
 #  PLAYWRIGHT BROWSER POOL — instancia única reutilizada
 #  Evita el overhead de launch/close (~700ms) por cada PDF.
@@ -10353,7 +10360,9 @@ def mant_ficha(cid):
 
     def _norm_contrato(row):
         r = dict(row)
-        for k in ('fecha_inicio', 'fecha_vencimiento', 'created_at', 'updated_at'):
+        for k in ('fecha_inicio', 'fecha_vencimiento', 'ai_fecha',
+                  'ai_vigencia_inicio', 'ai_vigencia_fin',
+                  'created_at', 'updated_at'):
             if k in r:
                 r[k] = _d(r[k])
         return r
