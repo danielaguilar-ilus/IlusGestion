@@ -89,19 +89,41 @@
               {# Panel Resend #}
               <div id="panel-resend">
                 <div id="resendStatusBox" class="alert py-2 px-3 mb-3 small" style="display:none"></div>
-                <div class="p-3 rounded-2 mb-3" style="background:#f0fdf4;border:1px solid #bbf7d0">
-                  <div class="d-flex align-items-start gap-2">
-                    <i class="bi bi-info-circle-fill text-success mt-1"></i>
-                    <div class="small">
-                      <strong>¿Por qué Resend?</strong> Railway bloquea las conexiones SMTP directas (puertos 587/465).
-                      Resend envía emails vía <strong>HTTPS</strong> — sin puertos bloqueados, más rápido y confiable.
-                      Plan gratuito: <strong>3.000 correos/mes</strong>.
-                    </div>
+
+                {# Banner: la key viene de Railway (ENV) #}
+                {% if resend_source == 'env' %}
+                <div class="alert alert-success d-flex gap-2 align-items-start small mb-3 py-2">
+                  <i class="bi bi-cloud-check-fill text-success mt-1 flex-shrink-0"></i>
+                  <div>
+                    <strong>✅ API Key activa desde Railway Variables</strong><br>
+                    La variable <code>RESEND_API_KEY</code> está configurada en Railway y el sistema la usa automáticamente.
+                    <strong>No necesitas guardar nada aquí.</strong> Solo usa los botones de abajo para verificar o probar.
                   </div>
                 </div>
+                {% elif resend_source == 'db' %}
+                <div class="alert alert-info d-flex gap-2 align-items-start small mb-3 py-2">
+                  <i class="bi bi-database-check mt-1 flex-shrink-0"></i>
+                  <div>
+                    <strong>API Key activa desde la base de datos</strong> — guardada en el sistema.
+                  </div>
+                </div>
+                {% else %}
+                <div class="alert alert-warning d-flex gap-2 align-items-start small mb-3 py-2">
+                  <i class="bi bi-exclamation-triangle-fill mt-1 flex-shrink-0"></i>
+                  <div>
+                    <strong>Sin API Key configurada.</strong> Pega tu key abajo o agrégala en Railway Variables como <code>RESEND_API_KEY</code>.
+                  </div>
+                </div>
+                {% endif %}
+
                 <div class="row g-3">
                   <div class="col-12">
-                    <label class="form-label small fw-semibold">API Key de Resend <span class="text-danger">*</span></label>
+                    <label class="form-label small fw-semibold">
+                      API Key de Resend
+                      {% if resend_source == 'env' %}
+                      <span class="badge bg-success ms-1 small">Activa desde Railway</span>
+                      {% endif %}
+                    </label>
                     <div class="input-group input-group-sm">
                       <input id="resendApiKeyInput" type="password" class="form-control form-control-sm"
                              placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -111,36 +133,44 @@
                         <i class="bi bi-eye"></i>
                       </button>
                     </div>
+                    {% if resend_source == 'env' %}
+                    <div class="form-text text-success">
+                      <i class="bi bi-cloud me-1"></i>Leyendo de <strong>Railway Variables (RESEND_API_KEY)</strong>. Si cambias la key, actualízala directamente en Railway, no aquí.
+                    </div>
+                    {% else %}
                     <div class="form-text">
                       Obtén tu API Key en <a href="https://resend.com/api-keys" target="_blank">resend.com/api-keys</a>
                       o agrégala como <code>RESEND_API_KEY</code> en Railway Variables.
                     </div>
+                    {% endif %}
                   </div>
                   <div class="col-12">
-                    <label class="form-label small fw-semibold">Email remitente (opcional)</label>
+                    <label class="form-label small fw-semibold">Email remitente</label>
                     <input id="resendFromAddr" class="form-control form-control-sm"
-                           placeholder="onboarding@resend.dev (plan gratuito) o noreply@tudominio.cl"
-                           value="{{ resend_from or '' }}">
-                    <div class="form-text">Plan gratuito: usar <code>onboarding@resend.dev</code>. Con dominio verificado: tu propio correo.</div>
+                           placeholder="onboarding@resend.dev"
+                           value="{{ resend_from or 'onboarding@resend.dev' }}">
+                    <div class="form-text">Plan gratuito: <code>onboarding@resend.dev</code>. Con dominio verificado: tu propio correo.</div>
                   </div>
                 </div>
                 <div class="d-flex gap-2 mt-3 flex-wrap align-items-center">
+                  {% if resend_source != 'env' %}
                   <button class="btn btn-danger btn-sm fw-bold" onclick="guardarResend()">
                     <i class="bi bi-floppy me-1"></i>Guardar configuración
                   </button>
+                  {% endif %}
                   <button class="btn btn-primary btn-sm" onclick="verificarResend(this)">
                     <i class="bi bi-shield-check me-1"></i>Verificar API Key
                   </button>
-                  <button class="btn btn-success btn-sm" onclick="abrirTestResend()">
+                  <button class="btn btn-success btn-sm fw-bold" onclick="abrirTestResend()">
                     <i class="bi bi-send me-1"></i>Enviar correo de prueba
                   </button>
                   <a href="https://resend.com/api-keys" target="_blank" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-box-arrow-up-right me-1"></i>Obtener API Key
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Ver API Keys
                   </a>
                 </div>
                 <div class="form-text mt-2">
                   <i class="bi bi-info-circle me-1"></i>
-                  <strong>Verificar API Key</strong> = solo valida la conexión sin enviar emails.
+                  <strong>Verificar</strong> = comprueba la conexión sin enviar.
                   <strong>Enviar prueba</strong> = manda un correo real.
                 </div>
                 <div id="resendMsg" class="small mt-2"></div>
@@ -1068,22 +1098,21 @@ async function verificarResend(btn) {
     }
     const sugg = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
     if (d.ok) {
-      msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small">
-        <div class="fw-bold"><i class="bi bi-shield-check-fill me-1"></i>${esc(d.message)}</div>
-        ${d.source ? `<div class="small mt-1 text-muted">Fuente de configuración: <code>${esc(d.source)}</code></div>` : ''}
+      const sourceNote = d.source === 'env'
+        ? `<div class="mt-1"><i class="bi bi-cloud-check me-1"></i>La key viene de <strong>Railway Variables (RESEND_API_KEY)</strong> — no necesitas guardarla en el sistema, ya está activa.</div>`
+        : d.source === 'db'
+        ? `<div class="mt-1 text-muted"><i class="bi bi-database me-1"></i>La key viene de la base de datos del sistema.</div>`
+        : '';
+      const alertClass = d.warning ? 'alert-warning' : 'alert-success';
+      msg.innerHTML = `<div class="alert ${alertClass} py-2 px-3 mb-0 small">
+        <div class="fw-bold">${esc(d.message)}</div>
+        ${sourceNote}
       </div>`;
     } else {
-      const is1010 = d.error_code === '1010' || (d.detail||'').includes('1010');
-      const extraBtn = is1010
-        ? `<div class="mt-2"><a href="https://resend.com/settings/general" target="_blank" class="btn btn-warning btn-sm fw-bold">
-             <i class="bi bi-box-arrow-up-right me-1"></i>Ir a verificar email en Resend →
-           </a></div>`
-        : '';
       msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
         <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'No se pudo verificar')}</div>
         ${d.detail ? `<div class="mt-1 font-monospace" style="font-size:.72rem;word-break:break-all">${esc(d.detail)}</div>` : ''}
         ${sugg ? `<div class="fw-semibold mt-2">Qué revisar:</div><ul class="mb-0 ps-3">${sugg}</ul>` : ''}
-        ${extraBtn}
       </div>`;
     }
   } catch(e) {

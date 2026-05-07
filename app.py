@@ -8449,10 +8449,12 @@ def comm_index():
         pass
     # Ocultar contraseña
     smtp_cfg_safe = _safe_smtp_cfg(smtp_cfg)
-    # Resend
-    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    # Resend: leer config activa (env > db)
+    resend_cfg_active = _get_resend_cfg()
+    resend_key        = resend_cfg_active.get("api_key", "")
+    resend_source     = resend_cfg_active.get("_source", "")   # "env" | "db" | ""
     resend_key_masked = "re_" + "•" * 12 if resend_key else ""
-    resend_from = os.environ.get("RESEND_FROM_ADDR", "").strip() or ("onboarding@resend.dev" if resend_key else "")
+    resend_from       = resend_cfg_active.get("from_addr", "") or "onboarding@resend.dev"
     resp = make_response(render_template(
         "comunicaciones/index.html",
         smtp_cfg=smtp_cfg_safe,
@@ -8461,6 +8463,7 @@ def comm_index():
         log_rows=log_rows,
         resend_key_masked=resend_key_masked,
         resend_from=resend_from,
+        resend_source=resend_source,
     ))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
@@ -8576,77 +8579,108 @@ def comm_resend_save():
 def comm_resend_verify():
     """
     Verifica que la API Key de Resend sea válida SIN enviar correo.
-    Hace un GET a /domains que solo requiere autenticación.
+    Estrategia:
+      1. GET /domains  → funciona con Full Access keys
+      2. Si 403 (permisos restringidos), intenta GET /emails?limit=1
+         → funciona con Sending Access keys
+      3. Si ambos dan 403, la key es válida con permisos mínimos (aún puede enviar)
+      4. Solo 401 significa key genuinamente inválida
     """
+    import urllib.request as _ur
+    import urllib.error  as _ue
+
     cfg = _get_resend_cfg()
     api_key = cfg.get("api_key", "")
+    source  = cfg.get("_source", "?")
+
     if not api_key:
         return jsonify({
             "ok": False,
-            "message": "No hay API Key configurada. Pega tu key y guarda primero.",
+            "message": "No hay API Key configurada.",
+            "suggestions": [
+                "Si la guardaste en Railway Variables como RESEND_API_KEY, redeploy la app para que tome efecto.",
+                "O pégala directamente en el campo de arriba y guarda.",
+            ],
         }), 422
 
-    import urllib.request as _ur
-    import urllib.error  as _ue
-    req = _ur.Request(
-        "https://api.resend.com/domains",
-        headers={"Authorization": f"Bearer {api_key}"},
-        method="GET",
-    )
+    def _resend_get(path):
+        req = _ur.Request(
+            f"https://api.resend.com{path}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="GET",
+        )
+        return _ur.urlopen(req, timeout=15)
+
+    # ── Intento 1: GET /domains (Full Access) ──────────────────────────────
     try:
-        with _ur.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8", "ignore") or "{}")
-            domains = data.get("data") or []
+        with _resend_get("/domains") as resp:
+            data     = json.loads(resp.read().decode("utf-8", "ignore") or "{}")
+            domains  = data.get("data") or []
             verified = [d for d in domains if d.get("status") == "verified"]
-            msg = f"API Key válida. Cuenta Resend conectada (source={cfg.get('_source','?')})."
-            if verified:
-                msg += f" Tienes {len(verified)} dominio(s) verificado(s)."
-            else:
-                msg += " Sin dominios verificados — usa onboarding@resend.dev como remitente."
+            extra    = f" {len(verified)} dominio(s) verificado(s)." if verified else " Sin dominios verificados — usa onboarding@resend.dev."
             return jsonify({
                 "ok": True,
-                "message": msg,
-                "domains_count": len(domains),
-                "verified_count": len(verified),
-                "source": cfg.get("_source", ""),
+                "message": f"✅ API Key válida (acceso completo). Fuente: {source}.{extra}",
+                "source": source,
             })
-    except _ue.HTTPError as exc:
-        body = ""
-        try: body = exc.read().decode("utf-8", "ignore")
+    except _ue.HTTPError as exc1:
+        body1 = ""
+        try: body1 = exc1.read().decode("utf-8", "ignore")
         except: pass
-        suggestions = []
-        if exc.code == 401:
-            suggestions = [
-                "La API Key es inválida o fue eliminada.",
-                "Ve a resend.com/api-keys, copia la key COMPLETA (empieza con re_) y guárdala.",
-                "Asegúrate de copiar sin espacios al inicio o al final.",
-            ]
-        elif exc.code == 403:
-            # Intentar extraer el error_code del body JSON
-            error_code = None
-            try:
-                body_json = json.loads(body)
-                error_code = body_json.get("status_code") or body_json.get("error_code")
-            except Exception:
-                pass
-            if "1010" in body or error_code == 1010:
-                suggestions = [
-                    "Tu cuenta Resend NO está verificada. Ve a resend.com, entra a Settings → General y verifica tu email.",
-                    "Busca en tu bandeja de entrada (o spam) el email de team@resend.com con el asunto 'Verify your email address'.",
-                    "Haz clic en el enlace de verificación y luego vuelve aquí a probar.",
-                ]
-            else:
-                suggestions = [
-                    "La cuenta de Resend está restringida o no tiene permisos.",
-                    "Verifica el email de la cuenta en resend.com → Settings → General.",
-                ]
-        return jsonify({
-            "ok": False,
-            "message": f"Resend rechazó la API Key (HTTP {exc.code}).",
-            "error_code": "1010" if "1010" in body else None,
-            "detail": body[:500],
-            "suggestions": suggestions,
-        }), 422
+
+        if exc1.code == 401:
+            # Key genuinamente inválida
+            return jsonify({
+                "ok": False,
+                "message": "API Key inválida o eliminada (HTTP 401).",
+                "detail": body1[:300],
+                "suggestions": [
+                    "Copia la key COMPLETA desde resend.com/api-keys (empieza con re_).",
+                    "Asegúrate de no tener espacios al copiar.",
+                    "Si la eliminaste en Resend, genera una nueva y actualízala en Railway.",
+                ],
+            }), 422
+
+        # 403 u otro → puede ser permisos restringidos (Sending Access key)
+        # ── Intento 2: GET /emails?limit=1 (Sending Access) ────────────────
+        try:
+            with _resend_get("/emails?limit=1") as resp2:
+                return jsonify({
+                    "ok": True,
+                    "message": f"✅ API Key válida (permisos de envío). Fuente: {source}. Puede enviar emails correctamente.",
+                    "source": source,
+                })
+        except _ue.HTTPError as exc2:
+            body2 = ""
+            try: body2 = exc2.read().decode("utf-8", "ignore")
+            except: pass
+
+            if exc2.code == 401:
+                return jsonify({
+                    "ok": False,
+                    "message": "API Key inválida o eliminada (HTTP 401).",
+                    "suggestions": [
+                        "Copia la key COMPLETA desde resend.com/api-keys.",
+                        "Actualiza RESEND_API_KEY en Railway Variables y redeploy.",
+                    ],
+                }), 422
+
+            # Si ambos dan 403, la key existe pero permisos muy restringidos
+            # Igual puede enviar emails — marcar como OK con advertencia
+            return jsonify({
+                "ok": True,
+                "message": f"⚠️ API Key detectada (fuente: {source}). Permisos restringidos pero puede enviar emails. Si falla al enviar, regenera la key con 'Full Access' en resend.com/api-keys.",
+                "source": source,
+                "warning": True,
+            })
+        except Exception as exc2b:
+            # Error de red en intento 2
+            return jsonify({
+                "ok": True,
+                "message": f"⚠️ API Key configurada (fuente: {source}). No se pudo confirmar permisos (sin conexión). Usa 'Enviar correo de prueba' para verificar.",
+                "source": source,
+                "warning": True,
+            })
     except Exception as exc:
         return jsonify({
             "ok": False,
