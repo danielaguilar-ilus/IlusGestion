@@ -125,11 +125,14 @@
                   </div>
                 </div>
                 <div class="d-flex gap-2 mt-3 flex-wrap align-items-center">
-                  <button class="btn btn-success btn-sm fw-bold" onclick="abrirTestResend()">
-                    <i class="bi bi-send me-1"></i>Probar Resend API
+                  <button class="btn btn-danger btn-sm fw-bold" onclick="guardarResend()">
+                    <i class="bi bi-floppy me-1"></i>Guardar configuración
                   </button>
-                  <a href="https://resend.com" target="_blank" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-box-arrow-up-right me-1"></i>Ir a resend.com
+                  <button class="btn btn-success btn-sm" onclick="abrirTestResend()">
+                    <i class="bi bi-send me-1"></i>Probar envío
+                  </button>
+                  <a href="https://resend.com/api-keys" target="_blank" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Obtener API Key
                   </a>
                 </div>
                 <div id="resendMsg" class="small mt-2"></div>
@@ -937,6 +940,39 @@ function switchEmailTab(which) {
   document.getElementById('tab-smtp').classList.toggle('active',   which === 'smtp');
 }
 
+async function guardarResend() {
+  const msg     = document.getElementById('resendMsg');
+  const apiKey  = document.getElementById('resendApiKeyInput').value.trim();
+  const fromAddr= document.getElementById('resendFromAddr').value.trim();
+  const bullets = ['•','*'];
+  const isMasked = apiKey === '' || bullets.some(b => apiKey === b.repeat(apiKey.length)) || /^re_•+$/.test(apiKey);
+  if (isMasked) {
+    msg.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>La key está enmascarada. Si ya está guardada en Railway no necesitas re-guardarla.</span>';
+    return;
+  }
+  if (apiKey && !apiKey.startsWith('re_')) {
+    msg.innerHTML = '<span class="text-danger">La API Key debe comenzar con <code>re_</code>. Cópiala exactamente desde resend.com/api-keys</span>';
+    return;
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Guardando…';
+  try {
+    const r = await fetch('/comunicaciones/resend/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({api_key: apiKey, from_addr: fromAddr || 'onboarding@resend.dev'})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
+      cargarEstadoEmail();
+    } else {
+      msg.innerHTML = `<span class="text-danger">${esc(d.error || 'Error al guardar')}</span>`;
+    }
+  } catch(e) {
+    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
+  }
+}
+
 function abrirTestResend() {
   document.getElementById('testResendMsg').innerHTML = '';
   _modalTestResend.show();
@@ -960,7 +996,8 @@ async function enviarTestResend() {
     } else {
       msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
         <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al enviar')}</div>
-        ${sugg ? `<ul class="mb-0 mt-1 ps-3">${sugg}</ul>` : ''}
+        ${d.detail ? `<div class="mt-1 font-monospace" style="font-size:.75rem;word-break:break-all">${esc(d.detail)}</div>` : ''}
+        ${sugg ? `<div class="fw-semibold mt-2">Qué revisar:</div><ul class="mb-0 ps-3">${sugg}</ul>` : ''}
       </div>`;
     }
   } catch(e) {

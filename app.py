@@ -1883,27 +1883,50 @@ def _open_smtp_client(host: str, port: int, secure: bool, timeout: int = 15, con
     return _IPv4SMTP(host, port, timeout=timeout)
 
 
+def _get_resend_cfg() -> dict:
+    """
+    Configuración Resend: env vars Railway → BD.
+    Retorna dict con 'api_key', 'from_addr', '_source'.
+    """
+    # 1. Env var (Railway / Docker / local .env)
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if api_key:
+        return {
+            "api_key":   api_key,
+            "from_addr": os.environ.get("RESEND_FROM_ADDR", "onboarding@resend.dev").strip(),
+            "_source":   "env",
+        }
+    # 2. BD
+    try:
+        row = mysql_fetchone("SELECT * FROM comm_resend_config ORDER BY id DESC LIMIT 1")
+        if row and row.get("api_key"):
+            return {
+                "api_key":   row["api_key"],
+                "from_addr": row.get("from_addr") or "onboarding@resend.dev",
+                "_source":   "db",
+            }
+    except Exception:
+        pass
+    return {}
+
+
 def _send_via_resend(to_addr: str, subject: str, html_body: str,
                      from_name: str = "ILUS Sport & Health",
                      from_addr: str = None) -> bool:
     """
     Envía email via Resend HTTP API (funciona en Railway donde SMTP está bloqueado).
-    Requiere env var RESEND_API_KEY.
+    Lee api_key desde env var RESEND_API_KEY (Railway) o BD.
     Plan gratuito: 3.000 emails/mes, 100/día.
     """
-    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    cfg = _get_resend_cfg()
+    api_key = cfg.get("api_key", "")
     if not api_key:
         return False
 
-    # Plan free → remitente forzado a onboarding@resend.dev
-    # Con dominio verificado → usar RESEND_FROM_ADDR o el from_addr del sistema
-    sender_addr = (
-        os.environ.get("RESEND_FROM_ADDR", "").strip()
-        or from_addr
-        or "onboarding@resend.dev"
-    )
+    sender_addr = cfg.get("from_addr") or from_addr or "onboarding@resend.dev"
 
     import urllib.request as _ur
+    import urllib.error  as _ue
 
     payload = json.dumps({
         "from":    f"{from_name} <{sender_addr}>",
@@ -1924,10 +1947,27 @@ def _send_via_resend(to_addr: str, subject: str, html_body: str,
     try:
         with _ur.urlopen(req, timeout=20) as resp:
             ok = resp.status in (200, 201)
-            print(f"[ILUS][RESEND] {'OK' if ok else 'FAIL'} → {to_addr} (HTTP {resp.status})")
+            print(f"[ILUS][RESEND] {'OK' if ok else 'FAIL'} → {to_addr} (HTTP {resp.status}, source={cfg.get('_source')})")
             return ok
+    except _ue.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "ignore")
+        except Exception:
+            pass
+        print(f"[ILUS][RESEND] HTTP {exc.code} → {to_addr}: {body}")
+        # Guardar detalle para que el endpoint de test lo pueda leer
+        try:
+            g._last_resend_error = f"HTTP {exc.code}: {body}"
+        except Exception:
+            pass
+        return False
     except Exception as exc:
         print(f"[ILUS][RESEND] Error → {to_addr}: {exc}")
+        try:
+            g._last_resend_error = str(exc)
+        except Exception:
+            pass
         return False
 
 
@@ -1945,7 +1985,7 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str) -> bool:
     from_addr_cfg = cfg.get("from_addr") or cfg.get("smtp_user", "")
 
     # ── 1. Resend API (máxima prioridad — funciona en Railway) ──────────
-    if os.environ.get("RESEND_API_KEY", "").strip():
+    if _get_resend_cfg().get("api_key"):
         if _send_via_resend(to_addr, subject, html_body, from_name, from_addr_cfg):
             return True
         print("[ILUS][EMAIL] Resend falló, intentando SMTP como respaldo...")
@@ -2045,7 +2085,7 @@ def _send_password_access_email(
 ) -> bool:
     """Envia correo ILUS para crear o cambiar clave mediante token seguro."""
     # Si Resend está configurado, saltar validación SMTP previa (Resend usa HTTPS, no SMTP)
-    if not os.environ.get("RESEND_API_KEY", "").strip():
+    if not _get_resend_cfg().get("api_key"):
         try:
             diag = _smtp_connection_diagnose(_get_smtp_cfg())
             if not diag.get("ok"):
@@ -7069,6 +7109,15 @@ def init_comunicaciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_resend_config (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    api_key         VARCHAR(250),
+                    from_addr       VARCHAR(200),
+                    updated_by      VARCHAR(190),
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS comm_log (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
                     canal           ENUM('email','whatsapp') NOT NULL,
@@ -7913,6 +7962,32 @@ def comm_smtp_test():
         }), 500
 
 
+@app.route("/comunicaciones/resend/config", methods=["POST"])
+@_require_superadmin
+def comm_resend_save():
+    """Guarda configuración Resend en BD (persiste entre deploys)."""
+    d        = request.get_json(silent=True) or {}
+    api_key  = (d.get("api_key")   or "").strip()
+    from_addr= (d.get("from_addr") or "").strip()
+
+    if api_key and not api_key.startswith("re_"):
+        return jsonify({"ok": False, "error": "La API Key debe comenzar con 're_'. Cópiala exactamente desde resend.com/api-keys"}), 400
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM comm_resend_config")
+            if api_key:
+                cur.execute(
+                    "INSERT INTO comm_resend_config (api_key, from_addr, updated_by) VALUES (%s,%s,%s)",
+                    (api_key, from_addr or "onboarding@resend.dev", current_username()),
+                )
+        conn.commit()
+        return jsonify({"ok": True, "message": "Configuración Resend guardada en base de datos."})
+    finally:
+        conn.close()
+
+
 @app.route("/comunicaciones/resend/test", methods=["POST"])
 @_require_superadmin
 def comm_resend_test():
@@ -7922,42 +7997,71 @@ def comm_resend_test():
     if not to:
         return jsonify({"ok": False, "message": "Ingresa un destinatario"}), 400
 
-    api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    if not api_key:
+    cfg = _get_resend_cfg()
+    if not cfg.get("api_key"):
         return jsonify({
             "ok": False,
-            "message": "No hay RESEND_API_KEY configurada.",
+            "message": "No hay API Key de Resend configurada.",
             "suggestions": [
-                "Ve a resend.com y crea una cuenta gratuita (3.000 emails/mes).",
-                "Copia tu API Key y agrégala como variable de entorno RESEND_API_KEY en Railway.",
+                "Pega tu API Key en el campo de arriba y presiona Guardar.",
+                "O agrégala como RESEND_API_KEY en Railway Variables.",
+                "Ve a resend.com/api-keys para obtener una.",
             ],
         }), 422
 
+    # Limpiar error anterior
+    try:
+        g._last_resend_error = ""
+    except Exception:
+        pass
+
     html = _ilus_email_html(
-        titulo    = "✅ Resend API — Conexión verificada",
-        subtitulo = "Prueba de integración — ILUS Comunicaciones",
-        saludo    = "¡Email entregado correctamente!",
-        parrafos  = [
+        titulo       = "✅ Resend API — Conexión verificada",
+        subtitulo    = "Prueba de integración — ILUS Comunicaciones",
+        saludo       = "¡Email entregado correctamente!",
+        parrafos     = [
             "La integración con Resend API está funcionando.",
             "Los correos se enviarán vía HTTPS y no dependen de puertos SMTP.",
         ],
-        info_lineas = [("", "Enviado por", current_username()), ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
+        info_lineas  = [("", "Enviado por", current_username()), ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
         color_acento = "#22c55e",
     )
     ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
+    resend_err = getattr(g, "_last_resend_error", "") or ""
     if ok:
-        _comm_log_entry("email", to, "Prueba Resend API", "ok", "Email de prueba enviado via Resend")
-        return jsonify({"ok": True, "message": f"Email enviado correctamente a {to} via Resend API."})
+        _comm_log_entry("email", to, "Prueba Resend API", "ok", f"Enviado via Resend (source={cfg.get('_source')})")
+        return jsonify({"ok": True, "message": f"✅ Email enviado a {to} vía Resend API."})
     else:
-        _comm_log_entry("email", to, "Prueba Resend API", "error", "Fallo al enviar via Resend")
+        _comm_log_entry("email", to, "Prueba Resend API", "error", resend_err or "Fallo Resend")
+        # Interpretar el error de Resend para dar sugerencias útiles
+        suggestions = []
+        detail = resend_err
+        if "401" in resend_err or "unauthorized" in resend_err.lower() or "invalid_api_key" in resend_err.lower():
+            suggestions = [
+                "La API Key es inválida o fue revocada.",
+                "Ve a resend.com/api-keys, copia la key completa (empieza con 're_') y guárdala de nuevo.",
+            ]
+        elif "422" in resend_err or "from" in resend_err.lower():
+            suggestions = [
+                "En plan gratuito el remitente DEBE ser 'onboarding@resend.dev'.",
+                "Si quieres usar tu propio correo, debes verificar el dominio en resend.com/domains.",
+            ]
+        elif "domain" in resend_err.lower() or "not verified" in resend_err.lower():
+            suggestions = [
+                "El dominio del remitente no está verificado en Resend.",
+                "Usa 'onboarding@resend.dev' como remitente (plan gratuito).",
+            ]
+        else:
+            suggestions = [
+                "Verifica que la API Key sea válida (debe empezar con 're_').",
+                "Asegúrate de que tu cuenta Resend tenga el email verificado.",
+                "En plan gratuito usa onboarding@resend.dev como remitente.",
+            ]
         return jsonify({
             "ok": False,
-            "message": "Resend API no pudo enviar el correo.",
-            "suggestions": [
-                "Verifica que RESEND_API_KEY sea válida.",
-                "En plan gratuito el remitente debe ser onboarding@resend.dev.",
-                "Para usar tu propio dominio, verifica el dominio en resend.com.",
-            ],
+            "message": "Resend no pudo enviar el correo.",
+            "detail": detail,
+            "suggestions": suggestions,
         }), 422
 
 
@@ -7965,16 +8069,17 @@ def comm_resend_test():
 @_require_superadmin
 def comm_email_status():
     """Estado del sistema de email: Resend (prioritario) o SMTP."""
-    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    resend_cfg = _get_resend_cfg()
     smtp_cfg   = _get_smtp_cfg()
     return jsonify({
-        "resend_active": bool(resend_key),
-        "resend_from":   os.environ.get("RESEND_FROM_ADDR", "onboarding@resend.dev"),
+        "resend_active": bool(resend_cfg.get("api_key")),
+        "resend_from":   resend_cfg.get("from_addr", "onboarding@resend.dev"),
+        "resend_source": resend_cfg.get("_source", ""),
         "smtp_source":   smtp_cfg.get("_source", "config"),
         "smtp_user":     smtp_cfg.get("smtp_user", ""),
         "smtp_host":     smtp_cfg.get("smtp_host", ""),
         "smtp_port":     smtp_cfg.get("smtp_port", 587),
-        "active_method": "resend" if resend_key else "smtp",
+        "active_method": "resend" if resend_cfg.get("api_key") else "smtp",
     })
 
 
