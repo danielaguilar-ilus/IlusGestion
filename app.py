@@ -757,6 +757,188 @@ def init_transporte_tables():
         conn.close()
 
 
+PICKUP_REQUESTS_TABLE = "pickup_requests"
+PICKUP_PACKAGES_TABLE = "pickup_packages"
+PICKUP_PROPOSALS_TABLE = "pickup_proposals"
+PICKUP_LOGS_TABLE = "pickup_logs"
+PICKUP_ATTACHMENTS_TABLE = "pickup_attachments"
+PICKUP_SIGNATURES_TABLE = "pickup_signatures"
+PICKUP_SETTINGS_TABLE = "pickup_settings"
+PICKUP_TEMPLATES_TABLE = "pickup_templates"
+
+
+def init_pickup_tables():
+    """Crea el modulo de solicitudes de retiro en bodega."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_REQUESTS_TABLE}` (
+                    id                         INT AUTO_INCREMENT PRIMARY KEY,
+                    code                       VARCHAR(30) UNIQUE,
+                    document_type              VARCHAR(30) NOT NULL,
+                    document_number            VARCHAR(60) NOT NULL,
+                    customer_name              VARCHAR(200) NOT NULL,
+                    customer_rut               VARCHAR(30) NOT NULL,
+                    contact_name               VARCHAR(160) NOT NULL,
+                    contact_email              VARCHAR(180) NOT NULL,
+                    contact_phone              VARCHAR(60) NOT NULL,
+                    pickup_person_name         VARCHAR(160) NOT NULL,
+                    pickup_person_rut          VARCHAR(30) NOT NULL,
+                    pickup_person_phone        VARCHAR(60) NOT NULL,
+                    pickup_person_relation     VARCHAR(40) NOT NULL,
+                    requested_date             DATE NOT NULL,
+                    requested_time_from        TIME NOT NULL,
+                    requested_time_to          TIME NOT NULL,
+                    proposed_date              DATE NULL,
+                    proposed_time_from         TIME NULL,
+                    proposed_time_to           TIME NULL,
+                    confirmed_date             DATE NULL,
+                    confirmed_time_from        TIME NULL,
+                    confirmed_time_to          TIME NULL,
+                    status                     VARCHAR(40) NOT NULL DEFAULT 'solicitud_recibida',
+                    information_quality_score  INT DEFAULT 0,
+                    risk_score                 INT DEFAULT 0,
+                    total_packages             INT DEFAULT 0,
+                    total_weight_kg            DECIMAL(12,3) DEFAULT 0,
+                    total_volumetric_weight    DECIMAL(12,3) DEFAULT 0,
+                    total_volume_m3            DECIMAL(12,4) DEFAULT 0,
+                    invoice_total_amount       DECIMAL(14,2) DEFAULT 0,
+                    observations               TEXT,
+                    internal_notes             TEXT,
+                    public_token               VARCHAR(160) NOT NULL,
+                    signature_status           VARCHAR(30) DEFAULT 'pendiente',
+                    created_ip                 VARCHAR(80),
+                    created_user_agent         VARCHAR(300),
+                    created_at                 DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at                 DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    closed_at                  DATETIME NULL,
+                    INDEX idx_pickup_status (status),
+                    INDEX idx_pickup_date (requested_date),
+                    INDEX idx_pickup_doc (document_type, document_number),
+                    INDEX idx_pickup_token (public_token)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_PACKAGES_TABLE}` (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id          INT NOT NULL,
+                    package_number      INT NOT NULL,
+                    length_cm           DECIMAL(10,2) DEFAULT 0,
+                    width_cm            DECIMAL(10,2) DEFAULT 0,
+                    height_cm           DECIMAL(10,2) DEFAULT 0,
+                    weight_kg           DECIMAL(10,3) DEFAULT 0,
+                    volumetric_weight   DECIMAL(10,3) DEFAULT 0,
+                    volume_m3           DECIMAL(12,4) DEFAULT 0,
+                    FOREIGN KEY (request_id) REFERENCES `{PICKUP_REQUESTS_TABLE}`(id) ON DELETE CASCADE,
+                    INDEX idx_pickup_pkg (request_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_PROPOSALS_TABLE}` (
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id     INT NOT NULL,
+                    proposed_by    VARCHAR(30) NOT NULL,
+                    date           DATE NOT NULL,
+                    time_from      TIME NOT NULL,
+                    time_to        TIME NOT NULL,
+                    message        TEXT,
+                    reason         VARCHAR(200),
+                    status         VARCHAR(30) DEFAULT 'pending',
+                    token          VARCHAR(160),
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    answered_at    DATETIME NULL,
+                    FOREIGN KEY (request_id) REFERENCES `{PICKUP_REQUESTS_TABLE}`(id) ON DELETE CASCADE,
+                    INDEX idx_pickup_prop (request_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_LOGS_TABLE}` (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id  INT NOT NULL,
+                    actor_type  VARCHAR(30) NOT NULL,
+                    actor_name  VARCHAR(180),
+                    action      VARCHAR(80) NOT NULL,
+                    old_status  VARCHAR(40),
+                    new_status  VARCHAR(40),
+                    notes       TEXT,
+                    ip          VARCHAR(80),
+                    user_agent  VARCHAR(300),
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (request_id) REFERENCES `{PICKUP_REQUESTS_TABLE}`(id) ON DELETE CASCADE,
+                    INDEX idx_pickup_log (request_id, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_ATTACHMENTS_TABLE}` (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id      INT NOT NULL,
+                    filename        VARCHAR(260) NOT NULL,
+                    original_name   VARCHAR(260),
+                    mime_type       VARCHAR(120),
+                    uploaded_by     VARCHAR(80) DEFAULT 'cliente',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (request_id) REFERENCES `{PICKUP_REQUESTS_TABLE}`(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_SIGNATURES_TABLE}` (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id      INT NOT NULL,
+                    signer_name     VARCHAR(180) NOT NULL,
+                    signer_rut      VARCHAR(30) NOT NULL,
+                    accepted_terms  TINYINT(1) DEFAULT 1,
+                    ip              VARCHAR(80),
+                    user_agent      VARCHAR(300),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (request_id) REFERENCES `{PICKUP_REQUESTS_TABLE}`(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_SETTINGS_TABLE}` (
+                    id              INT PRIMARY KEY DEFAULT 1,
+                    warehouse_name  VARCHAR(160) DEFAULT 'Bodega ILUS Quilicura',
+                    warehouse_addr  VARCHAR(260) DEFAULT 'Bodega principal ILUS, Quilicura',
+                    maps_url        VARCHAR(500) DEFAULT 'https://www.google.com/maps/search/?api=1&query=Quilicura%20Santiago%20Chile',
+                    open_time       TIME DEFAULT '09:00:00',
+                    close_time      TIME DEFAULT '17:30:00',
+                    work_days       VARCHAR(30) DEFAULT '1,2,3,4,5',
+                    holidays        TEXT,
+                    alert_enabled   TINYINT(1) DEFAULT 0,
+                    alert_title     VARCHAR(160) DEFAULT 'Aviso importante',
+                    alert_message   TEXT,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{PICKUP_TEMPLATES_TABLE}` (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    code        VARCHAR(60) UNIQUE,
+                    title       VARCHAR(180) NOT NULL,
+                    body        TEXT NOT NULL,
+                    channel     VARCHAR(30) DEFAULT 'email_whatsapp',
+                    active      TINYINT(1) DEFAULT 1
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"INSERT IGNORE INTO `{PICKUP_SETTINGS_TABLE}` (id) VALUES (1)")
+            defaults = [
+                ("cierre_anticipado", "Bodega cierra anticipadamente", "Hoy la bodega cerrara anticipadamente. Si tu retiro se ve afectado, te propondremos un nuevo horario."),
+                ("sin_disponibilidad", "Sin disponibilidad", "No tenemos disponibilidad para el horario solicitado. Te enviamos una propuesta alternativa para confirmar."),
+                ("info_incompleta", "Falta informacion", "Necesitamos completar informacion del documento, contacto o persona autorizada para poder avanzar con tu retiro."),
+                ("validar_identidad", "Validacion de identidad", "Para proteger tu pedido, necesitamos validar la identidad de la persona autorizada para retirar."),
+                ("recordatorio", "Recordatorio de retiro", "Recuerda presentarte con documento de identidad y la autorizacion correspondiente si retira un tercero."),
+            ]
+            for code, title, body in defaults:
+                cur.execute(
+                    f"""INSERT IGNORE INTO `{PICKUP_TEMPLATES_TABLE}` (code,title,body)
+                        VALUES (%s,%s,%s)""",
+                    (code, title, body),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def init_db():
     """Inicializa el esquema MySQL. Sin SQLite — todo va a MySQL."""
     init_mysql_schema()
@@ -764,6 +946,7 @@ def init_db():
     init_eval_tables()
     init_resets_table()
     init_transporte_tables()
+    init_pickup_tables()
     ensure_erp_table_index()
 
 
@@ -11037,7 +11220,8 @@ def mant_buscar_erp():
 def mant_documentos_por_rut(cid):
     """
     Busca en ERP todos los documentos (FCV/BLV/GDV) del cliente identificado por su RUT.
-    Primero intenta MySQL directo; si falla, devuelve instrucción para búsqueda manual.
+    Estrategia: generar TODOS los formatos posibles del RUT en Python y usar IN(...)
+    para que el ERP pueda aprovechar el índice de NRUC — sin funciones por fila.
     GET /mantenciones/api/clientes/<cid>/documentos-erp
     """
     cliente = mysql_fetchone("SELECT rut, razon_social FROM mant_clientes WHERE id=%s", (cid,))
@@ -11045,14 +11229,23 @@ def mant_documentos_por_rut(cid):
         return jsonify({"sin_rut": True, "documentos": []})
 
     rut = cliente["rut"].strip()
-    # Normalización agresiva del RUT — soluciona el bug de matching:
-    #  - 12.345.678-9   → 123456789
-    #  - 12345678-K     → 12345678K
-    #  - 12345678 - k   → 12345678K
-    #  - "76.123.456-0" → 761234560
-    rut_norm  = re.sub(r"[^0-9kK]", "", rut).upper()  # solo dígitos + K en upper
-    # Solo el número (sin dígito verificador) para fallback de búsqueda parcial
-    rut_solo  = rut_norm[:-1] if rut_norm and len(rut_norm) > 1 else rut_norm
+
+    # ── Normalización: extraer solo dígitos + K ─────────────────────────
+    rut_digits = re.sub(r"[^0-9kK]", "", rut).upper()   # ej: "760087564"
+    dv         = rut_digits[-1] if len(rut_digits) > 1 else ""
+    cuerpo     = rut_digits[:-1] if len(rut_digits) > 1 else rut_digits  # sin DV
+
+    # ── Formatos que el ERP podría estar usando (basado en observación) ──
+    # El ERP típicamente almacena RUTs sin puntos, y frecuentemente sin DV.
+    candidatos = set(filter(None, [
+        cuerpo,                       # 76008756   ← más común en ERP
+        rut_digits,                   # 760087564  (con DV pegado)
+        f"{cuerpo}-{dv}" if dv else None,  # 76008756-4
+        f"{cuerpo}-{dv.lower()}" if dv else None,  # 76008756-k (minúscula)
+        rut.strip(),                  # tal como está guardado en nuestro sistema
+    ]))
+    placeholders = ",".join(["%s"] * len(candidatos))
+    params_rut   = list(candidatos)
 
     ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
     erp_conn = get_erp_conn()
@@ -11067,11 +11260,10 @@ def mant_documentos_por_rut(cid):
 
     try:
         with erp_conn.cursor() as cur:
-            # Normalizamos AMBOS lados (cliente y ERP) con la misma función SQL,
-            # case-insensitive y eliminando todos los caracteres no alfanuméricos.
-            # Esto resuelve los casos: puntos, guiones, espacios al medio, tabs, k/K.
+            # IN con literales exactos → el ERP puede usar índice en NRUC.
+            # Sin funciones sobre la columna = mucho más rápido.
             cur.execute(
-                f"""SELECT DISTINCT
+                f"""SELECT
                        TRIM(d.NRAZON) AS razon_social,
                        TRIM(d.NRUC)   AS rut,
                        TRIM(d.TIDO)   AS tipo_doc,
@@ -11082,13 +11274,10 @@ def mant_documentos_por_rut(cid):
                        d.CANTD        AS cantidad
                     FROM `{ERP_SALES}` d
                     WHERE d.TIDO IN ('FCV','BLV','GDV','VD','WEB','NVI','NVV')
-                      AND (
-                          UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(d.NRUC,''),'.',''),'-',''),' ',''),CHAR(9),''),CHAR(13),'')) = %s
-                       OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(d.NRUC,''),'.',''),'-',''),' ',''),CHAR(9),''),CHAR(13),'')) = %s
-                      )
+                      AND TRIM(d.NRUC) IN ({placeholders})
                     ORDER BY d.FEMIS DESC
-                    LIMIT 200""",
-                (rut_norm, rut_solo)
+                    LIMIT 300""",
+                params_rut
             )
             rows = cur.fetchall()
         erp_conn.close()
