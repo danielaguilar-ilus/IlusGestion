@@ -728,6 +728,12 @@ def init_transporte_tables():
             for _mig in [
                 "ALTER TABLE transport_couriers ADD COLUMN website VARCHAR(200)",
                 "ALTER TABLE transport_couriers ADD COLUMN direccion VARCHAR(300)",
+                "ALTER TABLE transport_couriers ADD COLUMN logo_square_url VARCHAR(400)",
+                "ALTER TABLE transport_couriers ADD COLUMN logo_label_url VARCHAR(400)",
+                "ALTER TABLE transport_couriers ADD COLUMN nombre_fantasia VARCHAR(120)",
+                "ALTER TABLE transport_couriers ADD COLUMN giro VARCHAR(150)",
+                "ALTER TABLE transport_couriers ADD COLUMN contacto_cargo VARCHAR(120)",
+                "ALTER TABLE transport_couriers ADD COLUMN renovacion_automatica TINYINT(1) DEFAULT 0",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -6849,15 +6855,19 @@ def tr_courier_editar(cid):
     with conn.cursor() as cur:
         cur.execute(
             """UPDATE transport_couriers SET
-               nombre=%s, rut=%s, contacto=%s, telefono=%s, email=%s,
+               nombre=%s, nombre_fantasia=%s, rut=%s, giro=%s,
+               contacto=%s, contacto_cargo=%s, telefono=%s, email=%s,
                tipo=%s, notas=%s, activo=%s,
                peso_max_bulto=%s, peso_max_guia=%s, vol_max_bulto=%s, factor_vol=%s,
-               logo_url=%s, website=%s
+               logo_url=%s, website=%s, direccion=%s
                WHERE id=%s""",
             (
                 d.get("nombre","").strip(),
+                (d.get("nombre_fantasia") or "").strip(),
                 d.get("rut","").strip(),
+                (d.get("giro") or "").strip(),
                 d.get("contacto","").strip(),
+                (d.get("contacto_cargo") or "").strip(),
                 d.get("telefono","").strip(),
                 d.get("email","").strip(),
                 d.get("tipo","nacional"),
@@ -6868,7 +6878,8 @@ def tr_courier_editar(cid):
                 float(d.get("vol_max_bulto") or 0),
                 float(d.get("factor_vol") or 5000),
                 d.get("logo_url","").strip(),
-                d.get("website","").strip(),
+                (d.get("website") or "").strip(),
+                (d.get("direccion") or "").strip(),
                 cid,
             ),
         )
