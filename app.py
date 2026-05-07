@@ -690,6 +690,47 @@ def init_transporte_tables():
                     INDEX idx_courier (courier_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── COMMUNE-BASED PRICING & CONTRACTS ────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_courier_comunas (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    courier_id    INT NOT NULL,
+                    codigo        VARCHAR(20),
+                    sucursal      VARCHAR(120),
+                    comuna        VARCHAR(120) NOT NULL,
+                    zona          VARCHAR(80),
+                    region        VARCHAR(80),
+                    dias_transito VARCHAR(20),
+                    dias_entrega  VARCHAR(50),
+                    precios_json  MEDIUMTEXT,
+                    FOREIGN KEY (courier_id) REFERENCES transport_couriers(id) ON DELETE CASCADE,
+                    INDEX idx_courier_comuna (courier_id, comuna),
+                    UNIQUE KEY uq_courier_comuna (courier_id, comuna(100))
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_courier_contratos (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    courier_id   INT NOT NULL,
+                    nombre       VARCHAR(200),
+                    descripcion  TEXT,
+                    archivo_url  VARCHAR(400),
+                    tipo         ENUM('contrato','tarifario','acuerdo','otro') DEFAULT 'contrato',
+                    vigente      TINYINT(1) DEFAULT 1,
+                    fecha_inicio DATE,
+                    fecha_fin    DATE,
+                    subido_por   VARCHAR(190),
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (courier_id) REFERENCES transport_couriers(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migrations for transport_couriers additional fields
+            for _mig in [
+                "ALTER TABLE transport_couriers ADD COLUMN website VARCHAR(200)",
+                "ALTER TABLE transport_couriers ADD COLUMN direccion VARCHAR(300)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
             # ── DEFAULT COURIERS (solo si la tabla está vacía) ─────────
             cur.execute("SELECT COUNT(*) AS n FROM transport_couriers")
             row = cur.fetchone()
@@ -6655,6 +6696,60 @@ def tr_asignar_a_manifiesto():
     return jsonify({"ok": True, "manifest_id": mid, "correlativo": correlativo, "added": added, "duplicados": dupes})
 
 
+# ── COURIERS — helper functions ──────────────────────────────────────────────
+
+def _parse_peso_upper(col_header) -> float:
+    """Converts a weight column header to its upper bound in kg."""
+    s = str(col_header).strip().replace(',', '.').replace(' ', '').lower()
+    # Special cases
+    if '+' in s or 'mas' in s or 'more' in s:
+        return 999999.0
+    # Range like "100al499", "500-1999", "1001-5000"
+    for sep in ['-', 'al']:
+        if sep in s:
+            parts = s.split(sep)
+            try:
+                return float(parts[-1])
+            except Exception:
+                pass
+    # Single number
+    try:
+        return float(s)
+    except Exception:
+        return 999999.0
+
+
+def _courier_tarifa_lookup(courier_id: int, comuna: str, peso_kg: float):
+    """
+    Returns the price (float) for a given courier+commune+weight, or None.
+    """
+    row = mysql_fetchone(
+        "SELECT precios_json FROM transport_courier_comunas "
+        "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
+        (courier_id, comuna)
+    )
+    if not row or not row.get('precios_json'):
+        return None
+    try:
+        precios = json.loads(row['precios_json'])
+    except Exception:
+        return None
+    # Build sorted bracket list
+    brackets = []
+    for key, price in precios.items():
+        if price is None:
+            continue
+        upper = _parse_peso_upper(key)
+        brackets.append((upper, float(price)))
+    brackets.sort(key=lambda x: x[0])
+    if not brackets:
+        return None
+    for upper, price in brackets:
+        if peso_kg <= upper:
+            return price
+    return brackets[-1][1]  # over max weight → return last price
+
+
 # ── COURIERS ─────────────────────────────────────────────────────────────────
 
 @app.route("/transporte/couriers")
@@ -6662,9 +6757,11 @@ def tr_asignar_a_manifiesto():
 def tr_couriers():
     couriers = mysql_fetchall(
         """SELECT c.*,
-           COUNT(t.id) AS total_tarifas
+           COUNT(DISTINCT t.id) AS total_tarifas,
+           COUNT(DISTINCT cc.id) AS total_comunas
            FROM transport_couriers c
            LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
+           LEFT JOIN transport_courier_comunas cc ON cc.courier_id=c.id
            GROUP BY c.id ORDER BY c.activo DESC, c.nombre""",
         ()
     )
@@ -6727,7 +6824,8 @@ def tr_courier_editar(cid):
             """UPDATE transport_couriers SET
                nombre=%s, rut=%s, contacto=%s, telefono=%s, email=%s,
                tipo=%s, notas=%s, activo=%s,
-               peso_max_bulto=%s, peso_max_guia=%s, vol_max_bulto=%s, factor_vol=%s
+               peso_max_bulto=%s, peso_max_guia=%s, vol_max_bulto=%s, factor_vol=%s,
+               logo_url=%s, website=%s
                WHERE id=%s""",
             (
                 d.get("nombre","").strip(),
@@ -6742,6 +6840,8 @@ def tr_courier_editar(cid):
                 float(d.get("peso_max_guia") or 0),
                 float(d.get("vol_max_bulto") or 0),
                 float(d.get("factor_vol") or 5000),
+                d.get("logo_url","").strip(),
+                d.get("website","").strip(),
                 cid,
             ),
         )
@@ -6758,6 +6858,285 @@ def tr_courier_eliminar(cid):
         cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
     conn.commit()
     return jsonify({"ok": True})
+
+
+# ── COURIERS: IMPORT / EXPORT / LOOKUP / COMUNAS ─────────────────────────────
+
+@app.route("/transporte/couriers/import", methods=["POST"])
+@_tr_required
+def transporte_couriers_import():
+    """Import commune-based pricing from Excel."""
+    import openpyxl, math
+
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"ok": False, "error": "No se recibió archivo"}), 400
+
+    try:
+        wb = openpyxl.load_workbook(file, data_only=True)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"No se pudo leer el Excel: {exc}"}), 400
+
+    # Map sheet names to courier names
+    SHEET_MAP = {
+        'felca':   'Transporte Felca',
+        'milling': 'Transportes Melling',
+        'clickex': 'Clickex',
+    }
+
+    conn = get_db()
+    total_inserted = 0
+    results = []
+
+    try:
+        with conn.cursor() as cur:
+            for sheet_name in wb.sheetnames:
+                courier_name = SHEET_MAP.get(sheet_name.lower().strip())
+                if not courier_name:
+                    results.append({"sheet": sheet_name, "skipped": True, "reason": "Hoja no reconocida"})
+                    continue
+
+                # Get or create courier
+                cur.execute("SELECT id FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s)", (courier_name,))
+                row = cur.fetchone()
+                if row:
+                    courier_id = row['id']
+                else:
+                    cur.execute("INSERT INTO transport_couriers (nombre, tipo) VALUES (%s, 'nacional')", (courier_name,))
+                    courier_id = cur.lastrowid
+
+                ws = wb[sheet_name]
+                header = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+
+                is_clickex = sheet_name.lower().strip() == 'clickex'
+
+                if is_clickex:
+                    # Clickex: Región(0), Destino(1), Días(2), Lu-Sa(3-8), then prices from col 9
+                    meta_cols = 9
+                    comunas_col = 1    # "Destino"
+                    region_col  = 0
+                    dias_col    = 2
+                    dias_entrega_cols = list(range(3, 9))  # Lu Ma Mi Ju Vi Sa
+                    dias_names = ['Lu','Ma','Mi','Ju','Vi','Sa']
+                else:
+                    # Felca/Milling: Codigo(0), Sucursal(1), Comuna(2), ZONA(3), Dias(4), prices from col 5
+                    meta_cols = 5
+                    comunas_col = 2
+                    sucursal_col = 1
+                    codigo_col = 0
+                    zona_col = 3
+                    dias_col = 4
+
+                price_headers = header[meta_cols:]
+
+                # Delete existing data for this courier
+                cur.execute("DELETE FROM transport_courier_comunas WHERE courier_id=%s", (courier_id,))
+
+                inserted = 0
+                for row_data in ws.iter_rows(min_row=2, values_only=True):
+                    if all(v is None for v in row_data):
+                        continue
+
+                    if is_clickex:
+                        region = str(row_data[region_col] or '').strip()
+                        comuna = str(row_data[comunas_col] or '').strip()
+                        dias_str = str(row_data[dias_col] or '').strip() if row_data[dias_col] is not None else ''
+                        # Dias entrega
+                        dias_list = []
+                        for i, dn in zip(dias_entrega_cols, dias_names):
+                            v = row_data[i]
+                            if v and str(v).strip() not in ('', 'None'):
+                                dias_list.append(dn)
+                        dias_entrega = ','.join(dias_list)
+                        sucursal = ''
+                        codigo = ''
+                        zona = ''
+                    else:
+                        codigo = str(row_data[codigo_col] or '').strip()
+                        sucursal = str(row_data[sucursal_col] or '').strip()
+                        comuna = str(row_data[comunas_col] or '').strip()
+                        zona = str(row_data[zona_col] or '').strip()
+                        dias_val = row_data[dias_col]
+                        dias_str = '' if dias_val in ('#N/A', None) else str(dias_val).strip()
+                        region = ''
+                        dias_entrega = ''
+
+                    if not comuna:
+                        continue
+
+                    # Build prices dict
+                    price_data = row_data[meta_cols:]
+                    precios = {}
+                    for ph, pv in zip(price_headers, price_data):
+                        if ph is None:
+                            continue
+                        key = str(ph).strip()
+                        if pv is None or str(pv).strip() in ('#N/A', 'N/A', ''):
+                            continue
+                        try:
+                            val_f = float(pv)
+                            if not math.isnan(val_f):
+                                precios[key] = round(val_f, 2)
+                        except (TypeError, ValueError):
+                            pass
+
+                    if not precios:
+                        continue
+
+                    cur.execute("""
+                        INSERT INTO transport_courier_comunas
+                            (courier_id, codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON DUPLICATE KEY UPDATE
+                            codigo=VALUES(codigo), sucursal=VALUES(sucursal),
+                            zona=VALUES(zona), region=VALUES(region),
+                            dias_transito=VALUES(dias_transito), dias_entrega=VALUES(dias_entrega),
+                            precios_json=VALUES(precios_json)
+                    """, (courier_id, codigo, sucursal, comuna, zona, region, dias_str, dias_entrega, json.dumps(precios, ensure_ascii=False)))
+                    inserted += 1
+
+                total_inserted += inserted
+                results.append({"sheet": sheet_name, "courier": courier_name, "courier_id": courier_id, "inserted": inserted})
+
+        conn.commit()
+        return jsonify({"ok": True, "total": total_inserted, "results": results})
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/couriers/export", methods=["GET"])
+@_tr_required
+def transporte_couriers_export():
+    """Export all courier pricing as Excel, one sheet per courier."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from io import BytesIO
+
+    couriers = mysql_fetchall(
+        "SELECT id, nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre"
+    ) or []
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    RED_FILL = PatternFill("solid", fgColor="CC0000")
+    WHITE_FONT = Font(color="FFFFFF", bold=True)
+
+    for c in couriers:
+        rows = mysql_fetchall(
+            "SELECT codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json "
+            "FROM transport_courier_comunas WHERE courier_id=%s ORDER BY region, comuna",
+            (c['id'],)
+        ) or []
+        if not rows:
+            continue
+
+        ws = wb.create_sheet(title=c['nombre'][:31])
+
+        # Collect all weight keys
+        all_keys = []
+        for r in rows:
+            if r.get('precios_json'):
+                try:
+                    keys = list(json.loads(r['precios_json']).keys())
+                    for k in keys:
+                        if k not in all_keys:
+                            all_keys.append(k)
+                except Exception:
+                    pass
+
+        # Headers
+        headers = ['Codigo','Sucursal','Comuna','Zona','Region','Dias Transito','Dias Entrega'] + all_keys
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(1, ci, h)
+            cell.font = WHITE_FONT
+            cell.fill = RED_FILL
+            cell.alignment = Alignment(horizontal='center')
+
+        for ri, r in enumerate(rows, 2):
+            precios = {}
+            if r.get('precios_json'):
+                try: precios = json.loads(r['precios_json'])
+                except Exception: pass
+
+            row_vals = [
+                r.get('codigo',''), r.get('sucursal',''), r.get('comuna',''),
+                r.get('zona',''), r.get('region',''), r.get('dias_transito',''), r.get('dias_entrega','')
+            ] + [precios.get(k,'') for k in all_keys]
+
+            for ci, v in enumerate(row_vals, 1):
+                ws.cell(ri, ci, v)
+
+    if not wb.sheetnames:
+        ws = wb.create_sheet("Sin datos")
+        ws.cell(1,1,"No hay tarifas importadas aún.")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='ILUS_Tarifas_Couriers.xlsx'
+    )
+
+
+@app.route("/transporte/couriers/lookup", methods=["GET"])
+@_tr_required
+def transporte_couriers_lookup():
+    """API: GET ?courier_id=X&comuna=Y&peso=Z → returns price."""
+    courier_id = request.args.get('courier_id', type=int)
+    comuna     = (request.args.get('comuna') or '').strip()
+    peso       = request.args.get('peso', type=float)
+
+    if not all([courier_id, comuna, peso]):
+        return jsonify({"ok": False, "error": "Faltan parámetros: courier_id, comuna, peso"}), 400
+
+    price = _courier_tarifa_lookup(courier_id, comuna, peso)
+    if price is None:
+        # Try partial match
+        row = mysql_fetchone(
+            "SELECT comuna, precios_json FROM transport_courier_comunas "
+            "WHERE courier_id=%s AND LOWER(comuna) LIKE LOWER(%s) LIMIT 1",
+            (courier_id, f"%{comuna}%")
+        )
+        if row:
+            try:
+                precios = json.loads(row['precios_json'])
+                brackets = sorted(
+                    [(float(_parse_peso_upper(k)), float(v)) for k, v in precios.items() if v is not None],
+                    key=lambda x: x[0]
+                )
+                for upper, price in brackets:
+                    if peso <= upper:
+                        return jsonify({"ok": True, "precio": price, "comuna_matched": row['comuna'], "partial_match": True})
+                return jsonify({"ok": True, "precio": brackets[-1][1], "comuna_matched": row['comuna'], "partial_match": True})
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": f"No se encontró tarifa para '{comuna}' en este courier"}), 404
+
+    return jsonify({"ok": True, "precio": price, "comuna": comuna, "peso": peso})
+
+
+@app.route("/transporte/couriers/comunas", methods=["GET"])
+@_tr_required
+def transporte_couriers_comunas():
+    """API: GET ?courier_id=X → list of communes for that courier."""
+    courier_id = request.args.get('courier_id', type=int)
+    if not courier_id:
+        return jsonify([])
+    rows = mysql_fetchall(
+        "SELECT comuna, zona, region, dias_transito FROM transport_courier_comunas "
+        "WHERE courier_id=%s ORDER BY region, comuna",
+        (courier_id,)
+    ) or []
+    return jsonify(rows)
 
 
 # ── TARIFAS DE COURIER ────────────────────────────────────────────────────────

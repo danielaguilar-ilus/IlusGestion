@@ -8,90 +8,168 @@
   <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
     <div>
       <h4 class="mb-0 fw-bold"><i class="bi bi-building me-2 text-danger"></i>Couriers</h4>
-      <p class="text-muted small mb-0">Gestión de empresas de transporte y tarifas</p>
+      <p class="text-muted small mb-0">Gestión de empresas de transporte y tarifas por comuna</p>
     </div>
-    <button class="btn btn-danger ms-auto" data-bs-toggle="modal" data-bs-target="#modalNuevo">
-      <i class="bi bi-plus-lg me-1"></i>Nuevo courier
-    </button>
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+      <a href="/transporte/couriers/export" class="btn btn-outline-success btn-sm">
+        <i class="bi bi-download me-1"></i>Descargar tarifas
+      </a>
+      <button class="btn btn-outline-primary btn-sm" onclick="abrirImport()">
+        <i class="bi bi-upload me-1"></i>Importar Excel
+      </button>
+      <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+        <i class="bi bi-plus-lg me-1"></i>Nuevo courier
+      </button>
+    </div>
   </div>
 
-  {# ── TABLA COURIERS ── #}
-  <div class="card shadow-sm border-0">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0" id="tablaCouriers">
-          <thead class="table-dark">
-            <tr>
-              <th style="min-width:160px">Nombre</th>
-              <th>Tipo</th>
-              <th>Contacto</th>
-              <th class="text-center">Tarifas</th>
-              <th class="text-center">Límites</th>
-              <th class="text-center">Estado</th>
-              <th class="text-center">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for c in couriers %}
-            <tr id="rowC{{ c.id }}" class="{% if not c.activo %}opacity-50{% endif %}">
-              <td>
-                <div class="fw-semibold">{{ c.nombre }}</div>
-                {% if c.rut %}<div class="text-muted small">{{ c.rut }}</div>{% endif %}
-              </td>
-              <td>
+  {# ── COURIER CARDS ── #}
+  <div class="row g-3" id="couriersGrid">
+    {% for c in couriers %}
+    <div class="col-12 col-md-6 col-xl-4" id="cardWrap{{ c.id }}">
+      <div class="card border-0 shadow-sm h-100 {% if not c.activo %}opacity-50{% endif %}"
+           style="border-left: 4px solid #CC0000 !important;">
+        <div class="card-body p-3">
+          {# top row: logo/name + badges #}
+          <div class="d-flex align-items-start gap-3 mb-2">
+            {% if c.logo_url %}
+            <img src="{{ c.logo_url }}" alt="{{ c.nombre }}"
+                 style="width:48px;height:48px;object-fit:contain;border-radius:6px;background:#f8f9fa;padding:4px;">
+            {% else %}
+            <div class="d-flex align-items-center justify-content-center rounded"
+                 style="width:48px;height:48px;background:#1a1a1a;flex-shrink:0;">
+              <i class="bi bi-truck text-danger" style="font-size:1.4rem;"></i>
+            </div>
+            {% endif %}
+            <div class="flex-grow-1 min-w-0">
+              <div class="fw-bold text-truncate">{{ c.nombre }}</div>
+              <div class="d-flex gap-1 flex-wrap mt-1">
                 <span class="badge
                   {% if c.tipo=='nacional' %}bg-primary
                   {% elif c.tipo=='regional' %}bg-info text-dark
                   {% elif c.tipo=='local' %}bg-success
-                  {% else %}bg-secondary{% endif %}">
+                  {% else %}bg-secondary{% endif %} small">
                   {{ c.tipo|capitalize }}
                 </span>
-              </td>
-              <td>
-                <div class="small">
-                  {% if c.contacto %}<div>{{ c.contacto }}</div>{% endif %}
-                  {% if c.telefono %}<div class="text-muted">{{ c.telefono }}</div>{% endif %}
-                  {% if c.email %}<div class="text-muted">{{ c.email }}</div>{% endif %}
-                </div>
-              </td>
-              <td class="text-center">
-                <span class="badge bg-secondary" id="badgeTarifas{{ c.id }}">{{ c.total_tarifas }}</span>
-              </td>
-              <td class="text-center small text-muted">
-                {% if c.peso_max_bulto %}{{ c.peso_max_bulto|int }} kg/bulto<br>{% endif %}
-                {% if c.peso_max_guia %}{{ c.peso_max_guia|int }} kg/guía<br>{% endif %}
-                Div: {{ c.factor_vol|int }}
-              </td>
-              <td class="text-center">
-                <span class="badge {% if c.activo %}bg-success{% else %}bg-danger{% endif %}">
+                <span class="badge {% if c.activo %}bg-success{% else %}bg-danger{% endif %} small">
                   {% if c.activo %}Activo{% else %}Inactivo{% endif %}
                 </span>
-              </td>
-              <td class="text-center">
-                <button class="btn btn-sm btn-outline-secondary me-1"
-                        onclick="abrirEditar({{ c|tojson }})">
-                  <i class="bi bi-pencil"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger me-1"
-                        onclick="abrirTarifas({{ c.id }}, '{{ c.nombre }}')">
-                  <i class="bi bi-currency-dollar"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-warning"
-                        onclick="toggleActivo({{ c.id }}, {{ 0 if c.activo else 1 }})">
-                  <i class="bi bi-{% if c.activo %}eye-slash{% else %}eye{% endif %}"></i>
-                </button>
-              </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="7" class="text-center text-muted py-4">No hay couriers registrados aún.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+              </div>
+            </div>
+          </div>
+
+          {# contact info #}
+          <div class="text-muted small mb-2">
+            {% if c.rut %}<div><i class="bi bi-card-text me-1"></i>{{ c.rut }}</div>{% endif %}
+            {% if c.contacto %}<div><i class="bi bi-person me-1"></i>{{ c.contacto }}</div>{% endif %}
+            {% if c.telefono %}<div><i class="bi bi-telephone me-1"></i>{{ c.telefono }}</div>{% endif %}
+            {% if c.email %}<div><i class="bi bi-envelope me-1"></i>{{ c.email }}</div>{% endif %}
+          </div>
+
+          {# stats row #}
+          <div class="d-flex gap-3 mb-3">
+            <div class="text-center">
+              <div class="fw-bold text-danger" style="font-size:1.2rem;">{{ c.total_comunas or 0 }}</div>
+              <div class="text-muted" style="font-size:0.7rem;">Comunas</div>
+            </div>
+            <div class="text-center">
+              <div class="fw-bold" style="font-size:1.2rem;">{{ c.total_tarifas or 0 }}</div>
+              <div class="text-muted" style="font-size:0.7rem;">Tarifas</div>
+            </div>
+            {% if c.peso_max_bulto %}
+            <div class="text-center">
+              <div class="fw-bold" style="font-size:1.2rem;">{{ c.peso_max_bulto|int }}</div>
+              <div class="text-muted" style="font-size:0.7rem;">kg/bulto</div>
+            </div>
+            {% endif %}
+          </div>
+
+          {# action buttons #}
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick="editarCourier({{ c.id }})"
+                    title="Editar">
+              <i class="bi bi-pencil me-1"></i>Editar
+            </button>
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick="abrirTarifas({{ c.id }}, '{{ c.nombre|e }}')"
+                    title="Ver tarifas por comuna">
+              <i class="bi bi-map me-1"></i>Tarifas
+            </button>
+            <button class="btn btn-sm {% if c.activo %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                    onclick="toggleActivo({{ c.id }}, {{ 0 if c.activo else 1 }})"
+                    title="{% if c.activo %}Desactivar{% else %}Activar{% endif %}">
+              <i class="bi bi-{% if c.activo %}eye-slash{% else %}eye{% endif %}"></i>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
+    {% else %}
+    <div class="col-12">
+      <div class="alert alert-secondary text-center py-5">
+        <i class="bi bi-building display-4 d-block mb-2 opacity-25"></i>
+        No hay couriers registrados aún.
+      </div>
+    </div>
+    {% endfor %}
   </div>
 
 </div>{# /container #}
+
+
+{# ══════════════════════════════════════════════
+   MODAL: IMPORTAR EXCEL
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalImport" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-upload me-2 text-primary"></i>Importar tarifas desde Excel</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          El archivo debe tener hojas con nombre <strong>Felca</strong>, <strong>Milling</strong> y/o <strong>Clickex</strong>.
+          Los datos existentes de cada courier se reemplazarán.
+        </p>
+
+        {# drop zone #}
+        <div id="dropZone"
+             class="border border-secondary rounded text-center p-5"
+             style="cursor:pointer;transition:border-color .2s,background .2s;"
+             ondragover="event.preventDefault();this.style.borderColor='#CC0000';this.style.background='rgba(204,0,0,.08)'"
+             ondragleave="this.style.borderColor='';this.style.background=''"
+             ondrop="onDrop(event)">
+          <i class="bi bi-file-earmark-excel display-4 text-success d-block mb-2"></i>
+          <p class="mb-1">Arrastra el archivo Excel aquí</p>
+          <p class="text-muted small mb-2">o haz clic para seleccionar</p>
+          <input type="file" id="importFileInput" accept=".xlsx,.xls" style="display:none" onchange="subirExcel(this.files[0])">
+          <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('importFileInput').click()">
+            <i class="bi bi-folder-open me-1"></i>Seleccionar archivo
+          </button>
+        </div>
+
+        {# progress #}
+        <div id="importProgress" style="display:none" class="mt-3">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <div class="spinner-border spinner-border-sm text-danger"></div>
+            <span class="small">Procesando...</span>
+          </div>
+          <div class="progress" style="height:6px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated bg-danger w-100"></div>
+          </div>
+        </div>
+
+        {# results #}
+        <div id="importResults" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 
 {# ══════════════════════════════════════════════
@@ -132,9 +210,13 @@
               <label class="form-label small">Teléfono</label>
               <input name="telefono" class="form-control form-control-sm bg-dark text-light border-secondary">
             </div>
-            <div class="col-12">
+            <div class="col-md-6">
               <label class="form-label small">Email</label>
               <input name="email" type="email" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">Website</label>
+              <input name="website" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="https://...">
             </div>
             <div class="col-md-3">
               <label class="form-label small">Peso máx/bulto (kg, 0=libre)</label>
@@ -155,6 +237,10 @@
               <label class="form-label small">Divisor peso vol. (cm³/kg)</label>
               <input name="factor_vol" type="number" step="1" min="1" value="5000"
                      class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Logo URL</label>
+              <input name="logo_url" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="https://...">
             </div>
             <div class="col-12">
               <label class="form-label small">Notas</label>
@@ -184,11 +270,11 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" id="editarBody">
-        {# llenado por JS #}
+        <div class="text-center py-4"><div class="spinner-border text-danger"></div></div>
       </div>
       <div class="modal-footer border-secondary">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-warning" onclick="guardarEditar()">
+        <button type="button" class="btn btn-warning" onclick="guardarCourier()">
           <i class="bi bi-save me-1"></i>Guardar cambios
         </button>
       </div>
@@ -198,25 +284,53 @@
 
 
 {# ══════════════════════════════════════════════
-   MODAL: TARIFAS
+   MODAL: TARIFAS POR COMUNA
 ══════════════════════════════════════════════ #}
 <div class="modal fade" id="modalTarifas" tabindex="-1">
-  <div class="modal-dialog modal-xl">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
     <div class="modal-content bg-dark text-light border-0">
       <div class="modal-header border-secondary">
         <h5 class="modal-title" id="tituloTarifas">
-          <i class="bi bi-currency-dollar me-2 text-success"></i>Tarifas
+          <i class="bi bi-map me-2 text-success"></i>Tarifas por comuna
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body" id="cuerpoTarifas">
-        <div class="text-center py-4"><div class="spinner-border text-danger"></div></div>
+      <div class="modal-body p-0">
+        {# calculator panel #}
+        <div class="p-3 border-bottom border-secondary" style="background:#1a1a1a">
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-sm-4">
+              <label class="form-label small text-muted mb-1">Comuna de destino</label>
+              <input type="text" id="calcComuna" class="form-control form-control-sm bg-dark text-light border-secondary"
+                     placeholder="Ej: Santiago, Valparaíso...">
+            </div>
+            <div class="col-6 col-sm-3">
+              <label class="form-label small text-muted mb-1">Peso (kg)</label>
+              <input type="number" id="calcPeso" step="0.1" min="0.1" value="1"
+                     class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-6 col-sm-2">
+              <button class="btn btn-danger btn-sm w-100" onclick="buscarPrecio()">
+                <i class="bi bi-search me-1"></i>Calcular
+              </button>
+            </div>
+            <div class="col-12 col-sm-3" id="calcResult"></div>
+          </div>
+        </div>
+        {# search + table #}
+        <div class="p-3">
+          <div class="mb-2">
+            <input type="text" id="searchComuna" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="Buscar comuna..." oninput="filtrarComunas()">
+          </div>
+          <div id="cuerpoTarifas">
+            <div class="text-center py-4"><div class="spinner-border text-danger"></div></div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer border-secondary d-flex justify-content-between">
-        <button class="btn btn-success btn-sm" onclick="abrirNuevaTarifa()">
-          <i class="bi bi-plus-lg me-1"></i>Agregar tarifa
-        </button>
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <small class="text-muted" id="contadorComunas"></small>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
       </div>
     </div>
   </div>
@@ -224,7 +338,7 @@
 
 
 {# ══════════════════════════════════════════════
-   MODAL: FORM TARIFA (inline dentro de tarifas)
+   MODAL: FORM TARIFA (zona-based, legacy)
 ══════════════════════════════════════════════ #}
 <div class="modal fade" id="modalFormTarifa" tabindex="-1">
   <div class="modal-dialog">
@@ -256,7 +370,7 @@
                    id="ft_base" value="0">
           </div>
           <div class="col-6">
-            <label class="form-label small">$/kg extra (sobre peso desde)</label>
+            <label class="form-label small">$/kg extra</label>
             <input type="number" step="0.01" min="0" class="form-control form-control-sm bg-dark text-light border-secondary"
                    id="ft_kgextra" value="0">
           </div>
@@ -292,23 +406,113 @@
 {% block scripts %}
 <script>
 /* ── estado global ── */
-let _editarId   = null;
-let _tarifaCoid = null;   // courier_id activo en modal tarifas
-let _tarifaEditId = null; // id tarifa en edición (null=nueva)
-let _modalTarifas, _modalEditar, _modalFormTarifa;
+let _editarId    = null;
+let _tarifaCoid  = null;
+let _tarifaNombre = '';
+let _tarifaEditId = null;
+let _allComunas  = [];   // full list loaded for current courier
+
+let _modalImport, _modalNuevo, _modalEditar, _modalTarifas, _modalFormTarifa;
 
 document.addEventListener('DOMContentLoaded', () => {
-  _modalTarifas    = new bootstrap.Modal(document.getElementById('modalTarifas'));
+  _modalImport     = new bootstrap.Modal(document.getElementById('modalImport'));
+  _modalNuevo      = new bootstrap.Modal(document.getElementById('modalNuevo'));
   _modalEditar     = new bootstrap.Modal(document.getElementById('modalEditar'));
+  _modalTarifas    = new bootstrap.Modal(document.getElementById('modalTarifas'));
   _modalFormTarifa = new bootstrap.Modal(document.getElementById('modalFormTarifa'));
 });
 
 /* ════════════════════════════════
+   IMPORT EXCEL
+════════════════════════════════ */
+function abrirImport() {
+  document.getElementById('importResults').style.display = 'none';
+  document.getElementById('importProgress').style.display = 'none';
+  document.getElementById('importFileInput').value = '';
+  _modalImport.show();
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  const zone = document.getElementById('dropZone');
+  zone.style.borderColor = '';
+  zone.style.background  = '';
+  const f = e.dataTransfer.files[0];
+  if (f) subirExcel(f);
+}
+
+async function subirExcel(file) {
+  if (!file) return;
+  document.getElementById('importProgress').style.display = '';
+  document.getElementById('importResults').style.display  = 'none';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const r = await fetch('/transporte/couriers/import', { method: 'POST', body: fd });
+    const d = await r.json();
+    document.getElementById('importProgress').style.display = 'none';
+    mostrarResultadosImport(d);
+  } catch (err) {
+    document.getElementById('importProgress').style.display = 'none';
+    mostrarResultadosImport({ ok: false, error: String(err) });
+  }
+}
+
+function mostrarResultadosImport(d) {
+  const el = document.getElementById('importResults');
+  el.style.display = '';
+
+  if (!d.ok) {
+    el.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle me-2"></i>${esc(d.error)}</div>`;
+    return;
+  }
+
+  let rows = (d.results || []).map(r => {
+    if (r.skipped) return `<tr class="text-muted"><td>${esc(r.sheet)}</td><td colspan="2">Omitida — ${esc(r.reason)}</td></tr>`;
+    return `<tr>
+      <td><strong>${esc(r.sheet)}</strong></td>
+      <td>${esc(r.courier)}</td>
+      <td><span class="badge bg-success">${r.inserted} comunas</span></td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="alert alert-success mb-2">
+      <i class="bi bi-check-circle me-2"></i>
+      <strong>Importación exitosa</strong> — ${d.total} comunas procesadas en total.
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-dark mb-0">
+        <thead><tr><th>Hoja</th><th>Courier</th><th>Resultado</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary mt-2" onclick="location.reload()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Recargar página
+    </button>
+  `;
+}
+
+/* ════════════════════════════════
    EDITAR COURIER
 ════════════════════════════════ */
-function abrirEditar(c) {
-  _editarId = c.id;
+async function editarCourier(id) {
+  _editarId = id;
+  document.getElementById('editarBody').innerHTML =
+    '<div class="text-center py-4"><div class="spinner-border text-danger"></div></div>';
+  _modalEditar.show();
+
+  const r = await fetch(`/transporte/couriers/${id}`);
+  if (!r.ok) {
+    document.getElementById('editarBody').innerHTML = '<p class="text-danger">Error cargando datos.</p>';
+    return;
+  }
+  const d = await r.json();
+  const c = d.courier;
   const tipos = ['nacional','regional','local','internacional'];
+
   document.getElementById('editarBody').innerHTML = `
     <div class="row g-3">
       <div class="col-md-6">
@@ -337,31 +541,41 @@ function abrirEditar(c) {
         <input id="e_telefono" class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${esc(c.telefono||'')}">
       </div>
-      <div class="col-12">
+      <div class="col-md-6">
         <label class="form-label small">Email</label>
         <input id="e_email" type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${esc(c.email||'')}">
       </div>
+      <div class="col-md-6">
+        <label class="form-label small">Website</label>
+        <input id="e_website" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.website||'')}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small">Logo URL</label>
+        <input id="e_logo" class="form-control form-control-sm bg-dark text-light border-secondary"
+               value="${esc(c.logo_url||'')}">
+      </div>
       <div class="col-md-3">
-        <label class="form-label small">Peso máx/bulto (kg, 0=libre)</label>
+        <label class="form-label small">Peso máx/bulto (kg)</label>
         <input id="e_pmax_bulto" type="number" step="0.1" min="0"
                class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${c.peso_max_bulto||0}">
       </div>
       <div class="col-md-3">
-        <label class="form-label small">Peso máx/guía (kg, 0=libre)</label>
+        <label class="form-label small">Peso máx/guía (kg)</label>
         <input id="e_pmax_guia" type="number" step="0.1" min="0"
                class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${c.peso_max_guia||0}">
       </div>
       <div class="col-md-3">
-        <label class="form-label small">Vol máx/bulto (cm³, 0=libre)</label>
+        <label class="form-label small">Vol máx/bulto (cm³)</label>
         <input id="e_vmax" type="number" step="1" min="0"
                class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${c.vol_max_bulto||0}">
       </div>
       <div class="col-md-3">
-        <label class="form-label small">Divisor peso vol. (cm³/kg)</label>
+        <label class="form-label small">Divisor vol. (cm³/kg)</label>
         <input id="e_factor" type="number" step="1" min="1"
                class="form-control form-control-sm bg-dark text-light border-secondary"
                value="${c.factor_vol||5000}">
@@ -378,27 +592,28 @@ function abrirEditar(c) {
       </div>
     </div>
   `;
-  _modalEditar.show();
 }
 
-async function guardarEditar() {
+async function guardarCourier() {
   const body = {
-    nombre        : val('e_nombre'),
-    rut           : val('e_rut'),
-    tipo          : val('e_tipo'),
-    contacto      : val('e_contacto'),
-    telefono      : val('e_telefono'),
-    email         : val('e_email'),
-    peso_max_bulto: val('e_pmax_bulto'),
-    peso_max_guia : val('e_pmax_guia'),
-    vol_max_bulto : val('e_vmax'),
-    factor_vol    : val('e_factor'),
-    notas         : val('e_notas'),
+    nombre        : gval('e_nombre'),
+    rut           : gval('e_rut'),
+    tipo          : gval('e_tipo'),
+    contacto      : gval('e_contacto'),
+    telefono      : gval('e_telefono'),
+    email         : gval('e_email'),
+    website       : gval('e_website'),
+    logo_url      : gval('e_logo'),
+    peso_max_bulto: gval('e_pmax_bulto'),
+    peso_max_guia : gval('e_pmax_guia'),
+    vol_max_bulto : gval('e_vmax'),
+    factor_vol    : gval('e_factor'),
+    notas         : gval('e_notas'),
     activo        : document.getElementById('e_activo').checked,
   };
   if (!body.nombre) { alert('El nombre es obligatorio'); return; }
   const r = await fetch(`/transporte/couriers/${_editarId}`, {
-    method:'PUT', headers:{'Content-Type':'application/json'},
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
   if (r.ok) {
@@ -413,90 +628,132 @@ async function guardarEditar() {
    TOGGLE ACTIVO
 ════════════════════════════════ */
 async function toggleActivo(id, nuevoValor) {
-  /* obtener datos actuales del courier */
-  const r = await fetch(`/transporte/couriers/${id}`);
-  if (!r.ok) return;
-  const d = await r.json();
+  const r0 = await fetch(`/transporte/couriers/${id}`);
+  if (!r0.ok) return;
+  const d = await r0.json();
   await fetch(`/transporte/couriers/${id}`, {
-    method:'PUT', headers:{'Content-Type':'application/json'},
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({...d.courier, activo: nuevoValor})
   });
   location.reload();
 }
 
 /* ════════════════════════════════
-   TARIFAS
+   TARIFAS POR COMUNA
 ════════════════════════════════ */
 async function abrirTarifas(courierId, nombre) {
-  _tarifaCoid  = courierId;
+  _tarifaCoid   = courierId;
+  _tarifaNombre = nombre;
   _tarifaEditId = null;
+  _allComunas   = [];
+
   document.getElementById('tituloTarifas').innerHTML =
-    `<i class="bi bi-currency-dollar me-2 text-success"></i>Tarifas — ${esc(nombre)}`;
+    `<i class="bi bi-map me-2 text-success"></i>Tarifas — ${esc(nombre)}`;
   document.getElementById('cuerpoTarifas').innerHTML =
     '<div class="text-center py-4"><div class="spinner-border text-danger"></div></div>';
+  document.getElementById('calcResult').innerHTML = '';
+  document.getElementById('calcComuna').value = '';
+  document.getElementById('calcPeso').value   = '1';
+  document.getElementById('searchComuna').value = '';
+  document.getElementById('contadorComunas').textContent = '';
   _modalTarifas.show();
-  await refrescarTarifas();
+
+  // Load communes
+  const r = await fetch(`/transporte/couriers/comunas?courier_id=${courierId}`);
+  if (!r.ok) {
+    document.getElementById('cuerpoTarifas').innerHTML = '<p class="text-danger">Error cargando comunas.</p>';
+    return;
+  }
+  _allComunas = await r.json();
+  renderComunas(_allComunas);
 }
 
-async function refrescarTarifas() {
-  const r = await fetch(`/transporte/couriers/${_tarifaCoid}`);
-  if (!r.ok) { document.getElementById('cuerpoTarifas').innerHTML='<p class="text-danger">Error cargando tarifas</p>'; return; }
-  const d = await r.json();
-  renderTarifas(d.tarifas || []);
-  /* actualizar badge en tabla */
-  const b = document.getElementById(`badgeTarifas${_tarifaCoid}`);
-  if (b) b.textContent = (d.tarifas||[]).length;
-}
+function renderComunas(list) {
+  document.getElementById('contadorComunas').textContent =
+    `${list.length} comunas`;
 
-function renderTarifas(tarifas) {
-  const fmt = n => parseFloat(n||0).toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0});
-  const fmtKg = n => parseFloat(n||0).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1});
-
-  if (!tarifas.length) {
+  if (!list.length) {
     document.getElementById('cuerpoTarifas').innerHTML =
-      '<p class="text-muted text-center py-3">Sin tarifas. Agrega una con el botón de abajo.</p>';
+      '<p class="text-muted text-center py-4">Sin comunas importadas. Usa "Importar Excel" para cargar tarifas.</p>';
     return;
   }
 
-  let rows = tarifas.map(t => `
-    <tr class="${t.activo?'':'opacity-50'}">
-      <td>${esc(t.zona)}</td>
-      <td class="text-end">${fmtKg(t.peso_desde)}</td>
-      <td class="text-end">${t.peso_hasta?fmtKg(t.peso_hasta):'∞'}</td>
-      <td class="text-end fw-semibold">${t.moneda} ${fmt(t.precio_base)}</td>
-      <td class="text-end">${t.precio_kg_extra?fmt(t.precio_kg_extra)+'/'+'kg':'—'}</td>
-      <td class="text-center">
-        <span class="badge ${t.activo?'bg-success':'bg-secondary'}">${t.activo?'Sí':'No'}</span>
-      </td>
-      <td class="text-center">
-        <button class="btn btn-sm btn-outline-warning me-1" onclick="editarTarifa(${JSON.stringify(t).replace(/'/g,'&apos;')})">
-          <i class="bi bi-pencil"></i>
-        </button>
-        <button class="btn btn-sm btn-outline-danger" onclick="eliminarTarifa(${t.id})">
-          <i class="bi bi-trash"></i>
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  // Group by region
+  const byRegion = {};
+  list.forEach(c => {
+    const r = c.region || '(Sin región)';
+    if (!byRegion[r]) byRegion[r] = [];
+    byRegion[r].push(c);
+  });
 
-  document.getElementById('cuerpoTarifas').innerHTML = `
-    <div class="table-responsive">
-      <table class="table table-sm table-dark align-middle mb-0">
-        <thead>
-          <tr>
-            <th>Zona</th>
-            <th class="text-end">Desde (kg)</th>
-            <th class="text-end">Hasta (kg)</th>
-            <th class="text-end">Precio base</th>
-            <th class="text-end">$/kg extra</th>
-            <th class="text-center">Activo</th>
-            <th class="text-center">Acciones</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
+  let html = '<div class="table-responsive" style="max-height:55vh;overflow-y:auto;">';
+  html += '<table class="table table-sm table-dark table-hover align-middle mb-0" id="tablaComunas">';
+  html += '<thead class="sticky-top" style="background:#111;"><tr>'
+        + '<th>Comuna</th><th>Zona</th><th>Región</th><th>Días tránsito</th>'
+        + '</tr></thead><tbody>';
+
+  Object.keys(byRegion).sort().forEach(region => {
+    byRegion[region].forEach(c => {
+      html += `<tr>
+        <td class="fw-semibold">${esc(c.comuna)}</td>
+        <td><span class="badge bg-secondary small">${esc(c.zona||'—')}</span></td>
+        <td class="text-muted small">${esc(c.region||'—')}</td>
+        <td class="text-muted small">${esc(c.dias_transito||'—')}</td>
+      </tr>`;
+    });
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('cuerpoTarifas').innerHTML = html;
+}
+
+function filtrarComunas() {
+  const q = document.getElementById('searchComuna').value.toLowerCase().trim();
+  const filtered = q ? _allComunas.filter(c =>
+    (c.comuna||'').toLowerCase().includes(q) ||
+    (c.region||'').toLowerCase().includes(q) ||
+    (c.zona||'').toLowerCase().includes(q)
+  ) : _allComunas;
+  renderComunas(filtered);
+}
+
+async function buscarPrecio() {
+  const comuna = document.getElementById('calcComuna').value.trim();
+  const peso   = parseFloat(document.getElementById('calcPeso').value) || 1;
+  const el     = document.getElementById('calcResult');
+
+  if (!comuna) { el.innerHTML = '<small class="text-warning">Ingresa una comuna.</small>'; return; }
+
+  el.innerHTML = '<div class="spinner-border spinner-border-sm text-danger"></div>';
+
+  const r = await fetch(`/transporte/couriers/lookup?courier_id=${_tarifaCoid}&comuna=${encodeURIComponent(comuna)}&peso=${peso}`);
+  const d = await r.json();
+
+  if (d.ok) {
+    const fmt = n => Math.round(n).toLocaleString('es-CL');
+    const partial = d.partial_match
+      ? `<small class="text-muted d-block">Coincidencia: ${esc(d.comuna_matched)}</small>`
+      : '';
+    el.innerHTML = `
+      <div class="p-2 rounded" style="background:#0d3b17;border:1px solid #198754;">
+        <div class="fw-bold text-success fs-5">$${fmt(d.precio)}</div>
+        <div class="text-muted small">${peso} kg → ${esc(d.comune_matched || comuna)}</div>
+        ${partial}
+      </div>`;
+  } else {
+    el.innerHTML = `<small class="text-danger">${esc(d.error)}</small>`;
+  }
+}
+
+/* ════════════════════════════════
+   TARIFAS (zona-based legacy)
+════════════════════════════════ */
+async function refrescarTarifas() {
+  const r = await fetch(`/transporte/couriers/${_tarifaCoid}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  const b = document.getElementById(`badgeTarifas${_tarifaCoid}`);
+  if (b) b.textContent = (d.tarifas||[]).length;
 }
 
 function abrirNuevaTarifa() {
@@ -535,12 +792,12 @@ async function guardarTarifa() {
     moneda        : document.getElementById('ft_moneda').value,
     activo        : document.getElementById('ft_activo').checked,
   };
-  const url = _tarifaEditId
+  const url    = _tarifaEditId
     ? `/transporte/couriers/${_tarifaCoid}/tarifas/${_tarifaEditId}`
     : `/transporte/couriers/${_tarifaCoid}/tarifas`;
   const method = _tarifaEditId ? 'PUT' : 'POST';
   const r = await fetch(url, {
-    method, headers:{'Content-Type':'application/json'},
+    method, headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
   if (r.ok) {
@@ -560,7 +817,7 @@ async function eliminarTarifa(tid) {
 
 /* ── helpers ── */
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function val(id){ return (document.getElementById(id)||{}).value||''; }
+function gval(id){ return (document.getElementById(id)||{}).value||''; }
 function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
 </script>
 {% endblock %}
