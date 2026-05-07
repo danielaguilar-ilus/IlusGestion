@@ -8622,13 +8622,28 @@ def comm_resend_verify():
                 "Asegúrate de copiar sin espacios al inicio o al final.",
             ]
         elif exc.code == 403:
-            suggestions = [
-                "La cuenta de Resend está restringida o no tiene permisos.",
-                "Verifica el email de la cuenta en resend.com (revisa tu bandeja de entrada).",
-            ]
+            # Intentar extraer el error_code del body JSON
+            error_code = None
+            try:
+                body_json = json.loads(body)
+                error_code = body_json.get("status_code") or body_json.get("error_code")
+            except Exception:
+                pass
+            if "1010" in body or error_code == 1010:
+                suggestions = [
+                    "Tu cuenta Resend NO está verificada. Ve a resend.com, entra a Settings → General y verifica tu email.",
+                    "Busca en tu bandeja de entrada (o spam) el email de team@resend.com con el asunto 'Verify your email address'.",
+                    "Haz clic en el enlace de verificación y luego vuelve aquí a probar.",
+                ]
+            else:
+                suggestions = [
+                    "La cuenta de Resend está restringida o no tiene permisos.",
+                    "Verifica el email de la cuenta en resend.com → Settings → General.",
+                ]
         return jsonify({
             "ok": False,
             "message": f"Resend rechazó la API Key (HTTP {exc.code}).",
+            "error_code": "1010" if "1010" in body else None,
             "detail": body[:500],
             "suggestions": suggestions,
         }), 422
