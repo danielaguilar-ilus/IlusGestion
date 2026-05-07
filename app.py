@@ -6800,18 +6800,45 @@ def tr_courier_nuevo():
 
 @app.route("/transporte/couriers/<int:cid>", methods=["GET"])
 @_tr_required
-def tr_courier_detalle(cid):
-    courier = mysql_fetchone(
-        "SELECT * FROM transport_couriers WHERE id=%s", (cid,)
-    )
+def tr_courier_ficha(cid):
+    courier = mysql_fetchone("""
+        SELECT c.*,
+               COUNT(DISTINCT cc.id) AS total_comunas,
+               COUNT(DISTINCT ct.id) AS total_contratos,
+               MAX(cc.updated_at)    AS ultima_importacion
+        FROM transport_couriers c
+        LEFT JOIN transport_courier_comunas cc ON cc.courier_id=c.id
+        LEFT JOIN transport_courier_contratos ct ON ct.courier_id=c.id AND ct.vigente=1
+        WHERE c.id=%s GROUP BY c.id
+    """, (cid,))
     if not courier:
         flash("Courier no encontrado.", "danger")
         return redirect(url_for("tr_couriers"))
-    tarifas = mysql_fetchall(
-        "SELECT * FROM transport_courier_tarifas WHERE courier_id=%s ORDER BY zona,peso_desde",
-        (cid,),
+
+    contratos = mysql_fetchall(
+        "SELECT * FROM transport_courier_contratos WHERE courier_id=%s ORDER BY vigente DESC, created_at DESC",
+        (cid,)
+    ) or []
+
+    comunas_sample = mysql_fetchall(
+        "SELECT comuna, zona, region, dias_transito, precios_json FROM transport_courier_comunas "
+        "WHERE courier_id=%s ORDER BY region, comuna LIMIT 10", (cid,)
+    ) or []
+
+    regions = mysql_fetchall(
+        "SELECT DISTINCT region FROM transport_courier_comunas WHERE courier_id=%s AND region!='' ORDER BY region", (cid,)
+    ) or []
+    zonas = mysql_fetchall(
+        "SELECT DISTINCT zona FROM transport_courier_comunas WHERE courier_id=%s AND zona!='' ORDER BY zona", (cid,)
+    ) or []
+
+    return render_template("transporte/courier_ficha.html",
+        courier=courier,
+        contratos=contratos,
+        comunas_sample=comunas_sample,
+        regions=[r['region'] for r in regions],
+        zonas=[z['zona'] for z in zonas],
     )
-    return jsonify({"courier": dict(courier), "tarifas": [dict(t) for t in tarifas]})
 
 
 @app.route("/transporte/couriers/<int:cid>", methods=["PUT"])
@@ -6858,6 +6885,172 @@ def tr_courier_eliminar(cid):
         cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
     conn.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/transporte/couriers/<int:cid>/api", methods=["GET"])
+@_tr_required
+def tr_courier_api_data(cid):
+    """Returns full courier data as JSON for the ficha page."""
+    courier = mysql_fetchone("SELECT * FROM transport_couriers WHERE id=%s", (cid,))
+    if not courier:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(courier))
+
+
+@app.route("/transporte/couriers/<int:cid>/contratos", methods=["POST"])
+@_tr_required
+def tr_courier_contrato_nuevo(cid):
+    """Save/update contract info (no file, just metadata)."""
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if d.get("vigente"):
+                cur.execute("UPDATE transport_courier_contratos SET vigente=0 WHERE courier_id=%s", (cid,))
+            cur.execute("""
+                INSERT INTO transport_courier_contratos
+                    (courier_id, nombre, descripcion, archivo_url, tipo, vigente, fecha_inicio, fecha_fin, subido_por)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (
+                cid,
+                (d.get("nombre") or "Contrato").strip(),
+                (d.get("descripcion") or "").strip(),
+                (d.get("archivo_url") or "").strip(),
+                d.get("tipo", "contrato"),
+                1 if d.get("vigente") else 0,
+                d.get("fecha_inicio") or None,
+                d.get("fecha_fin") or None,
+                current_username(),
+            ))
+            new_id = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok": True, "id": new_id})
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/couriers/<int:cid>/contratos/<int:kid>", methods=["PUT"])
+@_tr_required
+def tr_courier_contrato_update(cid, kid):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if d.get("vigente"):
+                cur.execute("UPDATE transport_courier_contratos SET vigente=0 WHERE courier_id=%s", (cid,))
+            cur.execute("""
+                UPDATE transport_courier_contratos SET
+                    nombre=%s, descripcion=%s, archivo_url=%s, tipo=%s,
+                    vigente=%s, fecha_inicio=%s, fecha_fin=%s
+                WHERE id=%s AND courier_id=%s
+            """, (
+                (d.get("nombre") or "Contrato").strip(),
+                (d.get("descripcion") or "").strip(),
+                (d.get("archivo_url") or "").strip(),
+                d.get("tipo", "contrato"),
+                1 if d.get("vigente") else 0,
+                d.get("fecha_inicio") or None,
+                d.get("fecha_fin") or None,
+                kid, cid,
+            ))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/couriers/<int:cid>/contratos/<int:kid>", methods=["DELETE"])
+@_tr_required
+def tr_courier_contrato_delete(cid, kid):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM transport_courier_contratos WHERE id=%s AND courier_id=%s", (kid, cid))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/couriers/<int:cid>/logo", methods=["POST"])
+@_tr_required
+def tr_courier_logo(cid):
+    """Upload logo via URL. Accepts JSON {logo_url, logo_type}."""
+    d = request.get_json(silent=True) or {}
+    logo_url  = (d.get("logo_url") or "").strip()
+    logo_type = d.get("logo_type", "principal")
+
+    col_map = {"principal": "logo_url", "square": "logo_square_url", "label": "logo_label_url"}
+    col = col_map.get(logo_type, "logo_url")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for c_def in ["logo_square_url VARCHAR(400)", "logo_label_url VARCHAR(400)",
+                          "nombre_fantasia VARCHAR(120)", "giro VARCHAR(150)",
+                          "contacto_cargo VARCHAR(120)", "renovacion_automatica TINYINT(1) DEFAULT 0"]:
+                try:
+                    cur.execute(f"ALTER TABLE transport_couriers ADD COLUMN {c_def}")
+                except Exception:
+                    pass
+            cur.execute(f"UPDATE transport_couriers SET {col}=%s WHERE id=%s", (logo_url, cid))
+        conn.commit()
+        return jsonify({"ok": True, "logo_url": logo_url})
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/couriers/<int:cid>/comunas/paginated", methods=["GET"])
+@_tr_required
+def tr_courier_comunas_paginated(cid):
+    """Returns paginated, filterable commune pricing."""
+    page   = max(1, request.args.get("page", 1, type=int))
+    per    = 25
+    search = (request.args.get("q") or "").strip()
+    region = (request.args.get("region") or "").strip()
+    zona   = (request.args.get("zona") or "").strip()
+
+    conditions = ["courier_id=%s"]
+    params = [cid]
+    if search:
+        conditions.append("LOWER(comuna) LIKE LOWER(%s)")
+        params.append(f"%{search}%")
+    if region:
+        conditions.append("region=%s")
+        params.append(region)
+    if zona:
+        conditions.append("zona=%s")
+        params.append(zona)
+
+    where  = " AND ".join(conditions)
+    total  = (mysql_fetchone(f"SELECT COUNT(*) AS n FROM transport_courier_comunas WHERE {where}", params) or {}).get("n", 0)
+    offset = (page - 1) * per
+    rows   = mysql_fetchall(
+        f"SELECT codigo, sucursal, comuna, zona, region, dias_transito, precios_json "
+        f"FROM transport_courier_comunas WHERE {where} ORDER BY region, comuna LIMIT %s OFFSET %s",
+        params + [per, offset]
+    ) or []
+
+    result = []
+    for r in rows:
+        item = dict(r)
+        if r.get("precios_json"):
+            try:
+                item["precios"] = json.loads(r["precios_json"])
+            except Exception:
+                item["precios"] = {}
+        else:
+            item["precios"] = {}
+        del item["precios_json"]
+        result.append(item)
+
+    return jsonify({
+        "rows":  result,
+        "total": total,
+        "page":  page,
+        "pages": max(1, (total + per - 1) // per),
+        "per":   per,
+    })
 
 
 # ── COURIERS: IMPORT / EXPORT / LOOKUP / COMUNAS ─────────────────────────────
