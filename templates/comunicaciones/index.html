@@ -128,12 +128,20 @@
                   <button class="btn btn-danger btn-sm fw-bold" onclick="guardarResend()">
                     <i class="bi bi-floppy me-1"></i>Guardar configuración
                   </button>
+                  <button class="btn btn-primary btn-sm" onclick="verificarResend(this)">
+                    <i class="bi bi-shield-check me-1"></i>Verificar API Key
+                  </button>
                   <button class="btn btn-success btn-sm" onclick="abrirTestResend()">
-                    <i class="bi bi-send me-1"></i>Probar envío
+                    <i class="bi bi-send me-1"></i>Enviar correo de prueba
                   </button>
                   <a href="https://resend.com/api-keys" target="_blank" class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-box-arrow-up-right me-1"></i>Obtener API Key
                   </a>
+                </div>
+                <div class="form-text mt-2">
+                  <i class="bi bi-info-circle me-1"></i>
+                  <strong>Verificar API Key</strong> = solo valida la conexión sin enviar emails.
+                  <strong>Enviar prueba</strong> = manda un correo real.
                 </div>
                 <div id="resendMsg" class="small mt-2"></div>
               </div>
@@ -359,11 +367,20 @@
               </span>
             </div>
             <div class="card-body">
-              <div class="alert alert-dark border-0 small mb-4" style="background:#1a1a2e">
-                <i class="bi bi-info-circle-fill me-2 text-info"></i>
-                <strong>Modo Sandbox Twilio:</strong> el destinatario debe enviar primero
-                <code>join &lt;código&gt;</code> al número sandbox
-                <strong>+1 415 523 8886</strong> para recibir mensajes.
+              <div class="alert alert-warning border-0 small mb-4">
+                <div class="fw-bold mb-2"><i class="bi bi-exclamation-triangle-fill me-1"></i>Importante — Modo Sandbox de Twilio</div>
+                <div>El destinatario <strong>DEBE</strong> enviar primero un WhatsApp al número
+                <strong>+1 415 523 8886</strong> con el texto exacto:</div>
+                <div class="my-2 p-2 rounded text-center" style="background:#fff;border:1px dashed #f59e0b;font-family:monospace;font-size:.95rem">
+                  <span id="sandboxJoinCode">join &lt;código-de-tu-sandbox&gt;</span>
+                </div>
+                <div class="small">
+                  Encuentra <strong>tu código join</strong> en
+                  <a href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn" target="_blank">
+                    Twilio Console → WhatsApp → Sandbox
+                  </a>.
+                  Sin este paso, los mensajes a ese número <strong>no se entregan</strong> aunque Twilio responda OK.
+                </div>
               </div>
               <div class="row g-3">
                 <div class="col-12">
@@ -781,10 +798,12 @@
       <div class="modal-body">
         <div class="small text-secondary mb-3">Se enviará un correo de prueba usando Resend API para confirmar que funciona correctamente.</div>
         <label class="form-label small fw-semibold">Destinatario</label>
-        <input id="testResendTo" type="email" class="form-control form-control-sm"
+        <input id="testResendTo" type="email" name="email"
+               class="form-control form-control-sm"
                style="background:#1e293b;border-color:#334155;color:#f1f5f9"
                placeholder="correo@destino.cl"
-               value="{{ current_user.email if current_user else '' }}">
+               autocomplete="email"
+               value="">
         <div id="testResendMsg" class="small mt-2"></div>
       </div>
       <div class="modal-footer" style="border-color:#1e293b">
@@ -940,6 +959,41 @@ function switchEmailTab(which) {
   document.getElementById('tab-smtp').classList.toggle('active',   which === 'smtp');
 }
 
+async function verificarResend(btn) {
+  const msg = document.getElementById('resendMsg');
+  const original = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verificando...';
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-primary me-1"></div>Verificando API Key con Resend...';
+  try {
+    const r = await fetch('/comunicaciones/resend/verify', { method: 'POST' });
+    let d = null;
+    try { d = await r.json(); } catch(e) {
+      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">Respuesta inválida del servidor (HTTP ${r.status}). Recarga la página.</div>`;
+      return;
+    }
+    const sugg = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
+    if (d.ok) {
+      msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small">
+        <div class="fw-bold"><i class="bi bi-shield-check-fill me-1"></i>${esc(d.message)}</div>
+        ${d.source ? `<div class="small mt-1 text-muted">Fuente de configuración: <code>${esc(d.source)}</code></div>` : ''}
+      </div>`;
+    } else {
+      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
+        <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'No se pudo verificar')}</div>
+        ${d.detail ? `<div class="mt-1 font-monospace" style="font-size:.72rem;word-break:break-all">${esc(d.detail)}</div>` : ''}
+        ${sugg ? `<div class="fw-semibold mt-2">Qué revisar:</div><ul class="mb-0 ps-3">${sugg}</ul>` : ''}
+      </div>`;
+    }
+  } catch(e) {
+    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
+  }
+}
+
 async function guardarResend() {
   const msg     = document.getElementById('resendMsg');
   const apiKey  = document.getElementById('resendApiKeyInput').value.trim();
@@ -989,7 +1043,16 @@ async function enviarTestResend() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({to})
     });
-    const d = await r.json();
+    let d = null;
+    try {
+      d = await r.json();
+    } catch(jsonErr) {
+      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
+        <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>Error del servidor (HTTP ${r.status})</div>
+        <div class="mt-1">El servidor no devolvió JSON. Posiblemente la sesión expiró — recarga la página y vuelve a iniciar sesión.</div>
+      </div>`;
+      return;
+    }
     const sugg = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
     if (d.ok) {
       msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;

@@ -7988,10 +7988,93 @@ def comm_resend_save():
         conn.close()
 
 
+@app.route("/comunicaciones/resend/verify", methods=["POST"])
+@_require_superadmin
+def comm_resend_verify():
+    """
+    Verifica que la API Key de Resend sea válida SIN enviar correo.
+    Hace un GET a /domains que solo requiere autenticación.
+    """
+    cfg = _get_resend_cfg()
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        return jsonify({
+            "ok": False,
+            "message": "No hay API Key configurada. Pega tu key y guarda primero.",
+        }), 422
+
+    import urllib.request as _ur
+    import urllib.error  as _ue
+    req = _ur.Request(
+        "https://api.resend.com/domains",
+        headers={"Authorization": f"Bearer {api_key}"},
+        method="GET",
+    )
+    try:
+        with _ur.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore") or "{}")
+            domains = data.get("data") or []
+            verified = [d for d in domains if d.get("status") == "verified"]
+            msg = f"API Key válida. Cuenta Resend conectada (source={cfg.get('_source','?')})."
+            if verified:
+                msg += f" Tienes {len(verified)} dominio(s) verificado(s)."
+            else:
+                msg += " Sin dominios verificados — usa onboarding@resend.dev como remitente."
+            return jsonify({
+                "ok": True,
+                "message": msg,
+                "domains_count": len(domains),
+                "verified_count": len(verified),
+                "source": cfg.get("_source", ""),
+            })
+    except _ue.HTTPError as exc:
+        body = ""
+        try: body = exc.read().decode("utf-8", "ignore")
+        except: pass
+        suggestions = []
+        if exc.code == 401:
+            suggestions = [
+                "La API Key es inválida o fue eliminada.",
+                "Ve a resend.com/api-keys, copia la key COMPLETA (empieza con re_) y guárdala.",
+                "Asegúrate de copiar sin espacios al inicio o al final.",
+            ]
+        elif exc.code == 403:
+            suggestions = [
+                "La cuenta de Resend está restringida o no tiene permisos.",
+                "Verifica el email de la cuenta en resend.com (revisa tu bandeja de entrada).",
+            ]
+        return jsonify({
+            "ok": False,
+            "message": f"Resend rechazó la API Key (HTTP {exc.code}).",
+            "detail": body[:500],
+            "suggestions": suggestions,
+        }), 422
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "message": "No se pudo conectar a Resend.",
+            "detail": str(exc),
+        }), 500
+
+
 @app.route("/comunicaciones/resend/test", methods=["POST"])
 @_require_superadmin
 def comm_resend_test():
     """Prueba la conexión con Resend API enviando un correo de prueba."""
+    try:
+        return _comm_resend_test_inner()
+    except Exception as exc:
+        # Garantizar que SIEMPRE devuelva JSON (nunca HTML de error 500)
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "message": "Error interno al ejecutar la prueba.",
+            "detail": str(exc),
+        }), 500
+
+
+def _comm_resend_test_inner():
     d  = request.get_json(silent=True) or {}
     to = (d.get("to") or "").strip()
     if not to:
@@ -8016,15 +8099,15 @@ def comm_resend_test():
         pass
 
     html = _ilus_email_html(
-        titulo       = "✅ Resend API — Conexión verificada",
-        subtitulo    = "Prueba de integración — ILUS Comunicaciones",
-        saludo       = "¡Email entregado correctamente!",
-        parrafos     = [
+        titulo      = "Resend API verificado",
+        subtitulo   = "Prueba de integración — ILUS Comunicaciones",
+        saludo      = "Email entregado correctamente",
+        parrafos    = [
             "La integración con Resend API está funcionando.",
             "Los correos se enviarán vía HTTPS y no dependen de puertos SMTP.",
         ],
-        info_lineas  = [("", "Enviado por", current_username()), ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
-        color_acento = "#22c55e",
+        info_lineas = [("", "Enviado por", current_username() or "ILUS"),
+                       ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
     )
     ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
     resend_err = getattr(g, "_last_resend_error", "") or ""
