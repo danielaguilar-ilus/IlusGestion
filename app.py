@@ -2003,16 +2003,27 @@ def _send_via_resend(to_addr: str, subject: str, html_body: str,
         except Exception:
             pass
         print(f"[ILUS][RESEND] HTTP {exc.code} → {to_addr}: {body}")
-        # Guardar detalle para que el endpoint de test lo pueda leer
+        # Parsear el JSON de error para extraer message + statusCode + name
+        parsed = {}
         try:
-            g._last_resend_error = f"HTTP {exc.code}: {body}"
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {}
+        try:
+            g._last_resend_error = {
+                "http_code": exc.code,
+                "raw_body":  body,
+                "name":      parsed.get("name", ""),
+                "message":   parsed.get("message", ""),
+                "status_code": parsed.get("statusCode") or parsed.get("status_code") or exc.code,
+            }
         except Exception:
             pass
         return False
     except Exception as exc:
         print(f"[ILUS][RESEND] Error → {to_addr}: {exc}")
         try:
-            g._last_resend_error = str(exc)
+            g._last_resend_error = {"http_code": 0, "raw_body": str(exc), "name": "network_error", "message": str(exc), "status_code": 0}
         except Exception:
             pass
         return False
@@ -8689,6 +8700,123 @@ def comm_resend_verify():
         }), 500
 
 
+# ══════════════════════════════════════════════════════════════════
+# RESEND — GESTIÓN DE DOMINIOS (verificar dominio propio)
+# ══════════════════════════════════════════════════════════════════
+
+def _resend_api_call(method: str, path: str, body: dict = None) -> tuple:
+    """
+    Llamada genérica a la API de Resend.
+    Devuelve (ok, status_code, response_dict).
+    """
+    import urllib.request as _ur
+    import urllib.error  as _ue
+
+    cfg = _get_resend_cfg()
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        return False, 0, {"error": "No hay API Key configurada"}
+
+    data = json.dumps(body).encode("utf-8") if body else None
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if body:
+        headers["Content-Type"] = "application/json"
+
+    req = _ur.Request(f"https://api.resend.com{path}", data=data, headers=headers, method=method)
+    try:
+        with _ur.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8", "ignore")
+            return True, resp.status, (json.loads(raw) if raw else {})
+    except _ue.HTTPError as exc:
+        body_str = ""
+        try: body_str = exc.read().decode("utf-8", "ignore")
+        except: pass
+        try:
+            parsed = json.loads(body_str) if body_str else {}
+        except Exception:
+            parsed = {"raw": body_str}
+        return False, exc.code, parsed
+    except Exception as exc:
+        return False, 0, {"error": str(exc)}
+
+
+@app.route("/comunicaciones/resend/domains", methods=["GET"])
+@_require_superadmin
+def comm_resend_domains_list():
+    """Lista todos los dominios configurados en Resend."""
+    ok, code, data = _resend_api_call("GET", "/domains")
+    if not ok:
+        return jsonify({
+            "ok": False,
+            "message": "No se pudo listar dominios.",
+            "http_code": code,
+            "detail": data,
+        }), 422
+    return jsonify({
+        "ok": True,
+        "domains": data.get("data", []),
+    })
+
+
+@app.route("/comunicaciones/resend/domains", methods=["POST"])
+@_require_superadmin
+def comm_resend_domain_add():
+    """Agrega un dominio nuevo a Resend (devuelve registros DNS para verificar)."""
+    d = request.get_json(silent=True) or {}
+    domain = (d.get("domain") or "").strip().lower()
+    region = (d.get("region") or "us-east-1").strip()
+
+    if not domain or "." not in domain:
+        return jsonify({"ok": False, "message": "Dominio inválido. Ej: ilussport.cl"}), 400
+
+    ok, code, data = _resend_api_call("POST", "/domains", {"name": domain, "region": region})
+    if not ok:
+        return jsonify({
+            "ok": False,
+            "message": data.get("message") or f"Resend rechazó la solicitud (HTTP {code}).",
+            "http_code": code,
+            "detail": data,
+        }), 422
+    return jsonify({
+        "ok": True,
+        "message": f"Dominio '{domain}' agregado. Configura los registros DNS abajo y luego haz clic en Verificar.",
+        "domain": data,
+    })
+
+
+@app.route("/comunicaciones/resend/domains/<domain_id>/verify", methods=["POST"])
+@_require_superadmin
+def comm_resend_domain_verify(domain_id):
+    """Pide a Resend que re-verifique los registros DNS del dominio."""
+    ok, code, data = _resend_api_call("POST", f"/domains/{domain_id}/verify")
+    if not ok:
+        return jsonify({
+            "ok": False,
+            "message": data.get("message") or f"No se pudo verificar (HTTP {code}).",
+            "detail": data,
+        }), 422
+    # Re-leer estado actual
+    ok2, code2, info = _resend_api_call("GET", f"/domains/{domain_id}")
+    return jsonify({
+        "ok": True,
+        "message": "Verificación solicitada. Si los DNS están correctos, el estado pasará a 'verified' en pocos minutos.",
+        "domain": info if ok2 else None,
+    })
+
+
+@app.route("/comunicaciones/resend/domains/<domain_id>", methods=["DELETE"])
+@_require_superadmin
+def comm_resend_domain_delete(domain_id):
+    """Elimina un dominio de Resend."""
+    ok, code, data = _resend_api_call("DELETE", f"/domains/{domain_id}")
+    if not ok:
+        return jsonify({
+            "ok": False,
+            "message": data.get("message") or f"No se pudo eliminar (HTTP {code}).",
+        }), 422
+    return jsonify({"ok": True, "message": "Dominio eliminado."})
+
+
 @app.route("/comunicaciones/resend/test", methods=["POST"])
 @_require_superadmin
 def comm_resend_test():
@@ -8742,42 +8870,86 @@ def _comm_resend_test_inner():
                        ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
     )
     ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
-    resend_err = getattr(g, "_last_resend_error", "") or ""
+    err = getattr(g, "_last_resend_error", None) or {}
+    if not isinstance(err, dict):
+        err = {"raw_body": str(err), "message": str(err), "name": "", "http_code": 0, "status_code": 0}
+
     if ok:
         _comm_log_entry("email", to, "Prueba Resend API", "ok", f"Enviado via Resend (source={cfg.get('_source')})")
         return jsonify({"ok": True, "message": f"✅ Email enviado a {to} vía Resend API."})
+
+    # ── No envió: armar diagnóstico claro ────────────────────────────────
+    raw_body  = err.get("raw_body", "")
+    resend_msg = err.get("message", "")
+    err_name   = err.get("name", "")
+    http_code  = err.get("http_code", 0)
+    _comm_log_entry("email", to, "Prueba Resend API", "error", (raw_body or resend_msg)[:400])
+
+    # Detectar tipo de error
+    suggestions    = []
+    diagnosis      = ""
+    action_url     = ""
+    action_label   = ""
+    is_domain_issue = False
+    is_self_only_issue = False
+
+    body_lower = (raw_body + " " + resend_msg + " " + err_name).lower()
+
+    if "validation_error" in body_lower and ("only send testing" in body_lower or "your own email" in body_lower):
+        # ESTE es el famoso 1010: "you can only send to your own email"
+        is_self_only_issue = True
+        diagnosis = ("Resend exige verificar un dominio para enviar a CUALQUIER destinatario. "
+                     "Sin dominio verificado, solo permite enviar al email registrado en tu cuenta de Resend.")
+        suggestions = [
+            "OPCIÓN A (definitiva): Verifica un dominio en Resend → resend.com/domains. Una vez verificado, podrás usar 'noreply@tudominio.cl' como remitente y enviar a cualquier persona.",
+            f"OPCIÓN B (temporal): Envía solo al email con que registraste tu cuenta Resend. Prueba primero ver con qué email entras a resend.com.",
+            "OPCIÓN C: Cambia el destinatario a una dirección @resend.dev de prueba.",
+        ]
+        action_url = "https://resend.com/domains"
+        action_label = "Ir a verificar dominio en Resend"
+    elif http_code == 401 or "invalid_api_key" in body_lower or "unauthorized" in body_lower:
+        diagnosis = "La API Key es inválida o fue revocada en Resend."
+        suggestions = [
+            "Ve a resend.com/api-keys → genera una key NUEVA con 'Full access'.",
+            "Copia la key completa (empieza con 're_') sin espacios.",
+            "Actualízala en Railway Variables (RESEND_API_KEY) y redeploy.",
+        ]
+        action_url = "https://resend.com/api-keys"
+        action_label = "Generar nueva API Key"
+    elif "domain" in body_lower and ("not verified" in body_lower or "not_verified" in body_lower):
+        is_domain_issue = True
+        diagnosis = "El dominio del remitente no está verificado en Resend."
+        suggestions = [
+            f"Verifica el dominio del remitente actual ({cfg.get('from_addr','onboarding@resend.dev')}) en Resend.",
+            "O cambia el remitente a 'onboarding@resend.dev' (plan gratuito).",
+        ]
+        action_url = "https://resend.com/domains"
+        action_label = "Verificar dominio"
+    elif http_code == 429 or "rate" in body_lower:
+        diagnosis = "Has superado el límite de envíos por minuto/día."
+        suggestions = ["Espera unos minutos y reintenta.", "Plan gratuito: 100/día, 10/segundo."]
     else:
-        _comm_log_entry("email", to, "Prueba Resend API", "error", resend_err or "Fallo Resend")
-        # Interpretar el error de Resend para dar sugerencias útiles
-        suggestions = []
-        detail = resend_err
-        if "401" in resend_err or "unauthorized" in resend_err.lower() or "invalid_api_key" in resend_err.lower():
-            suggestions = [
-                "La API Key es inválida o fue revocada.",
-                "Ve a resend.com/api-keys, copia la key completa (empieza con 're_') y guárdala de nuevo.",
-            ]
-        elif "422" in resend_err or "from" in resend_err.lower():
-            suggestions = [
-                "En plan gratuito el remitente DEBE ser 'onboarding@resend.dev'.",
-                "Si quieres usar tu propio correo, debes verificar el dominio en resend.com/domains.",
-            ]
-        elif "domain" in resend_err.lower() or "not verified" in resend_err.lower():
-            suggestions = [
-                "El dominio del remitente no está verificado en Resend.",
-                "Usa 'onboarding@resend.dev' como remitente (plan gratuito).",
-            ]
-        else:
-            suggestions = [
-                "Verifica que la API Key sea válida (debe empezar con 're_').",
-                "Asegúrate de que tu cuenta Resend tenga el email verificado.",
-                "En plan gratuito usa onboarding@resend.dev como remitente.",
-            ]
-        return jsonify({
-            "ok": False,
-            "message": "Resend no pudo enviar el correo.",
-            "detail": detail,
-            "suggestions": suggestions,
-        }), 422
+        diagnosis = resend_msg or "Error desconocido de Resend."
+        suggestions = [
+            "Revisa que la cuenta Resend tenga el email verificado.",
+            "Verifica que la API Key esté activa en resend.com/api-keys.",
+        ]
+        action_url = "https://resend.com/domains"
+        action_label = "Ver mis dominios"
+
+    return jsonify({
+        "ok": False,
+        "message": diagnosis or "Resend no pudo enviar el correo.",
+        "resend_message": resend_msg,
+        "resend_name":    err_name,
+        "http_code":      http_code,
+        "raw_body":       raw_body[:500],
+        "suggestions":    suggestions,
+        "action_url":     action_url,
+        "action_label":   action_label,
+        "is_self_only_issue": is_self_only_issue,
+        "is_domain_issue":    is_domain_issue,
+    }), 422
 
 
 @app.route("/comunicaciones/email/status", methods=["GET"])

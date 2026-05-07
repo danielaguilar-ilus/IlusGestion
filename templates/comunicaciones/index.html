@@ -247,6 +247,60 @@
             </div>{# /collapse #}
           </div>
 
+          {# ════════════════════════════════════════════════════════════
+             DOMINIOS RESEND — la solución definitiva para enviar a clientes
+          ════════════════════════════════════════════════════════════ #}
+          <div class="card shadow-sm border-0 mb-4" id="cardDominios">
+            <div class="card-header d-flex align-items-center justify-content-between" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <span class="fw-bold">
+                <i class="bi bi-globe2 me-2 text-warning"></i>Dominios verificados — Para enviar a cualquier cliente
+              </span>
+              <button class="btn btn-sm btn-outline-light" onclick="cargarDominios()" title="Recargar">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+            <div class="card-body">
+              <div class="alert alert-info py-2 px-3 small mb-3">
+                <i class="bi bi-lightbulb-fill me-1"></i>
+                <strong>¿Por qué necesitas verificar un dominio?</strong>
+                Resend solo permite enviar emails a la dirección registrada en tu cuenta cuando usas <code>onboarding@resend.dev</code> como remitente.
+                Para enviar a <strong>cualquier cliente</strong>, debes verificar un dominio propio (ej: <code>sphs.cl</code>) — es un trámite que se hace UNA SOLA VEZ.
+              </div>
+
+              {# Form para agregar dominio #}
+              <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-7">
+                  <label class="form-label small fw-semibold">Agregar dominio nuevo</label>
+                  <input id="dominioNuevo" class="form-control form-control-sm"
+                         placeholder="ej: sphs.cl" autocomplete="off">
+                  <div class="form-text">Sin "https://" ni "www.". Solo el dominio raíz.</div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">Región</label>
+                  <select id="dominioRegion" class="form-select form-select-sm">
+                    <option value="us-east-1" selected>US East (Virginia)</option>
+                    <option value="eu-west-1">EU West (Ireland)</option>
+                    <option value="sa-east-1">South America (São Paulo)</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <button class="btn btn-warning btn-sm fw-bold w-100" onclick="agregarDominio()">
+                    <i class="bi bi-plus-lg me-1"></i>Agregar
+                  </button>
+                </div>
+              </div>
+
+              {# Lista de dominios #}
+              <div id="listaDominios">
+                <div class="text-center py-3 text-muted small">
+                  <div class="spinner-border spinner-border-sm me-2"></div>Cargando dominios...
+                </div>
+              </div>
+
+              <div id="dominiosMsg" class="mt-2 small"></div>
+            </div>
+          </div>
+
           {# Config Cliente #}
           <div class="card shadow-sm border-0">
             <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
@@ -979,6 +1033,8 @@ document.addEventListener('DOMContentLoaded', () => {
   poblarPlantillasManual();
   actualizarPreview();
   cargarEstadoEmail();
+  // Cargar dominios solo si Resend está activo (defer 600ms para no bloquear UI)
+  setTimeout(() => { try { cargarDominios(); } catch(e){} }, 600);
 
   document.getElementById('ccColor').addEventListener('input', function() {
     document.getElementById('ccColorText').value = this.value;
@@ -1177,22 +1233,201 @@ async function enviarTestResend() {
     } catch(jsonErr) {
       msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
         <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>Error del servidor (HTTP ${r.status})</div>
-        <div class="mt-1">El servidor no devolvió JSON. Posiblemente la sesión expiró — recarga la página y vuelve a iniciar sesión.</div>
+        <div class="mt-1">El servidor no devolvió JSON. Recarga la página.</div>
       </div>`;
       return;
     }
-    const sugg = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
+
     if (d.ok) {
       msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
+      return;
+    }
+
+    // ── Error: armar diagnóstico claro ──────────────────────────────────
+    const sugg = (d.suggestions || []).map(x => `<li class="mb-1">${esc(x)}</li>`).join('');
+    const actionBtn = d.action_url
+      ? `<a href="${esc(d.action_url)}" target="_blank" class="btn btn-warning btn-sm fw-bold mt-2">
+           <i class="bi bi-box-arrow-up-right me-1"></i>${esc(d.action_label || 'Ir a Resend')}
+         </a>`
+      : '';
+
+    // Detectar si es el famoso problema 1010
+    let banner = '';
+    if (d.is_self_only_issue) {
+      banner = `<div class="p-2 mb-2 rounded" style="background:#fef3c7;border-left:3px solid #f59e0b;color:#1f2937">
+        <div class="fw-bold mb-1">🔒 Restricción del plan gratuito de Resend</div>
+        <div>Este es el famoso error 1010. Resend solo deja enviar emails al correo con que registraste la cuenta — para enviar a clientes necesitas verificar un dominio.</div>
+      </div>`;
+    } else if (d.is_domain_issue) {
+      banner = `<div class="p-2 mb-2 rounded" style="background:#fef3c7;border-left:3px solid #f59e0b;color:#1f2937">
+        <div class="fw-bold mb-1">🌐 Dominio no verificado</div>
+        <div>El dominio del remitente no está verificado en Resend.</div>
+      </div>`;
+    }
+
+    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
+      ${banner}
+      <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al enviar')}</div>
+      ${d.resend_message ? `<div class="mt-2 p-2 rounded" style="background:#0b1220;color:#e2e8f0;font-family:monospace;font-size:.72rem;white-space:pre-wrap;word-break:break-all">${esc(d.resend_message)}</div>` : ''}
+      ${sugg ? `<div class="fw-semibold mt-2">Qué hacer:</div><ul class="mb-0 ps-3 mt-1">${sugg}</ul>` : ''}
+      ${actionBtn}
+    </div>`;
+  } catch(e) {
+    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   GESTIÓN DE DOMINIOS RESEND
+════════════════════════════════════════════════════════════ */
+async function cargarDominios() {
+  const cont = document.getElementById('listaDominios');
+  cont.innerHTML = '<div class="text-center py-3 text-muted small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando...</div>';
+  try {
+    const r = await fetch('/comunicaciones/resend/domains');
+    const d = await r.json();
+    if (!d.ok) {
+      cont.innerHTML = `<div class="alert alert-warning py-2 px-3 small mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>${esc(d.message || 'No se pudieron listar los dominios')}.
+        <div class="mt-1 small text-muted">Esto puede ocurrir si tu API Key tiene permisos limitados (Sending Access). Necesitas una key con "Full access" para gestionar dominios.</div>
+      </div>`;
+      return;
+    }
+    if (!d.domains || !d.domains.length) {
+      cont.innerHTML = `<div class="text-center py-3 text-muted small">
+        <i class="bi bi-globe2 d-block mb-2" style="font-size:1.5rem;opacity:.4"></i>
+        Sin dominios verificados todavía. Agrega uno arriba para empezar.
+      </div>`;
+      return;
+    }
+    cont.innerHTML = d.domains.map(dom => renderDominio(dom)).join('');
+  } catch(e) {
+    cont.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error de red: ${esc(String(e))}</div>`;
+  }
+}
+
+function renderDominio(dom) {
+  const status = (dom.status || '').toLowerCase();
+  const statusBadge = {
+    'verified':     '<span class="badge bg-success">Verificado ✓</span>',
+    'pending':      '<span class="badge bg-warning text-dark">Pendiente DNS</span>',
+    'not_started':  '<span class="badge bg-secondary">Sin verificar</span>',
+    'failure':      '<span class="badge bg-danger">Falló</span>',
+    'temporary_failure': '<span class="badge bg-warning text-dark">Reintentando</span>',
+  }[status] || `<span class="badge bg-secondary">${esc(status || 'desconocido')}</span>`;
+
+  const records = (dom.records || []).map(rec => `
+    <tr>
+      <td><code class="small">${esc(rec.record || rec.type || '')}</code></td>
+      <td><code class="small text-break" style="font-size:.7rem">${esc(rec.name || '')}</code></td>
+      <td><code class="small text-break" style="font-size:.7rem;max-width:300px;display:inline-block;word-break:break-all">${esc(rec.value || '')}</code></td>
+      <td>${rec.priority != null ? esc(String(rec.priority)) : '—'}</td>
+      <td><span class="badge bg-${rec.status === 'verified' ? 'success' : 'warning text-dark'} small">${esc(rec.status || '?')}</span></td>
+    </tr>
+  `).join('');
+
+  return `
+    <div class="border rounded p-3 mb-2" style="background:#fafafa">
+      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+        <div>
+          <span class="fw-bold">${esc(dom.name || '')}</span>
+          ${statusBadge}
+          <span class="text-muted small ms-2">${esc(dom.region || '')}</span>
+        </div>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-outline-primary" onclick="verificarDominio('${esc(dom.id)}')">
+            <i class="bi bi-shield-check me-1"></i>Re-verificar DNS
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="eliminarDominio('${esc(dom.id)}','${esc(dom.name)}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+
+      ${records ? `
+        <div class="small fw-semibold mt-3 mb-1">📋 Registros DNS — Cópialos en tu proveedor de DNS (Cloudflare, GoDaddy, NIC.cl, etc.)</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered mb-0" style="font-size:.75rem">
+            <thead class="table-light">
+              <tr><th>Tipo</th><th>Nombre/Host</th><th>Valor</th><th>Prio</th><th>Estado</th></tr>
+            </thead>
+            <tbody>${records}</tbody>
+          </table>
+        </div>
+        <div class="form-text mt-1">
+          <i class="bi bi-info-circle me-1"></i>Después de agregar los registros DNS, espera 5-10 minutos y haz clic en <strong>"Re-verificar DNS"</strong>.
+        </div>
+      ` : ''}
+
+      ${status === 'verified' ? `
+        <div class="alert alert-success small mt-3 mb-0 py-2">
+          <i class="bi bi-check-circle-fill me-1"></i>
+          <strong>Listo para usar.</strong> Cambia el "Email remitente" arriba a algo como
+          <code>noreply@${esc(dom.name)}</code> y guarda. Ya puedes enviar a cualquier cliente.
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+async function agregarDominio() {
+  const dom = document.getElementById('dominioNuevo').value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+  const region = document.getElementById('dominioRegion').value;
+  const msg = document.getElementById('dominiosMsg');
+  if (!dom || !dom.includes('.')) {
+    msg.innerHTML = '<div class="alert alert-warning py-2 px-3 small mb-0">Ingresa un dominio válido (ej: sphs.cl)</div>';
+    return;
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Agregando dominio en Resend...';
+  try {
+    const r = await fetch('/comunicaciones/resend/domains', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({domain: dom, region})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      msg.innerHTML = `<div class="alert alert-success py-2 px-3 small mb-0"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
+      document.getElementById('dominioNuevo').value = '';
+      cargarDominios();
     } else {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
-        <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al enviar')}</div>
-        ${d.detail ? `<div class="mt-1 font-monospace" style="font-size:.75rem;word-break:break-all">${esc(d.detail)}</div>` : ''}
-        ${sugg ? `<div class="fw-semibold mt-2">Qué revisar:</div><ul class="mb-0 ps-3">${sugg}</ul>` : ''}
+      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">
+        <i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al agregar')}
+        ${d.detail && d.detail.message ? `<div class="mt-1 small">${esc(d.detail.message)}</div>` : ''}
       </div>`;
     }
   } catch(e) {
-    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
+    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error de red: ${esc(String(e))}</div>`;
+  }
+}
+
+async function verificarDominio(id) {
+  const msg = document.getElementById('dominiosMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Solicitando verificación...';
+  try {
+    const r = await fetch(`/comunicaciones/resend/domains/${id}/verify`, {method:'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      msg.innerHTML = `<div class="alert alert-success py-2 px-3 small mb-0"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
+      cargarDominios();
+    } else {
+      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0"><i class="bi bi-x-circle me-1"></i>${esc(d.message)}</div>`;
+    }
+  } catch(e) {
+    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error: ${esc(String(e))}</div>`;
+  }
+}
+
+async function eliminarDominio(id, name) {
+  if (!confirm(`¿Eliminar el dominio "${name}" de Resend? Esto NO afecta tu DNS, solo desconecta Resend.`)) return;
+  const msg = document.getElementById('dominiosMsg');
+  try {
+    const r = await fetch(`/comunicaciones/resend/domains/${id}`, {method:'DELETE'});
+    const d = await r.json();
+    msg.innerHTML = `<div class="alert alert-${d.ok?'success':'danger'} py-2 px-3 small mb-0">${esc(d.message)}</div>`;
+    if (d.ok) cargarDominios();
+  } catch(e) {
+    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error: ${esc(String(e))}</div>`;
   }
 }
 
