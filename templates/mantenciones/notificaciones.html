@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Centro de Notificaciones — Mantenciones{% endblock %}
+{% block content %}
+<style>
+:root{--red:#e63946;}
+.notif-hero{background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;padding:24px 28px;margin-bottom:24px;}
+.notif-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;}
+.notif-kpi-card{background:#fff;border-radius:10px;border:1px solid #eaecf0;padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.05);}
+.notif-kpi-num{font-size:1.8rem;font-weight:900;line-height:1;}
+.notif-kpi-lbl{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;margin-top:3px;}
+.notif-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:14px;transition:border-color .15s;}
+.notif-row:hover{border-color:#cbd5e1;}
+.notif-row.pendiente{border-left:4px solid #f59e0b;}
+.notif-row.enviada{border-left:4px solid #2563eb;}
+.notif-row.leida{border-left:4px solid #9ca3af;opacity:.75;}
+.notif-row.ignorada{border-left:4px solid #e5e7eb;opacity:.55;}
+.notif-icon{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.95rem;}
+.notif-titulo{font-size:.85rem;font-weight:700;color:#111;margin-bottom:3px;}
+.notif-msg{font-size:.78rem;color:#374151;line-height:1.45;}
+.notif-meta{font-size:.68rem;color:#9ca3af;margin-top:4px;}
+.notif-acciones{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap;}
+.tipo-badge{font-size:.6rem;padding:2px 8px;border-radius:50px;font-weight:700;display:inline-block;}
+.canal-email{background:#dbeafe;color:#1e40af;}
+.canal-sistema{background:#f3f4f6;color:#374151;}
+.tipo-ai_alerta{background:#fef3c7;color:#92400e;}
+.tipo-vencimiento{background:#fee2e2;color:#991b1b;}
+.tipo-visita_proxima{background:#dcfce7;color:#166534;}
+.tipo-sla{background:#ede9fe;color:#5b21b6;}
+.filtros{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.filtros .btn{font-size:.78rem;}
+</style>
+
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
+  <nav aria-label="breadcrumb" style="font-size:.78rem">
+    <span class="text-muted">Mantenciones /</span>
+    <span class="fw-semibold ms-1">Centro de Notificaciones</span>
+  </nav>
+  {% if pendientes > 0 %}
+  <span class="badge bg-warning text-dark ms-1">{{ pendientes }} pendiente{{ 's' if pendientes!=1 }}</span>
+  {% endif %}
+</div>
+
+<div class="notif-hero">
+  <div class="d-flex align-items-center gap-3">
+    <div style="font-size:2.5rem">🔔</div>
+    <div>
+      <div style="font-size:1.15rem;font-weight:800;color:#fff">Centro de Notificaciones</div>
+      <div style="color:#94a3b8;font-size:.82rem">Seguimiento de alertas IA, vencimientos y comunicaciones de mantenciones</div>
+    </div>
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-light ms-auto">
+      <i class="bi bi-people me-1"></i>Clientes
+    </a>
+  </div>
+</div>
+
+{# KPIs #}
+{% set pendiente_c = notifs|selectattr('estado','equalto','pendiente')|list|length %}
+{% set enviada_c   = notifs|selectattr('estado','equalto','enviada')|list|length %}
+{% set leida_c     = notifs|selectattr('estado','equalto','leida')|list|length %}
+{% set email_c     = notifs|selectattr('canal','equalto','email')|list|length %}
+<div class="notif-kpi">
+  <div class="notif-kpi-card">
+    <div class="notif-kpi-num" style="color:#f59e0b">{{ pendiente_c }}</div>
+    <div class="notif-kpi-lbl">Pendientes</div>
+  </div>
+  <div class="notif-kpi-card">
+    <div class="notif-kpi-num" style="color:#2563eb">{{ enviada_c }}</div>
+    <div class="notif-kpi-lbl">Enviadas</div>
+  </div>
+  <div class="notif-kpi-card">
+    <div class="notif-kpi-num" style="color:#6b7280">{{ leida_c }}</div>
+    <div class="notif-kpi-lbl">Leídas</div>
+  </div>
+  <div class="notif-kpi-card">
+    <div class="notif-kpi-num" style="color:#111">{{ notifs|length }}</div>
+    <div class="notif-kpi-lbl">Total</div>
+  </div>
+  <div class="notif-kpi-card">
+    <div class="notif-kpi-num" style="color:#1e40af">{{ email_c }}</div>
+    <div class="notif-kpi-lbl">Por email</div>
+  </div>
+</div>
+
+{# Filtros #}
+<div class="filtros">
+  <button class="btn btn-sm btn-dark-ilus fw-semibold" onclick="filtrar('')" id="f-todos">Todas</button>
+  <button class="btn btn-sm btn-outline-warning" onclick="filtrar('pendiente')" id="f-pendiente">Pendientes</button>
+  <button class="btn btn-sm btn-outline-primary" onclick="filtrar('enviada')" id="f-enviada">Enviadas</button>
+  <button class="btn btn-sm btn-outline-secondary" onclick="filtrar('leida')" id="f-leida">Leídas</button>
+  <button class="btn btn-sm btn-outline-danger ms-auto" onclick="marcarTodasLeidas()">
+    <i class="bi bi-check-all me-1"></i>Marcar todas leídas
+  </button>
+</div>
+
+{# Lista #}
+<div id="notifLista">
+{% if notifs %}
+  {% for n in notifs %}
+  <div class="notif-row {{ n.estado }}" id="notif-{{ n.id }}" data-estado="{{ n.estado }}">
+    <div class="notif-icon" style="background:{{ '#fef3c7' if n.tipo=='ai_alerta' else '#fee2e2' if n.tipo=='vencimiento' else '#dcfce7' if n.tipo=='visita_proxima' else '#ede9fe' if n.tipo=='sla' else '#f3f4f6' }}">
+      <i class="bi bi-{{ 'stars' if n.tipo=='ai_alerta' else 'calendar-x' if n.tipo=='vencimiento' else 'calendar-check' if n.tipo=='visita_proxima' else 'stopwatch' if n.tipo=='sla' else 'bell' }}" style="color:{{ '#d97706' if n.tipo=='ai_alerta' else '#dc2626' if n.tipo=='vencimiento' else '#16a34a' if n.tipo=='visita_proxima' else '#7c3aed' else '#6b7280' }}"></i>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div class="notif-titulo">{{ n.titulo }}</div>
+      <div class="notif-msg">{{ n.mensaje }}</div>
+      <div class="notif-meta">
+        {% if n.razon_social %}<span class="me-2"><i class="bi bi-building me-1"></i>{{ n.razon_social }}</span>{% endif %}
+        <span class="me-2"><i class="bi bi-clock me-1"></i>{{ n.created_at }}</span>
+        <span class="tipo-badge tipo-{{ n.tipo }}">{{ n.tipo.replace('_',' ').title() }}</span>
+        <span class="tipo-badge canal-{{ n.canal }} ms-1">{{ n.canal }}</span>
+        {% if n.fecha_envio %}<span class="ms-2 text-success" style="font-size:.65rem"><i class="bi bi-check2 me-1"></i>Enviado {{ n.fecha_envio }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="notif-acciones">
+      {% if n.estado == 'pendiente' %}
+      {% if n.canal == 'email' and n.destinatario %}
+      <button class="btn btn-xs btn-primary" onclick="enviarNotif({{ n.id }}, this)">
+        <i class="bi bi-envelope me-1"></i>Enviar
+      </button>
+      {% endif %}
+      <button class="btn btn-xs btn-outline-secondary" onclick="cambiarEstado({{ n.id }}, 'leida', this)">
+        <i class="bi bi-check"></i>
+      </button>
+      <button class="btn btn-xs btn-outline-danger" onclick="cambiarEstado({{ n.id }}, 'ignorada', this)">
+        <i class="bi bi-x"></i>
+      </button>
+      {% elif n.estado == 'enviada' %}
+      <span class="badge bg-primary" style="font-size:.6rem">Enviada</span>
+      <button class="btn btn-xs btn-outline-secondary" onclick="cambiarEstado({{ n.id }}, 'leida', this)">
+        <i class="bi bi-check2-all"></i>
+      </button>
+      {% endif %}
+      {% if n.cliente_id %}
+      <a href="{{ url_for('mant_ficha', cid=n.cliente_id) }}" class="btn btn-xs btn-outline-dark" title="Ver ficha">
+        <i class="bi bi-arrow-right"></i>
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="text-center py-5 text-muted">
+    <i class="bi bi-bell-slash" style="font-size:3rem;opacity:.25"></i>
+    <div class="fw-semibold mt-3">Sin notificaciones</div>
+    <div style="font-size:.84rem">Las alertas IA de contratos y reportes aparecerán aquí</div>
+  </div>
+{% endif %}
+</div>
+
+<script>
+function filtrar(estado) {
+  document.querySelectorAll('.notif-row').forEach(r => {
+    r.style.display = (!estado || r.dataset.estado===estado) ? '' : 'none';
+  });
+}
+
+async function cambiarEstado(nid, estado, btn) {
+  const r = await fetch(`/mantenciones/api/notificaciones/${nid}`,{
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado})
+  });
+  if (r.ok) {
+    const row = document.getElementById(`notif-${nid}`);
+    row.className = `notif-row ${estado}`;
+    row.dataset.estado = estado;
+    // Quitar botones de acción
+    row.querySelector('.notif-acciones').innerHTML = `<span class="badge bg-secondary" style="font-size:.6rem">${estado}</span>`;
+  }
+}
+
+async function enviarNotif(nid, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const r = await fetch(`/mantenciones/api/notificaciones/${nid}/enviar`,{method:'POST'});
+  const data = await r.json();
+  if (data.ok) {
+    const row = document.getElementById(`notif-${nid}`);
+    row.className = 'notif-row enviada';
+    row.dataset.estado = 'enviada';
+    row.querySelector('.notif-acciones').innerHTML = '<span class="badge bg-primary" style="font-size:.6rem">Enviada ✓</span>';
+  } else {
+    alert('Error: ' + (data.error||'No se pudo enviar'));
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-envelope me-1"></i>Enviar';
+  }
+}
+
+async function marcarTodasLeidas() {
+  const pendientes = document.querySelectorAll('.notif-row.pendiente');
+  for (const row of pendientes) {
+    const nid = row.id.replace('notif-','');
+    await fetch(`/mantenciones/api/notificaciones/${nid}`,{
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({estado:'leida'})
+    });
+    row.className = 'notif-row leida';
+    row.dataset.estado = 'leida';
+    row.querySelector('.notif-acciones').innerHTML = '<span class="badge bg-secondary" style="font-size:.6rem">leida</span>';
+  }
+}
+</script>
+{% endblock %}

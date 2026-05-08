@@ -610,9 +610,16 @@
       <i class="bi bi-file-earmark-text"></i>Contrato
       <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ contratos|length }}</span>
     </button>
+    <button class="ftab-btn" data-tab="reportes" onclick="switchTab('reportes');cargarReportes()">
+      <i class="bi bi-file-earmark-medical"></i>Reportes
+    </button>
     <button class="ftab-btn" data-tab="ia" onclick="switchTab('ia')">
       <i class="bi bi-stars"></i>IA &amp; Plan
     </button>
+    <a href="{{ url_for('mant_notificaciones_centro') }}" class="ftab-btn" style="text-decoration:none;position:relative">
+      <i class="bi bi-bell"></i>Notif.
+      {# Contar notificaciones pendientes para este cliente #}
+    </a>
   </div>
 </div>
 
@@ -1566,6 +1573,224 @@
   {% endif %}
   </div>
 </div>
+
+{# ══════════════════════════════════════════════════════
+   TAB: REPORTES — Informe Post Servicio
+══════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-reportes">
+<style>
+.rep-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;padding:16px 18px;margin-bottom:12px;transition:border-color .15s,box-shadow .15s;}
+.rep-card:hover{border-color:#cbd5e1;box-shadow:0 4px 12px rgba(0,0,0,.06);}
+.rep-tipo-badge{font-size:.62rem;padding:2px 10px;border-radius:50px;font-weight:700;display:inline-flex;align-items:center;gap:4px;}
+.rep-tipo-mantencion{background:#dcfce7;color:#166534;}
+.rep-tipo-instalacion{background:#dbeafe;color:#1e40af;}
+.rep-tipo-inspeccion{background:#fef3c7;color:#92400e;}
+.rep-tipo-garantia{background:#ede9fe;color:#5b21b6;}
+.rep-tipo-otro{background:#f3f4f6;color:#374151;}
+.rep-estado-borrador{background:#f3f4f6;color:#374151;}
+.rep-estado-emitido{background:#dbeafe;color:#1e40af;}
+.rep-estado-entregado{background:#dcfce7;color:#166534;}
+.rep-field{margin-bottom:14px;}
+.rep-field label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;display:block;margin-bottom:4px;}
+.rep-maquina-row{display:flex;gap:8px;align-items:flex-start;background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+.rep-foto-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:10px;}
+.rep-foto-item{aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid #eaecf0;position:relative;cursor:pointer;}
+.rep-foto-item img{width:100%;height:100%;object-fit:cover;}
+.rep-foto-del{position:absolute;top:4px;right:4px;background:rgba(220,38,38,.85);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.rep-ai-card{background:linear-gradient(135deg,#f0fdf4,#eff6ff);border:1px solid #a7f3d0;border-radius:10px;padding:16px;margin-top:14px;}
+.rep-accion-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fff;border-radius:8px;border:1px solid #eaecf0;margin-bottom:8px;}
+.rep-urgencia-alta{border-left:3px solid #dc2626;}
+.rep-urgencia-media{border-left:3px solid #f59e0b;}
+.rep-urgencia-baja{border-left:3px solid #16a34a;}
+.adj-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid #eaecf0;border-radius:8px;margin-bottom:8px;}
+.adj-row:hover{border-color:#cbd5e1;}
+</style>
+
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1 fw-bold" style="font-size:1rem">Informes Post Servicio</h5>
+      <p class="text-muted mb-0" style="font-size:.78rem">Registro de mantenciones, instalaciones e inspecciones realizadas</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="cargarReportes()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+      </button>
+      <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirNuevoReporte()">
+        <i class="bi bi-plus-circle me-1"></i>Nuevo informe
+      </button>
+    </div>
+  </div>
+
+  {# Adjuntos del contrato principal #}
+  <div class="f-card mb-3" id="cardAdjuntos" style="display:none">
+    <div class="f-card-header">
+      <span class="f-card-title"><i class="bi bi-paperclip me-1"></i>Documentos adjuntos del contrato</span>
+      <button class="btn btn-xs btn-outline-secondary" onclick="mostrarSubirAdjunto()">
+        <i class="bi bi-upload me-1"></i>Subir adjunto
+      </button>
+    </div>
+    <div class="f-card-body" id="adjuntosLista">
+      <div class="text-muted small text-center py-2">Cargando adjuntos…</div>
+    </div>
+  </div>
+
+  {# Lista de reportes #}
+  <div id="reportesLista">
+    <div class="text-center py-4 text-muted">
+      <div class="spinner-border spinner-border-sm me-2"></div>Cargando informes…
+    </div>
+  </div>
+
+  {# Modal nuevo/editar reporte #}
+  <div class="modal fade" id="modalReporte" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header" style="background:#1a1a2e">
+          <div>
+            <h5 class="modal-title text-white fw-bold mb-0" id="modalRepTitulo">
+              <i class="bi bi-file-earmark-medical me-2"></i>Informe Post Servicio
+            </h5>
+            <div style="font-size:.72rem;color:#94a3b8">ILUS Sport & Health Solution SPA</div>
+          </div>
+          <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="repId">
+
+          {# ── CABECERA TICKET ── #}
+          <div class="row g-2 mb-3">
+            <div class="col-12"><div class="small fw-bold text-muted mb-1">DATOS DEL TICKET</div></div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Tipo de servicio</label>
+              <select id="repTipo" class="form-select form-select-sm">
+                <option value="mantencion">Mantención</option>
+                <option value="instalacion">Instalación</option>
+                <option value="inspeccion">Inspección</option>
+                <option value="garantia">Garantía</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">N° Ticket</label>
+              <input type="text" id="repTicket" class="form-control form-control-sm" placeholder="Ej: 11692">
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Estado</label>
+              <select id="repEstado" class="form-select form-select-sm">
+                <option value="borrador">Borrador</option>
+                <option value="emitido">Emitido</option>
+                <option value="entregado">Entregado</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Asunto</label>
+              <input type="text" id="repAsunto" class="form-control form-control-sm" placeholder="Ej: Mantención Preventiva">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Técnico Junior</label>
+              <input type="text" id="repTecJunior" class="form-control form-control-sm" placeholder="Nombre técnico">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Técnico Senior</label>
+              <input type="text" id="repTecSenior" class="form-control form-control-sm" placeholder="Nombre supervisor">
+            </div>
+            <div class="col-4 col-md-4">
+              <label class="form-label small fw-semibold">Fecha solicitado</label>
+              <input type="date" id="repFechaSol" class="form-control form-control-sm">
+            </div>
+            <div class="col-4 col-md-2">
+              <label class="form-label small fw-semibold">Fecha inicio</label>
+              <input type="date" id="repFechaIni" class="form-control form-control-sm">
+            </div>
+            <div class="col-4 col-md-2">
+              <label class="form-label small fw-semibold">Fecha cierre</label>
+              <input type="date" id="repFechaCie" class="form-control form-control-sm">
+            </div>
+          </div>
+          <hr class="my-2">
+
+          {# ── EQUIPOS INTERVENIDOS ── #}
+          <div class="small fw-bold text-muted mb-2">MÁQUINAS / EQUIPOS INTERVENIDOS</div>
+          <div id="repMaquinasList"></div>
+          <button class="btn btn-sm btn-outline-secondary mb-3" onclick="repAddMaquina()">
+            <i class="bi bi-plus me-1"></i>Agregar equipo
+          </button>
+          <hr class="my-2">
+
+          {# ── SECCIONES NARRATIVAS ── #}
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Antecedentes (solicitud del cliente)</label>
+              <textarea id="repAntecedentes" class="form-control form-control-sm" rows="3"
+                        placeholder="Describe la solicitud original del cliente…"></textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Objetivos de la visita técnica</label>
+              <div id="repObjetivosList"></div>
+              <button class="btn btn-xs btn-outline-secondary" onclick="repAddItem('Objetivos')">
+                <i class="bi bi-plus me-1"></i>Agregar objetivo
+              </button>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Trabajos realizados e intervenciones</label>
+              <div id="repTrabajosList"></div>
+              <button class="btn btn-xs btn-outline-secondary" onclick="repAddItem('Trabajos')">
+                <i class="bi bi-plus me-1"></i>Agregar trabajo
+              </button>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Observaciones generales post visita</label>
+              <div id="repObservacionesList"></div>
+              <button class="btn btn-xs btn-outline-secondary" onclick="repAddItem('Observaciones')">
+                <i class="bi bi-plus me-1"></i>Agregar observación
+              </button>
+            </div>
+          </div>
+          <hr class="my-2">
+
+          {# ── REGISTRO FOTOGRÁFICO ── #}
+          <div class="small fw-bold text-muted mb-2">REGISTRO FOTOGRÁFICO</div>
+          <div id="repFotosGrid" class="rep-foto-grid"></div>
+          <div id="repUploadFotoArea" class="mt-2" style="display:none">
+            <input type="file" id="repFotoInput" accept="image/*" multiple class="form-control form-control-sm">
+          </div>
+          <button class="btn btn-xs btn-outline-primary mt-2" onclick="repMostrarFotoUpload()">
+            <i class="bi bi-camera me-1"></i>Subir fotos
+          </button>
+        </div>
+        <div class="modal-footer gap-2">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+          <button class="btn btn-outline-info" onclick="repAnalizarIA()" id="btnRepIA">
+            <i class="bi bi-stars me-1"></i>Analizar con IA
+          </button>
+          <button class="btn btn-ilus fw-bold" onclick="repGuardar()">
+            <i class="bi bi-floppy me-1"></i>Guardar informe
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Modal: análisis IA del reporte #}
+  <div class="modal fade" id="modalRepIA" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header" style="background:#7c3aed">
+          <h5 class="modal-title text-white fw-bold"><i class="bi bi-stars me-2"></i>Diagnóstico IA del informe</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="modalRepIABody">
+          <div class="text-center py-5">
+            <div class="spinner-border text-danger mb-3"></div>
+            <div class="fw-semibold text-muted">Analizando con Claude AI…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{# /tab-reportes #}
 
 {# ══════════════════════════════════════════════════════
    TAB: IA & PLAN
@@ -3077,6 +3302,394 @@ async function gcGuardar() {
     spin.style.display = 'none';
     alert('Error de conexión: ' + e.message);
   }
+}
+
+// ─── REPORTES ─────────────────────────────────────────────────
+let _repMaquinas  = [], _repObjetivos = [], _repTrabajos = [], _repObservaciones = [];
+let _repCurrentId = null, _repFotosTemp = [];
+
+async function cargarReportes() {
+  const lista = document.getElementById('reportesLista');
+  if (!lista) return;
+  lista.innerHTML = '<div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes`);
+    const data = await r.json();
+    if (!data.length) {
+      lista.innerHTML = `<div class="text-center py-5 text-muted">
+        <i class="bi bi-file-earmark-x" style="font-size:3rem;opacity:.25"></i>
+        <div class="fw-semibold mt-2">Sin informes registrados</div>
+        <div style="font-size:.82rem">Crea el primer informe post servicio</div>
+        <button class="btn btn-sm btn-ilus mt-3 fw-bold" onclick="abrirNuevoReporte()">
+          <i class="bi bi-plus-circle me-1"></i>Nuevo informe</button>
+      </div>`;
+      return;
+    }
+    const tipoIcon = {mantencion:'wrench',instalacion:'box-seam',inspeccion:'search',garantia:'shield-check',otro:'file'};
+    const tipoLbl  = {mantencion:'Mantención',instalacion:'Instalación',inspeccion:'Inspección',garantia:'Garantía',otro:'Otro'};
+    lista.innerHTML = data.map(rep => `
+      <div class="rep-card">
+        <div class="d-flex align-items-start gap-3 flex-wrap">
+          <div style="min-width:36px;text-align:center">
+            <i class="bi bi-${tipoIcon[rep.tipo]||'file'}" style="font-size:1.6rem;color:#6b7280"></i>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+              <span class="fw-bold" style="font-size:.95rem">
+                ${rep.ticket_num ? `TICKET ${rep.ticket_num} — ` : ''}${rep.asunto || 'Informe de servicio'}
+              </span>
+              <span class="rep-tipo-badge rep-tipo-${rep.tipo}">${tipoLbl[rep.tipo]||rep.tipo}</span>
+              <span class="rep-tipo-badge rep-estado-${rep.estado}">${rep.estado.charAt(0).toUpperCase()+rep.estado.slice(1)}</span>
+            </div>
+            <div style="font-size:.75rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 16px">
+              ${rep.tecnico_junior ? `<span><i class="bi bi-person me-1"></i>${rep.tecnico_junior}</span>` : ''}
+              ${rep.fecha_inicio   ? `<span><i class="bi bi-calendar me-1"></i>${rep.fecha_inicio} → ${rep.fecha_cierre||'—'}</span>` : ''}
+              ${rep.ai_diagnostico ? `<span style="color:#7c3aed"><i class="bi bi-stars me-1"></i>Analizado por IA</span>` : ''}
+            </div>
+            ${rep.ai_diagnostico ? `<div class="rep-ai-card mt-2" style="font-size:.78rem;padding:10px 12px">
+              <div class="fw-bold mb-1" style="color:#166534"><i class="bi bi-stars me-1"></i>Diagnóstico IA</div>
+              <div style="color:#374151">${rep.ai_diagnostico.slice(0,220)}${rep.ai_diagnostico.length>220?'…':''}</div>
+            </div>` : ''}
+          </div>
+          <div class="d-flex gap-1 flex-shrink-0">
+            <button class="btn btn-xs btn-outline-primary" onclick="editarReporte(${rep.id})"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-xs btn-outline-danger" onclick="eliminarReporte(${rep.id})"><i class="bi bi-trash"></i></button>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    lista.innerHTML = `<div class="alert alert-danger">Error cargando reportes: ${e.message}</div>`;
+  }
+}
+
+function abrirNuevoReporte() {
+  _repCurrentId = null;
+  _repMaquinas = [{sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''}];
+  _repObjetivos = [''];
+  _repTrabajos = [''];
+  _repObservaciones = [''];
+  _repFotosTemp = [];
+  document.getElementById('repId').value = '';
+  document.getElementById('repTipo').value = 'mantencion';
+  document.getElementById('repEstado').value = 'borrador';
+  document.getElementById('repTicket').value = '';
+  document.getElementById('repAsunto').value = '';
+  document.getElementById('repTecJunior').value = '';
+  document.getElementById('repTecSenior').value = '';
+  document.getElementById('repFechaSol').value = '';
+  document.getElementById('repFechaIni').value = new Date().toISOString().split('T')[0];
+  document.getElementById('repFechaCie').value = '';
+  document.getElementById('repAntecedentes').value = '';
+  document.getElementById('repFotosGrid').innerHTML = '';
+  repRenderMaquinas();
+  repRenderLista('Objetivos');
+  repRenderLista('Trabajos');
+  repRenderLista('Observaciones');
+  document.getElementById('modalRepTitulo').textContent = 'Nuevo Informe Post Servicio';
+  document.getElementById('btnRepIA').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('modalReporte')).show();
+}
+
+async function editarReporte(rid) {
+  const r = await fetch(`/mantenciones/api/reportes/${rid}`);
+  const data = await r.json();
+  _repCurrentId = rid;
+  _repMaquinas = data.maquinas_json?.length ? data.maquinas_json : [{sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''}];
+  _repObjetivos = data.objetivos?.length ? data.objetivos : [''];
+  _repTrabajos = data.trabajos?.length ? data.trabajos : [''];
+  _repObservaciones = data.observaciones?.length ? data.observaciones : [''];
+  document.getElementById('repId').value = rid;
+  document.getElementById('repTipo').value = data.tipo || 'mantencion';
+  document.getElementById('repEstado').value = data.estado || 'borrador';
+  document.getElementById('repTicket').value = data.ticket_num || '';
+  document.getElementById('repAsunto').value = data.asunto || '';
+  document.getElementById('repTecJunior').value = data.tecnico_junior || '';
+  document.getElementById('repTecSenior').value = data.tecnico_senior || '';
+  document.getElementById('repFechaSol').value = data.fecha_solicitado || '';
+  document.getElementById('repFechaIni').value = data.fecha_inicio || '';
+  document.getElementById('repFechaCie').value = data.fecha_cierre || '';
+  document.getElementById('repAntecedentes').value = data.antecedentes || '';
+  // Fotos
+  const fotosGrid = document.getElementById('repFotosGrid');
+  fotosGrid.innerHTML = (data.fotos||[]).map(f => `
+    <div class="rep-foto-item">
+      <img src="${f.url}" alt="${f.nombre}" onclick="window.open('${f.url}','_blank')">
+      <button class="rep-foto-del" onclick="repDelFoto(${f.id}, this)" title="Eliminar">×</button>
+    </div>`).join('');
+  repRenderMaquinas();
+  repRenderLista('Objetivos');
+  repRenderLista('Trabajos');
+  repRenderLista('Observaciones');
+  document.getElementById('modalRepTitulo').textContent = `TICKET ${data.ticket_num||rid} — ${data.asunto||'Editar informe'}`;
+  document.getElementById('btnRepIA').style.display = '';
+  new bootstrap.Modal(document.getElementById('modalReporte')).show();
+}
+
+function repRenderMaquinas() {
+  const cont = document.getElementById('repMaquinasList');
+  if (!_repMaquinas.length) _repMaquinas = [{sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''}];
+  cont.innerHTML = _repMaquinas.map((m, i) => `
+    <div class="rep-maquina-row">
+      <div style="flex:1">
+        <div class="row g-2 mb-1">
+          <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="SKU"
+            value="${m.sku||''}" onchange="_repMaquinas[${i}].sku=this.value"></div>
+          <div class="col-5"><input type="text" class="form-control form-control-sm" placeholder="Descripción equipo"
+            value="${m.descripcion||''}" onchange="_repMaquinas[${i}].descripcion=this.value"></div>
+          <div class="col-2"><input type="number" class="form-control form-control-sm" placeholder="Cant" min="1"
+            value="${m.cantidad||1}" onchange="_repMaquinas[${i}].cantidad=parseInt(this.value)||1"></div>
+          <div class="col-2"><input type="text" class="form-control form-control-sm" placeholder="Modelo"
+            value="${m.modelo||''}" onchange="_repMaquinas[${i}].modelo=this.value"></div>
+        </div>
+        <div class="row g-2">
+          <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="N° Serie"
+            value="${m.serie||''}" onchange="_repMaquinas[${i}].serie=this.value"></div>
+          <div class="col-4"><input type="text" class="form-control form-control-sm" placeholder="Repuesto utilizado"
+            value="${m.repuesto||''}" onchange="_repMaquinas[${i}].repuesto=this.value"></div>
+          <div class="col-2"><input type="text" class="form-control form-control-sm" placeholder="Garantía"
+            value="${m.garantia||''}" onchange="_repMaquinas[${i}].garantia=this.value"></div>
+          <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="Observación"
+            value="${m.observacion||''}" onchange="_repMaquinas[${i}].observacion=this.value"></div>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" onclick="_repMaquinas.splice(${i},1);repRenderMaquinas()" style="flex-shrink:0">
+        <i class="bi bi-dash"></i>
+      </button>
+    </div>`).join('');
+}
+
+function repAddMaquina() {
+  _repMaquinas.push({sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''});
+  repRenderMaquinas();
+}
+
+function repRenderLista(tipo) {
+  const arr = tipo==='Objetivos' ? _repObjetivos : tipo==='Trabajos' ? _repTrabajos : _repObservaciones;
+  const cont = document.getElementById(`rep${tipo}List`);
+  cont.innerHTML = arr.map((v, i) => `
+    <div class="d-flex gap-2 mb-2">
+      <input type="text" class="form-control form-control-sm" value="${v}"
+             placeholder="Descripción…"
+             onchange="${tipo==='Objetivos'?'_repObjetivos':tipo==='Trabajos'?'_repTrabajos':'_repObservaciones'}[${i}]=this.value">
+      <button class="btn btn-xs btn-outline-danger" onclick="${tipo==='Objetivos'?'_repObjetivos':tipo==='Trabajos'?'_repTrabajos':'_repObservaciones'}.splice(${i},1);repRenderLista('${tipo}')">
+        <i class="bi bi-dash"></i>
+      </button>
+    </div>`).join('');
+}
+
+function repAddItem(tipo) {
+  if (tipo==='Objetivos')    _repObjetivos.push('');
+  else if(tipo==='Trabajos') _repTrabajos.push('');
+  else                       _repObservaciones.push('');
+  repRenderLista(tipo);
+}
+
+function repMostrarFotoUpload() {
+  const area = document.getElementById('repUploadFotoArea');
+  area.style.display = area.style.display==='none' ? '' : 'none';
+  if (!_repCurrentId) {
+    const input = document.getElementById('repFotoInput');
+    input.onchange = async () => {
+      // Guardar primero para tener el ID, luego subir fotos
+      await repGuardar(true);
+    };
+  } else {
+    const input = document.getElementById('repFotoInput');
+    input.onchange = async () => {
+      for (const file of input.files) await repSubirFoto(file);
+    };
+  }
+}
+
+async function repSubirFoto(file) {
+  if (!_repCurrentId) { alert('Guarda el informe primero'); return; }
+  const fd = new FormData();
+  fd.append('foto', file);
+  const r = await fetch(`/mantenciones/api/reportes/${_repCurrentId}/fotos`,{method:'POST',body:fd});
+  const data = await r.json();
+  if (data.ok) {
+    const grid = document.getElementById('repFotosGrid');
+    const div = document.createElement('div');
+    div.className = 'rep-foto-item';
+    div.innerHTML = `<img src="${data.url}" alt="${data.nombre}" onclick="window.open('${data.url}','_blank')">
+      <button class="rep-foto-del" onclick="repDelFoto(${data.id},this)">×</button>`;
+    grid.appendChild(div);
+  }
+}
+
+async function repDelFoto(fid, btn) {
+  if (!confirm('¿Eliminar foto?')) return;
+  const r = await fetch(`/mantenciones/api/adjuntos/${fid}`,{method:'DELETE'});
+  if (r.ok) btn.closest('.rep-foto-item').remove();
+}
+
+async function repGuardar(silencioso=false) {
+  const data = {
+    tipo:            document.getElementById('repTipo').value,
+    estado:          document.getElementById('repEstado').value,
+    ticket_num:      document.getElementById('repTicket').value.trim(),
+    asunto:          document.getElementById('repAsunto').value.trim(),
+    tecnico_junior:  document.getElementById('repTecJunior').value.trim(),
+    tecnico_senior:  document.getElementById('repTecSenior').value.trim(),
+    fecha_solicitado: document.getElementById('repFechaSol').value || null,
+    fecha_inicio:    document.getElementById('repFechaIni').value || null,
+    fecha_cierre:    document.getElementById('repFechaCie').value || null,
+    antecedentes:    document.getElementById('repAntecedentes').value.trim(),
+    objetivos:       _repObjetivos.filter(v=>v.trim()),
+    trabajos:        _repTrabajos.filter(v=>v.trim()),
+    observaciones:   _repObservaciones.filter(v=>v.trim()),
+    maquinas:        _repMaquinas,
+  };
+  const rid = document.getElementById('repId').value;
+  let url = `/mantenciones/api/clientes/${CID}/reportes`, method = 'POST';
+  if (rid) { url = `/mantenciones/api/reportes/${rid}`; method = 'PUT'; }
+  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  const resp = await r.json();
+  if (resp.ok) {
+    if (resp.id) {
+      _repCurrentId = resp.id;
+      document.getElementById('repId').value = resp.id;
+      document.getElementById('btnRepIA').style.display = '';
+    }
+    if (!silencioso) {
+      cargarReportes();
+      bootstrap.Modal.getInstance(document.getElementById('modalReporte'))?.hide();
+    }
+  } else {
+    alert('Error guardando: ' + (resp.error||'desconocido'));
+  }
+  return resp;
+}
+
+async function eliminarReporte(rid) {
+  if (!confirm('¿Eliminar este informe?')) return;
+  const r = await fetch(`/mantenciones/api/reportes/${rid}`,{method:'DELETE'});
+  if (r.ok) cargarReportes();
+}
+
+async function repAnalizarIA() {
+  const rid = document.getElementById('repId').value;
+  if (!rid) { alert('Guarda el informe primero'); return; }
+  // Guardar primero
+  await repGuardar(true);
+  // Mostrar modal IA
+  const modalIA = new bootstrap.Modal(document.getElementById('modalRepIA'));
+  document.getElementById('modalRepIABody').innerHTML = `
+    <div class="text-center py-5">
+      <div class="spinner-border text-danger mb-3" style="width:3rem;height:3rem"></div>
+      <div class="fw-semibold text-muted">Analizando con Claude AI…</div>
+      <div class="text-muted mt-1" style="font-size:.82rem">Puede tomar hasta 30 segundos</div>
+    </div>`;
+  modalIA.show();
+  try {
+    const r = await fetch(`/mantenciones/api/reportes/${rid}/analizar-ia`,{method:'POST'});
+    const data = await r.json();
+    if (!data.ok) {
+      document.getElementById('modalRepIABody').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+      return;
+    }
+    const res = data.resultado;
+    const healthColor = res.indice_salud>=70?'#16a34a':res.indice_salud>=40?'#ea580c':'#dc2626';
+    const urgIcon = {alta:'bi-exclamation-circle-fill',media:'bi-exclamation-triangle-fill',baja:'bi-info-circle-fill'};
+    const urgColor = {alta:'#dc2626',media:'#f59e0b',baja:'#16a34a'};
+    let html = `
+      <div class="d-flex align-items-center gap-3 mb-4 p-3" style="background:linear-gradient(135deg,#f0fdf4,#eff6ff);border-radius:10px">
+        <div style="width:70px;height:70px;border-radius:50%;background:${healthColor};display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;flex-shrink:0">
+          <div style="font-size:1.4rem;font-weight:900;line-height:1">${res.indice_salud}</div>
+          <div style="font-size:.5rem;font-weight:700;letter-spacing:.5px">SALUD</div>
+        </div>
+        <div>
+          <div style="font-size:.8rem;font-weight:700;color:#7c3aed;text-transform:uppercase">Estado: ${res.estado_flota||'—'}</div>
+          <div style="font-size:.84rem;color:#374151;margin-top:4px;line-height:1.5">${res.diagnostico||''}</div>
+        </div>
+      </div>`;
+
+    if (res.acciones?.length) {
+      html += `<div class="mb-3"><div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;margin-bottom:8px">Acciones recomendadas</div>`;
+      res.acciones.forEach(a => {
+        html += `<div class="rep-accion-row rep-urgencia-${a.urgencia}">
+          <i class="bi ${urgIcon[a.urgencia]||'bi-circle'}" style="color:${urgColor[a.urgencia]||'#6b7280'};flex-shrink:0"></i>
+          <div style="flex:1">
+            <div style="font-size:.82rem;font-weight:700">${a.titulo}</div>
+            <div style="font-size:.76rem;color:#374151;margin-top:2px">${a.descripcion}</div>
+            <div style="font-size:.68rem;color:#9ca3af;margin-top:2px">Plazo: ${a.plazo||'—'} · Tipo: ${a.tipo||'—'}
+              ${a.costo_estimado ? ` · Est: $${Number(a.costo_estimado).toLocaleString('es-CL')}` : ''}
+            </div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (res.piezas_criticas?.length) {
+      html += `<div class="mb-3"><div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;margin-bottom:6px">Piezas críticas</div>
+        ${res.piezas_criticas.map(p=>`<span class="badge bg-danger me-1 mb-1">${p}</span>`).join('')}
+      </div>`;
+    }
+
+    if (res.notificaciones_sugeridas?.length) {
+      html += `<div class="alert alert-info mb-0" style="font-size:.78rem">
+        <i class="bi bi-bell-fill me-1"></i>
+        <strong>Notificaciones creadas:</strong> ${res.notificaciones_sugeridas.length} alerta(s) registrada(s) en el centro de notificaciones.
+        <a href="/mantenciones/notificaciones" class="ms-2 fw-bold">Ver notificaciones →</a>
+      </div>`;
+    }
+
+    document.getElementById('modalRepIABody').innerHTML = html;
+    cargarReportes();
+  } catch(e) {
+    document.getElementById('modalRepIABody').innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
+  }
+}
+
+// ─── Adjuntos del contrato ─────────────────────────────────────
+async function cargarAdjuntos(ctid) {
+  const cont = document.getElementById('adjuntosLista');
+  if (!cont) return;
+  document.getElementById('cardAdjuntos').style.display = '';
+  const r = await fetch(`/mantenciones/api/contratos/${ctid}/adjuntos`);
+  const data = await r.json();
+  if (!data.length) {
+    cont.innerHTML = '<div class="text-muted small py-1">Sin adjuntos aún.</div>';
+    return;
+  }
+  const iconos = {contrato:'file-earmark-pdf',imagen:'image',solicitud:'file-earmark-spreadsheet',otro:'paperclip'};
+  cont.innerHTML = data.map(a => `
+    <div class="adj-row">
+      <i class="bi bi-${iconos[a.tipo]||'paperclip'}" style="font-size:1.3rem;color:#6b7280;flex-shrink:0"></i>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre}</div>
+        <div style="font-size:.68rem;color:#9ca3af">${a.tipo} · ${a.created_at} · ${a.created_by||''}</div>
+      </div>
+      <a href="${a.url}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i></a>
+      <button class="btn btn-xs btn-outline-danger" onclick="eliminarAdjunto(${a.id},this)"><i class="bi bi-trash"></i></button>
+    </div>`).join('');
+}
+
+function mostrarSubirAdjunto() {
+  // Obtener el contrato activo
+  const ctRow = document.querySelector('.contrato-pro');
+  if (!ctRow) { alert('Sin contrato activo'); return; }
+  const ctid = ctRow.id.replace('ct-','');
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx';
+  input.onchange = async () => {
+    if (!input.files[0]) return;
+    const fd = new FormData();
+    fd.append('archivo', input.files[0]);
+    fd.append('nombre', input.files[0].name);
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/adjuntos`,{method:'POST',body:fd});
+    const data = await r.json();
+    if (data.ok) cargarAdjuntos(ctid);
+    else alert('Error: ' + (data.error||'desconocido'));
+  };
+  input.click();
+}
+
+async function eliminarAdjunto(aid, btn) {
+  if (!confirm('¿Eliminar adjunto?')) return;
+  const r = await fetch(`/mantenciones/api/adjuntos/${aid}`,{method:'DELETE'});
+  if (r.ok) btn.closest('.adj-row').remove();
 }
 
 // ─── Actualizar estado Plan tab sin recargar ──────────────────

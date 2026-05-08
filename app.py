@@ -9587,6 +9587,86 @@ def init_mantenciones_tables():
                 except Exception:
                     pass  # columna ya existe
 
+            # ── Tabla: Reportes de servicio (Informe Post Servicio) ─────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_reportes (
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id        INT NOT NULL,
+                    tipo              ENUM('mantencion','instalacion','inspeccion','garantia','otro')
+                                      DEFAULT 'mantencion',
+                    estado            ENUM('borrador','emitido','entregado') DEFAULT 'borrador',
+                    ticket_num        VARCHAR(30),
+                    asunto            VARCHAR(300),
+                    tecnico_junior    VARCHAR(190),
+                    tecnico_senior    VARCHAR(190),
+                    fecha_solicitado  DATE,
+                    fecha_inicio      DATE,
+                    fecha_cierre      DATE,
+                    antecedentes      TEXT,
+                    objetivos         TEXT COMMENT 'JSON lista de strings',
+                    trabajos          TEXT COMMENT 'JSON lista de strings',
+                    observaciones     TEXT COMMENT 'JSON lista de strings',
+                    maquinas_json     TEXT COMMENT 'JSON lista {sku,descripcion,cantidad,modelo,serie,repuesto,garantia,observacion}',
+                    fotos_json        TEXT COMMENT 'JSON lista rutas de imágenes',
+                    ai_diagnostico    TEXT COMMENT 'Diagnóstico IA del reporte',
+                    ai_acciones       TEXT COMMENT 'JSON acciones recomendadas por IA',
+                    ai_fecha          DATETIME,
+                    ai_usuario        VARCHAR(190),
+                    created_by        VARCHAR(190),
+                    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE,
+                    INDEX idx_cliente (cliente_id),
+                    INDEX idx_fecha   (fecha_inicio)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Tabla: Notificaciones de mantenciones ──────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_notificaciones (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id    INT,
+                    entidad       ENUM('cliente','contrato','maquina','visita','reporte') DEFAULT 'cliente',
+                    entidad_id    INT,
+                    tipo          ENUM('vencimiento','sla','visita_proxima','garantia',
+                                       'sin_mantencion','contrato_riesgo','ai_alerta','otro')
+                                  DEFAULT 'otro',
+                    titulo        VARCHAR(300),
+                    mensaje       TEXT,
+                    estado        ENUM('pendiente','enviada','leida','ignorada') DEFAULT 'pendiente',
+                    canal         ENUM('email','sistema','whatsapp') DEFAULT 'sistema',
+                    destinatario  VARCHAR(190),
+                    fecha_envio   DATETIME,
+                    fecha_lectura DATETIME,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    created_by    VARCHAR(190),
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE SET NULL,
+                    INDEX idx_estado  (estado),
+                    INDEX idx_cliente (cliente_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Tabla: Adjuntos de contratos (multi-archivo) ────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_contrato_adjuntos (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    contrato_id  INT NOT NULL,
+                    cliente_id   INT NOT NULL,
+                    tipo         ENUM('contrato','imagen','solicitud','cotizacion','reporte','otro')
+                                 DEFAULT 'otro',
+                    nombre       VARCHAR(300),
+                    archivo_nombre VARCHAR(300),
+                    archivo_path VARCHAR(500),
+                    mime_type    VARCHAR(100),
+                    tamaño_bytes INT,
+                    descripcion  TEXT,
+                    created_by   VARCHAR(190),
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (contrato_id) REFERENCES mant_contratos(id) ON DELETE CASCADE,
+                    INDEX idx_contrato (contrato_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
         conn.commit()
     finally:
         conn.close()
@@ -10206,48 +10286,7 @@ def mant_contrato_ai_editar(ctid):
         conn.close()
 
 
-@app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["POST"])
-@_mant_required
-def mant_adjunto_subir(ctid):
-    """Sube un archivo adjunto adicional al contrato (hasta 4)."""
-    f = request.files.get("archivo")
-    if not f or not f.filename:
-        return jsonify({"error": "Sin archivo"}), 400
-    # Verificar límite
-    existing = mysql_fetchall("SELECT id FROM mant_adjuntos WHERE contrato_id=%s", (ctid,))
-    if len(existing) >= 4:
-        return jsonify({"error": "Máximo 4 adjuntos por contrato"}), 400
-    ext  = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "bin"
-    fname = secure_filename(f"adj_{ctid}_{int(time.time())}_{f.filename}")
-    fpath = os.path.join(MANT_UPLOADS, fname)
-    f.save(fpath)
-    conn = get_mysql()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_adjuntos (contrato_id,nombre_original,archivo_path,tipo,created_by) VALUES (%s,%s,%s,%s,%s)",
-                (ctid, f.filename, fname, ext, current_username())
-            )
-            aid = cur.lastrowid
-        conn.commit()
-        return jsonify({"ok": True, "id": aid, "nombre": f.filename})
-    finally:
-        conn.close()
-
-
-@app.route("/mantenciones/api/adjuntos/<int:aid>")
-@_mant_required
-def mant_adjunto_ver(aid):
-    """Descarga un adjunto — solo superadmin puede descargar."""
-    from flask import send_from_directory
-    if not g.permissions.get("superadmin"):
-        return "Acceso restringido — solo Superadmin puede descargar archivos de contratos.", 403
-    adj = mysql_fetchone("SELECT * FROM mant_adjuntos WHERE id=%s", (aid,))
-    if not adj:
-        return "No encontrado", 404
-    return send_from_directory(MANT_UPLOADS, adj["archivo_path"],
-                               as_attachment=False,
-                               download_name=adj["nombre_original"])
+# (mant_adjunto_subir y mant_adjunto_ver migrados a mant_contrato_adjuntos — ver sección ADJUNTOS)
 
 
 @app.route("/mantenciones/clientes/nuevo", methods=["GET", "POST"])
@@ -11406,6 +11445,477 @@ def mant_documentos_por_rut(cid):
             "documentos": [],
             "msg": "No se pudo conectar al ERP. Usa la búsqueda por número de documento."
         }), 200
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  REPORTES DE SERVICIO — INFORME POST SERVICIO
+# ══════════════════════════════════════════════════════════════════════
+
+MANT_REPORTES_UPLOADS = os.path.join(BASE_DIR, "static", "uploads", "mantenciones", "reportes")
+os.makedirs(MANT_REPORTES_UPLOADS, exist_ok=True)
+
+ALLOWED_REPORT_IMG = {"jpg","jpeg","png","gif","webp"}
+ALLOWED_ADJUNTO    = {"pdf","doc","docx","jpg","jpeg","png","gif","webp","xlsx","xls"}
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["GET"])
+@_mant_required
+def mant_reportes_list(cid):
+    rows = mysql_fetchall(
+        "SELECT id,tipo,estado,ticket_num,asunto,tecnico_junior,tecnico_senior,"
+        "fecha_inicio,fecha_cierre,ai_diagnostico,ai_fecha,created_by,created_at "
+        "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)
+    )
+    def _fmt(r):
+        d = dict(r)
+        for k in ("fecha_inicio","fecha_cierre","ai_fecha","created_at"):
+            if d.get(k): d[k] = str(d[k])[:10]
+        return d
+    return jsonify([_fmt(r) for r in rows])
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["POST"])
+@_mant_required
+def mant_reporte_crear(cid):
+    d = request.get_json(silent=True) or {}
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_reportes
+                   (cliente_id,tipo,estado,ticket_num,asunto,
+                    tecnico_junior,tecnico_senior,
+                    fecha_solicitado,fecha_inicio,fecha_cierre,
+                    antecedentes,objetivos,trabajos,observaciones,
+                    maquinas_json,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, d.get("tipo","mantencion"), d.get("estado","borrador"),
+                 d.get("ticket_num",""), d.get("asunto",""),
+                 d.get("tecnico_junior",""), d.get("tecnico_senior",""),
+                 d.get("fecha_solicitado") or None,
+                 d.get("fecha_inicio") or None, d.get("fecha_cierre") or None,
+                 d.get("antecedentes",""),
+                 json.dumps(d.get("objetivos",[]),    ensure_ascii=False),
+                 json.dumps(d.get("trabajos",[]),     ensure_ascii=False),
+                 json.dumps(d.get("observaciones",[]),ensure_ascii=False),
+                 json.dumps(d.get("maquinas",[]),     ensure_ascii=False),
+                 current_username())
+            )
+            rid = cur.lastrowid
+        conn.commit()
+        _mant_log("reporte", rid, "creado", d.get("asunto",""))
+        return jsonify({"ok": True, "id": rid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>", methods=["GET"])
+@_mant_required
+def mant_reporte_get(rid):
+    r = mysql_fetchone("SELECT * FROM mant_reportes WHERE id=%s", (rid,))
+    if not r: return jsonify({"error":"No encontrado"}), 404
+    d = dict(r)
+    for k in ("fecha_solicitado","fecha_inicio","fecha_cierre","ai_fecha","created_at","updated_at"):
+        if d.get(k): d[k] = str(d[k])[:10]
+    for k in ("objetivos","trabajos","observaciones","maquinas_json","fotos_json","ai_acciones"):
+        d[k] = json.loads(d[k] or "[]")
+    # Adjuntos
+    fotos = mysql_fetchall(
+        "SELECT id,nombre,archivo_path,tipo,created_at FROM mant_contrato_adjuntos "
+        "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
+    )
+    d["fotos"] = [{"id":f["id"],"nombre":f["nombre"],
+                   "url":f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"} for f in fotos]
+    return jsonify(d)
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>", methods=["PUT"])
+@_mant_required
+def mant_reporte_update(rid):
+    d = request.get_json(silent=True) or {}
+    allowed = ["tipo","estado","ticket_num","asunto","tecnico_junior","tecnico_senior",
+               "fecha_solicitado","fecha_inicio","fecha_cierre",
+               "antecedentes","objetivos","trabajos","observaciones","maquinas_json"]
+    sets, vals = [], []
+    for f in allowed:
+        if f not in d: continue
+        if f in ("objetivos","trabajos","observaciones","maquinas_json"):
+            sets.append(f"{f}=%s")
+            vals.append(json.dumps(d[f], ensure_ascii=False))
+        else:
+            sets.append(f"{f}=%s")
+            vals.append(d[f] or None)
+    if not sets: return jsonify({"error":"Sin campos"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_reportes SET {','.join(sets)} WHERE id=%s", vals+[rid])
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>", methods=["DELETE"])
+@_mant_required
+def mant_reporte_del(rid):
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mant_reportes WHERE id=%s", (rid,))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>/fotos", methods=["POST"])
+@_mant_required
+def mant_reporte_foto_subir(rid):
+    """Sube foto al registro fotográfico del reporte."""
+    f = request.files.get("foto")
+    if not f or not f.filename:
+        return jsonify({"error":"Sin archivo"}), 400
+    ext = f.filename.rsplit(".",1)[-1].lower()
+    if ext not in ALLOWED_REPORT_IMG:
+        return jsonify({"error":"Tipo no permitido"}), 400
+    fname  = secure_filename(f"rep{rid}_{int(time.time())}_{f.filename}")
+    fpath  = os.path.join(MANT_REPORTES_UPLOADS, fname)
+    f.save(fpath)
+    size   = os.path.getsize(fpath)
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_contrato_adjuntos
+                   (contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,
+                    mime_type,tamaño_bytes,created_by)
+                   SELECT %s,cliente_id,'imagen',%s,%s,%s,%s,%s,%s
+                   FROM mant_reportes WHERE id=%s""",
+                (rid, f.filename, f.filename, fname,
+                 f"image/{ext}", size, current_username(), rid)
+            )
+            aid = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok":True,"id":aid,
+                        "url":f"/static/uploads/mantenciones/reportes/{fname}",
+                        "nombre":f.filename})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>/analizar-ia", methods=["POST"])
+@_mant_required
+def mant_reporte_analizar(rid):
+    """Análisis IA del reporte: diagnóstico, acciones sugeridas, alertas."""
+    r = mysql_fetchone("SELECT r.*, c.razon_social FROM mant_reportes r "
+                       "JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s", (rid,))
+    if not r: return jsonify({"error":"No encontrado"}), 404
+
+    maquinas  = json.loads(r.get("maquinas_json") or "[]")
+    trabajos  = json.loads(r.get("trabajos") or "[]")
+    obs       = json.loads(r.get("observaciones") or "[]")
+    ai_key    = _get_ai_key()
+    if not ai_key:
+        return jsonify({"error":"API IA no configurada"}), 503
+
+    prompt = f"""Eres el sistema de análisis técnico de ILUS Sport & Health Solution SPA.
+Analiza este Informe Post Servicio y genera un diagnóstico inteligente.
+
+CLIENTE: {r['razon_social']}
+TIPO: {r['tipo']}
+TICKET: {r['ticket_num']}
+TÉCNICO: {r['tecnico_junior']} / Senior: {r['tecnico_senior']}
+FECHAS: {r['fecha_inicio']} → {r['fecha_cierre']}
+
+ANTECEDENTES:
+{r.get('antecedentes','')}
+
+TRABAJOS REALIZADOS:
+{chr(10).join(f'• {t}' for t in trabajos)}
+
+OBSERVACIONES:
+{chr(10).join(f'• {o}' for o in obs)}
+
+EQUIPOS INTERVENIDOS:
+{chr(10).join(f'• {m.get("sku","")} {m.get("descripcion","")} x{m.get("cantidad",1)}: {m.get("observacion","")}' for m in maquinas)}
+
+Responde SOLO en JSON con esta estructura:
+{{
+  "diagnostico": "Diagnóstico técnico conciso (2-3 párrafos)",
+  "estado_flota": "bueno|regular|critico",
+  "indice_salud": 0-100,
+  "acciones": [
+    {{"urgencia":"alta|media|baja","tipo":"correctiva|preventiva|cotizacion|seguimiento|contrato",
+      "titulo":"...", "descripcion":"...", "plazo":"...", "costo_estimado":null_o_numero}}
+  ],
+  "piezas_criticas": ["parte1","parte2"],
+  "notificaciones_sugeridas": [
+    {{"tipo":"email|sistema","titulo":"...","mensaje":"...","destinatario":"cliente|tecnico|admin"}}
+  ],
+  "requiere_cotizacion": true_o_false,
+  "items_cotizacion": [{{"sku":"","descripcion":"","cant":1,"precio_unit":0}}]
+}}"""
+
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=ai_key)
+        msg = client.messages.create(
+            model="claude-opus-4-5", max_tokens=2000,
+            messages=[{"role":"user","content":prompt}]
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"): raw = raw[4:]
+        resultado = json.loads(raw)
+    except Exception as e:
+        return jsonify({"error":f"Error IA: {e}"}), 500
+
+    # Guardar diagnóstico + crear notificaciones sugeridas automáticamente
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_reportes SET ai_diagnostico=%s, ai_acciones=%s, "
+                "ai_fecha=%s, ai_usuario=%s WHERE id=%s",
+                (resultado.get("diagnostico",""),
+                 json.dumps(resultado.get("acciones",[]), ensure_ascii=False),
+                 datetime.now(), current_username(), rid)
+            )
+            # Crear notificaciones sugeridas automáticamente
+            for n in resultado.get("notificaciones_sugeridas",[]):
+                cur.execute(
+                    """INSERT INTO mant_notificaciones
+                       (cliente_id,entidad,entidad_id,tipo,titulo,mensaje,
+                        canal,estado,created_by)
+                       VALUES (%s,'reporte',%s,'ai_alerta',%s,%s,%s,'pendiente',%s)""",
+                    (r["cliente_id"], rid, n.get("titulo",""),
+                     n.get("mensaje",""), n.get("tipo","sistema"),
+                     current_username())
+                )
+        conn.commit()
+        _mant_log("reporte", rid, "analizado_ia",
+                  f"salud={resultado.get('indice_salud')} estado={resultado.get('estado_flota')}")
+        return jsonify({"ok":True, "resultado":resultado})
+    finally:
+        conn.close()
+
+
+# ── ADJUNTOS DE CONTRATOS (multi-archivo) ─────────────────────────────
+
+ALLOWED_ADJUNTO_TIPOS = {
+    "pdf":"contrato","doc":"contrato","docx":"contrato",
+    "jpg":"imagen","jpeg":"imagen","png":"imagen","gif":"imagen","webp":"imagen",
+    "xlsx":"solicitud","xls":"solicitud",
+}
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["GET"])
+@_mant_required
+def mant_adjuntos_list(ctid):
+    rows = mysql_fetchall(
+        "SELECT id,tipo,nombre,archivo_nombre,mime_type,tamaño_bytes,descripcion,created_by,created_at "
+        "FROM mant_contrato_adjuntos WHERE contrato_id=%s ORDER BY created_at DESC", (ctid,)
+    )
+    def _fmt(r):
+        d = dict(r)
+        d["created_at"] = str(d["created_at"])[:16] if d.get("created_at") else ""
+        d["url"] = f"/static/uploads/mantenciones/{d['archivo_nombre']}"
+        return d
+    return jsonify([_fmt(r) for r in rows])
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["POST"])
+@_mant_required
+def mant_adjunto_subir(ctid):
+    ct = mysql_fetchone("SELECT cliente_id FROM mant_contratos WHERE id=%s", (ctid,))
+    if not ct: return jsonify({"error":"Contrato no encontrado"}), 404
+    f = request.files.get("archivo")
+    if not f or not f.filename: return jsonify({"error":"Sin archivo"}), 400
+    ext  = f.filename.rsplit(".",1)[-1].lower()
+    if ext not in ALLOWED_ADJUNTO:
+        return jsonify({"error":f"Tipo .{ext} no permitido"}), 400
+    tipo  = ALLOWED_ADJUNTO_TIPOS.get(ext, "otro")
+    fname = secure_filename(f"ct{ctid}_{int(time.time())}_{f.filename}")
+    fpath = os.path.join(MANT_UPLOADS, fname)
+    f.save(fpath)
+    size  = os.path.getsize(fpath)
+    nombre = request.form.get("nombre") or f.filename
+    descripcion = request.form.get("descripcion","")
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_contrato_adjuntos
+                   (contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,
+                    mime_type,tamaño_bytes,descripcion,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (ctid, ct["cliente_id"], tipo, nombre, fname, fname,
+                 f.content_type or f"application/{ext}", size,
+                 descripcion, current_username())
+            )
+            aid = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok":True,"id":aid,"nombre":nombre,
+                        "url":f"/static/uploads/mantenciones/{fname}","tipo":tipo})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/adjuntos/<int:aid>", methods=["DELETE"])
+@_mant_required
+def mant_adjunto_del(aid):
+    adj = mysql_fetchone("SELECT archivo_nombre FROM mant_contrato_adjuntos WHERE id=%s",(aid,))
+    if not adj: return jsonify({"error":"No encontrado"}),404
+    try:
+        fpath = os.path.join(MANT_UPLOADS, adj["archivo_nombre"])
+        if os.path.exists(fpath): os.remove(fpath)
+    except Exception: pass
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mant_contrato_adjuntos WHERE id=%s",(aid,))
+        conn.commit()
+        return jsonify({"ok":True})
+    finally:
+        conn.close()
+
+
+# ── NOTIFICACIONES ────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/notificaciones")
+@_mant_required
+def mant_notif_list():
+    """Lista notificaciones (todas o filtradas por cliente)."""
+    cid    = request.args.get("cliente_id")
+    estado = request.args.get("estado","")
+    sql    = ("SELECT n.*,c.razon_social FROM mant_notificaciones n "
+              "LEFT JOIN mant_clientes c ON c.id=n.cliente_id WHERE 1=1")
+    params = []
+    if cid:    sql += " AND n.cliente_id=%s"; params.append(int(cid))
+    if estado: sql += " AND n.estado=%s";    params.append(estado)
+    sql += " ORDER BY n.created_at DESC LIMIT 100"
+    rows = mysql_fetchall(sql, tuple(params))
+    def _fmt(r):
+        d = dict(r)
+        d["created_at"] = str(d["created_at"])[:16] if d.get("created_at") else ""
+        return d
+    return jsonify([_fmt(r) for r in rows])
+
+
+@app.route("/mantenciones/api/notificaciones", methods=["POST"])
+@_mant_required
+def mant_notif_crear():
+    """Crea una notificación manualmente."""
+    d = request.get_json(silent=True) or {}
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_notificaciones
+                   (cliente_id,entidad,entidad_id,tipo,titulo,mensaje,canal,
+                    destinatario,estado,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)""",
+                (d.get("cliente_id"), d.get("entidad","cliente"),
+                 d.get("entidad_id"), d.get("tipo","otro"),
+                 d.get("titulo",""), d.get("mensaje",""),
+                 d.get("canal","sistema"), d.get("destinatario",""),
+                 current_username())
+            )
+            nid = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok":True,"id":nid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/notificaciones/<int:nid>", methods=["PUT"])
+@_mant_required
+def mant_notif_update(nid):
+    """Cambia estado de una notificación (leida, ignorada, enviada)."""
+    d = request.get_json(silent=True) or {}
+    estado = d.get("estado","leida")
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            extra = ", fecha_lectura=%s" if estado in ("leida","ignorada") else ""
+            vals  = ([datetime.now()] if extra else []) + [estado, nid]
+            cur.execute(
+                f"UPDATE mant_notificaciones SET estado=%s{extra} WHERE id=%s",
+                [estado] + ([datetime.now()] if extra else []) + [nid]
+            )
+        conn.commit()
+        return jsonify({"ok":True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/notificaciones/<int:nid>/enviar", methods=["POST"])
+@_mant_required
+def mant_notif_enviar(nid):
+    """Envía la notificación por email usando Resend."""
+    notif = mysql_fetchone(
+        "SELECT n.*,c.contacto_email,c.razon_social FROM mant_notificaciones n "
+        "LEFT JOIN mant_clientes c ON c.id=n.cliente_id WHERE n.id=%s", (nid,)
+    )
+    if not notif: return jsonify({"error":"No encontrado"}), 404
+
+    destinatario = notif.get("destinatario") or notif.get("contacto_email","")
+    if not destinatario:
+        return jsonify({"error":"Sin email destinatario"}), 400
+
+    html_body = f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:auto">
+      <div style="background:#CC0000;padding:20px;text-align:center">
+        <h2 style="color:#fff;margin:0">ILUS Sport & Health</h2>
+      </div>
+      <div style="padding:24px;background:#f9f9f9">
+        <h3 style="color:#111">{notif['titulo']}</h3>
+        <p style="color:#374151;line-height:1.6">{notif['mensaje']}</p>
+        <p style="color:#6b7280;font-size:.85rem">
+          Cliente: <strong>{notif.get('razon_social','')}</strong>
+        </p>
+      </div>
+      <div style="padding:12px;text-align:center;color:#9ca3af;font-size:.78rem">
+        ILUS Sport & Health Solution SPA · Sistema de Mantenciones
+      </div>
+    </div>"""
+
+    try:
+        resultado = _send_via_resend(
+            to=destinatario,
+            subject=f"[ILUS Mantenciones] {notif['titulo']}",
+            html=html_body,
+            from_addr="mantenciones@sphs.cl"
+        )
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE mant_notificaciones SET estado='enviada',fecha_envio=%s WHERE id=%s",
+                    (datetime.now(), nid)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok":True})
+    except Exception as e:
+        return jsonify({"error":str(e)}), 500
+
+
+@app.route("/mantenciones/notificaciones")
+@_mant_required
+def mant_notificaciones_centro():
+    """Centro de notificaciones global."""
+    notifs = mysql_fetchall(
+        "SELECT n.*,c.razon_social FROM mant_notificaciones n "
+        "LEFT JOIN mant_clientes c ON c.id=n.cliente_id "
+        "ORDER BY n.created_at DESC LIMIT 200"
+    )
+    pendientes = sum(1 for n in notifs if n.get("estado")=="pendiente")
+    return render_template("mantenciones/notificaciones.html",
+                           notifs=[dict(n) for n in notifs],
+                           pendientes=pendientes)
 
 
 # ─────────────────────────────────────────────
