@@ -10416,11 +10416,17 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_maquinas ADD COLUMN ubicacion_cliente VARCHAR(200)",
                 "ALTER TABLE mant_maquinas ADD COLUMN fecha_instalacion DATE",
                 "ALTER TABLE mant_maquinas ADD COLUMN estado_op ENUM('operativo','critico','en_mantencion') DEFAULT 'operativo'",
-                # Código interno ILUS — único por equipo físico (NO por SKU del modelo)
-                # Permite trazabilidad cuando hay 5 máquinas iguales: cada una tiene su propio code
+                # Código interno ILUS — DEPRECADO en favor de campo `serie` auto-generado
+                # Se mantiene la columna por compatibilidad con datos previos
                 "ALTER TABLE mant_maquinas ADD COLUMN codigo_interno VARCHAR(80) NULL",
                 "ALTER TABLE mant_maquinas ADD COLUMN justif_fecha_inst TEXT NULL COMMENT 'Justificación si fecha_instalacion difiere de doc_fecha'",
                 "ALTER TABLE mant_maquinas ADD COLUMN justif_doc_mismatch TEXT NULL COMMENT 'Justificación si el doc_origen pertenece a otro RUT'",
+                # 2 etiquetas libres editables — el usuario las usa para filtrar/categorizar
+                # Ejemplos: "área cardio", "color rojo", "modelo 2024", "garantía extendida", etc.
+                "ALTER TABLE mant_maquinas ADD COLUMN tag_1 VARCHAR(120) NULL COMMENT 'Etiqueta libre 1'",
+                "ALTER TABLE mant_maquinas ADD COLUMN tag_2 VARCHAR(120) NULL COMMENT 'Etiqueta libre 2'",
+                # Asegurar largo del serie para soportar series largas del fabricante
+                "ALTER TABLE mant_maquinas MODIFY COLUMN serie VARCHAR(120)",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -11813,27 +11819,32 @@ def mant_cliente_delete(cid):
 
 # ── MÁQUINAS ──────────────────────────────────────────────────────────
 
-def _generar_codigo_interno_ilus(cid: int, sku: str = "", n: int = 1) -> str:
+def _generar_serie_ilus(cid: int, sku: str = "") -> str:
     """
-    Genera un código interno ILUS único para un equipo físico.
-    Formato: ILUS-{cid}-{SKU3}-{seq} (ej: ILUS-12-FZA-7)
-    Garantiza unicidad consultando los códigos ya emitidos para el cliente.
-    El usuario puede editarlo después.
+    Genera un N° Serie ILUS único para un equipo físico cuando el fabricante
+    no proporciona uno. Formato: ILUS-{cid}-{SKU6}-{seq}
+    Ejemplo: ILUS-12-FZAMC0-7
+
+    El usuario puede sobrescribirlo con el serial real del fabricante (cuando
+    la representación lo trae en la etiqueta). Es ÚNICO por cliente, lo que
+    permite trazabilidad cuando hay N máquinas iguales del mismo modelo.
+
+    Diseñado para imprimirse en etiqueta física pegada al equipo y enlazar
+    garantía + historial de mantenciones.
     """
-    sku_pref = (sku or "AUTO")[:6].upper().replace(" ", "")
+    sku_pref = (sku or "AUTO")[:6].upper().replace(" ", "").replace("-", "")
+    if not sku_pref:
+        sku_pref = "AUTO"
     base = f"ILUS-{cid}-{sku_pref}"
-    # Buscar el siguiente número disponible
     rows = mysql_fetchall(
-        "SELECT codigo_interno FROM mant_maquinas "
-        "WHERE cliente_id=%s AND codigo_interno LIKE %s",
+        "SELECT serie FROM mant_maquinas WHERE cliente_id=%s AND serie LIKE %s",
         (cid, f"{base}-%")
     )
     usados = set()
     for r in rows or []:
-        ci = (r.get("codigo_interno") or "")
-        suf = ci.rsplit("-", 1)[-1]
+        suf = (r.get("serie") or "").rsplit("-", 1)[-1]
         try: usados.add(int(suf))
-        except: pass
+        except Exception: pass
     seq = 1
     while seq in usados:
         seq += 1
@@ -11844,26 +11855,29 @@ def _generar_codigo_interno_ilus(cid: int, sku: str = "", n: int = 1) -> str:
 @_mant_required
 def mant_maquina_add(cid):
     d = request.get_json(silent=True) or {}
-    # Auto-generar código interno ILUS si no viene desde el front
-    codigo = (d.get("codigo_interno") or "").strip()
-    if not codigo:
-        codigo = _generar_codigo_interno_ilus(cid, d.get("sku",""), 1)
+    # N° Serie: si viene del front lo usamos, si no auto-generamos uno único.
+    # Esto cubre los 2 casos: (a) representación trae serial, (b) sistema lo crea
+    serie = (d.get("serie") or "").strip()
+    if not serie or serie.startswith("(auto"):
+        serie = _generar_serie_ilus(cid, d.get("sku", ""))
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_maquinas
-                   (cliente_id,sku,nombre,serie,codigo_interno,doc_origen,doc_fecha,cantidad,notas,
+                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
                     ubicacion_cliente,estado_op,fecha_instalacion,
+                    tag_1,tag_2,
                     justif_fecha_inst,justif_doc_mismatch,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (cid, d.get("sku",""), d.get("nombre",""), d.get("serie",""),
-                 codigo,
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, d.get("sku",""), d.get("nombre",""), serie,
                  d.get("doc_origen",""), d.get("doc_fecha") or None,
                  int(d.get("cantidad",1)), d.get("notas",""),
                  d.get("ubicacion_cliente",""),
                  d.get("estado_op","operativo"),
                  d.get("fecha_instalacion") or None,
+                 (d.get("tag_1") or "").strip()[:120] or None,
+                 (d.get("tag_2") or "").strip()[:120] or None,
                  d.get("justif_fecha_inst") or None,
                  d.get("justif_doc_mismatch") or None,
                  current_username())
@@ -11871,7 +11885,7 @@ def mant_maquina_add(cid):
             mid = cur.lastrowid
         conn.commit()
         _mant_log("maquina", mid, "agregada", d.get("nombre",""))
-        return jsonify({"ok": True, "id": mid, "codigo_interno": codigo})
+        return jsonify({"ok": True, "id": mid, "serie": serie})
     finally:
         conn.close()
 

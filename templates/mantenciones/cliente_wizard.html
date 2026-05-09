@@ -586,23 +586,24 @@
     </div>
   </div>
   <div class="table-responsive">
-    <table class="table eq-table align-middle mb-1" style="min-width:920px">
+    <table class="table eq-table align-middle mb-1" style="min-width:1080px">
       <thead><tr>
-          <th style="width:22%">Nombre equipo</th>
+          <th style="width:18%">Nombre equipo</th>
           <th style="width:9%" title="Código del MODELO en el ERP — compartido entre unidades iguales">SKU modelo</th>
-          <th style="width:11%" title="Código ILUS único POR EQUIPO físico (editable, autogenerado)">
-            Cód. ILUS <i class="bi bi-info-circle ms-1" style="font-size:.7rem;color:#92400e"></i>
+          <th style="width:13%" title="N° serie único POR EQUIPO físico. Auto-generado si está vacío. Se imprime en etiqueta para garantía y trazabilidad.">
+            N° Serie <i class="bi bi-info-circle ms-1" style="font-size:.7rem;color:#92400e"></i>
           </th>
-          <th style="width:9%">N° Serie</th>
-          <th style="width:10%">Ubicación</th>
-          <th style="width:9%">Estado</th>
+          <th style="width:8%" title="Etiqueta libre para filtrar/categorizar después (ej: 'sala cardio', 'comprado 2024')">Etiqueta 1</th>
+          <th style="width:8%" title="Segunda etiqueta libre para filtrar">Etiqueta 2</th>
+          <th style="width:9%">Ubicación</th>
+          <th style="width:8%">Estado</th>
           <th style="width:9%">F. Instalación</th>
           <th style="width:4%">Cant.</th>
           <th style="width:10%">Origen</th>
           <th style="width:3%"></th>
         </tr></thead>
       <tbody id="equiposTbody">
-        <tr id="eq-placeholder"><td colspan="10" class="text-center text-muted py-4" style="font-size:.82rem">
+        <tr id="eq-placeholder"><td colspan="11" class="text-center text-muted py-4" style="font-size:.82rem">
           <i class="bi bi-bicycle" style="font-size:1.4rem;opacity:.3;display:block;margin-bottom:6px"></i>
           Sin equipos — agrega una fila o búscalos en el ERP
         </td></tr>
@@ -1630,14 +1631,23 @@ function agregarFilaEquipo(datos={}) {
     : `<span style="font-size:.62rem;color:#888;font-style:italic">Manual</span>`;
   // Default fecha de instalación = fecha del documento (cubre garantía 6 meses)
   const fechaInst = datos.fecha_instalacion || datos.doc_fecha || datos.fecha || '';
-  const codigoIni = datos.codigo_interno || '(auto)';
+  // N° Serie: si la representación trae serial real, lo usamos; si no, "(auto)" → backend genera ILUS-{cid}-{SKU}-{n}
+  const serieIni = datos.serie || '(auto)';
+  const serieEsAuto = serieIni.startsWith('(auto');
   tr.innerHTML=`
     <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||datos.producto||'')}" placeholder="Nombre equipo"></td>
     <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}" title="SKU del modelo (compartido entre unidades iguales)"></td>
-    <td><input class="eq-input font-monospace" data-field="codigo_interno" value="${esc(codigoIni)}"
-              style="background:#fef9c3;border-color:#fde68a"
-              title="Código ILUS único de este equipo físico. Editable. Se autogenera al guardar si dice (auto)."></td>
-    <td><input class="eq-input" data-field="serie" value="${esc(datos.serie||'')}" placeholder="N° serie real" title="Número de serie del fabricante (capturable después)"></td>
+    <td><input class="eq-input font-monospace" data-field="serie" value="${esc(serieIni)}"
+              style="${serieEsAuto ? 'background:#fef9c3;border-color:#fde68a' : ''}"
+              title="N° serie único de este equipo. Si la representación lo trae, escríbelo aquí. Si dejas '(auto)', el sistema genera uno único al guardar (formato ILUS-{cliente}-{SKU}-{n}). Sirve para etiqueta física + garantía."
+              onfocus="if(this.value.startsWith('(auto')){this.value='';this.style.background='';this.style.borderColor=''}"
+              onblur="if(!this.value){this.value='(auto)';this.style.background='#fef9c3';this.style.borderColor='#fde68a'}"></td>
+    <td><input class="eq-input" data-field="tag_1" value="${esc(datos.tag_1||'')}"
+              placeholder="—" maxlength="120"
+              title="Etiqueta libre: usa para clasificar (ej: 'sala cardio', 'comprado 2024', 'garantía extendida')"></td>
+    <td><input class="eq-input" data-field="tag_2" value="${esc(datos.tag_2||'')}"
+              placeholder="—" maxlength="120"
+              title="Segunda etiqueta libre"></td>
     <td><input class="eq-input" data-field="ubicacion" value="${esc(datos.ubicacion||'')}"></td>
     <td><select class="eq-input" data-field="estado_op">
       <option value="operativo" ${(datos.estado_op||'operativo')==='operativo'?'selected':''}>Operativo</option>
@@ -1647,7 +1657,7 @@ function agregarFilaEquipo(datos={}) {
     <td><input type="date" class="eq-input" data-field="fecha_instalacion" value="${esc(fechaInst)}"
               data-original="${esc(fechaInst)}"
               onchange="eqValidarFechaInst(this)"
-              title="Default: fecha del documento. Si la cambias, se pedirá justificación."></td>
+              title="Default: fecha del documento (cubre garantía). Si la cambias, se pedirá justificación."></td>
     <td><input type="number" class="eq-input text-center" data-field="cantidad" value="${datos.cantidad||1}" min="1" style="width:44px"></td>
     <td>
       <input type="hidden" data-field="doc_origen" value="${esc(docOrigen)}">
@@ -1656,7 +1666,7 @@ function agregarFilaEquipo(datos={}) {
       <input type="hidden" data-field="justif_fecha_inst"   value="">
       ${docBadge}
     </td>
-    <td><button class="btn btn-xs btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-trash"></i></button></td>`;
+    <td><button class="btn btn-xs btn-outline-danger" onclick="this.closest('tr').remove()" title="Quitar"><i class="bi bi-trash"></i></button></td>`;
   tbody.appendChild(tr);
 }
 
@@ -1973,16 +1983,15 @@ function wzpImportar() {
     const cantidadCadaUna = expandirEsto ? 1 : qty;
 
     for (let n = 1; n <= filas; n++) {
-      // Código interno temporal — el backend lo regenera al guardar
-      const codTemp = expandirEsto ? `(auto ${n}/${qty})` : '(auto)';
+      // N° serie temporal — backend genera ILUS-{cid}-{SKU}-{n} al guardar
       agregarFilaEquipo({
         nombre,
         sku: p.sku || '',
+        serie: '(auto)',
         cantidad: cantidadCadaUna,
         doc_origen,
         doc_fecha: fecha_doc,
         fecha_instalacion: fecha_doc,
-        codigo_interno: codTemp,
         justif_doc_mismatch: justifMismatch,
       });
       creados++;
@@ -1995,6 +2004,85 @@ function wzpImportar() {
     const mErp = bootstrap.Modal.getInstance(document.getElementById('modalErpEq'));
     if (mErp) mErp.hide();
   }, 200);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// importarEq() — botón "Importar seleccionadas" en el modal ERP grande
+// Procesa selecciones de los tabs "Por documento" y "Por SKU" (que llenan erpEqSel)
+// ════════════════════════════════════════════════════════════════════
+function importarEq() {
+  const lineas = Object.values(erpEqSel);
+  if (!lineas.length) {
+    alert('Selecciona al menos un producto antes de importar.');
+    return;
+  }
+
+  // Validar mismatch RUT si las líneas vienen de un documento (doc_origen)
+  // Detectamos el RUT del documento mediante el primer elemento que tenga 'rut_doc'
+  // Por ahora, advertimos genéricamente.
+  const rutWiz = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'');
+  let justifMismatch = '';
+  for (const l of lineas) {
+    const rutDoc = (l.rut || l.cliente_rut || '').replace(/[.\-\s]/g,'');
+    if (rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc) {
+      const motivo = prompt(
+        `⚠️ El documento ${l.doc_origen||''} pertenece a un RUT distinto.\n\n` +
+        `RUT del documento: ${rutDoc}\nRUT del cliente: ${rutWiz}\n\n` +
+        `¿Por qué importas equipos de otro RUT? (mínimo 8 caracteres):`
+      );
+      if (!motivo || motivo.trim().length < 8) {
+        alert('Importación cancelada: justificación requerida.');
+        return;
+      }
+      justifMismatch = motivo.trim();
+      break; // un solo motivo aplica a toda la importación
+    }
+  }
+
+  // Preguntar globalmente si expandir cantidades > 1
+  const tieneExpandibles = lineas.some(l => {
+    const qty = parseInt(l.cantidad) || 1;
+    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(l.nombre || l.producto || '');
+    return qty > 1 && !esBulk;
+  });
+  let expandir = false;
+  if (tieneExpandibles) {
+    expandir = confirm(
+      'Algunos productos tienen cantidad > 1.\n\n' +
+      '¿Crear 1 ficha individual por cada unidad?\n\n' +
+      '✓ SÍ (recomendado): cada equipo tendrá su propio N° serie único.\n' +
+      '   Útil para trazabilidad de garantía y mantenciones.\n\n' +
+      '✗ NO: se crea 1 sola ficha con cantidad N.'
+    );
+  }
+
+  let creados = 0;
+  for (const l of lineas) {
+    const qty = parseInt(l.cantidad) || 1;
+    const nombre = l.nombre || l.producto || '';
+    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(nombre);
+    const expandirEsto = expandir && qty > 1 && !esBulk;
+    const filas = expandirEsto ? qty : 1;
+    const cantidadCadaUna = expandirEsto ? 1 : qty;
+    for (let n = 1; n <= filas; n++) {
+      agregarFilaEquipo({
+        nombre,
+        sku: l.sku || '',
+        serie: '(auto)',
+        cantidad: cantidadCadaUna,
+        doc_origen: l.doc_origen || '',
+        doc_fecha: l.doc_fecha || l.fecha || '',
+        fecha_instalacion: l.doc_fecha || l.fecha || '',
+        justif_doc_mismatch: justifMismatch,
+      });
+      creados++;
+    }
+  }
+
+  // Reset y cerrar modal
+  erpEqSel = {};
+  document.getElementById('erpEqCount').textContent = '0 seleccionadas';
+  bootstrap.Modal.getInstance(document.getElementById('modalErpEq'))?.hide();
 }
 function abrirErpEquipos(){
   erpEqSetTab('doc');
@@ -2059,7 +2147,10 @@ async function buscarDocErp() {
       const key = `doc-${tido}-${nudo}-${i}`;
       const ld = JSON.stringify({
         sku: it.sku, nombre: it.nombre, cantidad: it.cantidad,
-        doc_origen: `${tido} ${nudo}`, doc_fecha: data.fecha
+        doc_origen: `${tido} ${nudo}`,
+        doc_fecha: data.fecha,
+        rut: data.rut || '',          // RUT del documento (para validar mismatch)
+        cliente_doc: data.cliente || ''
       }).replace(/"/g,'&quot;');
       html += `<tr>
         <td><input type="checkbox" class="form-check-input" onchange="erpEqToggle('${key}',${ld},this.checked)"></td>
