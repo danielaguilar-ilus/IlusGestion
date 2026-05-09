@@ -3810,9 +3810,12 @@ function abrirEmailManual() {
           <td class="py-2">
             <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>
           </td>
-          <td class="py-2 pe-2">
-            <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v.id }})" title="Editar">
+          <td class="py-2 pe-2 text-nowrap">
+            <button class="btn btn-xs btn-outline-secondary" onclick='editarVisita({{ v|tojson }})' title="Editar">
               <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-xs btn-outline-danger ms-1" onclick="eliminarVisitaFromTabla({{ v.id }}, '{{ (v.titulo or v.tipo or 'visita')|replace("'", "\\'") }}')" title="Eliminar">
+              <i class="bi bi-trash"></i>
             </button>
           </td>
         </tr>
@@ -5099,7 +5102,10 @@ function editarVisita(v) {
   document.getElementById('vi_titulo').value = v.titulo || '';
   document.getElementById('vi_tipo').value = v.tipo || 'preventiva';
   document.getElementById('vi_estado').value = v.estado || 'programada';
-  document.getElementById('vi_fecha').value = v.fecha_programada ? v.fecha_programada.slice(0,10) : '';
+  // fecha_programada puede venir como 'YYYY-MM-DD' o como dict {__class__:'date',...} desde tojson
+  let f = v.fecha_programada;
+  if (f && typeof f === 'string') f = f.slice(0,10);
+  document.getElementById('vi_fecha').value = f || '';
   document.getElementById('vi_hora_inicio').value = v.hora_inicio || '';
   document.getElementById('vi_hora_fin').value = v.hora_fin || '';
   document.getElementById('vi_tecnico').value = v.tecnico || '';
@@ -5107,6 +5113,16 @@ function editarVisita(v) {
   document.getElementById('vi_descripcion').value = v.descripcion || '';
   document.getElementById('btnEliminarVisita').style.display = '';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+async function eliminarVisitaFromTabla(vid, titulo) {
+  if (!confirm(`¿Eliminar la visita "${titulo}"?\n\nEsta acción no se puede deshacer.`)) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || 'no se pudo eliminar')); return; }
+    location.reload();
+  } catch(e){ alert('Error de red: ' + e.message); }
 }
 
 // ─── Guardar cliente (PUT) ────────────────────────────────

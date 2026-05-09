@@ -38,18 +38,30 @@
          letter-spacing:.06em;color:#9ca3af;margin-bottom:2px}
 .kpi-num{font-size:1.7rem;font-weight:800;color:#111827;line-height:1}
 .filter-bar{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px}
+
+/* ── HEADER NEGRO ESTANDARIZADO ─────────────────────── */
+.mod-hero{
+  background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+}
+.mod-hero h4{margin:0;font-weight:700;font-size:1.4rem}
+.mod-hero h4 i{color:var(--ilus-red)}
+.mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px}
+.mod-hero .btn-outline-light{border-color:#475569;color:#e2e8f0}
+.mod-hero .btn-outline-light:hover{background:rgba(255,255,255,.08);border-color:#cbd5e1;color:#fff}
 </style>
 
-{# ── PAGE HEADER (mismo patrón que clientes.html) ────────────────────── #}
-<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+{# ── HEADER NEGRO ESTANDARIZADO ───────────────────────────────────── #}
+<div class="mod-hero">
   <div>
-    <h4 class="mb-0 fw-bold">
-      <i class="bi bi-person-badge-fill me-2" style="color:var(--ilus-red)"></i>Técnicos de Mantención
-    </h4>
-    <p class="text-muted mb-0 small">Catálogo de técnicos asignables a visitas — ficha individual con historial</p>
+    <h4><i class="bi bi-person-badge-fill me-2"></i>Técnicos de Mantención</h4>
+    <div class="mod-sub">Catálogo de técnicos asignables a visitas — ficha individual con historial</div>
   </div>
   <div class="d-flex gap-2 align-items-center">
-    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-secondary">
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-light">
       <i class="bi bi-arrow-left me-1"></i>Clientes
     </a>
     <button class="btn btn-ilus fw-bold px-3" data-bs-toggle="modal" data-bs-target="#modalNuevoTecnico">

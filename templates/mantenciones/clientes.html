@@ -61,24 +61,29 @@
 
 /* ── Filter bar ──────────────────────────────────────── */
 .filter-bar{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px}
+
+/* ── HEADER NEGRO ESTANDARIZADO (mismo patrón que ficha) ─ */
+.mod-hero{
+  background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+}
+.mod-hero h4{margin:0;font-weight:700;font-size:1.4rem}
+.mod-hero h4 i{color:var(--ilus-red)}
+.mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px}
+.mod-hero .btn-outline-light{border-color:#475569;color:#e2e8f0}
+.mod-hero .btn-outline-light:hover{background:rgba(255,255,255,.08);border-color:#cbd5e1;color:#fff}
 </style>
 
-{# ── PAGE HEADER ─────────────────────────────────────────────────── #}
-<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+{# ── HEADER NEGRO ESTANDARIZADO ───────────────────────────────────── #}
+<div class="mod-hero">
   <div>
-    <h4 class="mb-0 fw-bold">
-      <i class="bi bi-building-check me-2" style="color:var(--ilus-red)"></i>Clientes de Mantención
-    </h4>
-    <p class="text-muted mb-0 small">Gestión inteligente de contratos, equipos y visitas programadas</p>
+    <h4><i class="bi bi-building-check me-2"></i>Clientes de Mantención</h4>
+    <div class="mod-sub">Gestión inteligente de contratos, equipos y visitas programadas</div>
   </div>
   <div class="d-flex gap-2 align-items-center">
-    <a href="{{ url_for('mant_notificaciones_centro') }}" class="btn btn-sm btn-outline-secondary position-relative">
-      <i class="bi bi-bell me-1"></i>Notificaciones
-      {% if global_stats.notificaciones and global_stats.notificaciones > 0 %}
-      <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
-            style="font-size:.58rem;padding:3px 6px">{{ global_stats.notificaciones }}</span>
-      {% endif %}
-    </a>
     <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
       <i class="bi bi-building-add me-1"></i>Nuevo cliente
     </a>
