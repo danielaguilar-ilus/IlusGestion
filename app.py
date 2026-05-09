@@ -11956,6 +11956,89 @@ def mant_maquina_del(mid):
         conn.close()
 
 
+@app.route("/mantenciones/api/maquinas/<int:mid>/solicitar-cambio", methods=["POST"])
+@_mant_required
+def mant_maquina_solicitar_cambio(mid):
+    """
+    Solicita cambio/reparación de un equipo dañado:
+      1. Marca el equipo como 'critico' (o 'en_mantencion')
+      2. Crea una visita programada (tipo=garantia o correctiva) con
+         descripción que incluye el motivo del daño y la cantidad afectada
+      3. Loguea la acción para auditoría
+
+    Body JSON:
+      cantidad_afectada: int (cuántas unidades del equipo están dañadas)
+      motivo: str (mín 8 chars, descripción del daño)
+      tipo_visita: 'garantia' | 'correctiva' (default garantia)
+      fecha_programada: 'YYYY-MM-DD' (default: hoy + 3 días)
+      estado_nuevo: 'critico' | 'en_mantencion' (default critico)
+    """
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()
+    if len(motivo) < 8:
+        return jsonify({"error": "El motivo debe tener al menos 8 caracteres"}), 400
+
+    cant_afectada = int(d.get("cantidad_afectada") or 1)
+    tipo_visita   = d.get("tipo_visita") or "garantia"
+    if tipo_visita not in ("garantia","correctiva","preventiva","inspeccion"):
+        tipo_visita = "garantia"
+    estado_nuevo  = d.get("estado_nuevo") or "critico"
+    if estado_nuevo not in ("critico","en_mantencion","operativo"):
+        estado_nuevo = "critico"
+    fecha_prog = d.get("fecha_programada") or (
+        datetime.today().date() + timedelta(days=3)
+    ).isoformat()
+
+    # Cargar el equipo + cliente
+    maq = mysql_fetchone(
+        "SELECT id,cliente_id,nombre,sku,serie,cantidad,doc_origen "
+        "FROM mant_maquinas WHERE id=%s", (mid,)
+    )
+    if not maq:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+    cid = maq["cliente_id"]
+
+    # Construir descripción completa para la visita
+    titulo = f"Cambio/garantía: {maq.get('nombre','')[:80]}"
+    descripcion = (
+        f"SOLICITUD DE CAMBIO/REPARACIÓN\n"
+        f"Equipo: {maq.get('nombre','')}\n"
+        f"SKU del modelo: {maq.get('sku','') or '—'}\n"
+        f"N° serie: {maq.get('serie','') or '—'}\n"
+        f"Documento origen: {maq.get('doc_origen','') or '—'}\n"
+        f"Unidades afectadas: {cant_afectada} de {maq.get('cantidad',1)}\n"
+        f"Motivo: {motivo}\n"
+    )
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # 1. Cambiar estado del equipo
+            cur.execute(
+                "UPDATE mant_maquinas SET estado_op=%s WHERE id=%s",
+                (estado_nuevo, mid)
+            )
+            # 2. Crear visita programada
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (cliente_id,titulo,fecha_programada,tipo,estado,descripcion,created_by)
+                   VALUES (%s,%s,%s,%s,'programada',%s,%s)""",
+                (cid, titulo, fecha_prog, tipo_visita, descripcion, current_username())
+            )
+            vid = cur.lastrowid
+        conn.commit()
+        _mant_log("maquina", mid, "solicitud_cambio",
+                  f"{cant_afectada} unidad(es), {tipo_visita}, fecha {fecha_prog}, motivo: {motivo[:80]}")
+        return jsonify({
+            "ok": True,
+            "visita_id": vid,
+            "cliente_id": cid,
+            "fecha_programada": fecha_prog,
+        })
+    finally:
+        conn.close()
+
+
 # ══════════════════════════════════════════════════════════════════════
 # SUCURSALES — información adicional opcional del cliente
 # Para clientes con múltiples ubicaciones (cadenas, holding, franquicias).

@@ -35,7 +35,8 @@
            display:inline-flex;align-items:center;gap:4px;}
 /* ── Tabs ────────────────────────────────────────── */
 .ficha-tabs-wrap{background:#fff;border-bottom:2px solid var(--border);
-                 position:sticky;top:56px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.04);}
+                 position:sticky;top:0;z-index:1030;
+                 box-shadow:0 4px 14px rgba(0,0,0,.10);}
 .ficha-tabs{display:flex;gap:0;padding:0 8px;overflow-x:auto;scrollbar-width:none;}
 .ficha-tabs::-webkit-scrollbar{display:none;}
 .ftab-btn{background:none;border:none;outline:none;padding:12px 18px;
@@ -720,7 +721,7 @@
       {% if maquinas %}<span class="badge ms-1" style="font-size:.6rem;background:#dbeafe;color:#1e40af">{{ maquinas|length }}</span>{% endif %}
     </button>
     <button class="ftab-btn" data-tab="visitas" onclick="switchTab('visitas')">
-      <i class="bi bi-calendar-week"></i>Mantenciones
+      <i class="bi bi-calendar-week"></i>Mantenciones y Visitas
       {% if visitas %}<span class="badge ms-1" style="font-size:.6rem;background:#dcfce7;color:#166534">{{ visitas|length }}</span>{% endif %}
     </button>
     <button class="ftab-btn" data-tab="contrato" onclick="switchTab('contrato')">
@@ -1563,6 +1564,9 @@
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
           <tr id="maq-{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
+              data-doc-origen="{{ m.doc_origen or '' }}"
+              data-sku="{{ m.sku or '' }}"
+              data-cantidad="{{ m.cantidad or 1 }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
             <td>
               <div class="eq-cell-icon"><i class="bi bi-bicycle"></i></div>
@@ -1633,6 +1637,11 @@
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
+                <button class="btn btn-xs btn-outline-warning"
+                        onclick='abrirSolicitudCambio({{ {"id":m.id,"nombre":m.nombre,"sku":m.sku or "","serie":m.serie or "","cantidad":m.cantidad,"doc_fecha":(m.doc_fecha.strftime("%Y-%m-%d") if m.doc_fecha else "")}|tojson }})'
+                        title="Solicitar cambio / garantía">
+                  <i class="bi bi-arrow-repeat"></i>
+                </button>
                 <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>
@@ -4188,6 +4197,96 @@ function abrirEmailManual() {
   </div>
 </div>
 
+{# ── Modal: Solicitar cambio / garantía de equipo dañado ── #}
+<div class="modal fade" id="modalSolicitarCambio" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#d97706 0%,#b45309 100%);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-arrow-repeat me-2"></i>Solicitar cambio / garantía
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="sc_mid" value="">
+        <input type="hidden" id="sc_doc_fecha" value="">
+
+        <div class="alert alert-light border" style="font-size:.86rem">
+          <div><strong>Equipo:</strong> <span id="sc_nombre">—</span></div>
+          <div class="small text-muted">
+            <span class="me-3"><strong>SKU:</strong> <span id="sc_sku" class="font-monospace">—</span></span>
+            <span><strong>Serie:</strong> <span id="sc_serie" class="font-monospace">—</span></span>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Unidades afectadas <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <input type="number" id="sc_cantidad" class="form-control" min="1" value="1">
+              <span class="input-group-text">de <strong id="sc_total">1</strong> totales</span>
+            </div>
+            <div class="form-text">¿Cuántas unidades de este equipo están dañadas?</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Tipo de visita</label>
+            <select id="sc_tipo" class="form-select">
+              <option value="garantia" selected>Garantía (cobertura ERP)</option>
+              <option value="correctiva">Correctiva (reparación pagada)</option>
+            </select>
+            <div class="form-text" id="sc_tipo_hint">Default: garantía si está dentro de los 6 meses</div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Estado del equipo tras la solicitud <span class="text-danger">*</span>
+            </label>
+            <select id="sc_estado" class="form-select">
+              <option value="critico" selected>🔴 Crítico (no operativo, esperando cambio)</option>
+              <option value="en_mantencion">🟡 En mantención (en proceso)</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Fecha programada de visita <span class="text-danger">*</span>
+            </label>
+            <input type="date" id="sc_fecha" class="form-control">
+            <div class="form-text">Default: hoy + 3 días</div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Motivo del daño / justificación <span class="text-danger">*</span>
+            </label>
+            <textarea id="sc_motivo" class="form-control" rows="3"
+                      placeholder="Ej: Banda rota tras 2 meses de uso intensivo. Cliente reporta ruido en pantalla. Se requiere cambio bajo garantía."
+                      minlength="8" maxlength="800"></textarea>
+            <div class="form-text">Mínimo 8 caracteres. Se incluye en la descripción de la visita y queda en el log.</div>
+          </div>
+        </div>
+
+        <div class="alert alert-info mt-3 mb-0" style="font-size:.82rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Al confirmar:
+          <ul class="mb-0 mt-1 ps-3">
+            <li>El equipo cambia a estado <strong id="sc_resumen_estado">Crítico</strong></li>
+            <li>Se crea una visita programada con tipo <strong id="sc_resumen_tipo">Garantía</strong></li>
+            <li>El motivo queda en la descripción de la visita y en el historial</li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-warning fw-bold px-4" onclick="confirmarSolicitudCambio()">
+          <i class="bi bi-check-circle me-1"></i>Confirmar y agendar visita
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ── Modal: Máquina manual ── #}
 <div class="modal fade" id="modalMaqManual" tabindex="-1">
   <div class="modal-dialog">
@@ -4447,6 +4546,94 @@ function editarVisita(v) {
 
 // ─── Guardar cliente (PUT) ────────────────────────────────
 // ════════════════════════════════════════════════════════════════════
+// SOLICITAR CAMBIO / GARANTÍA de un equipo dañado
+// ════════════════════════════════════════════════════════════════════
+let _modalSolCambio = null;
+
+function abrirSolicitudCambio(eq) {
+  if (!_modalSolCambio) _modalSolCambio = new bootstrap.Modal(document.getElementById('modalSolicitarCambio'));
+  document.getElementById('sc_mid').value     = eq.id;
+  document.getElementById('sc_nombre').textContent = eq.nombre || '—';
+  document.getElementById('sc_sku').textContent    = eq.sku || '—';
+  document.getElementById('sc_serie').textContent  = eq.serie || '—';
+  document.getElementById('sc_total').textContent  = eq.cantidad || 1;
+  document.getElementById('sc_doc_fecha').value    = eq.doc_fecha || '';
+  document.getElementById('sc_cantidad').max        = eq.cantidad || 1;
+  document.getElementById('sc_cantidad').value     = 1;
+
+  // Default fecha = hoy + 3 días
+  const f = new Date(); f.setDate(f.getDate() + 3);
+  document.getElementById('sc_fecha').value = f.toISOString().slice(0,10);
+
+  // Sugerencia de tipo según garantía
+  if (eq.doc_fecha) {
+    const docFecha = new Date(eq.doc_fecha);
+    const garantiaFin = new Date(docFecha); garantiaFin.setMonth(garantiaFin.getMonth() + 6);
+    const enGarantia = new Date() <= garantiaFin;
+    document.getElementById('sc_tipo').value = enGarantia ? 'garantia' : 'correctiva';
+    document.getElementById('sc_tipo_hint').textContent = enGarantia
+      ? `✓ En garantía (vence ${garantiaFin.toLocaleDateString('es-CL')})`
+      : `⚠️ Garantía vencida desde ${garantiaFin.toLocaleDateString('es-CL')} → sugerimos correctiva`;
+  }
+
+  document.getElementById('sc_motivo').value = '';
+  document.getElementById('sc_estado').value = 'critico';
+  actualizarResumenSolCambio();
+
+  // Listeners para actualizar el resumen en vivo
+  ['sc_estado','sc_tipo'].forEach(id => {
+    document.getElementById(id).onchange = actualizarResumenSolCambio;
+  });
+
+  _modalSolCambio.show();
+}
+
+function actualizarResumenSolCambio() {
+  const estados = {critico:'Crítico', en_mantencion:'En mantención'};
+  const tipos = {garantia:'Garantía', correctiva:'Correctiva', preventiva:'Preventiva', inspeccion:'Inspección'};
+  document.getElementById('sc_resumen_estado').textContent =
+    estados[document.getElementById('sc_estado').value] || '—';
+  document.getElementById('sc_resumen_tipo').textContent =
+    tipos[document.getElementById('sc_tipo').value] || '—';
+}
+
+async function confirmarSolicitudCambio() {
+  const mid     = document.getElementById('sc_mid').value;
+  const motivo  = document.getElementById('sc_motivo').value.trim();
+  const cant    = parseInt(document.getElementById('sc_cantidad').value) || 1;
+  const tipo    = document.getElementById('sc_tipo').value;
+  const estado  = document.getElementById('sc_estado').value;
+  const fecha   = document.getElementById('sc_fecha').value;
+
+  if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
+  if (!fecha) { alert('La fecha de visita es obligatoria'); return; }
+
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/solicitar-cambio`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        cantidad_afectada: cant,
+        motivo,
+        tipo_visita: tipo,
+        fecha_programada: fecha,
+        estado_nuevo: estado,
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    _modalSolCambio.hide();
+    // Mostrar confirmación visual y recargar
+    setTimeout(() => {
+      alert(`✓ Visita agendada para ${d.fecha_programada}.\nEl equipo quedó en estado "${estado}".\nVerás la visita en la pestaña "Mantenciones y Visitas".`);
+      location.reload();
+    }, 200);
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════
 // SUCURSALES — CRUD del cliente
 // ════════════════════════════════════════════════════════════════════
 let _modalSucursal = null;
@@ -4621,6 +4808,10 @@ async function confirmarErpMismatch() {
 // ─── ERP — buscar por documento (REST API) ────────────────────
 let erpSeleccionadas = {};
 
+// fBuscarDoc — flujo unificado: consulta el doc, cierra el modal de búsqueda
+// y abre el modal LINDO (modalErpProductos) que ya usa "Por RUT/cliente".
+// Así reciclamos el mismo flow del wizard: checkboxes confiables, saldo,
+// elección por producto de "1 ficha vs N fichas", N° serie auto.
 async function fBuscarDoc() {
   const tido = document.getElementById('fDocTido').value;
   const nudo = document.getElementById('fDocNudo').value.trim();
@@ -4641,145 +4832,88 @@ async function fBuscarDoc() {
     }
     if (!data.items?.length) {
       let noItemsMsg = 'Este documento no tiene productos importables.';
-      if (data.total_lineas > 0) {
-        noItemsMsg += ` (${data.total_lineas} línea(s) en el ERP, todas corresponden a servicios o fletes)`;
-      } else {
-        noItemsMsg += ' (El documento no tiene líneas de detalle en el ERP)';
-      }
+      if (data.total_lineas > 0) noItemsMsg += ` (${data.total_lineas} líneas en el ERP, todas son servicios/fletes)`;
       cont.innerHTML = `<div class="text-center text-muted py-3">${noItemsMsg}</div>`;
       return;
     }
 
-    const rutCliente = '{{ cliente.rut | default("") | e }}';
-    // Comparación robusta: quitar puntos, guiones, y opcionalmente el dígito verificador
-    const _rutClean = (r) => (r||'').replace(/[.\-\s]/g,'').toUpperCase();
-    const _rutSinDV = (r) => { const c = _rutClean(r); return c.length > 1 ? c.slice(0,-1) : c; };
-    const rutDocClean   = _rutClean(data.rut);
-    const rutLocalClean = _rutClean(rutCliente);
-    const rutsCoinciden = rutDocClean && rutLocalClean &&
-        (rutDocClean === rutLocalClean || _rutSinDV(rutDocClean) === _rutSinDV(rutLocalClean));
+    // Construir un objeto "doc" compatible con abrirModalProductos()
+    const tido_display = (tido === 'VD' || tido === 'WEB') ? tido : tido;
+    const nudo_display = nudo;
+    const fecha_iso = (() => {
+      const p = (data.fecha || '').split('/');
+      return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : '';
+    })();
+    const docCompat = {
+      tido,
+      nudo,
+      tido_display,
+      nudo_display,
+      rut: data.rut || '',
+      razon_social: data.cliente || '',
+      fecha: data.fecha || '',
+      fecha_iso,
+      valor_total: 0
+    };
 
-    let mismatchAlert = '';
-    if (data.rut && rutCliente && !rutsCoinciden) {
-      // Bloquea importación hasta confirmar con motivo. Loggea en mant_logs.
-      window._erpMismatch = {
-        rutDoc: data.rut,
-        clienteDoc: data.cliente || data.rut,
-        tido: data.tido,
-        nudo: data.nudo,
-        confirmado: false,
-        motivo: ''
-      };
-      mismatchAlert = `<div class="alert alert-danger d-flex align-items-start gap-2 mt-2 mb-3" style="font-size:.85rem;border-left:5px solid #dc2626">
-        <i class="bi bi-exclamation-octagon-fill text-danger mt-1" style="font-size:1.2rem"></i>
-        <div style="flex:1">
-          <div class="fw-bold mb-1">⚠️ RUT no coincide con la ficha del cliente</div>
-          <div class="mb-2">
-            Documento <strong>${data.tido} ${data.nudo}</strong> pertenece a:<br>
-            • <strong>${data.cliente||data.rut}</strong> (RUT ${data.rut})<br>
-            Pero estás trabajando en la ficha de:<br>
-            • <strong>{{ cliente.razon_social | e }}</strong> (RUT ${rutCliente})
-          </div>
-          <div class="mb-2 small">
-            <strong>¿Por qué importas equipos de otro cliente a esta ficha?</strong>
-            Necesitamos justificar el cruce para auditoría.
-          </div>
-          <textarea id="erpMismatchMotivo" class="form-control form-control-sm mb-2"
-                    rows="2" minlength="8" maxlength="400"
-                    placeholder="Ej: Cliente final es el mismo (subsidiaria), o equipos cedidos del cliente X al Y..."></textarea>
-          <button type="button" class="btn btn-sm btn-warning fw-bold" onclick="confirmarErpMismatch()">
-            <i class="bi bi-check-lg me-1"></i>Confirmar y registrar motivo
-          </button>
-        </div>
-      </div>`;
-    }
-
-    let garantiaInfo = '';
-    if (data.fecha) {
-      const partes = data.fecha.split('/');
-      if (partes.length === 3) {
-        const fechaDoc = new Date(partes[2], partes[1]-1, partes[0]);
-        const garantiaFin = new Date(fechaDoc);
-        garantiaFin.setMonth(garantiaFin.getMonth() + 6);
-        const hoy = new Date();
-        const enGarantia = hoy <= garantiaFin;
-        const diasRestantes = Math.ceil((garantiaFin - hoy) / 86400000);
-        garantiaInfo = enGarantia
-          ? `<span class="badge bg-success ms-2"><i class="bi bi-shield-check me-1"></i>En garantía — ${diasRestantes} días restantes (vence ${garantiaFin.toLocaleDateString('es-CL')})</span>`
-          : `<span class="badge bg-secondary ms-2"><i class="bi bi-shield-x me-1"></i>Garantía vencida (venció ${garantiaFin.toLocaleDateString('es-CL')})</span>`;
-      }
-    }
-
-    let html = mismatchAlert;
-    html += `<div class="alert alert-success py-2 px-3 mb-3 d-flex align-items-center flex-wrap gap-2" style="font-size:.82rem">
-      <div>
-        <strong><i class="bi bi-receipt me-1"></i>${data.tido} ${data.nudo}</strong>
-        ${data.fecha ? ` &nbsp;·&nbsp; 📅 ${data.fecha}` : ''}
-        ${data.cliente ? ` &nbsp;·&nbsp; <strong>${data.cliente}</strong>` : ''}
-        ${data.rut ? ` (${data.rut})` : ''}
-        ${garantiaInfo}
-      </div>
-    </div>`;
-
-    html += `<div class="d-flex justify-content-end mb-2">
-      <button class="btn btn-sm btn-outline-secondary" onclick="fSelAll()">
-        <i class="bi bi-check2-all me-1"></i>Seleccionar todos
-      </button>
-    </div>`;
-
-    html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.82rem">
-      <thead class="table-light"><tr>
-        <th style="width:36px"></th>
-        <th style="width:110px">SKU</th>
-        <th>Producto / Descripción</th>
-        <th style="width:70px;text-align:center">Cant.</th>
-        <th style="width:100px;text-align:center">Garantía</th>
-      </tr></thead><tbody>`;
-
-    data.items.forEach((it, i) => {
-      const key = `fdoc-${tido}-${nudo}-${i}`;
-      let garBadge = '';
-      if (data.fecha) {
-        const partes = data.fecha.split('/');
-        if (partes.length === 3) {
-          const fechaDoc = new Date(partes[2], partes[1]-1, partes[0]);
-          const garantiaFin = new Date(fechaDoc); garantiaFin.setMonth(garantiaFin.getMonth()+6);
-          const enGar = new Date() <= garantiaFin;
-          garBadge = enGar
-            ? '<span class="badge bg-success" style="font-size:.6rem">✓ Garantía</span>'
-            : '<span class="badge bg-light text-secondary border" style="font-size:.6rem">Vencida</span>';
-        }
-      }
-      const ld = JSON.stringify({
-        sku: it.sku, nombre: it.nombre, cantidad: it.cantidad,
-        doc_origen: `${tido} ${nudo}`, doc_fecha: data.fecha,
-        en_garantia: garBadge.includes('Garantía')
-      }).replace(/"/g,'&quot;');
-      html += `<tr>
-        <td><input type="checkbox" class="form-check-input erp-chk"
-             onchange="erpToggle('${key}',${ld},this.checked)"></td>
-        <td class="font-monospace text-primary fw-bold">${it.sku || '—'}</td>
-        <td>${it.nombre}</td>
-        <td class="text-center">${it.cantidad}</td>
-        <td class="text-center">${garBadge}</td>
-      </tr>`;
-    });
-
-    html += '</tbody></table></div>';
-    cont.innerHTML = html;
-
-    erpSeleccionadas = {};
-    actualizarContadorErp();
+    // Cerrar modal de búsqueda y abrir el modal lindo con productos pre-cargados
+    bootstrap.Modal.getInstance(document.getElementById('modalErp'))?.hide();
+    setTimeout(() => abrirModalProductosConDatos(docCompat, data.items), 250);
 
   } catch(e) {
     cont.innerHTML = `<div class="alert alert-danger">Error de conexión: ${e.message}</div>`;
   }
 }
 
-function fSelAll() {
-  document.getElementById('fDocRes').querySelectorAll('input[type=checkbox]').forEach(chk => {
-    if (!chk.checked) chk.click();
-  });
+// Variante de abrirModalProductos que recibe los items ya cargados (sin re-fetch).
+async function abrirModalProductosConDatos(doc, items) {
+  _epDocActual = doc;
+  _epProductos = items;
+  _epSeleccion = new Set();
+  if (!_epModal) _epModal = new bootstrap.Modal(document.getElementById('modalErpProductos'));
+
+  document.getElementById('ep_docTitulo').textContent = `${doc.tido_display} ${doc.nudo_display}`;
+  document.getElementById('ep_cliente').textContent = doc.razon_social || '—';
+  document.getElementById('ep_rut').textContent = doc.rut || '—';
+  document.getElementById('ep_fecha').textContent = doc.fecha || '—';
+  document.getElementById('ep_total').textContent = '—';
+  document.getElementById('ep_chkAll').checked = false;
+  document.getElementById('ep_chkExpandir').checked = false;
+  document.getElementById('ep_count').textContent = '0';
+  document.getElementById('ep_total_items').textContent = items.length;
+  document.getElementById('ep_btnImportar').disabled = true;
+  document.getElementById('ep_btnCount').textContent = '0';
+
+  // Validación de mismatch RUT (igual que abrirModalProductos)
+  const _rutClean = (r) => (r||'').replace(/[.\-\s]/g,'').toUpperCase();
+  const rutFichaC = _rutClean(RUT_FICHA);
+  const rutDocC = _rutClean(doc.rut);
+  const noCoincide = rutFichaC && rutDocC &&
+      rutFichaC.slice(0,-1) !== rutDocC.slice(0,-1) && rutFichaC !== rutDocC;
+  const alertEl = document.getElementById('ep_mismatchAlert');
+  if (noCoincide) {
+    window._erpMismatch = {
+      rutDoc: doc.rut, clienteDoc: doc.razon_social || doc.rut,
+      tido: doc.tido, nudo: doc.nudo, confirmado: false, motivo: ''
+    };
+    alertEl.style.display = '';
+    alertEl.innerHTML = `<div class="alert alert-danger small mb-0" style="border-left:4px solid #dc2626">
+      <strong><i class="bi bi-exclamation-octagon-fill me-1"></i>RUT distinto al de la ficha</strong><br>
+      Documento: ${escHtml(doc.razon_social)} (${escHtml(doc.rut)})<br>
+      Ficha: ${escHtml(RAZON_FICHA)} (${escHtml(RUT_FICHA)})<br>
+      <textarea id="ep_motivo" class="form-control form-control-sm mt-2" rows="2" minlength="8"
+                placeholder="Motivo justificado (mínimo 8 caracteres)..."></textarea>
+      <button class="btn btn-sm btn-warning mt-2" onclick="epConfirmarMismatch()">
+        <i class="bi bi-check-lg me-1"></i>Confirmar y registrar motivo
+      </button>
+    </div>`;
+  } else {
+    alertEl.style.display = 'none';
+    window._erpMismatch = null;
+  }
+
+  epRenderTabla();
+  _epModal.show();
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -4946,25 +5080,67 @@ async function abrirModalProductos(doc) {
 }
 
 function epRenderTabla() {
+  // Calcular saldo: cuántas unidades de cada SKU YA están en mant_maquinas con
+  // doc_origen del documento actual. Lo leemos del DOM (lista actual de equipos).
+  const docOrigKey = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
+  const saldoPorSku = {};
+  // Las máquinas existentes están en la tabla de equipos del cliente (#maqListado).
+  const filas = document.querySelectorAll('#maqListado tr[data-doc-origen]');
+  filas.forEach(tr => {
+    if (tr.dataset.docOrigen === docOrigKey) {
+      const sku = tr.dataset.sku || '';
+      const qty = parseInt(tr.dataset.cantidad || '1') || 1;
+      saldoPorSku[sku] = (saldoPorSku[sku] || 0) + qty;
+    }
+  });
+
   let html = `<table class="table table-hover mb-0" style="font-size:.85rem">
     <thead style="background:#f9fafb">
       <tr>
         <th style="width:50px"></th>
         <th>Producto</th>
-        <th style="width:160px">SKU</th>
-        <th style="width:90px" class="text-center">Cantidad</th>
+        <th style="width:140px">SKU del modelo</th>
+        <th style="width:130px" class="text-center">Saldo</th>
+        <th style="width:170px" class="text-center" title="Si tiene cantidad &gt; 1, ¿crear N fichas individuales con N° serie único?">Crear fichas</th>
       </tr>
     </thead><tbody>`;
   _epProductos.forEach((p, i) => {
-    const checked = _epSeleccion.has(i) ? 'checked' : '';
     const qty = parseInt(p.cantidad) || 1;
-    const expandHint = qty > 1 ? `<span class="badge bg-warning-subtle text-warning border ms-1" style="font-size:.6rem"><i class="bi bi-arrow-down-up me-1"></i>expandible a ${qty}</span>` : '';
-    html += `<tr>
-      <td><input type="checkbox" class="form-check-input ep-chk" data-idx="${i}" ${checked}
+    const yaImp = saldoPorSku[p.sku || ''] || 0;
+    const saldo = Math.max(0, qty - yaImp);
+    const completo = saldo === 0 && yaImp > 0;
+    p._saldo    = saldo;
+    p._completo = completo;
+    p._cantTotal = qty;
+
+    const checked = _epSeleccion.has(i) ? 'checked' : '';
+    const chkAttrs = completo ? 'disabled' : checked;
+    const trStyle = completo ? 'opacity:.55;background:#f8f9fa' : '';
+
+    const saldoCell = (yaImp > 0)
+      ? (completo
+          ? `<span class="badge bg-success" title="Las ${qty} unidades ya están en la ficha">
+               <i class="bi bi-check-circle-fill me-1"></i>Completo
+             </span>`
+          : `<span class="badge bg-warning text-dark" title="${yaImp} ya en la ficha de ${qty} totales">
+               ${yaImp}/${qty} · saldo ${saldo}
+             </span>`)
+      : `<span class="text-muted small">${qty}</span>`;
+
+    const opciones = (saldo > 1)
+      ? `<select class="form-select form-select-sm" data-ep-fichas-idx="${i}" style="font-size:.72rem">
+            <option value="1" selected>1 ficha (cant. ${saldo})</option>
+            <option value="${saldo}">${saldo} fichas individuales</option>
+         </select>`
+      : (completo ? '<span class="text-muted small">—</span>' : '<span class="text-muted small">1 ficha</span>');
+
+    html += `<tr style="${trStyle}">
+      <td><input type="checkbox" class="form-check-input ep-chk" data-idx="${i}" ${chkAttrs}
                  onchange="epToggleItem(${i}, this.checked)"></td>
-      <td>${escHtml(p.nombre)}${expandHint}</td>
+      <td>${escHtml(p.nombre)}</td>
       <td class="font-monospace small">${escHtml(p.sku||'—')}</td>
-      <td class="text-center">${qty}</td>
+      <td class="text-center">${saldoCell}</td>
+      <td class="text-center">${opciones}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -5021,38 +5197,37 @@ async function epImportarSeleccionados() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
 
-  const expandir = document.getElementById('ep_chkExpandir').checked;
   const fecha_doc = _epDocActual.fecha_iso || '';
   const doc_origen = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
-  let creados = 0, fallidos = 0;
+  const justifMismatch = window._erpMismatch?.motivo || '';
+  let creados = 0, fallidos = 0, bloqueados = 0;
 
   for (const idx of _epSeleccion) {
     const p = _epProductos[idx];
-    const qty = parseInt(p.cantidad) || 1;
-    const nombre = p.nombre || p.sku || '';
-    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(nombre);
+    if (p._completo) { bloqueados++; continue; }   // saldo 0 → no agrega
 
-    // Decidir expansión: opt-in del usuario + cantidad > 1 + no es bulk
-    const expandirEsto = expandir && qty > 1 && !esBulk;
-    const filas = expandirEsto ? qty : 1;
-    const cantidadCadaUna = expandirEsto ? 1 : qty;
+    const saldo = (p._saldo !== undefined) ? p._saldo : (parseInt(p.cantidad) || 1);
+    const nombre = p.nombre || p.sku || '';
+
+    // Leer la elección del usuario (1 ficha vs N fichas) del select inline
+    const sel = document.querySelector(`select[data-ep-fichas-idx="${idx}"]`);
+    const fichasElegidas = sel ? parseInt(sel.value) : 1;
+    const filas = (fichasElegidas > 1) ? Math.min(fichasElegidas, saldo) : 1;
+    const cantidadCadaUna = (fichasElegidas > 1) ? 1 : saldo;
 
     for (let n = 1; n <= filas; n++) {
-      // Auto-generar serie si expandimos (formato: <SKU>-<NUDO>-<n>)
-      const serie = expandirEsto
-        ? `${(p.sku||'AUTO').toUpperCase()}-${_epDocActual.nudo_display}-${n}`
-        : '';
       try {
         const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
             sku: p.sku || '',
             nombre,
-            serie,
+            serie: '',                       // backend genera ILUS-{rut}-{sku}-{n}
             cantidad: cantidadCadaUna,
             doc_origen,
             doc_fecha: fecha_doc,
             fecha_instalacion: fecha_doc,
+            justif_doc_mismatch: justifMismatch,
           })
         });
         if (r.ok) creados++; else fallidos++;
