@@ -1429,48 +1429,113 @@ async function dirBuscar() {
   if(q.length < 4) return;
   drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando dirección…</div>';
   drop.style.display = 'block';
-  try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q+', Chile')}&countrycodes=cl&addressdetails=1&limit=6&accept-language=es`;
-    const r = await fetch(url, { headers: { 'Accept-Language': 'es', 'User-Agent': 'ILUSApp/1.0' } });
-    dirResults = await r.json();
-    dirIdx = -1;
-    document.getElementById('dir_validating').style.display='none';
-    if(!dirResults.length) {
-      drop.innerHTML = `<div class="ac-loading text-muted"><i class="bi bi-geo me-1"></i>No se encontró la dirección en Chile. Puedes igresarla manualmente.</div>`;
-      return;
-    }
-    drop.innerHTML = dirResults.map((d,i) => {
-      const addr = d.address || {};
-      const calle = [addr.road, addr.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0];
-      const comuna = addr.suburb || addr.city_district || addr.municipality || addr.county || '';
-      const ciudad = addr.city || addr.town || addr.state || '';
-      return `<div class="ac-item" onclick="dirSeleccionar(${i})">
-        <div class="d-flex align-items-start gap-2">
-          <i class="bi bi-geo-alt-fill text-danger mt-1" style="font-size:.8rem;flex-shrink:0"></i>
-          <div>
-            <div class="ac-name" style="font-size:.83rem">${calle}</div>
-            <div class="ac-rut">${[comuna, ciudad].filter(Boolean).join(', ')}</div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(err) {
-    document.getElementById('dir_validating').style.display='none';
-    drop.style.display='none';
+
+  // Estrategia multi-fuente para mejor cobertura en Chile:
+  //   1) Nominatim con la query original
+  //   2) Nominatim sin "Av/Avda/Avenida" (abreviaciones rompen el match)
+  //   3) Photon (OSM con tolerancia a typos y abreviaturas)
+  //   4) Nominatim con solo la calle (sin número) como último recurso
+  const variantes = [
+    q,
+    q.replace(/^(av\.?|avda\.?|avenida)\s+/i, ''),    // "Av San Jose..." → "San Jose..."
+    q.replace(/\s+\d+[A-Za-z]?\s*[,;]?\s*/g, ' ').trim()  // sin número
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+
+  async function nominatim(query) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query+', Chile')}&countrycodes=cl&addressdetails=1&limit=8&accept-language=es&dedupe=1`;
+    try {
+      const r = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return (j||[]).map(d => {
+        const addr = d.address || {};
+        return {
+          calle:  [addr.road, addr.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0],
+          comuna: addr.suburb || addr.city_district || addr.municipality || addr.county || addr.town || '',
+          ciudad: addr.city || addr.town || addr.state || '',
+          display: d.display_name,
+          fuente: 'OSM',
+        };
+      });
+    } catch { return []; }
   }
+
+  async function photon(query) {
+    // Photon: motor OSM con tolerancia a typos/abreviaturas. Bbox limitado a Chile.
+    // (Photon NO soporta lang=es; usa default que ya devuelve nombres locales)
+    const url = `https://photon.komoot.io/api?q=${encodeURIComponent(query+' Chile')}&limit=10&bbox=-75.7,-56,-66.4,-17.5`;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const j = await r.json();
+      return (j.features || []).filter(f => {
+        const c = (f.properties.country || '').toLowerCase();
+        return c === 'chile' || c.includes('chil');
+      }).map(f => {
+        const p = f.properties || {};
+        const calle = [p.name, p.housenumber].filter(Boolean).join(' ')
+                   || [p.street, p.housenumber].filter(Boolean).join(' ')
+                   || p.name || '';
+        return {
+          calle:  calle,
+          comuna: p.district || p.locality || p.suburb || '',
+          ciudad: p.city || p.county || p.state || '',
+          display: [calle, p.locality || p.district, p.city, p.country].filter(Boolean).join(', '),
+          fuente: 'Photon',
+        };
+      });
+    } catch { return []; }
+  }
+
+  // Ejecutar en cascada: si la primera variante no devuelve, probar la siguiente.
+  let resultados = [];
+  for (const v of variantes) {
+    resultados = await nominatim(v);
+    if (resultados.length) break;
+  }
+  // Fallback Photon
+  if (!resultados.length) {
+    for (const v of variantes) {
+      resultados = await photon(v);
+      if (resultados.length) break;
+    }
+  }
+
+  dirResults = resultados.filter(r => r.calle);
+  dirIdx = -1;
+  document.getElementById('dir_validating').style.display='none';
+
+  if(!dirResults.length) {
+    drop.innerHTML = `<div class="ac-loading text-muted">
+      <div><i class="bi bi-geo me-1"></i>Sin resultados exactos para esta dirección.</div>
+      <div class="small mt-1">Puedes ingresarla manualmente — completa también comuna y ciudad/región.</div>
+    </div>`;
+    return;
+  }
+
+  drop.innerHTML = dirResults.map((d,i) => {
+    const fuenteBadge = d.fuente === 'Photon'
+      ? '<span class="badge bg-info-subtle text-info border ms-1" style="font-size:.55rem;font-weight:600">Photon</span>'
+      : '';
+    return `<div class="ac-item" onclick="dirSeleccionar(${i})">
+      <div class="d-flex align-items-start gap-2">
+        <i class="bi bi-geo-alt-fill text-danger mt-1" style="font-size:.8rem;flex-shrink:0"></i>
+        <div style="flex:1;min-width:0">
+          <div class="ac-name" style="font-size:.83rem">${d.calle}${fuenteBadge}</div>
+          <div class="ac-rut">${[d.comuna, d.ciudad].filter(Boolean).join(', ') || d.display.slice(0,80)}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function dirSeleccionar(i) {
   const d = dirResults[i];
   if(!d) return;
-  const addr = d.address || {};
-  const calle = [addr.road, addr.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0];
-  const comuna = addr.suburb || addr.city_district || addr.municipality || addr.county || '';
-  const ciudad = addr.city || addr.town || addr.state || '';
-
-  document.getElementById('s1_direccion').value = calle || d.display_name.split(',').slice(0,2).join(',').trim();
-  if(comuna) document.getElementById('s1_comuna').value = comuna;
-  if(ciudad) document.getElementById('s1_ciudad').value = ciudad;
+  // El formato ya está normalizado por nominatim()/photon() — todos tienen calle/comuna/ciudad
+  document.getElementById('s1_direccion').value = d.calle || (d.display || '').split(',').slice(0,2).join(',').trim();
+  if(d.comuna) document.getElementById('s1_comuna').value = d.comuna;
+  if(d.ciudad) document.getElementById('s1_ciudad').value = d.ciudad;
   document.getElementById('dir_dropdown').style.display='none';
   document.getElementById('dir_ok').style.display='';
   document.getElementById('dir_validating').style.display='none';
