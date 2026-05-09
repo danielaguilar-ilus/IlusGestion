@@ -1042,11 +1042,18 @@
           <div class="row g-2" id="sucursalesGrid">
             {% for s in sucursales %}
             <div class="col-12 col-md-6">
-              <div class="border rounded-3 p-3 h-100" style="background:#fafafa;border-color:#e5e7eb !important">
+              <div class="border rounded-3 p-3 h-100"
+                   style="background:{% if s.es_principal %}#fff7ed{% else %}#fafafa{% endif %};
+                          border-color:{% if s.es_principal %}#fdba74 !important;border-width:2px !important{% else %}#e5e7eb !important{% endif %}">
+                {% if s.es_principal %}
+                <div class="badge mb-2" style="background:#d97706;color:#fff;font-size:.62rem">
+                  <i class="bi bi-star-fill me-1"></i>DIRECCIÓN PRINCIPAL
+                </div>
+                {% endif %}
                 <div class="d-flex justify-content-between align-items-start mb-2">
                   <div>
                     <div class="fw-bold" style="font-size:.92rem">
-                      <i class="bi bi-building me-1" style="color:#7c3aed"></i>{{ s.nombre }}
+                      <i class="bi bi-building-fill me-1" style="color:{% if s.es_principal %}#d97706{% else %}var(--ilus-red){% endif %}"></i>{{ s.nombre }}
                     </div>
                     {% if s.direccion %}
                     <div class="small text-muted" style="font-size:.76rem">
@@ -1062,6 +1069,10 @@
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
                       <li><a class="dropdown-item" href="#" onclick='abrirSucursal({{ s|tojson }})'><i class="bi bi-pencil me-2"></i>Editar</a></li>
+                      {% if not s.es_principal %}
+                      <li><a class="dropdown-item" href="#" onclick="marcarSucursalPrincipal({{ s.id }}, '{{ s.nombre|e }}')"><i class="bi bi-star me-2 text-warning"></i>Marcar como principal</a></li>
+                      {% endif %}
+                      <li><hr class="dropdown-divider"></li>
                       <li><a class="dropdown-item text-danger" href="#" onclick="eliminarSucursal({{ s.id }}, '{{ s.nombre|e }}')"><i class="bi bi-trash me-2"></i>Eliminar</a></li>
                     </ul>
                   </div>
@@ -1556,6 +1567,36 @@
               <th style="width:60px"></th>
             </tr>
           </thead>
+          {# Macro para emoji según tipo de equipo (trotadora, bici, pesa, etc.) #}
+          {%- macro eq_emoji(nombre) -%}
+            {%- set n = (nombre or '')|lower -%}
+            {%- if 'trotad' in n or 'cinta' in n or 'treadmill' in n -%}🏃‍♂️
+            {%- elif 'bicicleta' in n or 'bike' in n or 'spinning' in n -%}🚴‍♂️
+            {%- elif 'eliptic' in n or 'elliptic' in n or 'climber' in n or 'escalad' in n -%}🪜
+            {%- elif 'remad' in n or 'rower' in n or 'row machine' in n -%}🚣
+            {%- elif 'mancuerna' in n or 'dumbbell' in n -%}🏋️‍♂️
+            {%- elif 'kettleb' in n or 'pesa rusa' in n -%}🔔
+            {%- elif 'disco' in n or 'plate' in n or 'bumper' in n -%}⚪
+            {%- elif 'barra' in n or 'bar' in n -%}━
+            {%- elif 'banco' in n or 'bench' in n -%}🪑
+            {%- elif 'rack' in n or 'jaula' in n or 'cage' in n -%}🗄️
+            {%- elif 'jungle' in n or 'multi' in n or 'stack' in n -%}🌳
+            {%- elif 'cable' in n or 'pulley' in n or 'pull' in n -%}🔗
+            {%- elif 'leg' in n or 'press' in n -%}🦵
+            {%- elif 'chest' in n or 'pectoral' in n -%}💪
+            {%- elif 'shoulder' in n or 'hombro' in n -%}🤲
+            {%- elif 'glute' in n or 'gluteo' in n -%}🍑
+            {%- elif 'abdomin' in n or 'abs' in n or 'sit' in n -%}🧘
+            {%- elif 'sand bag' in n or 'sandbag' in n or 'wall ball' in n -%}🎯
+            {%- elif 'cuerda' in n or 'rope' in n -%}🪢
+            {%- elif 'banda' in n or 'band' in n -%}〰️
+            {%- elif 'yoga' in n or 'mat' in n or 'colchon' in n -%}🧘‍♀️
+            {%- elif 'rollo' in n or 'roller' in n -%}🛢️
+            {%- elif 'plyo' in n or 'box' in n -%}📦
+            {%- elif 'set' in n -%}📦
+            {%- else -%}🏋️
+            {%- endif -%}
+          {%- endmacro -%}
           <tbody id="maqListado">
           {% for m in maquinas %}
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
@@ -1566,7 +1607,9 @@
               data-cantidad="{{ m.cantidad or 1 }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
             <td>
-              <div class="eq-cell-icon"><i class="bi bi-bicycle"></i></div>
+              <div class="eq-cell-icon" style="font-size:1.4rem;line-height:1;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:8px;background:#f3f4f6">
+                {{ eq_emoji(m.nombre) }}
+              </div>
             </td>
             <td>
               <div class="eq-name-main">{{ m.nombre }}</div>
@@ -1585,11 +1628,24 @@
               {% endif %}
             </td>
             <td>
-              {% if m.serie %}
-              <span style="font-family:monospace;font-size:.78rem;color:#374151">{{ m.serie }}</span>
-              {% else %}
-              <span class="text-muted">—</span>
-              {% endif %}
+              {# N° serie editable con tracking auditable #}
+              <div class="d-flex align-items-center gap-1">
+                <span style="font-family:monospace;font-size:.78rem;color:#374151" id="serie-{{ m.id }}">
+                  {% if m.serie %}{{ m.serie }}{% else %}<span class="text-muted">—</span>{% endif %}
+                </span>
+                <button class="btn btn-xs btn-link p-0 text-muted"
+                        onclick='editarSerie({{ {"id":m.id,"serie":m.serie or "","nombre":m.nombre,"sku":m.sku or ""}|tojson }})'
+                        title="Editar N° serie con justificación"
+                        style="line-height:1">
+                  <i class="bi bi-pencil-square" style="font-size:.78rem"></i>
+                </button>
+                <button class="btn btn-xs btn-link p-0 text-muted"
+                        onclick="verAuditSerie({{ m.id }})"
+                        title="Ver historial de cambios de este equipo"
+                        style="line-height:1">
+                  <i class="bi bi-clock-history" style="font-size:.78rem"></i>
+                </button>
+              </div>
             </td>
             <td>
               {% if m.doc_origen %}
@@ -4124,34 +4180,160 @@ function abrirEmailManual() {
   </div>
 </div>
 
-{# ── Modal: Sucursal (agregar / editar) ── #}
+{# ════════════════════════════════════════════════════════════════════
+   Modal: Editar N° serie con auditoría
+══════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalEditarSerie" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-shield-lock me-2" style="color:var(--ilus-red)"></i>Cambiar N° serie
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="es_mid" value="">
+
+        <div class="alert alert-light border mb-3" style="font-size:.86rem">
+          <div class="text-muted small mb-1" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Equipo</div>
+          <div class="fw-bold" id="es_nombre">—</div>
+          <div class="small text-muted">SKU: <span id="es_sku" class="font-monospace">—</span></div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold small">N° Serie actual</label>
+            <input type="text" id="es_serie_actual" class="form-control font-monospace" disabled style="background:#f3f4f6">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Nuevo N° Serie <span class="text-danger">*</span>
+            </label>
+            <input type="text" id="es_serie_nueva" class="form-control font-monospace"
+                   placeholder="Ej: serial real del fabricante, o deja vacío para autogenerar">
+            <div class="form-text small">
+              Si lo dejas <strong>vacío</strong>, el sistema regenera uno automático con tu RUT.
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Motivo del cambio <span class="text-danger">*</span>
+            </label>
+            <textarea id="es_motivo" class="form-control" rows="3"
+                      placeholder="Ej: Se reemplaza por serial del fabricante encontrado en la etiqueta del equipo. O: número errado, corrección manual."
+                      minlength="5" maxlength="500"></textarea>
+            <div class="form-text small">
+              <strong>Mín. 5 caracteres.</strong> Quedará registrado <strong>quién cambió</strong>, <strong>cuándo</strong>,
+              <strong>de qué a qué</strong> y <strong>por qué</strong>. Aparece en el historial del equipo y de la ficha.
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0" style="font-size:.78rem">
+          <i class="bi bi-shield-exclamation mt-1" style="font-size:1rem;color:#92400e"></i>
+          <div>
+            <strong>Cambio sensible y trazable.</strong> El N° serie identifica el equipo físico
+            para garantía y mantención. Cualquier cambio queda en auditoría permanente.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:2px solid #fee2e2;background:#fafafa">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="confirmarCambioSerie()">
+          <i class="bi bi-check-circle me-1"></i>Confirmar cambio
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Modal: Historial de cambios del equipo (auditoría) #}
+<div class="modal fade" id="modalAuditEquipo" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial de cambios del equipo
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="audit_content">
+          <div class="text-center text-muted py-4">
+            <span class="spinner-border spinner-border-sm me-2"></span>Cargando…
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Sucursal (agregar / editar) — diseño ILUS ── #}
 <div class="modal fade" id="modalSucursal" tabindex="-1">
   <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header" style="background:#7c3aed;color:#fff">
+    <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
         <h5 class="modal-title fw-bold">
-          <i class="bi bi-building me-2"></i><span id="suc_modal_title">Nueva sucursal</span>
+          <i class="bi bi-building-fill-gear me-2" style="color:var(--ilus-red)"></i>
+          <span id="suc_modal_title">Nueva sucursal</span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="suc_id" value="">
+
+        {# Toggle "Marcar como principal" — visible y prominente #}
+        <div class="alert d-flex align-items-center gap-3 mb-3"
+             style="background:#fff7ed;border:2px solid #fed7aa;border-left:5px solid #d97706">
+          <div class="form-check form-switch m-0">
+            <input class="form-check-input" type="checkbox" id="suc_es_principal" style="width:42px;height:22px;cursor:pointer">
+          </div>
+          <div style="flex:1">
+            <label for="suc_es_principal" class="fw-bold mb-0" style="cursor:pointer;color:#92400e">
+              Marcar como dirección principal del cliente
+            </label>
+            <div class="small" style="color:#78350f">
+              Si activas, esta sucursal <strong>predomina</strong> sobre la dirección base. La razón social
+              de la ficha conservará su dirección como referencia.
+            </div>
+          </div>
+        </div>
+
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label fw-semibold small">Nombre de la sucursal <span class="text-danger">*</span></label>
-            <input type="text" id="suc_nombre" class="form-control" placeholder="Ej: Vitacura, Las Condes, Norte..." maxlength="200">
+            <input type="text" id="suc_nombre" class="form-control" placeholder="Ej: Sede Vitacura, Sucursal Las Condes..." maxlength="200">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold small">Dirección</label>
-            <input type="text" id="suc_direccion" class="form-control" placeholder="Av. Ejemplo 1234">
+            <label class="form-label fw-semibold small">
+              Dirección
+              <span id="suc_dir_validating" class="ms-1" style="display:none">
+                <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+              </span>
+              <span id="suc_dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+            </label>
+            <div class="position-relative">
+              <input type="text" id="suc_direccion" class="form-control" autocomplete="off"
+                     placeholder="Escribe y elige de la lista — busca en OpenStreetMap + Photon"
+                     oninput="sucDirDebounce()" onkeydown="sucDirKeydown(event)">
+              <div id="suc_dir_dropdown" class="ac-dropdown" style="display:none"></div>
+            </div>
+            <div class="form-text" style="font-size:.7rem">
+              <i class="bi bi-geo-alt me-1"></i>
+              Sugerencias automáticas con tolerancia a abreviaturas (Av/Avda) y typos.
+            </div>
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold small">Comuna</label>
-            <input type="text" id="suc_comuna" class="form-control">
+            <input type="text" id="suc_comuna" class="form-control" placeholder="Se completa con dirección">
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold small">Ciudad</label>
-            <input type="text" id="suc_ciudad" class="form-control">
+            <input type="text" id="suc_ciudad" class="form-control" placeholder="Se completa con dirección">
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold small">Región</label>
@@ -4205,7 +4387,7 @@ function abrirEmailManual() {
           </div>
         </div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" style="border-top:2px solid #fee2e2;background:#fafafa">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarSucursal()">
           <i class="bi bi-floppy me-1"></i><span id="suc_btn_label">Guardar sucursal</span>
@@ -4306,20 +4488,38 @@ function abrirEmailManual() {
 
 {# ── Modal: Máquina manual ── #}
 <div class="modal fade" id="modalMaqManual" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-bicycle me-2"></i>Agregar equipo manual</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-bicycle me-2" style="color:var(--ilus-red)"></i>Agregar equipo manual
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        {# Buscador ERP — autocomplete por nombre o SKU #}
+        <div class="mb-3 p-3 rounded-3" style="background:#fff7ed;border:2px solid #fed7aa;border-left:5px solid var(--ilus-red)">
+          <label class="form-label fw-semibold small mb-1" style="color:#92400e">
+            <i class="bi bi-search me-1"></i>Buscar producto en el ERP (opcional)
+          </label>
+          <div class="position-relative">
+            <input type="text" id="mm_erp_search" class="form-control" autocomplete="off"
+                   placeholder="Escribe nombre o SKU del producto (ej: Trotadora, Bicicleta, 1027100905…)"
+                   oninput="mmErpDebounce()" onkeydown="mmErpKeydown(event)">
+            <div id="mm_erp_drop" class="ac-dropdown" style="display:none"></div>
+          </div>
+          <div class="form-text small" style="color:#92400e">
+            Si lo encuentras, llena nombre + SKU automáticamente. Si no, completa los datos manualmente abajo.
+          </div>
+        </div>
+
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label fw-semibold">Nombre del equipo <span class="text-danger">*</span></label>
             <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">SKU</label>
+            <label class="form-label fw-semibold">SKU del modelo</label>
             <input type="text" id="mm_sku" class="form-control font-monospace">
           </div>
           <div class="col-6">
@@ -4725,6 +4925,9 @@ function abrirSucursal(s) {
    'suc_c2_nombre','suc_c2_cargo','suc_c2_tel','suc_c2_email','suc_notas']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
 
+  // Reset checkbox principal
+  document.getElementById('suc_es_principal').checked = false;
+
   if (s) {
     document.getElementById('suc_modal_title').textContent = 'Editar sucursal';
     document.getElementById('suc_btn_label').textContent  = 'Guardar cambios';
@@ -4743,12 +4946,153 @@ function abrirSucursal(s) {
     document.getElementById('suc_c2_tel').value       = s.contacto2_tel || '';
     document.getElementById('suc_c2_email').value     = s.contacto2_email || '';
     document.getElementById('suc_notas').value        = s.notas || '';
+    document.getElementById('suc_es_principal').checked = !!s.es_principal;
   } else {
     document.getElementById('suc_modal_title').textContent = 'Nueva sucursal';
     document.getElementById('suc_btn_label').textContent  = 'Guardar sucursal';
   }
   _modalSucursal.show();
 }
+
+// ─── Buscador potente de dirección dentro del modal de sucursal ───
+let _sucDirTimer = null;
+let _sucDirResults = [];
+let _sucDirIdx = -1;
+
+function sucDirDebounce() {
+  clearTimeout(_sucDirTimer);
+  const q = document.getElementById('suc_direccion').value.trim();
+  document.getElementById('suc_dir_ok').style.display = 'none';
+  if (q.length < 4) {
+    document.getElementById('suc_dir_dropdown').style.display = 'none';
+    return;
+  }
+  document.getElementById('suc_dir_validating').style.display = '';
+  _sucDirTimer = setTimeout(sucDirBuscar, 500);
+}
+
+async function sucDirBuscar() {
+  const q = document.getElementById('suc_direccion').value.trim();
+  const drop = document.getElementById('suc_dir_dropdown');
+  if (q.length < 4) return;
+  drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando dirección…</div>';
+  drop.style.display = 'block';
+
+  // Mismo cascada de motores que usa el wizard (Nominatim → Photon)
+  const variantes = [
+    q,
+    q.replace(/^(av\.?|avda\.?|avenida)\s+/i, ''),
+    q.replace(/\s+\d+[A-Za-z]?\s*[,;]?\s*/g, ' ').trim()
+  ].filter((v,i,a) => v && a.indexOf(v) === i);
+
+  async function nominatim(query) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query+', Chile')}&countrycodes=cl&addressdetails=1&limit=8&accept-language=es&dedupe=1`;
+    try {
+      const r = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return (j||[]).map(d => {
+        const a = d.address || {};
+        return {
+          calle:  [a.road, a.house_number].filter(Boolean).join(' ') || d.display_name.split(',')[0],
+          comuna: a.suburb || a.city_district || a.municipality || a.county || a.town || '',
+          ciudad: a.city || a.town || a.state || '',
+          region: a.state || '',
+          display: d.display_name,
+          fuente: 'OSM',
+        };
+      });
+    } catch { return []; }
+  }
+  async function photon(query) {
+    const url = `https://photon.komoot.io/api?q=${encodeURIComponent(query+' Chile')}&limit=10&bbox=-75.7,-56,-66.4,-17.5`;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const j = await r.json();
+      return (j.features || []).filter(f => {
+        const c = (f.properties.country || '').toLowerCase();
+        return c === 'chile' || c.includes('chil');
+      }).map(f => {
+        const p = f.properties || {};
+        return {
+          calle:  [p.name, p.housenumber].filter(Boolean).join(' ') || p.street || p.name || '',
+          comuna: p.district || p.locality || p.suburb || '',
+          ciudad: p.city || p.county || p.state || '',
+          region: p.state || '',
+          display: [p.name, p.locality, p.city, p.country].filter(Boolean).join(', '),
+          fuente: 'Photon',
+        };
+      });
+    } catch { return []; }
+  }
+
+  let resultados = [];
+  for (const v of variantes) {
+    resultados = await nominatim(v);
+    if (resultados.length) break;
+  }
+  if (!resultados.length) {
+    for (const v of variantes) {
+      resultados = await photon(v);
+      if (resultados.length) break;
+    }
+  }
+  _sucDirResults = resultados.filter(r => r.calle);
+  _sucDirIdx = -1;
+  document.getElementById('suc_dir_validating').style.display = 'none';
+
+  if (!_sucDirResults.length) {
+    drop.innerHTML = `<div class="ac-loading text-muted">
+      <div><i class="bi bi-geo me-1"></i>Sin resultados exactos.</div>
+      <div class="small mt-1">Puedes ingresarla manualmente — completa también comuna y ciudad.</div>
+    </div>`;
+    return;
+  }
+
+  drop.innerHTML = _sucDirResults.map((d,i) => {
+    const tag = d.fuente === 'Photon'
+      ? '<span class="badge bg-info-subtle text-info border ms-1" style="font-size:.55rem;font-weight:600">Photon</span>'
+      : '';
+    return `<div class="ac-item" onclick="sucDirSeleccionar(${i})">
+      <div class="d-flex align-items-start gap-2">
+        <i class="bi bi-geo-alt-fill text-danger mt-1" style="font-size:.8rem;flex-shrink:0"></i>
+        <div style="flex:1;min-width:0">
+          <div class="ac-name" style="font-size:.83rem">${d.calle}${tag}</div>
+          <div class="ac-rut">${[d.comuna, d.ciudad].filter(Boolean).join(', ') || (d.display||'').slice(0,80)}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function sucDirSeleccionar(i) {
+  const d = _sucDirResults[i];
+  if (!d) return;
+  document.getElementById('suc_direccion').value = d.calle || '';
+  if (d.comuna) document.getElementById('suc_comuna').value = d.comuna;
+  if (d.ciudad) document.getElementById('suc_ciudad').value = d.ciudad;
+  if (d.region) document.getElementById('suc_region').value = d.region;
+  document.getElementById('suc_dir_dropdown').style.display = 'none';
+  document.getElementById('suc_dir_ok').style.display = '';
+}
+
+function sucDirKeydown(e) {
+  const drop = document.getElementById('suc_dir_dropdown');
+  const items = drop.querySelectorAll('.ac-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { _sucDirIdx = Math.min(_sucDirIdx+1, items.length-1); items.forEach((el,i)=>el.style.background = i===_sucDirIdx?'#f0f4ff':''); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { _sucDirIdx = Math.max(_sucDirIdx-1, -1); items.forEach((el,i)=>el.style.background = i===_sucDirIdx?'#f0f4ff':''); e.preventDefault(); }
+  else if (e.key === 'Enter' && _sucDirIdx >= 0) { sucDirSeleccionar(_sucDirIdx); e.preventDefault(); }
+  else if (e.key === 'Escape') drop.style.display = 'none';
+}
+// Cerrar dropdown al click fuera
+document.addEventListener('click', e => {
+  if (!document.getElementById('suc_direccion')?.contains(e.target)) {
+    const dd = document.getElementById('suc_dir_dropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
 
 async function guardarSucursal() {
   const $v = id => (document.getElementById(id)?.value || '').trim();
@@ -4767,6 +5111,7 @@ async function guardarSucursal() {
     contacto2_tel:    $v('suc_c2_tel'),
     contacto2_email:  $v('suc_c2_email'),
     notas:            $v('suc_notas'),
+    es_principal:     document.getElementById('suc_es_principal').checked,
   };
   if (!data.nombre) { alert('El nombre de la sucursal es obligatorio'); return; }
 
@@ -4795,6 +5140,185 @@ async function eliminarSucursal(sid, nombre) {
     else alert('Error al eliminar');
   } catch(e) { alert('Error de red'); }
 }
+
+async function marcarSucursalPrincipal(sid, nombre) {
+  if (!confirm(`¿Marcar "${nombre}" como dirección principal?\n\nEsta sucursal predominará sobre la dirección base del cliente. Cualquier otra principal se desmarcará.`)) return;
+  try {
+    const r = await fetch(`/mantenciones/api/sucursales/${sid}/marcar-principal`, {method:'POST'});
+    if (r.ok) location.reload();
+    else alert('Error al marcar como principal');
+  } catch(e) { alert('Error de red'); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// N° SERIE EDITABLE con tracking auditable (cambio sensible)
+// ════════════════════════════════════════════════════════════════════
+let _modalEditSerie = null;
+let _modalAuditEq = null;
+
+function editarSerie(eq) {
+  if (!_modalEditSerie) _modalEditSerie = new bootstrap.Modal(document.getElementById('modalEditarSerie'));
+  document.getElementById('es_mid').value = eq.id;
+  document.getElementById('es_nombre').textContent = eq.nombre || '—';
+  document.getElementById('es_sku').textContent = eq.sku || '—';
+  document.getElementById('es_serie_actual').value = eq.serie || '';
+  document.getElementById('es_serie_nueva').value = eq.serie || '';
+  document.getElementById('es_motivo').value = '';
+  _modalEditSerie.show();
+  setTimeout(() => document.getElementById('es_serie_nueva').focus(), 300);
+}
+
+async function confirmarCambioSerie() {
+  const mid    = document.getElementById('es_mid').value;
+  const serie  = document.getElementById('es_serie_nueva').value.trim();
+  const motivo = document.getElementById('es_motivo').value.trim();
+  if (motivo.length < 5) { alert('El motivo debe tener al menos 5 caracteres'); return; }
+
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/serie`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({serie, motivo})
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    if (d.sin_cambios) {
+      alert('No hubo cambios — el N° serie es el mismo.');
+      _modalEditSerie.hide();
+      return;
+    }
+    // Actualizar visual en la fila sin recargar
+    const span = document.getElementById('serie-' + mid);
+    if (span) span.textContent = d.serie;
+    _modalEditSerie.hide();
+    // Toast inline
+    setTimeout(() => {
+      alert(`✓ N° serie actualizado.\n\nAntes: ${d.serie_anterior || '(vacío)'}\nAhora: ${d.serie}\n\nQuedó registrado en el historial del equipo.`);
+    }, 200);
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+
+async function verAuditSerie(mid) {
+  if (!_modalAuditEq) _modalAuditEq = new bootstrap.Modal(document.getElementById('modalAuditEquipo'));
+  document.getElementById('audit_content').innerHTML =
+    '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando…</div>';
+  _modalAuditEq.show();
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/audit`);
+    const d = await r.json();
+    if (!d.ok || !d.audit?.length) {
+      document.getElementById('audit_content').innerHTML =
+        `<div class="text-center text-muted py-4">
+          <i class="bi bi-shield-check" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+          Sin cambios registrados para este equipo.
+          <div class="small mt-2">Cuando edites el N° serie u otros datos sensibles, aparecerán aquí.</div>
+        </div>`;
+      return;
+    }
+    let html = '<div class="table-responsive"><table class="table table-sm" style="font-size:.85rem">';
+    html += '<thead style="background:#f9fafb"><tr><th>Fecha</th><th>Campo</th><th>Antes</th><th>Después</th><th>Usuario</th><th>Motivo</th></tr></thead><tbody>';
+    d.audit.forEach(a => {
+      html += `<tr>
+        <td class="small text-muted" style="white-space:nowrap">${escHtml(a.fecha || '—')}</td>
+        <td><span class="badge bg-secondary">${escHtml(a.campo)}</span></td>
+        <td class="font-monospace small text-danger" style="text-decoration:line-through">${escHtml(a.valor_antes || '(vacío)')}</td>
+        <td class="font-monospace small text-success">${escHtml(a.valor_nuevo || '')}</td>
+        <td class="small">${escHtml(a.usuario || '—')}</td>
+        <td class="small text-muted" style="max-width:280px">${escHtml(a.motivo || '')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('audit_content').innerHTML = html;
+  } catch(e) {
+    document.getElementById('audit_content').innerHTML =
+      `<div class="alert alert-danger small">Error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// BUSCADOR ERP en modal "Agregar equipo manual"
+// Autocomplete por nombre o SKU desde catálogo ERP
+// ════════════════════════════════════════════════════════════════════
+let _mmErpTimer = null;
+let _mmErpResults = [];
+let _mmErpIdx = -1;
+
+function mmErpDebounce() {
+  clearTimeout(_mmErpTimer);
+  const q = document.getElementById('mm_erp_search').value.trim();
+  const drop = document.getElementById('mm_erp_drop');
+  if (q.length < 2) { drop.style.display = 'none'; return; }
+  drop.innerHTML = '<div class="ac-loading"><span class="spinner-border spinner-border-sm me-1"></span>Buscando en ERP…</div>';
+  drop.style.display = 'block';
+  _mmErpTimer = setTimeout(mmErpFetch, 300);
+}
+
+async function mmErpFetch() {
+  const q = document.getElementById('mm_erp_search').value.trim();
+  if (q.length < 2) return;
+  try {
+    const r = await fetch(`/mantenciones/api/productos/buscar?q=${encodeURIComponent(q)}`);
+    _mmErpResults = await r.json();
+    _mmErpIdx = -1;
+    mmErpRender();
+  } catch(e) {
+    document.getElementById('mm_erp_drop').innerHTML =
+      '<div class="ac-loading text-muted small">Error al buscar</div>';
+  }
+}
+
+function mmErpRender() {
+  const drop = document.getElementById('mm_erp_drop');
+  if (!_mmErpResults.length) {
+    drop.innerHTML = '<div class="ac-loading text-muted small">Sin resultados — completa los datos manualmente abajo</div>';
+    return;
+  }
+  drop.innerHTML = _mmErpResults.map((p, i) => `
+    <div class="ac-item${i===_mmErpIdx?' active':''}" onclick="mmErpSeleccionar(${i})">
+      <div class="d-flex align-items-start gap-2">
+        <i class="bi bi-box-seam text-primary mt-1" style="font-size:.8rem"></i>
+        <div style="flex:1;min-width:0">
+          <div class="ac-name" style="font-size:.83rem">${escHtml(p.nombre || '—')}</div>
+          <div class="ac-rut">
+            <span class="font-monospace" style="color:#0066cc;font-weight:600">${escHtml(p.sku || '')}</span>
+            ${p.tipo ? ` · ${escHtml(p.tipo)}` : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  drop.style.display = 'block';
+}
+
+function mmErpSeleccionar(i) {
+  const p = _mmErpResults[i];
+  if (!p) return;
+  document.getElementById('mm_nombre').value = p.nombre || '';
+  document.getElementById('mm_sku').value    = p.sku || '';
+  document.getElementById('mm_erp_search').value = '';
+  document.getElementById('mm_erp_drop').style.display = 'none';
+  // Foco en N° serie para que el usuario complete lo siguiente
+  document.getElementById('mm_serie')?.focus();
+}
+
+function mmErpKeydown(e) {
+  const drop = document.getElementById('mm_erp_drop');
+  const items = drop.querySelectorAll('.ac-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { _mmErpIdx = Math.min(_mmErpIdx+1, items.length-1); mmErpRender(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { _mmErpIdx = Math.max(_mmErpIdx-1, -1); mmErpRender(); e.preventDefault(); }
+  else if (e.key === 'Enter' && _mmErpIdx >= 0) { mmErpSeleccionar(_mmErpIdx); e.preventDefault(); }
+  else if (e.key === 'Escape') drop.style.display = 'none';
+}
+
+document.addEventListener('click', e => {
+  if (!document.getElementById('mm_erp_search')?.contains(e.target)) {
+    const dd = document.getElementById('mm_erp_drop');
+    if (dd) dd.style.display = 'none';
+  }
+});
 
 async function guardarCliente() {
   const $v = id => (document.getElementById(id)?.value || '').trim();

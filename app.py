@@ -10446,11 +10446,28 @@ def init_mantenciones_tables():
                     contacto2_email  VARCHAR(200),
                     notas            TEXT,
                     activo           TINYINT(1) DEFAULT 1,
+                    es_principal     TINYINT(1) DEFAULT 0 COMMENT 'Si TRUE, esta sucursal predomina sobre la dirección base del cliente',
                     created_by       VARCHAR(190),
                     created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_cliente (cliente_id),
                     FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+                # Migración para BDs viejas que ya tenían la tabla sin es_principal
+                "ALTER TABLE mant_sucursales ADD COLUMN es_principal TINYINT(1) DEFAULT 0",
+                # Tabla de auditoría de cambios sensibles en equipos (N° serie, etc.)
+                """CREATE TABLE IF NOT EXISTS mant_maquina_audit (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    maquina_id  INT NOT NULL,
+                    cliente_id  INT,
+                    campo       VARCHAR(60) NOT NULL,
+                    valor_antes TEXT,
+                    valor_nuevo TEXT,
+                    motivo      TEXT,
+                    usuario     VARCHAR(190),
+                    fecha       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_maquina (maquina_id),
+                    INDEX idx_fecha   (fecha)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             ]:
                 try:
@@ -11969,6 +11986,95 @@ def mant_maquina_del(mid):
         conn.close()
 
 
+@app.route("/mantenciones/api/maquinas/<int:mid>/serie", methods=["PUT"])
+@_mant_required
+def mant_maquina_actualizar_serie(mid):
+    """
+    Actualiza el N° serie de un equipo con auditoría completa.
+    Cada cambio queda registrado en mant_maquina_audit:
+      - valor anterior, valor nuevo, motivo, usuario, fecha
+
+    Body JSON:
+      serie:  str (nuevo valor — vacío vuelve a auto-generar)
+      motivo: str (mín 5 chars, justificación del cambio)
+    """
+    d = request.get_json(silent=True) or {}
+    serie_nueva_raw = (d.get("serie") or "").strip()[:120]
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if len(motivo) < 5:
+        return jsonify({"error": "El motivo debe tener al menos 5 caracteres"}), 400
+
+    # Cargar equipo actual
+    maq = mysql_fetchone(
+        "SELECT id, cliente_id, sku, serie FROM mant_maquinas WHERE id=%s", (mid,)
+    )
+    if not maq:
+        return jsonify({"error": "Equipo no encontrado"}), 404
+
+    serie_anterior = maq.get("serie") or ""
+
+    # Si quedó vacío → regenerar auto
+    if not serie_nueva_raw:
+        serie_nueva = _generar_serie_ilus(maq["cliente_id"], maq.get("sku", ""))
+    else:
+        serie_nueva = serie_nueva_raw
+
+    if serie_nueva == serie_anterior:
+        return jsonify({"ok": True, "sin_cambios": True, "serie": serie_nueva})
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Actualizar el equipo
+            cur.execute("UPDATE mant_maquinas SET serie=%s WHERE id=%s",
+                        (serie_nueva, mid))
+            # Registrar en auditoría dedicada
+            cur.execute(
+                """INSERT INTO mant_maquina_audit
+                   (maquina_id, cliente_id, campo, valor_antes, valor_nuevo, motivo, usuario)
+                   VALUES (%s,%s,'serie',%s,%s,%s,%s)""",
+                (mid, maq["cliente_id"], serie_anterior, serie_nueva, motivo, current_username())
+            )
+        conn.commit()
+        # También al log general para que aparezca en historial de la ficha
+        _mant_log("maquina", mid, "serie_cambiada",
+                  f"'{serie_anterior}' → '{serie_nueva}'. Motivo: {motivo}")
+        return jsonify({
+            "ok": True,
+            "serie": serie_nueva,
+            "serie_anterior": serie_anterior,
+            "usuario": current_username(),
+        })
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/audit", methods=["GET"])
+@_mant_required
+def mant_maquina_audit_list(mid):
+    """Devuelve el historial de cambios sensibles de un equipo (serie, etc)."""
+    rows = mysql_fetchall(
+        "SELECT * FROM mant_maquina_audit WHERE maquina_id=%s ORDER BY fecha DESC LIMIT 50",
+        (mid,)
+    )
+    # Convertir a hora Chile
+    try:
+        from zoneinfo import ZoneInfo
+        tz_scl = ZoneInfo("America/Santiago")
+        tz_utc = ZoneInfo("UTC")
+        out = []
+        for r in (rows or []):
+            r = dict(r)
+            f = r.get("fecha")
+            if isinstance(f, datetime):
+                if f.tzinfo is None: f = f.replace(tzinfo=tz_utc)
+                r["fecha"] = f.astimezone(tz_scl).strftime("%d/%m/%Y %H:%M")
+            out.append(r)
+        return jsonify({"ok": True, "audit": out})
+    except Exception:
+        return jsonify({"ok": True, "audit": [dict(r) for r in (rows or [])]})
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/solicitar-cambio", methods=["POST"])
 @_mant_required
 def mant_maquina_solicitar_cambio(mid):
@@ -12076,16 +12182,23 @@ def mant_sucursal_add(cid):
     nombre = (d.get("nombre") or "").strip()[:200]
     if not nombre:
         return jsonify({"error": "El nombre de la sucursal es obligatorio"}), 400
+    es_principal = 1 if d.get("es_principal") else 0
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            # Si esta nueva va a ser principal, desmarcar las anteriores
+            if es_principal:
+                cur.execute(
+                    "UPDATE mant_sucursales SET es_principal=0 WHERE cliente_id=%s AND es_principal=1",
+                    (cid,)
+                )
             cur.execute(
                 """INSERT INTO mant_sucursales
                    (cliente_id,nombre,direccion,comuna,ciudad,region,
                     encargado_nombre,encargado_cargo,encargado_tel,encargado_email,
                     contacto2_nombre,contacto2_cargo,contacto2_tel,contacto2_email,
-                    notas,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    notas,es_principal,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, nombre,
                  (d.get("direccion") or "").strip()[:300] or None,
                  (d.get("comuna") or "").strip()[:100] or None,
@@ -12100,12 +12213,13 @@ def mant_sucursal_add(cid):
                  (d.get("contacto2_tel") or "").strip()[:50] or None,
                  (d.get("contacto2_email") or "").strip()[:200] or None,
                  (d.get("notas") or "").strip() or None,
+                 es_principal,
                  current_username())
             )
             sid = cur.lastrowid
         conn.commit()
-        _mant_log("cliente", cid, "sucursal_agregada", nombre)
-        return jsonify({"ok": True, "id": sid})
+        _mant_log("cliente", cid, "sucursal_agregada", nombre + (" (principal)" if es_principal else ""))
+        return jsonify({"ok": True, "id": sid, "es_principal": bool(es_principal)})
     finally:
         conn.close()
 
@@ -12124,14 +12238,56 @@ def mant_sucursal_update(sid):
             v = (d[f] or "").strip() if isinstance(d[f], str) else d[f]
             sets.append(f"{f}=%s")
             vals.append(v if v else None)
-    if not sets:
-        return jsonify({"error": "Sin cambios"}), 400
+    # Manejo de es_principal con lógica única (solo una principal por cliente)
+    es_principal = d.get("es_principal")
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            if es_principal is not None:
+                ep = 1 if es_principal else 0
+                if ep:
+                    # Obtener el cliente_id de esta sucursal
+                    row = mysql_fetchone("SELECT cliente_id FROM mant_sucursales WHERE id=%s", (sid,))
+                    if row:
+                        cur.execute(
+                            "UPDATE mant_sucursales SET es_principal=0 WHERE cliente_id=%s AND id<>%s",
+                            (row["cliente_id"], sid)
+                        )
+                sets.append("es_principal=%s")
+                vals.append(ep)
+            if not sets:
+                return jsonify({"error": "Sin cambios"}), 400
             cur.execute(f"UPDATE mant_sucursales SET {','.join(sets)} WHERE id=%s",
                         vals + [sid])
         conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/sucursales/<int:sid>/marcar-principal", methods=["POST"])
+@_mant_required
+def mant_sucursal_marcar_principal(sid):
+    """Marca una sucursal como principal (desmarca cualquier otra del mismo cliente)."""
+    row = mysql_fetchone(
+        "SELECT cliente_id, nombre FROM mant_sucursales WHERE id=%s AND activo=1",
+        (sid,)
+    )
+    if not row:
+        return jsonify({"error": "Sucursal no encontrada"}), 404
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_sucursales SET es_principal=0 WHERE cliente_id=%s",
+                (row["cliente_id"],)
+            )
+            cur.execute(
+                "UPDATE mant_sucursales SET es_principal=1 WHERE id=%s",
+                (sid,)
+            )
+        conn.commit()
+        _mant_log("cliente", row["cliente_id"], "sucursal_principal_cambiada", row["nombre"])
         return jsonify({"ok": True})
     finally:
         conn.close()
