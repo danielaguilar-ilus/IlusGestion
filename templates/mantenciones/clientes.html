@@ -2,79 +2,161 @@
 {% block title %}Clientes Mantención — ILUS{% endblock %}
 {% block content %}
 <style>
-/* ── Avatar palette (id % 6) ─────────────────────────── */
-.av-0{background:#dbeafe;color:#1d4ed8}
-.av-1{background:#fce7f3;color:#be185d}
-.av-2{background:#d1fae5;color:#065f46}
-.av-3{background:#fef3c7;color:#92400e}
-.av-4{background:#ede9fe;color:#5b21b6}
-.av-5{background:#ffedd5;color:#9a3412}
+/* ──────────────────────────────────────────────────────────────
+   CLIENTES — vista COMPACTA sin scroll, tipografía más grande,
+   cards más dinámicos
+   ────────────────────────────────────────────────────────────── */
 
-/* ── Estado badges ───────────────────────────────────── */
-.bx{display:inline-flex;align-items:center;gap:4px;font-size:.63rem;font-weight:700;
-    letter-spacing:.04em;padding:3px 10px;border-radius:50px;white-space:nowrap}
+/* Avatar palette (id % 6) — ahora con gradiente sutil */
+.av-0{background:linear-gradient(135deg,#dbeafe 0%,#bfdbfe 100%);color:#1d4ed8}
+.av-1{background:linear-gradient(135deg,#fce7f3 0%,#fbcfe8 100%);color:#be185d}
+.av-2{background:linear-gradient(135deg,#d1fae5 0%,#a7f3d0 100%);color:#065f46}
+.av-3{background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);color:#92400e}
+.av-4{background:linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%);color:#5b21b6}
+.av-5{background:linear-gradient(135deg,#ffedd5 0%,#fed7aa 100%);color:#9a3412}
+
+/* Estado badges */
+.bx{display:inline-flex;align-items:center;gap:3px;font-size:.6rem;font-weight:700;
+    letter-spacing:.04em;padding:2px 8px;border-radius:50px;white-space:nowrap}
 .bx-activo     {background:#dcfce7;color:#166534}
 .bx-prospecto  {background:#fef9c3;color:#854d0e}
 .bx-inactivo   {background:#f3f4f6;color:#6b7280}
 .bx-advertencia{background:#fff7ed;color:#c2410c}
 .bx-suspendido {background:#fee2e2;color:#991b1b}
 
-/* ── Contrato pill ───────────────────────────────────── */
-.cpill{font-size:.7rem;font-weight:700;padding:2px 9px;border-radius:50px;display:inline-block}
+/* Contrato pill */
+.cpill{font-size:.66rem;font-weight:700;padding:2px 8px;border-radius:50px;display:inline-block}
 .cpill-vigente     {background:#dcfce7;color:#166534}
 .cpill-por_vencer  {background:#fff7ed;color:#c2410c}
 .cpill-vencido     {background:#fee2e2;color:#991b1b}
 .cpill-indefinido  {background:#dbeafe;color:#1d4ed8}
 .cpill-sin_contrato{background:#f3f4f6;color:#6b7280}
 
-/* ── KPI card (icono izq + texto der) ────────────────── */
+/* ── KPI BAR — todo en una sola fila compacta ─────────── */
+.kpi-strip{
+  display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;margin-bottom:12px;
+}
 .kpi-card{
-  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
-  padding:16px 18px;display:flex;align-items:center;gap:14px;height:100%;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:8px 12px;display:flex;align-items:center;gap:9px;
+  transition:transform .15s,box-shadow .15s,border-color .15s;
 }
+.kpi-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.06);border-color:#d1d5db}
 .kpi-icon{
-  width:48px;height:48px;border-radius:12px;flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;font-size:1.35rem;
+  width:34px;height:34px;border-radius:9px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1rem;
 }
-.kpi-lbl{font-size:.63rem;font-weight:700;text-transform:uppercase;
-          letter-spacing:.06em;color:#9ca3af;margin-bottom:2px}
-.kpi-num{font-size:2rem;font-weight:800;color:#111827;line-height:1}
-.kpi-sub{font-size:.74rem;color:#9ca3af;margin-top:3px}
+.kpi-lbl{font-size:.55rem;font-weight:700;text-transform:uppercase;
+         letter-spacing:.06em;color:#9ca3af;margin-bottom:0;line-height:1.1}
+.kpi-num{font-size:1.35rem;font-weight:800;color:#111827;line-height:1.05}
 
-/* ── Client card ─────────────────────────────────────── */
+/* ── Filter bar compacta ──────────────────────────────── */
+.filter-bar{
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:8px 12px;margin-bottom:10px;
+}
+.filter-bar .form-control,.filter-bar .form-select{font-size:.82rem;padding:5px 10px}
+
+/* ── Header más compacto ──────────────────────────────── */
+.mod-hero{padding:14px 22px !important;margin-bottom:12px !important}
+.mod-hero h4{font-size:1.25rem !important}
+.mod-hero .mod-sub{font-size:.78rem !important}
+
+/* ══════════════════════════════════════════════════════
+   CLIENT CARD — tipografía grande del cliente, dinámico
+   ══════════════════════════════════════════════════════ */
 .client-card{
-  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
-  padding:20px;height:100%;cursor:pointer;
-  transition:box-shadow .15s,border-color .15s;
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:14px 16px;height:100%;cursor:pointer;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1.05),
+             box-shadow .18s,
+             border-color .18s,
+             background .18s;
+  position:relative;overflow:hidden;
 }
-.client-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.09);border-color:#d1d5db}
-
-/* ── Stat labels ─────────────────────────────────────── */
-.slbl{font-size:.61rem;font-weight:700;letter-spacing:.07em;
-      text-transform:uppercase;color:#9ca3af;margin-bottom:3px}
-.sval{font-size:.84rem;font-weight:700;color:#111827}
-.ssub{font-size:.73rem;color:#9ca3af;margin-top:1px}
-
-/* ── Completaje bar ──────────────────────────────────── */
-.pct-bar{height:4px;border-radius:2px;background:#f3f4f6;overflow:hidden;margin-top:5px}
-.pct-fill{height:100%;border-radius:2px}
-
-/* ── Filter bar ──────────────────────────────────────── */
-.filter-bar{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px}
-
-/* ── HEADER NEGRO ESTANDARIZADO (mismo patrón que ficha) ─ */
-.mod-hero{
-  background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
-  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
-  border-left:6px solid var(--ilus-red);
-  box-shadow:0 4px 16px rgba(0,0,0,.15);
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+.client-card::before{
+  content:'';position:absolute;inset:0;border-radius:14px;
+  background:linear-gradient(135deg,rgba(220,38,38,.0) 0%,rgba(15,23,42,.0) 100%);
+  pointer-events:none;transition:background .25s;
 }
-.mod-hero h4{margin:0;font-weight:700;font-size:1.4rem}
-.mod-hero h4 i{color:var(--ilus-red)}
-.mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px}
-.mod-hero .btn-outline-light{border-color:#475569;color:#e2e8f0}
-.mod-hero .btn-outline-light:hover{background:rgba(255,255,255,.08);border-color:#cbd5e1;color:#fff}
+.client-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 12px 28px rgba(0,0,0,.10),0 3px 8px rgba(220,38,38,.04);
+  border-color:transparent;
+}
+.client-card:hover::before{
+  background:linear-gradient(135deg,rgba(220,38,38,.04) 0%,rgba(15,23,42,.0) 60%);
+}
+.client-card:hover .cc-name{color:#dc2626}
+
+.cc-avatar{
+  width:48px;height:48px;border-radius:11px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.5rem;
+  box-shadow:inset 0 -2px 0 rgba(0,0,0,.04);
+  transition:transform .2s;
+}
+.client-card:hover .cc-avatar{transform:scale(1.06) rotate(-2deg)}
+
+/* TIPOGRAFÍA DEL CLIENTE — más grande según pedido */
+.cc-name{
+  font-size:1.08rem;font-weight:800;color:#0f172a;
+  line-height:1.2;letter-spacing:-.01em;
+  text-overflow:ellipsis;overflow:hidden;white-space:nowrap;
+  transition:color .2s;
+}
+.cc-rut{font-family:'SF Mono',Menlo,monospace;font-size:.72rem;color:#6b7280;letter-spacing:.02em}
+.cc-loc{font-size:.74rem;color:#6b7280;line-height:1.3}
+
+/* Stats — más compactos y con icono visual */
+.cc-stats{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:6px;
+  background:#fafbfc;border-radius:10px;padding:8px 10px;
+  margin:8px 0;
+}
+.cc-stat{display:flex;flex-direction:column;gap:0px}
+.cc-slbl{font-size:.55rem;font-weight:700;letter-spacing:.06em;
+         text-transform:uppercase;color:#9ca3af;line-height:1.2}
+.cc-sval{font-size:.82rem;font-weight:700;color:#0f172a;line-height:1.15;margin-top:1px}
+.cc-ssub{font-size:.68rem;color:#9ca3af;line-height:1.2}
+
+.pct-bar{height:3px;border-radius:2px;background:#e5e7eb;overflow:hidden;margin-top:3px}
+.pct-fill{height:100%;border-radius:2px;transition:width .4s ease}
+
+.cc-contact{
+  font-size:.74rem;color:#6b7280;
+  display:flex;align-items:center;gap:6px;
+  padding-top:7px;margin-top:auto;
+  border-top:1px dashed #e5e7eb;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.cc-contact i{flex-shrink:0;color:#9ca3af}
+
+/* ── Pagination footer fijo abajo ──────────────────── */
+.cli-pagination{
+  display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;
+  gap:10px;padding:8px 4px;margin-top:8px;
+}
+
+/* ── Vista lista (alternativa) ────────────────────── */
+.cli-list-row{
+  display:grid;grid-template-columns:50px 1fr 130px 100px 110px 80px 50px;
+  align-items:center;gap:10px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:8px 14px;margin-bottom:6px;font-size:.82rem;cursor:pointer;
+  transition:transform .15s,box-shadow .15s;
+}
+.cli-list-row:hover{transform:translateX(3px);box-shadow:0 4px 12px rgba(0,0,0,.06)}
+
+/* ── Responsive: mantener 4 columnas en md, 3 en lg+ ── */
+@media (max-width: 991px){
+  .kpi-strip{grid-template-columns:repeat(3,1fr)}
+}
+@media (max-width: 575px){
+  .kpi-strip{grid-template-columns:repeat(2,1fr)}
+  .cli-list-row{grid-template-columns:50px 1fr 80px 30px}
+  .cli-list-row > *:nth-child(n+5):not(:last-child){display:none}
+}
 </style>
 
 {# ── HEADER NEGRO ESTANDARIZADO ───────────────────────────────────── #}
@@ -90,70 +172,49 @@
   </div>
 </div>
 
-{# ── KPI BAR (horizontal: icono izq + número der) ────────────────── #}
+{# ── KPI STRIP (compacto: 6 mini-cards en una sola fila) ────────────── #}
 {%- set tot   = global_stats.total or 0 %}
-{%- set pct_a = (global_stats.activos      / tot * 100)|round(0)|int if tot else 0 %}
-{%- set pct_c = (global_stats.con_contrato / tot * 100)|round(0)|int if tot else 0 %}
-{%- set pct_e = (global_stats.con_equipos  / tot * 100)|round(0)|int if tot else 0 %}
-<div class="row g-2 mb-3">
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#e8eaf6;color:#3949ab"><i class="bi bi-people-fill"></i></div>
-      <div>
-        <div class="kpi-lbl">Total clientes</div>
-        <div class="kpi-num">{{ tot }}</div>
-        <div class="kpi-sub">100% del total</div>
-      </div>
+<div class="kpi-strip">
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#e8eaf6;color:#3949ab"><i class="bi bi-people-fill"></i></div>
+    <div>
+      <div class="kpi-lbl">Total</div>
+      <div class="kpi-num">{{ tot }}</div>
     </div>
   </div>
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-check-circle-fill"></i></div>
-      <div>
-        <div class="kpi-lbl">Activos</div>
-        <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
-        <div class="kpi-sub">{{ pct_a }}% del total</div>
-      </div>
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-check-circle-fill"></i></div>
+    <div>
+      <div class="kpi-lbl">Activos</div>
+      <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
     </div>
   </div>
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#e3f2fd;color:#1565c0"><i class="bi bi-file-earmark-check-fill"></i></div>
-      <div>
-        <div class="kpi-lbl">Con contrato</div>
-        <div class="kpi-num">{{ global_stats.con_contrato or 0 }}</div>
-        <div class="kpi-sub">{{ pct_c }}% del total</div>
-      </div>
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#e3f2fd;color:#1565c0"><i class="bi bi-file-earmark-check-fill"></i></div>
+    <div>
+      <div class="kpi-lbl">Contrato</div>
+      <div class="kpi-num">{{ global_stats.con_contrato or 0 }}</div>
     </div>
   </div>
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#fff8e1;color:#f57f17"><i class="bi bi-tools"></i></div>
-      <div>
-        <div class="kpi-lbl">Con equipos</div>
-        <div class="kpi-num">{{ global_stats.con_equipos or 0 }}</div>
-        <div class="kpi-sub">{{ pct_e }}% del total</div>
-      </div>
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#fff8e1;color:#f57f17"><i class="bi bi-tools"></i></div>
+    <div>
+      <div class="kpi-lbl">Equipos</div>
+      <div class="kpi-num">{{ global_stats.con_equipos or 0 }}</div>
     </div>
   </div>
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-calendar-check-fill"></i></div>
-      <div>
-        <div class="kpi-lbl">Próx. visitas (30d)</div>
-        <div class="kpi-num">{{ global_stats.visitas_30d or 0 }}</div>
-        <div class="kpi-sub">Programadas</div>
-      </div>
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-calendar-check-fill"></i></div>
+    <div>
+      <div class="kpi-lbl">Visitas 30d</div>
+      <div class="kpi-num">{{ global_stats.visitas_30d or 0 }}</div>
     </div>
   </div>
-  <div class="col-6 col-sm-4 col-lg-2">
-    <div class="kpi-card">
-      <div class="kpi-icon" style="background:#e8f5e9;color:#1b5e20"><i class="bi bi-speedometer2"></i></div>
-      <div>
-        <div class="kpi-lbl">Completaje prom.</div>
-        <div class="kpi-num">{{ global_stats.completaje_avg or 0 }}%</div>
-        <div class="kpi-sub">Información</div>
-      </div>
+  <div class="kpi-card">
+    <div class="kpi-icon" style="background:#e8f5e9;color:#1b5e20"><i class="bi bi-speedometer2"></i></div>
+    <div>
+      <div class="kpi-lbl">Completaje</div>
+      <div class="kpi-num">{{ global_stats.completaje_avg or 0 }}%</div>
     </div>
   </div>
 </div>
@@ -241,23 +302,26 @@
   {%- elif c.completaje >= 50 -%}{%- set pcol='#d97706' -%}
   {%- else -%}{%- set pcol='#dc2626' -%}{%- endif -%}
 
-  <div class="col-12 col-sm-6 col-xl-4 card-wrapper"
+  <div class="col-12 col-sm-6 col-lg-4 col-xl-3 card-wrapper"
        data-estado="{{ c.estado }}"
        data-contrato="{{ c.contrato_estado }}"
        data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"
        data-search="{{ (c.razon_social ~ ' ' ~ (c.rut or '') ~ ' ' ~ (c.contacto_email or '') ~ ' ' ~ (c.comuna or '') ~ ' ' ~ (c.ciudad or ''))|lower }}">
 
-    <div class="client-card" onclick="window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
+    <div class="client-card d-flex flex-column"
+         onclick="window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
 
-      {# ── Avatar + nombre + badge ──────────────────── #}
-      <div class="d-flex align-items-start gap-3 mb-2">
-        <div class="av-{{ c.id % 6 }}" style="width:46px;height:46px;border-radius:10px;flex-shrink:0;
-             display:flex;align-items:center;justify-content:center;font-size:1.3rem">
+      {# ── Avatar + nombre GRANDE + badge ──────────────────── #}
+      <div class="d-flex align-items-start gap-2 mb-2">
+        <div class="cc-avatar av-{{ c.id % 6 }}">
           <i class="bi bi-building"></i>
         </div>
         <div style="flex:1;min-width:0">
-          <div class="fw-bold text-truncate" style="font-size:.92rem;color:#111827">{{ c.razon_social }}</div>
-          <div class="font-monospace text-muted" style="font-size:.76rem">{{ c.rut or '—' }}</div>
+          <div class="cc-name" title="{{ c.razon_social }}">{{ c.razon_social }}</div>
+          <div class="cc-rut">{{ c.rut or '—' }}</div>
+          {% if c.comuna %}
+          <div class="cc-loc"><i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}{% if c.ciudad and c.ciudad != c.comuna %}, {{ c.ciudad }}{% endif %}</div>
+          {% endif %}
         </div>
         <span class="bx {{ bcls }}">
           {% if c.badge == 'advertencia' %}<i class="bi bi-exclamation-triangle-fill"></i>{% endif %}
@@ -265,111 +329,49 @@
         </span>
       </div>
 
-      {# Ubicación #}
-      <div class="text-muted mb-2" style="font-size:.79rem;min-height:1.2rem">
-        {% if c.comuna %}
-          <i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}{% if c.ciudad %}, {{ c.ciudad }}{% endif %}
-        {% endif %}
-      </div>
-
-      <hr style="margin:10px 0;border-color:#f3f4f6">
-
-      {# ── 4 stats ─────────────────────────────────── #}
-      <div class="row g-0 mb-3">
-        {# Contrato #}
-        <div class="col-6 pe-2">
-          <div class="slbl">Contrato</div>
-          <span class="cpill cpill-{{ c.contrato_estado }}">{{ ctxt }}</span>
-          <div class="ssub">
-            {%- if c.contrato_vencimiento %}Hasta {{ c.contrato_vencimiento.strftime('%d/%m/%Y') }}
-            {%- elif c.contrato_estado == 'indefinido' %}Sin vencimiento
-            {%- else %}—{%- endif %}
-          </div>
+      {# ── Stats grid (4 mini en bloque compacto) ─────────────── #}
+      <div class="cc-stats">
+        <div class="cc-stat">
+          <span class="cc-slbl"><i class="bi bi-file-earmark-text me-1"></i>Contrato</span>
+          <span class="cpill cpill-{{ c.contrato_estado }} mt-1">{{ ctxt }}</span>
         </div>
-        {# Equipos #}
-        <div class="col-6 ps-2" style="border-left:1px solid #f3f4f6">
-          <div class="slbl">Equipos</div>
+        <div class="cc-stat">
+          <span class="cc-slbl"><i class="bi bi-tools me-1"></i>Equipos</span>
           {% if (c.maquinas_count or 0) > 0 %}
-            <div class="sval">{{ c.maquinas_count }}</div>
-            <div class="ssub">Activos</div>
+            <span class="cc-sval">{{ c.maquinas_count }} <span class="cc-ssub" style="font-weight:500">activos</span></span>
           {% else %}
-            <div class="sval" style="color:#9ca3af">—</div>
-            <div class="ssub">Sin equipos</div>
+            <span class="cc-sval" style="color:#9ca3af">—</span>
           {% endif %}
         </div>
-      </div>
-      <div class="row g-0 mb-3">
-        {# Próxima visita #}
-        <div class="col-6 pe-2">
-          <div class="slbl">Próx. visita</div>
+        <div class="cc-stat">
+          <span class="cc-slbl"><i class="bi bi-calendar-event me-1"></i>Próx. visita</span>
           {% if c.prox_visita %}
-            <div class="sval">{{ c.prox_visita.strftime('%d/%m/%Y') }}</div>
-            <div class="ssub">En {{ c.prox_visita_dias }} días</div>
+            <span class="cc-sval">{{ c.prox_visita.strftime('%d/%m') }} <span class="cc-ssub" style="font-weight:500">+{{ c.prox_visita_dias }}d</span></span>
           {% else %}
-            <div class="sval" style="color:#9ca3af">—</div>
-            <div class="ssub">Sin visitas</div>
+            <span class="cc-sval" style="color:#9ca3af">—</span>
           {% endif %}
         </div>
-        {# Completaje #}
-        <div class="col-6 ps-2" style="border-left:1px solid #f3f4f6">
-          <div class="slbl">Completaje</div>
-          <div class="sval">{{ c.completaje }}%</div>
+        <div class="cc-stat">
+          <span class="cc-slbl"><i class="bi bi-speedometer2 me-1"></i>Completaje</span>
+          <span class="cc-sval" style="color:{{ pcol }}">{{ c.completaje }}%</span>
           <div class="pct-bar">
             <div class="pct-fill" style="width:{{ c.completaje }}%;background:{{ pcol }}"></div>
           </div>
         </div>
       </div>
 
-      {# ── Contacto + teléfono (siempre visible) ────── #}
-      <div style="font-size:.79rem;color:#6b7280;min-height:1.4rem;margin-bottom:14px;
-                  overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+      {# ── Contacto compacto al pie ────── #}
+      <div class="cc-contact">
         {% if c.contacto_nombre %}
-          <i class="bi bi-person me-1"></i>{{ c.contacto_nombre }}
-          {% if c.contacto_tel %}
-            <span class="ms-2 text-muted">
-              <i class="bi bi-telephone me-1"></i>{{ c.contacto_tel }}
-            </span>
-          {% endif %}
+          <i class="bi bi-person"></i>
+          <span class="text-truncate">{{ c.contacto_nombre }}{% if c.contacto_tel %} · {{ c.contacto_tel }}{% endif %}</span>
         {% elif c.contacto_email %}
-          <i class="bi bi-envelope me-1"></i>{{ c.contacto_email }}
+          <i class="bi bi-envelope"></i>
+          <span class="text-truncate">{{ c.contacto_email }}</span>
         {% else %}
-          <span class="text-muted fst-italic">Sin contacto registrado</span>
+          <i class="bi bi-info-circle"></i>
+          <span class="text-muted fst-italic">Sin contacto</span>
         {% endif %}
-      </div>
-
-      {# ── Acciones ────────────────────────────────── #}
-      <div class="d-flex justify-content-between align-items-center" onclick="event.stopPropagation()">
-        <a href="{{ url_for('mant_ficha', cid=c.id) }}" class="btn btn-sm btn-outline-secondary">
-          Ver detalles <i class="bi bi-arrow-right ms-1"></i>
-        </a>
-        <div class="dropdown">
-          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="bi bi-three-dots"></i>
-          </button>
-          <ul class="dropdown-menu dropdown-menu-end">
-            <li>
-              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}">
-                <i class="bi bi-eye me-2"></i>Ver ficha completa
-              </a>
-            </li>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-contrato">
-                <i class="bi bi-file-earmark-text me-2"></i>Contrato
-              </a>
-            </li>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-equipos">
-                <i class="bi bi-tools me-2"></i>Equipos
-              </a>
-            </li>
-            <li><hr class="dropdown-divider"></li>
-            <li>
-              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-visitas">
-                <i class="bi bi-calendar-plus me-2"></i>Programar visita
-              </a>
-            </li>
-          </ul>
-        </div>
       </div>
 
     </div><!-- /client-card -->
