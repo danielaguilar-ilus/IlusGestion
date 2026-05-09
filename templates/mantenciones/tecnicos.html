@@ -297,29 +297,47 @@
             <input type="email" id="nt_email" class="form-control" maxlength="200" placeholder="tecnico@ilus.cl">
           </div>
 
-          {# ─── Dirección con buscador inteligente ─── #}
-          <div class="col-12">
-            <label class="form-label fw-semibold small">
-              Dirección
-              <span class="text-muted fw-normal" style="font-size:.72rem">(buscador OSM Chile)</span>
-            </label>
-            <div class="position-relative">
-              <input type="text" id="nt_direccion" class="form-control" maxlength="300"
-                     placeholder="Empieza a escribir: 'Av Providencia 123…'" autocomplete="off">
-              <div id="nt_dir_dropdown" class="position-absolute w-100 bg-white shadow-sm border rounded mt-1"
-                   style="z-index:1080;display:none;max-height:240px;overflow-y:auto"></div>
-              <div id="nt_dir_loading" class="position-absolute" style="right:12px;top:9px;display:none">
-                <span class="spinner-border spinner-border-sm text-muted"></span>
-              </div>
-            </div>
-          </div>
+          {# Dirección eliminada — los datos vienen centralizados desde Colaboradores. #}
+          <input type="hidden" id="nt_direccion" value="">
           <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Comuna <span class="text-muted fw-normal" style="font-size:.72rem">(auto desde dirección)</span></label>
-            <input type="text" id="nt_comuna" class="form-control" maxlength="100">
+            <label class="form-label fw-semibold small">Comuna</label>
+            <select id="nt_comuna" class="form-select">
+              <option value="">— Selecciona comuna —</option>
+              {% for cm in [
+                'Alhué','Buin','Calera de Tango','Cerrillos','Cerro Navia','Colina','Conchalí',
+                'Curacaví','El Bosque','El Monte','Estación Central','Huechuraba','Independencia',
+                'Isla de Maipo','La Cisterna','La Florida','La Granja','La Pintana','La Reina',
+                'Lampa','Las Condes','Lo Barnechea','Lo Espejo','Lo Prado','Macul','Maipú','María Pinto',
+                'Melipilla','Ñuñoa','Padre Hurtado','Paine','Pedro Aguirre Cerda','Peñaflor','Peñalolén',
+                'Pirque','Providencia','Pudahuel','Puente Alto','Quilicura','Quinta Normal','Recoleta',
+                'Renca','San Bernardo','San Joaquín','San José de Maipo','San Miguel','San Pedro',
+                'San Ramón','Santiago','Talagante','Tiltil','Vitacura'
+              ] %}
+              <option value="{{ cm }}">{{ cm }}</option>
+              {% endfor %}
+            </select>
           </div>
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">Región</label>
-            <input type="text" id="nt_region" class="form-control" maxlength="100">
+            <select id="nt_region" class="form-select">
+              <option value="">— Selecciona región —</option>
+              <option value="Arica y Parinacota">Arica y Parinacota</option>
+              <option value="Tarapacá">Tarapacá</option>
+              <option value="Antofagasta">Antofagasta</option>
+              <option value="Atacama">Atacama</option>
+              <option value="Coquimbo">Coquimbo</option>
+              <option value="Valparaíso">Valparaíso</option>
+              <option value="Metropolitana de Santiago" selected>Metropolitana de Santiago</option>
+              <option value="O'Higgins">O'Higgins</option>
+              <option value="Maule">Maule</option>
+              <option value="Ñuble">Ñuble</option>
+              <option value="Biobío">Biobío</option>
+              <option value="La Araucanía">La Araucanía</option>
+              <option value="Los Ríos">Los Ríos</option>
+              <option value="Los Lagos">Los Lagos</option>
+              <option value="Aysén">Aysén</option>
+              <option value="Magallanes">Magallanes</option>
+            </select>
           </div>
 
           <div class="col-12">
@@ -427,75 +445,9 @@ function escHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// ── Buscador de dirección (Nominatim + Photon, Chile) ────────────────
-let _dirTimer = null;
-const dirIn = document.getElementById('nt_direccion');
-const dirDD = document.getElementById('nt_dir_dropdown');
-const dirLoad = document.getElementById('nt_dir_loading');
-dirIn.addEventListener('input', () => {
-  clearTimeout(_dirTimer);
-  const q = dirIn.value.trim();
-  if (q.length < 4) { dirDD.style.display='none'; dirLoad.style.display='none'; return; }
-  dirLoad.style.display = 'block';
-  _dirTimer = setTimeout(() => buscarDir(q), 500);
-});
-async function buscarDir(q){
-  try {
-    const variantes = [q, q.replace(/^(av\.?|avda\.?|avenida)\s+/i, '')]
-      .filter((v,i,a) => v && a.indexOf(v)===i);
-    let resultados = [];
-    for (const v of variantes){
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(v+', Chile')}&countrycodes=cl&addressdetails=1&limit=6&accept-language=es&dedupe=1`;
-      const r = await fetch(url, { headers: { 'Accept-Language': 'es' } });
-      if (!r.ok) continue;
-      const j = await r.json();
-      resultados = resultados.concat((j||[]).map(d => ({
-        display: d.display_name,
-        calle: (d.address?.road || '') + (d.address?.house_number ? ' ' + d.address.house_number : ''),
-        comuna: d.address?.suburb || d.address?.city_district || d.address?.town || d.address?.village || d.address?.county || '',
-        region: d.address?.state || d.address?.region || '',
-      })));
-      if (resultados.length >= 6) break;
-    }
-    // Dedupe por display
-    const seen = new Set();
-    resultados = resultados.filter(r => !seen.has(r.display) && seen.add(r.display));
-    dirLoad.style.display = 'none';
-    if (!resultados.length){
-      dirDD.innerHTML = '<div class="px-3 py-2 small text-muted">Sin resultados — escríbela manualmente</div>';
-      dirDD.style.display = 'block';
-      return;
-    }
-    dirDD.innerHTML = resultados.slice(0,6).map((r, i) => `
-      <div class="px-3 py-2 dir-item" style="cursor:pointer;border-bottom:1px solid #f3f4f6"
-           data-i="${i}">
-        <div class="fw-semibold small text-truncate">${escHtml(r.calle || r.display)}</div>
-        <div class="small text-muted text-truncate">
-          ${escHtml(r.comuna || '—')}${r.region ? ', '+escHtml(r.region) : ''}
-        </div>
-      </div>
-    `).join('');
-    dirDD.style.display = 'block';
-    dirDD.querySelectorAll('.dir-item').forEach(it => {
-      it.addEventListener('click', () => {
-        const r = resultados[parseInt(it.dataset.i, 10)];
-        dirIn.value = r.calle || r.display.split(',')[0];
-        document.getElementById('nt_comuna').value = r.comuna || '';
-        document.getElementById('nt_region').value = r.region || '';
-        dirDD.style.display = 'none';
-      });
-    });
-  } catch(e){
-    dirLoad.style.display = 'none';
-    dirDD.innerHTML = `<div class="px-3 py-2 small text-danger">Error: ${e.message}</div>`;
-    dirDD.style.display = 'block';
-  }
-}
-
 // Cerrar dropdowns al click fuera
 document.addEventListener('click', e => {
   if (!colabIn.contains(e.target) && !colabDD.contains(e.target)) colabDD.style.display='none';
-  if (!dirIn.contains(e.target)   && !dirDD.contains(e.target))   dirDD.style.display='none';
 });
 
 async function crearTecnico(){

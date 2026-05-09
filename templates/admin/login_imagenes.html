@@ -15,15 +15,15 @@
                font-size:.62rem;font-weight:700;}
 </style>
 
-<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+<div class="mod-hero">
   <div>
-    <h4 class="mb-1"><i class="bi bi-images me-2" style="color:#cc0000"></i>Imágenes del login</h4>
-    <p class="text-muted mb-0" style="font-size:.85rem">
+    <h4><i class="bi bi-images me-2"></i>Imágenes del login</h4>
+    <div class="mod-sub">
       Carrusel de hasta 5 imágenes que aparecen en el panel izquierdo del login.
       Sirve para destacar tu marca, equipo o productos.
-    </p>
+    </div>
   </div>
-  <a href="{{ url_for('login') }}" target="_blank" class="btn btn-sm btn-outline-dark">
+  <a href="{{ url_for('login') }}" target="_blank" class="btn btn-sm btn-outline-light">
     <i class="bi bi-eye me-1"></i>Ver login
   </a>
 </div>

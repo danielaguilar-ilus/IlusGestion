@@ -14,6 +14,32 @@
   --topbar-h:    90px;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   HEADER NEGRO ESTANDARIZADO — usar en todas las páginas principales
+   <div class="mod-hero">
+     <div>
+       <h4><i class="bi bi-XYZ me-2"></i>Título</h4>
+       <div class="mod-sub">Subtítulo descriptivo</div>
+     </div>
+     <div class="d-flex gap-2"> ...botones... </div>
+   </div>
+══════════════════════════════════════════════════════════════ */
+.mod-hero{
+  background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:14px;
+}
+.mod-hero h4{margin:0;font-weight:700;font-size:1.4rem;color:#fff}
+.mod-hero h4 i{color:var(--ilus-red)}
+.mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px}
+.mod-hero .btn-outline-light{border-color:#475569;color:#e2e8f0}
+.mod-hero .btn-outline-light:hover{background:rgba(255,255,255,.08);border-color:#cbd5e1;color:#fff}
+.mod-hero a{color:#fff}
+.mod-hero a:hover{color:#fee2e2}
+
 /* ── Reset / Base ───────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 body {
@@ -329,17 +355,39 @@ body {
 .flash-container { padding: 16px 0 0; }
 
 /* ══════════════════════════════════════════════════════════════
-   PAGE HEADER — diseño limpio, claro, asociado a colores ILUS
+   PAGE HEADER — gradiente negro estandarizado (igual a .mod-hero)
+   Usado en TODOS los módulos para look uniforme
 ══════════════════════════════════════════════════════════════ */
 .page-header {
-  background: #fff;
-  color: var(--ilus-black);
-  padding: 14px 0 12px;
-  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+  color: #fff;
+  padding: 18px 22px;
+  border: none;
+  border-left: 6px solid var(--ilus-red);
+  border-radius: 14px;
   margin: 0 0 18px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
 }
-.page-header h4  { margin: 0; font-weight: 900; font-size: 1.3rem; line-height: 1.2; color: var(--ilus-black); }
-.page-header .sub { color: #6b7280; font-size: .82rem; margin-top: 2px; }
+.page-header h4   { margin: 0; font-weight: 700; font-size: 1.35rem; line-height: 1.2; color: #fff; }
+.page-header h4 i { color: var(--ilus-red); }
+.page-header .sub { color: #cbd5e1; font-size: .86rem; margin-top: 3px; }
+.page-header a    { color: #fff; }
+.page-header a:hover { color: #fee2e2; }
+.page-header .btn-outline-secondary,
+.page-header .btn-outline-light {
+  border-color: #475569; color: #e2e8f0; background: transparent;
+}
+.page-header .btn-outline-secondary:hover,
+.page-header .btn-outline-light:hover {
+  background: rgba(255,255,255,.08); border-color: #cbd5e1; color: #fff;
+}
+/* Botón "volver" oscuro dentro del header — adaptarlo */
+.page-header .btn-dark-ilus {
+  background: rgba(255,255,255,.1); color: #fff; border: 1px solid #475569;
+}
+.page-header .btn-dark-ilus:hover {
+  background: rgba(255,255,255,.18); color: #fff;
+}
 
 /* ══════════════════════════════════════════════════════════════
    BOTONES

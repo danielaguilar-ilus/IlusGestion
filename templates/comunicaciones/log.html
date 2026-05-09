@@ -19,14 +19,14 @@
 .estado-fallido{background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:50px;font-size:.65rem;font-weight:700;}
 </style>
 
-<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+<div class="mod-hero">
   <div>
-    <h4 class="mb-1"><i class="bi bi-envelope-paper me-2" style="color:#cc0000"></i>Log de emails — Trazabilidad</h4>
-    <p class="text-muted mb-0" style="font-size:.85rem">
+    <h4><i class="bi bi-envelope-paper me-2"></i>Log de emails — Trazabilidad</h4>
+    <div class="mod-sub">
       Histórico completo de emails enviados desde el sistema. Útil para auditar entregas y diagnosticar fallas.
-    </p>
+    </div>
   </div>
-  <a href="{{ url_for('comm_index') }}" class="btn btn-sm btn-outline-secondary">
+  <a href="{{ url_for('comm_index') }}" class="btn btn-sm btn-outline-light">
     <i class="bi bi-gear me-1"></i>Configuración
   </a>
 </div>

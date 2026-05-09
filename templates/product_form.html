@@ -2,16 +2,16 @@
 {% block title %}{% if product %}Editar {{ product.sku }}{% else %}Nuevo Producto{% endif %} - ILUS{% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="mod-hero">
   <div class="d-flex align-items-center gap-3">
-    <a href="{{ url_for('index') }}" class="btn btn-sm btn-dark-ilus no-print">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-light no-print">
       <i class="bi bi-arrow-left"></i>
     </a>
     <div>
-      <h4><i class="bi bi-{% if product %}pencil{% else %}plus-circle{% endif %} me-2" style="color:var(--ilus-red)"></i>
+      <h4><i class="bi bi-{% if product %}pencil{% else %}plus-circle{% endif %} me-2"></i>
         {% if product %}Editar producto{% else %}Nuevo producto{% endif %}
       </h4>
-      <div class="sub">
+      <div class="mod-sub">
         {% if product %}{{ product.sku }} — {{ product.nombre }}
         {% else %}Busca en el ERP o ingresa SKU y nombre manualmente{% endif %}
       </div>

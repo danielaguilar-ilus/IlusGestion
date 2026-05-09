@@ -1027,7 +1027,45 @@ function exportarVisitas(){
 }
 
 // ── Init ────────────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', cargarEventos);
+window.addEventListener('DOMContentLoaded', async () => {
+  // Si la URL trae ?date=YYYY-MM-DD lo respetamos
+  const urlDate = new URLSearchParams(location.search).get('date');
+  if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+    calRefDate = new Date(urlDate + 'T00:00:00');
+  }
+  await cargarEventos();
+  // Si la semana visible no tiene eventos pero hay otras visitas próximas,
+  // saltar automáticamente a la semana de la próxima visita
+  if (calVista === 'week' && !urlDate){
+    autoSaltarASemanaConVisitas();
+  }
+});
+
+function autoSaltarASemanaConVisitas(){
+  const wkStart = startOfWeek(calRefDate);
+  const wkEnd   = endOfWeek(calRefDate);
+  const enSemana = calEventos.filter(ev => {
+    if (!ev.fecha) return false;
+    const f = new Date(ev.fecha + 'T00:00:00');
+    return f >= wkStart && f <= wkEnd;
+  });
+  if (enSemana.length) return; // ya hay visitas en la semana visible
+  // Buscar la próxima visita programada (estado != cancelada)
+  const t = new Date(); t.setHours(0,0,0,0);
+  const proxima = calEventos
+    .filter(ev => ev.estado !== 'cancelada' && ev.fecha)
+    .map(ev => ({ ev, f: new Date(ev.fecha + 'T00:00:00') }))
+    .filter(x => x.f >= t)
+    .sort((a,b) => a.f - b.f)[0];
+  if (proxima){
+    calRefDate = proxima.f;
+    cargarEventos();
+    if (window.ilusToast){
+      const fLbl = proxima.f.toLocaleDateString('es-CL',{day:'2-digit',month:'short'});
+      ilusToast(`Saltamos a la semana del ${fLbl} (donde está la próxima visita)`, { type:'info', duration:4500 });
+    }
+  }
+}
 </script>
 
 {% endblock %}

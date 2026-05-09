@@ -4,20 +4,20 @@
 {% block content %}
 <div class="container-fluid py-3 px-3 px-md-4">
 
-  {# ── HEADER ── #}
-  <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+  {# ── HEADER NEGRO ESTANDARIZADO ── #}
+  <div class="mod-hero">
     <div>
-      <h4 class="mb-0 fw-bold"><i class="bi bi-building me-2 text-danger"></i>Couriers</h4>
-      <p class="text-muted small mb-0">Gestión de empresas de transporte y tarifas por comuna</p>
+      <h4><i class="bi bi-building me-2"></i>Couriers</h4>
+      <div class="mod-sub">Gestión de empresas de transporte y tarifas por comuna</div>
     </div>
-    <div class="ms-auto d-flex gap-2 flex-wrap">
-      <a href="/transporte/couriers/export" class="btn btn-outline-success btn-sm">
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="/transporte/couriers/export" class="btn btn-outline-light btn-sm">
         <i class="bi bi-download me-1"></i>Exportar tarifas
       </a>
-      <button class="btn btn-outline-primary btn-sm" onclick="abrirImport()">
+      <button class="btn btn-outline-light btn-sm" onclick="abrirImport()">
         <i class="bi bi-upload me-1"></i>Importar Excel
       </button>
-      <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+      <button class="btn btn-ilus btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevo">
         <i class="bi bi-plus-lg me-1"></i>Nuevo courier
       </button>
     </div>

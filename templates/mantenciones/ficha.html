@@ -2177,7 +2177,12 @@ async function confirmarVisitaMulti() {
       return;
     }
     btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>Visita ${d.visita_id} creada`;
-    ilusToast(`Visita #${d.visita_id} creada · ${d.equipos_afectados} equipo(s)`, { type:'success' });
+    const tecCount = d.tecnicos_asignados || 0;
+    const costoTxt = d.costo_calculado ? ` · $${Math.round(d.costo_calculado).toLocaleString('es-CL')}` : '';
+    ilusToast(
+      `Visita #${d.visita_id} creada · ${d.equipos_afectados} equipo(s) · ${tecCount} técnico(s)${costoTxt}`,
+      { type:'success', duration: 5000 }
+    );
     setTimeout(() => location.reload(), 1000);
   } catch(e) {
     ilusToast('Error de red: ' + e.message, { type:'error' });
