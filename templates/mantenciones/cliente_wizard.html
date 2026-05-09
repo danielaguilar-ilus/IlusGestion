@@ -1631,17 +1631,20 @@ function agregarFilaEquipo(datos={}) {
     : `<span style="font-size:.62rem;color:#888;font-style:italic">Manual</span>`;
   // Default fecha de instalación = fecha del documento (cubre garantía 6 meses)
   const fechaInst = datos.fecha_instalacion || datos.doc_fecha || datos.fecha || '';
-  // N° Serie: si la representación trae serial real, lo usamos; si no, "(auto)" → backend genera ILUS-{cid}-{SKU}-{n}
-  const serieIni = datos.serie || '(auto)';
-  const serieEsAuto = serieIni.startsWith('(auto');
+  // N° Serie: si llega "(auto)" o vacío, generamos uno visible en cliente
+  // El backend lo regenera con cid real al guardar (formato ILUS-{cid}-{SKU}-{n})
+  let serieIni = (datos.serie || '').trim();
+  if (!serieIni || serieIni.startsWith('(auto')) {
+    serieIni = _serieTmpAuto(datos.sku || '');
+  }
+  const serieEsTemp = serieIni.startsWith('ILUS-NEW-') || serieIni.startsWith('ILUS-TMP-');
   tr.innerHTML=`
     <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||datos.producto||'')}" placeholder="Nombre equipo"></td>
     <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}" title="SKU del modelo (compartido entre unidades iguales)"></td>
     <td><input class="eq-input font-monospace" data-field="serie" value="${esc(serieIni)}"
-              style="${serieEsAuto ? 'background:#fef9c3;border-color:#fde68a' : ''}"
-              title="N° serie único de este equipo. Si la representación lo trae, escríbelo aquí. Si dejas '(auto)', el sistema genera uno único al guardar (formato ILUS-{cliente}-{SKU}-{n}). Sirve para etiqueta física + garantía."
-              onfocus="if(this.value.startsWith('(auto')){this.value='';this.style.background='';this.style.borderColor=''}"
-              onblur="if(!this.value){this.value='(auto)';this.style.background='#fef9c3';this.style.borderColor='#fde68a'}"></td>
+              style="${serieEsTemp ? 'background:#fef9c3;border-color:#fde68a' : ''}"
+              title="N° serie único de este equipo (autogenerado). Si la representación trae uno real, escríbelo aquí. Sirve para etiqueta física, garantía y trazabilidad."
+              onchange="if(this.value && !this.value.startsWith('ILUS-NEW-') && !this.value.startsWith('ILUS-TMP-')){this.style.background='';this.style.borderColor=''}else{this.style.background='#fef9c3';this.style.borderColor='#fde68a'}"></td>
     <td><input class="eq-input" data-field="tag_1" value="${esc(datos.tag_1||'')}"
               placeholder="—" maxlength="120"
               title="Etiqueta libre: usa para clasificar (ej: 'sala cardio', 'comprado 2024', 'garantía extendida')"></td>
@@ -1802,15 +1805,15 @@ async function wzAbrirModalProds(doc) {
   _wzProductos = [];
   _wzSeleccion = new Set();
 
-  // Crear modal dinámicamente si no existe
+  // Crear modal dinámicamente si no existe (z-index alto para apilarse sobre modal padre)
   if (!document.getElementById('wzModalProds')) {
-    const modalHtml = `<div class="modal fade" id="wzModalProds" tabindex="-1">
+    const modalHtml = `<div class="modal fade" id="wzModalProds" tabindex="-1" style="z-index:1080" data-bs-backdrop="static">
       <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header" style="background:#0f172a;color:#fff">
+        <div class="modal-content" style="border:3px solid var(--ilus-red);box-shadow:0 0 60px rgba(0,0,0,.5)">
+          <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-red) 0%,#990000 100%);color:#fff">
             <h5 class="modal-title fw-bold">
               <i class="bi bi-box-seam me-2"></i>Productos del documento
-              <span id="wzpDocTit" class="ms-2 fw-normal" style="font-size:.8rem;opacity:.85"></span>
+              <span id="wzpDocTit" class="ms-2 fw-normal" style="font-size:.85rem;opacity:.95;background:rgba(0,0,0,.25);padding:3px 10px;border-radius:50px"></span>
             </h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
@@ -1855,6 +1858,14 @@ async function wzAbrirModalProds(doc) {
       </div>
     </div>`;
     document.body.insertAdjacentHTML('beforeend', modalHtml);
+    // Hook para subir z-index del backdrop cuando este modal se apila sobre otro
+    document.getElementById('wzModalProds').addEventListener('shown.bs.modal', function() {
+      const backdrops = document.querySelectorAll('.modal-backdrop');
+      if (backdrops.length > 1) {
+        backdrops[backdrops.length - 1].style.zIndex = '1075';
+        backdrops[backdrops.length - 1].style.opacity = '0.7';   // más oscuro que el default
+      }
+    });
   }
   if (!_wzModalProds) _wzModalProds = new bootstrap.Modal(document.getElementById('wzModalProds'));
 
@@ -1983,11 +1994,11 @@ function wzpImportar() {
     const cantidadCadaUna = expandirEsto ? 1 : qty;
 
     for (let n = 1; n <= filas; n++) {
-      // N° serie temporal — backend genera ILUS-{cid}-{SKU}-{n} al guardar
+      // N° serie auto VISIBLE (backend lo regenera con cid real al guardar)
       agregarFilaEquipo({
         nombre,
         sku: p.sku || '',
-        serie: '(auto)',
+        serie: _serieTmpAuto(p.sku),
         cantidad: cantidadCadaUna,
         doc_origen,
         doc_fecha: fecha_doc,
@@ -2009,21 +2020,30 @@ function wzpImportar() {
 // ════════════════════════════════════════════════════════════════════
 // importarEq() — botón "Importar seleccionadas" en el modal ERP grande
 // Procesa selecciones de los tabs "Por documento" y "Por SKU" (que llenan erpEqSel)
+// La decisión "1 ficha o N fichas" se toma POR PRODUCTO desde el select inline
+// que pone el usuario en cada fila (data-fichas-key=KEY)
 // ════════════════════════════════════════════════════════════════════
+let _seqSerieTmp = 0;  // contador local para no repetir series temporales en sesión
+
+function _serieTmpAuto(sku) {
+  _seqSerieTmp++;
+  const pref = (sku || 'AUTO').slice(0,6).toUpperCase().replace(/[^A-Z0-9]/g,'');
+  // Visible para el usuario; backend lo regenera con cid real al guardar
+  return `ILUS-NEW-${pref || 'AUTO'}-${_seqSerieTmp}`;
+}
+
 function importarEq() {
-  const lineas = Object.values(erpEqSel);
+  const lineas = Object.entries(erpEqSel);  // [key, line]
   if (!lineas.length) {
     alert('Selecciona al menos un producto antes de importar.');
     return;
   }
 
-  // Validar mismatch RUT si las líneas vienen de un documento (doc_origen)
-  // Detectamos el RUT del documento mediante el primer elemento que tenga 'rut_doc'
-  // Por ahora, advertimos genéricamente.
+  // Validar mismatch RUT por línea (documentos pueden traer rut)
   const rutWiz = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'');
   let justifMismatch = '';
-  for (const l of lineas) {
-    const rutDoc = (l.rut || l.cliente_rut || '').replace(/[.\-\s]/g,'');
+  for (const [, l] of lineas) {
+    const rutDoc = (l.rut || '').replace(/[.\-\s]/g,'');
     if (rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc) {
       const motivo = prompt(
         `⚠️ El documento ${l.doc_origen||''} pertenece a un RUT distinto.\n\n` +
@@ -2035,40 +2055,24 @@ function importarEq() {
         return;
       }
       justifMismatch = motivo.trim();
-      break; // un solo motivo aplica a toda la importación
+      break;
     }
   }
 
-  // Preguntar globalmente si expandir cantidades > 1
-  const tieneExpandibles = lineas.some(l => {
-    const qty = parseInt(l.cantidad) || 1;
-    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(l.nombre || l.producto || '');
-    return qty > 1 && !esBulk;
-  });
-  let expandir = false;
-  if (tieneExpandibles) {
-    expandir = confirm(
-      'Algunos productos tienen cantidad > 1.\n\n' +
-      '¿Crear 1 ficha individual por cada unidad?\n\n' +
-      '✓ SÍ (recomendado): cada equipo tendrá su propio N° serie único.\n' +
-      '   Útil para trazabilidad de garantía y mantenciones.\n\n' +
-      '✗ NO: se crea 1 sola ficha con cantidad N.'
-    );
-  }
-
   let creados = 0;
-  for (const l of lineas) {
+  for (const [key, l] of lineas) {
     const qty = parseInt(l.cantidad) || 1;
     const nombre = l.nombre || l.producto || '';
-    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(nombre);
-    const expandirEsto = expandir && qty > 1 && !esBulk;
-    const filas = expandirEsto ? qty : 1;
-    const cantidadCadaUna = expandirEsto ? 1 : qty;
+    // Leer la elección del usuario: 1 ficha o N fichas (del select inline)
+    const sel = document.querySelector(`select[data-fichas-key="${key}"]`);
+    const fichasElegidas = sel ? parseInt(sel.value) : 1;
+    const filas = (fichasElegidas > 1) ? fichasElegidas : 1;
+    const cantidadCadaUna = (fichasElegidas > 1) ? 1 : qty;
     for (let n = 1; n <= filas; n++) {
       agregarFilaEquipo({
         nombre,
         sku: l.sku || '',
-        serie: '(auto)',
+        serie: _serieTmpAuto(l.sku),       // Visible y único, editable
         cantidad: cantidadCadaUna,
         doc_origen: l.doc_origen || '',
         doc_fecha: l.doc_fecha || l.fecha || '',
@@ -2127,12 +2131,36 @@ async function buscarDocErp() {
       return;
     }
 
+    // Validación: ¿este documento ya fue agregado a la lista de equipos?
+    const docOrigKey = `${tido} ${nudo}`;
+    const yaAgregadosCount = Array.from(document.querySelectorAll('#equiposTbody [data-field="doc_origen"]'))
+      .filter(el => el.value === docOrigKey).length;
+    let dupBanner = '';
+    if (yaAgregadosCount > 0) {
+      dupBanner = `<div class="alert alert-warning py-2 mb-2" style="font-size:.82rem">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        Este documento <strong>${docOrigKey}</strong> ya tiene <strong>${yaAgregadosCount}</strong> equipo(s) en tu lista.
+        Si seleccionas e importas, se agregarán de nuevo. Marca solo lo que falte.
+      </div>`;
+    }
+
+    // Guardar items en variable global para que erpEqToggle no dependa de inline JSON
+    window._docItems = data.items.map(it => ({
+      sku: it.sku || '',
+      nombre: it.nombre || '',
+      cantidad: parseInt(it.cantidad) || 1,
+      doc_origen: docOrigKey,
+      doc_fecha: data.fecha || '',
+      rut: data.rut || '',
+      cliente_doc: data.cliente || ''
+    }));
+
     // Header del documento
-    let html = `<div class="alert alert-success py-2 mb-3" style="font-size:.82rem">
+    let html = dupBanner + `<div class="alert alert-success py-2 mb-3" style="font-size:.82rem">
       <strong><i class="bi bi-check-circle me-1"></i>${data.tido} ${data.nudo}</strong>
       ${data.fecha ? ` — ${data.fecha}` : ''}
-      ${data.cliente ? ` &nbsp;·&nbsp; <strong>${data.cliente}</strong>` : ''}
-      ${data.rut ? ` (${data.rut})` : ''}
+      ${data.cliente ? ` &nbsp;·&nbsp; <strong>${esc(data.cliente)}</strong>` : ''}
+      ${data.rut ? ` (${esc(data.rut)})` : ''}
     </div>`;
 
     html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.82rem">
@@ -2140,23 +2168,29 @@ async function buscarDocErp() {
         <th style="width:36px"></th>
         <th style="width:110px">SKU</th>
         <th>Producto</th>
-        <th style="width:60px;text-align:center">Cant.</th>
+        <th style="width:90px;text-align:center">Cant.</th>
+        <th style="width:140px;text-align:center" title="Si tiene cantidad &gt; 1, ¿crear N fichas individuales con N° serie único?">Crear<br>fichas</th>
       </tr></thead><tbody>`;
 
     data.items.forEach((it, i) => {
       const key = `doc-${tido}-${nudo}-${i}`;
-      const ld = JSON.stringify({
-        sku: it.sku, nombre: it.nombre, cantidad: it.cantidad,
-        doc_origen: `${tido} ${nudo}`,
-        doc_fecha: data.fecha,
-        rut: data.rut || '',          // RUT del documento (para validar mismatch)
-        cliente_doc: data.cliente || ''
-      }).replace(/"/g,'&quot;');
+      const qty = parseInt(it.cantidad) || 1;
+      const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(it.nombre || '');
+      // Default: si tiene 1 unidad, crear 1 ficha. Si tiene >1 y NO es bulk, sugerir N fichas
+      const expandirDefault = qty > 1 && !esBulk;
+      // Por defecto, si es bulk con cantidad alta (ej: 16 discos), preferimos 1 ficha con cant=N
+      const opciones = qty > 1
+        ? `<select class="form-select form-select-sm" data-fichas-key="${key}" style="font-size:.72rem">
+              <option value="1" ${!expandirDefault ? 'selected' : ''}>1 ficha (cant. ${qty})</option>
+              <option value="${qty}" ${expandirDefault ? 'selected' : ''}>${qty} fichas individuales</option>
+           </select>`
+        : `<span class="text-muted small">1 ficha</span>`;
       html += `<tr>
-        <td><input type="checkbox" class="form-check-input" onchange="erpEqToggle('${key}',${ld},this.checked)"></td>
-        <td class="font-monospace text-primary fw-bold">${it.sku||'—'}</td>
-        <td>${it.nombre}</td>
-        <td class="text-center">${it.cantidad}</td>
+        <td><input type="checkbox" class="form-check-input wz-doc-chk" data-key="${key}" data-idx="${i}"></td>
+        <td class="font-monospace text-primary fw-bold">${esc(it.sku||'—')}</td>
+        <td>${esc(it.nombre)}</td>
+        <td class="text-center"><strong>${qty}</strong></td>
+        <td class="text-center">${opciones}</td>
       </tr>`;
     });
     html += '</tbody></table></div>';
@@ -2178,6 +2212,22 @@ async function buscarDocErp() {
       document.getElementById('s1_rut').value = data.rut;
     }
 
+    // Conectar event delegation para los checkboxes (más robusto que onclick inline)
+    cont.querySelectorAll('.wz-doc-chk').forEach(chk => {
+      chk.addEventListener('change', function() {
+        const idx = parseInt(this.dataset.idx);
+        const key = this.dataset.key;
+        const item = (window._docItems || [])[idx];
+        if (!item) return;
+        if (this.checked) {
+          erpEqSel[key] = {...item};
+        } else {
+          delete erpEqSel[key];
+        }
+        document.getElementById('erpEqCount').textContent = `${Object.keys(erpEqSel).length} seleccionadas`;
+      });
+    });
+
   } catch(e) {
     cont.innerHTML=`<div class="text-center text-danger py-3">Error de red: ${e.message}</div>`;
   }
@@ -2185,8 +2235,11 @@ async function buscarDocErp() {
 
 function docSelAll(tido, nudo, count) {
   const cont = document.getElementById('docErpRes');
-  cont.querySelectorAll('input[type=checkbox]').forEach(chk => {
-    if(!chk.checked) chk.click();
+  cont.querySelectorAll('.wz-doc-chk').forEach(chk => {
+    if(!chk.checked) {
+      chk.checked = true;
+      chk.dispatchEvent(new Event('change'));
+    }
   });
 }
 

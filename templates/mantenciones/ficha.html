@@ -3945,13 +3945,13 @@ function abrirEmailManual() {
 {# ════════════════════════════════════════════════════════════════════════
    Modal: Productos del documento ERP (selección + expansión inteligente)
 ══════════════════════════════════════════════════════════════════════════ #}
-<div class="modal fade" id="modalErpProductos" tabindex="-1" data-bs-backdrop="static">
+<div class="modal fade" id="modalErpProductos" tabindex="-1" data-bs-backdrop="static" style="z-index:1080">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+    <div class="modal-content" style="border:3px solid var(--ilus-red);box-shadow:0 0 60px rgba(0,0,0,.5)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-red) 0%,#990000 100%);color:#fff">
         <h5 class="modal-title fw-bold">
           <i class="bi bi-box-seam me-2"></i>Productos del documento
-          <span id="ep_docTitulo" class="ms-2 fw-normal" style="font-size:.8rem;opacity:.85"></span>
+          <span id="ep_docTitulo" class="ms-2 fw-normal" style="font-size:.85rem;opacity:.95;background:rgba(0,0,0,.25);padding:3px 10px;border-radius:50px"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
