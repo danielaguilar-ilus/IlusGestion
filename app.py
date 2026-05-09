@@ -2149,9 +2149,12 @@ def _open_smtp_client(host: str, port: int, secure: bool, timeout: int = 15, con
 
 
 def _get_resend_cfg() -> dict:
-    """Resend deshabilitado: devuelve siempre vacío (el sistema usa SMTP)."""
-    return {"api_key": "", "from_addr": "", "_source": ""}
-    # ── código legacy abajo, ya no se ejecuta ─────────────────────────
+    """
+    Devuelve configuración de Resend API.
+    Resend es necesario en hosting cloud (Railway, Heroku) porque Gmail/SMTP
+    típicamente bloquea o limita conexiones desde rangos IP de proveedores cloud.
+    Prioridad: env vars (Railway) → BD (configurado vía front).
+    """
     # 1. Env var (Railway / Docker / local .env)
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if api_key:
@@ -2171,7 +2174,79 @@ def _get_resend_cfg() -> dict:
             }
     except Exception:
         pass
-    return {}
+    return {"api_key": "", "from_addr": "", "_source": ""}
+
+
+def _send_via_resend(to, subject: str, html: str, from_addr: str = None) -> bool:
+    """
+    Envía email vía API HTTPS de Resend (no usa puertos SMTP).
+    Funciona desde cualquier IP, incluyendo cloud hosting (Railway, Heroku, AWS).
+
+    En caso de fallo, deja info en `g._last_resend_error` (dict con message/http_code/raw_body).
+    """
+    import urllib.request as _ur
+    import urllib.error as _ue
+
+    cfg = _get_resend_cfg()
+    if not cfg.get("api_key"):
+        g._last_resend_error = {
+            "name": "no_config",
+            "message": "RESEND_API_KEY no está configurada (env var o BD).",
+            "http_code": 0, "status_code": 0, "raw_body": "",
+        }
+        return False
+
+    sender = (from_addr or cfg.get("from_addr") or "onboarding@resend.dev").strip()
+    recipients = [to] if isinstance(to, str) else list(to)
+    payload = json.dumps({
+        "from": sender,
+        "to": recipients,
+        "subject": subject,
+        "html": html,
+    }).encode("utf-8")
+
+    req = _ur.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {cfg['api_key']}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with _ur.urlopen(req, timeout=20) as resp:
+            print(f"[ILUS][RESEND] Email enviado a {recipients} (HTTP {resp.status}, source={cfg.get('_source')})")
+            g._last_resend_error = None
+            return True
+    except _ue.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        try:
+            err_data = json.loads(body) if body else {}
+        except Exception:
+            err_data = {}
+        g._last_resend_error = {
+            "name":        err_data.get("name", ""),
+            "message":     err_data.get("message", str(e)),
+            "http_code":   e.code,
+            "status_code": e.code,
+            "raw_body":    body[:600],
+        }
+        print(f"[ILUS][RESEND] HTTP {e.code} — {body[:200]}")
+        return False
+    except Exception as e:
+        g._last_resend_error = {
+            "name":      "exception",
+            "message":   str(e),
+            "http_code": 0, "status_code": 0,
+            "raw_body":  "",
+        }
+        print(f"[ILUS][RESEND] Excepción: {e}")
+        return False
 
 
 def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=None):
@@ -2213,7 +2288,41 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *, evento: str 
 
 
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
-    """Implementación real (renombrada para wrap)."""
+    """
+    Implementación real con fallback inteligente:
+      1) Resend API (HTTPS) — funciona desde cloud hosting (Railway, Heroku)
+      2) SMTP — fallback si Resend no está configurado o falla
+
+    Esto resuelve el bug "el email funciona en local pero no en Railway":
+    Gmail bloquea/limita conexiones SMTP desde IPs cloud, pero acepta emails
+    enviados vía Resend porque pasan por sus propios MTAs ya whitelisted.
+    """
+    # ── 1. Intento Resend primero (si está configurado) ─────────────────
+    resend_cfg = _get_resend_cfg()
+    if resend_cfg.get("api_key"):
+        # Si el remitente Resend está configurado, lo usamos. Si no, dejamos el default
+        # de Resend (onboarding@resend.dev) ya manejado por _send_via_resend.
+        from_for_resend = None
+        try:
+            smtp_cfg = _get_smtp_cfg()
+            from_name = smtp_cfg.get("from_name", "ILUS Sport & Health")
+            from_addr = smtp_cfg.get("from_addr") or resend_cfg.get("from_addr")
+            if from_addr:
+                from_for_resend = f"{from_name} <{from_addr}>"
+        except Exception:
+            pass
+
+        if _send_via_resend(to_addr, subject, html_body, from_addr=from_for_resend):
+            return True
+        # Resend falló — guardar error legible y caer a SMTP
+        err = getattr(g, "_last_resend_error", None) or {}
+        try:
+            g._last_email_error = f"Resend: {err.get('message','fallo')} (HTTP {err.get('http_code',0)})"
+        except Exception:
+            pass
+        print(f"[ILUS][EMAIL] Resend falló, intento SMTP como fallback…")
+
+    # ── 2. Fallback a SMTP ──────────────────────────────────────────────
     try:
         cfg = _get_smtp_cfg()
     except Exception:
