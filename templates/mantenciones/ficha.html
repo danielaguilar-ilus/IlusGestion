@@ -1982,8 +1982,18 @@ function abrirVisitaMulti() {
   document.getElementById('vm_tipo').value = 'preventiva';
   document.getElementById('vm_estado').value = 'operativo';
   document.getElementById('vm_motivo').value = '';
-  document.getElementById('vm_tecnico').value = '';
   document.getElementById('vm_titulo').value = '';
+  document.getElementById('vm_observaciones').value = '';
+  document.getElementById('vm_hora_inicio').value = '';
+  document.getElementById('vm_hora_fin').value = '';
+  document.getElementById('vm_costo').value = '';
+  // Resumen de cantidad para el alert al pie
+  const resumen = document.getElementById('vm_count_resumen');
+  if (resumen) resumen.textContent = seleccionados.length + ' ';
+  // Reset técnico (el dropdown se llena async)
+  const tecSel = document.getElementById('vm_tecnico_id');
+  if (tecSel) tecSel.value = '';
+  vmCargarTecnicos();
   vmActualizarFechaPorTipo();
 
   if (!window._modalVisitaMulti) {
@@ -1992,17 +2002,42 @@ function abrirVisitaMulti() {
   window._modalVisitaMulti.show();
 }
 
+// Fecha por defecto: hoy + 48 horas (independiente del tipo de visita).
+// El estado sí se sugiere según el tipo (garantía → crítico, etc.)
 function vmActualizarFechaPorTipo() {
-  const dias = {garantia:3, correctiva:5, preventiva:14, inspeccion:7};
   const tipo = document.getElementById('vm_tipo').value;
-  const f = new Date(); f.setDate(f.getDate() + (dias[tipo] || 3));
-  document.getElementById('vm_fecha').value = f.toISOString().slice(0,10);
+  // Fecha siempre +48h (solo se modifica si la fecha está vacía o si es superadmin)
+  const fechaInput = document.getElementById('vm_fecha');
+  const isSuper = {{ 'true' if permissions.superadmin else 'false' }};
+  if (!fechaInput.value || isSuper === false) {
+    const f = new Date(); f.setDate(f.getDate() + 2);
+    fechaInput.value = f.toISOString().slice(0,10);
+  }
   // Sugerir estado por tipo
   const estadoSug = {garantia:'critico', correctiva:'en_mantencion', preventiva:'operativo', inspeccion:'operativo'};
   document.getElementById('vm_estado').value = estadoSug[tipo] || 'operativo';
   // Resumen
   const labels = {garantia:'Cambio/Garantía', correctiva:'Correctiva', preventiva:'Mantención preventiva', inspeccion:'Inspección/Levantamiento'};
   document.getElementById('vm_tipo_label').textContent = labels[tipo] || tipo;
+}
+
+// Carga el dropdown de técnicos (solo activos). Se cachea en window._tecnicosCache.
+async function vmCargarTecnicos() {
+  const sel = document.getElementById('vm_tecnico_id');
+  if (!sel || sel.dataset.loaded === '1') return;
+  try {
+    const r = await fetch('/mantenciones/api/tecnicos');
+    const list = await r.json();
+    sel.innerHTML = '<option value="">— Sin asignar —</option>' +
+      list.map(t => {
+        const sub = t.especialidad ? ` · ${t.especialidad}` : '';
+        const niv = t.nivel ? ` [${t.nivel}]` : '';
+        return `<option value="${t.id}">${t.nombre}${niv}${sub}</option>`;
+      }).join('');
+    sel.dataset.loaded = '1';
+  } catch(e) {
+    sel.innerHTML = '<option value="">Error cargando técnicos</option>';
+  }
 }
 
 async function confirmarVisitaMulti() {
@@ -2012,6 +2047,11 @@ async function confirmarVisitaMulti() {
   if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
   const fecha = document.getElementById('vm_fecha').value;
   if (!fecha) { alert('La fecha es obligatoria'); return; }
+
+  // Validación: hora_fin > hora_inicio si ambas están
+  const hi = document.getElementById('vm_hora_inicio').value;
+  const hf = document.getElementById('vm_hora_fin').value;
+  if (hi && hf && hf <= hi) { alert('La hora de fin debe ser posterior a la hora de inicio'); return; }
 
   const btn = document.getElementById('vm_btn');
   const orig = btn.innerHTML;
@@ -2025,15 +2065,19 @@ async function confirmarVisitaMulti() {
         maquina_ids: ids,
         tipo_visita: document.getElementById('vm_tipo').value,
         fecha_programada: fecha,
+        hora_inicio: hi || null,
+        hora_fin:    hf || null,
+        costo:       document.getElementById('vm_costo').value || null,
         motivo,
+        observaciones: document.getElementById('vm_observaciones').value.trim(),
         estado_nuevo: document.getElementById('vm_estado').value,
-        tecnico: document.getElementById('vm_tecnico').value.trim(),
-        titulo: document.getElementById('vm_titulo').value.trim(),
+        tecnico_id:   document.getElementById('vm_tecnico_id').value || null,
+        titulo:       document.getElementById('vm_titulo').value.trim(),
       })
     });
-    const d = await r.json();
-    if (!d.ok) {
-      alert('Error: ' + (d.error || ''));
+    const d = await r.json().catch(() => ({error: 'respuesta no válida'}));
+    if (!r.ok || !d.ok) {
+      alert('Error: ' + (d.error || 'no se pudo crear la visita'));
       btn.disabled = false; btn.innerHTML = orig;
       return;
     }
@@ -3715,10 +3759,11 @@ function abrirEmailManual() {
       <table class="table table-sm mb-0" style="font-size:.82rem">
         <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
           <tr>
-            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha</th>
+            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha / hora</th>
             <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Título</th>
             <th class="py-2 d-none d-sm-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Tipo</th>
             <th class="py-2 d-none d-md-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Técnico</th>
+            <th class="py-2 d-none d-lg-table-cell text-end" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Costo</th>
             <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Estado</th>
             <th class="py-2"></th>
           </tr>
@@ -3728,6 +3773,12 @@ function abrirEmailManual() {
         <tr style="border-bottom:1px solid #f3f4f6;transition:background .1s" onmouseover="this.style.background='#fafbfc'" onmouseout="this.style.background=''">
           <td class="ps-3 py-2 font-monospace" style="white-space:nowrap;color:#374151">
             {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+            {% if v.hora_inicio or v.hora_fin %}
+            <div style="font-size:.7rem;color:#9ca3af;font-weight:600">
+              {% if v.hora_inicio %}{{ v.hora_inicio.strftime('%H:%M') if v.hora_inicio.__class__.__name__ != 'str' else v.hora_inicio }}{% endif %}
+              {% if v.hora_fin %} – {{ v.hora_fin.strftime('%H:%M') if v.hora_fin.__class__.__name__ != 'str' else v.hora_fin }}{% endif %}
+            </div>
+            {% endif %}
           </td>
           <td class="py-2 fw-semibold" style="color:#0f172a">
             {{ v.titulo or (v.tipo.capitalize() + ' programada') }}
@@ -3743,7 +3794,19 @@ function abrirEmailManual() {
               {{ v.tipo.title() if v.tipo else '—' }}
             </span>
           </td>
-          <td class="py-2 d-none d-md-table-cell" style="color:#6b7280">{{ v.tecnico or '—' }}</td>
+          <td class="py-2 d-none d-md-table-cell" style="color:#6b7280">
+            {% if v.tecnico_id %}
+              <a href="{{ url_for('mant_tecnico_ficha', tid=v.tecnico_id) }}"
+                 class="text-decoration-none" style="color:#1d4ed8">
+                <i class="bi bi-person-badge me-1"></i>{{ v.tecnico or 'Técnico' }}
+              </a>
+            {% else %}
+              {{ v.tecnico or '—' }}
+            {% endif %}
+          </td>
+          <td class="py-2 d-none d-lg-table-cell text-end font-monospace" style="color:#374151">
+            {% if v.costo %}${{ '{:,.0f}'.format(v.costo).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
           <td class="py-2">
             <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>
           </td>
@@ -4587,13 +4650,52 @@ function abrirEmailManual() {
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
               Fecha programada <span class="text-danger">*</span>
+              {% if not permissions.superadmin %}
+              <i class="bi bi-lock-fill ms-1 text-muted" title="Solo superadmin puede modificar la fecha"></i>
+              {% endif %}
             </label>
-            <input type="date" id="vm_fecha" class="form-control">
-            <div class="form-text small">Default según tipo: preventiva +14d, garantía +3d, etc.</div>
+            <input type="date" id="vm_fecha" class="form-control"
+                   {% if not permissions.superadmin %}readonly{% endif %}>
+            <div class="form-text small">
+              {% if permissions.superadmin %}
+                Default: hoy + 48 horas
+              {% else %}
+                Fija en hoy + 48 horas (solo superadmin puede cambiarla)
+              {% endif %}
+            </div>
           </div>
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">Técnico asignado</label>
-            <input type="text" id="vm_tecnico" class="form-control" placeholder="Nombre del técnico (opcional)">
+            <select id="vm_tecnico_id" class="form-select">
+              <option value="">— Sin asignar —</option>
+            </select>
+            <div class="form-text small">
+              <a href="{{ url_for('mant_tecnicos_index') }}" target="_blank">
+                <i class="bi bi-plus-circle me-1"></i>Crear técnico nuevo
+              </a>
+            </div>
+          </div>
+
+          {# Horario de la visita #}
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Hora inicio</label>
+            <input type="time" id="vm_hora_inicio" class="form-control">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Hora fin</label>
+            <input type="time" id="vm_hora_fin" class="form-control">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Costo estimado (CLP)
+              <span class="text-muted fw-normal" style="font-size:.72rem">(opcional)</span>
+            </label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="number" id="vm_costo" class="form-control" min="0" step="1000"
+                     placeholder="0">
+            </div>
+            <div class="form-text small">Mano de obra + traslado. Repuestos se registran aparte.</div>
           </div>
 
           <div class="col-12">
@@ -4614,6 +4716,15 @@ function abrirEmailManual() {
             <div class="form-text small">
               Mínimo 8 caracteres. Se incluye en la descripción de la visita y queda en el log.
             </div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Observaciones internas
+              <span class="text-muted fw-normal" style="font-size:.72rem">(opcional, no se envía al cliente)</span>
+            </label>
+            <textarea id="vm_observaciones" class="form-control" rows="2" maxlength="1000"
+                      placeholder="Notas internas, riesgos, repuestos necesarios, etc."></textarea>
           </div>
         </div>
 

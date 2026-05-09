@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block title %}{{ tecnico.nombre }} — Técnico{% endblock %}
+{% block content %}
+<style>
+.tf-hero{
+  background:linear-gradient(135deg,#1a1a1a 0%,#2a2a2a 100%);
+  color:#fff;border-radius:14px;padding:24px 26px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+}
+.tf-avatar{
+  width:88px;height:88px;border-radius:50%;
+  background:#fff;color:#111827;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:2rem;flex-shrink:0;
+  background-size:cover;background-position:center;
+  border:3px solid var(--ilus-red);
+}
+.tf-pill{display:inline-flex;align-items:center;gap:4px;
+  font-size:.65rem;font-weight:700;letter-spacing:.04em;
+  padding:3px 9px;border-radius:50px;text-transform:uppercase;}
+.tf-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;height:100%}
+.tf-stat{font-size:1.6rem;font-weight:800;color:#111827;line-height:1}
+.tf-stat-lbl{font-size:.62rem;font-weight:700;letter-spacing:.06em;
+             text-transform:uppercase;color:#9ca3af;margin-bottom:4px}
+.tf-info-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:.86rem}
+.tf-info-row:last-child{border-bottom:none}
+.tf-info-lbl{color:#6b7280;font-weight:600}
+.tf-info-val{color:#111827;font-weight:700;text-align:right}
+.tf-edit-input{border:1px solid transparent;background:transparent;text-align:right;font-weight:700;color:#111827;width:60%;padding:2px 4px;border-radius:4px}
+.tf-edit-input:hover{border-color:#e5e7eb;background:#f9fafb}
+.tf-edit-input:focus{border-color:var(--ilus-red);background:#fff;outline:none}
+.bx{display:inline-flex;align-items:center;gap:4px;font-size:.62rem;font-weight:700;
+    letter-spacing:.04em;padding:2px 8px;border-radius:50px}
+.bx-prog{background:#fef3c7;color:#92400e}
+.bx-comp{background:#dcfce7;color:#166534}
+.bx-canc{background:#fee2e2;color:#991b1b}
+.bx-reag{background:#dbeafe;color:#1d4ed8}
+</style>
+
+{# ── BREADCRUMB / HEADER ─────────────────────────────────────────────── #}
+<div class="d-flex align-items-center gap-2 mb-2 small text-muted">
+  <a href="{{ url_for('mant_clientes') }}" class="text-decoration-none text-muted">Mantenciones</a>
+  <span>/</span>
+  <a href="{{ url_for('mant_tecnicos_index') }}" class="text-decoration-none text-muted">Técnicos</a>
+  <span>/</span>
+  <span class="fw-semibold text-dark">{{ tecnico.nombre }}</span>
+</div>
+
+{# ── HERO ────────────────────────────────────────────────────────────── #}
+<div class="tf-hero">
+  <div class="d-flex align-items-start gap-3 flex-wrap">
+    <div class="tf-avatar"
+         {% if tecnico.foto_url %}style="background-image:url('{{ tecnico.foto_url }}')"{% endif %}>
+      {% if not tecnico.foto_url %}{{ (tecnico.nombre or '?')[0]|upper }}{% endif %}
+    </div>
+    <div class="flex-grow-1">
+      <h4 class="mb-1 fw-bold">{{ tecnico.nombre }}</h4>
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+        <span class="tf-pill"
+              style="background:{% if tecnico.nivel=='senior' %}#dcfce7;color:#166534{% elif tecnico.nivel=='externo' %}#fef3c7;color:#92400e{% else %}#dbeafe;color:#1d4ed8{% endif %}">
+          {{ tecnico.nivel or 'junior' }}
+        </span>
+        {% if not tecnico.activo %}
+        <span class="tf-pill" style="background:#f3f4f6;color:#6b7280">Inactivo</span>
+        {% endif %}
+        {% if tecnico.es_externo %}
+        <span class="tf-pill" style="background:#fff7ed;color:#c2410c">Externo</span>
+        {% endif %}
+        {% if tecnico.especialidad %}
+        <span class="text-white-50" style="font-size:.85rem">
+          <i class="bi bi-tools me-1"></i>{{ tecnico.especialidad }}
+        </span>
+        {% endif %}
+      </div>
+      <div class="d-flex flex-wrap gap-3 small text-white-50">
+        {% if tecnico.telefono %}<span><i class="bi bi-telephone me-1"></i>{{ tecnico.telefono }}</span>{% endif %}
+        {% if tecnico.email %}<span><i class="bi bi-envelope me-1"></i>{{ tecnico.email }}</span>{% endif %}
+        {% if tecnico.comuna %}<span><i class="bi bi-geo-alt me-1"></i>{{ tecnico.comuna }}{% if tecnico.region %}, {{ tecnico.region }}{% endif %}</span>{% endif %}
+        {% if tecnico.empresa_externa %}<span><i class="bi bi-building me-1"></i>{{ tecnico.empresa_externa }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="d-flex flex-column gap-2">
+      <button class="btn btn-sm btn-outline-light" onclick="toggleActivo()">
+        <i class="bi bi-{% if tecnico.activo %}pause-circle{% else %}play-circle{% endif %} me-1"></i>
+        {% if tecnico.activo %}Desactivar{% else %}Activar{% endif %}
+      </button>
+      {% if permissions.superadmin %}
+      <button class="btn btn-sm btn-outline-danger" onclick="eliminarTecnico()">
+        <i class="bi bi-trash me-1"></i>Eliminar
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── STATS ───────────────────────────────────────────────────────────── #}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="tf-card">
+      <div class="tf-stat-lbl">Visitas totales</div>
+      <div class="tf-stat">{{ stats.total or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="tf-card">
+      <div class="tf-stat-lbl">Programadas</div>
+      <div class="tf-stat" style="color:#c2410c">{{ stats.programadas or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="tf-card">
+      <div class="tf-stat-lbl">Completadas</div>
+      <div class="tf-stat" style="color:#166534">{{ stats.completadas or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="tf-card">
+      <div class="tf-stat-lbl">Costo acumulado</div>
+      <div class="tf-stat" style="font-size:1.2rem">
+        ${{ '{:,.0f}'.format(stats.costo_total or 0).replace(',', '.') }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── COL IZQUIERDA: DATOS EDITABLES ──────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="tf-card">
+      <h6 class="fw-bold mb-3">
+        <i class="bi bi-person-vcard me-1" style="color:var(--ilus-red)"></i>Datos del técnico
+      </h6>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Nombre</span>
+        <input class="tf-edit-input" data-field="nombre" value="{{ tecnico.nombre or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">RUT</span>
+        <input class="tf-edit-input" data-field="rut" value="{{ tecnico.rut or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Especialidad</span>
+        <input class="tf-edit-input" data-field="especialidad" value="{{ tecnico.especialidad or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Nivel</span>
+        <select class="tf-edit-input" data-field="nivel">
+          <option value="junior"  {% if tecnico.nivel=='junior' %}selected{% endif %}>Junior</option>
+          <option value="senior"  {% if tecnico.nivel=='senior' %}selected{% endif %}>Senior</option>
+          <option value="externo" {% if tecnico.nivel=='externo' %}selected{% endif %}>Externo</option>
+        </select>
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Tarifa visita</span>
+        <input class="tf-edit-input" data-field="tarifa_visita" type="number" min="0"
+               value="{{ tecnico.tarifa_visita or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Teléfono</span>
+        <input class="tf-edit-input" data-field="telefono" value="{{ tecnico.telefono or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Email</span>
+        <input class="tf-edit-input" data-field="email" value="{{ tecnico.email or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Dirección</span>
+        <input class="tf-edit-input" data-field="direccion" value="{{ tecnico.direccion or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Comuna</span>
+        <input class="tf-edit-input" data-field="comuna" value="{{ tecnico.comuna or '' }}">
+      </div>
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Región</span>
+        <input class="tf-edit-input" data-field="region" value="{{ tecnico.region or '' }}">
+      </div>
+      {% if tecnico.es_externo %}
+      <div class="tf-info-row">
+        <span class="tf-info-lbl">Empresa</span>
+        <input class="tf-edit-input" data-field="empresa_externa" value="{{ tecnico.empresa_externa or '' }}">
+      </div>
+      {% endif %}
+      <div class="mt-3">
+        <label class="tf-info-lbl d-block mb-1">Notas internas</label>
+        <textarea class="form-control form-control-sm" rows="3" data-field="notas">{{ tecnico.notas or '' }}</textarea>
+      </div>
+      <div class="text-end mt-3">
+        <button class="btn btn-sm btn-ilus" onclick="guardarCambios()">
+          <i class="bi bi-check-circle me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ── COL DERECHA: HISTORIAL DE VISITAS ───────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="tf-card">
+      <h6 class="fw-bold mb-3">
+        <i class="bi bi-calendar-week me-1" style="color:var(--ilus-red)"></i>
+        Historial de visitas asignadas
+        <span class="badge bg-secondary ms-2" style="font-size:.65rem">{{ visitas|length }}</span>
+      </h6>
+      {% if visitas %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" style="font-size:.85rem">
+          <thead style="background:#fafafa;border-bottom:2px solid #e5e7eb">
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Tipo</th>
+              <th>Estado</th>
+              <th class="text-end">Costo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in visitas %}
+            <tr>
+              <td class="fw-semibold">{{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}</td>
+              <td>
+                <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" class="text-decoration-none">
+                  {{ v.razon_social }}
+                </a>
+              </td>
+              <td><span class="text-muted">{{ v.tipo or '—' }}</span></td>
+              <td>
+                <span class="bx bx-{{ {'programada':'prog','completada':'comp','cancelada':'canc','reagendada':'reag'}[v.estado] }}">
+                  {{ v.estado }}
+                </span>
+              </td>
+              <td class="text-end fw-semibold">
+                {% if v.costo %}${{ '{:,.0f}'.format(v.costo).replace(',', '.') }}{% else %}—{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-4 text-muted">
+        <i class="bi bi-calendar-x" style="font-size:2rem;opacity:.4"></i>
+        <div class="mt-2 small">Sin visitas asignadas todavía</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+const TID = {{ tecnico.id }};
+
+async function guardarCambios(){
+  const data = {};
+  document.querySelectorAll('[data-field]').forEach(el => {
+    const k = el.getAttribute('data-field');
+    let v = el.value;
+    if (el.type === 'number') v = v === '' ? null : parseFloat(v);
+    data[k] = v;
+  });
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos/${TID}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || 'no se pudo guardar')); return; }
+    location.reload();
+  } catch(e){ alert('Error de red: ' + e.message); }
+}
+
+async function toggleActivo(){
+  const nuevo = {{ 0 if tecnico.activo else 1 }};
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos/${TID}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({activo: nuevo})
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || '')); return; }
+    location.reload();
+  } catch(e){ alert('Error de red: ' + e.message); }
+}
+
+async function eliminarTecnico(){
+  if (!confirm('¿Eliminar este técnico?\n\nSi tiene visitas históricas, solo se desactivará.')) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos/${TID}`, { method:'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || '')); return; }
+    if (d.soft) {
+      alert('El técnico tiene visitas históricas y fue desactivado en lugar de eliminado.');
+      location.reload();
+    } else {
+      location.href = '{{ url_for("mant_tecnicos_index") }}';
+    }
+  } catch(e){ alert('Error de red: ' + e.message); }
+}
+</script>
+
+{% endblock %}

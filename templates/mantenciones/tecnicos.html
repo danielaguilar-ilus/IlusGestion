@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% block title %}Técnicos — Mantenciones ILUS{% endblock %}
+{% block content %}
+<style>
+.tk-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:18px;height:100%;cursor:pointer;
+  transition:box-shadow .15s,border-color .15s,transform .15s;
+}
+.tk-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.09);border-color:#d1d5db;transform:translateY(-1px)}
+.tk-card.inactivo{opacity:.55;background:#fafafa}
+.tk-avatar{
+  width:56px;height:56px;border-radius:50%;background:#f3f4f6;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:1.15rem;color:#374151;flex-shrink:0;
+  background-size:cover;background-position:center;
+}
+.tk-nivel{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:.62rem;font-weight:700;letter-spacing:.04em;
+  padding:3px 9px;border-radius:50px;text-transform:uppercase;
+}
+.tk-nivel-junior {background:#dbeafe;color:#1d4ed8}
+.tk-nivel-senior {background:#dcfce7;color:#166534}
+.tk-nivel-externo{background:#fef3c7;color:#92400e}
+.tk-stat{font-size:.84rem;font-weight:700;color:#111827}
+.tk-stat-lbl{font-size:.62rem;font-weight:700;letter-spacing:.05em;
+             text-transform:uppercase;color:#9ca3af}
+.kpi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:14px 16px;display:flex;align-items:center;gap:12px;height:100%;
+}
+.kpi-icon{
+  width:42px;height:42px;border-radius:10px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.2rem;
+}
+.kpi-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;
+         letter-spacing:.06em;color:#9ca3af;margin-bottom:2px}
+.kpi-num{font-size:1.7rem;font-weight:800;color:#111827;line-height:1}
+.filter-bar{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px}
+</style>
+
+{# ── PAGE HEADER (mismo patrón que clientes.html) ────────────────────── #}
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0 fw-bold">
+      <i class="bi bi-person-badge-fill me-2" style="color:var(--ilus-red)"></i>Técnicos de Mantención
+    </h4>
+    <p class="text-muted mb-0 small">Catálogo de técnicos asignables a visitas — ficha individual con historial</p>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Clientes
+    </a>
+    <button class="btn btn-ilus fw-bold px-3" data-bs-toggle="modal" data-bs-target="#modalNuevoTecnico">
+      <i class="bi bi-person-plus-fill me-1"></i>Nuevo técnico
+    </button>
+  </div>
+</div>
+
+{# ── KPIs ────────────────────────────────────────────────────────────── #}
+{%- set total_v   = tecnicos|length %}
+{%- set activos_v = tecnicos|selectattr('activo','equalto',1)|list|length %}
+{%- set externos_v = tecnicos|selectattr('es_externo','equalto',1)|list|length %}
+{%- set senior_v  = tecnicos|selectattr('nivel','equalto','senior')|list|length %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e8eaf6;color:#3949ab"><i class="bi bi-people-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Total</div>
+        <div class="kpi-num">{{ total_v }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-check-circle-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Activos</div>
+        <div class="kpi-num">{{ activos_v }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#fff3e0;color:#e65100"><i class="bi bi-building-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Externos</div>
+        <div class="kpi-num">{{ externos_v }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#fce4ec;color:#c2185b"><i class="bi bi-award-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Senior</div>
+        <div class="kpi-num">{{ senior_v }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── FILTROS ─────────────────────────────────────────────────────────── #}
+<form method="get" class="filter-bar mb-3">
+  <div class="row g-2 align-items-center">
+    <div class="col-12 col-md-6">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+        <input type="text" name="q" class="form-control" placeholder="Buscar por nombre, RUT, email o especialidad…"
+               value="{{ filtros.q or '' }}">
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <select name="estado" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="activo"   {% if filtros.estado=='activo' %}selected{% endif %}>Solo activos</option>
+        <option value="inactivo" {% if filtros.estado=='inactivo' %}selected{% endif %}>Solo inactivos</option>
+        <option value="todos"    {% if filtros.estado=='todos' %}selected{% endif %}>Todos</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3 text-end">
+      <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+      {% if filtros.q or filtros.estado != 'activo' %}
+      <a class="btn btn-sm btn-link text-danger" href="{{ url_for('mant_tecnicos_index') }}">Limpiar</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{# ── GRID ────────────────────────────────────────────────────────────── #}
+{% if tecnicos %}
+<div class="row g-3">
+  {% for t in tecnicos %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="tk-card {% if not t.activo %}inactivo{% endif %}"
+         onclick="location.href='{{ url_for('mant_tecnico_ficha', tid=t.id) }}'">
+      <div class="d-flex align-items-start gap-3 mb-3">
+        <div class="tk-avatar"
+             {% if t.foto_url %}style="background-image:url('{{ t.foto_url }}')"{% endif %}>
+          {% if not t.foto_url %}{{ (t.nombre or '?')[0]|upper }}{% endif %}
+        </div>
+        <div class="flex-grow-1 min-w-0">
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+            <span class="fw-bold" style="font-size:.95rem">{{ t.nombre }}</span>
+            <span class="tk-nivel tk-nivel-{{ t.nivel or 'junior' }}">{{ t.nivel or 'junior' }}</span>
+            {% if not t.activo %}<span class="tk-nivel" style="background:#f3f4f6;color:#6b7280">inactivo</span>{% endif %}
+            {% if t.es_externo %}<span class="tk-nivel" style="background:#fef3c7;color:#92400e">externo</span>{% endif %}
+          </div>
+          <div class="small text-muted text-truncate">
+            {% if t.especialidad %}<i class="bi bi-tools me-1"></i>{{ t.especialidad }}{% else %}<span class="text-muted">Sin especialidad</span>{% endif %}
+          </div>
+          {% if t.empresa_externa %}
+          <div class="small text-muted text-truncate"><i class="bi bi-building me-1"></i>{{ t.empresa_externa }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if t.telefono or t.email %}
+      <div class="small text-muted mb-2">
+        {% if t.telefono %}<div><i class="bi bi-telephone me-1"></i>{{ t.telefono }}</div>{% endif %}
+        {% if t.email %}<div class="text-truncate"><i class="bi bi-envelope me-1"></i>{{ t.email }}</div>{% endif %}
+      </div>
+      {% endif %}
+
+      <div class="d-flex justify-content-between border-top pt-2">
+        <div>
+          <div class="tk-stat-lbl">Visitas</div>
+          <div class="tk-stat">{{ t.visitas_total or 0 }}</div>
+        </div>
+        <div>
+          <div class="tk-stat-lbl">Pendientes</div>
+          <div class="tk-stat" style="color:#c2410c">{{ t.visitas_pendientes or 0 }}</div>
+        </div>
+        <div class="text-end">
+          <div class="tk-stat-lbl">Tarifa</div>
+          <div class="tk-stat">
+            {% if t.tarifa_visita %}${{ '{:,.0f}'.format(t.tarifa_visita).replace(',', '.') }}{% else %}—{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5" style="color:#9ca3af">
+  <i class="bi bi-person-x" style="font-size:3rem;opacity:.4"></i>
+  <div class="mt-3 fw-semibold">No hay técnicos {% if filtros.q %}que coincidan con la búsqueda{% endif %}</div>
+  <div class="small">Crea el primer técnico para asignarlo a visitas</div>
+  <button class="btn btn-ilus mt-3" data-bs-toggle="modal" data-bs-target="#modalNuevoTecnico">
+    <i class="bi bi-person-plus-fill me-1"></i>Nuevo técnico
+  </button>
+</div>
+{% endif %}
+
+{# ─── MODAL: Nuevo técnico ─── #}
+<div class="modal fade" id="modalNuevoTecnico" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-person-plus-fill me-2" style="color:var(--ilus-red)"></i>Nuevo técnico
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12 col-md-8">
+            <label class="form-label fw-semibold small">Nombre completo <span class="text-danger">*</span></label>
+            <input type="text" id="nt_nombre" class="form-control" maxlength="200" placeholder="Ej: Lenin Aguirre">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold small">RUT</label>
+            <input type="text" id="nt_rut" class="form-control" maxlength="20" placeholder="11.111.111-1">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Especialidad</label>
+            <input type="text" id="nt_especialidad" class="form-control" maxlength="160"
+                   placeholder="Ej: Cardio, fuerza, eléctrico">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Nivel</label>
+            <select id="nt_nivel" class="form-select">
+              <option value="junior">Junior</option>
+              <option value="senior">Senior</option>
+              <option value="externo">Externo</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Tarifa visita (CLP)</label>
+            <input type="number" id="nt_tarifa" class="form-control" min="0" step="1000" placeholder="0">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Teléfono</label>
+            <input type="text" id="nt_telefono" class="form-control" maxlength="50" placeholder="+56 9 1234 5678">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Email</label>
+            <input type="email" id="nt_email" class="form-control" maxlength="200" placeholder="tecnico@ilus.cl">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Comuna</label>
+            <input type="text" id="nt_comuna" class="form-control" maxlength="100">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Región</label>
+            <input type="text" id="nt_region" class="form-control" maxlength="100">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Dirección</label>
+            <input type="text" id="nt_direccion" class="form-control" maxlength="300">
+          </div>
+
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="nt_externo">
+              <label class="form-check-label small fw-semibold" for="nt_externo">
+                Es técnico externo (subcontratado)
+              </label>
+            </div>
+          </div>
+
+          <div class="col-12" id="nt_externo_wrap" style="display:none">
+            <label class="form-label fw-semibold small">Empresa externa</label>
+            <input type="text" id="nt_empresa" class="form-control" maxlength="200" placeholder="Nombre del proveedor">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Notas internas</label>
+            <textarea id="nt_notas" class="form-control" rows="2" maxlength="2000"
+                      placeholder="Información adicional, certificaciones, etc."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" id="nt_btn" onclick="crearTecnico()">
+          <i class="bi bi-check-circle me-1"></i>Crear técnico
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('nt_externo').addEventListener('change', function(){
+  document.getElementById('nt_externo_wrap').style.display = this.checked ? 'block' : 'none';
+});
+
+async function crearTecnico(){
+  const nombre = document.getElementById('nt_nombre').value.trim();
+  if (nombre.length < 3) { alert('Nombre obligatorio (mín 3 caracteres)'); return; }
+  const btn = document.getElementById('nt_btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+  try {
+    const r = await fetch('{{ url_for("mant_tecnico_crear") }}', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        nombre,
+        rut:           document.getElementById('nt_rut').value.trim(),
+        especialidad:  document.getElementById('nt_especialidad').value.trim(),
+        nivel:         document.getElementById('nt_nivel').value,
+        telefono:      document.getElementById('nt_telefono').value.trim(),
+        email:         document.getElementById('nt_email').value.trim(),
+        direccion:     document.getElementById('nt_direccion').value.trim(),
+        comuna:        document.getElementById('nt_comuna').value.trim(),
+        region:        document.getElementById('nt_region').value.trim(),
+        tarifa_visita: document.getElementById('nt_tarifa').value || null,
+        es_externo:    document.getElementById('nt_externo').checked,
+        empresa_externa: document.getElementById('nt_empresa').value.trim(),
+        notas:         document.getElementById('nt_notas').value.trim(),
+      })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || 'no se pudo crear')); btn.disabled=false; btn.innerHTML=orig; return; }
+    location.reload();
+  } catch(e){
+    alert('Error de red: ' + e.message);
+    btn.disabled=false; btn.innerHTML=orig;
+  }
+}
+</script>
+
+{% endblock %}

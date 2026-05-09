@@ -10752,6 +10752,42 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ── Técnicos de mantención (catálogo + ficha) ──────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tecnicos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre          VARCHAR(200) NOT NULL,
+                    rut             VARCHAR(20),
+                    especialidad    VARCHAR(160) COMMENT 'Cardio, fuerza, eléctrico, etc.',
+                    nivel           ENUM('junior','senior','externo') DEFAULT 'junior',
+                    telefono        VARCHAR(50),
+                    email           VARCHAR(200),
+                    direccion       VARCHAR(300),
+                    comuna          VARCHAR(100),
+                    region          VARCHAR(100),
+                    foto_url        VARCHAR(500),
+                    notas           TEXT,
+                    tarifa_visita   DECIMAL(12,2) COMMENT 'Costo base por visita (CLP)',
+                    activo          TINYINT(1) DEFAULT 1,
+                    es_externo      TINYINT(1) DEFAULT 0 COMMENT 'Subcontratado vs interno',
+                    empresa_externa VARCHAR(200) COMMENT 'Si es_externo=1, nombre del proveedor',
+                    fecha_ingreso   DATE,
+                    created_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                                    ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_activo (activo),
+                    INDEX idx_nombre (nombre)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migración: agregar tecnico_id en mant_visitas (FK opcional)
+            for _mig in [
+                "ALTER TABLE mant_visitas ADD COLUMN tecnico_id INT NULL AFTER tecnico",
+                "ALTER TABLE mant_visitas ADD INDEX idx_tecnico_id (tecnico_id)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
             # ── Log de emails enviados (trazabilidad global) ───────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS email_log (
@@ -12196,8 +12232,13 @@ def mant_visita_multi(cid):
       fecha_programada: 'YYYY-MM-DD'
       motivo: str (mín 8 chars)
       estado_nuevo: 'critico'|'en_mantencion'|'operativo'  (se aplica a todos)
-      tecnico: str (opcional)
+      tecnico: str (opcional, nombre libre — DEPRECADO; usar tecnico_id)
+      tecnico_id: int (opcional, FK a mant_tecnicos)
       titulo: str (opcional, generado si no viene)
+      hora_inicio: 'HH:MM' (opcional)
+      hora_fin: 'HH:MM' (opcional)
+      costo: float (opcional, CLP)
+      observaciones: str (opcional, hasta 1000 chars)
     """
     d = request.get_json(silent=True) or {}
     mids = d.get("maquina_ids") or []
@@ -12218,9 +12259,49 @@ def mant_visita_multi(cid):
     estado_nuevo = d.get("estado_nuevo") or "operativo"
     if estado_nuevo not in ("critico","en_mantencion","operativo"):
         estado_nuevo = "operativo"
-    fecha_prog = d.get("fecha_programada") or (datetime.today().date() + timedelta(days=3)).isoformat()
-    tecnico = (d.get("tecnico") or "").strip()[:200] or None
+    # Fecha por defecto: +48 horas. Solo el superadmin puede modificarla en frontend,
+    # pero validamos también en backend que el campo no quede vacío.
+    fecha_prog = d.get("fecha_programada") or (datetime.today().date() + timedelta(days=2)).isoformat()
+    tecnico_id = d.get("tecnico_id")
+    try:
+        tecnico_id = int(tecnico_id) if tecnico_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        tecnico_id = None
+
+    # Si viene tecnico_id, resolvemos el nombre desde la tabla; si no, usamos el texto libre.
+    tecnico_nombre = (d.get("tecnico") or "").strip()[:200] or None
+    if tecnico_id:
+        _t = mysql_fetchone("SELECT nombre FROM mant_tecnicos WHERE id=%s AND activo=1", (tecnico_id,))
+        if _t:
+            tecnico_nombre = _t["nombre"]
+        else:
+            tecnico_id = None  # ID inválido → ignorar
+
     titulo_input = (d.get("titulo") or "").strip()[:200]
+
+    # Hora inicio / fin (HH:MM) — opcional
+    def _parse_hora(s):
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            datetime.strptime(s, "%H:%M")
+            return s
+        except ValueError:
+            return None
+    hora_inicio = _parse_hora(d.get("hora_inicio"))
+    hora_fin    = _parse_hora(d.get("hora_fin"))
+
+    # Costo (CLP, número positivo) — opcional
+    costo = d.get("costo")
+    try:
+        costo = float(costo) if costo not in (None, "", 0, "0") else None
+        if costo is not None and costo < 0:
+            costo = None
+    except (TypeError, ValueError):
+        costo = None
+
+    observaciones = (d.get("observaciones") or "").strip()[:1000] or None
 
     # Cargar todos los equipos seleccionados (verificar que pertenecen al cliente)
     placeholders = ",".join(["%s"] * len(mids))
@@ -12257,9 +12338,13 @@ def mant_visita_multi(cid):
             # 1. Crear la visita única
             cur.execute(
                 """INSERT INTO mant_visitas
-                   (cliente_id,titulo,fecha_programada,tipo,estado,descripcion,tecnico,created_by)
-                   VALUES (%s,%s,%s,%s,'programada',%s,%s,%s)""",
-                (cid, titulo, fecha_prog, tipo_visita, descripcion, tecnico, current_username())
+                   (cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                    tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
+                    costo,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
+                (cid, titulo, fecha_prog, hora_inicio, hora_fin,
+                 tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
+                 costo, current_username())
             )
             vid = cur.lastrowid
             # 2. Cambiar estado de los equipos
@@ -12291,6 +12376,226 @@ def mant_visita_multi(cid):
         except Exception:
             pass
         return jsonify({"error": f"Error al crear la visita: {str(e)}"}), 500
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MÓDULO: TÉCNICOS — Catálogo de técnicos asignables a visitas
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/tecnicos")
+@_mant_required
+def mant_tecnicos_index():
+    """Listado de técnicos."""
+    q       = (request.args.get("q") or "").strip()
+    estado  = request.args.get("estado", "activo")  # activo | inactivo | todos
+    where, params = ["1=1"], []
+    if estado == "activo":
+        where.append("activo=1")
+    elif estado == "inactivo":
+        where.append("activo=0")
+    if q:
+        where.append("(nombre LIKE %s OR rut LIKE %s OR especialidad LIKE %s OR email LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    sql = f"""SELECT t.*,
+                (SELECT COUNT(*) FROM mant_visitas WHERE tecnico_id=t.id) AS visitas_total,
+                (SELECT COUNT(*) FROM mant_visitas
+                  WHERE tecnico_id=t.id AND estado='programada'
+                    AND fecha_programada >= CURDATE())                    AS visitas_pendientes
+              FROM mant_tecnicos t
+              WHERE {' AND '.join(where)}
+              ORDER BY t.activo DESC, t.nombre"""
+    tecnicos = mysql_fetchall(sql, tuple(params)) or []
+    return render_template("mantenciones/tecnicos.html",
+        tecnicos = [dict(r) for r in tecnicos],
+        filtros  = {"q": q, "estado": estado},
+    )
+
+
+@app.route("/mantenciones/api/tecnicos", methods=["GET"])
+@_mant_required
+def mant_tecnicos_list_api():
+    """JSON ligero para dropdowns. Solo activos por defecto."""
+    incluir_inactivos = request.args.get("all") == "1"
+    sql = "SELECT id,nombre,especialidad,nivel,telefono,email,activo FROM mant_tecnicos"
+    if not incluir_inactivos:
+        sql += " WHERE activo=1"
+    sql += " ORDER BY nombre"
+    rows = mysql_fetchall(sql, ()) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/tecnicos", methods=["POST"])
+@_mant_required
+def mant_tecnico_crear():
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:200]
+    if len(nombre) < 3:
+        return jsonify({"error": "El nombre es obligatorio (mín 3 caracteres)"}), 400
+    nivel = d.get("nivel") or "junior"
+    if nivel not in ("junior","senior","externo"):
+        nivel = "junior"
+    es_externo = 1 if d.get("es_externo") else 0
+    try:
+        tarifa = float(d.get("tarifa_visita")) if d.get("tarifa_visita") not in (None, "") else None
+        if tarifa is not None and tarifa < 0:
+            tarifa = None
+    except (TypeError, ValueError):
+        tarifa = None
+    fecha_ingreso = d.get("fecha_ingreso") or None
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_tecnicos
+                   (nombre,rut,especialidad,nivel,telefono,email,direccion,comuna,region,
+                    foto_url,notas,tarifa_visita,activo,es_externo,empresa_externa,
+                    fecha_ingreso,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s)""",
+                (nombre,
+                 (d.get("rut") or "").strip()[:20] or None,
+                 (d.get("especialidad") or "").strip()[:160] or None,
+                 nivel,
+                 (d.get("telefono") or "").strip()[:50] or None,
+                 (d.get("email") or "").strip()[:200] or None,
+                 (d.get("direccion") or "").strip()[:300] or None,
+                 (d.get("comuna") or "").strip()[:100] or None,
+                 (d.get("region") or "").strip()[:100] or None,
+                 (d.get("foto_url") or "").strip()[:500] or None,
+                 (d.get("notas") or "").strip() or None,
+                 tarifa,
+                 es_externo,
+                 (d.get("empresa_externa") or "").strip()[:200] or None,
+                 fecha_ingreso,
+                 current_username())
+            )
+            tid = cur.lastrowid
+        conn.commit()
+        _mant_log("cliente", 0, "tecnico_creado", f"Técnico {tid} ({nombre}) — nivel {nivel}")
+        return jsonify({"ok": True, "id": tid, "nombre": nombre})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": f"No se pudo crear el técnico: {str(e)}"}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/tecnicos/<int:tid>")
+@_mant_required
+def mant_tecnico_ficha(tid):
+    tecnico = mysql_fetchone("SELECT * FROM mant_tecnicos WHERE id=%s", (tid,))
+    if not tecnico:
+        flash("Técnico no encontrado", "danger")
+        return redirect(url_for("mant_tecnicos_index"))
+    visitas = mysql_fetchall(
+        """SELECT v.*, c.razon_social
+             FROM mant_visitas v
+             JOIN mant_clientes c ON c.id=v.cliente_id
+            WHERE v.tecnico_id=%s
+            ORDER BY v.fecha_programada DESC LIMIT 50""",
+        (tid,)
+    ) or []
+    # Stats
+    stats = mysql_fetchone(
+        """SELECT
+              COUNT(*)                                                    AS total,
+              SUM(estado='programada')                                    AS programadas,
+              SUM(estado='completada')                                    AS completadas,
+              SUM(estado='cancelada')                                     AS canceladas,
+              COALESCE(SUM(costo),0)                                      AS costo_total
+            FROM mant_visitas WHERE tecnico_id=%s""",
+        (tid,)
+    ) or {}
+    return render_template("mantenciones/tecnico_ficha.html",
+        tecnico = dict(tecnico),
+        visitas = [dict(r) for r in visitas],
+        stats   = dict(stats),
+    )
+
+
+@app.route("/mantenciones/api/tecnicos/<int:tid>", methods=["PUT"])
+@_mant_required
+def mant_tecnico_editar(tid):
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos WHERE id=%s", (tid,)):
+        return jsonify({"error": "Técnico no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+
+    # Solo se actualizan los campos que llegan en el payload (PATCH-like)
+    campos_validos = {
+        "nombre":(str,200), "rut":(str,20), "especialidad":(str,160),
+        "telefono":(str,50), "email":(str,200), "direccion":(str,300),
+        "comuna":(str,100), "region":(str,100), "foto_url":(str,500),
+        "notas":(str,5000), "empresa_externa":(str,200),
+    }
+    sets, params = [], []
+    for k,(typ,maxlen) in campos_validos.items():
+        if k in d:
+            v = (d.get(k) or "").strip()[:maxlen] or None
+            sets.append(f"{k}=%s"); params.append(v)
+    if "nivel" in d:
+        nv = d["nivel"] if d["nivel"] in ("junior","senior","externo") else "junior"
+        sets.append("nivel=%s"); params.append(nv)
+    if "activo" in d:
+        sets.append("activo=%s"); params.append(1 if d["activo"] else 0)
+    if "es_externo" in d:
+        sets.append("es_externo=%s"); params.append(1 if d["es_externo"] else 0)
+    if "tarifa_visita" in d:
+        try:
+            tv = float(d["tarifa_visita"]) if d["tarifa_visita"] not in (None, "") else None
+        except (TypeError, ValueError):
+            tv = None
+        sets.append("tarifa_visita=%s"); params.append(tv)
+    if "fecha_ingreso" in d:
+        sets.append("fecha_ingreso=%s"); params.append(d["fecha_ingreso"] or None)
+
+    if not sets:
+        return jsonify({"error": "Sin cambios"}), 400
+
+    params.append(tid)
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_tecnicos SET {', '.join(sets)} WHERE id=%s", tuple(params))
+        conn.commit()
+        _mant_log("cliente", 0, "tecnico_editado", f"Técnico {tid} actualizado")
+        return jsonify({"ok": True})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/tecnicos/<int:tid>", methods=["DELETE"])
+@_mant_required
+def mant_tecnico_eliminar(tid):
+    """Soft delete: marca activo=0 si tiene visitas asociadas; hard delete si no."""
+    if not g.permissions.get("superadmin"):
+        return jsonify({"error": "Solo superadmin puede eliminar técnicos"}), 403
+    n_vis = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_visitas WHERE tecnico_id=%s", (tid,))
+    tiene_visitas = (n_vis or {}).get("n", 0) > 0
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            if tiene_visitas:
+                cur.execute("UPDATE mant_tecnicos SET activo=0 WHERE id=%s", (tid,))
+                accion = "desactivado (tiene visitas históricas)"
+            else:
+                cur.execute("DELETE FROM mant_tecnicos WHERE id=%s", (tid,))
+                accion = "eliminado"
+        conn.commit()
+        _mant_log("cliente", 0, "tecnico_eliminado", f"Técnico {tid} {accion}")
+        return jsonify({"ok": True, "soft": tiene_visitas})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
