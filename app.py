@@ -12182,6 +12182,113 @@ def mant_maquina_audit_list(mid):
         return jsonify({"ok": True, "audit": [dict(r) for r in (rows or [])]})
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/visita-multi", methods=["POST"])
+@_mant_required
+def mant_visita_multi(cid):
+    """
+    Crea UNA sola visita asociada a N equipos del cliente.
+    Caso de uso real: "el lunes voy a Vitacura a cambiar 4 trotadoras + revisar 2 bicis"
+    → 1 visita técnica con 6 equipos involucrados, en lugar de 6 visitas separadas.
+
+    Body JSON:
+      maquina_ids: list[int]      — equipos a incluir
+      tipo_visita: str             — garantia|correctiva|preventiva|inspeccion
+      fecha_programada: 'YYYY-MM-DD'
+      motivo: str (mín 8 chars)
+      estado_nuevo: 'critico'|'en_mantencion'|'operativo'  (se aplica a todos)
+      tecnico: str (opcional)
+      titulo: str (opcional, generado si no viene)
+    """
+    d = request.get_json(silent=True) or {}
+    mids = d.get("maquina_ids") or []
+    if not isinstance(mids, list) or not mids:
+        return jsonify({"error": "Debes seleccionar al menos un equipo"}), 400
+    try:
+        mids = [int(m) for m in mids]
+    except (TypeError, ValueError):
+        return jsonify({"error": "IDs de equipo inválidos"}), 400
+
+    motivo = (d.get("motivo") or "").strip()
+    if len(motivo) < 8:
+        return jsonify({"error": "El motivo debe tener al menos 8 caracteres"}), 400
+
+    tipo_visita = d.get("tipo_visita") or "preventiva"
+    if tipo_visita not in ("garantia","correctiva","preventiva","inspeccion"):
+        tipo_visita = "preventiva"
+    estado_nuevo = d.get("estado_nuevo") or "operativo"
+    if estado_nuevo not in ("critico","en_mantencion","operativo"):
+        estado_nuevo = "operativo"
+    fecha_prog = d.get("fecha_programada") or (datetime.today().date() + timedelta(days=3)).isoformat()
+    tecnico = (d.get("tecnico") or "").strip()[:200] or None
+    titulo_input = (d.get("titulo") or "").strip()[:200]
+
+    # Cargar todos los equipos seleccionados (verificar que pertenecen al cliente)
+    placeholders = ",".join(["%s"] * len(mids))
+    rows = mysql_fetchall(
+        f"SELECT id,nombre,sku,serie,cantidad,doc_origen FROM mant_maquinas "
+        f"WHERE id IN ({placeholders}) AND cliente_id=%s",
+        tuple(mids) + (cid,)
+    )
+    if not rows or len(rows) != len(mids):
+        return jsonify({"error": "Algunos equipos no pertenecen a este cliente"}), 400
+
+    # Construir título y descripción
+    tipos_label = {
+        "garantia":   "Cambio / Garantía",
+        "correctiva": "Reparación correctiva",
+        "preventiva": "Mantención preventiva",
+        "inspeccion": "Inspección / Levantamiento",
+    }
+    titulo = titulo_input or f"{tipos_label[tipo_visita]} — {len(rows)} equipo(s)"
+
+    detalle_equipos = "\n".join(
+        f"  • {r['nombre']} (SKU {r.get('sku') or '—'}, Serie {r.get('serie') or '—'})"
+        for r in rows
+    )
+    descripcion = (
+        f"VISITA MULTI-EQUIPO — {tipos_label[tipo_visita]}\n"
+        f"Equipos involucrados ({len(rows)}):\n{detalle_equipos}\n\n"
+        f"Motivo:\n{motivo}\n"
+    )
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # 1. Crear la visita única
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (cliente_id,titulo,fecha_programada,tipo,estado,descripcion,tecnico,created_by)
+                   VALUES (%s,%s,%s,%s,'programada',%s,%s,%s)""",
+                (cid, titulo, fecha_prog, tipo_visita, descripcion, tecnico, current_username())
+            )
+            vid = cur.lastrowid
+            # 2. Cambiar estado de los equipos
+            cur.execute(
+                f"UPDATE mant_maquinas SET estado_op=%s WHERE id IN ({placeholders})",
+                (estado_nuevo,) + tuple(mids)
+            )
+            # 3. Loguear en cada equipo (auditoría)
+            for r in rows:
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,created_by) "
+                    "VALUES ('maquina',%s,'visita_multi',%s,%s)",
+                    (r["id"],
+                     f"Visita {vid} ({tipo_visita}) — fecha {fecha_prog}. {motivo[:120]}",
+                     current_username())
+                )
+        conn.commit()
+        _mant_log("cliente", cid, "visita_multi_creada",
+                  f"Visita {vid}: {len(rows)} equipos, tipo {tipo_visita}, fecha {fecha_prog}")
+        return jsonify({
+            "ok": True,
+            "visita_id": vid,
+            "equipos_afectados": len(rows),
+            "fecha_programada": fecha_prog,
+        })
+    finally:
+        conn.close()
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/solicitar-cambio", methods=["POST"])
 @_mant_required
 def mant_maquina_solicitar_cambio(mid):

@@ -1559,6 +1559,10 @@
         <table class="eq-table" id="eqTabla">
           <thead>
             <tr>
+              <th style="width:38px;text-align:center" title="Seleccionar todos para acciones múltiples">
+                <input type="checkbox" id="eqChkAll" class="form-check-input"
+                       onchange="eqToggleAll(this.checked)" title="Seleccionar/desmarcar todos">
+              </th>
               <th style="width:32px"></th>
               <th>Equipo</th>
               <th>SKU / Código</th>
@@ -1609,6 +1613,15 @@
               data-sku="{{ m.sku or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
+            <td style="text-align:center;vertical-align:middle">
+              <input type="checkbox" class="form-check-input eq-row-chk"
+                     data-id="{{ m.id }}"
+                     data-nombre="{{ m.nombre|e }}"
+                     data-sku="{{ m.sku|e if m.sku else '' }}"
+                     data-serie="{{ m.serie|e if m.serie else '' }}"
+                     data-cantidad="{{ m.cantidad or 1 }}"
+                     onchange="eqUpdateBarra()">
+            </td>
             <td>
               <div class="eq-cell-icon" style="font-size:1.4rem;line-height:1;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:8px;background:#f3f4f6">
                 {{ eq_emoji(m.nombre) }}
@@ -1693,32 +1706,9 @@
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
-                {# Dropdown de acciones del equipo: genera visitas múltiples por tipo #}
-                <div class="dropdown">
-                  <button class="btn btn-xs btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" title="Acciones / agendar visita">
-                    <i class="bi bi-lightning-charge"></i>
-                  </button>
-                  <ul class="dropdown-menu dropdown-menu-end" style="font-size:.82rem">
-                    {% set _eq_data = {"id":m.id,"nombre":m.nombre,"sku":m.sku or "","serie":m.serie or "","cantidad":m.cantidad,"doc_fecha":(m.doc_fecha.strftime("%Y-%m-%d") if m.doc_fecha else "")} %}
-                    <li class="dropdown-header" style="font-size:.7rem">Agendar visita por este equipo</li>
-                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("garantia",   {{ _eq_data|tojson }}); return false'>
-                      <i class="bi bi-shield-check text-success me-2"></i>Cambio / Garantía
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("correctiva", {{ _eq_data|tojson }}); return false'>
-                      <i class="bi bi-tools text-warning me-2"></i>Reparación correctiva
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("preventiva", {{ _eq_data|tojson }}); return false'>
-                      <i class="bi bi-calendar-check text-primary me-2"></i>Mantención preventiva
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("inspeccion", {{ _eq_data|tojson }}); return false'>
-                      <i class="bi bi-binoculars text-info me-2"></i>Inspección / Levantamiento
-                    </a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item text-muted" href="#" onclick="switchTab('visitas'); return false">
-                      <i class="bi bi-calendar-week me-2"></i>Ver todas las visitas →
-                    </a></li>
-                  </ul>
-                </div>
+                {# Las acciones de visita ahora son MÚLTIPLES — selecciona equipos con
+                   los checkboxes y usa la barra flotante. El rayito individual se eliminó
+                   por ser ineficiente para casos reales (ej: 4 trotadoras a cambiar). #}
                 <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>
@@ -1927,7 +1917,151 @@ function eqBuscar(q) {
 }
 // Alias para el oninput viejo
 function filtrarEquipos(q) { eqBuscar(q); }
+
+// ════════════════════════════════════════════════════════════════════
+// SELECCIÓN MÚLTIPLE DE EQUIPOS + barra flotante + visita multi
+// ════════════════════════════════════════════════════════════════════
+function eqToggleAll(checked) {
+  document.querySelectorAll('.eq-row-chk').forEach(c => {
+    if (!c.disabled) c.checked = checked;
+  });
+  eqUpdateBarra();
+}
+
+function eqUpdateBarra() {
+  const seleccionados = document.querySelectorAll('.eq-row-chk:checked');
+  const n = seleccionados.length;
+  const barra = document.getElementById('eqBarraSel');
+  const btnCount = document.getElementById('eqBarraCount');
+  if (n === 0) {
+    if (barra) barra.style.display = 'none';
+  } else {
+    if (barra) barra.style.display = 'flex';
+    if (btnCount) btnCount.textContent = n;
+  }
+  // Actualizar el master checkbox
+  const total = document.querySelectorAll('.eq-row-chk').length;
+  const master = document.getElementById('eqChkAll');
+  if (master) {
+    master.checked = (n > 0 && n === total);
+    master.indeterminate = (n > 0 && n < total);
+  }
+}
+
+function abrirVisitaMulti() {
+  const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'))
+    .map(c => ({
+      id: c.dataset.id,
+      nombre: c.dataset.nombre,
+      sku: c.dataset.sku || '',
+      serie: c.dataset.serie || '',
+      cantidad: c.dataset.cantidad || 1,
+    }));
+  if (!seleccionados.length) { alert('Selecciona al menos un equipo'); return; }
+
+  // Llenar el modal con los equipos seleccionados
+  const ul = document.getElementById('vm_lista');
+  ul.innerHTML = seleccionados.map(eq => `
+    <li class="d-flex align-items-center gap-2 py-1" style="font-size:.83rem;border-bottom:1px solid #f3f4f6">
+      <i class="bi bi-check2-square text-success"></i>
+      <div style="flex:1;min-width:0">
+        <div class="fw-semibold text-truncate">${escHtml(eq.nombre)}</div>
+        <div class="small text-muted">
+          ${eq.sku ? '<span class="font-monospace">'+escHtml(eq.sku)+'</span>' : ''}
+          ${eq.serie ? ' · serie '+escHtml(eq.serie) : ''}
+        </div>
+      </div>
+    </li>
+  `).join('');
+  document.getElementById('vm_count').textContent = seleccionados.length;
+
+  // Guardar IDs en variable global
+  window._vmIds = seleccionados.map(e => parseInt(e.id));
+
+  // Defaults
+  document.getElementById('vm_tipo').value = 'preventiva';
+  document.getElementById('vm_estado').value = 'operativo';
+  document.getElementById('vm_motivo').value = '';
+  document.getElementById('vm_tecnico').value = '';
+  document.getElementById('vm_titulo').value = '';
+  vmActualizarFechaPorTipo();
+
+  if (!window._modalVisitaMulti) {
+    window._modalVisitaMulti = new bootstrap.Modal(document.getElementById('modalVisitaMulti'));
+  }
+  window._modalVisitaMulti.show();
+}
+
+function vmActualizarFechaPorTipo() {
+  const dias = {garantia:3, correctiva:5, preventiva:14, inspeccion:7};
+  const tipo = document.getElementById('vm_tipo').value;
+  const f = new Date(); f.setDate(f.getDate() + (dias[tipo] || 3));
+  document.getElementById('vm_fecha').value = f.toISOString().slice(0,10);
+  // Sugerir estado por tipo
+  const estadoSug = {garantia:'critico', correctiva:'en_mantencion', preventiva:'operativo', inspeccion:'operativo'};
+  document.getElementById('vm_estado').value = estadoSug[tipo] || 'operativo';
+  // Resumen
+  const labels = {garantia:'Cambio/Garantía', correctiva:'Correctiva', preventiva:'Mantención preventiva', inspeccion:'Inspección/Levantamiento'};
+  document.getElementById('vm_tipo_label').textContent = labels[tipo] || tipo;
+}
+
+async function confirmarVisitaMulti() {
+  const ids = window._vmIds || [];
+  if (!ids.length) return;
+  const motivo = document.getElementById('vm_motivo').value.trim();
+  if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
+  const fecha = document.getElementById('vm_fecha').value;
+  if (!fecha) { alert('La fecha es obligatoria'); return; }
+
+  const btn = document.getElementById('vm_btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando visita…';
+
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/visita-multi`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        maquina_ids: ids,
+        tipo_visita: document.getElementById('vm_tipo').value,
+        fecha_programada: fecha,
+        motivo,
+        estado_nuevo: document.getElementById('vm_estado').value,
+        tecnico: document.getElementById('vm_tecnico').value.trim(),
+        titulo: document.getElementById('vm_titulo').value.trim(),
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      alert('Error: ' + (d.error || ''));
+      btn.disabled = false; btn.innerHTML = orig;
+      return;
+    }
+    btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>Visita ${d.visita_id} creada`;
+    setTimeout(() => location.reload(), 1200);
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
 </script>
+
+{# Barra flotante de selección — visible solo cuando hay equipos marcados #}
+<div id="eqBarraSel" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+                            z-index:1040;background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);
+                            color:#fff;padding:14px 22px;border-radius:50px;
+                            box-shadow:0 8px 32px rgba(0,0,0,.35);
+                            border:2px solid var(--ilus-red);
+                            align-items:center;gap:14px;font-weight:600;font-size:.92rem">
+  <i class="bi bi-check2-square" style="color:var(--ilus-red);font-size:1.3rem"></i>
+  <span><strong id="eqBarraCount">0</strong> equipo(s) seleccionado(s)</span>
+  <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px">
+    <i class="bi bi-calendar-plus me-1"></i>Agendar visita
+  </button>
+  <button class="btn btn-sm btn-link text-white-50" onclick="eqToggleAll(false)" title="Limpiar selección">
+    <i class="bi bi-x-lg"></i>
+  </button>
+</div>
 
 </div>{# /tab-equipos #}
 
@@ -4394,6 +4528,106 @@ function abrirEmailManual() {
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarSucursal()">
           <i class="bi bi-floppy me-1"></i><span id="suc_btn_label">Guardar sucursal</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: Visita multi-equipo (1 visita para N equipos seleccionados)
+══════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalVisitaMulti" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-calendar-plus me-2" style="color:var(--ilus-red)"></i>
+          Agendar visita técnica
+          <span class="badge bg-danger ms-2" style="font-size:.62rem"><span id="vm_count">0</span> equipos</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        {# Lista de equipos seleccionados #}
+        <div class="mb-3 p-3 rounded-3" style="background:#fff7ed;border:2px solid #fed7aa;border-left:5px solid var(--ilus-red);max-height:180px;overflow-y:auto">
+          <div class="small fw-bold mb-2" style="color:#92400e;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em">
+            <i class="bi bi-list-check me-1"></i>Equipos en esta visita
+          </div>
+          <ul id="vm_lista" class="list-unstyled m-0"></ul>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Tipo de visita <span class="text-danger">*</span>
+            </label>
+            <select id="vm_tipo" class="form-select" onchange="vmActualizarFechaPorTipo()">
+              <option value="preventiva">📅 Mantención preventiva</option>
+              <option value="garantia">🛡️ Cambio / Garantía</option>
+              <option value="correctiva">🔧 Reparación correctiva</option>
+              <option value="inspeccion">🔍 Inspección / Levantamiento</option>
+            </select>
+            <div class="form-text small">
+              Tipo: <strong id="vm_tipo_label">Mantención preventiva</strong>
+            </div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Estado de equipos tras la visita
+            </label>
+            <select id="vm_estado" class="form-select">
+              <option value="operativo">🟢 Operativo (sin cambios)</option>
+              <option value="en_mantencion">🟡 En mantención (en proceso)</option>
+              <option value="critico">🔴 Crítico (no operativo)</option>
+            </select>
+            <div class="form-text small">Se aplica a TODOS los equipos seleccionados</div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">
+              Fecha programada <span class="text-danger">*</span>
+            </label>
+            <input type="date" id="vm_fecha" class="form-control">
+            <div class="form-text small">Default según tipo: preventiva +14d, garantía +3d, etc.</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Técnico asignado</label>
+            <input type="text" id="vm_tecnico" class="form-control" placeholder="Nombre del técnico (opcional)">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Título de la visita <span class="text-muted fw-normal" style="font-size:.72rem">(opcional)</span>
+            </label>
+            <input type="text" id="vm_titulo" class="form-control" maxlength="200"
+                   placeholder="Se genera automático: 'Mantención preventiva — N equipo(s)'">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Motivo / descripción <span class="text-danger">*</span>
+            </label>
+            <textarea id="vm_motivo" class="form-control" rows="3"
+                      placeholder="Ej: Lunes voy a cambiar 4 trotadoras dañadas + revisar bicicletas..."
+                      minlength="8" maxlength="800"></textarea>
+            <div class="form-text small">
+              Mínimo 8 caracteres. Se incluye en la descripción de la visita y queda en el log.
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-info mt-3 mb-0" style="font-size:.82rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Se creará <strong>UNA sola visita</strong> en "Mantenciones y Visitas" asociada a
+          los <strong id="vm_count_resumen"></strong>equipos. Cada uno quedará registrado
+          en su propio historial con la referencia a esta visita.
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:2px solid #fee2e2;background:#fafafa">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" id="vm_btn" onclick="confirmarVisitaMulti()">
+          <i class="bi bi-calendar-plus me-1"></i>Crear visita
         </button>
       </div>
     </div>
