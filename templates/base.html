@@ -216,21 +216,26 @@
   </div>
   {% endif %}
 
-  {# — Footer: usuario + mi cuenta + logout — #}
+  {# — Footer: usuario clickable (lleva a Mi cuenta) + logout — #}
   <div class="sidebar-footer">
-    <div class="sidebar-user">
+    <a href="{{ url_for('mi_cuenta') }}"
+       class="sidebar-user text-decoration-none"
+       style="color:inherit;cursor:pointer;border-radius:8px;
+              {% if request.endpoint == 'mi_cuenta' %}background:rgba(204,0,0,.15);{% endif %}
+              transition:background .15s"
+       onmouseover="this.style.background='rgba(255,255,255,.08)'"
+       onmouseout="this.style.background='{% if request.endpoint == 'mi_cuenta' %}rgba(204,0,0,.15){% else %}transparent{% endif %}'"
+       title="Administrar mi cuenta">
+      {% if current_user.foto_url %}
+      <img src="{{ current_user.foto_url }}" class="sidebar-user-avatar" style="object-fit:cover" alt="Foto">
+      {% else %}
       <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
+      {% endif %}
       <div class="sidebar-user-info">
         <div class="sidebar-user-name">{{ current_user.nombre }}</div>
         <div class="sidebar-user-role">{{ role_label }}</div>
       </div>
-    </div>
-    <hr style="border-color:rgba(255,255,255,.08);margin:8px 0">
-    <a href="{{ url_for('mi_cuenta') }}"
-       class="sidebar-link{% if request.endpoint == 'mi_cuenta' %} active{% endif %}"
-       style="display:flex;align-items:center;gap:8px">
-      <i class="bi bi-gear"></i>
-      <span>Mi cuenta</span>
+      <i class="bi bi-gear ms-auto" style="color:#94a3b8;font-size:.95rem;opacity:.7"></i>
     </a>
     <form method="post" action="{{ url_for('logout') }}" class="mt-2">
       <button type="submit" class="btn-sidebar-logout">

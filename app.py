@@ -613,6 +613,21 @@ def init_mysql_schema():
                 cur.execute(f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN phone VARCHAR(40) DEFAULT NULL AFTER password_hash")
             except Exception:
                 pass
+            # Datos de calidad opcionales del usuario (perfil) — todos NULL-able
+            for col_sql in [
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN foto_url   VARCHAR(500) DEFAULT NULL COMMENT 'URL de foto de perfil (Cloudinary)'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN rut        VARCHAR(20)  DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN cargo      VARCHAR(120) DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN genero     VARCHAR(20)  DEFAULT NULL COMMENT 'masculino|femenino|otro|prefiero_no_decir'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN direccion  VARCHAR(300) DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN comuna     VARCHAR(100) DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN ciudad     VARCHAR(100) DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN fecha_nac  DATE         DEFAULT NULL",
+            ]:
+                try:
+                    cur.execute(col_sql)
+                except Exception:
+                    pass
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS `{PRODUCTS_TABLE}` (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -1215,14 +1230,14 @@ def _photo_src(filename, subfolder="uploads"):
 
 def get_auth_user_by_id(user_id):
     return mysql_fetchone(
-        f"SELECT id,username,nombre,password_hash,phone,role,active FROM `{AUTH_TABLE}` WHERE id=%s",
+        f"SELECT id,username,nombre,password_hash,phone,role,active,foto_url,rut,cargo,genero,direccion,comuna,ciudad,fecha_nac FROM `{AUTH_TABLE}` WHERE id=%s",
         (user_id,),
     )
 
 
 def get_auth_user_by_username(username):
     return mysql_fetchone(
-        f"SELECT id,username,nombre,password_hash,phone,role,active FROM `{AUTH_TABLE}` WHERE username=%s",
+        f"SELECT id,username,nombre,password_hash,phone,role,active,foto_url,rut,cargo,genero,direccion,comuna,ciudad,fecha_nac FROM `{AUTH_TABLE}` WHERE username=%s",
         (username,),
     )
 
@@ -2863,7 +2878,9 @@ def _normalize_phone_chile(raw: str) -> str:
 def mi_cuenta():
     """Página de perfil — accesible para cualquier usuario logueado."""
     u = mysql_fetchone(
-        f"SELECT id,username,nombre,phone,role,active,created_at FROM `{AUTH_TABLE}` WHERE id=%s",
+        f"SELECT id,username,nombre,phone,role,active,created_at,"
+        f"foto_url,rut,cargo,genero,direccion,comuna,ciudad,fecha_nac "
+        f"FROM `{AUTH_TABLE}` WHERE id=%s",
         (g.user["id"],)
     )
     if not u:
@@ -2874,7 +2891,11 @@ def mi_cuenta():
 @app.route("/mi-cuenta/datos", methods=["POST"])
 @login_required
 def mi_cuenta_datos():
-    """Actualiza nombre + teléfono del usuario actual. Username/role NO se editan."""
+    """
+    Actualiza datos del perfil del usuario actual.
+    Campos editables: nombre, phone, rut, cargo, genero, direccion, comuna, ciudad, fecha_nac.
+    NO editables: username, role (eso es identidad/seguridad).
+    """
     d = request.get_json(silent=True) or {}
     nombre = (d.get("nombre") or "").strip()[:190]
     phone  = _normalize_phone_chile(d.get("phone") or "")
@@ -2882,18 +2903,104 @@ def mi_cuenta_datos():
         return jsonify({"error": "El nombre debe tener al menos 2 caracteres"}), 400
     if phone and not re.match(r"^\+?\d{8,16}$", phone):
         return jsonify({"error": "Teléfono inválido. Usa formato +56912345678"}), 400
+
+    rut       = (d.get("rut") or "").strip()[:20] or None
+    cargo     = (d.get("cargo") or "").strip()[:120] or None
+    genero    = (d.get("genero") or "").strip()[:20] or None
+    direccion = (d.get("direccion") or "").strip()[:300] or None
+    comuna    = (d.get("comuna") or "").strip()[:100] or None
+    ciudad    = (d.get("ciudad") or "").strip()[:100] or None
+    fecha_nac = (d.get("fecha_nac") or "").strip() or None
+    if genero and genero not in ("masculino","femenino","otro","prefiero_no_decir"):
+        genero = None
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"UPDATE `{AUTH_TABLE}` SET nombre=%s, phone=%s WHERE id=%s",
-                (nombre, phone or None, g.user["id"])
+                f"UPDATE `{AUTH_TABLE}` SET nombre=%s, phone=%s, rut=%s, cargo=%s, "
+                f"genero=%s, direccion=%s, comuna=%s, ciudad=%s, fecha_nac=%s WHERE id=%s",
+                (nombre, phone or None, rut, cargo, genero, direccion, comuna, ciudad,
+                 fecha_nac, g.user["id"])
             )
         conn.commit()
-        # Refrescar sesión: g.user se reconstruye en cada request, pero el cache local podría diferir
-        return jsonify({"ok": True, "nombre": nombre, "phone": phone})
+        return jsonify({"ok": True, "nombre": nombre})
     except Exception as e:
-        return jsonify({"error": "No se pudo guardar"}), 500
+        return jsonify({"error": f"No se pudo guardar: {e}"}), 500
+
+
+@app.route("/mi-cuenta/foto", methods=["POST"])
+@login_required
+def mi_cuenta_foto():
+    """
+    Sube la foto de perfil del usuario a Cloudinary y guarda la URL en BD.
+    Acepta multipart/form-data con campo 'foto' (jpg/png/webp, máx 5MB).
+    """
+    f = request.files.get("foto")
+    if not f or not f.filename:
+        return jsonify({"error": "No se recibió archivo"}), 400
+    ext = (f.filename.rsplit(".", 1)[-1] or "").lower()
+    if ext not in {"jpg","jpeg","png","webp","gif"}:
+        return jsonify({"error": "Formato no permitido. Usa JPG, PNG o WEBP"}), 400
+    # Tamaño máximo 5MB
+    f.stream.seek(0, 2)
+    size = f.stream.tell()
+    f.stream.seek(0)
+    if size > 5 * 1024 * 1024:
+        return jsonify({"error": "Archivo demasiado grande (máx 5MB)"}), 400
+
+    try:
+        import cloudinary, cloudinary.uploader
+        # Subir a Cloudinary en folder específico de avatares
+        result = cloudinary.uploader.upload(
+            f,
+            folder=f"ilus/avatars",
+            public_id=f"user_{g.user['id']}",
+            overwrite=True,
+            resource_type="image",
+            transformation=[
+                {"width": 400, "height": 400, "crop": "fill", "gravity": "face"},
+                {"quality": "auto", "fetch_format": "auto"},
+            ],
+        )
+        url = result.get("secure_url")
+        if not url:
+            return jsonify({"error": "Error al subir a Cloudinary"}), 500
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET foto_url=%s WHERE id=%s",
+                    (url, g.user["id"])
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        return jsonify({"ok": True, "url": url})
+    except Exception as e:
+        return jsonify({"error": f"Error al procesar imagen: {e}"}), 500
+
+
+@app.route("/mi-cuenta/foto", methods=["DELETE"])
+@login_required
+def mi_cuenta_foto_eliminar():
+    """Elimina la foto de perfil (deja foto_url=NULL, vuelve a iniciales)."""
+    try:
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET foto_url=NULL WHERE id=%s",
+                    (g.user["id"],)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/mi-cuenta/password", methods=["POST"])

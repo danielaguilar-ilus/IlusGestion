@@ -67,13 +67,36 @@
     </a>
   </div>
 
-  {# ── HEADER ───────────────────────────────────────────── #}
+  {# ── HEADER con foto editable ───────────────────────── #}
   <div class="mc-header">
-    <div class="mc-avatar">{{ usuario.nombre[0].upper() }}</div>
+    <div class="mc-avatar-wrap" style="position:relative;flex-shrink:0">
+      {% if usuario.foto_url %}
+      <img src="{{ usuario.foto_url }}" id="hdrFoto" class="mc-avatar"
+           style="object-fit:cover" alt="Foto de perfil">
+      {% else %}
+      <div id="hdrFoto" class="mc-avatar">{{ usuario.nombre[0].upper() }}</div>
+      {% endif %}
+      <button type="button" onclick="document.getElementById('inpFoto').click()"
+              title="Cambiar foto de perfil"
+              style="position:absolute;bottom:-4px;right:-4px;background:var(--ilus-red);
+                     color:#fff;border:3px solid #fff;border-radius:50%;width:30px;height:30px;
+                     padding:0;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);
+                     display:flex;align-items:center;justify-content:center;line-height:1">
+        <i class="bi bi-camera-fill" style="font-size:.85rem"></i>
+      </button>
+      <input type="file" id="inpFoto" accept="image/jpeg,image/png,image/webp" hidden
+             onchange="subirFoto(this)">
+    </div>
     <div style="flex:1;min-width:0">
       <h4 class="mc-h-name" id="hdrNombre">{{ usuario.nombre }}</h4>
       <div class="mc-h-sub">@{{ usuario.username }}</div>
       <span class="mc-h-pill"><i class="bi bi-shield-fill me-1"></i>{{ usuario.role|title }}</span>
+      {% if usuario.foto_url %}
+      <a href="#" onclick="eliminarFoto(); return false" class="ms-2"
+         style="font-size:.7rem;color:#94a3b8;text-decoration:none">
+        <i class="bi bi-trash me-1"></i>quitar foto
+      </a>
+      {% endif %}
     </div>
   </div>
 
@@ -155,6 +178,60 @@
           </div>
         </div>
       </div>
+      {# ── Bloque OPCIONAL: Datos de calidad ─────────── #}
+      <hr class="my-3" style="border-color:#f3f4f6">
+      <div class="small fw-bold text-muted mb-3" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.05em">
+        <i class="bi bi-stars me-1"></i>Datos adicionales
+        <span class="badge bg-light text-secondary border ms-2" style="font-size:.6rem">OPCIONAL</span>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold small">RUT</label>
+          <input type="text" id="mcRut" class="form-control font-monospace" maxlength="20"
+                 value="{{ usuario.rut or '' }}" placeholder="12345678-9">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold small">Cargo</label>
+          <input type="text" id="mcCargo" class="form-control" maxlength="120"
+                 value="{{ usuario.cargo or '' }}" placeholder="Ej: Jefe de operaciones">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold small">Género</label>
+          <select id="mcGenero" class="form-select">
+            <option value="">— Seleccionar —</option>
+            <option value="masculino" {% if usuario.genero=='masculino' %}selected{% endif %}>Masculino</option>
+            <option value="femenino"  {% if usuario.genero=='femenino'  %}selected{% endif %}>Femenino</option>
+            <option value="otro"      {% if usuario.genero=='otro'      %}selected{% endif %}>Otro</option>
+            <option value="prefiero_no_decir" {% if usuario.genero=='prefiero_no_decir' %}selected{% endif %}>Prefiero no decir</option>
+          </select>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label fw-semibold small">Dirección</label>
+          <input type="text" id="mcDireccion" class="form-control" maxlength="300"
+                 value="{{ usuario.direccion or '' }}" placeholder="Calle 1234">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label fw-semibold small">Comuna</label>
+          <input type="text" id="mcComuna" class="form-control" maxlength="100"
+                 value="{{ usuario.comuna or '' }}">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label fw-semibold small">Ciudad</label>
+          <input type="text" id="mcCiudad" class="form-control" maxlength="100"
+                 value="{{ usuario.ciudad or '' }}">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold small">Fecha nacimiento</label>
+          <input type="date" id="mcFechaNac" class="form-control"
+                 value="{{ usuario.fecha_nac.strftime('%Y-%m-%d') if usuario.fecha_nac else '' }}">
+        </div>
+      </div>
+      <div class="form-text mt-2" style="font-size:.72rem">
+        <i class="bi bi-shield-lock me-1"></i>
+        Estos datos son <strong>tuyos</strong>, opcionales, y solo visibles para administradores.
+        Pueden usarse para pre-rellenar tu ficha si en algún momento te suman al módulo de Colaboradores.
+      </div>
+
       <div class="d-flex justify-content-end mt-3">
         <button class="btn btn-ilus fw-semibold px-4" id="btnSaveDatos" onclick="guardarDatos()">
           <i class="bi bi-floppy me-1"></i>Guardar cambios
@@ -261,19 +338,27 @@ function mcToast(msg, type='success') {
   }, 3500);
 }
 
-// ─── Datos personales ────────────────────────────────────────────
+// ─── Datos personales (incluye los opcionales) ───────────────────
 async function guardarDatos() {
   const btn = document.getElementById('btnSaveDatos');
   const original = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  const $v = id => (document.getElementById(id)?.value || '').trim();
   try {
     const r = await fetch('/mi-cuenta/datos', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
-        nombre: document.getElementById('mcNombre').value.trim(),
-        phone:  document.getElementById('mcPhone').value.trim(),
+        nombre:    $v('mcNombre'),
+        phone:     $v('mcPhone'),
+        rut:       $v('mcRut'),
+        cargo:     $v('mcCargo'),
+        genero:    $v('mcGenero'),
+        direccion: $v('mcDireccion'),
+        comuna:    $v('mcComuna'),
+        ciudad:    $v('mcCiudad'),
+        fecha_nac: $v('mcFechaNac'),
       })
     });
     const d = await r.json();
@@ -369,6 +454,51 @@ async function cambiarPassword() {
 }
 
 evaluarPw();
+
+// ─── Foto de perfil ───────────────────────────────────────────────
+async function subirFoto(input) {
+  const f = input.files?.[0];
+  if (!f) return;
+  if (f.size > 5 * 1024 * 1024) {
+    mcToast('La foto es muy grande (máx 5MB)', 'error'); return;
+  }
+  // Preview optimista
+  const fd = new FormData();
+  fd.append('foto', f);
+  mcToast('Subiendo foto…', 'success');
+  try {
+    const r = await fetch('/mi-cuenta/foto', { method:'POST', body: fd });
+    const d = await r.json();
+    if (!d.ok) { mcToast(d.error || 'Error al subir', 'error'); return; }
+    // Reemplazar el avatar visual sin recargar
+    const wrap = document.querySelector('.mc-avatar-wrap');
+    const old = document.getElementById('hdrFoto');
+    if (old && wrap) {
+      const img = document.createElement('img');
+      img.id = 'hdrFoto';
+      img.src = d.url + '?v=' + Date.now();
+      img.className = 'mc-avatar';
+      img.style.objectFit = 'cover';
+      old.replaceWith(img);
+    }
+    mcToast('Foto actualizada', 'success');
+    // Recarga después de 800ms para refrescar también el sidebar
+    setTimeout(() => location.reload(), 1000);
+  } catch (e) {
+    mcToast('Error de red', 'error');
+  }
+}
+
+async function eliminarFoto() {
+  if (!confirm('¿Quitar tu foto de perfil? Volverás a las iniciales.')) return;
+  try {
+    const r = await fetch('/mi-cuenta/foto', { method:'DELETE' });
+    if (r.ok) location.reload();
+    else mcToast('Error al eliminar', 'error');
+  } catch (e) {
+    mcToast('Error de red', 'error');
+  }
+}
 </script>
 
 {% endblock %}

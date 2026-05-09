@@ -1120,6 +1120,7 @@
             {% set _ = actividad.append({
               'tipo':   'visita',
               'fecha':  v.fecha_programada,
+              'fecha_str': (v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '0000-00-00'),
               'titulo': v.titulo or (v.tipo.capitalize() + ' - ' + (v.tecnico or 'sin asignar')),
               'estado': v.estado,
               'subtipo': v.tipo,
@@ -1130,6 +1131,7 @@
             {% set _ = actividad.append({
               'tipo':   'log',
               'fecha':  l.created_at,
+              'fecha_str': (l.created_at.strftime('%Y-%m-%d') if l.created_at else '0000-00-00'),
               'titulo': l.accion.replace('_',' ').capitalize(),
               'detalle': l.detalle,
               'usuario': l.usuario,
@@ -1137,7 +1139,8 @@
           {% endfor %}
           {% if actividad %}
             <div class="actividad-lista">
-              {% for a in (actividad|sort(attribute='fecha',reverse=True))[:8] %}
+              {# Sort por fecha_str (string YYYY-MM-DD) — evita comparar date vs datetime #}
+              {% for a in (actividad|sort(attribute='fecha_str',reverse=True))[:8] %}
               <div class="act-row">
                 <div class="act-icon" style="background:{% if a.tipo=='visita' %}{{ '#dcfce7' if a.estado=='completada' else '#dbeafe' if a.estado=='programada' else '#f3f4f6' }}{% else %}#f3f4f6{% endif %};color:{% if a.tipo=='visita' %}{{ '#166534' if a.estado=='completada' else '#1d4ed8' }}{% else %}#6b7280{% endif %}">
                   <i class="bi bi-{% if a.tipo=='visita' %}{{ 'check-circle' if a.estado=='completada' else 'calendar-check' if a.estado=='programada' else 'calendar' }}{% else %}{{ 'pencil' if 'edit' in (a.titulo|lower) else 'plus' }}{% endif %}"></i>

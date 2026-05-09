@@ -329,17 +329,17 @@ body {
 .flash-container { padding: 16px 0 0; }
 
 /* ══════════════════════════════════════════════════════════════
-   PAGE HEADER (full-bleed, compensa el padding del wrapper)
+   PAGE HEADER — diseño limpio, claro, asociado a colores ILUS
 ══════════════════════════════════════════════════════════════ */
 .page-header {
-  background: var(--ilus-black);
-  color: white;
-  padding: 18px 24px 16px;
-  border-bottom: 4px solid var(--ilus-red);
-  margin: 0 -24px 22px;
+  background: #fff;
+  color: var(--ilus-black);
+  padding: 14px 0 12px;
+  border-bottom: 1px solid #e5e7eb;
+  margin: 0 0 18px;
 }
-.page-header h4  { margin: 0; font-weight: 900; font-size: 1.25rem; line-height: 1.2; }
-.page-header .sub { color: #aaa; font-size: .82rem; margin-top: 3px; }
+.page-header h4  { margin: 0; font-weight: 900; font-size: 1.3rem; line-height: 1.2; color: var(--ilus-black); }
+.page-header .sub { color: #6b7280; font-size: .82rem; margin-top: 2px; }
 
 /* ══════════════════════════════════════════════════════════════
    BOTONES
