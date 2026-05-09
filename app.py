@@ -12270,7 +12270,7 @@ def mant_visita_multi(cid):
             # 3. Loguear en cada equipo (auditoría)
             for r in rows:
                 cur.execute(
-                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,created_by) "
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
                     "VALUES ('maquina',%s,'visita_multi',%s,%s)",
                     (r["id"],
                      f"Visita {vid} ({tipo_visita}) — fecha {fecha_prog}. {motivo[:120]}",
@@ -12285,6 +12285,12 @@ def mant_visita_multi(cid):
             "equipos_afectados": len(rows),
             "fecha_programada": fecha_prog,
         })
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": f"Error al crear la visita: {str(e)}"}), 500
     finally:
         conn.close()
 
