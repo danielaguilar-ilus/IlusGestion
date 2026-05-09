@@ -10788,6 +10788,25 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
 
+            # Tabla N:N para múltiples técnicos asignados a una visita
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visita_tecnicos (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id   INT NOT NULL,
+                    tecnico_id  INT NOT NULL,
+                    rol         VARCHAR(40) DEFAULT 'tecnico'
+                                COMMENT 'tecnico|lider|supervisor',
+                    horas       DECIMAL(5,2) DEFAULT 0
+                                COMMENT 'Horas reales trabajadas (post-visita)',
+                    costo       DECIMAL(12,2) DEFAULT 0
+                                COMMENT 'Costo individual del técnico para esta visita',
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_visita_tecnico (visita_id, tecnico_id),
+                    INDEX idx_visita  (visita_id),
+                    INDEX idx_tecnico (tecnico_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # ── Log de emails enviados (trazabilidad global) ───────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS email_log (
@@ -12262,20 +12281,38 @@ def mant_visita_multi(cid):
     # Fecha por defecto: +48 horas. Solo el superadmin puede modificarla en frontend,
     # pero validamos también en backend que el campo no quede vacío.
     fecha_prog = d.get("fecha_programada") or (datetime.today().date() + timedelta(days=2)).isoformat()
-    tecnico_id = d.get("tecnico_id")
-    try:
-        tecnico_id = int(tecnico_id) if tecnico_id not in (None, "", 0, "0") else None
-    except (TypeError, ValueError):
-        tecnico_id = None
+    # Multi-técnico: aceptamos lista de IDs (1..10). Compatibilidad con tecnico_id único.
+    tecnico_ids_raw = d.get("tecnico_ids") or []
+    if not isinstance(tecnico_ids_raw, list):
+        tecnico_ids_raw = []
+    if not tecnico_ids_raw and d.get("tecnico_id"):
+        tecnico_ids_raw = [d.get("tecnico_id")]
+    tecnico_ids = []
+    for x in tecnico_ids_raw:
+        try:
+            xi = int(x)
+            if xi > 0:
+                tecnico_ids.append(xi)
+        except (TypeError, ValueError):
+            pass
+    tecnico_ids = list(dict.fromkeys(tecnico_ids))[:10]  # dedupe + máx 10
 
-    # Si viene tecnico_id, resolvemos el nombre desde la tabla; si no, usamos el texto libre.
-    tecnico_nombre = (d.get("tecnico") or "").strip()[:200] or None
-    if tecnico_id:
-        _t = mysql_fetchone("SELECT nombre FROM mant_tecnicos WHERE id=%s AND activo=1", (tecnico_id,))
-        if _t:
-            tecnico_nombre = _t["nombre"]
-        else:
-            tecnico_id = None  # ID inválido → ignorar
+    # Resolver nombres y tarifas desde la tabla. El campo `tecnico` (texto libre)
+    # se conserva por compatibilidad con visitas viejas — se usa nombre concatenado.
+    tecnicos_data = []
+    if tecnico_ids:
+        placeholders_t = ",".join(["%s"] * len(tecnico_ids))
+        rows_t = mysql_fetchall(
+            f"SELECT id,nombre,tarifa_visita FROM mant_tecnicos WHERE id IN ({placeholders_t}) AND activo=1",
+            tuple(tecnico_ids)
+        ) or []
+        tecnicos_data = [dict(r) for r in rows_t]
+    tecnico_id     = tecnicos_data[0]["id"]     if tecnicos_data else None
+    tecnico_nombre = (
+        ", ".join(t["nombre"] for t in tecnicos_data)
+        if tecnicos_data
+        else ((d.get("tecnico") or "").strip()[:200] or None)
+    )
 
     titulo_input = (d.get("titulo") or "").strip()[:200]
 
@@ -12292,7 +12329,8 @@ def mant_visita_multi(cid):
     hora_inicio = _parse_hora(d.get("hora_inicio"))
     hora_fin    = _parse_hora(d.get("hora_fin"))
 
-    # Costo (CLP, número positivo) — opcional
+    # Costo (CLP). Si el usuario no lo indica → cálculo automático:
+    # tarifa_visita × cantidad de técnicos asignados (default $50.000 por técnico).
     costo = d.get("costo")
     try:
         costo = float(costo) if costo not in (None, "", 0, "0") else None
@@ -12300,6 +12338,12 @@ def mant_visita_multi(cid):
             costo = None
     except (TypeError, ValueError):
         costo = None
+    if costo is None and tecnicos_data:
+        costo_auto = 0.0
+        for t in tecnicos_data:
+            tarifa = float(t.get("tarifa_visita") or 50000)
+            costo_auto += tarifa
+        costo = costo_auto if costo_auto > 0 else None
 
     observaciones = (d.get("observaciones") or "").strip()[:1000] or None
 
@@ -12347,6 +12391,17 @@ def mant_visita_multi(cid):
                  costo, current_username())
             )
             vid = cur.lastrowid
+
+            # 1.b Insertar técnicos asignados (N:N) si hay
+            if tecnicos_data:
+                # Cada técnico se carga con su tarifa como costo individual de la visita
+                for t in tecnicos_data:
+                    cur.execute(
+                        """INSERT INTO mant_visita_tecnicos (visita_id, tecnico_id, costo)
+                           VALUES (%s, %s, %s)""",
+                        (vid, t["id"], float(t.get("tarifa_visita") or 50000))
+                    )
+
             # 2. Cambiar estado de los equipos
             cur.execute(
                 f"UPDATE mant_maquinas SET estado_op=%s WHERE id IN ({placeholders})",
@@ -12368,6 +12423,8 @@ def mant_visita_multi(cid):
             "ok": True,
             "visita_id": vid,
             "equipos_afectados": len(rows),
+            "tecnicos_asignados": len(tecnicos_data),
+            "costo_calculado": costo,
             "fecha_programada": fecha_prog,
         })
     except Exception as e:
@@ -12419,11 +12476,37 @@ def mant_tecnicos_index():
 def mant_tecnicos_list_api():
     """JSON ligero para dropdowns. Solo activos por defecto."""
     incluir_inactivos = request.args.get("all") == "1"
-    sql = "SELECT id,nombre,especialidad,nivel,telefono,email,activo FROM mant_tecnicos"
+    sql = "SELECT id,nombre,especialidad,nivel,telefono,email,tarifa_visita,activo,es_externo FROM mant_tecnicos"
     if not incluir_inactivos:
         sql += " WHERE activo=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ()) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/colaboradores-search", methods=["GET"])
+@_mant_required
+def mant_colab_search():
+    """
+    Autocomplete de colaboradores (HR) para importarlos como técnicos.
+    Búsqueda por nombre o RUT, devuelve datos personales + dirección.
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f"%{q}%"
+    rows = mysql_fetchall(
+        f"""SELECT c.id, c.nombre_completo, c.rut, c.email, c.telefono,
+                   c.direccion, c.comuna, c.region,
+                   cg.nombre AS cargo
+              FROM `{HRM_COLAB_TABLE}` c
+              LEFT JOIN `{HRM_CARGOS_TABLE}` cg ON cg.id = c.cargo_id
+             WHERE (c.nombre_completo LIKE %s OR c.rut LIKE %s)
+               AND c.estado='activo'
+             ORDER BY c.nombre_completo
+             LIMIT 12""",
+        (like, like)
+    ) or []
     return jsonify([dict(r) for r in rows])
 
 
@@ -13150,40 +13233,116 @@ def mant_contrato_clausulas_get(ctid):
 @app.route("/mantenciones/api/visitas", methods=["GET"])
 @_mant_required
 def mant_visitas_api():
-    """Devuelve visitas para el calendario (formato FullCalendar)."""
+    """
+    Devuelve visitas enriquecidas para el calendario inteligente.
+    Cada evento incluye: cliente, dirección, técnicos N:N, horario, costo.
+    Filtros opcionales:  start, end, cliente_id, tecnico_id
+    """
     desde = request.args.get("start", "")
     hasta = request.args.get("end", "")
     cid   = request.args.get("cliente_id")
+    tid   = request.args.get("tecnico_id")
     where, params = [], []
     if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
     if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
     if cid:   where.append("v.cliente_id=%s"); params.append(int(cid))
-    sql = ("SELECT v.*, c.razon_social FROM mant_visitas v "
-           "JOIN mant_clientes c ON c.id=v.cliente_id")
+    if tid:   where.append(
+        "v.id IN (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_id=%s)"
+    ); params.append(int(tid))
+
+    sql = ("""SELECT v.*, c.razon_social, c.direccion, c.comuna, c.region
+                FROM mant_visitas v
+                JOIN mant_clientes c ON c.id=v.cliente_id""")
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY v.fecha_programada LIMIT 500"
-    rows = mysql_fetchall(sql, tuple(params))
+    sql += " ORDER BY v.fecha_programada, v.hora_inicio LIMIT 500"
+    rows = mysql_fetchall(sql, tuple(params)) or []
+    rows = [dict(r) for r in rows]
 
-    COLORS = {"preventiva":"#1a7a1a","correctiva":"#cc0000",
-              "garantia":"#0066cc","inspeccion":"#f57c00"}
-    ESTADO_CLR = {"completada":"#6c757d","cancelada":"#999","reagendada":"#ff9800"}
+    # Cargar técnicos N:N de todas las visitas en una sola query
+    tecs_por_visita = {}
+    if rows:
+        vids = [r["id"] for r in rows]
+        ph = ",".join(["%s"] * len(vids))
+        tec_rows = mysql_fetchall(
+            f"""SELECT vt.visita_id, t.id, t.nombre, t.especialidad, t.nivel,
+                       t.es_externo, t.foto_url
+                  FROM mant_visita_tecnicos vt
+                  JOIN mant_tecnicos t ON t.id=vt.tecnico_id
+                 WHERE vt.visita_id IN ({ph})
+                 ORDER BY t.nombre""",
+            tuple(vids)
+        ) or []
+        for tr in tec_rows:
+            tecs_por_visita.setdefault(tr["visita_id"], []).append({
+                "id":           tr["id"],
+                "nombre":       tr["nombre"],
+                "especialidad": tr["especialidad"],
+                "nivel":        tr["nivel"],
+                "es_externo":   bool(tr.get("es_externo")),
+                "foto_url":     tr.get("foto_url"),
+            })
+
+    # Colores por TIPO (mantención preventiva, correctiva, etc.)
+    TIPO_COLOR = {
+        "preventiva": "#16a34a",
+        "correctiva": "#dc2626",
+        "garantia":   "#2563eb",
+        "inspeccion": "#f59e0b",
+    }
+    EST_BORDER = {
+        "programada":  "#0f172a",
+        "completada":  "#166534",
+        "cancelada":   "#9ca3af",
+        "reagendada":  "#7c3aed",
+    }
+
     events = []
     for r in rows:
-        color = ESTADO_CLR.get(r["estado"], COLORS.get(r["tipo"],"#555"))
+        tecs = tecs_por_visita.get(r["id"], [])
+        # Si no hay técnicos N:N pero sí hay tecnico_id legacy, fallback
+        if not tecs and r.get("tecnico_id"):
+            t_legacy = mysql_fetchone(
+                "SELECT id,nombre,especialidad,nivel,es_externo,foto_url FROM mant_tecnicos WHERE id=%s",
+                (r["tecnico_id"],)
+            )
+            if t_legacy:
+                tecs = [dict(t_legacy)]
+        # Para visitas viejas con solo el campo texto `tecnico`
+        elif not tecs and r.get("tecnico"):
+            tecs = [{"id": None, "nombre": r["tecnico"], "especialidad": None,
+                     "nivel": None, "es_externo": False, "foto_url": None}]
+
+        # Helper para serializar hora (puede venir como timedelta o string)
+        def _h(v):
+            if v is None: return None
+            if hasattr(v, "total_seconds"):
+                t = int(v.total_seconds())
+                return f"{t//3600:02d}:{(t%3600)//60:02d}"
+            s = str(v)
+            return s[:5] if len(s) >= 5 else s
+
         events.append({
-            "id":    r["id"],
-            "title": f"{r['razon_social']} — {r['titulo'] or r['tipo'].capitalize()}",
-            "start": str(r["fecha_programada"]),
-            "color": color,
-            "extendedProps": {
-                "cliente_id":   r["cliente_id"],
+            "id":          r["id"],
+            "title":       r["titulo"] or (r.get("tipo","").capitalize() + " programada"),
+            "fecha":       str(r["fecha_programada"]) if r["fecha_programada"] else None,
+            "hora_inicio": _h(r.get("hora_inicio")),
+            "hora_fin":    _h(r.get("hora_fin")),
+            "tipo":        r.get("tipo"),
+            "estado":      r.get("estado"),
+            "descripcion": (r.get("descripcion") or "")[:300],
+            "costo":       float(r.get("costo") or 0),
+            "cliente": {
+                "id":           r["cliente_id"],
                 "razon_social": r["razon_social"],
-                "tipo":         r["tipo"],
-                "estado":       r["estado"],
-                "tecnico":      r["tecnico"] or "",
-                "costo":        float(r["costo"] or 0),
-            }
+                "direccion":    r.get("direccion") or "",
+                "comuna":       r.get("comuna") or "",
+                "region":       r.get("region") or "",
+            },
+            "tecnicos":    tecs,
+            "n_tecnicos":  len(tecs),
+            "color_tipo":   TIPO_COLOR.get(r.get("tipo"), "#6b7280"),
+            "color_borde":  EST_BORDER.get(r.get("estado"), "#0f172a"),
         })
     return jsonify(events)
 
@@ -13260,9 +13419,15 @@ def mant_calendario():
     clientes = mysql_fetchall(
         "SELECT id, razon_social FROM mant_clientes WHERE estado='activo' ORDER BY razon_social",
         ()
-    )
+    ) or []
+    tecnicos = mysql_fetchall(
+        "SELECT id, nombre, especialidad, nivel, es_externo, foto_url "
+        "FROM mant_tecnicos WHERE activo=1 ORDER BY nombre",
+        ()
+    ) or []
     return render_template("mantenciones/calendario.html",
-        clientes = [dict(r) for r in clientes]
+        clientes = [dict(r) for r in clientes],
+        tecnicos = [dict(r) for r in tecnicos],
     )
 
 

@@ -210,29 +210,66 @@
 <div class="modal fade" id="modalNuevoTecnico" tabindex="-1">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content" style="border:2px solid var(--ilus-red)">
-      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
         <h5 class="modal-title fw-bold">
           <i class="bi bi-person-plus-fill me-2" style="color:var(--ilus-red)"></i>Nuevo técnico
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+
+        {# ─── Importar de Colaboradores ─── #}
+        <div class="p-3 mb-3 rounded-3" style="background:#f0f9ff;border:1px solid #bae6fd">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <i class="bi bi-people-fill" style="color:#0284c7"></i>
+            <strong style="color:#075985;font-size:.9rem">Importar desde Colaboradores</strong>
+          </div>
+          <div class="small text-muted mb-2">
+            ¿Lenin Urbina o algún colaborador interno se desempeña como técnico? Búscalo y rellena automáticamente.
+          </div>
+          <div class="position-relative">
+            <input type="text" id="nt_colab_search" class="form-control form-control-sm"
+                   placeholder="Buscar colaborador por nombre o RUT…" autocomplete="off">
+            <div id="nt_colab_dropdown" class="position-absolute w-100 bg-white shadow-sm border rounded mt-1"
+                 style="z-index:1080;display:none;max-height:240px;overflow-y:auto"></div>
+          </div>
+        </div>
+
         <div class="row g-3">
           <div class="col-12 col-md-8">
             <label class="form-label fw-semibold small">Nombre completo <span class="text-danger">*</span></label>
-            <input type="text" id="nt_nombre" class="form-control" maxlength="200" placeholder="Ej: Lenin Aguirre">
+            <input type="text" id="nt_nombre" class="form-control" maxlength="200" placeholder="Ej: Lenin Urbina">
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label fw-semibold small">RUT</label>
             <input type="text" id="nt_rut" class="form-control" maxlength="20" placeholder="11.111.111-1">
           </div>
 
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Especialidad</label>
-            <input type="text" id="nt_especialidad" class="form-control" maxlength="160"
-                   placeholder="Ej: Cardio, fuerza, eléctrico">
+          {# ─── Especialidades múltiples ─── #}
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Especialidades <span class="text-muted fw-normal" style="font-size:.72rem">(selecciona una o varias)</span>
+            </label>
+            <div class="d-flex flex-wrap gap-2 p-2 rounded-3"
+                 style="background:#f9fafb;border:1px solid #e5e7eb">
+              {% for esp in ['Cardio','Fuerza','Eléctrico','Carga de discos','Selector de peso','Bicicletas','Spinning','Pisos / Elastómeros','Estructural / soldadura','Electrónica / pantallas'] %}
+              <label class="form-check form-check-inline d-flex align-items-center"
+                     style="background:#fff;border:1px solid #e5e7eb;border-radius:50px;padding:4px 12px 4px 8px;margin:0;cursor:pointer">
+                <input class="form-check-input nt-esp-chk me-1" type="checkbox" value="{{ esp }}">
+                <span style="font-size:.78rem">{{ esp }}</span>
+              </label>
+              {% endfor %}
+              <label class="form-check form-check-inline d-flex align-items-center"
+                     style="background:#dcfce7;border:1px solid #16a34a;border-radius:50px;padding:4px 12px 4px 8px;margin:0;cursor:pointer">
+                <input class="form-check-input nt-esp-chk me-1" type="checkbox" value="Todas las especialidades">
+                <span style="font-size:.78rem;color:#166534;font-weight:700">⭐ Todas</span>
+              </label>
+            </div>
+            <input type="text" id="nt_especialidad_libre" class="form-control form-control-sm mt-2"
+                   maxlength="160" placeholder="O escribe otra especialidad personalizada (opcional)">
           </div>
-          <div class="col-6 col-md-3">
+
+          <div class="col-6 col-md-4">
             <label class="form-label fw-semibold small">Nivel</label>
             <select id="nt_nivel" class="form-select">
               <option value="junior">Junior</option>
@@ -240,32 +277,49 @@
               <option value="externo">Externo</option>
             </select>
           </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label fw-semibold small">Tarifa visita (CLP)</label>
-            <input type="number" id="nt_tarifa" class="form-control" min="0" step="1000" placeholder="0">
+          <div class="col-6 col-md-4">
+            <label class="form-label fw-semibold small">Tarifa por día (CLP)</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="number" id="nt_tarifa" class="form-control" min="0" step="1000"
+                     placeholder="50.000" value="50000">
+            </div>
+            <div class="form-text small">Default: $50.000 — el costo se multiplica por la cantidad de técnicos asignados.</div>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold small">Teléfono <span class="text-muted fw-normal" style="font-size:.72rem">(CL)</span></label>
+            <input type="text" id="nt_telefono" class="form-control" maxlength="50" placeholder="+56 9 1234 5678">
+            <div class="form-text small text-muted">Formato: +56 9 XXXX XXXX</div>
           </div>
 
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Teléfono</label>
-            <input type="text" id="nt_telefono" class="form-control" maxlength="50" placeholder="+56 9 1234 5678">
-          </div>
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">Email</label>
             <input type="email" id="nt_email" class="form-control" maxlength="200" placeholder="tecnico@ilus.cl">
           </div>
 
+          {# ─── Dirección con buscador inteligente ─── #}
+          <div class="col-12">
+            <label class="form-label fw-semibold small">
+              Dirección
+              <span class="text-muted fw-normal" style="font-size:.72rem">(buscador OSM Chile)</span>
+            </label>
+            <div class="position-relative">
+              <input type="text" id="nt_direccion" class="form-control" maxlength="300"
+                     placeholder="Empieza a escribir: 'Av Providencia 123…'" autocomplete="off">
+              <div id="nt_dir_dropdown" class="position-absolute w-100 bg-white shadow-sm border rounded mt-1"
+                   style="z-index:1080;display:none;max-height:240px;overflow-y:auto"></div>
+              <div id="nt_dir_loading" class="position-absolute" style="right:12px;top:9px;display:none">
+                <span class="spinner-border spinner-border-sm text-muted"></span>
+              </div>
+            </div>
+          </div>
           <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Comuna</label>
+            <label class="form-label fw-semibold small">Comuna <span class="text-muted fw-normal" style="font-size:.72rem">(auto desde dirección)</span></label>
             <input type="text" id="nt_comuna" class="form-control" maxlength="100">
           </div>
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">Región</label>
             <input type="text" id="nt_region" class="form-control" maxlength="100">
-          </div>
-
-          <div class="col-12">
-            <label class="form-label fw-semibold small">Dirección</label>
-            <input type="text" id="nt_direccion" class="form-control" maxlength="300">
           </div>
 
           <div class="col-12">
@@ -304,9 +358,173 @@ document.getElementById('nt_externo').addEventListener('change', function(){
   document.getElementById('nt_externo_wrap').style.display = this.checked ? 'block' : 'none';
 });
 
+// ── Toggle "Todas" en especialidades ──────────────────────────────────
+document.querySelectorAll('.nt-esp-chk').forEach(chk => {
+  chk.addEventListener('change', e => {
+    if (e.target.value === 'Todas las especialidades' && e.target.checked) {
+      document.querySelectorAll('.nt-esp-chk').forEach(c => {
+        if (c.value !== 'Todas las especialidades') c.checked = false;
+      });
+    } else if (e.target.value !== 'Todas las especialidades' && e.target.checked) {
+      const todas = document.querySelector('.nt-esp-chk[value="Todas las especialidades"]');
+      if (todas) todas.checked = false;
+    }
+  });
+});
+
+// ── Buscador de Colaboradores (importar técnico) ─────────────────────
+let _colabTimer = null;
+const colabIn = document.getElementById('nt_colab_search');
+const colabDD = document.getElementById('nt_colab_dropdown');
+colabIn.addEventListener('input', () => {
+  clearTimeout(_colabTimer);
+  const q = colabIn.value.trim();
+  if (q.length < 2) { colabDD.style.display='none'; return; }
+  _colabTimer = setTimeout(() => buscarColab(q), 300);
+});
+async function buscarColab(q){
+  try {
+    const r = await fetch(`/mantenciones/api/colaboradores-search?q=${encodeURIComponent(q)}`);
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length){
+      colabDD.innerHTML = '<div class="px-3 py-2 small text-muted">Sin resultados</div>';
+      colabDD.style.display = 'block';
+      return;
+    }
+    colabDD.innerHTML = list.map(c => `
+      <div class="px-3 py-2 colab-item" style="cursor:pointer;border-bottom:1px solid #f3f4f6"
+           data-c='${JSON.stringify(c).replace(/'/g, "&#39;")}'>
+        <div class="fw-semibold small">${escHtml(c.nombre_completo || '')}</div>
+        <div class="small text-muted">
+          ${c.rut ? '<i class="bi bi-person-vcard me-1"></i>' + escHtml(c.rut) : ''}
+          ${c.cargo ? ' · <i class="bi bi-briefcase me-1"></i>' + escHtml(c.cargo) : ''}
+        </div>
+      </div>
+    `).join('');
+    colabDD.style.display = 'block';
+    colabDD.querySelectorAll('.colab-item').forEach(it => {
+      it.addEventListener('click', () => {
+        const c = JSON.parse(it.dataset.c.replace(/&#39;/g, "'"));
+        document.getElementById('nt_nombre').value    = c.nombre_completo || '';
+        document.getElementById('nt_rut').value       = c.rut || '';
+        document.getElementById('nt_email').value     = c.email || '';
+        document.getElementById('nt_telefono').value  = c.telefono || '';
+        document.getElementById('nt_direccion').value = c.direccion || '';
+        document.getElementById('nt_comuna').value    = c.comuna || '';
+        document.getElementById('nt_region').value    = c.region || '';
+        colabDD.style.display = 'none';
+        colabIn.value = '';
+        ilusToast(`Datos importados de ${c.nombre_completo}`, { type:'success' });
+      });
+    });
+  } catch(e){
+    colabDD.innerHTML = `<div class="px-3 py-2 small text-danger">Error: ${e.message}</div>`;
+    colabDD.style.display = 'block';
+  }
+}
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Buscador de dirección (Nominatim + Photon, Chile) ────────────────
+let _dirTimer = null;
+const dirIn = document.getElementById('nt_direccion');
+const dirDD = document.getElementById('nt_dir_dropdown');
+const dirLoad = document.getElementById('nt_dir_loading');
+dirIn.addEventListener('input', () => {
+  clearTimeout(_dirTimer);
+  const q = dirIn.value.trim();
+  if (q.length < 4) { dirDD.style.display='none'; dirLoad.style.display='none'; return; }
+  dirLoad.style.display = 'block';
+  _dirTimer = setTimeout(() => buscarDir(q), 500);
+});
+async function buscarDir(q){
+  try {
+    const variantes = [q, q.replace(/^(av\.?|avda\.?|avenida)\s+/i, '')]
+      .filter((v,i,a) => v && a.indexOf(v)===i);
+    let resultados = [];
+    for (const v of variantes){
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(v+', Chile')}&countrycodes=cl&addressdetails=1&limit=6&accept-language=es&dedupe=1`;
+      const r = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+      if (!r.ok) continue;
+      const j = await r.json();
+      resultados = resultados.concat((j||[]).map(d => ({
+        display: d.display_name,
+        calle: (d.address?.road || '') + (d.address?.house_number ? ' ' + d.address.house_number : ''),
+        comuna: d.address?.suburb || d.address?.city_district || d.address?.town || d.address?.village || d.address?.county || '',
+        region: d.address?.state || d.address?.region || '',
+      })));
+      if (resultados.length >= 6) break;
+    }
+    // Dedupe por display
+    const seen = new Set();
+    resultados = resultados.filter(r => !seen.has(r.display) && seen.add(r.display));
+    dirLoad.style.display = 'none';
+    if (!resultados.length){
+      dirDD.innerHTML = '<div class="px-3 py-2 small text-muted">Sin resultados — escríbela manualmente</div>';
+      dirDD.style.display = 'block';
+      return;
+    }
+    dirDD.innerHTML = resultados.slice(0,6).map((r, i) => `
+      <div class="px-3 py-2 dir-item" style="cursor:pointer;border-bottom:1px solid #f3f4f6"
+           data-i="${i}">
+        <div class="fw-semibold small text-truncate">${escHtml(r.calle || r.display)}</div>
+        <div class="small text-muted text-truncate">
+          ${escHtml(r.comuna || '—')}${r.region ? ', '+escHtml(r.region) : ''}
+        </div>
+      </div>
+    `).join('');
+    dirDD.style.display = 'block';
+    dirDD.querySelectorAll('.dir-item').forEach(it => {
+      it.addEventListener('click', () => {
+        const r = resultados[parseInt(it.dataset.i, 10)];
+        dirIn.value = r.calle || r.display.split(',')[0];
+        document.getElementById('nt_comuna').value = r.comuna || '';
+        document.getElementById('nt_region').value = r.region || '';
+        dirDD.style.display = 'none';
+      });
+    });
+  } catch(e){
+    dirLoad.style.display = 'none';
+    dirDD.innerHTML = `<div class="px-3 py-2 small text-danger">Error: ${e.message}</div>`;
+    dirDD.style.display = 'block';
+  }
+}
+
+// Cerrar dropdowns al click fuera
+document.addEventListener('click', e => {
+  if (!colabIn.contains(e.target) && !colabDD.contains(e.target)) colabDD.style.display='none';
+  if (!dirIn.contains(e.target)   && !dirDD.contains(e.target))   dirDD.style.display='none';
+});
+
 async function crearTecnico(){
   const nombre = document.getElementById('nt_nombre').value.trim();
-  if (nombre.length < 3) { alert('Nombre obligatorio (mín 3 caracteres)'); return; }
+  if (nombre.length < 3) { ilusToast('Nombre obligatorio (mín 3 caracteres)', { type:'warning' }); return; }
+
+  // Validar email si fue ingresado
+  const email = document.getElementById('nt_email').value.trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    ilusToast('Email inválido', { type:'warning' }); return;
+  }
+
+  // Validar teléfono CL si fue ingresado: +56 9 XXXX XXXX o 9 XXXX XXXX
+  const tel = document.getElementById('nt_telefono').value.trim();
+  if (tel) {
+    const telLimpio = tel.replace(/[\s\-\.]/g, '');
+    if (!/^(\+?56)?9\d{8}$/.test(telLimpio)) {
+      ilusToast('Teléfono chileno inválido. Formato: +56 9 XXXX XXXX', { type:'warning' });
+      return;
+    }
+  }
+
+  // Especialidades múltiples (checkboxes)
+  const especialidades = Array.from(document.querySelectorAll('.nt-esp-chk:checked'))
+                              .map(c => c.value);
+  const especialidadFinal = especialidades.length
+    ? especialidades.join(', ')
+    : document.getElementById('nt_especialidad_libre').value.trim();
+
   const btn = document.getElementById('nt_btn');
   const orig = btn.innerHTML;
   btn.disabled = true;
@@ -317,10 +535,10 @@ async function crearTecnico(){
       body: JSON.stringify({
         nombre,
         rut:           document.getElementById('nt_rut').value.trim(),
-        especialidad:  document.getElementById('nt_especialidad').value.trim(),
+        especialidad:  especialidadFinal,
         nivel:         document.getElementById('nt_nivel').value,
-        telefono:      document.getElementById('nt_telefono').value.trim(),
-        email:         document.getElementById('nt_email').value.trim(),
+        telefono:      tel,
+        email:         email,
         direccion:     document.getElementById('nt_direccion').value.trim(),
         comuna:        document.getElementById('nt_comuna').value.trim(),
         region:        document.getElementById('nt_region').value.trim(),
@@ -331,10 +549,14 @@ async function crearTecnico(){
       })
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || 'no se pudo crear')); btn.disabled=false; btn.innerHTML=orig; return; }
-    location.reload();
+    if (!r.ok || !d.ok) {
+      ilusToast('Error: ' + (d.error || 'no se pudo crear'), { type:'error' });
+      btn.disabled=false; btn.innerHTML=orig; return;
+    }
+    ilusToast('Técnico creado', { type:'success' });
+    setTimeout(() => location.reload(), 600);
   } catch(e){
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, { type:'error' });
     btn.disabled=false; btn.innerHTML=orig;
   }
 }

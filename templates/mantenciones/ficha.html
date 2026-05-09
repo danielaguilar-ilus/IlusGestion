@@ -1990,10 +1990,11 @@ function abrirVisitaMulti() {
   // Resumen de cantidad para el alert al pie
   const resumen = document.getElementById('vm_count_resumen');
   if (resumen) resumen.textContent = seleccionados.length + ' ';
-  // Reset técnico (el dropdown se llena async)
-  const tecSel = document.getElementById('vm_tecnico_id');
-  if (tecSel) tecSel.value = '';
-  vmCargarTecnicos();
+  // Reset multi-técnico (chips + buscador)
+  window._vmTecnicosSel = [];
+  vmCargarTecnicos().then(() => { vmRenderChips(); vmSetupTecSearch(); });
+  document.getElementById('vm_tec_search').value = '';
+  document.getElementById('vm_tec_dropdown').style.display = 'none';
   vmActualizarFechaPorTipo();
 
   if (!window._modalVisitaMulti) {
@@ -2021,37 +2022,131 @@ function vmActualizarFechaPorTipo() {
   document.getElementById('vm_tipo_label').textContent = labels[tipo] || tipo;
 }
 
-// Carga el dropdown de técnicos (solo activos). Se cachea en window._tecnicosCache.
+// ── Multi-técnico: cache, buscador, chips, costo auto ─────────────────
+window._vmTecnicosAll = [];      // Catálogo completo cacheado
+window._vmTecnicosSel = [];      // Técnicos seleccionados [{id,nombre,tarifa_visita}]
+
 async function vmCargarTecnicos() {
-  const sel = document.getElementById('vm_tecnico_id');
-  if (!sel || sel.dataset.loaded === '1') return;
+  if (window._vmTecnicosAll.length) return;
   try {
     const r = await fetch('/mantenciones/api/tecnicos');
-    const list = await r.json();
-    sel.innerHTML = '<option value="">— Sin asignar —</option>' +
-      list.map(t => {
-        const sub = t.especialidad ? ` · ${t.especialidad}` : '';
-        const niv = t.nivel ? ` [${t.nivel}]` : '';
-        return `<option value="${t.id}">${t.nombre}${niv}${sub}</option>`;
-      }).join('');
-    sel.dataset.loaded = '1';
+    window._vmTecnicosAll = await r.json();
   } catch(e) {
-    sel.innerHTML = '<option value="">Error cargando técnicos</option>';
+    window._vmTecnicosAll = [];
   }
+}
+
+function vmRenderChips(){
+  const wrap = document.getElementById('vm_tec_chips');
+  if (!wrap) return;
+  if (!window._vmTecnicosSel.length){
+    wrap.innerHTML = '<span class="small text-muted">Ningún técnico asignado todavía</span>';
+  } else {
+    wrap.innerHTML = window._vmTecnicosSel.map(t => `
+      <span class="badge d-inline-flex align-items-center gap-1"
+            style="background:#0f172a;color:#fff;font-weight:600;padding:6px 10px;font-size:.78rem">
+        <i class="bi bi-person-badge"></i>${escHtml(t.nombre)}
+        <button type="button" class="btn-close btn-close-white ms-1"
+                style="font-size:.55rem" onclick="vmRemoveTec(${t.id})"></button>
+      </span>
+    `).join('');
+  }
+  vmRecalcularCosto();
+}
+
+function vmAddTec(id){
+  if (window._vmTecnicosSel.length >= 10) {
+    ilusToast('Máximo 10 técnicos por visita', { type:'warning' }); return;
+  }
+  if (window._vmTecnicosSel.some(t => t.id === id)) return;
+  const t = window._vmTecnicosAll.find(x => x.id === id);
+  if (!t) return;
+  window._vmTecnicosSel.push(t);
+  vmRenderChips();
+  document.getElementById('vm_tec_search').value = '';
+  document.getElementById('vm_tec_dropdown').style.display = 'none';
+}
+
+function vmRemoveTec(id){
+  window._vmTecnicosSel = window._vmTecnicosSel.filter(t => t.id !== id);
+  vmRenderChips();
+}
+
+function vmRecalcularCosto(){
+  // Costo automático = sum(tarifa_visita × cantidad) — default 50.000 si no tiene tarifa
+  let total = 0;
+  for (const t of window._vmTecnicosSel){
+    total += parseFloat(t.tarifa_visita || 50000);
+  }
+  document.getElementById('vm_costo').value = total ? Math.round(total) : '';
+  const bd = document.getElementById('vm_costo_breakdown');
+  if (bd && window._vmTecnicosSel.length){
+    const detalle = window._vmTecnicosSel.map(t =>
+      `${t.nombre.split(' ')[0]}: $${(parseFloat(t.tarifa_visita || 50000)).toLocaleString('es-CL')}`
+    ).join(' + ');
+    bd.innerHTML = `<strong>Auto:</strong> ${detalle} = <strong>$${total.toLocaleString('es-CL')}</strong>`;
+  } else if (bd){
+    bd.innerHTML = 'Default: $50.000 × cantidad de técnicos. Repuestos se registran aparte.';
+  }
+}
+
+// Buscador de técnicos en el modal
+function vmSetupTecSearch(){
+  const inp = document.getElementById('vm_tec_search');
+  const dd  = document.getElementById('vm_tec_dropdown');
+  if (!inp || inp.dataset.bound === '1') return;
+  inp.dataset.bound = '1';
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    if (q.length < 1) { dd.style.display='none'; return; }
+    const list = window._vmTecnicosAll.filter(t =>
+      !window._vmTecnicosSel.some(s => s.id === t.id) &&
+      ((t.nombre || '').toLowerCase().includes(q) ||
+       (t.especialidad || '').toLowerCase().includes(q))
+    ).slice(0, 8);
+    if (!list.length){
+      dd.innerHTML = '<div class="px-3 py-2 small text-muted">Sin coincidencias</div>';
+    } else {
+      dd.innerHTML = list.map(t => {
+        const tar = t.tarifa_visita ? `$${parseInt(t.tarifa_visita).toLocaleString('es-CL')}` : '$50.000';
+        const ext = t.es_externo ? '<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">externo</span>' : '';
+        return `<div class="px-3 py-2 vm-tec-item" style="cursor:pointer;border-bottom:1px solid #f3f4f6"
+                     data-id="${t.id}">
+          <div class="fw-semibold small">${escHtml(t.nombre)}${ext}</div>
+          <div class="small text-muted">
+            ${t.especialidad ? '<i class=\"bi bi-tools me-1\"></i>'+escHtml(t.especialidad)+' · ' : ''}
+            <i class="bi bi-cash"></i> ${tar} / día
+          </div>
+        </div>`;
+      }).join('');
+    }
+    dd.style.display = 'block';
+    dd.querySelectorAll('.vm-tec-item').forEach(it => {
+      it.addEventListener('click', () => vmAddTec(parseInt(it.dataset.id, 10)));
+    });
+  });
+  document.addEventListener('click', e => {
+    if (!inp.contains(e.target) && !dd.contains(e.target)) dd.style.display='none';
+  });
+}
+
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 async function confirmarVisitaMulti() {
   const ids = window._vmIds || [];
   if (!ids.length) return;
   const motivo = document.getElementById('vm_motivo').value.trim();
-  if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
+  if (motivo.length < 8) { ilusToast('El motivo debe tener al menos 8 caracteres', { type:'warning' }); return; }
   const fecha = document.getElementById('vm_fecha').value;
-  if (!fecha) { alert('La fecha es obligatoria'); return; }
+  if (!fecha) { ilusToast('La fecha es obligatoria', { type:'warning' }); return; }
 
   // Validación: hora_fin > hora_inicio si ambas están
   const hi = document.getElementById('vm_hora_inicio').value;
   const hf = document.getElementById('vm_hora_fin').value;
-  if (hi && hf && hf <= hi) { alert('La hora de fin debe ser posterior a la hora de inicio'); return; }
+  if (hi && hf && hf <= hi) { ilusToast('La hora de fin debe ser posterior a la de inicio', { type:'warning' }); return; }
 
   const btn = document.getElementById('vm_btn');
   const orig = btn.innerHTML;
@@ -2071,20 +2166,21 @@ async function confirmarVisitaMulti() {
         motivo,
         observaciones: document.getElementById('vm_observaciones').value.trim(),
         estado_nuevo: document.getElementById('vm_estado').value,
-        tecnico_id:   document.getElementById('vm_tecnico_id').value || null,
+        tecnico_ids:  (window._vmTecnicosSel || []).map(t => t.id),
         titulo:       document.getElementById('vm_titulo').value.trim(),
       })
     });
     const d = await r.json().catch(() => ({error: 'respuesta no válida'}));
     if (!r.ok || !d.ok) {
-      alert('Error: ' + (d.error || 'no se pudo crear la visita'));
+      ilusToast('Error: ' + (d.error || 'no se pudo crear la visita'), { type:'error' });
       btn.disabled = false; btn.innerHTML = orig;
       return;
     }
     btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>Visita ${d.visita_id} creada`;
-    setTimeout(() => location.reload(), 1200);
+    ilusToast(`Visita #${d.visita_id} creada · ${d.equipos_afectados} equipo(s)`, { type:'success' });
+    setTimeout(() => location.reload(), 1000);
   } catch(e) {
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, { type:'error' });
     btn.disabled = false; btn.innerHTML = orig;
   }
 }
@@ -4668,10 +4764,17 @@ function abrirEmailManual() {
             </div>
           </div>
           <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Técnico asignado</label>
-            <select id="vm_tecnico_id" class="form-select">
-              <option value="">— Sin asignar —</option>
-            </select>
+            <label class="form-label fw-semibold small">
+              Técnicos asignados
+              <span class="text-muted fw-normal" style="font-size:.72rem">(1 a 10)</span>
+            </label>
+            <div class="position-relative">
+              <input type="text" id="vm_tec_search" class="form-control"
+                     placeholder="Escribe nombre del técnico…" autocomplete="off">
+              <div id="vm_tec_dropdown" class="position-absolute w-100 bg-white shadow-sm border rounded mt-1"
+                   style="z-index:1080;display:none;max-height:220px;overflow-y:auto"></div>
+            </div>
+            <div id="vm_tec_chips" class="d-flex flex-wrap gap-1 mt-2"></div>
             <div class="form-text small">
               <a href="{{ url_for('mant_tecnicos_index') }}" target="_blank">
                 <i class="bi bi-plus-circle me-1"></i>Crear técnico nuevo
@@ -4691,14 +4794,19 @@ function abrirEmailManual() {
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
               Costo estimado (CLP)
-              <span class="text-muted fw-normal" style="font-size:.72rem">(opcional)</span>
+              <span class="text-muted fw-normal" style="font-size:.72rem">(auto: tarifa × N técnicos)</span>
             </label>
             <div class="input-group">
               <span class="input-group-text">$</span>
               <input type="number" id="vm_costo" class="form-control" min="0" step="1000"
                      placeholder="0">
+              <button type="button" class="btn btn-outline-secondary" onclick="vmRecalcularCosto()" title="Recalcular automático">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
             </div>
-            <div class="form-text small">Mano de obra + traslado. Repuestos se registran aparte.</div>
+            <div class="form-text small" id="vm_costo_breakdown">
+              Default: $50.000 × cantidad de técnicos. Repuestos se registran aparte.
+            </div>
           </div>
 
           <div class="col-12">
@@ -5116,13 +5224,24 @@ function editarVisita(v) {
 }
 
 async function eliminarVisitaFromTabla(vid, titulo) {
-  if (!confirm(`¿Eliminar la visita "${titulo}"?\n\nEsta acción no se puede deshacer.`)) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar visita',
+    message: `¿Eliminar la visita "${titulo}"?`,
+    sub: 'Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || 'no se pudo eliminar')); return; }
-    location.reload();
-  } catch(e){ alert('Error de red: ' + e.message); }
+    if (!r.ok || !d.ok) {
+      ilusToast('Error: ' + (d.error || 'no se pudo eliminar'), { type:'error' });
+      return;
+    }
+    ilusToast('Visita eliminada', { type:'success' });
+    setTimeout(() => location.reload(), 600);
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type:'error' }); }
 }
 
 // ─── Guardar cliente (PUT) ────────────────────────────────

@@ -3,46 +3,10 @@
 
 {% block content %}
 <style>
-/* ── Calendario custom ─────────────────────────── */
-.cal-wrap    { background:#fff;border-radius:12px;border:1px solid #eee;
-               box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 20px; }
-.cal-nav     { display:flex;align-items:center;gap:12px; }
-.cal-nav h5  { margin:0;font-size:1rem;font-weight:800;min-width:200px;text-align:center; }
-.cal-grid    { display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:12px; }
-.cal-dow     { text-align:center;font-size:.68rem;font-weight:700;text-transform:uppercase;
-               letter-spacing:.6px;color:#aaa;padding:6px 0; }
-.cal-day     { min-height:90px;border-radius:8px;padding:6px;position:relative;
-               background:#fafafa;border:1px solid #f0f0f0;cursor:pointer;
-               transition:background .12s; }
-.cal-day:hover { background:#f0f4ff; }
-.cal-day.other-month { opacity:.35; }
-.cal-day.today { border-color:var(--ilus-red)!important;background:#fff8f8; }
-.cal-day-num { font-size:.78rem;font-weight:700;color:#333;margin-bottom:4px; }
-.cal-day.today .cal-day-num { color:var(--ilus-red); }
-.cal-event   { font-size:.65rem;border-radius:4px;padding:2px 5px;margin-bottom:2px;
-               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;
-               cursor:pointer;font-weight:600; }
-.cal-event:hover { opacity:.85; }
-.cal-more    { font-size:.62rem;color:#888;margin-top:2px; }
-/* Sidebar eventos */
-.evt-panel   { background:#fff;border-radius:12px;border:1px solid #eee;
-               box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px; }
-.evt-item    { padding:10px 0;border-bottom:1px solid #f5f5f5;cursor:pointer;
-               transition:background .1s; }
-.evt-item:last-child { border-bottom:none; }
-.evt-item:hover { background:#f8f9fa;border-radius:6px;padding-left:6px; }
-.evt-dot     { width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:3px; }
-/* Filtros */
-.tipo-btn    { font-size:.72rem;padding:3px 10px;border-radius:50px;border:1px solid #ddd;
-               cursor:pointer;transition:all .15s;background:#fff;color:#555; }
-.tipo-btn.active { color:#fff!important;border-color:transparent; }
-/* Leyenda */
-.leyenda-dot { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px; }
-
-/* ── HEADER NEGRO ESTANDARIZADO ─────────────────────── */
+/* ── HEADER ────────────────────────────────────────── */
 .mod-hero{
   background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
-  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  color:#fff;border-radius:14px;padding:18px 22px;margin-bottom:14px;
   border-left:6px solid var(--ilus-red);
   box-shadow:0 4px 16px rgba(0,0,0,.15);
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
@@ -50,122 +14,387 @@
 .mod-hero h4{margin:0;font-weight:700;font-size:1.4rem}
 .mod-hero h4 i{color:var(--ilus-red)}
 .mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px}
+
+/* ── TOOLBAR ───────────────────────────────────────── */
+.cal-toolbar{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:10px 14px;margin-bottom:14px;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+}
+.cal-nav{display:flex;align-items:center;gap:6px}
+.cal-nav .btn{padding:4px 10px;font-size:.85rem}
+.cal-rango{font-weight:700;font-size:.92rem;color:#0f172a;min-width:170px;text-align:center}
+
+.view-tabs{display:flex;background:#f1f5f9;border-radius:10px;padding:3px;gap:2px}
+.view-tab{
+  background:transparent;border:none;padding:6px 14px;font-size:.83rem;
+  font-weight:600;border-radius:8px;color:#64748b;cursor:pointer;
+  display:flex;align-items:center;gap:5px;transition:all .15s;
+}
+.view-tab:hover{color:#0f172a}
+.view-tab.active{background:var(--ilus-red);color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3)}
+
+.cal-filter-btn{
+  font-size:.83rem;padding:5px 12px;
+  background:#fff;border:1px solid #d1d5db;border-radius:8px;
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font-weight:600;color:#374151;
+}
+.cal-filter-btn:hover{background:#f9fafb;border-color:#9ca3af}
+.cal-filter-btn.has-filter{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+/* ── SEMANA VIEW ───────────────────────────────────── */
+.week-grid{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;
+  display:grid;grid-template-columns:60px repeat(7, 1fr);
+}
+.week-head{
+  background:#f9fafb;padding:10px 6px;text-align:center;
+  border-bottom:2px solid #e5e7eb;border-right:1px solid #f3f4f6;
+  font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;
+}
+.week-head:last-child{border-right:none}
+.week-head .wh-num{
+  font-size:1.2rem;font-weight:800;color:#0f172a;display:block;
+  text-transform:none;letter-spacing:0;line-height:1.2;margin-top:2px;
+}
+.week-head.today .wh-num{
+  background:var(--ilus-red);color:#fff;border-radius:50%;
+  width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+}
+.week-hour-lbl{
+  font-size:.65rem;font-weight:700;color:#9ca3af;
+  text-align:right;padding:4px 6px;border-bottom:1px solid #f3f4f6;
+  border-right:1px solid #e5e7eb;background:#fafafa;
+  height:64px;display:flex;align-items:flex-start;justify-content:flex-end;
+}
+.week-cell{
+  border-bottom:1px solid #f3f4f6;border-right:1px solid #f3f4f6;
+  height:64px;position:relative;background:#fff;
+  cursor:pointer;transition:background .1s;
+}
+.week-cell:last-child{border-right:none}
+.week-cell:hover{background:#f9fafb}
+.week-cell.today{background:#fff8f8}
+.week-cell.weekend{background:#fafbfc}
+
+.week-event{
+  position:absolute;left:2px;right:2px;
+  border-radius:6px;padding:4px 6px 5px;
+  background:#16a34a;color:#fff;font-size:.7rem;
+  border-left:3px solid #0f172a;cursor:pointer;
+  box-shadow:0 1px 3px rgba(0,0,0,.1);overflow:hidden;
+  line-height:1.15;
+}
+.week-event:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.2);z-index:10}
+.week-event .wev-time{font-weight:700;font-size:.65rem;opacity:.9}
+.week-event .wev-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.week-event .wev-tec{font-size:.62rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ── LISTA VIEW ─────────────────────────────────────── */
+.list-view{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.list-row{
+  display:grid;grid-template-columns:120px 1fr 200px 140px 100px 140px 50px;
+  padding:12px 14px;border-bottom:1px solid #f3f4f6;
+  align-items:center;gap:10px;font-size:.85rem;cursor:pointer;
+  transition:background .1s;
+}
+.list-row:hover{background:#f9fafb}
+.list-row:last-child{border-bottom:none}
+.list-row.head{
+  background:#fafafa;font-size:.65rem;font-weight:800;
+  text-transform:uppercase;color:#6b7280;letter-spacing:.05em;
+  cursor:default;
+}
+.list-row.head:hover{background:#fafafa}
+.list-fecha{font-weight:700;color:#0f172a;font-family:monospace}
+.list-fecha .lf-hora{display:block;font-size:.7rem;color:#9ca3af;font-weight:600;margin-top:2px;font-family:inherit}
+.list-tec-stack{display:flex;align-items:center;gap:-5px}
+.list-tec-avatar{
+  width:26px;height:26px;border-radius:50%;background:#dbeafe;color:#1d4ed8;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:.65rem;border:2px solid #fff;margin-left:-6px;
+  background-size:cover;background-position:center;
+}
+.list-tec-avatar:first-child{margin-left:0}
+.list-tec-extra{
+  background:#0f172a;color:#fff;font-size:.62rem;
+  width:26px;height:26px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:2px solid #fff;margin-left:-6px;
+}
+.tipo-pill{
+  font-size:.65rem;font-weight:700;padding:3px 8px;border-radius:50px;
+  display:inline-flex;align-items:center;gap:4px;text-transform:uppercase;letter-spacing:.04em;
+}
+.estado-pill{
+  font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:50px;
+  background:#f3f4f6;color:#374151;display:inline-block;
+}
+.estado-pill.programada{background:#fff7ed;color:#c2410c}
+.estado-pill.completada{background:#dcfce7;color:#166534}
+.estado-pill.cancelada {background:#fee2e2;color:#991b1b}
+.estado-pill.reagendada{background:#ede9fe;color:#7c3aed}
+
+/* ── AGENDA (cronológica vertical) ──────────────────── */
+.agenda-day{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:12px 16px;margin-bottom:10px;
+}
+.agenda-day-head{
+  display:flex;align-items:center;gap:10px;margin-bottom:8px;
+  font-size:.95rem;font-weight:700;color:#0f172a;
+}
+.agenda-day-head .ad-circle{
+  width:34px;height:34px;border-radius:8px;background:#f3f4f6;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:.9rem;
+}
+.agenda-day-head.today .ad-circle{background:var(--ilus-red);color:#fff}
+.agenda-event{
+  display:flex;gap:12px;padding:10px 0;border-top:1px solid #f3f4f6;cursor:pointer;
+  transition:background .1s;
+}
+.agenda-event:hover{background:#f9fafb}
+.agenda-event-time{
+  flex-shrink:0;width:100px;font-family:monospace;font-weight:700;
+  color:#0f172a;font-size:.85rem;
+}
+.agenda-event-time small{display:block;color:#9ca3af;font-weight:500;font-size:.7rem}
+.agenda-event-body{flex:1;min-width:0}
+.agenda-event-title{font-weight:700;color:#0f172a;font-size:.92rem}
+.agenda-event-meta{font-size:.78rem;color:#6b7280;margin-top:2px}
+.agenda-event-bar{
+  width:4px;border-radius:3px;background:#16a34a;flex-shrink:0;
+}
+
+/* ── SIDEBAR ────────────────────────────────────────── */
+.side-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:14px 16px;margin-bottom:12px;
+}
+.side-card h6{
+  font-size:.78rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.06em;color:#374151;margin:0 0 10px 0;
+}
+.side-kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.side-kpi{
+  background:#fafafa;border:1px solid #f3f4f6;border-radius:10px;
+  padding:10px 12px;text-align:center;
+}
+.side-kpi .k-num{font-size:1.4rem;font-weight:800;color:#0f172a;line-height:1}
+.side-kpi .k-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;
+                 letter-spacing:.05em;color:#6b7280;margin-top:3px}
+
+.next-visit{
+  display:flex;gap:10px;padding:10px 0;border-top:1px solid #f3f4f6;
+  cursor:pointer;transition:background .1s;
+}
+.next-visit:first-of-type{border-top:none;padding-top:0}
+.next-visit:hover{background:#fafafa}
+.next-visit-dot{
+  width:8px;height:8px;border-radius:50%;background:#16a34a;
+  margin-top:6px;flex-shrink:0;
+}
+.next-visit-body{flex:1;min-width:0}
+.next-visit-cli{font-size:.82rem;font-weight:700;color:#0f172a;
+                white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.next-visit-meta{font-size:.7rem;color:#6b7280;margin-top:1px}
+.next-visit-tec{font-size:.7rem;color:#1d4ed8;margin-top:1px}
+
+.legend-item{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:.8rem}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* ── TÉCNICO MULTI-FILTRO POPOVER ──────────────────── */
+.filter-pop{
+  position:absolute;top:calc(100% + 4px);right:0;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  box-shadow:0 8px 28px rgba(0,0,0,.15);
+  padding:10px 12px;min-width:240px;z-index:1090;
+}
+.filter-pop input{font-size:.8rem;margin-bottom:8px}
+.filter-pop label{
+  display:flex;align-items:center;gap:7px;padding:5px 6px;border-radius:6px;
+  font-size:.82rem;cursor:pointer;
+}
+.filter-pop label:hover{background:#f3f4f6}
+.filter-pop .tec-color{
+  width:10px;height:10px;border-radius:50%;
+}
+
+/* No data */
+.no-data{
+  text-align:center;padding:40px 20px;color:#9ca3af;
+}
+.no-data i{font-size:3rem;opacity:.3;margin-bottom:8px;display:block}
+
+@media (max-width: 991px){
+  .week-grid{grid-template-columns:50px repeat(7, 1fr)}
+  .list-row{grid-template-columns:100px 1fr 100px 60px;gap:8px}
+  .list-row > *:nth-child(n+5):not(:last-child){display:none}
+}
 </style>
 
-{# ── HEADER NEGRO ESTANDARIZADO ───────────────────────────────────── #}
+{# ─────────── HEADER NEGRO ─────────── #}
 <div class="mod-hero">
   <div>
     <h4><i class="bi bi-calendar3 me-2"></i>Calendario de mantenciones</h4>
-    <div class="mod-sub">Visitas programadas y completadas</div>
+    <div class="mod-sub">Visitas programadas y completadas — vista semanal interactiva</div>
   </div>
   <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-light" onclick="exportarVisitas()">
+      <i class="bi bi-download me-1"></i>Exportar
+    </button>
     <button class="btn btn-ilus fw-bold" onclick="abrirNuevaVisita()">
       <i class="bi bi-calendar-plus me-1"></i>Nueva visita
     </button>
   </div>
 </div>
 
-<div class="row g-3">
-
-{# ── Calendario ── #}
-<div class="col-12 col-lg-9">
-  <div class="cal-wrap">
-    {# Barra superior: nav + filtros #}
-    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-      <div class="cal-nav">
-        <button class="btn btn-sm btn-outline-secondary" onclick="calNav(-1)"><i class="bi bi-chevron-left"></i></button>
-        <h5 id="calTitulo">—</h5>
-        <button class="btn btn-sm btn-outline-secondary" onclick="calNav(1)"><i class="bi bi-chevron-right"></i></button>
-        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="calIrHoy()">Hoy</button>
-      </div>
-      <div class="d-flex gap-1 flex-wrap">
-        <button class="tipo-btn active" data-tipo="all" style="background:#555;border-color:#555;color:#fff" onclick="filtroTipo('all',this)">Todos</button>
-        <button class="tipo-btn" data-tipo="preventiva" onclick="filtroTipo('preventiva',this)" style="color:#1a7a1a">Preventiva</button>
-        <button class="tipo-btn" data-tipo="correctiva" onclick="filtroTipo('correctiva',this)" style="color:#cc0000">Correctiva</button>
-        <button class="tipo-btn" data-tipo="garantia"   onclick="filtroTipo('garantia',this)"   style="color:#0066cc">Garantía</button>
-        <button class="tipo-btn" data-tipo="inspeccion" onclick="filtroTipo('inspeccion',this)" style="color:#f57c00">Inspección</button>
-      </div>
-    </div>
-    {# Días de semana header #}
-    <div class="cal-grid">
-      {% for d in ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'] %}
-      <div class="cal-dow">{{ d }}</div>
-      {% endfor %}
-    </div>
-    {# Grid días #}
-    <div class="cal-grid" id="calGrid">
-      <div class="text-center text-muted py-5 col-span-7" style="grid-column:1/-1">
-        <span class="spinner-border spinner-border-sm me-2"></span>Cargando…
-      </div>
-    </div>
+{# ─────────── TOOLBAR ─────────── #}
+<div class="cal-toolbar">
+  <div class="cal-nav">
+    <button class="btn btn-sm btn-outline-secondary" onclick="calIrHoy()">Hoy</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="calNav(-1)"><i class="bi bi-chevron-left"></i></button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="calNav(+1)"><i class="bi bi-chevron-right"></i></button>
+    <span class="cal-rango ms-2" id="calRango">—</span>
   </div>
-</div>
 
-{# ── Panel lateral: filtro cliente + lista día ── #}
-<div class="col-12 col-lg-3">
-  <div class="evt-panel mb-3">
-    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888;margin-bottom:8px">Filtrar cliente</div>
-    <select id="filtroCliente" class="form-select form-select-sm" onchange="calRender()">
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="week"  onclick="cambiarVista('week')">
+      <i class="bi bi-calendar-week"></i>Semana
+    </button>
+    <button class="view-tab" data-view="month" onclick="cambiarVista('month')">
+      <i class="bi bi-calendar3"></i>Mes
+    </button>
+    <button class="view-tab" data-view="list"  onclick="cambiarVista('list')">
+      <i class="bi bi-list-ul"></i>Lista
+    </button>
+    <button class="view-tab" data-view="agenda" onclick="cambiarVista('agenda')">
+      <i class="bi bi-calendar-check"></i>Agenda
+    </button>
+  </div>
+
+  <div class="d-flex gap-2 align-items-center position-relative">
+    <select id="filtroCliente" class="form-select form-select-sm" style="min-width:170px"
+            onchange="aplicarFiltros()">
       <option value="">Todos los clientes</option>
       {% for c in clientes %}
       <option value="{{ c.id }}">{{ c.razon_social }}</option>
       {% endfor %}
     </select>
-  </div>
-
-  <div class="evt-panel">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#888" id="diaSelLabel">
-        Visitas del mes
-      </div>
-      <span class="badge bg-secondary" id="diaSelCount" style="font-size:.65rem">—</span>
-    </div>
-    <div id="diaEvtLista" style="max-height:380px;overflow-y:auto">
-      <div class="text-center text-muted py-3" style="font-size:.8rem">
-        Haz clic en un día para ver sus visitas
-      </div>
-    </div>
-    {# Leyenda #}
-    <div class="mt-3 pt-3 border-top">
-      <div class="small text-muted fw-bold mb-1">Tipos</div>
-      <div class="d-flex flex-column gap-1" style="font-size:.72rem">
-        <div><span class="leyenda-dot" style="background:#1a7a1a"></span>Preventiva</div>
-        <div><span class="leyenda-dot" style="background:#cc0000"></span>Correctiva</div>
-        <div><span class="leyenda-dot" style="background:#0066cc"></span>Garantía</div>
-        <div><span class="leyenda-dot" style="background:#f57c00"></span>Inspección</div>
+    <button class="cal-filter-btn" id="btnFiltroTec" onclick="toggleFiltroTec(event)">
+      <i class="bi bi-people"></i>
+      <span id="filtroTecLabel">Todos los técnicos ({{ tecnicos|length }})</span>
+      <i class="bi bi-caret-down-fill" style="font-size:.6rem"></i>
+    </button>
+    <div class="filter-pop" id="popFiltroTec" style="display:none">
+      <input type="text" id="popTecSearch" class="form-control form-control-sm" placeholder="Buscar técnico…">
+      <div style="max-height:240px;overflow-y:auto" id="popTecList">
+        <label>
+          <input type="checkbox" id="tecAll" checked onchange="toggleAllTec(this)">
+          <strong>Todos los técnicos</strong>
+        </label>
+        <hr class="my-1">
+        {% for t in tecnicos %}
+        {% set color_idx = t.id % 8 %}
+        {% set tec_colors = ['#dc2626','#2563eb','#16a34a','#7c3aed','#f59e0b','#0891b2','#ec4899','#65a30d'] %}
+        <label data-name="{{ t.nombre|lower }}">
+          <input type="checkbox" class="tec-chk" value="{{ t.id }}" data-color="{{ tec_colors[color_idx] }}"
+                 checked onchange="aplicarFiltros()">
+          <span class="tec-color" style="background:{{ tec_colors[color_idx] }}"></span>
+          {{ t.nombre }}
+          {% if t.es_externo %}<span class="badge bg-warning text-dark ms-1" style="font-size:.55rem">externo</span>{% endif %}
+        </label>
+        {% endfor %}
       </div>
     </div>
   </div>
 </div>
 
-</div>{# /row #}
+{# ─────────── LAYOUT PRINCIPAL ─────────── #}
+<div class="row g-3">
+  <div class="col-12 col-lg-9">
 
-{# ── Modal: Nueva / editar visita ── #}
+    {# Vista Semana #}
+    <div id="view-week"></div>
+
+    {# Vista Mes #}
+    <div id="view-month" style="display:none"></div>
+
+    {# Vista Lista #}
+    <div id="view-list" style="display:none"></div>
+
+    {# Vista Agenda #}
+    <div id="view-agenda" style="display:none"></div>
+
+  </div>
+
+  {# ─────────── SIDEBAR ─────────── #}
+  <div class="col-12 col-lg-3">
+    <div class="side-card">
+      <h6><i class="bi bi-calendar-day me-1" style="color:var(--ilus-red)"></i>Resumen del día</h6>
+      <div class="side-kpis">
+        <div class="side-kpi">
+          <div class="k-num" id="kpiTotal">0</div>
+          <div class="k-lbl">Visitas</div>
+        </div>
+        <div class="side-kpi">
+          <div class="k-num" id="kpiProg" style="color:#c2410c">0</div>
+          <div class="k-lbl">Programadas</div>
+        </div>
+        <div class="side-kpi">
+          <div class="k-num" id="kpiComp" style="color:#166534">0</div>
+          <div class="k-lbl">Completadas</div>
+        </div>
+        <div class="side-kpi">
+          <div class="k-num" id="kpiTec">0</div>
+          <div class="k-lbl">Técnicos</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h6><i class="bi bi-clock-history me-1" style="color:var(--ilus-red)"></i>Próximas visitas</h6>
+      <div id="proximasVisitas">
+        <div class="text-center small text-muted py-2">Cargando…</div>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h6><i class="bi bi-tag me-1" style="color:var(--ilus-red)"></i>Tipos de mantención</h6>
+      <div class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>Preventiva</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>Correctiva</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#2563eb"></span>Garantía</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Inspección</div>
+    </div>
+  </div>
+</div>
+
+{# ─────────── MODAL DETALLE VISITA ─────────── #}
 <div class="modal fade" id="modalVisita" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="modalVisitaTitulo"><i class="bi bi-calendar-plus me-2"></i>Nueva visita</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold" id="modalVisitaTitulo">
+          <i class="bi bi-calendar-check me-2" style="color:var(--ilus-red)"></i>Detalle de visita
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="vi_id" value="">
+        <input type="hidden" id="vi_id">
         <div class="row g-3">
-          <div class="col-12">
-            <label class="form-label fw-semibold">Cliente <span class="text-danger">*</span></label>
+          <div class="col-12 col-md-8">
+            <label class="form-label fw-semibold small">Cliente <span class="text-danger">*</span></label>
             <select id="vi_cliente" class="form-select">
-              <option value="">— Seleccionar —</option>
+              <option value="">— Selecciona cliente —</option>
               {% for c in clientes %}
               <option value="{{ c.id }}">{{ c.razon_social }}</option>
               {% endfor %}
             </select>
           </div>
-          <div class="col-12">
-            <label class="form-label fw-semibold">Título</label>
-            <input type="text" id="vi_titulo" class="form-control" placeholder="Ej: Mantención preventiva Q2">
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Tipo <span class="text-danger">*</span></label>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold small">Tipo</label>
             <select id="vi_tipo" class="form-select">
               <option value="preventiva">Preventiva</option>
               <option value="correctiva">Correctiva</option>
@@ -173,319 +402,632 @@
               <option value="inspeccion">Inspección</option>
             </select>
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Estado</label>
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Título</label>
+            <input type="text" id="vi_titulo" class="form-control" maxlength="200">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold small">Fecha</label>
+            <input type="date" id="vi_fecha" class="form-control">
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label fw-semibold small">Hora inicio</label>
+            <input type="time" id="vi_hora_inicio" class="form-control">
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label fw-semibold small">Hora fin</label>
+            <input type="time" id="vi_hora_fin" class="form-control">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Estado</label>
             <select id="vi_estado" class="form-select">
               <option value="programada">Programada</option>
               <option value="completada">Completada</option>
-              <option value="reagendada">Reagendada</option>
               <option value="cancelada">Cancelada</option>
+              <option value="reagendada">Reagendada</option>
             </select>
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Fecha <span class="text-danger">*</span></label>
-            <input type="date" id="vi_fecha" class="form-control">
-          </div>
-          <div class="col-3">
-            <label class="form-label fw-semibold">Inicio</label>
-            <input type="time" id="vi_hora_inicio" class="form-control">
-          </div>
-          <div class="col-3">
-            <label class="form-label fw-semibold">Fin</label>
-            <input type="time" id="vi_hora_fin" class="form-control">
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Costo (CLP)</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="number" id="vi_costo" class="form-control" min="0" step="1000">
+            </div>
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Técnico</label>
-            <input type="text" id="vi_tecnico" class="form-control">
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Costo ($)</label>
-            <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+            <label class="form-label fw-semibold small">Técnicos asignados</label>
+            <input type="text" id="vi_tecnico" class="form-control"
+                   placeholder="Nombre(s) de técnicos (texto libre — para multi-asignación, edita la visita desde la ficha del cliente)">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Descripción</label>
-            <textarea id="vi_descripcion" class="form-control" rows="2"></textarea>
+            <label class="form-label fw-semibold small">Descripción</label>
+            <textarea id="vi_descripcion" class="form-control" rows="3"></textarea>
+          </div>
+          <div class="col-12" id="vi_extra_info" style="display:none">
+            <div class="alert alert-light border" style="font-size:.85rem">
+              <div id="vi_extra_html"></div>
+            </div>
           </div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-danger me-auto" id="btnEliminar" style="display:none"
-                onclick="eliminarVisita()"><i class="bi bi-trash me-1"></i>Eliminar</button>
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus fw-bold" onclick="guardarVisita()">
-          <i class="bi bi-floppy me-1"></i>Guardar
+      <div class="modal-footer d-flex justify-content-between">
+        <button type="button" class="btn btn-outline-danger" id="btnEliminarVisita" onclick="eliminarVisita()" style="display:none">
+          <i class="bi bi-trash me-1"></i>Eliminar
         </button>
+        <div>
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarVisita()">
+            <i class="bi bi-check-circle me-1"></i>Guardar
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-{% endblock %}
-
-{% block scripts %}
 <script>
-// ══ Estado global ══════════════════════════════════════════
-let calAnio  = new Date().getFullYear();
-let calMes   = new Date().getMonth(); // 0-based
-let calEventos = [];  // todos los eventos del mes cargado
-let filtroTipoActivo = 'all';
-let diaSeleccionado  = null;
+// ════════════════════════════════════════════════════════════════════
+//  CALENDARIO INTELIGENTE — vista semanal por defecto + filtros
+// ════════════════════════════════════════════════════════════════════
 
-const TIPO_COLOR = {
-  preventiva: '#1a7a1a',
-  correctiva: '#cc0000',
-  garantia:   '#0066cc',
-  inspeccion: '#f57c00',
-};
-const ESTADO_COLOR = {
-  completada: '#6c757d',
-  cancelada:  '#999999',
-  reagendada: '#ff9800',
-};
-const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
-               'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const TEC_COLORS = ['#dc2626','#2563eb','#16a34a','#7c3aed','#f59e0b','#0891b2','#ec4899','#65a30d'];
 
-// ══ Carga de eventos ════════════════════════════════════════
-async function calCargarEventos() {
-  const desde = `${calAnio}-${String(calMes+1).padStart(2,'0')}-01`;
-  const fin   = new Date(calAnio, calMes+1, 0);
-  const hasta = `${calAnio}-${String(calMes+1).padStart(2,'0')}-${fin.getDate()}`;
-  const cid   = document.getElementById('filtroCliente').value;
-  let url = `/mantenciones/api/visitas?start=${desde}&end=${hasta}`;
-  if (cid) url += `&cliente_id=${cid}`;
-  const r = await fetch(url);
-  calEventos = await r.json();
-  calRender();
+// Estado global
+let calVista       = 'week';            // week | month | list | agenda
+let calRefDate     = new Date();        // fecha de referencia
+let calEventos     = [];                // eventos cargados desde backend
+let calTecFiltro   = null;              // null = todos | Set<int>
+let calCliFiltro   = '';                // '' = todos | id
+
+// Helpers de fechas
+function startOfWeek(d){
+  const x = new Date(d); const dow = (x.getDay() + 6) % 7;  // LUN=0
+  x.setDate(x.getDate() - dow); x.setHours(0,0,0,0); return x;
+}
+function endOfWeek(d){
+  const x = startOfWeek(d); x.setDate(x.getDate() + 6); x.setHours(23,59,59,999); return x;
+}
+function startOfMonth(d){ const x = new Date(d.getFullYear(), d.getMonth(), 1); return x; }
+function endOfMonth(d){ const x = new Date(d.getFullYear(), d.getMonth()+1, 0, 23,59,59); return x; }
+function fmtFecha(d){
+  return d.toISOString().slice(0,10);
+}
+function fmtDiaCorto(d){
+  return ['LUN','MAR','MIÉ','JUE','VIE','SÁB','DOM'][(d.getDay()+6)%7];
+}
+function fmtMesEs(m){
+  return ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][m];
+}
+function isToday(d){
+  const t = new Date();
+  return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+}
+function isSameDay(a,b){
+  return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+}
+function colorDeTec(id){
+  if (id == null) return '#6b7280';
+  return TEC_COLORS[Math.abs(id) % TEC_COLORS.length];
+}
+function fmtCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// ══ Render del grid ════════════════════════════════════════
-function calRender() {
-  document.getElementById('calTitulo').textContent = `${MESES[calMes]} ${calAnio}`;
-  const grid    = document.getElementById('calGrid');
-  const hoy     = new Date();
-  const primero = new Date(calAnio, calMes, 1);
-  // lunes=0, domingo=6
-  let startDow = primero.getDay() - 1; // 0=lun
-  if (startDow < 0) startDow = 6;
-  const totalDias = new Date(calAnio, calMes+1, 0).getDate();
+// ── Navegación / vista ───────────────────────────────────────────────
+function cambiarVista(v){
+  calVista = v;
+  document.querySelectorAll('.view-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.view === v);
+  });
+  ['week','month','list','agenda'].forEach(k => {
+    document.getElementById('view-'+k).style.display = k === v ? 'block' : 'none';
+  });
+  cargarEventos();
+}
 
-  // Filtrar eventos
-  const cid = document.getElementById('filtroCliente').value;
-  const eventos = calEventos.filter(e => {
-    if (filtroTipoActivo !== 'all' && e.extendedProps.tipo !== filtroTipoActivo) return false;
-    if (cid && String(e.extendedProps.cliente_id) !== cid) return false;
+function calIrHoy(){
+  calRefDate = new Date();
+  cargarEventos();
+}
+function calNav(dir){
+  if (calVista === 'month'){
+    calRefDate.setMonth(calRefDate.getMonth() + dir);
+  } else if (calVista === 'agenda'){
+    calRefDate.setDate(calRefDate.getDate() + dir * 7);
+  } else {
+    calRefDate.setDate(calRefDate.getDate() + dir * 7);
+  }
+  cargarEventos();
+}
+
+// ── Filtros ──────────────────────────────────────────────────────────
+function aplicarFiltros(){
+  calCliFiltro = document.getElementById('filtroCliente').value;
+  const checked = Array.from(document.querySelectorAll('.tec-chk:checked')).map(c => parseInt(c.value, 10));
+  const total   = document.querySelectorAll('.tec-chk').length;
+  if (checked.length === total) {
+    calTecFiltro = null;
+    document.getElementById('filtroTecLabel').textContent = `Todos los técnicos (${total})`;
+    document.getElementById('btnFiltroTec').classList.remove('has-filter');
+  } else {
+    calTecFiltro = new Set(checked);
+    document.getElementById('filtroTecLabel').textContent = `Técnicos: ${checked.length}/${total}`;
+    document.getElementById('btnFiltroTec').classList.toggle('has-filter', checked.length < total);
+  }
+  document.getElementById('tecAll').checked = (checked.length === total);
+  renderVista();
+  renderSidebar();
+}
+function toggleAllTec(chk){
+  document.querySelectorAll('.tec-chk').forEach(c => c.checked = chk.checked);
+  aplicarFiltros();
+}
+function toggleFiltroTec(e){
+  e.stopPropagation();
+  const p = document.getElementById('popFiltroTec');
+  p.style.display = (p.style.display === 'none' ? 'block' : 'none');
+}
+document.addEventListener('click', e => {
+  const p = document.getElementById('popFiltroTec');
+  const b = document.getElementById('btnFiltroTec');
+  if (!p.contains(e.target) && !b.contains(e.target)) p.style.display = 'none';
+});
+document.getElementById('popTecSearch').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#popTecList label[data-name]').forEach(l => {
+    l.style.display = !q || l.dataset.name.includes(q) ? 'flex' : 'none';
+  });
+});
+
+function eventosFiltrados(){
+  return calEventos.filter(ev => {
+    if (calCliFiltro && String(ev.cliente.id) !== calCliFiltro) return false;
+    if (calTecFiltro){
+      const ids = ev.tecnicos.map(t => t.id).filter(x => x != null);
+      if (!ids.some(id => calTecFiltro.has(id))) return false;
+    }
     return true;
   });
-
-  // Indexar por día
-  const evtPorDia = {};
-  eventos.forEach(e => {
-    const d = parseInt(e.start.slice(8, 10));
-    if (!evtPorDia[d]) evtPorDia[d] = [];
-    evtPorDia[d].push(e);
-  });
-
-  let html = '';
-  // Celdas vacías al inicio
-  for (let i = 0; i < startDow; i++) {
-    html += `<div class="cal-day other-month"><div class="cal-day-num"></div></div>`;
-  }
-  for (let d = 1; d <= totalDias; d++) {
-    const esHoy = (d === hoy.getDate() && calMes === hoy.getMonth() && calAnio === hoy.getFullYear());
-    const dayEvts = evtPorDia[d] || [];
-    const MAX_SHOW = 3;
-    let evtsHtml = '';
-    dayEvts.slice(0, MAX_SHOW).forEach(e => {
-      const color = ESTADO_COLOR[e.extendedProps.estado] || TIPO_COLOR[e.extendedProps.tipo] || '#888';
-      const label = e.extendedProps.razon_social || e.title;
-      evtsHtml += `<div class="cal-event" style="background:${color}" title="${e.title}"
-                        onclick="abrirEvento(event, ${e.id})">${label}</div>`;
-    });
-    if (dayEvts.length > MAX_SHOW) {
-      evtsHtml += `<div class="cal-more">+${dayEvts.length - MAX_SHOW} más</div>`;
-    }
-    html += `<div class="cal-day${esHoy?' today':''}" onclick="selDia(${d})">
-               <div class="cal-day-num">${d}</div>
-               ${evtsHtml}
-             </div>`;
-  }
-  // Celdas vacías al final (completar semana)
-  const total = startDow + totalDias;
-  const resto = total % 7 === 0 ? 0 : 7 - (total % 7);
-  for (let i = 0; i < resto; i++) {
-    html += `<div class="cal-day other-month"><div class="cal-day-num"></div></div>`;
-  }
-  grid.innerHTML = html;
-
-  // Actualizar sidebar
-  actualizarSidebar(eventos);
 }
 
-function actualizarSidebar(eventos) {
-  const lista  = document.getElementById('diaEvtLista');
-  const count  = document.getElementById('diaSelCount');
-  const label  = document.getElementById('diaSelLabel');
-  const filtro = diaSeleccionado;
-  const mostrar = filtro
-    ? eventos.filter(e => parseInt(e.start.slice(8,10)) === filtro)
-    : eventos;
-  label.textContent = filtro ? `Día ${filtro}/${calMes+1}` : 'Visitas del mes';
-  count.textContent = mostrar.length;
-  if (!mostrar.length) {
-    lista.innerHTML = '<div class="text-center text-muted py-3" style="font-size:.8rem">Sin visitas</div>';
+// ── Carga de eventos ─────────────────────────────────────────────────
+async function cargarEventos(){
+  let start, end;
+  if (calVista === 'month'){ start = startOfMonth(calRefDate); end = endOfMonth(calRefDate); }
+  else if (calVista === 'agenda'){
+    start = new Date(calRefDate); start.setHours(0,0,0,0);
+    end = new Date(start); end.setDate(end.getDate() + 13);
+  }
+  else { start = startOfWeek(calRefDate); end = endOfWeek(calRefDate); }
+
+  // Para vistas chicas, traer un rango más amplio para próximas visitas
+  const startWide = new Date(start); startWide.setDate(startWide.getDate() - 7);
+  const endWide   = new Date(end);   endWide.setDate(endWide.getDate() + 30);
+
+  try {
+    const r = await fetch(
+      `/mantenciones/api/visitas?start=${fmtFecha(startWide)}&end=${fmtFecha(endWide)}`
+    );
+    calEventos = await r.json();
+  } catch(e){
+    calEventos = [];
+    if (window.ilusToast) ilusToast('Error cargando visitas', { type:'error' });
+  }
+  // Actualizar rango visible
+  document.getElementById('calRango').textContent = formatRango(start, end);
+  renderVista();
+  renderSidebar();
+}
+
+function formatRango(start, end){
+  if (calVista === 'month'){
+    return `${fmtMesEs(calRefDate.getMonth())} ${calRefDate.getFullYear()}`;
+  }
+  // Semana / agenda
+  const sM = fmtMesEs(start.getMonth()).slice(0,3);
+  const eM = fmtMesEs(end.getMonth()).slice(0,3);
+  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()){
+    return `${start.getDate()}–${end.getDate()} ${sM} ${start.getFullYear()}`;
+  }
+  return `${start.getDate()} ${sM} – ${end.getDate()} ${eM} ${end.getFullYear()}`;
+}
+
+// ── Render: switcher ────────────────────────────────────────────────
+function renderVista(){
+  if (calVista === 'week')    renderSemana();
+  else if (calVista === 'month')  renderMes();
+  else if (calVista === 'list')   renderLista();
+  else if (calVista === 'agenda') renderAgenda();
+}
+
+// ── Render Semana ────────────────────────────────────────────────────
+function renderSemana(){
+  const HORAS = []; for(let h=8; h<20; h++) HORAS.push(h);
+  const start = startOfWeek(calRefDate);
+  const dias = []; for(let i=0; i<7; i++){ const d = new Date(start); d.setDate(d.getDate()+i); dias.push(d); }
+
+  const html = [];
+  // Cabecera
+  html.push('<div class="week-grid">');
+  html.push('<div class="week-head"></div>');
+  for (const d of dias){
+    const today = isToday(d);
+    const wknd  = d.getDay()===0 || d.getDay()===6;
+    html.push(`<div class="week-head ${today?'today':''}" style="${wknd?'background:#f1f5f9':''}">
+      ${fmtDiaCorto(d)}
+      <span class="wh-num">${d.getDate()}</span>
+    </div>`);
+  }
+  // Filas por hora
+  const events = eventosFiltrados();
+  for (const h of HORAS){
+    const lbl = `${String(h).padStart(2,'0')}:00`;
+    html.push(`<div class="week-hour-lbl">${lbl}</div>`);
+    for (const d of dias){
+      const today = isToday(d);
+      const wknd  = d.getDay()===0 || d.getDay()===6;
+      // Eventos en este día/hora
+      const evDay = events.filter(ev => {
+        if (!ev.fecha) return false;
+        const f = new Date(ev.fecha + 'T00:00:00');
+        if (!isSameDay(f, d)) return false;
+        const hi = ev.hora_inicio ? parseInt(ev.hora_inicio.slice(0,2), 10) : 9;
+        return hi === h;
+      });
+      const evHtml = evDay.map(ev => {
+        const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+        const horario = (ev.hora_inicio || '') + (ev.hora_fin ? ' – ' + ev.hora_fin : '');
+        const tecNames = ev.tecnicos.map(t => t.nombre.split(' ')[0]).join(', ') || 'Sin asignar';
+        return `<div class="week-event"
+                     style="background:${ev.color_tipo};border-left-color:${tecCol};top:2px"
+                     onclick="abrirVisitaModal(${ev.id});event.stopPropagation()">
+          <div class="wev-time">${horario || ''}</div>
+          <div class="wev-title">${escHtml(ev.cliente.razon_social)}</div>
+          <div class="wev-tec"><i class="bi bi-person"></i> ${escHtml(tecNames)}${ev.n_tecnicos>1?' +'+(ev.n_tecnicos-1):''}</div>
+        </div>`;
+      }).join('');
+      html.push(`<div class="week-cell ${today?'today':''} ${wknd?'weekend':''}"
+                      onclick="nuevaVisitaEnSlot('${fmtFecha(d)}', '${lbl}')">
+        ${evHtml}
+      </div>`);
+    }
+  }
+  html.push('</div>');
+  document.getElementById('view-week').innerHTML = html.join('');
+}
+
+// ── Render Mes (grid clásico) ────────────────────────────────────────
+function renderMes(){
+  const ref = calRefDate;
+  const first = new Date(ref.getFullYear(), ref.getMonth(), 1);
+  const start = startOfWeek(first);
+  const events = eventosFiltrados();
+  const html = [];
+  html.push(`<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px">`);
+  html.push(`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">`);
+  ['LUN','MAR','MIÉ','JUE','VIE','SÁB','DOM'].forEach(d => {
+    html.push(`<div style="text-align:center;font-size:.65rem;font-weight:800;color:#6b7280;padding:6px 0">${d}</div>`);
+  });
+  for (let w=0; w<6; w++){
+    for (let i=0; i<7; i++){
+      const d = new Date(start); d.setDate(d.getDate() + w*7 + i);
+      const otro = d.getMonth() !== ref.getMonth();
+      const today = isToday(d);
+      const evDay = events.filter(ev => ev.fecha && isSameDay(new Date(ev.fecha+'T00:00:00'), d));
+      html.push(`<div style="min-height:100px;border-radius:8px;padding:6px;
+                              background:${today?'#fff8f8':otro?'#fafafa':'#fff'};
+                              border:1px solid ${today?'var(--ilus-red)':'#f3f4f6'};
+                              cursor:pointer;${otro?'opacity:.45;':''}"
+                      onclick="nuevaVisitaEnSlot('${fmtFecha(d)}','09:00')">
+        <div style="font-size:.8rem;font-weight:700;color:${today?'var(--ilus-red)':'#333'};margin-bottom:4px">
+          ${d.getDate()}
+        </div>
+        ${evDay.slice(0,3).map(ev => {
+          const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+          return `<div style="font-size:.65rem;background:${ev.color_tipo};color:#fff;
+                              border-left:3px solid ${tecCol};
+                              padding:2px 5px;border-radius:4px;margin-bottom:2px;
+                              white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+                       onclick="abrirVisitaModal(${ev.id});event.stopPropagation()">
+            ${ev.hora_inicio ? '<strong>'+ev.hora_inicio+'</strong> ' : ''}${escHtml(ev.cliente.razon_social)}
+          </div>`;
+        }).join('')}
+        ${evDay.length>3 ? `<div style="font-size:.62rem;color:#888">+${evDay.length-3} más…</div>` : ''}
+      </div>`);
+    }
+  }
+  html.push('</div></div>');
+  document.getElementById('view-month').innerHTML = html.join('');
+}
+
+// ── Render Lista ─────────────────────────────────────────────────────
+function renderLista(){
+  const events = eventosFiltrados();
+  if (!events.length){
+    document.getElementById('view-list').innerHTML =
+      '<div class="list-view"><div class="no-data"><i class="bi bi-calendar-x"></i><div>Sin visitas en este rango</div></div></div>';
     return;
   }
-  lista.innerHTML = mostrar.map(e => {
-    const color  = ESTADO_COLOR[e.extendedProps.estado] || TIPO_COLOR[e.extendedProps.tipo] || '#888';
-    const estado = e.extendedProps.estado.replace('_',' ');
-    const tec    = e.extendedProps.tecnico ? `· ${e.extendedProps.tecnico}` : '';
-    const fecha  = e.start ? e.start.slice(8,10) + '/' + e.start.slice(5,7) : '—';
-    return `<div class="evt-item" onclick="abrirEvento(event, ${e.id})">
-      <div class="d-flex gap-2">
-        <div class="evt-dot" style="background:${color}"></div>
-        <div style="min-width:0">
-          <div class="fw-semibold text-truncate" style="font-size:.82rem">${e.extendedProps.razon_social}</div>
-          <div class="small text-muted">${fecha} ${tec}</div>
-          <div style="font-size:.68rem;color:${color};font-weight:700">${e.extendedProps.tipo} · ${estado}</div>
+  const html = ['<div class="list-view">'];
+  html.push(`<div class="list-row head">
+    <div>Fecha / hora</div>
+    <div>Cliente</div>
+    <div>Técnicos</div>
+    <div>Tipo</div>
+    <div>Estado</div>
+    <div class="text-end">Costo</div>
+    <div></div>
+  </div>`);
+  for (const ev of events){
+    const horario = ev.hora_inicio ? `${ev.hora_inicio}${ev.hora_fin ? ' – ' + ev.hora_fin : ''}` : '';
+    const fecha = ev.fecha ? new Date(ev.fecha + 'T00:00:00').toLocaleDateString('es-CL', {day:'2-digit',month:'2-digit'}) : '—';
+    const tecHtml = ev.tecnicos.length ? ev.tecnicos.slice(0, 4).map(t => {
+      const col = colorDeTec(t.id);
+      const ini = (t.nombre || '?').charAt(0).toUpperCase();
+      const bg = t.foto_url ? `style="background-image:url('${t.foto_url}')"` : `style="background:${col}33;color:${col}"`;
+      return `<span class="list-tec-avatar" ${bg} title="${escHtml(t.nombre)}">${t.foto_url?'':ini}</span>`;
+    }).join('') + (ev.n_tecnicos > 4 ? `<span class="list-tec-extra">+${ev.n_tecnicos-4}</span>` : '')
+      : '<span class="text-muted small">Sin asignar</span>';
+    html.push(`<div class="list-row" onclick="abrirVisitaModal(${ev.id})">
+      <div class="list-fecha">${fecha}<small class="lf-hora">${horario || ''}</small></div>
+      <div class="fw-semibold">
+        ${escHtml(ev.cliente.razon_social)}
+        <div class="small text-muted">${escHtml(ev.cliente.comuna || '')}${ev.cliente.region ? ', '+escHtml(ev.cliente.region) : ''}</div>
+      </div>
+      <div class="list-tec-stack">${tecHtml}</div>
+      <div><span class="tipo-pill" style="background:${ev.color_tipo}22;color:${ev.color_tipo}">${ev.tipo || '—'}</span></div>
+      <div><span class="estado-pill ${ev.estado || ''}">${ev.estado || '—'}</span></div>
+      <div class="text-end font-monospace">${ev.costo ? fmtCLP(ev.costo) : '—'}</div>
+      <div class="text-end">
+        <button class="btn btn-xs btn-outline-secondary" onclick="event.stopPropagation();abrirVisitaModal(${ev.id})">
+          <i class="bi bi-eye"></i>
+        </button>
+      </div>
+    </div>`);
+  }
+  html.push('</div>');
+  document.getElementById('view-list').innerHTML = html.join('');
+}
+
+// ── Render Agenda (cronológica por día) ─────────────────────────────
+function renderAgenda(){
+  const events = eventosFiltrados();
+  // Agrupar por fecha
+  const groups = {};
+  for (const ev of events){
+    const k = ev.fecha;
+    if (!k) continue;
+    (groups[k] = groups[k] || []).push(ev);
+  }
+  const fechas = Object.keys(groups).sort();
+  if (!fechas.length){
+    document.getElementById('view-agenda').innerHTML =
+      '<div class="agenda-day"><div class="no-data"><i class="bi bi-calendar-x"></i><div>Sin visitas en este rango</div></div></div>';
+    return;
+  }
+  const html = [];
+  for (const f of fechas){
+    const d = new Date(f + 'T00:00:00');
+    const today = isToday(d);
+    const evs = groups[f].sort((a,b) => (a.hora_inicio||'99') > (b.hora_inicio||'99') ? 1 : -1);
+    html.push(`<div class="agenda-day">
+      <div class="agenda-day-head ${today?'today':''}">
+        <span class="ad-circle">${d.getDate()}</span>
+        <div>
+          <div>${fmtDiaCorto(d)} ${d.getDate()} de ${fmtMesEs(d.getMonth())}</div>
+          <div class="small text-muted" style="font-weight:500">${evs.length} visita(s)</div>
         </div>
       </div>
-    </div>`;
-  }).join('');
+      ${evs.map(ev => {
+        const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+        const tecNames = ev.tecnicos.map(t => t.nombre).join(', ') || 'Sin asignar';
+        const dur = (ev.hora_inicio && ev.hora_fin)
+          ? `${ev.hora_inicio} – ${ev.hora_fin}`
+          : (ev.hora_inicio || 'Todo el día');
+        return `<div class="agenda-event" onclick="abrirVisitaModal(${ev.id})">
+          <div class="agenda-event-bar" style="background:${ev.color_tipo}"></div>
+          <div class="agenda-event-time">${dur}<small>${ev.costo ? fmtCLP(ev.costo) : ''}</small></div>
+          <div class="agenda-event-body">
+            <div class="agenda-event-title">${escHtml(ev.cliente.razon_social)}</div>
+            <div class="agenda-event-meta">
+              <span class="tipo-pill" style="background:${ev.color_tipo}22;color:${ev.color_tipo}">${ev.tipo || '—'}</span>
+              · <i class="bi bi-people"></i> ${escHtml(tecNames)}
+              ${ev.cliente.comuna ? '· <i class="bi bi-geo-alt"></i> ' + escHtml(ev.cliente.comuna) : ''}
+            </div>
+            ${ev.descripcion ? '<div class="small text-muted mt-1">'+escHtml(ev.descripcion.slice(0,200))+'…</div>' : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`);
+  }
+  document.getElementById('view-agenda').innerHTML = html.join('');
 }
 
-function selDia(d) {
-  diaSeleccionado = (diaSeleccionado === d) ? null : d;
-  const cid = document.getElementById('filtroCliente').value;
-  const eventos = calEventos.filter(e => {
-    if (filtroTipoActivo !== 'all' && e.extendedProps.tipo !== filtroTipoActivo) return false;
-    if (cid && String(e.extendedProps.cliente_id) !== cid) return false;
-    return true;
-  });
-  actualizarSidebar(eventos);
-}
+// ── Sidebar ──────────────────────────────────────────────────────────
+function renderSidebar(){
+  const today = new Date();
+  // KPIs del día actual (no de la vista) — para contexto inmediato
+  const todayEvs = calEventos.filter(ev => ev.fecha && isSameDay(new Date(ev.fecha+'T00:00:00'), today));
+  const todayFiltrados = todayEvs; // No filtramos los KPIs por filtros (dan contexto global)
+  document.getElementById('kpiTotal').textContent = todayFiltrados.length;
+  document.getElementById('kpiProg').textContent  = todayFiltrados.filter(e => e.estado==='programada').length;
+  document.getElementById('kpiComp').textContent  = todayFiltrados.filter(e => e.estado==='completada').length;
+  const tecsHoy = new Set();
+  todayFiltrados.forEach(e => e.tecnicos.forEach(t => t.id && tecsHoy.add(t.id)));
+  document.getElementById('kpiTec').textContent = tecsHoy.size;
 
-// ══ Navegación ══════════════════════════════════════════════
-function calNav(dir) {
-  calMes += dir;
-  if (calMes > 11) { calMes = 0; calAnio++; }
-  if (calMes < 0)  { calMes = 11; calAnio--; }
-  diaSeleccionado = null;
-  calCargarEventos();
-}
-function calIrHoy() {
-  const h = new Date();
-  calAnio = h.getFullYear();
-  calMes  = h.getMonth();
-  diaSeleccionado = null;
-  calCargarEventos();
-}
-
-// ══ Filtro tipo ════════════════════════════════════════════
-function filtroTipo(tipo, btn) {
-  filtroTipoActivo = tipo;
-  document.querySelectorAll('.tipo-btn').forEach(b => {
-    const t = b.dataset.tipo;
-    b.classList.remove('active');
-    b.style.background = '';
-    b.style.borderColor = '';
-    b.style.color = t === 'preventiva' ? '#1a7a1a'
-                  : t === 'correctiva' ? '#cc0000'
-                  : t === 'garantia'   ? '#0066cc'
-                  : t === 'inspeccion' ? '#f57c00'
-                  : '#555';
-  });
-  btn.classList.add('active');
-  const color = tipo === 'preventiva' ? '#1a7a1a'
-              : tipo === 'correctiva' ? '#cc0000'
-              : tipo === 'garantia'   ? '#0066cc'
-              : tipo === 'inspeccion' ? '#f57c00'
-              : '#555';
-  btn.style.background  = color;
-  btn.style.borderColor = color;
-  btn.style.color       = '#fff';
-  calRender();
-}
-
-// ══ Abrir evento (para editar) ═════════════════════════════
-function abrirEvento(evt, eid) {
-  evt.stopPropagation();
-  const e = calEventos.find(x => x.id == eid);
-  if (!e) return;
-  document.getElementById('vi_id').value = e.id;
-  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-check me-2"></i>Editar visita';
-  document.getElementById('vi_cliente').value   = e.extendedProps.cliente_id || '';
-  document.getElementById('vi_titulo').value    = e.title ? e.title.split(' — ').slice(1).join(' — ') : '';
-  document.getElementById('vi_tipo').value      = e.extendedProps.tipo || 'preventiva';
-  document.getElementById('vi_estado').value    = e.extendedProps.estado || 'programada';
-  document.getElementById('vi_fecha').value     = e.start ? e.start.slice(0,10) : '';
-  document.getElementById('vi_hora_inicio').value = '';
-  document.getElementById('vi_hora_fin').value    = '';
-  document.getElementById('vi_tecnico').value   = e.extendedProps.tecnico || '';
-  document.getElementById('vi_costo').value     = e.extendedProps.costo || '';
-  document.getElementById('vi_descripcion').value = '';
-  document.getElementById('btnEliminar').style.display = '';
-  new bootstrap.Modal(document.getElementById('modalVisita')).show();
-}
-
-// ══ Nueva visita ════════════════════════════════════════════
-function abrirNuevaVisita() {
-  document.getElementById('vi_id').value = '';
-  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
-  ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('vi_cliente').value  = document.getElementById('filtroCliente').value || '';
-  document.getElementById('vi_tipo').value     = 'preventiva';
-  document.getElementById('vi_estado').value   = 'programada';
-  document.getElementById('vi_fecha').value    = diaSeleccionado
-    ? `${calAnio}-${String(calMes+1).padStart(2,'0')}-${String(diaSeleccionado).padStart(2,'0')}`
-    : '';
-  document.getElementById('vi_hora_inicio').value = '';
-  document.getElementById('vi_hora_fin').value    = '';
-  document.getElementById('vi_costo').value    = '';
-  document.getElementById('btnEliminar').style.display = 'none';
-  new bootstrap.Modal(document.getElementById('modalVisita')).show();
-}
-
-// ══ Guardar visita ══════════════════════════════════════════
-async function guardarVisita() {
-  const vid    = document.getElementById('vi_id').value;
-  const cid    = document.getElementById('vi_cliente').value;
-  const fecha  = document.getElementById('vi_fecha').value;
-  if (!cid)   { alert('Selecciona un cliente'); return; }
-  if (!fecha) { alert('Fecha requerida'); return; }
-  const data = {
-    cliente_id:       parseInt(cid),
-    titulo:           document.getElementById('vi_titulo').value.trim(),
-    tipo:             document.getElementById('vi_tipo').value,
-    estado:           document.getElementById('vi_estado').value,
-    fecha_programada: fecha,
-    hora_inicio:      document.getElementById('vi_hora_inicio').value || null,
-    hora_fin:         document.getElementById('vi_hora_fin').value || null,
-    tecnico:          document.getElementById('vi_tecnico').value.trim(),
-    costo:            parseFloat(document.getElementById('vi_costo').value) || 0,
-    descripcion:      document.getElementById('vi_descripcion').value.trim(),
-  };
-  let url = '/mantenciones/api/visitas', method = 'POST';
-  if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
-  const r = await fetch(url, {
-    method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
-  });
-  if (r.ok) {
-    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
-    calCargarEventos();
-  } else { alert('Error al guardar visita'); }
-}
-
-async function eliminarVisita() {
-  const vid = document.getElementById('vi_id').value;
-  if (!vid || !confirm('¿Eliminar esta visita?')) return;
-  const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
-  if (r.ok) {
-    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
-    calCargarEventos();
+  // Próximas visitas — desde hoy, 5 más cercanas
+  const proximas = calEventos
+    .filter(ev => {
+      if (!ev.fecha) return false;
+      const f = new Date(ev.fecha + 'T00:00:00'); f.setHours(0,0,0,0);
+      const t = new Date(); t.setHours(0,0,0,0);
+      return f >= t && ev.estado !== 'cancelada';
+    })
+    .sort((a,b) => (a.fecha + (a.hora_inicio||'')) > (b.fecha + (b.hora_inicio||'')) ? 1 : -1)
+    .slice(0, 5);
+  const wrap = document.getElementById('proximasVisitas');
+  if (!proximas.length){
+    wrap.innerHTML = '<div class="text-center small text-muted py-2">No hay visitas próximas</div>';
+  } else {
+    wrap.innerHTML = proximas.map(ev => {
+      const f = new Date(ev.fecha + 'T00:00:00');
+      const fLabel = f.toLocaleDateString('es-CL', {day:'2-digit', month:'short'});
+      const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+      const tecNames = ev.tecnicos.map(t => t.nombre.split(' ')[0]).join(', ') || 'Sin asignar';
+      return `<div class="next-visit" onclick="abrirVisitaModal(${ev.id})">
+        <div class="next-visit-dot" style="background:${ev.color_tipo}"></div>
+        <div class="next-visit-body">
+          <div class="next-visit-cli">${escHtml(ev.cliente.razon_social)}</div>
+          <div class="next-visit-meta">
+            ${fLabel}${ev.hora_inicio ? ' · ' + ev.hora_inicio : ''}
+            · <span style="color:${ev.color_tipo};font-weight:600">${ev.tipo || ''}</span>
+          </div>
+          <div class="next-visit-tec" style="color:${tecCol}">
+            <i class="bi bi-person"></i> ${escHtml(tecNames)}${ev.n_tecnicos>1?' +'+(ev.n_tecnicos-1):''}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
   }
 }
 
-// ══ Iniciar ════════════════════════════════════════════════
-calCargarEventos();
+// ── Modal de visita ──────────────────────────────────────────────────
+function abrirVisitaModal(vid){
+  const ev = calEventos.find(e => e.id === vid);
+  if (!ev) return;
+  document.getElementById('vi_id').value = vid;
+  document.getElementById('vi_cliente').value = ev.cliente.id;
+  document.getElementById('vi_tipo').value = ev.tipo || 'preventiva';
+  document.getElementById('vi_titulo').value = ev.title || '';
+  document.getElementById('vi_fecha').value = ev.fecha || '';
+  document.getElementById('vi_hora_inicio').value = ev.hora_inicio || '';
+  document.getElementById('vi_hora_fin').value = ev.hora_fin || '';
+  document.getElementById('vi_estado').value = ev.estado || 'programada';
+  document.getElementById('vi_costo').value = ev.costo || '';
+  document.getElementById('vi_tecnico').value = ev.tecnicos.map(t => t.nombre).join(', ');
+  document.getElementById('vi_descripcion').value = ev.descripcion || '';
+  document.getElementById('btnEliminarVisita').style.display = '';
+
+  const extra = document.getElementById('vi_extra_info');
+  const xH    = document.getElementById('vi_extra_html');
+  const partes = [];
+  if (ev.cliente.direccion) partes.push(`<i class="bi bi-geo-alt me-1"></i><strong>Dirección:</strong> ${escHtml(ev.cliente.direccion)}, ${escHtml(ev.cliente.comuna)}`);
+  if (ev.tecnicos.length){
+    const lista = ev.tecnicos.map(t => `${escHtml(t.nombre)}${t.especialidad ? ' <span class="text-muted">('+escHtml(t.especialidad)+')</span>' : ''}`).join(' · ');
+    partes.push(`<i class="bi bi-people me-1"></i><strong>Técnicos (${ev.n_tecnicos}):</strong> ${lista}`);
+  }
+  if (partes.length){ xH.innerHTML = partes.join('<br>'); extra.style.display = 'block'; }
+  else { extra.style.display = 'none'; }
+
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+function abrirNuevaVisita(){
+  document.getElementById('vi_id').value = '';
+  document.getElementById('vi_titulo').value = '';
+  document.getElementById('vi_descripcion').value = '';
+  document.getElementById('vi_tecnico').value = '';
+  document.getElementById('vi_costo').value = '';
+  document.getElementById('vi_hora_inicio').value = '';
+  document.getElementById('vi_hora_fin').value = '';
+  document.getElementById('vi_estado').value = 'programada';
+  document.getElementById('vi_tipo').value = 'preventiva';
+  document.getElementById('vi_cliente').value = '';
+  // Fecha por defecto: hoy + 2 días
+  const f = new Date(); f.setDate(f.getDate()+2);
+  document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
+  document.getElementById('btnEliminarVisita').style.display = 'none';
+  document.getElementById('vi_extra_info').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+function nuevaVisitaEnSlot(fecha, hora){
+  abrirNuevaVisita();
+  document.getElementById('vi_fecha').value = fecha;
+  document.getElementById('vi_hora_inicio').value = hora;
+}
+
+async function guardarVisita(){
+  const vid = document.getElementById('vi_id').value;
+  const cli = document.getElementById('vi_cliente').value;
+  const fecha = document.getElementById('vi_fecha').value;
+  if (!cli || !fecha) {
+    if (window.ilusToast) ilusToast('Cliente y fecha son obligatorios', { type:'warning' });
+    return;
+  }
+  const body = {
+    cliente_id: cli,
+    fecha_programada: fecha,
+    hora_inicio: document.getElementById('vi_hora_inicio').value || null,
+    hora_fin:    document.getElementById('vi_hora_fin').value || null,
+    titulo:      document.getElementById('vi_titulo').value.trim(),
+    tipo:        document.getElementById('vi_tipo').value,
+    estado:      document.getElementById('vi_estado').value,
+    tecnico:     document.getElementById('vi_tecnico').value.trim(),
+    descripcion: document.getElementById('vi_descripcion').value.trim(),
+    costo:       parseFloat(document.getElementById('vi_costo').value || 0) || 0,
+  };
+  try {
+    const url = vid ? `/mantenciones/api/visitas/${vid}` : '/mantenciones/api/visitas';
+    const method = vid ? 'PUT' : 'POST';
+    const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      if (window.ilusToast) ilusToast('Error: ' + (d.error || 'no se pudo guardar'), { type:'error' });
+      return;
+    }
+    if (window.ilusToast) ilusToast(vid ? 'Visita actualizada' : 'Visita creada', { type:'success' });
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    cargarEventos();
+  } catch(e){ if (window.ilusToast) ilusToast('Error de red: '+e.message, { type:'error' }); }
+}
+
+async function eliminarVisita(){
+  const vid = document.getElementById('vi_id').value;
+  if (!vid) return;
+  const ok = await ilusConfirm({
+    title:'Eliminar visita', message:'¿Eliminar esta visita?',
+    sub:'Esta acción no se puede deshacer.', danger:true, okLabel:'Eliminar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      ilusToast('Error: '+(d.error||'no se pudo eliminar'), { type:'error' }); return;
+    }
+    ilusToast('Visita eliminada', { type:'success' });
+    bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+    cargarEventos();
+  } catch(e){ ilusToast('Error de red: '+e.message, { type:'error' }); }
+}
+
+function exportarVisitas(){
+  const events = eventosFiltrados();
+  if (!events.length){ ilusToast('Nada que exportar', { type:'warning' }); return; }
+  const head = ['Fecha','Hora inicio','Hora fin','Cliente','Comuna','Tipo','Estado','Técnicos','Costo'];
+  const rows = events.map(ev => [
+    ev.fecha || '', ev.hora_inicio || '', ev.hora_fin || '',
+    ev.cliente.razon_social, ev.cliente.comuna || '',
+    ev.tipo || '', ev.estado || '',
+    ev.tecnicos.map(t => t.nombre).join('; '),
+    ev.costo || 0,
+  ]);
+  const csv = [head, ...rows].map(r =>
+    r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+  const blob = new Blob(['﻿' + csv], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `visitas-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── Init ────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', cargarEventos);
 </script>
+
 {% endblock %}
