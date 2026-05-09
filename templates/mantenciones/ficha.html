@@ -3905,18 +3905,27 @@ function abrirEmailManual() {
             </div>
           </div>
 
-          {# ── Panel por RUT (MySQL directo) ── #}
+          {# ── Panel por RUT/nombre/número (SQL Server directo a Random) ── #}
           <div id="fPanelRut" style="display:none">
-            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Busca por RUT o razón social. Requiere conexión directa al ERP.</p>
+            <p class="text-muted small mb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              Búsqueda inteligente: detecta automáticamente si escribes <strong>RUT</strong>,
+              <strong>nombre</strong> o <strong>número de documento</strong> (8827, no VD00008827).
+            </p>
             <div class="d-flex gap-2 mb-3">
               <input type="text" id="erpQ" class="form-control form-control-sm"
-                     placeholder="RUT o razón social…"
+                     placeholder="Ej: 65206047, Vitacura, 8827…"
                      value="{{ cliente.rut or '' }}"
-                     onkeydown="if(event.key==='Enter') buscarErp()">
-              <button class="btn btn-ilus btn-sm" onclick="buscarErp()"><i class="bi bi-search"></i></button>
+                     onkeydown="if(event.key==='Enter') buscarErpSql()">
+              <button class="btn btn-ilus btn-sm" onclick="buscarErpSql()">
+                <i class="bi bi-search me-1"></i>Buscar
+              </button>
             </div>
             <div id="erpResultado">
-              <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un término para buscar</div>
+              <div class="text-center text-muted py-4" style="font-size:.85rem">
+                <i class="bi bi-search" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:8px"></i>
+                Ingresa al menos 3 caracteres
+              </div>
             </div>
           </div>
 
@@ -3927,6 +3936,78 @@ function abrirEmailManual() {
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus fw-bold px-4" onclick="importarDesdeErp()">
           <i class="bi bi-box-arrow-in-down me-1"></i>Importar seleccionadas
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════
+   Modal: Productos del documento ERP (selección + expansión inteligente)
+══════════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalErpProductos" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-box-seam me-2"></i>Productos del documento
+          <span id="ep_docTitulo" class="ms-2 fw-normal" style="font-size:.8rem;opacity:.85"></span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        {# Header con info del documento + alerta RUT mismatch #}
+        <div id="ep_header" style="padding:14px 22px;background:#f9fafb;border-bottom:1px solid #e5e7eb">
+          <div class="d-flex flex-wrap gap-3 align-items-center" style="font-size:.84rem">
+            <div><span class="text-muted">Cliente:</span> <strong id="ep_cliente">—</strong></div>
+            <div><span class="text-muted">RUT:</span> <span id="ep_rut" class="font-monospace">—</span></div>
+            <div><span class="text-muted">Fecha:</span> <strong id="ep_fecha">—</strong></div>
+            <div><span class="text-muted">Total:</span> <strong id="ep_total">—</strong></div>
+          </div>
+          <div id="ep_mismatchAlert" style="display:none;margin-top:10px"></div>
+        </div>
+
+        {# Toolbar: master checkbox + opciones #}
+        <div style="padding:12px 22px;border-bottom:1px solid #e5e7eb;background:#fff">
+          <div class="d-flex flex-wrap gap-3 align-items-center">
+            <div class="form-check m-0">
+              <input class="form-check-input" type="checkbox" id="ep_chkAll"
+                     onchange="epToggleAll(this.checked)">
+              <label class="form-check-label fw-bold" for="ep_chkAll">
+                Seleccionar todos
+              </label>
+            </div>
+            <div class="form-check m-0">
+              <input class="form-check-input" type="checkbox" id="ep_chkExpandir">
+              <label class="form-check-label" for="ep_chkExpandir"
+                     title="Cuando un producto tiene cantidad N>1, crea N filas con cantidad 1 (para asignar número de serie único a cada equipo)">
+                <i class="bi bi-arrow-down-up me-1 text-warning"></i>
+                <strong>Expandir cantidades</strong> (crea 1 línea por unidad para series únicas)
+              </label>
+            </div>
+            <div class="ms-auto small text-muted">
+              <span id="ep_count">0</span> de <span id="ep_total_items">0</span> seleccionado(s)
+            </div>
+          </div>
+        </div>
+
+        {# Tabla de productos #}
+        <div id="ep_tabla" style="padding:0">
+          <div class="text-center text-muted py-5">
+            <span class="spinner-border spinner-border-sm me-2"></span>Cargando productos…
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="me-auto text-muted">
+          <i class="bi bi-info-circle me-1"></i>
+          Fecha de instalación = fecha del documento. Series autogeneradas si están vacías.
+        </small>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" id="ep_btnImportar"
+                onclick="epImportarSeleccionados()" disabled>
+          <i class="bi bi-box-arrow-in-down me-1"></i>
+          Agregar a equipos (<span id="ep_btnCount">0</span>)
         </button>
       </div>
     </div>
@@ -4443,50 +4524,289 @@ function fSelAll() {
   });
 }
 
-// ─── ERP — buscar por RUT/cliente (MySQL) ────────────────────
-async function buscarErp() {
+// ════════════════════════════════════════════════════════════════════════
+// ERP — Búsqueda inteligente vía SQL Server directo (Random)
+// ════════════════════════════════════════════════════════════════════════
+const RUT_FICHA = '{{ cliente.rut | default("") | e }}';
+const RAZON_FICHA = '{{ cliente.razon_social | default("") | e }}';
+let _epModal = null;
+let _epDocActual = null;   // {tido, nudo, fecha, cliente, rut}
+let _epProductos = [];     // productos del documento abierto
+let _epSeleccion = new Set(); // índices seleccionados
+
+async function buscarErpSql() {
   const q = document.getElementById('erpQ').value.trim();
-  if (!q) return;
+  if (q.length < 3) {
+    document.getElementById('erpResultado').innerHTML =
+      '<div class="alert alert-warning small mb-0">Mínimo 3 caracteres</div>';
+    return;
+  }
   const cont = document.getElementById('erpResultado');
-  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
-  const r = await fetch('/mantenciones/api/buscar-erp', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({q})
-  });
-  const data = await r.json();
+  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando en Random ERP…</div>';
+
+  let data;
+  try {
+    const r = await fetch('/mantenciones/api/buscar-erp-sql', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({q})
+    });
+    data = await r.json();
+  } catch(e) {
+    cont.innerHTML = `<div class="alert alert-danger small">Error de red: ${e.message}</div>`;
+    return;
+  }
+
   if (data.sin_conexion) {
     cont.innerHTML = `<div class="alert alert-warning">
-      <i class="bi bi-exclamation-triangle me-1"></i>${data.error}
-      <br><small>Usa la pestaña <strong>"Por número de documento"</strong> para importar equipos.</small>
+      <i class="bi bi-plug me-1"></i><strong>ERP no conectado.</strong> ${data.error||''}
+      <br><small class="text-muted">Pídele al admin que setee las variables RANDOM_SQL_* en Railway.</small>
     </div>`;
     return;
   }
-  if (data.error) { cont.innerHTML = `<div class="alert alert-warning">${data.error}</div>`; return; }
-  if (!data.documentos?.length) {
-    cont.innerHTML = '<div class="text-center text-muted py-4">Sin resultados para ese RUT o nombre.</div>';
+  if (data.error) {
+    cont.innerHTML = `<div class="alert alert-warning small">${data.error}</div>`;
     return;
   }
-  erpSeleccionadas = {};
-  actualizarContadorErp();
-  let html = '<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.8rem"><thead><tr><th></th><th>Doc</th><th>Fecha</th><th>SKU</th><th>Producto</th><th>Cant.</th></tr></thead><tbody>';
-  data.documentos.forEach(doc => {
-    html += `<tr class="table-secondary"><td colspan="6" class="fw-bold text-muted" style="font-size:.72rem">${doc.tipo_doc} ${doc.num_doc} — ${doc.razon_social} (${doc.fecha})</td></tr>`;
-    doc.lineas.forEach((l, idx) => {
-      const key = `${doc.tipo_doc}-${doc.num_doc}-${idx}`;
-      const le = {...l, doc_origen:`${doc.tipo_doc} ${doc.num_doc}`, fecha:doc.fecha, producto:l.nombre};
-      html += `<tr>
-        <td><input type="checkbox" class="erp-chk form-check-input"
-             onchange="erpToggle('${key}',${JSON.stringify(le).replace(/"/g,'&quot;')},this.checked)"></td>
-        <td class="text-muted">${doc.tipo_doc} ${doc.num_doc}</td>
-        <td class="text-muted">${doc.fecha}</td>
-        <td class="font-monospace">${l.sku||'—'}</td>
-        <td>${l.nombre||'—'}</td>
-        <td>${l.cantidad||1}</td>
-      </tr>`;
-    });
+  if (!data.documentos?.length) {
+    cont.innerHTML = `<div class="text-center text-muted py-4" style="font-size:.85rem">
+      <i class="bi bi-search" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:8px"></i>
+      Sin resultados para "${escHtml(q)}"
+    </div>`;
+    return;
+  }
+
+  // Render tabla de documentos con click para abrir modal de productos
+  const modoLbl = {rut:'RUT', numero:'Número doc.', nombre:'Nombre'}[data.modo] || '';
+  let html = `<div class="d-flex justify-content-between align-items-center mb-2 small text-muted">
+    <span><strong>${data.documentos.length}</strong> documento(s) encontrado(s) por <strong>${modoLbl}</strong></span>
+  </div>
+  <div class="table-responsive" style="max-height:380px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
+  <table class="table table-sm table-hover mb-0" style="font-size:.82rem">
+    <thead class="sticky-top" style="background:#f9fafb;top:0">
+      <tr>
+        <th style="width:70px">Tipo</th>
+        <th style="width:120px">Número</th>
+        <th>Cliente</th>
+        <th style="width:100px">Fecha</th>
+        <th class="text-end" style="width:120px">Total</th>
+        <th style="width:130px"></th>
+      </tr>
+    </thead>
+    <tbody>`;
+  data.documentos.forEach((d, i) => {
+    const rutMatch = (d.rut||'').replace(/[.\-\s]/g,'') === (RUT_FICHA||'').replace(/[.\-\s]/g,'');
+    const tidoBadge = `<span class="badge bg-secondary" style="font-size:.62rem;font-family:monospace">${escHtml(d.tido_display)}</span>`;
+    const total = d.valor_total ? '$' + Math.round(d.valor_total).toLocaleString('es-CL') : '—';
+    html += `<tr>
+      <td>${tidoBadge}</td>
+      <td class="font-monospace">${escHtml(d.nudo_display)}</td>
+      <td style="max-width:280px" class="text-truncate" title="${escHtml(d.razon_social)} (${escHtml(d.rut)})">
+        ${escHtml(d.razon_social || '—')}
+        ${rutMatch ? '' : '<i class="bi bi-exclamation-triangle text-warning ms-1" title="RUT distinto al de la ficha"></i>'}
+      </td>
+      <td class="small text-muted">${escHtml(d.fecha)}</td>
+      <td class="text-end small">${total}</td>
+      <td>
+        <button class="btn btn-sm btn-ilus w-100" onclick='abrirModalProductos(${JSON.stringify(d).replace(/'/g, "&#39;")})'>
+          <i class="bi bi-eye me-1"></i>Ver productos
+        </button>
+      </td>
+    </tr>`;
   });
   html += '</tbody></table></div>';
   cont.innerHTML = html;
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ─── Modal: Productos del documento ───────────────────────────
+async function abrirModalProductos(doc) {
+  _epDocActual = doc;
+  _epProductos = [];
+  _epSeleccion = new Set();
+  if (!_epModal) _epModal = new bootstrap.Modal(document.getElementById('modalErpProductos'));
+
+  document.getElementById('ep_docTitulo').textContent = `${doc.tido_display} ${doc.nudo_display}`;
+  document.getElementById('ep_cliente').textContent = doc.razon_social || '—';
+  document.getElementById('ep_rut').textContent = doc.rut || '—';
+  document.getElementById('ep_fecha').textContent = doc.fecha || '—';
+  document.getElementById('ep_total').textContent = doc.valor_total
+    ? '$' + Math.round(doc.valor_total).toLocaleString('es-CL') : '—';
+  document.getElementById('ep_chkAll').checked = false;
+  document.getElementById('ep_chkExpandir').checked = false;
+  document.getElementById('ep_count').textContent = '0';
+  document.getElementById('ep_total_items').textContent = '…';
+  document.getElementById('ep_btnImportar').disabled = true;
+  document.getElementById('ep_btnCount').textContent = '0';
+
+  // Validar RUT mismatch
+  const rutFicha = (RUT_FICHA||'').replace(/[.\-\s]/g,'').toUpperCase();
+  const rutDoc   = (doc.rut||'').replace(/[.\-\s]/g,'').toUpperCase();
+  const noCoincide = rutFicha && rutDoc && rutFicha.slice(0,-1) !== rutDoc.slice(0,-1) && rutFicha !== rutDoc;
+  const alertEl = document.getElementById('ep_mismatchAlert');
+  if (noCoincide) {
+    window._erpMismatch = { rutDoc:doc.rut, clienteDoc:doc.razon_social, tido:doc.tido, nudo:doc.nudo, confirmado:false, motivo:'' };
+    alertEl.style.display = '';
+    alertEl.innerHTML = `<div class="alert alert-danger small mb-0" style="border-left:4px solid #dc2626">
+      <strong><i class="bi bi-exclamation-octagon-fill me-1"></i>RUT distinto al de la ficha</strong><br>
+      Documento: ${escHtml(doc.razon_social)} (${escHtml(doc.rut)})<br>
+      Ficha: ${escHtml(RAZON_FICHA)} (${escHtml(RUT_FICHA)})<br>
+      <textarea id="ep_motivo" class="form-control form-control-sm mt-2" rows="2" minlength="8"
+                placeholder="Motivo justificado (mínimo 8 caracteres)..."></textarea>
+      <button class="btn btn-sm btn-warning mt-2" onclick="epConfirmarMismatch()">
+        <i class="bi bi-check-lg me-1"></i>Confirmar y registrar motivo
+      </button>
+    </div>`;
+  } else {
+    alertEl.style.display = 'none';
+    window._erpMismatch = null;
+  }
+
+  document.getElementById('ep_tabla').innerHTML =
+    '<div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-2"></span>Cargando productos del ERP…</div>';
+  _epModal.show();
+
+  // Fetch productos del documento (vía REST API que ya existe)
+  try {
+    const r = await fetch(`/mantenciones/api/documento?tido=${encodeURIComponent(doc.tido)}&nudo=${encodeURIComponent(doc.nudo)}`);
+    const data = await r.json();
+    if (!data.ok || !data.items?.length) {
+      document.getElementById('ep_tabla').innerHTML =
+        '<div class="text-center text-muted py-4">Este documento no tiene productos importables.</div>';
+      return;
+    }
+    _epProductos = data.items;
+    document.getElementById('ep_total_items').textContent = _epProductos.length;
+    epRenderTabla();
+  } catch(e) {
+    document.getElementById('ep_tabla').innerHTML =
+      `<div class="alert alert-danger m-3 small">Error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function epRenderTabla() {
+  let html = `<table class="table table-hover mb-0" style="font-size:.85rem">
+    <thead style="background:#f9fafb">
+      <tr>
+        <th style="width:50px"></th>
+        <th>Producto</th>
+        <th style="width:160px">SKU</th>
+        <th style="width:90px" class="text-center">Cantidad</th>
+      </tr>
+    </thead><tbody>`;
+  _epProductos.forEach((p, i) => {
+    const checked = _epSeleccion.has(i) ? 'checked' : '';
+    const qty = parseInt(p.cantidad) || 1;
+    const expandHint = qty > 1 ? `<span class="badge bg-warning-subtle text-warning border ms-1" style="font-size:.6rem"><i class="bi bi-arrow-down-up me-1"></i>expandible a ${qty}</span>` : '';
+    html += `<tr>
+      <td><input type="checkbox" class="form-check-input ep-chk" data-idx="${i}" ${checked}
+                 onchange="epToggleItem(${i}, this.checked)"></td>
+      <td>${escHtml(p.nombre)}${expandHint}</td>
+      <td class="font-monospace small">${escHtml(p.sku||'—')}</td>
+      <td class="text-center">${qty}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('ep_tabla').innerHTML = html;
+}
+
+function epToggleItem(idx, checked) {
+  if (checked) _epSeleccion.add(idx);
+  else _epSeleccion.delete(idx);
+  epActualizarContador();
+}
+
+function epToggleAll(checked) {
+  _epSeleccion.clear();
+  if (checked) _epProductos.forEach((_, i) => _epSeleccion.add(i));
+  document.querySelectorAll('.ep-chk').forEach(c => c.checked = checked);
+  epActualizarContador();
+}
+
+function epActualizarContador() {
+  const n = _epSeleccion.size;
+  document.getElementById('ep_count').textContent = n;
+  document.getElementById('ep_btnCount').textContent = n;
+  document.getElementById('ep_btnImportar').disabled = n === 0;
+}
+
+async function epConfirmarMismatch() {
+  const motivo = (document.getElementById('ep_motivo')?.value || '').trim();
+  if (motivo.length < 8) { alert('Mínimo 8 caracteres en el motivo.'); return; }
+  if (!window._erpMismatch) return;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/{{ cliente.id }}/equipos-import-mismatch`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ motivo, rut_doc:window._erpMismatch.rutDoc, tido:window._erpMismatch.tido, nudo:window._erpMismatch.nudo })
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    window._erpMismatch.confirmado = true;
+    window._erpMismatch.motivo = motivo;
+    document.getElementById('ep_mismatchAlert').innerHTML =
+      `<div class="alert alert-success small mb-0"><i class="bi bi-check-circle-fill me-1"></i>Importación autorizada. Motivo registrado.</div>`;
+  } catch(e) { alert('Error de red'); }
+}
+
+async function epImportarSeleccionados() {
+  if (_epSeleccion.size === 0) return;
+  // Bloqueo si mismatch sin confirmar
+  if (window._erpMismatch && !window._erpMismatch.confirmado) {
+    alert('Confirma primero el motivo del RUT distinto.');
+    return;
+  }
+  const btn = document.getElementById('ep_btnImportar');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
+
+  const expandir = document.getElementById('ep_chkExpandir').checked;
+  const fecha_doc = _epDocActual.fecha_iso || '';
+  const doc_origen = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
+  let creados = 0, fallidos = 0;
+
+  for (const idx of _epSeleccion) {
+    const p = _epProductos[idx];
+    const qty = parseInt(p.cantidad) || 1;
+    const nombre = p.nombre || p.sku || '';
+    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(nombre);
+
+    // Decidir expansión: opt-in del usuario + cantidad > 1 + no es bulk
+    const expandirEsto = expandir && qty > 1 && !esBulk;
+    const filas = expandirEsto ? qty : 1;
+    const cantidadCadaUna = expandirEsto ? 1 : qty;
+
+    for (let n = 1; n <= filas; n++) {
+      // Auto-generar serie si expandimos (formato: <SKU>-<NUDO>-<n>)
+      const serie = expandirEsto
+        ? `${(p.sku||'AUTO').toUpperCase()}-${_epDocActual.nudo_display}-${n}`
+        : '';
+      try {
+        const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            sku: p.sku || '',
+            nombre,
+            serie,
+            cantidad: cantidadCadaUna,
+            doc_origen,
+            doc_fecha: fecha_doc,
+            fecha_instalacion: fecha_doc,
+          })
+        });
+        if (r.ok) creados++; else fallidos++;
+      } catch(e) { fallidos++; }
+    }
+  }
+
+  btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${creados} creado(s)`;
+  setTimeout(() => {
+    _epModal.hide();
+    location.reload();
+  }, 1200);
 }
 
 function erpToggle(key, linea, checked) {

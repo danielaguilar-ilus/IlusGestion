@@ -334,6 +334,146 @@ def get_db():
     return g._db
 
 
+# ════════════════════════════════════════════════════════════════════════
+# RANDOM ERP — SQL Server READ-ONLY (Cuatro capas de seguridad)
+# ════════════════════════════════════════════════════════════════════════
+#
+# Conexión directa a SQL Server del ERP Random (cloud.random.cl:8058).
+# El usuario `usr_sport` tiene rol db_owner por ahora — mientras Random
+# nos crea un usuario db_datareader puro, este código IMPONE read-only
+# desde la aplicación con 4 capas:
+#
+#   Capa 1: WHITELIST — _random_sql_query() solo acepta SELECT/WITH
+#   Capa 2: BLACKLIST — bloquea palabras peligrosas (INSERT, DROP, etc.)
+#   Capa 3: PARAMETRIZACIÓN — pymssql con %s, imposible SQL injection
+#   Capa 4: AUTOCOMMIT OFF — sin commit explícito, escrituras no persisten
+#
+# Único punto de entrada para Random ERP. Cualquier código que necesite
+# leer del ERP DEBE pasar por _random_sql_query() o _random_sql_one().
+# ════════════════════════════════════════════════════════════════════════
+
+RANDOM_SQL_CFG = {
+    "server":   os.environ.get("RANDOM_SQL_HOST", "cloud.random.cl"),
+    "port":     int(os.environ.get("RANDOM_SQL_PORT", "8058")),
+    "user":     os.environ.get("RANDOM_SQL_USER", "").strip(),
+    "password": os.environ.get("RANDOM_SQL_PASS", "").strip(),
+    "database": os.environ.get("RANDOM_SQL_DB",   "rd095bd01"),
+}
+
+_random_pool      = None
+_random_pool_lock = threading.Lock()
+
+# Capa 2: tokens prohibidos (case-insensitive). Si alguno aparece en el SQL,
+# la query es rechazada antes de tocar la BD.
+_RANDOM_FORBIDDEN_TOKENS = (
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE",
+    "EXEC", "EXECUTE", "MERGE", "GRANT", "REVOKE", "CREATE",
+    "BACKUP", "RESTORE", "SHUTDOWN", "OPENROWSET", "OPENQUERY",
+    "BULK", "DBCC", "KILL", "RECONFIGURE",
+    "INTO ", "; ", "/*", "*/",
+    "XP_CMDSHELL", "SP_CONFIGURE", "SP_EXECUTESQL",
+)
+
+
+def _random_sql_pool():
+    """Pool perezoso de conexiones a Random SQL Server."""
+    global _random_pool
+    if _random_pool is not None:
+        return _random_pool
+    if not RANDOM_SQL_CFG["user"] or not RANDOM_SQL_CFG["password"]:
+        return None  # No configurado — endpoints lo manejan devolviendo lista vacía
+    with _random_pool_lock:
+        if _random_pool is not None:
+            return _random_pool
+        try:
+            import pymssql
+            from dbutils.pooled_db import PooledDB
+            _random_pool = PooledDB(
+                creator        = pymssql,
+                mincached      = 1,
+                maxcached      = 3,
+                maxconnections = 5,
+                blocking       = True,
+                ping           = 1,
+                server         = RANDOM_SQL_CFG["server"],
+                port           = RANDOM_SQL_CFG["port"],
+                user           = RANDOM_SQL_CFG["user"],
+                password       = RANDOM_SQL_CFG["password"],
+                database       = RANDOM_SQL_CFG["database"],
+                login_timeout  = 10,
+                timeout        = 25,
+                autocommit     = False,   # Capa 4: sin commit, escrituras NO persisten
+                as_dict        = True,
+            )
+            print(f"[RANDOM SQL] Pool activo → {RANDOM_SQL_CFG['server']}:{RANDOM_SQL_CFG['port']}/{RANDOM_SQL_CFG['database']}")
+        except ImportError:
+            print("[RANDOM SQL][WARN] pymssql no instalado — instalar con: pip install pymssql")
+            _random_pool = None
+        except Exception as e:
+            print(f"[RANDOM SQL][ERROR] No se pudo crear pool: {e}")
+            _random_pool = None
+    return _random_pool
+
+
+def _random_sql_validate(sql: str) -> None:
+    """
+    Capa 1 + 2 de seguridad. Lanza PermissionError si la query no es segura.
+    Se ejecuta SIEMPRE antes de tocar la BD.
+    """
+    if not sql or not isinstance(sql, str):
+        raise PermissionError("Random SQL: query vacía o no es string")
+    sql_clean = sql.strip()
+    sql_upper = sql_clean.upper()
+    # Capa 1: solo SELECT (también permitimos CTE con WITH)
+    first_token = sql_upper.split(None, 1)[0] if sql_upper else ""
+    if first_token not in ("SELECT", "WITH"):
+        raise PermissionError(f"Random SQL: solo SELECT permitido (recibido: '{first_token}')")
+    # Capa 2: blacklist de tokens en cualquier lugar
+    for tok in _RANDOM_FORBIDDEN_TOKENS:
+        if tok in sql_upper:
+            raise PermissionError(f"Random SQL: token prohibido en query: '{tok.strip()}'")
+
+
+def _random_sql_query(sql: str, params=None, max_rows: int = 500):
+    """
+    ÚNICO punto de entrada permitido para Random ERP SQL Server.
+    Devuelve lista de dicts o None si no hay configuración / error de conexión.
+    Lanza PermissionError si el SQL viola las reglas de seguridad.
+
+    NUNCA construir SQL con f-strings o concatenación. SIEMPRE usar params.
+    Ejemplo correcto:
+        _random_sql_query("SELECT TOP 10 * FROM MAEEN WHERE RTEN LIKE %s", (f"{rut}%",))
+    """
+    _random_sql_validate(sql)   # Capas 1 y 2 — falla antes de conectar
+    pool = _random_sql_pool()
+    if pool is None:
+        return None
+    conn = None
+    try:
+        conn = pool.connection()
+        with conn.cursor(as_dict=True) as cur:
+            cur.execute(sql, params or ())
+            rows = cur.fetchmany(max_rows) if max_rows else cur.fetchall()
+        # Capa 4: NO llamamos conn.commit() — cualquier escritura accidental
+        # se descarta al cerrar la conexión.
+        return [dict(r) for r in rows]
+    except PermissionError:
+        raise
+    except Exception as e:
+        print(f"[RANDOM SQL][QUERY ERROR] {e}  ::  SQL={sql[:120]}  ::  params={params}")
+        return None
+    finally:
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
+
+
+def _random_sql_one(sql: str, params=None):
+    """Versión que devuelve solo la primera fila o None."""
+    rows = _random_sql_query(sql, params, max_rows=1)
+    return rows[0] if rows else None
+
+
 def mysql_fetchone(query, params=None):
     with get_db().cursor() as cur:
         cur.execute(query, params or ())
@@ -12382,6 +12522,169 @@ def mant_equipos_import_mismatch(cid):
     detalle = f"Documento {tido} {nudo} (RUT cliente doc: {rut_doc}) — Motivo: {motivo}"
     _mant_log("cliente", cid, "import_rut_mismatch", detalle)
     return jsonify({"ok": True})
+
+
+# TIDOs válidos para listar como "documentos del cliente" (todos los G* + ventas)
+# COV=Cotización, FCV=Factura, BLV=Boleta, NVI=Nota Interna, NVV=Nota Venta,
+# GDV=Guía Despacho Venta, GDP=Guía Despacho Provisional, GTR=Guía Traslado,
+# GRD=Guía Retiro/Devolución, FCO=Factura Compra
+_RANDOM_TIDOS_VENTA = ('FCV','BLV','NVI','NVV','GDV','GDP','GTR','GRD','FCO','COV')
+
+
+@app.route("/mantenciones/api/buscar-erp-sql", methods=["POST"])
+@_mant_required
+def mant_buscar_erp_sql():
+    """
+    Búsqueda inteligente de documentos en Random ERP via SQL Server directo.
+
+    Detecta automáticamente el tipo de búsqueda según lo que escribió el usuario:
+      - Solo dígitos 7-9 chars  → RUT (busca todos los docs del cliente)
+      - Solo dígitos 1-6 chars  → Número de documento (busca por NUDO)
+      - Texto                   → Razón social (LIKE en NOKOEN)
+
+    Maneja prefijos VD/WEB que se almacenan como NVV con NUDO prefijado.
+    """
+    d = request.get_json(silent=True) or {}
+    q = (d.get("q") or "").strip()
+    if len(q) < 3:
+        return jsonify({"error": "Mínimo 3 caracteres"}), 400
+
+    pool = _random_sql_pool()
+    if pool is None:
+        return jsonify({
+            "error": "Conexión a Random ERP no configurada. Pídele al admin que setee RANDOM_SQL_* en Railway.",
+            "documentos": [], "sin_conexion": True
+        }), 200
+
+    # Normalizar query
+    q_clean   = q.replace(".", "").replace(" ", "").replace("-", "").upper()
+    is_digits = q_clean.isdigit()
+    tidos_in  = "','".join(_RANDOM_TIDOS_VENTA)
+
+    docs = []
+    modo = ""
+    try:
+        # ── Modo 1: RUT (7-9 dígitos) ───────────────────────────
+        if is_digits and 7 <= len(q_clean) <= 9:
+            modo = "rut"
+            rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
+            docs = _random_sql_query(f"""
+                SELECT TOP 100
+                    e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO,
+                    e.FEEMDO, e.VANEDO, e.VAIVDO, e.VABRDO,
+                    e.ESPGDO, e.ESDO,
+                    en.NOKOEN AS razon_social,
+                    en.RTEN   AS rut
+                FROM MAEEDO e
+                LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                      LEFT(LTRIM(RTRIM(e.ENDO)),
+                           CHARINDEX('-', LTRIM(RTRIM(e.ENDO)) + '-') - 1)
+                WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+                  AND e.TIDO IN ('{tidos_in}')
+                ORDER BY e.FEEMDO DESC
+            """, (f"{rut_base}%", f"%{q_clean}%")) or []
+
+        # ── Modo 2: Número de documento (1-6 dígitos) ──────────
+        if not docs and is_digits and 1 <= len(q_clean) <= 7:
+            modo = "numero"
+            # NUDO en MAEEDO se guarda con padding de ceros (10 chars) o con prefijo VD/WEB
+            nudo_padded = q_clean.zfill(10)
+            nudo_vd     = f"VD{q_clean.zfill(8)}"
+            nudo_web    = f"WEB{q_clean.zfill(7)}"
+            docs = _random_sql_query(f"""
+                SELECT TOP 50
+                    e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO,
+                    e.FEEMDO, e.VANEDO, e.VAIVDO, e.VABRDO,
+                    e.ESPGDO, e.ESDO,
+                    en.NOKOEN AS razon_social,
+                    en.RTEN   AS rut
+                FROM MAEEDO e
+                LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                      LEFT(LTRIM(RTRIM(e.ENDO)),
+                           CHARINDEX('-', LTRIM(RTRIM(e.ENDO)) + '-') - 1)
+                WHERE e.NUDO IN (%s, %s, %s)
+                  AND e.TIDO IN ('{tidos_in}')
+                ORDER BY e.FEEMDO DESC
+            """, (nudo_padded, nudo_vd, nudo_web)) or []
+
+        # ── Modo 3: Razón social (texto) ───────────────────────
+        # Estrategia 2-pasos para evitar JOIN calculado lento:
+        #   3a) Buscar primero los RUTs en MAEEN (tabla chica, índice por NOKOEN)
+        #   3b) Luego traer documentos por ENDO IN (rut1-N, rut2-N, ...)
+        if not docs and not is_digits:
+            modo = "nombre"
+            q_like = f"%{q.upper()}%"
+            # 3a) RUTs que coinciden con el nombre buscado
+            ruts = _random_sql_query("""
+                SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut, LTRIM(RTRIM(NOKOEN)) AS razon
+                FROM MAEEN
+                WHERE UPPER(NOKOEN) LIKE %s AND TIEN IN ('C','A')
+            """, (q_like,)) or []
+            if ruts:
+                # 3b) Construir IN(...) seguro (los valores vienen de MAEEN, no del usuario)
+                rut_map = {r['rut']: r['razon'] for r in ruts}
+                # ENDO en MAEEDO incluye DV (formato 65206047-N), generamos patrones LIKE
+                like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(rut_map))
+                params = tuple(f"{rut}%" for rut in rut_map.keys())
+                docs_raw = _random_sql_query(f"""
+                    SELECT TOP 50
+                        e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO,
+                        e.FEEMDO, e.VANEDO, e.VAIVDO, e.VABRDO,
+                        e.ESPGDO, e.ESDO
+                    FROM MAEEDO e
+                    WHERE ({like_clauses})
+                      AND e.TIDO IN ('{tidos_in}')
+                    ORDER BY e.FEEMDO DESC
+                """, params) or []
+                # Enriquecer con razón social mapeada por prefijo de RUT
+                for r in docs_raw:
+                    endo = (r.get("ENDO") or "").strip()
+                    rut_clean = endo.split("-")[0] if "-" in endo else endo
+                    r["rut"] = rut_clean
+                    r["razon_social"] = rut_map.get(rut_clean, "")
+                docs = docs_raw
+    except PermissionError as pe:
+        return jsonify({"error": f"Bloqueado por seguridad: {pe}"}), 403
+
+    # Formatear respuesta
+    out = []
+    for r in docs:
+        nudo_raw = (r.get("NUDO") or "").strip()
+        tido_raw = (r.get("TIDO") or "").strip()
+        # Detectar prefijo VD/WEB en NUDO (esos se guardan como TIDO=NVV)
+        tido_display = tido_raw
+        if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+            tido_display = "VD"
+            nudo_display = nudo_raw[2:].lstrip("0") or "0"
+        elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+            tido_display = "WEB"
+            nudo_display = nudo_raw[3:].lstrip("0") or "0"
+        else:
+            nudo_display = nudo_raw.lstrip("0") or "0"
+
+        fe = r.get("FEEMDO")
+        out.append({
+            "idmaeedo":     r.get("IDMAEEDO"),
+            "tido":         tido_raw,                  # tido real para fetch detalle
+            "nudo":         nudo_raw,                  # nudo real para fetch detalle
+            "tido_display": tido_display,              # para mostrar al usuario
+            "nudo_display": nudo_display,
+            "rut":          (r.get("rut")  or r.get("ENDO") or "").strip(),
+            "razon_social": (r.get("razon_social") or "").strip().title(),
+            "fecha":        fe.strftime("%d/%m/%Y") if fe else "",
+            "fecha_iso":    fe.strftime("%Y-%m-%d") if fe else "",
+            "valor_neto":   float(r.get("VANEDO") or 0),
+            "valor_total":  float(r.get("VABRDO") or 0),
+            "estado_pago":  (r.get("ESPGDO") or "").strip(),
+        })
+
+    return jsonify({
+        "ok": True,
+        "modo": modo,
+        "documentos": out,
+        "count": len(out),
+        "query": q,
+    })
 
 
 @app.route("/mantenciones/api/buscar-erp", methods=["POST"])
