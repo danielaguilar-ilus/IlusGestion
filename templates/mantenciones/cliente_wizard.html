@@ -586,20 +586,23 @@
     </div>
   </div>
   <div class="table-responsive">
-    <table class="table eq-table align-middle mb-1" style="min-width:680px">
+    <table class="table eq-table align-middle mb-1" style="min-width:920px">
       <thead><tr>
-          <th style="width:27%">Nombre equipo</th>
-          <th style="width:9%">SKU</th>
-          <th style="width:10%">N° Serie</th>
-          <th style="width:12%">Ubicación</th>
-          <th style="width:11%">Estado</th>
-          <th style="width:10%">F. Instalación</th>
+          <th style="width:22%">Nombre equipo</th>
+          <th style="width:9%" title="Código del MODELO en el ERP — compartido entre unidades iguales">SKU modelo</th>
+          <th style="width:11%" title="Código ILUS único POR EQUIPO físico (editable, autogenerado)">
+            Cód. ILUS <i class="bi bi-info-circle ms-1" style="font-size:.7rem;color:#92400e"></i>
+          </th>
+          <th style="width:9%">N° Serie</th>
+          <th style="width:10%">Ubicación</th>
+          <th style="width:9%">Estado</th>
+          <th style="width:9%">F. Instalación</th>
           <th style="width:4%">Cant.</th>
           <th style="width:10%">Origen</th>
           <th style="width:3%"></th>
         </tr></thead>
       <tbody id="equiposTbody">
-        <tr id="eq-placeholder"><td colspan="8" class="text-center text-muted py-4" style="font-size:.82rem">
+        <tr id="eq-placeholder"><td colspan="10" class="text-center text-muted py-4" style="font-size:.82rem">
           <i class="bi bi-bicycle" style="font-size:1.4rem;opacity:.3;display:block;margin-bottom:6px"></i>
           Sin equipos — agrega una fila o búscalos en el ERP
         </td></tr>
@@ -823,12 +826,13 @@
             <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
               <div>
                 <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo</label>
-                <select id="docTido" class="form-select form-select-sm" style="width:90px">
+                <select id="docTido" class="form-select form-select-sm" style="width:110px">
                   <option value="FCV">FCV</option>
                   <option value="BLV">BLV</option>
                   <option value="NVI">NVI</option>
                   <option value="NVV">NVV</option>
                   <option value="GDV">GDV</option>
+                  <option value="GDP">GDP</option>
                   <option value="VD">VD</option>
                 </select>
               </div>
@@ -850,16 +854,26 @@
             </div>
           </div>
 
-          <!-- Panel: por cliente -->
+          <!-- Panel: por cliente (SQL Server directo a Random) -->
           <div id="panelClient" style="display:none">
-            <p class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Busca por RUT o razón social. Se listarán los documentos del cliente (requiere conexión directa al ERP).</p>
+            <p class="text-muted small mb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              Búsqueda inteligente: escribe <strong>RUT</strong> (65206047), <strong>nombre</strong> (Vitacura)
+              o <strong>número de documento</strong> (8827, sin prefijos).
+            </p>
             <div class="d-flex gap-2 mb-3">
-              <input type="text" id="erpEqQ" class="form-control form-control-sm" placeholder="RUT o razón social del cliente…"
+              <input type="text" id="erpEqQ" class="form-control form-control-sm"
+                     placeholder="Ej: 65206047, Vitacura, 8827…"
                      onkeydown="if(event.key==='Enter') buscarErpEq()">
-              <button class="btn btn-ilus btn-sm" onclick="buscarErpEq()"><i class="bi bi-search"></i></button>
+              <button class="btn btn-ilus btn-sm" onclick="buscarErpEq()">
+                <i class="bi bi-search me-1"></i>Buscar
+              </button>
             </div>
             <div id="erpEqRes">
-              <div class="text-center text-muted py-4" style="font-size:.85rem">Ingresa un RUT o nombre para buscar</div>
+              <div class="text-center text-muted py-4" style="font-size:.85rem">
+                <i class="bi bi-search" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:8px"></i>
+                Ingresa al menos 3 caracteres
+              </div>
             </div>
           </div>
 
@@ -1614,25 +1628,57 @@ function agregarFilaEquipo(datos={}) {
   const docBadge = docOrigen
     ? `<span style="font-size:.62rem;color:#0066cc;font-family:monospace;white-space:nowrap">${docOrigen}</span>`
     : `<span style="font-size:.62rem;color:#888;font-style:italic">Manual</span>`;
+  // Default fecha de instalación = fecha del documento (cubre garantía 6 meses)
+  const fechaInst = datos.fecha_instalacion || datos.doc_fecha || datos.fecha || '';
+  const codigoIni = datos.codigo_interno || '(auto)';
   tr.innerHTML=`
     <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||datos.producto||'')}" placeholder="Nombre equipo"></td>
-    <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}"></td>
-    <td><input class="eq-input" data-field="serie" value="${esc(datos.serie||'')}"></td>
+    <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}" title="SKU del modelo (compartido entre unidades iguales)"></td>
+    <td><input class="eq-input font-monospace" data-field="codigo_interno" value="${esc(codigoIni)}"
+              style="background:#fef9c3;border-color:#fde68a"
+              title="Código ILUS único de este equipo físico. Editable. Se autogenera al guardar si dice (auto)."></td>
+    <td><input class="eq-input" data-field="serie" value="${esc(datos.serie||'')}" placeholder="N° serie real" title="Número de serie del fabricante (capturable después)"></td>
     <td><input class="eq-input" data-field="ubicacion" value="${esc(datos.ubicacion||'')}"></td>
     <td><select class="eq-input" data-field="estado_op">
       <option value="operativo" ${(datos.estado_op||'operativo')==='operativo'?'selected':''}>Operativo</option>
       <option value="critico"   ${datos.estado_op==='critico'?'selected':''}>Crítico</option>
       <option value="en_mantencion" ${datos.estado_op==='en_mantencion'?'selected':''}>En mantención</option>
     </select></td>
-    <td><input type="date" class="eq-input" data-field="fecha_instalacion" value="${esc(datos.fecha_instalacion||'')}"></td>
+    <td><input type="date" class="eq-input" data-field="fecha_instalacion" value="${esc(fechaInst)}"
+              data-original="${esc(fechaInst)}"
+              onchange="eqValidarFechaInst(this)"
+              title="Default: fecha del documento. Si la cambias, se pedirá justificación."></td>
     <td><input type="number" class="eq-input text-center" data-field="cantidad" value="${datos.cantidad||1}" min="1" style="width:44px"></td>
     <td>
       <input type="hidden" data-field="doc_origen" value="${esc(docOrigen)}">
       <input type="hidden" data-field="doc_fecha"  value="${esc(datos.doc_fecha||datos.fecha||'')}">
+      <input type="hidden" data-field="justif_doc_mismatch" value="${esc(datos.justif_doc_mismatch||'')}">
+      <input type="hidden" data-field="justif_fecha_inst"   value="">
       ${docBadge}
     </td>
     <td><button class="btn btn-xs btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-trash"></i></button></td>`;
   tbody.appendChild(tr);
+}
+
+// Si el usuario cambia la fecha de instalación, exige justificación
+function eqValidarFechaInst(inp) {
+  const orig = inp.dataset.original || '';
+  const nueva = inp.value || '';
+  if (!orig || nueva === orig) return;
+  const motivo = prompt(
+    `Estás cambiando la fecha de instalación.\n\n` +
+    `Default (fecha documento): ${orig}\nNueva: ${nueva}\n\n` +
+    `Esta fecha cubre garantía. Justifica por qué la cambias (mín. 8 caracteres):`
+  );
+  if (!motivo || motivo.trim().length < 8) {
+    inp.value = orig;
+    alert('Cambio cancelado: justificación requerida.');
+    return;
+  }
+  // Guardar la justificación en el hidden
+  const tr = inp.closest('tr');
+  const j = tr.querySelector('[data-field="justif_fecha_inst"]');
+  if (j) j.value = motivo.trim();
 }
 function esc(s) { return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function leerEquipos() {
@@ -1655,64 +1701,300 @@ function erpEqSetTab(tab) {
   });
 }
 
-// ── Tab "Por documento" ───────────────────────────────────────
+// ── Helper escape HTML ────────────────────────────────────────
+function _escHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ════════════════════════════════════════════════════════════════════
+// WIZARD ERP — Búsqueda por RUT/nombre/número via SQL Server (Random)
+// ════════════════════════════════════════════════════════════════════
+let _wzDocActual = null;     // doc seleccionado para abrir modal productos
+let _wzProductos = [];       // productos del doc abierto
+let _wzSeleccion = new Set();
+
+// Tab "Por cliente (RUT/nombre)" — usa el endpoint SQL nuevo
 async function buscarErpEq() {
-  const q=document.getElementById('erpEqQ').value.trim();
-  if(!q) return;
-  const cont=document.getElementById('erpEqRes');
-  cont.innerHTML='<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
-  const r=await fetch('/mantenciones/api/buscar-erp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
-  const data=await r.json();
-  if(data.error||!data.documentos?.length){cont.innerHTML=`<div class="text-center text-muted py-3">${data.error||'Sin resultados'}</div>`;return;}
-  erpEqSel={};
-  document.getElementById('erpEqCount').textContent='0 seleccionadas';
-  let html='<div class="table-responsive"><table class="table table-sm table-hover" style="font-size:.8rem"><thead><tr><th></th><th>Doc</th><th>Fecha</th><th>SKU</th><th>Producto</th><th>Cant.</th></tr></thead><tbody>';
-  data.documentos.forEach(doc=>{
-    html+=`<tr class="table-secondary"><td colspan="6" class="fw-bold text-muted py-1" style="font-size:.7rem">${doc.tipo_doc} ${doc.num_doc} — ${doc.razon_social}</td></tr>`;
-    doc.lineas.forEach((l,i)=>{
-      const key=`${doc.tipo_doc}-${doc.num_doc}-${i}`;
-      const ld=JSON.stringify({...l,doc_origen:`${doc.tipo_doc} ${doc.num_doc}`,fecha:doc.fecha}).replace(/"/g,'&quot;');
-      html+=`<tr><td><input type="checkbox" onchange="erpEqToggle('${key}',${ld},this.checked)"></td><td class="text-muted">${doc.tipo_doc} ${doc.num_doc}</td><td>${doc.fecha}</td><td class="font-monospace">${l.sku||'—'}</td><td>${l.nombre||'—'}</td><td>${l.cantidad||1}</td></tr>`;
+  const q = (document.getElementById('erpEqQ').value || '').trim();
+  if (q.length < 3) {
+    document.getElementById('erpEqRes').innerHTML =
+      '<div class="alert alert-warning small mb-0">Mínimo 3 caracteres</div>';
+    return;
+  }
+  const cont = document.getElementById('erpEqRes');
+  cont.innerHTML = '<div class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando en Random ERP…</div>';
+
+  let data;
+  try {
+    const r = await fetch('/mantenciones/api/buscar-erp-sql', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({q})
     });
+    data = await r.json();
+  } catch(e) {
+    cont.innerHTML = `<div class="alert alert-danger small">Error de red: ${_escHtml(e.message)}</div>`;
+    return;
+  }
+
+  if (data.sin_conexion) {
+    cont.innerHTML = `<div class="alert alert-warning">
+      <i class="bi bi-plug me-1"></i><strong>ERP no conectado.</strong> ${_escHtml(data.error||'')}
+      <br><small class="text-muted">Pídele al admin que setee RANDOM_SQL_* en Railway.</small>
+    </div>`;
+    return;
+  }
+  if (data.error) { cont.innerHTML = `<div class="alert alert-warning small">${_escHtml(data.error)}</div>`; return; }
+  if (!data.documentos?.length) {
+    cont.innerHTML = `<div class="text-center text-muted py-4" style="font-size:.85rem">
+      <i class="bi bi-search" style="font-size:1.6rem;opacity:.3;display:block;margin-bottom:8px"></i>
+      Sin resultados para "${_escHtml(q)}"</div>`;
+    return;
+  }
+
+  const rutWizard = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'');
+  const modoLbl = {rut:'RUT', numero:'Nº doc', nombre:'Nombre'}[data.modo] || '';
+  let html = `<div class="d-flex justify-content-between align-items-center mb-2 small text-muted">
+    <span><strong>${data.documentos.length}</strong> documento(s) por <strong>${modoLbl}</strong></span>
+  </div>
+  <div class="table-responsive" style="max-height:340px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
+    <table class="table table-sm table-hover mb-0" style="font-size:.82rem">
+      <thead class="sticky-top" style="background:#f9fafb;top:0">
+        <tr><th style="width:60px">Tipo</th><th style="width:120px">Número</th>
+            <th>Cliente</th><th style="width:100px">Fecha</th>
+            <th class="text-end" style="width:120px">Total</th>
+            <th style="width:130px"></th></tr>
+      </thead><tbody>`;
+  data.documentos.forEach(d => {
+    const rutDoc = (d.rut||'').replace(/[.\-\s]/g,'');
+    const rutMatch = rutWizard && rutDoc && (rutDoc.slice(0,-1) === rutWizard.slice(0,-1) || rutDoc === rutWizard);
+    const total = d.valor_total ? '$' + Math.round(d.valor_total).toLocaleString('es-CL') : '—';
+    html += `<tr>
+      <td><span class="badge bg-secondary" style="font-size:.62rem">${_escHtml(d.tido_display)}</span></td>
+      <td class="font-monospace">${_escHtml(d.nudo_display)}</td>
+      <td class="text-truncate" style="max-width:220px" title="${_escHtml(d.razon_social)} (${_escHtml(d.rut)})">
+        ${_escHtml(d.razon_social || '—')}
+        ${rutWizard && !rutMatch ? '<i class="bi bi-exclamation-triangle text-warning ms-1" title="RUT distinto"></i>' : ''}
+      </td>
+      <td class="small text-muted">${_escHtml(d.fecha)}</td>
+      <td class="text-end small">${total}</td>
+      <td><button class="btn btn-sm btn-ilus w-100" onclick='wzAbrirModalProds(${JSON.stringify(d).replace(/'/g,"&#39;")})'>
+        <i class="bi bi-eye me-1"></i>Ver productos
+      </button></td>
+    </tr>`;
   });
-  html+='</tbody></table></div>';
-  cont.innerHTML=html;
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
 }
-function erpEqToggle(key,l,checked){
-  if(checked)erpEqSel[key]=l;else delete erpEqSel[key];
-  document.getElementById('erpEqCount').textContent=`${Object.keys(erpEqSel).length} seleccionadas`;
-}
-function importarEq(){
-  const modal = bootstrap.Modal.getInstance(document.getElementById('modalErpEq'));
-  modal.hide();
-  Object.values(erpEqSel).forEach(l => {
-    const qty = parseInt(l.cantidad) || 1;
-    const docOrig = [l.doc_origen || '', l.tipo_doc ? `${l.tipo_doc} ${l.num_doc||''}`.trim() : ''].filter(Boolean)[0] || '';
-    const base = {
-      nombre: l.nombre || l.producto || '',
-      sku: l.sku || '',
-      cantidad: 1,
-      doc_origen: docOrig,
-      doc_fecha: l.fecha || l.doc_fecha || ''
-    };
-    // Si cantidad > 1 y NO es disco/accesorio bulk, preguntar
-    const esBulk = /disco|plate|pesa|dumbbell|kg\b/i.test(base.nombre);
-    if(qty > 1 && !esBulk) {
-      const expandir = confirm(
-        `"${base.nombre}" tiene cantidad ${qty}.\n\n` +
-        `¿Crear ${qty} líneas individuales (una por equipo)?\n` +
-        `→ Sí: ${qty} filas con cantidad 1\n` +
-        `→ No: 1 fila con cantidad ${qty}`
-      );
-      if(expandir) {
-        for(let i=0;i<qty;i++) agregarFilaEquipo({...base, cantidad:1});
-      } else {
-        agregarFilaEquipo({...base, cantidad:qty});
-      }
-    } else {
-      agregarFilaEquipo({...base, cantidad:qty});
+
+// ── Modal de productos del documento (en el wizard) ─────────────
+let _wzModalProds = null;
+
+async function wzAbrirModalProds(doc) {
+  _wzDocActual = doc;
+  _wzProductos = [];
+  _wzSeleccion = new Set();
+
+  // Crear modal dinámicamente si no existe
+  if (!document.getElementById('wzModalProds')) {
+    const modalHtml = `<div class="modal fade" id="wzModalProds" tabindex="-1">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header" style="background:#0f172a;color:#fff">
+            <h5 class="modal-title fw-bold">
+              <i class="bi bi-box-seam me-2"></i>Productos del documento
+              <span id="wzpDocTit" class="ms-2 fw-normal" style="font-size:.8rem;opacity:.85"></span>
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body p-0">
+            <div id="wzpHeader" style="padding:14px 20px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-size:.84rem"></div>
+            <div id="wzpMismatch" style="padding:0 20px;display:none"></div>
+            <div style="padding:12px 20px;border-bottom:1px solid #e5e7eb">
+              <div class="d-flex flex-wrap gap-3 align-items-center">
+                <div class="form-check m-0">
+                  <input class="form-check-input" type="checkbox" id="wzpChkAll" onchange="wzpToggleAll(this.checked)">
+                  <label class="form-check-label fw-bold" for="wzpChkAll">Seleccionar todos</label>
+                </div>
+                <div class="form-check m-0" style="background:#fff7ed;padding:6px 12px;border-radius:6px;border:1px solid #fdba74">
+                  <input class="form-check-input" type="checkbox" id="wzpChkExpandir" checked>
+                  <label class="form-check-label" for="wzpChkExpandir">
+                    <i class="bi bi-arrow-down-up me-1 text-warning"></i>
+                    <strong>Crear 1 ficha individual por unidad</strong>
+                    <span class="text-muted small ms-1">(recomendado: cada equipo con su propio código ILUS para trazabilidad)</span>
+                  </label>
+                </div>
+                <div class="ms-auto small text-muted">
+                  <span id="wzpCount">0</span> de <span id="wzpTotal">0</span> seleccionado(s)
+                </div>
+              </div>
+            </div>
+            <div id="wzpTabla">
+              <div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-2"></span>Cargando…</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <small class="me-auto text-muted">
+              <i class="bi bi-info-circle me-1"></i>
+              Fecha de instalación = fecha del documento. Código ILUS auto, editable después.
+            </small>
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-ilus fw-bold px-4" id="wzpBtnImp" onclick="wzpImportar()" disabled>
+              <i class="bi bi-box-arrow-in-down me-1"></i>
+              Agregar a equipos (<span id="wzpBtnCount">0</span>)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+  }
+  if (!_wzModalProds) _wzModalProds = new bootstrap.Modal(document.getElementById('wzModalProds'));
+
+  // Header
+  document.getElementById('wzpDocTit').textContent = `${doc.tido_display} ${doc.nudo_display}`;
+  document.getElementById('wzpHeader').innerHTML = `
+    <div class="d-flex flex-wrap gap-3">
+      <div><span class="text-muted">Cliente:</span> <strong>${_escHtml(doc.razon_social||'—')}</strong></div>
+      <div><span class="text-muted">RUT:</span> <span class="font-monospace">${_escHtml(doc.rut||'—')}</span></div>
+      <div><span class="text-muted">Fecha:</span> <strong>${_escHtml(doc.fecha)}</strong></div>
+    </div>`;
+  document.getElementById('wzpChkAll').checked = false;
+  document.getElementById('wzpCount').textContent = '0';
+  document.getElementById('wzpTotal').textContent = '…';
+  document.getElementById('wzpBtnImp').disabled = true;
+  document.getElementById('wzpBtnCount').textContent = '0';
+
+  // Validar mismatch RUT
+  const rutWiz = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'').toUpperCase();
+  const rutDoc = (doc.rut||'').replace(/[.\-\s]/g,'').toUpperCase();
+  const noCoincide = rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc;
+  const mEl = document.getElementById('wzpMismatch');
+  if (noCoincide) {
+    window._wzMismatch = { rutDoc:doc.rut, tido:doc.tido, nudo:doc.nudo, confirmado:false, motivo:'' };
+    mEl.style.display = '';
+    mEl.innerHTML = `<div class="alert alert-danger small mt-2 mb-2" style="border-left:4px solid #dc2626">
+      <strong><i class="bi bi-exclamation-octagon-fill me-1"></i>RUT distinto al del cliente que estás creando</strong><br>
+      <textarea id="wzpMotivo" class="form-control form-control-sm mt-2" rows="2"
+                placeholder="¿Por qué estás importando equipos de otro RUT? (mínimo 8 caracteres)"></textarea>
+      <button class="btn btn-sm btn-warning mt-2" onclick="wzpConfirmarMismatch()">
+        <i class="bi bi-check-lg me-1"></i>Confirmar motivo
+      </button>
+    </div>`;
+  } else {
+    mEl.style.display = 'none';
+    window._wzMismatch = null;
+  }
+
+  document.getElementById('wzpTabla').innerHTML =
+    '<div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-2"></span>Cargando productos del ERP…</div>';
+  _wzModalProds.show();
+
+  // Fetch productos del documento
+  try {
+    const r = await fetch(`/mantenciones/api/documento?tido=${encodeURIComponent(doc.tido)}&nudo=${encodeURIComponent(doc.nudo)}`);
+    const data = await r.json();
+    if (!data.ok || !data.items?.length) {
+      document.getElementById('wzpTabla').innerHTML = '<div class="text-center text-muted py-4">Este documento no tiene productos importables.</div>';
+      return;
     }
+    _wzProductos = data.items;
+    document.getElementById('wzpTotal').textContent = _wzProductos.length;
+    wzpRender();
+  } catch(e) {
+    document.getElementById('wzpTabla').innerHTML = `<div class="alert alert-danger m-3 small">Error: ${_escHtml(e.message)}</div>`;
+  }
+}
+
+function wzpRender() {
+  let html = `<table class="table table-hover mb-0" style="font-size:.85rem">
+    <thead style="background:#f9fafb">
+      <tr><th style="width:50px"></th><th>Producto</th><th style="width:160px">SKU del modelo</th>
+          <th style="width:90px" class="text-center">Cantidad</th></tr>
+    </thead><tbody>`;
+  _wzProductos.forEach((p,i) => {
+    const checked = _wzSeleccion.has(i) ? 'checked' : '';
+    const qty = parseInt(p.cantidad) || 1;
+    const expandHint = qty > 1 ? `<br><span class="text-warning small"><i class="bi bi-arrow-down-up me-1"></i>creará ${qty} fichas individuales</span>` : '';
+    html += `<tr>
+      <td><input type="checkbox" class="form-check-input wzp-chk" ${checked} onchange="wzpToggleItem(${i}, this.checked)"></td>
+      <td>${_escHtml(p.nombre)}${expandHint}</td>
+      <td class="font-monospace small text-muted">${_escHtml(p.sku||'—')}</td>
+      <td class="text-center"><strong>${qty}</strong></td>
+    </tr>`;
   });
+  html += '</tbody></table>';
+  document.getElementById('wzpTabla').innerHTML = html;
+}
+
+function wzpToggleItem(idx, checked) {
+  if (checked) _wzSeleccion.add(idx); else _wzSeleccion.delete(idx);
+  wzpUpdateCount();
+}
+function wzpToggleAll(checked) {
+  _wzSeleccion.clear();
+  if (checked) _wzProductos.forEach((_,i) => _wzSeleccion.add(i));
+  document.querySelectorAll('.wzp-chk').forEach(c => c.checked = checked);
+  wzpUpdateCount();
+}
+function wzpUpdateCount() {
+  const n = _wzSeleccion.size;
+  document.getElementById('wzpCount').textContent = n;
+  document.getElementById('wzpBtnCount').textContent = n;
+  document.getElementById('wzpBtnImp').disabled = n === 0;
+}
+
+function wzpConfirmarMismatch() {
+  const motivo = (document.getElementById('wzpMotivo')?.value || '').trim();
+  if (motivo.length < 8) { alert('Mínimo 8 caracteres en el motivo'); return; }
+  if (!window._wzMismatch) return;
+  window._wzMismatch.confirmado = true;
+  window._wzMismatch.motivo = motivo;
+  document.getElementById('wzpMismatch').innerHTML =
+    `<div class="alert alert-success small mt-2 mb-2"><i class="bi bi-check-circle-fill me-1"></i>Motivo registrado. Puedes importar.</div>`;
+}
+
+function wzpImportar() {
+  if (_wzSeleccion.size === 0) return;
+  if (window._wzMismatch && !window._wzMismatch.confirmado) {
+    alert('Confirma primero el motivo del RUT distinto.');
+    return;
+  }
+  const expandir = document.getElementById('wzpChkExpandir').checked;
+  const fecha_doc = _wzDocActual.fecha_iso || '';
+  const doc_origen = `${_wzDocActual.tido_display} ${_wzDocActual.nudo_display}`;
+  const justifMismatch = window._wzMismatch?.motivo || '';
+  let creados = 0;
+
+  for (const idx of _wzSeleccion) {
+    const p = _wzProductos[idx];
+    const qty = parseInt(p.cantidad) || 1;
+    const nombre = p.nombre || p.sku || '';
+    const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(nombre);
+    const expandirEsto = expandir && qty > 1 && !esBulk;
+    const filas = expandirEsto ? qty : 1;
+    const cantidadCadaUna = expandirEsto ? 1 : qty;
+
+    for (let n = 1; n <= filas; n++) {
+      // Código interno temporal — el backend lo regenera al guardar
+      const codTemp = expandirEsto ? `(auto ${n}/${qty})` : '(auto)';
+      agregarFilaEquipo({
+        nombre,
+        sku: p.sku || '',
+        cantidad: cantidadCadaUna,
+        doc_origen,
+        doc_fecha: fecha_doc,
+        fecha_instalacion: fecha_doc,
+        codigo_interno: codTemp,
+        justif_doc_mismatch: justifMismatch,
+      });
+      creados++;
+    }
+  }
+
+  // Cerrar modales y limpiar
+  _wzModalProds.hide();
+  setTimeout(() => {
+    const mErp = bootstrap.Modal.getInstance(document.getElementById('modalErpEq'));
+    if (mErp) mErp.hide();
+  }, 200);
 }
 function abrirErpEquipos(){
   erpEqSetTab('doc');
@@ -2243,18 +2525,27 @@ async function subirContrato(){
 async function subirMaquinas(){
   const eqs=leerEquipos();
   for(const eq of eqs){
-    await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      nombre:         eq.nombre,
-      sku:            eq.sku,
-      serie:          eq.serie,
-      cantidad:       parseInt(eq.cantidad)||1,
-      ubicacion_cliente: eq.ubicacion,
-      estado_op:      eq.estado_op,
-      fecha_instalacion: eq.fecha_instalacion||null,
-      doc_origen:     eq.doc_origen||'',
-      doc_fecha:      eq.doc_fecha||null
-    })});
+    // Si el código interno está como "(auto)" o "(auto N/M)", lo dejamos vacío
+    // para que el backend genere el correcto basado en cliente_id.
+    const codInt = (eq.codigo_interno || '').trim();
+    const codigoFinal = (codInt.startsWith('(auto') || !codInt) ? '' : codInt;
+    await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        nombre:             eq.nombre,
+        sku:                eq.sku,
+        codigo_interno:     codigoFinal,
+        serie:              eq.serie,
+        cantidad:           parseInt(eq.cantidad)||1,
+        ubicacion_cliente:  eq.ubicacion,
+        estado_op:          eq.estado_op,
+        fecha_instalacion:  eq.fecha_instalacion||null,
+        doc_origen:         eq.doc_origen||'',
+        doc_fecha:          eq.doc_fecha||null,
+        justif_fecha_inst:  eq.justif_fecha_inst||'',
+        justif_doc_mismatch:eq.justif_doc_mismatch||'',
+      })
+    });
   }
 }
 

@@ -10416,6 +10416,11 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_maquinas ADD COLUMN ubicacion_cliente VARCHAR(200)",
                 "ALTER TABLE mant_maquinas ADD COLUMN fecha_instalacion DATE",
                 "ALTER TABLE mant_maquinas ADD COLUMN estado_op ENUM('operativo','critico','en_mantencion') DEFAULT 'operativo'",
+                # Código interno ILUS — único por equipo físico (NO por SKU del modelo)
+                # Permite trazabilidad cuando hay 5 máquinas iguales: cada una tiene su propio code
+                "ALTER TABLE mant_maquinas ADD COLUMN codigo_interno VARCHAR(80) NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN justif_fecha_inst TEXT NULL COMMENT 'Justificación si fecha_instalacion difiere de doc_fecha'",
+                "ALTER TABLE mant_maquinas ADD COLUMN justif_doc_mismatch TEXT NULL COMMENT 'Justificación si el doc_origen pertenece a otro RUT'",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -11808,30 +11813,65 @@ def mant_cliente_delete(cid):
 
 # ── MÁQUINAS ──────────────────────────────────────────────────────────
 
+def _generar_codigo_interno_ilus(cid: int, sku: str = "", n: int = 1) -> str:
+    """
+    Genera un código interno ILUS único para un equipo físico.
+    Formato: ILUS-{cid}-{SKU3}-{seq} (ej: ILUS-12-FZA-7)
+    Garantiza unicidad consultando los códigos ya emitidos para el cliente.
+    El usuario puede editarlo después.
+    """
+    sku_pref = (sku or "AUTO")[:6].upper().replace(" ", "")
+    base = f"ILUS-{cid}-{sku_pref}"
+    # Buscar el siguiente número disponible
+    rows = mysql_fetchall(
+        "SELECT codigo_interno FROM mant_maquinas "
+        "WHERE cliente_id=%s AND codigo_interno LIKE %s",
+        (cid, f"{base}-%")
+    )
+    usados = set()
+    for r in rows or []:
+        ci = (r.get("codigo_interno") or "")
+        suf = ci.rsplit("-", 1)[-1]
+        try: usados.add(int(suf))
+        except: pass
+    seq = 1
+    while seq in usados:
+        seq += 1
+    return f"{base}-{seq}"
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/maquinas", methods=["POST"])
 @_mant_required
 def mant_maquina_add(cid):
     d = request.get_json(silent=True) or {}
+    # Auto-generar código interno ILUS si no viene desde el front
+    codigo = (d.get("codigo_interno") or "").strip()
+    if not codigo:
+        codigo = _generar_codigo_interno_ilus(cid, d.get("sku",""), 1)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_maquinas
-                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
-                    ubicacion_cliente,estado_op,fecha_instalacion,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   (cliente_id,sku,nombre,serie,codigo_interno,doc_origen,doc_fecha,cantidad,notas,
+                    ubicacion_cliente,estado_op,fecha_instalacion,
+                    justif_fecha_inst,justif_doc_mismatch,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("sku",""), d.get("nombre",""), d.get("serie",""),
+                 codigo,
                  d.get("doc_origen",""), d.get("doc_fecha") or None,
                  int(d.get("cantidad",1)), d.get("notas",""),
                  d.get("ubicacion_cliente",""),
                  d.get("estado_op","operativo"),
                  d.get("fecha_instalacion") or None,
+                 d.get("justif_fecha_inst") or None,
+                 d.get("justif_doc_mismatch") or None,
                  current_username())
             )
             mid = cur.lastrowid
         conn.commit()
         _mant_log("maquina", mid, "agregada", d.get("nombre",""))
-        return jsonify({"ok": True, "id": mid})
+        return jsonify({"ok": True, "id": mid, "codigo_interno": codigo})
     finally:
         conn.close()
 
