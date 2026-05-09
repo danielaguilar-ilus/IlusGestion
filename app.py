@@ -12283,7 +12283,10 @@ def mant_documento_erp():
     if not tido or not nudo:
         return jsonify({"error": "Ingresa tipo y número de documento"}), 400
 
-    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","VD","WEB","FCO"}
+    # GDP = Guía Despacho Provisional (despachos parciales). El ERP usa GDP para
+    # documentos en estado "Parc" antes de facturación final. Incluido para
+    # importar equipos desde guías de despacho provisorias.
+    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","GDP","VD","WEB","FCO"}
     if tido not in TIDOS_VALIDOS:
         return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
 
@@ -12343,6 +12346,44 @@ def mant_documento_erp():
 
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
 
+def _rut_norm(raw: str) -> str:
+    """Normaliza RUT: quita puntos, espacios y guión. Devuelve solo dígitos + DV opcional."""
+    if not raw:
+        return ""
+    return raw.replace(".", "").replace(" ", "").replace("-", "").upper()
+
+
+def _ruts_equivalentes(rut_a: str, rut_b: str) -> bool:
+    """True si dos RUT son el mismo (comparando sin puntos/DV)."""
+    a = _rut_norm(rut_a)
+    b = _rut_norm(rut_b)
+    if not a or not b:
+        return False
+    # Comparar sin DV (último carácter)
+    a_sin = a[:-1] if len(a) > 1 else a
+    b_sin = b[:-1] if len(b) > 1 else b
+    return a_sin == b_sin or a == b
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos-import-mismatch", methods=["POST"])
+@_mant_required
+def mant_equipos_import_mismatch(cid):
+    """
+    Registra en mant_logs cuando el usuario importa equipos de un documento ERP
+    cuyo RUT NO coincide con el de la ficha de cliente. Pide motivo justificado.
+    """
+    d = (request.get_json(silent=True) or {})
+    motivo  = (d.get("motivo")  or "").strip()
+    rut_doc = (d.get("rut_doc") or "").strip()
+    tido    = (d.get("tido")    or "").strip()
+    nudo    = (d.get("nudo")    or "").strip()
+    if len(motivo) < 8:
+        return jsonify({"error": "El motivo debe tener al menos 8 caracteres."}), 400
+    detalle = f"Documento {tido} {nudo} (RUT cliente doc: {rut_doc}) — Motivo: {motivo}"
+    _mant_log("cliente", cid, "import_rut_mismatch", detalle)
+    return jsonify({"ok": True})
+
+
 @app.route("/mantenciones/api/buscar-erp", methods=["POST"])
 @_mant_required
 def mant_buscar_erp():
@@ -12358,6 +12399,14 @@ def mant_buscar_erp():
             "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
             "documentos": [], "sin_conexion": True
         }), 200
+    # Normalizar el query:
+    #  - quitar puntos/guión/espacios para que "65.206.047-1" matchee "65206047" o "65206047-1"
+    #  - upper para que el LIKE en NRAZON sea case-insensitive (NRAZON suele estar en mayúsculas)
+    q_clean    = q.replace(".", "").replace(" ", "")
+    q_sin_dv   = q_clean.split("-")[0] if "-" in q_clean else q_clean
+    q_like     = f"%{q.upper()}%"
+    q_like_clean = f"%{q_clean}%"
+    q_like_sindv = f"%{q_sin_dv}%"
     try:
         with erp_conn.cursor() as cur:
             cur.execute(
@@ -12371,11 +12420,16 @@ def mant_buscar_erp():
                        TRIM(d.KOPRCT) AS sku,
                        d.CANTD        AS cantidad
                     FROM `{ERP_SALES}` d
-                    WHERE (TRIM(d.NRAZON) LIKE %s OR TRIM(d.NRUC) LIKE %s)
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV')
+                    WHERE (
+                          UPPER(TRIM(d.NRAZON)) LIKE %s
+                       OR TRIM(d.NRUC) LIKE %s
+                       OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
+                       OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
+                    )
+                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV','GDP')
                     ORDER BY d.FEMIS DESC
                     LIMIT 100""",
-                (f"%{q}%", f"%{q}%")
+                (q_like, q_like_clean, q_like_clean, q_like_sindv)
             )
             rows = cur.fetchall()
         erp_conn.close()

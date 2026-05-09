@@ -566,7 +566,7 @@
     <div class="sec-title mb-0"><i class="bi bi-bicycle me-1"></i>Equipos / Activos del cliente</div>
     <div class="d-flex gap-2">
       <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpEquipos()">
-        <i class="bi bi-file-earmark-text me-1"></i>Asignar desde documento
+        <i class="bi bi-database-fill-up me-1"></i>Asignar desde ERP
       </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="agregarFilaEquipo()">
         <i class="bi bi-plus"></i> Fila manual
@@ -1312,6 +1312,30 @@ async function _enriquecerDesdeErp(rut, localId) {
       const obs = document.getElementById('s1_notas');
       if(obs && !obs.value.trim()) obs.value = d.observaciones;
     }
+    // Sugerir el email del ERP como placeholder en el contacto principal
+    // (NO lo escribimos, solo sugerimos — el usuario completa nombre/cargo/teléfono manualmente)
+    if (d.email) {
+      const ce = document.getElementById('s1_contacto_email');
+      if (ce && !ce.value) {
+        ce.placeholder = d.email + '  ← sugerido por ERP, completa o reemplaza';
+        ce.style.background = '#fef9c3';
+        ce.title = 'Email institucional del ERP. Pendiente de confirmar para el contacto principal.';
+        ce.addEventListener('focus', function _once() {
+          ce.style.background = '';
+          ce.removeEventListener('focus', _once);
+        });
+        // Botón rápido "Usar este" si el usuario quiere copiarlo
+        const wrap = ce.parentElement;
+        if (wrap && !wrap.querySelector('.erp-email-suggest')) {
+          const hint = document.createElement('div');
+          hint.className = 'erp-email-suggest form-text';
+          hint.style.cssText = 'font-size:.7rem;margin-top:2px;color:#92400e';
+          hint.innerHTML = '<i class="bi bi-lightbulb me-1"></i>El ERP sugiere <strong>' + d.email + '</strong>. ' +
+            '<a href="#" onclick="event.preventDefault();document.getElementById(\'s1_contacto_email\').value=\'' + d.email + '\';this.parentElement.remove();qfActualizar()" class="text-decoration-none">Usar este email</a>';
+          wrap.appendChild(hint);
+        }
+      }
+    }
 
     const infoPills = [
       d.region   ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">${d.region}</span>` : '',
@@ -1822,20 +1846,48 @@ async function eqSearchFetch() {
   }
 }
 
+// True si el SKU ya está en la tabla de equipos seleccionados de este wizard
+function _skuYaEnLista(sku) {
+  if (!sku) return false;
+  const skuU = String(sku).trim().toUpperCase();
+  const inputs = document.querySelectorAll('#equiposTbody input[data-field="sku"]');
+  for (const inp of inputs) {
+    if ((inp.value || '').trim().toUpperCase() === skuU) return true;
+  }
+  return false;
+}
+
 function renderEqSearchDrop() {
   const drop = document.getElementById('eqProdDrop');
   if(!eqSearchResults.length) {
-    drop.innerHTML='<div class="eq-prod-item text-muted small">Sin resultados</div>';
+    drop.innerHTML='<div class="eq-prod-item text-muted small">Sin resultados — prueba con otro nombre o SKU</div>';
+    drop.style.display='block';
     return;
   }
-  drop.innerHTML = eqSearchResults.map((p,i)=>`
-    <div class="eq-prod-item${i===eqSearchIdx?' active':''}" onclick="eqSearchSeleccionar(${i})">
-      <div class="eq-prod-name">${p.nombre||'—'}</div>
-      <div class="eq-prod-sub">
-        <span class="eq-prod-sku">${p.sku||''}</span>
-        ${p.tipo ? ` | Tipo: ${p.tipo}` : ' | Tipo: N/A'}
+  drop.innerHTML = eqSearchResults.map((p,i)=>{
+    const ya = _skuYaEnLista(p.sku);
+    const cls = ya ? 'eq-prod-item' : ('eq-prod-item'+(i===eqSearchIdx?' active':''));
+    const click = ya ? '' : `onclick="eqSearchSeleccionar(${i})"`;
+    const nombre = (p.nombre||'—').replace(/[<>]/g,'');
+    const sku    = (p.sku||'').replace(/[<>]/g,'');
+    const tipo   = (p.tipo||'').replace(/[<>]/g,'');
+    return `
+    <div class="${cls}" ${click} style="${ya ? 'opacity:.5;cursor:default;background:#f9fafb' : ''}">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div style="flex:1;min-width:0">
+          <div class="eq-prod-name">${nombre}</div>
+          <div class="eq-prod-sub">
+            <span class="eq-prod-sku" style="font-family:monospace;font-weight:700;color:#0066cc">${sku}</span>
+            ${tipo ? ` <span class="text-muted">· ${tipo}</span>` : ''}
+          </div>
+        </div>
+        ${ya
+          ? '<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size:.62rem;font-weight:700;align-self:center"><i class="bi bi-check-circle-fill me-1"></i>Ya agregado</span>'
+          : '<span class="badge bg-light text-muted border" style="font-size:.62rem;font-weight:600;align-self:center"><i class="bi bi-plus-lg me-1"></i>Agregar</span>'
+        }
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   drop.style.display='block';
 }
 

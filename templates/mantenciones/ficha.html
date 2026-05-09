@@ -3877,12 +3877,13 @@ function abrirEmailManual() {
             <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
               <div>
                 <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo doc.</label>
-                <select id="fDocTido" class="form-select form-select-sm" style="width:90px">
+                <select id="fDocTido" class="form-select form-select-sm" style="width:110px">
                   <option value="FCV">FCV</option>
                   <option value="BLV">BLV</option>
                   <option value="NVI">NVI</option>
                   <option value="NVV">NVV</option>
                   <option value="GDV">GDV</option>
+                  <option value="GDP">GDP</option>
                   <option value="VD">VD</option>
                 </select>
               </div>
@@ -4236,6 +4237,48 @@ function fSetTab(tab) {
   document.getElementById('fPanelRut').style.display = tab==='rut' ? '' : 'none';
 }
 
+// ─── Confirmar importación con RUT distinto al de la ficha ──────────
+async function confirmarErpMismatch() {
+  const ta = document.getElementById('erpMismatchMotivo');
+  if (!ta) return;
+  const motivo = (ta.value || '').trim();
+  if (motivo.length < 8) {
+    alert('Escribe un motivo de al menos 8 caracteres para auditoría.');
+    ta.focus();
+    return;
+  }
+  if (!window._erpMismatch) return;
+  // Loggear el motivo en el backend (mant_logs)
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/{{ cliente.id }}/equipos-import-mismatch`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        motivo:  motivo,
+        rut_doc: window._erpMismatch.rutDoc,
+        tido:    window._erpMismatch.tido,
+        nudo:    window._erpMismatch.nudo,
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('No se pudo registrar el motivo: ' + (d.error||'')); return; }
+  } catch(e) {
+    alert('Error de red al registrar motivo. Intenta de nuevo.');
+    return;
+  }
+  window._erpMismatch.confirmado = true;
+  window._erpMismatch.motivo     = motivo;
+  // Reemplazar la alerta roja por confirmación verde
+  const alerta = ta.closest('.alert');
+  if (alerta) {
+    alerta.className = 'alert alert-success d-flex align-items-start gap-2 mt-2 mb-3';
+    alerta.style = 'border-left:5px solid #16a34a';
+    alerta.innerHTML = '<i class="bi bi-check-circle-fill text-success mt-1"></i>' +
+      '<div><strong>Importación autorizada y registrada</strong><br>' +
+      '<span class="small">Motivo: ' + motivo.replace(/[<>&"]/g,'') + '</span></div>';
+  }
+}
+
 // ─── ERP — buscar por documento (REST API) ────────────────────
 let erpSeleccionadas = {};
 
@@ -4269,13 +4312,46 @@ async function fBuscarDoc() {
     }
 
     const rutCliente = '{{ cliente.rut | default("") | e }}';
+    // Comparación robusta: quitar puntos, guiones, y opcionalmente el dígito verificador
+    const _rutClean = (r) => (r||'').replace(/[.\-\s]/g,'').toUpperCase();
+    const _rutSinDV = (r) => { const c = _rutClean(r); return c.length > 1 ? c.slice(0,-1) : c; };
+    const rutDocClean   = _rutClean(data.rut);
+    const rutLocalClean = _rutClean(rutCliente);
+    const rutsCoinciden = rutDocClean && rutLocalClean &&
+        (rutDocClean === rutLocalClean || _rutSinDV(rutDocClean) === _rutSinDV(rutLocalClean));
+
     let mismatchAlert = '';
-    if(data.rut && rutCliente && data.rut.replace(/[.\-]/g,'') !== rutCliente.replace(/[.\-]/g,'')) {
-      mismatchAlert = `<div class="alert alert-warning d-flex align-items-start gap-2 mt-2 mb-3" style="font-size:.82rem">
-        <i class="bi bi-exclamation-triangle-fill text-warning mt-1"></i>
-        <div><strong>Atención:</strong> Este documento pertenece a <strong>${data.cliente||data.rut}</strong> (${data.rut}),
-        diferente al cliente actual <strong>{{ cliente.razon_social | e }}</strong> (${rutCliente}).
-        Los equipos se asignarán igualmente a <strong>{{ cliente.razon_social | e }}</strong>.</div>
+    if (data.rut && rutCliente && !rutsCoinciden) {
+      // Bloquea importación hasta confirmar con motivo. Loggea en mant_logs.
+      window._erpMismatch = {
+        rutDoc: data.rut,
+        clienteDoc: data.cliente || data.rut,
+        tido: data.tido,
+        nudo: data.nudo,
+        confirmado: false,
+        motivo: ''
+      };
+      mismatchAlert = `<div class="alert alert-danger d-flex align-items-start gap-2 mt-2 mb-3" style="font-size:.85rem;border-left:5px solid #dc2626">
+        <i class="bi bi-exclamation-octagon-fill text-danger mt-1" style="font-size:1.2rem"></i>
+        <div style="flex:1">
+          <div class="fw-bold mb-1">⚠️ RUT no coincide con la ficha del cliente</div>
+          <div class="mb-2">
+            Documento <strong>${data.tido} ${data.nudo}</strong> pertenece a:<br>
+            • <strong>${data.cliente||data.rut}</strong> (RUT ${data.rut})<br>
+            Pero estás trabajando en la ficha de:<br>
+            • <strong>{{ cliente.razon_social | e }}</strong> (RUT ${rutCliente})
+          </div>
+          <div class="mb-2 small">
+            <strong>¿Por qué importas equipos de otro cliente a esta ficha?</strong>
+            Necesitamos justificar el cruce para auditoría.
+          </div>
+          <textarea id="erpMismatchMotivo" class="form-control form-control-sm mb-2"
+                    rows="2" minlength="8" maxlength="400"
+                    placeholder="Ej: Cliente final es el mismo (subsidiaria), o equipos cedidos del cliente X al Y..."></textarea>
+          <button type="button" class="btn btn-sm btn-warning fw-bold" onclick="confirmarErpMismatch()">
+            <i class="bi bi-check-lg me-1"></i>Confirmar y registrar motivo
+          </button>
+        </div>
       </div>`;
     }
 
@@ -4426,6 +4502,13 @@ function actualizarContadorErp() {
 async function importarDesdeErp() {
   const lineas = Object.values(erpSeleccionadas);
   if (!lineas.length) { alert('Selecciona al menos una línea'); return; }
+  // Bloqueo: si hay mismatch de RUT y el usuario no lo confirmó, no se puede importar
+  if (window._erpMismatch && !window._erpMismatch.confirmado) {
+    alert('Este documento pertenece a otro RUT.\nDebes escribir el motivo y confirmar antes de importar los equipos.');
+    const ta = document.getElementById('erpMismatchMotivo');
+    if (ta) ta.focus();
+    return;
+  }
   const btn = document.querySelector('#modalErp .btn-ilus.fw-bold');
   if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Importando…'; }
   for (const l of lineas) {
