@@ -98,11 +98,14 @@
 }
 .client-card:hover .cc-avatar{transform:scale(1.06) rotate(-2deg)}
 
-/* TIPOGRAFÍA DEL CLIENTE — más grande según pedido */
+/* TIPOGRAFÍA DEL CLIENTE — grande, COMPLETO (wrap a 2 líneas) */
 .cc-name{
-  font-size:1.08rem;font-weight:800;color:#0f172a;
-  line-height:1.2;letter-spacing:-.01em;
-  text-overflow:ellipsis;overflow:hidden;white-space:nowrap;
+  font-size:1.05rem;font-weight:800;color:#0f172a;
+  line-height:1.22;letter-spacing:-.01em;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;
+  word-break:break-word;
+  min-height:2.55em;  /* reservar espacio fijo para 2 líneas (alinea cards) */
   transition:color .2s;
 }
 .cc-rut{font-family:'SF Mono',Menlo,monospace;font-size:.72rem;color:#6b7280;letter-spacing:.02em}
@@ -132,10 +135,36 @@
 }
 .cc-contact i{flex-shrink:0;color:#9ca3af}
 
-/* ── Pagination footer fijo abajo ──────────────────── */
-.cli-pagination{
-  display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;
-  gap:10px;padding:8px 4px;margin-top:8px;
+/* ── FOOTER PAGINACIÓN (estilo Foodat) ──────────────────── */
+.cli-footer{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:14px;flex-wrap:wrap;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:9px 16px;margin-top:14px;
+  box-shadow:0 1px 3px rgba(0,0,0,.03);
+}
+.cli-footer-info{
+  font-size:.82rem;font-weight:600;color:#6b7280;
+}
+.cli-footer-perpage{
+  display:flex;align-items:center;gap:6px;
+}
+.cli-footer-perpage select{
+  width:auto;font-size:.78rem;padding:4px 24px 4px 9px;font-weight:600;
+}
+.cli-footer .pagination{margin:0}
+.cli-footer .page-link{
+  border:none;color:#6b7280;font-weight:600;
+  padding:4px 11px;border-radius:6px !important;
+  margin:0 1px;font-size:.82rem;
+  transition:background .15s,color .15s;
+}
+.cli-footer .page-link:hover{background:#f3f4f6;color:#0f172a}
+.cli-footer .page-item.active .page-link{
+  background:var(--ilus-red);color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3);
+}
+.cli-footer .page-item.disabled .page-link{
+  color:#cbd5e1;background:transparent;
 }
 
 /* ── Vista lista (alternativa) ────────────────────── */
@@ -273,9 +302,6 @@
   </div>
 </div>
 
-<div class="mb-2">
-  <small class="text-muted" id="resultCount">{{ clientes|length }} clientes encontrados</small>
-</div>
 
 {# ── CARDS GRID ──────────────────────────────────────────────────── #}
 {% if clientes %}
@@ -302,7 +328,7 @@
   {%- elif c.completaje >= 50 -%}{%- set pcol='#d97706' -%}
   {%- else -%}{%- set pcol='#dc2626' -%}{%- endif -%}
 
-  <div class="col-12 col-sm-6 col-lg-4 col-xl-3 card-wrapper"
+  <div class="col-12 col-md-6 col-lg-4 card-wrapper"
        data-estado="{{ c.estado }}"
        data-contrato="{{ c.contrato_estado }}"
        data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"
@@ -379,20 +405,21 @@
   {% endfor %}
 </div><!-- /clientGrid -->
 
-{# ── PAGINACIÓN ──────────────────────────────────────────────────── #}
-<div class="d-flex flex-wrap justify-content-between align-items-center mt-3 gap-2">
-  <small class="text-muted" id="pageInfo"></small>
-  <div class="d-flex align-items-center gap-2">
+{# ── FOOTER PAGINACIÓN (estilo Foodat: contador izq · pager der · perPage) ─ #}
+<div class="cli-footer">
+  <div class="cli-footer-info" id="pageInfo">Mostrando 0 de 0</div>
+  <ul class="pagination pagination-sm mb-0" id="pagCtrl"></ul>
+  <div class="cli-footer-perpage">
     <span class="text-muted small">Mostrar</span>
-    <select id="perPage" class="form-select form-select-sm" style="width:72px" onchange="filterAndPage(1)">
+    <select id="perPage" class="form-select form-select-sm" onchange="filterAndPage(1)">
       <option value="6" selected>6</option>
+      <option value="9">9</option>
       <option value="12">12</option>
       <option value="24">24</option>
       <option value="999">Todo</option>
     </select>
     <span class="text-muted small">por página</span>
   </div>
-  <ul class="pagination pagination-sm mb-0" id="pagCtrl"></ul>
 </div>
 
 {% else %}
@@ -442,13 +469,17 @@
     wrappers().forEach(el => el.style.display = 'none');
     vis.forEach((el, i) => { el.style.display = (i >= s && i < e) ? '' : 'none'; });
 
-    const rc = document.getElementById('resultCount');
-    if (rc) rc.textContent = tot + ' cliente' + (tot !== 1 ? 's' : '') + ' encontrado' + (tot !== 1 ? 's' : '');
-
     const pi = document.getElementById('pageInfo');
-    if (pi) pi.textContent = tot
-      ? 'Mostrando ' + Math.min(s + 1, tot) + '–' + Math.min(e, tot) + ' de ' + tot + ' clientes'
-      : 'Sin resultados';
+    if (pi) {
+      if (!tot) {
+        pi.textContent = 'Sin resultados';
+      } else if (pp >= 999) {
+        pi.textContent = 'Mostrando ' + tot + ' de ' + tot;
+      } else {
+        // Estilo Foodat: "Mostrando 1 de 4" donde 4 es el total de páginas
+        pi.textContent = 'Mostrando ' + curPage + ' de ' + pgs;
+      }
+    }
 
     const ul = document.getElementById('pagCtrl');
     if (!ul) return;
