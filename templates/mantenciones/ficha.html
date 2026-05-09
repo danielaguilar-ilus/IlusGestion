@@ -751,9 +751,6 @@
       <i class="bi bi-clock-history"></i>Historial
       {% if logs %}<span class="badge ms-1" style="font-size:.6rem;background:#f3f4f6;color:#374151">{{ logs|length }}</span>{% endif %}
     </button>
-    <a href="{{ url_for('mant_notificaciones_centro') }}" class="ftab-btn" style="text-decoration:none;position:relative">
-      <i class="bi bi-bell"></i>Notif.
-    </a>
   </div>
 </div>
 
@@ -1637,11 +1634,32 @@
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
-                <button class="btn btn-xs btn-outline-warning"
-                        onclick='abrirSolicitudCambio({{ {"id":m.id,"nombre":m.nombre,"sku":m.sku or "","serie":m.serie or "","cantidad":m.cantidad,"doc_fecha":(m.doc_fecha.strftime("%Y-%m-%d") if m.doc_fecha else "")}|tojson }})'
-                        title="Solicitar cambio / garantía">
-                  <i class="bi bi-arrow-repeat"></i>
-                </button>
+                {# Dropdown de acciones del equipo: genera visitas múltiples por tipo #}
+                <div class="dropdown">
+                  <button class="btn btn-xs btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" title="Acciones / agendar visita">
+                    <i class="bi bi-lightning-charge"></i>
+                  </button>
+                  <ul class="dropdown-menu dropdown-menu-end" style="font-size:.82rem">
+                    {% set _eq_data = {"id":m.id,"nombre":m.nombre,"sku":m.sku or "","serie":m.serie or "","cantidad":m.cantidad,"doc_fecha":(m.doc_fecha.strftime("%Y-%m-%d") if m.doc_fecha else "")} %}
+                    <li class="dropdown-header" style="font-size:.7rem">Agendar visita por este equipo</li>
+                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("garantia",   {{ _eq_data|tojson }}); return false'>
+                      <i class="bi bi-shield-check text-success me-2"></i>Cambio / Garantía
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("correctiva", {{ _eq_data|tojson }}); return false'>
+                      <i class="bi bi-tools text-warning me-2"></i>Reparación correctiva
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("preventiva", {{ _eq_data|tojson }}); return false'>
+                      <i class="bi bi-calendar-check text-primary me-2"></i>Mantención preventiva
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick='abrirAccionEquipo("inspeccion", {{ _eq_data|tojson }}); return false'>
+                      <i class="bi bi-binoculars text-info me-2"></i>Inspección / Levantamiento
+                    </a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-muted" href="#" onclick="switchTab('visitas'); return false">
+                      <i class="bi bi-calendar-week me-2"></i>Ver todas las visitas →
+                    </a></li>
+                  </ul>
+                </div>
                 <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>
@@ -4197,90 +4215,89 @@ function abrirEmailManual() {
   </div>
 </div>
 
-{# ── Modal: Solicitar cambio / garantía de equipo dañado ── #}
-<div class="modal fade" id="modalSolicitarCambio" tabindex="-1">
+{# ════════════════════════════════════════════════════════════════════
+   Modal genérico: Acción del equipo (cambio/garantía, mantención, inspección)
+   Adapta colores/textos según el tipo seleccionado
+══════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalAccionEquipo" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#d97706 0%,#b45309 100%);color:#fff">
+      <div class="modal-header" id="ae_header" style="background:linear-gradient(135deg,#d97706 0%,#b45309 100%);color:#fff">
         <h5 class="modal-title fw-bold">
-          <i class="bi bi-arrow-repeat me-2"></i>Solicitar cambio / garantía
+          <i class="bi" id="ae_icon"></i><span class="ms-2" id="ae_title">Acción</span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="sc_mid" value="">
-        <input type="hidden" id="sc_doc_fecha" value="">
+        <input type="hidden" id="ae_mid" value="">
+        <input type="hidden" id="ae_tipo" value="garantia">
+        <input type="hidden" id="ae_doc_fecha" value="">
 
         <div class="alert alert-light border" style="font-size:.86rem">
-          <div><strong>Equipo:</strong> <span id="sc_nombre">—</span></div>
+          <div><strong>Equipo:</strong> <span id="ae_nombre">—</span></div>
           <div class="small text-muted">
-            <span class="me-3"><strong>SKU:</strong> <span id="sc_sku" class="font-monospace">—</span></span>
-            <span><strong>Serie:</strong> <span id="sc_serie" class="font-monospace">—</span></span>
+            <span class="me-3"><strong>SKU modelo:</strong> <span id="ae_sku" class="font-monospace">—</span></span>
+            <span><strong>N° Serie:</strong> <span id="ae_serie" class="font-monospace">—</span></span>
           </div>
         </div>
 
         <div class="row g-3">
-          <div class="col-12 col-md-6">
+          <div class="col-12 col-md-6" id="ae_cantidad_wrap">
             <label class="form-label fw-semibold small">
               Unidades afectadas <span class="text-danger">*</span>
             </label>
             <div class="input-group">
-              <input type="number" id="sc_cantidad" class="form-control" min="1" value="1">
-              <span class="input-group-text">de <strong id="sc_total">1</strong> totales</span>
+              <input type="number" id="ae_cantidad" class="form-control" min="1" value="1">
+              <span class="input-group-text">de <strong id="ae_total">1</strong> totales</span>
             </div>
-            <div class="form-text">¿Cuántas unidades de este equipo están dañadas?</div>
+            <div class="form-text" id="ae_cantidad_hint">¿Cuántas unidades están afectadas?</div>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Tipo de visita</label>
-            <select id="sc_tipo" class="form-select">
-              <option value="garantia" selected>Garantía (cobertura ERP)</option>
-              <option value="correctiva">Correctiva (reparación pagada)</option>
-            </select>
-            <div class="form-text" id="sc_tipo_hint">Default: garantía si está dentro de los 6 meses</div>
-          </div>
-
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
               Estado del equipo tras la solicitud <span class="text-danger">*</span>
             </label>
-            <select id="sc_estado" class="form-select">
-              <option value="critico" selected>🔴 Crítico (no operativo, esperando cambio)</option>
-              <option value="en_mantencion">🟡 En mantención (en proceso)</option>
+            <select id="ae_estado" class="form-select">
+              <option value="critico">🔴 Crítico (no operativo)</option>
+              <option value="en_mantencion" selected>🟡 En mantención (en proceso)</option>
+              <option value="operativo">🟢 Operativo (sin cambios)</option>
             </select>
           </div>
+
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
               Fecha programada de visita <span class="text-danger">*</span>
             </label>
-            <input type="date" id="sc_fecha" class="form-control">
+            <input type="date" id="ae_fecha" class="form-control">
             <div class="form-text">Default: hoy + 3 días</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold small">Técnico asignado</label>
+            <input type="text" id="ae_tecnico" class="form-control" placeholder="Nombre del técnico (opcional)">
           </div>
 
           <div class="col-12">
             <label class="form-label fw-semibold small">
-              Motivo del daño / justificación <span class="text-danger">*</span>
+              Motivo / descripción <span class="text-danger">*</span>
             </label>
-            <textarea id="sc_motivo" class="form-control" rows="3"
-                      placeholder="Ej: Banda rota tras 2 meses de uso intensivo. Cliente reporta ruido en pantalla. Se requiere cambio bajo garantía."
+            <textarea id="ae_motivo" class="form-control" rows="3"
+                      placeholder="Detalla el motivo de la visita..."
                       minlength="8" maxlength="800"></textarea>
-            <div class="form-text">Mínimo 8 caracteres. Se incluye en la descripción de la visita y queda en el log.</div>
+            <div class="form-text">Mínimo 8 caracteres. Se incluye en la descripción de la visita y queda en el historial.</div>
           </div>
         </div>
 
         <div class="alert alert-info mt-3 mb-0" style="font-size:.82rem">
           <i class="bi bi-info-circle me-1"></i>
-          Al confirmar:
-          <ul class="mb-0 mt-1 ps-3">
-            <li>El equipo cambia a estado <strong id="sc_resumen_estado">Crítico</strong></li>
-            <li>Se crea una visita programada con tipo <strong id="sc_resumen_tipo">Garantía</strong></li>
-            <li>El motivo queda en la descripción de la visita y en el historial</li>
-          </ul>
+          Al confirmar se crea una <strong>visita programada</strong> de tipo
+          <strong id="ae_resumen_tipo">—</strong> que aparecerá en la pestaña
+          "Mantenciones y Visitas". El equipo quedará como
+          <strong id="ae_resumen_estado">—</strong>.
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-warning fw-bold px-4" onclick="confirmarSolicitudCambio()">
-          <i class="bi bi-check-circle me-1"></i>Confirmar y agendar visita
+        <button type="button" class="btn btn-primary fw-bold px-4" id="ae_btn_confirmar" onclick="confirmarAccionEquipo()">
+          <i class="bi bi-check-circle me-1"></i>Agendar visita
         </button>
       </div>
     </div>
@@ -4546,64 +4563,126 @@ function editarVisita(v) {
 
 // ─── Guardar cliente (PUT) ────────────────────────────────
 // ════════════════════════════════════════════════════════════════════
-// SOLICITAR CAMBIO / GARANTÍA de un equipo dañado
+// ACCIONES POR EQUIPO — modal genérico que adapta tipo (garantía,
+// correctiva, preventiva, inspección). Cada acción genera UNA visita.
 // ════════════════════════════════════════════════════════════════════
-let _modalSolCambio = null;
+let _modalAccionEq = null;
 
-function abrirSolicitudCambio(eq) {
-  if (!_modalSolCambio) _modalSolCambio = new bootstrap.Modal(document.getElementById('modalSolicitarCambio'));
-  document.getElementById('sc_mid').value     = eq.id;
-  document.getElementById('sc_nombre').textContent = eq.nombre || '—';
-  document.getElementById('sc_sku').textContent    = eq.sku || '—';
-  document.getElementById('sc_serie').textContent  = eq.serie || '—';
-  document.getElementById('sc_total').textContent  = eq.cantidad || 1;
-  document.getElementById('sc_doc_fecha').value    = eq.doc_fecha || '';
-  document.getElementById('sc_cantidad').max        = eq.cantidad || 1;
-  document.getElementById('sc_cantidad').value     = 1;
+const TIPO_ACCION_CFG = {
+  garantia: {
+    title:  'Cambio / Garantía',
+    icon:   'bi-shield-check',
+    headerBg: 'linear-gradient(135deg,#16a34a 0%,#15803d 100%)',
+    btnClass: 'btn-success',
+    estado_default: 'critico',
+    estado_label: 'Crítico',
+    placeholder: 'Ej: Banda rota tras 2 meses. Cliente reporta ruido. Cambio bajo garantía ERP.',
+    hint_cantidad: '¿Cuántas unidades de este equipo están dañadas?',
+    fecha_dias: 3,
+  },
+  correctiva: {
+    title:  'Reparación correctiva',
+    icon:   'bi-tools',
+    headerBg: 'linear-gradient(135deg,#d97706 0%,#b45309 100%)',
+    btnClass: 'btn-warning',
+    estado_default: 'en_mantencion',
+    estado_label: 'En mantención',
+    placeholder: 'Ej: Pantalla con falla intermitente. Garantía vencida. Cliente acepta reparación pagada.',
+    hint_cantidad: '¿Cuántas unidades necesitan reparación?',
+    fecha_dias: 5,
+  },
+  preventiva: {
+    title:  'Mantención preventiva',
+    icon:   'bi-calendar-check',
+    headerBg: 'linear-gradient(135deg,#2563eb 0%,#1e40af 100%)',
+    btnClass: 'btn-primary',
+    estado_default: 'operativo',
+    estado_label: 'Operativo (sin cambios)',
+    placeholder: 'Ej: Mantención programada según contrato. Lubricación, calibración, limpieza profunda.',
+    hint_cantidad: 'Unidades a revisar',
+    fecha_dias: 14,
+  },
+  inspeccion: {
+    title:  'Inspección / Levantamiento',
+    icon:   'bi-binoculars',
+    headerBg: 'linear-gradient(135deg,#0891b2 0%,#0e7490 100%)',
+    btnClass: 'btn-info',
+    estado_default: 'operativo',
+    estado_label: 'Operativo (sin cambios)',
+    placeholder: 'Ej: Visita técnica para evaluar el estado actual del equipo y levantar requerimientos.',
+    hint_cantidad: 'Unidades a inspeccionar',
+    fecha_dias: 7,
+  },
+};
 
-  // Default fecha = hoy + 3 días
-  const f = new Date(); f.setDate(f.getDate() + 3);
-  document.getElementById('sc_fecha').value = f.toISOString().slice(0,10);
+function abrirAccionEquipo(tipo, eq) {
+  const cfg = TIPO_ACCION_CFG[tipo] || TIPO_ACCION_CFG.garantia;
+  if (!_modalAccionEq) _modalAccionEq = new bootstrap.Modal(document.getElementById('modalAccionEquipo'));
 
-  // Sugerencia de tipo según garantía
-  if (eq.doc_fecha) {
+  // Header dinámico
+  document.getElementById('ae_header').style.background = cfg.headerBg;
+  document.getElementById('ae_icon').className = 'bi ' + cfg.icon;
+  document.getElementById('ae_title').textContent = cfg.title;
+  const btn = document.getElementById('ae_btn_confirmar');
+  btn.className = `btn ${cfg.btnClass} fw-bold px-4`;
+
+  // Datos del equipo
+  document.getElementById('ae_mid').value     = eq.id;
+  document.getElementById('ae_tipo').value    = tipo;
+  document.getElementById('ae_doc_fecha').value = eq.doc_fecha || '';
+  document.getElementById('ae_nombre').textContent = eq.nombre || '—';
+  document.getElementById('ae_sku').textContent    = eq.sku || '—';
+  document.getElementById('ae_serie').textContent  = eq.serie || '—';
+  document.getElementById('ae_total').textContent  = eq.cantidad || 1;
+  document.getElementById('ae_cantidad').max       = eq.cantidad || 1;
+  document.getElementById('ae_cantidad').value     = 1;
+  document.getElementById('ae_cantidad_hint').textContent = cfg.hint_cantidad;
+
+  // Default fecha según tipo
+  const f = new Date(); f.setDate(f.getDate() + cfg.fecha_dias);
+  document.getElementById('ae_fecha').value = f.toISOString().slice(0,10);
+
+  // Estado default según tipo
+  document.getElementById('ae_estado').value = cfg.estado_default;
+
+  // Limpiar
+  document.getElementById('ae_motivo').value = '';
+  document.getElementById('ae_motivo').placeholder = cfg.placeholder;
+  document.getElementById('ae_tecnico').value = '';
+
+  // Hint de garantía si tipo es garantia o correctiva
+  if (eq.doc_fecha && (tipo === 'garantia' || tipo === 'correctiva')) {
     const docFecha = new Date(eq.doc_fecha);
     const garantiaFin = new Date(docFecha); garantiaFin.setMonth(garantiaFin.getMonth() + 6);
     const enGarantia = new Date() <= garantiaFin;
-    document.getElementById('sc_tipo').value = enGarantia ? 'garantia' : 'correctiva';
-    document.getElementById('sc_tipo_hint').textContent = enGarantia
-      ? `✓ En garantía (vence ${garantiaFin.toLocaleDateString('es-CL')})`
-      : `⚠️ Garantía vencida desde ${garantiaFin.toLocaleDateString('es-CL')} → sugerimos correctiva`;
+    if (tipo === 'garantia' && !enGarantia) {
+      document.getElementById('ae_motivo').placeholder =
+        `⚠️ Garantía vencida ${garantiaFin.toLocaleDateString('es-CL')}. Considera usar "Correctiva" en su lugar.\n\n` + cfg.placeholder;
+    }
   }
 
-  document.getElementById('sc_motivo').value = '';
-  document.getElementById('sc_estado').value = 'critico';
-  actualizarResumenSolCambio();
-
-  // Listeners para actualizar el resumen en vivo
-  ['sc_estado','sc_tipo'].forEach(id => {
-    document.getElementById(id).onchange = actualizarResumenSolCambio;
-  });
-
-  _modalSolCambio.show();
+  actualizarResumenAccion();
+  document.getElementById('ae_estado').onchange = actualizarResumenAccion;
+  _modalAccionEq.show();
 }
 
-function actualizarResumenSolCambio() {
-  const estados = {critico:'Crítico', en_mantencion:'En mantención'};
-  const tipos = {garantia:'Garantía', correctiva:'Correctiva', preventiva:'Preventiva', inspeccion:'Inspección'};
-  document.getElementById('sc_resumen_estado').textContent =
-    estados[document.getElementById('sc_estado').value] || '—';
-  document.getElementById('sc_resumen_tipo').textContent =
-    tipos[document.getElementById('sc_tipo').value] || '—';
+function actualizarResumenAccion() {
+  const tipo = document.getElementById('ae_tipo').value;
+  const cfg = TIPO_ACCION_CFG[tipo] || {};
+  const estados = {critico:'🔴 Crítico', en_mantencion:'🟡 En mantención', operativo:'🟢 Operativo'};
+  document.getElementById('ae_resumen_tipo').textContent = cfg.title || tipo;
+  document.getElementById('ae_resumen_estado').textContent =
+    estados[document.getElementById('ae_estado').value] || '—';
 }
 
-async function confirmarSolicitudCambio() {
-  const mid     = document.getElementById('sc_mid').value;
-  const motivo  = document.getElementById('sc_motivo').value.trim();
-  const cant    = parseInt(document.getElementById('sc_cantidad').value) || 1;
-  const tipo    = document.getElementById('sc_tipo').value;
-  const estado  = document.getElementById('sc_estado').value;
-  const fecha   = document.getElementById('sc_fecha').value;
+async function confirmarAccionEquipo() {
+  const mid     = document.getElementById('ae_mid').value;
+  const tipo    = document.getElementById('ae_tipo').value;
+  const motivo  = document.getElementById('ae_motivo').value.trim();
+  const cant    = parseInt(document.getElementById('ae_cantidad').value) || 1;
+  const estado  = document.getElementById('ae_estado').value;
+  const fecha   = document.getElementById('ae_fecha').value;
+  const tecnico = document.getElementById('ae_tecnico').value.trim();
 
   if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
   if (!fecha) { alert('La fecha de visita es obligatoria'); return; }
@@ -4617,20 +4696,20 @@ async function confirmarSolicitudCambio() {
         tipo_visita: tipo,
         fecha_programada: fecha,
         estado_nuevo: estado,
+        tecnico,
       })
     });
     const d = await r.json();
     if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
-    _modalSolCambio.hide();
-    // Mostrar confirmación visual y recargar
-    setTimeout(() => {
-      alert(`✓ Visita agendada para ${d.fecha_programada}.\nEl equipo quedó en estado "${estado}".\nVerás la visita en la pestaña "Mantenciones y Visitas".`);
-      location.reload();
-    }, 200);
+    _modalAccionEq.hide();
+    setTimeout(() => location.reload(), 200);
   } catch(e) {
     alert('Error de red: ' + e.message);
   }
 }
+
+// Compatibilidad con código antiguo (por si queda referencia)
+function abrirSolicitudCambio(eq) { abrirAccionEquipo('garantia', eq); }
 
 
 // ════════════════════════════════════════════════════════════════════

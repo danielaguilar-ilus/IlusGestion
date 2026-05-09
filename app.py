@@ -11726,10 +11726,25 @@ def mant_ficha(cid):
         "total_correctivas_12m":   len(visitas_correctivas),
     }
 
-    # Normaliza logs (created_at puede ser datetime, necesita ser date para sort mixto)
+    # Normaliza logs: conserva datetime convertido a hora Chile (America/Santiago).
+    # MySQL en cloud guarda en UTC; sin conversión la hora mostrada está mal.
+    try:
+        from zoneinfo import ZoneInfo
+        _tz_scl = ZoneInfo("America/Santiago")
+        _tz_utc = ZoneInfo("UTC")
+    except Exception:
+        _tz_scl = _tz_utc = None
+
+    def _to_chile(dt):
+        if dt is None or _tz_scl is None or not isinstance(dt, datetime):
+            return dt
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz_utc)
+        return dt.astimezone(_tz_scl)
+
     def _norm_log(row):
         r = dict(row)
-        r['created_at'] = _d(r.get('created_at'))
+        r['created_at'] = _to_chile(r.get('created_at'))
         return r
 
     # Sucursales (información adicional opcional)
@@ -11857,22 +11872,21 @@ def mant_cliente_delete(cid):
 
 def _generar_serie_ilus(cid: int, sku: str = "") -> str:
     """
-    Genera un N° Serie ILUS único GLOBALMENTE para un equipo físico cuando el
-    fabricante no proporciona uno.
+    Genera un N° Serie único para un equipo físico cuando el fabricante no
+    proporciona uno.
 
-    Formato: ILUS-{RUT}-{SKU6}-{seq}
+    Formato amigable: {RUT}-{SKU4}-{n}
       RUT  = RUT del cliente sin DV ni puntos (ej: 65206047)
-      SKU6 = primeros 6 chars alfanum del SKU del modelo
-      seq  = secuencial dentro del cliente
+      SKU4 = últimos 4 caracteres alfanuméricos del SKU del modelo
+      n    = secuencial dentro del cliente para ese SKU
 
-    Ejemplo: ILUS-65206047-FZAMC0-7
+    Ejemplos:
+      65206047-0905-1   (Trotadora ILUS, SKU 1027100905, primera unidad)
+      65206047-0905-2   (segunda trotadora del mismo modelo)
+      65206047-4640-1   (otro equipo, SKU termina en 4640)
 
-    Usar RUT en lugar de cid garantiza que el código sea único entre clientes
-    (cid puede repetirse si dos sistemas migran datos; RUT es identidad legal).
-
-    El usuario puede sobrescribirlo con el serial real del fabricante (cuando
-    la representación lo trae en la etiqueta). Sirve para etiqueta física,
-    garantía y trazabilidad.
+    Único globalmente porque incluye RUT del cliente (identidad legal).
+    Editable: el usuario puede reemplazar con el serial real del fabricante.
     """
     # Obtener RUT del cliente (sin DV, sin puntos)
     rut_clean = "00000000"
@@ -11880,15 +11894,14 @@ def _generar_serie_ilus(cid: int, sku: str = "") -> str:
         row = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,))
         if row and row.get("rut"):
             raw = str(row["rut"]).replace(".", "").replace(" ", "").replace("-", "").upper()
-            # Quitar el DV (último carácter si la longitud es >= 8)
             rut_clean = raw[:-1] if len(raw) >= 8 else raw
     except Exception:
         pass
 
-    sku_pref = (sku or "AUTO")[:6].upper().replace(" ", "").replace("-", "")
-    if not sku_pref:
-        sku_pref = "AUTO"
-    base = f"ILUS-{rut_clean}-{sku_pref}"
+    # Últimos 4 chars alfanum del SKU
+    sku_clean = "".join(c for c in (sku or "AUTO").upper() if c.isalnum())
+    sku4 = sku_clean[-4:] if len(sku_clean) >= 4 else (sku_clean.rjust(4, "0") if sku_clean else "AUTO")
+    base = f"{rut_clean}-{sku4}"
     rows = mysql_fetchall(
         "SELECT serie FROM mant_maquinas WHERE cliente_id=%s AND serie LIKE %s",
         (cid, f"{base}-%")
@@ -11988,6 +12001,7 @@ def mant_maquina_solicitar_cambio(mid):
     fecha_prog = d.get("fecha_programada") or (
         datetime.today().date() + timedelta(days=3)
     ).isoformat()
+    tecnico_asign = (d.get("tecnico") or "").strip()[:200] or None
 
     # Cargar el equipo + cliente
     maq = mysql_fetchone(
@@ -12021,9 +12035,9 @@ def mant_maquina_solicitar_cambio(mid):
             # 2. Crear visita programada
             cur.execute(
                 """INSERT INTO mant_visitas
-                   (cliente_id,titulo,fecha_programada,tipo,estado,descripcion,created_by)
-                   VALUES (%s,%s,%s,%s,'programada',%s,%s)""",
-                (cid, titulo, fecha_prog, tipo_visita, descripcion, current_username())
+                   (cliente_id,titulo,fecha_programada,tipo,estado,descripcion,tecnico,created_by)
+                   VALUES (%s,%s,%s,%s,'programada',%s,%s,%s)""",
+                (cid, titulo, fecha_prog, tipo_visita, descripcion, tecnico_asign, current_username())
             )
             vid = cur.lastrowid
         conn.commit()

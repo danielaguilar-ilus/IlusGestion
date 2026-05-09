@@ -1697,12 +1697,15 @@ function agregarFilaEquipo(datos={}) {
   // Default fecha de instalación = fecha del documento (cubre garantía 6 meses)
   const fechaInst = datos.fecha_instalacion || datos.doc_fecha || datos.fecha || '';
   // N° Serie: si llega "(auto)" o vacío, generamos uno visible en cliente
-  // El backend lo regenera con cid real al guardar (formato ILUS-{cid}-{SKU}-{n})
+  // Formato: {RUT}-{últimos4SKU}-{n} (ej: 65206047-0905-1)
   let serieIni = (datos.serie || '').trim();
   if (!serieIni || serieIni.startsWith('(auto')) {
     serieIni = _serieTmpAuto(datos.sku || '');
   }
-  const serieEsTemp = serieIni.startsWith('ILUS-NEW-') || serieIni.startsWith('ILUS-TMP-');
+  // Detectar si es serie autogenerada (rut-sku4-n) vs serie real del fabricante
+  const rutWiz = _rutDelWizard();
+  const serieEsTemp = serieIni.startsWith(rutWiz + '-') ||
+                      serieIni.startsWith('ILUS-NEW-') || serieIni.startsWith('ILUS-TMP-');
   tr.innerHTML=`
     <td><input class="eq-input" data-field="nombre" value="${esc(datos.nombre||datos.producto||'')}" placeholder="Nombre equipo"></td>
     <td><input class="eq-input font-monospace" data-field="sku" value="${esc(datos.sku||'')}" title="SKU del modelo (compartido entre unidades iguales)"></td>
@@ -2097,10 +2100,12 @@ function _rutDelWizard() {
 }
 
 function _serieTmpAuto(sku) {
+  // Formato amigable: {RUT}-{SKU4}-{n}
+  // Ej: 65206047-0905-1, 65206047-0905-2, ...
   const rut = _rutDelWizard();
-  const pref = (sku || 'AUTO').slice(0,6).toUpperCase().replace(/[^A-Z0-9]/g,'') || 'AUTO';
-  // Calcular siguiente secuencial buscando en la tabla local de equipos por mismo prefijo
-  const baseStr = `ILUS-${rut}-${pref}-`;
+  const skuClean = (sku || 'AUTO').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const sku4 = skuClean.length >= 4 ? skuClean.slice(-4) : (skuClean.padStart(4, '0') || 'AUTO');
+  const baseStr = `${rut}-${sku4}-`;
   let max = 0;
   document.querySelectorAll('#equiposTbody [data-field="serie"]').forEach(inp => {
     const v = (inp.value || '').toUpperCase();
