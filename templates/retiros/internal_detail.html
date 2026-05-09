@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ req.code }} - Retiro ILUS{% endblock %}
+{% block content %}
+{% set b = status_badge(req.status) %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h4><i class="bi bi-calendar2-check me-2" style="color:var(--ilus-red)"></i>{{ req.code }} <span class="badge bg-{{ b.color }}">{{ b.label }}</span></h4>
+      <div class="sub">{{ req.customer_name }} · {{ req.document_type|upper }} {{ req.document_number }}</div>
+    </div>
+  </div>
+  <a href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-link-45deg me-1"></i>Link cliente</a>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Calidad info</div><div class="fs-3 fw-black">{{ req.information_quality_score }}%</div></div></div>
+  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Riesgo</div><div class="fs-3 fw-black">{{ req.risk_score }}%</div></div></div>
+  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Peso / PV</div><div class="fs-5 fw-black">{{ req.total_weight_kg }} / {{ req.total_volumetric_weight }}</div></div></div>
+  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Volumen</div><div class="fs-5 fw-black">{{ req.total_volume_m3 }} m3</div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-8">
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header"><span><i class="bi bi-person-vcard me-2"></i>Ficha del retiro</span></div>
+      <div class="card-body p-3">
+        <div class="row g-3">
+          <div class="col-md-6"><small class="text-muted">Cliente</small><div class="fw-bold">{{ req.customer_name }}</div><div class="font-monospace small">{{ req.customer_rut }}</div></div>
+          <div class="col-md-6"><small class="text-muted">Contacto</small><div class="fw-bold">{{ req.contact_name }}</div><div class="small">{{ req.contact_email }} · {{ req.contact_phone }}</div></div>
+          <div class="col-md-6"><small class="text-muted">Persona que retira</small><div class="fw-bold">{{ req.pickup_person_name }}</div><div class="small">{{ req.pickup_person_rut }} · {{ req.pickup_person_phone }} · {{ req.pickup_person_relation }}</div></div>
+          <div class="col-md-6"><small class="text-muted">Bodega</small><div class="fw-bold">{{ settings.warehouse_name }}</div><a href="{{ settings.maps_url }}" target="_blank" class="small">Abrir mapa</a></div>
+          <div class="col-md-4"><small class="text-muted">Solicitada</small><div class="fw-bold">{{ req.requested_date }} {{ req.requested_time_from|hm }}-{{ req.requested_time_to|hm }}</div></div>
+          <div class="col-md-4"><small class="text-muted">Propuesta</small><div class="fw-bold">{{ req.proposed_date or '-' }} {% if req.proposed_time_from %}{{ req.proposed_time_from|hm }}-{{ req.proposed_time_to|hm }}{% endif %}</div></div>
+          <div class="col-md-4"><small class="text-muted">Confirmada</small><div class="fw-bold">{{ req.confirmed_date or '-' }} {% if req.confirmed_time_from %}{{ req.confirmed_time_from|hm }}-{{ req.confirmed_time_to|hm }}{% endif %}</div></div>
+          {% if req.observations %}<div class="col-12"><small class="text-muted">Observaciones cliente</small><div class="p-2 bg-light rounded">{{ req.observations }}</div></div>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header"><span><i class="bi bi-box-seam me-2"></i>Bultos y cubicaje</span></div>
+      <div class="table-responsive">
+        <table class="table ilus-table mb-0">
+          <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Peso kg</th><th>Peso vol.</th><th>M3</th></tr></thead>
+          <tbody>{% for p in packages %}<tr><td>{{ p.package_number }}</td><td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td><td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td><td>{{ p.volume_m3 }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ilus-card">
+      <div class="ilus-card-header"><span><i class="bi bi-clock-history me-2"></i>Timeline y logs</span></div>
+      <div class="card-body p-3">
+        {% for l in logs %}
+        <div class="d-flex gap-3 mb-3">
+          <div class="rounded-circle bg-danger flex-shrink-0" style="width:10px;height:10px;margin-top:6px"></div>
+          <div class="small">
+            <div class="fw-bold">{{ l.action }} <span class="text-muted fw-normal">por {{ l.actor_name }}</span></div>
+            <div class="text-muted">{{ l.created_at }} {% if l.old_status or l.new_status %}· {{ l.old_status or '-' }} → {{ l.new_status or '-' }}{% endif %}</div>
+            {% if l.notes %}<div>{{ l.notes }}</div>{% endif %}
+          </div>
+        </div>
+        {% else %}<div class="text-muted small">Sin eventos aun.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header"><span><i class="bi bi-lightning-charge me-2"></i>Acciones</span></div>
+      <div class="card-body p-3">
+        <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" class="mb-3">
+          <label class="form-label small fw-bold">Cambiar estado</label>
+          <select name="status" class="form-select mb-2">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+          <textarea name="notes" class="form-control mb-2" rows="2" placeholder="Nota interna"></textarea>
+          <button class="btn btn-dark w-100">Actualizar estado</button>
+        </form>
+        <hr>
+        <form method="post" action="{{ url_for('pickup_create_proposal', rid=req.id) }}">
+          <label class="form-label small fw-bold">Proponer agenda</label>
+          <input type="date" name="date" class="form-control mb-2" required>
+          <div class="row g-2 mb-2"><div class="col"><input type="time" name="time_from" class="form-control" required></div><div class="col"><input type="time" name="time_to" class="form-control" required></div></div>
+          <input name="reason" class="form-control mb-2" placeholder="Motivo: disponibilidad, flujo, cierre...">
+          <textarea name="message" class="form-control mb-2" rows="2" placeholder="Mensaje para el cliente"></textarea>
+          <button class="btn btn-ilus w-100 fw-bold"><i class="bi bi-send-check me-1"></i>Enviar propuesta</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header"><span><i class="bi bi-chat-dots me-2"></i>Comunicacion rapida</span></div>
+      <div class="card-body p-3">
+        <form method="post" action="{{ url_for('pickup_send_message', rid=req.id) }}">
+          <select name="template_id" class="form-select mb-2"><option value="">Mensaje manual</option>{% for t in templates %}<option value="{{ t.id }}">{{ t.title }}</option>{% endfor %}</select>
+          <textarea name="message" class="form-control mb-2" rows="3" placeholder="Puedes escribir un mensaje o usar una plantilla"></textarea>
+          <button class="btn btn-outline-danger w-100"><i class="bi bi-envelope-paper me-1"></i>Enviar al cliente</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header"><span><i class="bi bi-paperclip me-2"></i>Adjuntos</span></div>
+      <div class="card-body p-3 small">
+        {% for a in attachments %}
+        <a href="{{ url_for('pickup_attachment', aid=a.id) }}" target="_blank" class="d-block mb-2"><i class="bi bi-file-earmark me-1"></i>{{ a.original_name }}</a>
+        {% else %}<span class="text-muted">Sin adjuntos.</span>{% endfor %}
+      </div>
+    </div>
+
+    <div class="ilus-card">
+      <div class="ilus-card-header"><span><i class="bi bi-arrow-left-right me-2"></i>Propuestas</span></div>
+      <div class="card-body p-3 small">
+        {% for p in proposals %}
+        <div class="mb-2 p-2 bg-light rounded">
+          <strong>{{ p.date }} {{ p.time_from|hm }}-{{ p.time_to|hm }}</strong>
+          <div class="text-muted">{{ p.proposed_by }} · {{ p.status }}</div>
+          {% if p.message %}<div>{{ p.message }}</div>{% endif %}
+        </div>
+        {% else %}<span class="text-muted">Sin propuestas.</span>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,74 +1,393 @@
 {% extends "base.html" %}
-{% block title %}Clientes Mantenciones — ILUS{% endblock %}
+{% block title %}Clientes Mantención — ILUS{% endblock %}
 {% block content %}
-<div class="page-header">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <div>
-      <h4><i class="bi bi-building-check me-2" style="color:var(--ilus-red)"></i>Clientes de Mantención</h4>
-      <div class="sub">{{ clientes|length }} cliente(s) encontrado(s)</div>
-    </div>
+<style>
+/* ── Avatar palette (id % 6) ─────────────────────────── */
+.av-0{background:#dbeafe;color:#1d4ed8}
+.av-1{background:#fce7f3;color:#be185d}
+.av-2{background:#d1fae5;color:#065f46}
+.av-3{background:#fef3c7;color:#92400e}
+.av-4{background:#ede9fe;color:#5b21b6}
+.av-5{background:#ffedd5;color:#9a3412}
+
+/* ── Estado badges ───────────────────────────────────── */
+.bx{display:inline-flex;align-items:center;gap:4px;font-size:.63rem;font-weight:700;
+    letter-spacing:.04em;padding:3px 10px;border-radius:50px;white-space:nowrap}
+.bx-activo     {background:#dcfce7;color:#166534}
+.bx-prospecto  {background:#fef9c3;color:#854d0e}
+.bx-inactivo   {background:#f3f4f6;color:#6b7280}
+.bx-advertencia{background:#fff7ed;color:#c2410c}
+.bx-suspendido {background:#fee2e2;color:#991b1b}
+
+/* ── Contrato pill ───────────────────────────────────── */
+.cpill{font-size:.7rem;font-weight:700;padding:2px 9px;border-radius:50px;display:inline-block}
+.cpill-vigente     {background:#dcfce7;color:#166534}
+.cpill-por_vencer  {background:#fff7ed;color:#c2410c}
+.cpill-vencido     {background:#fee2e2;color:#991b1b}
+.cpill-indefinido  {background:#dbeafe;color:#1d4ed8}
+.cpill-sin_contrato{background:#f3f4f6;color:#6b7280}
+
+/* ── KPI card (icono izq + texto der) ────────────────── */
+.kpi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:16px 18px;display:flex;align-items:center;gap:14px;height:100%;
+}
+.kpi-icon{
+  width:48px;height:48px;border-radius:12px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.35rem;
+}
+.kpi-lbl{font-size:.63rem;font-weight:700;text-transform:uppercase;
+          letter-spacing:.06em;color:#9ca3af;margin-bottom:2px}
+.kpi-num{font-size:2rem;font-weight:800;color:#111827;line-height:1}
+.kpi-sub{font-size:.74rem;color:#9ca3af;margin-top:3px}
+
+/* ── Client card ─────────────────────────────────────── */
+.client-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:20px;height:100%;cursor:pointer;
+  transition:box-shadow .15s,border-color .15s;
+}
+.client-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.09);border-color:#d1d5db}
+
+/* ── Stat labels ─────────────────────────────────────── */
+.slbl{font-size:.61rem;font-weight:700;letter-spacing:.07em;
+      text-transform:uppercase;color:#9ca3af;margin-bottom:3px}
+.sval{font-size:.84rem;font-weight:700;color:#111827}
+.ssub{font-size:.73rem;color:#9ca3af;margin-top:1px}
+
+/* ── Completaje bar ──────────────────────────────────── */
+.pct-bar{height:4px;border-radius:2px;background:#f3f4f6;overflow:hidden;margin-top:5px}
+.pct-fill{height:100%;border-radius:2px}
+
+/* ── Filter bar ──────────────────────────────────────── */
+.filter-bar{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px}
+</style>
+
+{# ── PAGE HEADER ─────────────────────────────────────────────────── #}
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0 fw-bold">
+      <i class="bi bi-building-check me-2" style="color:var(--ilus-red)"></i>Clientes de Mantención
+    </h4>
+    <p class="text-muted mb-0 small">Gestión inteligente de contratos, equipos y visitas programadas</p>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <a href="{{ url_for('mant_notificaciones_centro') }}" class="btn btn-sm btn-outline-secondary position-relative">
+      <i class="bi bi-bell me-1"></i>Notificaciones
+      {% if global_stats.notificaciones and global_stats.notificaciones > 0 %}
+      <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+            style="font-size:.58rem;padding:3px 6px">{{ global_stats.notificaciones }}</span>
+      {% endif %}
+    </a>
     <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
       <i class="bi bi-building-add me-1"></i>Nuevo cliente
     </a>
   </div>
 </div>
 
-<form method="get" class="ilus-card mb-3 p-3">
-  <div class="row g-2 align-items-end">
-    <div class="col-12 col-sm-5">
-      <input type="text" name="q" value="{{ filtros.q }}" class="form-control form-control-sm"
-             placeholder="🔍 Razón social, RUT, email…">
+{# ── KPI BAR (horizontal: icono izq + número der) ────────────────── #}
+{%- set tot   = global_stats.total or 0 %}
+{%- set pct_a = (global_stats.activos      / tot * 100)|round(0)|int if tot else 0 %}
+{%- set pct_c = (global_stats.con_contrato / tot * 100)|round(0)|int if tot else 0 %}
+{%- set pct_e = (global_stats.con_equipos  / tot * 100)|round(0)|int if tot else 0 %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e8eaf6;color:#3949ab"><i class="bi bi-people-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Total clientes</div>
+        <div class="kpi-num">{{ tot }}</div>
+        <div class="kpi-sub">100% del total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-check-circle-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Activos</div>
+        <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
+        <div class="kpi-sub">{{ pct_a }}% del total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e3f2fd;color:#1565c0"><i class="bi bi-file-earmark-check-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Con contrato</div>
+        <div class="kpi-num">{{ global_stats.con_contrato or 0 }}</div>
+        <div class="kpi-sub">{{ pct_c }}% del total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#fff8e1;color:#f57f17"><i class="bi bi-tools"></i></div>
+      <div>
+        <div class="kpi-lbl">Con equipos</div>
+        <div class="kpi-num">{{ global_stats.con_equipos or 0 }}</div>
+        <div class="kpi-sub">{{ pct_e }}% del total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-calendar-check-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Próx. visitas (30d)</div>
+        <div class="kpi-num">{{ global_stats.visitas_30d or 0 }}</div>
+        <div class="kpi-sub">Programadas</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-4 col-lg-2">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e8f5e9;color:#1b5e20"><i class="bi bi-speedometer2"></i></div>
+      <div>
+        <div class="kpi-lbl">Completaje prom.</div>
+        <div class="kpi-num">{{ global_stats.completaje_avg or 0 }}%</div>
+        <div class="kpi-sub">Información</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── FILTER BAR ──────────────────────────────────────────────────── #}
+<div class="filter-bar mb-3">
+  <div class="row g-2 align-items-center">
+    <div class="col-12 col-sm-5 col-md-4">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-white border-end-0 pe-1">
+          <i class="bi bi-search text-muted"></i>
+        </span>
+        <input type="text" id="searchInput" class="form-control border-start-0 ps-1"
+               placeholder="Buscar por nombre, RUT, email, comuna…"
+               value="{{ filtros.q }}" oninput="filterAndPage(1)">
+      </div>
     </div>
     <div class="col-auto">
-      <select name="estado" class="form-select form-select-sm">
-        <option value="">Todos</option>
-        <option value="activo"    {% if filtros.estado=='activo'    %}selected{% endif %}>Activos</option>
-        <option value="prospecto" {% if filtros.estado=='prospecto' %}selected{% endif %}>Prospectos</option>
-        <option value="inactivo"  {% if filtros.estado=='inactivo'  %}selected{% endif %}>Inactivos</option>
+      <select id="filterEstado" class="form-select form-select-sm" onchange="filterAndPage(1)">
+        <option value="">Estado: Todos</option>
+        <option value="activo"     {% if filtros.estado=='activo'     %}selected{% endif %}>Activos</option>
+        <option value="inactivo"   {% if filtros.estado=='inactivo'   %}selected{% endif %}>Inactivos</option>
+        <option value="prospecto"  {% if filtros.estado=='prospecto'  %}selected{% endif %}>Prospectos</option>
+        <option value="suspendido" {% if filtros.estado=='suspendido' %}selected{% endif %}>Suspendidos</option>
       </select>
     </div>
     <div class="col-auto">
-      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
-      <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+      <select id="filterContrato" class="form-select form-select-sm" onchange="filterAndPage(1)">
+        <option value="">Contrato: Todos</option>
+        <option value="vigente">Vigente</option>
+        <option value="por_vencer">Por vencer</option>
+        <option value="vencido">Vencido</option>
+        <option value="indefinido">Indefinido</option>
+        <option value="sin_contrato">Sin contrato</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <select id="filterEquipos" class="form-select form-select-sm" onchange="filterAndPage(1)">
+        <option value="">Equipos: Todos</option>
+        <option value="con">Con equipos</option>
+        <option value="sin">Sin equipos</option>
+      </select>
+    </div>
+    <div class="col-auto ms-auto d-flex gap-2">
+      <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-secondary active" id="btnGrid"
+                onclick="setView('grid')" title="Cuadrícula">
+          <i class="bi bi-grid-3x3-gap"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary" id="btnList"
+                onclick="setView('list')" title="Lista">
+          <i class="bi bi-list-ul"></i>
+        </button>
+      </div>
     </div>
   </div>
-</form>
+</div>
 
+<div class="mb-2">
+  <small class="text-muted" id="resultCount">{{ clientes|length }} clientes encontrados</small>
+</div>
+
+{# ── CARDS GRID ──────────────────────────────────────────────────── #}
 {% if clientes %}
-<div class="row g-3">
+<div id="clientGrid" class="row g-3">
   {% for c in clientes %}
-  <div class="col-12 col-sm-6 col-xl-4">
-    <a href="{{ url_for('mant_ficha', cid=c.id) }}" class="text-decoration-none">
-      <div style="background:#fff;border-radius:12px;border:1px solid #eee;
-                  box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;
-                  transition:box-shadow .15s;height:100%"
-           onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,.13)'"
-           onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,.06)'">
-        <div class="d-flex align-items-start gap-3">
-          <div style="width:42px;height:42px;border-radius:50%;flex-shrink:0;
-                      background:{{ '#e8f5e9' if c.estado=='activo' else '#f5f5f5' }};
-                      display:flex;align-items:center;justify-content:center">
-            <i class="bi bi-building" style="font-size:1.1rem;color:{{ '#1a7a1a' if c.estado=='activo' else '#888' }}"></i>
+
+  {%- if c.badge == 'activo' -%}
+    {%- set bcls='bx-activo' -%}{%- set btxt='ACTIVO' -%}
+  {%- elif c.badge == 'advertencia' -%}
+    {%- set bcls='bx-advertencia' -%}{%- set btxt='ADVERTENCIA' -%}
+  {%- elif c.badge == 'inactivo' -%}
+    {%- set bcls='bx-inactivo' -%}{%- set btxt='INACTIVO' -%}
+  {%- elif c.badge == 'suspendido' -%}
+    {%- set bcls='bx-suspendido' -%}{%- set btxt='SUSPENDIDO' -%}
+  {%- else -%}
+    {%- set bcls='bx-prospecto' -%}{%- set btxt='PROSPECTO' -%}
+  {%- endif -%}
+
+  {%- set ctxt = {'vigente':'Vigente','por_vencer':'Por vencer','vencido':'Vencido',
+                  'indefinido':'Indefinido','sin_contrato':'Sin contrato'}
+                 .get(c.contrato_estado, c.contrato_estado) -%}
+
+  {%- if c.completaje >= 80 -%}{%- set pcol='#16a34a' -%}
+  {%- elif c.completaje >= 50 -%}{%- set pcol='#d97706' -%}
+  {%- else -%}{%- set pcol='#dc2626' -%}{%- endif -%}
+
+  <div class="col-12 col-sm-6 col-xl-4 card-wrapper"
+       data-estado="{{ c.estado }}"
+       data-contrato="{{ c.contrato_estado }}"
+       data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"
+       data-search="{{ (c.razon_social ~ ' ' ~ (c.rut or '') ~ ' ' ~ (c.contacto_email or '') ~ ' ' ~ (c.comuna or '') ~ ' ' ~ (c.ciudad or ''))|lower }}">
+
+    <div class="client-card" onclick="window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
+
+      {# ── Avatar + nombre + badge ──────────────────── #}
+      <div class="d-flex align-items-start gap-3 mb-2">
+        <div class="av-{{ c.id % 6 }}" style="width:46px;height:46px;border-radius:10px;flex-shrink:0;
+             display:flex;align-items:center;justify-content:center;font-size:1.3rem">
+          <i class="bi bi-building"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="fw-bold text-truncate" style="font-size:.92rem;color:#111827">{{ c.razon_social }}</div>
+          <div class="font-monospace text-muted" style="font-size:.76rem">{{ c.rut or '—' }}</div>
+        </div>
+        <span class="bx {{ bcls }}">
+          {% if c.badge == 'advertencia' %}<i class="bi bi-exclamation-triangle-fill"></i>{% endif %}
+          {{ btxt }}
+        </span>
+      </div>
+
+      {# Ubicación #}
+      <div class="text-muted mb-2" style="font-size:.79rem;min-height:1.2rem">
+        {% if c.comuna %}
+          <i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}{% if c.ciudad %}, {{ c.ciudad }}{% endif %}
+        {% endif %}
+      </div>
+
+      <hr style="margin:10px 0;border-color:#f3f4f6">
+
+      {# ── 4 stats ─────────────────────────────────── #}
+      <div class="row g-0 mb-3">
+        {# Contrato #}
+        <div class="col-6 pe-2">
+          <div class="slbl">Contrato</div>
+          <span class="cpill cpill-{{ c.contrato_estado }}">{{ ctxt }}</span>
+          <div class="ssub">
+            {%- if c.contrato_vencimiento %}Hasta {{ c.contrato_vencimiento.strftime('%d/%m/%Y') }}
+            {%- elif c.contrato_estado == 'indefinido' %}Sin vencimiento
+            {%- else %}—{%- endif %}
           </div>
-          <div style="min-width:0;flex:1">
-            <div class="fw-bold text-dark text-truncate" style="font-size:.92rem">{{ c.razon_social }}</div>
-            <div class="small text-muted font-monospace">{{ c.rut or '—' }}</div>
-            {% if c.contacto_nombre %}
-            <div class="small text-muted mt-1"><i class="bi bi-person me-1"></i>{{ c.contacto_nombre }}</div>
-            {% endif %}
-            {% if c.comuna %}<div class="small text-muted"><i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}</div>{% endif %}
-          </div>
-          <span class="badge-estado badge-{{ c.estado }}" style="display:inline-block;padding:3px 10px;border-radius:50px;font-size:.65rem;font-weight:700;
-            background:{{ '#e8f5e9' if c.estado=='activo' else ('#fff3e0' if c.estado=='prospecto' else '#f5f5f5') }};
-            color:{{ '#1a7a1a' if c.estado=='activo' else ('#e65100' if c.estado=='prospecto' else '#666') }}">
-            {{ c.estado.title() }}
-          </span>
+        </div>
+        {# Equipos #}
+        <div class="col-6 ps-2" style="border-left:1px solid #f3f4f6">
+          <div class="slbl">Equipos</div>
+          {% if (c.maquinas_count or 0) > 0 %}
+            <div class="sval">{{ c.maquinas_count }}</div>
+            <div class="ssub">Activos</div>
+          {% else %}
+            <div class="sval" style="color:#9ca3af">—</div>
+            <div class="ssub">Sin equipos</div>
+          {% endif %}
         </div>
       </div>
-    </a>
-  </div>
+      <div class="row g-0 mb-3">
+        {# Próxima visita #}
+        <div class="col-6 pe-2">
+          <div class="slbl">Próx. visita</div>
+          {% if c.prox_visita %}
+            <div class="sval">{{ c.prox_visita.strftime('%d/%m/%Y') }}</div>
+            <div class="ssub">En {{ c.prox_visita_dias }} días</div>
+          {% else %}
+            <div class="sval" style="color:#9ca3af">—</div>
+            <div class="ssub">Sin visitas</div>
+          {% endif %}
+        </div>
+        {# Completaje #}
+        <div class="col-6 ps-2" style="border-left:1px solid #f3f4f6">
+          <div class="slbl">Completaje</div>
+          <div class="sval">{{ c.completaje }}%</div>
+          <div class="pct-bar">
+            <div class="pct-fill" style="width:{{ c.completaje }}%;background:{{ pcol }}"></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Contacto + teléfono (siempre visible) ────── #}
+      <div style="font-size:.79rem;color:#6b7280;min-height:1.4rem;margin-bottom:14px;
+                  overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        {% if c.contacto_nombre %}
+          <i class="bi bi-person me-1"></i>{{ c.contacto_nombre }}
+          {% if c.contacto_tel %}
+            <span class="ms-2 text-muted">
+              <i class="bi bi-telephone me-1"></i>{{ c.contacto_tel }}
+            </span>
+          {% endif %}
+        {% elif c.contacto_email %}
+          <i class="bi bi-envelope me-1"></i>{{ c.contacto_email }}
+        {% else %}
+          <span class="text-muted fst-italic">Sin contacto registrado</span>
+        {% endif %}
+      </div>
+
+      {# ── Acciones ────────────────────────────────── #}
+      <div class="d-flex justify-content-between align-items-center" onclick="event.stopPropagation()">
+        <a href="{{ url_for('mant_ficha', cid=c.id) }}" class="btn btn-sm btn-outline-secondary">
+          Ver detalles <i class="bi bi-arrow-right ms-1"></i>
+        </a>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}">
+                <i class="bi bi-eye me-2"></i>Ver ficha completa
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-contrato">
+                <i class="bi bi-file-earmark-text me-2"></i>Contrato
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-equipos">
+                <i class="bi bi-tools me-2"></i>Equipos
+              </a>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('mant_ficha', cid=c.id) }}#tab-visitas">
+                <i class="bi bi-calendar-plus me-2"></i>Programar visita
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+    </div><!-- /client-card -->
+  </div><!-- /card-wrapper -->
   {% endfor %}
+</div><!-- /clientGrid -->
+
+{# ── PAGINACIÓN ──────────────────────────────────────────────────── #}
+<div class="d-flex flex-wrap justify-content-between align-items-center mt-3 gap-2">
+  <small class="text-muted" id="pageInfo"></small>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">Mostrar</span>
+    <select id="perPage" class="form-select form-select-sm" style="width:72px" onchange="filterAndPage(1)">
+      <option value="6" selected>6</option>
+      <option value="12">12</option>
+      <option value="24">24</option>
+      <option value="999">Todo</option>
+    </select>
+    <span class="text-muted small">por página</span>
+  </div>
+  <ul class="pagination pagination-sm mb-0" id="pagCtrl"></ul>
 </div>
+
 {% else %}
 <div class="ilus-card">
   <div class="empty-state">
@@ -80,4 +399,105 @@
   </div>
 </div>
 {% endif %}
+
+<script>
+(function () {
+  let curPage = 1;
+
+  function wrappers() {
+    return Array.from(document.querySelectorAll('.card-wrapper'));
+  }
+
+  function visible() {
+    const q  = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+    const es = document.getElementById('filterEstado')?.value   || '';
+    const co = document.getElementById('filterContrato')?.value || '';
+    const eq = document.getElementById('filterEquipos')?.value  || '';
+    return wrappers().filter(el => {
+      if (es && el.dataset.estado   !== es) return false;
+      if (co && el.dataset.contrato !== co) return false;
+      if (eq && el.dataset.equipos  !== eq) return false;
+      if (q  && !el.dataset.search.includes(q)) return false;
+      return true;
+    });
+  }
+
+  window.filterAndPage = function (page) {
+    if (page) curPage = page;
+    const vis = visible();
+    const pp  = parseInt(document.getElementById('perPage')?.value || 6);
+    const tot = vis.length;
+    const pgs = pp >= 999 ? 1 : Math.ceil(tot / pp);
+    if (curPage > pgs) curPage = 1;
+    const s = (curPage - 1) * pp;
+    const e = pp >= 999 ? tot : s + pp;
+
+    wrappers().forEach(el => el.style.display = 'none');
+    vis.forEach((el, i) => { el.style.display = (i >= s && i < e) ? '' : 'none'; });
+
+    const rc = document.getElementById('resultCount');
+    if (rc) rc.textContent = tot + ' cliente' + (tot !== 1 ? 's' : '') + ' encontrado' + (tot !== 1 ? 's' : '');
+
+    const pi = document.getElementById('pageInfo');
+    if (pi) pi.textContent = tot
+      ? 'Mostrando ' + Math.min(s + 1, tot) + '–' + Math.min(e, tot) + ' de ' + tot + ' clientes'
+      : 'Sin resultados';
+
+    const ul = document.getElementById('pagCtrl');
+    if (!ul) return;
+    ul.innerHTML = '';
+    if (pgs <= 1) return;
+
+    function li(label, pg, disabled, active) {
+      const l = document.createElement('li');
+      l.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+      const a = document.createElement('a');
+      a.className = 'page-link'; a.href = '#'; a.innerHTML = label;
+      if (!disabled) a.onclick = ev => { ev.preventDefault(); filterAndPage(pg); };
+      l.appendChild(a); ul.appendChild(l);
+    }
+
+    li('&laquo;', curPage - 1, curPage === 1);
+    for (let p = 1; p <= pgs; p++) {
+      if (p === 1 || p === pgs || (p >= curPage - 1 && p <= curPage + 1)) {
+        li(p, p, false, p === curPage);
+      } else if (p === curPage - 2 || p === curPage + 2) {
+        li('…', p, true);
+      }
+    }
+    li('&raquo;', curPage + 1, curPage === pgs);
+  };
+
+  window.setView = function (view) {
+    const grid = document.getElementById('clientGrid');
+    if (!grid) return;
+    if (view === 'list') {
+      grid.classList.add('list-view');
+      document.getElementById('btnGrid')?.classList.remove('active');
+      document.getElementById('btnList')?.classList.add('active');
+    } else {
+      grid.classList.remove('list-view');
+      document.getElementById('btnGrid')?.classList.add('active');
+      document.getElementById('btnList')?.classList.remove('active');
+    }
+  };
+
+  filterAndPage(1);
+})();
+</script>
+
+<style>
+/* ── Vista lista ─────────────────────────────────────── */
+#clientGrid.list-view .card-wrapper{
+  flex:0 0 100%!important;max-width:100%!important;
+}
+#clientGrid.list-view .client-card{
+  display:flex;align-items:center;gap:16px;padding:12px 18px;border-radius:8px;
+}
+#clientGrid.list-view .client-card hr{display:none}
+#clientGrid.list-view .client-card .row.g-0{flex-wrap:nowrap;flex:1;margin:0}
+#clientGrid.list-view .client-card .col-6{
+  flex:0 0 auto;width:auto;min-width:100px;border-left:none!important;
+}
+</style>
 {% endblock %}

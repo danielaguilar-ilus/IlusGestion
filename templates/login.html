@@ -2,11 +2,76 @@
 {% block title %}Iniciar Sesión — ILUS Sport & Health{% endblock %}
 
 {% block content %}
+<style>
+/* ── Carrusel login (transición suave entre imágenes) ── */
+.login-carousel{position:absolute;inset:0;z-index:0;overflow:hidden;}
+.login-carousel-slide{
+  position:absolute;inset:0;
+  background-size:cover;background-position:center;
+  opacity:0;transition:opacity 1.4s ease-in-out;
+}
+.login-carousel-slide.active{opacity:1;}
+.login-carousel-overlay{
+  position:absolute;inset:0;z-index:1;
+  background:linear-gradient(135deg,rgba(15,23,42,.78),rgba(204,0,0,.45));
+}
+.login-hero-content{position:relative;z-index:2;}
+.login-slide-caption{
+  position:absolute;bottom:30px;left:40px;right:40px;z-index:3;
+  color:#fff;
+}
+.login-slide-caption .lc-title{
+  font-size:1.1rem;font-weight:800;letter-spacing:.3px;
+  text-shadow:0 2px 12px rgba(0,0,0,.5);margin-bottom:4px;
+  opacity:0;transform:translateY(8px);transition:opacity .8s,transform .8s;
+}
+.login-slide-caption .lc-sub{
+  font-size:.78rem;color:#e5e7eb;text-shadow:0 1px 6px rgba(0,0,0,.5);
+  opacity:0;transform:translateY(8px);transition:opacity .8s .15s,transform .8s .15s;
+}
+.login-slide-caption.active .lc-title,.login-slide-caption.active .lc-sub{opacity:1;transform:translateY(0);}
+.login-carousel-dots{
+  position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  display:flex;gap:7px;z-index:4;
+}
+.login-carousel-dot{
+  width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.35);
+  cursor:pointer;transition:background .25s,width .25s;
+}
+.login-carousel-dot.active{background:#fff;width:22px;border-radius:4px;}
+</style>
 <div class="login-wrap">
 
-  {# ══ PANEL IZQUIERDO: imagen hero ILUS ══ #}
-  <div class="login-hero">
+  {# ══ PANEL IZQUIERDO: hero con carrusel ══ #}
+  <div class="login-hero" style="position:relative">
+    {% if login_images %}
+    <div class="login-carousel" id="loginCarousel">
+      {% for img in login_images %}
+      <div class="login-carousel-slide{% if loop.first %} active{% endif %}"
+           style="background-image:url('{{ url_for('static', filename=img.archivo_path) }}')"
+           data-idx="{{ loop.index0 }}"></div>
+      {% endfor %}
+      <div class="login-carousel-overlay"></div>
+      {% for img in login_images %}
+        {% if img.titulo or img.subtitulo %}
+        <div class="login-slide-caption{% if loop.first %} active{% endif %}" data-cap="{{ loop.index0 }}">
+          {% if img.titulo %}<div class="lc-title">{{ img.titulo }}</div>{% endif %}
+          {% if img.subtitulo %}<div class="lc-sub">{{ img.subtitulo }}</div>{% endif %}
+        </div>
+        {% endif %}
+      {% endfor %}
+      {% if login_images|length > 1 %}
+      <div class="login-carousel-dots" id="loginDots">
+        {% for img in login_images %}
+        <div class="login-carousel-dot{% if loop.first %} active{% endif %}" data-dot="{{ loop.index0 }}"></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
     <div class="login-hero-overlay"></div>
+    {% endif %}
+
     <div class="login-hero-content">
       {% if has_logo %}
       <img src="{{ url_for('static', filename='Logo.png') }}"
@@ -16,10 +81,10 @@
       {% endif %}
       <span class="login-hero-accent"></span>
       <div class="login-hero-tagline">
-        Sistema de Gestión<br>
-        <strong>ILUS Sport &amp; Health</strong>
+        ILUS Fitness<br>
+        <strong>Sport &amp; Health</strong>
       </div>
-      <div class="login-hero-sub">Etiquetas · Colaboradores · Evaluaciones</div>
+      <div class="login-hero-sub">Sistema de gestión interno</div>
     </div>
   </div>
 
@@ -93,6 +158,26 @@
       inp.type = show ? 'text' : 'password';
       icon.className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
     });
+  }
+
+  // ── Carrusel automático login ──
+  var slides = document.querySelectorAll('.login-carousel-slide');
+  var caps   = document.querySelectorAll('.login-slide-caption');
+  var dots   = document.querySelectorAll('.login-carousel-dot');
+  if (slides.length > 1) {
+    var idx = 0;
+    function show(n) {
+      slides.forEach(function(s,i){ s.classList.toggle('active', i===n); });
+      caps.forEach(function(c){
+        c.classList.toggle('active', parseInt(c.dataset.cap||-1) === n);
+      });
+      dots.forEach(function(d,i){ d.classList.toggle('active', i===n); });
+      idx = n;
+    }
+    dots.forEach(function(d,i){ d.addEventListener('click', function(){ show(i); restart(); }); });
+    var timer;
+    function restart(){ clearInterval(timer); timer = setInterval(function(){ show((idx+1)%slides.length); }, 5500); }
+    restart();
   }
 })();
 </script>

@@ -1,194 +1,336 @@
 {% extends "base.html" %}
-{% block title %}Gestión de Roles — ILUS{% endblock %}
+{% block title %}Roles y permisos — ILUS{% endblock %}
 
 {% block content %}
 <style>
 :root{--rad:12px;--shadow:0 2px 12px rgba(0,0,0,.07);--border:#eaecf0;}
-.r-card{background:#fff;border-radius:var(--rad);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;}
-.r-card-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;background:#fafbfc;}
-.r-card-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin:0;}
-.role-pill{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;padding:2px 10px;border-radius:50px;}
+.r-card{background:#fff;border-radius:var(--rad);border:1px solid var(--border);
+        box-shadow:var(--shadow);overflow:hidden;}
+.r-card-header{padding:14px 20px;border-bottom:1px solid var(--border);
+               display:flex;align-items:center;justify-content:space-between;
+               gap:8px;background:#fafbfc;}
+.r-card-title{font-size:.72rem;font-weight:800;text-transform:uppercase;
+              letter-spacing:.8px;color:#6b7280;margin:0;}
+
+.role-pill{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;
+           font-weight:700;padding:2px 10px;border-radius:50px;}
 .role-superadmin{background:#fee2e2;color:#991b1b;}
-.role-admin{background:#fef9c3;color:#854d0e;}
-.role-ejecutivo{background:#dbeafe;color:#1d4ed8;}
-.role-editor{background:#ede9fe;color:#5b21b6;}
+.role-admin{background:#dbeafe;color:#1d4ed8;}
+.role-editor{background:#fed7aa;color:#9a3412;}
+.role-mantenciones{background:#dcfce7;color:#166534;}
+.role-transporte{background:#fef3c7;color:#854d0e;}
+.role-vendedor{background:#ede9fe;color:#5b21b6;}
 .role-lector{background:#f3f4f6;color:#374151;}
-.role-vendedor{background:#dcfce7;color:#166534;}
-.ref-card{border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:8px;
-          display:flex;align-items:flex-start;gap:12px;transition:box-shadow .15s;}
-.ref-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.08);}
-.ref-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;}
-.toast-stack{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
-.ilus-toast{background:#1a1a2e;color:#fff;padding:10px 18px;border-radius:8px;font-size:.83rem;
-            box-shadow:0 4px 16px rgba(0,0,0,.18);pointer-events:all;
-            animation:slideIn .25s ease;min-width:220px;}
+
+/* Sección tabs (Asignación / Matriz) */
+.uni-tabs{display:flex;border-bottom:2px solid var(--border);background:#fff;
+          border-radius:var(--rad) var(--rad) 0 0;padding:0 8px;
+          box-shadow:0 2px 8px rgba(0,0,0,.04);}
+.uni-tab{padding:14px 22px;border:none;background:none;font-size:.86rem;
+         font-weight:600;color:#6b7280;cursor:pointer;border-bottom:3px solid transparent;
+         margin-bottom:-2px;transition:all .15s;display:inline-flex;align-items:center;gap:8px;}
+.uni-tab:hover{color:#374151;}
+.uni-tab.active{color:#cc0000;border-bottom-color:#cc0000;}
+.uni-pane{display:none;background:#fff;border-radius:0 0 var(--rad) var(--rad);
+          padding:18px 0;border:1px solid var(--border);border-top:none;
+          box-shadow:0 2px 8px rgba(0,0,0,.04);}
+.uni-pane.active{display:block;}
+
+/* Matriz */
+.rm-rol-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:14px 18px;
+             border-bottom:1px solid var(--border);background:#fafbfc;}
+.rm-rol-btn{padding:7px 14px;border:1px solid #e5e7eb;border-radius:8px;
+            background:#fff;font-size:.78rem;font-weight:600;color:#6b7280;
+            cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+.rm-rol-btn:hover{border-color:#cbd5e1;}
+.rm-rol-btn.active{background:#0f172a;color:#fff;border-color:#0f172a;}
+.rm-rol-btn .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+.rm-rol-btn .badge-sys{background:#fee2e2;color:#991b1b;font-size:.55rem;
+                       padding:1px 5px;border-radius:50px;font-weight:800;}
+.rm-rol-btn .badge-tot{background:#fee2e2;color:#991b1b;font-size:.55rem;
+                       padding:1px 5px;border-radius:50px;font-weight:800;}
+
+.rm-matrix-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.rm-matrix-table th{padding:10px 12px;text-align:left;font-size:.66rem;
+                    font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+                    color:#6b7280;background:#fafbfc;border-bottom:2px solid var(--border);}
+.rm-matrix-table td{padding:10px 12px;border-bottom:1px solid #f3f4f6;}
+.rm-modulo{font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;}
+.rm-modulo i{color:#cc0000;font-size:1rem;}
+
+.rm-action-list{display:flex;flex-wrap:wrap;gap:8px;}
+.rm-action-chip{display:inline-flex;align-items:center;gap:6px;
+                padding:5px 12px;border:1px solid #e5e7eb;border-radius:50px;
+                background:#fff;font-size:.74rem;font-weight:600;color:#6b7280;
+                cursor:pointer;transition:all .15s;user-select:none;}
+.rm-action-chip:hover{border-color:#9ca3af;}
+.rm-action-chip input{display:none;}
+.rm-action-chip.checked{background:#dcfce7;border-color:#86efac;color:#166534;}
+.rm-action-chip.checked::before{content:'✓ ';font-weight:800;}
+
+.rm-actions-bar{padding:14px 18px;border-top:1px solid var(--border);
+                background:#fafbfc;display:flex;justify-content:space-between;
+                align-items:center;gap:8px;flex-wrap:wrap;}
+
+.toast-stack{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;
+             flex-direction:column;gap:8px;pointer-events:none;}
+.ilus-toast{background:#1a1a2e;color:#fff;padding:10px 18px;border-radius:8px;
+            font-size:.83rem;box-shadow:0 4px 16px rgba(0,0,0,.18);
+            pointer-events:all;animation:slideIn .25s ease;min-width:220px;}
 .ilus-toast.success{border-left:4px solid #16a34a;}
 .ilus-toast.error{border-left:4px solid #dc2626;}
 @keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
 </style>
 
-{# ── Breadcrumb ── #}
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
-  <div class="d-flex align-items-center gap-2">
-    <a href="{{ url_for('users_index') }}" class="btn btn-sm btn-dark-ilus">
-      <i class="bi bi-arrow-left"></i>
-    </a>
-    <nav aria-label="breadcrumb" style="font-size:.78rem">
-      <span class="text-muted">Administración /</span>
-      <span class="fw-semibold ms-1">Gestión de Roles</span>
-    </nav>
+{# ── Header ── #}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-shield-lock me-2" style="color:#cc0000"></i>Roles y permisos</h4>
+    <p class="text-muted mb-0" style="font-size:.85rem">
+      Asigna roles a usuarios y configura los permisos de cada rol en una sola pantalla.
+    </p>
   </div>
+  <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#modalNuevoRol">
+    <i class="bi bi-plus-lg me-1"></i>Nuevo rol
+  </button>
 </div>
 
-<div class="row g-4">
+{# ── Tabs principales ── #}
+<div class="uni-tabs">
+  <button class="uni-tab active" onclick="uniTab('usuarios',this)">
+    <i class="bi bi-people"></i>Asignar a usuarios
+    <span class="badge bg-secondary ms-1" style="font-size:.62rem">{{ users|length }}</span>
+  </button>
+  <button class="uni-tab" onclick="uniTab('matriz',this)" id="tabMatrizBtn">
+    <i class="bi bi-grid-3x3-gap-fill"></i>Matriz de permisos
+    <span class="badge bg-secondary ms-1" style="font-size:.62rem">{{ roles|length + 1 }}</span>
+  </button>
+</div>
 
-  {# ── Tabla de usuarios ── #}
-  <div class="col-12 col-xl-8">
-    <div class="r-card">
-      <div class="r-card-header">
-        <span class="r-card-title"><i class="bi bi-people me-1"></i>Usuarios y roles</span>
-        <span class="text-muted" style="font-size:.77rem">{{ users|length }} usuario(s)</span>
-      </div>
-      <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0" style="font-size:.84rem">
-          <thead class="table-light">
-            <tr>
-              <th style="padding:10px 20px">Usuario</th>
-              <th>Rol actual</th>
-              <th style="width:220px">Cambiar rol</th>
-              <th style="width:80px">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for u in users %}
-          <tr id="user-row-{{ u.id }}">
-            <td style="padding:10px 20px">
-              <div class="d-flex align-items-center gap-2">
-                <div style="width:34px;height:34px;border-radius:50%;background:#f3f4f6;
-                            display:flex;align-items:center;justify-content:center;
-                            font-weight:700;font-size:.8rem;color:#374151;flex-shrink:0">
-                  {{ (u.nombre or u.username)[0].upper() }}
-                </div>
-                <div>
-                  <div class="fw-semibold" style="font-size:.85rem">{{ u.nombre or '—' }}</div>
-                  <div class="text-muted" style="font-size:.72rem">{{ u.username }}</div>
-                </div>
-              </div>
-            </td>
-            <td>
-              <span class="role-pill role-{{ u.role }}" id="role-badge-{{ u.id }}">
-                <i class="bi bi-shield-fill"></i>{{ u.role }}
-              </span>
-            </td>
-            <td>
-              <div class="d-flex gap-1 align-items-center">
-                <select class="form-select form-select-sm" id="role-sel-{{ u.id }}"
-                        style="font-size:.78rem;max-width:160px">
-                  {% for r in roles %}
-                  <option value="{{ r.value }}" {% if u.role == r.value %}selected{% endif %}>
-                    {{ r.label }}
-                  </option>
-                  {% endfor %}
-                </select>
-                <button class="btn btn-sm btn-ilus px-2" onclick="cambiarRol({{ u.id }})" title="Guardar">
-                  <i class="bi bi-check-lg"></i>
-                </button>
-              </div>
-            </td>
-            <td>
-              {% if u.active %}
-              <span style="background:#dcfce7;color:#166534;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Activo</span>
-              {% else %}
-              <span style="background:#f3f4f6;color:#6b7280;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Inactivo</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+{# ══════════════════════════════════════════════════════════════════
+   PANE 1: ASIGNACIÓN DE USUARIOS
+══════════════════════════════════════════════════════════════════ #}
+<div class="uni-pane active" id="uni-usuarios">
+  <div class="r-card-header" style="border-bottom:1px solid var(--border);background:#fafbfc">
+    <span class="r-card-title"><i class="bi bi-people me-1"></i>Gestión de acceso</span>
+    <span class="text-muted" style="font-size:.77rem">{{ users|length }} usuario(s)</span>
   </div>
-
-  {# ── Matriz de permisos ── #}
-  <div class="col-12">
-    <div class="r-card mt-2">
-      <div class="r-card-header">
-        <span class="r-card-title"><i class="bi bi-grid-3x3-gap me-1"></i>Matriz de acceso por rol</span>
-        <span class="text-muted" style="font-size:.74rem">✅ Acceso completo &nbsp;·&nbsp; 👁 Solo lectura &nbsp;·&nbsp; — Sin acceso</span>
-      </div>
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem">
-          <thead style="background:#f8fafc">
-            <tr>
-              <th style="min-width:150px;padding-left:20px">Módulo / Función</th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-superadmin">SuperAdmin</span></th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-admin">Admin</span></th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-ejecutivo">Ejecutivo</span></th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-editor">Editor</span></th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-lector">Lector</span></th>
-              <th class="text-center" style="width:100px"><span class="role-pill role-vendedor">Vendedor</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% set M = [
-              ('🏷️ Etiquetas',          'Ver productos',          True,True,False,True,True,True),
-              ('🏷️ Etiquetas',          'Crear/editar productos', True,True,False,True,False,False),
-              ('🚛 Transporte',          'Cubicador',              True,True,False,True,False,True),
-              ('🚛 Transporte',          'Monitor / Manifiestos',  True,True,False,True,False,False),
-              ('🔧 Mantenciones',        'Dashboard',              True,True,True,False,False,False),
-              ('🔧 Mantenciones',        'Clientes / Fichas',      True,True,True,False,False,False),
-              ('🔧 Mantenciones',        'Calendario',             True,True,True,False,False,False),
-              ('🔧 Mantenciones',        'Análisis',               True,True,True,False,False,False),
-              ('👥 Colaboradores',       'Ver / Editar',           True,True,False,True,False,False),
-              ('📋 Evaluaciones',        'Ver / Crear',            True,True,False,True,False,False),
-              ('💬 Comunicaciones',      'Email / WhatsApp',       True,True,False,False,False,False),
-              ('⚙️ Ajustes',             'Usuarios',               True,True,False,False,False,False),
-              ('⚙️ Ajustes',             'Roles y permisos',       True,True,False,False,False,False),
-              ('⚙️ Ajustes',             'Preguntas Genéricas',    True,False,False,False,False,False),
-            ] %}
-            {% set last_mod = namespace(v='') %}
-            {% for modulo,funcion,sa,ad,ej,ed,lc,vd in M %}
-            {% set show_mod = modulo != last_mod.v %}
-            {% set last_mod.v = modulo %}
-            <tr{% if show_mod %} style="border-top:2px solid #f1f5f9"{% endif %}>
-              <td style="padding-left:20px">
-                {% if show_mod %}<div style="font-weight:700;color:#374151">{{ modulo }}</div>{% endif %}
-                <div style="color:#6b7280;font-size:.76rem;padding-left:12px">{{ funcion }}</div>
-              </td>
-              {% for v in [sa,ad,ej,ed,lc,vd] %}
-              <td class="text-center">
-                {% if v %}<span style="color:#16a34a;font-size:1rem">✅</span>{% else %}<span style="color:#d1d5db;font-size:.85rem">—</span>{% endif %}
-              </td>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.84rem">
+      <thead class="table-light">
+        <tr>
+          <th style="padding:10px 20px">Usuario</th>
+          <th>Nombre</th>
+          <th>Rol actual</th>
+          <th style="width:240px">Cambiar rol</th>
+          <th style="width:80px">Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+      <tr id="user-row-{{ u.id }}">
+        <td style="padding:10px 20px">
+          <span class="font-monospace" style="font-size:.78rem;color:#374151">{{ u.username }}</span>
+        </td>
+        <td>
+          <div class="d-flex align-items-center gap-2">
+            <div style="width:32px;height:32px;border-radius:50%;background:#f3f4f6;
+                        display:flex;align-items:center;justify-content:center;
+                        font-weight:700;font-size:.75rem;color:#374151;flex-shrink:0">
+              {{ (u.nombre or u.username)[0].upper() }}
+            </div>
+            <span class="fw-semibold">{{ u.nombre or '—' }}</span>
+          </div>
+        </td>
+        <td>
+          <span class="role-pill role-{{ u.role }}" id="role-badge-{{ u.id }}">
+            <i class="bi bi-shield-fill"></i>{{ u.role }}
+          </span>
+        </td>
+        <td>
+          <div class="d-flex gap-1 align-items-center">
+            <select class="form-select form-select-sm" id="role-sel-{{ u.id }}"
+                    style="font-size:.78rem;max-width:170px">
+              <option value="superadmin" {% if u.role == 'superadmin' %}selected{% endif %}>Super Administrador</option>
+              {% for r in roles %}
+              <option value="{{ r.slug }}" {% if u.role == r.slug %}selected{% endif %}>
+                {{ r.nombre }}
+              </option>
               {% endfor %}
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+            </select>
+            <button class="btn btn-sm btn-ilus px-2" onclick="cambiarRol({{ u.id }})" title="Guardar">
+              <i class="bi bi-check-lg"></i>
+            </button>
+          </div>
+        </td>
+        <td>
+          {% if u.active %}
+          <span style="background:#dcfce7;color:#166534;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Activo</span>
+          {% else %}
+          <span style="background:#f3f4f6;color:#6b7280;font-size:.65rem;padding:2px 9px;border-radius:50px;font-weight:700">Inactivo</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
-
 </div>
 
-{# ── Toast stack ── #}
-<div class="toast-stack" id="toastStack"></div>
+{# ══════════════════════════════════════════════════════════════════
+   PANE 2: MATRIZ DE PERMISOS
+══════════════════════════════════════════════════════════════════ #}
+<div class="uni-pane" id="uni-matriz">
+  <div class="rm-rol-tabs">
+    {% for r in roles %}
+    <button class="rm-rol-btn{% if loop.first %} active{% endif %}" type="button"
+            data-rol="{{ r.slug }}" onclick="rmSelectRol('{{ r.slug }}', this)">
+      <span class="dot" style="background:{{ r.color }}"></span>
+      {{ r.nombre }}
+      {% if r.is_system %}<span class="badge-sys">SISTEMA</span>{% endif %}
+    </button>
+    {% endfor %}
+    <button class="rm-rol-btn" type="button"
+            data-rol="superadmin" onclick="rmSelectRol('superadmin', this)">
+      <span class="dot" style="background:#dc2626"></span>
+      Super Administrador
+      <span class="badge-tot">TOTAL</span>
+    </button>
+  </div>
 
+  {# Forms editables por rol #}
+  {% for r in roles %}
+  <form method="post" action="{{ url_for('admin_roles_matrix_save') }}"
+        id="form-{{ r.slug }}" class="rm-form" style="{% if not loop.first %}display:none{% endif %}">
+    <input type="hidden" name="rol_slug" value="{{ r.slug }}">
+    <table class="rm-matrix-table">
+      <thead>
+        <tr>
+          <th style="width:200px">Módulo</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for mod_key, mod_cfg in matrix.items() %}
+        <tr>
+          <td>
+            <div class="rm-modulo"><i class="bi {{ mod_cfg.icon }}"></i>{{ mod_cfg.label }}</div>
+          </td>
+          <td>
+            <div class="rm-action-list">
+              {% for accion in mod_cfg.acciones %}
+              {% set checked = perms.get(r.slug,{}).get(mod_key,{}).get(accion, False) %}
+              <label class="rm-action-chip{% if checked %} checked{% endif %}">
+                <input type="checkbox" name="p_.{{ mod_key }}.{{ accion }}"
+                       {% if checked %}checked{% endif %}
+                       onchange="this.parentElement.classList.toggle('checked', this.checked)">
+                {{ accion.replace('_',' ').title() }}
+              </label>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="rm-actions-bar">
+      <div class="d-flex gap-2 align-items-center" style="font-size:.78rem;color:#6b7280">
+        <i class="bi bi-info-circle"></i>
+        Cambios afectan a todos los usuarios con rol <strong>{{ r.nombre }}</strong>.
+      </div>
+      <div class="d-flex gap-2">
+        {% if not r.is_system %}
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                onclick="if(confirm('Eliminar el rol \'{{ r.nombre }}\'? Los usuarios pasarán a \'lector\'.')) location.href='{{ url_for('admin_rol_eliminar', slug=r.slug) }}'">
+          <i class="bi bi-trash me-1"></i>Eliminar rol
+        </button>
+        {% endif %}
+        <button type="submit" class="btn btn-sm btn-ilus">
+          <i class="bi bi-check-lg me-1"></i>Guardar permisos de {{ r.nombre }}
+        </button>
+      </div>
+    </div>
+  </form>
+  {% endfor %}
+
+  {# Vista superadmin (read-only) #}
+  <div id="form-superadmin" class="rm-form" style="display:none;padding:32px 18px;text-align:center">
+    <i class="bi bi-shield-fill-check" style="font-size:3rem;color:#dc2626"></i>
+    <h5 class="mt-3 fw-bold">Super Administrador</h5>
+    <p class="text-muted" style="font-size:.85rem;max-width:500px;margin:8px auto 0">
+      Tiene acceso total al sistema. Este rol no es editable y siempre puede ver y modificar todo.
+    </p>
+  </div>
+</div>
+
+{# ── Modal: nuevo rol ── #}
+<div class="modal fade" id="modalNuevoRol" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('admin_rol_crear') }}">
+        <div class="modal-header" style="background:#0f172a;color:#fff">
+          <h5 class="modal-title"><i class="bi bi-shield-plus me-2"></i>Crear nuevo rol</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Nombre del rol <span class="text-danger">*</span></label>
+            <input type="text" name="nombre" class="form-control form-control-sm" placeholder="Ej: Supervisor de bodega" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Descripción</label>
+            <textarea name="descripcion" class="form-control form-control-sm" rows="2"
+                      placeholder="Para qué sirve este rol"></textarea>
+          </div>
+          <div class="mb-0">
+            <label class="form-label small fw-semibold">Color identificador</label>
+            <input type="color" name="color" class="form-control form-control-color form-control-sm" value="#7c3aed">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-sm btn-ilus">
+            <i class="bi bi-check-lg me-1"></i>Crear rol
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const ROLES_META = {{ roles | tojson }};
+function uniTab(tab, btn) {
+  document.querySelectorAll('.uni-tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.uni-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('uni-' + tab).classList.add('active');
+  if (tab === 'matriz') location.hash = '#matriz';
+  else if (location.hash) history.replaceState(null,'',location.pathname);
+}
+// Hash al cargar
+if (location.hash === '#matriz') {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('tabMatrizBtn').click();
+  });
+}
+
+function rmSelectRol(slug, btn) {
+  document.querySelectorAll('.rm-rol-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.rm-form').forEach(f => f.style.display = 'none');
+  const form = document.getElementById('form-' + slug);
+  if (form) form.style.display = '';
+}
 
 async function cambiarRol(uid) {
   const sel = document.getElementById(`role-sel-${uid}`);
   const newRole = sel.value;
   const badge   = document.getElementById(`role-badge-${uid}`);
-
-  // Confirmación
-  const label = ROLES_META.find(r => r.value === newRole)?.label || newRole;
-  if (!confirm(`¿Cambiar el rol de este usuario a "${label}"?\n\nEste cambio es inmediato.`)) return;
-
+  if (!confirm(`¿Cambiar el rol a "${newRole}"?\n\nEste cambio es inmediato.`)) return;
   try {
     const r = await fetch(`/admin/roles/${uid}`, {
       method: 'PUT',
@@ -196,15 +338,12 @@ async function cambiarRol(uid) {
       body: JSON.stringify({role: newRole})
     });
     const data = await r.json();
-
     if (data.ok) {
-      // Actualizar badge visual
       badge.className = `role-pill role-${newRole}`;
       badge.innerHTML = `<i class="bi bi-shield-fill"></i>${newRole}`;
-      showToast(`Rol actualizado a "${label}"`, 'success');
+      showToast(`Rol actualizado a "${newRole}"`, 'success');
     } else {
       showToast(data.error || 'Error al actualizar rol', 'error');
-      // Restaurar select al valor anterior reflejado en el badge
     }
   } catch(e) {
     showToast('Error de conexión', 'error');
@@ -219,5 +358,36 @@ function showToast(msg, type='success') {
   stack.appendChild(t);
   setTimeout(() => { t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 300); }, 3200);
 }
+
+// ─── Guardar matriz de permisos vía AJAX (sin recargar) ───────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('form.rm-form').forEach(form => {
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const btn = form.querySelector('button[type="submit"]');
+      const originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+      try {
+        const r = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.ok) {
+          const rolNombre = form.querySelector('input[name="rol_slug"]').value;
+          showToast(`Permisos de "${rolNombre}" actualizados — ${data.permisos} acción(es) habilitada(s)`, 'success');
+          btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Guardado';
+          setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 1600);
+        } else {
+          showToast(data.error || 'Error al guardar', 'error');
+          btn.innerHTML = originalHTML;
+          btn.disabled = false;
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+      }
+    });
+  });
+});
 </script>
 {% endblock %}

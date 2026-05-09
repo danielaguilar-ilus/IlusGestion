@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Imágenes del login — ILUS{% endblock %}
+{% block content %}
+<style>
+.li-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+         box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden;}
+.li-thumb{width:100%;height:160px;object-fit:cover;display:block;background:#f3f4f6;}
+.li-empty{height:160px;display:flex;align-items:center;justify-content:center;
+          color:#9ca3af;font-size:.85rem;background:#fafbfc;}
+.li-form-row{display:flex;flex-direction:column;gap:6px;padding:12px 14px;}
+.li-form-row input,.li-form-row textarea{font-size:.82rem;}
+.li-status-on{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;
+              font-size:.62rem;font-weight:700;}
+.li-status-off{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;
+               font-size:.62rem;font-weight:700;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-images me-2" style="color:#cc0000"></i>Imágenes del login</h4>
+    <p class="text-muted mb-0" style="font-size:.85rem">
+      Carrusel de hasta 5 imágenes que aparecen en el panel izquierdo del login.
+      Sirve para destacar tu marca, equipo o productos.
+    </p>
+  </div>
+  <a href="{{ url_for('login') }}" target="_blank" class="btn btn-sm btn-outline-dark">
+    <i class="bi bi-eye me-1"></i>Ver login
+  </a>
+</div>
+
+{# ── Subir nueva imagen ── #}
+<div class="li-card mb-4 p-3">
+  <form method="post" action="{{ url_for('admin_login_imagenes_subir') }}" enctype="multipart/form-data">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Imagen <span class="text-danger">*</span></label>
+        <input type="file" name="imagen" class="form-control form-control-sm"
+               accept="image/png,image/jpeg,image/webp" required>
+        <small class="text-muted">PNG/JPG/WEBP — recomendado 1600×1200</small>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Título (opcional)</label>
+        <input type="text" name="titulo" class="form-control form-control-sm"
+               placeholder="Ej: Bodega Quilicura">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Subtítulo (opcional)</label>
+        <input type="text" name="subtitulo" class="form-control form-control-sm"
+               placeholder="Ej: 1.500m² para tu equipo">
+      </div>
+      <div class="col-md-1">
+        <div class="form-check mt-3">
+          <input type="checkbox" name="activa" class="form-check-input" id="activa_new" checked>
+          <label class="form-check-label small" for="activa_new">Activa</label>
+        </div>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-ilus w-100">
+          <i class="bi bi-cloud-arrow-up me-1"></i>Subir
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+
+{# ── Galería de imágenes ── #}
+{% if imagenes %}
+<div class="row g-3">
+  {% for img in imagenes %}
+  <div class="col-12 col-md-6 col-xl-4">
+    <div class="li-card">
+      <img src="{{ url_for('static', filename=img.archivo_path) }}" class="li-thumb" alt="">
+      <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}">
+        <div class="li-form-row">
+          <div class="d-flex align-items-center justify-content-between">
+            <span class="{% if img.activa %}li-status-on{% else %}li-status-off{% endif %}">
+              {{ 'Activa' if img.activa else 'Inactiva' }}
+            </span>
+            <small class="text-muted">#{{ img.id }} · orden {{ img.orden }}</small>
+          </div>
+          <input type="text" name="titulo" class="form-control form-control-sm"
+                 value="{{ img.titulo or '' }}" placeholder="Título">
+          <input type="text" name="subtitulo" class="form-control form-control-sm"
+                 value="{{ img.subtitulo or '' }}" placeholder="Subtítulo">
+          <div class="d-flex gap-2 align-items-center">
+            <input type="number" name="orden" class="form-control form-control-sm"
+                   value="{{ img.orden }}" min="0" max="20" style="width:90px"
+                   title="Orden (menor primero)">
+            <div class="form-check m-0">
+              <input type="checkbox" name="activa" id="activa_{{ img.id }}"
+                     class="form-check-input" {% if img.activa %}checked{% endif %}>
+              <label class="form-check-label small" for="activa_{{ img.id }}">Activa</label>
+            </div>
+            <button class="btn btn-sm btn-ilus ms-auto">
+              <i class="bi bi-check-lg"></i>
+            </button>
+            <button type="submit" name="action" value="delete"
+                    onclick="return confirm('¿Eliminar esta imagen?')"
+                    class="btn btn-sm btn-outline-danger">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="li-card text-center p-5">
+  <i class="bi bi-images" style="font-size:3rem;opacity:.2;color:#9ca3af"></i>
+  <div class="fw-bold mt-3" style="font-size:.95rem;color:#374151">Sin imágenes en el carrusel</div>
+  <div style="font-size:.85rem;color:#6b7280">Sube la primera imagen con el formulario de arriba.</div>
+</div>
+{% endif %}
+
+<div class="alert alert-info mt-4 py-2" style="font-size:.78rem">
+  <i class="bi bi-info-circle me-1"></i>
+  Solo se muestran las imágenes <strong>activas</strong> en el carrusel del login. El máximo es 5 activas.
+  Usa el campo <em>Orden</em> para controlar la secuencia.
+</div>
+{% endblock %}

@@ -90,11 +90,12 @@
 <div class="d-flex gap-2 mb-3 justify-content-end flex-wrap">
 
   <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline"
-        onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
+        onsubmit="const b=this.querySelector('button');const old=b.innerHTML;b.disabled=true;b.innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...';setTimeout(()=>{b.disabled=false;b.innerHTML=old},8000)">
     {% for i in range(rdocs|length) %}
     <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
     <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">
     {% endfor %}
+    <input type="hidden" name="payload_json" value='{{ resultado.export_payload|tojson }}'>
     <button type="submit" class="btn btn-sm fw-semibold"
             style="background:#1a7a1a;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-excel me-1"></i>Excel

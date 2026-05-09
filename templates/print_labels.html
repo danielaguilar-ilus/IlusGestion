@@ -516,10 +516,10 @@
   --label-border: .38mm;
   --hdr-h: 24mm;
   --meta-h: 12mm;
-  --prod-h: 18mm;
+  --prod-h: 22mm;          /* +4mm para que el nombre tenga más aire */
   --stripe-h: 8mm;
   --pad-x: 4mm;
-  --product-pad-x: 1.8mm;
+  --product-pad-x: 4mm;    /* margen lateral mayor para look "premium" */
   --cell-pad: 1.5mm;
   --gap-sm: 1.1mm;
   --sports-size: 7.2mm;
@@ -531,7 +531,7 @@
   --ilus-scale: 1.25;
   --ilus-lift: -1.85mm;
   --meta-size: 4.3mm;
-  --product-size: 8mm;
+  --product-size: 12mm;    /* base mayor — el JS lo ajusta hacia abajo si no cabe */
   --icon-size: 5.5mm;
   --dim-icon-w: 6mm;
   --dim-label-w: 11mm;
@@ -966,14 +966,28 @@
 
     <div class="panel-section">
       <div class="panel-label">Tamano de etiqueta</div>
-      <a class="radio-link {% if format_key == '150x100' %}is-active{% endif %}" href="{{ url_for('print_labels_alt', pid=product.id, fmt='150x100') }}">
+      {# Preservar bulto + qty_X al cambiar de tamaño — fix bug "vuelve a todas las etiquetas al cambiar formato" #}
+      {% set _preserve_args = {} %}
+      {% if request.args.get('bulto') %}{% set _ = _preserve_args.update({'bulto': request.args.get('bulto')}) %}{% endif %}
+      {% for b in bultos %}{% set _ = _preserve_args.update({'qty_' ~ b.bulto_num: qty_per_bulto[b.bulto_num]}) %}{% endfor %}
+      <a class="radio-link {% if format_key == '150x100' %}is-active{% endif %}"
+         href="{{ url_for('print_labels_alt', pid=product.id, fmt='150x100', **_preserve_args) }}">
         <span class="radio-dot"></span>
         <span><strong>150 x 100 mm</strong><br><small>Etiqueta grande</small></span>
       </a>
-      <a class="radio-link {% if format_key == '100x50' %}is-active{% endif %}" href="{{ url_for('print_labels_alt', pid=product.id, fmt='100x50') }}">
+      <a class="radio-link {% if format_key == '100x50' %}is-active{% endif %}"
+         href="{{ url_for('print_labels_alt', pid=product.id, fmt='100x50', **_preserve_args) }}">
         <span class="radio-dot"></span>
         <span><strong>100 x 50 mm</strong><br><small>Etiqueta pequena</small></span>
       </a>
+      {% if request.args.get('bulto') %}
+      <div style="margin-top:10px;padding:8px 12px;background:#fff6f6;border:1px solid #f4c2c2;border-radius:6px;font-size:.74rem;color:#7f1d1d;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span><i class="bi bi-funnel-fill me-1"></i>Filtrado: <strong>Bulto {{ request.args.get('bulto') }}</strong></span>
+        <a href="{{ url_for('print_labels_alt', pid=product.id, fmt=format_key) }}" style="color:#7f1d1d;text-decoration:underline;font-weight:700">
+          Ver todos
+        </a>
+      </div>
+      {% endif %}
     </div>
 
     <div class="panel-section">
@@ -1033,28 +1047,38 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function fitTextToBox(el, maxPx, minPx) {
     if (!el) return;
-    if (formatKey !== "100x50") {
-      let size = maxPx;
-      el.style.fontSize = size + "px";
-      el.style.lineHeight = "1.02";
-      for (let i = 0; i < 120; i += 1) {
-        const tooTall = el.scrollHeight > el.clientHeight + 1;
-        if (!tooTall || size <= minPx) break;
-        size -= 0.5;
-        el.style.fontSize = size + "px";
-      }
-      return;
+    // Quitar line-clamp dinámico para medir bien (lo restauramos al final)
+    const prevClamp = el.style.webkitLineClamp;
+    el.style.webkitLineClamp = "unset";
+    el.style.lineHeight = "1.02";
+    // Permitir que el contenedor revele si desborda (max-height puede mentir)
+    const prevMaxHeight = el.style.maxHeight;
+    el.style.maxHeight = "none";
+
+    function fits(px) {
+      el.style.fontSize = px + "px";
+      // Forzar reflow
+      void el.offsetHeight;
+      const parent = el.parentElement;
+      const parentH = parent ? (parent.clientHeight - 2) : el.clientHeight;
+      const parentW = parent ? (parent.clientWidth  - 2) : el.clientWidth;
+      const h = el.scrollHeight;
+      const w = el.scrollWidth;
+      return h <= parentH && w <= parentW;
     }
 
-    let size = maxPx;
-    el.style.fontSize = size + "px";
-    el.style.lineHeight = "1.02";
-    for (let i = 0; i < 100; i += 1) {
-      const tooTall = el.scrollHeight > el.clientHeight + 1;
-      if (!tooTall || size <= minPx) break;
-      size -= 0.5;
-      el.style.fontSize = size + "px";
+    // Búsqueda binaria del tamaño máximo que ENCAJA
+    let lo = minPx, hi = maxPx, best = minPx;
+    while (lo <= hi) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) { best = mid; lo = mid + 0.5; }
+      else            { hi = mid - 0.5; }
     }
+    el.style.fontSize = best + "px";
+
+    // Restaurar
+    el.style.maxHeight = prevMaxHeight;
+    el.style.webkitLineClamp = prevClamp || "2";
   }
 
   function renderBarcode(barcode) {
@@ -1087,7 +1111,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   document.querySelectorAll(".product-name").forEach((el) => {
-    fitTextToBox(el, formatKey === "100x50" ? 12.5 : 52, formatKey === "100x50" ? 6.5 : 13);
+    // 150x100: hasta 110px (impacto fuerte para nombres cortos), mín 14px para que siempre se lea
+    // 100x50:  igual que antes (sin cambios — esta etiqueta ya estaba bien)
+    fitTextToBox(el, formatKey === "100x50" ? 16 : 110, formatKey === "100x50" ? 6 : 14);
   });
 
   document.querySelectorAll(".sku-value").forEach((el) => {

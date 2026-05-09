@@ -54,3 +54,7 @@ server.err.log
 run_local_server.bat
 run_local_server.ps1
 start.bat
+
+# Backups locales (no subir a producción)
+.backups/
+*.bak

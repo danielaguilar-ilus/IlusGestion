@@ -592,7 +592,120 @@
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
         <i class="bi bi-calendar-plus me-1"></i>Nueva visita
       </button>
+      {% if permissions.admin or permissions.superadmin %}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)"
+                data-bs-toggle="dropdown">
+          <i class="bi bi-three-dots-vertical"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item" href="#" onclick="window.print();return false">
+            <i class="bi bi-printer me-2"></i>Imprimir ficha
+          </a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-danger" href="#" onclick="abrirEliminarCliente();return false">
+            <i class="bi bi-trash me-2"></i>Eliminar cliente
+          </a></li>
+        </ul>
+      </div>
+      {% endif %}
     </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════════════════════════
+   PIPELINE VISUAL — trayectoria del cliente
+══════════════════════════════════════════════════════════════════ #}
+{% set _ct_vigente = contratos|selectattr('estado','equalto','vigente')|list|first if contratos else none %}
+{% set _has_eq = (maquinas|length) > 0 %}
+{% set _has_ct = (contratos|length) > 0 %}
+{% set _has_visita = stats.realizadas_12m > 0 %}
+{% set _has_prox = stats.prox_visita_fecha is not none %}
+{% set _has_reportes = false %}{# se calcula via JS #}
+
+<style>
+.cli-pipeline{
+  background:#fff;border:1px solid var(--border);border-radius:0 0 12px 12px;
+  padding:18px 24px;margin-bottom:14px;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);
+  display:flex;align-items:center;gap:0;overflow-x:auto;
+}
+.pipe-step{
+  display:flex;flex-direction:column;align-items:center;flex:1;min-width:90px;
+  position:relative;padding:0 6px;
+}
+.pipe-step::after{
+  content:'';position:absolute;top:18px;left:50%;width:100%;height:2px;
+  background:#e5e7eb;z-index:0;
+}
+.pipe-step:last-child::after{display:none;}
+.pipe-step.done::after{background:#16a34a;}
+.pipe-step.warn::after{background:#f59e0b;}
+.pipe-circle{
+  width:36px;height:36px;border-radius:50%;background:#f3f4f6;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.95rem;color:#9ca3af;
+  border:2px solid #e5e7eb;position:relative;z-index:1;
+  transition:all .25s;
+}
+.pipe-step.done .pipe-circle{background:#16a34a;color:#fff;border-color:#16a34a;}
+.pipe-step.warn .pipe-circle{background:#f59e0b;color:#fff;border-color:#f59e0b;}
+.pipe-step.current .pipe-circle{
+  background:#cc0000;color:#fff;border-color:#cc0000;
+  box-shadow:0 0 0 4px rgba(204,0,0,.15);
+}
+.pipe-label{
+  font-size:.68rem;font-weight:700;color:#6b7280;text-transform:uppercase;
+  letter-spacing:.4px;margin-top:6px;text-align:center;line-height:1.3;
+}
+.pipe-step.done .pipe-label,.pipe-step.warn .pipe-label,.pipe-step.current .pipe-label{color:#0f172a;}
+.pipe-sub{font-size:.62rem;color:#9ca3af;margin-top:1px;text-align:center;}
+</style>
+
+<div class="cli-pipeline">
+  {% set _step_cls = {
+    'cliente':  'done',
+    'equipos':  'done' if _has_eq else 'current',
+    'contrato': 'done' if _has_ct else ('warn' if _has_eq else ''),
+    'visitas':  'done' if _has_visita else ('current' if _has_ct else ''),
+    'prox':     'done' if _has_prox else ('current' if _has_visita else ''),
+    'reportes': '' if not _has_visita else 'current',
+  } %}
+  <div class="pipe-step done">
+    <div class="pipe-circle"><i class="bi bi-person-check-fill"></i></div>
+    <div class="pipe-label">Cliente</div>
+    <div class="pipe-sub">{{ cliente.estado.title() }}</div>
+  </div>
+  <div class="pipe-step {{ _step_cls.equipos }}" onclick="switchTab('equipos')" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-bicycle"></i></div>
+    <div class="pipe-label">Equipos</div>
+    <div class="pipe-sub">{{ maquinas|length }} reg.</div>
+  </div>
+  <div class="pipe-step {{ _step_cls.contrato }}" onclick="switchTab('contrato')" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-file-earmark-text-fill"></i></div>
+    <div class="pipe-label">Contrato</div>
+    <div class="pipe-sub">{% if _ct_vigente %}Vigente{% elif _has_ct %}{{ contratos[0].estado.replace('_',' ').title() }}{% else %}Sin contrato{% endif %}</div>
+  </div>
+  <div class="pipe-step {{ _step_cls.visitas }}" onclick="switchTab('visitas')" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-tools"></i></div>
+    <div class="pipe-label">Mantenciones</div>
+    <div class="pipe-sub">{{ stats.realizadas_12m }} hechas</div>
+  </div>
+  <div class="pipe-step {{ _step_cls.prox }}" onclick="abrirNuevaVisita()" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-calendar-event-fill"></i></div>
+    <div class="pipe-label">Próx. visita</div>
+    <div class="pipe-sub">{% if stats.prox_visita_fecha %}{{ stats.prox_visita_fecha.strftime('%d/%m') }}{% else %}—{% endif %}</div>
+  </div>
+  <div class="pipe-step {{ _step_cls.reportes }}" onclick="switchTab('reportes');cargarReportes()" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-file-earmark-medical-fill"></i></div>
+    <div class="pipe-label">Reportes</div>
+    <div class="pipe-sub">Post-servicio</div>
+  </div>
+  <div class="pipe-step" onclick="switchTab('repuestos');cargarRepuestos()" style="cursor:pointer">
+    <div class="pipe-circle"><i class="bi bi-gear-wide-connected"></i></div>
+    <div class="pipe-label">Repuestos</div>
+    <div class="pipe-sub">Ventas/garantía</div>
   </div>
 </div>
 
@@ -604,21 +717,41 @@
     </button>
     <button class="ftab-btn" data-tab="equipos" onclick="switchTab('equipos')">
       <i class="bi bi-bicycle"></i>Equipos
-      <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ maquinas|length }}</span>
+      {% if maquinas %}<span class="badge ms-1" style="font-size:.6rem;background:#dbeafe;color:#1e40af">{{ maquinas|length }}</span>{% endif %}
+    </button>
+    <button class="ftab-btn" data-tab="visitas" onclick="switchTab('visitas')">
+      <i class="bi bi-calendar-week"></i>Mantenciones
+      {% if visitas %}<span class="badge ms-1" style="font-size:.6rem;background:#dcfce7;color:#166534">{{ visitas|length }}</span>{% endif %}
     </button>
     <button class="ftab-btn" data-tab="contrato" onclick="switchTab('contrato')">
       <i class="bi bi-file-earmark-text"></i>Contrato
-      <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ contratos|length }}</span>
+      {% if contratos %}<span class="badge ms-1" style="font-size:.6rem;background:#ede9fe;color:#5b21b6">{{ contratos|length }}</span>{% endif %}
     </button>
     <button class="ftab-btn" data-tab="reportes" onclick="switchTab('reportes');cargarReportes()">
       <i class="bi bi-file-earmark-medical"></i>Reportes
     </button>
+    <button class="ftab-btn" data-tab="repuestos" onclick="switchTab('repuestos');cargarRepuestos()">
+      <i class="bi bi-gear-wide-connected"></i>Repuestos
+      <span id="repCountBadge" class="badge ms-1" style="font-size:.6rem;background:#fef3c7;color:#92400e;display:none">0</span>
+    </button>
+    <button class="ftab-btn" data-tab="finanzas" onclick="switchTab('finanzas');cargarFinanzas()">
+      <i class="bi bi-cash-coin"></i>Finanzas
+    </button>
+    <button class="ftab-btn" data-tab="documentos" onclick="switchTab('documentos');cargarDocumentos()">
+      <i class="bi bi-folder-fill"></i>Documentos
+    </button>
+    <button class="ftab-btn" data-tab="comunicaciones" onclick="switchTab('comunicaciones');cargarComunicaciones()">
+      <i class="bi bi-chat-dots"></i>Comunicaciones
+    </button>
     <button class="ftab-btn" data-tab="ia" onclick="switchTab('ia')">
       <i class="bi bi-stars"></i>IA &amp; Plan
     </button>
+    <button class="ftab-btn" data-tab="historial" onclick="switchTab('historial')">
+      <i class="bi bi-clock-history"></i>Historial
+      {% if logs %}<span class="badge ms-1" style="font-size:.6rem;background:#f3f4f6;color:#374151">{{ logs|length }}</span>{% endif %}
+    </button>
     <a href="{{ url_for('mant_notificaciones_centro') }}" class="ftab-btn" style="text-decoration:none;position:relative">
       <i class="bi bi-bell"></i>Notif.
-      {# Contar notificaciones pendientes para este cliente #}
     </a>
   </div>
 </div>
@@ -634,67 +767,129 @@
        ───────────────────────────────────────────────────────────── #}
     <div class="col-12 col-xl-8">
 
-      {# ── ESTADO + TIPO + VISITAS — Cards grandes destacadas ── #}
+      {# ── 6 KPI CARDS — Estado general / Contrato / Mantención / Repuestos / Visita / Cumplimiento ── #}
       <div class="row g-2 mb-3">
-        <div class="col-6 col-md-2">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Estado</div>
-            <div class="kpi-cell-val" style="color:{{ '#16a34a' if cliente.estado=='activo' else '#854d0e' if cliente.estado=='prospecto' else '#6b7280' }}">
-              {{ cliente.estado.title() }}
+
+        {# 1. Estado General #}
+        {% set est_color = '#16a34a' if cliente.estado=='activo' else '#d97706' if cliente.estado=='prospecto' else '#6b7280' %}
+        {% set est_bg = '#f0fdf4' if cliente.estado=='activo' else '#fffbeb' if cliente.estado=='prospecto' else '#f9fafb' %}
+        {% set est_icon = 'check-circle-fill' if cliente.estado=='activo' else 'clock-fill' if cliente.estado=='prospecto' else 'dash-circle-fill' %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="background:{{ est_bg }};border-left:3px solid {{ est_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-{{ est_icon }}" style="color:{{ est_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Estado general</div>
             </div>
+            <div class="kpi-cell-val" style="color:{{ est_color }};font-size:1.1rem">{{ cliente.estado.title() }}</div>
+            <div class="kpi-cell-sub">Cliente {{ cliente.estado }}</div>
           </div>
         </div>
-        <div class="col-6 col-md-2">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Tipo cliente</div>
-            <div class="kpi-cell-val" style="font-size:.95rem;color:#111">
-              {{ (cliente.tipo or 'Comercial').title() if cliente.get('tipo') else 'Comercial' }}
+
+        {# 2. Contrato #}
+        {% set ct_activo = contratos|selectattr('estado','equalto','vigente')|list|first if contratos else none %}
+        {% set ct_color = '#2563eb' if ct_activo else '#9ca3af' %}
+        {% set ct_bg = '#eff6ff' if ct_activo else '#f9fafb' %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="background:{{ ct_bg }};border-left:3px solid {{ ct_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-file-earmark-check-fill" style="color:{{ ct_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Contrato</div>
             </div>
-          </div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Última visita</div>
-            <div class="kpi-cell-val" style="font-size:.95rem">
-              {% if stats.ult_visita_fecha %}
-                {{ stats.ult_visita_fecha.strftime('%d/%m/%Y') }}
-                <div class="kpi-cell-sub">Hace {{ stats.ult_visita_dias }} día{{ 's' if stats.ult_visita_dias != 1 else '' }}</div>
-              {% else %}
-                —<div class="kpi-cell-sub">Sin visitas</div>
+            {% if ct_activo %}
+              <div class="kpi-cell-val" style="color:#2563eb;font-size:.95rem">Vigente</div>
+              {% if ct_activo.fecha_vencimiento %}
+              <div class="kpi-cell-sub">Vence {{ ct_activo.fecha_vencimiento.strftime('%d/%m/%Y') }}</div>
+              {% elif ct_activo.es_indefinido %}
+              <div class="kpi-cell-sub">Sin fecha — Indefinido</div>
               {% endif %}
+            {% elif contratos %}
+              <div class="kpi-cell-val" style="color:#d97706;font-size:.95rem">{{ contratos[0].estado.replace('_',' ').title() }}</div>
+              <div class="kpi-cell-sub">{{ contratos|length }} contrato(s)</div>
+            {% else %}
+              <div class="kpi-cell-val" style="color:#9ca3af;font-size:.95rem">Sin contrato</div>
+              <div class="kpi-cell-sub">No registrado</div>
+            {% endif %}
+          </div>
+        </div>
+
+        {# 3. Mantención #}
+        {% set mant_color = '#16a34a' if stats.realizadas_12m > 0 else '#9ca3af' %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="border-left:3px solid {{ mant_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-tools" style="color:{{ mant_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Mantención</div>
+            </div>
+            <div class="kpi-cell-val" style="color:{{ mant_color }}">{{ stats.realizadas_12m }}</div>
+            <div class="kpi-cell-sub">
+              Realizadas (12 meses)
+              {% if stats.ult_visita_fecha %} · Última: {{ stats.ult_visita_fecha.strftime('%d/%m') }}{% endif %}
             </div>
           </div>
         </div>
-        <div class="col-6 col-md-3">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Próxima visita</div>
-            <div class="kpi-cell-val" style="font-size:.95rem">
-              {% if stats.prox_visita_fecha %}
-                {{ stats.prox_visita_fecha.strftime('%d/%m/%Y') }}
-                <div class="kpi-cell-sub" style="color:{{ '#dc2626' if stats.prox_visita_dias<=3 else '#ea580c' if stats.prox_visita_dias<=7 else '#16a34a' }}">
-                  En {{ stats.prox_visita_dias }} día{{ 's' if stats.prox_visita_dias != 1 else '' }}
-                </div>
-              {% else %}
-                <span class="text-muted">No programada</span>
-              {% endif %}
+
+        {# 4. Equipos #}
+        {% set eq_color = '#7c3aed' if maquinas else '#9ca3af' %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="background:{% if maquinas %}#faf5ff{% else %}#f9fafb{% endif %};border-left:3px solid {{ eq_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-bicycle" style="color:{{ eq_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Equipos</div>
             </div>
-          </div>
-        </div>
-        <div class="col-6 col-md-1">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Equipos</div>
-            <div class="kpi-cell-val" style="color:#2563eb">{{ maquinas|length }}</div>
+            <div class="kpi-cell-val" style="color:{{ eq_color }}">{{ maquinas|length }}</div>
             <div class="kpi-cell-sub">Activos: {{ stats.eq_activos }}</div>
           </div>
         </div>
-        <div class="col-6 col-md-1">
-          <div class="kpi-cell">
-            <div class="kpi-cell-label">Mantenc.</div>
-            <div class="kpi-cell-val" style="color:#7c3aed">{{ stats.realizadas_12m }}</div>
-            <div class="kpi-cell-sub">12 meses</div>
+
+        {# 5. Próxima visita #}
+        {% set pv_dias = stats.prox_visita_dias if stats.prox_visita_fecha else none %}
+        {% set pv_color = '#dc2626' if pv_dias is not none and pv_dias<=3 else '#ea580c' if pv_dias is not none and pv_dias<=7 else '#16a34a' if pv_dias is not none else '#9ca3af' %}
+        {% set pv_bg = '#fef2f2' if pv_dias is not none and pv_dias<=3 else '#fff7ed' if pv_dias is not none and pv_dias<=7 else '#f0fdf4' if pv_dias is not none else '#f9fafb' %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="background:{{ pv_bg }};border-left:3px solid {{ pv_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-calendar-event-fill" style="color:{{ pv_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Próxima visita</div>
+            </div>
+            {% if stats.prox_visita_fecha %}
+              <div class="kpi-cell-val" style="color:{{ pv_color }};font-size:1rem">{{ stats.prox_visita_fecha.strftime('%d/%m/%Y') }}</div>
+              <div class="kpi-cell-sub" style="color:{{ pv_color }}">En {{ pv_dias }} día{{ 's' if pv_dias != 1 else '' }}</div>
+            {% else %}
+              <div class="kpi-cell-val" style="color:#9ca3af;font-size:.95rem">No programada</div>
+              <div class="kpi-cell-sub">Agendar visita</div>
+            {% endif %}
           </div>
         </div>
+
+        {# 6. Índice de cumplimiento — con "dial" circular #}
+        {% set pct = stats.cumplimiento_pct %}
+        {% set dial_color = '#16a34a' if pct>=80 else '#ea580c' if pct>=50 else '#dc2626' %}
+        {% set circ = (pct * 251.2 / 100)|int %}
+        <div class="col-6 col-md-4">
+          <div class="kpi-cell" style="border-left:3px solid {{ dial_color }}">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-patch-check-fill" style="color:{{ dial_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Cumplimiento</div>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+              <svg viewBox="0 0 42 42" style="width:46px;height:46px;flex-shrink:0">
+                <circle cx="21" cy="21" r="15.91549" fill="none" stroke="#f3f4f6" stroke-width="4"></circle>
+                <circle cx="21" cy="21" r="15.91549" fill="none" stroke="{{ dial_color }}" stroke-width="4"
+                        stroke-dasharray="{{ circ }} {{ 251 - circ }}"
+                        stroke-dashoffset="63" stroke-linecap="round" transform="rotate(-90 21 21)"></circle>
+                <text x="21" y="25" text-anchor="middle"
+                      style="font-size:9px;font-weight:900;fill:{{ dial_color }}">{{ pct }}%</text>
+              </svg>
+              <div>
+                <div class="kpi-cell-val" style="color:{{ dial_color }}">{{ pct }}%</div>
+                <div class="kpi-cell-sub">Prev. cumplido</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
+      {# /6 KPIs #}
 
       {# ── INFORMACIÓN PRINCIPAL ── #}
       <div class="f-card mb-3">
@@ -705,6 +900,11 @@
           </button>
         </div>
         <div class="f-card-body">
+
+          {# ── Datos de empresa (desde ERP) ── #}
+          <div class="info-section-h" style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">
+            <i class="bi bi-building me-1"></i>Datos de empresa
+          </div>
           <div class="info-grid">
             <div class="info-row">
               <span class="info-lbl">Razón social</span>
@@ -714,6 +914,52 @@
             <div class="info-row">
               <span class="info-lbl">RUT</span>
               <span class="info-val font-monospace">{{ cliente.rut }}</span>
+            </div>
+            {% endif %}
+            {% if cliente.giro %}
+            <div class="info-row">
+              <span class="info-lbl">Giro / actividad</span>
+              <span class="info-val">{{ cliente.giro }}</span>
+            </div>
+            {% endif %}
+            {% if cliente.direccion or cliente.comuna or cliente.ciudad %}
+            <div class="info-row">
+              <span class="info-lbl">Dirección</span>
+              <span class="info-val">
+                {% if cliente.direccion %}{{ cliente.direccion }}{% endif %}
+                {% if cliente.comuna %}{% if cliente.direccion %}, {% endif %}{{ cliente.comuna }}{% endif %}
+                {% if cliente.ciudad %}{% if cliente.direccion or cliente.comuna %}, {% endif %}{{ cliente.ciudad }}{% endif %}
+                {% if cliente.region %} · {{ cliente.region }}{% endif %}
+              </span>
+            </div>
+            {% endif %}
+            {% if cliente.email_empresa %}
+            <div class="info-row">
+              <span class="info-lbl">Email empresa</span>
+              <a href="mailto:{{ cliente.email_empresa }}" class="info-val text-decoration-none">{{ cliente.email_empresa }}</a>
+            </div>
+            {% endif %}
+            {% if cliente.tel_empresa %}
+            <div class="info-row">
+              <span class="info-lbl">Teléfono empresa</span>
+              <a href="tel:{{ cliente.tel_empresa }}" class="info-val text-decoration-none">{{ cliente.tel_empresa }}</a>
+            </div>
+            {% endif %}
+          </div>
+
+          {# ── Contacto principal ── #}
+          {% if cliente.contacto_nombre or cliente.contacto_email or cliente.contacto_tel %}
+          <div class="info-section-h mt-4" style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">
+            <i class="bi bi-person-vcard me-1"></i>Contacto principal
+          </div>
+          <div class="info-grid">
+            {% if cliente.contacto_nombre %}
+            <div class="info-row">
+              <span class="info-lbl">Nombre</span>
+              <span class="info-val">
+                {{ cliente.contacto_nombre }}
+                {% if cliente.contacto_cargo %}<span class="text-muted ms-1">· {{ cliente.contacto_cargo }}</span>{% endif %}
+              </span>
             </div>
             {% endif %}
             {% if cliente.contacto_email %}
@@ -728,18 +974,39 @@
               <a href="tel:{{ cliente.contacto_tel }}" class="info-val text-decoration-none">{{ cliente.contacto_tel }}</a>
             </div>
             {% endif %}
-            {% if cliente.direccion or cliente.ciudad %}
+          </div>
+          {% endif %}
+
+          {# ── Contacto secundario ── #}
+          {% if cliente.contacto2_nombre or cliente.contacto2_email or cliente.contacto2_tel %}
+          <div class="info-section-h mt-4" style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">
+            <i class="bi bi-people me-1"></i>Contacto secundario
+          </div>
+          <div class="info-grid">
+            {% if cliente.contacto2_nombre %}
             <div class="info-row">
-              <span class="info-lbl">Dirección</span>
+              <span class="info-lbl">Nombre</span>
               <span class="info-val">
-                {% if cliente.direccion %}{{ cliente.direccion }}{% endif %}
-                {% if cliente.comuna %}{% if cliente.direccion %}, {% endif %}{{ cliente.comuna }}{% endif %}
-                {% if cliente.ciudad %}{% if cliente.direccion or cliente.comuna %}, {% endif %}{{ cliente.ciudad }}{% endif %}
-                {% if cliente.region %} · {{ cliente.region }}{% endif %}
+                {{ cliente.contacto2_nombre }}
+                {% if cliente.contacto2_cargo %}<span class="text-muted ms-1">· {{ cliente.contacto2_cargo }}</span>{% endif %}
               </span>
             </div>
             {% endif %}
+            {% if cliente.contacto2_email %}
+            <div class="info-row">
+              <span class="info-lbl">Email</span>
+              <a href="mailto:{{ cliente.contacto2_email }}" class="info-val text-decoration-none">{{ cliente.contacto2_email }}</a>
+            </div>
+            {% endif %}
+            {% if cliente.contacto2_tel %}
+            <div class="info-row">
+              <span class="info-lbl">Teléfono</span>
+              <a href="tel:{{ cliente.contacto2_tel }}" class="info-val text-decoration-none">{{ cliente.contacto2_tel }}</a>
+            </div>
+            {% endif %}
           </div>
+          {% endif %}
+
           {% if cliente.notas %}
           <div class="mt-3 p-3 rounded-3" style="background:#fffbeb;border:1px solid #fde68a">
             <div class="info-lbl mb-1"><i class="bi bi-sticky me-1"></i>Notas internas</div>
@@ -1035,83 +1302,465 @@
    TAB: EQUIPOS
 ══════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-equipos">
+<style>
+/* ── Equipos tab ─────────────────────────────────────────────── */
+.eq-kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;}
+.eq-kpi-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:13px 15px;
+             display:flex;align-items:center;gap:11px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.eq-kpi-icon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;
+             justify-content:center;font-size:1rem;flex-shrink:0;}
+.eq-kpi-num{font-size:1.25rem;font-weight:900;line-height:1;color:#0f172a;}
+.eq-kpi-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;margin-top:2px;}
+.eq-kpi-sub{font-size:.68rem;color:#6b7280;margin-top:1px;}
 
-  {# — Card: Documentos ERP por RUT (auto-search) — #}
-  {% if cliente.rut %}
-  <div class="f-card mb-3" id="erpRutCard">
-    <div class="f-card-header" style="cursor:pointer" onclick="toggleErpRutPanel()">
-      <span class="f-card-title"><i class="bi bi-receipt me-1"></i>Documentos ERP para RUT {{ cliente.rut }}</span>
-      <div class="d-flex align-items-center gap-2">
-        <span id="erpRutBadge" class="badge bg-secondary" style="font-size:.65rem">—</span>
-        <i class="bi bi-chevron-down" id="erpRutChevron" style="font-size:.7rem;transition:transform .2s"></i>
-      </div>
+/* Filtros top */
+.eq-filter-bar{background:#fff;border:1px solid var(--border);border-radius:10px;
+               padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.eq-tab-group{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.eq-tab-btn{padding:5px 14px;border:none;background:#fff;font-size:.78rem;font-weight:600;
+            color:#6b7280;cursor:pointer;transition:background .1s,color .1s;}
+.eq-tab-btn.active{background:#0f172a;color:#fff;}
+.eq-search{border:1px solid var(--border);border-radius:8px;padding:6px 10px 6px 32px;
+           font-size:.8rem;outline:none;background:#fafbfc;transition:border .15s;width:200px;}
+.eq-search:focus{border-color:#6b7280;background:#fff;}
+.eq-search-wrap{position:relative;}
+.eq-search-wrap i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#9ca3af;font-size:.85rem;}
+
+/* Tabla equipos */
+.eq-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.eq-table thead th{
+  padding:9px 12px;text-align:left;
+  font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;
+  background:#fafbfc;border-bottom:2px solid var(--border);white-space:nowrap;
+}
+.eq-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background .1s;}
+.eq-table tbody tr:hover{background:#fafbfc;}
+.eq-table tbody td{padding:10px 12px;vertical-align:middle;}
+.eq-table tbody tr:last-child{border-bottom:none;}
+
+/* Equipo cell */
+.eq-cell-icon{width:32px;height:32px;border-radius:8px;background:#eff6ff;
+              display:inline-flex;align-items:center;justify-content:center;
+              font-size:.85rem;color:#2563eb;flex-shrink:0;}
+.eq-name-main{font-weight:700;color:#0f172a;font-size:.84rem;}
+.eq-name-sub{font-size:.69rem;color:#9ca3af;margin-top:1px;}
+
+/* Garantía chips */
+.gar-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;
+          border-radius:50px;font-size:.65rem;font-weight:700;}
+.gar-chip-ok{background:#dcfce7;color:#166534;}
+.gar-chip-warn{background:#fef9c3;color:#854d0e;}
+.gar-chip-vencida{background:#f3f4f6;color:#6b7280;}
+
+/* Estado equipo */
+.eq-estado-activo{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
+.eq-estado-baja{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
+.eq-estado-garantia{background:#dbeafe;color:#1e40af;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
+
+/* Sidebar */
+.eq-sidebar{width:270px;flex-shrink:0;display:flex;flex-direction:column;gap:12px;}
+@media(max-width:991px){.eq-sidebar{width:100%;}}
+
+/* Acciones rápidas sidebar */
+.eq-accion-item{display:flex;align-items:center;gap:11px;padding:10px 12px;
+                border-radius:9px;border:1px solid var(--border);cursor:pointer;
+                transition:border-color .15s,background .15s;background:#fff;}
+.eq-accion-item:hover{border-color:#cbd5e1;background:#fafbfc;}
+.eq-accion-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+                justify-content:center;font-size:.9rem;flex-shrink:0;}
+.eq-accion-title{font-size:.8rem;font-weight:700;color:#0f172a;}
+.eq-accion-sub{font-size:.68rem;color:#9ca3af;}
+
+/* Paginador */
+.eq-pager{display:flex;align-items:center;justify-content:space-between;
+          padding:10px 14px;border-top:1px solid var(--border);font-size:.78rem;color:#6b7280;}
+</style>
+
+{# ── Variables de cálculo ─────────────────────────────── #}
+{% set eq_total     = maquinas|length %}
+{% set eq_activos   = maquinas|selectattr('estado','equalto','activo')|list|length %}
+{% set eq_baja      = maquinas|selectattr('estado','equalto','baja')|list|length %}
+{% set eq_garantia  = maquinas|selectattr('estado','equalto','garantia')|list|length %}
+{% set eq_con_doc   = maquinas|selectattr('doc_origen')|list|length %}
+
+{# ── KPI Strip ────────────────────────────────────────── #}
+<div class="eq-kpi-strip">
+  <div class="eq-kpi-card">
+    <div class="eq-kpi-icon" style="background:#eff6ff;color:#2563eb"><i class="bi bi-bicycle"></i></div>
+    <div>
+      <div class="eq-kpi-num" style="color:#2563eb">{{ eq_total }}</div>
+      <div class="eq-kpi-lbl">Total equipos</div>
+      <div class="eq-kpi-sub">Activos: {{ eq_activos }}</div>
     </div>
-    <div id="erpRutPanel" style="display:none">
-      <div class="f-card-body" id="erpRutContent">
-        <div class="text-center text-muted py-3" style="font-size:.82rem">
-          <span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP…
-        </div>
-      </div>
+  </div>
+  <div class="eq-kpi-card">
+    <div class="eq-kpi-icon" style="background:#f0fdf4;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+    <div>
+      <div class="eq-kpi-num" style="color:#16a34a">{{ eq_activos }}</div>
+      <div class="eq-kpi-lbl">Activos</div>
+      <div class="eq-kpi-sub">{% if eq_total %}{{ (eq_activos*100//eq_total) }}% del total{% else %}—{% endif %}</div>
+    </div>
+  </div>
+  {% if stats.prox_visita_fecha %}
+  <div class="eq-kpi-card">
+    <div class="eq-kpi-icon" style="background:#fffbeb;color:#d97706"><i class="bi bi-calendar-event-fill"></i></div>
+    <div>
+      <div class="eq-kpi-num" style="color:#d97706;font-size:1rem">{{ stats.prox_visita_fecha.strftime('%d/%m/%Y') }}</div>
+      <div class="eq-kpi-lbl">Próx. mantención</div>
+      <div class="eq-kpi-sub">En {{ stats.prox_visita_dias }} días</div>
     </div>
   </div>
   {% endif %}
-
-  <div class="f-card">
-    <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-bicycle me-1"></i>Equipos / Máquinas</span>
-      <div class="d-flex gap-2 flex-wrap">
-        <input type="text" id="eqBuscar" class="form-control form-control-sm"
-               style="width:180px" placeholder="Buscar equipo…"
-               oninput="filtrarEquipos(this.value)">
-        <button class="btn btn-xs btn-outline-secondary" onclick="abrirErpModal()">
-          <i class="bi bi-search me-1"></i>Importar ERP
-        </button>
-        <button class="btn btn-xs btn-ilus" onclick="abrirMaquinaManual()">
-          <i class="bi bi-plus me-1"></i>Agregar manual
-        </button>
-      </div>
+  <div class="eq-kpi-card">
+    <div class="eq-kpi-icon" style="background:#faf5ff;color:#7c3aed"><i class="bi bi-patch-check-fill"></i></div>
+    <div>
+      <div class="eq-kpi-num" style="color:#7c3aed">{{ stats.cumplimiento_pct }}%</div>
+      <div class="eq-kpi-lbl">Cumplimiento</div>
+      <div class="eq-kpi-sub">12 meses</div>
     </div>
-    <div class="f-card-body" id="maqListado">
-    {% if maquinas %}
-      {% for m in maquinas %}
-      <div class="eq-item" id="maq-{{ m.id }}" data-eq-name="{{ m.nombre|lower }}">
-        <div class="eq-icon"><i class="bi bi-bicycle"></i></div>
-        <div style="flex:1;min-width:0">
-          <div class="eq-name">{{ m.nombre }}</div>
-          <div class="eq-meta">
-            {% if m.sku %}<span class="eq-sku">{{ m.sku }}</span>{% endif %}
-            {% if m.serie %}<span><i class="bi bi-upc me-1" style="font-size:.65rem"></i>{{ m.serie }}</span>{% endif %}
-            {% if m.cantidad > 1 %}<span><i class="bi bi-layers me-1" style="font-size:.65rem"></i>{{ m.cantidad }} unid.</span>{% endif %}
-            {% if m.doc_origen %}
-              <span><i class="bi bi-receipt me-1" style="font-size:.65rem"></i>{{ m.doc_origen }}</span>
-            {% endif %}
-            {% if m.doc_fecha %}
-              {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 999 %}
-              {% if dias_doc <= 180 %}
-                <span class="gar-ok"><i class="bi bi-shield-check me-1"></i>Garantía {{ 180 - dias_doc }}d restantes</span>
-              {% elif dias_doc <= 210 %}
-                <span class="gar-warn"><i class="bi bi-shield-exclamation me-1"></i>Garantía próx. a vencer</span>
-              {% else %}
-                <span class="gar-no"><i class="bi bi-shield-x me-1"></i>Sin garantía</span>
-              {% endif %}
-            {% endif %}
-          </div>
-        </div>
-        <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
-          <i class="bi bi-trash"></i>
-        </button>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty-state" id="eqEmptyState">
-        <i class="bi bi-bicycle"></i>
-        <div class="fw-semibold mb-1">Sin equipos registrados</div>
-        <div style="font-size:.78rem">Usa "Importar ERP" para traer desde una FCV o BLV, o agrega uno manualmente</div>
-      </div>
-    {% endif %}
+  </div>
+  <div class="eq-kpi-card">
+    <div class="eq-kpi-icon" style="background:#f0fdf4;color:#059669"><i class="bi bi-file-earmark-check"></i></div>
+    <div>
+      <div class="eq-kpi-num" style="color:#059669">{{ eq_con_doc }}</div>
+      <div class="eq-kpi-lbl">Con documento</div>
+      <div class="eq-kpi-sub">Desde ERP</div>
     </div>
   </div>
 </div>
+
+{# ── Layout: tabla + sidebar ──────────────────────────── #}
+<div class="d-flex gap-3 align-items-start flex-wrap flex-lg-nowrap">
+
+  {# ── Columna principal ─────────────────────────────── #}
+  <div style="flex:1;min-width:0">
+
+    {# Filtros #}
+    <div class="eq-filter-bar">
+      <div class="eq-tab-group">
+        <button class="eq-tab-btn active" onclick="eqFiltrar('todos',this)">Todos <span class="ms-1" style="opacity:.6">{{ eq_total }}</span></button>
+        <button class="eq-tab-btn" onclick="eqFiltrar('activo',this)">Activos <span class="ms-1" style="opacity:.6">{{ eq_activos }}</span></button>
+        <button class="eq-tab-btn" onclick="eqFiltrar('baja',this)">Baja <span class="ms-1" style="opacity:.6">{{ eq_baja }}</span></button>
+      </div>
+      <div class="eq-search-wrap">
+        <i class="bi bi-search"></i>
+        <input type="text" class="eq-search" id="eqBuscar" placeholder="Buscar equipo, código, serie…"
+               oninput="eqBuscar(this.value)">
+      </div>
+      <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()" title="Buscar por boleta o factura en el ERP">
+          <i class="bi bi-cloud-download me-1"></i>Importar ERP
+        </button>
+        <button class="btn btn-sm btn-ilus" onclick="abrirMaquinaManual()">
+          <i class="bi bi-plus-lg me-1"></i>Agregar equipo
+        </button>
+      </div>
+    </div>
+
+    {# Tabla #}
+    <div class="f-card" style="overflow:hidden">
+      {% if maquinas %}
+      <div style="overflow-x:auto">
+        <table class="eq-table" id="eqTabla">
+          <thead>
+            <tr>
+              <th style="width:32px"></th>
+              <th>Equipo</th>
+              <th>SKU / Código</th>
+              <th>Serie</th>
+              <th>Documento ERP</th>
+              <th>Fecha emisión</th>
+              <th>Garantía</th>
+              <th>Estado</th>
+              <th style="width:60px"></th>
+            </tr>
+          </thead>
+          <tbody id="maqListado">
+          {% for m in maquinas %}
+          {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
+          <tr id="maq-{{ m.id }}"
+              data-estado="{{ m.estado or 'activo' }}"
+              data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
+            <td>
+              <div class="eq-cell-icon"><i class="bi bi-bicycle"></i></div>
+            </td>
+            <td>
+              <div class="eq-name-main">{{ m.nombre }}</div>
+              {% if m.notas %}
+              <div class="eq-name-sub text-truncate" style="max-width:220px" title="{{ m.notas }}">{{ m.notas }}</div>
+              {% endif %}
+              {% if m.cantidad > 1 %}
+              <div class="eq-name-sub"><i class="bi bi-layers me-1"></i>{{ m.cantidad }} unidades</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if m.sku %}
+              <span class="eq-sku">{{ m.sku }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if m.serie %}
+              <span style="font-family:monospace;font-size:.78rem;color:#374151">{{ m.serie }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if m.doc_origen %}
+              <a href="#" onclick="importarDocErpRut('{{ m.doc_origen.split(' ')[0] if ' ' in (m.doc_origen or '') else 'FCV' }}','{{ m.doc_origen }}'); return false"
+                 class="text-decoration-none" style="font-size:.78rem;font-family:monospace;color:#2563eb">
+                {{ m.doc_origen }}
+              </a>
+              {% else %}
+              <span class="text-muted" style="font-size:.78rem">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if m.doc_fecha %}
+              <span style="font-size:.78rem;color:#374151">{{ m.doc_fecha.strftime('%d/%m/%Y') }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if m.doc_fecha %}
+                {% if dias_doc <= 180 %}
+                <span class="gar-chip gar-chip-ok">
+                  <i class="bi bi-shield-check"></i>{{ 180 - dias_doc }}d rest.
+                </span>
+                {% elif dias_doc <= 210 %}
+                <span class="gar-chip gar-chip-warn">
+                  <i class="bi bi-shield-exclamation"></i>Por vencer
+                </span>
+                {% else %}
+                <span class="gar-chip gar-chip-vencida">
+                  <i class="bi bi-shield-x"></i>Vencida
+                </span>
+                {% endif %}
+              {% else %}
+              <span class="text-muted" style="font-size:.75rem">Sin registro</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="eq-estado-{{ m.estado or 'activo' }}">
+                {{ (m.estado or 'activo').replace('_',' ').title() }}
+              </span>
+            </td>
+            <td>
+              <div class="d-flex gap-1 justify-content-end">
+                <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# Pie de tabla #}
+      <div class="eq-pager">
+        <span id="eqCount">Mostrando {{ maquinas|length }} equipo{{ 's' if maquinas|length != 1 }}</span>
+        <span style="font-size:.72rem;color:#9ca3af">{{ maquinas|length }} en total</span>
+      </div>
+
+      {% else %}
+      <div class="empty-state" id="eqEmptyState">
+        <i class="bi bi-bicycle"></i>
+        <div class="fw-semibold mb-1" style="font-size:.92rem;color:#374151">Sin equipos registrados</div>
+        <div style="font-size:.8rem;margin-bottom:14px">
+          Importa desde una boleta/factura del ERP, o agrega uno manualmente por SKU
+        </div>
+        <div class="d-flex gap-2 justify-content-center flex-wrap">
+          <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()">
+            <i class="bi bi-cloud-download me-1"></i>Importar desde ERP
+          </button>
+          <button class="btn btn-sm btn-ilus" onclick="abrirMaquinaManual()">
+            <i class="bi bi-plus-lg me-1"></i>Agregar equipo
+          </button>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>{# /columna principal #}
+
+  {# ── Sidebar derecho ───────────────────────────────── #}
+  <div class="eq-sidebar">
+
+    {# Resumen visual #}
+    <div class="f-card">
+      <div class="f-card-header">
+        <span class="f-card-title"><i class="bi bi-pie-chart me-1"></i>Resumen de equipos</span>
+      </div>
+      <div class="f-card-body" style="padding:14px 16px">
+        {% if maquinas %}
+        {% set pct_act = (eq_activos*100//eq_total) if eq_total else 0 %}
+        {% set pct_gar = (eq_garantia*100//eq_total) if eq_total else 0 %}
+        {% set pct_baj = (eq_baja*100//eq_total) if eq_total else 0 %}
+        <div class="d-flex align-items-center gap-3">
+          {# Mini donut SVG #}
+          {% set c_act = (pct_act * 251 // 100)|int %}
+          {% set c_gar = (pct_gar * 251 // 100)|int %}
+          <svg viewBox="0 0 42 42" style="width:70px;height:70px;flex-shrink:0">
+            <circle cx="21" cy="21" r="15.915" fill="none" stroke="#f3f4f6" stroke-width="5"></circle>
+            {% if pct_act > 0 %}
+            <circle cx="21" cy="21" r="15.915" fill="none" stroke="#16a34a" stroke-width="5"
+                    stroke-dasharray="{{ c_act }} {{ 251-c_act }}"
+                    stroke-dashoffset="63" stroke-linecap="butt" transform="rotate(-90 21 21)"></circle>
+            {% endif %}
+            {% if pct_gar > 0 %}
+            <circle cx="21" cy="21" r="15.915" fill="none" stroke="#2563eb" stroke-width="5"
+                    stroke-dasharray="{{ c_gar }} {{ 251-c_gar }}"
+                    stroke-dashoffset="{{ 63 - c_act }}" stroke-linecap="butt" transform="rotate(-90 21 21)"></circle>
+            {% endif %}
+            <text x="21" y="25" text-anchor="middle" style="font-size:9px;font-weight:900;fill:#0f172a">{{ eq_total }}</text>
+          </svg>
+          <div style="font-size:.76rem;flex:1">
+            <div class="d-flex justify-content-between mb-1">
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#16a34a;margin-right:5px"></span>Activos</span>
+              <span class="fw-bold">{{ eq_activos }} <span style="color:#9ca3af">({{ pct_act }}%)</span></span>
+            </div>
+            {% if eq_garantia %}
+            <div class="d-flex justify-content-between mb-1">
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2563eb;margin-right:5px"></span>En garantía</span>
+              <span class="fw-bold">{{ eq_garantia }} <span style="color:#9ca3af">({{ pct_gar }}%)</span></span>
+            </div>
+            {% endif %}
+            {% if eq_baja %}
+            <div class="d-flex justify-content-between">
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#d1d5db;margin-right:5px"></span>De baja</span>
+              <span class="fw-bold">{{ eq_baja }} <span style="color:#9ca3af">({{ pct_baj }}%)</span></span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="text-muted text-center py-2" style="font-size:.78rem">Sin equipos aún</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Acciones rápidas #}
+    <div class="f-card">
+      <div class="f-card-header">
+        <span class="f-card-title"><i class="bi bi-lightning-charge me-1"></i>Acciones rápidas</span>
+      </div>
+      <div class="f-card-body" style="padding:10px 12px;display:flex;flex-direction:column;gap:7px">
+        <div class="eq-accion-item" onclick="abrirNuevaVisita('preventiva')">
+          <div class="eq-accion-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-tools"></i></div>
+          <div>
+            <div class="eq-accion-title">Programar mantención</div>
+            <div class="eq-accion-sub">Programar mantención preventiva</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
+        </div>
+        <div class="eq-accion-item" onclick="abrirErpModal()">
+          <div class="eq-accion-icon" style="background:#dbeafe;color:#2563eb"><i class="bi bi-cloud-download"></i></div>
+          <div>
+            <div class="eq-accion-title">Carga desde ERP</div>
+            <div class="eq-accion-sub">Importar desde boleta o factura</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
+        </div>
+        <div class="eq-accion-item" onclick="abrirMaquinaManual()">
+          <div class="eq-accion-icon" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-plus-circle"></i></div>
+          <div>
+            <div class="eq-accion-title">Agregar equipo manual</div>
+            <div class="eq-accion-sub">Registrar equipo por SKU</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
+        </div>
+        <div class="eq-accion-item" onclick="switchTab('ia')">
+          <div class="eq-accion-icon" style="background:#faf5ff;color:#7c3aed"><i class="bi bi-stars"></i></div>
+          <div>
+            <div class="eq-accion-title">Ver plan IA</div>
+            <div class="eq-accion-sub">Recomendaciones por equipo</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
+        </div>
+      </div>
+    </div>
+
+    {# Notas del cliente #}
+    {% if cliente.notas %}
+    <div class="f-card">
+      <div class="f-card-header" style="background:#fffbeb;border-bottom-color:#fde68a">
+        <span class="f-card-title" style="color:#92400e"><i class="bi bi-sticky-fill me-1"></i>Notas del cliente</span>
+        <button class="btn btn-xs btn-link" style="font-size:.7rem;color:#92400e" onclick="abrirEditarCliente()">
+          <i class="bi bi-pencil me-1"></i>Editar
+        </button>
+      </div>
+      <div class="f-card-body" style="background:#fffbeb;padding:12px 16px">
+        <p style="font-size:.8rem;color:#78350f;margin:0;line-height:1.55">{{ cliente.notas }}</p>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Documentos ERP por RUT #}
+    {% if cliente.rut %}
+    <div class="f-card" id="erpRutCard">
+      <div class="f-card-header" style="cursor:pointer" onclick="toggleErpRutPanel()">
+        <span class="f-card-title"><i class="bi bi-receipt me-1"></i>Docs ERP — RUT {{ cliente.rut }}</span>
+        <div class="d-flex align-items-center gap-2">
+          <span id="erpRutBadge" class="badge bg-secondary" style="font-size:.6rem">—</span>
+          <i class="bi bi-chevron-down" id="erpRutChevron" style="font-size:.7rem;transition:transform .2s"></i>
+        </div>
+      </div>
+      <div id="erpRutPanel" style="display:none">
+        <div class="f-card-body" id="erpRutContent" style="padding:12px 14px">
+          <div class="text-center text-muted py-3" style="font-size:.82rem">
+            <span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP…
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>{# /sidebar #}
+
+</div>{# /flex layout #}
+
+<script>
+// ── Filtro tab (Todos/Activos/Baja) ─────────────────────────
+function eqFiltrar(estado, btn) {
+  document.querySelectorAll('.eq-tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const rows = document.querySelectorAll('#maqListado tr');
+  let visible = 0;
+  rows.forEach(tr => {
+    const est = tr.dataset.estado || 'activo';
+    const show = estado === 'todos' || est === estado;
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const countEl = document.getElementById('eqCount');
+  if (countEl) countEl.textContent = `Mostrando ${visible} equipo${visible!==1?'s':''}`;
+}
+
+// ── Filtro búsqueda ────────────────────────────────────────
+function eqBuscar(q) {
+  const norm = q.toLowerCase().trim();
+  const rows = document.querySelectorAll('#maqListado tr');
+  let visible = 0;
+  rows.forEach(tr => {
+    if (tr.style.display === 'none' && !norm) return;
+    const name = tr.dataset.name || '';
+    const show = !norm || name.includes(norm);
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const countEl = document.getElementById('eqCount');
+  if (countEl) countEl.textContent = `Mostrando ${visible} equipo${visible!==1?'s':''}`;
+}
+// Alias para el oninput viejo
+function filtrarEquipos(q) { eqBuscar(q); }
+</script>
+
+</div>{# /tab-equipos #}
 
 {# ══════════════════════════════════════════════════════════════════
    TAB: CONTRATO — Rediseño profesional con visualizaciones ricas
@@ -1758,10 +2407,16 @@
             <i class="bi bi-camera me-1"></i>Subir fotos
           </button>
         </div>
-        <div class="modal-footer gap-2">
+        <div class="modal-footer gap-2 flex-wrap">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
           <button class="btn btn-outline-info" onclick="repAnalizarIA()" id="btnRepIA">
             <i class="bi bi-stars me-1"></i>Analizar con IA
+          </button>
+          <button class="btn btn-outline-dark" onclick="repDescargarWord()" id="btnRepWord" disabled>
+            <i class="bi bi-file-earmark-word me-1"></i>Word
+          </button>
+          <button class="btn btn-outline-success" onclick="repEnviarEmail()" id="btnRepEnviar" disabled>
+            <i class="bi bi-envelope-paper me-1"></i>Enviar email
           </button>
           <button class="btn btn-ilus fw-bold" onclick="repGuardar()">
             <i class="bi bi-floppy me-1"></i>Guardar informe
@@ -1791,6 +2446,876 @@
 
 </div>
 {# /tab-reportes #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: REPUESTOS — Inventario, ventas/garantías por cliente
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-repuestos">
+<style>
+.rep-kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
+.rep-kpi{background:#fff;border:1px solid var(--border);border-radius:10px;padding:13px 16px;
+         display:flex;align-items:center;gap:11px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.rep-kpi-icon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;
+              justify-content:center;font-size:1rem;flex-shrink:0;}
+.rep-kpi-num{font-size:1.15rem;font-weight:900;line-height:1;color:#0f172a;}
+.rep-kpi-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;margin-top:2px;}
+
+.rep-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.rep-table thead th{padding:9px 12px;text-align:left;font-size:.62rem;font-weight:800;
+                    text-transform:uppercase;letter-spacing:.5px;color:#6b7280;
+                    background:#fafbfc;border-bottom:2px solid var(--border);white-space:nowrap;}
+.rep-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background .1s;}
+.rep-table tbody tr:hover{background:#fafbfc;}
+.rep-table tbody td{padding:10px 12px;vertical-align:middle;}
+.rep-tipo-venta{background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:50px;font-size:.62rem;font-weight:700;}
+.rep-tipo-garantia{background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:50px;font-size:.62rem;font-weight:700;}
+.rep-tipo-reposicion{background:#dcfce7;color:#166534;padding:2px 8px;border-radius:50px;font-size:.62rem;font-weight:700;}
+.rep-tipo-consumo{background:#f3f4f6;color:#6b7280;padding:2px 8px;border-radius:50px;font-size:.62rem;font-weight:700;}
+.rep-estado-cotizado{background:#fef9c3;color:#854d0e;}
+.rep-estado-aprobado{background:#dbeafe;color:#1e40af;}
+.rep-estado-instalado{background:#dcfce7;color:#166534;}
+.rep-estado-facturado{background:#ede9fe;color:#5b21b6;}
+.rep-estado-cancelado{background:#f3f4f6;color:#6b7280;}
+.rep-estado{padding:2px 8px;border-radius:50px;font-size:.62rem;font-weight:700;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-gear-wide-connected me-2" style="color:var(--ilus-red)"></i>Repuestos del cliente</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Ventas, garantías y consumo</span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="abrirImportarRepErp()">
+      <i class="bi bi-cloud-download me-1"></i>Importar desde ERP
+    </button>
+    <button class="btn btn-sm btn-ilus" onclick="abrirRepuestoModal()">
+      <i class="bi bi-plus-lg me-1"></i>Agregar repuesto
+    </button>
+  </div>
+</div>
+
+{# Modal importar repuestos desde ERP #}
+<div class="modal fade" id="modalImportarRepErp" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#2563eb;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-cloud-download me-2"></i>Importar repuestos desde documento ERP</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3">
+          <div class="col-4">
+            <label class="form-label small fw-semibold">Tipo documento</label>
+            <select id="repErp_tido" class="form-select form-select-sm">
+              <option value="FCV">Factura</option>
+              <option value="BLV">Boleta</option>
+              <option value="GDV">Guía de Despacho</option>
+              <option value="VD">Nota de Venta Directa</option>
+              <option value="WEB">Nota de Venta Web</option>
+              <option value="COV">Cotización</option>
+            </select>
+          </div>
+          <div class="col-5">
+            <label class="form-label small fw-semibold">Número</label>
+            <input type="text" id="repErp_nudo" class="form-control form-control-sm" placeholder="Ej: 12345">
+          </div>
+          <div class="col-3 d-flex align-items-end">
+            <button class="btn btn-sm btn-primary w-100" onclick="repErpBuscar()">
+              <i class="bi bi-search me-1"></i>Buscar
+            </button>
+          </div>
+        </div>
+        <div id="repErpResultado"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-sm btn-success" id="btnRepErpImportar" disabled onclick="repErpImportar()">
+          <i class="bi bi-cloud-upload me-1"></i>Importar seleccionados
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# KPI strip #}
+<div class="rep-kpi-strip" id="repKpiStrip">
+  <div class="rep-kpi">
+    <div class="rep-kpi-icon" style="background:#eff6ff;color:#2563eb"><i class="bi bi-box-seam"></i></div>
+    <div><div class="rep-kpi-num" id="rep-k-count">—</div><div class="rep-kpi-lbl">Total registros</div></div>
+  </div>
+  <div class="rep-kpi">
+    <div class="rep-kpi-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-cart-check"></i></div>
+    <div><div class="rep-kpi-num" id="rep-k-venta">—</div><div class="rep-kpi-lbl">Ventas</div></div>
+  </div>
+  <div class="rep-kpi">
+    <div class="rep-kpi-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-shield-check"></i></div>
+    <div><div class="rep-kpi-num" id="rep-k-garantia">—</div><div class="rep-kpi-lbl">Garantías</div></div>
+  </div>
+  <div class="rep-kpi">
+    <div class="rep-kpi-icon" style="background:#f0fdf4;color:#16a34a"><i class="bi bi-cash-stack"></i></div>
+    <div><div class="rep-kpi-num" id="rep-k-venta-tot">—</div><div class="rep-kpi-lbl">Venta total</div></div>
+  </div>
+  <div class="rep-kpi">
+    <div class="rep-kpi-icon" style="background:#faf5ff;color:#7c3aed"><i class="bi bi-graph-up-arrow"></i></div>
+    <div><div class="rep-kpi-num" id="rep-k-margen">—</div><div class="rep-kpi-lbl">Margen acum.</div></div>
+  </div>
+</div>
+
+<div class="f-card" style="overflow:hidden">
+  <div class="f-card-body p-0">
+    <div style="overflow-x:auto">
+      <table class="rep-table" id="repTabla">
+        <thead>
+          <tr>
+            <th>SKU / Nombre</th>
+            <th>Tipo</th>
+            <th>Cant.</th>
+            <th>Costo unit.</th>
+            <th>Precio venta</th>
+            <th>Margen</th>
+            <th>Estado</th>
+            <th>Fecha</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="repTbody">
+          <tr><td colspan="9" class="text-center text-muted py-4" style="font-size:.85rem">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# Modal nuevo/editar repuesto #}
+<div class="modal fade" id="modalRepuesto" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0f172a;color:#fff">
+        <h5 class="modal-title" id="repModalTitulo"><i class="bi bi-gear-wide-connected me-2"></i>Nuevo repuesto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rep_id">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">SKU</label>
+            <input type="text" class="form-control form-control-sm" id="rep_sku" placeholder="EQ-1234">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small fw-semibold">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" id="rep_nombre" placeholder="Polea de transmisión Ascensor 1">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Descripción</label>
+            <textarea class="form-control form-control-sm" id="rep_descripcion" rows="2" placeholder="Detalles técnicos, marca, modelo, motivo del cambio…"></textarea>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Tipo</label>
+            <select class="form-select form-select-sm" id="rep_tipo">
+              <option value="venta">Venta</option>
+              <option value="garantia">Garantía</option>
+              <option value="reposicion">Reposición</option>
+              <option value="consumo">Consumo</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Estado</label>
+            <select class="form-select form-select-sm" id="rep_estado">
+              <option value="cotizado">Cotizado</option>
+              <option value="aprobado">Aprobado</option>
+              <option value="instalado">Instalado</option>
+              <option value="facturado">Facturado</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Cantidad</label>
+            <input type="number" step="0.01" class="form-control form-control-sm" id="rep_cantidad" value="1" min="0">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Fecha</label>
+            <input type="date" class="form-control form-control-sm" id="rep_fecha">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
+            <input type="number" step="1" class="form-control form-control-sm" id="rep_costo" value="0" min="0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">Precio venta (CLP)</label>
+            <input type="number" step="1" class="form-control form-control-sm" id="rep_precio" value="0" min="0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">Documento (OC/FCV)</label>
+            <input type="text" class="form-control form-control-sm" id="rep_documento">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Proveedor</label>
+            <input type="text" class="form-control form-control-sm" id="rep_proveedor">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Equipo asociado (opcional)</label>
+            <select class="form-select form-select-sm" id="rep_maquina">
+              <option value="">— sin asignar —</option>
+              {% for m in maquinas %}
+              <option value="{{ m.id }}">{{ m.nombre }} {% if m.sku %}({{ m.sku }}){% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Observación</label>
+            <textarea class="form-control form-control-sm" id="rep_observacion" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-sm btn-ilus" onclick="guardarRepuesto()">
+          <i class="bi bi-check-lg me-1"></i>Guardar repuesto
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _repCache = [];
+
+async function cargarRepuestos() {
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/repuestos`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    _repCache = data.repuestos || [];
+    repRenderTabla(_repCache);
+    repRenderKpis(data.totales || {});
+    const badge = document.getElementById('repCountBadge');
+    if (badge) {
+      if (_repCache.length) { badge.textContent = _repCache.length; badge.style.display = ''; }
+      else badge.style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('repTbody').innerHTML =
+      `<tr><td colspan="9" class="text-center text-danger py-3">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function repFmt(n) {
+  if (n === null || n === undefined) return '—';
+  return new Intl.NumberFormat('es-CL').format(Math.round(n));
+}
+
+function repRenderKpis(t) {
+  const $ = id => document.getElementById(id);
+  $('rep-k-count').textContent     = t.count || 0;
+  $('rep-k-venta').textContent     = t.venta_count || 0;
+  $('rep-k-garantia').textContent  = t.garantia_count || 0;
+  $('rep-k-venta-tot').textContent = '$' + repFmt(t.venta_total);
+  $('rep-k-margen').textContent    = '$' + repFmt(t.margen_total);
+}
+
+function repRenderTabla(arr) {
+  const tbody = document.getElementById('repTbody');
+  if (!arr.length) {
+    tbody.innerHTML = `
+      <tr><td colspan="9" class="text-center text-muted py-5">
+        <i class="bi bi-box-seam" style="font-size:2rem;opacity:.3"></i>
+        <div class="fw-semibold mt-2" style="font-size:.9rem;color:#374151">Sin repuestos registrados</div>
+        <div style="font-size:.78rem">Agrega el primero con el botón "Agregar repuesto"</div>
+      </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = arr.map(r => `
+    <tr id="rep-row-${r.id}">
+      <td>
+        <div class="fw-bold" style="font-size:.84rem;color:#0f172a">${r.nombre || '—'}</div>
+        <div style="font-size:.68rem;color:#9ca3af;font-family:monospace">${r.sku || '—'}</div>
+      </td>
+      <td><span class="rep-tipo-${r.tipo}">${r.tipo}</span></td>
+      <td>${r.cantidad}</td>
+      <td>$${repFmt(r.costo_unitario)}</td>
+      <td>$${repFmt(r.precio_venta)}</td>
+      <td style="color:${r.margen >= 0 ? '#16a34a' : '#dc2626'};font-weight:600">
+        $${repFmt(r.margen)}${r.margen_pct !== null ? ` <small style="color:#9ca3af">(${r.margen_pct}%)</small>` : ''}
+      </td>
+      <td><span class="rep-estado rep-estado-${r.estado}">${r.estado}</span></td>
+      <td style="font-size:.75rem;color:#6b7280">${r.fecha || '—'}</td>
+      <td>
+        <div class="d-flex gap-1 justify-content-end">
+          <button class="btn btn-xs btn-outline-secondary" onclick="editarRepuesto(${r.id})" title="Editar">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn btn-xs btn-outline-danger" onclick="eliminarRepuesto(${r.id})" title="Eliminar">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function abrirRepuestoModal() {
+  document.getElementById('rep_id').value = '';
+  document.getElementById('repModalTitulo').innerHTML = '<i class="bi bi-gear-wide-connected me-2"></i>Nuevo repuesto';
+  ['rep_sku','rep_nombre','rep_descripcion','rep_documento','rep_proveedor','rep_observacion'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('rep_cantidad').value = 1;
+  document.getElementById('rep_costo').value = 0;
+  document.getElementById('rep_precio').value = 0;
+  document.getElementById('rep_tipo').value = 'venta';
+  document.getElementById('rep_estado').value = 'cotizado';
+  document.getElementById('rep_fecha').value = new Date().toISOString().slice(0,10);
+  document.getElementById('rep_maquina').value = '';
+  new bootstrap.Modal(document.getElementById('modalRepuesto')).show();
+}
+
+function editarRepuesto(rid) {
+  const r = _repCache.find(x => x.id === rid);
+  if (!r) return;
+  document.getElementById('rep_id').value = r.id;
+  document.getElementById('repModalTitulo').innerHTML = '<i class="bi bi-pencil-square me-2"></i>Editar repuesto';
+  document.getElementById('rep_sku').value = r.sku || '';
+  document.getElementById('rep_nombre').value = r.nombre || '';
+  document.getElementById('rep_descripcion').value = r.descripcion || '';
+  document.getElementById('rep_documento').value = r.documento || '';
+  document.getElementById('rep_proveedor').value = r.proveedor || '';
+  document.getElementById('rep_observacion').value = r.observacion || '';
+  document.getElementById('rep_cantidad').value = r.cantidad;
+  document.getElementById('rep_costo').value = r.costo_unitario;
+  document.getElementById('rep_precio').value = r.precio_venta;
+  document.getElementById('rep_tipo').value = r.tipo;
+  document.getElementById('rep_estado').value = r.estado;
+  document.getElementById('rep_fecha').value = r.fecha || '';
+  document.getElementById('rep_maquina').value = r.maquina_id || '';
+  new bootstrap.Modal(document.getElementById('modalRepuesto')).show();
+}
+
+async function guardarRepuesto() {
+  const rid = document.getElementById('rep_id').value;
+  const payload = {
+    sku:         document.getElementById('rep_sku').value.trim(),
+    nombre:      document.getElementById('rep_nombre').value.trim(),
+    descripcion: document.getElementById('rep_descripcion').value.trim(),
+    cantidad:    parseFloat(document.getElementById('rep_cantidad').value) || 1,
+    costo_unitario: parseFloat(document.getElementById('rep_costo').value) || 0,
+    precio_venta:parseFloat(document.getElementById('rep_precio').value) || 0,
+    tipo:        document.getElementById('rep_tipo').value,
+    estado:      document.getElementById('rep_estado').value,
+    fecha:       document.getElementById('rep_fecha').value || null,
+    documento:   document.getElementById('rep_documento').value.trim(),
+    proveedor:   document.getElementById('rep_proveedor').value.trim(),
+    observacion: document.getElementById('rep_observacion').value.trim(),
+    maquina_id:  document.getElementById('rep_maquina').value || null,
+  };
+  if (!payload.nombre) { alert('Nombre del repuesto es obligatorio'); return; }
+  const url = rid ? `/mantenciones/api/repuestos/${rid}` : `/mantenciones/api/clientes/${CID}/repuestos`;
+  const method = rid ? 'PUT' : 'POST';
+  const r = await fetch(url, {
+    method, headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) { alert('Error al guardar'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('modalRepuesto')).hide();
+  cargarRepuestos();
+}
+
+async function eliminarRepuesto(rid) {
+  if (!confirm('¿Eliminar este repuesto?')) return;
+  const r = await fetch(`/mantenciones/api/repuestos/${rid}`, {method:'DELETE'});
+  if (r.ok) cargarRepuestos();
+  else alert('Error al eliminar');
+}
+
+// ── Importar repuestos desde ERP ────────────────────────────
+let _repErpLineas = [];
+function abrirImportarRepErp() {
+  document.getElementById('repErp_nudo').value = '';
+  document.getElementById('repErpResultado').innerHTML = '';
+  document.getElementById('btnRepErpImportar').disabled = true;
+  _repErpLineas = [];
+  new bootstrap.Modal(document.getElementById('modalImportarRepErp')).show();
+}
+
+async function repErpBuscar() {
+  const tido = document.getElementById('repErp_tido').value;
+  const nudo = document.getElementById('repErp_nudo').value.trim();
+  if (!nudo) { alert('Ingresa el número de documento'); return; }
+  const cont = document.getElementById('repErpResultado');
+  cont.innerHTML = '<div class="text-center py-3"><div class="spinner-border text-primary"></div><div class="text-muted mt-2" style="font-size:.82rem">Consultando ERP…</div></div>';
+  try {
+    const r = await fetch(`/api/erp/documento?tido=${encodeURIComponent(tido)}&nudo=${encodeURIComponent(nudo)}`);
+    if (!r.ok) {
+      const e = await r.json();
+      cont.innerHTML = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-1"></i>${e.error || 'Documento no encontrado'}</div>`;
+      return;
+    }
+    const data = await r.json();
+    _repErpLineas = data.lineas || [];
+    if (!_repErpLineas.length) {
+      cont.innerHTML = '<div class="alert alert-info">El documento no tiene líneas.</div>';
+      return;
+    }
+    cont.innerHTML = `
+      <div class="alert alert-info py-2 mb-3" style="font-size:.78rem">
+        <strong>${data.hdr.razon_social || '—'}</strong>
+        ${data.hdr.rut?` · RUT ${data.hdr.rut}`:''}
+        ${data.hdr.fecha?` · ${data.hdr.fecha}`:''}
+      </div>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span style="font-size:.82rem;color:#374151"><strong>${_repErpLineas.length}</strong> líneas en el documento</span>
+        <div>
+          <label class="small me-2"><input type="checkbox" id="rep_erp_all" checked onchange="document.querySelectorAll('.rep-erp-chk').forEach(c=>c.checked=this.checked)"> Marcar todas</label>
+        </div>
+      </div>
+      <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+        <table class="table table-sm" style="font-size:.78rem">
+          <thead><tr><th></th><th>SKU</th><th>Descripción</th><th>Cant.</th><th>P. unit.</th></tr></thead>
+          <tbody>
+            ${_repErpLineas.map((ln, i) => `
+              <tr>
+                <td><input type="checkbox" class="rep-erp-chk" data-idx="${i}" checked></td>
+                <td class="font-monospace">${ln.sku || '—'}</td>
+                <td>${ln.nombre}</td>
+                <td>${ln.cantidad}</td>
+                <td>$${new Intl.NumberFormat('es-CL').format(ln.precio_unit||0)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    document.getElementById('btnRepErpImportar').disabled = false;
+  } catch (e) {
+    cont.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+async function repErpImportar() {
+  const seleccionados = Array.from(document.querySelectorAll('.rep-erp-chk:checked'))
+    .map(c => parseInt(c.dataset.idx)).filter(n => !isNaN(n));
+  if (!seleccionados.length) { alert('Selecciona al menos una línea'); return; }
+  const tido = document.getElementById('repErp_tido').value;
+  const nudo = document.getElementById('repErp_nudo').value.trim();
+  const btn = document.getElementById('btnRepErpImportar');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
+  let ok = 0, err = 0;
+  for (const idx of seleccionados) {
+    const ln = _repErpLineas[idx];
+    const payload = {
+      sku: ln.sku, nombre: ln.nombre,
+      cantidad: ln.cantidad, precio_venta: ln.precio_unit,
+      tipo: 'venta', estado: 'cotizado',
+      documento: `${tido} ${nudo}`,
+      fecha: new Date().toISOString().slice(0,10),
+    };
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/repuestos`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      if (r.ok) ok++; else err++;
+    } catch { err++; }
+  }
+  bootstrap.Modal.getInstance(document.getElementById('modalImportarRepErp')).hide();
+  alert(`✓ Importados ${ok} repuestos${err?` (${err} errores)`:''}`);
+  cargarRepuestos();
+}
+
+// Auto-cargar al abrir el tab por primera vez
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.ftab-btn[data-tab="repuestos"]').forEach(btn => {
+    btn.addEventListener('click', () => { if (!_repCache.length) cargarRepuestos(); });
+  });
+  // Cargar contador en background al cargar la ficha
+  cargarRepuestos();
+});
+</script>
+
+</div>
+{# /tab-repuestos #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: FINANZAS — ingresos, costos, margen, gráfico mensual
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-finanzas">
+<style>
+.fin-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px;}
+.fin-kpi{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;
+         box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.fin-kpi-label{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;}
+.fin-kpi-num{font-size:1.5rem;font-weight:900;line-height:1;margin-top:4px;}
+.fin-kpi-sub{font-size:.7rem;color:#6b7280;margin-top:3px;}
+.fin-section-h{font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#475569;margin:18px 0 8px;}
+.fin-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f3f4f6;font-size:.84rem;}
+.fin-row:last-child{border-bottom:none;}
+.fin-bar-chart{display:flex;align-items:flex-end;gap:4px;height:140px;padding:8px 0;}
+.fin-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;}
+.fin-bar{width:100%;border-radius:3px 3px 0 0;background:linear-gradient(180deg,#16a34a,#0f7a35);
+         min-height:3px;transition:height .6s;}
+.fin-bar-lbl{font-size:.6rem;font-weight:700;color:#9ca3af;text-transform:uppercase;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-cash-coin me-2" style="color:var(--ilus-red)"></i>Análisis financiero</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Ingresos, costos y margen del cliente</span>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <select id="fin_periodo" class="form-select form-select-sm" style="width:auto"
+            onchange="cargarFinanzas()">
+      <option value="12">Últimos 12 meses</option>
+      <option value="6">Últimos 6 meses</option>
+      <option value="3">Últimos 3 meses</option>
+      <option value="0">Todo el historial</option>
+    </select>
+  </div>
+</div>
+
+<div class="fin-kpi-grid" id="finKpiGrid">
+  <div class="fin-kpi"><div class="fin-kpi-label">Ingresos brutos</div><div class="fin-kpi-num" id="fin-ingresos" style="color:#16a34a">$0</div><div class="fin-kpi-sub" id="fin-ingresos-sub">Repuestos + visitas + contrato</div></div>
+  <div class="fin-kpi"><div class="fin-kpi-label">Costos</div><div class="fin-kpi-num" id="fin-costos" style="color:#dc2626">$0</div><div class="fin-kpi-sub" id="fin-costos-sub">Repuestos + visitas técnico</div></div>
+  <div class="fin-kpi"><div class="fin-kpi-label">Margen</div><div class="fin-kpi-num" id="fin-margen" style="color:#0f172a">$0</div><div class="fin-kpi-sub" id="fin-margen-sub">% sobre ingresos</div></div>
+  <div class="fin-kpi"><div class="fin-kpi-label">Garantías</div><div class="fin-kpi-num" id="fin-garantia" style="color:#d97706">$0</div><div class="fin-kpi-sub">Costo cubierto</div></div>
+  <div class="fin-kpi"><div class="fin-kpi-label">Visitas facturables</div><div class="fin-kpi-num" id="fin-visitas">0</div><div class="fin-kpi-sub">en período</div></div>
+  <div class="fin-kpi"><div class="fin-kpi-label">Ticket promedio</div><div class="fin-kpi-num" id="fin-ticket" style="color:#7c3aed">$0</div><div class="fin-kpi-sub">por intervención</div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-7">
+    <div class="f-card">
+      <div class="f-card-header">
+        <span class="f-card-title"><i class="bi bi-graph-up me-1"></i>Ingresos por mes</span>
+      </div>
+      <div class="f-card-body">
+        <div class="fin-bar-chart" id="finBarChart">
+          <div class="text-center w-100 text-muted py-4" style="font-size:.78rem">Cargando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-xl-5">
+    <div class="f-card">
+      <div class="f-card-header">
+        <span class="f-card-title"><i class="bi bi-list-check me-1"></i>Desglose</span>
+      </div>
+      <div class="f-card-body" id="finDesglose">
+        <div class="text-muted text-center py-3" style="font-size:.78rem">Cargando…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function cargarFinanzas() {
+  const meses = parseInt(document.getElementById('fin_periodo').value) || 12;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/finanzas?meses=${meses}`);
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    const fmt = n => '$' + new Intl.NumberFormat('es-CL').format(Math.round(n||0));
+    document.getElementById('fin-ingresos').textContent = fmt(d.ingresos_total);
+    document.getElementById('fin-costos').textContent   = fmt(d.costos_total);
+    document.getElementById('fin-margen').textContent   = fmt(d.margen);
+    document.getElementById('fin-garantia').textContent = fmt(d.garantia_costo);
+    document.getElementById('fin-visitas').textContent  = d.visitas_count;
+    document.getElementById('fin-ticket').textContent   = fmt(d.ticket_promedio);
+    const pct = d.ingresos_total ? Math.round(d.margen*100/d.ingresos_total) : 0;
+    document.getElementById('fin-margen-sub').textContent = pct + '% sobre ingresos';
+    document.getElementById('fin-margen').style.color = pct>=30 ? '#16a34a' : pct>=10 ? '#d97706' : '#dc2626';
+
+    // Bar chart
+    const max = Math.max(1, ...d.por_mes.map(m => m.ingreso));
+    document.getElementById('finBarChart').innerHTML = d.por_mes.map(m => `
+      <div class="fin-bar-col" title="${m.label}: $${new Intl.NumberFormat('es-CL').format(m.ingreso)}">
+        <div style="flex:1;display:flex;align-items:flex-end;width:100%">
+          <div class="fin-bar" style="height:${(m.ingreso*100/max)}%"></div>
+        </div>
+        <div class="fin-bar-lbl">${m.label}</div>
+      </div>
+    `).join('');
+
+    // Desglose
+    document.getElementById('finDesglose').innerHTML = `
+      <div class="fin-row"><span><i class="bi bi-gear-wide-connected me-2 text-primary"></i>Repuestos vendidos</span><strong>${fmt(d.repuestos_venta)}</strong></div>
+      <div class="fin-row"><span><i class="bi bi-shield-check me-2 text-warning"></i>Garantía (sin cobro)</span><strong>${fmt(d.garantia_costo)}</strong></div>
+      <div class="fin-row"><span><i class="bi bi-tools me-2 text-success"></i>Visitas con costo</span><strong>${fmt(d.visitas_costo)}</strong></div>
+      <div class="fin-row"><span><i class="bi bi-file-earmark-text me-2 text-purple"></i>Contrato (estimado)</span><strong>${fmt(d.contrato_estimado)}</strong></div>
+      <hr class="my-2">
+      <div class="fin-row" style="background:#f0fdf4;padding:10px 12px;border-radius:8px"><span class="fw-bold">TOTAL INGRESOS</span><strong style="color:#16a34a">${fmt(d.ingresos_total)}</strong></div>
+      <div class="fin-row" style="background:#fef2f2;padding:10px 12px;border-radius:8px"><span class="fw-bold">TOTAL COSTOS</span><strong style="color:#dc2626">${fmt(d.costos_total)}</strong></div>
+      <div class="fin-row" style="background:#0f172a;color:#fff;padding:10px 12px;border-radius:8px"><span class="fw-bold">MARGEN NETO</span><strong>${fmt(d.margen)} (${pct}%)</strong></div>
+    `;
+  } catch (e) {
+    document.getElementById('finDesglose').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+</script>
+</div>
+{# /tab-finanzas #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: DOCUMENTOS — adjuntos del cliente unificados
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-documentos">
+<style>
+.doc-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+          display:flex;gap:14px;align-items:center;margin-bottom:8px;
+          transition:box-shadow .15s,border-color .15s;}
+.doc-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.06);border-color:#cbd5e1;}
+.doc-icon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+          font-size:1.15rem;flex-shrink:0;}
+.doc-name{font-weight:700;font-size:.85rem;color:#0f172a;}
+.doc-meta{font-size:.7rem;color:#9ca3af;margin-top:2px;}
+.doc-tipo-contrato{background:#fee2e2;color:#991b1b;}
+.doc-tipo-imagen{background:#f0fdf4;color:#16a34a;}
+.doc-tipo-reporte{background:#ede9fe;color:#5b21b6;}
+.doc-tipo-otro{background:#f3f4f6;color:#6b7280;}
+.doc-filter-tabs{display:flex;gap:4px;margin-bottom:14px;border:1px solid var(--border);
+                 border-radius:8px;overflow:hidden;}
+.doc-filter-btn{padding:7px 14px;border:none;background:#fff;font-size:.78rem;font-weight:600;
+                color:#6b7280;cursor:pointer;transition:all .1s;}
+.doc-filter-btn.active{background:#0f172a;color:#fff;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-folder-fill me-2" style="color:var(--ilus-red)"></i>Documentos del cliente</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Contratos, fotos de servicios, reportes y archivos sueltos</span>
+  </div>
+  <button class="btn btn-sm btn-ilus" onclick="document.getElementById('docUploadInput').click()">
+    <i class="bi bi-cloud-arrow-up me-1"></i>Subir documento
+  </button>
+  <input type="file" id="docUploadInput" style="display:none" multiple
+         accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp"
+         onchange="docSubir(this.files)">
+</div>
+
+<div class="doc-filter-tabs" id="docFilterTabs">
+  <button class="doc-filter-btn active" onclick="docFiltrar('todos',this)">Todos</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('contrato',this)">Contratos</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('imagen',this)">Fotos</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('reporte',this)">Reportes HTML</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('otro',this)">Otros</button>
+</div>
+
+<div id="docListado">
+  <div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>
+</div>
+
+<script>
+let _docCache = [];
+async function cargarDocumentos() {
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/documentos`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _docCache = await r.json();
+    docRender(_docCache);
+  } catch (e) {
+    document.getElementById('docListado').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+function docRender(arr) {
+  const cont = document.getElementById('docListado');
+  if (!arr.length) {
+    cont.innerHTML = `<div class="text-center py-5 text-muted">
+      <i class="bi bi-folder-x" style="font-size:2.5rem;opacity:.25"></i>
+      <div class="fw-semibold mt-2">Sin documentos</div>
+      <div style="font-size:.78rem">Sube el primero con el botón "Subir documento"</div></div>`;
+    return;
+  }
+  const ico = {contrato:'bi-file-earmark-pdf',imagen:'bi-image',reporte:'bi-file-earmark-richtext',otro:'bi-file-earmark'};
+  cont.innerHTML = arr.map(d => `
+    <div class="doc-card">
+      <div class="doc-icon doc-tipo-${d.tipo||'otro'}">
+        <i class="bi ${ico[d.tipo]||'bi-file-earmark'}"></i>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="doc-name text-truncate">${d.nombre || 'Sin nombre'}</div>
+        <div class="doc-meta">
+          <span class="me-2">${d.tipo}</span>
+          <span class="me-2">${d.created_at || ''}</span>
+          ${d.created_by ? `<span class="me-2"><i class="bi bi-person me-1"></i>${d.created_by}</span>` : ''}
+          ${d.size_kb ? `<span>${d.size_kb} KB</span>` : ''}
+          ${d.fuente ? `<span class="ms-2 badge bg-light text-dark" style="font-size:.6rem">${d.fuente}</span>` : ''}
+        </div>
+      </div>
+      <div class="d-flex gap-1">
+        <a href="${d.url}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i></a>
+        <a href="${d.url}" download class="btn btn-xs btn-outline-secondary"><i class="bi bi-download"></i></a>
+        ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')"><i class="bi bi-trash"></i></button>` : ''}
+      </div>
+    </div>`).join('');
+}
+function docFiltrar(tipo, btn) {
+  document.querySelectorAll('.doc-filter-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (tipo === 'todos') docRender(_docCache);
+  else docRender(_docCache.filter(d => d.tipo === tipo));
+}
+async function docSubir(files) {
+  if (!files || !files.length) return;
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append('archivo', f);
+    fd.append('tipo', 'otro');
+    fd.append('nombre', f.name);
+    await fetch(`/mantenciones/api/clientes/${CID}/documentos`, {method:'POST', body:fd});
+  }
+  cargarDocumentos();
+}
+async function docEliminar(kind, id) {
+  if (!confirm('¿Eliminar este documento?')) return;
+  await fetch(`/mantenciones/api/documentos/${kind}/${id}`, {method:'DELETE'});
+  cargarDocumentos();
+}
+</script>
+</div>
+{# /tab-documentos #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: COMUNICACIONES — emails y notificaciones del cliente
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-comunicaciones">
+<style>
+.com-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;
+          margin-bottom:8px;transition:box-shadow .15s;}
+.com-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.07);}
+.com-canal-email{background:#dbeafe;color:#1e40af;}
+.com-canal-whatsapp{background:#dcfce7;color:#166534;}
+.com-canal-sistema{background:#f3f4f6;color:#374151;}
+.com-canal{padding:2px 9px;border-radius:50px;font-size:.62rem;font-weight:700;}
+.com-est-pendiente{background:#fef9c3;color:#854d0e;}
+.com-est-enviada{background:#dbeafe;color:#1e40af;}
+.com-est-leida{background:#dcfce7;color:#166534;}
+.com-est-fallida{background:#fee2e2;color:#991b1b;}
+.com-est{padding:2px 9px;border-radius:50px;font-size:.62rem;font-weight:700;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-chat-dots me-2" style="color:var(--ilus-red)"></i>Comunicaciones del cliente</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Histórico de emails y notificaciones enviadas</span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="abrirEmailManual()">
+      <i class="bi bi-envelope-paper me-1"></i>Enviar email
+    </button>
+    <a href="{{ url_for('mant_notificaciones_centro') }}" class="btn btn-sm btn-outline-dark">
+      <i class="bi bi-bell"></i>
+    </a>
+  </div>
+</div>
+
+<div id="comListado">
+  <div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>
+</div>
+
+<script>
+async function cargarComunicaciones() {
+  try {
+    const r = await fetch(`/mantenciones/api/notificaciones?cliente_id=${CID}`);
+    const arr = await r.json();
+    const cont = document.getElementById('comListado');
+    if (!arr.length) {
+      cont.innerHTML = `<div class="text-center py-5 text-muted">
+        <i class="bi bi-envelope-x" style="font-size:2.5rem;opacity:.25"></i>
+        <div class="fw-semibold mt-2">Sin comunicaciones registradas</div>
+        <div style="font-size:.78rem">Las notificaciones y emails enviados aparecerán aquí</div></div>`;
+      return;
+    }
+    cont.innerHTML = arr.map(n => `
+      <div class="com-card">
+        <div class="d-flex align-items-start gap-3 flex-wrap">
+          <div style="width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:${n.canal==='email'?'#dbeafe':n.canal==='whatsapp'?'#dcfce7':'#f3f4f6'};color:${n.canal==='email'?'#1e40af':n.canal==='whatsapp'?'#166534':'#6b7280'};flex-shrink:0">
+            <i class="bi ${n.canal==='email'?'bi-envelope-fill':n.canal==='whatsapp'?'bi-whatsapp':'bi-bell-fill'}"></i>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+              <span class="fw-bold" style="font-size:.85rem">${n.titulo}</span>
+              <span class="com-canal com-canal-${n.canal}">${n.canal}</span>
+              <span class="com-est com-est-${n.estado}">${n.estado}</span>
+            </div>
+            <div style="font-size:.77rem;color:#374151;line-height:1.45">${n.mensaje||''}</div>
+            <div style="font-size:.66rem;color:#9ca3af;margin-top:3px">
+              ${n.created_at||''}${n.destinatario?' · '+n.destinatario:''}${n.fecha_envio?' · enviado '+n.fecha_envio:''}
+            </div>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('comListado').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+function abrirEmailManual() {
+  const cliente_email = {{ (cliente.contacto_email or '')|tojson }};
+  const cliente_nombre = {{ (cliente.contacto_nombre or cliente.razon_social or '')|tojson }};
+  const html = `
+    <div class="modal fade" id="modalEmailManual" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header" style="background:#0f172a;color:#fff">
+            <h5 class="modal-title"><i class="bi bi-envelope-paper me-2"></i>Enviar email manual</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2">
+              <label class="form-label small fw-semibold">Destinatario</label>
+              <input type="email" id="em_to" class="form-control form-control-sm" value="${cliente_email}">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold">Asunto</label>
+              <input type="text" id="em_subj" class="form-control form-control-sm">
+            </div>
+            <div class="mb-0">
+              <label class="form-label small fw-semibold">Mensaje</label>
+              <textarea id="em_body" class="form-control form-control-sm" rows="8"
+                        placeholder="Estimado/a ${cliente_nombre}, ..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button class="btn btn-sm btn-ilus" id="btn_em_enviar">
+              <i class="bi bi-send me-1"></i>Enviar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  const old = document.getElementById('modalEmailManual'); if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+  const m = new bootstrap.Modal(document.getElementById('modalEmailManual'));
+  m.show();
+  document.getElementById('btn_em_enviar').onclick = async () => {
+    const btn = document.getElementById('btn_em_enviar');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando...';
+    const payload = {
+      destinatario: document.getElementById('em_to').value.trim(),
+      asunto:       document.getElementById('em_subj').value.trim(),
+      mensaje:      document.getElementById('em_body').value.trim(),
+    };
+    if (!payload.destinatario || !payload.asunto || !payload.mensaje) {
+      alert('Completa destinatario, asunto y mensaje.'); btn.disabled=false; btn.innerHTML='<i class="bi bi-send me-1"></i>Enviar'; return;
+    }
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/email-manual`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (data.ok) {
+      m.hide();
+      cargarComunicaciones();
+    } else {
+      alert('Error: ' + (data.error || 'No se pudo enviar'));
+      btn.disabled=false; btn.innerHTML='<i class="bi bi-send me-1"></i>Enviar';
+    }
+  };
+}
+</script>
+</div>
+{# /tab-comunicaciones #}
+
 
 {# ══════════════════════════════════════════════════════
    TAB: IA & PLAN
@@ -1866,9 +3391,198 @@
 {# /ftab-pane ia #}
 
 
+{# ══════════════════════════════════════════════════════════════════
+   TAB: MANTENCIONES / VISITAS
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-visitas">
+
+  <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+    <div>
+      <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-calendar-week me-2" style="color:var(--ilus-red)"></i>Mantenciones y Visitas</span>
+      <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ visitas|length }}</span>
+    </div>
+    <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
+      <i class="bi bi-calendar-plus me-1"></i>Agendar visita
+    </button>
+  </div>
+
+  {% if visitas %}
+  <div class="f-card">
+    <div class="f-card-body p-0">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
+          <tr>
+            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Título</th>
+            <th class="py-2 d-none d-sm-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Tipo</th>
+            <th class="py-2 d-none d-md-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Técnico</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Estado</th>
+            <th class="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for v in visitas|sort(attribute='fecha_programada',reverse=True) %}
+        <tr style="border-bottom:1px solid #f3f4f6;transition:background .1s" onmouseover="this.style.background='#fafbfc'" onmouseout="this.style.background=''">
+          <td class="ps-3 py-2 font-monospace" style="white-space:nowrap;color:#374151">
+            {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+          </td>
+          <td class="py-2 fw-semibold" style="color:#0f172a">
+            {{ v.titulo or (v.tipo.capitalize() + ' programada') }}
+            {% if v.descripcion %}
+            <div style="font-size:.7rem;color:#9ca3af;font-weight:400">{{ v.descripcion[:60] }}{% if v.descripcion|length>60 %}…{% endif %}</div>
+            {% endif %}
+          </td>
+          <td class="py-2 d-none d-sm-table-cell">
+            {% set tipo_col = {'preventiva':'#dcfce7','correctiva':'#fee2e2','garantia':'#dbeafe','inspeccion':'#fef3c7'} %}
+            {% set tipo_txt = {'preventiva':'#166534','correctiva':'#991b1b','garantia':'#1e40af','inspeccion':'#92400e'} %}
+            <span style="display:inline-block;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;
+                         background:{{ tipo_col.get(v.tipo,'#f3f4f6') }};color:{{ tipo_txt.get(v.tipo,'#374151') }}">
+              {{ v.tipo.title() if v.tipo else '—' }}
+            </span>
+          </td>
+          <td class="py-2 d-none d-md-table-cell" style="color:#6b7280">{{ v.tecnico or '—' }}</td>
+          <td class="py-2">
+            <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>
+          </td>
+          <td class="py-2 pe-2">
+            <button class="btn btn-xs btn-outline-secondary" onclick="editarVisita({{ v.id }})" title="Editar">
+              <i class="bi bi-pencil"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="f-card">
+    <div class="empty-state">
+      <i class="bi bi-calendar-x"></i>
+      <div class="fw-semibold" style="font-size:.9rem;color:#374151">Sin visitas registradas</div>
+      <div style="font-size:.8rem;margin-bottom:12px">Agenda la primera mantención para este cliente</div>
+      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Agendar visita
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{# /ftab-pane visitas #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: HISTORIAL
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-historial">
+
+  <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+    <div>
+      <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial de actividad</span>
+      <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ logs|length }} registros</span>
+    </div>
+  </div>
+
+  {% if logs %}
+  <div class="f-card">
+    <div class="f-card-body p-0">
+      {% for l in logs|sort(attribute='created_at',reverse=True) %}
+      {% set ico_map = {
+        'crear_cliente':  ('person-plus','#dcfce7','#166534'),
+        'editar_cliente': ('pencil','#dbeafe','#1d4ed8'),
+        'agregar_maquina':('bicycle','#ede9fe','#5b21b6'),
+        'editar_maquina': ('bicycle','#ede9fe','#5b21b6'),
+        'subir_contrato': ('file-earmark-text','#ede9fe','#5b21b6'),
+        'analizar_contrato':('stars','#fef9c3','#92400e'),
+        'crear_visita':   ('calendar-plus','#dcfce7','#166534'),
+        'editar_visita':  ('calendar-check','#dbeafe','#1d4ed8'),
+      } %}
+      {% set ico = ico_map.get(l.accion, ('clock','#f3f4f6','#6b7280')) %}
+      <div class="log-item" style="display:flex;gap:12px;padding:12px 18px;border-bottom:1px solid #f9fafb;align-items:flex-start">
+        <div style="width:32px;height:32px;border-radius:8px;background:{{ ico[1] }};color:{{ ico[2] }};
+                    display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0">
+          <i class="bi bi-{{ ico[0] }}"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="fw-semibold" style="font-size:.83rem;color:#0f172a">{{ l.accion.replace('_',' ').title() }}</div>
+          {% if l.detalle %}
+          <div style="font-size:.75rem;color:#6b7280;margin-top:2px">{{ l.detalle[:120] }}{% if l.detalle|length > 120 %}…{% endif %}</div>
+          {% endif %}
+          <div style="font-size:.68rem;color:#9ca3af;margin-top:3px">
+            {% if l.usuario %}<span class="me-2"><i class="bi bi-person me-1"></i>{{ l.usuario }}</span>{% endif %}
+          </div>
+        </div>
+        <div style="font-size:.7rem;color:#9ca3af;text-align:right;flex-shrink:0;white-space:nowrap">
+          {% if l.created_at %}
+            {{ l.created_at.strftime('%d/%m/%Y') }}
+            <div>{{ l.created_at.strftime('%H:%M') }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="f-card">
+    <div class="empty-state">
+      <i class="bi bi-clock-history"></i>
+      <div class="fw-semibold" style="font-size:.9rem;color:#374151">Sin historial de actividad</div>
+      <div style="font-size:.8rem">Las acciones realizadas sobre este cliente aparecerán aquí</div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{# /ftab-pane historial #}
+
+
 {# ═══════════════════════════════════════════════════════════════
    MODALES
 ═══════════════════════════════════════════════════════════════ #}
+
+{# ── Modal: Eliminar cliente (zona peligrosa) ── #}
+<div class="modal fade" id="modalEliminarCliente" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#dc2626;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Eliminar cliente — acción irreversible</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger" style="font-size:.85rem">
+          <strong><i class="bi bi-shield-exclamation me-1"></i>Vas a eliminar permanentemente:</strong>
+          <ul class="mb-0 mt-2">
+            <li><strong>{{ cliente.razon_social }}</strong> {% if cliente.rut %}<span class="font-monospace ms-1">({{ cliente.rut }})</span>{% endif %}</li>
+            <li>Equipos, contratos, visitas, reportes y repuestos asociados</li>
+            <li>Notificaciones y log de actividad del cliente</li>
+            <li>Archivos adjuntos en disco asociados</li>
+          </ul>
+        </div>
+        <p style="font-size:.85rem;color:#374151">
+          Para confirmar, escribe a continuación la <strong>razón social</strong> o el <strong>RUT</strong> del cliente exactamente.
+        </p>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Confirmación</label>
+          <input type="text" id="del_confirm" class="form-control"
+                 placeholder="{{ cliente.razon_social }}"
+                 autocomplete="off">
+          <div id="del_hint" class="form-text" style="font-size:.72rem;color:#9ca3af">
+            Espera de: <strong>{{ cliente.razon_social }}</strong>
+            {% if cliente.rut %}o <strong>{{ cliente.rut }}</strong>{% endif %}
+          </div>
+        </div>
+        <div id="del_error" class="alert alert-warning d-none py-2" style="font-size:.78rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-danger" id="btnConfirmarEliminar" disabled onclick="confirmarEliminarCliente()">
+          <i class="bi bi-trash3-fill me-1"></i>Eliminar definitivamente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ── Modal: Gestión de contrato — variables, cláusulas ── #}
 <div class="modal fade" id="modalGestionContrato" tabindex="-1">
@@ -2021,25 +3735,33 @@
           <div class="col-6">
             <label class="form-label fw-semibold">Estado</label>
             <select id="ec_estado" class="form-select">
-              {% for e in ['activo','prospecto','inactivo'] %}
+              {% for e in ['activo','prospecto','inactivo','suspendido'] %}
               <option value="{{ e }}" {% if cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
               {% endfor %}
             </select>
           </div>
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Contacto</div></div>
+
+          {# ── Datos de empresa ── #}
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-building me-1"></i>Datos de empresa
+          </div></div>
           <div class="col-12 col-sm-6">
-            <label class="form-label fw-semibold">Nombre contacto</label>
-            <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}">
+            <label class="form-label fw-semibold">Giro / actividad</label>
+            <input type="text" id="ec_giro" class="form-control" value="{{ cliente.giro or '' }}" placeholder="Servicios deportivos, hotelería…">
           </div>
           <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto_tel" class="form-control" value="{{ cliente.contacto_tel or '' }}">
+            <label class="form-label fw-semibold">Email empresa</label>
+            <input type="email" id="ec_email_empresa" class="form-control" value="{{ cliente.email_empresa or '' }}" placeholder="contacto@empresa.cl">
           </div>
           <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Email</label>
-            <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
+            <label class="form-label fw-semibold">Tel. empresa</label>
+            <input type="text" id="ec_tel_empresa" class="form-control" value="{{ cliente.tel_empresa or '' }}" placeholder="+56 2 ...">
           </div>
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Ubicación</div></div>
+
+          {# ── Ubicación ── #}
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-geo-alt me-1"></i>Ubicación
+          </div></div>
           <div class="col-12">
             <label class="form-label fw-semibold">Dirección</label>
             <input type="text" id="ec_direccion" class="form-control" value="{{ cliente.direccion or '' }}">
@@ -2056,6 +3778,51 @@
             <label class="form-label fw-semibold">Ciudad</label>
             <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
           </div>
+
+          {# ── Contacto principal ── #}
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-person-vcard me-1"></i>Contacto principal
+          </div></div>
+          <div class="col-12 col-sm-5">
+            <label class="form-label fw-semibold">Nombre completo</label>
+            <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Cargo / Rol</label>
+            <input type="text" id="ec_contacto_cargo" class="form-control" value="{{ cliente.contacto_cargo or '' }}" placeholder="Administrador…">
+          </div>
+          <div class="col-6 col-sm-2">
+            <label class="form-label fw-semibold">Teléfono</label>
+            <input type="text" id="ec_contacto_tel" class="form-control" value="{{ cliente.contacto_tel or '' }}">
+          </div>
+          <div class="col-12 col-sm-2">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
+          </div>
+
+          {# ── Contacto secundario ── #}
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-people me-1"></i>Contacto secundario
+            <span class="text-muted fw-normal" style="font-size:.72rem">— opcional</span>
+          </div></div>
+          <div class="col-12 col-sm-5">
+            <label class="form-label fw-semibold">Nombre completo</label>
+            <input type="text" id="ec_contacto2_nombre" class="form-control" value="{{ cliente.contacto2_nombre or '' }}" placeholder="Ej: María González">
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Cargo / Rol</label>
+            <input type="text" id="ec_contacto2_cargo" class="form-control" value="{{ cliente.contacto2_cargo or '' }}" placeholder="Gerente, mantenedor…">
+          </div>
+          <div class="col-6 col-sm-2">
+            <label class="form-label fw-semibold">Teléfono</label>
+            <input type="text" id="ec_contacto2_tel" class="form-control" value="{{ cliente.contacto2_tel or '' }}">
+          </div>
+          <div class="col-12 col-sm-2">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" id="ec_contacto2_email" class="form-control" value="{{ cliente.contacto2_email or '' }}">
+          </div>
+
+          <div class="col-12"><hr class="my-1"></div>
           <div class="col-12">
             <label class="form-label fw-semibold">Notas internas</label>
             <textarea id="ec_notas" class="form-control" rows="2">{{ cliente.notas or '' }}</textarea>
@@ -2424,18 +4191,32 @@ function editarVisita(v) {
 
 // ─── Guardar cliente (PUT) ────────────────────────────────
 async function guardarCliente() {
+  const $v = id => (document.getElementById(id)?.value || '').trim();
   const data = {
-    razon_social:     document.getElementById('ec_razon').value.trim(),
-    rut:              document.getElementById('ec_rut').value.trim(),
-    estado:           document.getElementById('ec_estado').value,
-    contacto_nombre:  document.getElementById('ec_contacto_nombre').value.trim(),
-    contacto_tel:     document.getElementById('ec_contacto_tel').value.trim(),
-    contacto_email:   document.getElementById('ec_contacto_email').value.trim(),
-    direccion:        document.getElementById('ec_direccion').value.trim(),
-    region:           document.getElementById('ec_region').value.trim(),
-    comuna:           document.getElementById('ec_comuna').value.trim(),
-    ciudad:           document.getElementById('ec_ciudad').value.trim(),
-    notas:            document.getElementById('ec_notas').value.trim(),
+    // Empresa
+    razon_social:      $v('ec_razon'),
+    rut:               $v('ec_rut'),
+    estado:            document.getElementById('ec_estado').value,
+    giro:              $v('ec_giro'),
+    email_empresa:     $v('ec_email_empresa'),
+    tel_empresa:       $v('ec_tel_empresa'),
+    // Ubicación
+    direccion:         $v('ec_direccion'),
+    region:            $v('ec_region'),
+    comuna:            $v('ec_comuna'),
+    ciudad:            $v('ec_ciudad'),
+    // Contacto principal
+    contacto_nombre:   $v('ec_contacto_nombre'),
+    contacto_cargo:    $v('ec_contacto_cargo'),
+    contacto_tel:      $v('ec_contacto_tel'),
+    contacto_email:    $v('ec_contacto_email'),
+    // Contacto secundario
+    contacto2_nombre:  $v('ec_contacto2_nombre'),
+    contacto2_cargo:   $v('ec_contacto2_cargo'),
+    contacto2_tel:     $v('ec_contacto2_tel'),
+    contacto2_email:   $v('ec_contacto2_email'),
+    // Notas
+    notas:             $v('ec_notas'),
   };
   if (!data.razon_social) { alert('Razón social requerida'); return; }
   const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
@@ -2702,6 +4483,57 @@ async function eliminarMaquina(mid, btn) {
     const row = document.getElementById(`maq-${mid}`);
     if (row) { row.style.transition='opacity .3s'; row.style.opacity='0'; setTimeout(()=>row.remove(),300); }
   } else { btn.disabled = false; alert('Error al eliminar'); }
+}
+
+// ─── Eliminar cliente (con doble confirmación) ─────────────────
+function abrirEliminarCliente() {
+  const inp = document.getElementById('del_confirm');
+  inp.value = '';
+  document.getElementById('del_error').classList.add('d-none');
+  document.getElementById('btnConfirmarEliminar').disabled = true;
+  // Habilitar botón solo cuando coincide
+  const expected = [
+    {{ (cliente.razon_social or '')|tojson }},
+    {{ (cliente.rut or '')|tojson }}
+  ].map(v => (v||'').trim().toLowerCase()).filter(Boolean);
+  inp.oninput = () => {
+    const v = inp.value.trim().toLowerCase();
+    const v_norm = v.replace(/[^0-9k]/g,'');
+    const ok = expected.some(e => e === v || (e.replace(/[^0-9k]/g,'') === v_norm && v_norm.length>=7));
+    document.getElementById('btnConfirmarEliminar').disabled = !ok;
+  };
+  new bootstrap.Modal(document.getElementById('modalEliminarCliente')).show();
+}
+
+async function confirmarEliminarCliente() {
+  const btn = document.getElementById('btnConfirmarEliminar');
+  const errBox = document.getElementById('del_error');
+  const confirm_text = document.getElementById('del_confirm').value.trim();
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando...';
+  errBox.classList.add('d-none');
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text})
+    });
+    const data = await r.json();
+    if (data.ok) {
+      alert(`✓ Cliente "${data.razon_social}" eliminado.\n\nSe eliminaron ${Object.entries(data.eliminado||{}).map(([k,v])=>`${v} ${k}`).join(', ') || 'datos asociados'}.`);
+      window.location.href = '/mantenciones/clientes';
+    } else {
+      errBox.textContent = data.error || 'No se pudo eliminar.';
+      errBox.classList.remove('d-none');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-trash3-fill me-1"></i>Eliminar definitivamente';
+    }
+  } catch (e) {
+    errBox.textContent = 'Error de red: ' + e.message;
+    errBox.classList.remove('d-none');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3-fill me-1"></i>Eliminar definitivamente';
+  }
 }
 
 // ─── Subir contrato ───────────────────────────────────────
@@ -3351,11 +5183,26 @@ async function cargarReportes() {
               <div style="color:#374151">${rep.ai_diagnostico.slice(0,220)}${rep.ai_diagnostico.length>220?'…':''}</div>
             </div>` : ''}
           </div>
-          <div class="d-flex gap-1 flex-shrink-0">
-            <button class="btn btn-xs btn-outline-primary" onclick="editarReporte(${rep.id})"><i class="bi bi-pencil"></i></button>
-            <button class="btn btn-xs btn-outline-danger" onclick="eliminarReporte(${rep.id})"><i class="bi bi-trash"></i></button>
+          <div class="d-flex gap-1 flex-shrink-0 flex-wrap">
+            ${rep.html_url ? `
+              <a href="${rep.html_url}" target="_blank" class="btn btn-xs btn-outline-success" title="Ver HTML guardado">
+                <i class="bi bi-eye"></i>
+              </a>
+              <a href="${rep.html_url}" download="informe_${rep.id}.html" class="btn btn-xs btn-outline-secondary" title="Descargar HTML">
+                <i class="bi bi-download"></i>
+              </a>` : ''}
+            <a href="/mantenciones/api/reportes/${rep.id}/word" class="btn btn-xs btn-outline-dark" title="Descargar Word">
+              <i class="bi bi-file-earmark-word"></i>
+            </a>
+            <button class="btn btn-xs btn-outline-primary" onclick="editarReporte(${rep.id})" title="Editar">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-xs btn-outline-danger" onclick="eliminarReporte(${rep.id})" title="Eliminar">
+              <i class="bi bi-trash"></i>
+            </button>
           </div>
         </div>
+        ${rep.html_generated_at ? `<div class="mt-2" style="font-size:.66rem;color:#9ca3af;text-align:right"><i class="bi bi-clock me-1"></i>HTML generado ${rep.html_generated_at}</div>` : ''}
       </div>`).join('');
   } catch(e) {
     lista.innerHTML = `<div class="alert alert-danger">Error cargando reportes: ${e.message}</div>`;
@@ -3641,6 +5488,118 @@ async function repAnalizarIA() {
     document.getElementById('modalRepIABody').innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
   }
 }
+
+// ─── Reporte: Word + Enviar email ────────────────────────────────
+function repDescargarWord() {
+  const rid = document.getElementById('repId').value;
+  if (!rid) { alert('Guarda el informe primero'); return; }
+  window.open(`/mantenciones/api/reportes/${rid}/word`, '_blank');
+}
+
+async function repEnviarEmail() {
+  const rid = document.getElementById('repId').value;
+  if (!rid) { alert('Guarda el informe primero'); return; }
+  await repGuardar(true);
+
+  const html = `
+    <div class="modal fade" id="modalEnvioRep" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header" style="background:#16a34a;color:#fff">
+            <h5 class="modal-title"><i class="bi bi-envelope-paper me-2"></i>Enviar informe por email</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Destinatarios (separados por coma)</label>
+              <input type="text" id="enviar_to" class="form-control form-control-sm"
+                     placeholder="cliente@empresa.cl, gerente@empresa.cl">
+              <small class="text-muted">Si dejas vacío usa el email del cliente</small>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Asunto (opcional)</label>
+              <input type="text" id="enviar_asunto" class="form-control form-control-sm">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Mensaje adicional (opcional)</label>
+              <textarea id="enviar_mensaje" class="form-control form-control-sm" rows="3"
+                        placeholder="Mensaje breve para el cliente"></textarea>
+            </div>
+            <div class="alert alert-info py-2" style="font-size:.78rem">
+              <i class="bi bi-info-circle me-1"></i>Se adjuntará el informe en formato Word (.docx) y se incluirá la versión HTML en el cuerpo del email.
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button class="btn btn-sm btn-success" id="btnDoEnvio">
+              <i class="bi bi-send-fill me-1"></i>Enviar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  // Remove old modal if exists
+  const old = document.getElementById('modalEnvioRep');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+  const m = new bootstrap.Modal(document.getElementById('modalEnvioRep'));
+  m.show();
+
+  document.getElementById('btnDoEnvio').onclick = async () => {
+    const btn = document.getElementById('btnDoEnvio');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    const to = document.getElementById('enviar_to').value.trim();
+    const payload = {
+      destinatarios: to ? to.split(',').map(x => x.trim()).filter(Boolean) : null,
+      asunto:        document.getElementById('enviar_asunto').value.trim() || null,
+      mensaje:       document.getElementById('enviar_mensaje').value.trim(),
+    };
+    try {
+      const r = await fetch(`/mantenciones/api/reportes/${rid}/enviar`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      if (data.ok) {
+        m.hide();
+        alert('✓ Informe enviado a: ' + (data.destinatarios||[]).join(', '));
+      } else {
+        alert('Error: ' + (data.error || 'No se pudo enviar'));
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill me-1"></i>Enviar';
+      }
+    } catch (e) {
+      alert('Error de red: ' + e.message);
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill me-1"></i>Enviar';
+    }
+  };
+}
+
+// Habilitar botones Word/Email cuando hay reporte guardado
+function _repToggleExportBtns(enabled) {
+  const w = document.getElementById('btnRepWord');
+  const e = document.getElementById('btnRepEnviar');
+  if (w) w.disabled = !enabled;
+  if (e) e.disabled = !enabled;
+}
+// Hook a repGuardar — observa el campo repId
+(function() {
+  const obs = new MutationObserver(() => {
+    const v = document.getElementById('repId')?.value;
+    _repToggleExportBtns(!!v);
+  });
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('repId');
+    if (el) obs.observe(el, {attributes:true, attributeFilter:['value']});
+    // Polling de respaldo cada 800ms cuando el modal está abierto
+    setInterval(() => {
+      const modal = document.getElementById('modalReporte');
+      if (modal && modal.classList.contains('show')) {
+        _repToggleExportBtns(!!document.getElementById('repId')?.value);
+      }
+    }, 800);
+  });
+})();
 
 // ─── Adjuntos del contrato ─────────────────────────────────────
 async function cargarAdjuntos(ctid) {

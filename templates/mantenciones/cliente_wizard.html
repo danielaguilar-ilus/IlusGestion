@@ -101,6 +101,110 @@
 .erp-ok   { background:#e8f5e9;border:1px solid #c8e6c9;border-radius:8px;padding:10px 14px;font-size:.82rem; }
 .erp-warn { background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;padding:10px 14px;font-size:.8rem;color:#e65100; }
 .erp-info { background:#e3f2fd;border:1px solid #bbdefb;border-radius:8px;padding:10px 14px;font-size:.8rem;color:#0066cc; }
+
+/* ══ Layout 2 columnas paso 1 ═════════════════════════════ */
+.wz-grid { display:grid; grid-template-columns: minmax(0,1fr) 320px; gap:18px; align-items:start; }
+@media(max-width:991px){ .wz-grid { grid-template-columns:1fr; } }
+
+/* ══ Sidebar calidad de ficha ════════════════════════════ */
+.qf-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  box-shadow:0 3px 14px rgba(0,0,0,.07);padding:18px 20px;
+  position:sticky;top:14px;
+}
+.qf-header{
+  display:flex;align-items:center;gap:12px;
+  padding-bottom:14px;border-bottom:1px solid #f0f0f0;margin-bottom:14px;
+}
+.qf-ring{
+  width:62px;height:62px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;font-weight:900;color:#fff;
+  background:conic-gradient(#cc0000 0%, #eaecf0 0%);
+  position:relative;
+}
+.qf-ring::before{
+  content:'';position:absolute;inset:5px;background:#fff;border-radius:50%;
+}
+.qf-ring span{position:relative;color:#0f172a;}
+.qf-title-lg{font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;}
+.qf-title-sub{font-size:.84rem;font-weight:700;color:#0f172a;line-height:1.2;}
+
+.qf-list{display:flex;flex-direction:column;gap:6px;}
+.qf-item{
+  display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:9px;
+  font-size:.78rem;line-height:1.35;cursor:default;transition:background .15s;
+  border:1px solid transparent;
+}
+.qf-item.actionable{cursor:pointer;}
+.qf-item.actionable:hover{background:#fafbfc;border-color:#eaecf0;}
+.qf-icon{
+  width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;color:#fff;margin-top:1px;
+}
+.qf-icon-ok{background:#16a34a;}
+.qf-icon-warn{background:#f59e0b;}
+.qf-icon-pending{background:#cbd5e1;color:#fff;}
+.qf-text{flex:1;min-width:0;}
+.qf-text strong{font-weight:700;color:#0f172a;display:block;}
+.qf-text small{display:block;font-size:.7rem;color:#6b7280;margin-top:1px;}
+.qf-action{font-size:.72rem;color:#cc0000;font-weight:700;text-decoration:none;flex-shrink:0;margin-top:2px;}
+.qf-action:hover{color:#990000;text-decoration:underline;}
+
+.qf-section-h{
+  font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.6px;
+  color:#9ca3af;margin:14px 0 6px;padding-top:10px;border-top:1px dashed #f3f4f6;
+}
+.qf-tip{
+  background:#fffbeb;border:1px solid #fde68a;border-radius:9px;
+  padding:10px 12px;margin-top:14px;font-size:.74rem;color:#78350f;line-height:1.4;
+}
+.qf-tip strong{color:#92400e;}
+
+/* Highlight cuando se hace foco al click [Agregar →] */
+.field-highlight{
+  animation:fldFlash 1.5s ease;
+}
+@keyframes fldFlash{
+  0%{box-shadow:0 0 0 0 rgba(204,0,0,0);}
+  20%{box-shadow:0 0 0 4px rgba(204,0,0,.25);background:#fff8f8;}
+  100%{box-shadow:0 0 0 0 rgba(204,0,0,0);}
+}
+
+/* Pill estado en header */
+.estado-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:.68rem;font-weight:800;padding:3px 10px;border-radius:50px;
+  text-transform:uppercase;letter-spacing:.4px;
+}
+.estado-pill::before{content:'';width:7px;height:7px;border-radius:50%;}
+.estado-activo{background:#dcfce7;color:#166534;}
+.estado-activo::before{background:#16a34a;}
+.estado-prospecto{background:#fef9c3;color:#854d0e;}
+.estado-prospecto::before{background:#eab308;}
+.estado-inactivo{background:#f3f4f6;color:#6b7280;}
+.estado-inactivo::before{background:#9ca3af;}
+.estado-suspendido{background:#fee2e2;color:#991b1b;}
+.estado-suspendido::before{background:#dc2626;}
+
+.erp-tag{display:none;font-size:.6rem;font-weight:700;background:#dcfce7;color:#166534;
+         padding:1px 7px;border-radius:50px;margin-left:5px;letter-spacing:.3px;}
+.erp-tag.visible{display:inline-flex;align-items:center;gap:3px;}
+.erp-tag.visible::before{content:'⚡';}
+
+/* Guidance bar superior compacta */
+.qf-bar{
+  background:linear-gradient(90deg,#0f172a 0%,#1e293b 100%);
+  color:#fff;border-radius:10px;padding:11px 18px;margin-bottom:14px;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+}
+.qf-bar-text{font-size:.85rem;font-weight:600;}
+.qf-bar-text strong{color:#fef9c3;font-weight:800;}
+.qf-bar-pct{
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);
+  padding:3px 11px;border-radius:50px;font-size:.78rem;font-weight:800;
+}
 </style>
 
 <div class="page-header">
@@ -140,6 +244,17 @@
 
 {# ══ PASO 1 — DATOS CLIENTE ══════════════════════════════════════════ #}
 <div id="step-1">
+
+{# Banner-guía de top contexto: explica al usuario qué hacer ahora #}
+<div class="qf-bar" id="qfTopBar">
+  <i class="bi bi-lightbulb-fill" style="font-size:1.3rem;color:#fbbf24;flex-shrink:0"></i>
+  <div class="qf-bar-text" id="qfTopMsg">
+    Empieza buscando el cliente por <strong>RUT o nombre</strong>. El sistema autocompletará los datos disponibles.
+  </div>
+  <span class="qf-bar-pct ms-auto"><span id="qfTopPct">0%</span> completo</span>
+</div>
+
+<div class="wz-grid">
 <div class="wz-card">
 
   {# Tabs de entrada #}
@@ -198,17 +313,25 @@
 
   {# — Panel: manual — #}
   <div id="panel-manual">
-    <div class="sec-title"><i class="bi bi-search me-1"></i>Buscar cliente (RUT o nombre)</div>
+    <div class="sec-title">
+      <i class="bi bi-search me-1"></i>Buscar cliente en el ERP
+      <span class="text-muted fw-normal" style="font-size:.7rem;text-transform:none;letter-spacing:0;margin-left:4px">(opcional pero recomendado)</span>
+    </div>
+    <div class="text-muted small mb-2" style="font-size:.78rem">
+      <i class="bi bi-info-circle me-1"></i>
+      Escribe el <strong>RUT o nombre</strong>. Si está en el ERP, se rellenan razón social, RUT, dirección, comuna, ciudad y región automáticamente.
+    </div>
     <div class="row g-2 mb-4">
-      <div class="col-12 col-sm-7">
+      <div class="col-12">
         <div class="ac-wrap">
-          <input type="text" id="ac_input" class="form-control" autocomplete="off"
-                 placeholder="Escribe RUT (ej: 76.123.456-7) o nombre del cliente…"
+          <input type="text" id="ac_input" class="form-control form-control-lg" autocomplete="off"
+                 placeholder="🔍  Buscar por RUT (76.123.456-7) o nombre del cliente…"
+                 style="font-size:.95rem"
                  oninput="acDebounce()" onkeydown="acKeydown(event)">
           <div class="ac-dropdown" id="ac_dropdown"></div>
         </div>
       </div>
-      <div class="col-auto">
+      <div class="col-12">
         <div id="busq_status"></div>
       </div>
     </div>
@@ -216,63 +339,183 @@
     <div class="sec-title"><i class="bi bi-building me-1"></i>Datos del cliente</div>
     <div class="row g-3">
       <div class="col-12 col-md-8">
-        <label class="form-label fw-semibold">Razón social <span class="text-danger">*</span></label>
-        <input type="text" id="s1_razon" class="form-control" placeholder="Empresa o persona" required>
+        <label class="form-label fw-semibold">
+          Razón social <span class="text-danger">*</span>
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Nombre legal de la empresa o persona natural según SII"></i>
+        </label>
+        <input type="text" id="s1_razon" class="form-control" placeholder="Empresa SpA / Pedro Pérez" required
+               oninput="qfActualizar()">
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label fw-semibold">RUT</label>
-        <input type="text" id="s1_rut" class="form-control font-monospace" placeholder="12.345.678-9">
+        <label class="form-label fw-semibold">
+          RUT <span class="text-danger">*</span>
+          <span id="rut_status" class="ms-1" style="font-size:.7rem"></span>
+        </label>
+        <input type="text" id="s1_rut" class="form-control font-monospace" placeholder="76123456-7"
+               oninput="qfRutValidar(this);qfActualizar()" onblur="qfRutFormat(this)">
       </div>
-      <div class="col-12 col-md-6">
+      <div class="col-12 col-md-8">
         <label class="form-label fw-semibold">
           Dirección
           <span id="dir_validating" class="ms-1" style="display:none">
             <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
           </span>
           <span id="dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Dirección física donde se realizan los servicios. Se valida con OpenStreetMap."></i>
         </label>
         <div class="ac-wrap">
           <input type="text" id="s1_direccion" class="form-control" autocomplete="off"
-                 placeholder="Escribe la dirección y elige de la lista…"
-                 oninput="dirDebounce();document.getElementById('dir_ok').style.display='none';['s1_comuna','s1_ciudad'].forEach(id=>{var el=document.getElementById(id);el.style.borderColor='';el.style.background='';})"
+                 placeholder="Av. Ejemplo 1234 — escribe y elige de la lista"
+                 oninput="dirDebounce();document.getElementById('dir_ok').style.display='none';qfActualizar();['s1_comuna','s1_ciudad'].forEach(id=>{var el=document.getElementById(id);el.style.borderColor='';el.style.background='';})"
                  onkeydown="dirKeydown(event)">
           <div class="ac-dropdown" id="dir_dropdown"></div>
         </div>
         <div class="form-text text-muted" style="font-size:.7rem"><i class="bi bi-geo-alt me-1"></i>Sugerencias automáticas de direcciones en Chile</div>
       </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">
+          Estado del cliente
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Activo = en servicio · Prospecto = en conversación · Inactivo = pausado · Suspendido = problema"></i>
+        </label>
+        <select id="s1_estado" class="form-select" onchange="qfActualizar()">
+          <option value="activo" selected>● Activo</option>
+          <option value="prospecto">● Prospecto</option>
+          <option value="inactivo">● Inactivo</option>
+          <option value="suspendido">● Suspendido</option>
+        </select>
+      </div>
       <div class="col-6 col-md-3">
         <label class="form-label fw-semibold">Comuna</label>
-        <input type="text" id="s1_comuna" class="form-control" placeholder="Auto-completa al elegir dirección">
+        <input type="text" id="s1_comuna" class="form-control" placeholder="Se completa con dirección"
+               oninput="qfActualizar()">
       </div>
       <div class="col-6 col-md-3">
         <label class="form-label fw-semibold">Ciudad / Región</label>
-        <input type="text" id="s1_ciudad" class="form-control" placeholder="Auto-completa al elegir dirección">
+        <input type="text" id="s1_ciudad" class="form-control" placeholder="Se completa con dirección"
+               oninput="qfActualizar()">
       </div>
-      <div class="col-12"><hr class="my-0"><div class="small fw-bold text-muted">Contacto principal</div></div>
-      <div class="col-12 col-sm-4">
-        <label class="form-label fw-semibold">Nombre contacto</label>
-        <input type="text" id="s1_contacto_nombre" class="form-control">
+      <div class="col-12 col-md-6">
+        <label class="form-label fw-semibold">
+          Giro / actividad
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Rubro de la empresa según ERP. Útil para informes comerciales y análisis IA."></i>
+        </label>
+        <input type="text" id="s1_giro" class="form-control" placeholder="Servicios deportivos, gimnasio, hotelería…"
+               oninput="qfActualizar()">
       </div>
-      <div class="col-6 col-sm-4">
-        <label class="form-label fw-semibold">Teléfono</label>
-        <input type="text" id="s1_contacto_tel" class="form-control" placeholder="+56 9">
+
+      <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+        <i class="bi bi-envelope-at me-1"></i>Datos de contacto institucional
+        <span class="text-muted fw-normal" style="font-size:.72rem">— se traen automáticamente del ERP</span>
+      </div></div>
+      <div class="col-12 col-md-6">
+        <label class="form-label fw-semibold">
+          Email empresa
+          <span id="emailEmp_status" class="ms-1" style="font-size:.7rem"></span>
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Email institucional/oficial (factura, contacto general). Lo trae el ERP automáticamente."></i>
+          <span class="erp-tag" id="emailEmp_erp"></span>
+        </label>
+        <input type="email" id="s1_email_empresa" class="form-control" placeholder="contacto@empresa.cl"
+               oninput="qfActualizar()">
       </div>
-      <div class="col-6 col-sm-4">
-        <label class="form-label fw-semibold">Email</label>
-        <input type="email" id="s1_contacto_email" class="form-control">
+      <div class="col-12 col-md-6">
+        <label class="form-label fw-semibold">
+          Teléfono empresa
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Teléfono central de la empresa (no del contacto personal)"></i>
+          <span class="erp-tag" id="telEmp_erp"></span>
+        </label>
+        <input type="text" id="s1_tel_empresa" class="form-control" placeholder="+56 2 2XXX XXXX"
+               oninput="qfActualizar()">
       </div>
-      <div class="col-6">
-        <label class="form-label fw-semibold">Estado</label>
-        <select id="s1_estado" class="form-select">
-          <option value="activo">Activo</option>
-          <option value="prospecto">Prospecto</option>
-          <option value="inactivo">Inactivo</option>
-        </select>
-      </div>
+
+      {# ── Separador fuerte: termina ERP, empieza data manual ── #}
       <div class="col-12">
-        <label class="form-label fw-semibold">Notas internas</label>
-        <textarea id="s1_notas" class="form-control" rows="2"></textarea>
+        <div style="background:linear-gradient(90deg,#fff7ed 0%,#fef3c7 100%);
+                    border-left:4px solid #f59e0b;border-radius:8px;
+                    padding:14px 18px;margin:18px 0 6px;
+                    display:flex;align-items:center;gap:14px">
+          <i class="bi bi-arrow-down-circle-fill" style="font-size:1.6rem;color:#d97706;flex-shrink:0"></i>
+          <div>
+            <div class="fw-bold" style="font-size:.88rem;color:#78350f;line-height:1.25">
+              Hasta aquí los datos automáticos del ERP
+            </div>
+            <div class="small text-muted" style="color:#92400e !important">
+              Ahora completa manualmente los <strong>contactos</strong>: persona principal de coordinación y un contacto secundario opcional.
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div class="col-12"><div class="small fw-bold text-muted">
+        <i class="bi bi-person-vcard me-1"></i>Contacto principal <span class="text-danger">*</span>
+        <span class="text-muted fw-normal" style="font-size:.72rem">— persona de coordinación día a día</span>
+      </div></div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Nombre completo</label>
+        <input type="text" id="s1_contacto_nombre" class="form-control" placeholder="Ej: Juan Pérez"
+               oninput="qfActualizar()">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label fw-semibold">Cargo / Rol</label>
+        <input type="text" id="s1_contacto_cargo" class="form-control" placeholder="Administrador, Jefe operaciones…"
+               oninput="qfActualizar()">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label fw-semibold">
+          Teléfono
+          <span id="tel_status" class="ms-1" style="font-size:.7rem"></span>
+        </label>
+        <input type="text" id="s1_contacto_tel" class="form-control" placeholder="+56 9 XXXX XXXX"
+               oninput="qfTelFormat(this);qfActualizar()">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label fw-semibold">
+          Email <span id="email_status" class="ms-1" style="font-size:.7rem"></span>
+        </label>
+        <input type="email" id="s1_contacto_email" class="form-control" placeholder="juan@empresa.cl"
+               oninput="qfActualizar()">
+      </div>
+
+      <div class="col-12"><div class="small fw-bold text-muted mt-2">
+        <i class="bi bi-people me-1"></i>Contacto secundario
+        <span class="text-muted fw-normal" style="font-size:.72rem">— opcional, ej: jefe operaciones, mantenedor, gerente</span>
+      </div></div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-semibold">Nombre completo</label>
+        <input type="text" id="s1_contacto2_nombre" class="form-control" placeholder="Ej: María González"
+               oninput="qfActualizar()">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label fw-semibold">Cargo / Rol</label>
+        <input type="text" id="s1_contacto2_cargo" class="form-control" placeholder="Gerente, Mantenedor…"
+               oninput="qfActualizar()">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label fw-semibold">Teléfono</label>
+        <input type="text" id="s1_contacto2_tel" class="form-control" placeholder="+56 9 XXXX XXXX"
+               oninput="qfTelFormat(this);qfActualizar()">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label fw-semibold">Email</label>
+        <input type="email" id="s1_contacto2_email" class="form-control" placeholder="maria@empresa.cl"
+               oninput="qfActualizar()">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label fw-semibold">
+          Notas internas <span class="text-muted fw-normal" style="font-size:.74rem">(visible para tu equipo)</span>
+          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+             title="Información operativa: horarios, accesos, requerimientos."></i>
+        </label>
+        <textarea id="s1_notas" class="form-control" rows="2"
+                  placeholder="Ej: Cliente prefiere visitas viernes 09–12h. Acceso por estacionamiento subterráneo. Pagar siempre con factura a 30 días."></textarea>
+      </div>
+
     </div>
   </div>
 
@@ -283,7 +526,38 @@
     </button>
   </div>
 </div>
-</div>
+
+{# ══ Sidebar derecho: calidad de ficha en vivo ══════════════════ #}
+<aside id="qfSidebar">
+  <div class="qf-card">
+    <div class="qf-header">
+      <div class="qf-ring" id="qfRing"><span id="qfPct">0%</span></div>
+      <div style="flex:1;min-width:0">
+        <div class="qf-title-lg">Calidad de ficha</div>
+        <div class="qf-title-sub" id="qfStatusText">Empezando…</div>
+        <span class="estado-pill estado-activo" id="qfEstadoPill" style="margin-top:4px"><span id="qfEstadoLbl">Activo</span></span>
+      </div>
+    </div>
+
+    <div class="qf-section-h" style="border:none;padding:0;margin:0 0 8px">
+      <i class="bi bi-asterisk me-1"></i>Datos críticos
+    </div>
+    <div class="qf-list" id="qfCriticos"></div>
+
+    <div class="qf-section-h">
+      <i class="bi bi-stars me-1"></i>Datos recomendados
+    </div>
+    <div class="qf-list" id="qfRecomendados"></div>
+
+    <div class="qf-tip" id="qfNextTip">
+      <strong>💡 Próxima acción:</strong>
+      <span id="qfNextActionMsg">Empieza buscando el cliente por RUT o nombre.</span>
+    </div>
+  </div>
+</aside>
+
+</div>{# /.wz-grid #}
+</div>{# /#step-1 #}
 
 {# ══ PASO 2 — EQUIPOS ════════════════════════════════════════════════ #}
 <div id="step-2" style="display:none">
@@ -653,6 +927,222 @@ function setTab(t) {
   document.getElementById('panel-contrato').style.display = t==='contrato' ? '' : 'none';
 }
 
+// ══════════════════════════════════════════════════════════════
+// CALIDAD DE FICHA EN VIVO — coaching para usuario sin contexto
+// ══════════════════════════════════════════════════════════════
+
+// Validar RUT chileno (con dígito verificador)
+function _validarRut(rut) {
+  if (!rut) return false;
+  const limpio = rut.replace(/[^0-9kK]/g,'').toUpperCase();
+  if (limpio.length < 7 || limpio.length > 9) return false;
+  const cuerpo = limpio.slice(0,-1);
+  const dv = limpio.slice(-1);
+  let suma = 0, mult = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += parseInt(cuerpo[i]) * mult;
+    mult = mult === 7 ? 2 : mult + 1;
+  }
+  const resto = 11 - (suma % 11);
+  const dvOk = resto === 11 ? '0' : resto === 10 ? 'K' : String(resto);
+  return dv === dvOk;
+}
+
+function qfRutValidar(input) {
+  const v = input.value.trim();
+  const stat = document.getElementById('rut_status');
+  if (!v) { stat.innerHTML = ''; return; }
+  if (_validarRut(v)) {
+    stat.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Válido</span>';
+  } else {
+    stat.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> RUT inválido</span>';
+  }
+}
+
+function qfRutFormat(input) {
+  // Formato CRUDO estilo ERP: solo número-DV (sin puntos)
+  // Ej: 76.123.456-7  →  76123456-7
+  const limpio = input.value.replace(/[^0-9kK]/g,'').toUpperCase();
+  if (limpio.length < 2) return;
+  const cuerpo = limpio.slice(0,-1);
+  const dv = limpio.slice(-1);
+  input.value = cuerpo + '-' + dv;
+}
+
+function qfTelFormat(input) {
+  const stat = document.getElementById('tel_status');
+  let v = input.value.replace(/[^\d+]/g,'');
+  // Si empieza con 9 y son 9 chars, asumir Chile
+  if (v.length === 9 && v.startsWith('9')) v = '+56' + v;
+  // Si empieza con 56 sin +
+  else if (v.startsWith('56') && v.length === 11) v = '+' + v;
+  // Reformat +56 9 XXXX XXXX
+  if (v.startsWith('+56') && v.length === 12) {
+    input.value = `+56 ${v.slice(3,4)} ${v.slice(4,8)} ${v.slice(8)}`;
+    if (stat) stat.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>';
+  } else if (v.length >= 8) {
+    if (stat) stat.innerHTML = '';
+  }
+}
+
+// Estado pill update
+function _updateEstadoPill() {
+  const sel = document.getElementById('s1_estado');
+  if (!sel) return;
+  const v = sel.value;
+  const lbl = sel.options[sel.selectedIndex].text.replace('● ','');
+  const pill = document.getElementById('qfEstadoPill');
+  const lblEl = document.getElementById('qfEstadoLbl');
+  if (pill && lblEl) {
+    pill.className = 'estado-pill estado-' + v;
+    pill.style.marginTop = '4px';
+    lblEl.textContent = lbl;
+  }
+}
+
+// Cálculo de score y render del sidebar
+function qfActualizar() {
+  _updateEstadoPill();
+
+  const $ = id => document.getElementById(id);
+  const val = id => ($(id) || {}).value || '';
+  const has = id => val(id).trim().length > 0;
+
+  const isEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  const isTel   = t => /^\+?[0-9\s\-]{8,16}$/.test(t);
+
+  // Datos críticos (peso 55%)
+  const rutOk      = _validarRut(val('s1_rut'));
+  const razonOk    = val('s1_razon').trim().length >= 3;
+  const direccionOk = has('s1_direccion');
+  const comunaOk   = has('s1_comuna');
+  const ciudadOk   = has('s1_ciudad');
+  const contactoOk = val('s1_contacto_nombre').trim().length >= 3;
+
+  // Datos recomendados (peso 45%)
+  const giroOk        = has('s1_giro');
+  const emailEmpOk    = isEmail(val('s1_email_empresa'));
+  const telEmpOk      = isTel(val('s1_tel_empresa'));
+  const cargoOk       = val('s1_contacto_cargo').trim().length >= 2;
+  const telOk         = isTel(val('s1_contacto_tel'));
+  const emailOk       = isEmail(val('s1_contacto_email'));
+  const cont2Ok       = val('s1_contacto2_nombre').trim().length >= 3 &&
+                        (isEmail(val('s1_contacto2_email')) || isTel(val('s1_contacto2_tel')));
+
+  const criticos = [
+    {key:'razon',     label:'Razón social',          ok:razonOk,
+     msg:razonOk?'Identificación legal del cliente':'Mínimo 3 caracteres', field:'s1_razon'},
+    {key:'rut',       label:'RUT válido',            ok:rutOk,
+     msg:rutOk?'RUT con dígito verificador correcto':'Formato sin puntos: 76123456-7', field:'s1_rut'},
+    {key:'direccion', label:'Dirección',             ok:direccionOk,
+     msg:direccionOk?'Dirección registrada':'Dónde se realizan los servicios', field:'s1_direccion'},
+    {key:'comuna',    label:'Comuna',                ok:comunaOk,
+     msg:comunaOk?'':'Se completa al elegir dirección', field:'s1_comuna'},
+    {key:'ciudad',    label:'Ciudad / Región',       ok:ciudadOk,
+     msg:ciudadOk?'':'Se completa al elegir dirección', field:'s1_ciudad'},
+    {key:'contacto',  label:'Contacto principal',    ok:contactoOk,
+     msg:contactoOk?'Persona de coordinación':'Nombre del contacto principal', field:'s1_contacto_nombre'},
+  ];
+
+  const recomendados = [
+    {key:'giro',         label:'Giro / actividad',     ok:giroOk,
+     msg:giroOk?'Desde ERP':'Lo trae el ERP', field:'s1_giro'},
+    {key:'emailEmpresa', label:'Email empresa',        ok:emailEmpOk,
+     msg:emailEmpOk?'Email institucional':'Lo trae el ERP — emails de la empresa', field:'s1_email_empresa'},
+    {key:'telEmpresa',   label:'Teléfono empresa',     ok:telEmpOk,
+     msg:telEmpOk?'':'Teléfono central', field:'s1_tel_empresa'},
+    {key:'cargo',        label:'Cargo del contacto',   ok:cargoOk,
+     msg:cargoOk?'':'Ej: Administrador, Jefe operaciones', field:'s1_contacto_cargo'},
+    {key:'telefono',     label:'Tel. contacto',        ok:telOk,
+     msg:telOk?'Validado':'Formato +56 9 XXXX XXXX', field:'s1_contacto_tel'},
+    {key:'email',        label:'Email contacto',       ok:emailOk,
+     msg:emailOk?'Email válido':'Para reportes y notificaciones', field:'s1_contacto_email'},
+    {key:'contacto2',    label:'Contacto secundario',  ok:cont2Ok,
+     msg:cont2Ok?'Backup registrado':'Backup útil (gerente, mantenedor)', field:'s1_contacto2_nombre'},
+  ];
+
+  const renderItem = (it) => {
+    const icon = it.ok
+      ? '<div class="qf-icon qf-icon-ok"><i class="bi bi-check-lg"></i></div>'
+      : '<div class="qf-icon qf-icon-pending"><i class="bi bi-dash"></i></div>';
+    const action = it.ok
+      ? ''
+      : `<a class="qf-action" onclick="qfFocusField('${it.field}');return false">Agregar →</a>`;
+    return `<div class="qf-item ${it.ok?'':'actionable'}" ${it.ok?'':`onclick="qfFocusField('${it.field}')"`}>
+      ${icon}
+      <div class="qf-text">
+        <strong>${it.label}</strong>
+        <small>${it.msg}</small>
+      </div>
+      ${action}
+    </div>`;
+  };
+
+  const elCrit = $('qfCriticos');
+  const elRec  = $('qfRecomendados');
+  if (elCrit) elCrit.innerHTML = criticos.map(renderItem).join('');
+  if (elRec)  elRec.innerHTML  = recomendados.map(renderItem).join('');
+
+  // Score: críticos pesan 55, recomendados 45
+  const critOk = criticos.filter(c=>c.ok).length;
+  const recOk  = recomendados.filter(c=>c.ok).length;
+  const pct = Math.round((critOk / criticos.length) * 55 + (recOk / recomendados.length) * 45);
+
+  const ringEl = $('qfRing');
+  const pctEl  = $('qfPct');
+  if (ringEl && pctEl) {
+    pctEl.textContent = pct + '%';
+    const color = pct >= 80 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#cc0000';
+    ringEl.style.background = `conic-gradient(${color} ${pct*3.6}deg, #eaecf0 ${pct*3.6}deg)`;
+  }
+  const topPct = $('qfTopPct'); if (topPct) topPct.textContent = pct + '%';
+
+  // Mensaje de estado y próxima acción
+  const statusText = $('qfStatusText');
+  const nextMsg = $('qfNextActionMsg');
+  const topMsg = $('qfTopMsg');
+  if (statusText) {
+    if (pct < 20) statusText.textContent = 'Empezando…';
+    else if (pct < 50) statusText.textContent = 'Datos básicos en progreso';
+    else if (pct < 80) statusText.textContent = 'Datos suficientes';
+    else if (pct < 100) statusText.textContent = '¡Casi completo!';
+    else statusText.textContent = 'Ficha 100% lista ✓';
+  }
+
+  // Próxima acción dinámica
+  let nextAction = null;
+  for (const c of criticos) { if (!c.ok) { nextAction = c; break; } }
+  if (!nextAction) for (const r of recomendados) { if (!r.ok) { nextAction = r; break; } }
+
+  if (nextMsg) {
+    if (nextAction) {
+      nextMsg.innerHTML = `Falta <strong>${nextAction.label.toLowerCase()}</strong> · ${nextAction.msg}`;
+    } else {
+      nextMsg.innerHTML = '✓ Ficha completa. Puedes pasar al paso 2 (equipos).';
+    }
+  }
+  if (topMsg) {
+    if (pct < 30) topMsg.innerHTML = 'Empieza buscando el cliente por <strong>RUT o nombre</strong>. El sistema autocompletará los datos disponibles.';
+    else if (nextAction) topMsg.innerHTML = `Falta agregar <strong>${nextAction.label.toLowerCase()}</strong>.`;
+    else topMsg.innerHTML = '<strong>Excelente</strong> — la ficha está lista para pasar al paso 2.';
+  }
+}
+
+function qfFocusField(fieldId) {
+  const el = document.getElementById(fieldId);
+  if (!el) return;
+  el.focus();
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  el.classList.add('field-highlight');
+  setTimeout(()=>el.classList.remove('field-highlight'), 1500);
+}
+
+// Inicializar al cargar
+document.addEventListener('DOMContentLoaded', () => {
+  qfActualizar();
+});
+window.qfActualizar = qfActualizar;
+
 // ══ AUTOCOMPLETE ═════════════════════════════════════════════
 let acTimer = null;
 let acResults = [];
@@ -710,14 +1200,28 @@ async function acBuscar() {
 function acSeleccionar(i) {
   const c = acResults[i];
   if(!c) return;
+  // RUT en formato crudo (sin puntos, con guion-DV) tal como viene del ERP
+  const rutCrudo = (c.rut||'').replace(/\./g,'').toUpperCase();
   document.getElementById('s1_razon').value           = c.razon_social||'';
-  document.getElementById('s1_rut').value             = c.rut||'';
-  document.getElementById('s1_contacto_email').value  = c.email||'';
-  document.getElementById('ac_input').value           = `${c.razon_social}${c.rut?' ('+c.rut+')':''}`;
+  document.getElementById('s1_rut').value             = rutCrudo;
+  // Email empresa (institucional desde ERP)
+  if(c.email) {
+    const el = document.getElementById('s1_email_empresa');
+    if(el) el.value = c.email;
+    const tag = document.getElementById('emailEmp_erp');
+    if(tag) tag.classList.add('visible'), tag.textContent = ' ERP';
+  }
+  document.getElementById('ac_input').value           = `${c.razon_social}${rutCrudo?' ('+rutCrudo+')':''}`;
   if(c.region)    { const el=document.getElementById('s1_ciudad');       if(el) el.value=c.region; }
   if(c.comuna)    { const el=document.getElementById('s1_comuna');       if(el) el.value=c.comuna; }
   if(c.direccion) { const el=document.getElementById('s1_direccion');    if(el) el.value=c.direccion; }
-  if(c.telefono)  { const el=document.getElementById('s1_contacto_tel'); if(el) el.value=c.telefono; }
+  if(c.telefono)  {
+    const el=document.getElementById('s1_tel_empresa');
+    if(el) el.value=c.telefono;
+    const tag = document.getElementById('telEmp_erp');
+    if(tag) tag.classList.add('visible'), tag.textContent = ' ERP';
+  }
+  if(c.giro)      { const el=document.getElementById('s1_giro');         if(el) el.value=c.giro; }
   document.getElementById('ac_dropdown').style.display = 'none';
 
   // Badge inicial mientras cargamos el enriquecimiento
@@ -733,6 +1237,8 @@ function acSeleccionar(i) {
   } else {
     _mostrarBadgeBasico(c);
   }
+  // Actualizar calidad inmediatamente con lo que llegó
+  if (window.qfActualizar) window.qfActualizar();
 }
 
 async function _enriquecerDesdeErp(rut, localId) {
@@ -749,12 +1255,17 @@ async function _enriquecerDesdeErp(rut, localId) {
 
     // Sobrescribir campos con datos de alta calidad del ERP
     const fill = (id, val) => { const el=document.getElementById(id); if(el && val) el.value=val; };
+    const tagErp = (tagId) => {
+      const t = document.getElementById(tagId);
+      if (t) { t.classList.add('visible'); t.textContent = ' ERP'; }
+    };
     fill('s1_razon',         d.razon_social);
-    fill('s1_contacto_email',d.email);
-    fill('s1_contacto_tel',  d.telefono);
+    fill('s1_email_empresa', d.email);          if(d.email) tagErp('emailEmp_erp');
+    fill('s1_tel_empresa',   d.telefono);       if(d.telefono) tagErp('telEmp_erp');
     fill('s1_direccion',     d.direccion);
     fill('s1_comuna',        d.comuna);
     fill('s1_ciudad',        d.region);  // "Ciudad/Región" = nombre de región
+    fill('s1_giro',          d.giro);    // Giro del ERP
     if(d.observaciones) {
       const obs = document.getElementById('s1_notas');
       if(obs && !obs.value.trim()) obs.value = d.observaciones;
@@ -780,6 +1291,11 @@ async function _enriquecerDesdeErp(rut, localId) {
         </div>
         <div>${infoPills}</div></div>`;
     }
+    // Refrescar calidad de ficha con los nuevos datos
+    if (window.qfActualizar) window.qfActualizar();
+    // Refrescar validación visual del RUT
+    const rutInp = document.getElementById('s1_rut');
+    if (rutInp && rutInp.value) qfRutValidar(rutInp);
   } catch(err) {
     console.warn('Enriquecimiento ERP falló:', err);
     _mostrarBadgeBasico(null);
@@ -883,6 +1399,7 @@ function dirSeleccionar(i) {
     const el = document.getElementById(id);
     if(el.value) { el.style.borderColor='#1a7a1a'; el.style.background='#f1f8e9'; }
   });
+  if (window.qfActualizar) window.qfActualizar();
 }
 
 function dirKeydown(e) {
@@ -1583,18 +2100,30 @@ function renderCal(){
 
 // ══ Guardar ═══════════════════════════════════════════════════
 async function crearCliente(){
+  const $v = id => (document.getElementById(id)||{}).value?.trim() || '';
   const fd=new FormData();
-  fd.append('razon_social',    document.getElementById('s1_razon').value.trim());
-  fd.append('rut',             document.getElementById('s1_rut').value.trim());
-  fd.append('direccion',       document.getElementById('s1_direccion').value.trim());
-  fd.append('comuna',          document.getElementById('s1_comuna').value.trim());
-  fd.append('ciudad',          document.getElementById('s1_ciudad').value.trim());
-  fd.append('region',          document.getElementById('s1_ciudad').value.trim()); // Ciudad/Región = región ERP
-  fd.append('contacto_nombre', document.getElementById('s1_contacto_nombre').value.trim());
-  fd.append('contacto_tel',    document.getElementById('s1_contacto_tel').value.trim());
-  fd.append('contacto_email',  document.getElementById('s1_contacto_email').value.trim());
+  fd.append('razon_social',    $v('s1_razon'));
+  fd.append('rut',             $v('s1_rut').replace(/\./g,'').toUpperCase());
+  fd.append('email_empresa',   $v('s1_email_empresa'));
+  fd.append('tel_empresa',     $v('s1_tel_empresa'));
+  fd.append('giro',            $v('s1_giro'));
+  fd.append('direccion',       $v('s1_direccion'));
+  fd.append('comuna',          $v('s1_comuna'));
+  fd.append('ciudad',          $v('s1_ciudad'));
+  fd.append('region',          $v('s1_ciudad')); // Ciudad/Región = región ERP
+  // Contacto principal
+  fd.append('contacto_nombre', $v('s1_contacto_nombre'));
+  fd.append('contacto_cargo',  $v('s1_contacto_cargo'));
+  fd.append('contacto_tel',    $v('s1_contacto_tel'));
+  fd.append('contacto_email',  $v('s1_contacto_email'));
+  // Contacto secundario
+  fd.append('contacto2_nombre', $v('s1_contacto2_nombre'));
+  fd.append('contacto2_cargo',  $v('s1_contacto2_cargo'));
+  fd.append('contacto2_tel',    $v('s1_contacto2_tel'));
+  fd.append('contacto2_email',  $v('s1_contacto2_email'));
+  // Notas
+  fd.append('notas',           $v('s1_notas'));
   fd.append('estado',          document.getElementById('s1_estado').value);
-  fd.append('notas',           document.getElementById('s1_notas').value.trim());
   const r=await fetch('/mantenciones/clientes/nuevo',{method:'POST',headers:{'X-Wizard':'1'},body:fd});
   const data=await r.json();
   if(data.ok){WZ.cid=data.id;return true;}

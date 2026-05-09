@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Matriz de roles — ILUS{% endblock %}
+{% block content %}
+<style>
+.rm-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+         box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.rm-rol-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:14px 18px;
+             border-bottom:1px solid #eaecf0;background:#fafbfc;
+             border-radius:12px 12px 0 0;}
+.rm-rol-btn{padding:7px 14px;border:1px solid #e5e7eb;border-radius:8px;
+            background:#fff;font-size:.78rem;font-weight:600;color:#6b7280;
+            cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+.rm-rol-btn:hover{border-color:#cbd5e1;}
+.rm-rol-btn.active{background:#0f172a;color:#fff;border-color:#0f172a;}
+.rm-rol-btn .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+.rm-rol-btn .badge-sys{background:#fee2e2;color:#991b1b;font-size:.55rem;
+                       padding:1px 5px;border-radius:50px;font-weight:800;}
+
+.rm-matrix-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.rm-matrix-table th{padding:10px 12px;text-align:left;font-size:.66rem;
+                    font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+                    color:#6b7280;background:#fafbfc;border-bottom:2px solid #eaecf0;}
+.rm-matrix-table td{padding:10px 12px;border-bottom:1px solid #f3f4f6;}
+.rm-modulo{font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;}
+.rm-modulo i{color:#cc0000;font-size:1rem;}
+
+.rm-action-list{display:flex;flex-wrap:wrap;gap:8px;}
+.rm-action-chip{display:inline-flex;align-items:center;gap:6px;
+                padding:5px 12px;border:1px solid #e5e7eb;border-radius:50px;
+                background:#fff;font-size:.74rem;font-weight:600;color:#6b7280;
+                cursor:pointer;transition:all .15s;user-select:none;}
+.rm-action-chip:hover{border-color:#9ca3af;}
+.rm-action-chip input{display:none;}
+.rm-action-chip.checked{background:#dcfce7;border-color:#86efac;color:#166534;}
+.rm-action-chip.checked::before{content:'✓ ';font-weight:800;}
+
+.rm-actions-bar{padding:14px 18px;border-top:1px solid #eaecf0;background:#fafbfc;
+                border-radius:0 0 12px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-shield-lock me-2" style="color:#cc0000"></i>Matriz de roles y permisos</h4>
+    <p class="text-muted mb-0" style="font-size:.85rem">
+      Define qué módulos y acciones puede ver/hacer cada rol. Los cambios se aplican al guardar.
+    </p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('admin_roles') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-people me-1"></i>Asignar a usuarios
+    </a>
+    <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#modalNuevoRol">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo rol
+    </button>
+  </div>
+</div>
+
+<div class="rm-card">
+  {# ── Tabs de roles ── #}
+  <div class="rm-rol-tabs">
+    {% for r in roles %}
+    <button class="rm-rol-btn{% if loop.first %} active{% endif %}" type="button"
+            data-rol="{{ r.slug }}" onclick="rmSelectRol('{{ r.slug }}', this)">
+      <span class="dot" style="background:{{ r.color }}"></span>
+      {{ r.nombre }}
+      {% if r.is_system %}<span class="badge-sys">SISTEMA</span>{% endif %}
+    </button>
+    {% endfor %}
+    <button class="rm-rol-btn" type="button"
+            data-rol="superadmin" onclick="rmSelectRol('superadmin', this)">
+      <span class="dot" style="background:#dc2626"></span>
+      Super Administrador
+      <span class="badge-sys">TOTAL</span>
+    </button>
+  </div>
+
+  {# ── Forms de cada rol (ocultos, se muestra el activo) ── #}
+  {% for r in roles %}
+  <form method="post" action="{{ url_for('admin_roles_matrix_save') }}"
+        id="form-{{ r.slug }}" class="rm-form" style="{% if not loop.first %}display:none{% endif %}">
+    <input type="hidden" name="rol_slug" value="{{ r.slug }}">
+    <table class="rm-matrix-table">
+      <thead>
+        <tr>
+          <th style="width:200px">Módulo</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for mod_key, mod_cfg in matrix.items() %}
+        <tr>
+          <td>
+            <div class="rm-modulo"><i class="bi {{ mod_cfg.icon }}"></i>{{ mod_cfg.label }}</div>
+          </td>
+          <td>
+            <div class="rm-action-list">
+              {% for accion in mod_cfg.acciones %}
+              {% set checked = perms.get(r.slug,{}).get(mod_key,{}).get(accion, False) %}
+              <label class="rm-action-chip{% if checked %} checked{% endif %}">
+                <input type="checkbox" name="p_.{{ mod_key }}.{{ accion }}"
+                       {% if checked %}checked{% endif %}
+                       onchange="this.parentElement.classList.toggle('checked', this.checked)">
+                {{ accion.replace('_',' ').title() }}
+              </label>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="rm-actions-bar">
+      <div class="d-flex gap-2 align-items-center" style="font-size:.78rem;color:#6b7280">
+        <i class="bi bi-info-circle"></i>
+        Cambios afectan a todos los usuarios con rol <strong>{{ r.nombre }}</strong>.
+      </div>
+      <div class="d-flex gap-2">
+        {% if not r.is_system %}
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                onclick="if(confirm('Eliminar el rol \'{{ r.nombre }}\'? Los usuarios pasarán a \'lector\'.')) location.href='{{ url_for('admin_rol_eliminar', slug=r.slug) }}'">
+          <i class="bi bi-trash me-1"></i>Eliminar rol
+        </button>
+        {% endif %}
+        <button type="submit" class="btn btn-sm btn-ilus">
+          <i class="bi bi-check-lg me-1"></i>Guardar permisos de {{ r.nombre }}
+        </button>
+      </div>
+    </div>
+  </form>
+  {% endfor %}
+
+  {# ── Vista superadmin (read-only) ── #}
+  <div id="form-superadmin" class="rm-form" style="display:none;padding:32px 18px;text-align:center">
+    <i class="bi bi-shield-fill-check" style="font-size:3rem;color:#dc2626"></i>
+    <h5 class="mt-3 fw-bold">Super Administrador</h5>
+    <p class="text-muted" style="font-size:.85rem;max-width:500px;margin:8px auto 0">
+      Tiene acceso total al sistema. Este rol no es editable y siempre puede ver y modificar todo.
+    </p>
+  </div>
+</div>
+
+{# ── Modal: nuevo rol ── #}
+<div class="modal fade" id="modalNuevoRol" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('admin_rol_crear') }}">
+        <div class="modal-header" style="background:#0f172a;color:#fff">
+          <h5 class="modal-title"><i class="bi bi-shield-plus me-2"></i>Crear nuevo rol</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Nombre del rol <span class="text-danger">*</span></label>
+            <input type="text" name="nombre" class="form-control form-control-sm" placeholder="Ej: Supervisor de bodega" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Descripción</label>
+            <textarea name="descripcion" class="form-control form-control-sm" rows="2"
+                      placeholder="Para qué sirve este rol"></textarea>
+          </div>
+          <div class="mb-0">
+            <label class="form-label small fw-semibold">Color identificador</label>
+            <input type="color" name="color" class="form-control form-control-color form-control-sm" value="#7c3aed">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-sm btn-ilus">
+            <i class="bi bi-check-lg me-1"></i>Crear rol
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function rmSelectRol(slug, btn) {
+  document.querySelectorAll('.rm-rol-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.rm-form').forEach(f => f.style.display = 'none');
+  const form = document.getElementById('form-' + slug);
+  if (form) form.style.display = '';
+}
+</script>
+{% endblock %}

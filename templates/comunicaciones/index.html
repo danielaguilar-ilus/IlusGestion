@@ -2,16 +2,20 @@
 {% block title %}Comunicaciones — ILUS{% endblock %}
 
 {% block content %}
+
 <div class="container-fluid py-3 px-3 px-md-4">
 
   {# ── HEADER ── #}
-  <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+  <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
     <div>
       <h4 class="mb-0 fw-bold">
         <i class="bi bi-chat-dots me-2 text-danger"></i>Comunicaciones
       </h4>
       <p class="text-muted small mb-0">Email y WhatsApp — Solo Super Administrador</p>
     </div>
+    <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-dark ms-auto">
+      <i class="bi bi-list-ul me-1"></i>Log de envíos
+    </a>
   </div>
 
   {# ── TABS PRINCIPALES ── #}
@@ -50,11 +54,6 @@
         {# ── Columna izquierda: SMTP + Cliente ── #}
         <div class="col-12 col-lg-6">
 
-          {# ── Banner Resend API ── #}
-          <div id="resendBanner" class="alert mb-3 py-2 px-3 d-flex align-items-center gap-2" style="display:none!important">
-            {# populated by JS on page load #}
-          </div>
-
           {# SMTP Config #}
           <div class="card shadow-sm border-0 mb-4">
             <div class="card-header d-flex justify-content-between align-items-center"
@@ -71,113 +70,8 @@
             <div class="collapse show" id="smtpCollapse">
               <div class="card-body">
 
-              {# Sub-tabs: Resend / SMTP #}
-              <ul class="nav nav-pills nav-sm mb-3" id="emailMethodTabs">
-                <li class="nav-item">
-                  <button class="nav-link active py-1 px-3" id="tab-resend" onclick="switchEmailTab('resend')">
-                    <i class="bi bi-send-fill me-1"></i>Resend API
-                    <span class="badge bg-success ms-1" id="resendActiveBadge" style="display:none;font-size:.6rem">ACTIVO</span>
-                  </button>
-                </li>
-                <li class="nav-item">
-                  <button class="nav-link py-1 px-3" id="tab-smtp" onclick="switchEmailTab('smtp')">
-                    <i class="bi bi-server me-1"></i>SMTP clásico
-                  </button>
-                </li>
-              </ul>
-
-              {# Panel Resend #}
-              <div id="panel-resend">
-                <div id="resendStatusBox" class="alert py-2 px-3 mb-3 small" style="display:none"></div>
-
-                {# Banner: la key viene de Railway (ENV) #}
-                {% if resend_source == 'env' %}
-                <div class="alert alert-success d-flex gap-2 align-items-start small mb-3 py-2">
-                  <i class="bi bi-cloud-check-fill text-success mt-1 flex-shrink-0"></i>
-                  <div>
-                    <strong>✅ API Key activa desde Railway Variables</strong><br>
-                    La variable <code>RESEND_API_KEY</code> está configurada en Railway y el sistema la usa automáticamente.
-                    <strong>No necesitas guardar nada aquí.</strong> Solo usa los botones de abajo para verificar o probar.
-                  </div>
-                </div>
-                {% elif resend_source == 'db' %}
-                <div class="alert alert-info d-flex gap-2 align-items-start small mb-3 py-2">
-                  <i class="bi bi-database-check mt-1 flex-shrink-0"></i>
-                  <div>
-                    <strong>API Key activa desde la base de datos</strong> — guardada en el sistema.
-                  </div>
-                </div>
-                {% else %}
-                <div class="alert alert-warning d-flex gap-2 align-items-start small mb-3 py-2">
-                  <i class="bi bi-exclamation-triangle-fill mt-1 flex-shrink-0"></i>
-                  <div>
-                    <strong>Sin API Key configurada.</strong> Pega tu key abajo o agrégala en Railway Variables como <code>RESEND_API_KEY</code>.
-                  </div>
-                </div>
-                {% endif %}
-
-                <div class="row g-3">
-                  <div class="col-12">
-                    <label class="form-label small fw-semibold">
-                      API Key de Resend
-                      {% if resend_source == 'env' %}
-                      <span class="badge bg-success ms-1 small">Activa desde Railway</span>
-                      {% endif %}
-                    </label>
-                    <div class="input-group input-group-sm">
-                      <input id="resendApiKeyInput" type="password" class="form-control form-control-sm"
-                             placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                             value="{{ resend_key_masked or '' }}">
-                      <button class="btn btn-outline-secondary btn-sm" type="button"
-                              onclick="togglePass('resendApiKeyInput',this)">
-                        <i class="bi bi-eye"></i>
-                      </button>
-                    </div>
-                    {% if resend_source == 'env' %}
-                    <div class="form-text text-success">
-                      <i class="bi bi-cloud me-1"></i>Leyendo de <strong>Railway Variables (RESEND_API_KEY)</strong>. Si cambias la key, actualízala directamente en Railway, no aquí.
-                    </div>
-                    {% else %}
-                    <div class="form-text">
-                      Obtén tu API Key en <a href="https://resend.com/api-keys" target="_blank">resend.com/api-keys</a>
-                      o agrégala como <code>RESEND_API_KEY</code> en Railway Variables.
-                    </div>
-                    {% endif %}
-                  </div>
-                  <div class="col-12">
-                    <label class="form-label small fw-semibold">Email remitente</label>
-                    <input id="resendFromAddr" class="form-control form-control-sm"
-                           placeholder="onboarding@resend.dev"
-                           value="{{ resend_from or 'onboarding@resend.dev' }}">
-                    <div class="form-text">Plan gratuito: <code>onboarding@resend.dev</code>. Con dominio verificado: tu propio correo.</div>
-                  </div>
-                </div>
-                <div class="d-flex gap-2 mt-3 flex-wrap align-items-center">
-                  {% if resend_source != 'env' %}
-                  <button class="btn btn-danger btn-sm fw-bold" onclick="guardarResend()">
-                    <i class="bi bi-floppy me-1"></i>Guardar configuración
-                  </button>
-                  {% endif %}
-                  <button class="btn btn-primary btn-sm" onclick="verificarResend(this)">
-                    <i class="bi bi-shield-check me-1"></i>Verificar API Key
-                  </button>
-                  <button class="btn btn-success btn-sm fw-bold" onclick="abrirTestResend()">
-                    <i class="bi bi-send me-1"></i>Enviar correo de prueba
-                  </button>
-                  <a href="https://resend.com/api-keys" target="_blank" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-box-arrow-up-right me-1"></i>Ver API Keys
-                  </a>
-                </div>
-                <div class="form-text mt-2">
-                  <i class="bi bi-info-circle me-1"></i>
-                  <strong>Verificar</strong> = comprueba la conexión sin enviar.
-                  <strong>Enviar prueba</strong> = manda un correo real.
-                </div>
-                <div id="resendMsg" class="small mt-2"></div>
-              </div>
-
-              {# Panel SMTP (colapsado por defecto si Resend activo) #}
-              <div id="panel-smtp" style="display:none">
+              {# Panel SMTP (único método de envío) #}
+              <div id="panel-smtp">
                 <div class="row g-3">
                   <div class="col-md-8">
                     <label class="form-label small fw-semibold">Servidor SMTP</label>
@@ -197,18 +91,35 @@
                            placeholder="correo@dominio.cl">
                   </div>
                   <div class="col-md-6">
-                    <label class="form-label small fw-semibold">Contraseña / App Password</label>
+                    <label class="form-label small fw-semibold">
+                      Contraseña / App Password
+                      {% if smtp_cfg.smtp_pass %}
+                      <span class="badge bg-success ms-1" style="font-size:.6rem;font-weight:700">
+                        <i class="bi bi-shield-check me-1"></i>GUARDADA EN BD
+                      </span>
+                      {% endif %}
+                    </label>
                     <div class="input-group input-group-sm">
                       <input id="smtpPass" type="password" class="form-control form-control-sm"
                              value="{% if smtp_cfg.smtp_pass %}••••••••{% endif %}"
                              data-has-secret="{% if smtp_cfg.smtp_pass %}1{% else %}0{% endif %}"
-                             placeholder="{% if smtp_cfg.smtp_pass %}Guardada{% else %}Ingresa contraseña{% endif %}">
+                             placeholder="{% if smtp_cfg.smtp_pass %}Ya guardada — déjala así{% else %}Ingresa la App Password de 16 caracteres{% endif %}"
+                             onfocus="if(this.dataset.hasSecret==='1' && this.value==='••••••••'){this.value='';this.placeholder='Solo edítala si quieres cambiarla'}"
+                             onblur="if(this.dataset.hasSecret==='1' && !this.value){this.value='••••••••';this.placeholder='Ya guardada — déjala así'}">
                       <button class="btn btn-outline-secondary btn-sm" type="button"
                               onclick="togglePass('smtpPass',this)">
                         <i class="bi bi-eye"></i>
                       </button>
                     </div>
-                    <div class="form-text">Para Gmail usa una <strong>App Password</strong> de 16 caracteres.</div>
+                    <div class="form-text">
+                      Para Gmail usa una <strong>App Password</strong> de 16 caracteres.
+                      {% if smtp_cfg.smtp_pass %}
+                      <span class="text-success">
+                        <i class="bi bi-info-circle ms-1"></i>
+                        La contraseña se guarda <strong>cifrada en la BD</strong>, no en el código. Solo edítala si la cambiaste.
+                      </span>
+                      {% endif %}
+                    </div>
                   </div>
                   <div class="col-md-7">
                     <label class="form-label small fw-semibold">Nombre del remitente</label>
@@ -245,60 +156,6 @@
 
               </div>{# /card-body #}
             </div>{# /collapse #}
-          </div>
-
-          {# ════════════════════════════════════════════════════════════
-             DOMINIOS RESEND — la solución definitiva para enviar a clientes
-          ════════════════════════════════════════════════════════════ #}
-          <div class="card shadow-sm border-0 mb-4" id="cardDominios">
-            <div class="card-header d-flex align-items-center justify-content-between" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
-              <span class="fw-bold">
-                <i class="bi bi-globe2 me-2 text-warning"></i>Dominios verificados — Para enviar a cualquier cliente
-              </span>
-              <button class="btn btn-sm btn-outline-light" onclick="cargarDominios()" title="Recargar">
-                <i class="bi bi-arrow-clockwise"></i>
-              </button>
-            </div>
-            <div class="card-body">
-              <div class="alert alert-info py-2 px-3 small mb-3">
-                <i class="bi bi-lightbulb-fill me-1"></i>
-                <strong>¿Por qué necesitas verificar un dominio?</strong>
-                Resend solo permite enviar emails a la dirección registrada en tu cuenta cuando usas <code>onboarding@resend.dev</code> como remitente.
-                Para enviar a <strong>cualquier cliente</strong>, debes verificar un dominio propio (ej: <code>sphs.cl</code>) — es un trámite que se hace UNA SOLA VEZ.
-              </div>
-
-              {# Form para agregar dominio #}
-              <div class="row g-2 align-items-end mb-3">
-                <div class="col-md-7">
-                  <label class="form-label small fw-semibold">Agregar dominio nuevo</label>
-                  <input id="dominioNuevo" class="form-control form-control-sm"
-                         placeholder="ej: sphs.cl" autocomplete="off">
-                  <div class="form-text">Sin "https://" ni "www.". Solo el dominio raíz.</div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label small fw-semibold">Región</label>
-                  <select id="dominioRegion" class="form-select form-select-sm">
-                    <option value="us-east-1" selected>US East (Virginia)</option>
-                    <option value="eu-west-1">EU West (Ireland)</option>
-                    <option value="sa-east-1">South America (São Paulo)</option>
-                  </select>
-                </div>
-                <div class="col-md-2">
-                  <button class="btn btn-warning btn-sm fw-bold w-100" onclick="agregarDominio()">
-                    <i class="bi bi-plus-lg me-1"></i>Agregar
-                  </button>
-                </div>
-              </div>
-
-              {# Lista de dominios #}
-              <div id="listaDominios">
-                <div class="text-center py-3 text-muted small">
-                  <div class="spinner-border spinner-border-sm me-2"></div>Cargando dominios...
-                </div>
-              </div>
-
-              <div id="dominiosMsg" class="mt-2 small"></div>
-            </div>
           </div>
 
           {# Config Cliente #}
@@ -850,8 +707,8 @@
               <tbody>
                 {% for l in log_rows %}
                 <tr>
-                  <td class="text-muted" style="white-space:nowrap">
-                    {{ l.created_at.strftime('%d/%m %H:%M') if l.created_at else '—' }}
+                  <td class="text-muted" style="white-space:nowrap" title="Hora local Santiago de Chile">
+                    {{ l.created_at.strftime('%d/%m/%Y %H:%M') if l.created_at else '—' }}
                   </td>
                   <td>
                     {% if l.canal == 'email' %}
@@ -962,37 +819,6 @@
 </div>
 
 {# ══════════════════════════════════════════════
-   MODAL: Test Resend
-══════════════════════════════════════════════ #}
-<div class="modal fade" id="modalTestResend" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered" style="max-width:440px">
-    <div class="modal-content border-0" style="background:#0f172a;color:#f1f5f9">
-      <div class="modal-header" style="border-color:#1e293b">
-        <h6 class="modal-title"><i class="bi bi-send-fill me-2 text-success"></i>Probar Resend API</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="small text-secondary mb-3">Se enviará un correo de prueba usando Resend API para confirmar que funciona correctamente.</div>
-        <label class="form-label small fw-semibold">Destinatario</label>
-        <input id="testResendTo" type="email" name="email"
-               class="form-control form-control-sm"
-               style="background:#1e293b;border-color:#334155;color:#f1f5f9"
-               placeholder="correo@destino.cl"
-               autocomplete="email"
-               value="">
-        <div id="testResendMsg" class="small mt-2"></div>
-      </div>
-      <div class="modal-footer" style="border-color:#1e293b">
-        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-success btn-sm fw-bold" onclick="enviarTestResend()">
-          <i class="bi bi-send me-1"></i>Enviar prueba
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-{# ══════════════════════════════════════════════
    MODAL: Test WhatsApp
 ══════════════════════════════════════════════ #}
 <div class="modal fade" id="modalTestWA" tabindex="-1">
@@ -1025,16 +851,13 @@
 {% block scripts %}
 <script>
 /* ── modales ── */
-let _modalTestEmail, _modalTestWA, _modalTestResend;
+let _modalTestEmail, _modalTestWA;
 document.addEventListener('DOMContentLoaded', () => {
   _modalTestEmail  = new bootstrap.Modal(document.getElementById('modalTestEmail'));
   _modalTestWA     = new bootstrap.Modal(document.getElementById('modalTestWA'));
-  _modalTestResend = new bootstrap.Modal(document.getElementById('modalTestResend'));
   poblarPlantillasManual();
   actualizarPreview();
   cargarEstadoEmail();
-  // Cargar dominios solo si Resend está activo (defer 600ms para no bloquear UI)
-  setTimeout(() => { try { cargarDominios(); } catch(e){} }, 600);
 
   document.getElementById('ccColor').addEventListener('input', function() {
     document.getElementById('ccColorText').value = this.value;
@@ -1054,9 +877,51 @@ let _logoBase64 = '{{ client_cfg.logo_url or "" }}';
 /* ════════════════════════════════
    SMTP
 ════════════════════════════════ */
+// ─── Toast flotante ─────────────────────────────────────────────────
+function commToast(msg, type='success') {
+  let stack = document.getElementById('commToastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'commToastStack';
+    stack.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:420px';
+    document.body.appendChild(stack);
+  }
+  const t = document.createElement('div');
+  const colors = {
+    success: { bg:'#16a34a', icon:'check-circle-fill' },
+    error:   { bg:'#dc2626', icon:'exclamation-circle-fill' },
+    warning: { bg:'#d97706', icon:'exclamation-triangle-fill' },
+  };
+  const c = colors[type] || colors.success;
+  t.style.cssText = `background:${c.bg};color:#fff;padding:14px 20px;border-radius:10px;
+    box-shadow:0 8px 26px rgba(0,0,0,.25);font-weight:600;font-size:.88rem;
+    display:flex;align-items:center;gap:10px;
+    animation:commToastIn .25s cubic-bezier(.2,.8,.2,1);min-width:280px`;
+  t.innerHTML = `<i class="bi bi-${c.icon}" style="font-size:1.3rem;flex-shrink:0"></i><div>${msg}</div>`;
+  stack.appendChild(t);
+  setTimeout(() => {
+    t.style.transition = 'opacity .3s, transform .3s';
+    t.style.opacity = '0';
+    t.style.transform = 'translateX(20px)';
+    setTimeout(() => t.remove(), 300);
+  }, 3500);
+}
+// Animation keyframes (inyección única)
+if (!document.getElementById('commToastStyle')) {
+  const s = document.createElement('style'); s.id = 'commToastStyle';
+  s.textContent = '@keyframes commToastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}';
+  document.head.appendChild(s);
+}
+
 async function guardarSmtp() {
   const msg = document.getElementById('smtpMsg');
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const btn = event?.target?.closest('button') || document.querySelector('button[onclick="guardarSmtp()"]');
+  const originalBtn = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  }
+  msg.innerHTML = '';
   const passInput = document.getElementById('smtpPass');
   const body = {
     host    : val('smtpHost'),
@@ -1067,33 +932,56 @@ async function guardarSmtp() {
     fromAddr: val('smtpFromAddr'),
     secure  : document.getElementById('smtpSecure').checked,
   };
-  if (!body.user) { msg.innerHTML='<span class="text-danger">Ingresa el email</span>'; return; }
+  if (!body.user) {
+    if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
+    commToast('Ingresa el email primero', 'error');
+    return;
+  }
   if (!body.fromAddr) body.fromAddr = body.user;
-  const r = await fetch('/comunicaciones/smtp/config', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  });
-  const d = await r.json();
-  msg.innerHTML = d.ok
-    ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>${d.warning ? `<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle me-1"></i>${esc(d.warning)}</div>` : ''}`
-    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
-  if (d.ok) {
-    if (d.smtp) {
-      document.getElementById('smtpHost').value = d.smtp.smtp_host || body.host;
-      document.getElementById('smtpPort').value = d.smtp.smtp_port || body.port;
-      document.getElementById('smtpUser').value = d.smtp.smtp_user || body.user;
-      document.getElementById('smtpFromName').value = d.smtp.from_name || body.fromName;
-      document.getElementById('smtpFromAddr').value = d.smtp.from_addr || body.fromAddr;
-      document.getElementById('smtpSecure').checked = !!d.smtp.secure;
+  try {
+    const r = await fetch('/comunicaciones/smtp/config', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (d.smtp) {
+        document.getElementById('smtpHost').value = d.smtp.smtp_host || body.host;
+        document.getElementById('smtpPort').value = d.smtp.smtp_port || body.port;
+        document.getElementById('smtpUser').value = d.smtp.smtp_user || body.user;
+        document.getElementById('smtpFromName').value = d.smtp.from_name || body.fromName;
+        document.getElementById('smtpFromAddr').value = d.smtp.from_addr || body.fromAddr;
+        document.getElementById('smtpSecure').checked = !!d.smtp.secure;
+      }
+      passInput.value = '••••••••';
+      passInput.dataset.hasSecret = '1';
+      passInput.placeholder = 'Guardada en BD — déjala así';
+      actualizarPreview();
+      commToast('Configuración SMTP guardada correctamente en la base de datos', 'success');
+      if (d.warning) setTimeout(() => commToast(d.warning, 'warning'), 400);
+      // Botón con confirmación visible 2s
+      if (btn) {
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-success');
+        btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Guardado';
+        setTimeout(() => {
+          btn.classList.remove('btn-success');
+          btn.classList.add('btn-danger');
+          btn.innerHTML = originalBtn;
+          btn.disabled = false;
+        }, 2000);
+      }
+    } else {
+      commToast(d.error || 'No se pudo guardar', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
     }
-    passInput.value = '••••••••';
-    passInput.dataset.hasSecret = '1';
-    passInput.placeholder = 'Guardada';
-    actualizarPreview();
+  } catch (e) {
+    commToast('Error de conexión con el servidor', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
   }
 }
 
 /* ════════════════════════════════
-   EMAIL METHOD TABS + STATUS
+   ESTADO SMTP (badge en cabecera)
 ════════════════════════════════ */
 async function cargarEstadoEmail() {
   try {
@@ -1101,334 +989,16 @@ async function cargarEstadoEmail() {
     if (!r.ok) return;
     const d = await r.json();
     const badge = document.getElementById('emailMethodBadge');
-    const resendBadge = document.getElementById('resendActiveBadge');
-    if (d.resend_active) {
-      // Resend está activo — mostrar tab Resend por defecto
-      badge.textContent = 'Resend API';
-      badge.className = 'badge bg-success ms-2';
-      if (resendBadge) resendBadge.style.display = '';
-      // Mostrar estado en box
-      const sb = document.getElementById('resendStatusBox');
-      if (sb) {
-        sb.style.display = '';
-        sb.className = 'alert alert-success py-2 px-3 mb-3 small';
-        sb.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i><strong>Resend API activa</strong> — Remitente: <code>${esc(d.resend_from)}</code>. Los correos se enviarán vía HTTPS.`;
+    if (badge) {
+      if (d.configured) {
+        badge.textContent = 'Configurado';
+        badge.className = 'badge bg-success ms-2';
+      } else {
+        badge.textContent = 'Sin configurar';
+        badge.className = 'badge bg-warning text-dark ms-2';
       }
-      switchEmailTab('resend');
-    } else {
-      badge.textContent = 'SMTP';
-      badge.className = 'badge bg-secondary ms-2';
-      // Mostrar aviso de que SMTP puede fallar en Railway
-      const sb = document.getElementById('resendStatusBox');
-      if (sb) {
-        sb.style.display = '';
-        sb.className = 'alert alert-warning py-2 px-3 mb-3 small';
-        sb.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Resend no configurado.</strong> Railway bloquea SMTP (puertos 587/465). Configura Resend API para correos confiables.`;
-      }
-      switchEmailTab('resend'); // mostrar panel Resend para que vea el aviso
     }
   } catch(e) { /* silencioso */ }
-}
-
-function switchEmailTab(which) {
-  document.getElementById('panel-resend').style.display = which === 'resend' ? '' : 'none';
-  document.getElementById('panel-smtp').style.display   = which === 'smtp'   ? '' : 'none';
-  document.getElementById('tab-resend').classList.toggle('active', which === 'resend');
-  document.getElementById('tab-smtp').classList.toggle('active',   which === 'smtp');
-}
-
-async function verificarResend(btn) {
-  const msg = document.getElementById('resendMsg');
-  const original = btn ? btn.innerHTML : '';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verificando...';
-  }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-primary me-1"></div>Verificando API Key con Resend...';
-  try {
-    const r = await fetch('/comunicaciones/resend/verify', { method: 'POST' });
-    let d = null;
-    try { d = await r.json(); } catch(e) {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">Respuesta inválida del servidor (HTTP ${r.status}). Recarga la página.</div>`;
-      return;
-    }
-    const sugg = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
-    if (d.ok) {
-      const sourceNote = d.source === 'env'
-        ? `<div class="mt-1"><i class="bi bi-cloud-check me-1"></i>La key viene de <strong>Railway Variables (RESEND_API_KEY)</strong> — no necesitas guardarla en el sistema, ya está activa.</div>`
-        : d.source === 'db'
-        ? `<div class="mt-1 text-muted"><i class="bi bi-database me-1"></i>La key viene de la base de datos del sistema.</div>`
-        : '';
-      const alertClass = d.warning ? 'alert-warning' : 'alert-success';
-      msg.innerHTML = `<div class="alert ${alertClass} py-2 px-3 mb-0 small">
-        <div class="fw-bold">${esc(d.message)}</div>
-        ${sourceNote}
-      </div>`;
-    } else {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
-        <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'No se pudo verificar')}</div>
-        ${d.detail ? `<div class="mt-1 font-monospace" style="font-size:.72rem;word-break:break-all">${esc(d.detail)}</div>` : ''}
-        ${sugg ? `<div class="fw-semibold mt-2">Qué revisar:</div><ul class="mb-0 ps-3">${sugg}</ul>` : ''}
-      </div>`;
-    }
-  } catch(e) {
-    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = original; }
-  }
-}
-
-async function guardarResend() {
-  const msg     = document.getElementById('resendMsg');
-  const apiKey  = document.getElementById('resendApiKeyInput').value.trim();
-  const fromAddr= document.getElementById('resendFromAddr').value.trim();
-  const bullets = ['•','*'];
-  const isMasked = apiKey === '' || bullets.some(b => apiKey === b.repeat(apiKey.length)) || /^re_•+$/.test(apiKey);
-  if (isMasked) {
-    msg.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>La key está enmascarada. Si ya está guardada en Railway no necesitas re-guardarla.</span>';
-    return;
-  }
-  if (apiKey && !apiKey.startsWith('re_')) {
-    msg.innerHTML = '<span class="text-danger">La API Key debe comenzar con <code>re_</code>. Cópiala exactamente desde resend.com/api-keys</span>';
-    return;
-  }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Guardando…';
-  try {
-    const r = await fetch('/comunicaciones/resend/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({api_key: apiKey, from_addr: fromAddr || 'onboarding@resend.dev'})
-    });
-    const d = await r.json();
-    if (d.ok) {
-      msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
-      cargarEstadoEmail();
-    } else {
-      msg.innerHTML = `<span class="text-danger">${esc(d.error || 'Error al guardar')}</span>`;
-    }
-  } catch(e) {
-    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
-  }
-}
-
-function abrirTestResend() {
-  document.getElementById('testResendMsg').innerHTML = '';
-  _modalTestResend.show();
-}
-
-async function enviarTestResend() {
-  const to  = document.getElementById('testResendTo').value.trim();
-  const msg = document.getElementById('testResendMsg');
-  if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa un destinatario.</span>'; return; }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Enviando vía Resend…';
-  try {
-    const r = await fetch('/comunicaciones/resend/test', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({to})
-    });
-    let d = null;
-    try {
-      d = await r.json();
-    } catch(jsonErr) {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
-        <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>Error del servidor (HTTP ${r.status})</div>
-        <div class="mt-1">El servidor no devolvió JSON. Recarga la página.</div>
-      </div>`;
-      return;
-    }
-
-    if (d.ok) {
-      msg.innerHTML = `<div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
-      return;
-    }
-
-    // ── Error: armar diagnóstico claro ──────────────────────────────────
-    const sugg = (d.suggestions || []).map(x => `<li class="mb-1">${esc(x)}</li>`).join('');
-    const actionBtn = d.action_url
-      ? `<a href="${esc(d.action_url)}" target="_blank" class="btn btn-warning btn-sm fw-bold mt-2">
-           <i class="bi bi-box-arrow-up-right me-1"></i>${esc(d.action_label || 'Ir a Resend')}
-         </a>`
-      : '';
-
-    // Detectar si es el famoso problema 1010
-    let banner = '';
-    if (d.is_self_only_issue) {
-      banner = `<div class="p-2 mb-2 rounded" style="background:#fef3c7;border-left:3px solid #f59e0b;color:#1f2937">
-        <div class="fw-bold mb-1">🔒 Restricción del plan gratuito de Resend</div>
-        <div>Este es el famoso error 1010. Resend solo deja enviar emails al correo con que registraste la cuenta — para enviar a clientes necesitas verificar un dominio.</div>
-      </div>`;
-    } else if (d.is_domain_issue) {
-      banner = `<div class="p-2 mb-2 rounded" style="background:#fef3c7;border-left:3px solid #f59e0b;color:#1f2937">
-        <div class="fw-bold mb-1">🌐 Dominio no verificado</div>
-        <div>El dominio del remitente no está verificado en Resend.</div>
-      </div>`;
-    }
-
-    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 mb-0 small">
-      ${banner}
-      <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al enviar')}</div>
-      ${d.resend_message ? `<div class="mt-2 p-2 rounded" style="background:#0b1220;color:#e2e8f0;font-family:monospace;font-size:.72rem;white-space:pre-wrap;word-break:break-all">${esc(d.resend_message)}</div>` : ''}
-      ${sugg ? `<div class="fw-semibold mt-2">Qué hacer:</div><ul class="mb-0 ps-3 mt-1">${sugg}</ul>` : ''}
-      ${actionBtn}
-    </div>`;
-  } catch(e) {
-    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e))}</span>`;
-  }
-}
-
-/* ════════════════════════════════════════════════════════════
-   GESTIÓN DE DOMINIOS RESEND
-════════════════════════════════════════════════════════════ */
-async function cargarDominios() {
-  const cont = document.getElementById('listaDominios');
-  cont.innerHTML = '<div class="text-center py-3 text-muted small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando...</div>';
-  try {
-    const r = await fetch('/comunicaciones/resend/domains');
-    const d = await r.json();
-    if (!d.ok) {
-      cont.innerHTML = `<div class="alert alert-warning py-2 px-3 small mb-0">
-        <i class="bi bi-exclamation-triangle me-1"></i>${esc(d.message || 'No se pudieron listar los dominios')}.
-        <div class="mt-1 small text-muted">Esto puede ocurrir si tu API Key tiene permisos limitados (Sending Access). Necesitas una key con "Full access" para gestionar dominios.</div>
-      </div>`;
-      return;
-    }
-    if (!d.domains || !d.domains.length) {
-      cont.innerHTML = `<div class="text-center py-3 text-muted small">
-        <i class="bi bi-globe2 d-block mb-2" style="font-size:1.5rem;opacity:.4"></i>
-        Sin dominios verificados todavía. Agrega uno arriba para empezar.
-      </div>`;
-      return;
-    }
-    cont.innerHTML = d.domains.map(dom => renderDominio(dom)).join('');
-  } catch(e) {
-    cont.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error de red: ${esc(String(e))}</div>`;
-  }
-}
-
-function renderDominio(dom) {
-  const status = (dom.status || '').toLowerCase();
-  const statusBadge = {
-    'verified':     '<span class="badge bg-success">Verificado ✓</span>',
-    'pending':      '<span class="badge bg-warning text-dark">Pendiente DNS</span>',
-    'not_started':  '<span class="badge bg-secondary">Sin verificar</span>',
-    'failure':      '<span class="badge bg-danger">Falló</span>',
-    'temporary_failure': '<span class="badge bg-warning text-dark">Reintentando</span>',
-  }[status] || `<span class="badge bg-secondary">${esc(status || 'desconocido')}</span>`;
-
-  const records = (dom.records || []).map(rec => `
-    <tr>
-      <td><code class="small">${esc(rec.record || rec.type || '')}</code></td>
-      <td><code class="small text-break" style="font-size:.7rem">${esc(rec.name || '')}</code></td>
-      <td><code class="small text-break" style="font-size:.7rem;max-width:300px;display:inline-block;word-break:break-all">${esc(rec.value || '')}</code></td>
-      <td>${rec.priority != null ? esc(String(rec.priority)) : '—'}</td>
-      <td><span class="badge bg-${rec.status === 'verified' ? 'success' : 'warning text-dark'} small">${esc(rec.status || '?')}</span></td>
-    </tr>
-  `).join('');
-
-  return `
-    <div class="border rounded p-3 mb-2" style="background:#fafafa">
-      <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-        <div>
-          <span class="fw-bold">${esc(dom.name || '')}</span>
-          ${statusBadge}
-          <span class="text-muted small ms-2">${esc(dom.region || '')}</span>
-        </div>
-        <div class="d-flex gap-1">
-          <button class="btn btn-sm btn-outline-primary" onclick="verificarDominio('${esc(dom.id)}')">
-            <i class="bi bi-shield-check me-1"></i>Re-verificar DNS
-          </button>
-          <button class="btn btn-sm btn-outline-danger" onclick="eliminarDominio('${esc(dom.id)}','${esc(dom.name)}')">
-            <i class="bi bi-trash"></i>
-          </button>
-        </div>
-      </div>
-
-      ${records ? `
-        <div class="small fw-semibold mt-3 mb-1">📋 Registros DNS — Cópialos en tu proveedor de DNS (Cloudflare, GoDaddy, NIC.cl, etc.)</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-bordered mb-0" style="font-size:.75rem">
-            <thead class="table-light">
-              <tr><th>Tipo</th><th>Nombre/Host</th><th>Valor</th><th>Prio</th><th>Estado</th></tr>
-            </thead>
-            <tbody>${records}</tbody>
-          </table>
-        </div>
-        <div class="form-text mt-1">
-          <i class="bi bi-info-circle me-1"></i>Después de agregar los registros DNS, espera 5-10 minutos y haz clic en <strong>"Re-verificar DNS"</strong>.
-        </div>
-      ` : ''}
-
-      ${status === 'verified' ? `
-        <div class="alert alert-success small mt-3 mb-0 py-2">
-          <i class="bi bi-check-circle-fill me-1"></i>
-          <strong>Listo para usar.</strong> Cambia el "Email remitente" arriba a algo como
-          <code>noreply@${esc(dom.name)}</code> y guarda. Ya puedes enviar a cualquier cliente.
-        </div>
-      ` : ''}
-    </div>
-  `;
-}
-
-async function agregarDominio() {
-  const dom = document.getElementById('dominioNuevo').value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
-  const region = document.getElementById('dominioRegion').value;
-  const msg = document.getElementById('dominiosMsg');
-  if (!dom || !dom.includes('.')) {
-    msg.innerHTML = '<div class="alert alert-warning py-2 px-3 small mb-0">Ingresa un dominio válido (ej: sphs.cl)</div>';
-    return;
-  }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Agregando dominio en Resend...';
-  try {
-    const r = await fetch('/comunicaciones/resend/domains', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({domain: dom, region})
-    });
-    const d = await r.json();
-    if (d.ok) {
-      msg.innerHTML = `<div class="alert alert-success py-2 px-3 small mb-0"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
-      document.getElementById('dominioNuevo').value = '';
-      cargarDominios();
-    } else {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">
-        <i class="bi bi-x-circle me-1"></i>${esc(d.message || 'Error al agregar')}
-        ${d.detail && d.detail.message ? `<div class="mt-1 small">${esc(d.detail.message)}</div>` : ''}
-      </div>`;
-    }
-  } catch(e) {
-    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error de red: ${esc(String(e))}</div>`;
-  }
-}
-
-async function verificarDominio(id) {
-  const msg = document.getElementById('dominiosMsg');
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Solicitando verificación...';
-  try {
-    const r = await fetch(`/comunicaciones/resend/domains/${id}/verify`, {method:'POST'});
-    const d = await r.json();
-    if (d.ok) {
-      msg.innerHTML = `<div class="alert alert-success py-2 px-3 small mb-0"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.message)}</div>`;
-      cargarDominios();
-    } else {
-      msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0"><i class="bi bi-x-circle me-1"></i>${esc(d.message)}</div>`;
-    }
-  } catch(e) {
-    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error: ${esc(String(e))}</div>`;
-  }
-}
-
-async function eliminarDominio(id, name) {
-  if (!confirm(`¿Eliminar el dominio "${name}" de Resend? Esto NO afecta tu DNS, solo desconecta Resend.`)) return;
-  const msg = document.getElementById('dominiosMsg');
-  try {
-    const r = await fetch(`/comunicaciones/resend/domains/${id}`, {method:'DELETE'});
-    const d = await r.json();
-    msg.innerHTML = `<div class="alert alert-${d.ok?'success':'danger'} py-2 px-3 small mb-0">${esc(d.message)}</div>`;
-    if (d.ok) cargarDominios();
-  } catch(e) {
-    msg.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">Error: ${esc(String(e))}</div>`;
-  }
 }
 
 function abrirTestEmail() {

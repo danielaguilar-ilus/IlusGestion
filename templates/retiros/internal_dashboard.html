@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Retiros - ILUS{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-calendar2-check me-2" style="color:var(--ilus-red)"></i>Retiros</h4>
+    <div class="sub">Solicitudes de retiro en bodega, agenda y negociacion controlada</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
+    {% if permissions.admin %}
+    <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-gear me-1"></i>Horarios y alertas</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Retiros hoy</div><div class="fs-3 fw-black">{{ day.total or 0 }}</div></div></div>
+  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Bultos hoy</div><div class="fs-3 fw-black">{{ day.bultos or 0 }}</div></div></div>
+  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Peso real</div><div class="fs-3 fw-black">{{ "%.1f"|format(day.peso or 0) }} kg</div></div></div>
+  <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Volumen</div><div class="fs-3 fw-black">{{ "%.3f"|format(day.m3 or 0) }} m3</div></div></div>
+</div>
+
+<form method="get" class="ilus-card p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-4"><input name="q" value="{{ filtros.q }}" class="form-control form-control-sm" placeholder="Buscar solicitud, documento, cliente, telefono"></div>
+    <div class="col-md-3"><select name="status" class="form-select form-select-sm"><option value="">Todos los estados</option>{% for k,v in statuses.items() %}<option value="{{ k }}" {% if filtros.status==k %}selected{% endif %}>{{ v }} ({{ stats.get(k,0) }})</option>{% endfor %}</select></div>
+    <div class="col-md-2"><input type="date" name="date" value="{{ filtros.date }}" class="form-control form-control-sm"></div>
+    <div class="col-md-3 d-flex gap-2"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
+  </div>
+  <div class="btn-group btn-group-sm mt-3">
+    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Pipeline','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
+    <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
+    {% endfor %}
+  </div>
+</form>
+
+{% if filtros.view == 'kanban' %}
+<div class="d-flex gap-3 overflow-auto pb-3">
+  {% for key,label in statuses.items() %}
+  <div style="min-width:280px">
+    <div class="fw-bold small text-uppercase text-muted mb-2">{{ label }} <span class="badge bg-secondary">{{ stats.get(key,0) }}</span></div>
+    {% for r in rows if r.status == key %}
+    {% set b = status_badge(r.status) %}
+    <a href="{{ url_for('pickup_detail', rid=r.id) }}" class="text-decoration-none text-dark">
+      <div class="ilus-card p-3 mb-2" style="border-left:4px solid var(--ilus-red)">
+        <div class="fw-bold">{{ r.code }}</div>
+        <div class="small">{{ r.customer_name }}</div>
+        <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
+        <span class="badge bg-{{ b.color }} mt-2">{{ b.label }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% elif filtros.view == 'agenda' %}
+<div class="row g-3">
+  <div class="col-xl-8">
+    {% for r in rows %}
+    {% set b = status_badge(r.status) %}
+    <a href="{{ url_for('pickup_detail', rid=r.id) }}" class="text-decoration-none text-dark">
+      <div class="ilus-card p-3 mb-2" style="border-left:4px solid var(--ilus-red)">
+        <div class="d-flex justify-content-between flex-wrap gap-2">
+          <div>
+            <div class="fw-bold">{{ r.requested_date }} · {{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div>
+            <div>{{ r.customer_name }}</div>
+            <div class="small text-muted">{{ r.code }} · {{ r.document_type|upper }} {{ r.document_number }} · Retira: {{ r.pickup_person_name }}</div>
+          </div>
+          <div class="text-end">
+            <span class="badge bg-{{ b.color }}">{{ b.label }}</span>
+            <div class="small text-muted mt-1">{{ r.total_packages }} bultos · {{ r.total_weight_kg }} kg · PV {{ r.total_volumetric_weight }}</div>
+          </div>
+        </div>
+      </div>
+    </a>
+    {% else %}
+    <div class="ilus-card p-5 text-center text-muted">No hay retiros para esta agenda.</div>
+    {% endfor %}
+  </div>
+  <div class="col-xl-4">
+    <div class="ilus-card p-3">
+      <div class="fw-bold mb-2"><i class="bi bi-broadcast me-1 text-danger"></i>Comunicacion operativa</div>
+      <p class="small text-muted">Usa la alerta publica para avisos generales como cierre anticipado. Para clientes especificos, entra a la ficha del retiro y usa Comunicacion rapida.</p>
+      {% if permissions.admin %}
+      <button class="btn btn-sm btn-ilus w-100" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-megaphone me-1"></i>Editar alerta publica</button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="ilus-card">
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0 align-middle">
+      <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        {% set b = status_badge(r.status) %}
+        <tr onclick="location.href='{{ url_for('pickup_detail', rid=r.id) }}'" style="cursor:pointer">
+          <td class="fw-bold font-monospace">{{ r.code }}</td>
+          <td>{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
+          <td>{{ r.document_type|upper }} {{ r.document_number }}</td>
+          <td>{{ r.requested_date }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
+          <td><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
+          <td>
+            <div class="progress" style="height:7px"><div class="progress-bar bg-{{ 'success' if r.information_quality_score>=80 else ('warning' if r.information_quality_score>=60 else 'danger') }}" style="width:{{ r.information_quality_score }}%"></div></div>
+            <small>{{ r.information_quality_score }}%</small>
+          </td>
+          <td class="text-end">{{ r.total_packages }} bultos<br><small class="text-muted">{{ r.total_weight_kg }} kg · PV {{ r.total_volumetric_weight }}</small></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if permissions.admin %}
+<div class="modal fade" id="settingsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
+    <div class="modal-header bg-dark text-white"><h5 class="modal-title">Horarios, feriados y alerta publica</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body row g-3">
+      <div class="col-md-6"><label class="form-label">Nombre bodega</label><input name="warehouse_name" class="form-control" value="{{ settings.warehouse_name }}"></div>
+      <div class="col-md-6"><label class="form-label">Direccion</label><input name="warehouse_addr" class="form-control" value="{{ settings.warehouse_addr }}"></div>
+      <div class="col-12"><label class="form-label">Link mapa</label><input name="maps_url" class="form-control" value="{{ settings.maps_url }}"></div>
+      <div class="col-md-3"><label class="form-label">Abre</label><input name="open_time" type="time" class="form-control" value="{{ settings.open_time|hm }}"></div>
+      <div class="col-md-3"><label class="form-label">Cierra</label><input name="close_time" type="time" class="form-control" value="{{ settings.close_time|hm }}"></div>
+      <div class="col-md-6"><label class="form-label">Feriados/bloqueos (YYYY-MM-DD separados por coma)</label><input name="holidays" class="form-control" value="{{ settings.holidays or '' }}"></div>
+      <div class="col-12">
+        <label class="form-label">Dias habilitados</label><br>
+        {% for n,d in [(1,'Lun'),(2,'Mar'),(3,'Mie'),(4,'Jue'),(5,'Vie'),(6,'Sab'),(7,'Dom')] %}
+        <label class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="work_days" value="{{ n }}" {% if n|string in (settings.work_days or '') %}checked{% endif %}>{{ d }}</label>
+        {% endfor %}
+      </div>
+      <div class="col-md-4"><label class="form-check"><input class="form-check-input" type="checkbox" name="alert_enabled" {% if settings.alert_enabled %}checked{% endif %}>Mostrar alerta publica</label></div>
+      <div class="col-md-8"><input name="alert_title" class="form-control" value="{{ settings.alert_title }}"></div>
+      <div class="col-12"><textarea name="alert_message" class="form-control" rows="3">{{ settings.alert_message or '' }}</textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ilus">Guardar configuracion</button></div>
+  </form></div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,603 @@
+{% extends "base.html" %}
+{% block title %}Calendario operativo — Retiros — ILUS{% endblock %}
+{% block content %}
+<style>
+:root{--rad:12px;--ilus-red:#cc0000;--ink:#0f172a;}
+.cal-hero{
+  background:linear-gradient(135deg,#0f172a 0%,#1a1a2e 60%,#1e293b 100%);
+  border-radius:14px;padding:22px 26px;color:#fff;margin-bottom:16px;
+  position:relative;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.15);
+}
+.cal-hero::before{
+  content:'';position:absolute;top:-50px;right:-50px;width:240px;height:240px;
+  border-radius:50%;background:rgba(204,0,0,.10);pointer-events:none;
+}
+.cal-hero-row{display:flex;gap:18px;flex-wrap:wrap;align-items:center;position:relative;z-index:1;}
+.cal-hero-title{font-size:1.2rem;font-weight:900;letter-spacing:.3px;}
+.cal-hero-sub{font-size:.82rem;color:#94a3b8;margin-top:3px;}
+
+.cal-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+             background:#fff;border:1px solid #eaecf0;border-radius:12px;
+             padding:12px 16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.cal-nav-btn{padding:6px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;
+             cursor:pointer;font-size:.82rem;color:#374151;font-weight:600;
+             display:inline-flex;align-items:center;gap:6px;transition:all .15s;}
+.cal-nav-btn:hover{background:#fafbfc;border-color:#cbd5e1;}
+.cal-vista-tabs{display:flex;gap:0;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;}
+.cal-vista-btn{padding:6px 14px;border:none;background:#fff;font-size:.8rem;font-weight:600;
+               color:#6b7280;cursor:pointer;}
+.cal-vista-btn.active{background:#0f172a;color:#fff;}
+
+.cal-stats-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
+.cal-stat{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:11px 14px;
+          display:flex;align-items:center;gap:10px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.cal-stat-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+               justify-content:center;font-size:.95rem;flex-shrink:0;}
+.cal-stat-num{font-size:1.15rem;font-weight:900;color:#0f172a;line-height:1;}
+.cal-stat-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;margin-top:2px;}
+
+/* Vista semanal: 7 columnas */
+.cal-week{display:grid;grid-template-columns:90px repeat(7, minmax(0, 1fr));gap:1px;
+          background:#eaecf0;border:1px solid #eaecf0;border-radius:12px;overflow:hidden;
+          box-shadow:0 2px 12px rgba(0,0,0,.06);}
+.cal-week-head{background:#fafbfc;padding:10px 8px;text-align:center;
+               font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;
+               color:#6b7280;border-bottom:2px solid #eaecf0;}
+.cal-week-head.today{background:linear-gradient(135deg,#fee2e2,#fef2f2);color:#991b1b;}
+.cal-week-head .cw-day{font-size:1.05rem;font-weight:900;color:#0f172a;line-height:1;margin:3px 0;}
+.cal-week-head.today .cw-day{color:#cc0000;}
+.cal-week-head .cw-bar{margin-top:6px;height:3px;background:#e5e7eb;border-radius:2px;overflow:hidden;}
+.cal-week-head .cw-bar-fill{height:100%;background:#16a34a;transition:width .4s;}
+
+.cal-time-col{background:#fafbfc;padding:8px 6px;text-align:right;
+              font-size:.68rem;color:#6b7280;font-family:monospace;font-weight:700;
+              border-right:2px solid #eaecf0;}
+.cal-slot{background:#fff;min-height:80px;padding:5px;position:relative;
+          transition:background .1s;}
+.cal-slot:hover{background:#fafbfc;}
+.cal-slot.full{background:#fef2f2;}
+.cal-slot.high{background:linear-gradient(0deg,#fef9c3,#fff);}
+.cal-slot-cap{position:absolute;top:2px;right:4px;font-size:.6rem;color:#9ca3af;font-weight:700;}
+
+.cal-pick{background:#fff;border-left:3px solid #6b7280;border-radius:5px;
+          padding:5px 7px;margin-bottom:3px;cursor:pointer;
+          font-size:.7rem;line-height:1.25;
+          box-shadow:0 1px 2px rgba(0,0,0,.06);transition:all .15s;}
+.cal-pick:hover{transform:translateX(2px);box-shadow:0 3px 8px rgba(0,0,0,.1);}
+.cal-pick-status-solicitud_recibida{border-left-color:#2563eb;}
+.cal-pick-status-en_revision{border-left-color:#06b6d4;}
+.cal-pick-status-informacion_incompleta{border-left-color:#f59e0b;}
+.cal-pick-status-propuesta_enviada{border-left-color:#a855f7;}
+.cal-pick-status-esperando_cliente{border-left-color:#94a3b8;}
+.cal-pick-status-agenda_confirmada{border-left-color:#16a34a;background:#f0fdf4;}
+.cal-pick-status-reagendada{border-left-color:#f59e0b;}
+.cal-pick-status-rechazada{border-left-color:#dc2626;opacity:.55;text-decoration:line-through;}
+.cal-pick-status-en_preparacion{border-left-color:#0f172a;background:#f1f5f9;}
+.cal-pick-status-retirada{border-left-color:#16a34a;background:#dcfce7;}
+.cal-pick-status-fallida{border-left-color:#dc2626;background:#fee2e2;}
+.cal-pick-status-cerrada{border-left-color:#6b7280;opacity:.6;}
+.cal-pick-code{font-weight:800;color:#0f172a;font-family:monospace;font-size:.66rem;}
+.cal-pick-cliente{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cal-pick-meta{color:#6b7280;font-size:.62rem;display:flex;justify-content:space-between;}
+
+/* Drawer ficha completa */
+.fc-drawer{position:fixed;top:0;right:-100%;width:520px;max-width:100%;height:100vh;background:#fff;
+           border-left:1px solid #eaecf0;box-shadow:-8px 0 24px rgba(0,0,0,.12);
+           transition:right .3s ease;z-index:1050;display:flex;flex-direction:column;}
+.fc-drawer.open{right:0;}
+.fc-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.4);
+             opacity:0;pointer-events:none;transition:opacity .25s;z-index:1049;}
+.fc-backdrop.open{opacity:1;pointer-events:all;}
+.fc-header{padding:18px 24px;background:#0f172a;color:#fff;border-bottom:3px solid #cc0000;
+           display:flex;align-items:flex-start;gap:12px;flex-shrink:0;}
+.fc-header .fc-code{font-family:monospace;font-size:1.05rem;font-weight:900;}
+.fc-header .fc-cliente{font-size:.85rem;color:#cbd5e1;margin-top:2px;}
+.fc-header .fc-status{font-size:.62rem;padding:3px 10px;border-radius:50px;font-weight:800;
+                      text-transform:uppercase;letter-spacing:.4px;display:inline-block;margin-top:6px;}
+.fc-body{flex:1;overflow-y:auto;padding:0;}
+.fc-section{padding:14px 24px;border-bottom:1px solid #f3f4f6;}
+.fc-section h6{font-size:.66rem;font-weight:800;text-transform:uppercase;
+               letter-spacing:.5px;color:#9ca3af;margin-bottom:9px;}
+.fc-row{display:flex;justify-content:space-between;font-size:.82rem;padding:5px 0;
+        border-bottom:1px dashed #f3f4f6;}
+.fc-row:last-child{border-bottom:none;}
+.fc-row-lbl{color:#6b7280;font-weight:600;font-size:.74rem;}
+.fc-row-val{color:#0f172a;font-weight:600;text-align:right;}
+.fc-actions{padding:14px 24px;background:#fafbfc;border-top:1px solid #eaecf0;display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;}
+.fc-empty{padding:36px 18px;text-align:center;color:#9ca3af;font-size:.86rem;}
+
+.fc-pkg-card{background:#fafbfc;border:1px solid #eaecf0;border-radius:8px;padding:10px 12px;margin-bottom:6px;}
+.fc-pkg-meta{font-size:.7rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 12px;margin-top:3px;}
+
+.fc-erp{background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;}
+.fc-erp-line{display:grid;grid-template-columns:auto 1fr auto;gap:8px;font-size:.76rem;padding:5px 0;border-bottom:1px dashed rgba(0,0,0,.06);}
+.fc-erp-line:last-child{border-bottom:none;}
+.fc-erp-sku{font-family:monospace;color:#1e40af;font-weight:700;font-size:.7rem;}
+.fc-erp-qty{font-weight:700;color:#0f172a;}
+
+.fc-prep-box{background:linear-gradient(135deg,#fef9c3,#fff);border:1px solid #fde68a;border-radius:10px;padding:11px 14px;}
+.fc-prep-box .fc-prep-lbl{font-size:.62rem;font-weight:800;text-transform:uppercase;color:#92400e;letter-spacing:.4px;}
+.fc-prep-box .fc-prep-val{font-size:.84rem;font-weight:700;color:#7c2d12;margin-top:3px;}
+
+.fc-log-item{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid #f9fafb;font-size:.74rem;}
+.fc-log-item:last-child{border-bottom:none;}
+.fc-log-icon{width:24px;height:24px;border-radius:6px;background:#f3f4f6;color:#6b7280;
+             display:flex;align-items:center;justify-content:center;font-size:.7rem;flex-shrink:0;}
+.fc-log-time{color:#9ca3af;font-size:.66rem;font-family:monospace;flex-shrink:0;}
+
+/* Modal proponer */
+.prop-form input,.prop-form select,.prop-form textarea{font-size:.84rem;}
+</style>
+
+{# ── Hero ── #}
+<div class="cal-hero">
+  <div class="cal-hero-row">
+    <div style="width:54px;height:54px;border-radius:12px;background:linear-gradient(135deg,#cc0000,#990000);
+                display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0;
+                box-shadow:0 4px 14px rgba(204,0,0,.3)">
+      <i class="bi bi-calendar2-week"></i>
+    </div>
+    <div style="flex:1;min-width:240px">
+      <div class="cal-hero-title">Calendario operativo de retiros</div>
+      <div class="cal-hero-sub">Visualiza solicitudes en vivo · capacidad por franja · agenda inteligente</div>
+    </div>
+    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm" style="background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15)">
+      <i class="bi bi-list-ul me-1"></i>Lista clásica
+    </a>
+  </div>
+</div>
+
+{# ── Stats globales (semana actual) ── #}
+<div class="cal-stats-strip" id="calStats">
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-calendar-event"></i></div>
+    <div><div class="cal-stat-num" id="cs-total">—</div><div class="cal-stat-lbl">Retiros (rango)</div></div>
+  </div>
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#fef9c3;color:#92400e"><i class="bi bi-clock-history"></i></div>
+    <div><div class="cal-stat-num" id="cs-pendientes">—</div><div class="cal-stat-lbl">Por confirmar</div></div>
+  </div>
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
+    <div><div class="cal-stat-num" id="cs-confirmadas">—</div><div class="cal-stat-lbl">Confirmadas</div></div>
+  </div>
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#ede9fe;color:#5b21b6"><i class="bi bi-box-seam"></i></div>
+    <div><div class="cal-stat-num" id="cs-bultos">—</div><div class="cal-stat-lbl">Bultos totales</div></div>
+  </div>
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-truck"></i></div>
+    <div><div class="cal-stat-num" id="cs-kg">—</div><div class="cal-stat-lbl">Peso (kg)</div></div>
+  </div>
+  <div class="cal-stat">
+    <div class="cal-stat-icon" style="background:#cffafe;color:#0e7490"><i class="bi bi-bounding-box"></i></div>
+    <div><div class="cal-stat-num" id="cs-m3">—</div><div class="cal-stat-lbl">Volumen (m³)</div></div>
+  </div>
+</div>
+
+{# ── Toolbar navegación ── #}
+<div class="cal-toolbar">
+  <button class="cal-nav-btn" onclick="calPrev()"><i class="bi bi-chevron-left"></i> Anterior</button>
+  <button class="cal-nav-btn" onclick="calToday()"><i class="bi bi-calendar2-check me-1"></i>Hoy</button>
+  <button class="cal-nav-btn" onclick="calNext()">Siguiente <i class="bi bi-chevron-right"></i></button>
+  <span id="calRangeLabel" style="font-weight:700;color:#0f172a;font-size:.92rem;margin-left:8px"></span>
+  <div class="ms-auto d-flex gap-2 align-items-center">
+    <span style="font-size:.74rem;color:#9ca3af">Capacidad por franja:</span>
+    <span class="badge bg-light text-dark" style="font-size:.7rem" id="cap-badge">—</span>
+    <a href="{{ url_for('pickup_dashboard') }}#settings" class="btn-sm btn btn-outline-dark" style="font-size:.74rem;padding:4px 10px"><i class="bi bi-sliders me-1"></i>Configurar</a>
+  </div>
+</div>
+
+{# ── Calendario semanal (grid 7 días + columna horario) ── #}
+<div id="calLoader" class="text-center py-5 text-muted">
+  <div class="spinner-border text-danger"></div>
+  <div class="mt-2" style="font-size:.84rem">Cargando calendario…</div>
+</div>
+<div class="cal-week" id="calWeek" style="display:none"></div>
+
+{# ── Drawer ficha completa ── #}
+<div class="fc-backdrop" id="fcBackdrop" onclick="cerrarDrawer()"></div>
+<div class="fc-drawer" id="fcDrawer">
+  <div class="fc-header">
+    <div style="flex:1;min-width:0">
+      <div class="fc-code" id="fc-code">—</div>
+      <div class="fc-cliente" id="fc-cliente">Cargando…</div>
+      <span class="fc-status" id="fc-status" style="background:#374151;color:#fff">—</span>
+    </div>
+    <button class="btn btn-sm" onclick="cerrarDrawer()" style="color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15)">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="fc-body" id="fc-body">
+    <div class="fc-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>
+  </div>
+  <div class="fc-actions" id="fc-actions"></div>
+</div>
+
+{# ── Modal proponer fecha alternativa ── #}
+<div class="modal fade" id="modalProponer" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#a855f7;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Proponer fecha alternativa</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body prop-form">
+        <input type="hidden" id="prop_rid">
+        <div class="row g-3">
+          <div class="col-12"><label class="form-label small fw-semibold">Nueva fecha</label>
+            <input type="date" id="prop_date" class="form-control"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Desde</label>
+            <input type="time" id="prop_tf" class="form-control"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Hasta</label>
+            <input type="time" id="prop_tt" class="form-control"></div>
+          <div class="col-12"><label class="form-label small fw-semibold">Mensaje al cliente</label>
+            <textarea id="prop_msg" class="form-control" rows="3" placeholder="Hola, te proponemos esta nueva fecha por…"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-sm" style="background:#a855f7;color:#fff" onclick="enviarPropuesta()">
+          <i class="bi bi-send me-1"></i>Enviar al cliente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _calData = null;
+let _rangeFrom = null, _rangeTo = null;
+
+function calFmtDate(d) {
+  return d.toISOString().slice(0,10);
+}
+function calStartOfWeek(d) {
+  const x = new Date(d);
+  const dow = (x.getDay() + 6) % 7;  // L=0, D=6
+  x.setDate(x.getDate() - dow);
+  x.setHours(0,0,0,0);
+  return x;
+}
+function calToday() {
+  const today = new Date();
+  _rangeFrom = calStartOfWeek(today);
+  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
+  cargarCalendario();
+}
+function calPrev() {
+  _rangeFrom.setDate(_rangeFrom.getDate() - 7);
+  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
+  cargarCalendario();
+}
+function calNext() {
+  _rangeFrom.setDate(_rangeFrom.getDate() + 7);
+  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
+  cargarCalendario();
+}
+
+async function cargarCalendario() {
+  document.getElementById('calLoader').style.display = '';
+  document.getElementById('calWeek').style.display = 'none';
+  const url = `/retiros/api/calendario?from=${calFmtDate(_rangeFrom)}&to=${calFmtDate(_rangeTo)}`;
+  try {
+    const r = await fetch(url);
+    _calData = await r.json();
+    renderSemana();
+    renderStats();
+  } catch (e) {
+    document.getElementById('calLoader').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+function renderSemana() {
+  const cont = document.getElementById('calWeek');
+  const cfg = _calData.settings;
+  document.getElementById('cap-badge').textContent =
+    `${cfg.max_picks_slot} retiros · ${cfg.max_kg_slot} kg · ${cfg.max_m3_slot} m³`;
+
+  // Etiqueta rango
+  const fmt = d => d.toLocaleDateString('es-CL',{day:'numeric',month:'short'});
+  document.getElementById('calRangeLabel').textContent =
+    `${fmt(_rangeFrom)} → ${fmt(_rangeTo)} ${_rangeFrom.getFullYear()}`;
+
+  // Generar headers
+  const today = calFmtDate(new Date());
+  const dayNames = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  let html = '<div class="cal-week-head" style="grid-column:1"><div style="font-size:.68rem;color:#9ca3af">HORA</div></div>';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(_rangeFrom); d.setDate(d.getDate() + i);
+    const fecha = calFmtDate(d);
+    const dia = _calData.dias[fecha] || {total_picks:0, ocupacion_pct:0};
+    const isToday = fecha === today;
+    html += `<div class="cal-week-head${isToday?' today':''}">
+      <div style="font-size:.65rem">${dayNames[i]}</div>
+      <div class="cw-day">${d.getDate()}</div>
+      <div style="font-size:.62rem;color:#9ca3af;font-weight:600">${dia.total_picks} retiros</div>
+      <div class="cw-bar"><div class="cw-bar-fill" style="width:${dia.ocupacion_pct}%;background:${dia.ocupacion_pct>=80?'#dc2626':dia.ocupacion_pct>=50?'#f59e0b':'#16a34a'}"></div></div>
+    </div>`;
+  }
+
+  // Generar slots horarios (de open_time a close_time, cada slot_minutes)
+  const [oH,oM] = cfg.open_time.split(':').map(Number);
+  const [cH,cM] = cfg.close_time.split(':').map(Number);
+  let totalMin = (cH*60+cM) - (oH*60+oM);
+  const slotMin = cfg.slot_minutes || 60;
+  const slots = [];
+  for (let m = 0; m < totalMin; m += slotMin) {
+    const t = oH*60+oM + m;
+    slots.push(`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`);
+  }
+
+  for (const slot of slots) {
+    html += `<div class="cal-time-col">${slot}</div>`;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(_rangeFrom); d.setDate(d.getDate() + i);
+      const fecha = calFmtDate(d);
+      const dia = _calData.dias[fecha];
+      const slotData = dia && dia.slots[slot];
+      let cellClass = 'cal-slot';
+      let capInfo = '';
+      let picksHtml = '';
+      if (slotData) {
+        const pct = slotData.pct;
+        if (pct >= 100) cellClass += ' full';
+        else if (pct >= 70) cellClass += ' high';
+        capInfo = `<div class="cal-slot-cap" title="Ocupación ${pct}%">${slotData.ocupados}/${slotData.max_picks}</div>`;
+        picksHtml = slotData.picks.map(p => `
+          <div class="cal-pick cal-pick-status-${p.status}" onclick="abrirDrawer(${p.id})">
+            <div class="cal-pick-cliente">${p.customer_name||'—'}</div>
+            <div class="cal-pick-meta">
+              <span>${p.code||''}</span>
+              <span>${p.total_packages?p.total_packages+'b':''} ${p.total_weight_kg?Math.round(p.total_weight_kg)+'kg':''}</span>
+            </div>
+          </div>`).join('');
+      }
+      html += `<div class="${cellClass}">${capInfo}${picksHtml}</div>`;
+    }
+  }
+
+  cont.innerHTML = html;
+  document.getElementById('calLoader').style.display = 'none';
+  cont.style.display = '';
+}
+
+function renderStats() {
+  let total = 0, conf = 0, pend = 0, bultos = 0, kg = 0, m3 = 0;
+  for (const fecha in _calData.dias) {
+    const d = _calData.dias[fecha];
+    total += d.total_picks;
+    bultos += d.picks.reduce((a,p)=>a + (p.total_packages||0), 0);
+    kg     += d.total_kg;
+    m3     += d.total_m3;
+    for (const p of d.picks) {
+      if (p.is_confirmed || p.status === 'agenda_confirmada' || p.status === 'retirada') conf++;
+      else if (['solicitud_recibida','en_revision','propuesta_enviada','esperando_cliente','informacion_incompleta'].includes(p.status)) pend++;
+    }
+  }
+  const f = n => new Intl.NumberFormat('es-CL').format(Math.round(n*100)/100);
+  document.getElementById('cs-total').textContent = total;
+  document.getElementById('cs-pendientes').textContent = pend;
+  document.getElementById('cs-confirmadas').textContent = conf;
+  document.getElementById('cs-bultos').textContent = bultos;
+  document.getElementById('cs-kg').textContent = f(kg);
+  document.getElementById('cs-m3').textContent = f(m3);
+}
+
+// ── Drawer ficha completa ────────────────────────────────────────
+async function abrirDrawer(rid) {
+  document.getElementById('fcBackdrop').classList.add('open');
+  document.getElementById('fcDrawer').classList.add('open');
+  document.getElementById('fc-body').innerHTML = '<div class="fc-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>';
+  document.getElementById('fc-actions').innerHTML = '';
+  try {
+    const r = await fetch(`/retiros/api/${rid}/full`);
+    const d = await r.json();
+    if (d.error) { document.getElementById('fc-body').innerHTML = `<div class="fc-empty">${d.error}</div>`; return; }
+    renderDrawer(d);
+  } catch(e) {
+    document.getElementById('fc-body').innerHTML = `<div class="fc-empty">Error: ${e.message}</div>`;
+  }
+}
+
+function cerrarDrawer() {
+  document.getElementById('fcBackdrop').classList.remove('open');
+  document.getElementById('fcDrawer').classList.remove('open');
+}
+
+function renderDrawer(d) {
+  document.getElementById('fc-code').innerHTML = `${d.code||'—'} <small style="font-weight:400;color:#94a3b8;font-size:.72rem">· ${d.document_type||''} ${d.document_number||''}</small>`;
+  document.getElementById('fc-cliente').textContent = `${d.customer_name||'—'}${d.customer_rut?' · '+d.customer_rut:''}`;
+  const stCol = {success:'#16a34a',warning:'#f59e0b',primary:'#2563eb',danger:'#dc2626',info:'#06b6d4',secondary:'#6b7280',dark:'#0f172a'}[d.status_color] || '#6b7280';
+  const stEl = document.getElementById('fc-status');
+  stEl.style.background = stCol; stEl.textContent = d.status_label || d.status;
+
+  // Cuerpo
+  let html = '';
+
+  // ── PEDIDO + PREPARACIÓN
+  html += '<div class="fc-section">';
+  html += '<h6><i class="bi bi-box-seam me-1"></i>Pedido y preparación</h6>';
+  html += '<div class="fc-prep-box">';
+  html += `<div class="fc-prep-lbl">¿Qué pedido es?</div>`;
+  html += `<div class="fc-prep-val">${(d.document_type||'').toUpperCase()} ${d.document_number||''} — ${d.customer_name||''}</div>`;
+  if (d.total_packages) {
+    html += `<div class="fc-prep-lbl mt-2">Carga estimada</div>`;
+    html += `<div class="fc-prep-val">${d.total_packages} bulto${d.total_packages!=1?'s':''} · ${d.total_weight_kg||0} kg · ${d.total_volume_m3||0} m³</div>`;
+  }
+  html += '</div></div>';
+
+  // ── ERP ENRIQUECIDO (productos)
+  if (d.erp && !d.erp.error && d.erp.lineas && d.erp.lineas.length) {
+    html += '<div class="fc-section">';
+    html += '<h6><i class="bi bi-list-stars me-1"></i>Productos del documento (ERP)</h6>';
+    html += '<div class="fc-erp">';
+    if (d.erp.direccion) html += `<div style="font-size:.72rem;color:#1e40af;margin-bottom:6px"><i class="bi bi-geo-alt me-1"></i>${d.erp.direccion}</div>`;
+    for (const ln of d.erp.lineas) {
+      html += `<div class="fc-erp-line">
+        <span class="fc-erp-sku">${ln.sku||'—'}</span>
+        <span>${ln.nombre||'—'}</span>
+        <span class="fc-erp-qty">${ln.cantidad||0} ${ln.unidad||''}</span>
+      </div>`;
+    }
+    html += '</div></div>';
+  } else if (d.erp && d.erp.error) {
+    html += '<div class="fc-section"><h6><i class="bi bi-exclamation-circle me-1"></i>ERP</h6>';
+    html += `<div class="alert alert-warning py-2 mb-0" style="font-size:.78rem">No se pudo enriquecer desde ERP: ${d.erp.error}</div></div>`;
+  }
+
+  // ── BULTOS (si los detalló)
+  if (d.packages && d.packages.length) {
+    html += '<div class="fc-section">';
+    html += '<h6><i class="bi bi-boxes me-1"></i>Bultos detallados</h6>';
+    for (const p of d.packages) {
+      html += `<div class="fc-pkg-card">
+        <strong>Bulto ${p.package_number}</strong>
+        <div class="fc-pkg-meta">
+          <span>${p.length_cm}×${p.width_cm}×${p.height_cm} cm</span>
+          <span>${p.weight_kg} kg real</span>
+          <span>${p.volumetric_weight} kg vol.</span>
+          <span>${p.volume_m3} m³</span>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // ── HORARIO
+  html += '<div class="fc-section">';
+  html += '<h6><i class="bi bi-calendar-check me-1"></i>Horario</h6>';
+  if (d.confirmed_date) {
+    html += `<div class="fc-row"><span class="fc-row-lbl">Confirmado</span><span class="fc-row-val" style="color:#16a34a">${d.confirmed_date} · ${d.confirmed_time_from}–${d.confirmed_time_to}</span></div>`;
+  } else if (d.proposed_date) {
+    html += `<div class="fc-row"><span class="fc-row-lbl">Propuesto por nosotros</span><span class="fc-row-val" style="color:#a855f7">${d.proposed_date} · ${d.proposed_time_from}–${d.proposed_time_to}</span></div>`;
+  }
+  html += `<div class="fc-row"><span class="fc-row-lbl">Solicitado</span><span class="fc-row-val">${d.requested_date} · ${d.requested_time_from}–${d.requested_time_to}</span></div>`;
+  html += '</div>';
+
+  // ── CONTACTO
+  html += '<div class="fc-section">';
+  html += '<h6><i class="bi bi-person-vcard me-1"></i>Contacto y persona que retira</h6>';
+  html += `<div class="fc-row"><span class="fc-row-lbl">Contacto</span><span class="fc-row-val">${d.contact_name||'—'}</span></div>`;
+  html += `<div class="fc-row"><span class="fc-row-lbl">Teléfono</span><span class="fc-row-val"><a href="tel:${d.contact_phone}" class="text-decoration-none">${d.contact_phone||'—'}</a></span></div>`;
+  html += `<div class="fc-row"><span class="fc-row-lbl">Email</span><span class="fc-row-val"><a href="mailto:${d.contact_email}" class="text-decoration-none">${d.contact_email||'—'}</a></span></div>`;
+  html += `<div class="fc-row"><span class="fc-row-lbl">Retira</span><span class="fc-row-val">${d.pickup_person_name||'—'} <small class="text-muted">(${d.pickup_person_relation||''})</small></span></div>`;
+  html += `<div class="fc-row"><span class="fc-row-lbl">Tel. retira</span><span class="fc-row-val">${d.pickup_person_phone||'—'}</span></div>`;
+  html += '</div>';
+
+  // ── CALIDAD
+  html += '<div class="fc-section">';
+  html += '<h6><i class="bi bi-shield-check me-1"></i>Calidad de información</h6>';
+  html += `<div class="fc-row"><span class="fc-row-lbl">Quality score</span><span class="fc-row-val" style="color:${d.information_quality_score>=80?'#16a34a':d.information_quality_score>=60?'#f59e0b':'#dc2626'}">${d.information_quality_score||0}%</span></div>`;
+  html += `<div class="fc-row"><span class="fc-row-lbl">Risk score</span><span class="fc-row-val" style="color:${d.risk_score>=50?'#dc2626':d.risk_score>=25?'#f59e0b':'#16a34a'}">${d.risk_score||0}%</span></div>`;
+  if (d.observations) html += `<div class="fc-row"><span class="fc-row-lbl">Observación cliente</span><span class="fc-row-val text-end" style="max-width:60%">${d.observations}</span></div>`;
+  if (d.internal_notes) html += `<div class="fc-row"><span class="fc-row-lbl">Notas internas</span><span class="fc-row-val text-end" style="max-width:60%">${d.internal_notes}</span></div>`;
+  html += '</div>';
+
+  // ── PROPUESTAS
+  if (d.proposals && d.proposals.length) {
+    html += '<div class="fc-section">';
+    html += '<h6><i class="bi bi-arrow-left-right me-1"></i>Propuestas previas</h6>';
+    for (const p of d.proposals) {
+      html += `<div class="fc-pkg-card" style="background:${p.status==='accepted'?'#f0fdf4':p.status==='declined'?'#fef2f2':'#fef9c3'}">
+        <strong>${p.proposed_by==='operacion'?'Operación →':'Cliente →'}</strong>
+        <div class="fc-pkg-meta">
+          <span>${p.date} · ${p.time_from}–${p.time_to}</span>
+          <span style="text-transform:uppercase;font-weight:700;color:#6b7280">${p.status}</span>
+        </div>
+        ${p.message?`<div style="font-size:.74rem;margin-top:4px;color:#374151">${p.message}</div>`:''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // ── HISTORIAL
+  if (d.logs && d.logs.length) {
+    html += '<div class="fc-section">';
+    html += '<h6><i class="bi bi-clock-history me-1"></i>Historial</h6>';
+    for (const lg of d.logs.slice(0,15)) {
+      html += `<div class="fc-log-item">
+        <div class="fc-log-icon"><i class="bi bi-circle-fill" style="font-size:.55rem"></i></div>
+        <div style="flex:1;min-width:0">
+          <div style="color:#0f172a;font-weight:600">${lg.action||''}</div>
+          ${lg.notes?`<div style="color:#6b7280;font-size:.7rem">${lg.notes}</div>`:''}
+        </div>
+        <span class="fc-log-time">${lg.created_at||''}</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  document.getElementById('fc-body').innerHTML = html;
+
+  // Acciones según estado
+  const actions = document.getElementById('fc-actions');
+  let acHtml = `<a href="${d.public_url}" target="_blank" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye me-1"></i>Vista cliente</a>`;
+  // Confirmar
+  if (!d.confirmed_date && d.status !== 'rechazada' && d.status !== 'cerrada') {
+    acHtml += `<button class="btn btn-sm btn-success" onclick="confirmarRetiro(${d.id})"><i class="bi bi-check-circle-fill me-1"></i>Confirmar</button>`;
+  }
+  // Proponer
+  if (d.status !== 'cerrada' && d.status !== 'retirada' && d.status !== 'rechazada') {
+    acHtml += `<button class="btn btn-sm" style="background:#a855f7;color:#fff" onclick="abrirProponer(${d.id}, '${d.requested_date}')"><i class="bi bi-calendar-plus me-1"></i>Proponer</button>`;
+  }
+  // Rechazar
+  if (d.status !== 'rechazada' && d.status !== 'cerrada') {
+    acHtml += `<button class="btn btn-sm btn-outline-danger" onclick="rechazarRetiro(${d.id})"><i class="bi bi-x-octagon me-1"></i>Rechazar</button>`;
+  }
+  acHtml += `<a href="/retiros/${d.id}" class="btn btn-sm btn-outline-dark ms-auto"><i class="bi bi-arrow-up-right-square me-1"></i>Ficha completa</a>`;
+  actions.innerHTML = acHtml;
+}
+
+async function confirmarRetiro(rid) {
+  if (!confirm('¿Confirmar este retiro? Se notificará al cliente por email.')) return;
+  const r = await fetch(`/retiros/${rid}/status`, {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`status=agenda_confirmada&notes=Confirmado desde calendario operativo`
+  });
+  if (r.ok) { cerrarDrawer(); cargarCalendario(); }
+  else alert('Error confirmando.');
+}
+
+async function rechazarRetiro(rid) {
+  const motivo = prompt('Motivo del rechazo (se incluirá en notificación al cliente):');
+  if (!motivo) return;
+  const r = await fetch(`/retiros/${rid}/status`, {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`status=rechazada&notes=${encodeURIComponent(motivo)}`
+  });
+  if (r.ok) { cerrarDrawer(); cargarCalendario(); }
+  else alert('Error rechazando.');
+}
+
+function abrirProponer(rid, defaultDate) {
+  document.getElementById('prop_rid').value = rid;
+  document.getElementById('prop_date').value = defaultDate || '';
+  document.getElementById('prop_tf').value = '09:00';
+  document.getElementById('prop_tt').value = '12:00';
+  document.getElementById('prop_msg').value = '';
+  new bootstrap.Modal(document.getElementById('modalProponer')).show();
+}
+
+async function enviarPropuesta() {
+  const rid  = document.getElementById('prop_rid').value;
+  const date = document.getElementById('prop_date').value;
+  const tf   = document.getElementById('prop_tf').value;
+  const tt   = document.getElementById('prop_tt').value;
+  const msg  = document.getElementById('prop_msg').value;
+  if (!date || !tf || !tt) { alert('Completa fecha y horario'); return; }
+  const r = await fetch(`/retiros/${rid}/proposal`, {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body: `date=${date}&time_from=${tf}&time_to=${tt}&message=${encodeURIComponent(msg)}`
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalProponer')).hide();
+    cerrarDrawer();
+    cargarCalendario();
+  } else alert('Error enviando propuesta.');
+}
+
+// Iniciar
+document.addEventListener('DOMContentLoaded', calToday);
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Log de emails — ILUS{% endblock %}
+{% block content %}
+<style>
+.elog-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;}
+.elog-kpi{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.elog-kpi-num{font-size:1.6rem;font-weight:900;line-height:1;}
+.elog-kpi-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;margin-top:4px;}
+
+.elog-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.elog-table thead th{padding:9px 12px;text-align:left;font-size:.62rem;font-weight:800;
+                     text-transform:uppercase;letter-spacing:.5px;color:#6b7280;
+                     background:#fafbfc;border-bottom:2px solid #eaecf0;}
+.elog-table tbody td{padding:9px 12px;border-bottom:1px solid #f3f4f6;vertical-align:top;}
+
+.evento-chip{padding:2px 9px;border-radius:50px;font-size:.62rem;font-weight:700;
+             background:#dbeafe;color:#1e40af;}
+.estado-enviado{background:#dcfce7;color:#166534;padding:3px 10px;border-radius:50px;font-size:.65rem;font-weight:700;}
+.estado-fallido{background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:50px;font-size:.65rem;font-weight:700;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-envelope-paper me-2" style="color:#cc0000"></i>Log de emails — Trazabilidad</h4>
+    <p class="text-muted mb-0" style="font-size:.85rem">
+      Histórico completo de emails enviados desde el sistema. Útil para auditar entregas y diagnosticar fallas.
+    </p>
+  </div>
+  <a href="{{ url_for('comm_index') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-gear me-1"></i>Configuración
+  </a>
+</div>
+
+{# KPIs últimos 30 días #}
+<div class="elog-kpi-grid">
+  <div class="elog-kpi"><div class="elog-kpi-num" style="color:#0f172a">{{ stats.total or 0 }}</div><div class="elog-kpi-lbl">Total enviados (30d)</div></div>
+  <div class="elog-kpi"><div class="elog-kpi-num" style="color:#16a34a">{{ stats.exitosos or 0 }}</div><div class="elog-kpi-lbl">Exitosos</div></div>
+  <div class="elog-kpi"><div class="elog-kpi-num" style="color:#dc2626">{{ stats.fallidos or 0 }}</div><div class="elog-kpi-lbl">Fallidos</div></div>
+  <div class="elog-kpi"><div class="elog-kpi-num" style="color:#2563eb">{{ stats.destinatarios_unicos or 0 }}</div><div class="elog-kpi-lbl">Destinatarios únicos</div></div>
+  {% if stats.total %}
+  {% set tasa = (stats.exitosos*100//stats.total) %}
+  <div class="elog-kpi"><div class="elog-kpi-num" style="color:{{ '#16a34a' if tasa>=90 else '#d97706' if tasa>=70 else '#dc2626' }}">{{ tasa }}%</div><div class="elog-kpi-lbl">Tasa éxito</div></div>
+  {% endif %}
+</div>
+
+{# Filtros #}
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  <form method="get" class="d-flex gap-2 flex-wrap">
+    <select name="evento" class="form-select form-select-sm" style="width:auto">
+      <option value="">Todos los eventos</option>
+      {% for e in eventos_top %}
+      <option value="{{ e.evento }}" {% if filtros.evento == e.evento %}selected{% endif %}>
+        {{ e.evento }} ({{ e.n }})
+      </option>
+      {% endfor %}
+    </select>
+    <select name="estado" class="form-select form-select-sm" style="width:auto">
+      <option value="">Todos los estados</option>
+      <option value="enviado" {% if filtros.estado == 'enviado' %}selected{% endif %}>Solo enviados</option>
+      <option value="fallido" {% if filtros.estado == 'fallido' %}selected{% endif %}>Solo fallidos</option>
+    </select>
+    <button class="btn btn-sm btn-dark"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+    <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-secondary">✕</a>
+  </form>
+</div>
+
+{# Tabla #}
+<div class="ilus-card p-0 overflow-hidden">
+  {% if rows %}
+  <div style="overflow-x:auto">
+    <table class="elog-table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Destinatario</th>
+          <th>Asunto</th>
+          <th>Evento</th>
+          <th>Actor</th>
+          <th>Estado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="white-space:nowrap;color:#6b7280;font-size:.74rem;font-family:monospace">{{ r.created_at|string|truncate(16,True,'') }}</td>
+          <td style="font-family:monospace">{{ r.destinatario }}</td>
+          <td>{{ r.asunto or '—' }}</td>
+          <td>{% if r.evento %}<span class="evento-chip">{{ r.evento }}</span>{% else %}—{% endif %}</td>
+          <td style="font-size:.75rem;color:#6b7280">{{ r.actor or '—' }}</td>
+          <td>
+            <span class="estado-{{ r.estado }}">
+              {% if r.estado == 'enviado' %}<i class="bi bi-check-circle-fill"></i> Enviado{% else %}<i class="bi bi-x-circle-fill"></i> Fallido{% endif %}
+            </span>
+            {% if r.error_msg %}
+            <div style="font-size:.66rem;color:#dc2626;margin-top:3px;max-width:280px;word-wrap:break-word">
+              {{ r.error_msg|truncate(140,True,'…') }}
+            </div>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.estado == 'fallido' %}
+            <button class="btn btn-xs btn-outline-secondary" onclick="reintentar({{ r.id }}, this)">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-center py-5 text-muted">
+    <i class="bi bi-envelope-x" style="font-size:3rem;opacity:.25"></i>
+    <div class="fw-semibold mt-2">Sin registros</div>
+    <div style="font-size:.82rem">El log se llenará automáticamente cuando se envíen emails desde el sistema.</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+async function reintentar(lid, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const r = await fetch(`/comunicaciones/log/${lid}/reintentar`, {method:'POST'});
+  const d = await r.json();
+  if (d.ok) { alert('Reintento OK'); location.reload(); }
+  else { alert('Reintento falló'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>'; }
+}
+</script>
+{% endblock %}

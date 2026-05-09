@@ -84,6 +84,26 @@
       {% endif %}
     </div>
 
+    {# ── RETIROS (módulo independiente) ── #}
+    <button class="sg-toggle" data-sg="retiros">
+      <i class="bi bi-box-arrow-up-right"></i>Retiros
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-retiros">
+      <a href="{{ url_for('pickup_dashboard') }}"
+         class="sidebar-link{% if request.endpoint == 'pickup_dashboard' %} active{% endif %}">
+        <i class="bi bi-display"></i><span>Monitor</span>
+      </a>
+      <a href="{{ url_for('pickup_calendar') }}"
+         class="sidebar-link{% if request.endpoint == 'pickup_calendar' %} active{% endif %}">
+        <i class="bi bi-calendar2-week-fill"></i><span>Calendario</span>
+      </a>
+      <a href="{{ url_for('pickup_public_request') }}" target="_blank"
+         class="sidebar-link">
+        <i class="bi bi-box-arrow-up-right"></i><span>Form. público</span>
+      </a>
+    </div>
+
     {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
     {% if permissions.cubicador or permissions.transporte %}
     <button class="sg-toggle" data-sg="transporte">
@@ -144,9 +164,11 @@
     </div>
     {% endif %}
 
-    {# ── AJUSTES — arriba del footer (admin/hrm) ── #}
-    {% if permissions.admin or permissions.hrm %}
-    <div class="sg-separator"></div>
+  </div>
+
+  {# ── AJUSTES — pegado al footer, separado por línea de los módulos ── #}
+  {% if permissions.admin or permissions.hrm %}
+  <div class="sidebar-ajustes-bottom" style="border-top:1px solid rgba(255,255,255,.08);padding-top:6px;margin-top:4px">
     <button class="sg-toggle sg-ajustes" data-sg="ajustes">
       <i class="bi bi-gear-wide-connected"></i>Ajustes
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -164,16 +186,24 @@
       {% endif %}
       {% if permissions.admin %}
       <a href="{{ url_for('comm_index') }}"
-         class="sidebar-link{% if request.endpoint and request.endpoint.startswith('comm_') %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint == 'comm_index' or (request.endpoint and request.endpoint.startswith('comm_') and request.endpoint != 'comm_email_log') %} active{% endif %}">
         <i class="bi bi-chat-dots"></i><span>Comunicaciones</span>
+      </a>
+      <a href="{{ url_for('comm_email_log') }}"
+         class="sidebar-link{% if request.endpoint == 'comm_email_log' %} active{% endif %}">
+        <i class="bi bi-envelope-paper"></i><span>Log de emails</span>
       </a>
       <a href="{{ url_for('users_index') }}"
          class="sidebar-link{% if request.endpoint in ['users_index','new_user','edit_user'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Usuarios</span>
       </a>
       <a href="{{ url_for('admin_roles') }}"
-         class="sidebar-link{% if request.endpoint in ['admin_roles','admin_roles_update'] %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ['admin_roles','admin_roles_update','admin_roles_matrix','admin_roles_matrix_save','admin_rol_crear','admin_rol_eliminar'] %} active{% endif %}">
         <i class="bi bi-shield-lock"></i><span>Roles y permisos</span>
+      </a>
+      <a href="{{ url_for('marketing_settings') }}"
+         class="sidebar-link{% if request.endpoint in ['marketing_settings','admin_login_imagenes','admin_login_imagenes_subir','admin_login_imagen_update'] %} active{% endif %}">
+        <i class="bi bi-images"></i><span>Marketing</span>
       </a>
       {% endif %}
       {% if permissions.superadmin %}
@@ -183,11 +213,10 @@
       </a>
       {% endif %}
     </div>
-    {% endif %}
-
   </div>
+  {% endif %}
 
-  {# — Footer: usuario + logout — #}
+  {# — Footer: usuario + mi cuenta + logout — #}
   <div class="sidebar-footer">
     <div class="sidebar-user">
       <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
@@ -196,6 +225,13 @@
         <div class="sidebar-user-role">{{ role_label }}</div>
       </div>
     </div>
+    <hr style="border-color:rgba(255,255,255,.08);margin:8px 0">
+    <a href="{{ url_for('mi_cuenta') }}"
+       class="sidebar-link{% if request.endpoint == 'mi_cuenta' %} active{% endif %}"
+       style="display:flex;align-items:center;gap:8px">
+      <i class="bi bi-gear"></i>
+      <span>Mi cuenta</span>
+    </a>
     <form method="post" action="{{ url_for('logout') }}" class="mt-2">
       <button type="submit" class="btn-sidebar-logout">
         <i class="bi bi-box-arrow-left me-2"></i>Cerrar sesion

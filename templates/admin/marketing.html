@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Marketing — ILUS{% endblock %}
+{% block content %}
+<style>
+.mk-tabs{display:flex;border-bottom:2px solid #eaecf0;background:#fff;
+         border-radius:12px 12px 0 0;padding:0 8px;box-shadow:0 2px 8px rgba(0,0,0,.04);}
+.mk-tab{padding:14px 22px;border:none;background:none;font-size:.86rem;
+        font-weight:600;color:#6b7280;cursor:pointer;border-bottom:3px solid transparent;
+        margin-bottom:-2px;transition:all .15s;display:inline-flex;align-items:center;gap:8px;}
+.mk-tab:hover{color:#374151;}
+.mk-tab.active{color:#cc0000;border-bottom-color:#cc0000;}
+.mk-pane{display:none;background:#fff;border-radius:0 0 12px 12px;
+         padding:24px;border:1px solid #eaecf0;border-top:none;}
+.mk-pane.active{display:block;}
+
+.li-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+         box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden;}
+.li-thumb{width:100%;height:160px;object-fit:cover;display:block;background:#f3f4f6;}
+.li-form-row{display:flex;flex-direction:column;gap:6px;padding:12px 14px;}
+.li-form-row input,.li-form-row textarea{font-size:.82rem;}
+.li-status-on{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;
+              font-size:.62rem;font-weight:700;}
+.li-status-off{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;
+               font-size:.62rem;font-weight:700;}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-images me-2" style="color:#cc0000"></i>Marketing</h4>
+    <p class="text-muted mb-0" style="font-size:.85rem">
+      Gestión visual de páginas públicas y pantalla de login.
+    </p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('login') }}" target="_blank" class="btn btn-sm btn-outline-dark">
+      <i class="bi bi-eye me-1"></i>Ver login
+    </a>
+    <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-dark">
+      <i class="bi bi-box-arrow-up-right me-1"></i>Ver retiros públicos
+    </a>
+  </div>
+</div>
+
+{# ── Tabs ── #}
+<div class="mk-tabs">
+  <button class="mk-tab active" onclick="mkTab('login',this)">
+    <i class="bi bi-shield-lock"></i>Imágenes Login
+    <span class="badge bg-secondary ms-1" style="font-size:.62rem">{{ login_imagenes|length }}</span>
+  </button>
+  <button class="mk-tab" onclick="mkTab('retiros',this)">
+    <i class="bi bi-box-seam"></i>Marketing público (Retiros)
+  </button>
+</div>
+
+{# ══════════════════════════════════════════════════════════════════
+   PANE: IMÁGENES LOGIN
+══════════════════════════════════════════════════════════════════ #}
+<div class="mk-pane active" id="mk-login">
+
+  <div class="alert alert-info py-2" style="font-size:.84rem">
+    <i class="bi bi-info-circle me-1"></i>
+    Carrusel de hasta 5 imágenes activas que se muestran en el panel izquierdo del login.
+    Recomendado: PNG/JPG/WEBP horizontales 1600×1200 con buena luz.
+  </div>
+
+  {# Subir nueva imagen #}
+  <div class="li-card mb-4 p-3">
+    <form method="post" action="{{ url_for('admin_login_imagenes_subir') }}" enctype="multipart/form-data">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Imagen <span class="text-danger">*</span></label>
+          <input type="file" name="imagen" class="form-control form-control-sm"
+                 accept="image/png,image/jpeg,image/webp" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Título (opcional)</label>
+          <input type="text" name="titulo" class="form-control form-control-sm"
+                 placeholder="Ej: Bodega Quilicura">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Subtítulo (opcional)</label>
+          <input type="text" name="subtitulo" class="form-control form-control-sm"
+                 placeholder="Ej: 1.500m² para tu equipo">
+        </div>
+        <div class="col-md-1">
+          <div class="form-check mt-3">
+            <input type="checkbox" name="activa" class="form-check-input" id="activa_new" checked>
+            <label class="form-check-label small" for="activa_new">Activa</label>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-ilus w-100">
+            <i class="bi bi-cloud-arrow-up me-1"></i>Subir
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if login_imagenes %}
+  <div class="row g-3">
+    {% for img in login_imagenes %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="li-card">
+        <img src="{{ url_for('static', filename=img.archivo_path) }}" class="li-thumb" alt="">
+        <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}">
+          <div class="li-form-row">
+            <div class="d-flex align-items-center justify-content-between">
+              <span class="{% if img.activa %}li-status-on{% else %}li-status-off{% endif %}">
+                {{ 'Activa' if img.activa else 'Inactiva' }}
+              </span>
+              <small class="text-muted">#{{ img.id }} · orden {{ img.orden }}</small>
+            </div>
+            <input type="text" name="titulo" class="form-control form-control-sm"
+                   value="{{ img.titulo or '' }}" placeholder="Título">
+            <input type="text" name="subtitulo" class="form-control form-control-sm"
+                   value="{{ img.subtitulo or '' }}" placeholder="Subtítulo">
+            <div class="d-flex gap-2 align-items-center">
+              <input type="number" name="orden" class="form-control form-control-sm"
+                     value="{{ img.orden }}" min="0" max="20" style="width:90px"
+                     title="Orden (menor primero)">
+              <div class="form-check m-0">
+                <input type="checkbox" name="activa" id="activa_{{ img.id }}"
+                       class="form-check-input" {% if img.activa %}checked{% endif %}>
+                <label class="form-check-label small" for="activa_{{ img.id }}">Activa</label>
+              </div>
+              <button class="btn btn-sm btn-ilus ms-auto">
+                <i class="bi bi-check-lg"></i>
+              </button>
+              <button type="submit" name="action" value="delete"
+                      onclick="return confirm('¿Eliminar esta imagen?')"
+                      class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="li-card text-center p-5">
+    <i class="bi bi-images" style="font-size:3rem;opacity:.2;color:#9ca3af"></i>
+    <div class="fw-bold mt-3" style="font-size:.95rem;color:#374151">Sin imágenes en el carrusel</div>
+    <div style="font-size:.85rem;color:#6b7280">Sube la primera imagen con el formulario de arriba.</div>
+  </div>
+  {% endif %}
+
+</div>
+
+{# ══════════════════════════════════════════════════════════════════
+   PANE: COLLAGE RETIROS
+══════════════════════════════════════════════════════════════════ #}
+<div class="mk-pane" id="mk-retiros">
+
+  <div class="alert alert-info py-2" style="font-size:.84rem">
+    <i class="bi bi-info-circle me-1"></i>
+    Estas 3 imágenes alimentan el collage de la página pública de retiros. Usa fotos limpias de bodega,
+    productos o preparación de carga para transmitir confianza.
+  </div>
+
+  <div class="row g-4">
+    <div class="col-xl-5">
+      <form method="post" enctype="multipart/form-data" class="ilus-card p-0 overflow-hidden">
+        <div class="bg-dark text-white p-3 fw-bold">
+          <i class="bi bi-cloud-arrow-up me-2 text-danger"></i>Fotos para páginas públicas
+        </div>
+        <div class="p-4">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Header / foto principal</label>
+            <input type="file" name="hero_image_1" class="form-control" accept="image/png,image/jpeg,image/webp">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Lateral / producto</label>
+            <input type="file" name="hero_image_2" class="form-control" accept="image/png,image/jpeg,image/webp">
+          </div>
+          <div class="mb-4">
+            <label class="form-label fw-bold">Footer visual / carga</label>
+            <input type="file" name="hero_image_3" class="form-control" accept="image/png,image/jpeg,image/webp">
+          </div>
+          <button class="btn btn-ilus w-100 fw-bold">
+            <i class="bi bi-save2 me-2"></i>Guardar marketing retiros
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="col-xl-7">
+      <div class="ilus-card p-0 overflow-hidden">
+        <div class="bg-dark text-white p-3 fw-bold">
+          <i class="bi bi-window-sidebar me-2 text-danger"></i>Preview visual
+        </div>
+        <div class="p-4">
+          <div class="row g-3">
+            {% set imgs = [
+              settings.get('hero_image_1') or 'uploads/p2530_1777290755.jpg',
+              settings.get('hero_image_2') or 'uploads/p1257_1777170890.jpeg',
+              settings.get('hero_image_3') or 'uploads/p1271_1777153752.jpeg'
+            ] %}
+            {% for img in imgs %}
+            <div class="col-md-4">
+              <div class="border rounded overflow-hidden bg-light">
+                <img src="{{ url_for('static', filename=img) }}" style="width:100%;height:180px;object-fit:cover;filter:grayscale(1) contrast(1.05)" alt="Marketing">
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="alert alert-warning mt-4 mb-0 small">
+            <i class="bi bi-lightbulb-fill me-2"></i>
+            Recomendación: usa imágenes horizontales, con buena luz, sin texto encima y sin datos sensibles de clientes.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function mkTab(tab, btn) {
+  document.querySelectorAll('.mk-tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.mk-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('mk-' + tab).classList.add('active');
+  if (tab === 'retiros') location.hash = '#retiros';
+  else if (location.hash) history.replaceState(null,'',location.pathname);
+}
+if (location.hash === '#retiros') {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelector('[onclick*="mkTab(\'retiros\'"]').click();
+  });
+}
+</script>
+{% endblock %}

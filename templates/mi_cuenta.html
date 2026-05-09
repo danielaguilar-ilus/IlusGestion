@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block title %}Mi cuenta — ILUS{% endblock %}
+{% block content %}
+
+<style>
+.mc-page{max-width:1180px;margin:0 auto;padding:0 4px}
+.mc-header{
+  background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);
+  border-radius:14px;padding:22px 28px;color:#fff;margin-bottom:16px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  box-shadow:0 6px 24px rgba(0,0,0,.12);
+}
+.mc-avatar{
+  width:72px;height:72px;border-radius:50%;
+  background:var(--ilus-red);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.9rem;font-weight:800;
+  box-shadow:0 4px 14px rgba(204,0,0,.35);
+  flex-shrink:0;
+}
+.mc-h-name{font-size:1.4rem;font-weight:800;margin:0;line-height:1.1}
+.mc-h-sub{font-size:.85rem;color:#94a3b8;margin-top:3px}
+.mc-h-pill{
+  display:inline-block;padding:3px 10px;border-radius:50px;
+  font-size:.68rem;font-weight:700;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.18);margin-top:6px;
+  text-transform:uppercase;letter-spacing:.05em;
+}
+
+.mc-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  margin-bottom:14px;overflow:hidden;
+}
+.mc-card-h{
+  padding:12px 20px;border-bottom:1px solid #f3f4f6;
+  display:flex;align-items:center;gap:10px;
+}
+.mc-card-h h6{margin:0;font-weight:800;font-size:.92rem;color:#111827}
+.mc-card-h .small{color:#9ca3af;margin:0;font-size:.76rem}
+.mc-card-b{padding:18px 20px}
+
+.mc-readonly{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 14px;background:#f9fafb;border-radius:8px;
+  border:1px solid #f3f4f6;
+}
+.mc-readonly .lbl{font-size:.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;min-width:90px}
+.mc-readonly .val{font-size:.88rem;color:#111827;font-weight:600;flex:1;
+                  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mc-readonly i{color:#9ca3af;font-size:1rem}
+
+.mc-strength{height:6px;border-radius:3px;background:#f3f4f6;overflow:hidden;margin-top:6px}
+.mc-strength-bar{height:100%;border-radius:3px;transition:width .3s,background .3s}
+.mc-strength-text{font-size:.72rem;color:#6b7280;margin-top:4px}
+.mc-rule{display:flex;align-items:center;gap:6px;font-size:.72rem;color:#9ca3af;margin:2px 0}
+.mc-rule.ok{color:#16a34a}
+.mc-rule.ok i.bi-circle{display:none}
+.mc-rule.ok::before{content:'\F26A';font-family:'bootstrap-icons';color:#16a34a}
+.mc-rule:not(.ok)::before{content:'\F28C';font-family:'bootstrap-icons'}
+</style>
+
+<div class="mc-page">
+
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-link text-decoration-none text-muted">
+      <i class="bi bi-arrow-left me-1"></i>Volver
+    </a>
+  </div>
+
+  {# ── HEADER ───────────────────────────────────────────── #}
+  <div class="mc-header">
+    <div class="mc-avatar">{{ usuario.nombre[0].upper() }}</div>
+    <div style="flex:1;min-width:0">
+      <h4 class="mc-h-name" id="hdrNombre">{{ usuario.nombre }}</h4>
+      <div class="mc-h-sub">@{{ usuario.username }}</div>
+      <span class="mc-h-pill"><i class="bi bi-shield-fill me-1"></i>{{ usuario.role|title }}</span>
+    </div>
+  </div>
+
+  {# ── 1. IDENTIDAD (read-only) ────────────────────────── #}
+  <div class="mc-card">
+    <div class="mc-card-h">
+      <i class="bi bi-person-badge" style="color:#3949ab;font-size:1.2rem"></i>
+      <div>
+        <h6>Identidad</h6>
+        <div class="small">Datos que identifican tu cuenta — no son editables aquí</div>
+      </div>
+    </div>
+    <div class="mc-card-b">
+      <div class="row g-2">
+        <div class="col-12 col-md-6">
+          <div class="mc-readonly">
+            <i class="bi bi-envelope"></i>
+            <span class="lbl">Email</span>
+            <span class="val">{{ usuario.username }}</span>
+          </div>
+        </div>
+        <div class="col-12 col-md-6">
+          <div class="mc-readonly">
+            <i class="bi bi-shield"></i>
+            <span class="lbl">Rol</span>
+            <span class="val">{{ usuario.role|title }}</span>
+          </div>
+        </div>
+        <div class="col-12 col-md-6">
+          <div class="mc-readonly">
+            <i class="bi bi-calendar-check"></i>
+            <span class="lbl">Cuenta creada</span>
+            <span class="val">{{ usuario.created_at.strftime('%d/%m/%Y') if usuario.created_at else '—' }}</span>
+          </div>
+        </div>
+        <div class="col-12 col-md-6">
+          <div class="mc-readonly">
+            <i class="bi bi-toggle-on" style="color:{{ '#16a34a' if usuario.active else '#dc2626' }} !important"></i>
+            <span class="lbl">Estado</span>
+            <span class="val" style="color:{{ '#16a34a' if usuario.active else '#dc2626' }}">
+              {{ 'Activa' if usuario.active else 'Suspendida' }}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="form-text mt-3" style="font-size:.74rem">
+        <i class="bi bi-info-circle me-1"></i>
+        Para cambiar tu email o rol, contacta al administrador del sistema.
+      </div>
+    </div>
+  </div>
+
+  {# ── 2. DATOS PERSONALES ─────────────────────────────── #}
+  <div class="mc-card">
+    <div class="mc-card-h">
+      <i class="bi bi-person-lines-fill" style="color:#16a34a;font-size:1.2rem"></i>
+      <div>
+        <h6>Datos personales</h6>
+        <div class="small">Información que tú controlas y puedes actualizar</div>
+      </div>
+    </div>
+    <div class="mc-card-b">
+      <div class="row g-3">
+        <div class="col-12 col-md-7">
+          <label class="form-label fw-semibold small">Nombre completo <span class="text-danger">*</span></label>
+          <input type="text" id="mcNombre" class="form-control" maxlength="190"
+                 value="{{ usuario.nombre }}" autocomplete="name">
+        </div>
+        <div class="col-12 col-md-5">
+          <label class="form-label fw-semibold small">
+            Teléfono
+            <span class="text-muted fw-normal" style="font-size:.72rem">(opcional)</span>
+          </label>
+          <input type="tel" id="mcPhone" class="form-control" maxlength="20"
+                 value="{{ usuario.phone or '' }}"
+                 placeholder="+56 9 1234 5678" autocomplete="tel">
+          <div class="form-text" style="font-size:.7rem">
+            Formato Chile: <code>+56912345678</code>. Solo se guardan dígitos y el signo +.
+          </div>
+        </div>
+      </div>
+      <div class="d-flex justify-content-end mt-3">
+        <button class="btn btn-ilus fw-semibold px-4" id="btnSaveDatos" onclick="guardarDatos()">
+          <i class="bi bi-floppy me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ── 3. SEGURIDAD: cambiar contraseña ─────────────────── #}
+  <div class="mc-card">
+    <div class="mc-card-h">
+      <i class="bi bi-shield-lock" style="color:#dc2626;font-size:1.2rem"></i>
+      <div>
+        <h6>Seguridad</h6>
+        <div class="small">Cambia tu contraseña — no necesitas avisarle a nadie</div>
+      </div>
+    </div>
+    <div class="mc-card-b">
+      <div class="row g-3">
+        <div class="col-12">
+          <label class="form-label fw-semibold small">Contraseña actual <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" id="mcCurrent" class="form-control" autocomplete="current-password">
+            <button class="btn btn-outline-secondary" type="button" onclick="togglePw('mcCurrent',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label fw-semibold small">Nueva contraseña <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" id="mcNew" class="form-control" autocomplete="new-password"
+                   oninput="evaluarPw()">
+            <button class="btn btn-outline-secondary" type="button" onclick="togglePw('mcNew',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+          <div class="mc-strength"><div id="mcStrengthBar" class="mc-strength-bar"></div></div>
+          <div id="mcStrengthText" class="mc-strength-text">Ingresa una contraseña…</div>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label fw-semibold small">Confirmar nueva <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" id="mcConfirm" class="form-control" autocomplete="new-password"
+                   oninput="evaluarPw()">
+            <button class="btn btn-outline-secondary" type="button" onclick="togglePw('mcConfirm',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+          <div id="mcMatchText" class="mc-strength-text">&nbsp;</div>
+        </div>
+        <div class="col-12">
+          <div style="background:#f9fafb;border:1px solid #f3f4f6;border-radius:8px;padding:10px 14px">
+            <div class="small fw-bold mb-2" style="color:#374151">Reglas mínimas:</div>
+            <div class="mc-rule" id="r-len">12 caracteres o más</div>
+            <div class="mc-rule" id="r-low">Una letra minúscula</div>
+            <div class="mc-rule" id="r-up">Una letra mayúscula</div>
+            <div class="mc-rule" id="r-num">Un número</div>
+            <div class="mc-rule" id="r-sym">Un símbolo (ej: @ # $ !)</div>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex justify-content-end mt-3">
+        <button class="btn btn-danger fw-semibold px-4" id="btnSavePw" onclick="cambiarPassword()">
+          <i class="bi bi-shield-check me-1"></i>Cambiar contraseña
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function togglePw(id, btn) {
+  const inp = document.getElementById(id);
+  const i = btn.querySelector('i');
+  if (inp.type === 'password') { inp.type = 'text'; i.className = 'bi bi-eye-slash'; }
+  else { inp.type = 'password'; i.className = 'bi bi-eye'; }
+}
+
+function mcToast(msg, type='success') {
+  let stack = document.getElementById('mcToastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'mcToastStack';
+    stack.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:420px';
+    document.body.appendChild(stack);
+  }
+  const colors = {
+    success: { bg:'#16a34a', icon:'check-circle-fill' },
+    error:   { bg:'#dc2626', icon:'exclamation-circle-fill' },
+  };
+  const c = colors[type] || colors.success;
+  const t = document.createElement('div');
+  t.style.cssText = `background:${c.bg};color:#fff;padding:14px 20px;border-radius:10px;
+    box-shadow:0 8px 26px rgba(0,0,0,.25);font-weight:600;font-size:.88rem;
+    display:flex;align-items:center;gap:10px;min-width:280px`;
+  t.innerHTML = `<i class="bi bi-${c.icon}" style="font-size:1.3rem;flex-shrink:0"></i><div>${msg}</div>`;
+  stack.appendChild(t);
+  setTimeout(() => {
+    t.style.transition='opacity .3s,transform .3s';
+    t.style.opacity='0'; t.style.transform='translateX(20px)';
+    setTimeout(() => t.remove(), 300);
+  }, 3500);
+}
+
+// ─── Datos personales ────────────────────────────────────────────
+async function guardarDatos() {
+  const btn = document.getElementById('btnSaveDatos');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try {
+    const r = await fetch('/mi-cuenta/datos', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        nombre: document.getElementById('mcNombre').value.trim(),
+        phone:  document.getElementById('mcPhone').value.trim(),
+      })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      mcToast('Datos personales actualizados', 'success');
+      // Reflejar en el header sin recargar
+      document.getElementById('hdrNombre').textContent = d.nombre;
+      btn.classList.remove('btn-ilus'); btn.classList.add('btn-success');
+      btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Guardado';
+      setTimeout(() => {
+        btn.classList.remove('btn-success'); btn.classList.add('btn-ilus');
+        btn.innerHTML = original; btn.disabled = false;
+      }, 1800);
+    } else {
+      mcToast(d.error || 'Error al guardar', 'error');
+      btn.disabled = false; btn.innerHTML = original;
+    }
+  } catch(e) {
+    mcToast('Error de conexión', 'error');
+    btn.disabled = false; btn.innerHTML = original;
+  }
+}
+
+// ─── Password strength ───────────────────────────────────────────
+function evaluarPw() {
+  const v = document.getElementById('mcNew').value;
+  const c = document.getElementById('mcConfirm').value;
+  const checks = {
+    len: v.length >= 12,
+    low: /[a-z]/.test(v),
+    up:  /[A-Z]/.test(v),
+    num: /\d/.test(v),
+    sym: /[^A-Za-z0-9]/.test(v),
+  };
+  ['len','low','up','num','sym'].forEach(k => {
+    document.getElementById('r-'+k).classList.toggle('ok', checks[k]);
+  });
+  const score = Object.values(checks).filter(Boolean).length;
+  const bar = document.getElementById('mcStrengthBar');
+  const txt = document.getElementById('mcStrengthText');
+  const colors = ['#dc2626','#dc2626','#f59e0b','#f59e0b','#16a34a','#16a34a'];
+  const labels = ['Muy débil','Débil','Aceptable','Buena','Fuerte','Excelente'];
+  bar.style.width = (score * 20) + '%';
+  bar.style.background = colors[score];
+  txt.textContent = v ? labels[score] : 'Ingresa una contraseña…';
+  txt.style.color = colors[score] || '#6b7280';
+
+  // Confirmación
+  const m = document.getElementById('mcMatchText');
+  if (!c) { m.textContent = ' '; m.style.color = '#6b7280'; }
+  else if (c === v) { m.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Coinciden'; m.style.color = '#16a34a'; }
+  else { m.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>No coinciden'; m.style.color = '#dc2626'; }
+}
+
+async function cambiarPassword() {
+  const btn = document.getElementById('btnSavePw');
+  const original = btn.innerHTML;
+  const cur = document.getElementById('mcCurrent').value;
+  const nw  = document.getElementById('mcNew').value;
+  const cf  = document.getElementById('mcConfirm').value;
+  if (!cur || !nw || !cf) { mcToast('Completa los 3 campos', 'error'); return; }
+  if (nw !== cf) { mcToast('La confirmación no coincide', 'error'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Validando…';
+  try {
+    const r = await fetch('/mi-cuenta/password', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ current: cur, new: nw, confirm: cf })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      mcToast(d.message || 'Contraseña actualizada', 'success');
+      document.getElementById('mcCurrent').value = '';
+      document.getElementById('mcNew').value = '';
+      document.getElementById('mcConfirm').value = '';
+      evaluarPw();
+      btn.classList.remove('btn-danger'); btn.classList.add('btn-success');
+      btn.innerHTML = '<i class="bi bi-shield-fill-check me-1"></i>Actualizada';
+      setTimeout(() => {
+        btn.classList.remove('btn-success'); btn.classList.add('btn-danger');
+        btn.innerHTML = original; btn.disabled = false;
+      }, 2000);
+    } else {
+      mcToast(d.error || 'Error al cambiar contraseña', 'error');
+      btn.disabled = false; btn.innerHTML = original;
+    }
+  } catch(e) {
+    mcToast('Error de conexión', 'error');
+    btn.disabled = false; btn.innerHTML = original;
+  }
+}
+
+evaluarPw();
+</script>
+
+{% endblock %}
