@@ -2023,13 +2023,28 @@ function wzpImportar() {
 // La decisión "1 ficha o N fichas" se toma POR PRODUCTO desde el select inline
 // que pone el usuario en cada fila (data-fichas-key=KEY)
 // ════════════════════════════════════════════════════════════════════
-let _seqSerieTmp = 0;  // contador local para no repetir series temporales en sesión
+// Series temporales del wizard — único POR RUT del cliente que se está creando.
+// Backend lo regenera con el formato definitivo (mismo formato) al guardar.
+function _rutDelWizard() {
+  const raw = (document.getElementById('s1_rut')?.value || '').replace(/[.\s-]/g,'').toUpperCase();
+  if (!raw) return '00000000';
+  return raw.length >= 8 ? raw.slice(0,-1) : raw;
+}
 
 function _serieTmpAuto(sku) {
-  _seqSerieTmp++;
-  const pref = (sku || 'AUTO').slice(0,6).toUpperCase().replace(/[^A-Z0-9]/g,'');
-  // Visible para el usuario; backend lo regenera con cid real al guardar
-  return `ILUS-NEW-${pref || 'AUTO'}-${_seqSerieTmp}`;
+  const rut = _rutDelWizard();
+  const pref = (sku || 'AUTO').slice(0,6).toUpperCase().replace(/[^A-Z0-9]/g,'') || 'AUTO';
+  // Calcular siguiente secuencial buscando en la tabla local de equipos por mismo prefijo
+  const baseStr = `ILUS-${rut}-${pref}-`;
+  let max = 0;
+  document.querySelectorAll('#equiposTbody [data-field="serie"]').forEach(inp => {
+    const v = (inp.value || '').toUpperCase();
+    if (v.startsWith(baseStr)) {
+      const suf = parseInt(v.slice(baseStr.length));
+      if (!isNaN(suf) && suf > max) max = suf;
+    }
+  });
+  return `${baseStr}${max + 1}`;
 }
 
 function importarEq() {
@@ -2060,19 +2075,24 @@ function importarEq() {
   }
 
   let creados = 0;
+  let bloqueados = 0;
   for (const [key, l] of lineas) {
-    const qty = parseInt(l.cantidad) || 1;
+    if (l._completo) {            // saldo 0 → no se agrega
+      bloqueados++;
+      continue;
+    }
+    const qty = parseInt(l.cantidad) || 1;     // cantidad ya viene como SALDO disponible
     const nombre = l.nombre || l.producto || '';
-    // Leer la elección del usuario: 1 ficha o N fichas (del select inline)
+    // Leer la elección del usuario: 1 ficha o N fichas
     const sel = document.querySelector(`select[data-fichas-key="${key}"]`);
     const fichasElegidas = sel ? parseInt(sel.value) : 1;
-    const filas = (fichasElegidas > 1) ? fichasElegidas : 1;
+    const filas = (fichasElegidas > 1) ? Math.min(fichasElegidas, qty) : 1;
     const cantidadCadaUna = (fichasElegidas > 1) ? 1 : qty;
     for (let n = 1; n <= filas; n++) {
       agregarFilaEquipo({
         nombre,
         sku: l.sku || '',
-        serie: _serieTmpAuto(l.sku),       // Visible y único, editable
+        serie: _serieTmpAuto(l.sku),
         cantidad: cantidadCadaUna,
         doc_origen: l.doc_origen || '',
         doc_fecha: l.doc_fecha || l.fecha || '',
@@ -2172,26 +2192,61 @@ async function buscarDocErp() {
         <th style="width:140px;text-align:center" title="Si tiene cantidad &gt; 1, ¿crear N fichas individuales con N° serie único?">Crear<br>fichas</th>
       </tr></thead><tbody>`;
 
+    // Calcular saldo disponible: cuántas unidades de cada SKU YA tiene en la tabla
+    // local desde este mismo documento. Restamos para no permitir duplicar.
+    const saldoPorSku = {};
+    Array.from(document.querySelectorAll('#equiposTbody tr:not(#eq-placeholder)')).forEach(tr => {
+      const docF = tr.querySelector('[data-field="doc_origen"]')?.value || '';
+      if (docF !== docOrigKey) return;
+      const skuF = tr.querySelector('[data-field="sku"]')?.value || '';
+      const qF   = parseInt(tr.querySelector('[data-field="cantidad"]')?.value || '1') || 1;
+      saldoPorSku[skuF] = (saldoPorSku[skuF] || 0) + qF;
+    });
+
     data.items.forEach((it, i) => {
       const key = `doc-${tido}-${nudo}-${i}`;
       const qty = parseInt(it.cantidad) || 1;
-      const esBulk = /disco|plate|pesa|mancuerna|kettleb|barra|kg\b|pares\b/i.test(it.nombre || '');
-      // Default: si tiene 1 unidad, crear 1 ficha. Si tiene >1 y NO es bulk, sugerir N fichas
-      const expandirDefault = qty > 1 && !esBulk;
-      // Por defecto, si es bulk con cantidad alta (ej: 16 discos), preferimos 1 ficha con cant=N
-      const opciones = qty > 1
+      const yaImportado = saldoPorSku[it.sku || ''] || 0;
+      const saldo = Math.max(0, qty - yaImportado);
+      const completo = saldo === 0;
+
+      // Default SIEMPRE "1 ficha" — el usuario decide explícitamente si quiere N
+      // (tu queja: te obligaba a N fichas; ahora 1 ficha es el default conservador)
+      const opciones = (saldo > 1)
         ? `<select class="form-select form-select-sm" data-fichas-key="${key}" style="font-size:.72rem">
-              <option value="1" ${!expandirDefault ? 'selected' : ''}>1 ficha (cant. ${qty})</option>
-              <option value="${qty}" ${expandirDefault ? 'selected' : ''}>${qty} fichas individuales</option>
+              <option value="1" selected>1 ficha (cant. ${saldo})</option>
+              <option value="${saldo}">${saldo} fichas individuales</option>
            </select>`
         : `<span class="text-muted small">1 ficha</span>`;
-      html += `<tr>
-        <td><input type="checkbox" class="form-check-input wz-doc-chk" data-key="${key}" data-idx="${i}"></td>
+
+      // Indicador de saldo
+      const saldoCell = (yaImportado > 0)
+        ? (completo
+            ? `<span class="badge bg-success" title="Las ${qty} unidades ya están en tu lista">
+                 <i class="bi bi-check-circle-fill me-1"></i>Completo
+               </span>`
+            : `<span class="badge bg-warning text-dark" title="${yaImportado} ya en tu lista de ${qty} totales">
+                 ${yaImportado}/${qty} agregadas · saldo ${saldo}
+               </span>`)
+        : `<span class="text-muted small">${qty}</span>`;
+
+      // Si está completo, deshabilitar el checkbox
+      const chkAttrs = completo ? 'disabled' : '';
+      const trStyle = completo ? 'opacity:.55;background:#f8f9fa' : '';
+
+      html += `<tr style="${trStyle}">
+        <td><input type="checkbox" class="form-check-input wz-doc-chk" data-key="${key}" data-idx="${i}" ${chkAttrs}></td>
         <td class="font-monospace text-primary fw-bold">${esc(it.sku||'—')}</td>
         <td>${esc(it.nombre)}</td>
-        <td class="text-center"><strong>${qty}</strong></td>
-        <td class="text-center">${opciones}</td>
+        <td class="text-center">${saldoCell}</td>
+        <td class="text-center">${completo ? '<span class="text-muted small">—</span>' : opciones}</td>
       </tr>`;
+
+      // Para que importarEq sepa el saldo (no la cantidad total), guardamos en el item
+      if (window._docItems && window._docItems[i]) {
+        window._docItems[i].cantidad = saldo;       // ← cantidad disponible, no total
+        window._docItems[i]._completo = completo;
+      }
     });
     html += '</tbody></table></div>';
 

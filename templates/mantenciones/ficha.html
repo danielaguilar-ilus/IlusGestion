@@ -1016,6 +1016,89 @@
         </div>
       </div>
 
+      {# ── SUCURSALES (información adicional opcional) ── #}
+      <div class="f-card mb-3">
+        <div class="f-card-header">
+          <span class="f-card-title">
+            <i class="bi bi-geo-alt-fill me-1" style="color:#7c3aed"></i>
+            Sucursales
+            <span class="badge bg-secondary-subtle text-secondary border ms-2" style="font-size:.6rem">OPCIONAL</span>
+            {% if sucursales|length > 0 %}<span class="badge bg-primary ms-1" style="font-size:.6rem">{{ sucursales|length }}</span>{% endif %}
+          </span>
+          <button class="btn btn-xs btn-outline-primary" onclick="abrirSucursal(null)">
+            <i class="bi bi-plus-circle me-1"></i>Agregar sucursal
+          </button>
+        </div>
+        <div class="f-card-body">
+          <div class="text-muted small mb-2" style="font-size:.78rem">
+            <i class="bi bi-info-circle me-1"></i>
+            Solo si este cliente tiene <strong>múltiples ubicaciones físicas</strong>
+            (ej. cadena de gimnasios, holding, franquicias). Cada sucursal con su encargado.
+          </div>
+          {% if sucursales|length == 0 %}
+          <div class="text-center text-muted py-3" style="font-size:.85rem">
+            <i class="bi bi-building" style="font-size:1.5rem;opacity:.3;display:block;margin-bottom:6px"></i>
+            Sin sucursales registradas. Si el cliente solo opera en una ubicación, no es necesario agregar.
+          </div>
+          {% else %}
+          <div class="row g-2" id="sucursalesGrid">
+            {% for s in sucursales %}
+            <div class="col-12 col-md-6">
+              <div class="border rounded-3 p-3 h-100" style="background:#fafafa;border-color:#e5e7eb !important">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <div>
+                    <div class="fw-bold" style="font-size:.92rem">
+                      <i class="bi bi-building me-1" style="color:#7c3aed"></i>{{ s.nombre }}
+                    </div>
+                    {% if s.direccion %}
+                    <div class="small text-muted" style="font-size:.76rem">
+                      <i class="bi bi-geo-alt me-1"></i>{{ s.direccion }}
+                      {% if s.comuna %}, {{ s.comuna }}{% endif %}
+                      {% if s.ciudad %}, {{ s.ciudad }}{% endif %}
+                    </div>
+                    {% endif %}
+                  </div>
+                  <div class="dropdown">
+                    <button class="btn btn-xs btn-link text-muted" data-bs-toggle="dropdown">
+                      <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                      <li><a class="dropdown-item" href="#" onclick='abrirSucursal({{ s|tojson }})'><i class="bi bi-pencil me-2"></i>Editar</a></li>
+                      <li><a class="dropdown-item text-danger" href="#" onclick="eliminarSucursal({{ s.id }}, '{{ s.nombre|e }}')"><i class="bi bi-trash me-2"></i>Eliminar</a></li>
+                    </ul>
+                  </div>
+                </div>
+                {% if s.encargado_nombre %}
+                <hr class="my-2" style="border-color:#e5e7eb">
+                <div class="small">
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700;letter-spacing:.05em">Encargado</div>
+                  <div style="font-size:.84rem">
+                    <strong>{{ s.encargado_nombre }}</strong>
+                    {% if s.encargado_cargo %}<span class="text-muted"> · {{ s.encargado_cargo }}</span>{% endif %}
+                  </div>
+                  <div class="text-muted" style="font-size:.76rem">
+                    {% if s.encargado_email %}<i class="bi bi-envelope me-1"></i>{{ s.encargado_email }}{% endif %}
+                    {% if s.encargado_tel %}<span class="ms-2"><i class="bi bi-telephone me-1"></i>{{ s.encargado_tel }}</span>{% endif %}
+                  </div>
+                </div>
+                {% endif %}
+                {% if s.contacto2_nombre %}
+                <div class="small mt-2">
+                  <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700;letter-spacing:.05em">Contacto 2</div>
+                  <div style="font-size:.84rem">
+                    {{ s.contacto2_nombre }}
+                    {% if s.contacto2_cargo %}<span class="text-muted"> · {{ s.contacto2_cargo }}</span>{% endif %}
+                  </div>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
       {# ── ACTIVIDAD RECIENTE — Lista combinada visitas + logs ── #}
       <div class="f-card mb-3">
         <div class="f-card-header">
@@ -4014,6 +4097,97 @@ function abrirEmailManual() {
   </div>
 </div>
 
+{# ── Modal: Sucursal (agregar / editar) ── #}
+<div class="modal fade" id="modalSucursal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#7c3aed;color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-building me-2"></i><span id="suc_modal_title">Nueva sucursal</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="suc_id" value="">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Nombre de la sucursal <span class="text-danger">*</span></label>
+            <input type="text" id="suc_nombre" class="form-control" placeholder="Ej: Vitacura, Las Condes, Norte..." maxlength="200">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Dirección</label>
+            <input type="text" id="suc_direccion" class="form-control" placeholder="Av. Ejemplo 1234">
+          </div>
+          <div class="col-4">
+            <label class="form-label fw-semibold small">Comuna</label>
+            <input type="text" id="suc_comuna" class="form-control">
+          </div>
+          <div class="col-4">
+            <label class="form-label fw-semibold small">Ciudad</label>
+            <input type="text" id="suc_ciudad" class="form-control">
+          </div>
+          <div class="col-4">
+            <label class="form-label fw-semibold small">Región</label>
+            <input type="text" id="suc_region" class="form-control" placeholder="Ej: Metropolitana">
+          </div>
+
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-person-vcard me-1"></i>Encargado de la sucursal
+          </div></div>
+          <div class="col-12 col-md-5">
+            <label class="form-label fw-semibold small">Nombre completo</label>
+            <input type="text" id="suc_enc_nombre" class="form-control" placeholder="Ej: Juan Pérez">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Cargo / Rol</label>
+            <input type="text" id="suc_enc_cargo" class="form-control" placeholder="Administrador, Jefe...">
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="form-label fw-semibold small">Teléfono</label>
+            <input type="text" id="suc_enc_tel" class="form-control" placeholder="+56 9 ...">
+          </div>
+          <div class="col-12 col-md-2">
+            <label class="form-label fw-semibold small">Email</label>
+            <input type="email" id="suc_enc_email" class="form-control" placeholder="...@empresa.cl">
+          </div>
+
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-people me-1"></i>Contacto secundario
+            <span class="text-muted fw-normal" style="font-size:.72rem">— opcional</span>
+          </div></div>
+          <div class="col-12 col-md-5">
+            <label class="form-label fw-semibold small">Nombre completo</label>
+            <input type="text" id="suc_c2_nombre" class="form-control">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold small">Cargo / Rol</label>
+            <input type="text" id="suc_c2_cargo" class="form-control">
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="form-label fw-semibold small">Teléfono</label>
+            <input type="text" id="suc_c2_tel" class="form-control">
+          </div>
+          <div class="col-12 col-md-2">
+            <label class="form-label fw-semibold small">Email</label>
+            <input type="email" id="suc_c2_email" class="form-control">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-semibold small">Notas</label>
+            <textarea id="suc_notas" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarSucursal()">
+          <i class="bi bi-floppy me-1"></i><span id="suc_btn_label">Guardar sucursal</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ── Modal: Máquina manual ── #}
 <div class="modal fade" id="modalMaqManual" tabindex="-1">
   <div class="modal-dialog">
@@ -4272,6 +4446,90 @@ function editarVisita(v) {
 }
 
 // ─── Guardar cliente (PUT) ────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+// SUCURSALES — CRUD del cliente
+// ════════════════════════════════════════════════════════════════════
+let _modalSucursal = null;
+
+function abrirSucursal(s) {
+  if (!_modalSucursal) _modalSucursal = new bootstrap.Modal(document.getElementById('modalSucursal'));
+  // Reset
+  ['suc_id','suc_nombre','suc_direccion','suc_comuna','suc_ciudad','suc_region',
+   'suc_enc_nombre','suc_enc_cargo','suc_enc_tel','suc_enc_email',
+   'suc_c2_nombre','suc_c2_cargo','suc_c2_tel','suc_c2_email','suc_notas']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+
+  if (s) {
+    document.getElementById('suc_modal_title').textContent = 'Editar sucursal';
+    document.getElementById('suc_btn_label').textContent  = 'Guardar cambios';
+    document.getElementById('suc_id').value           = s.id || '';
+    document.getElementById('suc_nombre').value       = s.nombre || '';
+    document.getElementById('suc_direccion').value    = s.direccion || '';
+    document.getElementById('suc_comuna').value       = s.comuna || '';
+    document.getElementById('suc_ciudad').value       = s.ciudad || '';
+    document.getElementById('suc_region').value       = s.region || '';
+    document.getElementById('suc_enc_nombre').value   = s.encargado_nombre || '';
+    document.getElementById('suc_enc_cargo').value    = s.encargado_cargo || '';
+    document.getElementById('suc_enc_tel').value      = s.encargado_tel || '';
+    document.getElementById('suc_enc_email').value    = s.encargado_email || '';
+    document.getElementById('suc_c2_nombre').value    = s.contacto2_nombre || '';
+    document.getElementById('suc_c2_cargo').value     = s.contacto2_cargo || '';
+    document.getElementById('suc_c2_tel').value       = s.contacto2_tel || '';
+    document.getElementById('suc_c2_email').value     = s.contacto2_email || '';
+    document.getElementById('suc_notas').value        = s.notas || '';
+  } else {
+    document.getElementById('suc_modal_title').textContent = 'Nueva sucursal';
+    document.getElementById('suc_btn_label').textContent  = 'Guardar sucursal';
+  }
+  _modalSucursal.show();
+}
+
+async function guardarSucursal() {
+  const $v = id => (document.getElementById(id)?.value || '').trim();
+  const data = {
+    nombre:           $v('suc_nombre'),
+    direccion:        $v('suc_direccion'),
+    comuna:           $v('suc_comuna'),
+    ciudad:           $v('suc_ciudad'),
+    region:           $v('suc_region'),
+    encargado_nombre: $v('suc_enc_nombre'),
+    encargado_cargo:  $v('suc_enc_cargo'),
+    encargado_tel:    $v('suc_enc_tel'),
+    encargado_email:  $v('suc_enc_email'),
+    contacto2_nombre: $v('suc_c2_nombre'),
+    contacto2_cargo:  $v('suc_c2_cargo'),
+    contacto2_tel:    $v('suc_c2_tel'),
+    contacto2_email:  $v('suc_c2_email'),
+    notas:            $v('suc_notas'),
+  };
+  if (!data.nombre) { alert('El nombre de la sucursal es obligatorio'); return; }
+
+  const sid = $v('suc_id');
+  const url = sid
+    ? `/mantenciones/api/sucursales/${sid}`
+    : `/mantenciones/api/clientes/${CID}/sucursales`;
+  const method = sid ? 'PUT' : 'POST';
+
+  try {
+    const r = await fetch(url, {
+      method, headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const d = await r.json();
+    if (d.ok) { location.reload(); }
+    else { alert('Error: ' + (d.error || 'No se pudo guardar')); }
+  } catch(e) { alert('Error de red'); }
+}
+
+async function eliminarSucursal(sid, nombre) {
+  if (!confirm(`¿Eliminar la sucursal "${nombre}"?\n\nEsta acción se puede revertir desde la BD si es necesario.`)) return;
+  try {
+    const r = await fetch(`/mantenciones/api/sucursales/${sid}`, {method:'DELETE'});
+    if (r.ok) location.reload();
+    else alert('Error al eliminar');
+  } catch(e) { alert('Error de red'); }
+}
+
 async function guardarCliente() {
   const $v = id => (document.getElementById(id)?.value || '').trim();
   const data = {

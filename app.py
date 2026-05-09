@@ -10427,6 +10427,31 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_maquinas ADD COLUMN tag_2 VARCHAR(120) NULL COMMENT 'Etiqueta libre 2'",
                 # Asegurar largo del serie para soportar series largas del fabricante
                 "ALTER TABLE mant_maquinas MODIFY COLUMN serie VARCHAR(120)",
+                # Tabla de sucursales (información adicional opcional)
+                """CREATE TABLE IF NOT EXISTS mant_sucursales (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id      INT NOT NULL,
+                    nombre          VARCHAR(200) NOT NULL,
+                    direccion       VARCHAR(300),
+                    comuna          VARCHAR(100),
+                    ciudad          VARCHAR(100),
+                    region          VARCHAR(100),
+                    encargado_nombre VARCHAR(200),
+                    encargado_cargo  VARCHAR(120),
+                    encargado_tel    VARCHAR(50),
+                    encargado_email  VARCHAR(200),
+                    contacto2_nombre VARCHAR(200),
+                    contacto2_cargo  VARCHAR(120),
+                    contacto2_tel    VARCHAR(50),
+                    contacto2_email  VARCHAR(200),
+                    notas            TEXT,
+                    activo           TINYINT(1) DEFAULT 1,
+                    created_by       VARCHAR(190),
+                    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_cliente (cliente_id),
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -11707,6 +11732,16 @@ def mant_ficha(cid):
         r['created_at'] = _d(r.get('created_at'))
         return r
 
+    # Sucursales (información adicional opcional)
+    try:
+        sucursales = mysql_fetchall(
+            "SELECT * FROM mant_sucursales WHERE cliente_id=%s AND activo=1 ORDER BY nombre",
+            (cid,)
+        )
+        sucursales = [dict(s) for s in (sucursales or [])]
+    except Exception:
+        sucursales = []
+
     return render_template("mantenciones/ficha.html",
         cliente   = dict(cliente),
         maquinas  = maquinas,
@@ -11715,6 +11750,7 @@ def mant_ficha(cid):
         logs      = [_norm_log(r) for r in logs],
         hoy       = hoy,
         stats     = stats,
+        sucursales = sucursales,
     )
 
 
@@ -11821,21 +11857,38 @@ def mant_cliente_delete(cid):
 
 def _generar_serie_ilus(cid: int, sku: str = "") -> str:
     """
-    Genera un N° Serie ILUS único para un equipo físico cuando el fabricante
-    no proporciona uno. Formato: ILUS-{cid}-{SKU6}-{seq}
-    Ejemplo: ILUS-12-FZAMC0-7
+    Genera un N° Serie ILUS único GLOBALMENTE para un equipo físico cuando el
+    fabricante no proporciona uno.
+
+    Formato: ILUS-{RUT}-{SKU6}-{seq}
+      RUT  = RUT del cliente sin DV ni puntos (ej: 65206047)
+      SKU6 = primeros 6 chars alfanum del SKU del modelo
+      seq  = secuencial dentro del cliente
+
+    Ejemplo: ILUS-65206047-FZAMC0-7
+
+    Usar RUT en lugar de cid garantiza que el código sea único entre clientes
+    (cid puede repetirse si dos sistemas migran datos; RUT es identidad legal).
 
     El usuario puede sobrescribirlo con el serial real del fabricante (cuando
-    la representación lo trae en la etiqueta). Es ÚNICO por cliente, lo que
-    permite trazabilidad cuando hay N máquinas iguales del mismo modelo.
-
-    Diseñado para imprimirse en etiqueta física pegada al equipo y enlazar
-    garantía + historial de mantenciones.
+    la representación lo trae en la etiqueta). Sirve para etiqueta física,
+    garantía y trazabilidad.
     """
+    # Obtener RUT del cliente (sin DV, sin puntos)
+    rut_clean = "00000000"
+    try:
+        row = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,))
+        if row and row.get("rut"):
+            raw = str(row["rut"]).replace(".", "").replace(" ", "").replace("-", "").upper()
+            # Quitar el DV (último carácter si la longitud es >= 8)
+            rut_clean = raw[:-1] if len(raw) >= 8 else raw
+    except Exception:
+        pass
+
     sku_pref = (sku or "AUTO")[:6].upper().replace(" ", "").replace("-", "")
     if not sku_pref:
         sku_pref = "AUTO"
-    base = f"ILUS-{cid}-{sku_pref}"
+    base = f"ILUS-{rut_clean}-{sku_pref}"
     rows = mysql_fetchall(
         "SELECT serie FROM mant_maquinas WHERE cliente_id=%s AND serie LIKE %s",
         (cid, f"{base}-%")
@@ -11897,6 +11950,104 @@ def mant_maquina_del(mid):
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SUCURSALES — información adicional opcional del cliente
+# Para clientes con múltiples ubicaciones (cadenas, holding, franquicias).
+# Cada sucursal tiene encargado y opcionalmente contacto secundario.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/sucursales", methods=["GET"])
+@_mant_required
+def mant_sucursales_list(cid):
+    rows = mysql_fetchall(
+        "SELECT * FROM mant_sucursales WHERE cliente_id=%s AND activo=1 ORDER BY nombre",
+        (cid,)
+    )
+    return jsonify({"ok": True, "sucursales": [dict(r) for r in (rows or [])]})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/sucursales", methods=["POST"])
+@_mant_required
+def mant_sucursal_add(cid):
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:200]
+    if not nombre:
+        return jsonify({"error": "El nombre de la sucursal es obligatorio"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_sucursales
+                   (cliente_id,nombre,direccion,comuna,ciudad,region,
+                    encargado_nombre,encargado_cargo,encargado_tel,encargado_email,
+                    contacto2_nombre,contacto2_cargo,contacto2_tel,contacto2_email,
+                    notas,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, nombre,
+                 (d.get("direccion") or "").strip()[:300] or None,
+                 (d.get("comuna") or "").strip()[:100] or None,
+                 (d.get("ciudad") or "").strip()[:100] or None,
+                 (d.get("region") or "").strip()[:100] or None,
+                 (d.get("encargado_nombre") or "").strip()[:200] or None,
+                 (d.get("encargado_cargo") or "").strip()[:120] or None,
+                 (d.get("encargado_tel") or "").strip()[:50] or None,
+                 (d.get("encargado_email") or "").strip()[:200] or None,
+                 (d.get("contacto2_nombre") or "").strip()[:200] or None,
+                 (d.get("contacto2_cargo") or "").strip()[:120] or None,
+                 (d.get("contacto2_tel") or "").strip()[:50] or None,
+                 (d.get("contacto2_email") or "").strip()[:200] or None,
+                 (d.get("notas") or "").strip() or None,
+                 current_username())
+            )
+            sid = cur.lastrowid
+        conn.commit()
+        _mant_log("cliente", cid, "sucursal_agregada", nombre)
+        return jsonify({"ok": True, "id": sid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/sucursales/<int:sid>", methods=["PUT"])
+@_mant_required
+def mant_sucursal_update(sid):
+    d = request.get_json(silent=True) or {}
+    fields = ["nombre","direccion","comuna","ciudad","region",
+              "encargado_nombre","encargado_cargo","encargado_tel","encargado_email",
+              "contacto2_nombre","contacto2_cargo","contacto2_tel","contacto2_email",
+              "notas"]
+    sets, vals = [], []
+    for f in fields:
+        if f in d:
+            v = (d[f] or "").strip() if isinstance(d[f], str) else d[f]
+            sets.append(f"{f}=%s")
+            vals.append(v if v else None)
+    if not sets:
+        return jsonify({"error": "Sin cambios"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE mant_sucursales SET {','.join(sets)} WHERE id=%s",
+                        vals + [sid])
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/sucursales/<int:sid>", methods=["DELETE"])
+@_mant_required
+def mant_sucursal_del(sid):
+    """Soft delete: marca activo=0 para preservar histórico."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE mant_sucursales SET activo=0 WHERE id=%s", (sid,))
         conn.commit()
         return jsonify({"ok": True})
     finally:
