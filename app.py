@@ -2396,15 +2396,32 @@ def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, 
     return sent
 
 
-def _notify_user_access(username: str, nombre: str, phone: str = "", *, mode: str = "manual", action_url: str = "") -> dict:
-    """Envia notificaciones email/WhatsApp sobre acceso o creacion de clave."""
+def _notify_user_access(username: str, nombre: str, phone: str = "", *,
+                        mode: str = "manual", action_url: str = "",
+                        email_purpose: str = "invite") -> dict:
+    """
+    Envia notificaciones email/WhatsApp sobre acceso o creacion/cambio de clave.
+
+    email_purpose:
+      - 'invite' (default): cuenta nueva → email "Crea tu contraseña" (mode=setup, 24h)
+      - 'change': cambio solicitado por admin → email "Cambio seguro de contraseña" (mode=reset, 60min)
+                  Gmail los trata como mensajes distintos (subject distinto), evita threading
+                  con la invitación previa y el usuario distingue claramente cada acción.
+    """
     actor = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
     login_url = _portal_login_url()
     result = {"email": None, "whatsapp": None, "errors": []}
 
     try:
         if mode == "token" and action_url:
-            result["email"] = _send_invitation_email(username, nombre, action_url, actor)
+            if email_purpose == "change":
+                # Email de cambio de contraseña — subject y CTA distintos a los de invitación
+                result["email"] = _send_password_access_email(
+                    username, nombre, action_url,
+                    actor_name=actor, mode="reset", minutes=60
+                )
+            else:
+                result["email"] = _send_invitation_email(username, nombre, action_url, actor)
         else:
             result["email"] = _send_access_notification_email(username, nombre, login_url, actor_name=actor)
         if not result["email"]:
@@ -2417,7 +2434,14 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *, mode: st
         try:
             wa_cfg = _get_wa_cfg()
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
-                if mode == "token" and action_url:
+                if mode == "token" and action_url and email_purpose == "change":
+                    body = (
+                        f"Hola {nombre}, se solicito un *cambio de contrasena* para tu cuenta ILUS.\n\n"
+                        f"Define tu nueva contrasena aqui: {action_url}\n"
+                        f"El enlace es de un solo uso y vence en 60 minutos.\n\n"
+                        f"Si no esperabas esta solicitud, ignora este mensaje."
+                    )
+                elif mode == "token" and action_url:
                     body = (
                         f"Hola {nombre}, ILUS habilito tu acceso al portal.\n\n"
                         f"Crea tu contrasena aqui: {action_url}\n"
@@ -3335,8 +3359,10 @@ def new_user():
             errors.append("El nombre y apellido son requeridos.")
         if phone and not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
             errors.append("El telefono WhatsApp debe usar formato internacional, por ejemplo +56912345678.")
-        if role not in {"superadmin", "admin", "ejecutivo", "editor", "lector", "vendedor"}:
+        if not _es_rol_valido(role):
             errors.append("Rol no valido.")
+        elif role == "superadmin" and not is_superadmin:
+            errors.append("Solo un superadministrador puede asignar el rol superadmin.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
         if manual_password and len(manual_password) < 8:
@@ -3345,7 +3371,8 @@ def new_user():
             errors.append("Ese correo ya está registrado.")
 
         if errors:
-            return render_template("user_form.html", errors=errors, user=None, fd=request.form)
+            return render_template("user_form.html", errors=errors, user=None, fd=request.form,
+                                   roles=_get_roles_disponibles())
 
         # Crear usuario con contraseña placeholder (bloqueada hasta que use el enlace)
         placeholder_hash = generate_password_hash(manual_password or secrets.token_hex(32))
@@ -3380,7 +3407,8 @@ def new_user():
             flash("Clave manual asignada por superadmin.", "info")
         return redirect(url_for("users_index"))
 
-    return render_template("user_form.html", errors=[], user=None, fd={})
+    return render_template("user_form.html", errors=[], user=None, fd={},
+                           roles=_get_roles_disponibles())
 
 
 @app.route("/admin/users/<int:user_id>/edit", methods=["GET", "POST"])
@@ -3409,8 +3437,10 @@ def edit_user(user_id):
             errors.append("El nombre y apellido son requeridos.")
         if phone and not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
             errors.append("El telefono WhatsApp debe usar formato internacional, por ejemplo +56912345678.")
-        if role not in {"superadmin", "admin", "ejecutivo", "editor", "lector", "vendedor"}:
+        if not _es_rol_valido(role):
             errors.append("Rol no valido.")
+        elif role == "superadmin" and not is_superadmin:
+            errors.append("Solo un superadministrador puede asignar el rol superadmin.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
         if manual_password and len(manual_password) < 8:
@@ -3421,7 +3451,8 @@ def edit_user(user_id):
             errors.append("Ese correo ya está en uso.")
 
         if errors:
-            return render_template("user_form.html", errors=errors, user=user, fd=request.form)
+            return render_template("user_form.html", errors=errors, user=user, fd=request.form,
+                                   roles=_get_roles_disponibles())
 
         conn = get_db()
         with conn.cursor() as cur:
@@ -3449,7 +3480,8 @@ def edit_user(user_id):
             flash("Usuario actualizado.", "success")
         return redirect(url_for("users_index"))
 
-    return render_template("user_form.html", errors=[], user=user, fd={})
+    return render_template("user_form.html", errors=[], user=user, fd={},
+                           roles=_get_roles_disponibles())
 
 
 @app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
@@ -3510,6 +3542,43 @@ PERMISSIONS_MATRIX = {
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
                        "acciones":["usuarios","roles","marketing","login_imagenes"]},
 }
+
+
+def _get_roles_disponibles():
+    """
+    Devuelve la lista de roles activos desde roles_dinamicos.
+    Se usa para poblar dropdowns de creación/edición de usuario.
+    Si la tabla aún no existe (primer arranque), devuelve los roles del sistema hardcoded.
+    """
+    try:
+        rows = mysql_fetchall(
+            "SELECT slug,nombre,color,is_system FROM roles_dinamicos WHERE activo=1 "
+            "ORDER BY is_system DESC, nombre"
+        )
+        if rows:
+            return [dict(r) for r in rows]
+    except Exception:
+        pass
+    # Fallback si la tabla aún no fue inicializada
+    return [
+        {"slug":"superadmin", "nombre":"Super Administrador", "color":"#dc2626", "is_system":1},
+        {"slug":"admin",      "nombre":"Administrador",      "color":"#2563eb", "is_system":1},
+        {"slug":"editor",     "nombre":"Editor",             "color":"#ea580c", "is_system":1},
+        {"slug":"lector",     "nombre":"Solo lectura",       "color":"#6b7280", "is_system":1},
+    ]
+
+
+def _es_rol_valido(slug):
+    """True si el slug existe en roles_dinamicos activos. Solo superadmin puede asignar 'superadmin'."""
+    if not slug:
+        return False
+    try:
+        row = mysql_fetchone(
+            "SELECT 1 FROM roles_dinamicos WHERE slug=%s AND activo=1 LIMIT 1", (slug,)
+        )
+        return bool(row)
+    except Exception:
+        return slug in {"superadmin","admin","editor","lector","vendedor","ejecutivo"}
 
 
 def get_role_permissions(slug):
@@ -3681,7 +3750,11 @@ def user_password_link(user_id):
     try:
         token, _expires = _issue_password_token(user_id, minutes=60)
         reset_url = url_for("reset_password", token=token, _external=True)
-        result = _notify_user_access(user["username"], user["nombre"], user.get("phone") or "", mode="token", action_url=reset_url)
+        # email_purpose='change' → email "Cambio seguro de contraseña" (no se mezcla con invitación previa)
+        result = _notify_user_access(
+            user["username"], user["nombre"], user.get("phone") or "",
+            mode="token", action_url=reset_url, email_purpose="change"
+        )
         if result.get("email") or result.get("whatsapp"):
             msg, _level = _access_notification_flash(result, token_mode=True)
             return jsonify({"ok": True, "message": msg})
@@ -10347,6 +10420,12 @@ def init_mantenciones_tables():
                     )
                 except Exception:
                     pass
+
+            # Regla: no se pueden repetir nombres de rol (ya hay UNIQUE en slug)
+            try:
+                cur.execute("ALTER TABLE roles_dinamicos ADD UNIQUE KEY uq_rol_nombre (nombre)")
+            except Exception:
+                pass  # ya existe el índice
 
         conn.commit()
     finally:

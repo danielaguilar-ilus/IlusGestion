@@ -970,18 +970,60 @@ function qfRutFormat(input) {
 }
 
 function qfTelFormat(input) {
+  // Normalizador inteligente de teléfono chileno.
+  // Casos que maneja:
+  //   "+569 1234 5678"  → +56 9 1234 5678   (ya válido)
+  //   "+56912345678"    → +56 9 1234 5678
+  //   "569 12345678"    → +56 9 1234 5678
+  //   "912345678"       → +56 9 1234 5678   (móvil 9 dígitos sin prefijo)
+  //   "12345678"        → +56 9 1234 5678   (8 dígitos: asume móvil sin el 9 inicial)
+  //   "22XXXXXXX"       → +56 2 XXXX XXXX   (fijo Santiago, 9 dígitos)
+  //   "32XXXXXXX"       → +56 3 XXXX XXXX   (fijo regiones)
   const stat = document.getElementById('tel_status');
-  let v = input.value.replace(/[^\d+]/g,'');
-  // Si empieza con 9 y son 9 chars, asumir Chile
-  if (v.length === 9 && v.startsWith('9')) v = '+56' + v;
-  // Si empieza con 56 sin +
-  else if (v.startsWith('56') && v.length === 11) v = '+' + v;
-  // Reformat +56 9 XXXX XXXX
-  if (v.startsWith('+56') && v.length === 12) {
-    input.value = `+56 ${v.slice(3,4)} ${v.slice(4,8)} ${v.slice(8)}`;
-    if (stat) stat.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>';
-  } else if (v.length >= 8) {
+  // Limpiar: solo dígitos y '+' inicial si existe
+  let raw = (input.value || '').replace(/[^\d+]/g, '');
+  // Quitar + intermedios (solo el primero cuenta)
+  if (raw.includes('+')) raw = '+' + raw.replace(/\+/g, '');
+
+  // Extraer solo los dígitos del cuerpo nacional (sin código país)
+  let national = '';
+  if (raw.startsWith('+56')) national = raw.slice(3);
+  else if (raw.startsWith('56') && raw.length >= 10) national = raw.slice(2);
+  else if (raw.startsWith('+')) national = raw.slice(1);   // otro país → no formatear
+  else national = raw;
+
+  // Si tiene + de otro país (no +56) lo dejo sin tocar
+  if (raw.startsWith('+') && !raw.startsWith('+56')) {
     if (stat) stat.innerHTML = '';
+    return;
+  }
+
+  // Auto-añadir el "9" inicial para móviles tipeados sin él
+  if (national.length === 8 && /^[2-9]/.test(national)) {
+    national = '9' + national;
+  }
+
+  // Validar largo final (9 dígitos = código de área + 8)
+  let formatted = '';
+  let valid = false;
+  if (national.length === 9) {
+    const area = national[0];
+    const rest = national.slice(1);
+    formatted = `+56 ${area} ${rest.slice(0,4)} ${rest.slice(4)}`;
+    valid = true;
+  } else if (national.length > 0 && national.length < 9) {
+    // Aún incompleto: muestro lo que llevamos sin reformatear agresivo
+    formatted = '+56 ' + national;
+  } else {
+    // Más de 9 dígitos: dejo lo que escribió tal cual (raro)
+    formatted = raw;
+  }
+
+  input.value = formatted;
+  if (stat) {
+    stat.innerHTML = valid
+      ? '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>'
+      : '';
   }
 }
 

@@ -113,17 +113,30 @@
         {% endif %}
 
         <div class="col-md-4">
-          <label class="form-label fw-semibold small">Rol</label>
+          <label class="form-label fw-semibold small">
+            Rol
+            <a href="{{ url_for('admin_roles') }}" class="ms-1 small text-muted text-decoration-none"
+               title="Crear o editar roles">
+              <i class="bi bi-gear"></i>
+            </a>
+          </label>
           {% set current_role = (fd.role or user.role) if user else fd.get('role','editor') %}
           <select name="role" class="form-select">
-            <option value="lector"     {% if current_role == 'lector'     %}selected{% endif %}>Lector (solo visualiza)</option>
-            <option value="vendedor"   {% if current_role == 'vendedor'   %}selected{% endif %}>Vendedor (cubicador)</option>
-            <option value="editor"     {% if current_role == 'editor'     %}selected{% endif %}>Editor (crea y edita)</option>
-            <option value="admin"      {% if current_role == 'admin'      %}selected{% endif %}>Administrador</option>
-            {% if permissions.superadmin %}
-            <option value="superadmin" {% if current_role == 'superadmin' %}selected{% endif %}>Super Administrador</option>
-            {% endif %}
+            {% for r in roles %}
+              {# superadmin solo se ofrece a otros superadmins (regla de seguridad) #}
+              {% if r.slug != 'superadmin' or permissions.superadmin %}
+              <option value="{{ r.slug }}"
+                      {% if current_role == r.slug %}selected{% endif %}
+                      data-color="{{ r.color }}">
+                {{ r.nombre }}{% if r.is_system %} · sistema{% endif %}
+              </option>
+              {% endif %}
+            {% endfor %}
           </select>
+          <div class="form-text" style="font-size:.72rem">
+            Refleja los roles definidos en
+            <a href="{{ url_for('admin_roles') }}">Roles y permisos</a>.
+          </div>
         </div>
 
         <div class="col-md-4">
