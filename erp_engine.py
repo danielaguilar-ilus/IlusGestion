@@ -959,7 +959,22 @@ class ERPClient:
             cliente_obs = fix_yen_to_n(self._pick(ent, ("OBEN", "OBSERVACIONES")))
             cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
 
-        # ── Consolidar (preferencia: /entidades > header > líneas) ──
+        # ── Consolidar — la prioridad depende del campo ────────────────
+        #
+        # Para datos IDENTITARIOS del cliente (nombre, email, teléfono):
+        #   /entidades > header > líneas
+        #   El cliente es la fuente más confiable de su propio contacto.
+        #
+        # Para OBSERVACIONES del documento:
+        #   header_obs > líneas (OBDO) > /entidades (OBEN)
+        #   La observación del DOCUMENTO (lo que escribió el operador ESTA
+        #   venta) gana sobre la observación HISTÓRICA del cliente. Si no
+        #   hay obs del doc, usamos el OBEN del cliente como último recurso.
+        #
+        # Para DIRECCIÓN:
+        #   DIENDESP del doc > línea > /entidades > header del cliente
+        #   La dirección de DESPACHO del documento gana sobre la del cliente.
+        # ─────────────────────────────────────────────────────────────────
         cliente_nombre = cliente_nombre or nombre_efectivo
         cliente_email = cliente_email or header_email
         cliente_telefono = cliente_telefono or normalize_phone_cl(header_fono)
@@ -968,7 +983,8 @@ class ERPClient:
             or dir_efectivo
             or cliente_dir_base
         )
-        cliente_obs = cliente_obs or obs_efectivo
+        # ★★★ OBSERVACIONES: prioridad invertida — el documento manda ★★★
+        cliente_obs = obs_efectivo or cliente_obs
 
         # Comuna: prioridad doc > línea > entidad > zona
         comuna_doc = self._pick(raw_header,
@@ -998,9 +1014,24 @@ class ERPClient:
             sv = str(v).strip()
             if sv and sv not in ("0", "0.0", "0.00", "False"):
                 raw_sample[k] = sv[:200]
+        # NUEVO: mostrar la primera línea con OBDO no-vacío, no solo la
+        # primera línea. Útil para diagnosticar por qué una observación
+        # no aparece — si OBDO existe en raw_line_sample pero no en
+        # observaciones, hay un bug de mapeo; si no aparece, el ERP no
+        # devuelve OBDO para ese documento.
         raw_line_sample = {}
-        if raw_lines:
-            for k, v in raw_lines[0].items():
+        chosen_line = None
+        for ln in raw_lines or []:
+            if not isinstance(ln, dict):
+                continue
+            # Priorizar línea con OBDO no vacío
+            obdo_val = (ln.get("OBDO") or ln.get("obdo") or "").strip()
+            if obdo_val and not chosen_line:
+                chosen_line = ln
+            if not chosen_line:
+                chosen_line = ln
+        if chosen_line:
+            for k, v in chosen_line.items():
                 if v is None:
                     continue
                 sv = str(v).strip()
@@ -1008,6 +1039,21 @@ class ERPClient:
                     raw_line_sample[k] = sv[:200]
 
         diag["latency_ms"] = int((time.time() - t0) * 1000)
+        # Telemetría de qué se extrajo (para Railway logs)
+        diag["extracted"] = {
+            "cliente_nombre": bool(cliente_nombre),
+            "email": bool(cliente_email),
+            "telefono": bool(cliente_telefono),
+            "direccion": bool(cliente_dir_final),
+            "comuna": bool(comuna_final),
+            "observaciones": bool(cliente_obs),
+            "obs_source": (
+                "header" if header_obs else
+                "linea_obdo" if line_data.get("obs") else
+                "entidad_oben" if cliente_obs else
+                "ninguno"
+            ),
+        }
 
         doc = {
             # Identificación
