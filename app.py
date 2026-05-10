@@ -5679,6 +5679,35 @@ def erp_documento_raw():
 # llamadas repetidas con los mismos parámetros.
 # ────────────────────────────────────────────────────────────────────
 
+def _get_build_version():
+    """Devuelve commit hash + timestamp del HEAD actual de git.
+    Si git no está disponible (Railway puede no tenerlo), usa el mtime
+    de app.py como fallback. Esto permite verificar visualmente desde
+    el navegador si Railway ya desplegó el commit más reciente.
+    """
+    import subprocess
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        ts = subprocess.check_output(
+            ["git", "log", "-1", "--format=%ai", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        return sha, ts
+    except Exception:
+        try:
+            mtime = os.path.getmtime(os.path.abspath(__file__))
+            return "no-git", datetime.fromtimestamp(mtime).isoformat()
+        except Exception:
+            return "unknown", "unknown"
+
+
 @app.route("/api/erp/health", methods=["GET"])
 def erp_engine_health():
     """Health-check del motor ERP. Útil para verificar en producción si:
@@ -5686,8 +5715,10 @@ def erp_engine_health():
       - El cliente está inicializado
       - Hay token configurado
       - El caché está funcionando
+      - Qué commit/versión está corriendo (vs lo que esperás)
     NO requiere login para diagnosticar problemas de despliegue sin sesión.
     """
+    sha, build_ts = _get_build_version()
     try:
         c = erp_engine.get_client()
         with c._lock:
@@ -5705,13 +5736,17 @@ def erp_engine_health():
             "retries": c.retries,
             "doc_cache_size": doc_size,
             "ent_cache_size": ent_size,
-            "version": "df52786+",
+            "build_commit": sha,
+            "build_timestamp": build_ts,
+            "server_time": datetime.now().isoformat(),
         })
     except Exception as e:
         return jsonify({
             "ok": False,
             "engine_loaded": False,
             "error": str(e),
+            "build_commit": sha,
+            "build_timestamp": build_ts,
         }), 500
 
 
@@ -6149,13 +6184,18 @@ def cubicador():
                 "export_payload": _cubicador_export_payload(headers, lineas, docs),
             }
 
-    return render_template(
+    resp = make_response(render_template(
         "cubicador/index.html",
         tipos_doc=TIPOS_DOC_CUBICADOR,
         docs=docs,
         resultado=resultado,
         error_msg=error_msg,
-    )
+    ))
+    # Anti-caché agresivo: nunca servir HTML viejo cacheado por el navegador.
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/cubicador/export/excel", methods=["POST"])
@@ -6961,11 +7001,20 @@ def _comuna_to_postal(comuna: str):
 @app.route("/asignar", methods=["GET"])
 @login_required
 def asignar_cotizar():
-    """Página principal del módulo Asignar y Cotizar."""
+    """Página principal del módulo Asignar y Cotizar.
+
+    Forzamos headers anti-caché para que el navegador NUNCA sirva una
+    versión vieja del HTML. Crítico porque este template es el que más
+    JavaScript inline tiene y donde más sufrimos por caché del usuario.
+    """
     if not g.permissions.get("cubicador"):
         flash("No tienes acceso al módulo Asignar y Cotizar.", "danger")
         return redirect(url_for("index"))
-    return render_template("cubicador/asignar.html")
+    resp = make_response(render_template("cubicador/asignar.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/api/asignar/documento", methods=["POST"])
