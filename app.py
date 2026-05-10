@@ -5414,6 +5414,15 @@ def _erp_get(path, params, token, timeout=10):
         return _json_mod.loads(resp.read().decode("utf-8"))
 
 
+# ── CACHE SIMPLE EN MEMORIA para búsquedas de documentos ERP ─────────
+# Evita refetch del mismo documento en ventanas cortas (cuando el
+# usuario edita campos del cubicador o cambia de pestaña).
+_ERP_DOC_CACHE = {}        # { 'TIDO|NUDO': (timestamp, header, lineas) }
+_ERP_DOC_CACHE_TTL = 90    # segundos
+_ERP_ENT_CACHE = {}        # { 'RUT': (timestamp, entidad) }
+_ERP_ENT_CACHE_TTL = 300   # las entidades cambian poco — 5 min
+
+
 # ── Endpoint UNIFICADO de búsqueda de documentos ERP ──────────────────
 # Reutilizable desde Cubicador, Asignar/Cotizar y Mantenciones (repuestos)
 @app.route("/api/erp/documento", methods=["GET","POST"])
@@ -5480,8 +5489,15 @@ def _cubicador_fetch(tido, nudo):
     """
     Consulta el ERP vía REST API y cruza con nuestra BD local.
     Retorna (header_dict, lineas_list) o lanza excepción.
+
+    Optimizaciones:
+      - Cache en memoria (TTL 90s) para evitar refetch del mismo documento
+      - 1 sola query SQL para TODOS los SKUs (en vez de N queries seriadas)
+      - Fallback robusto para encontrar al cliente cuando ENDO viene vacío
+        (típico en NV directa/web del ERP Random)
     """
     from datetime import datetime as _dt
+    import time as _time
 
     TOKEN = ERP_CONFIG.get("api_token", "")
 
@@ -5494,6 +5510,13 @@ def _cubicador_fetch(tido, nudo):
         erp_tido = tido
         erp_nudo = str(nudo).strip()
 
+    # ── CACHE: si el mismo doc fue consultado hace <90s, devolverlo ──
+    cache_key = f"{tido}|{nudo}"
+    now_ts = _time.time()
+    cached = _ERP_DOC_CACHE.get(cache_key)
+    if cached and (now_ts - cached[0]) < _ERP_DOC_CACHE_TTL:
+        return cached[1], cached[2]
+
     nudos = _nudo_variants(erp_nudo)
 
     # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
@@ -5504,7 +5527,7 @@ def _cubicador_fetch(tido, nudo):
             body = _erp_get(
                 "/documentos/render",
                 {"tido": erp_tido, "nudo": nv, "empresa": "01"},
-                TOKEN, timeout=12,
+                TOKEN, timeout=8,
             )
             data = body.get("data") or []
             if data:
@@ -5518,7 +5541,22 @@ def _cubicador_fetch(tido, nudo):
         return None, []
 
     # ── 2. Datos completos del cliente (entidades) ─────────────────────
-    endo = (raw_header.get("ENDO") or "").strip()
+    # Para NV (VD/WEB) el campo ENDO a veces viene vacío; probamos varios
+    # campos del header como fallback.
+    endo_candidates = [
+        raw_header.get("ENDO"),
+        raw_header.get("RTEN"),     # rut entidad
+        raw_header.get("RUT"),      # variante
+        raw_header.get("CLEN"),     # codigo cliente
+        raw_header.get("ENDODESP"), # entidad despacho
+        raw_header.get("RTENDESP"), # rut despacho
+    ]
+    endo = ""
+    for cand in endo_candidates:
+        if cand and str(cand).strip():
+            endo = str(cand).strip()
+            break
+
     cliente_nombre  = ""
     cliente_rut     = endo
     cliente_email   = ""
@@ -5529,30 +5567,46 @@ def _cubicador_fetch(tido, nudo):
     cliente_obs     = ""
     cliente_comuna_nombre = ""
 
+    # También extraemos lo que ya viene en el HEADER del documento
+    # (algunos campos están duplicados ahí y son fallback útil para NV)
+    header_nombre  = (raw_header.get("NOKOEN") or raw_header.get("NRAZON") or "").strip().title()
+    header_email   = (raw_header.get("EMAIL")  or raw_header.get("EMAILEN") or "").strip()
+    header_fono    = (raw_header.get("FOEN")   or raw_header.get("FONOEN")  or "").strip()
+    header_dir     = (raw_header.get("DIEN")   or raw_header.get("DIRECEN") or "").strip().title()
+    header_obs     = (raw_header.get("OBEN")   or raw_header.get("OBENEN")  or raw_header.get("OBDO") or "").strip()
+
     if endo:
-        try:
-            ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=8)
-            ent_data = ent_body.get("data") or []
-            if ent_data:
-                e = ent_data[0]
-                cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
-                cliente_rut      = (e.get("RTEN")   or endo).strip()
-                # Email: preferir principal, caer en comercial
-                cliente_email    = (e.get("EMAIL") or e.get("EMAILCOMER") or "").strip()
-                # Teléfono: normalizar a formato +56XXXXXXXXX
-                raw_fono = (e.get("FOEN") or e.get("FAEN") or "").strip()
-                cliente_telefono = _normalize_phone_cl(raw_fono)
-                # Dirección base del cliente (no la de despacho)
-                cliente_direccion_base = (e.get("DIEN") or "").strip().title()
-                # Código de región y comuna
-                cliente_cien     = (e.get("CIEN") or "").strip()
-                cliente_cmen     = (e.get("CMEN") or "").strip()
-                # Observaciones
-                cliente_obs      = (e.get("OBEN") or "").strip()
-                # Resolver nombre de comuna desde código
-                cliente_comuna_nombre = _cmen_to_comuna(cliente_cien, cliente_cmen)
-        except Exception:
-            pass   # si falla entidades igual mostramos el doc
+        # Cache de entidades (TTL 5 min)
+        ent_cached = _ERP_ENT_CACHE.get(endo)
+        if ent_cached and (now_ts - ent_cached[0]) < _ERP_ENT_CACHE_TTL:
+            e = ent_cached[1]
+        else:
+            try:
+                ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=6)
+                ent_data = ent_body.get("data") or []
+                e = ent_data[0] if ent_data else None
+                if e:
+                    _ERP_ENT_CACHE[endo] = (now_ts, e)
+            except Exception:
+                e = None
+        if e:
+            cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
+            cliente_rut      = (e.get("RTEN")   or endo).strip()
+            cliente_email    = (e.get("EMAIL") or e.get("EMAILCOMER") or "").strip()
+            raw_fono = (e.get("FOEN") or e.get("FAEN") or "").strip()
+            cliente_telefono = _normalize_phone_cl(raw_fono)
+            cliente_direccion_base = (e.get("DIEN") or "").strip().title()
+            cliente_cien     = (e.get("CIEN") or "").strip()
+            cliente_cmen     = (e.get("CMEN") or "").strip()
+            cliente_obs      = (e.get("OBEN") or "").strip()
+            cliente_comuna_nombre = _cmen_to_comuna(cliente_cien, cliente_cmen)
+
+    # ── Fallbacks: si /entidades no respondió, usar lo que vino en el header
+    cliente_nombre   = cliente_nombre   or header_nombre
+    cliente_email    = cliente_email    or header_email
+    cliente_telefono = cliente_telefono or _normalize_phone_cl(header_fono)
+    cliente_direccion_base = cliente_direccion_base or header_dir
+    cliente_obs      = cliente_obs      or header_obs
 
     # ── 3. Formatear fecha ─────────────────────────────────────────────
     fecha_raw = raw_header.get("FEEMDO", "")
@@ -5593,7 +5647,39 @@ def _cubicador_fetch(tido, nudo):
         "all_fields":       list(raw_header.keys()),   # para debug
     }
 
-    # ── 4. Cruzar líneas con BD local (bultos/peso) ────────────────────
+    # ── 4. Cruzar líneas con BD local (bultos/peso) — BATCH SQL ────────
+    # OPTIMIZACIÓN: una sola query con WHERE sku IN (...) para todos los
+    # SKUs del documento. Antes hacíamos N queries seriadas (lento en docs
+    # con muchos productos).
+    skus_set = set()
+    for l in raw_lineas:
+        s = (l.get("KOPRCT") or "").strip().upper()
+        if s:
+            skus_set.add(s)
+
+    sku_data_map = {}
+    if skus_set:
+        skus_list = list(skus_set)
+        ph = ",".join(["%s"] * len(skus_list))
+        rows_sku = mysql_fetchall(f"""
+            SELECT
+                UPPER(TRIM(p.sku))                                     AS sku_norm,
+                p.id                                                   AS app_id,
+                p.nombre                                               AS nombre_app,
+                COUNT(DISTINCT b.id)                                   AS total_bultos,
+                COALESCE(SUM(b.peso), 0)                               AS peso_total,
+                COALESCE(SUM(b.largo * b.ancho * b.alto), 0)           AS volumen_cm3,
+                ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4)
+                                                                       AS peso_vol
+            FROM `{PRODUCTS_TABLE}` p
+            LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+            WHERE UPPER(TRIM(p.sku)) IN ({ph})
+            GROUP BY p.id, p.nombre
+        """, tuple(skus_list)) or []
+        for r in rows_sku:
+            sku_data_map[r["sku_norm"]] = dict(r)
+
+    ZZ_CODES = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
     lineas = []
     for l in raw_lineas:
         sku         = (l.get("KOPRCT") or "").strip().upper()
@@ -5601,33 +5687,19 @@ def _cubicador_fetch(tido, nudo):
         qty          = float(l.get("CAPRCO1") or 0)
         qty_desp     = float(l.get("CAPRAD1") or 0)
         saldo_linea  = max(qty - qty_desp, 0)
-        es_zz        = sku.upper() in {s.upper() for s in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}}
+        es_zz        = sku in ZZ_CODES
 
         if not sku:
             continue
 
-        app_data = mysql_fetchone(f"""
-            SELECT
-                p.id     AS app_id,
-                p.nombre AS nombre_app,
-                COUNT(DISTINCT b.id)                                    AS total_bultos,
-                COALESCE(SUM(b.peso), 0)                                AS peso_total,
-                COALESCE(SUM(b.largo * b.ancho * b.alto), 0)            AS volumen_cm3,
-                ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4)
-                                                                        AS peso_vol
-            FROM `{PRODUCTS_TABLE}` p
-            LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
-            WHERE UPPER(TRIM(p.sku)) = %s
-            GROUP BY p.id, p.nombre
-        """, (sku,))
-
+        app_data = sku_data_map.get(sku)
         tiene_ficha  = app_data is not None
-        total_bultos = int(app_data["total_bultos"] if tiene_ficha else 0)
+        total_bultos = int(app_data["total_bultos"]) if tiene_ficha else 0
         tiene_bultos = tiene_ficha and float(app_data.get("volumen_cm3") or 0) > 0
 
-        peso_kg_u  = float(app_data["peso_total"]  if tiene_ficha else 0)
-        peso_vol_u = float(app_data["peso_vol"]     if tiene_ficha else 0)
-        vol_u      = float(app_data["volumen_cm3"]  if tiene_ficha else 0)
+        peso_kg_u  = float(app_data["peso_total"])  if tiene_ficha else 0
+        peso_vol_u = float(app_data["peso_vol"])    if tiene_ficha else 0
+        vol_u      = float(app_data["volumen_cm3"]) if tiene_ficha else 0
         pred_u     = max(peso_kg_u, peso_vol_u)
 
         nombre_app = (app_data["nombre_app"] if tiene_ficha else "") or ""
@@ -5642,25 +5714,28 @@ def _cubicador_fetch(tido, nudo):
             "app_id":           app_data["app_id"] if tiene_ficha else None,
             "tiene_ficha":      tiene_ficha,
             "tiene_bultos":     tiene_bultos,
-            # Por unidad
             "peso_kg_u":        round(peso_kg_u,  4),
             "peso_vol_u":       round(peso_vol_u, 4),
             "vol_u":            round(vol_u,      2),
             "pred_u":           round(pred_u,     4),
-            # Totales (× cantidad)
             "peso_kg_tot":      round(peso_kg_u  * qty, 4),
             "peso_vol_tot":     round(peso_vol_u * qty, 4),
             "vol_tot":          round(vol_u      * qty, 2),
             "pred_tot":         round(pred_u     * qty, 4),
-            # Flag
             "diferencia":       diferencia,
-            # Saldo / despacho
             "cantidad_despachada": qty_desp,
             "saldo":               saldo_linea,
             "es_zz":               es_zz,
-            # Valor neto de línea (para ZZ Envío)
             "vaneli":              float(l.get("VANELI") or 0),
         })
+
+    # Cachear resultado para próximas búsquedas del mismo doc
+    _ERP_DOC_CACHE[cache_key] = (now_ts, header, lineas)
+    # Limpieza periódica del cache si crece mucho
+    if len(_ERP_DOC_CACHE) > 200:
+        cutoff = now_ts - _ERP_DOC_CACHE_TTL
+        for k in [k for k, (t, *_r) in _ERP_DOC_CACHE.items() if t < cutoff]:
+            _ERP_DOC_CACHE.pop(k, None)
 
     return header, lineas
 
