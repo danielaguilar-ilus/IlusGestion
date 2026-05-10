@@ -1995,6 +1995,10 @@ function abrirVisitaMulti() {
   vmCargarTecnicos().then(() => { vmRenderChips(); vmSetupTecSearch(); });
   document.getElementById('vm_tec_search').value = '';
   document.getElementById('vm_tec_dropdown').style.display = 'none';
+  // Reset repuestos
+  window._vmRepuestos = [];
+  vmRenderRepuestos();
+  document.getElementById('vm_rep_search_wrap').style.display = 'none';
   vmActualizarFechaPorTipo();
 
   if (!window._modalVisitaMulti) {
@@ -2135,6 +2139,153 @@ function escHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ─── Auto-completar horas: '8' → '08:00', '12' → '12:00', '8:30' → '08:30' ──
+function normalizeHoraInput(input){
+  let v = (input.value || '').trim();
+  if (!v) return;
+  // Solo dígitos: hora sin minutos
+  if (/^\d{1,2}$/.test(v)){
+    const h = parseInt(v, 10);
+    if (h >= 0 && h <= 23){
+      input.value = String(h).padStart(2, '0') + ':00';
+    }
+    return;
+  }
+  // Con ':' — completar minutos si faltan
+  const m = v.match(/^(\d{1,2}):(\d{0,2})$/);
+  if (m){
+    const h  = parseInt(m[1], 10);
+    const mm = m[2] ? parseInt(m[2], 10) : 0;
+    if (h >= 0 && h <= 23 && mm >= 0 && mm <= 59){
+      input.value = String(h).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+    }
+  }
+}
+
+// ─── REPUESTOS ──────────────────────────────────────────────────────
+window._vmRepuestos = [];
+
+function vmRenderRepuestos(){
+  const wrap  = document.getElementById('vm_repuestos_list');
+  const empty = document.getElementById('vm_rep_empty');
+  const totalLbl = document.getElementById('vm_rep_total');
+  const lista = window._vmRepuestos || [];
+  let total = 0;
+  if (!lista.length){
+    wrap.innerHTML = '<div class="text-muted small fst-italic" id="vm_rep_empty">Sin repuestos asociados</div>';
+    totalLbl.textContent = '$0';
+    return;
+  }
+  wrap.innerHTML = lista.map((rp, i) => {
+    const ctot = (parseFloat(rp.cantidad||1) * parseFloat(rp.costo_unitario||0)) || 0;
+    total += ctot;
+    return `<div class="d-flex align-items-center gap-2 p-2 bg-white rounded border" data-i="${i}">
+      <span class="badge ${rp.origen==='manual' ? 'bg-secondary' : 'bg-info'}" style="font-size:.6rem;text-transform:uppercase">
+        ${rp.origen==='manual' ? '✎' : (rp.sku || 'erp')}
+      </span>
+      <input type="text" class="form-control form-control-sm" value="${escHtml(rp.descripcion)}"
+             onchange="window._vmRepuestos[${i}].descripcion = this.value;vmRenderRepuestos()"
+             style="font-size:.82rem;flex:2">
+      <input type="number" class="form-control form-control-sm" value="${rp.cantidad}" min="0" step="0.5"
+             onchange="window._vmRepuestos[${i}].cantidad = parseFloat(this.value)||1;vmRenderRepuestos()"
+             style="font-size:.82rem;width:65px" title="Cantidad">
+      <span class="small text-muted">×</span>
+      <input type="number" class="form-control form-control-sm" value="${rp.costo_unitario}" min="0" step="100"
+             onchange="window._vmRepuestos[${i}].costo_unitario = parseFloat(this.value)||0;vmRenderRepuestos()"
+             style="font-size:.82rem;width:90px" title="Costo unitario">
+      <span class="small fw-bold" style="min-width:80px;text-align:right;color:#0284c7">
+        $${ctot.toLocaleString('es-CL')}
+      </span>
+      <button type="button" class="btn-close" onclick="vmRemoveRep(${i})"></button>
+    </div>`;
+  }).join('');
+  totalLbl.textContent = '$' + total.toLocaleString('es-CL');
+}
+
+function vmAddRepManual(){
+  window._vmRepuestos.push({
+    sku: null, producto_id: null, descripcion: 'Nuevo repuesto',
+    cantidad: 1, costo_unitario: 0, origen: 'manual'
+  });
+  vmRenderRepuestos();
+}
+
+function vmRemoveRep(i){
+  window._vmRepuestos.splice(i, 1);
+  vmRenderRepuestos();
+}
+
+function vmAbrirERPSearch(){
+  const wrap = document.getElementById('vm_rep_search_wrap');
+  wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+  if (wrap.style.display === 'block') {
+    document.getElementById('vm_rep_search').focus();
+  }
+}
+
+let _vmRepTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('vm_rep_search');
+  const dd  = document.getElementById('vm_rep_search_dd');
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    clearTimeout(_vmRepTimer);
+    const q = inp.value.trim();
+    if (q.length < 2) { dd.style.display='none'; return; }
+    _vmRepTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`/mantenciones/api/productos-search?q=${encodeURIComponent(q)}`);
+        const list = await r.json();
+        if (!Array.isArray(list) || !list.length){
+          dd.innerHTML = '<div class="px-3 py-2 small text-muted">Sin resultados — usa "Manual"</div>';
+          dd.style.display = 'block';
+          return;
+        }
+        dd.innerHTML = list.map((p, idx) => `
+          <div class="px-3 py-2 vm-prod-item" style="cursor:pointer;border-bottom:1px solid #f3f4f6"
+               data-i="${idx}">
+            <div class="d-flex justify-content-between align-items-center">
+              <div style="flex:1;min-width:0">
+                <div class="fw-semibold small text-truncate">${escHtml(p.nombre)}</div>
+                <div class="small text-muted">
+                  <span class="font-monospace">${escHtml(p.sku||'—')}</span>
+                  ${p.marca ? ' · ' + escHtml(p.marca) : ''}
+                </div>
+              </div>
+              <span class="small fw-bold text-info" style="white-space:nowrap">
+                $${parseInt(p.precio_venta||0).toLocaleString('es-CL')}
+              </span>
+            </div>
+          </div>
+        `).join('');
+        dd.style.display = 'block';
+        dd.querySelectorAll('.vm-prod-item').forEach(it => {
+          it.addEventListener('click', () => {
+            const p = list[parseInt(it.dataset.i, 10)];
+            window._vmRepuestos.push({
+              sku: p.sku, producto_id: null,
+              descripcion: p.nombre,
+              cantidad: 1,
+              costo_unitario: parseFloat(p.precio_venta||0),
+              origen: 'erp'
+            });
+            inp.value = '';
+            dd.style.display = 'none';
+            document.getElementById('vm_rep_search_wrap').style.display = 'none';
+            vmRenderRepuestos();
+          });
+        });
+      } catch(e){
+        dd.innerHTML = `<div class="px-3 py-2 small text-danger">Error: ${e.message}</div>`;
+        dd.style.display = 'block';
+      }
+    }, 300);
+  });
+  document.addEventListener('click', e => {
+    if (!inp.contains(e.target) && !dd.contains(e.target)) dd.style.display='none';
+  });
+});
+
 async function confirmarVisitaMulti() {
   const ids = window._vmIds || [];
   if (!ids.length) return;
@@ -2143,9 +2294,13 @@ async function confirmarVisitaMulti() {
   const fecha = document.getElementById('vm_fecha').value;
   if (!fecha) { ilusToast('La fecha es obligatoria', { type:'warning' }); return; }
 
-  // Validación: hora_fin > hora_inicio si ambas están
+  // Auto-completar y validar horas: '8' → '08:00', '12' → '12:00'
+  normalizeHoraInput(document.getElementById('vm_hora_inicio'));
+  normalizeHoraInput(document.getElementById('vm_hora_fin'));
   const hi = document.getElementById('vm_hora_inicio').value;
   const hf = document.getElementById('vm_hora_fin').value;
+  if (hi && !/^\d{2}:\d{2}$/.test(hi)) { ilusToast('Hora inicio inválida (usa formato HH:MM o solo número)', { type:'warning' }); return; }
+  if (hf && !/^\d{2}:\d{2}$/.test(hf)) { ilusToast('Hora fin inválida (usa formato HH:MM o solo número)', { type:'warning' }); return; }
   if (hi && hf && hf <= hi) { ilusToast('La hora de fin debe ser posterior a la de inicio', { type:'warning' }); return; }
 
   const btn = document.getElementById('vm_btn');
@@ -2168,6 +2323,7 @@ async function confirmarVisitaMulti() {
         estado_nuevo: document.getElementById('vm_estado').value,
         tecnico_ids:  (window._vmTecnicosSel || []).map(t => t.id),
         titulo:       document.getElementById('vm_titulo').value.trim(),
+        repuestos:    window._vmRepuestos || [],
       })
     });
     const d = await r.json().catch(() => ({error: 'respuesta no válida'}));
@@ -2176,14 +2332,41 @@ async function confirmarVisitaMulti() {
       btn.disabled = false; btn.innerHTML = orig;
       return;
     }
-    btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>Visita ${d.visita_id} creada`;
+    btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${d.numero_ot || 'Visita'} creada`;
     const tecCount = d.tecnicos_asignados || 0;
     const costoTxt = d.costo_calculado ? ` · $${Math.round(d.costo_calculado).toLocaleString('es-CL')}` : '';
+    const repTxt   = d.repuestos_count ? ` · ${d.repuestos_count} repuesto(s)` : '';
     ilusToast(
-      `Visita #${d.visita_id} creada · ${d.equipos_afectados} equipo(s) · ${tecCount} técnico(s)${costoTxt}`,
-      { type:'success', duration: 5000 }
+      `${d.numero_ot || ('Visita #' + d.visita_id)} creada · ${d.equipos_afectados} equipo(s) · ${tecCount} técnico(s)${repTxt}${costoTxt}`,
+      { type:'success', duration: 4500 }
     );
-    setTimeout(() => location.reload(), 1000);
+
+    // Preguntar al usuario si desea enviar email al cliente
+    setTimeout(async () => {
+      const enviar = await ilusConfirm({
+        title: '¿Enviar email al cliente?',
+        message: `Notificar al cliente que se agendó la visita ${d.numero_ot || ''}`,
+        sub: 'Se enviará un correo con el detalle de la visita, técnicos asignados, fecha y costo.',
+        okLabel: '📧 Enviar email',
+        cancelLabel: 'Ahora no',
+        type: 'info',
+      });
+      if (enviar) {
+        try {
+          const r2 = await fetch(`/mantenciones/api/visitas/${d.visita_id}/enviar-email`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({})
+          });
+          const d2 = await r2.json().catch(() => ({}));
+          if (r2.ok && d2.ok) {
+            ilusToast(`Email enviado a ${d2.destinatario}`, { type:'success' });
+          } else {
+            ilusToast('No se pudo enviar: ' + (d2.error || 'error desconocido'), { type:'error', duration: 6000 });
+          }
+        } catch(e){ ilusToast('Error de red: '+e.message, { type:'error' }); }
+      }
+      setTimeout(() => location.reload(), 700);
+    }, 800);
   } catch(e) {
     ilusToast('Error de red: ' + e.message, { type:'error' });
     btn.disabled = false; btn.innerHTML = orig;
@@ -3849,9 +4032,14 @@ function abrirEmailManual() {
       <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-calendar-week me-2" style="color:var(--ilus-red)"></i>Mantenciones y Visitas</span>
       <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ visitas|length }}</span>
     </div>
-    <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
-      <i class="bi bi-calendar-plus me-1"></i>Agendar visita
-    </button>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-success" onclick="abrirNuevaVisita('preventiva')" title="Programar una mantención preventiva">
+        <i class="bi bi-tools me-1"></i>Programar mantención
+      </button>
+      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Nueva visita
+      </button>
+    </div>
   </div>
 
   {% if visitas %}
@@ -3860,7 +4048,8 @@ function abrirEmailManual() {
       <table class="table table-sm mb-0" style="font-size:.82rem">
         <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
           <tr>
-            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha / hora</th>
+            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">N° OT</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha / hora</th>
             <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Título</th>
             <th class="py-2 d-none d-sm-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Tipo</th>
             <th class="py-2 d-none d-md-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Técnico</th>
@@ -3872,7 +4061,14 @@ function abrirEmailManual() {
         <tbody>
         {% for v in visitas|sort(attribute='fecha_programada',reverse=True) %}
         <tr style="border-bottom:1px solid #f3f4f6;transition:background .1s" onmouseover="this.style.background='#fafbfc'" onmouseout="this.style.background=''">
-          <td class="ps-3 py-2 font-monospace" style="white-space:nowrap;color:#374151">
+          <td class="ps-3 py-2 font-monospace" style="white-space:nowrap;font-size:.72rem">
+            {% if v.numero_ot %}
+              <span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:5px;font-weight:700">{{ v.numero_ot }}</span>
+            {% else %}
+              <span class="text-muted">V-{{ '%05d'|format(v.id) }}</span>
+            {% endif %}
+          </td>
+          <td class="py-2 font-monospace" style="white-space:nowrap;color:#374151">
             {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
             {% if v.hora_inicio or v.hora_fin %}
             <div style="font-size:.7rem;color:#9ca3af;font-weight:600">
@@ -4787,14 +4983,24 @@ function abrirEmailManual() {
             </div>
           </div>
 
-          {# Horario de la visita #}
+          {# Horario de la visita — texto libre con auto-completado de ceros #}
           <div class="col-6 col-md-3">
-            <label class="form-label fw-semibold small">Hora inicio</label>
-            <input type="time" id="vm_hora_inicio" class="form-control">
+            <label class="form-label fw-semibold small">
+              Hora inicio
+              <span class="text-muted fw-normal" style="font-size:.7rem">(ej: 8 → 08:00)</span>
+            </label>
+            <input type="text" id="vm_hora_inicio" class="form-control"
+                   placeholder="08:00 o solo 8" maxlength="5"
+                   onblur="normalizeHoraInput(this)">
           </div>
           <div class="col-6 col-md-3">
-            <label class="form-label fw-semibold small">Hora fin</label>
-            <input type="time" id="vm_hora_fin" class="form-control">
+            <label class="form-label fw-semibold small">
+              Hora fin
+              <span class="text-muted fw-normal" style="font-size:.7rem">(ej: 12 → 12:00)</span>
+            </label>
+            <input type="text" id="vm_hora_fin" class="form-control"
+                   placeholder="12:00 o solo 12" maxlength="5"
+                   onblur="normalizeHoraInput(this)">
           </div>
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
@@ -4841,6 +5047,40 @@ function abrirEmailManual() {
             </label>
             <textarea id="vm_observaciones" class="form-control" rows="2" maxlength="1000"
                       placeholder="Notas internas, riesgos, repuestos necesarios, etc."></textarea>
+          </div>
+
+          {# ─────────── REPUESTOS ─────────── #}
+          <div class="col-12">
+            <div class="p-3 rounded-3" style="background:#f0f9ff;border:1px solid #bae6fd">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <div class="d-flex align-items-center gap-2">
+                  <i class="bi bi-box-seam-fill" style="color:#0284c7;font-size:1.1rem"></i>
+                  <strong style="color:#075985;font-size:.9rem">Repuestos asociados</strong>
+                  <span id="vm_rep_total" class="badge bg-info" style="font-size:.65rem">$0</span>
+                </div>
+                <div class="d-flex gap-1">
+                  <button type="button" class="btn btn-xs btn-outline-info" onclick="vmAddRepManual()">
+                    <i class="bi bi-pencil-square me-1"></i>Manual
+                  </button>
+                  <button type="button" class="btn btn-xs btn-info text-white" onclick="vmAbrirERPSearch()">
+                    <i class="bi bi-search me-1"></i>Buscar producto
+                  </button>
+                </div>
+              </div>
+
+              {# Buscador de productos ERP/catálogo (oculto por default) #}
+              <div id="vm_rep_search_wrap" class="position-relative mb-2" style="display:none">
+                <input type="text" id="vm_rep_search" class="form-control form-control-sm"
+                       placeholder="Buscar por SKU o nombre del producto..." autocomplete="off">
+                <div id="vm_rep_search_dd" class="position-absolute w-100 bg-white shadow-sm border rounded mt-1"
+                     style="z-index:1080;display:none;max-height:240px;overflow-y:auto"></div>
+              </div>
+
+              {# Lista de repuestos agregados #}
+              <div id="vm_repuestos_list" class="d-flex flex-column gap-1">
+                <div class="text-muted small fst-italic" id="vm_rep_empty">Sin repuestos asociados</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -5196,13 +5436,20 @@ function abrirMaquinaManual() {
 function abrirContratoModal() {
   new bootstrap.Modal(document.getElementById('modalContrato')).show();
 }
-function abrirNuevaVisita() {
+function abrirNuevaVisita(tipoPreset) {
+  // tipoPreset opcional: 'preventiva' | 'correctiva' | 'garantia' | 'inspeccion'
   document.getElementById('vi_id').value = '';
-  document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
+  const titulo = tipoPreset === 'preventiva'
+    ? '<i class="bi bi-tools me-2"></i>Programar mantención preventiva'
+    : '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
+  document.getElementById('modalVisitaTitulo').innerHTML = titulo;
   ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('vi_tipo').value = 'preventiva';
+  document.getElementById('vi_tipo').value = tipoPreset || 'preventiva';
   document.getElementById('vi_estado').value = 'programada';
-  document.getElementById('vi_fecha').value = '';
+  // Fecha por defecto: hoy + 14 días para mantenciones, +3 días para resto
+  const dias = tipoPreset === 'preventiva' ? 14 : 3;
+  const f = new Date(); f.setDate(f.getDate() + dias);
+  document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
   document.getElementById('vi_hora_inicio').value = '';
   document.getElementById('vi_hora_fin').value = '';
   document.getElementById('vi_costo').value = '';

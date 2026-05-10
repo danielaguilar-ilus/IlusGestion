@@ -10788,6 +10788,35 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
 
+            # Migración: número de OT (Orden de Trabajo) único por visita
+            for _mig in [
+                "ALTER TABLE mant_visitas ADD COLUMN numero_ot VARCHAR(30) NULL AFTER id",
+                "ALTER TABLE mant_visitas ADD UNIQUE KEY uq_numero_ot (numero_ot)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
+            # Tabla de repuestos asociados a una visita (manual o desde ERP)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visita_repuestos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id       INT NOT NULL,
+                    sku             VARCHAR(80) NULL
+                                    COMMENT 'SKU del producto si vino del ERP',
+                    producto_id     INT NULL
+                                    COMMENT 'id del catalogo local si fue desde productos',
+                    descripcion     VARCHAR(300) NOT NULL,
+                    cantidad        DECIMAL(10,2) DEFAULT 1.00,
+                    costo_unitario  DECIMAL(12,2) DEFAULT 0.00,
+                    costo_total     DECIMAL(12,2) DEFAULT 0.00,
+                    origen          ENUM('manual','erp','catalogo') DEFAULT 'manual',
+                    notas           VARCHAR(500) DEFAULT NULL,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_visita  (visita_id),
+                    INDEX idx_sku     (sku)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Tabla N:N para múltiples técnicos asignados a una visita
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_visita_tecnicos (
@@ -10909,6 +10938,54 @@ def _mant_log(entidad, entidad_id, accion, detalle=""):
         conn.close()
     except Exception:
         pass
+
+
+def _next_ot_number():
+    """
+    Genera el proximo numero de Orden de Trabajo correlativo.
+    Formato: OT-YYYY-NNNNN (ej. OT-2026-00042)
+    """
+    year = datetime.now().year
+    prefix = f"OT-{year}-"
+    last = mysql_fetchone(
+        "SELECT numero_ot FROM mant_visitas "
+        "WHERE numero_ot LIKE %s "
+        "ORDER BY id DESC LIMIT 1",
+        (f"{prefix}%",)
+    )
+    next_n = 1
+    if last and last.get("numero_ot"):
+        try:
+            seq = last["numero_ot"].split("-")[-1]
+            next_n = int(seq) + 1
+        except Exception:
+            next_n = 1
+    return f"{prefix}{next_n:05d}"
+
+
+def _normalize_hora(s):
+    """
+    '8' -> '08:00', '12' -> '12:00', '8:30' -> '08:30', '8:5' -> '08:05'.
+    Devuelve None si vacio o invalido.
+    """
+    if not s: return None
+    s = str(s).strip()
+    if not s: return None
+    if s.isdigit():
+        h = int(s)
+        if 0 <= h <= 23:
+            return f"{h:02d}:00"
+        return None
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            h = int(parts[0]) if parts[0] else 0
+            m = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return f"{h:02d}:{m:02d}"
+        except (ValueError, IndexError):
+            return None
+    return None
 
 
 def _mant_actualizar_estado_contratos():
@@ -12316,18 +12393,9 @@ def mant_visita_multi(cid):
 
     titulo_input = (d.get("titulo") or "").strip()[:200]
 
-    # Hora inicio / fin (HH:MM) — opcional
-    def _parse_hora(s):
-        s = (s or "").strip()
-        if not s:
-            return None
-        try:
-            datetime.strptime(s, "%H:%M")
-            return s
-        except ValueError:
-            return None
-    hora_inicio = _parse_hora(d.get("hora_inicio"))
-    hora_fin    = _parse_hora(d.get("hora_fin"))
+    # Hora inicio / fin — autocompleta ceros: '8' -> '08:00', '12' -> '12:00'
+    hora_inicio = _normalize_hora(d.get("hora_inicio"))
+    hora_fin    = _normalize_hora(d.get("hora_fin"))
 
     # Costo (CLP). Si el usuario no lo indica → cálculo automático:
     # tarifa_visita × cantidad de técnicos asignados (default $50.000 por técnico).
@@ -12346,6 +12414,43 @@ def mant_visita_multi(cid):
         costo = costo_auto if costo_auto > 0 else None
 
     observaciones = (d.get("observaciones") or "").strip()[:1000] or None
+
+    # Repuestos asociados (lista de objetos con sku/descripcion/cantidad/costo_unitario/origen)
+    repuestos_raw = d.get("repuestos") or []
+    if not isinstance(repuestos_raw, list):
+        repuestos_raw = []
+    repuestos = []
+    repuestos_total = 0.0
+    for rp in repuestos_raw[:50]:  # max 50 por visita
+        try:
+            desc = (rp.get("descripcion") or "").strip()[:300]
+            if not desc:
+                continue
+            cant = float(rp.get("cantidad") or 1) or 1.0
+            cunit = float(rp.get("costo_unitario") or 0) or 0.0
+            ctot = round(cant * cunit, 2)
+            repuestos.append({
+                "sku":            (rp.get("sku") or "").strip()[:80] or None,
+                "producto_id":    int(rp["producto_id"]) if rp.get("producto_id") else None,
+                "descripcion":    desc,
+                "cantidad":       cant,
+                "costo_unitario": cunit,
+                "costo_total":    ctot,
+                "origen":         rp.get("origen") if rp.get("origen") in ("manual","erp","catalogo") else "manual",
+                "notas":          (rp.get("notas") or "").strip()[:500] or None,
+            })
+            repuestos_total += ctot
+        except (TypeError, ValueError):
+            continue
+    # Si vinieron repuestos y el costo no fue indicado manualmente,
+    # se SUMA al costo total de la visita
+    if repuestos_total > 0 and costo is not None:
+        costo += repuestos_total
+    elif repuestos_total > 0 and costo is None:
+        costo = repuestos_total
+
+    # Generar número de OT correlativo
+    numero_ot = _next_ot_number()
 
     # Cargar todos los equipos seleccionados (verificar que pertenecen al cliente)
     placeholders = ",".join(["%s"] * len(mids))
@@ -12379,14 +12484,14 @@ def mant_visita_multi(cid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            # 1. Crear la visita única
+            # 1. Crear la visita única (con número de OT correlativo)
             cur.execute(
                 """INSERT INTO mant_visitas
-                   (cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                   (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
                     tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
                     costo,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
-                (cid, titulo, fecha_prog, hora_inicio, hora_fin,
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
+                (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
                  tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
                  costo, current_username())
             )
@@ -12394,13 +12499,24 @@ def mant_visita_multi(cid):
 
             # 1.b Insertar técnicos asignados (N:N) si hay
             if tecnicos_data:
-                # Cada técnico se carga con su tarifa como costo individual de la visita
                 for t in tecnicos_data:
                     cur.execute(
                         """INSERT INTO mant_visita_tecnicos (visita_id, tecnico_id, costo)
                            VALUES (%s, %s, %s)""",
                         (vid, t["id"], float(t.get("tarifa_visita") or 50000))
                     )
+
+            # 1.c Insertar repuestos asociados a la visita
+            for rp in repuestos:
+                cur.execute(
+                    """INSERT INTO mant_visita_repuestos
+                       (visita_id, sku, producto_id, descripcion, cantidad,
+                        costo_unitario, costo_total, origen, notas)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (vid, rp["sku"], rp["producto_id"], rp["descripcion"],
+                     rp["cantidad"], rp["costo_unitario"], rp["costo_total"],
+                     rp["origen"], rp["notas"])
+                )
 
             # 2. Cambiar estado de los equipos
             cur.execute(
@@ -12422,10 +12538,14 @@ def mant_visita_multi(cid):
         return jsonify({
             "ok": True,
             "visita_id": vid,
+            "numero_ot": numero_ot,
             "equipos_afectados": len(rows),
             "tecnicos_asignados": len(tecnicos_data),
+            "repuestos_count": len(repuestos),
+            "repuestos_total": repuestos_total,
             "costo_calculado": costo,
             "fecha_programada": fecha_prog,
+            "cliente_id": cid,
         })
     except Exception as e:
         try:
@@ -13409,6 +13529,142 @@ def mant_visita_del(vid):
         return jsonify({"ok": True})
     finally:
         conn.close()
+
+
+# ── REPUESTOS DE UNA VISITA ──────────────────────────────────────────
+
+@app.route("/mantenciones/api/visitas/<int:vid>/repuestos", methods=["GET"])
+@_mant_required
+def mant_visita_repuestos_get(vid):
+    rows = mysql_fetchall(
+        "SELECT id, sku, producto_id, descripcion, cantidad, "
+        "       costo_unitario, costo_total, origen, notas "
+        "  FROM mant_visita_repuestos "
+        " WHERE visita_id=%s ORDER BY id",
+        (vid,)
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/productos-search", methods=["GET"])
+@_mant_required
+def mant_productos_search():
+    """
+    Buscador de productos del catálogo local (para repuestos).
+    Busca por SKU o nombre.
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f"%{q}%"
+    # Tabla 'products' es el catálogo de etiquetas/productos local
+    rows = mysql_fetchall(
+        "SELECT sku, nombre, marca, precio_venta "
+        "  FROM products "
+        " WHERE sku LIKE %s OR nombre LIKE %s "
+        " ORDER BY sku LIMIT 15",
+        (like, like)
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+# ── ENVÍO DE EMAIL: visita agendada (con OT) ─────────────────────────
+
+@app.route("/mantenciones/api/visitas/<int:vid>/enviar-email", methods=["POST"])
+@_mant_required
+def mant_visita_enviar_email(vid):
+    """
+    Envía un email al cliente notificando que se agendó la visita,
+    incluyendo el número de OT, fecha, técnicos y costo.
+    Body JSON opcional:
+      destinatario: email (si no se pasa, usa contacto_email del cliente)
+    """
+    d = request.get_json(silent=True) or {}
+    v = mysql_fetchone(
+        """SELECT v.*, c.razon_social, c.contacto_email, c.contacto_nombre,
+                  c.direccion, c.comuna, c.region
+             FROM mant_visitas v
+             JOIN mant_clientes c ON c.id=v.cliente_id
+            WHERE v.id=%s""",
+        (vid,)
+    )
+    if not v:
+        return jsonify({"error": "Visita no encontrada"}), 404
+
+    destinatario = (d.get("destinatario") or v.get("contacto_email") or "").strip()
+    if not destinatario:
+        return jsonify({"error": "El cliente no tiene email registrado. Indica un destinatario."}), 400
+
+    # Cargar técnicos asignados
+    tecs = mysql_fetchall(
+        """SELECT t.nombre, t.especialidad
+             FROM mant_visita_tecnicos vt
+             JOIN mant_tecnicos t ON t.id=vt.tecnico_id
+            WHERE vt.visita_id=%s""",
+        (vid,)
+    ) or []
+    # Repuestos
+    reps = mysql_fetchall(
+        "SELECT descripcion, cantidad, costo_total FROM mant_visita_repuestos WHERE visita_id=%s",
+        (vid,)
+    ) or []
+
+    ot   = v.get("numero_ot") or f"V-{vid:05d}"
+    fecha_str = v["fecha_programada"].strftime("%d/%m/%Y") if v.get("fecha_programada") else "—"
+    horario = ""
+    if v.get("hora_inicio"):
+        h_ini = str(v["hora_inicio"])[:5]
+        h_fin = str(v["hora_fin"])[:5] if v.get("hora_fin") else ""
+        horario = f"{h_ini}{(' – ' + h_fin) if h_fin else ''}"
+    tipo_label = {
+        "preventiva":"Mantención preventiva",
+        "correctiva":"Reparación correctiva",
+        "garantia":"Cambio / Garantía",
+        "inspeccion":"Inspección"
+    }.get(v.get("tipo"), v.get("tipo") or "Visita")
+    tecs_html = ", ".join(t["nombre"] for t in tecs) if tecs else (v.get("tecnico") or "Por asignar")
+    reps_html = ""
+    if reps:
+        reps_html = "<h3 style='margin:18px 0 6px;font-size:14px;color:#0f172a'>Repuestos asociados</h3><ul style='font-size:13px;color:#374151'>"
+        for rp in reps:
+            reps_html += f"<li>{rp['descripcion']} × {rp['cantidad']} — ${int(rp['costo_total'] or 0):,}</li>".replace(",", ".")
+        reps_html += "</ul>"
+    costo_html = ""
+    if v.get("costo"):
+        costo_html = f"<p style='font-size:14px'><strong>Costo estimado:</strong> ${int(v['costo']):,} CLP</p>".replace(",", ".")
+
+    saludo = f"Estimado/a {v.get('contacto_nombre') or v['razon_social']}"
+    body = f"""
+    <p style="font-size:14px;color:#374151">{saludo},</p>
+    <p style="font-size:14px;color:#374151">
+      Le informamos que se ha programado una visita técnica en sus dependencias:
+    </p>
+    <table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px">
+      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">N° de Orden</td>
+          <td style="padding:7px 10px;font-family:monospace;color:#dc2626;font-weight:700">{ot}</td></tr>
+      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Tipo</td>
+          <td style="padding:7px 10px">{tipo_label}</td></tr>
+      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Fecha</td>
+          <td style="padding:7px 10px"><strong>{fecha_str}</strong>{(' · ' + horario) if horario else ''}</td></tr>
+      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Técnico(s)</td>
+          <td style="padding:7px 10px">{tecs_html}</td></tr>
+      {('<tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Dirección</td><td style="padding:7px 10px">' + (v.get('direccion') or '') + ', ' + (v.get('comuna') or '') + '</td></tr>') if v.get('direccion') else ''}
+    </table>
+    {costo_html}
+    {reps_html}
+    <p style="font-size:13px;color:#6b7280;margin-top:18px">
+      Si necesita reagendar o cancelar la visita, por favor responda este correo
+      o comuníquese con su ejecutivo asignado.
+    </p>
+    """
+    asunto = f"Visita técnica programada — {ot} ({fecha_str})"
+    html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
+    ok = _send_ilus_email(destinatario, asunto, html, evento="visita_agendada")
+
+    if ok:
+        _mant_log("visita", vid, "email_enviado", f"a {destinatario} — OT {ot}")
+        return jsonify({"ok": True, "destinatario": destinatario})
+    return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP."}), 500
 
 
 # ── CALENDARIO ────────────────────────────────────────────────────────
