@@ -23,6 +23,17 @@ try:
 except ImportError:
     _ANTHROPIC_KEY_CFG = ""
 
+# ── Motor ERP unificado (cubicador, asignar, retiros, mantenciones, etc.) ──
+import erp_engine
+_ERP = erp_engine.init_engine(
+    base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
+    token=ERP_CONFIG.get("api_token", ""),
+    doc_ttl=90,
+    ent_ttl=300,
+    timeout=6,
+    retries=2,
+)
+
 def _get_ai_key():
     """Resuelve la API key de Anthropic: env var > config.py"""
     return os.environ.get("ANTHROPIC_API_KEY") or _ANTHROPIC_KEY_CFG or ""
@@ -5745,303 +5756,62 @@ def erp_documento_unificado():
 
 def _cubicador_fetch(tido, nudo):
     """
-    Consulta el ERP vía REST API y cruza con nuestra BD local.
-    Retorna (header_dict, lineas_list) o lanza excepción.
+    SHIM de compatibilidad sobre erp_engine.ERPClient.
 
-    Optimizaciones:
-      - Cache en memoria (TTL 90s) para evitar refetch del mismo documento
-      - 1 sola query SQL para TODOS los SKUs (en vez de N queries seriadas)
-      - Fallback robusto para encontrar al cliente cuando ENDO viene vacío
-        (típico en NV directa/web del ERP Random)
+    Delegamos toda la lógica ERP al motor unificado (erp_engine.py) y aquí
+    solo hacemos:
+      1. Llamar al motor → obtener documento + líneas crudas
+      2. Cruzar SKUs con nuestra BD local en UNA query batch (peso/volumen/bultos)
+      3. Devolver (header_dict, lineas_list) en el formato legacy que esperan
+         los templates y los demás callers.
+
+    El motor maneja: variantes NUDO, variantes RUT en paralelo, fallback a
+    /entidades por nombre cuando RUT no resuelve, caché, retry, logger,
+    resolución de comuna desde código, normalización de teléfono, etc.
+
+    Cualquier módulo nuevo (retiros, mantenciones, etc.) debe llamar
+    directamente a `erp_engine.get_client().fetch_document(tido, nudo)` y
+    no a esta función — esto es solo para mantener la API legacy.
     """
-    from datetime import datetime as _dt
-    import time as _time
+    # 1. Llamar al motor unificado
+    try:
+        doc = _ERP.fetch_document(tido, nudo)
+    except Exception as e:
+        # Re-raise para que el caller maneje (ConnectionError típico)
+        raise
 
-    TOKEN = ERP_CONFIG.get("api_token", "")
-
-    # ── Mapear VD/WEB → TIDO=NVV con NUDO prefijado (ej. VD00008827) ──
-    display_tido = tido
-    if tido in _ERP_TIDO_NUDO_MAP:
-        erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
-        erp_nudo = nudo_fn(nudo)
-    else:
-        erp_tido = tido
-        erp_nudo = str(nudo).strip()
-
-    # ── CACHE: si el mismo doc fue consultado hace <90s, devolverlo ──
-    cache_key = f"{tido}|{nudo}"
-    now_ts = _time.time()
-    cached = _ERP_DOC_CACHE.get(cache_key)
-    if cached and (now_ts - cached[0]) < _ERP_DOC_CACHE_TTL:
-        return cached[1], cached[2]
-
-    nudos = _nudo_variants(erp_nudo)
-
-    # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
-    # Timeout reducido a 6s — si Random no responde en 6s, mejor que falle rápido
-    # y el operador reintente, en vez de tener al usuario esperando 8-12s.
-    raw_header = None
-    raw_lineas = []
-    last_err = None
-    for nv in nudos:
-        try:
-            body = _erp_get(
-                "/documentos/render",
-                {"tido": erp_tido, "nudo": nv, "empresa": "01"},
-                TOKEN, timeout=6,
-            )
-            data = body.get("data") or []
-            if data:
-                raw_header = data[0].get("maeedo") or {}
-                raw_lineas = data[0].get("maeddo") or []
-                break
-        except Exception as api_err:
-            last_err = api_err
-            continue   # probar la siguiente variante de NUDO antes de rendirse
-
-    if not raw_header:
-        if last_err:
-            raise ConnectionError(f"ERP no respondió ({last_err}). Reintenta.")
+    if not doc:
         return None, []
 
-    # ── 2. Datos completos del cliente (entidades) ─────────────────────
-    # Para NV (VD/WEB) y algunos documentos del ERP Random los campos
-    # cambian de nombre. Probamos MUCHAS variantes para maximizar la
-    # captura de datos sin importar el tipo de documento.
+    raw_lineas = doc.get("lineas_raw") or []
 
-    # Helper para buscar valor entre múltiples claves del header
-    def _hdr(*keys):
-        for k in keys:
-            v = raw_header.get(k) or raw_header.get(k.lower())
-            if v and str(v).strip():
-                return str(v).strip()
-        return ""
-
-    # RUT del cliente — buscar en muchos campos posibles
-    endo = _hdr(
-        "ENDO", "RTEN", "RUT", "CLEN",
-        "ENDODESP", "RTENDESP",
-        "RTENDO", "RUTEN", "RUTEMP",        # variantes adicionales
-        "RUTCLI", "ENDOFAC", "ENDOEMI",     # más variantes
-    )
-
-    cliente_nombre  = ""
-    cliente_rut     = endo
-    cliente_email   = ""
-    cliente_telefono = ""
-    cliente_direccion_base = ""
-    cliente_cmen    = ""
-    cliente_cien    = ""
-    cliente_obs     = ""
-    cliente_comuna_nombre = ""
-
-    # ── FALLBACKS DEL HEADER (para NV/ventas directas/web) ──────────────
-    header_nombre = _hdr(
-        "NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL",
-        "NRAZONSOC", "NRAZONFINAL", "RAZON",
-        "NOKEN", "NOKO", "NOMBRE", "NOMENDO",
-    ).title() if _hdr("NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL", "NRAZONSOC", "NRAZONFINAL", "RAZON", "NOKEN", "NOKO", "NOMBRE", "NOMENDO") else ""
-
-    header_email = _hdr(
-        "EMAIL", "EMAILEN", "EMAILCOMER", "MAIL", "MAILEN",
-        "CORREO", "EMAILCLI", "EMAILDESP", "MAILCOMERCIAL",
-    )
-    header_fono = _hdr(
-        "FOEN", "FONOEN", "TELEFONOEN", "FONO", "TEL",
-        "TELEFONO", "FONOMOVIL", "CELULAR", "FAEN",
-    )
-    header_dir = _hdr(
-        "DIEN", "DIRECEN", "DIRECCION", "DIENDESP", "DIENDE",
-        "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP",
-    ).title() if _hdr("DIEN", "DIRECEN", "DIRECCION", "DIENDESP", "DIENDE", "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP") else ""
-
-    header_obs = _hdr(
-        "OBEN", "OBENEN", "OBDO", "OBSERVA", "OBSERVACIONES",
-        "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO", "OBSERVACION",
-        "REFERENCIA", "DETOFE",
-    )
-
-    # ★★★ NUEVO: Datos del cliente desde las LÍNEAS (maeddo) ★★★
-    # En el ERP Random, NOKOEN, DIEN, COMUNA, OBDO vienen embebidos en
-    # las primeras líneas del documento (todas las líneas tienen los
-    # mismos datos del cliente). Esto es lo que descubrimos al revisar
-    # el export Excel del ERP — el header solo trae ENDO (rut) y datos
-    # del documento; el resto está en las líneas.
-    line_nombre = ""
-    line_dir    = ""
-    line_comuna = ""
-    line_obs    = ""
-    line_zona   = ""
-    if raw_lineas:
-        # Buscar la primera línea con datos no vacíos (puede haber líneas
-        # de servicio o ZZ envío sin estos campos)
-        for ln in raw_lineas:
-            if not line_nombre:
-                line_nombre = (ln.get("NOKOEN") or "").strip().title()
-            if not line_dir:
-                line_dir = (ln.get("DIEN") or "").strip().title()
-            if not line_comuna:
-                # Random a veces guarda COMUNA como código (CEI) o como nombre (CERRILLOS)
-                line_comuna = (ln.get("COMUNA") or "").strip()
-            if not line_obs:
-                line_obs = (ln.get("OBDO") or ln.get("OBSERVA") or ln.get("OBSERVACION") or "").strip()
-            if not line_zona:
-                line_zona = (ln.get("NOKOZO") or "").strip()
-
-    # Aplicar datos de las líneas como fallback si el header no los trajo
-    header_nombre = header_nombre or line_nombre
-    header_dir    = header_dir    or line_dir
-    header_obs    = header_obs    or line_obs
-
-    if endo:
-        # Cache de entidades (TTL 5 min)
-        ent_cached = _ERP_ENT_CACHE.get(endo)
-        if ent_cached and (now_ts - ent_cached[0]) < _ERP_ENT_CACHE_TTL:
-            e = ent_cached[1]
-        else:
-            # ★★★ Probar VARIANTES del RUT EN PARALELO — el ERP Random no
-            # acepta el mismo formato siempre. Probamos varias variantes en
-            # paralelo y la primera respuesta válida gana.
-            e = None
-            rut_clean = endo.replace(".", "").replace("-", "").strip().upper()
-            rut_variants = [endo]
-            if "-" in endo:
-                rut_variants.append(rut_clean)
-                if rut_clean and rut_clean[-1] in "0123456789K":
-                    rut_variants.append(rut_clean[:-1])
-                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])
-            else:
-                rut_variants.append(rut_clean)
-                if rut_clean and len(rut_clean) >= 8:
-                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])
-            seen = set()
-            rut_variants = [r for r in rut_variants if r and not (r in seen or seen.add(r))]
-
-            # Lanzar las variantes en paralelo con un thread pool
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            def _try_rut(rv):
-                try:
-                    body = _erp_get("/entidades", {"rten": rv}, TOKEN, timeout=3)
-                    data = body.get("data") or []
-                    return (rv, data[0]) if data else None
-                except Exception:
-                    return None
-            with ThreadPoolExecutor(max_workers=min(4, len(rut_variants))) as pool:
-                futures = [pool.submit(_try_rut, rv) for rv in rut_variants]
-                for fut in as_completed(futures, timeout=5):
-                    result = fut.result()
-                    if result:
-                        _, e = result
-                        _ERP_ENT_CACHE[endo] = (now_ts, e)
-                        # Cancelar las demás
-                        for f in futures:
-                            f.cancel()
-                        break
-        if e:
-            cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
-            cliente_rut      = (e.get("RTEN")   or endo).strip()
-            cliente_email    = (e.get("EMAIL") or e.get("EMAILCOMER") or "").strip()
-            raw_fono = (e.get("FOEN") or e.get("FAEN") or "").strip()
-            cliente_telefono = _normalize_phone_cl(raw_fono)
-            cliente_direccion_base = (e.get("DIEN") or "").strip().title()
-            cliente_cien     = (e.get("CIEN") or "").strip()
-            cliente_cmen     = (e.get("CMEN") or "").strip()
-            cliente_obs      = (e.get("OBEN") or "").strip()
-            cliente_comuna_nombre = _cmen_to_comuna(cliente_cien, cliente_cmen)
-
-    # ── Fallbacks: si /entidades no respondió, usar lo que vino en el header
-    cliente_nombre   = cliente_nombre   or header_nombre
-    cliente_email    = cliente_email    or header_email
-    cliente_telefono = cliente_telefono or _normalize_phone_cl(header_fono)
-    cliente_direccion_base = cliente_direccion_base or header_dir
-    cliente_obs      = cliente_obs      or header_obs
-
-    # ── 3. Formatear fecha ─────────────────────────────────────────────
-    fecha_raw = raw_header.get("FEEMDO", "")
-    try:
-        fecha = _dt.fromisoformat(fecha_raw.replace("Z", "+00:00")).strftime("%d/%m/%Y")
-    except Exception:
-        fecha = fecha_raw
-
-    # Dirección de despacho (del documento, tiene prioridad sobre la del cliente)
-    dir_despacho = (raw_header.get("DIENDESP") or raw_header.get("DIENDE") or
-                    raw_header.get("OBDO") or "").strip()
-    # Si el doc no trae dirección de despacho, usar la del cliente
-    direccion_final = dir_despacho or cliente_direccion_base
-
-    # Comuna del doc (tiene prioridad); si no, la del cliente.
-    # ★ Las NV/FCV del Random traen COMUNA en las LÍNEAS, no en el header
-    comuna_doc = (raw_header.get("NOKOZO") or raw_header.get("NOKOCOMU") or
-                  raw_header.get("NOKOCOMUNADE") or raw_header.get("NOKOMUENDE") or
-                  raw_header.get("NOKOMUNEN") or raw_header.get("NOKCOMENDESP") or "").strip()
-    # Resolver código de comuna a nombre completo
-    # line_comuna puede venir como código (CEI) o nombre (CERRILLOS).
-    # Si es código (3 letras mayúsculas), convertimos a nombre.
-    def _resolve_comuna(val):
-        if not val:
-            return ""
-        s = str(val).strip()
-        # Si parece código (3 chars todas mayúsculas), buscar en map
-        if len(s) <= 4 and s.upper() == s and s.isalpha():
-            resolved = _cmen_to_comuna("013", s.upper())
-            if resolved and resolved != s:
-                return resolved
-            # Probar todas las regiones
-            for cien in _CMEN_MAP.keys():
-                r = _cmen_to_comuna(cien, s.upper())
-                if r and r != s:
-                    return r
-        return s.title() if s.upper() == s else s
-
-    comuna_final = (_resolve_comuna(comuna_doc) or _resolve_comuna(line_comuna)
-                    or cliente_comuna_nombre or _resolve_comuna(line_zona))
-
-    # ── DEBUG SAMPLE: SIEMPRE devolvemos un snapshot del header crudo
-    # + primera línea cruda para que el frontend pueda mostrar al admin
-    # qué campos vienen del ERP. Esto permite diagnosticar problemas de
-    # mapeo (ej. observaciones en campos distintos a OBDO).
-    raw_sample = {}
-    for k, v in (raw_header or {}).items():
-        if v is None: continue
-        sv = str(v).strip()
-        if sv and sv not in ("0", "0.0", "0.00", "False"):
-            raw_sample[k] = sv[:200]
-
-    # Primera línea cruda (los campos del cliente y observaciones suelen
-    # estar aquí, no en el header)
-    raw_linea_sample = {}
-    if raw_lineas:
-        for k, v in raw_lineas[0].items():
-            if v is None: continue
-            sv = str(v).strip()
-            if sv and sv not in ("0", "0.0", "0.00", "False"):
-                raw_linea_sample[k] = sv[:200]
-
-    _nudo_str = str(raw_header.get("NUDO", erp_nudo) or erp_nudo)
+    # 2. Construir header legacy desde el doc del motor (compat con templates)
     header = {
-        "tido":             display_tido,
-        "nudo":             str(nudo),
-        "nudo_display":     str(nudo).lstrip("0") or str(nudo),
-        "fecha":            fecha,
-        "valor_neto":       float(raw_header.get("VANEDO") or 0),
-        "valor_iva":        float(raw_header.get("VAIVDO") or 0),
-        "valor_bruto":      float(raw_header.get("VABRDO") or 0),
-        "cliente_nombre":   cliente_nombre,
-        "cliente_rut":      cliente_rut,
-        # Campos de contacto enriquecidos desde /entidades
-        "email":            cliente_email,
-        "telefono":         cliente_telefono,
-        "direccion":        direccion_final,
-        "comuna":           comuna_final,
-        "observaciones":    cliente_obs,
-        "all_fields":       list(raw_header.keys()),   # para debug
-        "raw_sample":       raw_sample,                # campos no-vacíos del header
-        "raw_linea_sample": raw_linea_sample,          # campos no-vacíos primera línea
-        "n_lineas":         len(raw_lineas or []),
-        "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
+        "tido":             doc.get("tido"),
+        "nudo":             doc.get("nudo"),
+        "nudo_display":     doc.get("nudo_display"),
+        "fecha":            doc.get("fecha"),
+        "valor_neto":       doc.get("valor_neto"),
+        "valor_iva":        doc.get("valor_iva"),
+        "valor_bruto":      doc.get("valor_bruto"),
+        "cliente_nombre":   doc.get("cliente_nombre"),
+        "cliente_rut":      doc.get("cliente_rut"),
+        # Campos de contacto enriquecidos desde /entidades (motor)
+        "email":            doc.get("email"),
+        "telefono":         doc.get("telefono"),
+        "direccion":        doc.get("direccion"),
+        "comuna":           doc.get("comuna"),
+        "observaciones":    doc.get("observaciones"),
+        # Diagnóstico para el frontend (botón "Diagnosticar ERP")
+        "all_fields":       doc.get("all_fields", []),
+        "raw_sample":       doc.get("raw_sample", {}),
+        "raw_linea_sample": doc.get("raw_linea_sample", {}),
+        "n_lineas":         doc.get("n_lineas", 0),
+        "datos_completos":  doc.get("datos_completos", False),
+        "diagnostics":      doc.get("diagnostics", {}),  # nudo_tried, rut_tried, latency_ms
     }
 
-    # ── 4. Cruzar líneas con BD local (bultos/peso) — BATCH SQL ────────
+    # ── Cruzar líneas con BD local (bultos/peso) — BATCH SQL ───────────
     # OPTIMIZACIÓN: una sola query con WHERE sku IN (...) para todos los
     # SKUs del documento. Antes hacíamos N queries seriadas (lento en docs
     # con muchos productos).
@@ -6123,13 +5893,9 @@ def _cubicador_fetch(tido, nudo):
             "vaneli":              float(l.get("VANELI") or 0),
         })
 
-    # Cachear resultado para próximas búsquedas del mismo doc
-    _ERP_DOC_CACHE[cache_key] = (now_ts, header, lineas)
-    # Limpieza periódica del cache si crece mucho
-    if len(_ERP_DOC_CACHE) > 200:
-        cutoff = now_ts - _ERP_DOC_CACHE_TTL
-        for k in [k for k, (t, *_r) in _ERP_DOC_CACHE.items() if t < cutoff]:
-            _ERP_DOC_CACHE.pop(k, None)
+    # NOTA: La caché del documento la maneja erp_engine.ERPClient internamente.
+    # _ERP_DOC_CACHE (legacy) se mantiene como dict vacío para compat con
+    # cualquier código que pudiera consultarlo, pero no se usa aquí.
 
     return header, lineas
 
