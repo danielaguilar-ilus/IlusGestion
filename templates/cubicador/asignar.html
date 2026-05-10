@@ -383,12 +383,26 @@
     <div class="ac-card" id="cardDatos" style="display:none">
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">2</span>Datos del Documento</div>
-        <span style="font-size:.68rem;color:#555">
-          <i class="bi bi-pencil-square me-1"></i>Campos editables activos
-        </span>
+        <div class="d-flex align-items-center gap-2">
+          <button type="button" id="btnDiag" onclick="toggleDiagPanel()"
+                  style="background:transparent;border:1px solid #475569;color:#cbd5e1;
+                         padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer"
+                  title="Ver campos crudos del ERP — útil para diagnóstico">
+            <i class="bi bi-bug me-1"></i>Diagnosticar ERP
+          </button>
+          <button type="button" onclick="exportarDocumento()"
+                  style="background:#dc2626;border:none;color:#fff;
+                         padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer;font-weight:700"
+                  title="Generar informe del documento">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Exportar
+          </button>
+          <span style="font-size:.68rem;color:#9ca3af">
+            <i class="bi bi-pencil-square me-1"></i>Campos editables activos
+          </span>
+        </div>
       </div>
       <div class="ac-card-body">
-        {# Panel de diagnóstico ERP — solo aparece cuando faltan datos clave #}
+        {# Panel de diagnóstico ERP — siempre disponible vía botón #}
         <div id="panelDiagnostico"></div>
         <div class="client-grid" id="clientGrid">
 
@@ -956,15 +970,150 @@ function copiarDiagnostico(){
   const d = window._lastRawSample;
   if (!d){ alert('No hay diagnóstico disponible'); return; }
   const txt = `DIAGNÓSTICO ERP — Documento ${d.tido} ${d.nudo}\n\n` +
-              `Campos disponibles en el header (${d.all_fields.length}):\n` +
-              d.all_fields.join(', ') + '\n\n' +
-              `Datos no vacíos:\n` +
-              Object.entries(d.raw).map(([k,v]) => `  ${k}: ${v}`).join('\n');
+              `HEADER (${d.all_fields.length} campos disponibles):\n` +
+              Object.entries(d.raw || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n') +
+              '\n\nPRIMERA LÍNEA (campos no vacíos):\n' +
+              Object.entries(d.raw_linea || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n');
   navigator.clipboard.writeText(txt).then(() => {
     alert('Diagnóstico copiado al portapapeles. Pégalo en un mensaje al admin.');
   }).catch(() => {
     prompt('Copia este texto y pégalo al admin:', txt);
   });
+}
+
+// Toggle del panel de diagnóstico (siempre disponible vía botón)
+function toggleDiagPanel(){
+  if (!_docData){ alert('Primero busca un documento'); return; }
+  const h = _docData.header || {};
+  const panel = document.getElementById('panelDiagnostico');
+  if (panel.dataset.shown === '1'){
+    panel.innerHTML = '';
+    panel.dataset.shown = '0';
+    return;
+  }
+  panel.dataset.shown = '1';
+  const rawHdr = h.raw_sample || {};
+  const rawLin = h.raw_linea_sample || {};
+  const itemsHdr = Object.entries(rawHdr)
+    .map(([k,v]) => `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #f3f4f6;font-size:.74rem">
+      <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#dc2626;flex-shrink:0;min-width:130px">${k}</code>
+      <span style="color:#374151;word-break:break-word">${String(v)}</span>
+    </div>`).join('');
+  const itemsLin = Object.entries(rawLin)
+    .map(([k,v]) => `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #f3f4f6;font-size:.74rem">
+      <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#1e40af;flex-shrink:0;min-width:130px">${k}</code>
+      <span style="color:#374151;word-break:break-word">${String(v)}</span>
+    </div>`).join('');
+  window._lastRawSample = { tido: h.tido, nudo: h.nudo, raw: rawHdr, raw_linea: rawLin, all_fields: h.all_fields || [] };
+  panel.innerHTML = `
+    <div style="background:#f0f9ff;border:2px solid #7dd3fc;border-radius:10px;padding:14px 16px;margin-bottom:14px">
+      <strong style="color:#075985;display:block;margin-bottom:8px">
+        <i class="bi bi-bug me-1"></i>Diagnóstico ERP · ${h.tido || ''} ${h.nudo || ''}
+        ${h.datos_completos ? '<span style="background:#16a34a;color:#fff;padding:1px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:8px">DATOS COMPLETOS</span>' : '<span style="background:#dc2626;color:#fff;padding:1px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:8px">FALTAN DATOS</span>'}
+      </strong>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div>
+          <strong style="font-size:.78rem;color:#075985;display:block;margin-bottom:6px">📋 HEADER (${Object.keys(rawHdr).length} campos)</strong>
+          <div style="background:#fff;border-radius:6px;padding:8px 10px;max-height:280px;overflow-y:auto">${itemsHdr || '<em style="color:#9ca3af">Sin campos</em>'}</div>
+        </div>
+        <div>
+          <strong style="font-size:.78rem;color:#075985;display:block;margin-bottom:6px">📦 PRIMERA LÍNEA (${Object.keys(rawLin).length} campos · ${h.n_lineas||0} totales)</strong>
+          <div style="background:#fff;border-radius:6px;padding:8px 10px;max-height:280px;overflow-y:auto">${itemsLin || '<em style="color:#9ca3af">Sin líneas</em>'}</div>
+        </div>
+      </div>
+      <button type="button" onclick="copiarDiagnostico()" style="margin-top:10px;background:#075985;color:#fff;border:none;padding:5px 14px;border-radius:6px;font-size:.74rem;cursor:pointer;font-weight:700">
+        <i class="bi bi-clipboard me-1"></i>Copiar diagnóstico completo
+      </button>
+    </div>
+  `;
+}
+
+// Exporta el documento actual como HTML imprimible (PDF vía Ctrl+P)
+function exportarDocumento(){
+  if (!_docData){ alert('Primero busca un documento'); return; }
+  const h = _docData.header || {};
+  const d = _docData;
+  const tot = d.totales || {};
+  const lineas = d.lineas || [];
+  const fmt = v => (v||0).toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0});
+  const fClp = v => '$' + fmt(Math.round(v||0));
+
+  const win = window.open('', '_blank');
+  const html = `<!doctype html><html><head><meta charset="utf-8">
+<title>Documento ${h.tido} ${h.nudo} — ${h.cliente_nombre||''}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#0a0a0a;padding:30px;max-width:900px;margin:auto}
+.hdr{display:flex;justify-content:space-between;align-items:start;border-bottom:3px solid #dc2626;padding-bottom:14px;margin-bottom:20px}
+.hdr h1{margin:0;font-size:1.6rem;color:#dc2626;letter-spacing:-.01em}
+.hdr .meta{text-align:right;font-size:.84rem;color:#6b7280}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.info-cell{background:#f9fafb;border-radius:8px;padding:10px 14px;border-left:3px solid #dc2626}
+.info-cell .lbl{font-size:.65rem;text-transform:uppercase;color:#6b7280;font-weight:700;letter-spacing:.06em;margin-bottom:3px}
+.info-cell .val{font-size:.95rem;font-weight:700;color:#0a0a0a}
+table{width:100%;border-collapse:collapse;font-size:.84rem;margin-bottom:20px}
+table th{background:#0f172a;color:#fff;padding:8px 10px;text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
+.totales{background:#0f172a;color:#fff;padding:14px 18px;border-radius:8px;display:flex;justify-content:space-around}
+.totales > div{text-align:center}
+.totales .lbl{font-size:.65rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em}
+.totales .val{font-size:1.25rem;font-weight:900;margin-top:3px}
+.totales .val.red{color:#fee2e2}
+.footer{margin-top:30px;padding-top:14px;border-top:1px solid #e5e7eb;text-align:center;font-size:.75rem;color:#6b7280}
+@media print{body{padding:18px}}
+</style></head><body>
+<div class="hdr">
+  <div>
+    <h1>${h.tido||''} ${h.nudo_display||h.nudo||''}</h1>
+    <div style="color:#6b7280;font-size:.86rem">Fecha emisión: <strong>${h.fecha||'—'}</strong></div>
+  </div>
+  <div class="meta">
+    <div style="font-size:1.2rem;font-weight:900;color:#0a0a0a">ILUS</div>
+    <div>Sport and Health Solutions SPA</div>
+    <div>Bodega Quilicura</div>
+  </div>
+</div>
+
+<div class="info-grid">
+  <div class="info-cell"><div class="lbl">Cliente</div><div class="val">${h.cliente_nombre||'—'}</div></div>
+  <div class="info-cell"><div class="lbl">RUT</div><div class="val">${h.cliente_rut||'—'}</div></div>
+  <div class="info-cell"><div class="lbl">Email</div><div class="val">${h.email||'—'}</div></div>
+  <div class="info-cell"><div class="lbl">Teléfono</div><div class="val">${h.telefono||'—'}</div></div>
+  <div class="info-cell" style="grid-column:span 2"><div class="lbl">Dirección de despacho</div><div class="val">${h.direccion||'—'}</div></div>
+  <div class="info-cell"><div class="lbl">Comuna</div><div class="val">${h.comuna||'—'}</div></div>
+  <div class="info-cell"><div class="lbl">Valor neto</div><div class="val">${fClp(h.valor_neto)}</div></div>
+  ${h.observaciones ? `<div class="info-cell" style="grid-column:span 2;background:#fff7ed;border-left-color:#f59e0b"><div class="lbl">Observaciones</div><div class="val">${h.observaciones}</div></div>` : ''}
+</div>
+
+<table>
+  <thead><tr><th>SKU</th><th>Producto</th><th style="text-align:right">Cant</th><th style="text-align:right">Bultos</th><th style="text-align:right">Peso real (kg)</th><th style="text-align:right">Peso vol (kg)</th><th style="text-align:right">Predominante</th></tr></thead>
+  <tbody>
+    ${lineas.map(l => `<tr>
+      <td style="font-family:monospace;color:#dc2626">${l.sku||''}</td>
+      <td>${l.descripcion_erp||''}</td>
+      <td style="text-align:right">${l.cantidad}</td>
+      <td style="text-align:right">${l.bultos_tot||0}</td>
+      <td style="text-align:right">${(l.peso_kg_u*l.cantidad).toFixed(2)}</td>
+      <td style="text-align:right">${(l.peso_vol_u*l.cantidad).toFixed(2)}</td>
+      <td style="text-align:right;font-weight:700;color:#dc2626">${(l.pred_tot||0).toFixed(2)} kg</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+<div class="totales">
+  <div><div class="lbl">Cantidad</div><div class="val">${tot.total_qty||0}</div></div>
+  <div><div class="lbl">Bultos</div><div class="val">${tot.total_bultos||0}</div></div>
+  <div><div class="lbl">Peso real</div><div class="val">${(tot.peso_kg||0).toFixed(2)} kg</div></div>
+  <div><div class="lbl">Peso volumétrico</div><div class="val">${(tot.peso_pv||0).toFixed(2)} kg</div></div>
+  <div><div class="lbl">Predominante</div><div class="val red">${(tot.peso_pred||0).toFixed(2)} kg</div></div>
+</div>
+
+<div class="footer">
+  Generado ${new Date().toLocaleString('es-CL')} · ILUS Sport and Health Solutions
+</div>
+<script>setTimeout(()=>window.print(),300);</script>
+</body></html>`;
+  win.document.write(html);
+  win.document.close();
 }
 
 async function buscarDoc(){

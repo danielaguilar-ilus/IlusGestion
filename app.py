@@ -5473,11 +5473,39 @@ _REGION_NOMBRES: dict = {
 def _nudo_variants(nudo_raw):
     """
     El ERP guarda NUDO como string de 10 chars con ceros a la izquierda.
-    Devuelve lista de variantes a probar: ['0000009344', '9344', ...]
+    Devuelve lista de variantes a probar.
+
+    Casos especiales:
+    - NV WEB: prefijo "WEB" + 7 dígitos (ej. WEB0021756)
+    - NV directa: prefijo "VD" + 8 dígitos (ej. VD00009344)
+    - Otros docs: solo zfill a 10
+
+    Si el NUDO ya tiene letras (prefijo), respetamos el prefijo y
+    ajustamos solo el padding de los dígitos.
     """
     s = str(nudo_raw).strip()
-    padded = s.zfill(10)
-    return list(dict.fromkeys([padded, s]))   # únicos, preservando orden
+    if not s:
+        return []
+
+    # Separar prefijo alfa (si existe) de la parte numérica
+    import re as _re
+    m = _re.match(r"^([A-Za-z]*)(\d+)$", s)
+    if m:
+        prefix, num = m.group(1).upper(), m.group(2)
+        variants = [
+            prefix + num.zfill(10 - len(prefix)),     # padding al total 10
+            prefix + num.zfill(7),                     # WEB+7 dígitos (típico)
+            prefix + num.zfill(8),                     # VD+8 dígitos
+            prefix + num.zfill(6),
+            prefix + num,                              # sin padding
+            num.zfill(10),                             # sin prefijo, padded
+            num,                                       # tal cual
+        ]
+    else:
+        # NUDO puramente numérico (factura, boleta, etc.)
+        variants = [s.zfill(10), s, s.zfill(8), s.zfill(7)]
+
+    return list(dict.fromkeys(variants))
 
 
 def _erp_get(path, params, token, timeout=10):
@@ -5968,17 +5996,26 @@ def _cubicador_fetch(tido, nudo):
     comuna_final = (_resolve_comuna(comuna_doc) or _resolve_comuna(line_comuna)
                     or cliente_comuna_nombre or _resolve_comuna(line_zona))
 
-    # ── DEBUG SAMPLE: si los campos clave vienen vacíos, devolvemos un
-    # snapshot del header crudo (filtrado a strings no vacías) para que el
-    # frontend pueda mostrar AL MENOS lo que sí trae el ERP. Esto es el
-    # último recurso para no quedarnos sin info de cliente.
+    # ── DEBUG SAMPLE: SIEMPRE devolvemos un snapshot del header crudo
+    # + primera línea cruda para que el frontend pueda mostrar al admin
+    # qué campos vienen del ERP. Esto permite diagnosticar problemas de
+    # mapeo (ej. observaciones en campos distintos a OBDO).
     raw_sample = {}
-    if not (cliente_nombre and cliente_rut and (cliente_email or cliente_telefono)):
-        for k, v in (raw_header or {}).items():
+    for k, v in (raw_header or {}).items():
+        if v is None: continue
+        sv = str(v).strip()
+        if sv and sv not in ("0", "0.0", "0.00", "False"):
+            raw_sample[k] = sv[:200]
+
+    # Primera línea cruda (los campos del cliente y observaciones suelen
+    # estar aquí, no en el header)
+    raw_linea_sample = {}
+    if raw_lineas:
+        for k, v in raw_lineas[0].items():
             if v is None: continue
             sv = str(v).strip()
             if sv and sv not in ("0", "0.0", "0.00", "False"):
-                raw_sample[k] = sv[:200]   # truncar valores largos
+                raw_linea_sample[k] = sv[:200]
 
     _nudo_str = str(raw_header.get("NUDO", erp_nudo) or erp_nudo)
     header = {
@@ -5999,6 +6036,8 @@ def _cubicador_fetch(tido, nudo):
         "observaciones":    cliente_obs,
         "all_fields":       list(raw_header.keys()),   # para debug
         "raw_sample":       raw_sample,                # campos no-vacíos del header
+        "raw_linea_sample": raw_linea_sample,          # campos no-vacíos primera línea
+        "n_lineas":         len(raw_lineas or []),
         "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
     }
 
