@@ -708,50 +708,85 @@
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabLog">
       <div class="card shadow-sm border-0">
-        <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+        <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2"
+             style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
           <span class="fw-bold">
             <i class="bi bi-list-ul me-2 text-danger"></i>Historial de envíos (últimos 80)
           </span>
+          <div class="d-flex gap-2">
+            <input type="text" id="logFilter" class="form-control form-control-sm"
+                   placeholder="Buscar destinatario/asunto..."
+                   style="max-width:240px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                   oninput="filterLogRows(this.value)">
+            <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light fw-bold">
+              <i class="bi bi-arrows-fullscreen me-1"></i>Ver log completo + filtros
+            </a>
+          </div>
         </div>
         <div class="card-body p-0">
+          <style>
+            .log-tab-table{font-size:.84rem}
+            .log-tab-table thead th{padding:11px 12px;font-size:.66rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.06em;color:#6b7280;
+              background:#f9fafb;border-bottom:2px solid #e5e7eb}
+            .log-tab-table tbody td{padding:10px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+            .log-tab-table tbody tr:hover{background:#fafafa}
+            .log-date-cell{white-space:nowrap;font-family:monospace}
+            .log-date-cell .ldc-d{font-weight:700;color:#0f172a;font-size:.82rem;display:block}
+            .log-date-cell .ldc-h{color:#6b7280;font-size:.72rem}
+            .log-channel-pill{padding:3px 9px;border-radius:50px;font-size:.65rem;font-weight:700;display:inline-flex;align-items:center;gap:4px}
+            .log-channel-pill.email{background:#dbeafe;color:#1e40af}
+            .log-channel-pill.wa{background:#dcfce7;color:#166534}
+            .log-status-pill{padding:3px 10px;border-radius:50px;font-size:.66rem;font-weight:800;letter-spacing:.04em}
+            .log-status-pill.ok{background:#dcfce7;color:#166534}
+            .log-status-pill.fail{background:#fee2e2;color:#991b1b}
+          </style>
           <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem">
-              <thead class="table-dark">
+            <table class="table mb-0 log-tab-table" id="logHistorialTable">
+              <thead>
                 <tr>
-                  <th>Fecha</th>
+                  <th><i class="bi bi-calendar3 me-1"></i>Fecha</th>
                   <th>Canal</th>
                   <th>Destinatario</th>
-                  <th>Asunto / Body</th>
+                  <th>Asunto / Mensaje</th>
                   <th class="text-center">Estado</th>
                   <th>Enviado por</th>
                 </tr>
               </thead>
               <tbody>
                 {% for l in log_rows %}
-                <tr>
-                  <td class="text-muted" style="white-space:nowrap" title="Hora local Santiago de Chile">
-                    {{ l.created_at.strftime('%d/%m/%Y %H:%M') if l.created_at else '—' }}
+                {% set _ts = l.created_at|to_chile if l.created_at else None %}
+                <tr data-search="{{ ((l.destinatario or '') ~ ' ' ~ (l.asunto or '') ~ ' ' ~ (l.enviado_por or ''))|lower }}">
+                  <td class="log-date-cell" title="Hora local Chile">
+                    {% if _ts %}
+                      <span class="ldc-d">{{ _ts.strftime('%d/%m/%Y') if _ts.__class__.__name__ == 'datetime' else l.created_at|string|truncate(10,True,'') }}</span>
+                      <span class="ldc-h">{{ _ts.strftime('%H:%M:%S') if _ts.__class__.__name__ == 'datetime' else '' }}</span>
+                    {% else %}—{% endif %}
                   </td>
                   <td>
                     {% if l.canal == 'email' %}
-                      <span class="badge bg-primary"><i class="bi bi-envelope me-1"></i>Email</span>
+                      <span class="log-channel-pill email"><i class="bi bi-envelope"></i>Email</span>
                     {% else %}
-                      <span class="badge bg-success"><i class="bi bi-whatsapp me-1"></i>WA</span>
+                      <span class="log-channel-pill wa"><i class="bi bi-whatsapp"></i>WA</span>
                     {% endif %}
                   </td>
-                  <td class="font-monospace" style="font-size:.75rem">{{ l.destinatario or '—' }}</td>
-                  <td>{{ (l.asunto or '—')[:60] }}</td>
+                  <td class="font-monospace" style="font-size:.78rem;font-weight:600">{{ l.destinatario or '—' }}</td>
+                  <td title="{{ l.asunto or '' }}" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ (l.asunto or '—')[:80] }}</td>
                   <td class="text-center">
                     {% if l.estado == 'ok' %}
-                      <span class="badge bg-success">OK</span>
+                      <span class="log-status-pill ok"><i class="bi bi-check-circle-fill me-1"></i>OK</span>
                     {% else %}
-                      <span class="badge bg-danger" title="{{ l.detalle or '' }}">Error</span>
+                      <span class="log-status-pill fail" title="{{ l.detalle or '' }}"><i class="bi bi-x-circle-fill me-1"></i>Error</span>
                     {% endif %}
                   </td>
-                  <td class="text-muted" style="font-size:.75rem">{{ l.enviado_por or '—' }}</td>
+                  <td class="text-muted" style="font-size:.75rem">
+                    <span style="background:#f3f4f6;padding:2px 7px;border-radius:50px">{{ l.enviado_por or '—' }}</span>
+                  </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-4">Sin registros de envíos aún.</td></tr>
+                <tr><td colspan="6" class="text-center text-muted py-4">
+                  <i class="bi bi-envelope-x me-1"></i>Sin registros de envíos aún
+                </td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -762,6 +797,19 @@
 
   </div>{# /tab-content #}
 </div>{# /container #}
+
+<script>
+// Filtro client-side del log historial
+function filterLogRows(q){
+  const txt = (q || '').toLowerCase().trim();
+  const tbody = document.querySelector('#logHistorialTable tbody');
+  if (!tbody) return;
+  Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
+    const data = tr.dataset.search || '';
+    tr.style.display = (!txt || data.includes(txt)) ? '' : 'none';
+  });
+}
+</script>
 
 
 {# ══════════════════════════════════════════════

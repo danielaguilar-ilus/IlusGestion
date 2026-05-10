@@ -170,52 +170,39 @@
 
   </div>
 
-  {# ── AJUSTES — pegado al footer, separado por línea de los módulos ── #}
-  {% if permissions.admin or permissions.hrm %}
+  {# ── AJUSTES — visible solo para roles con permiso 'ajustes' (default: superadmin) ── #}
+  {% if permissions.ajustes or permissions.superadmin %}
   <div class="sidebar-ajustes-bottom" style="border-top:1px solid rgba(255,255,255,.08);padding-top:6px;margin-top:4px">
     <button class="sg-toggle sg-ajustes" data-sg="ajustes">
       <i class="bi bi-gear-wide-connected"></i>Ajustes
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
     <div class="sg-items" id="sg-ajustes">
-      {% if permissions.hrm %}
-      <a href="{{ url_for('colab_index') }}"
-         class="sidebar-link{% if request.endpoint in ['colab_index','colab_nuevo','colab_editar','colab_ficha'] %} active{% endif %}">
-        <i class="bi bi-people-fill"></i><span>Colaboradores</span>
-      </a>
-      <a href="{{ url_for('eval_index') }}"
-         class="sidebar-link{% if request.endpoint in ['eval_index','eval_nueva','eval_editar','eval_constructor'] %} active{% endif %}">
-        <i class="bi bi-clipboard2-check"></i><span>Evaluaciones</span>
-      </a>
-      {% endif %}
-      {% if permissions.admin %}
+      {# ── Comunicaciones (incluye Log de emails como tab interno) ── #}
       <a href="{{ url_for('comm_index') }}"
-         class="sidebar-link{% if request.endpoint == 'comm_index' or (request.endpoint and request.endpoint.startswith('comm_') and request.endpoint != 'comm_email_log') %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint == 'comm_index' or (request.endpoint and request.endpoint.startswith('comm_')) %} active{% endif %}">
         <i class="bi bi-chat-dots"></i><span>Comunicaciones</span>
       </a>
-      <a href="{{ url_for('comm_email_log') }}"
-         class="sidebar-link{% if request.endpoint == 'comm_email_log' %} active{% endif %}">
-        <i class="bi bi-envelope-paper"></i><span>Log de emails</span>
-      </a>
+
+      {# ── Usuarios (incluye Roles y permisos como tab interno) ── #}
       <a href="{{ url_for('users_index') }}"
-         class="sidebar-link{% if request.endpoint in ['users_index','new_user','edit_user'] %} active{% endif %}">
-        <i class="bi bi-person-badge"></i><span>Usuarios</span>
+         class="sidebar-link{% if request.endpoint in ['users_index','new_user','edit_user','admin_roles','admin_roles_update','admin_roles_matrix','admin_roles_matrix_save','admin_rol_crear','admin_rol_eliminar'] %} active{% endif %}">
+        <i class="bi bi-person-badge"></i><span>Usuarios y roles</span>
       </a>
-      <a href="{{ url_for('admin_roles') }}"
-         class="sidebar-link{% if request.endpoint in ['admin_roles','admin_roles_update','admin_roles_matrix','admin_roles_matrix_save','admin_rol_crear','admin_rol_eliminar'] %} active{% endif %}">
-        <i class="bi bi-shield-lock"></i><span>Roles y permisos</span>
-      </a>
+
+      {# ── Marketing ── #}
       <a href="{{ url_for('marketing_settings') }}"
          class="sidebar-link{% if request.endpoint in ['marketing_settings','admin_login_imagenes','admin_login_imagenes_subir','admin_login_imagen_update'] %} active{% endif %}">
         <i class="bi bi-images"></i><span>Marketing</span>
       </a>
-      {% endif %}
-      {% if permissions.superadmin %}
-      <a href="{{ url_for('preg_gen_index') }}"
-         class="sidebar-link{% if request.endpoint == 'preg_gen_index' %} active{% endif %}">
-        <i class="bi bi-shield-fill-check"></i><span>Preguntas Genéricas</span>
-      </a>
-      {% endif %}
+
+      {# ── OCULTO (a pedido — disponible vía URL directa si se requiere) ──
+         · Colaboradores      → /colaboradores/
+         · Evaluaciones       → /evaluaciones/
+         · Preguntas genéricas → /admin/preguntas-genericas
+         · Log de emails      → integrado en Comunicaciones → tab Historial
+         · Roles y permisos   → integrado en Usuarios → tab Roles
+      #}
     </div>
   </div>
   {% endif %}

@@ -85,12 +85,28 @@
 {# ── Header negro estandarizado ── #}
 <div class="mod-hero">
   <div>
-    <h4><i class="bi bi-shield-lock me-2"></i>Roles y permisos</h4>
+    <h4><i class="bi bi-shield-lock me-2"></i>Usuarios y roles</h4>
     <div class="mod-sub">Asigna roles a usuarios y configura los permisos de cada rol en una sola pantalla.</div>
   </div>
   <button class="btn btn-sm btn-ilus fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevoRol">
     <i class="bi bi-plus-lg me-1"></i>Nuevo rol
   </button>
+</div>
+
+{# ── Mini-tabs visual entre Usuarios y Roles ──────────────── #}
+<style>
+.ur-tabs{display:flex;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:4px;gap:2px;margin-bottom:14px;width:fit-content}
+.ur-tab{background:transparent;border:none;padding:8px 18px;font-size:.86rem;font-weight:700;border-radius:7px;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:7px;text-decoration:none;transition:all .15s}
+.ur-tab:hover{color:#0f172a;background:#f3f4f6}
+.ur-tab.active{background:var(--ilus-red);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.3)}
+</style>
+<div class="ur-tabs">
+  <a href="{{ url_for('users_index') }}" class="ur-tab">
+    <i class="bi bi-people-fill"></i>Usuarios
+  </a>
+  <a href="{{ url_for('admin_roles') }}" class="ur-tab active">
+    <i class="bi bi-shield-lock"></i>Roles y permisos
+  </a>
 </div>
 
 {# ── Tabs principales ── #}

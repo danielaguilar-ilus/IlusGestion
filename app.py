@@ -1214,6 +1214,7 @@ def permission_set(role):
         "delete":        False,
         "admin":         False,   # gestión usuarios / configuración
         "superadmin":    False,   # preguntas genéricas + acciones irreversibles
+        "ajustes":       False,   # acceso al menú de Ajustes (Comunicaciones, Usuarios, Marketing)
         "hrm":           False,   # módulo colaboradores
         "cubicador":     False,   # módulo cubicador de documentos
         "transporte":    False,   # módulo Transporte y Distribución
@@ -1224,7 +1225,8 @@ def permission_set(role):
     if role == "admin":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "delete": True, "admin": True, "hrm": True,
-                "cubicador": True, "transporte": True, "mantenciones": True}
+                "cubicador": True, "transporte": True, "mantenciones": True,
+                "ajustes": True}
     if role == "ejecutivo":
         # Sólo mantenciones — sin acceso al resto del sistema
         return {**base, "mantenciones": True, "view": True,
@@ -3929,7 +3931,7 @@ PERMISSIONS_MATRIX = {
     "comunicaciones": {"label":"Comunicaciones", "icon":"bi-chat-dots",
                        "acciones":["ver","configurar","enviar","plantillas"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
-                       "acciones":["usuarios","roles","marketing","login_imagenes"]},
+                       "acciones":["ajustes","usuarios","roles","marketing","login_imagenes"]},
 }
 
 
