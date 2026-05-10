@@ -1172,14 +1172,21 @@ table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
 }
 
 async function buscarDoc(){
+  // ── TELEMETRÍA DEFENSIVA — si esto NO aparece en consola al hacer clic,
+  //     el JS está roto antes de llegar aquí (típicamente por otro </script>
+  //     literal o un syntax error en alguna parte cargada antes).
+  console.log('[asignar] buscarDoc() iniciado');
+
   const tido = document.getElementById('docTipo').value;
   const nudo = document.getElementById('docNudo').value.trim();
+  console.log('[asignar] tido=', tido, 'nudo=', nudo);
   if(!nudo){ showAlert('alertBuscar','Ingresa el número de documento'); return; }
   hideAlert('alertBuscar');
 
   const cacheKey = `${tido}|${nudo}`;
   const cached = _docCache.get(cacheKey);
   if (cached && (Date.now() - cached.ts) < _docCacheTTL){
+    console.log('[asignar] cache HIT', cacheKey);
     _docData = cached.data;
     renderDoc(cached.data);
     return;
@@ -1197,15 +1204,24 @@ async function buscarDoc(){
   ]);
 
   try {
+    console.log('[asignar] POST /api/asignar/documento');
     const r = await fetch('/api/asignar/documento',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({tido, nudo})
     });
+    console.log('[asignar] response status=', r.status);
     const d = await r.json();
+    console.log('[asignar] response body=', d);
     finishProgress();
     if(!r.ok||d.error){
-      showAlert('alertBuscar', d.error||'Error al consultar ERP');
+      // Mostrar diagnóstico expandido si vino en la respuesta (motor ERP)
+      let msg = d.error || `Error al consultar ERP (HTTP ${r.status})`;
+      if (d.diagnostics){
+        msg += `\n\nDiagnóstico:\n• Nudos probados: ${(d.diagnostics.nudo_tried||[]).join(', ')}\n• RUTs probados: ${(d.diagnostics.rut_tried||[]).join(', ')}\n• Latencia: ${d.diagnostics.latency_ms||'?'}ms`;
+      }
+      showAlert('alertBuscar', msg);
+      console.warn('[asignar] búsqueda falló:', msg);
       return;
     }
     _docData = d;
@@ -1214,9 +1230,11 @@ async function buscarDoc(){
       _docCache.delete(_docCache.keys().next().value);
     }
     const elapsedMs = Date.now() - t0;
+    console.log('[asignar] OK en', elapsedMs, 'ms — cliente:', d.header?.cliente_nombre);
     renderDoc(d, elapsedMs);
   } catch(e){
     finishProgress();
+    console.error('[asignar] EXCEPCIÓN:', e);
     showAlert('alertBuscar','Error de conexión: '+e.message);
   } finally {
     setBuscarLoading(false);

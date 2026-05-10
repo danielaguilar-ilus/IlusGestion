@@ -5679,6 +5679,92 @@ def erp_documento_raw():
 # llamadas repetidas con los mismos parámetros.
 # ────────────────────────────────────────────────────────────────────
 
+@app.route("/api/erp/health", methods=["GET"])
+def erp_engine_health():
+    """Health-check del motor ERP. Útil para verificar en producción si:
+      - El módulo erp_engine está cargado
+      - El cliente está inicializado
+      - Hay token configurado
+      - El caché está funcionando
+    NO requiere login para diagnosticar problemas de despliegue sin sesión.
+    """
+    try:
+        c = erp_engine.get_client()
+        with c._lock:
+            doc_size = len(c._doc_cache)
+            ent_size = len(c._ent_cache)
+        return jsonify({
+            "ok": True,
+            "engine_loaded": True,
+            "base_url": c.base_url,
+            "has_token": bool(c.token),
+            "token_length": len(c.token or ""),
+            "doc_ttl": c.doc_ttl,
+            "ent_ttl": c.ent_ttl,
+            "timeout": c.timeout,
+            "retries": c.retries,
+            "doc_cache_size": doc_size,
+            "ent_cache_size": ent_size,
+            "version": "df52786+",
+        })
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "engine_loaded": False,
+            "error": str(e),
+        }), 500
+
+
+@app.route("/api/erp/diagnose", methods=["POST"])
+@login_required
+def erp_engine_diagnose():
+    """Diagnóstico profundo de una búsqueda en el ERP.
+
+    POST JSON: { tido, nudo }
+    Devuelve TODO lo que el motor intentó: variantes de NUDO probadas,
+    variantes de RUT, latencia de cada llamada, fallback chain. Sin cruzar
+    con BD local. Útil para depurar cuando un documento "no aparece".
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+    d = request.get_json(silent=True) or {}
+    tido = (d.get("tido") or "").strip().upper()
+    nudo = (d.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "tido y nudo son obligatorios"}), 400
+    try:
+        # Invalidar la cache del motor para forzar refetch real
+        _ERP.invalidate_doc(tido, nudo)
+        doc = _ERP.fetch_document(tido, nudo)
+        if not doc:
+            return jsonify({
+                "ok": False,
+                "error": "Documento no encontrado",
+                "nudo_variants_tried": erp_engine.nudo_variants(
+                    erp_engine.TIDO_NUDO_MAP[tido][1](nudo)
+                    if tido in erp_engine.TIDO_NUDO_MAP else nudo
+                ),
+            }), 404
+        return jsonify({
+            "ok": True,
+            "encontrado": True,
+            "cliente_nombre": doc.get("cliente_nombre"),
+            "cliente_rut": doc.get("cliente_rut"),
+            "email": doc.get("email"),
+            "telefono": doc.get("telefono"),
+            "direccion": doc.get("direccion"),
+            "comuna": doc.get("comuna"),
+            "observaciones": doc.get("observaciones"),
+            "n_lineas": doc.get("n_lineas"),
+            "datos_completos": doc.get("datos_completos"),
+            "diagnostics": doc.get("diagnostics"),
+            "raw_sample": doc.get("raw_sample"),
+            "raw_linea_sample": doc.get("raw_linea_sample"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/erp/documento", methods=["GET","POST"])
 @login_required
 def erp_documento_unificado():
@@ -6908,7 +6994,23 @@ def api_asignar_documento():
         return jsonify({"error": f"Error al consultar ERP: {ex}"}), 500
 
     if hdr is None:
-        return jsonify({"error": f"No se encontró {tido} N° {nudo} en el ERP"}), 404
+        # Devolvemos diagnóstico del motor para que el frontend pueda mostrar
+        # exactamente qué variantes de NUDO se probaron contra el ERP.
+        try:
+            erp_diag = _ERP._doc_cached(f"{tido}|{nudo}")
+        except Exception:
+            erp_diag = None
+        return jsonify({
+            "error": f"No se encontró {tido} N° {nudo} en el ERP Random",
+            "diagnostics": {
+                "nudo_tried": erp_engine.nudo_variants(
+                    erp_engine.TIDO_NUDO_MAP[tido][1](nudo) if tido in erp_engine.TIDO_NUDO_MAP else nudo
+                ),
+                "tido": tido,
+                "nudo": nudo,
+                "hint": "Verifica que el documento existe en el ERP Random (la app probó todas las variantes de padding que conoce)."
+            }
+        }), 404
 
     # Extraer valor de ZZ Envío (tarifa de despacho cargada en el documento)
     zzenvio_valor = 0.0
