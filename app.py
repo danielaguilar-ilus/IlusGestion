@@ -5755,8 +5755,6 @@ def _cubicador_fetch(tido, nudo):
     cliente_comuna_nombre = ""
 
     # ── FALLBACKS DEL HEADER (para NV/ventas directas/web) ──────────────
-    # Buscamos en muchas variantes porque el ERP Random a veces nombra
-    # los campos distinto según el tipo de documento.
     header_nombre = _hdr(
         "NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL",
         "NRAZONSOC", "NRAZONFINAL", "RAZON",
@@ -5781,20 +5779,76 @@ def _cubicador_fetch(tido, nudo):
         "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO",
     )
 
+    # ★★★ NUEVO: Datos del cliente desde las LÍNEAS (maeddo) ★★★
+    # En el ERP Random, NOKOEN, DIEN, COMUNA, OBDO vienen embebidos en
+    # las primeras líneas del documento (todas las líneas tienen los
+    # mismos datos del cliente). Esto es lo que descubrimos al revisar
+    # el export Excel del ERP — el header solo trae ENDO (rut) y datos
+    # del documento; el resto está en las líneas.
+    line_nombre = ""
+    line_dir    = ""
+    line_comuna = ""
+    line_obs    = ""
+    line_zona   = ""
+    if raw_lineas:
+        # Buscar la primera línea con datos no vacíos (puede haber líneas
+        # de servicio o ZZ envío sin estos campos)
+        for ln in raw_lineas:
+            if not line_nombre:
+                line_nombre = (ln.get("NOKOEN") or "").strip().title()
+            if not line_dir:
+                line_dir = (ln.get("DIEN") or "").strip().title()
+            if not line_comuna:
+                line_comuna = (ln.get("COMUNA") or "").strip().title()
+            if not line_obs:
+                line_obs = (ln.get("OBDO") or "").strip()
+            if not line_zona:
+                line_zona = (ln.get("NOKOZO") or "").strip().title()
+            # Si ya tenemos lo principal, salir del loop
+            if line_nombre and line_dir and line_comuna:
+                break
+
+    # Aplicar datos de las líneas como fallback si el header no los trajo
+    header_nombre = header_nombre or line_nombre
+    header_dir    = header_dir    or line_dir
+    header_obs    = header_obs    or line_obs
+
     if endo:
         # Cache de entidades (TTL 5 min)
         ent_cached = _ERP_ENT_CACHE.get(endo)
         if ent_cached and (now_ts - ent_cached[0]) < _ERP_ENT_CACHE_TTL:
             e = ent_cached[1]
         else:
-            try:
-                ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=4)
-                ent_data = ent_body.get("data") or []
-                e = ent_data[0] if ent_data else None
-                if e:
-                    _ERP_ENT_CACHE[endo] = (now_ts, e)
-            except Exception:
-                e = None
+            # ★★★ Probar VARIANTES del RUT — el ERP Random no acepta el
+            # mismo formato siempre. Probamos: con guión, sin guión, sin DV,
+            # con puntos. La primera variante que devuelva datos gana.
+            e = None
+            rut_clean = endo.replace(".", "").replace("-", "").strip().upper()
+            rut_variants = [endo]                         # ej. 76993445-6
+            if "-" in endo:
+                rut_variants.append(rut_clean)            # ej. 769934456 (sin guión ni DV juntos)
+                # Sin DV
+                if rut_clean and rut_clean[-1] in "0123456789K":
+                    rut_variants.append(rut_clean[:-1])   # ej. 76993445
+                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])  # forzar guion
+            else:
+                rut_variants.append(rut_clean)
+                if rut_clean and len(rut_clean) >= 8:
+                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])
+            # Dedupe preservando orden
+            seen = set()
+            rut_variants = [r for r in rut_variants if r and not (r in seen or seen.add(r))]
+
+            for rv in rut_variants:
+                try:
+                    ent_body = _erp_get("/entidades", {"rten": rv}, TOKEN, timeout=4)
+                    ent_data = ent_body.get("data") or []
+                    if ent_data:
+                        e = ent_data[0]
+                        _ERP_ENT_CACHE[endo] = (now_ts, e)
+                        break
+                except Exception:
+                    continue
         if e:
             cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
             cliente_rut      = (e.get("RTEN")   or endo).strip()
@@ -5827,11 +5881,12 @@ def _cubicador_fetch(tido, nudo):
     # Si el doc no trae dirección de despacho, usar la del cliente
     direccion_final = dir_despacho or cliente_direccion_base
 
-    # Comuna del doc (tiene prioridad); si no, la del cliente
+    # Comuna del doc (tiene prioridad); si no, la del cliente.
+    # ★ Las NV/FCV del Random traen COMUNA en las LÍNEAS, no en el header
     comuna_doc = (raw_header.get("NOKOZO") or raw_header.get("NOKOCOMU") or
                   raw_header.get("NOKOCOMUNADE") or raw_header.get("NOKOMUENDE") or
                   raw_header.get("NOKOMUNEN") or raw_header.get("NOKCOMENDESP") or "").strip()
-    comuna_final = comuna_doc or cliente_comuna_nombre
+    comuna_final = comuna_doc or line_comuna or cliente_comuna_nombre or line_zona
 
     # ── DEBUG SAMPLE: si los campos clave vienen vacíos, devolvemos un
     # snapshot del header crudo (filtrado a strings no vacías) para que el
