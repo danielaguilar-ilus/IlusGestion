@@ -9153,6 +9153,8 @@ def init_comunicaciones_tables():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS comm_templates (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
+                    modulo      VARCHAR(40) NOT NULL DEFAULT 'transporte'
+                                COMMENT 'transporte | retiros | mantenciones',
                     estado      VARCHAR(60) NOT NULL,
                     canal       ENUM('email','whatsapp') NOT NULL,
                     asunto      VARCHAR(300),
@@ -9160,9 +9162,20 @@ def init_comunicaciones_tables():
                     activo      TINYINT(1) DEFAULT 1,
                     updated_by  VARCHAR(190),
                     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uq_estado_canal (estado, canal)
+                    UNIQUE KEY uq_mod_estado_canal (modulo, estado, canal),
+                    INDEX idx_modulo (modulo)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Migración para tablas existentes (que no tenían columna 'modulo')
+            for _mig in [
+                "ALTER TABLE comm_templates ADD COLUMN modulo VARCHAR(40) NOT NULL DEFAULT 'transporte' AFTER id",
+                "ALTER TABLE comm_templates ADD INDEX idx_modulo (modulo)",
+                # Eliminar la UNIQUE vieja (estado, canal) para permitir duplicados entre módulos
+                "ALTER TABLE comm_templates DROP INDEX uq_estado_canal",
+                "ALTER TABLE comm_templates ADD UNIQUE KEY uq_mod_estado_canal (modulo, estado, canal)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
             # Insertar plantillas por defecto si la tabla está vacía
             cur.execute("SELECT COUNT(*) AS n FROM comm_templates")
             tpl_row = cur.fetchone()
@@ -9202,18 +9215,119 @@ def init_comunicaciones_tables():
                     'cambio_pass':   '🔑 *ILUS* — Tu contraseña fue cambiada el {{fecha_hora}}.',
                 }
                 for estado_key, _ in _ESTADOS:
-                    # Email template
                     asunto, cuerpo = _EMAIL_DEFAULTS.get(estado_key, ('', ''))
                     cur.execute(
-                        "INSERT INTO comm_templates (estado, canal, asunto, cuerpo) VALUES (%s,'email',%s,%s)",
+                        "INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo) VALUES ('transporte',%s,'email',%s,%s)",
                         (estado_key, asunto, cuerpo)
                     )
-                    # WhatsApp template
                     wa_body = _WA_DEFAULTS.get(estado_key, '')
                     cur.execute(
-                        "INSERT INTO comm_templates (estado, canal, asunto, cuerpo) VALUES (%s,'whatsapp',%s,%s)",
+                        "INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo) VALUES ('transporte',%s,'whatsapp',%s,%s)",
                         (estado_key, '', wa_body)
                     )
+
+            # ── PLANTILLAS DE RETIROS (siembra idempotente: solo si no existen) ──
+            # Variables disponibles: {{code}}, {{cliente}}, {{persona_retira}},
+            # {{fecha_solicitada}}, {{fecha_propuesta}}, {{fecha_confirmada}},
+            # {{horario}}, {{documento}}, {{n_bultos}}, {{kg}}, {{m3}},
+            # {{link_seguimiento}}, {{warehouse_name}}, {{warehouse_addr}}
+            _RETIRO_TPL = [
+                # (estado, canal, asunto, cuerpo)
+                ('solicitud_recibida', 'email',
+                 '✓ Recibimos tu solicitud de retiro {{code}}',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Recibimos tu solicitud de retiro <strong>{{code}}</strong> para el {{fecha_solicitada}} entre {{horario}}.</p>'
+                 '<p>Estamos validando la disponibilidad y te confirmaremos en menos de 2 horas hábiles.</p>'
+                 '<p>Puedes revisar el estado en cualquier momento aquí: <a href="{{link_seguimiento}}">Ver mi retiro</a></p>'
+                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                ('solicitud_recibida', 'whatsapp',
+                 '',
+                 '🟢 *ILUS* — Recibimos tu solicitud de retiro *{{code}}* para el {{fecha_solicitada}} ({{horario}}). '
+                 'Te confirmaremos pronto. Seguimiento: {{link_seguimiento}}'),
+
+                ('propuesta_enviada', 'email',
+                 '📅 ILUS te propone una fecha para el retiro {{code}}',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Para tu retiro <strong>{{code}}</strong> ({{documento}} de {{cliente}}), '
+                 'ILUS propone la siguiente fecha:</p>'
+                 '<p style="background:#fff7ed;padding:14px;border-left:4px solid #fb923c;border-radius:6px">'
+                 '<strong>📆 {{fecha_propuesta}}</strong> · ⏰ {{horario}}</p>'
+                 '<p>Por favor confirma o propone otra fecha en este enlace:<br>'
+                 '<a href="{{link_seguimiento}}" style="background:#e60000;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold">Responder propuesta</a></p>'
+                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                ('propuesta_enviada', 'whatsapp',
+                 '',
+                 '📅 *ILUS* — Para tu retiro *{{code}}* proponemos: {{fecha_propuesta}} ({{horario}}). '
+                 'Confirma aquí: {{link_seguimiento}}'),
+
+                ('agenda_confirmada', 'email',
+                 '✅ Retiro {{code}} confirmado para el {{fecha_confirmada}}',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Tu retiro <strong>{{code}}</strong> está confirmado:</p>'
+                 '<p style="background:#dcfce7;padding:14px;border-left:4px solid #22c55e;border-radius:6px">'
+                 '<strong>📆 {{fecha_confirmada}}</strong> · ⏰ {{horario}}<br>'
+                 '<i>📍 {{warehouse_name}}</i><br>'
+                 '<small>{{warehouse_addr}}</small></p>'
+                 '<p><strong>Recuerda llevar:</strong></p>'
+                 '<ul><li>Tu cédula de identidad (debe coincidir con la persona autorizada)</li>'
+                 '<li>Vehículo apto para {{n_bultos}} bulto(s) ({{kg}} kg / {{m3}} m³)</li></ul>'
+                 '<p>Seguimiento: <a href="{{link_seguimiento}}">{{link_seguimiento}}</a></p>'
+                 '<p>Te esperamos.<br>Equipo ILUS</p>'),
+                ('agenda_confirmada', 'whatsapp',
+                 '',
+                 '✅ *ILUS* — Retiro *{{code}}* confirmado: {{fecha_confirmada}} ({{horario}}). '
+                 'Lugar: {{warehouse_name}}. Lleva tu carnet. Seguimiento: {{link_seguimiento}}'),
+
+                ('en_preparacion', 'email',
+                 '📦 Tu retiro {{code}} está siendo preparado',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Bodega ya está preparando tu retiro <strong>{{code}}</strong> para el {{fecha_confirmada}} ({{horario}}).</p>'
+                 '<p>Cuando llegues, presenta tu cédula al ingreso. Te esperamos a tiempo.</p>'
+                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                ('en_preparacion', 'whatsapp',
+                 '',
+                 '📦 *ILUS* — Bodega ya está preparando tu retiro *{{code}}* para mañana ({{horario}}). Trae tu carnet.'),
+
+                ('retirada', 'email',
+                 '✅ Retiro {{code}} completado — gracias',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Confirmamos la entrega de tu retiro <strong>{{code}}</strong>. '
+                 'Esperamos que disfrutes tu equipo ILUS.</p>'
+                 '<p>Si necesitas asesoría o un service post-venta, escríbenos. Estamos para ayudarte.</p>'
+                 '<p>¡Gracias por confiar en ILUS!<br>Equipo ILUS</p>'),
+                ('retirada', 'whatsapp',
+                 '',
+                 '✅ *ILUS* — Retiro *{{code}}* completado. ¡Gracias por confiar en nosotros! 💪'),
+
+                ('rechazada', 'email',
+                 'Solicitud de retiro {{code}} cancelada',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Tu solicitud de retiro <strong>{{code}}</strong> fue cancelada. '
+                 'Si fue un error o quieres reagendar, escríbenos respondiendo este correo.</p>'
+                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                ('rechazada', 'whatsapp',
+                 '',
+                 '⚠ *ILUS* — Tu solicitud de retiro *{{code}}* fue cancelada. Si fue error, escríbenos.'),
+
+                ('reagendada', 'email',
+                 '🔄 Retiro {{code}} reagendado',
+                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
+                 '<p>Tu retiro <strong>{{code}}</strong> ha sido reagendado.</p>'
+                 '<p>Nueva fecha propuesta: <strong>{{fecha_propuesta}}</strong> · {{horario}}</p>'
+                 '<p>Confirma aquí: <a href="{{link_seguimiento}}">{{link_seguimiento}}</a></p>'
+                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                ('reagendada', 'whatsapp',
+                 '',
+                 '🔄 *ILUS* — Retiro *{{code}}* reagendado para {{fecha_propuesta}} ({{horario}}). Confirma: {{link_seguimiento}}'),
+            ]
+            for _est, _can, _asu, _cue in _RETIRO_TPL:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                        "VALUES ('retiros', %s, %s, %s, %s)",
+                        (_est, _can, _asu, _cue)
+                    )
+                except Exception: pass
             # ── Normalización: dejar máximo UNA fila por tabla (id=1) ────
             # Si por bugs anteriores quedaron filas duplicadas, conservamos
             # la más reciente y la forzamos a id=1 para que la lectura
@@ -10379,15 +10493,24 @@ def comm_wa_test():
 @app.route("/comunicaciones/templates", methods=["GET"])
 @_require_superadmin
 def comm_templates_get():
-    """Devuelve todas las plantillas agrupadas por estado."""
+    """Devuelve plantillas agrupadas por estado.
+    Filtra por ?modulo=transporte (default), retiros, mantenciones."""
+    modulo = (request.args.get("modulo") or "transporte").strip()
+    if modulo not in ("transporte", "retiros", "mantenciones"):
+        modulo = "transporte"
     rows = mysql_fetchall(
-        "SELECT * FROM comm_templates ORDER BY estado, canal"
+        "SELECT * FROM comm_templates WHERE modulo=%s ORDER BY estado, canal",
+        (modulo,),
     ) or []
     legacy_tokens = ("Dropit", "direccion_origen", "direccion_destino", "link_tracking", "nombre_conductor")
-    if any(any(tok in ((r.get("asunto") or "") + " " + (r.get("cuerpo") or "")) for tok in legacy_tokens) for r in rows):
+    if modulo == "transporte" and any(
+        any(tok in ((r.get("asunto") or "") + " " + (r.get("cuerpo") or "")) for tok in legacy_tokens)
+        for r in rows
+    ):
         _comm_seed_default_templates(overwrite=True)
         rows = mysql_fetchall(
-            "SELECT * FROM comm_templates ORDER BY estado, canal"
+            "SELECT * FROM comm_templates WHERE modulo=%s ORDER BY estado, canal",
+            (modulo,),
         ) or []
     data = {}
     for r in rows:
@@ -10406,21 +10529,25 @@ def comm_templates_get():
 @app.route("/comunicaciones/templates/<estado>/<canal>", methods=["PUT"])
 @_require_superadmin
 def comm_template_save(estado, canal):
-    """Guarda/actualiza una plantilla para estado + canal."""
+    """Guarda/actualiza una plantilla para estado + canal en un módulo dado.
+    Body opcional: { modulo: 'transporte' | 'retiros' | 'mantenciones' }"""
     if canal not in ("email", "whatsapp"):
         return jsonify({"error": "Canal inválido"}), 400
     d      = request.get_json(silent=True) or {}
+    modulo = (d.get("modulo") or "transporte").strip()
+    if modulo not in ("transporte", "retiros", "mantenciones"):
+        modulo = "transporte"
     asunto = d.get("asunto", "")
     cuerpo = d.get("cuerpo", "")
     user   = current_username()
     conn   = get_db()
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO comm_templates (estado, canal, asunto, cuerpo, updated_by)
-               VALUES (%s,%s,%s,%s,%s)
+            """INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo, updated_by)
+               VALUES (%s,%s,%s,%s,%s,%s)
                ON DUPLICATE KEY UPDATE
                  asunto=VALUES(asunto), cuerpo=VALUES(cuerpo), updated_by=VALUES(updated_by)""",
-            (estado, canal, asunto, cuerpo, user)
+            (modulo, estado, canal, asunto, cuerpo, user)
         )
     conn.commit()
     return jsonify({"ok": True})

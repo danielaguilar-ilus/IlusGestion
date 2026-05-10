@@ -7,205 +7,353 @@
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
-    :root{--ilus-red:#e60000;--ink:#0b0b0b}
-    body{margin:0;background:#f3f4f6;color:#111827;font-family:Arial,Helvetica,sans-serif}
-    .public-top{background:#050505;color:#fff;border-bottom:4px solid var(--ilus-red);padding:18px 22px}
-    .public-top-inner{max-width:1080px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-    .public-top-inner img{height:42px}
-    .public-top-inner .pub-tag{background:var(--ilus-red);padding:4px 10px;border-radius:50px;font-size:.7rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
-    .track-wrap{padding:26px 22px}
-    .track-shell{max-width:1080px;margin:auto}
-    .track-head{background:#070707;color:#fff;border-radius:10px;border-bottom:4px solid var(--ilus-red);padding:24px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 8px 22px rgba(0,0,0,.18)}
-    .track-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 6px 18px rgba(15,23,42,.08)}
-    .track-card h6{font-weight:900;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin-bottom:10px}
+    :root{--ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a}
+    *{box-sizing:border-box}
+    body{margin:0;background:#fafafa;color:#111827;font-family:'Inter','Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
 
-    /* Timeline */
-    .progress-track{display:flex;align-items:center;gap:6px;margin:14px 0 22px;flex-wrap:wrap}
-    .progress-step{flex:1;min-width:90px;text-align:center;position:relative;padding:8px 4px}
-    .progress-circle{width:36px;height:36px;border-radius:50%;background:#e5e7eb;color:#9ca3af;display:flex;align-items:center;justify-content:center;font-weight:800;margin:0 auto 6px;border:3px solid #fff;box-shadow:0 0 0 2px #e5e7eb;font-size:.85rem}
-    .progress-step.done .progress-circle{background:#16a34a;color:#fff;box-shadow:0 0 0 2px #16a34a}
-    .progress-step.active .progress-circle{background:var(--ilus-red);color:#fff;box-shadow:0 0 0 2px var(--ilus-red);animation:pulse 1.6s ease-in-out infinite}
-    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
-    .progress-step .ps-label{font-size:.72rem;font-weight:700;color:#374151;line-height:1.15}
-    .progress-step.done .ps-label{color:#16a34a}
-    .progress-step.active .ps-label{color:var(--ilus-red)}
+    /* HEADER PÚBLICO */
+    .pub-top{background:#0a0a0a;color:#fff;border-bottom:5px solid var(--ilus-red);padding:18px 22px}
+    .pub-top-inner{max-width:1180px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+    .pub-top-inner img.logo{height:60px}
+    .pub-top-inner .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .pub-top-inner .actions a{font-weight:700;letter-spacing:.02em}
 
-    .timeline-item{border-left:3px solid #e5e7eb;padding:0 0 14px 14px;margin-left:8px;position:relative}
-    .timeline-item:before{content:'';width:10px;height:10px;background:var(--ilus-red);border-radius:50%;position:absolute;left:-6px;top:4px}
+    /* HERO RESUMEN del retiro */
+    .track-hero{
+      background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;
+      border-radius:14px;border-bottom:4px solid var(--ilus-red);
+      padding:28px 30px;margin-top:22px;
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;
+      box-shadow:0 14px 30px rgba(0,0,0,.12);
+    }
+    .track-hero .code{
+      font-family:'Bebas Neue';font-size:2.4rem;letter-spacing:.01em;line-height:1;margin:0;
+    }
+    .track-hero .doc-line{color:#cbd5e1;font-size:.9rem;margin-top:6px}
+    .track-hero .status-pill{
+      padding:8px 18px;border-radius:50px;font-weight:800;font-size:.86rem;letter-spacing:.04em;
+      box-shadow:0 4px 14px rgba(0,0,0,.25);
+    }
+    .track-hero .status-help{color:#9ca3af;font-size:.78rem;margin-top:8px;max-width:280px;text-align:right}
 
-    .footer{background:#050505;color:#9ca3af;padding:22px;text-align:center;margin-top:20px}
-    .footer img{width:90px;margin-bottom:6px}
-    .footer a{color:#fff}
+    /* PIPELINE / TRACKING VISUAL */
+    .pipeline{
+      background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:24px 22px;
+      margin-top:18px;box-shadow:0 6px 18px rgba(15,23,42,.06);
+    }
+    .pipeline-title{font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.1em;color:#9ca3af;margin:0 0 18px}
+    .pipeline-row{display:grid;grid-template-columns:repeat(6,1fr);gap:0;align-items:flex-start;position:relative}
+    .pipeline-step{position:relative;text-align:center;padding:10px 4px}
+    .pipeline-step::before,.pipeline-step::after{
+      content:'';position:absolute;top:30px;height:4px;background:#e5e7eb;z-index:0;
+    }
+    .pipeline-step::before{left:0;right:50%}
+    .pipeline-step::after{left:50%;right:0}
+    .pipeline-step:first-child::before,.pipeline-step:last-child::after{display:none}
+    .pipeline-step.done::before,.pipeline-step.done::after{background:#22c55e}
+    .pipeline-step.active::before{background:#22c55e}
+    .pipeline-step.active::after{background:linear-gradient(90deg,var(--ilus-red),#e5e7eb)}
+    .pipeline-circle{
+      position:relative;z-index:2;width:64px;height:64px;border-radius:50%;
+      background:#fff;border:4px solid #e5e7eb;color:#9ca3af;
+      display:flex;align-items:center;justify-content:center;font-size:1.6rem;
+      margin:0 auto 12px;transition:all .3s;
+    }
+    .pipeline-step.done .pipeline-circle{background:#22c55e;border-color:#22c55e;color:#fff;transform:scale(1)}
+    .pipeline-step.active .pipeline-circle{
+      background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
+      box-shadow:0 0 0 6px rgba(230,0,0,.15);animation:pulseRing 2s ease-in-out infinite;
+    }
+    @keyframes pulseRing{
+      0%,100%{box-shadow:0 0 0 6px rgba(230,0,0,.15)}
+      50%{box-shadow:0 0 0 12px rgba(230,0,0,.05)}
+    }
+    .pipeline-label{font-size:.78rem;font-weight:800;color:#6b7280;line-height:1.2;text-transform:uppercase;letter-spacing:.04em}
+    .pipeline-step.done .pipeline-label{color:#16a34a}
+    .pipeline-step.active .pipeline-label{color:var(--ilus-red);font-size:.84rem}
+    .pipeline-step .substep{font-size:.7rem;color:#9ca3af;margin-top:3px}
+
+    /* AGENDA Cards */
+    .track-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 22px;box-shadow:0 4px 14px rgba(15,23,42,.05);margin-bottom:14px}
+    .track-card h6{font-weight:900;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin:0 0 14px}
+    .track-card h6 i{color:var(--ilus-red)}
+    .agenda-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .agenda-cell{padding:14px 16px;border-radius:10px;border:1.5px solid #e5e7eb;background:#fafafa}
+    .agenda-cell .ag-lbl{font-size:.65rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+    .agenda-cell .ag-val{font-weight:900;font-size:.95rem;color:#0a0a0a;line-height:1.25}
+    .agenda-cell.proposed{background:#fff7ed;border-color:#fed7aa}
+    .agenda-cell.confirmed{background:#dcfce7;border-color:#86efac}
+    .agenda-cell.confirmed .ag-val{color:#166534}
+    .agenda-cell.proposed .ag-val{color:#9a3412}
+
+    /* PROPUESTA pendiente */
+    .alert-propuesta{
+      background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);
+      border:2px solid #fb923c;border-radius:12px;padding:20px 22px;margin-bottom:14px;
+      box-shadow:0 8px 18px rgba(251,146,60,.18);
+      animation:bellShake .6s ease-in-out;
+    }
+    @keyframes bellShake{
+      0%,100%{transform:none}25%{transform:translateY(-2px)}50%{transform:translateY(0)}75%{transform:translateY(-1px)}
+    }
+    .alert-propuesta h5{margin:0 0 8px;font-weight:900;color:#9a3412}
+    .alert-propuesta h5 i{margin-right:6px;animation:bellRing 1.5s ease-in-out infinite}
+    @keyframes bellRing{0%,100%{transform:none}30%{transform:rotate(15deg)}60%{transform:rotate(-15deg)}}
+    .alert-propuesta .prop-fecha{
+      background:#fff;border-radius:10px;padding:14px;margin:12px 0;
+      font-size:1.05rem;text-align:center;font-weight:800;color:#0a0a0a;
+      border:2px dashed #fb923c;
+    }
+    .alert-propuesta .btn-prop{padding:12px 22px;font-weight:800;border-radius:8px;letter-spacing:.02em}
+
+    /* CARGA */
+    .carga-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .carga-cell{background:#0a0a0a;color:#fff;border-radius:10px;padding:14px 12px;text-align:center}
+    .carga-cell .c-num{font-family:'Bebas Neue';font-size:1.9rem;color:var(--ilus-red);line-height:1}
+    .carga-cell .c-lbl{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;margin-top:4px;color:#9ca3af;font-weight:700}
+
+    /* HISTORIAL */
+    .timeline-wrap{position:relative;padding-left:24px}
+    .timeline-wrap::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:2px;background:#e5e7eb}
+    .timeline-item{position:relative;padding:0 0 14px 16px}
+    .timeline-item::before{content:'';position:absolute;left:-22px;top:5px;width:14px;height:14px;border-radius:50%;background:var(--ilus-red);border:3px solid #fff;box-shadow:0 0 0 1px var(--ilus-red)}
+    .timeline-item:last-child::before{background:#22c55e;box-shadow:0 0 0 1px #22c55e}
+    .timeline-item .ti-action{font-weight:800;font-size:.86rem;color:#0a0a0a}
+    .timeline-item .ti-meta{font-size:.72rem;color:#6b7280;margin-top:2px}
+    .timeline-item .ti-notes{font-size:.78rem;color:#374151;margin-top:4px;padding:6px 10px;background:#f9fafb;border-radius:6px;border-left:3px solid var(--ilus-red)}
+
+    /* Botones generales */
+    .btn-volver{
+      background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.2);
+      padding:8px 16px;border-radius:8px;font-weight:700;text-decoration:none;font-size:.86rem;
+      display:inline-flex;align-items:center;gap:6px;transition:all .15s;
+    }
+    .btn-volver:hover{background:#fff;color:#0a0a0a;border-color:#fff}
+
+    /* Footer */
+    .footer{background:#0a0a0a;color:#9ca3af;padding:30px 22px;text-align:center;margin-top:30px}
+    .footer img{width:100px;margin-bottom:8px}
+
+    @media(max-width:991px){
+      .pipeline-row{grid-template-columns:repeat(3,1fr);gap:14px;row-gap:24px}
+      .pipeline-step::before,.pipeline-step::after{display:none}
+      .agenda-grid,.carga-grid{grid-template-columns:1fr 1fr}
+    }
+    @media(max-width:600px){
+      .pub-top-inner img.logo{height:46px}
+      .agenda-grid,.carga-grid{grid-template-columns:1fr}
+      .track-hero{padding:22px 18px}
+      .track-hero .code{font-size:1.8rem}
+    }
   </style>
 </head>
 <body>
 
-  {# ── HEADER PÚBLICO (sin sidebar interno) ──────────── #}
-  <header class="public-top">
-    <div class="public-top-inner">
-      <div class="d-flex align-items-center gap-3">
-        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
-        <span class="pub-tag">Vista pública</span>
+  {# ── HEADER PÚBLICO con LOGO GRANDE + botón Volver ─────────────── #}
+  <header class="pub-top">
+    <div class="pub-top-inner">
+      <img src="{{ url_for('static', filename='Logo.png') }}" class="logo" alt="ILUS">
+      <div class="actions">
+        <a href="{{ url_for('pickup_public_request') }}" class="btn-volver">
+          <i class="bi bi-arrow-left"></i>Volver al inicio
+        </a>
+        <a href="{{ url_for('pickup_public_request') }}" class="btn-volver" style="background:var(--ilus-red);border-color:var(--ilus-red)">
+          <i class="bi bi-plus-lg"></i>Nueva solicitud
+        </a>
       </div>
-      <a href="{{ url_for('pickup_public_request') }}" class="btn btn-sm btn-outline-light">
-        <i class="bi bi-plus-lg me-1"></i>Nueva solicitud
-      </a>
     </div>
   </header>
 
-  <div class="track-wrap">
-    <div class="track-shell">
+  <div style="max-width:1180px;margin:auto;padding:0 22px 30px">
 
-      {% if created %}
-      <div class="alert alert-success" role="alert">
-        <i class="bi bi-check-circle-fill me-2"></i>
-        <strong>Solicitud {{ req.code }} creada correctamente.</strong>
-        Guarda este enlace o búscalo en tu correo. Te avisaremos por email cuando ILUS confirme la fecha.
-      </div>
-      {% endif %}
+    {% if created %}
+    <div class="alert alert-success mt-3" role="alert" style="border-radius:10px;border:none;background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);color:#14532d;padding:16px 20px">
+      <i class="bi bi-check-circle-fill me-2" style="font-size:1.3rem"></i>
+      <strong>¡Listo! Solicitud {{ req.code }} creada correctamente.</strong>
+      Guarda este enlace o búscalo en tu correo. Te avisaremos por email cuando ILUS confirme.
+    </div>
+    {% endif %}
 
-      {# ── Header negro con código + estado ──────────────── #}
-      {% set b = status_badge(req.status) %}
-      <div class="track-head mb-3">
-        <div>
-          <h2 class="fw-black mb-1" style="font-size:1.8rem">{{ req.code }}</h2>
-          <div class="text-white-50">{{ req.document_type|upper }} {{ req.document_number }} · {{ req.customer_name }}</div>
-        </div>
-        <div class="text-end">
-          <span class="badge bg-{{ b.color }} px-3 py-2" style="font-size:.85rem">{{ b.label }}</span>
-          <div class="small text-white-50 mt-2" style="max-width:280px">
-            La cita queda <strong>confirmada</strong> solo cuando aparece el sello verde abajo.
-          </div>
+    {# ── HERO RESUMEN ─────────────────────────────────────── #}
+    {% set b = status_badge(req.status) %}
+    <div class="track-hero">
+      <div>
+        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:#9ca3af;font-weight:700;margin-bottom:6px">Orden de retiro</div>
+        <h2 class="code">{{ req.code }}</h2>
+        <div class="doc-line">
+          <i class="bi bi-file-earmark-text me-1"></i>{{ req.document_type|upper }} {{ req.document_number }}
+          <span class="mx-2">·</span>
+          <i class="bi bi-person me-1"></i>{{ req.customer_name }}
         </div>
       </div>
+      <div style="text-align:right">
+        <span class="status-pill bg-{{ b.color }}">{{ b.label }}</span>
+        <div class="status-help">
+          La cita queda <strong style="color:#fff">confirmada</strong> solo cuando aparece como tal abajo.
+        </div>
+      </div>
+    </div>
 
-      {# ── Barra de progreso visual del proceso ─────────── #}
-      {% set _flow = [
-        ('solicitud_recibida','Solicitud',         'send-check'),
-        ('en_revision',       'Validación',        'shield-check'),
-        ('propuesta_enviada', 'Propuesta',         'envelope-paper'),
-        ('agenda_confirmada', 'Confirmada',        'calendar-check'),
-        ('en_preparacion',    'En preparación',    'box-seam'),
-        ('retirada',          'Retirada',          'check-circle-fill'),
-      ] %}
-      {%- set _idx_actual = -1 -%}
-      {%- for _s, _l, _i in _flow -%}{% if _s == req.status %}{% set _idx_actual = loop.index0 %}{% endif %}{%- endfor -%}
-      <div class="progress-track">
-        {% for s, l, i in _flow %}
+    {# ── PIPELINE / TRACKING VISUAL ───────────────────────── #}
+    {% set _flow = [
+      ('solicitud_recibida','Solicitud',     'send-check',           'Enviada'),
+      ('en_revision',       'Validación',    'shield-check',         'ILUS revisa'),
+      ('propuesta_enviada', 'Propuesta',     'envelope-paper',       'Esperando tu OK'),
+      ('agenda_confirmada', 'Confirmada',    'calendar-check',       'Cita acordada'),
+      ('en_preparacion',    'En preparación','box-seam',             'Bodega listo'),
+      ('retirada',          'Retirada',      'check-circle-fill',    'Completado'),
+    ] %}
+    {%- set _idx_actual = -1 -%}
+    {%- for _s, _l, _i, _sub in _flow -%}{% if _s == req.status %}{% set _idx_actual = loop.index0 %}{% endif %}{%- endfor -%}
+    {# Para estados terminales no-éxito (rechazada, cancelada, fallida) marcamos hasta donde llegó #}
+    {% if req.status in ['rechazada','fallida','cerrada','reagendada','informacion_incompleta','esperando_cliente'] %}
+      {% set _idx_actual = 1 %}
+    {% endif %}
+
+    <div class="pipeline">
+      <div class="pipeline-title">
+        <i class="bi bi-arrow-right me-1" style="color:var(--ilus-red)"></i>Estado de tu retiro · paso a paso
+      </div>
+      <div class="pipeline-row">
+        {% for s, l, i, sub in _flow %}
           {%- set _cls = 'done' if loop.index0 < _idx_actual else ('active' if loop.index0 == _idx_actual else '') -%}
-          <div class="progress-step {{ _cls }}">
-            <div class="progress-circle"><i class="bi bi-{{ i }}"></i></div>
-            <div class="ps-label">{{ l }}</div>
+          <div class="pipeline-step {{ _cls }}">
+            <div class="pipeline-circle"><i class="bi bi-{{ i }}"></i></div>
+            <div class="pipeline-label">{{ l }}</div>
+            <div class="substep">{% if loop.index0 == _idx_actual %}{{ sub }}{% elif loop.index0 < _idx_actual %}✓ {{ sub }}{% else %}{{ sub }}{% endif %}</div>
           </div>
         {% endfor %}
       </div>
+    </div>
 
-      <div class="row g-3">
-        <div class="col-lg-8">
+    <div class="row g-3 mt-1">
+      <div class="col-lg-8">
 
-          {# ── Agenda (3 fechas: solicitada / propuesta / confirmada) ── #}
-          <div class="track-card p-3 mb-3">
-            <h6><i class="bi bi-calendar-event me-1" style="color:var(--ilus-red)"></i>Agenda del retiro</h6>
-            <div class="row g-2">
-              <div class="col-md-4">
-                <div class="p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
-                  <small class="text-muted text-uppercase" style="font-size:.65rem;font-weight:700;letter-spacing:.05em">Solicitada por ti</small>
-                  <div class="fw-bold mt-1">{{ req.requested_date }} {% if req.requested_time_from %}<br>{{ req.requested_time_from|hm }}–{{ req.requested_time_to|hm }}{% endif %}</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="p-2 rounded" style="background:{% if req.proposed_date %}#fff7ed;border:1px solid #fed7aa{% else %}#f9fafb;border:1px solid #e5e7eb{% endif %}">
-                  <small class="text-muted text-uppercase" style="font-size:.65rem;font-weight:700;letter-spacing:.05em">Propuesta de ILUS</small>
-                  <div class="fw-bold mt-1">{{ req.proposed_date or '—' }} {% if req.proposed_time_from %}<br>{{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}{% endif %}</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="p-2 rounded" style="background:{% if req.confirmed_date %}#dcfce7;border:1px solid #86efac{% else %}#f9fafb;border:1px solid #e5e7eb{% endif %}">
-                  <small class="text-muted text-uppercase" style="font-size:.65rem;font-weight:700;letter-spacing:.05em">Confirmada</small>
-                  <div class="fw-bold mt-1">{{ req.confirmed_date or '—' }} {% if req.confirmed_time_from %}<br>{{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}{% endif %}</div>
-                </div>
-              </div>
-            </div>
+        {# ── PROPUESTA PENDIENTE (destacada) ──────────────── #}
+        {% set pending = proposals|selectattr('status','equalto','pending')|list %}
+        {% if pending %}
+        <div class="alert-propuesta">
+          <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una nueva fecha — responde por favor</h5>
+          <p class="mb-0 small text-muted">Tienes 3 opciones: confirmar, proponer otra fecha o rechazar definitivamente.</p>
+          <div class="prop-fecha">
+            <i class="bi bi-calendar-event me-2" style="color:var(--ilus-red)"></i>
+            {{ pending[0].date }} · {{ pending[0].time_from|hm }} – {{ pending[0].time_to|hm }}
           </div>
-
-          {# ── Propuesta pendiente: cliente decide ─────────── #}
-          {% set pending = proposals|selectattr('status','equalto','pending')|list %}
-          {% if pending %}
-          <div class="track-card p-3 mb-3" style="border-left:4px solid var(--ilus-red)">
-            <h6 style="color:var(--ilus-red)"><i class="bi bi-bell-fill me-1"></i>ILUS te propuso una fecha — responde por favor</h6>
-            <p class="mb-2">
-              ILUS propuso: <strong>{{ pending[0].date }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}</strong>
-            </p>
-            {% if pending[0].message %}<p class="small text-muted">{{ pending[0].message }}</p>{% endif %}
-            <div class="d-flex flex-wrap gap-2">
-              <form method="post" style="display:inline">
-                <input type="hidden" name="action" value="confirm">
-                <button class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Confirmar esta fecha</button>
-              </form>
-              <button class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#counterModal">
-                <i class="bi bi-calendar-plus me-1"></i>Proponer otra fecha
-              </button>
-              <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">
-                <i class="bi bi-x-circle me-1"></i>No puedo
-              </button>
-            </div>
-          </div>
+          {% if pending[0].message %}
+          <p class="small mb-3" style="color:#9a3412;background:rgba(255,255,255,.6);padding:10px 14px;border-radius:8px">
+            <i class="bi bi-chat-dots me-1"></i><strong>Mensaje:</strong> {{ pending[0].message }}
+          </p>
           {% endif %}
+          <div class="d-flex flex-wrap gap-2 mt-2">
+            <form method="post" style="display:inline">
+              <input type="hidden" name="action" value="confirm">
+              <button class="btn btn-success btn-prop fw-bold">
+                <i class="bi bi-check-circle me-1"></i>Confirmar esta fecha
+              </button>
+            </form>
+            <button class="btn btn-outline-dark btn-prop" data-bs-toggle="modal" data-bs-target="#counterModal">
+              <i class="bi bi-calendar-plus me-1"></i>Proponer otra fecha
+            </button>
+            <button class="btn btn-outline-danger btn-prop" data-bs-toggle="modal" data-bs-target="#rejectModal">
+              <i class="bi bi-x-circle me-1"></i>No puedo
+            </button>
+          </div>
+        </div>
+        {% endif %}
 
-          {# ── Carga declarada ─────────────────────── #}
-          <div class="track-card p-3 mb-3">
-            <h6><i class="bi bi-box-seam me-1" style="color:var(--ilus-red)"></i>Carga declarada</h6>
-            <div class="row g-2 mb-3">
-              <div class="col-6 col-md-3"><div class="p-2 bg-light rounded text-center"><small>Bultos</small><br><strong>{{ req.total_packages }}</strong></div></div>
-              <div class="col-6 col-md-3"><div class="p-2 bg-light rounded text-center"><small>Peso</small><br><strong>{{ req.total_weight_kg }} kg</strong></div></div>
-              <div class="col-6 col-md-3"><div class="p-2 bg-light rounded text-center"><small>Peso vol.</small><br><strong>{{ req.total_volumetric_weight }}</strong></div></div>
-              <div class="col-6 col-md-3"><div class="p-2 bg-light rounded text-center"><small>m³</small><br><strong>{{ req.total_volume_m3 }}</strong></div></div>
+        {# ── AGENDA (3 fechas: solicitada / propuesta / confirmada) ── #}
+        <div class="track-card">
+          <h6><i class="bi bi-calendar-event me-1"></i>Agenda del retiro</h6>
+          <div class="agenda-grid">
+            <div class="agenda-cell">
+              <div class="ag-lbl">📩 Solicitada por ti</div>
+              <div class="ag-val">
+                {{ req.requested_date }}
+                {% if req.requested_time_from %}<br>{{ req.requested_time_from|hm }} – {{ req.requested_time_to|hm }}{% endif %}
+              </div>
             </div>
-            {% if packages %}
-            <div class="table-responsive">
-              <table class="table table-sm">
-                <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
-                <tbody>{% for p in packages %}<tr><td>{{ p.package_number }}</td><td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td><td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td></tr>{% endfor %}</tbody>
-              </table>
+            <div class="agenda-cell {% if req.proposed_date %}proposed{% endif %}">
+              <div class="ag-lbl">📨 Propuesta de ILUS</div>
+              <div class="ag-val">
+                {% if req.proposed_date %}
+                  {{ req.proposed_date }}
+                  {% if req.proposed_time_from %}<br>{{ req.proposed_time_from|hm }} – {{ req.proposed_time_to|hm }}{% endif %}
+                {% else %}—{% endif %}
+              </div>
             </div>
-            {% else %}
-            <div class="text-center text-muted small py-3">
-              <i class="bi bi-info-circle me-1"></i>No declaraste medidas. ILUS las verificará al momento del retiro.
+            <div class="agenda-cell {% if req.confirmed_date %}confirmed{% endif %}">
+              <div class="ag-lbl">✅ Confirmada</div>
+              <div class="ag-val">
+                {% if req.confirmed_date %}
+                  {{ req.confirmed_date }}
+                  {% if req.confirmed_time_from %}<br>{{ req.confirmed_time_from|hm }} – {{ req.confirmed_time_to|hm }}{% endif %}
+                {% else %}—{% endif %}
+              </div>
             </div>
-            {% endif %}
           </div>
         </div>
 
-        {# ── Sidebar derecho: instrucciones + historial ── #}
-        <div class="col-lg-4">
-          <div class="track-card p-3 mb-3">
-            <h6><i class="bi bi-geo-alt-fill me-1" style="color:var(--ilus-red)"></i>Bodega de retiro</h6>
-            <strong>{{ settings.warehouse_name }}</strong><br>
-            <span class="small text-muted">{{ settings.warehouse_addr }}</span>
-            <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-outline-danger w-100 mt-3">
-              <i class="bi bi-map me-1"></i>Abrir en mapa
-            </a>
-            <hr>
-            <ul class="small mb-0 ps-3">
-              <li>Presenta tu carnet al llegar.</li>
-              <li>Si retira un tercero, debe coincidir con la persona autorizada.</li>
-              <li>La agenda solo es válida cuando figura como <strong>confirmada</strong>.</li>
-            </ul>
+        {# ── CARGA DECLARADA ────────────────────────────── #}
+        <div class="track-card">
+          <h6><i class="bi bi-box-seam me-1"></i>Carga declarada</h6>
+          <div class="carga-grid mb-3">
+            <div class="carga-cell"><div class="c-num">{{ req.total_packages }}</div><div class="c-lbl">Bultos</div></div>
+            <div class="carga-cell"><div class="c-num">{{ req.total_weight_kg }}</div><div class="c-lbl">Kg</div></div>
+            <div class="carga-cell"><div class="c-num">{{ req.total_volumetric_weight }}</div><div class="c-lbl">Peso vol.</div></div>
+            <div class="carga-cell"><div class="c-num">{{ req.total_volume_m3 }}</div><div class="c-lbl">m³</div></div>
           </div>
+          {% if packages and req.total_packages > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm" style="font-size:.84rem">
+              <thead style="background:#f9fafb"><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
+              <tbody>{% for p in packages %}<tr><td><strong>{{ p.package_number }}</strong></td><td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td><td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td></tr>{% endfor %}</tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="text-center text-muted small py-2">
+            <i class="bi bi-info-circle me-1"></i>No declaraste medidas. ILUS las verificará al momento del retiro.
+          </div>
+          {% endif %}
+        </div>
+      </div>
 
-          <div class="track-card p-3">
-            <h6><i class="bi bi-clock-history me-1" style="color:var(--ilus-red)"></i>Historial</h6>
+      {# ── SIDEBAR: instrucciones + historial ──────────── #}
+      <div class="col-lg-4">
+        <div class="track-card">
+          <h6><i class="bi bi-geo-alt-fill me-1"></i>Bodega de retiro</h6>
+          <strong style="font-size:.96rem">{{ settings.warehouse_name }}</strong><br>
+          <span class="small text-muted">{{ settings.warehouse_addr }}</span>
+          <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-outline-danger w-100 mt-3 fw-bold">
+            <i class="bi bi-map me-1"></i>Abrir en mapa
+          </a>
+          <hr>
+          <ul class="small mb-0 ps-3" style="line-height:1.7">
+            <li>Presenta tu carnet al llegar.</li>
+            <li>Si retira un tercero, debe coincidir con la persona autorizada.</li>
+            <li>La agenda solo es válida cuando figura como <strong>confirmada</strong>.</li>
+            <li>Firmarás digitalmente al recibir.</li>
+          </ul>
+        </div>
+
+        <div class="track-card">
+          <h6><i class="bi bi-clock-history me-1"></i>Historial de actividad</h6>
+          {% if logs %}
+          <div class="timeline-wrap">
             {% for l in logs %}
-            <div class="timeline-item small mb-2">
-              <strong>{{ l.action.replace('_',' ').title() }}</strong><br>
-              <span class="text-muted">{{ l.created_at }} · {{ l.actor_name }}</span>
-              {% if l.notes %}<div class="mt-1" style="color:#374151">{{ l.notes }}</div>{% endif %}
+            <div class="timeline-item">
+              <div class="ti-action">{{ l.action.replace('_',' ').title() }}</div>
+              <div class="ti-meta">{{ l.created_at }} · {{ l.actor_name }}</div>
+              {% if l.notes %}<div class="ti-notes">{{ l.notes }}</div>{% endif %}
             </div>
-            {% else %}
-            <div class="text-center text-muted small py-3">Sin actividad aún</div>
             {% endfor %}
           </div>
+          {% else %}
+          <div class="text-center text-muted small py-3">
+            <i class="bi bi-info-circle"></i>Sin actividad aún
+          </div>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -214,15 +362,18 @@
   <footer class="footer">
     <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
     <div class="fw-bold text-white mb-1">ILUS Fitness</div>
-    <div class="small">Esta es una página pública de seguimiento. Conserva el enlace para consultas posteriores.</div>
+    <div class="small">© Todos los derechos reservados · Página pública de seguimiento</div>
   </footer>
 
-  {# ── Modales ──────── #}
+  {# ── Modales: contraproposición / rechazo ─────── #}
   <div class="modal fade" id="counterModal" tabindex="-1">
     <div class="modal-dialog">
       <form method="post" class="modal-content">
         <input type="hidden" name="action" value="counter">
-        <div class="modal-header"><h5 class="modal-title">Proponer otra fecha</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-header bg-dark text-white">
+          <h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Proponer otra fecha</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
         <div class="modal-body row g-2">
           <div class="col-12">
             <label class="form-label small fw-bold">Nueva fecha</label>
@@ -253,7 +404,10 @@
     <div class="modal-dialog">
       <form method="post" class="modal-content">
         <input type="hidden" name="action" value="reject">
-        <div class="modal-header"><h5 class="modal-title">No puedo asistir</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-header bg-dark text-white">
+          <h5 class="modal-title"><i class="bi bi-x-circle me-2"></i>No puedo asistir</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
         <div class="modal-body">
           <label class="form-label small fw-bold">Motivo</label>
           <textarea name="reason" class="form-control" rows="3" placeholder="Cuéntanos qué pasó"></textarea>

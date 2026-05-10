@@ -3,125 +3,390 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solicitud de retiro — ILUS</title>
+  <title>Solicita tu retiro — ILUS</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
-    :root{--ilus-red:#e60000;--ink:#0b0b0b}
-    body{margin:0;background:#f2f3f5;color:#111827;font-family:Arial,Helvetica,sans-serif}
-    .public-top{background:#050505;color:#fff;border-bottom:4px solid var(--ilus-red)}
-    .public-top-inner{max-width:1180px;margin:auto;padding:28px 22px 34px;display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:28px;align-items:center}
-    .brand-logo{width:380px;max-width:100%;height:auto;margin-bottom:22px}
-    .hero-title{font-size:clamp(2.2rem,5vw,4.6rem);font-weight:900;line-height:.96;margin:0;letter-spacing:0}
-    .hero-copy{font-size:1.05rem;line-height:1.65;color:#d1d5db;max-width:740px;margin:18px 0 0}
-    .pill-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
-    .pill{background:#fff;color:#111;border-radius:50px;padding:8px 14px;font-weight:800;font-size:.84rem}
-    .photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .photo-grid img{width:100%;height:146px;object-fit:cover;border-radius:8px;filter:grayscale(1) contrast(1.08);border:1px solid #1f1f1f}
-    .photo-grid img:first-child{grid-row:span 2;height:302px}
-    .shell{max-width:1180px;margin:24px auto 0;padding:0 22px 40px}
-    .cardx{background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 22px rgba(15,23,42,.08)}
-    .cardx-head{background:#111;color:#fff;padding:15px 18px;border-radius:8px 8px 0 0;font-weight:900}
-    .cardx-body{padding:20px}
-    .section-mark{border-left:4px solid var(--ilus-red);padding-left:12px;margin:0 0 16px}
-    .section-mark h5{font-size:1rem;font-weight:900;margin:0}
-    .req{color:var(--ilus-red)}
-    .info-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:24px}
-    .info-card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;box-shadow:0 6px 18px rgba(15,23,42,.06)}
-    .info-icon{width:36px;height:36px;border-radius:8px;background:#111;color:#fff;display:grid;place-items:center;margin-bottom:10px}
-    .info-card h6{font-weight:900;margin:0 0 4px;font-size:.95rem}
-    .info-card p{margin:0;font-size:.78rem;color:#6b7280;line-height:1.4}
-    .step-num{position:absolute;top:-10px;right:-10px;background:var(--ilus-red);color:#fff;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:900;font-size:.85rem;box-shadow:0 4px 10px rgba(230,0,0,.4)}
-    .info-card{position:relative}
-    .warehouse-strip{margin-top:18px;background:#111;color:#fff;border-radius:8px;padding:20px;display:flex;gap:16px;align-items:center;justify-content:space-between}
-    .warehouse-strip p{margin:4px 0 0;color:#d1d5db}
-    .footer{background:#050505;color:#9ca3af;padding:28px 22px;margin-top:10px;text-align:center}
-    .footer img{width:120px;margin-bottom:10px}
-    .footer-row{max-width:1180px;margin:auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start;text-align:left}
-    .footer-logo{text-align:center}
+    :root{
+      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#161616;
+      --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;--gray-4:#374151;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:#fafafa;color:#111827;font-family:'Inter','Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+
+    /* ════════════════════════════════════════════════════════════
+       MINI BAR (banner pequeño superior con CTA seguimiento)
+       ════════════════════════════════════════════════════════════ */
+    .mini-bar{background:#0a0a0a;color:#fff;font-size:.78rem;padding:7px 22px;display:flex;align-items:center;justify-content:center;gap:14px;border-bottom:1px solid #1c1c1c}
+    .mini-bar .mini-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);padding:3px 10px;border-radius:50px;font-weight:600}
+    .mini-bar a{color:#fff;text-decoration:underline;font-weight:600}
+    .mini-bar a:hover{color:var(--ilus-red);text-decoration:none}
+
+    /* ════════════════════════════════════════════════════════════
+       HERO MARKETING — animado, moderno, con copy de impacto
+       ════════════════════════════════════════════════════════════ */
+    .hero-wrap{position:relative;background:#0a0a0a;color:#fff;overflow:hidden;border-bottom:5px solid var(--ilus-red)}
+    .hero-wrap::before{
+      content:'';position:absolute;inset:0;
+      background:
+        radial-gradient(circle at 20% 30%, rgba(230,0,0,.18) 0%, transparent 45%),
+        radial-gradient(circle at 80% 60%, rgba(230,0,0,.10) 0%, transparent 45%);
+      pointer-events:none;
+    }
+    .hero-grid{
+      max-width:1280px;margin:0 auto;padding:50px 22px 60px;
+      display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:48px;align-items:center;position:relative;z-index:2;
+    }
+    .hero-pill-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;animation:fadeInUp .6s .1s both}
+    .hero-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+    .hero-pill.red{background:var(--ilus-red);border-color:var(--ilus-red)}
+    .hero-logo{height:46px;margin-bottom:24px;animation:fadeInUp .6s both}
+    .hero-title{
+      font-family:'Bebas Neue','Inter',sans-serif;
+      font-size:clamp(2.6rem,5.5vw,5.6rem);font-weight:900;line-height:.92;
+      letter-spacing:-.01em;margin:0;animation:fadeInUp .6s .15s both;
+    }
+    .hero-title .word-red{color:var(--ilus-red);position:relative;display:inline-block}
+    .hero-title .word-red::after{
+      content:'';position:absolute;bottom:6px;left:0;right:0;height:6px;background:var(--ilus-red);
+      transform:scaleX(.3);transform-origin:left;animation:underlineGrow 1.4s .3s ease-out forwards;
+    }
+    @keyframes underlineGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+    .hero-copy{font-size:1.1rem;line-height:1.6;color:#cbd5e1;max-width:620px;margin:22px 0 0;animation:fadeInUp .6s .25s both}
+    .hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px;animation:fadeInUp .6s .35s both}
+    .hero-cta .btn{padding:13px 26px;font-weight:800;border-radius:8px;font-size:.96rem;letter-spacing:.02em}
+    .hero-bullets{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:14px;animation:fadeInUp .6s .45s both}
+    .hero-bullet{display:flex;align-items:flex-start;gap:10px;font-size:.86rem;color:#d1d5db}
+    .hero-bullet i{color:var(--ilus-red);font-size:1.1rem;margin-top:2px;flex-shrink:0}
+    .hero-bullet strong{color:#fff;display:block;font-size:.95rem;margin-bottom:2px}
+
+    /* Hero slideshow lateral */
+    .hero-slides{position:relative;height:520px;border-radius:14px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06)}
+    .hero-slide{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;transition:opacity 1.2s ease-in-out;filter:contrast(1.04) saturate(1.05)}
+    .hero-slide.active{opacity:1}
+    .hero-slide::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(10,10,10,.55) 0%,rgba(10,10,10,.15) 50%,transparent 100%)}
+    .hero-slide-tag{position:absolute;bottom:24px;left:24px;right:24px;color:#fff;z-index:2}
+    .hero-slide-tag .stag-label{display:inline-block;background:var(--ilus-red);font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;border-radius:4px;margin-bottom:8px}
+    .hero-slide-tag h4{font-family:'Bebas Neue';font-size:1.85rem;line-height:1;margin:0;letter-spacing:.01em}
+    .hero-slide-tag p{font-size:.86rem;color:#e5e7eb;margin:6px 0 0}
+    .hero-slide-dots{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:3}
+    .hero-slide-dot{width:30px;height:4px;background:rgba(255,255,255,.3);border-radius:2px;cursor:pointer;transition:background .25s}
+    .hero-slide-dot.active{background:var(--ilus-red)}
+
+    /* Stats strip */
+    .stats-strip{background:#0a0a0a;color:#fff;padding:18px 22px;border-top:1px solid #1c1c1c;border-bottom:1px solid #1c1c1c}
+    .stats-inner{max-width:1180px;margin:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+    .stat-cell{text-align:center;padding:6px}
+    .stat-cell .stat-num{font-family:'Bebas Neue';font-size:2.2rem;color:var(--ilus-red);line-height:.9}
+    .stat-cell .stat-lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;font-weight:700;margin-top:6px}
+
+    /* ════════════════════════════════════════════════════════════
+       PROCESO 4 STEPS
+       ════════════════════════════════════════════════════════════ */
+    .shell{max-width:1180px;margin:0 auto;padding:36px 22px}
+    .section-title{margin:0 0 18px;font-weight:900;font-size:.86rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.1em}
+    .steps-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}
+    .step-card{position:relative;background:#fff;border:1px solid var(--gray-2);border-radius:12px;padding:22px 20px;transition:transform .2s,box-shadow .2s,border-color .2s}
+    .step-card:hover{transform:translateY(-3px);box-shadow:0 14px 28px rgba(0,0,0,.08);border-color:var(--ink)}
+    .step-num{position:absolute;top:-12px;left:20px;background:var(--ilus-red);color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue';font-size:1.1rem;box-shadow:0 6px 14px rgba(230,0,0,.4)}
+    .step-card h6{font-weight:900;margin:6px 0 6px;font-size:1rem}
+    .step-card p{margin:0;font-size:.8rem;color:#6b7280;line-height:1.45}
+    .step-icon{width:42px;height:42px;border-radius:10px;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.15rem;margin-bottom:14px}
+
+    /* ════════════════════════════════════════════════════════════
+       FORM CARD
+       ════════════════════════════════════════════════════════════ */
+    .form-card{background:#fff;border:1px solid var(--gray-2);border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.06);overflow:hidden}
+    .form-head{background:#0a0a0a;color:#fff;padding:18px 24px;border-bottom:4px solid var(--ilus-red);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    .form-head h3{margin:0;font-family:'Bebas Neue';font-size:1.7rem;letter-spacing:.01em}
+    .form-head .form-sub{color:#9ca3af;font-size:.84rem;margin-top:3px}
+    .form-body{padding:28px}
+    .section-mark{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding-bottom:8px;border-bottom:1px solid #f3f4f6}
+    .section-mark .sm-num{background:var(--ilus-red);color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex-shrink:0}
+    .section-mark h5{margin:0;font-size:1rem;font-weight:900;letter-spacing:-.01em}
+    .section-mark .sm-help{font-size:.78rem;color:#6b7280;margin-left:auto}
+    .req{color:var(--ilus-red);font-weight:900}
     .input-help{font-size:.7rem;color:#6b7280;margin-top:3px}
     .input-error{font-size:.74rem;color:var(--ilus-red);margin-top:3px;font-weight:600;display:none}
-    .field-valid{border-color:#22c55e !important}
+    .field-valid{border-color:#22c55e !important;background:#f0fdf4}
     .field-invalid{border-color:#dc2626 !important;background:#fef2f2}
-    .toggle-bultos{background:#f9fafb;border:2px dashed #d1d5db;border-radius:8px;padding:14px 18px;cursor:pointer;text-align:center;font-weight:600;font-size:.86rem;color:#374151;transition:all .15s}
-    .toggle-bultos:hover{background:#fff;border-color:#111;color:#111}
-    .toggle-bultos.active{background:#fff;border-color:var(--ilus-red);border-style:solid}
-    @media(max-width:900px){.public-top-inner{grid-template-columns:1fr}.photo-grid img,.photo-grid img:first-child{height:145px}.info-grid{grid-template-columns:1fr 1fr}.footer-row{grid-template-columns:1fr}.warehouse-strip{display:block}.warehouse-strip a{margin-top:12px}}
-    @media(max-width:600px){.info-grid{grid-template-columns:1fr}}
+    .form-control,.form-select{font-size:.92rem;padding:10px 12px}
+
+    /* Toggle bultos */
+    .toggle-bultos{background:#f9fafb;border:2px dashed #d1d5db;border-radius:10px;padding:14px 18px;cursor:pointer;text-align:center;font-weight:600;font-size:.86rem;color:#374151;transition:all .15s;width:100%;display:flex;align-items:center;justify-content:center;gap:10px}
+    .toggle-bultos:hover{background:#fff;border-color:#0a0a0a;color:#0a0a0a}
+    .toggle-bultos.active{background:#fff;border-color:var(--ilus-red);border-style:solid;color:var(--ilus-red)}
+
+    /* ════════════════════════════════════════════════════════════
+       SELECTOR DE BLOQUE HORARIO INTELIGENTE — grid de slots
+       ════════════════════════════════════════════════════════════ */
+    .slot-picker{background:#fafafa;border:1px solid var(--gray-2);border-radius:10px;padding:14px}
+    .slot-picker-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:.82rem}
+    .slot-picker-head .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.72rem;color:#6b7280}
+    .slot-picker-head .legend .dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:middle}
+    .slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(102px,1fr));gap:6px}
+    .slot-item{
+      padding:10px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
+      font-size:.84rem;font-weight:700;color:#0a0a0a;text-align:center;cursor:pointer;
+      transition:all .12s;font-variant-numeric:tabular-nums;user-select:none;position:relative;
+    }
+    .slot-item:hover{border-color:#0a0a0a;background:#f9fafb}
+    .slot-item.taken{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;text-decoration:line-through}
+    .slot-item.taken:hover{border-color:#e5e7eb;background:#f3f4f6}
+    .slot-item.selected{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);box-shadow:0 6px 14px rgba(230,0,0,.3)}
+    .slot-item.in-range{background:#fee2e2;color:var(--ilus-red);border-color:#fecaca}
+    .slot-item.is-start::before{content:'INICIO';position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:var(--ilus-red);color:#fff;font-size:.55rem;padding:1px 6px;border-radius:50px;letter-spacing:.05em}
+    .slot-item.is-end::before{content:'FIN';position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:1px 6px;border-radius:50px;letter-spacing:.05em}
+    .slot-summary{margin-top:12px;padding:12px 14px;background:#0a0a0a;color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:.86rem}
+    .slot-summary .sum-empty{color:#9ca3af;font-style:italic}
+    .slot-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+    .slot-quick{padding:5px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:50px;font-size:.74rem;font-weight:600;cursor:pointer;color:#374151}
+    .slot-quick:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+
+    /* Submit */
+    .submit-btn{
+      background:var(--ilus-red);color:#fff;font-weight:900;font-size:1.05rem;padding:15px 30px;
+      border:none;border-radius:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+      box-shadow:0 14px 28px rgba(230,0,0,.32);transition:all .2s;cursor:pointer;letter-spacing:.02em;
+    }
+    .submit-btn:hover{background:var(--ilus-red-dk);transform:translateY(-2px);box-shadow:0 20px 36px rgba(230,0,0,.45)}
+    .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+    /* Warehouse strip */
+    .warehouse-strip{margin-top:24px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:12px;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;border-left:5px solid var(--ilus-red)}
+    .warehouse-strip h5{margin:0;font-family:'Bebas Neue';font-size:1.5rem;letter-spacing:.01em}
+    .warehouse-strip p{margin:5px 0 0;color:#cbd5e1;font-size:.86rem}
+
+    /* Footer */
+    .footer{background:#0a0a0a;color:#9ca3af;padding:34px 22px;margin-top:18px;text-align:center}
+    .footer img{width:110px;margin-bottom:10px}
+
+    /* ════════════════════════════════════════════════════════════
+       RESPONSIVE
+       ════════════════════════════════════════════════════════════ */
+    @media(max-width:991px){
+      .hero-grid{grid-template-columns:1fr;gap:30px}
+      .hero-slides{height:340px}
+      .steps-grid{grid-template-columns:1fr 1fr}
+      .stats-inner{grid-template-columns:1fr 1fr}
+    }
+    @media(max-width:600px){
+      .hero-bullets{grid-template-columns:1fr}
+      .steps-grid{grid-template-columns:1fr}
+      .form-body{padding:20px}
+    }
   </style>
 </head>
 <body>
-  <header class="public-top">
-    <div class="public-top-inner">
+
+  {# ── MINI BAR (banner pequeño con CTA seguimiento) ─────────────── #}
+  <div class="mini-bar">
+    <span class="mini-pill"><i class="bi bi-truck me-1"></i>Solicitud de retiro</span>
+    <span>¿Ya enviaste tu solicitud?</span>
+    <a href="#tracking-search">
+      <i class="bi bi-search me-1"></i>Buscar mi seguimiento
+    </a>
+  </div>
+
+  {# ════════════════════════════════════════════════════════════════
+     HERO MARKETING — copywriting de impacto + slideshow
+     ════════════════════════════════════════════════════════════════ #}
+  <header class="hero-wrap">
+    <div class="hero-grid">
       <div>
-        <img src="{{ url_for('static', filename='Logo.png') }}" class="brand-logo" alt="ILUS">
-        <h1 class="hero-title">Solicitud de retiro en bodega</h1>
+        <img src="{{ url_for('static', filename='Logo.png') }}" class="hero-logo" alt="ILUS">
+        <div class="hero-pill-row">
+          <span class="hero-pill red"><i class="bi bi-lightning-charge-fill me-1"></i>Servicio premium</span>
+          <span class="hero-pill"><i class="bi bi-shield-check me-1"></i>Bodega Quilicura</span>
+          <span class="hero-pill"><i class="bi bi-clock-history me-1"></i>Atención en menos de 2 hrs</span>
+        </div>
+
+        <h1 class="hero-title">
+          Tu equipo de fitness,<br>
+          <span class="word-red">listo para retirar</span>
+        </h1>
+
         <p class="hero-copy">
-          Este formulario es <strong>público</strong>. Llena tus datos y te enviaremos un enlace
-          para hacer seguimiento al estado del retiro. La fecha queda confirmada solo cuando
-          ambas partes (tú e ILUS) acepten el día y horario.
+          Agenda el retiro de tu factura, boleta o nota de venta en <strong>3 minutos</strong>.
+          Te enviamos un enlace privado de seguimiento y confirmamos por correo. Sin filas,
+          sin papeleo, sin malos ratos. <strong>Así trabaja ILUS.</strong>
         </p>
-        <div class="pill-row">
-          <span class="pill"><i class="bi bi-shield-check me-1 text-danger"></i>Validación interna</span>
-          <span class="pill"><i class="bi bi-clock-history me-1 text-danger"></i>Mínimo 24 horas de anticipación</span>
-          <span class="pill"><i class="bi bi-envelope-paper me-1 text-danger"></i>Seguimiento por email</span>
+
+        <div class="hero-cta">
+          <a href="#form-solicitud" class="btn btn-danger btn-lg">
+            <i class="bi bi-send-check me-2"></i>Solicitar mi retiro
+          </a>
+          <a href="#tracking-search" class="btn btn-outline-light btn-lg">
+            <i class="bi bi-search me-2"></i>Ver estado existente
+          </a>
+        </div>
+
+        <div class="hero-bullets">
+          <div class="hero-bullet">
+            <i class="bi bi-calendar-check"></i>
+            <div>
+              <strong>Agenda flexible</strong>
+              Selecciona el rango horario que más te acomode.
+            </div>
+          </div>
+          <div class="hero-bullet">
+            <i class="bi bi-envelope-paper"></i>
+            <div>
+              <strong>Seguimiento online</strong>
+              Link privado por email — siempre sabrás el estado.
+            </div>
+          </div>
+          <div class="hero-bullet">
+            <i class="bi bi-shield-lock"></i>
+            <div>
+              <strong>Datos protegidos</strong>
+              RUT y teléfono validados. Nada se comparte.
+            </div>
+          </div>
+          <div class="hero-bullet">
+            <i class="bi bi-people"></i>
+            <div>
+              <strong>Tercero autorizado</strong>
+              Permite que otra persona retire por ti.
+            </div>
+          </div>
         </div>
       </div>
-      <div class="photo-grid">
-        <img src="{{ url_for('static', filename=settings.get('hero_image_1') or 'uploads/p2530_1777290755.jpg') }}" alt="Equipo ILUS">
-        <img src="{{ url_for('static', filename=settings.get('hero_image_2') or 'uploads/p1257_1777170890.jpeg') }}" alt="Producto">
-        <img src="{{ url_for('static', filename=settings.get('hero_image_3') or 'uploads/p1271_1777153752.jpeg') }}" alt="Carga">
+
+      <div>
+        <div class="hero-slides" id="heroSlides">
+          {% set _slides = [
+            (settings.get('hero_image_1') or 'uploads/p2530_1777290755.jpg', 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más'),
+            (settings.get('hero_image_2') or 'uploads/p1257_1777170890.jpeg', 'Calidad ILUS', 'Productos que duran toda la vida'),
+            (settings.get('hero_image_3') or 'uploads/p1271_1777153752.jpeg', 'Bodega central', 'Despacho organizado y profesional'),
+          ] %}
+          {% for img, title, sub in _slides %}
+          <div class="hero-slide {% if loop.first %}active{% endif %}"
+               style="background-image:url('{{ url_for('static', filename=img) }}')">
+            <div class="hero-slide-tag">
+              <span class="stag-label">{{ sub }}</span>
+              <h4>{{ title }}</h4>
+            </div>
+          </div>
+          {% endfor %}
+          <div class="hero-slide-dots" id="heroDots">
+            {% for _ in _slides %}
+            <span class="hero-slide-dot {% if loop.first %}active{% endif %}" data-idx="{{ loop.index0 }}"></span>
+            {% endfor %}
+          </div>
+        </div>
       </div>
     </div>
   </header>
 
-  {# ── Pasos del proceso ────────────────────────────────────────────── #}
-  <div class="shell">
-    <section class="info-grid">
-      <div class="info-card">
-        <div class="step-num">1</div>
-        <div class="info-icon"><i class="bi bi-pencil-square"></i></div>
-        <h6>Envías la solicitud</h6>
-        <p>Completas datos del documento y de la persona autorizada. No es una reserva todavía.</p>
+  {# Stats strip #}
+  <div class="stats-strip">
+    <div class="stats-inner">
+      <div class="stat-cell">
+        <div class="stat-num">+5K</div>
+        <div class="stat-lbl">Retiros completados</div>
       </div>
-      <div class="info-card">
-        <div class="step-num">2</div>
-        <div class="info-icon"><i class="bi bi-shield-check"></i></div>
-        <h6>ILUS revisa</h6>
-        <p>Validamos disponibilidad. Si todo está OK confirmamos. Si no, te proponemos otra fecha.</p>
+      <div class="stat-cell">
+        <div class="stat-num">24h</div>
+        <div class="stat-lbl">Tiempo de respuesta</div>
       </div>
-      <div class="info-card">
-        <div class="step-num">3</div>
-        <div class="info-icon"><i class="bi bi-envelope-check"></i></div>
-        <h6>Confirmación final</h6>
-        <p>Recibirás un email con la fecha definitiva. La cita queda agendada cuando aceptas la propuesta.</p>
+      <div class="stat-cell">
+        <div class="stat-num">98%</div>
+        <div class="stat-lbl">Satisfacción</div>
       </div>
-      <div class="info-card">
-        <div class="step-num">4</div>
-        <div class="info-icon"><i class="bi bi-truck"></i></div>
-        <h6>Día del retiro</h6>
-        <p>La persona autorizada presenta su carnet en bodega. Firmará al recibir los productos.</p>
+      <div class="stat-cell">
+        <div class="stat-num">RM</div>
+        <div class="stat-lbl">Cobertura nacional</div>
       </div>
-    </section>
+    </div>
   </div>
 
+  {# ════════════════════════════════════════════════════════════════
+     STEPS DEL PROCESO
+     ════════════════════════════════════════════════════════════════ #}
   <main class="shell">
-    <form method="post" class="cardx" id="solicitudForm" novalidate>
-      <div class="cardx-head"><i class="bi bi-clipboard2-check me-2"></i>Datos para solicitar retiro</div>
-      <div class="cardx-body">
+    <div class="section-title">¿Cómo funciona?</div>
+    <div class="steps-grid">
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <div class="step-icon"><i class="bi bi-pencil-square"></i></div>
+        <h6>Envías la solicitud</h6>
+        <p>Completas tus datos y la persona autorizada en 3 min. No es una reserva todavía.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <div class="step-icon"><i class="bi bi-shield-check"></i></div>
+        <h6>ILUS revisa</h6>
+        <p>Validamos disponibilidad y respondemos en menos de 2 horas hábiles.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <div class="step-icon"><i class="bi bi-envelope-check"></i></div>
+        <h6>Confirmación</h6>
+        <p>Recibes email con la fecha definitiva. La cita queda agendada al aceptarla.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">4</div>
+        <div class="step-icon"><i class="bi bi-truck"></i></div>
+        <h6>Día del retiro</h6>
+        <p>Te entregamos los productos. Firmas digitalmente al recibir.</p>
+      </div>
+    </div>
+
+    {# ════════════════════════════════════════════════════════════════
+       BUSCAR SEGUIMIENTO EXISTENTE
+       ════════════════════════════════════════════════════════════════ #}
+    <div id="tracking-search" class="form-card mb-4" style="border-left:5px solid #0a0a0a">
+      <div class="form-body" style="padding:20px 24px">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <div style="flex:1;min-width:240px">
+            <h5 class="mb-1 fw-black"><i class="bi bi-search me-2" style="color:var(--ilus-red)"></i>¿Ya tienes una solicitud?</h5>
+            <p class="mb-0 small text-muted">Pega aquí el enlace de seguimiento que te enviamos por correo.</p>
+          </div>
+          <div class="d-flex gap-2 align-items-center" style="flex:1;min-width:280px">
+            <input type="text" id="trackingLink" class="form-control" placeholder="Pega el enlace o el código (RET-000123)">
+            <button class="btn btn-dark fw-bold" onclick="irASeguimiento()">
+              <i class="bi bi-arrow-right"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ════════════════════════════════════════════════════════════════
+       FORMULARIO DE SOLICITUD
+       ════════════════════════════════════════════════════════════════ #}
+    <form id="form-solicitud" method="post" class="form-card" novalidate>
+      <div class="form-head">
+        <div>
+          <h3>SOLICITA TU RETIRO</h3>
+          <div class="form-sub">Completa el formulario · Recibirás el seguimiento en tu email</div>
+        </div>
+        <span class="hero-pill red"><i class="bi bi-clock me-1"></i>3 minutos</span>
+      </div>
+      <div class="form-body">
         {% if errors %}
-        <div class="alert alert-danger py-2">{% for e in errors %}<div><i class="bi bi-exclamation-triangle me-1"></i>{{ e }}</div>{% endfor %}</div>
+        <div class="alert alert-danger py-2 mb-3">
+          <strong><i class="bi bi-exclamation-triangle me-2"></i>Revisa estos errores:</strong>
+          <ul class="mb-0 mt-1">
+            {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+          </ul>
+        </div>
         {% endif %}
 
-        {# ── Documento y cliente ───────────────────────────────────── #}
+        {# ── 1. Documento ─────────────────────────────────────── #}
         <div class="section-mark">
-          <h5>1. Documento del retiro</h5>
-          <small class="text-muted">El documento que respalda los productos a retirar.</small>
+          <span class="sm-num">1</span>
+          <h5>Documento del retiro</h5>
+          <span class="sm-help">El que respalda tus productos</span>
         </div>
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label small fw-bold">Tipo documento <span class="req">*</span></label>
+        <div class="row g-3 mb-4">
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">Tipo <span class="req">*</span></label>
             <select name="document_type" class="form-select" required>
               <option value="factura">Factura</option>
               <option value="boleta">Boleta</option>
@@ -129,41 +394,39 @@
               <option value="pedido">N° pedido</option>
             </select>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label small fw-bold">N° documento <span class="req">*</span></label>
-            <input name="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required>
-            <div class="input-help">Ej: 12345 o VD0008827</div>
+            <input name="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required placeholder="12345">
           </div>
-          <div class="col-md-4">
-            <label class="form-label small fw-bold">Comentarios del retiro</label>
-            <input class="form-control" name="observations" value="{{ fd.get('observations','') }}" placeholder="Opcional — algo que debamos saber">
+          <div class="col-md-6">
+            <label class="form-label small fw-bold">Comentarios <span class="text-muted fw-normal">(opcional)</span></label>
+            <input class="form-control" name="observations" value="{{ fd.get('observations','') }}" placeholder="Algo que debamos saber">
             <input type="hidden" name="invoice_total_amount" value="0">
           </div>
           <div class="col-md-8">
             <label class="form-label small fw-bold">Razón social o nombre <span class="req">*</span></label>
-            <input name="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required>
+            <input name="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required placeholder="Mi Empresa S.A. / Juan Pérez">
           </div>
           <div class="col-md-4">
             <label class="form-label small fw-bold">RUT del cliente <span class="req">*</span></label>
             <input name="customer_rut" id="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}"
-                   placeholder="11.111.111-1" required oninput="formatRUT(this)" onblur="validateRUT(this)">
-            <div class="input-help">Formato: 12.345.678-9 (con dígito verificador)</div>
-            <div class="input-error" id="customer_rut_err">RUT inválido — revisa el dígito verificador</div>
+                   placeholder="12.345.678-9" required oninput="formatRUT(this)" onblur="validateRUT(this)">
+            <div class="input-help">Con dígito verificador</div>
+            <div class="input-error" id="customer_rut_err">RUT inválido — revisa el dígito</div>
           </div>
         </div>
 
-        <hr class="my-4">
-
-        {# ── Persona autorizada para retirar ─────────────────────── #}
+        {# ── 2. Persona autorizada ─────────────────────────────── #}
         <div class="section-mark">
-          <h5>2. Persona autorizada para retirar</h5>
-          <small class="text-muted">Esta persona deberá presentar su cédula al llegar a bodega. Le enviaremos el seguimiento por email.</small>
+          <span class="sm-num">2</span>
+          <h5>Persona autorizada para retirar</h5>
+          <span class="sm-help">Le enviaremos el seguimiento</span>
         </div>
-        <div class="row g-3">
+        <div class="row g-3 mb-4">
           <div class="col-md-6">
             <label class="form-label small fw-bold">Nombre completo <span class="req">*</span></label>
-            <input name="pickup_person_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" required>
-            <div class="input-help">Mismo nombre que aparecerá en el carnet</div>
+            <input name="pickup_person_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" required placeholder="Juan Pérez González">
+            <div class="input-help">Mismo que aparece en el carnet</div>
           </div>
           <div class="col-md-3">
             <label class="form-label small fw-bold">RUT <span class="req">*</span></label>
@@ -174,13 +437,15 @@
           </div>
           <div class="col-md-3">
             <label class="form-label small fw-bold">Relación</label>
-            <select name="pickup_person_relation" class="form-select">{% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
+            <select name="pickup_person_relation" class="form-select">
+              {% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}
+            </select>
           </div>
 
           <div class="col-md-6">
             <label class="form-label small fw-bold">Email <span class="req">*</span></label>
             <input name="contact_email" id="contact_email" type="email" class="form-control"
-                   value="{{ fd.get('contact_email','') }}" required>
+                   value="{{ fd.get('contact_email','') }}" required placeholder="tucorreo@email.com">
             <div class="input-help">Aquí recibirás el link de seguimiento</div>
           </div>
           <div class="col-md-6">
@@ -188,83 +453,102 @@
             <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
                    value="{{ fd.get('contact_phone','') }}"
                    placeholder="+56 9 1234 5678" required oninput="formatPhone(this)" onblur="validatePhone(this)">
-            <div class="input-help">Formato chileno: +56 9 XXXX XXXX</div>
-            <div class="input-error" id="contact_phone_err">Teléfono chileno inválido (debe empezar con +56 9)</div>
-            {# Sincronizamos el teléfono de contacto y de persona automáticamente #}
+            <div class="input-help">Móvil chileno: +56 9 XXXX XXXX</div>
+            <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
             <input type="hidden" name="pickup_person_phone" id="pickup_person_phone">
             <input type="hidden" name="contact_name" id="contact_name">
           </div>
         </div>
 
-        <hr class="my-4">
-
-        {# ── Fecha y hora ────────────────────────────────────────── #}
+        {# ── 3. Fecha y horario INTELIGENTE ─────────────────── #}
         <div class="section-mark">
-          <h5>3. Fecha y horario</h5>
-          <small class="text-muted">Mínimo 24 horas de anticipación. Los bloques en gris ya están ocupados.</small>
+          <span class="sm-num">3</span>
+          <h5>Fecha y horario</h5>
+          <span class="sm-help">Mínimo +24h · Selecciona rango</span>
         </div>
-        <div class="row g-3">
-          <div class="col-md-6">
+        <div class="row g-3 mb-4">
+          <div class="col-md-5">
             <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
             <input type="date" id="cal_fecha" class="form-control" required>
             <small id="cal_fecha_msg" class="input-help"></small>
           </div>
-          <div class="col-md-6">
+          <div class="col-md-7">
             <label class="form-label small fw-bold">Bloque horario <span class="req">*</span></label>
-            <select id="cal_slot" class="form-select" required disabled>
-              <option value="">— Selecciona fecha primero —</option>
-            </select>
-            <small id="cal_slot_msg" class="input-help"></small>
+            <div class="slot-picker" id="slotPicker">
+              <div class="slot-picker-head">
+                <strong style="font-size:.84rem">Selecciona uno o más bloques contiguos</strong>
+                <div class="legend">
+                  <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
+                  <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
+                  <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Ocupado</span>
+                </div>
+              </div>
+              <div class="slot-grid" id="slotGrid">
+                <div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">
+                  <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
+                </div>
+              </div>
+              <div class="slot-actions" id="slotQuickWrap" style="display:none">
+                <span class="text-muted small me-2">Rápido:</span>
+                <span class="slot-quick" onclick="setQuickRange(1)">1 hora</span>
+                <span class="slot-quick" onclick="setQuickRange(2)">2 horas</span>
+                <span class="slot-quick" onclick="setQuickRange(3)">3 horas</span>
+                <span class="slot-quick" onclick="setQuickRange(0)">Limpiar</span>
+              </div>
+              <div class="slot-summary">
+                <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aún</div>
+                <button type="button" class="btn btn-sm btn-outline-light" id="clearSlotBtn" onclick="clearSlots()" style="display:none">
+                  <i class="bi bi-x-lg me-1"></i>Limpiar
+                </button>
+              </div>
+            </div>
+            <input type="hidden" name="requested_date">
+            <input type="hidden" name="requested_time_from">
+            <input type="hidden" name="requested_time_to">
           </div>
-          <input type="hidden" name="requested_date">
-          <input type="hidden" name="requested_time_from">
-          <input type="hidden" name="requested_time_to">
         </div>
 
-        <hr class="my-4">
-
-        {# ── Bultos (colapsado por default) ─────────────────────── #}
+        {# ── 4. Bultos (opcional, colapsado) ────────────────────── #}
         <div class="section-mark">
-          <h5>4. Bultos a retirar <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h5>
-          <small class="text-muted">Si conoces las medidas exactas, ingresálas para planificar mejor el retiro.</small>
+          <span class="sm-num">4</span>
+          <h5>Bultos a retirar <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h5>
+          <span class="sm-help">Si conoces las medidas</span>
         </div>
-
-        <div id="bultosToggleWrap">
+        <div class="mb-4">
           <div class="toggle-bultos" id="bultosToggle" onclick="toggleBultos()">
-            <i class="bi bi-rulers me-2"></i>Tengo las medidas exactas — quiero ingresarlas
-            <i class="bi bi-chevron-down ms-2"></i>
+            <i class="bi bi-rulers"></i>
+            <span id="bultosToggleText">Tengo las medidas exactas — quiero ingresarlas</span>
+            <i class="bi bi-chevron-down" id="bultosToggleIcon"></i>
           </div>
-        </div>
 
-        <div id="bultosWrap" style="display:none">
-          <div id="bultosContainer" class="mt-3">
-            <div class="row g-2 align-items-end mb-2 bulto-row" data-idx="1">
-              <div class="col-1 fw-bold text-center" style="background:#111;color:#fff;border-radius:6px;padding:8px 0">1</div>
-              <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-              <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-              <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-              <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-              <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled><i class="bi bi-trash"></i></button></div>
+          <div id="bultosWrap" style="display:none;margin-top:14px">
+            <div id="bultosContainer">
+              <div class="row g-2 align-items-end mb-2 bulto-row" data-idx="1">
+                <div class="col-1 fw-bold text-center" style="background:#0a0a0a;color:#fff;border-radius:6px;padding:8px 0">1</div>
+                <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+                <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+                <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+                <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+                <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled><i class="bi bi-trash"></i></button></div>
+              </div>
+            </div>
+            <div class="d-flex gap-2 mt-2">
+              <button type="button" class="btn btn-sm btn-outline-dark" onclick="addBulto()"><i class="bi bi-plus-lg me-1"></i>Agregar bulto</button>
+              <div class="ms-auto small text-muted" id="bultosResumen"><strong id="b_count">1</strong> bulto · <strong id="b_kg">0</strong> kg · <strong id="b_m3">0</strong> m³</div>
             </div>
           </div>
-          <div class="d-flex gap-2 mb-2">
-            <button type="button" class="btn btn-sm btn-outline-dark" onclick="addBulto()"><i class="bi bi-plus-lg me-1"></i>Agregar bulto</button>
-            <div class="ms-auto small text-muted" id="bultosResumen"><strong id="b_count">1</strong> bulto · <strong id="b_kg">0</strong> kg · <strong id="b_m3">0</strong> m³</div>
-          </div>
+          <input type="hidden" name="total_packages" id="total_packages" value="0">
         </div>
-        <input type="hidden" name="total_packages" id="total_packages" value="0">
 
-        <hr class="my-4">
-
-        {# ── Aceptar y enviar ───────────────────────────────────── #}
-        <div class="form-check mt-4 p-3 rounded" style="background:#fff8f8;border:1px solid #f4c2c2">
+        {# ── 5. Aceptar y enviar ────────────────────────────── #}
+        <div class="form-check p-3 rounded-3 mb-3" style="background:#fff8f8;border:1px solid #f4c2c2">
           <input class="form-check-input" type="checkbox" name="accept_terms" id="acceptTerms" required>
           <label class="form-check-label fw-semibold" for="acceptTerms">
             Declaro que los datos son correctos y que la persona indicada está autorizada para retirar.
           </label>
         </div>
-        <button class="btn btn-danger btn-lg fw-bold mt-3 w-100" id="submitBtn">
-          <i class="bi bi-send-check me-2"></i>Enviar solicitud
+        <button class="submit-btn" id="submitBtn">
+          <i class="bi bi-send-check"></i>Enviar solicitud
         </button>
         <div class="text-center mt-2 small text-muted">
           <i class="bi bi-shield-lock me-1"></i>
@@ -275,28 +559,19 @@
 
     <section class="warehouse-strip">
       <div>
-        <div class="fw-bold"><i class="bi bi-geo-alt-fill text-danger me-2"></i>{{ settings.warehouse_name }}</div>
+        <h5><i class="bi bi-geo-alt-fill text-danger me-2"></i>{{ settings.warehouse_name }}</h5>
         <p>{{ settings.warehouse_addr }}</p>
       </div>
-      <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-danger fw-bold"><i class="bi bi-map me-1"></i>Abrir mapa</a>
+      <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-danger fw-bold">
+        <i class="bi bi-map me-1"></i>Abrir en mapa
+      </a>
     </section>
   </main>
 
   <footer class="footer">
-    <div class="footer-row">
-      <div>
-        <div class="fw-bold text-white mb-2">Antes de retirar</div>
-        <div class="small">Espera la confirmación de ILUS por email. La solicitud queda válida solo cuando ambas partes aceptan fecha y horario.</div>
-      </div>
-      <div class="footer-logo">
-        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
-        <div class="fw-bold text-white">ILUS Fitness</div>
-      </div>
-      <div>
-        <div class="fw-bold text-white mb-2">Al llegar a bodega</div>
-        <div class="small">Presenta documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.</div>
-      </div>
-    </div>
+    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+    <div class="fw-bold text-white mb-1">ILUS Fitness</div>
+    <div class="small">© Todos los derechos reservados · Solicitud de retiro segura</div>
   </footer>
 
   {% if settings.alert_enabled and settings.alert_message %}
@@ -310,15 +585,43 @@
 
 <script>
 // ════════════════════════════════════════════════════════
-//  VALIDACIÓN RUT CHILENO
-//  Algoritmo módulo 11 — verifica dígito verificador
+//  HERO SLIDESHOW
 // ════════════════════════════════════════════════════════
-function cleanRUT(rut){
-  return String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+let _heroIdx = 0;
+const _heroSlides = document.querySelectorAll('.hero-slide');
+const _heroDots = document.querySelectorAll('.hero-slide-dot');
+function setHero(i){
+  _heroIdx = (i + _heroSlides.length) % _heroSlides.length;
+  _heroSlides.forEach((s,k) => s.classList.toggle('active', k === _heroIdx));
+  _heroDots.forEach((d,k) => d.classList.toggle('active', k === _heroIdx));
 }
+_heroDots.forEach((d,i) => d.addEventListener('click', () => setHero(i)));
+setInterval(() => setHero(_heroIdx + 1), 4500);
+
+// ════════════════════════════════════════════════════════
+//  IR A SEGUIMIENTO (banner mini)
+// ════════════════════════════════════════════════════════
+function irASeguimiento(){
+  const v = document.getElementById('trackingLink').value.trim();
+  if (!v){ alert('Pega el enlace o el código RET-XXXXXX que recibiste por email'); return; }
+  // Si es URL completa, redirige tal cual; si es código, redirige a búsqueda
+  if (v.startsWith('http') || v.includes('/retiros/seguimiento/')){
+    location.href = v;
+  } else if (v.match(/^RET-\d+$/i)){
+    location.href = '/retiros/buscar?code=' + encodeURIComponent(v);
+  } else {
+    // asumimos token
+    location.href = '/retiros/seguimiento/' + encodeURIComponent(v);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN RUT CHILENO (módulo 11)
+// ════════════════════════════════════════════════════════
+function cleanRUT(rut){ return String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase(); }
 function calcDV(num){
   let suma = 0, mul = 2;
-  for (let i = num.length - 1; i >= 0; i--){
+  for (let i = num.length-1; i >= 0; i--){
     suma += parseInt(num[i],10) * mul;
     mul = mul === 7 ? 2 : mul + 1;
   }
@@ -330,24 +633,18 @@ function calcDV(num){
 function isValidRUT(rut){
   const c = cleanRUT(rut);
   if (c.length < 8 || c.length > 9) return false;
-  const num = c.slice(0,-1);
-  const dv  = c.slice(-1);
-  if (!/^\d+$/.test(num)) return false;
-  return calcDV(num) === dv;
+  return /^\d+$/.test(c.slice(0,-1)) && calcDV(c.slice(0,-1)) === c.slice(-1);
 }
 function formatRUT(input){
   const c = cleanRUT(input.value);
   if (c.length < 2){ input.value = c; return; }
-  const num = c.slice(0,-1);
-  const dv  = c.slice(-1);
-  // Formato 12.345.678-9
-  let formatted = '';
-  let rev = num.split('').reverse().join('');
+  const num = c.slice(0,-1), dv = c.slice(-1);
+  let f = '', rev = num.split('').reverse().join('');
   for (let i = 0; i < rev.length; i++){
-    formatted = rev[i] + formatted;
-    if ((i+1) % 3 === 0 && i !== rev.length-1) formatted = '.' + formatted;
+    f = rev[i] + f;
+    if ((i+1) % 3 === 0 && i !== rev.length-1) f = '.' + f;
   }
-  input.value = formatted + '-' + dv;
+  input.value = f + '-' + dv;
 }
 function validateRUT(input){
   const ok = isValidRUT(input.value);
@@ -359,22 +656,17 @@ function validateRUT(input){
 }
 
 // ════════════════════════════════════════════════════════
-//  VALIDACIÓN TELÉFONO CHILENO
-//  Acepta: +56 9 XXXX XXXX | 9 XXXX XXXX | 569XXXXXXXX
+//  VALIDACIÓN TELÉFONO CL
 // ════════════════════════════════════════════════════════
-function cleanPhone(phone){
-  return String(phone||'').replace(/[^\d+]/g,'');
-}
-function isValidCLPhone(phone){
-  const c = cleanPhone(phone).replace(/^\+/,'');
-  // 569XXXXXXXX (11 dígitos) ó 9XXXXXXXX (9 dígitos)
+function cleanPhone(p){ return String(p||'').replace(/[^\d+]/g,''); }
+function isValidCLPhone(p){
+  const c = cleanPhone(p).replace(/^\+/,'');
   return /^(56)?9\d{8}$/.test(c);
 }
 function formatPhone(input){
   let c = cleanPhone(input.value).replace(/^\+/,'');
   if (c.startsWith('56') && c.length > 2) c = c.slice(2);
   if (c.length > 9) c = c.slice(0, 9);
-  // Formato +56 9 XXXX XXXX
   if (c.length === 0){ input.value = ''; return; }
   let out = '+56 ';
   if (c.length >= 1) out += c[0];
@@ -392,116 +684,210 @@ function validatePhone(input){
 }
 
 // ════════════════════════════════════════════════════════
-//  DISPONIBILIDAD DE FECHAS Y HORARIOS
+//  SELECTOR DE SLOTS INTELIGENTE
+//  - Permite seleccionar UN bloque inicial o RANGO contiguo
+//  - Muestra ocupados visualmente (no clickeables)
+//  - Quick: 1h / 2h / 3h
 // ════════════════════════════════════════════════════════
 let _disponibilidad = null;
+let _slotsDelDia = [];     // [{hora, disponible, ocupados, max}]
+let _slotStartIdx = null;
+let _slotEndIdx = null;
 
 async function cargarDisponibilidad() {
   try {
     const r = await fetch('/retiros/api/disponibilidad-publica');
     _disponibilidad = await r.json();
     const fechaInput = document.getElementById('cal_fecha');
-    // Mínimo +24h: si la API devuelve "from" pero es < mañana, ajustamos
-    const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
+    const tomorrow = new Date(Date.now() + 24*3600*1000);
     const tomorrowStr = tomorrow.toISOString().slice(0,10);
     fechaInput.min = (_disponibilidad.from < tomorrowStr) ? tomorrowStr : _disponibilidad.from;
     fechaInput.max = _disponibilidad.to;
     fechaInput.addEventListener('change', onFechaChange);
   } catch (e) {
-    document.getElementById('cal_fecha_msg').textContent = 'No se pudo cargar disponibilidad — contacta a ILUS.';
+    document.getElementById('cal_fecha_msg').textContent = '⚠ No se pudo cargar disponibilidad';
   }
 }
 
 function onFechaChange() {
   const fecha = document.getElementById('cal_fecha').value;
-  const sel   = document.getElementById('cal_slot');
   const msg   = document.getElementById('cal_fecha_msg');
-
-  // Validar mínimo +24h
-  const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
-  if (fecha && new Date(fecha + 'T00:00:00') < minDate){
-    msg.textContent = '⚠ Necesitamos mínimo 24 horas de anticipación.';
-    msg.style.color = '#dc2626';
-    sel.disabled = true;
-    sel.innerHTML = '<option value="">— Elige una fecha desde mañana —</option>';
-    return;
-  }
+  const grid  = document.getElementById('slotGrid');
+  const quick = document.getElementById('slotQuickWrap');
 
   document.querySelector('input[name=requested_date]').value = fecha;
-  if (!fecha || !_disponibilidad) {
-    sel.disabled = true;
-    sel.innerHTML = '<option value="">— Selecciona fecha primero —</option>';
+  clearSlots();
+
+  if (!fecha || !_disponibilidad){
+    grid.innerHTML = '<div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1"><i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero</div>';
+    quick.style.display = 'none';
     return;
   }
-  const dia = _disponibilidad.dias[fecha];
-  if (!dia || !dia.disponible) {
-    sel.disabled = true;
-    sel.innerHTML = `<option value="">— ${(dia&&dia.razon)||'Sin disponibilidad este día'} —</option>`;
-    msg.textContent = '✕ ' + ((dia && dia.razon) || 'Día sin cupos disponibles');
+
+  const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
+  if (new Date(fecha + 'T00:00:00') < minDate){
+    msg.textContent = '⚠ Necesitamos mínimo 24 horas de anticipación';
     msg.style.color = '#dc2626';
+    grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde mañana</div>';
+    quick.style.display = 'none';
     return;
   }
-  const libres = dia.slots.filter(s => s.disponible).length;
+
+  const dia = _disponibilidad.dias[fecha];
+  if (!dia || !dia.disponible){
+    msg.textContent = '✕ ' + ((dia && dia.razon) || 'Día sin cupos');
+    msg.style.color = '#dc2626';
+    grid.innerHTML = `<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-x-circle me-1"></i>${(dia && dia.razon) || 'Día sin cupos disponibles'}</div>`;
+    quick.style.display = 'none';
+    return;
+  }
+
+  _slotsDelDia = dia.slots;
+  const libres = _slotsDelDia.filter(s => s.disponible).length;
   msg.textContent = `✓ ${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
   msg.style.color = '#16a34a';
-  sel.disabled = false;
-  sel.innerHTML = '<option value="">— Selecciona bloque —</option>' +
-    dia.slots.map(s => {
-      const lbl = `${s.hora} (${s.ocupados}/${s.max} ocupados)`;
-      return `<option value="${s.hora}" ${!s.disponible?'disabled':''}>${s.disponible?'🟢 ':'⛔ '}${lbl}${!s.disponible?' — completo':''}</option>`;
-    }).join('');
-  sel.onchange = onSlotChange;
+
+  renderSlotGrid();
+  quick.style.display = 'flex';
 }
 
-function onSlotChange() {
-  const slot = document.getElementById('cal_slot').value;
-  const msg  = document.getElementById('cal_slot_msg');
-  if (!slot) {
+function renderSlotGrid(){
+  const grid = document.getElementById('slotGrid');
+  grid.innerHTML = _slotsDelDia.map((s, i) => {
+    const cls = ['slot-item'];
+    if (!s.disponible) cls.push('taken');
+    if (_slotStartIdx !== null && _slotEndIdx !== null){
+      if (i === _slotStartIdx) cls.push('selected', 'is-start');
+      else if (i === _slotEndIdx && _slotStartIdx !== _slotEndIdx) cls.push('selected', 'is-end');
+      else if (i > _slotStartIdx && i < _slotEndIdx) cls.push('in-range');
+    }
+    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${s.disponible?'Click para seleccionar':'Ocupado ('+s.ocupados+'/'+s.max+')'}">${s.hora}</div>`;
+  }).join('');
+}
+
+function onSlotClick(i){
+  const s = _slotsDelDia[i];
+  if (!s.disponible) return;
+
+  // 1° click: marca inicio
+  // 2° click: marca fin (si es válido)
+  // 3° click (mismo inicio): limpia
+  if (_slotStartIdx === null){
+    _slotStartIdx = _slotEndIdx = i;
+  } else if (_slotStartIdx === i && _slotEndIdx === i){
+    // mismo bloque otra vez → limpiar
+    _slotStartIdx = _slotEndIdx = null;
+  } else {
+    // segundo click: definir rango
+    let from = Math.min(_slotStartIdx, i);
+    let to = Math.max(_slotStartIdx, i);
+    // verificar que NINGUNO en el rango esté ocupado
+    let valid = true;
+    for (let k = from; k <= to; k++){
+      if (!_slotsDelDia[k].disponible){ valid = false; break; }
+    }
+    if (!valid){
+      // si el rango cruza un ocupado, mantenemos solo el nuevo click
+      _slotStartIdx = _slotEndIdx = i;
+    } else {
+      _slotStartIdx = from;
+      _slotEndIdx = to;
+    }
+  }
+  updateSlotSummary();
+  renderSlotGrid();
+}
+
+function setQuickRange(hours){
+  if (hours === 0){ clearSlots(); return; }
+  if (_slotStartIdx === null){
+    // Buscar primer slot disponible
+    const firstFree = _slotsDelDia.findIndex(s => s.disponible);
+    if (firstFree < 0) return;
+    _slotStartIdx = firstFree;
+  }
+  // El slot dura "slot_minutes" (típicamente 60). N horas = N slots si son de 60min
+  const slotMin = _disponibilidad.slot_minutes || 60;
+  const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
+  let end = _slotStartIdx + slotsNeeded - 1;
+  if (end >= _slotsDelDia.length) end = _slotsDelDia.length - 1;
+  // Verificar que NINGUNO en el rango esté ocupado
+  for (let k = _slotStartIdx; k <= end; k++){
+    if (!_slotsDelDia[k].disponible){
+      // truncar al último libre antes del ocupado
+      end = k - 1;
+      break;
+    }
+  }
+  if (end < _slotStartIdx) end = _slotStartIdx;
+  _slotEndIdx = end;
+  updateSlotSummary();
+  renderSlotGrid();
+}
+
+function clearSlots(){
+  _slotStartIdx = _slotEndIdx = null;
+  updateSlotSummary();
+  renderSlotGrid();
+}
+
+function updateSlotSummary(){
+  const txt = document.getElementById('slotSummaryText');
+  const clearBtn = document.getElementById('clearSlotBtn');
+  if (_slotStartIdx === null){
+    txt.className = 'sum-empty';
+    txt.textContent = 'No has seleccionado bloque aún';
+    clearBtn.style.display = 'none';
     document.querySelector('input[name=requested_time_from]').value = '';
     document.querySelector('input[name=requested_time_to]').value = '';
-    msg.textContent = '';
     return;
   }
   const slotMin = _disponibilidad.slot_minutes || 60;
-  const [h,m] = slot.split(':').map(Number);
-  const endMin = h*60 + m + slotMin;
+  const startStr = _slotsDelDia[_slotStartIdx].hora;
+  const [h,m] = _slotsDelDia[_slotEndIdx].hora.split(':').map(Number);
+  const endMin = h * 60 + m + slotMin;
   const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
-  document.querySelector('input[name=requested_time_from]').value = slot;
+  const dur = (_slotEndIdx - _slotStartIdx + 1) * slotMin;
+  const durTxt = dur >= 60 ? `${(dur/60).toFixed(dur%60===0?0:1)}h` : `${dur}min`;
+  txt.className = '';
+  txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#22c55e"></i><strong>${startStr} – ${endStr}</strong> · duración ${durTxt}`;
+  clearBtn.style.display = '';
+  document.querySelector('input[name=requested_time_from]').value = startStr;
   document.querySelector('input[name=requested_time_to]').value = endStr;
-  msg.textContent = `Tu retiro será entre ${slot} y ${endStr}`;
-  msg.style.color = '#16a34a';
 }
 
 // ════════════════════════════════════════════════════════
 //  BULTOS — toggle + cálculo dinámico
 // ════════════════════════════════════════════════════════
 let _bultoCount = 1;
-
 function toggleBultos(){
   const wrap = document.getElementById('bultosWrap');
   const btn = document.getElementById('bultosToggle');
+  const txt = document.getElementById('bultosToggleText');
+  const ico = document.getElementById('bultosToggleIcon');
   if (wrap.style.display === 'none'){
     wrap.style.display = 'block';
     btn.classList.add('active');
-    btn.innerHTML = '<i class="bi bi-rulers me-2"></i>Editando bultos · clic para ocultar <i class="bi bi-chevron-up ms-2"></i>';
+    txt.textContent = 'Editando bultos · clic para ocultar';
+    ico.className = 'bi bi-chevron-up';
     document.getElementById('total_packages').value = 1;
     actualizarBultos();
   } else {
     wrap.style.display = 'none';
     btn.classList.remove('active');
-    btn.innerHTML = '<i class="bi bi-rulers me-2"></i>Tengo las medidas exactas — quiero ingresarlas <i class="bi bi-chevron-down ms-2"></i>';
+    txt.textContent = 'Tengo las medidas exactas — quiero ingresarlas';
+    ico.className = 'bi bi-chevron-down';
     document.getElementById('total_packages').value = 0;
   }
 }
-
-function addBulto() {
+function addBulto(){
   _bultoCount++;
   const i = _bultoCount;
   const row = document.createElement('div');
   row.className = 'row g-2 align-items-end mb-2 bulto-row';
   row.dataset.idx = i;
   row.innerHTML = `
-    <div class="col-1 fw-bold text-center" style="background:#111;color:#fff;border-radius:6px;padding:8px 0">${i}</div>
+    <div class="col-1 fw-bold text-center" style="background:#0a0a0a;color:#fff;border-radius:6px;padding:8px 0">${i}</div>
     <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
     <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
     <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
@@ -512,8 +898,7 @@ function addBulto() {
   row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', actualizarBultos));
   actualizarBultos();
 }
-
-function actualizarBultos() {
+function actualizarBultos(){
   const rows = document.querySelectorAll('.bulto-row');
   let kg = 0, m3 = 0;
   rows.forEach((r,i) => {
@@ -532,10 +917,9 @@ function actualizarBultos() {
 }
 
 // ════════════════════════════════════════════════════════
-//  VALIDACIÓN DEL FORM AL ENVIAR
+//  VALIDACIÓN AL ENVIAR
 // ════════════════════════════════════════════════════════
-document.getElementById('solicitudForm').addEventListener('submit', function(e){
-  // Sincronizar campos hidden requeridos por el backend (compatibilidad)
+document.getElementById('form-solicitud').addEventListener('submit', function(e){
   document.getElementById('contact_name').value = document.querySelector('input[name=pickup_person_name]').value;
   document.getElementById('pickup_person_phone').value = document.getElementById('contact_phone').value;
 
@@ -546,6 +930,8 @@ document.getElementById('solicitudForm').addEventListener('submit', function(e){
     errores.push('RUT de la persona que retira inválido');
   if (!isValidCLPhone(document.getElementById('contact_phone').value))
     errores.push('Teléfono debe ser chileno (+56 9 XXXX XXXX)');
+  if (!document.querySelector('input[name=requested_time_from]').value)
+    errores.push('Selecciona al menos un bloque horario');
 
   if (errores.length){
     e.preventDefault();
@@ -554,9 +940,6 @@ document.getElementById('solicitudForm').addEventListener('submit', function(e){
   }
 });
 
-// ════════════════════════════════════════════════════════
-//  INIT
-// ════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   cargarDisponibilidad();
   document.querySelectorAll('.bulto-row input').forEach(inp =>

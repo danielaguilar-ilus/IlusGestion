@@ -483,12 +483,36 @@
        TAB 3 — PLANTILLAS POR ESTADO
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabPlantillas">
+
+      {# Selector de módulo (Transporte / Retiros) #}
+      <div class="d-flex align-items-center gap-2 mb-3 flex-wrap p-3"
+           style="background:#fafafa;border:1px solid #e5e7eb;border-radius:8px">
+        <strong style="font-size:.84rem;color:#374151">
+          <i class="bi bi-collection me-1" style="color:#dc2626"></i>Módulo:
+        </strong>
+        <div class="btn-group btn-group-sm" role="group">
+          <input type="radio" class="btn-check" name="tplModulo" id="modTransporte" value="transporte" checked
+                 onchange="cargarPlantillas(true)">
+          <label class="btn btn-outline-dark" for="modTransporte">
+            <i class="bi bi-truck me-1"></i>Transporte / Despachos
+          </label>
+          <input type="radio" class="btn-check" name="tplModulo" id="modRetiros" value="retiros"
+                 onchange="cargarPlantillas(true)">
+          <label class="btn btn-outline-dark" for="modRetiros">
+            <i class="bi bi-box-arrow-up me-1"></i>Retiros en bodega
+          </label>
+        </div>
+        <span class="ms-auto small text-muted" id="tplModuloHelp">
+          Plantillas que se envían al cliente por cada estado del proceso
+        </span>
+      </div>
+
       <div class="row g-0" style="min-height:600px;border-radius:.5rem;overflow:hidden;border:1px solid #dee2e6">
 
         {# Panel izquierdo: lista de estados #}
         <div class="col-12 col-md-3" style="background:#111;border-right:1px solid #222">
           <div style="padding:14px 16px 8px;color:#888;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px">
-            <i class="bi bi-diagram-3 me-1"></i>Estados
+            <i class="bi bi-diagram-3 me-1"></i>Estados <span id="tplModuloLabel" style="color:#e60000">— Transporte</span>
           </div>
           <div class="px-3 pb-2">
             <button class="btn btn-sm btn-outline-light w-100" onclick="tplRestaurarTodo()"
@@ -1251,7 +1275,8 @@ async function enviarTestWA() {
 /* ════════════════════════════════════════════════════
    PLANTILLAS POR ESTADO
 ════════════════════════════════════════════════════ */
-const TPL_ESTADOS = [
+// Estados disponibles por MÓDULO
+const TPL_ESTADOS_TRANSPORTE = [
   { key:'programado',    label:'Pedido programado',        icon:'bi-box-seam',         grupo:'despacho',
     color:'#28a745', desc:'Se envía cuando el pedido queda ingresado y programado' },
   { key:'en_ruta',       label:'En ruta',                  icon:'bi-truck',             grupo:'despacho',
@@ -1267,6 +1292,36 @@ const TPL_ESTADOS = [
   { key:'cambio_pass',   label:'Cambio de contraseña',     icon:'bi-key',               grupo:'sistema',
     color:'#fd7e14', desc:'Se envía cuando se cambia o crea la contraseña del usuario' },
 ];
+
+const TPL_ESTADOS_RETIROS = [
+  { key:'solicitud_recibida', label:'Solicitud recibida',     icon:'bi-send-check',     grupo:'retiro',
+    color:'#3b82f6', desc:'Confirma al cliente que recibimos su solicitud (al crearse)' },
+  { key:'propuesta_enviada',  label:'Propuesta enviada',      icon:'bi-envelope-paper', grupo:'retiro',
+    color:'#f59e0b', desc:'Cuando ILUS propone una nueva fecha al cliente' },
+  { key:'agenda_confirmada',  label:'Agenda confirmada',      icon:'bi-calendar-check', grupo:'retiro',
+    color:'#22c55e', desc:'Cuando ambas partes acuerdan la fecha de retiro' },
+  { key:'en_preparacion',     label:'En preparación',         icon:'bi-box-seam',       grupo:'retiro',
+    color:'#0ea5e9', desc:'Aviso 24h antes — bodega ya está preparando' },
+  { key:'retirada',           label:'Retirada / Completada',  icon:'bi-check-circle-fill',grupo:'retiro',
+    color:'#16a34a', desc:'Confirma al cliente que el retiro se completó' },
+  { key:'reagendada',         label:'Reagendada',             icon:'bi-arrow-repeat',   grupo:'retiro',
+    color:'#7c3aed', desc:'Cuando se reagenda y se propone nueva fecha' },
+  { key:'rechazada',          label:'Rechazada / Cancelada',  icon:'bi-x-circle',       grupo:'retiro',
+    color:'#dc2626', desc:'Cuando la solicitud queda anulada' },
+];
+
+// Devuelve los estados según el módulo seleccionado en la UI
+function getCurrentModulo(){
+  const sel = document.querySelector('input[name=tplModulo]:checked');
+  return sel ? sel.value : 'transporte';
+}
+function getEstadosForModulo(){
+  const m = getCurrentModulo();
+  if (m === 'retiros') return TPL_ESTADOS_RETIROS;
+  return TPL_ESTADOS_TRANSPORTE;
+}
+// Variable global compatibilidad — siempre apunta al módulo actual
+let TPL_ESTADOS = TPL_ESTADOS_TRANSPORTE;
 
 const TPL_VARS = {
   despacho: [
@@ -1284,6 +1339,22 @@ const TPL_VARS = {
     { v:'{{email_usuario}}',  label:'Email usuario' },
     { v:'{{fecha_hora}}',     label:'Fecha y hora' },
     { v:'{{ip_acceso}}',      label:'IP de acceso' },
+  ],
+  retiro: [
+    { v:'{{code}}',             label:'Código retiro (RET-XXXX)' },
+    { v:'{{cliente}}',          label:'Razón social cliente' },
+    { v:'{{persona_retira}}',   label:'Persona autorizada' },
+    { v:'{{fecha_solicitada}}', label:'Fecha solicitada' },
+    { v:'{{fecha_propuesta}}',  label:'Fecha propuesta por ILUS' },
+    { v:'{{fecha_confirmada}}', label:'Fecha confirmada' },
+    { v:'{{horario}}',          label:'Horario (desde - hasta)' },
+    { v:'{{documento}}',        label:'Documento (factura/boleta)' },
+    { v:'{{n_bultos}}',         label:'Cantidad de bultos' },
+    { v:'{{kg}}',               label:'Peso (kg)' },
+    { v:'{{m3}}',               label:'Volumen (m³)' },
+    { v:'{{warehouse_name}}',   label:'Nombre bodega' },
+    { v:'{{warehouse_addr}}',   label:'Dirección bodega' },
+    { v:'{{link_seguimiento}}', label:'Link de seguimiento' },
   ],
 };
 
@@ -1456,16 +1527,25 @@ function tplSetVisible(id, visible, displayValue='block') {
 }
 
 async function cargarPlantillas(force=false) {
-  if (_tplLoaded && !force) {
-    if (!_tplEstado && TPL_ESTADOS.length) tplSeleccionar(TPL_ESTADOS[0].key);
-    return;
-  }
+  // Refrescar TPL_ESTADOS según el módulo actual
+  const modulo = getCurrentModulo();
+  TPL_ESTADOS = getEstadosForModulo();
+
+  // Etiqueta visual del módulo actual
+  const lbl = document.getElementById('tplModuloLabel');
+  if (lbl) lbl.textContent = '— ' + (modulo === 'retiros' ? 'Retiros' : 'Transporte');
+  const help = document.getElementById('tplModuloHelp');
+  if (help) help.textContent = modulo === 'retiros'
+    ? 'Plantillas que se envían al cliente en cada estado de su solicitud de retiro'
+    : 'Plantillas que se envían al cliente por cada estado del proceso';
+
   if (force) {
     _tplLoaded = false;
     _tplData = {};
+    _tplEstado = null;  // resetear selección al cambiar módulo
   }
   try {
-    const r = await fetch('/comunicaciones/templates?t=' + Date.now(), { cache:'no-store' });
+    const r = await fetch('/comunicaciones/templates?modulo=' + modulo + '&t=' + Date.now(), { cache:'no-store' });
     _tplData = r.ok ? await r.json() : {};
   } catch(e) {
     console.warn('No se pudo leer comm_templates; se usaran defaults locales', e);
@@ -1658,6 +1738,7 @@ async function tplGuardar() {
   if (!_tplEstado) return;
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
   const body = {
+    modulo: getCurrentModulo(),
     asunto: _tplCanal === 'email' ? val('tplAsunto') : '',
     cuerpo: _tplCanal === 'email'
       ? document.getElementById('tplCuerpoVisual').innerHTML
@@ -1686,7 +1767,7 @@ async function tplRestaurar() {
   const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
   const r   = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
     method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(def)
+    body: JSON.stringify({...def, modulo: getCurrentModulo()})
   });
   const d = await r.json();
   if (d.ok) {
