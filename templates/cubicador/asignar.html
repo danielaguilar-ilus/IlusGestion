@@ -1172,9 +1172,9 @@ table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
 }
 
 async function buscarDoc(){
-  // ── TELEMETRÍA DEFENSIVA — si esto NO aparece en consola al hacer clic,
-  //     el JS está roto antes de llegar aquí (típicamente por otro </script>
-  //     literal o un syntax error en alguna parte cargada antes).
+  // TELEMETRIA DEFENSIVA — si esto NO aparece en consola al hacer clic,
+  // el JS esta roto antes de llegar aqui (typicamente otra etiqueta cerrando
+  // el script literal, o un syntax error mas arriba).
   console.log('[asignar] buscarDoc() iniciado');
 
   const tido = document.getElementById('docTipo').value;
