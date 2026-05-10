@@ -5306,21 +5306,29 @@ def _normalize_phone_cl(raw: str) -> str:
 # CIEN: código de región de 3 dígitos (ej. "013"=RM, "005"=Valparaíso)
 # CMEN: código de 3 chars (ej. "LOB"=Lo Barnechea, "VAL"=Valdivia/Valparaíso)
 _CMEN_MAP: dict[str, dict[str, str]] = {
-    # ── Región Metropolitana (013) ──────────────────────────────
+    # ── Región Metropolitana (013) — CÓDIGOS EXACTOS DEL ERP RANDOM ───
+    # (verificados contra Sport and Health Solutions SPA Gestión Admin)
     "013": {
-        "STG":"Santiago",    "PRO":"Providencia",  "LAC":"Las Condes",   "VIT":"Vitacura",
-        "NUN":"Ñuñoa",       "LAF":"La Florida",   "MAI":"Maipú",        "PUD":"Pudahuel",
-        "QUI":"Quilicura",   "REN":"Renca",         "CNV":"Cerro Navia",  "ECE":"Estación Central",
-        "PEN":"Peñalolén",   "MAC":"Macul",         "SJO":"San Joaquín",  "LGR":"La Granja",
-        "LPI":"La Pintana",  "EBO":"El Bosque",    "SBE":"San Bernardo", "BUI":"Buin",
-        "PIR":"Pirque",      "CAL":"Calera de Tango","TAL":"Talagante",  "PAI":"Paine",
-        "IMA":"Isla de Maipo","MEL":"Melipilla",   "COL":"Colina",       "LAM":"Lampa",
-        "TIL":"Tiltil",      "PEF":"Peñaflor",     "CUR":"Curacaví",    "PCH":"Padre Hurtado",
-        "ELM":"El Monte",    "LOB":"Lo Barnechea", "HUA":"Huechuraba",  "REC":"Recoleta",
-        "IND":"Independencia","LOP":"Lo Prado",    "QNO":"Quinta Normal","LOE":"Lo Espejo",
-        "SMI":"San Miguel",  "LCI":"La Cisterna",  "PAG":"Pedro Aguirre Cerda",
-        "SRA":"San Ramón",   "LRE":"La Reina",     "PUA":"Puente Alto",  "CON":"Conchalí",
-        "MPD":"María Pinto", "ALH":"Alhué",         "SJM":"San José de Maipo",
+        "CEI":"Cerrillos",      "CER":"Cerro Navia",     "COL":"Colina",
+        "CON":"Conchalí",       "CUR":"Curacaví",        "ELB":"El Bosque",
+        "ELM":"El Monte",       "EST":"Estación Central","HUE":"Huechuraba",
+        "IND":"Independencia",  "ISL":"Isla de Maipo",   "LAC":"La Cisterna",
+        "LAF":"La Florida",     "LAG":"La Granja",       "LAP":"La Pintana",
+        "LAR":"La Reina",       "LAM":"Lampa",           "LAS":"Las Condes",
+        "LOB":"Lo Barnechea",   "LOE":"Lo Espejo",       "LOP":"Lo Prado",
+        "MAC":"Macul",          "MAI":"Maipú",           "MAR":"María Pinto",
+        "MEL":"Melipilla",      "PAD":"Padre Hurtado",   "PAI":"Paine",
+        "PED":"Pedro Aguirre Cerda",
+        "PEF":"Peñaflor",       "PEN":"Peñalolén",        "PEA":"Peñalolén",
+        "PIR":"Pirque",         "PRO":"Providencia",     "PUD":"Pudahuel",
+        "PUE":"Puente Alto",    "PUA":"Puente Alto",     "QUI":"Quilicura",
+        "QNO":"Quinta Normal",  "REC":"Recoleta",        "REN":"Renca",
+        "SBE":"San Bernardo",   "SJM":"San José de Maipo",
+        "SMI":"San Miguel",     "SPE":"San Pedro",       "SJO":"San Joaquín",
+        "SRA":"San Ramón",      "SAN":"Santiago",        "STG":"Santiago",
+        "TAL":"Talagante",      "TIL":"Tiltil",          "VIT":"Vitacura",
+        "ALH":"Alhué",          "BUI":"Buin",            "CTA":"Calera de Tango",
+        "CAL":"Calera de Tango","NUN":"Ñuñoa",
     },
     # ── Valparaíso (005) ───────────────────────────────────────
     "005": {
@@ -5600,8 +5608,38 @@ def erp_documento_raw():
     })
 
 
-# ── Endpoint UNIFICADO de búsqueda de documentos ERP ──────────────────
-# Reutilizable desde Cubicador, Asignar/Cotizar y Mantenciones (repuestos)
+# ════════════════════════════════════════════════════════════════════
+#  MOTOR ÚNICO DE BÚSQUEDA DE DOCUMENTOS ERP — REUTILIZABLE
+# ════════════════════════════════════════════════════════════════════
+# Este endpoint es el ÚNICO punto de entrada para buscar documentos del
+# ERP Random desde cualquier módulo de la app:
+#   - Cubicador / Asignar y Cotizar (POST /api/erp/documento)
+#   - Mantenciones — repuestos
+#   - Retiros — validación de documentación
+#   - Módulos futuros (cobranzas, devoluciones, etc.)
+#
+# Devuelve estructura UNIFICADA con todos los datos del cliente extraídos
+# desde HEADER + LÍNEAS + /entidades (con variantes RUT en paralelo).
+# Códigos de comuna se resuelven automáticamente a nombres.
+#
+# Uso desde JS:
+#   const r = await fetch('/api/erp/documento', {
+#     method: 'POST',
+#     headers: {'Content-Type':'application/json'},
+#     body: JSON.stringify({ tido: 'FCV', nudo: '10599' })
+#   });
+#   const data = await r.json();
+#   // data.hdr.cliente_nombre, data.hdr.email, data.hdr.comuna, etc.
+#   // data.lineas[0].sku, data.lineas[0].nombre, etc.
+#
+# Tipos de documento soportados:
+#   FCV (Factura), BLV (Boleta), VD (NV directa), WEB (NV web),
+#   NVI (NV interna), GDV (Guía despacho), GDI (Guía int), GTI (Traspaso)
+#
+# El endpoint cachea respuestas 90 segundos para evitar refetch en
+# llamadas repetidas con los mismos parámetros.
+# ────────────────────────────────────────────────────────────────────
+
 @app.route("/api/erp/documento", methods=["GET","POST"])
 @login_required
 def erp_documento_unificado():
@@ -5629,34 +5667,49 @@ def erp_documento_unificado():
     if not hdr:
         return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
 
-    # Normalizar cabecera con nombres limpios
+    # Como _cubicador_fetch YA hace todo el trabajo pesado (extracción
+    # desde header + líneas + /entidades + resolución de comuna), aquí
+    # solo pasamos esos campos al response. Mantiene compatibilidad
+    # con código viejo (que usa razon_social/rut/etc) Y con código nuevo
+    # (que usa cliente_nombre/cliente_rut/email/etc).
     h = {
         "tido":         tido,
         "nudo":         nudo,
-        "razon_social": (hdr.get("NRAZON") or hdr.get("nrazon") or "").strip(),
-        "rut":          (hdr.get("NRUC") or hdr.get("nruc") or "").strip(),
-        "direccion":    (hdr.get("DIEN") or hdr.get("dien") or "").strip(),
-        "comuna_codigo":(hdr.get("CMEN") or hdr.get("cmen") or "").strip(),
-        "comuna":       (hdr.get("CMEN_DESC") or "").strip() or _cmen_to_comuna(hdr.get("CMEN") or hdr.get("cmen") or "")
-                        if "_cmen_to_comuna" in globals() else "",
-        "ciudad":       (hdr.get("CIEN") or hdr.get("cien") or "").strip(),
-        "telefono":     (hdr.get("FOEN") or hdr.get("foen") or "").strip(),
-        "email":        (hdr.get("EMAIL") or hdr.get("email") or "").strip(),
-        "fecha":        str(hdr.get("FEDO") or hdr.get("fedo") or ""),
-        "vendedor":     (hdr.get("NVEN") or hdr.get("nven") or "").strip(),
-        "obs":          (hdr.get("OBEN") or hdr.get("oben") or "").strip(),
+        # Nombres "nuevos" (preferidos)
+        "cliente_nombre": hdr.get("cliente_nombre", ""),
+        "cliente_rut":    hdr.get("cliente_rut", ""),
+        "email":          hdr.get("email", ""),
+        "telefono":       hdr.get("telefono", ""),
+        "direccion":      hdr.get("direccion", ""),
+        "comuna":         hdr.get("comuna", ""),
+        "observaciones":  hdr.get("observaciones", ""),
+        "fecha":          hdr.get("fecha", ""),
+        "valor_neto":     hdr.get("valor_neto", 0),
+        "valor_bruto":    hdr.get("valor_bruto", 0),
+        "valor_iva":      hdr.get("valor_iva", 0),
+        # Aliases para compatibilidad con código antiguo
+        "razon_social":   hdr.get("cliente_nombre", ""),
+        "rut":            hdr.get("cliente_rut", ""),
+        "obs":            hdr.get("observaciones", ""),
+        # Diagnóstico para el frontend
+        "raw_sample":     hdr.get("raw_sample", {}),
+        "datos_completos": hdr.get("datos_completos", False),
+        "all_fields":     hdr.get("all_fields", []),
     }
 
-    # Normalizar líneas
+    # Normalizar líneas (formato compacto pero útil)
     out_lineas = []
     for ln in (lineas or []):
         out_lineas.append({
-            "sku":         (ln.get("CODIGO") or ln.get("codigo") or "").strip(),
-            "nombre":      (ln.get("DESCRIPCION") or ln.get("descripcion") or ln.get("DETOFE") or "").strip(),
-            "cantidad":    float(ln.get("CANTIDAD") or ln.get("cantidad") or ln.get("CADO") or 0),
-            "unidad":      (ln.get("UNIDAD") or ln.get("unidad") or "").strip(),
-            "precio_unit": float(ln.get("PRECIO") or ln.get("precio") or ln.get("PRTO") or 0),
-            "subtotal":    float(ln.get("SUBTOTAL") or ln.get("subtotal") or 0),
+            "sku":         ln.get("sku", ""),
+            "nombre":      ln.get("descripcion_erp") or ln.get("nombre_app", ""),
+            "cantidad":    float(ln.get("cantidad") or 0),
+            "peso_kg_u":   float(ln.get("peso_kg_u") or 0),
+            "peso_vol_u":  float(ln.get("peso_vol_u") or 0),
+            "vol_u":       float(ln.get("vol_u") or 0),
+            "tiene_bultos": bool(ln.get("tiene_bultos")),
+            "es_zz":       bool(ln.get("es_zz")),
+            "vaneli":      float(ln.get("vaneli") or 0),
         })
 
     return jsonify({"hdr": h, "lineas": out_lineas})
@@ -5775,8 +5828,9 @@ def _cubicador_fetch(tido, nudo):
     ).title() if _hdr("DIEN", "DIRECEN", "DIRECCION", "DIENDESP", "DIENDE", "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP") else ""
 
     header_obs = _hdr(
-        "OBEN", "OBENEN", "OBDO", "OBSERVACIONES",
-        "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO",
+        "OBEN", "OBENEN", "OBDO", "OBSERVA", "OBSERVACIONES",
+        "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO", "OBSERVACION",
+        "REFERENCIA", "DETOFE",
     )
 
     # ★★★ NUEVO: Datos del cliente desde las LÍNEAS (maeddo) ★★★
@@ -5799,14 +5853,12 @@ def _cubicador_fetch(tido, nudo):
             if not line_dir:
                 line_dir = (ln.get("DIEN") or "").strip().title()
             if not line_comuna:
-                line_comuna = (ln.get("COMUNA") or "").strip().title()
+                # Random a veces guarda COMUNA como código (CEI) o como nombre (CERRILLOS)
+                line_comuna = (ln.get("COMUNA") or "").strip()
             if not line_obs:
-                line_obs = (ln.get("OBDO") or "").strip()
+                line_obs = (ln.get("OBDO") or ln.get("OBSERVA") or ln.get("OBSERVACION") or "").strip()
             if not line_zona:
-                line_zona = (ln.get("NOKOZO") or "").strip().title()
-            # Si ya tenemos lo principal, salir del loop
-            if line_nombre and line_dir and line_comuna:
-                break
+                line_zona = (ln.get("NOKOZO") or "").strip()
 
     # Aplicar datos de las líneas como fallback si el header no los trajo
     header_nombre = header_nombre or line_nombre
@@ -5819,36 +5871,44 @@ def _cubicador_fetch(tido, nudo):
         if ent_cached and (now_ts - ent_cached[0]) < _ERP_ENT_CACHE_TTL:
             e = ent_cached[1]
         else:
-            # ★★★ Probar VARIANTES del RUT — el ERP Random no acepta el
-            # mismo formato siempre. Probamos: con guión, sin guión, sin DV,
-            # con puntos. La primera variante que devuelva datos gana.
+            # ★★★ Probar VARIANTES del RUT EN PARALELO — el ERP Random no
+            # acepta el mismo formato siempre. Probamos varias variantes en
+            # paralelo y la primera respuesta válida gana.
             e = None
             rut_clean = endo.replace(".", "").replace("-", "").strip().upper()
-            rut_variants = [endo]                         # ej. 76993445-6
+            rut_variants = [endo]
             if "-" in endo:
-                rut_variants.append(rut_clean)            # ej. 769934456 (sin guión ni DV juntos)
-                # Sin DV
+                rut_variants.append(rut_clean)
                 if rut_clean and rut_clean[-1] in "0123456789K":
-                    rut_variants.append(rut_clean[:-1])   # ej. 76993445
-                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])  # forzar guion
+                    rut_variants.append(rut_clean[:-1])
+                    rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])
             else:
                 rut_variants.append(rut_clean)
                 if rut_clean and len(rut_clean) >= 8:
                     rut_variants.append(rut_clean[:-1] + "-" + rut_clean[-1])
-            # Dedupe preservando orden
             seen = set()
             rut_variants = [r for r in rut_variants if r and not (r in seen or seen.add(r))]
 
-            for rv in rut_variants:
+            # Lanzar las variantes en paralelo con un thread pool
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _try_rut(rv):
                 try:
-                    ent_body = _erp_get("/entidades", {"rten": rv}, TOKEN, timeout=4)
-                    ent_data = ent_body.get("data") or []
-                    if ent_data:
-                        e = ent_data[0]
-                        _ERP_ENT_CACHE[endo] = (now_ts, e)
-                        break
+                    body = _erp_get("/entidades", {"rten": rv}, TOKEN, timeout=3)
+                    data = body.get("data") or []
+                    return (rv, data[0]) if data else None
                 except Exception:
-                    continue
+                    return None
+            with ThreadPoolExecutor(max_workers=min(4, len(rut_variants))) as pool:
+                futures = [pool.submit(_try_rut, rv) for rv in rut_variants]
+                for fut in as_completed(futures, timeout=5):
+                    result = fut.result()
+                    if result:
+                        _, e = result
+                        _ERP_ENT_CACHE[endo] = (now_ts, e)
+                        # Cancelar las demás
+                        for f in futures:
+                            f.cancel()
+                        break
         if e:
             cliente_nombre   = (e.get("NOKOEN") or "").strip().title()
             cliente_rut      = (e.get("RTEN")   or endo).strip()
@@ -5886,7 +5946,27 @@ def _cubicador_fetch(tido, nudo):
     comuna_doc = (raw_header.get("NOKOZO") or raw_header.get("NOKOCOMU") or
                   raw_header.get("NOKOCOMUNADE") or raw_header.get("NOKOMUENDE") or
                   raw_header.get("NOKOMUNEN") or raw_header.get("NOKCOMENDESP") or "").strip()
-    comuna_final = comuna_doc or line_comuna or cliente_comuna_nombre or line_zona
+    # Resolver código de comuna a nombre completo
+    # line_comuna puede venir como código (CEI) o nombre (CERRILLOS).
+    # Si es código (3 letras mayúsculas), convertimos a nombre.
+    def _resolve_comuna(val):
+        if not val:
+            return ""
+        s = str(val).strip()
+        # Si parece código (3 chars todas mayúsculas), buscar en map
+        if len(s) <= 4 and s.upper() == s and s.isalpha():
+            resolved = _cmen_to_comuna("013", s.upper())
+            if resolved and resolved != s:
+                return resolved
+            # Probar todas las regiones
+            for cien in _CMEN_MAP.keys():
+                r = _cmen_to_comuna(cien, s.upper())
+                if r and r != s:
+                    return r
+        return s.title() if s.upper() == s else s
+
+    comuna_final = (_resolve_comuna(comuna_doc) or _resolve_comuna(line_comuna)
+                    or cliente_comuna_nombre or _resolve_comuna(line_zona))
 
     # ── DEBUG SAMPLE: si los campos clave vienen vacíos, devolvemos un
     # snapshot del header crudo (filtrado a strings no vacías) para que el
