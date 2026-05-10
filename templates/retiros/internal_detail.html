@@ -31,130 +31,247 @@
     {% set _doc_ok = _doc_status == 'ok' %}
     {% set _doc_incomp = _doc_status == 'incompleto' %}
     <style>
-      .wf-steps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
-      .wf-step{background:#fff;border:2px solid #e5e7eb;border-radius:10px;padding:12px 14px;text-align:center;position:relative}
-      .wf-step.done{background:#dcfce7;border-color:#86efac}
-      .wf-step.active{background:#fff7ed;border-color:#fb923c;box-shadow:0 4px 14px rgba(251,146,60,.18)}
-      .wf-step.fail{background:#fee2e2;border-color:#fca5a5}
-      .wf-step .wf-num{position:absolute;top:-12px;left:14px;width:26px;height:26px;border-radius:50%;background:#9ca3af;color:#fff;font-weight:800;font-size:.78rem;display:flex;align-items:center;justify-content:center}
-      .wf-step.done .wf-num{background:#16a34a}
-      .wf-step.active .wf-num{background:#dc2626;animation:pulse-step 1.5s ease-in-out infinite}
-      @keyframes pulse-step{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
-      .wf-step h6{margin:6px 0 2px;font-weight:800;font-size:.86rem}
-      .wf-step .wf-sub{font-size:.7rem;color:#6b7280}
-      .wf-step.done h6{color:#166534}
-      .wf-step.active h6{color:#9a3412}
+      /* ── PIPELINE INTERACTIVO 6 PASOS ─────────────────────────── */
+      .pipe-wrap{padding:18px 22px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);border-radius:14px;margin-bottom:16px;color:#fff;border-bottom:4px solid var(--ilus-red,#e60000)}
+      .pipe-wrap-title{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:14px}
+      .pipe-row{display:grid;grid-template-columns:repeat(6,1fr);gap:0;align-items:flex-start;position:relative}
+      .pipe-step{position:relative;text-align:center;padding:6px 4px;cursor:pointer;transition:transform .15s}
+      .pipe-step:hover{transform:translateY(-2px)}
+      .pipe-step::before,.pipe-step::after{content:'';position:absolute;top:24px;height:3px;background:rgba(255,255,255,.1);z-index:0}
+      .pipe-step::before{left:0;right:50%}
+      .pipe-step::after{left:50%;right:0}
+      .pipe-step:first-child::before,.pipe-step:last-child::after{display:none}
+      .pipe-step.done::before,.pipe-step.done::after{background:#22c55e}
+      .pipe-step.active::before{background:#22c55e}
+      .pipe-step.active::after{background:linear-gradient(90deg,var(--ilus-red,#e60000),rgba(255,255,255,.1))}
+      .pipe-step.fail::before,.pipe-step.fail::after{background:#dc2626}
+      .pipe-circle{position:relative;z-index:2;width:48px;height:48px;border-radius:50%;background:#1c1c1c;border:3px solid rgba(255,255,255,.15);color:#9ca3af;display:flex;align-items:center;justify-content:center;font-size:1.15rem;margin:0 auto 8px;transition:all .25s}
+      .pipe-step.done .pipe-circle{background:#22c55e;border-color:#22c55e;color:#fff}
+      .pipe-step.active .pipe-circle{background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;box-shadow:0 0 0 5px rgba(230,0,0,.18);animation:pipe-pulse 2s ease-in-out infinite}
+      .pipe-step.fail .pipe-circle{background:#dc2626;border-color:#dc2626;color:#fff}
+      @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 5px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 10px rgba(230,0,0,.06)}}
+      .pipe-label{font-size:.74rem;font-weight:800;color:#cbd5e1;line-height:1.2;text-transform:uppercase;letter-spacing:.04em}
+      .pipe-step.done .pipe-label{color:#86efac}
+      .pipe-step.active .pipe-label{color:#fff;font-size:.78rem}
+      .pipe-step.fail .pipe-label{color:#fca5a5}
+      .pipe-sub{font-size:.65rem;color:#9ca3af;margin-top:2px;font-weight:500}
+
+      /* ── PANEL DE VALIDACIÓN ─────────────────────────────────── */
       .val-card{background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border:2px solid #fdba74;border-radius:12px;padding:18px 22px;margin-bottom:14px}
       .val-card.ok{background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);border-color:#86efac}
       .val-card.fail{background:linear-gradient(135deg,#fee2e2 0%,#fecaca 100%);border-color:#fca5a5}
       .val-card h5{margin:0 0 6px;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+      .val-section-title{font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7c2d12;margin:14px 0 8px;display:flex;align-items:center;gap:6px}
+      .val-section-title.ok{color:#166534}
+
+      /* ── ÍTEMS ERP con badge cubicaje ────────────────────────── */
+      .erp-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fff;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:5px;font-size:.85rem}
+      .erp-item .sku{font-family:monospace;font-size:.78rem;color:#6b7280;flex-shrink:0;min-width:120px}
+      .erp-item .name{flex:1;color:#0f172a;font-weight:600}
+      .erp-item .qty{font-weight:700;color:#0a0a0a;flex-shrink:0}
+      .erp-item .badge-cubic{padding:2px 8px;border-radius:50px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;flex-shrink:0}
+      .erp-item .badge-cubic.has{background:#dcfce7;color:#166534}
+      .erp-item .badge-cubic.no{background:#fee2e2;color:#991b1b;cursor:pointer}
+      .erp-item .badge-cubic.no:hover{background:#dc2626;color:#fff}
     </style>
 
-    <div class="ilus-card mb-3" style="background:#0a0a0a;color:#fff;border:none">
-      <div class="ilus-card-header" style="background:transparent;color:#fff;border-bottom:1px solid #1c1c1c">
-        <span><i class="bi bi-diagram-3 me-2 text-danger"></i>Proceso interno ILUS</span>
-        <small class="ms-auto" style="color:#9ca3af">Workflow para procesar el retiro</small>
+    {# ═══════════════════════════════════════════════════════════
+       PIPELINE INTERACTIVO — 6 pasos navegables, control del usuario
+    ═══════════════════════════════════════════════════════════ #}
+    <div class="pipe-wrap">
+      <div class="pipe-wrap-title">
+        <i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>
+        Proceso interno · click en cada paso para ir a su sección
       </div>
-      <div class="card-body p-3" style="background:#0a0a0a">
-        <div class="wf-steps">
-          <div class="wf-step {% if _doc_ok %}done{% elif _doc_incomp %}fail{% else %}active{% endif %}">
-            <span class="wf-num">1</span>
-            <h6><i class="bi bi-shield-check me-1"></i>Validar documentación</h6>
-            <div class="wf-sub">
-              {% if _doc_ok %}✓ Validada por {{ req.doc_validated_by or '—' }}
-              {% elif _doc_incomp %}⚠ Información incompleta
-              {% else %}Pendiente de revisión{% endif %}
-            </div>
+      <div class="pipe-row">
+        {# Paso 1: Recibida #}
+        <div class="pipe-step done" onclick="document.getElementById('sec-ficha').scrollIntoView({behavior:'smooth',block:'center'})">
+          <div class="pipe-circle"><i class="bi bi-inbox"></i></div>
+          <div class="pipe-label">Recibida</div>
+          <div class="pipe-sub">{{ req.created_at|string|truncate(10,True,'') if req.created_at else '—' }}</div>
+        </div>
+
+        {# Paso 2: Documento (validación interna) #}
+        <div class="pipe-step {% if _doc_ok %}done{% elif _doc_incomp %}fail{% else %}active{% endif %}"
+             onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth',block:'center'})">
+          <div class="pipe-circle"><i class="bi bi-shield-check"></i></div>
+          <div class="pipe-label">Documento</div>
+          <div class="pipe-sub">
+            {% if _doc_ok %}✓ Validado{% elif _doc_incomp %}⚠ Incompleto{% else %}Por validar{% endif %}
           </div>
-          <div class="wf-step {% if req.proposed_date %}done{% elif _doc_ok %}active{% endif %}">
-            <span class="wf-num">2</span>
-            <h6><i class="bi bi-calendar-event me-1"></i>Proponer fecha</h6>
-            <div class="wf-sub">
-              {% if req.proposed_date %}✓ {{ req.proposed_date }} {{ req.proposed_time_from|hm }}-{{ req.proposed_time_to|hm }}
-              {% elif _doc_ok %}Listo para proponer
-              {% else %}Esperando paso 1{% endif %}
-            </div>
+        </div>
+
+        {# Paso 3: Cubicaje (peso/vol/tiempo calculados) #}
+        {% set _cubic_ok = req.peso_real_kg and req.peso_vol_kg and req.tiempo_estimado_min %}
+        <div class="pipe-step {% if _cubic_ok %}done{% elif _doc_ok %}active{% endif %}"
+             onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth',block:'center'})">
+          <div class="pipe-circle"><i class="bi bi-rulers"></i></div>
+          <div class="pipe-label">Cubicaje</div>
+          <div class="pipe-sub">
+            {% if _cubic_ok %}{{ req.peso_real_kg }}kg · {{ req.tiempo_estimado_min }}min{% else %}Pendiente{% endif %}
           </div>
-          <div class="wf-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}">
-            <span class="wf-num">3</span>
-            <h6><i class="bi bi-check-circle me-1"></i>Confirmación</h6>
-            <div class="wf-sub">
-              {% if req.confirmed_date %}✓ {{ req.confirmed_date }}
-              {% elif req.proposed_date %}Esperando cliente
-              {% else %}Sin propuesta{% endif %}
-            </div>
+        </div>
+
+        {# Paso 4: Propuesta #}
+        <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% elif _doc_ok %}active{% endif %}"
+             onclick="document.getElementById('sec-propuesta').scrollIntoView({behavior:'smooth',block:'center'})">
+          <div class="pipe-circle"><i class="bi bi-calendar-event"></i></div>
+          <div class="pipe-label">Propuesta</div>
+          <div class="pipe-sub">
+            {% if req.proposed_date %}{{ req.proposed_date }}{% else %}Sin proponer{% endif %}
+          </div>
+        </div>
+
+        {# Paso 5: Confirmada (cliente acepta) #}
+        <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}">
+          <div class="pipe-circle"><i class="bi bi-check2-circle"></i></div>
+          <div class="pipe-label">Confirmada</div>
+          <div class="pipe-sub">
+            {% if req.confirmed_date %}{{ req.confirmed_date }}{% elif req.proposed_date %}Esperando cliente{% else %}—{% endif %}
+          </div>
+        </div>
+
+        {# Paso 6: Preparación / Retirada #}
+        <div class="pipe-step {% if req.status == 'retirada' %}done{% elif req.status == 'en_preparacion' %}active{% endif %}">
+          <div class="pipe-circle"><i class="bi bi-truck"></i></div>
+          <div class="pipe-label">Retiro</div>
+          <div class="pipe-sub">
+            {% if req.status == 'retirada' %}✓ Completado
+            {% elif req.status == 'en_preparacion' %}En preparación
+            {% else %}Pendiente{% endif %}
           </div>
         </div>
       </div>
     </div>
 
-    {# ── PASO 1: Validar documentación (panel principal si no está OK) ── #}
-    {% if not _doc_ok %}
-    <div class="val-card {% if _doc_incomp %}fail{% endif %}">
+    {# ═══════════════════════════════════════════════════════════
+       SECCIÓN: VALIDACIÓN DE DOCUMENTACIÓN
+       Buscador manual + items + cubicaje + peso/vol + estado
+    ═══════════════════════════════════════════════════════════ #}
+    <div id="sec-validacion" class="val-card {% if _doc_ok %}ok{% elif _doc_incomp %}fail{% endif %}">
       <h5>
-        <i class="bi bi-{% if _doc_incomp %}exclamation-triangle{% else %}clipboard2-check{% endif %}"></i>
-        {% if _doc_incomp %}Información incompleta — solicita al cliente
-        {% else %}Paso 1: Valida la documentación del cliente{% endif %}
+        <i class="bi bi-{% if _doc_ok %}check-circle-fill{% elif _doc_incomp %}exclamation-triangle{% else %}clipboard2-check{% endif %}"></i>
+        {% if _doc_ok %}Documentación validada
+        {% elif _doc_incomp %}Información incompleta
+        {% else %}Validación de documentación{% endif %}
       </h5>
-      <p class="small mb-3" style="color:#7c2d12">
-        {% if _doc_incomp %}
-        Marca de regreso "OK" cuando el cliente complete la información que falta.
+      <p class="small mb-3" style="color:{% if _doc_ok %}#166534{% else %}#7c2d12{% endif %}">
+        {% if _doc_ok %}
+        Validada el {{ req.doc_validated_at }} por <strong>{{ req.doc_validated_by }}</strong>.
+        Puedes re-validar en cualquier momento si cambia algo.
+        {% elif _doc_incomp %}
+        Notifica al cliente para que complete información. Cuando recibas todo, marca como OK.
         {% else %}
-        Antes de proponer fecha, verifica que los datos del documento ({{ req.document_type|upper }} {{ req.document_number }})
-        existan en el ERP, que el RUT calce y que tengamos peso/volumen reales para planificar.
+        El cliente declaró <strong>{{ req.document_type|upper }} {{ req.document_number }}</strong>.
+        Búscalo en el ERP, verifica los datos, calcula peso/volumen real, y marca OK para
+        habilitar la propuesta de fecha.
         {% endif %}
       </p>
 
-      {# Buscador del documento en ERP — auto-rellena peso/vol #}
+      {# ── BUSCADOR MANUAL DE DOCUMENTO (editable TIDO + NUDO) ── #}
       <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #fdba74">
-        <div class="d-flex align-items-center gap-2 mb-2">
-          <strong style="color:#0a0a0a;font-size:.88rem"><i class="bi bi-search me-1 text-danger"></i>Buscar en ERP Random</strong>
-          <span class="ms-auto small text-muted">{{ req.document_type|upper }} #{{ req.document_number }}</span>
+        <div class="val-section-title">
+          <i class="bi bi-search"></i>1) Buscar documento en el ERP
         </div>
-        <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="buscarERP({{ req.id }}, '{{ req.document_type|upper }}', '{{ req.document_number }}')">
-          <i class="bi bi-cloud-download me-1"></i>Traer datos del ERP y calcular peso/volumen
-        </button>
-        <div id="erpResult" class="mt-2 small"></div>
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small fw-bold mb-1">Tipo</label>
+            <select id="val_tido" class="form-select form-select-sm">
+              <option value="FCV"{% if (req.document_type|upper) in ['FCV','FACTURA'] %} selected{% endif %}>FCV — Factura</option>
+              <option value="BLV"{% if (req.document_type|upper) in ['BLV','BOLETA'] %} selected{% endif %}>BLV — Boleta</option>
+              <option value="VD" {% if (req.document_type|upper) in ['VD'] %} selected{% endif %}>VD — N. Venta Directa</option>
+              <option value="WEB"{% if (req.document_type|upper) in ['WEB'] %} selected{% endif %}>WEB — N. Venta Web</option>
+              <option value="NVI">NVI — N. Venta Interna</option>
+              <option value="GDV">GDV — Guía despacho</option>
+              <option value="GDI">GDI — Guía Desp. Interna</option>
+              <option value="GTI">GTI — Guía Traspaso Int.</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-bold mb-1">N° documento</label>
+            <input type="text" id="val_nudo" class="form-control form-control-sm font-monospace"
+                   value="{{ req.document_number }}" placeholder="Ej: 12345 o VD0008827">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label small fw-bold mb-1">&nbsp;</label>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-dark fw-bold flex-grow-1"
+                      onclick="buscarERP({{ req.id }})">
+                <i class="bi bi-cloud-download me-1"></i>Buscar en ERP
+              </button>
+              {% if req.doc_erp_data %}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      onclick="document.getElementById('erp-snapshot').classList.toggle('d-none')"
+                      title="Ver datos guardados">
+                <i class="bi bi-database"></i>
+              </button>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="form-text mt-2 small" style="color:#7c2d12">
+          <i class="bi bi-info-circle me-1"></i>
+          Si el cliente se equivocó al ingresar el documento, cámbialo aquí y haz click en "Buscar".
+          El sistema validará el documento real, traerá los items y calculará peso/volumen automáticamente.
+        </div>
+        <div id="erpResult" class="mt-2"></div>
         {% if req.doc_erp_data %}
-        <details class="mt-2">
-          <summary class="small text-muted">Ver snapshot ERP guardado</summary>
-          <pre class="small bg-light p-2 rounded mt-1" style="max-height:240px;overflow:auto;font-size:.72rem">{{ req.doc_erp_data[:2000] }}</pre>
-        </details>
+        <div id="erp-snapshot" class="d-none mt-2">
+          <small class="text-muted">Snapshot ERP guardado:</small>
+          <pre class="small bg-light p-2 rounded mt-1" style="max-height:200px;overflow:auto;font-size:.7rem">{{ req.doc_erp_data[:3000] }}</pre>
+        </div>
         {% endif %}
       </div>
 
-      {# Form de validación #}
-      <form method="post" action="{{ url_for('pickup_validar_doc', rid=req.id) }}">
-        <div class="row g-2 align-items-end">
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">Peso real (kg)</label>
-            <input type="number" name="peso_real_kg" id="val_peso_real" class="form-control form-control-sm"
-                   step="0.01" value="{{ req.peso_real_kg or req.total_weight_kg or '' }}">
+      {# ── 2) PESO / VOLUMEN / TIEMPO ── #}
+      <form method="post" action="{{ url_for('pickup_validar_doc', rid=req.id) }}" id="formValidacion">
+        <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #fdba74">
+          <div class="val-section-title">
+            <i class="bi bi-rulers"></i>2) Cubicaje y tiempo estimado
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">Peso volumétrico (kg)</label>
-            <input type="number" name="peso_vol_kg" id="val_peso_vol" class="form-control form-control-sm"
-                   step="0.01" value="{{ req.peso_vol_kg or req.total_volumetric_weight or '' }}">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small fw-bold mb-1">Peso real (kg)</label>
+              <input type="number" name="peso_real_kg" id="val_peso_real" class="form-control form-control-sm"
+                     step="0.01" value="{{ req.peso_real_kg or req.total_weight_kg or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold mb-1">Peso volumétrico (kg)</label>
+              <input type="number" name="peso_vol_kg" id="val_peso_vol" class="form-control form-control-sm"
+                     step="0.01" value="{{ req.peso_vol_kg or req.total_volumetric_weight or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold mb-1">Tiempo estimado (min)</label>
+              <input type="number" name="tiempo_estimado_min" id="val_tiempo" class="form-control form-control-sm"
+                     step="5" value="{{ req.tiempo_estimado_min or 30 }}" placeholder="30">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold mb-1">Volumen total (m³)</label>
+              <input type="number" id="val_m3" class="form-control form-control-sm"
+                     step="0.001" value="{{ req.total_volume_m3 or '' }}" disabled>
+            </div>
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">Tiempo estimado (min)</label>
-            <input type="number" name="tiempo_estimado_min" id="val_tiempo" class="form-control form-control-sm"
-                   step="5" value="{{ req.tiempo_estimado_min or 30 }}" placeholder="30">
+          <div class="form-text mt-2 small">
+            <i class="bi bi-lightbulb text-warning me-1"></i>
+            Los valores se completan automáticamente al buscar en ERP cuando los SKUs tienen
+            cubicaje. Si algún producto está marcado <span class="badge bg-danger" style="font-size:.55rem">SIN CUBICAJE</span>,
+            usa el botón para mandarlo a gestionar medidas.
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">&nbsp;</label>
-            <button type="submit" name="action" value="marcar_ok" class="btn btn-success w-100 btn-sm fw-bold">
-              <i class="bi bi-check-circle me-1"></i>Documentación OK
-            </button>
+        </div>
+
+        {# ── 3) NOTAS Y ACCIÓN FINAL ── #}
+        <div class="bg-white p-3 rounded-3" style="border:1px solid #fdba74">
+          <div class="val-section-title">
+            <i class="bi bi-chat-square-text"></i>3) Notas internas y decisión
           </div>
-          <div class="col-12">
-            <label class="form-label small fw-bold">Notas internas (opcional)</label>
-            <textarea name="notes" class="form-control form-control-sm" rows="2"
-                      placeholder="Ej: Documento verificado en ERP. Cliente solvente. Sin observaciones.">{{ req.doc_validation_notes or '' }}</textarea>
-          </div>
-          <div class="col-12 d-flex gap-2 justify-content-end">
+          <textarea name="notes" class="form-control form-control-sm mb-2" rows="2"
+                    placeholder="Ej: Cliente verificado en ERP. Documento OK. Pendiente de pesar el bulto manual.">{{ req.doc_validation_notes or '' }}</textarea>
+          <div class="d-flex flex-wrap gap-2 justify-content-end">
             <button type="submit" name="action" value="marcar_incompleto" class="btn btn-outline-danger btn-sm">
-              <i class="bi bi-exclamation-triangle me-1"></i>Marcar como incompleta
+              <i class="bi bi-exclamation-triangle me-1"></i>Marcar incompleta
+            </button>
+            <button type="submit" name="action" value="marcar_ok" class="btn btn-success btn-sm fw-bold px-4">
+              <i class="bi bi-check-circle me-1"></i>{% if _doc_ok %}Re-validar{% else %}Validar y habilitar paso siguiente{% endif %}
             </button>
           </div>
         </div>
@@ -162,9 +279,14 @@
     </div>
 
     <script>
-    async function buscarERP(rid, tido, nudo){
+    let _erpLineas = [];
+
+    async function buscarERP(rid){
+      const tido = document.getElementById('val_tido').value;
+      const nudo = document.getElementById('val_nudo').value.trim();
+      if (!nudo){ alert('Ingresa el N° del documento'); return; }
       const resDiv = document.getElementById('erpResult');
-      resDiv.innerHTML = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP...</div>';
+      resDiv.innerHTML = '<div class="text-muted py-2"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP Random...</div>';
       try {
         const r = await fetch('/api/erp/documento', {
           method: 'POST',
@@ -173,64 +295,103 @@
         });
         const d = await r.json();
         if (!r.ok || d.error){
-          resDiv.innerHTML = `<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${d.error || 'Error consultando ERP'}</div>`;
+          resDiv.innerHTML = `<div class="alert alert-danger py-2 small mb-0">
+            <i class="bi bi-x-circle me-1"></i>${d.error || 'Error consultando ERP'}
+          </div>`;
           return;
         }
-        // Mostrar resumen
-        const lineas = d.lineas || [];
+        _erpLineas = d.lineas || [];
         const cliente = (d.hdr && d.hdr.razon_social) || '—';
         const rut = (d.hdr && d.hdr.rut) || '—';
-        // Calcular totales (cantidad por linea)
-        let totalQty = 0;
-        let html = `<div class="alert alert-success py-2 mb-2 small">
-          <i class="bi bi-check-circle me-1"></i><strong>Documento encontrado en ERP</strong><br>
-          Cliente: <strong>${cliente}</strong> (${rut})<br>
-          Líneas: ${lineas.length} ítems
-        </div>`;
-        if (lineas.length){
-          html += '<table class="table table-sm small mb-2"><thead><tr><th>SKU</th><th>Producto</th><th class="text-end">Cant.</th></tr></thead><tbody>';
-          lineas.forEach(l => {
-            totalQty += parseFloat(l.cantidad || 0);
-            html += `<tr><td class="font-monospace">${l.sku}</td><td>${l.nombre}</td><td class="text-end">${l.cantidad}</td></tr>`;
-          });
-          html += '</tbody></table>';
-        }
-        resDiv.innerHTML = html;
-        // Sugerir tiempo según cantidad de items: 5min base + 2min por línea
-        const tiempo = Math.max(15, 5 + lineas.length * 2);
-        document.getElementById('val_tiempo').value = tiempo;
-        // Guardar snapshot ERP en BD
+
+        // Detectar diferencia con el documento del cliente
+        const docOriginal = '{{ (req.document_type|upper) }} {{ req.document_number }}';
+        const docBuscado = `${tido} ${nudo}`;
+        const docCambiado = docOriginal.trim() !== docBuscado.trim();
+
+        // Calcular peso/vol cruzando con catálogo local
+        let totalKg = 0, totalM3 = 0, totalPesoVol = 0, sinCubicaje = 0;
+        const itemsHtml = _erpLineas.map((l, i) => {
+          const tieneCubic = l.tiene_ficha && l.tiene_bultos;
+          const kg = parseFloat(l.peso_kg_tot || 0);
+          const m3 = parseFloat(l.vol_tot || 0) / 1000000;
+          const pv = parseFloat(l.peso_vol_tot || 0);
+          if (tieneCubic){
+            totalKg += kg;
+            totalM3 += m3;
+            totalPesoVol += pv;
+          } else {
+            sinCubicaje++;
+          }
+          return `<div class="erp-item">
+            <span class="sku">${l.sku || '—'}</span>
+            <span class="name">${l.descripcion_erp || l.nombre_app || '—'}</span>
+            <span class="qty">${l.cantidad || 0} u.</span>
+            ${tieneCubic
+              ? `<span class="badge-cubic has" title="Cubicaje OK: ${kg.toFixed(2)}kg · ${m3.toFixed(3)}m³"><i class="bi bi-check"></i> ${kg.toFixed(1)}kg</span>`
+              : `<span class="badge-cubic no" title="Sin cubicaje en catálogo. Click para gestionar." onclick="solicitarCubicaje('${l.sku}','${l.app_id||''}')"><i class="bi bi-exclamation-triangle"></i> Sin cubicaje</span>`
+            }
+          </div>`;
+        }).join('');
+
+        resDiv.innerHTML = `
+          ${docCambiado ? `<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>El documento original era <strong>${docOriginal}</strong>. Estás validando ahora <strong>${docBuscado}</strong>.</div>` : ''}
+          <div class="alert alert-success py-2 small mb-2">
+            <i class="bi bi-check-circle me-1"></i><strong>Documento encontrado en ERP</strong>
+            · Cliente: <strong>${cliente}</strong> (${rut})
+            · ${_erpLineas.length} línea(s)
+            ${sinCubicaje > 0 ? `<br><i class="bi bi-exclamation-triangle text-danger me-1"></i><strong class="text-danger">${sinCubicaje} producto(s) sin cubicaje</strong> — necesitan medidas para calcular envío`: ''}
+          </div>
+          <div style="max-height:280px;overflow-y:auto">${itemsHtml}</div>
+          <div class="d-flex gap-2 mt-2 align-items-center" style="font-size:.84rem">
+            <strong>Totales:</strong>
+            <span class="badge bg-dark">${totalKg.toFixed(2)} kg reales</span>
+            <span class="badge bg-info">${totalPesoVol.toFixed(2)} kg vol.</span>
+            <span class="badge bg-secondary">${totalM3.toFixed(3)} m³</span>
+            <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="aplicarTotales(${totalKg.toFixed(2)}, ${totalPesoVol.toFixed(2)}, ${_erpLineas.length})">
+              <i class="bi bi-arrow-down-circle me-1"></i>Usar estos valores
+            </button>
+          </div>
+        `;
+
+        // Auto-aplicar totales
+        aplicarTotales(totalKg.toFixed(2), totalPesoVol.toFixed(2), _erpLineas.length);
+
+        // Guardar snapshot ERP en BD silenciosamente
         const fd = new FormData();
         fd.append('action', 'guardar_erp');
         fd.append('erp_data_json', JSON.stringify(d));
-        fd.append('peso_real_kg', document.getElementById('val_peso_real').value || 0);
-        fd.append('peso_vol_kg', document.getElementById('val_peso_vol').value || 0);
-        fd.append('tiempo_estimado_min', tiempo);
+        fd.append('peso_real_kg', totalKg.toFixed(2));
+        fd.append('peso_vol_kg', totalPesoVol.toFixed(2));
+        fd.append('tiempo_estimado_min', Math.max(15, 5 + _erpLineas.length * 2));
         await fetch(`/retiros/${rid}/validar-doc`, { method:'POST', body: fd });
       } catch(e){
-        resDiv.innerHTML = `<div class="text-danger">Error de red: ${e.message}</div>`;
+        resDiv.innerHTML = `<div class="alert alert-danger py-2 small mb-0">Error de red: ${e.message}</div>`;
+      }
+    }
+
+    function aplicarTotales(kg, pv, nLineas){
+      document.getElementById('val_peso_real').value = kg;
+      document.getElementById('val_peso_vol').value = pv;
+      // Tiempo: 5min base + 2min × línea
+      document.getElementById('val_tiempo').value = Math.max(15, 5 + nLineas * 2);
+    }
+
+    function solicitarCubicaje(sku, productId){
+      if (!sku){ alert('Sin SKU disponible'); return; }
+      if (productId){
+        // Si tenemos product_id, ir directo a editar el producto
+        window.open(`/products/${productId}/edit`, '_blank');
+      } else {
+        // Sino, abrir buscador
+        if (confirm(`El SKU "${sku}" no está en tu catálogo. ¿Quieres crearlo ahora?`)){
+          window.open('/products/new?sku=' + encodeURIComponent(sku), '_blank');
+        }
       }
     }
     </script>
-    {% else %}
-    {# Paso 1 completado — banner verde resumen + botón "Re-validar" #}
-    <div class="val-card ok">
-      <h5><i class="bi bi-check-circle-fill text-success"></i>Documentación validada — listo para paso 2</h5>
-      <p class="small mb-2" style="color:#166534">
-        Validada el <strong>{{ req.doc_validated_at }}</strong> por <strong>{{ req.doc_validated_by }}</strong>.
-        {% if req.peso_real_kg %}Peso real: <strong>{{ req.peso_real_kg }} kg</strong> · {% endif %}
-        {% if req.peso_vol_kg %}Peso vol: <strong>{{ req.peso_vol_kg }} kg</strong> · {% endif %}
-        {% if req.tiempo_estimado_min %}Tiempo estimado: <strong>{{ req.tiempo_estimado_min }} min</strong>{% endif %}
-      </p>
-      {% if req.doc_validation_notes %}
-      <div class="bg-white p-2 rounded small" style="color:#166534;border:1px solid #86efac">
-        <i class="bi bi-chat-square-text me-1"></i>{{ req.doc_validation_notes }}
-      </div>
-      {% endif %}
-    </div>
-    {% endif %}
 
-    <div class="ilus-card mb-3">
+    <div id="sec-ficha" class="ilus-card mb-3">
       <div class="ilus-card-header"><span><i class="bi bi-person-vcard me-2"></i>Ficha del retiro</span></div>
       <div class="card-body p-3">
         <div class="row g-3">
@@ -284,13 +445,25 @@
           <button class="btn btn-dark w-100">Actualizar estado</button>
         </form>
         <hr>
-        <form method="post" action="{{ url_for('pickup_create_proposal', rid=req.id) }}">
+        <form id="sec-propuesta" method="post" action="{{ url_for('pickup_create_proposal', rid=req.id) }}">
           <label class="form-label small fw-bold">Proponer agenda</label>
-          <input type="date" name="date" class="form-control mb-2" required>
-          <div class="row g-2 mb-2"><div class="col"><input type="time" name="time_from" class="form-control" required></div><div class="col"><input type="time" name="time_to" class="form-control" required></div></div>
-          <input name="reason" class="form-control mb-2" placeholder="Motivo: disponibilidad, flujo, cierre...">
-          <textarea name="message" class="form-control mb-2" rows="2" placeholder="Mensaje para el cliente"></textarea>
-          <button class="btn btn-ilus w-100 fw-bold"><i class="bi bi-send-check me-1"></i>Enviar propuesta</button>
+          {% if not _doc_ok %}
+          <div class="alert alert-warning py-2 small mb-2">
+            <i class="bi bi-shield-exclamation me-1"></i>
+            <strong>Falta validar la documentación primero.</strong>
+            <a href="#sec-validacion" onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth'})">Ir a validar →</a>
+          </div>
+          {% endif %}
+          <input type="date" name="date" class="form-control mb-2" required {% if not _doc_ok %}disabled{% endif %}>
+          <div class="row g-2 mb-2">
+            <div class="col"><input type="time" name="time_from" class="form-control" required {% if not _doc_ok %}disabled{% endif %}></div>
+            <div class="col"><input type="time" name="time_to" class="form-control" required {% if not _doc_ok %}disabled{% endif %}></div>
+          </div>
+          <input name="reason" class="form-control mb-2" placeholder="Motivo: disponibilidad, flujo, cierre..." {% if not _doc_ok %}disabled{% endif %}>
+          <textarea name="message" class="form-control mb-2" rows="2" placeholder="Mensaje para el cliente" {% if not _doc_ok %}disabled{% endif %}></textarea>
+          <button class="btn btn-ilus w-100 fw-bold" {% if not _doc_ok %}disabled title="Valida la documentación primero"{% endif %}>
+            <i class="bi bi-send-check me-1"></i>Enviar propuesta
+          </button>
         </form>
       </div>
     </div>
