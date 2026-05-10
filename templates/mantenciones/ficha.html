@@ -688,12 +688,12 @@
     <div class="pipe-label">Contrato</div>
     <div class="pipe-sub">{% if _ct_vigente %}Vigente{% elif _has_ct %}{{ contratos[0].estado.replace('_',' ').title() }}{% else %}Sin contrato{% endif %}</div>
   </div>
-  <div class="pipe-step {{ _step_cls.visitas }}" onclick="switchTab('visitas')" style="cursor:pointer">
+  <div class="pipe-step {{ _step_cls.visitas }}" onclick="switchTab('visitas');setTimeout(()=>abrirNuevaVisita('preventiva'), 250)" style="cursor:pointer" title="Click para programar nueva mantención">
     <div class="pipe-circle"><i class="bi bi-tools"></i></div>
     <div class="pipe-label">Mantenciones</div>
-    <div class="pipe-sub">{{ stats.realizadas_12m }} hechas</div>
+    <div class="pipe-sub">{{ stats.realizadas_12m }} hechas · click para programar</div>
   </div>
-  <div class="pipe-step {{ _step_cls.prox }}" onclick="abrirNuevaVisita()" style="cursor:pointer">
+  <div class="pipe-step {{ _step_cls.prox }}" onclick="switchTab('visitas');setTimeout(()=>abrirNuevaVisita(), 250)" style="cursor:pointer" title="Click para nueva visita">
     <div class="pipe-circle"><i class="bi bi-calendar-event-fill"></i></div>
     <div class="pipe-label">Próx. visita</div>
     <div class="pipe-sub">{% if stats.prox_visita_fecha %}{{ stats.prox_visita_fecha.strftime('%d/%m') }}{% else %}—{% endif %}</div>
@@ -4146,48 +4146,108 @@ function abrirEmailManual() {
   <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
     <div>
       <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-clock-history me-2" style="color:var(--ilus-red)"></i>Historial de actividad</span>
-      <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ logs|length }} registros</span>
+      <span class="ms-2 badge bg-secondary" style="font-size:.65rem" id="histCount">{{ logs|length }} registros</span>
+    </div>
+    {# Filtros del historial #}
+    <div class="d-flex gap-2 flex-wrap">
+      <select id="histFilterAccion" class="form-select form-select-sm" style="width:auto;font-size:.78rem"
+              onchange="filtrarHistorial()">
+        <option value="">Todas las acciones</option>
+        <option value="crear">Creaciones</option>
+        <option value="actualiz">Actualizaciones</option>
+        <option value="eliminad">Eliminaciones</option>
+        <option value="visita">Visitas</option>
+        <option value="contrato">Contratos</option>
+        <option value="reporte">Reportes</option>
+        <option value="maquina">Equipos</option>
+        <option value="repuesto">Repuestos</option>
+        <option value="email">Comunicaciones</option>
+      </select>
+      <select id="histFilterUser" class="form-select form-select-sm" style="width:auto;font-size:.78rem"
+              onchange="filtrarHistorial()">
+        <option value="">Todos los usuarios</option>
+        {% set usuarios_set = logs|map(attribute='usuario')|select|unique|list %}
+        {% for u in usuarios_set %}
+        <option value="{{ u }}">{{ u }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" id="histFilterText" class="form-control form-control-sm"
+             style="width:auto;font-size:.78rem;min-width:160px"
+             placeholder="🔍 Buscar en detalle..." oninput="filtrarHistorial()">
     </div>
   </div>
 
   {% if logs %}
   <div class="f-card">
-    <div class="f-card-body p-0">
+    <div class="f-card-body p-0" id="histListWrap">
       {% for l in logs|sort(attribute='created_at',reverse=True) %}
       {% set ico_map = {
-        'crear_cliente':  ('person-plus','#dcfce7','#166534'),
-        'editar_cliente': ('pencil','#dbeafe','#1d4ed8'),
-        'agregar_maquina':('bicycle','#ede9fe','#5b21b6'),
-        'editar_maquina': ('bicycle','#ede9fe','#5b21b6'),
-        'subir_contrato': ('file-earmark-text','#ede9fe','#5b21b6'),
-        'analizar_contrato':('stars','#fef9c3','#92400e'),
-        'crear_visita':   ('calendar-plus','#dcfce7','#166534'),
-        'editar_visita':  ('calendar-check','#dbeafe','#1d4ed8'),
+        'crear_cliente':       ('person-plus','#dcfce7','#166534'),
+        'editar_cliente':      ('pencil','#dbeafe','#1d4ed8'),
+        'agregar_maquina':     ('bicycle','#ede9fe','#5b21b6'),
+        'equipo_eliminado':    ('trash','#fee2e2','#991b1b'),
+        'editar_maquina':      ('bicycle','#ede9fe','#5b21b6'),
+        'subir_contrato':      ('file-earmark-text','#ede9fe','#5b21b6'),
+        'contrato_actualizado':('file-earmark-pencil','#dbeafe','#1d4ed8'),
+        'analizar_contrato':   ('stars','#fef9c3','#92400e'),
+        'crear_visita':        ('calendar-plus','#dcfce7','#166534'),
+        'editar_visita':       ('calendar-check','#dbeafe','#1d4ed8'),
+        'visita_eliminada':    ('calendar-x','#fee2e2','#991b1b'),
+        'sucursal_agregada':   ('geo-alt','#dcfce7','#166534'),
+        'sucursal_actualizada':('geo-alt-fill','#dbeafe','#1d4ed8'),
+        'sucursal_eliminada':  ('geo','#fee2e2','#991b1b'),
+        'reporte_actualizado': ('file-medical','#dbeafe','#1d4ed8'),
+        'reporte_eliminado':   ('file-x','#fee2e2','#991b1b'),
+        'reporte_foto_subida': ('camera','#fef9c3','#92400e'),
+        'adjunto_contrato':    ('paperclip','#fef9c3','#92400e'),
+        'adjunto_eliminado':   ('paperclip','#fee2e2','#991b1b'),
+        'documento_eliminado': ('file-minus','#fee2e2','#991b1b'),
+        'email_enviado':       ('envelope-check','#dcfce7','#166534'),
+        'repuesto_creado':     ('gear-fill','#dcfce7','#166534'),
+        'repuesto_actualizado':('gear-wide-connected','#dbeafe','#1d4ed8'),
+        'repuesto_eliminado':  ('gear','#fee2e2','#991b1b'),
+        'serie_actualizada':   ('hash','#fef9c3','#92400e'),
       } %}
       {% set ico = ico_map.get(l.accion, ('clock','#f3f4f6','#6b7280')) %}
-      <div class="log-item" style="display:flex;gap:12px;padding:12px 18px;border-bottom:1px solid #f9fafb;align-items:flex-start">
-        <div style="width:32px;height:32px;border-radius:8px;background:{{ ico[1] }};color:{{ ico[2] }};
-                    display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0">
+      <div class="log-item"
+           data-accion="{{ l.accion or '' }}"
+           data-usuario="{{ l.usuario or '' }}"
+           data-text="{{ ((l.accion or '') ~ ' ' ~ (l.detalle or ''))|lower }}"
+           style="display:flex;gap:12px;padding:11px 18px;border-bottom:1px solid #f9fafb;align-items:flex-start;transition:background .12s">
+        <div style="width:34px;height:34px;border-radius:9px;background:{{ ico[1] }};color:{{ ico[2] }};
+                    display:flex;align-items:center;justify-content:center;font-size:.95rem;flex-shrink:0">
           <i class="bi bi-{{ ico[0] }}"></i>
         </div>
         <div style="flex:1;min-width:0">
-          <div class="fw-semibold" style="font-size:.83rem;color:#0f172a">{{ l.accion.replace('_',' ').title() }}</div>
+          <div class="fw-semibold" style="font-size:.84rem;color:#0f172a">
+            {{ l.accion.replace('_',' ').title() if l.accion else '—' }}
+          </div>
           {% if l.detalle %}
-          <div style="font-size:.75rem;color:#6b7280;margin-top:2px">{{ l.detalle[:120] }}{% if l.detalle|length > 120 %}…{% endif %}</div>
+          <div style="font-size:.76rem;color:#6b7280;margin-top:2px;word-break:break-word">{{ l.detalle[:200] }}{% if l.detalle|length > 200 %}…{% endif %}</div>
           {% endif %}
-          <div style="font-size:.68rem;color:#9ca3af;margin-top:3px">
-            {% if l.usuario %}<span class="me-2"><i class="bi bi-person me-1"></i>{{ l.usuario }}</span>{% endif %}
+          <div style="font-size:.68rem;color:#9ca3af;margin-top:4px">
+            {% if l.usuario %}
+              <span style="background:#f3f4f6;padding:1px 7px;border-radius:50px;font-weight:600">
+                <i class="bi bi-person-circle me-1"></i>{{ l.usuario }}
+              </span>
+            {% endif %}
+            {% if l.entidad %}
+              <span class="ms-2 text-uppercase" style="font-size:.6rem;letter-spacing:.05em">{{ l.entidad }}</span>
+            {% endif %}
           </div>
         </div>
-        <div style="font-size:.7rem;color:#9ca3af;text-align:right;flex-shrink:0;white-space:nowrap">
+        <div style="font-size:.7rem;color:#9ca3af;text-align:right;flex-shrink:0;white-space:nowrap;font-family:monospace">
           {% if l.created_at %}
-            {{ l.created_at.strftime('%d/%m/%Y') }}
-            <div>{{ l.created_at.strftime('%H:%M') }}</div>
+            <strong style="color:#374151">{{ l.created_at.strftime('%d/%m/%Y') }}</strong>
+            <div>{{ l.created_at.strftime('%H:%M:%S') }}</div>
           {% endif %}
         </div>
       </div>
       {% endfor %}
     </div>
+  </div>
+  <div class="text-center text-muted small mt-2" id="histEmptyMsg" style="display:none">
+    <i class="bi bi-funnel"></i> Sin coincidencias para los filtros
   </div>
   {% else %}
   <div class="f-card">
@@ -4198,6 +4258,28 @@ function abrirEmailManual() {
     </div>
   </div>
   {% endif %}
+
+  <script>
+  function filtrarHistorial(){
+    const acc  = (document.getElementById('histFilterAccion').value || '').toLowerCase();
+    const usr  = document.getElementById('histFilterUser').value || '';
+    const txt  = (document.getElementById('histFilterText').value || '').toLowerCase().trim();
+    let visibles = 0;
+    document.querySelectorAll('.log-item').forEach(it => {
+      const a = (it.dataset.accion || '').toLowerCase();
+      const u = it.dataset.usuario || '';
+      const t = it.dataset.text || '';
+      let show = true;
+      if (acc && !a.includes(acc)) show = false;
+      if (usr && u !== usr) show = false;
+      if (txt && !t.includes(txt)) show = false;
+      it.style.display = show ? '' : 'none';
+      if (show) visibles++;
+    });
+    document.getElementById('histCount').textContent = visibles + ' registros' + (visibles !== document.querySelectorAll('.log-item').length ? ' (filtrado)' : '');
+    document.getElementById('histEmptyMsg').style.display = visibles ? 'none' : '';
+  }
+  </script>
 
 </div>
 {# /ftab-pane historial #}
@@ -4543,12 +4625,15 @@ function abrirEmailManual() {
             <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
               <div>
                 <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo doc.</label>
-                <select id="fDocTido" class="form-select form-select-sm" style="width:140px">
+                <select id="fDocTido" class="form-select form-select-sm" style="width:155px">
                   <option value="FCV">FCV — Factura</option>
                   <option value="BLV">BLV — Boleta</option>
                   <option value="VD">VD — N. Venta Directa</option>
                   <option value="WEB">WEB — N. Venta Web</option>
+                  <option value="NVI">NVI — N. Venta Interna</option>
                   <option value="GDV">GDV — Guía despacho</option>
+                  <option value="GDI">GDI — Guía Desp. Interna</option>
+                  <option value="GTI">GTI — Guía Traspaso Int.</option>
                 </select>
               </div>
               <div style="flex:1;min-width:140px">

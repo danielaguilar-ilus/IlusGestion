@@ -11914,8 +11914,17 @@ def mant_ficha(cid):
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC", (cid,)
     )
+    # Historial: traer hasta 250 registros del cliente, sus contratos, equipos, visitas y reportes
+    # asociados — el frontend luego permite filtrar por acción, usuario y texto.
     logs = mysql_fetchall(
-        "SELECT * FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s ORDER BY created_at DESC LIMIT 20", (cid,)
+        """SELECT * FROM mant_logs
+           WHERE (entidad='cliente' AND entidad_id=%s)
+              OR (entidad='contrato' AND entidad_id IN (SELECT id FROM mant_contratos WHERE cliente_id=%s))
+              OR (entidad='maquina'  AND entidad_id IN (SELECT id FROM mant_maquinas  WHERE cliente_id=%s))
+              OR (entidad='visita'   AND entidad_id IN (SELECT id FROM mant_visitas   WHERE cliente_id=%s))
+              OR (entidad='reporte'  AND entidad_id IN (SELECT id FROM mant_reportes  WHERE cliente_id=%s))
+           ORDER BY created_at DESC LIMIT 250""",
+        (cid, cid, cid, cid, cid)
     )
 
     # Normalizar todas las fechas a datetime.date
@@ -12184,8 +12193,15 @@ def mant_cliente_delete(cid):
             cur.execute("DELETE FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s", (cid,))
             # mant_maquinas, mant_contratos, mant_visitas tienen ON DELETE CASCADE
             cur.execute("DELETE FROM mant_clientes WHERE id=%s", (cid,))
+            # AUDIT: registrar la eliminación con entidad='global' para que persista
+            cur.execute(
+                "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                "VALUES ('global', 0, 'cliente_eliminado', %s, %s)",
+                (f"#{cid} {cliente.get('razon_social') or ''} (RUT {cliente.get('rut') or '—'}) "
+                 f"— {counts}",
+                 current_username())
+            )
         conn.commit()
-        # Log global (no en mant_logs porque ya borramos el del cliente)
         print(f"[MANT][DEL] cliente#{cid} '{cliente.get('razon_social')}' eliminado por {current_username()} — {counts}")
         return jsonify({
             "ok": True,
@@ -12290,11 +12306,18 @@ def mant_maquina_add(cid):
 @app.route("/mantenciones/api/maquinas/<int:mid>", methods=["DELETE"])
 @_mant_required
 def mant_maquina_del(mid):
+    m_info = mysql_fetchone(
+        "SELECT cliente_id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (mid,)
+    )
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
         conn.commit()
+        if m_info:
+            detalle = f"{m_info.get('nombre') or ''} (SKU {m_info.get('sku') or '—'} · Serie {m_info.get('serie') or '—'})"
+            _mant_log("maquina", mid, "eliminada", detalle)
+            _mant_log("cliente", m_info.get("cliente_id"), "equipo_eliminado", detalle)
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -13063,6 +13086,12 @@ def mant_sucursal_update(sid):
             cur.execute(f"UPDATE mant_sucursales SET {','.join(sets)} WHERE id=%s",
                         vals + [sid])
         conn.commit()
+        # Log con cliente_id y nombre de la sucursal
+        suc_info = mysql_fetchone("SELECT cliente_id, nombre FROM mant_sucursales WHERE id=%s", (sid,))
+        if suc_info:
+            campos_mod = ", ".join([f.split("=")[0] for f in sets[:6]])
+            _mant_log("cliente", suc_info["cliente_id"], "sucursal_actualizada",
+                      f"{suc_info.get('nombre') or 'sucursal'} — campos: {campos_mod}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -13100,11 +13129,14 @@ def mant_sucursal_marcar_principal(sid):
 @_mant_required
 def mant_sucursal_del(sid):
     """Soft delete: marca activo=0 para preservar histórico."""
+    suc_info = mysql_fetchone("SELECT cliente_id, nombre FROM mant_sucursales WHERE id=%s", (sid,))
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE mant_sucursales SET activo=0 WHERE id=%s", (sid,))
         conn.commit()
+        if suc_info:
+            _mant_log("cliente", suc_info["cliente_id"], "sucursal_eliminada", suc_info.get("nombre") or f"sucursal #{sid}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -13175,6 +13207,13 @@ def mant_contrato_update(ctid):
             cur.execute(f"UPDATE mant_contratos SET {','.join(sets)} WHERE id=%s",
                         vals + [ctid])
         conn.commit()
+        # Log con campos modificados
+        ct_info = mysql_fetchone("SELECT cliente_id, nombre FROM mant_contratos WHERE id=%s", (ctid,))
+        campos_mod = ", ".join([f for f in allowed if f in d][:6])
+        _mant_log("contrato", ctid, "actualizado", f"campos: {campos_mod}")
+        if ct_info:
+            _mant_log("cliente", ct_info["cliente_id"], "contrato_actualizado",
+                      f"{ct_info.get('nombre') or ''} — {campos_mod}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -13596,11 +13635,19 @@ def mant_visita_update(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
 @_mant_required
 def mant_visita_del(vid):
+    # Capturar info ANTES de borrar para el log
+    v_info = mysql_fetchone(
+        "SELECT cliente_id, numero_ot, titulo, fecha_programada FROM mant_visitas WHERE id=%s", (vid,)
+    )
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
+        if v_info:
+            ot = v_info.get("numero_ot") or f"V-{vid}"
+            _mant_log("visita", vid, "eliminada", f"{ot} — {v_info.get('titulo') or ''}")
+            _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{ot}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -14508,6 +14555,13 @@ def mant_reporte_update(rid):
         # Regenerar snapshot HTML
         try: _save_reporte_html_snapshot(rid)
         except Exception: pass
+        # Log
+        rep_info = mysql_fetchone("SELECT cliente_id, asunto, ticket_num FROM mant_reportes WHERE id=%s", (rid,))
+        campos_mod = ", ".join([f for f in allowed if f in d][:6])
+        _mant_log("reporte", rid, "actualizado", f"campos: {campos_mod}")
+        if rep_info:
+            _mant_log("cliente", rep_info["cliente_id"], "reporte_actualizado",
+                      f"#{rep_info.get('ticket_num') or rid} — {rep_info.get('asunto') or ''}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -14516,11 +14570,16 @@ def mant_reporte_update(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>", methods=["DELETE"])
 @_mant_required
 def mant_reporte_del(rid):
+    rep_info = mysql_fetchone("SELECT cliente_id, asunto, ticket_num FROM mant_reportes WHERE id=%s", (rid,))
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM mant_reportes WHERE id=%s", (rid,))
         conn.commit()
+        if rep_info:
+            label = f"#{rep_info.get('ticket_num') or rid} — {rep_info.get('asunto') or ''}"
+            _mant_log("reporte", rid, "eliminado", label)
+            _mant_log("cliente", rep_info["cliente_id"], "reporte_eliminado", label)
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -14554,6 +14613,12 @@ def mant_reporte_foto_subir(rid):
             )
             aid = cur.lastrowid
         conn.commit()
+        # Log
+        rep_info = mysql_fetchone("SELECT cliente_id FROM mant_reportes WHERE id=%s", (rid,))
+        _mant_log("reporte", rid, "foto_subida", f.filename)
+        if rep_info:
+            _mant_log("cliente", rep_info["cliente_id"], "reporte_foto_subida",
+                      f"reporte #{rid} — {f.filename}")
         return jsonify({"ok":True,"id":aid,
                         "url":f"/static/uploads/mantenciones/reportes/{fname}",
                         "nombre":f.filename})
@@ -15045,6 +15110,9 @@ def mant_adjunto_subir(ctid):
             )
             aid = cur.lastrowid
         conn.commit()
+        # Log
+        _mant_log("contrato", ctid, "adjunto_subido", f"{tipo} · {nombre}")
+        _mant_log("cliente", ct["cliente_id"], "adjunto_contrato", f"{tipo} · {nombre}")
         return jsonify({"ok":True,"id":aid,"nombre":nombre,
                         "url":f"/static/uploads/mantenciones/{fname}","tipo":tipo})
     finally:
@@ -15054,7 +15122,10 @@ def mant_adjunto_subir(ctid):
 @app.route("/mantenciones/api/adjuntos/<int:aid>", methods=["DELETE"])
 @_mant_required
 def mant_adjunto_del(aid):
-    adj = mysql_fetchone("SELECT archivo_nombre FROM mant_contrato_adjuntos WHERE id=%s",(aid,))
+    adj = mysql_fetchone(
+        "SELECT archivo_nombre, nombre, contrato_id, cliente_id, tipo FROM mant_contrato_adjuntos WHERE id=%s",
+        (aid,)
+    )
     if not adj: return jsonify({"error":"No encontrado"}),404
     try:
         fpath = os.path.join(MANT_UPLOADS, adj["archivo_nombre"])
@@ -15065,6 +15136,11 @@ def mant_adjunto_del(aid):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM mant_contrato_adjuntos WHERE id=%s",(aid,))
         conn.commit()
+        label = f"{adj.get('tipo') or 'archivo'} · {adj.get('nombre') or aid}"
+        if adj.get("contrato_id"):
+            _mant_log("contrato", adj["contrato_id"], "adjunto_eliminado", label)
+        if adj.get("cliente_id"):
+            _mant_log("cliente", adj["cliente_id"], "adjunto_eliminado", label)
         return jsonify({"ok":True})
     finally:
         conn.close()
@@ -15412,13 +15488,19 @@ def mant_cliente_documento_subir(cid):
 @_mant_required
 def mant_documento_del(kind, did):
     if kind == "adjunto":
-        adj = mysql_fetchone("SELECT archivo_nombre FROM mant_contrato_adjuntos WHERE id=%s",(did,))
+        adj = mysql_fetchone(
+            "SELECT archivo_nombre, nombre, cliente_id FROM mant_contrato_adjuntos WHERE id=%s",
+            (did,)
+        )
         if adj:
             try:
                 fp = os.path.join(MANT_UPLOADS, adj["archivo_nombre"])
                 if os.path.exists(fp): os.remove(fp)
             except Exception: pass
             mysql_execute("DELETE FROM mant_contrato_adjuntos WHERE id=%s",(did,))
+            if adj.get("cliente_id"):
+                _mant_log("cliente", adj["cliente_id"], "documento_eliminado",
+                          adj.get("nombre") or f"adjunto #{did}")
             return jsonify({"ok":True})
     return jsonify({"error":"Tipo no eliminable o no encontrado"}), 400
 
