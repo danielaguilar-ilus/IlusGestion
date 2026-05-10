@@ -5708,6 +5708,75 @@ def _get_build_version():
             return "unknown", "unknown"
 
 
+@app.route("/api/erp/peek", methods=["GET"])
+@login_required
+def erp_engine_peek():
+    """Inspector simple del ERP: abrí en el navegador como
+        /api/erp/peek?tido=FCV&nudo=10683
+    y devuelve el JSON con:
+      - lo que vio el motor (cliente_nombre, observaciones, comuna, etc.)
+      - obs_source: de dónde extrajo la observación (o por qué no la tiene)
+      - raw_header_keys: todos los campos del header del ERP
+      - first_3_lines_obdo: OBDO de las primeras 3 líneas — para verificar
+        si el ERP lo devuelve o no.
+      - first_line_keys: todos los campos de la primera línea.
+
+    Diseñado para ser leído desde el navegador sin DevTools.
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+    tido = (request.args.get("tido") or "FCV").strip().upper()
+    nudo = (request.args.get("nudo") or "").strip()
+    if not nudo:
+        return jsonify({"error": "Falta parámetro 'nudo'. Ejemplo: /api/erp/peek?tido=FCV&nudo=10683"}), 400
+    try:
+        _ERP.invalidate_doc(tido, nudo)  # forzar refetch
+        doc = _ERP.fetch_document(tido, nudo)
+    except Exception as e:
+        return jsonify({"error": str(e), "tido": tido, "nudo": nudo}), 500
+    if not doc:
+        return jsonify({"error": "Documento no encontrado", "tido": tido, "nudo": nudo}), 404
+
+    # Inspeccionar las primeras 3 líneas crudas: ¿tienen OBDO?
+    raw_lines = doc.get("lineas_raw") or []
+    first_3 = []
+    for ln in raw_lines[:3]:
+        if not isinstance(ln, dict):
+            continue
+        first_3.append({
+            "sku":     ln.get("KOPRCT") or ln.get("koprct"),
+            "OBDO":    ln.get("OBDO") or ln.get("obdo") or "",
+            "NOKOEN":  ln.get("NOKOEN") or ln.get("nokoen") or "",
+            "DIEN":    ln.get("DIEN") or ln.get("dien") or "",
+            "COMUNA":  ln.get("COMUNA") or ln.get("comuna") or "",
+        })
+
+    return jsonify({
+        "tido": doc.get("tido"),
+        "nudo": doc.get("nudo"),
+        "encontrado": True,
+        "extraido": {
+            "cliente_nombre": doc.get("cliente_nombre"),
+            "cliente_rut":    doc.get("cliente_rut"),
+            "email":          doc.get("email"),
+            "telefono":       doc.get("telefono"),
+            "direccion":      doc.get("direccion"),
+            "comuna":         doc.get("comuna"),
+            "observaciones":  doc.get("observaciones"),
+        },
+        "diagnostico": doc.get("diagnostics"),
+        "primeras_3_lineas": first_3,
+        "header_keys_disponibles": sorted((doc.get("raw_sample") or {}).keys()),
+        "primera_linea_keys_disponibles": sorted((doc.get("raw_linea_sample") or {}).keys()),
+        "totales": {
+            "neto":  doc.get("valor_neto"),
+            "iva":   doc.get("valor_iva"),
+            "bruto": doc.get("valor_bruto"),
+        },
+        "n_lineas": doc.get("n_lineas"),
+    })
+
+
 @app.route("/api/erp/health", methods=["GET"])
 def erp_engine_health():
     """Health-check del motor ERP. Útil para verificar en producción si:
