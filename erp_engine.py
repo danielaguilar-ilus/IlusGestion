@@ -775,9 +775,18 @@ class ERPClient:
 
     @staticmethod
     def _pick(d: dict, keys: Iterable[str]) -> str:
-        """Devuelve el primer valor no-vacío entre las keys dadas (case-insensitive)."""
+        """Devuelve el primer valor no-vacío entre las keys dadas.
+
+        Búsqueda 100% case-insensitive: construye un índice de las keys del
+        dict en lowercase y compara cada key buscada contra ese índice.
+        Esto evita fallar si el ERP devuelve "obdo", "Obdo" u "OBDO".
+        """
+        if not d:
+            return ""
+        # Construir índice {lowercase: valor_real} para acceso CI
+        lower_index = {str(k).lower(): v for k, v in d.items()}
         for k in keys:
-            v = d.get(k) or d.get(k.lower()) or d.get(k.upper())
+            v = lower_index.get(str(k).lower())
             if v is not None and str(v).strip():
                 return str(v).strip()
         return ""
@@ -785,27 +794,50 @@ class ERPClient:
     @classmethod
     def _scan_lines(cls, lines: list[dict]) -> dict:
         """Extrae datos del cliente embebidos en las líneas.
-        Random ERP a veces guarda NOKOEN/DIEN/COMUNA/OBDO en maeddo[0..N].
-        Aplica fix_yen_to_n a todos los textos legibles (¥ → Ñ).
+
+        Random ERP guarda NOKOEN/DIEN/COMUNA/OBDO en CADA LÍNEA de maeddo
+        (no en el header maeedo). Típicamente todas las líneas tienen los
+        mismos valores, pero a veces algunas líneas tienen OBDO con info
+        relevante y otras vacío o con códigos.
+
+        Estrategia:
+          - Escanea TODAS las líneas (no se detiene en la primera).
+          - Para cada campo, retiene el PRIMER valor no-vacío encontrado.
+          - Para OBDO: recolecta TODOS los valores únicos no-vacíos y los
+            concatena con " / " — así si una línea tiene "OC NRO. 47216"
+            y otra "CAMBIO DE DCTO FCV-10201" se ven ambos.
+
+        Aplica fix_yen_to_n (¥ → Ñ) a textos legibles.
         """
         out = {"nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": ""}
         if not lines:
             return out
+        obs_seen: list[str] = []  # observaciones únicas en orden
         for ln in lines:
+            if not isinstance(ln, dict):
+                continue
             if not out["nombre"]:
                 out["nombre"] = fix_yen_to_n(cls._pick(ln, cls.LINE_NAME_KEYS)).title()
             if not out["direccion"]:
                 out["direccion"] = fix_yen_to_n(cls._pick(ln, cls.LINE_ADDR_KEYS)).title()
             if not out["comuna"]:
-                # Comuna: NO aplicar fix_yen_to_n directo porque el código
-                # original "VI¥" se necesita para resolve_comuna(). Lo
-                # convertimos solo si parece nombre largo (no código).
+                # Comuna: NO aplicar fix_yen_to_n al CÓDIGO crudo porque
+                # "VI¥" debe llegar literal a resolve_comuna() (ahí se hace
+                # la conversión cuando se resuelve a nombre).
                 raw_c = cls._pick(ln, cls.LINE_COMUNA_KEYS)
-                out["comuna"] = raw_c  # resolve_comuna() ya maneja ¥ internamente
-            if not out["obs"]:
-                out["obs"] = fix_yen_to_n(cls._pick(ln, cls.LINE_OBS_KEYS))
+                out["comuna"] = raw_c
             if not out["zona"]:
                 out["zona"] = cls._pick(ln, cls.LINE_ZONA_KEYS)
+            # OBSERVACIONES: recolectar TODAS las únicas
+            obs_line = fix_yen_to_n(cls._pick(ln, cls.LINE_OBS_KEYS))
+            if obs_line and obs_line not in obs_seen:
+                # Ignorar valores que son obviamente IDs numéricos cortos
+                # (ej. "4039", "#1582") — esos no son observaciones reales
+                clean = obs_line.lstrip("#").strip()
+                if not (clean.isdigit() and len(clean) <= 6):
+                    obs_seen.append(obs_line)
+        if obs_seen:
+            out["obs"] = " / ".join(obs_seen[:3])  # max 3 distintas
         return out
 
     def fetch_document(self, tido: str, nudo: str) -> Optional[dict]:
