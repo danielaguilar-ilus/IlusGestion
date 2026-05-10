@@ -54,147 +54,201 @@ if not logger.handlers:
 #  CONSTANTES — códigos de comuna y región del ERP Random
 # ════════════════════════════════════════════════════════════════════
 
-# CIEN: código de región de 3 dígitos (ej. "013"=RM, "005"=Valparaíso)
-# CMEN: código de 3 chars (ej. "LOB"=Lo Barnechea, "VAL"=Valdivia/Valparaíso)
+# ────────────────────────────────────────────────────────────────────
+#  CMEN_MAP — Mapa completo extraído de la tabla LLAVE del ERP Random
+# ────────────────────────────────────────────────────────────────────
+# Estructura: { "<num_region>": { "<codigo>": "<nombre_legible>" } }
+#
+# IMPORTANTE — Codificación de Ñ:
+#   El ERP Random guarda el carácter "Ñ" como "¥" (yen, byte 0xA5) por
+#   usar codificación CP437/CP850 antigua. Algunos códigos contienen "¥"
+#   literal — ej. "5VI¥" = Viña del Mar, "13¥U¥" = Ñuñoa.
+#
+#   Mantenemos los códigos con "¥" porque ASÍ se buscan en el ERP, pero
+#   los nombres legibles usan Ñ correcta para mostrar al usuario.
+#
+# Los códigos de región son 1-16 SIN ceros a la izquierda (no "013").
+# Tabla verificada con la LLAVE actual de Random (mayo 2026).
+# ────────────────────────────────────────────────────────────────────
 CMEN_MAP: dict[str, dict[str, str]] = {
-    # ── Región Metropolitana (013) — verificados contra ERP Random Sport&Health ──
-    "013": {
-        "CEI":"Cerrillos",      "CER":"Cerro Navia",     "COL":"Colina",
-        "CON":"Conchalí",       "CUR":"Curacaví",        "ELB":"El Bosque",
-        "ELM":"El Monte",       "EST":"Estación Central","HUE":"Huechuraba",
-        "IND":"Independencia",  "ISL":"Isla de Maipo",   "LAC":"La Cisterna",
-        "LAF":"La Florida",     "LAG":"La Granja",       "LAP":"La Pintana",
-        "LAR":"La Reina",       "LAM":"Lampa",           "LAS":"Las Condes",
-        "LOB":"Lo Barnechea",   "LOE":"Lo Espejo",       "LOP":"Lo Prado",
-        "MAC":"Macul",          "MAI":"Maipú",           "MAR":"María Pinto",
-        "MEL":"Melipilla",      "PAD":"Padre Hurtado",   "PAI":"Paine",
-        "PED":"Pedro Aguirre Cerda",
-        "PEF":"Peñaflor",       "PEN":"Peñalolén",        "PEA":"Peñalolén",
-        "PIR":"Pirque",         "PRO":"Providencia",     "PUD":"Pudahuel",
-        "PUE":"Puente Alto",    "PUA":"Puente Alto",     "QUI":"Quilicura",
-        "QNO":"Quinta Normal",  "REC":"Recoleta",        "REN":"Renca",
-        "SBE":"San Bernardo",   "SJM":"San José de Maipo",
-        "SMI":"San Miguel",     "SPE":"San Pedro",       "SJO":"San Joaquín",
-        "SRA":"San Ramón",      "SAN":"Santiago",        "STG":"Santiago",
-        "TAL":"Talagante",      "TIL":"Tiltil",          "VIT":"Vitacura",
-        "ALH":"Alhué",          "BUI":"Buin",            "CTA":"Calera de Tango",
-        "CAL":"Calera de Tango","NUN":"Ñuñoa",
+    # ── 1. Tarapacá ──────────────────────────────────────────────────
+    "1": {
+        "ATH": "Alto Hospicio",  "CAI": "Camiña",          "COL": "Colchane",
+        "HUA": "Huara",          "IQU": "Iquique",         "PIC": "Pica",
+        "POZ": "Pozo Almonte",
     },
-    # ── Valparaíso (005) ─────────────────────────────────────────────
-    "005": {
-        "VAL":"Valparaíso",  "VDM":"Viña del Mar", "CON":"Concón",      "QUI":"Quilpué",
-        "VLA":"Villa Alemana","SAN":"San Antonio",  "QLL":"Quillota",    "LAC":"La Calera",
-        "LAN":"Los Andes",   "SFE":"San Felipe",   "LIM":"Limache",     "OLM":"Olmué",
-        "CAB":"Cabildo",     "LLI":"La Ligua",     "ZAP":"Zapallar",    "PAP":"Papudo",
-        "QTE":"Quintero",    "PCU":"Puchuncaví",   "CAS":"Casablanca",  "SES":"San Esteban",
-        "LLY":"Llaillay",    "PUT":"Putaendo",      "SMR":"Santa María", "ALG":"Algarrobo",
-        "CTG":"Cartagena",   "SDO":"Santo Domingo", "EQU":"El Quisco",   "ETA":"El Tabo",
-        "RIN":"Rinconada",   "CAL":"Calle Larga",  "JSF":"Juan Fernández","IPA":"Isla de Pascua",
+    # ── 2. Antofagasta ───────────────────────────────────────────────
+    "2": {
+        "ANT": "Antofagasta",    "CAL": "Calama",          "MAR": "María Elena",
+        "MEJ": "Mejillones",     "OLL": "Ollagüe",         "SAN": "San Pedro de Atacama",
+        "SIE": "Sierra Gorda",   "TAL": "Taltal",          "TOC": "Tocopilla",
     },
-    # ── O'Higgins (006) ──────────────────────────────────────────────
-    "006": {
-        "RAN":"Rancagua",    "GRA":"Graneros",     "MOS":"Mostazal",    "COD":"Codegua",
-        "OLI":"Olivar",      "COL":"Coltauco",     "DON":"Doñihue",     "REN":"Rengo",
-        "REQ":"Requínoa",    "SFE":"San Fernando", "CHI":"Chimbarongo", "STA":"Santa Cruz",
-        "NAN":"Nancagua",    "PAL":"Palmilla",      "PIC":"Pichilemu",   "LOL":"Lolol",
-        "MAR":"Marchihue",   "PAR":"Paredones",    "SVC":"San Vicente", "LCA":"Las Cabras",
-        "PEU":"Peumo",       "PID":"Pichidegua",   "MAL":"Malloa",      "MCL":"Machalí",
+    # ── 3. Atacama ───────────────────────────────────────────────────
+    "3": {
+        "ALT": "Alto del Carmen","CAL": "Caldera",         "CHA": "Chañaral",
+        "COP": "Copiapó",        "DIE": "Diego de Almagro","FRE": "Freirina",
+        "HUA": "Huasco",         "TIE": "Tierra Amarilla", "VAL": "Vallenar",
     },
-    # ── Maule (007) ──────────────────────────────────────────────────
-    "007": {
-        "TAL":"Talca",       "CUR":"Curicó",        "LIN":"Linares",     "CON":"Constitución",
-        "CAU":"Cauquenes",   "MOL":"Molina",        "TEN":"Teno",        "ROM":"Romeral",
-        "HUA":"Hualañé",     "LIC":"Licantén",      "RAU":"Rauco",       "SCL":"San Clemente",
-        "PEN":"Pencahue",    "MAU":"Maule",          "EMP":"Empedrado",   "SJV":"San Javier",
-        "VLA":"Villa Alegre","YER":"Yerbas Buenas",  "COL":"Colbún",      "LON":"Longaví",
-        "PAR":"Parral",       "RET":"Retiro",
+    # ── 4. Coquimbo ──────────────────────────────────────────────────
+    "4": {
+        "AND": "Andacollo",      "CAN": "Canela",          "COM": "Combarbalá",
+        "COQ": "Coquimbo",       "ILL": "Illapel",         "LAH": "La Higuera",
+        "LAS": "La Serena",      "LOS": "Los Vilos",       "MON": "Monte Patria",
+        "OVA": "Ovalle",         "PAI": "Paihuano",        "PUN": "Punitaqui",
+        "RIO": "Río Hurtado",    "SAL": "Salamanca",
+        "VIC": "Vicuña",         "VIC¥": "Vicuña",          # ERP guarda "VIC" pero nombre "VICU¥A"
     },
-    # ── Biobío (008) ─────────────────────────────────────────────────
-    "008": {
-        "CON":"Concepción",  "TAL":"Talcahuano",   "HUA":"Hualpén",    "SAN":"San Pedro de la Paz",
-        "COR":"Coronel",     "LOT":"Lota",          "TOM":"Tomé",        "PEN":"Penco",
-        "CHI":"Chiguayante", "HUL":"Hualqui",       "SJU":"Santa Juana", "FLO":"Florida",
-        "ARA":"Arauco",      "CAN":"Cañete",        "LEB":"Lebu",        "LOS":"Los Álamos",
-        "CRN":"Curanilahue", "LAJ":"Laja",          "NAC":"Nacimiento",  "MUL":"Mulchén",
-        "NEG":"Negrete",     "LAA":"Los Ángeles",   "YUM":"Yumbel",      "CAB":"Cabrero",
-        "SRO":"San Rosendo", "CHV":"Chillán Viejo", "BUL":"Bulnes",      "SCA":"San Carlos",
-        "SFB":"San Fabián",  "SNN":"San Nicolás",   "NIH":"Ninhue",      "COE":"Coelemu",
-        "PEM":"Pemuco",      "ELC":"El Carmen",     "PIN":"Pinto",       "COI":"Coihueco",
-        "YUN":"Yungay",      "SIG":"San Ignacio",
+    # ── 5. Valparaíso ────────────────────────────────────────────────
+    "5": {
+        "ALG": "Algarrobo",      "CAB": "Cabildo",         "CAL": "Calle Larga",
+        "CAR": "Cartagena",      "CAS": "Casablanca",      "CAT": "Catemu",
+        "CON": "Concón",         "ELQ": "El Quisco",       "ELT": "El Tabo",
+        "HIJ": "Hijuelas",       "ISL": "Isla de Pascua",  "JUA": "Juan Fernández",
+        "LAC": "La Calera",      "LAL": "La Ligua",        "LAR": "La Cruz",
+        "LIM": "Limache",        "LLA": "Llay Llay",       "LOS": "Los Andes",
+        "NOG": "Nogales",        "OLM": "Olmué",           "PAN": "Panquehue",
+        "PAP": "Papudo",         "PET": "Petorca",         "PUC": "Puchuncaví",
+        "PUT": "Putaendo",       "QUI": "Quilpué",         "QUL": "Quillota",
+        "QUN": "Quintero",       "RIN": "Rinconada",       "SAE": "San Esteban",
+        "SAF": "San Felipe",     "SAM": "Santa María",     "SAN": "San Antonio",
+        "SAT": "Santo Domingo",  "VAL": "Valparaíso",      "VIL": "Villa Alemana",
+        "VI¥": "Viña del Mar",   "ZAP": "Zapallar",
     },
-    # ── Araucanía (009) ──────────────────────────────────────────────
-    "009": {
-        "TEM":"Temuco",      "PDL":"Padre las Casas","VIL":"Villarrica", "PUC":"Pucón",
-        "ANG":"Angol",       "VIC":"Victoria",       "LAU":"Lautaro",     "FRE":"Freire",
-        "GOR":"Gorbea",      "LON":"Loncoche",       "CUR":"Curacautín", "MEL":"Melipeuco",
-        "CUN":"Cunco",       "VLC":"Vilcún",          "PER":"Perquenco",   "GAL":"Galvarino",
-        "COL":"Collipulli",  "ERC":"Ercilla",         "PUR":"Purén",       "TRA":"Traiguén",
-        "REN":"Renaico",     "PIT":"Pitrufquén",      "TOL":"Toltén",      "CAR":"Carahue",
-        "NEI":"Nueva Imperial","CHO":"Cholchol",      "SAA":"Saavedra",
+    # ── 6. O'Higgins ─────────────────────────────────────────────────
+    "6": {
+        "CHE": "Chépica",        "CHI": "Chimbarongo",     "COD": "Codegua",
+        "COI": "Coínco",         "COL": "Coltauco",        "DO¥": "Doñihue",
+        "GRA": "Graneros",       "LAE": "La Estrella",     "LAS": "Las Cabras",
+        "LIT": "Litueche",       "LOL": "Lolol",           "MAC": "Machalí",
+        "MAL": "Malloa",         "MAR": "Marchihue",       "NAN": "Nancagua",
+        "NAV": "Navidad",        "OLI": "Olivar",          "PAL": "Palmilla",
+        "PAR": "Paredones",      "PER": "Peralillo",       "PEU": "Peumo",
+        "PIC": "Pichidegua",     "PIH": "Pichilemu",       "PLA": "Placilla",
+        "PUM": "Pumanque",       "QUI": "Quinta de Tilcoco","RAN": "Rancagua",
+        "REN": "Rengo",          "REQ": "Requínoa",        "SAC": "Santa Cruz",
+        "SAF": "San Fernando",   "SAN": "San Francisco de Mostazal",
+        "SAV": "San Vicente",
     },
-    # ── Los Ríos (016) ───────────────────────────────────────────────
-    "016": {
-        "VAL":"Valdivia",    "LUN":"La Unión",       "RBO":"Río Bueno",  "LRA":"Lago Ranco",
-        "FUT":"Futrono",     "PAN":"Panguipulli",    "LLA":"Los Lagos",  "COR":"Corral",
-        "MAR":"Mariquina",   "LAN":"Lanco",          "MAF":"Máfil",      "PAI":"Paillaco",
+    # ── 7. Maule ─────────────────────────────────────────────────────
+    "7": {
+        "CAU": "Cauquenes",      "CHA": "Chanco",          "COL": "Colbún",
+        "CON": "Constitución",   "CUE": "Curepto",         "CUR": "Curicó",
+        "EMP": "Empedrado",      "HUA": "Hualañé",         "LIC": "Licantén",
+        "LIN": "Linares",        "LON": "Longaví",         "MAU": "Maule",
+        "MOL": "Molina",         "PAR": "Parral",          "PEL": "Pelarco",
+        "PEN": "Pencahue",       "PEU": "Pelluhue",        "RAU": "Rauco",
+        "RET": "Retiro",         "RIO": "Río Claro",       "ROM": "Romeral",
+        "SAG": "Sagrada Familia","SAJ": "San Javier",       "SAN": "San Clemente",
+        "SAR": "San Rafael",     "TAL": "Talca",           "TEN": "Teno",
+        "VIC": "Vichuquén",      "VIL": "Villa Alegre",     "YER": "Yerbas Buenas",
     },
-    # ── Los Lagos (010) ──────────────────────────────────────────────
-    "010": {
-        "PMO":"Puerto Montt","PVA":"Puerto Varas",   "OSO":"Osorno",     "CAS":"Castro",
-        "ANC":"Ancud",       "QUE":"Quellón",        "CAL":"Calbuco",    "MAU":"Maullín",
-        "LMU":"Los Muermos", "FRU":"Frutillar",      "LLA":"Llanquihue", "PUR":"Purranque",
-        "POC":"Puerto Octay","FRE":"Fresia",          "SPB":"San Pablo",  "PUY":"Puyehue",
-        "RNE":"Río Negro",   "SJC":"San Juan de la Costa",
-        "CHA":"Chaitén",     "FUL":"Futaleufú",      "PAL":"Palena",     "HUL":"Hualaihué",
+    # ── 8. Biobío ────────────────────────────────────────────────────
+    "8": {
+        "ANT": "Antuco",         "ARA": "Arauco",          "CAB": "Cabrero",
+        "CA¥": "Cañete",         "CHG": "Chiguayante",     "CON": "Concepción",
+        "COR": "Coronel",        "COT": "Contulmo",        "CUR": "Curanilahue",
+        "FLO": "Florida",        "HLP": "Hualpén",         "HUA": "Hualqui",
+        "LAJ": "Laja",           "LEB": "Lebu",            "LOA": "Los Ángeles",
+        "LOS": "Los Álamos",     "LOT": "Lota",            "MUL": "Mulchén",
+        "NAC": "Nacimiento",     "NEG": "Negrete",         "PEN": "Penco",
+        "QUA": "Quilaco",        "QUE": "Quilleco",        "SAB": "Santa Bárbara",
+        "SAG": "San Gabriel Ñiquén","SAJ": "Santa Juana",  "SAR": "San Rosendo",
+        "SPZ": "San Pedro de la Paz","TAL": "Talcahuano",  "TIR": "Tirúa",
+        "TOM": "Tomé",           "TUC": "Tucapel",         "YUM": "Yumbel",
     },
-    # ── Aysén (011) ──────────────────────────────────────────────────
-    "011": {
-        "COY":"Coyhaique",   "PAY":"Puerto Aysén",   "CCH":"Chile Chico","COC":"Cochrane",
-        "OHI":"O'Higgins",   "TOR":"Tortel",          "CIS":"Cisnes",     "LVE":"Lago Verde",
-        "RIB":"Río Ibáñez",
+    # ── 9. Araucanía ─────────────────────────────────────────────────
+    "9": {
+        "ANG": "Angol",          "CAR": "Carahue",         "COL": "Collipulli",
+        "CUA": "Curarrehue",     "CUN": "Cunco",           "CUR": "Curacautín",
+        "ERC": "Ercilla",        "FRE": "Freire",          "GAL": "Galvarino",
+        "GOR": "Gorbea",         "LAU": "Lautaro",         "LOC": "Loncoche",
+        "LON": "Lonquimay",      "LOS": "Los Sauces",      "LUM": "Lumaco",
+        "MEL": "Melipeuco",      "NUE": "Nueva Imperial",  "PER": "Perquenco",
+        "PIT": "Pitrufquén",     "PUC": "Pucón",           "PUR": "Purén",
+        "REN": "Renaico",        "SAA": "Saavedra",        "TEM": "Temuco",
+        "TEO": "Teodoro Schmidt","TOL": "Toltén",          "TRA": "Traiguén",
+        "VIA": "Villarrica",     "VIC": "Victoria",        "VIL": "Vilcún",
     },
-    # ── Magallanes (012) ─────────────────────────────────────────────
-    "012": {
-        "PUA":"Punta Arenas","PNA":"Puerto Natales", "POR":"Porvenir",   "PRI":"Primavera",
-        "TIM":"Timaukel",    "LBL":"Laguna Blanca",  "RVE":"Río Verde",  "SGR":"San Gregorio",
-        "CAH":"Cabo de Hornos",
+    # ── 10. Los Lagos ────────────────────────────────────────────────
+    "10": {
+        "ANC": "Ancud",          "CAL": "Calbuco",         "CAS": "Castro",
+        "CHA": "Chaitén",        "CHO": "Chonchi",         "COC": "Cochamó",
+        "CUR": "Curaco de Vélez","DAL": "Dalcahue",         "FRE": "Fresia",
+        "FRU": "Frutillar",      "FUA": "Futaleufú",        "HAU": "Hualaihué",
+        "LLA": "Llanquihue",     "LOM": "Los Muermos",     "MAU": "Maullín",
+        "OSO": "Osorno",         "PAL": "Palena",          "PUE": "Puerto Octay",
+        "PUQ": "Puqueldón",      "PUR": "Purranque",       "PUT": "Puerto Montt",
+        "PUV": "Puerto Varas",   "PUY": "Puyehue",         "QUE": "Queilén",
+        "QUI": "Quinchao",       "QUL": "Quellón",         "QUM": "Quemchi",
+        "RIN": "Río Negro",      "SAJ": "San Juan de la Costa","SAP": "San Pablo",
     },
-    # ── Tarapacá (001) ───────────────────────────────────────────────
-    "001": {
-        "IQU":"Iquique",     "ALH":"Alto Hospicio",  "POZ":"Pozo Almonte","PIC":"Pica",
-        "COL":"Colchane",    "CAM":"Camiña",          "HUA":"Huara",
+    # ── 11. Aysén ────────────────────────────────────────────────────
+    "11": {
+        "AYS": "Aysén",          "CHI": "Chile Chico",     "CIS": "Cisnes",
+        "COC": "Cochrane",       "COY": "Coyhaique",       "GUA": "Guaitecas",
+        "LAG": "Lago Verde",     "OHI": "O'Higgins",       "RIO": "Río Ibáñez",
+        "TOR": "Tortel",
     },
-    # ── Arica y Parinacota (015) ─────────────────────────────────────
-    "015": {
-        "ARI":"Arica",       "CAM":"Camarones",      "PUT":"Putre",       "GLA":"General Lagos",
+    # ── 12. Magallanes ───────────────────────────────────────────────
+    "12": {
+        "LAG": "Laguna Blanca",  "NAV": "Cabo de Hornos (Navarino)","POR": "Porvenir",
+        "PRI": "Primavera",      "PUE": "Puerto Natales",  "PUN": "Punta Arenas",
+        "RIO": "Río Verde",      "SAN": "San Gregorio",    "TIM": "Timaukel",
+        "TOR": "Torres del Paine",
     },
-    # ── Antofagasta (002) ────────────────────────────────────────────
-    "002": {
-        "ANT":"Antofagasta", "CAL":"Calama",          "TOC":"Tocopilla",  "MEJ":"Mejillones",
-        "TAL":"Taltal",       "SPA":"San Pedro de Atacama","OLL":"Ollagüe","MRE":"María Elena",
+    # ── 13. Región Metropolitana ─────────────────────────────────────
+    "13": {
+        "ALH": "Alhué",          "BUI": "Buin",            "CAL": "Calera de Tango",
+        "CEI": "Cerrillos",      "CER": "Cerro Navia",     "COL": "Colina",
+        "CON": "Conchalí",       "CUR": "Curacaví",        "ELB": "El Bosque",
+        "ELM": "El Monte",       "EST": "Estación Central","HUE": "Huechuraba",
+        "IND": "Independencia",  "ISL": "Isla de Maipo",   "LAC": "La Cisterna",
+        "LAF": "La Florida",     "LAG": "La Granja",       "LAM": "Lampa",
+        "LAP": "La Pintana",     "LAR": "La Reina",        "LAS": "Las Condes",
+        "LOB": "Lo Barnechea",   "LOE": "Lo Espejo",       "LOP": "Lo Prado",
+        "MAC": "Macul",          "MAI": "Maipú",           "MAR": "María Pinto",
+        "MEL": "Melipilla",      "PAD": "Padre Hurtado",   "PAI": "Paine",
+        "PEA": "Peñalolén",      "PED": "Pedro Aguirre Cerda",
+        "PE¥": "Peñaflor",       "PIR": "Pirque",          "PRO": "Providencia",
+        "PUD": "Pudahuel",       "PUE": "Puente Alto",     "QUI": "Quinta Normal",
+        "QUL": "Quilicura",      "REC": "Recoleta",        "REN": "Renca",
+        "SAB": "San Bernardo",   "SAJ": "San Joaquín",     "SAM": "San Miguel",
+        "SAN": "Santiago",       "SAO": "San José de Maipo","SAP": "San Pedro",
+        "SAR": "San Ramón",      "TAL": "Talagante",       "TIL": "Tiltil",
+        "VIT": "Vitacura",       "¥U¥": "Ñuñoa",
     },
-    # ── Atacama (003) ────────────────────────────────────────────────
-    "003": {
-        "COP":"Copiapó",     "CLD":"Caldera",         "CHA":"Chañaral",  "DIA":"Diego de Almagro",
-        "VAL":"Vallenar",    "FRE":"Freirina",         "HUA":"Huasco",    "ALC":"Alto del Carmen",
-        "TIA":"Tierra Amarilla",
+    # ── 14. Arica y Parinacota ───────────────────────────────────────
+    "14": {
+        "ARI": "Arica",          "CAM": "Camarones",       "GNL": "General Lagos",
+        "PUT": "Putre",
     },
-    # ── Coquimbo (004) ───────────────────────────────────────────────
-    "004": {
-        "LSE":"La Serena",   "COQ":"Coquimbo",        "OVA":"Ovalle",    "ILL":"Illapel",
-        "LVI":"Los Vilos",   "SAL":"Salamanca",        "CAN":"Canela",    "MPT":"Monte Patria",
-        "PUN":"Punitaqui",   "VIC":"Vicuña",           "ANT":"Andacollo", "PAI":"Paihuano",
-        "COM":"Combarbalá",  "LHG":"La Higuera",
+    # ── 15. Ñuble ────────────────────────────────────────────────────
+    "15": {
+        "BUL": "Bulnes",         "CHI": "Chillán",         "CHV": "Chillán Viejo",
+        "COE": "Coelemu",        "COI": "Coihueco",        "CQC": "Cobquecura",
+        "ELC": "El Carmen",      "NIN": "Ninhue",          "PEM": "Pemuco",
+        "PIN": "Pinto",          "POR": "Portezuelo",      "QRH": "Quirihue",
+        "QUI": "Quillón",        "RAN": "Ránquil",         "SNC": "San Carlos",
+        "SNF": "San Fabián",     "SNI": "San Ignacio",     "SNN": "San Nicolás",
+        "TRE": "Trehuaco",       "YNY": "Yungay",          "ÑIQ": "Ñiquén",
+    },
+    # ── 16. Los Ríos ─────────────────────────────────────────────────
+    "16": {
+        "COR": "Corral",         "FUT": "Futrono",         "LAG": "Los Lagos",
+        "LAN": "Lanco",          "LAU": "La Unión",        "MAF": "Máfil",
+        "MAQ": "Mariquina",      "PAI": "Paillaco",        "PAN": "Panguipulli",
+        "RAN": "Lago Ranco",     "RBU": "Río Bueno",       "VAL": "Valdivia",
     },
 }
 
 REGION_NOMBRES: dict[str, str] = {
-    "001": "Tarapacá",          "002": "Antofagasta",         "003": "Atacama",
-    "004": "Coquimbo",          "005": "Valparaíso",          "006": "O'Higgins",
-    "007": "Maule",             "008": "Biobío",              "009": "Araucanía",
-    "010": "Los Lagos",         "011": "Aysén",               "012": "Magallanes",
-    "013": "Metropolitana",     "014": "Los Ríos",            "015": "Arica y Parinacota",
-    "016": "Los Ríos",
+    "1": "Tarapacá",                "2": "Antofagasta",          "3": "Atacama",
+    "4": "Coquimbo",                "5": "Valparaíso",
+    "6": "Libertador Gral. Bernardo O'Higgins",
+    "7": "Maule",                   "8": "Biobío",               "9": "La Araucanía",
+    "10": "Los Lagos",              "11": "Aysén",               "12": "Magallanes",
+    "13": "Metropolitana",          "14": "Arica y Parinacota",
+    "15": "Ñuble",                  "16": "Los Ríos",
 }
 
 # VD y WEB usan TIDO=NVV en el ERP; el NUDO lleva el prefijo dentro (10 chars).
@@ -385,44 +439,106 @@ def nudo_variants(nudo_raw: str) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
+def fix_yen_to_n(text: str) -> str:
+    """Convierte el carácter "¥" (yen, byte 0xA5) a "Ñ" — y "¥" minúscula
+    a "ñ" cuando aparece en contexto minúsculo.
+
+    El ERP Random guarda Ñ como "¥" por codificación CP437/CP850 antigua.
+    Esta función se aplica al MOSTRAR datos al usuario; los códigos de
+    búsqueda contra el ERP mantienen el "¥" literal porque así están
+    guardados allá.
+
+    Ejemplos:
+      "VICU¥A"     → "VICUÑA"
+      "DO¥IHUE"    → "DOÑIHUE"
+      "VI¥A DEL MAR" → "VIÑA DEL MAR"
+      "Vicu¥a"     → "Vicuña"
+    """
+    if not text:
+        return ""
+    s = str(text)
+    # Reemplazo agresivo: cualquier ¥ → Ñ. Después, si todo el texto está
+    # en minúsculas (excepto la Ñ recién introducida), convertir Ñ a ñ.
+    result = s.replace("¥", "Ñ")
+    # Casos típicos: "Vicu¥a" donde el resto está en minúsculas o title-case
+    # Detección simple: si hay letras minúsculas y "Ñ" no está al inicio
+    # de palabra, convertir a "ñ"
+    if any(c.islower() for c in result) and result != result.upper():
+        # title-case con Ñ minúscula
+        out = []
+        for i, c in enumerate(result):
+            if c == "Ñ":
+                # Si el carácter siguiente es minúscula, la Ñ también va minúscula
+                if i + 1 < len(result) and result[i + 1].islower():
+                    out.append("ñ")
+                else:
+                    out.append(c)
+            else:
+                out.append(c)
+        result = "".join(out)
+    return result
+
+
 def cmen_to_comuna(cien: str, cmen: str) -> str:
     """Convierte (CIEN_región, CMEN_comuna) a nombre de comuna legible.
-    Si no hay match, retorna el CMEN tal cual (sirve como seed).
+
+    Args:
+        cien: código numérico de región (1-16). Acepta "1", "01", "001".
+        cmen: código de 3-4 chars (puede contener "¥" para Ñ).
+
+    Si no hay match, intenta `fix_yen_to_n(cmen)` como fallback final
+    (sirve como seed para autocomplete).
     """
     if not cmen:
         return ""
-    region_map = CMEN_MAP.get(str(cien).zfill(3), {})
-    nombre = region_map.get(str(cmen).upper().strip())
+    # Normalizar región: quitar ceros a la izquierda. "013" → "13", "01" → "1".
+    cien_key = str(cien).lstrip("0") or "0"
+    cmen_key = str(cmen).upper().strip()
+
+    region_map = CMEN_MAP.get(cien_key, {})
+    nombre = region_map.get(cmen_key)
     if nombre:
         return nombre
     # Fallback: buscar en todas las regiones (por si el CIEN viene mal)
-    key = str(cmen).upper().strip()
     for rmap in CMEN_MAP.values():
-        if key in rmap:
-            return rmap[key]
-    return str(cmen)
+        if cmen_key in rmap:
+            return rmap[cmen_key]
+    # Último recurso: devolver el código con ¥ convertido a Ñ
+    return fix_yen_to_n(cmen_key)
 
 
-def resolve_comuna(val: str, prefer_cien: str = "013") -> str:
-    """Resuelve un valor que puede ser código (CEI, 3-4 chars mayúsculas)
-    o nombre (CERRILLOS) a nombre legible.
+def resolve_comuna(val: str, prefer_cien: str = "13") -> str:
+    """Resuelve un valor que puede ser código (CEI, VI¥, 3-4 chars) o
+    nombre (CERRILLOS, VICU¥A) a nombre legible.
+
+    Args:
+        val: el valor a resolver, sea código o nombre.
+        prefer_cien: región preferida al buscar códigos ambiguos.
+                     Default "13" (Metropolitana, lo más común para ILUS).
     """
     if not val:
         return ""
     s = str(val).strip()
     if not s:
         return ""
-    # Si parece código (≤4 chars, mayúsculas, sin números)
-    if len(s) <= 4 and s.upper() == s and s.isalpha():
+
+    # Si parece código (≤4 chars, mayúsculas o "¥", sin números)
+    looks_like_code = (
+        len(s) <= 4 and
+        s.upper() == s and
+        all(c.isalpha() or c == "¥" for c in s)
+    )
+    if looks_like_code:
         nombre = cmen_to_comuna(prefer_cien, s)
-        if nombre and nombre != s:
+        if nombre and nombre != fix_yen_to_n(s):
             return nombre
         for cien in CMEN_MAP.keys():
             r = cmen_to_comuna(cien, s)
-            if r and r != s:
+            if r and r != fix_yen_to_n(s):
                 return r
-    # Es nombre — capitalizar si viene en mayúsculas
-    return s.title() if s.upper() == s else s
+    # Es nombre — convertir ¥ a Ñ y capitalizar si viene en mayúsculas
+    s_normalized = fix_yen_to_n(s)
+    return s_normalized.title() if s_normalized.upper() == s_normalized else s_normalized
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -470,9 +586,16 @@ class ERPClient:
         "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP",
     )
     HDR_OBS_KEYS = (
+        # Variantes principales
         "OBEN", "OBENEN", "OBDO", "OBSERVA", "OBSERVACIONES",
         "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO", "OBSERVACION",
         "REFERENCIA", "DETOFE",
+        # ★★★ Textos libres del ERP Random (donde típicamente está
+        # información como "QUIEBRE NVV-7623" — referencias a NV padre)
+        "TEXTO1", "TEXTO2", "TEXTO3", "TEXTO4", "TEXTO5",
+        "TXTODO", "TXDO", "NOTA", "NOTADO",
+        "DESDO", "DETDO", "DESCDO", "DESCRIPCION",
+        "GLOSADO", "GLOSA", "MEMODO",
     )
     # Claves en las LÍNEAS (maeddo) — el ERP Random embebe datos del cliente
     # en las primeras líneas cuando el header no los trae (típico en WEB/NVV)
@@ -482,7 +605,12 @@ class ERPClient:
     )
     LINE_ADDR_KEYS = ("DIEN", "DIENDESP", "DIENDE", "DIRECCION", "DIRECDESP")
     LINE_COMUNA_KEYS = ("COMUNA", "CMEN", "NOKOCOMU", "NOKOZO")
-    LINE_OBS_KEYS = ("OBDO", "OBSERVA", "OBSERVACION", "OBENEN", "OBLI")
+    LINE_OBS_KEYS = (
+        "OBDO", "OBSERVA", "OBSERVACION", "OBENEN", "OBLI",
+        # ★★★ Textos libres por línea
+        "TEXTO1", "TEXTO2", "TXLI", "NOTLI", "GLOSALI", "DETLI",
+        "DESLI", "DESCLI", "OBSLI", "REFLI",
+    )
     LINE_ZONA_KEYS = ("NOKOZO", "ZONA", "NOKOZONA")
 
     # ZZ — códigos de SKU que son servicio/flete (no productos físicos)
@@ -658,19 +786,24 @@ class ERPClient:
     def _scan_lines(cls, lines: list[dict]) -> dict:
         """Extrae datos del cliente embebidos en las líneas.
         Random ERP a veces guarda NOKOEN/DIEN/COMUNA/OBDO en maeddo[0..N].
+        Aplica fix_yen_to_n a todos los textos legibles (¥ → Ñ).
         """
         out = {"nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": ""}
         if not lines:
             return out
         for ln in lines:
             if not out["nombre"]:
-                out["nombre"] = cls._pick(ln, cls.LINE_NAME_KEYS).title()
+                out["nombre"] = fix_yen_to_n(cls._pick(ln, cls.LINE_NAME_KEYS)).title()
             if not out["direccion"]:
-                out["direccion"] = cls._pick(ln, cls.LINE_ADDR_KEYS).title()
+                out["direccion"] = fix_yen_to_n(cls._pick(ln, cls.LINE_ADDR_KEYS)).title()
             if not out["comuna"]:
-                out["comuna"] = cls._pick(ln, cls.LINE_COMUNA_KEYS)
+                # Comuna: NO aplicar fix_yen_to_n directo porque el código
+                # original "VI¥" se necesita para resolve_comuna(). Lo
+                # convertimos solo si parece nombre largo (no código).
+                raw_c = cls._pick(ln, cls.LINE_COMUNA_KEYS)
+                out["comuna"] = raw_c  # resolve_comuna() ya maneja ¥ internamente
             if not out["obs"]:
-                out["obs"] = cls._pick(ln, cls.LINE_OBS_KEYS)
+                out["obs"] = fix_yen_to_n(cls._pick(ln, cls.LINE_OBS_KEYS))
             if not out["zona"]:
                 out["zona"] = cls._pick(ln, cls.LINE_ZONA_KEYS)
         return out
@@ -739,12 +872,14 @@ class ERPClient:
             return None
 
         # ── Extraer datos del cliente desde el header ───────────────
+        # IMPORTANTE: aplicar fix_yen_to_n a todos los textos legibles
+        # porque el ERP guarda Ñ como ¥ (codificación CP437/CP850 antigua).
         endo = self._pick(raw_header, self.HDR_RUT_KEYS)
-        header_nombre = self._pick(raw_header, self.HDR_NAME_KEYS).title()
+        header_nombre = fix_yen_to_n(self._pick(raw_header, self.HDR_NAME_KEYS)).title()
         header_email = self._pick(raw_header, self.HDR_EMAIL_KEYS)
         header_fono = self._pick(raw_header, self.HDR_PHONE_KEYS)
-        header_dir = self._pick(raw_header, self.HDR_ADDR_KEYS).title()
-        header_obs = self._pick(raw_header, self.HDR_OBS_KEYS)
+        header_dir = fix_yen_to_n(self._pick(raw_header, self.HDR_ADDR_KEYS)).title()
+        header_obs = fix_yen_to_n(self._pick(raw_header, self.HDR_OBS_KEYS))
 
         # ── Extraer datos del cliente desde las LÍNEAS (fallback) ──
         line_data = self._scan_lines(raw_lines)
@@ -781,14 +916,15 @@ class ERPClient:
                 diag["fallback_chain"].append(f"entidad por NRAZON: {nombre_efectivo[:30]}")
 
         if ent:
-            cliente_nombre = self._pick(ent, ("NOKOEN", "NRAZON", "NOMBRE")).title()
+            # Normalizar ¥ → Ñ en todos los textos legibles del cliente
+            cliente_nombre = fix_yen_to_n(self._pick(ent, ("NOKOEN", "NRAZON", "NOMBRE"))).title()
             cliente_rut = self._pick(ent, ("RTEN", "ENDO")) or endo
             cliente_email = self._pick(ent, ("EMAIL", "EMAILCOMER", "MAIL"))
             cliente_telefono = normalize_phone_cl(self._pick(ent, ("FOEN", "FAEN", "FONO", "CELULAR")))
-            cliente_dir_base = self._pick(ent, ("DIEN", "DIRECCION", "DIRECEN")).title()
+            cliente_dir_base = fix_yen_to_n(self._pick(ent, ("DIEN", "DIRECCION", "DIRECEN"))).title()
             cliente_cien = self._pick(ent, ("CIEN", "REGION"))
             cliente_cmen = self._pick(ent, ("CMEN", "COMUNA"))
-            cliente_obs = self._pick(ent, ("OBEN", "OBSERVACIONES"))
+            cliente_obs = fix_yen_to_n(self._pick(ent, ("OBEN", "OBSERVACIONES")))
             cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
 
         # ── Consolidar (preferencia: /entidades > header > líneas) ──
@@ -796,7 +932,7 @@ class ERPClient:
         cliente_email = cliente_email or header_email
         cliente_telefono = cliente_telefono or normalize_phone_cl(header_fono)
         cliente_dir_final = (
-            self._pick(raw_header, ("DIENDESP", "DIENDE"))   # despacho del doc
+            fix_yen_to_n(self._pick(raw_header, ("DIENDESP", "DIENDE")))   # despacho del doc
             or dir_efectivo
             or cliente_dir_base
         )
