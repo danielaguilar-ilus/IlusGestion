@@ -135,8 +135,25 @@
             ${{ (h.valor_bruto or 0)|fvol }}
           </div>
         </div>
-        <div class="mt-1 fw-semibold" style="font-size:.88rem">{{ h.cliente_nombre or '—' }}</div>
+        <div class="mt-1 fw-semibold" style="font-size:.88rem">{{ h.cliente_nombre or '⚠ Sin nombre' }}</div>
         <div class="small text-muted">RUT: {{ h.cliente_rut or '—' }}</div>
+        {% if h.comuna or h.direccion %}
+        <div class="small mt-1" style="color:#6b7280;font-size:.76rem">
+          {% if h.direccion %}<i class="bi bi-geo-alt me-1"></i>{{ h.direccion }}{% endif %}
+          {% if h.comuna %} · <strong>{{ h.comuna }}</strong>{% endif %}
+        </div>
+        {% endif %}
+        {% if h.email or h.telefono %}
+        <div class="small" style="color:#6b7280;font-size:.74rem">
+          {% if h.email %}<i class="bi bi-envelope me-1"></i>{{ h.email }}{% endif %}
+          {% if h.telefono %} · <i class="bi bi-telephone me-1"></i>{{ h.telefono }}{% endif %}
+        </div>
+        {% endif %}
+        {% if h.observaciones %}
+        <div class="mt-1 px-2 py-1 rounded" style="background:#fff7ed;border-left:2px solid #fb923c;font-size:.74rem;color:#9a3412">
+          <strong>📝</strong> {{ h.observaciones[:120] }}{% if h.observaciones|length > 120 %}…{% endif %}
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -144,42 +161,82 @@
 </div>
 
 {% else %}
-{# Vista single: cabecera completa #}
+{# Vista single: cabecera completa con TODOS los datos del cliente #}
 {% set h = headers[0] %}
-<div class="ilus-card mb-3">
-  <div class="ilus-card-header" style="background:var(--ilus-black)">
-    <span class="text-white fw-bold">
+{# Detectar ZZ Envío en líneas #}
+{% set ns_zz = namespace(valor=0) %}
+{% for l in lineas %}
+  {% if l.sku and l.sku.upper() == 'ZZENVIO' %}
+    {% set ns_zz.valor = l.vaneli %}
+  {% endif %}
+{% endfor %}
+
+<div class="ilus-card mb-3" style="background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-left:4px solid var(--ilus-red)">
+  <div class="ilus-card-header" style="background:transparent;border-bottom:1px solid rgba(255,255,255,.1)">
+    <span class="fw-bold" style="color:#fff">
       <i class="bi bi-file-earmark-text me-2" style="color:var(--ilus-red)"></i>
-      {{ h.tido }} N° {{ h.nudo_display }}
+      <span style="font-size:1.1rem">{{ h.tido }} N° {{ h.nudo_display }}</span>
     </span>
-    <span class="text-muted small fw-normal">{{ h.fecha }}</span>
+    <span class="small" style="color:#9ca3af">{{ h.fecha }}</span>
   </div>
   <div class="card-body p-3">
-    <div class="row g-2">
-      <div class="col-md-5">
-        <div class="small text-muted fw-semibold text-uppercase" style="font-size:.68rem;letter-spacing:.5px">Cliente</div>
-        <div class="fw-bold" style="font-size:1rem">{{ h.cliente_nombre or '—' }}</div>
-        <div class="small text-muted">RUT: {{ h.cliente_rut or '—' }}</div>
+    {# ── Grid completo: TODOS los datos del cliente ── #}
+    <div class="row g-2 mb-3">
+      <div class="col-md-6 col-lg-4">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">👤 Cliente</div>
+        <div class="fw-bold" style="color:#fff;font-size:.95rem;word-break:break-word">{{ h.cliente_nombre or '⚠ Sin nombre' }}</div>
       </div>
-      <div class="col-md-7">
-        <div class="d-flex gap-3 flex-wrap">
-          <div>
-            <div class="small text-muted fw-semibold" style="font-size:.68rem">Neto</div>
-            <div class="fw-bold">${{ (h.valor_neto or 0)|fvol }}</div>
-          </div>
-          <div>
-            <div class="small text-muted fw-semibold" style="font-size:.68rem">IVA</div>
-            <div class="fw-bold">${{ (h.valor_iva or 0)|fvol }}</div>
-          </div>
-          <div>
-            <div class="small text-muted fw-semibold" style="font-size:.68rem">Bruto</div>
-            <div class="fw-bold" style="color:var(--ilus-red)">${{ (h.valor_bruto or 0)|fvol }}</div>
-          </div>
-          <div>
-            <div class="small text-muted fw-semibold" style="font-size:.68rem">SKUs</div>
-            <div class="fw-bold">{{ lineas|length }}</div>
-          </div>
-        </div>
+      <div class="col-md-3 col-lg-2">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">🆔 RUT</div>
+        <div class="fw-bold font-monospace" style="color:#fff;font-size:.88rem">{{ h.cliente_rut or '—' }}</div>
+      </div>
+      <div class="col-md-3 col-lg-3">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">📧 Email</div>
+        <div class="fw-bold" style="color:#fff;font-size:.84rem;word-break:break-all">{{ h.email or '—' }}</div>
+      </div>
+      <div class="col-md-3 col-lg-3">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">📞 Teléfono</div>
+        <div class="fw-bold" style="color:#fff;font-size:.88rem">{{ h.telefono or '—' }}</div>
+      </div>
+      <div class="col-md-8">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">📍 Dirección de despacho</div>
+        <div class="fw-bold" style="color:#fff;font-size:.88rem;word-break:break-word">{{ h.direccion or '⚠ Sin dirección' }}</div>
+      </div>
+      <div class="col-md-4">
+        <div style="font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700">🏙 Comuna</div>
+        <div class="fw-bold" style="color:#fff;font-size:.88rem">{{ h.comuna or '⚠ Sin comuna' }}</div>
+      </div>
+    </div>
+
+    {# ── Observaciones (destacadas si las hay) ── #}
+    {% if h.observaciones %}
+    <div style="background:rgba(251,146,60,.15);border-left:3px solid #fb923c;border-radius:6px;padding:8px 12px;margin-bottom:10px">
+      <div style="font-size:.62rem;color:#fed7aa;text-transform:uppercase;letter-spacing:.06em;font-weight:700">📝 Observaciones del documento</div>
+      <div style="color:#fff;font-size:.88rem;margin-top:2px">{{ h.observaciones }}</div>
+    </div>
+    {% endif %}
+
+    {# ── Totales del documento ── #}
+    <div class="d-flex flex-wrap gap-2">
+      <div style="background:rgba(255,255,255,.08);padding:6px 12px;border-radius:6px">
+        <div style="font-size:.6rem;color:#9ca3af;text-transform:uppercase">Neto</div>
+        <div class="fw-bold" style="color:#fff">${{ (h.valor_neto or 0)|fvol }}</div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);padding:6px 12px;border-radius:6px">
+        <div style="font-size:.6rem;color:#9ca3af;text-transform:uppercase">IVA</div>
+        <div class="fw-bold" style="color:#fff">${{ (h.valor_iva or 0)|fvol }}</div>
+      </div>
+      <div style="background:rgba(220,38,38,.18);padding:6px 12px;border-radius:6px;border:1px solid rgba(220,38,38,.35)">
+        <div style="font-size:.6rem;color:#fecaca;text-transform:uppercase">Bruto</div>
+        <div class="fw-bold" style="color:#fff">${{ (h.valor_bruto or 0)|fvol }}</div>
+      </div>
+      <div style="background:rgba(34,197,94,.15);padding:6px 12px;border-radius:6px;border:1px solid rgba(34,197,94,.3)">
+        <div style="font-size:.6rem;color:#86efac;text-transform:uppercase">🚚 ZZ Envío</div>
+        <div class="fw-bold" style="color:#fff">${{ (ns_zz.valor or 0)|fvol }}</div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);padding:6px 12px;border-radius:6px">
+        <div style="font-size:.6rem;color:#9ca3af;text-transform:uppercase">SKUs</div>
+        <div class="fw-bold" style="color:#fff">{{ lineas|length }}</div>
       </div>
     </div>
   </div>
@@ -559,11 +616,52 @@ document.querySelectorAll('#docsContainer .remove-doc-btn').forEach(function(btn
   });
 });
 
-/* Spinner al enviar */
+/* Spinner + barra de progreso al enviar */
 document.getElementById('cubicadorForm').addEventListener('submit', function() {
   var btn = document.getElementById('submitBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Cubicando…';
+
+  // Inyectar barra de progreso flotante
+  var overlay = document.createElement('div');
+  overlay.id = 'cubicadorProgress';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;padding:14px 22px;z-index:10000;box-shadow:0 6px 20px rgba(0,0,0,.25);border-bottom:3px solid #dc2626';
+  overlay.innerHTML =
+    '<div style="max-width:900px;margin:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap">'+
+      '<span style="font-size:1.5rem">📦</span>'+
+      '<div style="flex:1;min-width:200px">'+
+        '<div id="cubProgressMsg" style="font-size:.86rem;font-weight:700">Cubicando documentos...</div>'+
+        '<div style="background:rgba(255,255,255,.1);border-radius:50px;overflow:hidden;height:6px;margin-top:6px">'+
+          '<div id="cubProgressFill" style="height:100%;background:linear-gradient(90deg,#dc2626,#fb923c);width:8%;transition:width .5s ease-out;border-radius:50px;box-shadow:0 0 8px rgba(220,38,38,.5)"></div>'+
+        '</div>'+
+      '</div>'+
+      '<span id="cubProgressTime" style="font-size:.7rem;color:#9ca3af;font-family:monospace">0.0s</span>'+
+    '</div>';
+  document.body.appendChild(overlay);
+
+  // Animar progreso
+  var t0 = Date.now();
+  var steps = [
+    { ms: 200,  pct: 15, txt: '🔌 Conectando al ERP Random...' },
+    { ms: 800,  pct: 30, txt: '📄 Buscando documentos...' },
+    { ms: 2000, pct: 50, txt: '👤 Consultando datos del cliente (variantes RUT en paralelo)...' },
+    { ms: 3500, pct: 70, txt: '📦 Calculando cubicaje y bultos por SKU...' },
+    { ms: 5500, pct: 85, txt: '🧮 Procesando totales y peso volumétrico...' },
+    { ms: 8000, pct: 95, txt: '⏳ ERP tarda... siga esperando' },
+  ];
+  steps.forEach(function(s){
+    setTimeout(function(){
+      var msg = document.getElementById('cubProgressMsg');
+      var fill = document.getElementById('cubProgressFill');
+      if (msg && fill){ msg.textContent = s.txt; fill.style.width = s.pct+'%'; }
+    }, s.ms);
+  });
+  // Cronómetro
+  var clock = setInterval(function(){
+    var el = document.getElementById('cubProgressTime');
+    if (el) el.textContent = ((Date.now()-t0)/1000).toFixed(1)+'s';
+    else clearInterval(clock);
+  }, 100);
 });
 
 /* ────────────────────────────────────────────────────────────

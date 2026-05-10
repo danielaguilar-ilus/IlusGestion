@@ -6207,7 +6207,18 @@ def _cubicador_num(value, default=0.0):
 
 
 def _cubicador_export_payload(headers, lineas, docs):
-    """JSON-safe snapshot of the current cubicador table for fast multidoc exports."""
+    """JSON-safe snapshot of the current cubicador table for fast multidoc exports.
+
+    Incluye TODOS los datos del cliente (dirección, comuna, email, teléfono,
+    observaciones, ZZ envío) para generar informes PDF/Excel completos.
+    """
+    # Calcular ZZ envío por documento
+    zz_por_doc = {}
+    for l in (lineas or []):
+        if (l.get("sku") or "").upper() == "ZZENVIO":
+            key = f"{l.get('_doc_tido','')}-{l.get('_doc_nudo','')}"
+            zz_por_doc[key] = _cubicador_num(l.get("vaneli"))
+
     return {
         "docs": [[str(t), str(n)] for t, n in (docs or [])],
         "headers": [
@@ -6218,6 +6229,13 @@ def _cubicador_export_payload(headers, lineas, docs):
                 "fecha": str(h.get("fecha", "")),
                 "cliente_nombre": str(h.get("cliente_nombre", "")),
                 "cliente_rut": str(h.get("cliente_rut", "")),
+                # ★★★ Datos de contacto + dirección + comuna + obs ★★★
+                "email":          str(h.get("email", "")),
+                "telefono":       str(h.get("telefono", "")),
+                "direccion":      str(h.get("direccion", "")),
+                "comuna":         str(h.get("comuna", "")),
+                "observaciones":  str(h.get("observaciones", "")),
+                "zzenvio":        zz_por_doc.get(f"{h.get('tido','')}-{h.get('nudo','')}", 0),
                 "valor_neto": _cubicador_num(h.get("valor_neto")),
                 "valor_iva": _cubicador_num(h.get("valor_iva")),
                 "valor_bruto": _cubicador_num(h.get("valor_bruto")),
