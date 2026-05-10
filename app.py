@@ -769,9 +769,18 @@ def init_transporte_tables():
                     volumen_unitario DECIMAL(14,2) DEFAULT 0,
                     FOREIGN KEY (commitment_id)
                         REFERENCES transport_commitments(id) ON DELETE CASCADE,
-                    INDEX idx_comm (commitment_id)
+                    INDEX idx_comm (commitment_id),
+                    INDEX idx_koprct (koprct),
+                    INDEX idx_comm_saldo (commitment_id, saldo)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Migración: agregar índices si la tabla ya existía
+            for _idx in [
+                "ALTER TABLE transport_commitment_lines ADD INDEX idx_koprct (koprct)",
+                "ALTER TABLE transport_commitment_lines ADD INDEX idx_comm_saldo (commitment_id, saldo)",
+            ]:
+                try: cur.execute(_idx)
+                except Exception: pass
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_manifests (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -5422,6 +5431,42 @@ _ERP_DOC_CACHE_TTL = 90    # segundos
 _ERP_ENT_CACHE = {}        # { 'RUT': (timestamp, entidad) }
 _ERP_ENT_CACHE_TTL = 300   # las entidades cambian poco — 5 min
 
+# Cache del catálogo de couriers + tarifas (cambia poco, ~5 min)
+_COURIERS_CACHE = {"ts": 0, "data": None}
+_COURIERS_CACHE_TTL = 300
+
+def _get_couriers_cached():
+    """Devuelve la lista de couriers activos con sus tarifas concatenadas.
+    Cacheado 5 min para evitar re-ejecutar el JOIN+GROUP_CONCAT en cada cotización.
+    """
+    import time as _time
+    now = _time.time()
+    if _COURIERS_CACHE["data"] is not None and (now - _COURIERS_CACHE["ts"]) < _COURIERS_CACHE_TTL:
+        return _COURIERS_CACHE["data"]
+    rows = mysql_fetchall(
+        """SELECT c.*,
+               GROUP_CONCAT(
+                   CONCAT_WS('|', t.zona, t.peso_desde, t.peso_hasta,
+                             t.precio_base, t.precio_kg_extra)
+                   ORDER BY t.zona, t.peso_desde SEPARATOR ';;'
+               ) AS tarifas_raw
+           FROM transport_couriers c
+           LEFT JOIN transport_courier_tarifas t ON t.courier_id = c.id AND t.activo = 1
+           WHERE c.activo = 1
+           GROUP BY c.id
+           ORDER BY c.nombre""",
+        (),
+    ) or []
+    data = [dict(r) for r in rows]
+    _COURIERS_CACHE["ts"] = now
+    _COURIERS_CACHE["data"] = data
+    return data
+
+def _invalidate_couriers_cache():
+    """Llamar después de editar couriers/tarifas para refrescar el cache."""
+    _COURIERS_CACHE["ts"] = 0
+    _COURIERS_CACHE["data"] = None
+
 
 # ── Endpoint UNIFICADO de búsqueda de documentos ERP ──────────────────
 # Reutilizable desde Cubicador, Asignar/Cotizar y Mantenciones (repuestos)
@@ -8164,6 +8209,7 @@ def tr_courier_nuevo():
             ),
         )
     conn.commit()
+    _invalidate_couriers_cache()
     flash("Courier creado correctamente.", "success")
     return redirect(url_for("tr_couriers"))
 
@@ -8248,6 +8294,7 @@ def tr_courier_editar(cid):
             ),
         )
     conn.commit()
+    _invalidate_couriers_cache()
     return jsonify({"ok": True})
 
 
@@ -8259,6 +8306,7 @@ def tr_courier_eliminar(cid):
         # desactivar en lugar de borrar (preserva historial)
         cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
     conn.commit()
+    _invalidate_couriers_cache()
     return jsonify({"ok": True})
 
 
@@ -8731,6 +8779,7 @@ def tr_tarifa_nueva(cid):
         )
         tid = cur.lastrowid
     conn.commit()
+    _invalidate_couriers_cache()
     return jsonify({"ok": True, "id": tid})
 
 
@@ -8757,6 +8806,7 @@ def tr_tarifa_editar(cid, tid):
             ),
         )
     conn.commit()
+    _invalidate_couriers_cache()
     return jsonify({"ok": True})
 
 
@@ -8789,37 +8839,52 @@ def tr_cotizar():
     if not cid:
         return jsonify({"error": "commitment_id requerido"}), 400
 
-    # peso y volumen totales del compromiso usando las mismas tablas que _cubicador_fetch
-    row = mysql_fetchone(
-        f"""SELECT
-           COALESCE(SUM(l.saldo * bk.peso_total),0)          AS peso_real,
-           COALESCE(SUM(l.saldo * bk.volumen_cm3),0)          AS vol_total
-           FROM transport_commitment_lines l
-           LEFT JOIN (
-               SELECT UPPER(TRIM(p.sku)) AS sku,
-                      COALESCE(SUM(b.peso),0) AS peso_total,
-                      COALESCE(SUM(b.largo * b.ancho * b.alto),0) AS volumen_cm3
-               FROM `{PRODUCTS_TABLE}` p
-               LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id=p.id
-               GROUP BY p.sku
-           ) bk ON bk.sku=UPPER(TRIM(l.koprct))
-           WHERE l.commitment_id=%s AND l.saldo>0""",
+    # OPTIMIZACIÓN: filtramos SKUs antes de calcular peso/vol (evita JOIN sin filtro)
+    skus_rows = mysql_fetchall(
+        """SELECT DISTINCT UPPER(TRIM(koprct)) AS sku, saldo
+            FROM transport_commitment_lines
+            WHERE commitment_id=%s AND saldo>0 AND koprct IS NOT NULL AND koprct<>''""",
         (cid,),
-    )
-    peso_real = float(row["peso_real"] or 0) if row else 0
-    vol_total = float(row["vol_total"] or 0) if row else 0
+    ) or []
+    if not skus_rows:
+        peso_real = vol_total = 0
+    else:
+        skus_unicos = list({r["sku"] for r in skus_rows})
+        ph_sku = ",".join(["%s"] * len(skus_unicos))
+        bk_rows = mysql_fetchall(
+            f"""SELECT UPPER(TRIM(p.sku)) AS sku,
+                       COALESCE(SUM(b.peso),0) AS peso_total,
+                       COALESCE(SUM(b.largo * b.ancho * b.alto),0) AS volumen_cm3
+                FROM `{PRODUCTS_TABLE}` p
+                LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id=p.id
+                WHERE UPPER(TRIM(p.sku)) IN ({ph_sku})
+                GROUP BY p.sku""",
+            tuple(skus_unicos),
+        ) or []
+        bk_map = { r["sku"]: r for r in bk_rows }
+        peso_real = 0.0
+        vol_total = 0.0
+        for r in skus_rows:
+            bk = bk_map.get(r["sku"])
+            if bk:
+                peso_real += float(r["saldo"] or 0) * float(bk["peso_total"] or 0)
+                vol_total += float(r["saldo"] or 0) * float(bk["volumen_cm3"] or 0)
 
-    couriers = mysql_fetchall(
-        """SELECT c.*, GROUP_CONCAT(
-               CONCAT_WS('|',t.zona,t.peso_desde,t.peso_hasta,t.precio_base,t.precio_kg_extra)
-               ORDER BY t.zona,t.peso_desde SEPARATOR ';;'
-           ) AS tarifas_raw
-           FROM transport_couriers c
-           LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
-           WHERE c.activo=1 {}
-           GROUP BY c.id""".format("AND c.id=%s" if solo_courier else ""),
-        (solo_courier,) if solo_courier else (),
-    )
+    # Couriers: cacheado si pedimos todos, query directa si filtramos uno
+    if solo_courier:
+        couriers = mysql_fetchall(
+            """SELECT c.*, GROUP_CONCAT(
+                   CONCAT_WS('|',t.zona,t.peso_desde,t.peso_hasta,t.precio_base,t.precio_kg_extra)
+                   ORDER BY t.zona,t.peso_desde SEPARATOR ';;'
+               ) AS tarifas_raw
+               FROM transport_couriers c
+               LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
+               WHERE c.activo=1 AND c.id=%s
+               GROUP BY c.id""",
+            (solo_courier,),
+        )
+    else:
+        couriers = _get_couriers_cached()
 
     resultados = []
     for co in couriers:
@@ -8887,41 +8952,47 @@ def tr_cola_cotizar():
 
     ph = ",".join(["%s"] * len(cids))
 
-    # Peso y volumen acumulados de todos los compromisos
-    row = mysql_fetchone(
-        f"""SELECT
-               COALESCE(SUM(l.saldo * bk.peso_total), 0) AS peso_real,
-               COALESCE(SUM(l.saldo * bk.vol_cm3),   0) AS vol_total
-           FROM transport_commitment_lines l
-           LEFT JOIN (
-               SELECT UPPER(TRIM(p.sku)) AS sku,
-                      COALESCE(SUM(b.peso), 0)                     AS peso_total,
-                      COALESCE(SUM(b.largo * b.ancho * b.alto), 0) AS vol_cm3
-               FROM `{PRODUCTS_TABLE}` p
-               LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
-               GROUP BY p.sku
-           ) bk ON bk.sku = UPPER(TRIM(l.koprct))
-           WHERE l.commitment_id IN ({ph}) AND l.saldo > 0""",
+    # OPTIMIZACIÓN: en vez de un subquery que materializa TODO products×bultos,
+    # primero traemos los SKUs únicos del compromiso y filtramos directo.
+    # Pasa de ~tabla completa de products (cientos/miles) a solo los SKUs
+    # presentes en estos commitments (típicamente <30).
+    skus_rows = mysql_fetchall(
+        f"""SELECT DISTINCT UPPER(TRIM(koprct)) AS sku, saldo
+            FROM transport_commitment_lines
+            WHERE commitment_id IN ({ph}) AND saldo > 0 AND koprct IS NOT NULL AND koprct <> ''""",
         tuple(cids),
-    )
-    peso_real = float(row["peso_real"] or 0) if row else 0
-    vol_total = float(row["vol_total"] or 0) if row else 0
+    ) or []
 
-    # Couriers activos con sus tarifas
-    couriers = mysql_fetchall(
-        """SELECT c.*,
-               GROUP_CONCAT(
-                   CONCAT_WS('|', t.zona, t.peso_desde, t.peso_hasta,
-                             t.precio_base, t.precio_kg_extra)
-                   ORDER BY t.zona, t.peso_desde SEPARATOR ';;'
-               ) AS tarifas_raw
-           FROM transport_couriers c
-           LEFT JOIN transport_courier_tarifas t ON t.courier_id = c.id AND t.activo = 1
-           WHERE c.activo = 1
-           GROUP BY c.id
-           ORDER BY c.nombre""",
-        (),
-    )
+    if not skus_rows:
+        peso_real = vol_total = 0
+    else:
+        skus_unicos = list({r["sku"] for r in skus_rows})
+        ph_sku = ",".join(["%s"] * len(skus_unicos))
+
+        # Una sola query batch: trae peso/vol por SKU solo de los relevantes
+        bk_rows = mysql_fetchall(
+            f"""SELECT UPPER(TRIM(p.sku)) AS sku,
+                       COALESCE(SUM(b.peso), 0)                     AS peso_total,
+                       COALESCE(SUM(b.largo * b.ancho * b.alto), 0) AS vol_cm3
+                FROM `{PRODUCTS_TABLE}` p
+                LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+                WHERE UPPER(TRIM(p.sku)) IN ({ph_sku})
+                GROUP BY p.sku""",
+            tuple(skus_unicos),
+        ) or []
+        bk_map = { r["sku"]: r for r in bk_rows }
+
+        # Sumar en memoria — más rápido que JOIN sin filtro
+        peso_real = 0.0
+        vol_total = 0.0
+        for r in skus_rows:
+            bk = bk_map.get(r["sku"])
+            if bk:
+                peso_real += float(r["saldo"] or 0) * float(bk["peso_total"] or 0)
+                vol_total += float(r["saldo"] or 0) * float(bk["vol_cm3"] or 0)
+
+    # Couriers activos con sus tarifas — cacheado 60s (cambian rara vez)
+    couriers = _get_couriers_cached()
 
     zona_req = data.get("zona", "General")
     resultados = []

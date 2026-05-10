@@ -931,11 +931,24 @@ function sincronizarBultos(val){
 // ════════════════════════════════════════════════════════════
 //  BUSCAR DOCUMENTO
 // ════════════════════════════════════════════════════════════
+// Cache JS de documentos buscados (TTL 90s, mismo que backend)
+const _docCache = new Map();
+const _docCacheTTL = 90_000;
+
 async function buscarDoc(){
   const tido = document.getElementById('docTipo').value;
   const nudo = document.getElementById('docNudo').value.trim();
   if(!nudo){ showAlert('alertBuscar','Ingresa el número de documento'); return; }
   hideAlert('alertBuscar');
+
+  const cacheKey = `${tido}|${nudo}`;
+  const cached = _docCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts) < _docCacheTTL){
+    _docData = cached.data;
+    renderDoc(cached.data);
+    return;
+  }
+
   setBuscarLoading(true);
   try {
     const r = await fetch('/api/asignar/documento',{
@@ -946,6 +959,10 @@ async function buscarDoc(){
     const d = await r.json();
     if(!r.ok||d.error){ showAlert('alertBuscar', d.error||'Error al consultar ERP'); return; }
     _docData = d;
+    _docCache.set(cacheKey, { data: d, ts: Date.now() });
+    if (_docCache.size > 30){
+      _docCache.delete(_docCache.keys().next().value);
+    }
     renderDoc(d);
   } catch(e){
     showAlert('alertBuscar','Error de conexión: '+e.message);
@@ -1059,10 +1076,35 @@ const COURIERS_FIJOS = [
   {id:'milling',    nombre:'Trans. Milling',  logo:'<b style="color:#888;font-size:.82rem">Trans. Milling</b>',                            svc:'Terrestre',          etd:'48 - 72 horas'},
 ];
 
-async function actualizarTarifas(){
+// Cache JS de respuestas FedEx — evita re-llamadas con los mismos inputs
+const _fedexCache = new Map();   // key → {costo, ts}
+const _fedexCacheTTL = 90_000;   // 90s
+let _fedexDebounceTimer = null;
+
+function actualizarTarifas(){
+  // Debounce 200ms para que clicks rápidos en checkbox no disparen N llamadas
+  clearTimeout(_fedexDebounceTimer);
+  _fedexDebounceTimer = setTimeout(_actualizarTarifasReal, 200);
+}
+
+async function _actualizarTarifasReal(){
   if(!_docData || !_zonaActual) return;
   const resid  = document.getElementById('chkResid').checked;
   const remoto = document.getElementById('chkRemoto').checked;
+
+  // Construir clave de cache con TODOS los inputs
+  const cacheKey = JSON.stringify({
+    peso: _docData.totales.peso_pred,
+    zona: _zonaActual,
+    resid, remoto,
+    valor: _docData.header.valor_neto,
+  });
+  const cached = _fedexCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts) < _fedexCacheTTL){
+    _precioFedex = cached.costo;
+    renderCouriers(_precioFedex);
+    return;
+  }
 
   renderCouriers(null); // loading state
 
@@ -1080,6 +1122,14 @@ async function actualizarTarifas(){
     });
     const d = await r.json();
     _precioFedex = d.ok ? d.costo_total : null;
+    if (_precioFedex !== null){
+      _fedexCache.set(cacheKey, { costo: _precioFedex, ts: Date.now() });
+      // Limpieza simple: limitar a 50 entradas
+      if (_fedexCache.size > 50){
+        const firstKey = _fedexCache.keys().next().value;
+        _fedexCache.delete(firstKey);
+      }
+    }
   } catch(e){
     _precioFedex = null;
   }
