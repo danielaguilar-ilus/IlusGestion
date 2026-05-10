@@ -48,6 +48,10 @@
   <button class="mk-tab" onclick="mkTab('retiros',this)">
     <i class="bi bi-box-seam"></i>Marketing público (Retiros)
   </button>
+  <button class="mk-tab" onclick="mkTab('bloqueos',this)">
+    <i class="bi bi-calendar-x"></i>Bloqueos de retiro
+    <span class="badge bg-danger ms-1" style="font-size:.62rem">{{ pickup_blocks|length }}</span>
+  </button>
 </div>
 
 {# ══════════════════════════════════════════════════════════════════
@@ -214,18 +218,139 @@
   </div>
 </div>
 
+{# ══════════════════════════════════════════════════════════════════
+   PANE: BLOQUEOS DE RETIRO (días u horas no disponibles)
+══════════════════════════════════════════════════════════════════ #}
+<div class="mk-pane" id="mk-bloqueos">
+
+  <div class="alert alert-warning py-2" style="font-size:.84rem">
+    <i class="bi bi-info-circle me-1"></i>
+    <strong>Cómo funciona:</strong> bloquea días enteros (ej. feriado, salida anticipada del personal)
+    o solo franjas específicas (ej. "Cierre temprano: 14:00 a 16:30"). Los horarios bloqueados
+    NO se ofrecen al cliente en el formulario público de retiros. Si una hora ya tiene un retiro
+    reservado, ese cupo NO se libera (queda fijo).
+  </div>
+
+  {# Form crear bloqueo #}
+  <div class="li-card mb-4 p-3" style="background:#fff8f8;border-color:#fecaca">
+    <h6 class="mb-3"><i class="bi bi-plus-circle me-2 text-danger"></i>Nuevo bloqueo</h6>
+    <form method="post" action="{{ url_for('pickup_blocks_new') }}">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Fecha <span class="text-danger">*</span></label>
+          <input type="date" name="fecha" class="form-control form-control-sm" required
+                 min="{{ '%04d-%02d-%02d'|format(2026,1,1) }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small fw-semibold">Hora desde
+            <span class="text-muted">(opcional)</span>
+          </label>
+          <input type="time" name="hora_inicio" class="form-control form-control-sm"
+                 placeholder="vacío = todo el día">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small fw-semibold">Hora hasta
+            <span class="text-muted">(opcional)</span>
+          </label>
+          <input type="time" name="hora_fin" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Motivo (visible en log)</label>
+          <input type="text" name="motivo" class="form-control form-control-sm" maxlength="200"
+                 placeholder="Ej: Feriado, salida anticipada, inventario...">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-danger w-100 btn-sm fw-bold">
+            <i class="bi bi-shield-x me-1"></i>Bloquear
+          </button>
+        </div>
+      </div>
+      <div class="form-text mt-2 small">
+        <i class="bi bi-lightbulb me-1"></i>
+        <strong>Día completo</strong>: deja las dos horas vacías. ·
+        <strong>Salida anticipada</strong>: deja "desde" en blanco y "hasta" con el horario de cierre temprano. ·
+        <strong>Franja específica</strong>: ambas horas (ej. 14:00 a 16:30).
+      </div>
+    </form>
+  </div>
+
+  {# Tabla de bloqueos vigentes #}
+  <div class="li-card overflow-hidden">
+    <div class="p-3 border-bottom d-flex align-items-center justify-content-between">
+      <h6 class="mb-0"><i class="bi bi-calendar-x me-2 text-danger"></i>Bloqueos próximos (60 días)</h6>
+      <span class="text-muted small">{{ pickup_blocks|length }} registro(s)</span>
+    </div>
+    {% if pickup_blocks %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.86rem">
+        <thead style="background:#fafafa">
+          <tr>
+            <th class="ps-3">Fecha</th>
+            <th>Tipo</th>
+            <th>Horario</th>
+            <th>Motivo</th>
+            <th>Creado por</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in pickup_blocks %}
+          {% set is_full_day = not b.hora_inicio %}
+          <tr>
+            <td class="ps-3 font-monospace fw-bold">
+              {{ b.fecha.strftime('%d/%m/%Y') if b.fecha.__class__.__name__ == 'date' else b.fecha }}
+            </td>
+            <td>
+              {% if is_full_day %}
+                <span class="badge bg-danger">Día completo</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">Franja</span>
+              {% endif %}
+            </td>
+            <td class="font-monospace">
+              {% if is_full_day %}—{% else %}
+                {{ b.hora_inicio.strftime('%H:%M') if b.hora_inicio.__class__.__name__ == 'time' else (b.hora_inicio|string)[:5] }}
+                – {{ b.hora_fin.strftime('%H:%M') if b.hora_fin and b.hora_fin.__class__.__name__ == 'time' else (b.hora_fin|string)[:5] if b.hora_fin else 'cierre' }}
+              {% endif %}
+            </td>
+            <td>{{ b.motivo or '—' }}</td>
+            <td class="text-muted small">{{ b.created_by or '—' }}</td>
+            <td class="text-end pe-3">
+              <form method="post" action="{{ url_for('pickup_blocks_delete', bid=b.id) }}"
+                    onsubmit="return confirm('¿Eliminar este bloqueo?')" style="display:inline">
+                <button class="btn btn-sm btn-outline-danger" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4">
+      <i class="bi bi-shield-check" style="font-size:2rem;opacity:.3"></i>
+      <div class="mt-2">No hay bloqueos vigentes — la bodega opera con horario normal.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 <script>
 function mkTab(tab, btn) {
   document.querySelectorAll('.mk-tab').forEach(t => t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.querySelectorAll('.mk-pane').forEach(p => p.classList.remove('active'));
   document.getElementById('mk-' + tab).classList.add('active');
-  if (tab === 'retiros') location.hash = '#retiros';
+  if (tab === 'retiros' || tab === 'bloqueos') location.hash = '#' + tab;
   else if (location.hash) history.replaceState(null,'',location.pathname);
 }
-if (location.hash === '#retiros') {
+if (location.hash === '#retiros' || location.hash === '#bloqueos') {
   document.addEventListener('DOMContentLoaded', () => {
-    document.querySelector('[onclick*="mkTab(\'retiros\'"]').click();
+    const tab = location.hash.slice(1);
+    const btn = document.querySelector(`[onclick*="mkTab('${tab}'"]`);
+    if (btn) btn.click();
   });
 }
 </script>

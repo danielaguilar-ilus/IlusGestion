@@ -785,9 +785,59 @@ def register_pickup_routes(app, ctx):
             login_imgs = [dict(r) for r in login_imgs]
         except Exception:
             login_imgs = []
+        # Cargar bloqueos de retiros próximos (60 días)
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            blocks_rows = mysql_fetchall(
+                "SELECT id, fecha, hora_inicio, hora_fin, motivo, created_by, created_at "
+                "FROM pickup_blocks "
+                "WHERE fecha >= %s AND fecha <= %s "
+                "ORDER BY fecha ASC, hora_inicio ASC",
+                (_dt.now().date(), _dt.now().date() + _td(days=60))
+            ) or []
+            pickup_blocks_list = [dict(r) for r in blocks_rows]
+        except Exception:
+            pickup_blocks_list = []
         return render_template("admin/marketing.html",
                                settings=settings(),
-                               login_imagenes=login_imgs)
+                               login_imagenes=login_imgs,
+                               pickup_blocks=pickup_blocks_list)
+
+
+    @app.route("/retiros/bloqueos/nuevo", methods=["POST"])
+    @require_permission("admin")
+    def pickup_blocks_new():
+        """Crea un bloqueo de día/franja en pickup_blocks."""
+        fecha = (request.form.get("fecha") or "").strip()
+        hora_ini = (request.form.get("hora_inicio") or "").strip() or None
+        hora_fin = (request.form.get("hora_fin") or "").strip() or None
+        motivo = (request.form.get("motivo") or "").strip()[:200]
+        if not fecha:
+            flash("La fecha es obligatoria.", "danger")
+            return redirect(url_for("marketing_settings"))
+        try:
+            mysql_execute(
+                "INSERT INTO pickup_blocks (fecha, hora_inicio, hora_fin, motivo, created_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (fecha, hora_ini, hora_fin, motivo,
+                 g.user["nombre"] if getattr(g,"user",None) else None)
+            )
+            flash("Bloqueo creado correctamente.", "success")
+        except Exception as exc:
+            flash(f"Error al crear bloqueo: {exc}", "danger")
+        return redirect(url_for("marketing_settings"))
+
+
+    @app.route("/retiros/bloqueos/<int:bid>/eliminar", methods=["POST"])
+    @require_permission("admin")
+    def pickup_blocks_delete(bid):
+        """Elimina un bloqueo."""
+        try:
+            mysql_execute("DELETE FROM pickup_blocks WHERE id=%s", (bid,))
+            flash("Bloqueo eliminado.", "success")
+        except Exception as exc:
+            flash(f"Error al eliminar: {exc}", "danger")
+        return redirect(url_for("marketing_settings"))
 
     @app.route("/retiros/adjuntos/<int:aid>")
     @require_permission("view")
@@ -1001,23 +1051,44 @@ def register_pickup_routes(app, ctx):
         max_kg_slot    = float(cfg.get("max_kg_per_slot") or 500)
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
-        slot_min       = int(cfg.get("slot_minutes") or 60)
+        slot_dur       = int(cfg.get("slot_minutes") or 60)
+        # Step entre inicios: si está configurado, lo usamos; si no, half-step
+        # (30min) para que el último slot termine exactamente al close_time.
+        slot_step      = int(cfg.get("slot_step_minutes") or 30)
+        # Colación (default 13:00 - 14:00)
+        lunch_s_str = str(cfg.get("lunch_start") or "13:00")[:5]
+        lunch_e_str = str(cfg.get("lunch_end")   or "14:00")[:5]
+        try:
+            lH,lM = [int(x) for x in lunch_s_str.split(":")]
+            leH,leM = [int(x) for x in lunch_e_str.split(":")]
+            lunch_start_min = lH*60 + lM
+            lunch_end_min   = leH*60 + leM
+        except Exception:
+            lunch_start_min = lunch_end_min = -1
 
         # Días hábiles
         work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays  = {h.strip() for h in (cfg.get("holidays") or "").replace(";",",").split(",") if h.strip()}
 
         # Slots horarios — el ÚLTIMO bloque debe TERMINAR ≤ close_time
-        # (antes el while comparaba sólo el inicio, dejando bloques que se extendían
-        #  más allá de la hora de cierre).
+        # Step de 30min para que con duración 60min el último slot llegue a 16:30
+        # (15:30 + 60min = 16:30).
         oH,oM = [int(x) for x in str(cfg.get("open_time") or "09:00:00")[:5].split(":")]
         cH,cM = [int(x) for x in str(cfg.get("close_time") or "16:30:00")[:5].split(":")]
+        # slots ahora es lista de dicts con metadata (lunch flag)
         slots = []
         m = 0
-        while (oH*60+oM + m + slot_min) <= (cH*60+cM):
+        while (oH*60+oM + m + slot_dur) <= (cH*60+cM):
             t = oH*60+oM + m
-            slots.append(f"{t//60:02d}:{t%60:02d}")
-            m += slot_min
+            t_end = t + slot_dur
+            # Detectar solapamiento con bloque de colación
+            is_lunch = (lunch_start_min < lunch_end_min and
+                        not (t_end <= lunch_start_min or t >= lunch_end_min))
+            slots.append({
+                "hora": f"{t//60:02d}:{t%60:02d}",
+                "lunch": is_lunch,
+            })
+            m += slot_step
 
         # Calcular ocupación por slot
         ocupacion = {}  # {fecha_str: {slot: {ocupados, kg, m3}}}
@@ -1035,33 +1106,95 @@ def register_pickup_routes(app, ctx):
             ocupacion[fecha_str][slot]["kg"]       += float(r.get("total_weight_kg") or 0)
             ocupacion[fecha_str][slot]["m3"]       += float(r.get("total_volume_m3") or 0)
 
+        # Bloqueos manuales (tabla pickup_blocks): días u horas bloqueadas
+        # por el administrador desde Marketing.
+        blocks_by_date = {}
+        try:
+            blk_rows = mysql_fetchall(
+                f"""SELECT fecha, hora_inicio, hora_fin, motivo
+                    FROM pickup_blocks
+                    WHERE fecha BETWEEN %s AND %s""",
+                (d_from, d_to)
+            ) or []
+            for b in blk_rows:
+                f = b["fecha"]
+                fs = f.isoformat() if hasattr(f,"isoformat") else str(f)
+                blocks_by_date.setdefault(fs, []).append({
+                    "hora_inicio": str(b.get("hora_inicio") or "")[:5],
+                    "hora_fin":    str(b.get("hora_fin") or "")[:5],
+                    "motivo":      b.get("motivo") or "",
+                })
+        except Exception:
+            pass  # tabla puede no existir aún
+
         # Generar disponibilidad por día
         dias = {}
         for offset in range(30):
             d = d_from + _td(days=offset)
             iso = d.isoformat()
-            # Día disponible?
             disp_dia = (d.isoweekday() in work_days) and (iso not in holidays)
+
+            # Bloqueo de día completo (registro sin horas en pickup_blocks)
+            day_blocks = blocks_by_date.get(iso, [])
+            full_day_block = any(not b["hora_inicio"] for b in day_blocks)
+            full_day_motivo = next((b["motivo"] for b in day_blocks if not b["hora_inicio"]), "")
+
             day_picks = sum(s["ocupados"] for s in ocupacion.get(iso,{}).values())
             full_dia = day_picks >= max_picks_day
+            dia_disponible = disp_dia and not full_dia and not full_day_block
+
             dias[iso] = {
                 "fecha":      iso,
-                "disponible": disp_dia and not full_dia,
-                "razon":      "" if (disp_dia and not full_dia) else
-                              ("No laborable" if not disp_dia else "Día completo"),
+                "disponible": dia_disponible,
+                "razon":      "" if dia_disponible else (
+                                "Día bloqueado: " + full_day_motivo if full_day_block else
+                                "No laborable" if not disp_dia else "Día completo"
+                              ),
                 "slots":      [],
             }
-            if not (disp_dia and not full_dia): continue
-            for slot in slots:
-                ocup = ocupacion.get(iso,{}).get(slot,{"ocupados":0,"kg":0,"m3":0})
-                disponible = (ocup["ocupados"] < max_picks_slot
-                              and ocup["kg"]   < max_kg_slot
-                              and ocup["m3"]   < max_m3_slot)
+            if not dia_disponible: continue
+
+            for slot_info in slots:
+                slot_hora = slot_info["hora"]
+                is_lunch = slot_info["lunch"]
+                ocup = ocupacion.get(iso,{}).get(slot_hora, {"ocupados":0,"kg":0,"m3":0})
+
+                # Verificar bloqueos manuales por hora
+                slot_h, slot_m = [int(x) for x in slot_hora.split(":")]
+                slot_start_min = slot_h*60 + slot_m
+                slot_end_min   = slot_start_min + slot_dur
+                manual_block = None
+                for b in day_blocks:
+                    if not b["hora_inicio"]: continue  # ya manejado arriba
+                    try:
+                        bH, bM = [int(x) for x in b["hora_inicio"].split(":")]
+                        bEH, bEM = [int(x) for x in (b["hora_fin"] or "23:59").split(":")]
+                        bs, be = bH*60+bM, bEH*60+bEM
+                        if not (slot_end_min <= bs or slot_start_min >= be):
+                            manual_block = b["motivo"] or "Bloqueado"
+                            break
+                    except Exception:
+                        continue
+
+                if is_lunch:
+                    razon = "Colación"
+                    disponible_slot = False
+                elif manual_block:
+                    razon = manual_block
+                    disponible_slot = False
+                else:
+                    razon = ""
+                    disponible_slot = (ocup["ocupados"] < max_picks_slot
+                                       and ocup["kg"]   < max_kg_slot
+                                       and ocup["m3"]   < max_m3_slot)
+
                 dias[iso]["slots"].append({
-                    "hora":        slot,
-                    "disponible":  disponible,
+                    "hora":        slot_hora,
+                    "disponible":  disponible_slot,
                     "ocupados":    ocup["ocupados"],
                     "max":         max_picks_slot,
+                    "razon":       razon,
+                    "lunch":       is_lunch,
                 })
 
         return jsonify({
@@ -1070,7 +1203,10 @@ def register_pickup_routes(app, ctx):
             "warehouse_name": cfg.get("warehouse_name"),
             "open_time":  str(cfg.get("open_time") or "09:00")[:5],
             "close_time": str(cfg.get("close_time") or "16:30")[:5],
-            "slot_minutes": slot_min,
+            "slot_minutes": slot_dur,
+            "slot_step":    slot_step,
+            "lunch_start":  lunch_s_str,
+            "lunch_end":    lunch_e_str,
             "dias": dias,
         })
 

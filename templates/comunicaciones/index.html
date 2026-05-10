@@ -713,14 +713,25 @@
           <span class="fw-bold">
             <i class="bi bi-list-ul me-2 text-danger"></i>Historial de envíos (últimos 80)
           </span>
-          <div class="d-flex gap-2">
-            <input type="text" id="logFilter" class="form-control form-control-sm"
-                   placeholder="Buscar destinatario/asunto..."
-                   style="max-width:240px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
-                   oninput="filterLogRows(this.value)">
-            <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light fw-bold">
-              <i class="bi bi-arrows-fullscreen me-1"></i>Ver log completo + filtros
-            </a>
+          <div class="d-flex gap-2 align-items-center">
+            <select id="logFilterEstado" class="form-select form-select-sm"
+                    style="max-width:140px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                    onchange="applyLogFilters()">
+              <option value="">Todos los estados</option>
+              <option value="ok">Solo OK</option>
+              <option value="error">Solo Errores</option>
+            </select>
+            <select id="logFilterCanal" class="form-select form-select-sm"
+                    style="max-width:130px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                    onchange="applyLogFilters()">
+              <option value="">Todos los canales</option>
+              <option value="email">Email</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
+            <input type="text" id="logFilterText" class="form-control form-control-sm"
+                   placeholder="🔍 Buscar destinatario/asunto..."
+                   style="max-width:220px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                   oninput="applyLogFilters()">
           </div>
         </div>
         <div class="card-body p-0">
@@ -756,7 +767,9 @@
               <tbody>
                 {% for l in log_rows %}
                 {% set _ts = l.created_at|to_chile if l.created_at else None %}
-                <tr data-search="{{ ((l.destinatario or '') ~ ' ' ~ (l.asunto or '') ~ ' ' ~ (l.enviado_por or ''))|lower }}">
+                <tr data-search="{{ ((l.destinatario or '') ~ ' ' ~ (l.asunto or '') ~ ' ' ~ (l.enviado_por or ''))|lower }}"
+                    data-canal="{{ l.canal or '' }}"
+                    data-estado="{{ 'ok' if l.estado == 'ok' else 'error' }}">
                   <td class="log-date-cell" title="Hora local Chile">
                     {% if _ts %}
                       <span class="ldc-d">{{ _ts.strftime('%d/%m/%Y') if _ts.__class__.__name__ == 'datetime' else l.created_at|string|truncate(10,True,'') }}</span>
@@ -799,16 +812,49 @@
 </div>{# /container #}
 
 <script>
-// Filtro client-side del log historial
-function filterLogRows(q){
-  const txt = (q || '').toLowerCase().trim();
+// Filtros combinados client-side del tab Historial
+function applyLogFilters(){
+  const txt = (document.getElementById('logFilterText')?.value || '').toLowerCase().trim();
+  const estado = document.getElementById('logFilterEstado')?.value || '';
+  const canal = document.getElementById('logFilterCanal')?.value || '';
   const tbody = document.querySelector('#logHistorialTable tbody');
   if (!tbody) return;
+  let visible = 0;
   Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
-    const data = tr.dataset.search || '';
-    tr.style.display = (!txt || data.includes(txt)) ? '' : 'none';
+    const dSearch = tr.dataset.search || '';
+    const dCanal = tr.dataset.canal || '';
+    const dEstado = tr.dataset.estado || '';
+    let show = true;
+    if (txt && !dSearch.includes(txt)) show = false;
+    if (estado && dEstado !== estado) show = false;
+    if (canal && dCanal !== canal) show = false;
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
   });
 }
+// Auto-filtros desde el hash si vino redirigido desde /comunicaciones/log
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = window.location.hash;
+  if (hash && hash.includes('?')){
+    const qs = new URLSearchParams(hash.split('?')[1]);
+    if (qs.get('estado')){
+      const sel = document.getElementById('logFilterEstado');
+      if (sel) {
+        const v = qs.get('estado');
+        sel.value = v === 'enviado' ? 'ok' : (v === 'fallido' ? 'error' : v);
+      }
+    }
+    applyLogFilters();
+    // Activar tab Historial si vino con #tabLog
+    if (hash.startsWith('#tabLog')){
+      const btn = document.querySelector('[data-bs-target="#tabLog"]');
+      if (btn) btn.click();
+    }
+  } else if (hash === '#tabLog'){
+    const btn = document.querySelector('[data-bs-target="#tabLog"]');
+    if (btn) btn.click();
+  }
+});
 </script>
 
 

@@ -1125,9 +1125,27 @@ def init_pickup_tables():
                     active      TINYINT(1) DEFAULT 1
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            # Migración: capacidad por franja (peso/volumen/cupos)
+            # Tabla de bloqueos de retiros: días u horas no disponibles
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pickup_blocks (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    fecha        DATE NOT NULL,
+                    hora_inicio  TIME NULL
+                                 COMMENT 'NULL = bloquea día completo',
+                    hora_fin     TIME NULL
+                                 COMMENT 'NULL = bloquea hasta el cierre',
+                    motivo       VARCHAR(200) DEFAULT '',
+                    created_by   VARCHAR(190) DEFAULT NULL,
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_fecha (fecha)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migración: capacidad por franja (peso/volumen/cupos) + colación + step
             for _mig in [
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN slot_minutes INT DEFAULT 60 COMMENT 'Duración de cada franja en minutos'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN slot_step_minutes INT DEFAULT 30 COMMENT 'Cada cuántos min se ofrece un nuevo bloque'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN lunch_start TIME DEFAULT '13:00:00' COMMENT 'Inicio colación'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN lunch_end TIME DEFAULT '14:00:00' COMMENT 'Fin colación'",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_picks_per_slot INT DEFAULT 5",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_kg_per_slot DECIMAL(10,2) DEFAULT 500.00",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_m3_per_slot DECIMAL(10,3) DEFAULT 5.000",
@@ -10594,7 +10612,26 @@ def comm_templates_restore_all():
 @app.route("/comunicaciones/log")
 @require_permission("admin")
 def comm_email_log():
-    """Vista del log de emails enviados con trazabilidad completa."""
+    """Redirige al tab Historial dentro de Comunicaciones (centralizado).
+
+    Antes era una página separada. Ahora todo se concentra en la pestaña
+    Historial de /comunicaciones para evitar duplicidad. Si vino con filtros
+    en query, se preservan en el hash para que el JS los procese.
+    """
+    qs = []
+    for k in ("evento", "estado", "limit"):
+        v = request.args.get(k)
+        if v: qs.append(f"{k}={v}")
+    hash_part = "#tabLog"
+    if qs:
+        hash_part += "?" + "&".join(qs)
+    return redirect(url_for("comm_index") + hash_part)
+
+
+@app.route("/comunicaciones/log/legacy")
+@require_permission("admin")
+def comm_email_log_legacy():
+    """Vista legacy del log (mantenida por compatibilidad con scripts/links viejos)."""
     limit = min(int(request.args.get("limit") or 100), 500)
     evento = request.args.get("evento","")
     estado = request.args.get("estado","")

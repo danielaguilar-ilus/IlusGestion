@@ -42,7 +42,15 @@
     .hero-pill-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;animation:fadeInUp .6s .1s both}
     .hero-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
     .hero-pill.red{background:var(--ilus-red);border-color:var(--ilus-red)}
-    .hero-logo{height:46px;margin-bottom:24px;animation:fadeInUp .6s both}
+    .hero-logo{
+      height:170px;width:auto;object-fit:cover;object-position:center;
+      max-width:420px;margin:-30px 0 16px -10px;
+      filter:drop-shadow(0 6px 18px rgba(230,0,0,.25));
+      animation:fadeInUp .6s both;
+    }
+    @media(max-width:600px){
+      .hero-logo{height:120px;margin:-20px 0 12px -8px}
+    }
     .hero-title{
       font-family:'Bebas Neue','Inter',sans-serif;
       font-size:clamp(2.6rem,5.5vw,5.6rem);font-weight:900;line-height:.92;
@@ -142,6 +150,10 @@
     .slot-item:hover{border-color:#0a0a0a;background:#f9fafb}
     .slot-item.taken{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;text-decoration:line-through}
     .slot-item.taken:hover{border-color:#e5e7eb;background:#f3f4f6}
+    .slot-item.lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;text-decoration:none;position:relative}
+    .slot-item.lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem}
+    .slot-item.blocked{background:#fee2e2;color:#991b1b;border-color:#fecaca;cursor:not-allowed;text-decoration:none}
+    .slot-item.blocked::after{content:'🔒';position:absolute;top:2px;right:4px;font-size:.65rem}
     .slot-item.selected{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);box-shadow:0 6px 14px rgba(230,0,0,.3)}
     .slot-item.in-range{background:#fee2e2;color:var(--ilus-red);border-color:#fecaca}
     .slot-item.is-start::before{content:'INICIO';position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:var(--ilus-red);color:#fff;font-size:.55rem;padding:1px 6px;border-radius:50px;letter-spacing:.05em}
@@ -156,10 +168,56 @@
     .submit-btn{
       background:var(--ilus-red);color:#fff;font-weight:900;font-size:1.05rem;padding:15px 30px;
       border:none;border-radius:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-      box-shadow:0 14px 28px rgba(230,0,0,.32);transition:all .2s;cursor:pointer;letter-spacing:.02em;
+      box-shadow:0 14px 28px rgba(230,0,0,.32);transition:all .2s;cursor:pointer;letter-spacing:.02em;margin-top:16px;
     }
     .submit-btn:hover{background:var(--ilus-red-dk);transform:translateY(-2px);box-shadow:0 20px 36px rgba(230,0,0,.45)}
     .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+    /* Declaración de responsabilidad — card atractiva */
+    .declaracion-box{
+      background:linear-gradient(135deg,#fff5f5 0%,#ffe8e8 100%);
+      border:2px solid #fecaca;border-radius:14px;padding:18px 22px;margin-top:24px;
+      box-shadow:0 4px 14px rgba(230,0,0,.08);transition:all .25s;
+      position:relative;overflow:hidden;
+    }
+    .declaracion-box::before{
+      content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--ilus-red);
+    }
+    .declaracion-box:has(input:checked){
+      background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);
+      border-color:#86efac;
+    }
+    .declaracion-box:has(input:checked)::before{background:#16a34a}
+    .declaracion-label{display:flex;align-items:flex-start;gap:14px;cursor:pointer;margin:0;width:100%}
+    .dec-check{position:relative;flex-shrink:0;margin-top:2px}
+    .dec-check input[type=checkbox]{
+      position:absolute;opacity:0;width:28px;height:28px;cursor:pointer;z-index:2;margin:0;
+    }
+    .dec-check-mark{
+      width:28px;height:28px;border-radius:8px;background:#fff;border:2.5px solid var(--ilus-red);
+      display:flex;align-items:center;justify-content:center;font-size:1.1rem;color:transparent;
+      transition:all .2s;
+    }
+    .dec-check input:checked + .dec-check-mark{
+      background:#16a34a;border-color:#16a34a;color:#fff;
+      transform:scale(1.05);
+    }
+    .dec-text{flex:1;display:flex;flex-direction:column;gap:4px}
+    .dec-text strong{
+      font-size:1rem;color:#0a0a0a;font-weight:900;letter-spacing:-.01em;
+      display:flex;align-items:center;gap:8px;
+    }
+    .dec-text strong::before{
+      content:'';width:6px;height:6px;border-radius:50%;background:var(--ilus-red);
+      animation:pulse-red 1.6s ease-in-out infinite;
+    }
+    .declaracion-box:has(input:checked) .dec-text strong{color:#166534}
+    .declaracion-box:has(input:checked) .dec-text strong::before{background:#16a34a;animation:none}
+    .dec-text-sub{font-size:.84rem;color:#6b7280;line-height:1.5}
+    @keyframes pulse-red{
+      0%,100%{transform:scale(1);opacity:1}
+      50%{transform:scale(1.4);opacity:.4}
+    }
 
     /* Warehouse strip */
     .warehouse-strip{margin-top:24px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:12px;padding:22px 26px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;border-left:5px solid var(--ilus-red)}
@@ -486,6 +544,7 @@
                   <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
                   <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
                   <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Ocupado</span>
+                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>☕ Colación</span>
                 </div>
               </div>
               <div class="slot-grid" id="slotGrid">
@@ -545,19 +604,25 @@
           <input type="hidden" name="total_packages" id="total_packages" value="0">
         </div>
 
-        {# ── 5. Aceptar y enviar ────────────────────────────── #}
-        <div class="form-check p-3 rounded-3 mb-3" style="background:#fff8f8;border:1px solid #f4c2c2">
-          <input class="form-check-input" type="checkbox" name="accept_terms" id="acceptTerms" required>
-          <label class="form-check-label fw-semibold" for="acceptTerms">
-            Declaro que los datos son correctos y que la persona indicada está autorizada para retirar.
+        {# ── 5. Aceptar y enviar — Declaración con diseño atractivo ──── #}
+        <div class="declaracion-box">
+          <label class="declaracion-label" for="acceptTerms">
+            <span class="dec-check">
+              <input class="form-check-input" type="checkbox" name="accept_terms" id="acceptTerms" required>
+              <span class="dec-check-mark"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <span class="dec-text">
+              <strong>Declaración de responsabilidad</strong>
+              <span class="dec-text-sub">Confirmo que los datos ingresados son correctos y que la persona indicada está autorizada para retirar los productos en mi nombre.</span>
+            </span>
           </label>
         </div>
         <button class="submit-btn" id="submitBtn">
           <i class="bi bi-send-check"></i>Enviar solicitud
         </button>
-        <div class="text-center mt-2 small text-muted">
-          <i class="bi bi-shield-lock me-1"></i>
-          Tus datos solo se usan para procesar este retiro. No se comparten con terceros.
+        <div class="text-center mt-3 small text-muted" style="display:flex;align-items:center;justify-content:center;gap:6px">
+          <i class="bi bi-shield-lock"></i>
+          <span>Tus datos solo se usan para procesar este retiro. No se comparten con terceros.</span>
         </div>
       </div>
     </form>
@@ -760,13 +825,20 @@ function renderSlotGrid(){
   const grid = document.getElementById('slotGrid');
   grid.innerHTML = _slotsDelDia.map((s, i) => {
     const cls = ['slot-item'];
-    if (!s.disponible) cls.push('taken');
+    if (s.lunch) cls.push('lunch');
+    else if (s.razon && !s.disponible) cls.push('blocked');
+    else if (!s.disponible) cls.push('taken');
     if (_slotStartIdx !== null && _slotEndIdx !== null){
       if (i === _slotStartIdx) cls.push('selected', 'is-start');
       else if (i === _slotEndIdx && _slotStartIdx !== _slotEndIdx) cls.push('selected', 'is-end');
       else if (i > _slotStartIdx && i < _slotEndIdx) cls.push('in-range');
     }
-    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${s.disponible?'Click para seleccionar':'Ocupado ('+s.ocupados+'/'+s.max+')'}">${s.hora}</div>`;
+    let title;
+    if (s.lunch) title = 'Horario de colación (no se realizan retiros)';
+    else if (s.razon && !s.disponible) title = s.razon;
+    else if (!s.disponible) title = 'Ocupado (' + s.ocupados + '/' + s.max + ')';
+    else title = 'Click para seleccionar';
+    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${title}">${s.hora}</div>`;
   }).join('');
 }
 
