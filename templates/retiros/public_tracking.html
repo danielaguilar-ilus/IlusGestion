@@ -16,15 +16,18 @@
     /* HEADER PÚBLICO */
     .pub-top{background:#0a0a0a;color:#fff;border-bottom:5px solid var(--ilus-red);padding:14px 22px;overflow:hidden}
     .pub-top-inner{max-width:1180px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-    .pub-top-inner img.logo{
-      height:170px;width:auto;
-      object-fit:cover;object-position:center;
-      margin:-30px 0;          /* recortar bordes top/bottom para que no agrande el header */
-      max-width:380px;
+    .pub-top-inner .logo-wrap{
+      width:340px;height:90px;overflow:hidden;
       filter:drop-shadow(0 4px 14px rgba(230,0,0,.15));
+      flex-shrink:0;
+    }
+    .pub-top-inner .logo-wrap img{
+      height:100%;width:auto;object-fit:cover;object-position:center center;
+      transform:scale(1.85);transform-origin:left center;display:block;
     }
     @media (max-width:600px){
-      .pub-top-inner img.logo{height:110px;margin:-18px 0;max-width:240px}
+      .pub-top-inner .logo-wrap{width:230px;height:62px}
+      .pub-top-inner .logo-wrap img{transform:scale(1.7)}
     }
     .pub-top-inner .actions{display:flex;gap:10px;flex-wrap:wrap}
     .pub-top-inner .actions a{font-weight:700;letter-spacing:.02em}
@@ -163,7 +166,9 @@
   {# ── HEADER PÚBLICO con LOGO GRANDE + botón Volver ─────────────── #}
   <header class="pub-top">
     <div class="pub-top-inner">
-      <img src="{{ url_for('static', filename='Logo.png') }}" class="logo" alt="ILUS">
+      <div class="logo-wrap">
+        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+      </div>
       <div class="actions">
         <a href="{{ url_for('pickup_public_request') }}" class="btn-volver">
           <i class="bi bi-arrow-left"></i>Volver al inicio

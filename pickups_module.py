@@ -139,12 +139,12 @@ def register_pickup_routes(app, ctx):
 
     def settings():
         row = mysql_fetchone(f"SELECT * FROM `{SET}` WHERE id=1") or {}
-        # Migración suave: si el close_time guardado es el viejo default 17:30,
-        # lo bajamos a 16:30 (último bloque debe terminar a más tardar 16:30)
-        if row and str(row.get("close_time", ""))[:5] == "17:30":
+        # Migración: subir close_time a 17:30 (bodega trabaja hasta 17:00, recibe
+        # clientes hasta 16:30 — el último slot 16:30+60min termina a 17:30).
+        if row and str(row.get("close_time", ""))[:5] == "16:30":
             try:
-                mysql_execute(f"UPDATE `{SET}` SET close_time='16:30:00' WHERE id=1")
-                row["close_time"] = "16:30:00"
+                mysql_execute(f"UPDATE `{SET}` SET close_time='17:30:00' WHERE id=1")
+                row["close_time"] = "17:30:00"
             except Exception:
                 pass
         return row or {
@@ -152,7 +152,7 @@ def register_pickup_routes(app, ctx):
             "warehouse_addr": "Av. Presidente Eduardo Frei Montalva 9770, Bod 30, Quilicura.",
             "maps_url": "https://www.google.com/maps/search/?api=1&query=Av.%20Presidente%20Eduardo%20Frei%20Montalva%209770%20Bod%2030%20Quilicura",
             "open_time": "09:00:00",
-            "close_time": "16:30:00",
+            "close_time": "17:30:00",
             "work_days": "1,2,3,4,5",
             "holidays": "",
             "alert_enabled": 0,
@@ -692,12 +692,98 @@ def register_pickup_routes(app, ctx):
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
+    @app.route("/retiros/<int:rid>/validar-doc", methods=["POST"])
+    @require_permission("edit")
+    def pickup_validar_doc(rid):
+        """Paso 1 del proceso interno: validar documentación del cliente.
+        Marca el estado de validación, calcula peso/vol/tiempo estimado y
+        deja todo listo para el paso 2 (proponer fecha).
+        """
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return redirect(url_for("pickup_dashboard"))
+
+        action = (request.form.get("action") or "").strip()
+        notes  = (request.form.get("notes") or "").strip()[:1000]
+
+        if action == "marcar_ok":
+            # Validación exitosa
+            peso_real = request.form.get("peso_real_kg") or req.get("peso_real_kg") or req.get("total_weight_kg") or 0
+            peso_vol  = request.form.get("peso_vol_kg")  or req.get("peso_vol_kg")  or req.get("total_volumetric_weight") or 0
+            tiempo    = request.form.get("tiempo_estimado_min") or req.get("tiempo_estimado_min") or 0
+            try:
+                peso_real = float(peso_real or 0)
+                peso_vol  = float(peso_vol or 0)
+                tiempo    = int(tiempo or 0)
+            except Exception:
+                pass
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                    SET doc_validation_status='ok',
+                        doc_validated_at=NOW(),
+                        doc_validated_by=%s,
+                        doc_validation_notes=%s,
+                        peso_real_kg=%s,
+                        peso_vol_kg=%s,
+                        tiempo_estimado_min=%s,
+                        status=CASE WHEN status='solicitud_recibida' THEN 'en_revision' ELSE status END
+                    WHERE id=%s""",
+                (g.user["nombre"] if getattr(g,"user",None) else "interno",
+                 notes, peso_real, peso_vol, tiempo, rid)
+            )
+            log_event(rid, "doc_validada", req["status"], "en_revision",
+                      f"Documentación validada · peso={peso_real}kg vol={peso_vol}kg tiempo={tiempo}min",
+                      "interno")
+            flash("Documentación validada. Ya puedes proponer fecha al cliente.", "success")
+
+        elif action == "marcar_incompleto":
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                    SET doc_validation_status='incompleto',
+                        doc_validation_notes=%s,
+                        status='informacion_incompleta'
+                    WHERE id=%s""",
+                (notes, rid)
+            )
+            log_event(rid, "doc_incompleta", req["status"], "informacion_incompleta",
+                      f"Falta información: {notes[:200]}", "interno")
+            flash("Marcado como información incompleta. Notifica al cliente para completar.", "warning")
+
+        elif action == "guardar_erp":
+            # Guardar snapshot ERP + auto-rellenar peso/vol
+            erp_json = request.form.get("erp_data_json") or "{}"
+            peso_real = request.form.get("peso_real_kg") or 0
+            peso_vol  = request.form.get("peso_vol_kg") or 0
+            tiempo    = request.form.get("tiempo_estimado_min") or 0
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                    SET doc_erp_data=%s,
+                        peso_real_kg=%s,
+                        peso_vol_kg=%s,
+                        tiempo_estimado_min=%s
+                    WHERE id=%s""",
+                (erp_json[:60000], peso_real or 0, peso_vol or 0, tiempo or 0, rid)
+            )
+            log_event(rid, "erp_actualizado", req["status"], req["status"],
+                      f"Datos ERP cargados · peso={peso_real}kg vol={peso_vol}kg",
+                      "interno")
+            flash("Datos del ERP cargados al retiro.", "success")
+
+        return redirect(url_for("pickup_detail", rid=rid))
+
+
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])
     @require_permission("edit")
     def pickup_create_proposal(rid):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return redirect(url_for("pickup_dashboard"))
+
+        # WORKFLOW: bloquear propuesta si la documentación no fue validada
+        if req.get("doc_validation_status") not in ("ok",):
+            flash("Antes de proponer fecha, valida la documentación del cliente (paso 1).", "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
+
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
         okd, md = date_allowed(date); okt, mt = time_allowed(tf, tt)
         if not okd or not okt:
@@ -1074,7 +1160,7 @@ def register_pickup_routes(app, ctx):
         # Step de 30min para que con duración 60min el último slot llegue a 16:30
         # (15:30 + 60min = 16:30).
         oH,oM = [int(x) for x in str(cfg.get("open_time") or "09:00:00")[:5].split(":")]
-        cH,cM = [int(x) for x in str(cfg.get("close_time") or "16:30:00")[:5].split(":")]
+        cH,cM = [int(x) for x in str(cfg.get("close_time") or "17:30:00")[:5].split(":")]
         # slots ahora es lista de dicts con metadata (lunch flag)
         slots = []
         m = 0
@@ -1202,7 +1288,7 @@ def register_pickup_routes(app, ctx):
             "to":   d_to.isoformat(),
             "warehouse_name": cfg.get("warehouse_name"),
             "open_time":  str(cfg.get("open_time") or "09:00")[:5],
-            "close_time": str(cfg.get("close_time") or "16:30")[:5],
+            "close_time": str(cfg.get("close_time") or "17:30")[:5],
             "slot_minutes": slot_dur,
             "slot_step":    slot_step,
             "lunch_start":  lunch_s_str,

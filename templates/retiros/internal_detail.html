@@ -22,6 +22,214 @@
 
 <div class="row g-3">
   <div class="col-xl-8">
+
+    {# ═══════════════════════════════════════════════════════════════
+       PROCESO INTERNO ILUS — Workflow de validación de documentación
+       Paso 1: Validar doc → Paso 2: Calcular peso/vol → Paso 3: Proponer fecha
+    ═══════════════════════════════════════════════════════════════ #}
+    {% set _doc_status = req.doc_validation_status or 'pendiente' %}
+    {% set _doc_ok = _doc_status == 'ok' %}
+    {% set _doc_incomp = _doc_status == 'incompleto' %}
+    <style>
+      .wf-steps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
+      .wf-step{background:#fff;border:2px solid #e5e7eb;border-radius:10px;padding:12px 14px;text-align:center;position:relative}
+      .wf-step.done{background:#dcfce7;border-color:#86efac}
+      .wf-step.active{background:#fff7ed;border-color:#fb923c;box-shadow:0 4px 14px rgba(251,146,60,.18)}
+      .wf-step.fail{background:#fee2e2;border-color:#fca5a5}
+      .wf-step .wf-num{position:absolute;top:-12px;left:14px;width:26px;height:26px;border-radius:50%;background:#9ca3af;color:#fff;font-weight:800;font-size:.78rem;display:flex;align-items:center;justify-content:center}
+      .wf-step.done .wf-num{background:#16a34a}
+      .wf-step.active .wf-num{background:#dc2626;animation:pulse-step 1.5s ease-in-out infinite}
+      @keyframes pulse-step{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+      .wf-step h6{margin:6px 0 2px;font-weight:800;font-size:.86rem}
+      .wf-step .wf-sub{font-size:.7rem;color:#6b7280}
+      .wf-step.done h6{color:#166534}
+      .wf-step.active h6{color:#9a3412}
+      .val-card{background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border:2px solid #fdba74;border-radius:12px;padding:18px 22px;margin-bottom:14px}
+      .val-card.ok{background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);border-color:#86efac}
+      .val-card.fail{background:linear-gradient(135deg,#fee2e2 0%,#fecaca 100%);border-color:#fca5a5}
+      .val-card h5{margin:0 0 6px;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+    </style>
+
+    <div class="ilus-card mb-3" style="background:#0a0a0a;color:#fff;border:none">
+      <div class="ilus-card-header" style="background:transparent;color:#fff;border-bottom:1px solid #1c1c1c">
+        <span><i class="bi bi-diagram-3 me-2 text-danger"></i>Proceso interno ILUS</span>
+        <small class="ms-auto" style="color:#9ca3af">Workflow para procesar el retiro</small>
+      </div>
+      <div class="card-body p-3" style="background:#0a0a0a">
+        <div class="wf-steps">
+          <div class="wf-step {% if _doc_ok %}done{% elif _doc_incomp %}fail{% else %}active{% endif %}">
+            <span class="wf-num">1</span>
+            <h6><i class="bi bi-shield-check me-1"></i>Validar documentación</h6>
+            <div class="wf-sub">
+              {% if _doc_ok %}✓ Validada por {{ req.doc_validated_by or '—' }}
+              {% elif _doc_incomp %}⚠ Información incompleta
+              {% else %}Pendiente de revisión{% endif %}
+            </div>
+          </div>
+          <div class="wf-step {% if req.proposed_date %}done{% elif _doc_ok %}active{% endif %}">
+            <span class="wf-num">2</span>
+            <h6><i class="bi bi-calendar-event me-1"></i>Proponer fecha</h6>
+            <div class="wf-sub">
+              {% if req.proposed_date %}✓ {{ req.proposed_date }} {{ req.proposed_time_from|hm }}-{{ req.proposed_time_to|hm }}
+              {% elif _doc_ok %}Listo para proponer
+              {% else %}Esperando paso 1{% endif %}
+            </div>
+          </div>
+          <div class="wf-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}">
+            <span class="wf-num">3</span>
+            <h6><i class="bi bi-check-circle me-1"></i>Confirmación</h6>
+            <div class="wf-sub">
+              {% if req.confirmed_date %}✓ {{ req.confirmed_date }}
+              {% elif req.proposed_date %}Esperando cliente
+              {% else %}Sin propuesta{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── PASO 1: Validar documentación (panel principal si no está OK) ── #}
+    {% if not _doc_ok %}
+    <div class="val-card {% if _doc_incomp %}fail{% endif %}">
+      <h5>
+        <i class="bi bi-{% if _doc_incomp %}exclamation-triangle{% else %}clipboard2-check{% endif %}"></i>
+        {% if _doc_incomp %}Información incompleta — solicita al cliente
+        {% else %}Paso 1: Valida la documentación del cliente{% endif %}
+      </h5>
+      <p class="small mb-3" style="color:#7c2d12">
+        {% if _doc_incomp %}
+        Marca de regreso "OK" cuando el cliente complete la información que falta.
+        {% else %}
+        Antes de proponer fecha, verifica que los datos del documento ({{ req.document_type|upper }} {{ req.document_number }})
+        existan en el ERP, que el RUT calce y que tengamos peso/volumen reales para planificar.
+        {% endif %}
+      </p>
+
+      {# Buscador del documento en ERP — auto-rellena peso/vol #}
+      <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #fdba74">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <strong style="color:#0a0a0a;font-size:.88rem"><i class="bi bi-search me-1 text-danger"></i>Buscar en ERP Random</strong>
+          <span class="ms-auto small text-muted">{{ req.document_type|upper }} #{{ req.document_number }}</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="buscarERP({{ req.id }}, '{{ req.document_type|upper }}', '{{ req.document_number }}')">
+          <i class="bi bi-cloud-download me-1"></i>Traer datos del ERP y calcular peso/volumen
+        </button>
+        <div id="erpResult" class="mt-2 small"></div>
+        {% if req.doc_erp_data %}
+        <details class="mt-2">
+          <summary class="small text-muted">Ver snapshot ERP guardado</summary>
+          <pre class="small bg-light p-2 rounded mt-1" style="max-height:240px;overflow:auto;font-size:.72rem">{{ req.doc_erp_data[:2000] }}</pre>
+        </details>
+        {% endif %}
+      </div>
+
+      {# Form de validación #}
+      <form method="post" action="{{ url_for('pickup_validar_doc', rid=req.id) }}">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">Peso real (kg)</label>
+            <input type="number" name="peso_real_kg" id="val_peso_real" class="form-control form-control-sm"
+                   step="0.01" value="{{ req.peso_real_kg or req.total_weight_kg or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">Peso volumétrico (kg)</label>
+            <input type="number" name="peso_vol_kg" id="val_peso_vol" class="form-control form-control-sm"
+                   step="0.01" value="{{ req.peso_vol_kg or req.total_volumetric_weight or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">Tiempo estimado (min)</label>
+            <input type="number" name="tiempo_estimado_min" id="val_tiempo" class="form-control form-control-sm"
+                   step="5" value="{{ req.tiempo_estimado_min or 30 }}" placeholder="30">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">&nbsp;</label>
+            <button type="submit" name="action" value="marcar_ok" class="btn btn-success w-100 btn-sm fw-bold">
+              <i class="bi bi-check-circle me-1"></i>Documentación OK
+            </button>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-bold">Notas internas (opcional)</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2"
+                      placeholder="Ej: Documento verificado en ERP. Cliente solvente. Sin observaciones.">{{ req.doc_validation_notes or '' }}</textarea>
+          </div>
+          <div class="col-12 d-flex gap-2 justify-content-end">
+            <button type="submit" name="action" value="marcar_incompleto" class="btn btn-outline-danger btn-sm">
+              <i class="bi bi-exclamation-triangle me-1"></i>Marcar como incompleta
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <script>
+    async function buscarERP(rid, tido, nudo){
+      const resDiv = document.getElementById('erpResult');
+      resDiv.innerHTML = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP...</div>';
+      try {
+        const r = await fetch('/api/erp/documento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tido, nudo })
+        });
+        const d = await r.json();
+        if (!r.ok || d.error){
+          resDiv.innerHTML = `<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${d.error || 'Error consultando ERP'}</div>`;
+          return;
+        }
+        // Mostrar resumen
+        const lineas = d.lineas || [];
+        const cliente = (d.hdr && d.hdr.razon_social) || '—';
+        const rut = (d.hdr && d.hdr.rut) || '—';
+        // Calcular totales (cantidad por linea)
+        let totalQty = 0;
+        let html = `<div class="alert alert-success py-2 mb-2 small">
+          <i class="bi bi-check-circle me-1"></i><strong>Documento encontrado en ERP</strong><br>
+          Cliente: <strong>${cliente}</strong> (${rut})<br>
+          Líneas: ${lineas.length} ítems
+        </div>`;
+        if (lineas.length){
+          html += '<table class="table table-sm small mb-2"><thead><tr><th>SKU</th><th>Producto</th><th class="text-end">Cant.</th></tr></thead><tbody>';
+          lineas.forEach(l => {
+            totalQty += parseFloat(l.cantidad || 0);
+            html += `<tr><td class="font-monospace">${l.sku}</td><td>${l.nombre}</td><td class="text-end">${l.cantidad}</td></tr>`;
+          });
+          html += '</tbody></table>';
+        }
+        resDiv.innerHTML = html;
+        // Sugerir tiempo según cantidad de items: 5min base + 2min por línea
+        const tiempo = Math.max(15, 5 + lineas.length * 2);
+        document.getElementById('val_tiempo').value = tiempo;
+        // Guardar snapshot ERP en BD
+        const fd = new FormData();
+        fd.append('action', 'guardar_erp');
+        fd.append('erp_data_json', JSON.stringify(d));
+        fd.append('peso_real_kg', document.getElementById('val_peso_real').value || 0);
+        fd.append('peso_vol_kg', document.getElementById('val_peso_vol').value || 0);
+        fd.append('tiempo_estimado_min', tiempo);
+        await fetch(`/retiros/${rid}/validar-doc`, { method:'POST', body: fd });
+      } catch(e){
+        resDiv.innerHTML = `<div class="text-danger">Error de red: ${e.message}</div>`;
+      }
+    }
+    </script>
+    {% else %}
+    {# Paso 1 completado — banner verde resumen + botón "Re-validar" #}
+    <div class="val-card ok">
+      <h5><i class="bi bi-check-circle-fill text-success"></i>Documentación validada — listo para paso 2</h5>
+      <p class="small mb-2" style="color:#166534">
+        Validada el <strong>{{ req.doc_validated_at }}</strong> por <strong>{{ req.doc_validated_by }}</strong>.
+        {% if req.peso_real_kg %}Peso real: <strong>{{ req.peso_real_kg }} kg</strong> · {% endif %}
+        {% if req.peso_vol_kg %}Peso vol: <strong>{{ req.peso_vol_kg }} kg</strong> · {% endif %}
+        {% if req.tiempo_estimado_min %}Tiempo estimado: <strong>{{ req.tiempo_estimado_min }} min</strong>{% endif %}
+      </p>
+      {% if req.doc_validation_notes %}
+      <div class="bg-white p-2 rounded small" style="color:#166534;border:1px solid #86efac">
+        <i class="bi bi-chat-square-text me-1"></i>{{ req.doc_validation_notes }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="ilus-card mb-3">
       <div class="ilus-card-header"><span><i class="bi bi-person-vcard me-2"></i>Ficha del retiro</span></div>
       <div class="card-body p-3">

@@ -1153,6 +1153,30 @@ def init_pickup_tables():
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
+
+            # Migración: workflow de validación de documentación (proceso interno)
+            # Permite que ILUS valide los datos del cliente antes de proponer fecha.
+            for _mig in [
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN doc_validation_status "
+                f"ENUM('pendiente','en_revision','ok','incompleto') DEFAULT 'pendiente' "
+                f"COMMENT 'Estado de validación de la documentación del cliente'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN doc_validated_at DATETIME NULL "
+                f"COMMENT 'Fecha en que se validó la documentación'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN doc_validated_by VARCHAR(190) NULL "
+                f"COMMENT 'Usuario que validó la documentación'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN doc_erp_data MEDIUMTEXT NULL "
+                f"COMMENT 'JSON con snapshot del documento del ERP (header + lineas)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN doc_validation_notes TEXT NULL "
+                f"COMMENT 'Notas internas del validador'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN peso_real_kg DECIMAL(10,2) DEFAULT NULL "
+                f"COMMENT 'Peso real total calculado desde catálogo'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN peso_vol_kg DECIMAL(10,2) DEFAULT NULL "
+                f"COMMENT 'Peso volumétrico total calculado desde catálogo'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL "
+                f"COMMENT 'Tiempo estimado de retiro en minutos (basado en bultos)'",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
             cur.execute(f"INSERT IGNORE INTO `{PICKUP_SETTINGS_TABLE}` (id) VALUES (1)")
             cur.execute(
                 f"""UPDATE `{PICKUP_SETTINGS_TABLE}`
