@@ -2,16 +2,32 @@
 {% block title %}Asignar y Cotizar — ILUS{% endblock %}
 
 {% block content %}
+
+{# Header negro estandarizado, igual que el resto de la app #}
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-truck me-2"></i>Asignar y Cotizar</h4>
+      <div class="sub">Busca el documento ERP, cubica los productos y selecciona el courier al mejor precio.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('tr_couriers') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-list-ul me-1"></i>Couriers y tarifas
+      </a>
+    </div>
+  </div>
+</div>
+
 <style>
-/* ══ VARIABLES ════════════════════════════════════════════════ */
+/* ══ VARIABLES — TEMA CLARO ═══════════════════════════════════ */
 :root{
-  --c-bg:     #111;
-  --c-card:   #1c1c1c;
-  --c-card2:  #202020;
-  --c-border: #2e2e2e;
-  --c-muted:  #666;
-  --c-text:   #e8e8e8;
-  --c-sub:    #999;
+  --c-bg:     #fafafa;
+  --c-card:   #ffffff;
+  --c-card2:  #f9fafb;
+  --c-border: #e5e7eb;
+  --c-muted:  #9ca3af;
+  --c-text:   #0f172a;
+  --c-sub:    #6b7280;
   --c-red:    #CC0000;
   --c-green:  #16a34a;
   --radius:   10px;
@@ -28,12 +44,14 @@
   border-radius:var(--radius);
   overflow:hidden;
   margin-bottom:16px;
+  box-shadow:0 2px 8px rgba(15,23,42,.04);
 }
 .ac-card-hdr{
   display:flex; align-items:center; justify-content:space-between;
   padding:11px 18px;
   border-bottom:1px solid var(--c-border);
-  background:#181818;
+  background:#0f172a;
+  color:#fff;
 }
 .sec-title{
   display:flex; align-items:center; gap:10px;
@@ -52,7 +70,7 @@
 .search-row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .search-row select,
 .search-row input[type=text]{
-  background:#141414; border:1px solid var(--c-border); color:var(--c-text);
+  background:#fff; border:1.5px solid var(--c-border); color:var(--c-text);
   border-radius:8px; padding:10px 14px; font-size:.9rem;
   transition:border-color .2s;
 }
@@ -89,11 +107,11 @@
 .client-cell.span3{ grid-column:span 3; border-right:none; }
 .client-lbl{
   font-size:.67rem; text-transform:uppercase; letter-spacing:.9px;
-  color:#777; font-weight:700; margin-bottom:5px;
+  color:var(--c-sub); font-weight:700; margin-bottom:5px;
   display:flex; align-items:center; gap:5px;
 }
 .client-lbl .req{ color:var(--c-red); font-size:.7rem; }
-.client-lbl .editable-ico{ color:#444; font-size:.65rem; }
+.client-lbl .editable-ico{ color:var(--c-muted); font-size:.65rem; }
 
 /* Valores de solo lectura */
 .client-val{
@@ -102,13 +120,13 @@
 }
 .client-val.big{ font-size:1.05rem; font-weight:800; }
 .client-val.red{ color:var(--c-red); }
-.client-val.green{ color:#22c55e; }
+.client-val.green{ color:#16a34a; }
 
 /* Inputs editables inline */
 .client-input{
   background:transparent;
   border:none;
-  border-bottom:1.5px solid #333;
+  border-bottom:1.5px solid #d1d5db;
   color:var(--c-text);
   font-size:.95rem;
   font-weight:600;
@@ -118,57 +136,57 @@
   transition:border-color .2s;
   line-height:1.3;
 }
-.client-input:hover{ border-bottom-color:#555; }
+.client-input:hover{ border-bottom-color:#9ca3af; }
 .client-input:focus{ border-bottom-color:var(--c-red); }
-.client-input::placeholder{ color:#444; font-weight:400; font-size:.85rem; }
-.client-input.required-empty{ border-bottom-color:#ff4444 !important; }
+.client-input::placeholder{ color:#9ca3af; font-weight:400; font-size:.85rem; }
+.client-input.required-empty{ border-bottom-color:#dc2626 !important; }
 
 /* Autocomplete container */
 .autocomplete-wrap{ position:relative; }
 .autocomplete-wrap .ac-dropdown{
   position:absolute; top:100%; left:0; right:0; z-index:999;
-  background:#1a1a1a; border:1px solid var(--c-border);
+  background:#fff; border:1px solid var(--c-border);
   border-top:none; border-radius:0 0 8px 8px;
   max-height:220px; overflow-y:auto;
-  box-shadow:0 8px 24px rgba(0,0,0,.5);
+  box-shadow:0 8px 24px rgba(15,23,42,.12);
   display:none;
 }
 .ac-dropdown.open{ display:block; }
 .ac-option{
-  padding:9px 14px; font-size:.88rem; color:var(--c-sub);
+  padding:9px 14px; font-size:.88rem; color:var(--c-text);
   cursor:pointer; transition:background .1s;
 }
-.ac-option:hover, .ac-option.focused{ background:#262626; color:#fff; }
+.ac-option:hover, .ac-option.focused{ background:#f3f4f6; color:#0f172a; }
 .ac-option mark{ background:none; color:var(--c-red); font-weight:800; }
 
 /* ══ TABLA CUBICAJE ══════════════════════════════════════════ */
 .cube-table{ width:100%; border-collapse:collapse; font-size:.85rem; }
 .cube-table thead th{
-  background:#181818; color:#888;
-  padding:9px 12px; text-align:left;
+  background:#f9fafb; color:#6b7280;
+  padding:10px 12px; text-align:left;
   font-size:.68rem; font-weight:800;
   text-transform:uppercase; letter-spacing:.5px;
-  border-bottom:1px solid var(--c-border);
+  border-bottom:2px solid var(--c-border);
   white-space:nowrap;
 }
 .cube-table td{
-  padding:9px 12px; border-bottom:1px solid #222;
+  padding:10px 12px; border-bottom:1px solid #f3f4f6;
   color:var(--c-text); font-size:.88rem;
   vertical-align:middle;
 }
-.cube-table tbody tr:hover td{ background:rgba(255,255,255,.025); }
+.cube-table tbody tr:hover td{ background:#fafafa; }
 .cube-table .mono{ font-family:monospace; font-size:.8rem; font-weight:700; color:var(--c-red); }
 .cube-table .tr{ text-align:right; }
 .cube-table .tc{ text-align:center; }
 .cube-table .pred-tot{ font-weight:900; color:var(--c-red); font-size:.92rem; }
-.cube-table .pred-u{ font-weight:700; color:#999; }
-.cube-table .sf{ color:#3a3a3a; font-size:.75rem; }
-.pill-kg{ background:#0d2010; color:#4ade80; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
-.pill-pv{ background:#0d0d25; color:#818cf8; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
-.pill-sf{ background:#1e1e1e; color:#444; padding:2px 8px; border-radius:50px; font-size:.67rem; }
+.cube-table .pred-u{ font-weight:700; color:#6b7280; }
+.cube-table .sf{ color:#9ca3af; font-size:.75rem; }
+.pill-kg{ background:#dcfce7; color:#166534; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
+.pill-pv{ background:#dbeafe; color:#1e40af; padding:2px 8px; border-radius:50px; font-size:.67rem; font-weight:800; }
+.pill-sf{ background:#f3f4f6; color:#9ca3af; padding:2px 8px; border-radius:50px; font-size:.67rem; }
 .bultos-badge{
   width:24px; height:24px; border-radius:50%;
-  background:#282828; color:#ccc;
+  background:#0f172a; color:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   font-size:.68rem; font-weight:800;
 }
@@ -176,24 +194,24 @@
 /* ══ BARRA TOTALES ═══════════════════════════════════════════ */
 .totals-bar{
   display:flex; align-items:stretch;
-  background:#181818; border:1px solid var(--c-border);
+  background:#0f172a; border:1px solid #1c1c1c;
   border-radius:9px; overflow:hidden; margin-top:14px;
 }
 .tot-cell{
   flex:1; text-align:center; padding:12px 8px;
-  border-right:1px solid var(--c-border);
+  border-right:1px solid rgba(255,255,255,.08);
 }
-.tot-cell:last-child{ border-right:none; background:#1a0000; }
-.tot-lbl{ font-size:.6rem; text-transform:uppercase; letter-spacing:.6px; color:#555; font-weight:700; margin-bottom:4px; }
+.tot-cell:last-child{ border-right:none; background:rgba(204,0,0,.18); }
+.tot-lbl{ font-size:.6rem; text-transform:uppercase; letter-spacing:.6px; color:#9ca3af; font-weight:700; margin-bottom:4px; }
 .tot-val{ font-size:1.1rem; font-weight:900; color:#fff; line-height:1.1; }
-.tot-val.red{ color:var(--c-red); font-size:1.25rem; }
+.tot-val.red{ color:#fee2e2; font-size:1.25rem; }
 
 /* ══ AVISO CALCULAR ══════════════════════════════════════════ */
 .aviso-calcular{
   display:flex; align-items:center; gap:10px;
-  background:#1a1000; border:1px solid #3a2500;
+  background:#fff7ed; border:1px solid #fed7aa;
   border-radius:8px; padding:10px 14px;
-  font-size:.82rem; color:#f59e0b; margin-bottom:12px;
+  font-size:.82rem; color:#9a3412; margin-bottom:12px;
 }
 
 /* ══ FLUJO LOGÍSTICO ═════════════════════════════════════════ */
@@ -203,12 +221,12 @@
   width:42px; height:42px; border-radius:50%;
   border:2px solid var(--c-border);
   display:flex; align-items:center; justify-content:center;
-  font-size:1rem; color:#444; background:#181818;
+  font-size:1rem; color:#9ca3af; background:#fff;
   transition:all .2s;
 }
-.flow-icon.active{ border-color:var(--c-red); color:var(--c-red); background:rgba(204,0,0,.1); }
-.flow-icon.done{ border-color:#16a34a; color:#16a34a; background:rgba(22,163,74,.1); }
-.flow-lbl{ font-size:.65rem; color:#444; font-weight:600; text-align:center; line-height:1.2; }
+.flow-icon.active{ border-color:var(--c-red); color:var(--c-red); background:rgba(204,0,0,.06); }
+.flow-icon.done{ border-color:#16a34a; color:#16a34a; background:rgba(22,163,74,.06); }
+.flow-lbl{ font-size:.65rem; color:#6b7280; font-weight:600; text-align:center; line-height:1.2; }
 .flow-lbl.active{ color:var(--c-red); }
 .flow-lbl.done{ color:#16a34a; }
 .flow-line{ flex:1; height:2px; background:var(--c-border); margin:0 4px; margin-bottom:22px; }
@@ -216,11 +234,11 @@
 
 /* ══ PANEL DERECHO ═══════════════════════════════════════════ */
 .resumen-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.res-cell{ background:#181818; border-radius:8px; padding:11px 14px; }
-.res-lbl{ font-size:.62rem; text-transform:uppercase; letter-spacing:.7px; color:#555; font-weight:700; margin-bottom:4px; }
-.res-val{ font-size:.92rem; font-weight:800; color:#fff; }
+.res-cell{ background:#f9fafb; border:1px solid var(--c-border); border-radius:8px; padding:11px 14px; }
+.res-lbl{ font-size:.62rem; text-transform:uppercase; letter-spacing:.7px; color:#6b7280; font-weight:700; margin-bottom:4px; }
+.res-val{ font-size:.92rem; font-weight:800; color:var(--c-text); }
 .res-val.red{ color:var(--c-red); }
-.res-val.green{ color:#22c55e; }
+.res-val.green{ color:#16a34a; }
 .badge-cubicado{
   background:#16a34a; color:#fff;
   font-size:.62rem; font-weight:800; padding:3px 10px;
@@ -232,15 +250,15 @@
 .courier-item{
   display:flex; align-items:center; gap:10px;
   padding:11px 14px; border-radius:9px;
-  border:1px solid var(--c-border);
+  border:1.5px solid var(--c-border);
   cursor:pointer; transition:all .15s;
-  background:#181818;
+  background:#fff;
 }
-.courier-item:hover{ border-color:#444; background:#1e1e1e; }
-.courier-item.selected{ border-color:var(--c-red); background:rgba(204,0,0,.07); }
+.courier-item:hover{ border-color:#9ca3af; background:#fafafa; }
+.courier-item.selected{ border-color:var(--c-red); background:#fff5f5; box-shadow:0 4px 12px rgba(204,0,0,.08); }
 .courier-radio{
   width:17px; height:17px; border-radius:50%;
-  border:2px solid #444; flex-shrink:0;
+  border:2px solid #d1d5db; flex-shrink:0;
   transition:all .15s; margin-top:1px;
 }
 .courier-item.selected .courier-radio{
@@ -248,29 +266,30 @@
   box-shadow:0 0 0 3px rgba(204,0,0,.2);
 }
 .courier-info{ flex:1; }
-.courier-name{ font-size:.82rem; font-weight:700; color:#fff; }
-.courier-svc{ font-size:.68rem; color:#555; }
-.courier-price{ font-size:1rem; font-weight:900; color:#fff; text-align:right; white-space:nowrap; }
-.courier-price.loading{ color:#333; animation:pulse 1s infinite; }
-.courier-etd{ font-size:.64rem; color:#555; text-align:right; }
+.courier-name{ font-size:.82rem; font-weight:700; color:var(--c-text); }
+.courier-svc{ font-size:.68rem; color:var(--c-sub); }
+.courier-price{ font-size:1rem; font-weight:900; color:var(--c-text); text-align:right; white-space:nowrap; }
+.courier-price.loading{ color:#9ca3af; animation:pulse 1s infinite; }
+.courier-etd{ font-size:.64rem; color:var(--c-sub); text-align:right; }
 .btn-detalle{
-  background:#242424; border:none; color:#666; border-radius:5px;
+  background:#f3f4f6; border:none; color:#6b7280; border-radius:5px;
   padding:3px 9px; font-size:.65rem; cursor:pointer;
   transition:all .15s; white-space:nowrap;
 }
-.btn-detalle:hover{ background:#2e2e2e; color:#ccc; }
+.btn-detalle:hover{ background:#e5e7eb; color:#0f172a; }
 .btn-seleccionar{
   width:100%; padding:12px; border:none;
   background:var(--c-red); color:#fff;
   border-radius:9px; font-size:.9rem; font-weight:800;
   cursor:pointer; text-transform:uppercase; letter-spacing:.5px;
   transition:background .15s; margin-top:10px;
+  box-shadow:0 4px 12px rgba(204,0,0,.25);
 }
-.btn-seleccionar:hover{ background:#aa0000; }
+.btn-seleccionar:hover{ background:#aa0000; box-shadow:0 6px 16px rgba(204,0,0,.35); }
 
 /* Zona bloqueada (sin comuna) */
 .courier-locked{
-  pointer-events:none; opacity:.35; filter:blur(.5px);
+  pointer-events:none; opacity:.4; filter:grayscale(.4);
 }
 
 /* ══ ACCIONES ════════════════════════════════════════════════ */
@@ -280,12 +299,12 @@
   padding:11px 8px; border-radius:9px; font-size:.8rem; font-weight:700;
   cursor:pointer; transition:all .15s; border:none; text-decoration:none;
 }
-.btn-accion.outline{ background:transparent; border:1px solid var(--c-border); color:#999; }
-.btn-accion.outline:hover{ border-color:#555; color:#fff; }
+.btn-accion.outline{ background:#fff; border:1.5px solid var(--c-border); color:var(--c-sub); }
+.btn-accion.outline:hover{ border-color:#0f172a; color:var(--c-text); }
 .btn-accion.primary{ background:var(--c-red); color:#fff; }
 .btn-accion.primary:hover{ background:#aa0000; }
-.btn-accion.dark{ background:#242424; color:#fff; }
-.btn-accion.dark:hover{ background:#2e2e2e; }
+.btn-accion.dark{ background:#0f172a; color:#fff; }
+.btn-accion.dark:hover{ background:#1f2937; }
 
 /* ══ MISC ════════════════════════════════════════════════════ */
 .spin-ico{
@@ -296,40 +315,34 @@
 }
 @keyframes spin{ to{transform:rotate(360deg)} }
 @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
-.empty-state{ text-align:center; padding:40px 20px; color:#3a3a3a; }
+.empty-state{ text-align:center; padding:40px 20px; color:#9ca3af; }
 .empty-state i{ font-size:2.5rem; margin-bottom:10px; display:block; }
 .empty-state p{ font-size:.85rem; }
 .btn-refresh{
-  background:transparent; border:1px solid var(--c-border); color:#555;
+  background:#fff; border:1.5px solid var(--c-border); color:var(--c-sub);
   border-radius:6px; padding:4px 11px; font-size:.7rem; cursor:pointer;
   display:flex; align-items:center; gap:5px; transition:all .15s;
 }
-.btn-refresh:hover{ border-color:#555; color:#aaa; }
+.btn-refresh:hover{ border-color:#0f172a; color:var(--c-text); }
 .ac-alert{
-  background:#1a0000; border:1px solid #440000; border-radius:8px;
-  color:#ff6b6b; padding:11px 15px; font-size:.83rem; margin-bottom:12px;
+  background:#fef2f2; border:1px solid #fecaca; border-radius:8px;
+  color:#991b1b; padding:11px 15px; font-size:.83rem; margin-bottom:12px;
 }
-.tel-hint{ font-size:.65rem; color:#555; margin-top:3px; }
-.tel-hint.ok{ color:#22c55e; }
-.tel-hint.err{ color:#ff6b6b; }
+.tel-hint{ font-size:.65rem; color:var(--c-sub); margin-top:3px; }
+.tel-hint.ok{ color:#16a34a; }
+.tel-hint.err{ color:#dc2626; }
 
 /* Zona auto-tag */
 .zona-tag{
   font-size:.65rem; font-weight:800; padding:2px 8px;
-  border-radius:50px; background:#1a1a2e; color:#818cf8;
+  border-radius:50px; background:#dbeafe; color:#1e40af;
   margin-left:auto; white-space:nowrap;
 }
-</style>
 
-{# ── Página header ── #}
-<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
-  <div>
-    <h5 class="mb-0 fw-bold text-white" style="font-size:1.05rem">
-      <i class="bi bi-send-check me-2" style="color:var(--ilus-red)"></i>Asignar y Cotizar
-    </h5>
-    <div class="text-muted" style="font-size:.75rem">Cubicaje · Couriers · Manifiesto</div>
-  </div>
-</div>
+/* Forzar fondo claro en toda la página */
+.ac-wrap{ background:transparent; }
+.left-panel, .right-panel{ background:transparent; }
+</style>
 
 <div class="ac-wrap">
 
@@ -375,6 +388,8 @@
         </span>
       </div>
       <div class="ac-card-body">
+        {# Panel de diagnóstico ERP — solo aparece cuando faltan datos clave #}
+        <div id="panelDiagnostico"></div>
         <div class="client-grid" id="clientGrid">
 
           {# Row 1: Cliente, RUT, Fecha #}
@@ -935,6 +950,23 @@ function sincronizarBultos(val){
 const _docCache = new Map();
 const _docCacheTTL = 90_000;
 
+// Copia al clipboard el diagnóstico crudo del ERP — útil para enviar al admin
+// y que ajuste los nombres de campos en _cubicador_fetch.
+function copiarDiagnostico(){
+  const d = window._lastRawSample;
+  if (!d){ alert('No hay diagnóstico disponible'); return; }
+  const txt = `DIAGNÓSTICO ERP — Documento ${d.tido} ${d.nudo}\n\n` +
+              `Campos disponibles en el header (${d.all_fields.length}):\n` +
+              d.all_fields.join(', ') + '\n\n' +
+              `Datos no vacíos:\n` +
+              Object.entries(d.raw).map(([k,v]) => `  ${k}: ${v}`).join('\n');
+  navigator.clipboard.writeText(txt).then(() => {
+    alert('Diagnóstico copiado al portapapeles. Pégalo en un mensaje al admin.');
+  }).catch(() => {
+    prompt('Copia este texto y pégalo al admin:', txt);
+  });
+}
+
 async function buscarDoc(){
   const tido = document.getElementById('docTipo').value;
   const nudo = document.getElementById('docNudo').value.trim();
@@ -984,6 +1016,44 @@ function renderDoc(d){
   setText('cli-neto',   fClp(h.valor_neto));
   setText('cli-skus',   d.zzenvio_valor > 0 ? fClp(d.zzenvio_valor) : '—');
   setText('cli-seguro', fClp(h.valor_neto * 0.012));
+
+  // ── DIAGNÓSTICO: si los datos clave están vacíos, mostrar campos
+  //    crudos del ERP para que el operador pueda copiarlos manualmente
+  //    o avisarle al admin qué nombres usa este tipo de documento.
+  const datosCompletos = h.datos_completos === true;
+  const diagPanel = document.getElementById('panelDiagnostico');
+  if (diagPanel){
+    if (!datosCompletos && h.raw_sample && Object.keys(h.raw_sample).length){
+      const items = Object.entries(h.raw_sample)
+        .filter(([k,v]) => v && String(v).trim())
+        .map(([k,v]) => `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:.78rem">
+          <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#dc2626;flex-shrink:0;min-width:130px">${k}</code>
+          <span style="color:#374151;word-break:break-word">${String(v)}</span>
+        </div>`).join('');
+      diagPanel.innerHTML = `
+        <div style="background:#fef9c3;border:2px solid #fde047;border-radius:10px;padding:14px 16px;margin-top:12px">
+          <strong style="color:#854d0e;display:block;margin-bottom:6px"><i class="bi bi-exclamation-triangle me-1"></i>Datos del cliente incompletos en este documento</strong>
+          <p style="font-size:.82rem;color:#78350f;margin:0 0 10px">
+            El ERP devolvió el documento pero <strong>algunos campos clave llegaron vacíos o con nombres distintos</strong>.
+            Estos son los datos crudos del header — copia manualmente lo que necesites:
+          </p>
+          <button type="button" onclick="document.getElementById('rawFields').style.display=document.getElementById('rawFields').style.display==='none'?'block':'none'"
+                  style="background:#854d0e;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer">
+            <i class="bi bi-eye me-1"></i>Ver/ocultar campos crudos del ERP (${Object.keys(h.raw_sample).length})
+          </button>
+          <div id="rawFields" style="display:none;margin-top:10px;background:#fff;border-radius:6px;padding:10px;max-height:300px;overflow-y:auto">
+            ${items || '<em style="color:#9ca3af">Sin campos disponibles</em>'}
+          </div>
+          <button type="button" onclick="copiarDiagnostico()" style="margin-top:8px;background:transparent;color:#854d0e;border:1px solid #854d0e;padding:4px 10px;border-radius:6px;font-size:.74rem;cursor:pointer">
+            <i class="bi bi-clipboard me-1"></i>Copiar diagnóstico para enviar al admin
+          </button>
+        </div>
+      `;
+      window._lastRawSample = { tido: h.tido, nudo: h.nudo, raw: h.raw_sample, all_fields: h.all_fields };
+    } else {
+      diagPanel.innerHTML = '';
+    }
+  }
 
   // ── Campos editables — pre-rellena con datos del ERP (editables por usuario)
   setInput('cli-email', h.email     || '');

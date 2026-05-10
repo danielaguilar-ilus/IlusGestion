@@ -5697,14 +5697,17 @@ def _cubicador_fetch(tido, nudo):
     nudos = _nudo_variants(erp_nudo)
 
     # ── 1. Buscar el documento (probar variantes de NUDO) ──────────────
+    # Timeout reducido a 6s — si Random no responde en 6s, mejor que falle rápido
+    # y el operador reintente, en vez de tener al usuario esperando 8-12s.
     raw_header = None
     raw_lineas = []
+    last_err = None
     for nv in nudos:
         try:
             body = _erp_get(
                 "/documentos/render",
                 {"tido": erp_tido, "nudo": nv, "empresa": "01"},
-                TOKEN, timeout=8,
+                TOKEN, timeout=6,
             )
             data = body.get("data") or []
             if data:
@@ -5712,9 +5715,12 @@ def _cubicador_fetch(tido, nudo):
                 raw_lineas = data[0].get("maeddo") or []
                 break
         except Exception as api_err:
-            raise ConnectionError(f"No se pudo conectar al ERP ({api_err}). Intenta en unos momentos.")
+            last_err = api_err
+            continue   # probar la siguiente variante de NUDO antes de rendirse
 
     if not raw_header:
+        if last_err:
+            raise ConnectionError(f"ERP no respondió ({last_err}). Reintenta.")
         return None, []
 
     # ── 2. Datos completos del cliente (entidades) ─────────────────────
@@ -5782,7 +5788,7 @@ def _cubicador_fetch(tido, nudo):
             e = ent_cached[1]
         else:
             try:
-                ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=6)
+                ent_body = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=4)
                 ent_data = ent_body.get("data") or []
                 e = ent_data[0] if ent_data else None
                 if e:
@@ -5827,6 +5833,18 @@ def _cubicador_fetch(tido, nudo):
                   raw_header.get("NOKOMUNEN") or raw_header.get("NOKCOMENDESP") or "").strip()
     comuna_final = comuna_doc or cliente_comuna_nombre
 
+    # ── DEBUG SAMPLE: si los campos clave vienen vacíos, devolvemos un
+    # snapshot del header crudo (filtrado a strings no vacías) para que el
+    # frontend pueda mostrar AL MENOS lo que sí trae el ERP. Esto es el
+    # último recurso para no quedarnos sin info de cliente.
+    raw_sample = {}
+    if not (cliente_nombre and cliente_rut and (cliente_email or cliente_telefono)):
+        for k, v in (raw_header or {}).items():
+            if v is None: continue
+            sv = str(v).strip()
+            if sv and sv not in ("0", "0.0", "0.00", "False"):
+                raw_sample[k] = sv[:200]   # truncar valores largos
+
     _nudo_str = str(raw_header.get("NUDO", erp_nudo) or erp_nudo)
     header = {
         "tido":             display_tido,
@@ -5845,6 +5863,8 @@ def _cubicador_fetch(tido, nudo):
         "comuna":           comuna_final,
         "observaciones":    cliente_obs,
         "all_fields":       list(raw_header.keys()),   # para debug
+        "raw_sample":       raw_sample,                # campos no-vacíos del header
+        "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
     }
 
     # ── 4. Cruzar líneas con BD local (bultos/peso) — BATCH SQL ────────
