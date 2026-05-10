@@ -139,12 +139,20 @@ def register_pickup_routes(app, ctx):
 
     def settings():
         row = mysql_fetchone(f"SELECT * FROM `{SET}` WHERE id=1") or {}
+        # Migración suave: si el close_time guardado es el viejo default 17:30,
+        # lo bajamos a 16:30 (último bloque debe terminar a más tardar 16:30)
+        if row and str(row.get("close_time", ""))[:5] == "17:30":
+            try:
+                mysql_execute(f"UPDATE `{SET}` SET close_time='16:30:00' WHERE id=1")
+                row["close_time"] = "16:30:00"
+            except Exception:
+                pass
         return row or {
             "warehouse_name": "Bodega ILUS Quilicura",
             "warehouse_addr": "Av. Presidente Eduardo Frei Montalva 9770, Bod 30, Quilicura.",
             "maps_url": "https://www.google.com/maps/search/?api=1&query=Av.%20Presidente%20Eduardo%20Frei%20Montalva%209770%20Bod%2030%20Quilicura",
             "open_time": "09:00:00",
-            "close_time": "17:30:00",
+            "close_time": "16:30:00",
             "work_days": "1,2,3,4,5",
             "holidays": "",
             "alert_enabled": 0,
@@ -252,68 +260,183 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             print(f"[ILUS][PICKUP LOG] {exc}")
 
+    def _render_pickup_vars(req, proposal=None):
+        """Construye el dict de variables disponibles en plantillas de retiros."""
+        cfg = settings()
+        def _hm(t):
+            return str(t)[:5] if t else ""
+        def _fmt_horario(tf, tt):
+            tf, tt = _hm(tf), _hm(tt)
+            return f"{tf} - {tt}" if tf else ""
+        return {
+            "code":              req.get("code") or "",
+            "cliente":           req.get("customer_name") or "",
+            "persona_retira":    req.get("pickup_person_name") or req.get("contact_name") or "",
+            "documento":         f"{(req.get('document_type') or '').upper()} {req.get('document_number') or ''}".strip(),
+            "fecha_solicitada":  str(req.get("requested_date") or ""),
+            "fecha_propuesta":   str((proposal or {}).get("date") or req.get("proposed_date") or ""),
+            "fecha_confirmada":  str(req.get("confirmed_date") or ""),
+            "horario": (
+                _fmt_horario((proposal or {}).get("time_from"), (proposal or {}).get("time_to"))
+                or _fmt_horario(req.get("confirmed_time_from"), req.get("confirmed_time_to"))
+                or _fmt_horario(req.get("proposed_time_from"), req.get("proposed_time_to"))
+                or _fmt_horario(req.get("requested_time_from"), req.get("requested_time_to"))
+            ),
+            "n_bultos":          str(req.get("total_packages") or 0),
+            "kg":                str(req.get("total_weight_kg") or 0),
+            "m3":                str(req.get("total_volume_m3") or 0),
+            "warehouse_name":    cfg.get("warehouse_name") or "Bodega ILUS Quilicura",
+            "warehouse_addr":    cfg.get("warehouse_addr") or "",
+            "link_seguimiento":  url_for("pickup_public_tracking", token=req["public_token"], _external=True),
+        }
+
+
+    def _apply_template(text, variables):
+        """Reemplaza {{var}} con su valor (string)."""
+        if not text:
+            return ""
+        for k, v in variables.items():
+            text = text.replace("{{" + k + "}}", str(v))
+            text = text.replace("{{ " + k + " }}", str(v))
+        return text
+
+
+    def _get_pickup_template(estado, canal):
+        """Lee plantilla de comm_templates para retiros (modulo='retiros')."""
+        try:
+            row = mysql_fetchone(
+                "SELECT asunto, cuerpo FROM comm_templates "
+                "WHERE modulo='retiros' AND estado=%s AND canal=%s LIMIT 1",
+                (estado, canal)
+            )
+            return row
+        except Exception:
+            return None
+
+
+    # Mapeo: kind del notify() → estado en comm_templates
+    _KIND_TO_ESTADO = {
+        "created":   "solicitud_recibida",
+        "proposal":  "propuesta_enviada",
+        "confirmed": "agenda_confirmada",
+        "preparing": "en_preparacion",
+        "done":      "retirada",
+        "rejected":  "rechazada",
+        "rescheduled": "reagendada",
+        "message":   None,    # custom — sin plantilla
+    }
+
+
     def notify(req, kind="created", proposal=None, custom_message=""):
+        """Envía notificación al cliente usando plantillas configuradas en
+        Comunicaciones → Plantillas → Retiros (DB).
+
+        Si la plantilla no existe en BD, cae al template hardcoded original.
+        """
         cfg = settings()
         follow_url = url_for("pickup_public_tracking", token=req["public_token"], _external=True)
-        titles = {
-            "created": "Solicitud de retiro recibida",
-            "proposal": "ILUS propuso una agenda de retiro",
-            "confirmed": "Agenda de retiro confirmada",
-            "message": "Actualizacion de tu solicitud de retiro",
-        }
-        title = titles.get(kind, "Actualizacion de retiro ILUS")
-        if kind == "created":
-            paragraphs = [
-                "Recibimos tu solicitud. Esta solicitud aun no es una reserva confirmada.",
-                "Nuestro equipo revisara documento, identidad y disponibilidad para responder con una confirmacion o propuesta.",
-            ]
-        elif kind == "proposal" and proposal:
-            paragraphs = [
-                "Te enviamos una propuesta de fecha y horario para tu retiro.",
-                f"Propuesta: <strong>{proposal['date']} de {str(proposal['time_from'])[:5]} a {str(proposal['time_to'])[:5]}</strong>.",
-                proposal.get("message") or "Puedes confirmar, rechazar o proponer una nueva fecha desde el enlace.",
-            ]
-        elif kind == "confirmed":
-            paragraphs = [
-                "Tu agenda de retiro fue confirmada.",
-                "Recuerda presentar documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
-            ]
-        else:
-            paragraphs = [custom_message or "Hay una actualizacion disponible para tu solicitud de retiro."]
-        html = _ilus_email_html(
-            titulo=title,
-            subtitulo=f"{req['code']} - {req['document_type']} {req['document_number']}",
-            saludo=req["contact_name"],
-            parrafos=paragraphs,
-            btn_primario_txt="Ver solicitud",
-            btn_primario_url=follow_url,
-            btn_secundario_txt="Como llegar",
-            btn_secundario_url=cfg.get("maps_url"),
-            info_lineas=[
-                ("", "Bodega", cfg.get("warehouse_name") or "Bodega ILUS Quilicura"),
-                ("", "Direccion", cfg.get("warehouse_addr") or "Quilicura"),
-                ("", "Horario solicitado", f"{req['requested_date']} {str(req['requested_time_from'])[:5]}-{str(req['requested_time_to'])[:5]}"),
-            ],
-        )
+        variables = _render_pickup_vars(req, proposal)
+        estado = _KIND_TO_ESTADO.get(kind)
+
+        # ── EMAIL ──────────────────────────────────────────────────────
         sent_mail = False
         try:
-            sent_mail = _send_ilus_email(req["contact_email"], f"ILUS - {title} {req['code']}", html)
+            tpl_email = _get_pickup_template(estado, "email") if estado else None
+            if tpl_email and (tpl_email.get("asunto") or tpl_email.get("cuerpo")):
+                # Plantilla configurada en BD: usar con variables interpoladas
+                asunto = _apply_template(tpl_email.get("asunto") or "", variables)
+                cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables)
+                # Envolver en el wrapper HTML oficial ILUS
+                html = _ilus_email_html(
+                    titulo=asunto or f"Actualización retiro {req['code']}",
+                    subtitulo=f"{req['code']} - {variables['documento']}",
+                    saludo=variables["persona_retira"],
+                    parrafos=[cuerpo],   # cuerpo ya viene como HTML
+                    btn_primario_txt="Ver solicitud",
+                    btn_primario_url=follow_url,
+                    btn_secundario_txt="Cómo llegar",
+                    btn_secundario_url=cfg.get("maps_url"),
+                    info_lineas=[
+                        ("", "Bodega", variables["warehouse_name"]),
+                        ("", "Dirección", variables["warehouse_addr"]),
+                    ],
+                )
+                sent_mail = _send_ilus_email(req["contact_email"], f"ILUS — {asunto}", html)
+            else:
+                # Fallback: plantilla hardcoded original
+                titles = {
+                    "created": "Solicitud de retiro recibida",
+                    "proposal": "ILUS propuso una agenda de retiro",
+                    "confirmed": "Agenda de retiro confirmada",
+                    "message": "Actualización de tu solicitud de retiro",
+                }
+                title = titles.get(kind, "Actualización de retiro ILUS")
+                if kind == "created":
+                    paragraphs = [
+                        "Recibimos tu solicitud. Esta solicitud aún no es una reserva confirmada.",
+                        "Nuestro equipo revisará documento, identidad y disponibilidad para responder con una confirmación o propuesta.",
+                    ]
+                elif kind == "proposal" and proposal:
+                    paragraphs = [
+                        "Te enviamos una propuesta de fecha y horario para tu retiro.",
+                        f"Propuesta: <strong>{proposal['date']} de {str(proposal['time_from'])[:5]} a {str(proposal['time_to'])[:5]}</strong>.",
+                        proposal.get("message") or "Puedes confirmar, rechazar o proponer una nueva fecha desde el enlace.",
+                    ]
+                elif kind == "confirmed":
+                    paragraphs = [
+                        "Tu agenda de retiro fue confirmada.",
+                        "Recuerda presentar documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
+                    ]
+                else:
+                    paragraphs = [custom_message or "Hay una actualización disponible para tu solicitud de retiro."]
+                html = _ilus_email_html(
+                    titulo=title,
+                    subtitulo=f"{req['code']} - {variables['documento']}",
+                    saludo=variables["persona_retira"],
+                    parrafos=paragraphs,
+                    btn_primario_txt="Ver solicitud",
+                    btn_primario_url=follow_url,
+                    btn_secundario_txt="Cómo llegar",
+                    btn_secundario_url=cfg.get("maps_url"),
+                    info_lineas=[
+                        ("", "Bodega", variables["warehouse_name"]),
+                        ("", "Dirección", variables["warehouse_addr"]),
+                        ("", "Horario solicitado", variables["horario"]),
+                    ],
+                )
+                sent_mail = _send_ilus_email(req["contact_email"], f"ILUS - {title} {req['code']}", html)
         except Exception as exc:
             try:
                 print(f"[ILUS][PICKUP EMAIL] {str(exc).encode('ascii', 'ignore').decode('ascii')}")
             except Exception:
                 pass
+
+        # ── WHATSAPP ───────────────────────────────────────────────────
         sent_wa = None
         try:
             wa_cfg = _get_wa_cfg()
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
-                wa_body = (
-                    f"ILUS - {title}\n\nSolicitud: {req['code']}\n"
-                    f"Documento: {req['document_type']} {req['document_number']}\n"
-                    f"Bodega: {cfg.get('warehouse_name') or 'Bodega ILUS Quilicura'}\n"
-                    f"Seguimiento: {follow_url}"
+                tpl_wa = _get_pickup_template(estado, "whatsapp") if estado else None
+                if tpl_wa and tpl_wa.get("cuerpo"):
+                    wa_body = _apply_template(tpl_wa.get("cuerpo") or "", variables)
+                else:
+                    titles = {
+                        "created": "Solicitud de retiro recibida",
+                        "proposal": "ILUS propuso una agenda de retiro",
+                        "confirmed": "Agenda de retiro confirmada",
+                        "message": "Actualización de tu retiro",
+                    }
+                    title = titles.get(kind, "Actualización retiro ILUS")
+                    wa_body = (
+                        f"ILUS - {title}\n\nSolicitud: {req['code']}\n"
+                        f"Documento: {variables['documento']}\n"
+                        f"Bodega: {variables['warehouse_name']}\n"
+                        f"Seguimiento: {follow_url}"
+                    )
+                sent_wa = _send_whatsapp(
+                    wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"],
+                    req["contact_phone"], wa_body
                 )
-                sent_wa = _send_whatsapp(wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"], req["contact_phone"], wa_body)
         except Exception as exc:
             print(f"[ILUS][PICKUP WA] {exc}")
         return sent_mail, sent_wa
@@ -884,12 +1007,14 @@ def register_pickup_routes(app, ctx):
         work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays  = {h.strip() for h in (cfg.get("holidays") or "").replace(";",",").split(",") if h.strip()}
 
-        # Slots horarios
+        # Slots horarios — el ÚLTIMO bloque debe TERMINAR ≤ close_time
+        # (antes el while comparaba sólo el inicio, dejando bloques que se extendían
+        #  más allá de la hora de cierre).
         oH,oM = [int(x) for x in str(cfg.get("open_time") or "09:00:00")[:5].split(":")]
-        cH,cM = [int(x) for x in str(cfg.get("close_time") or "17:30:00")[:5].split(":")]
+        cH,cM = [int(x) for x in str(cfg.get("close_time") or "16:30:00")[:5].split(":")]
         slots = []
         m = 0
-        while oH*60+oM + m < cH*60+cM:
+        while (oH*60+oM + m + slot_min) <= (cH*60+cM):
             t = oH*60+oM + m
             slots.append(f"{t//60:02d}:{t%60:02d}")
             m += slot_min
@@ -944,7 +1069,7 @@ def register_pickup_routes(app, ctx):
             "to":   d_to.isoformat(),
             "warehouse_name": cfg.get("warehouse_name"),
             "open_time":  str(cfg.get("open_time") or "09:00")[:5],
-            "close_time": str(cfg.get("close_time") or "17:30")[:5],
+            "close_time": str(cfg.get("close_time") or "16:30")[:5],
             "slot_minutes": slot_min,
             "dias": dias,
         })

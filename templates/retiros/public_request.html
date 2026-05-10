@@ -77,12 +77,17 @@
     .hero-slide-dot{width:30px;height:4px;background:rgba(255,255,255,.3);border-radius:2px;cursor:pointer;transition:background .25s}
     .hero-slide-dot.active{background:var(--ilus-red)}
 
-    /* Stats strip */
-    .stats-strip{background:#0a0a0a;color:#fff;padding:18px 22px;border-top:1px solid #1c1c1c;border-bottom:1px solid #1c1c1c}
-    .stats-inner{max-width:1180px;margin:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-    .stat-cell{text-align:center;padding:6px}
-    .stat-cell .stat-num{font-family:'Bebas Neue';font-size:2.2rem;color:var(--ilus-red);line-height:.9}
-    .stat-cell .stat-lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;font-weight:700;margin-top:6px}
+    /* Stats strip — beneficios destacados del servicio */
+    .stats-strip{background:#0a0a0a;color:#fff;padding:22px 22px;border-top:1px solid #1c1c1c;border-bottom:1px solid #1c1c1c}
+    .stats-inner{max-width:1180px;margin:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+    .stat-cell{text-align:center;padding:8px;border-right:1px solid rgba(255,255,255,.06)}
+    .stat-cell:last-child{border-right:none}
+    .stat-cell .stat-num{font-family:'Bebas Neue';font-size:2.6rem;color:var(--ilus-red);line-height:.9;display:flex;align-items:center;justify-content:center;gap:8px}
+    .stat-cell .stat-num i{font-size:2.4rem}
+    .stat-cell .stat-lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:#cbd5e1;font-weight:700;margin-top:8px;line-height:1.3}
+    @media(max-width:600px){
+      .stat-cell{border-right:none;border-bottom:1px solid rgba(255,255,255,.06);padding:14px 8px}
+    }
 
     /* ════════════════════════════════════════════════════════════
        PROCESO 4 STEPS
@@ -283,24 +288,24 @@
     </div>
   </header>
 
-  {# Stats strip #}
+  {# Stats strip — beneficios reales del servicio de retiro #}
   <div class="stats-strip">
     <div class="stats-inner">
       <div class="stat-cell">
-        <div class="stat-num">+5K</div>
-        <div class="stat-lbl">Retiros completados</div>
+        <div class="stat-num"><i class="bi bi-clock-history"></i> 24h</div>
+        <div class="stat-lbl">Respuesta rápida</div>
       </div>
       <div class="stat-cell">
-        <div class="stat-num">24h</div>
-        <div class="stat-lbl">Tiempo de respuesta</div>
+        <div class="stat-num"><i class="bi bi-shield-check"></i></div>
+        <div class="stat-lbl">Validación segura del autorizado</div>
       </div>
       <div class="stat-cell">
-        <div class="stat-num">98%</div>
-        <div class="stat-lbl">Satisfacción</div>
+        <div class="stat-num"><i class="bi bi-envelope-paper-heart"></i></div>
+        <div class="stat-lbl">Seguimiento online por email</div>
       </div>
       <div class="stat-cell">
-        <div class="stat-num">RM</div>
-        <div class="stat-lbl">Cobertura nacional</div>
+        <div class="stat-num"><i class="bi bi-cash-coin"></i></div>
+        <div class="stat-lbl">Servicio sin costo extra</div>
       </div>
     </div>
   </div>

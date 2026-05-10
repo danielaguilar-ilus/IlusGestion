@@ -64,15 +64,39 @@
   </form>
 </div>
 
-{# Tabla #}
+{# Tabla rediseñada — más legible, fechas en horario Chile #}
+<style>
+.elog-table-v2{width:100%;border-collapse:separate;border-spacing:0;font-size:.85rem;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(15,23,42,.04)}
+.elog-table-v2 thead th{padding:14px 14px;text-align:left;font-size:.65rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.06em;color:#6b7280;
+  background:#f9fafb;border-bottom:2px solid #e5e7eb;position:sticky;top:0}
+.elog-table-v2 tbody tr{transition:background .12s}
+.elog-table-v2 tbody tr:hover{background:#fafafa}
+.elog-table-v2 tbody td{padding:12px 14px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.elog-table-v2 tbody tr:last-child td{border-bottom:none}
+.elog-cell-date{white-space:nowrap;font-family:monospace}
+.elog-cell-date .date-d{font-weight:700;color:#0f172a;font-size:.86rem}
+.elog-cell-date .date-h{display:block;color:#6b7280;font-size:.74rem;font-weight:500;margin-top:2px}
+.elog-cell-dest{font-family:monospace;font-size:.82rem;color:#1f2937;font-weight:600}
+.elog-cell-asunto{color:#0f172a;font-weight:500;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.elog-evento{padding:3px 10px;border-radius:50px;font-size:.62rem;font-weight:700;background:#dbeafe;color:#1e40af;display:inline-block;text-transform:uppercase;letter-spacing:.04em}
+.elog-actor{font-size:.74rem;color:#6b7280;background:#f3f4f6;padding:2px 8px;border-radius:50px}
+.elog-status{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:50px;font-size:.7rem;font-weight:800;letter-spacing:.04em}
+.elog-status.ok{background:#dcfce7;color:#166534}
+.elog-status.fail{background:#fee2e2;color:#991b1b}
+.elog-error-box{font-size:.7rem;color:#991b1b;background:#fef2f2;border-left:3px solid #dc2626;padding:5px 10px;margin-top:4px;border-radius:4px;max-width:340px;word-break:break-word}
+.elog-action-btn{padding:4px 9px;border-radius:6px;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:.74rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.elog-action-btn:hover{background:#0f172a;color:#fff;border-color:#0f172a}
+</style>
+
 <div class="ilus-card p-0 overflow-hidden">
   {% if rows %}
-  <div style="overflow-x:auto">
-    <table class="elog-table">
+  <div style="overflow-x:auto;border-radius:10px">
+    <table class="elog-table-v2">
       <thead>
         <tr>
-          <th>Fecha</th>
-          <th>Destinatario</th>
+          <th><i class="bi bi-calendar3 me-1"></i>Fecha y hora</th>
+          <th><i class="bi bi-envelope me-1"></i>Destinatario</th>
           <th>Asunto</th>
           <th>Evento</th>
           <th>Actor</th>
@@ -83,25 +107,31 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td style="white-space:nowrap;color:#6b7280;font-size:.74rem;font-family:monospace">{{ r.created_at|string|truncate(16,True,'') }}</td>
-          <td style="font-family:monospace">{{ r.destinatario }}</td>
-          <td>{{ r.asunto or '—' }}</td>
-          <td>{% if r.evento %}<span class="evento-chip">{{ r.evento }}</span>{% else %}—{% endif %}</td>
-          <td style="font-size:.75rem;color:#6b7280">{{ r.actor or '—' }}</td>
+          <td class="elog-cell-date">
+            {% if r.created_at %}
+              {%- set _ts = r.created_at|to_chile if r.created_at.__class__.__name__ in ('datetime',) else r.created_at -%}
+              <span class="date-d">{{ _ts.strftime('%d/%m/%Y') if _ts.__class__.__name__ in ('datetime',) else r.created_at|string|truncate(10,True,'') }}</span>
+              <span class="date-h">{{ _ts.strftime('%H:%M:%S') if _ts.__class__.__name__ in ('datetime',) else r.created_at|string|replace(' ','T')|truncate(19,True,'')|replace('T',' ')|truncate(19,True,'') }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="elog-cell-dest">{{ r.destinatario }}</td>
+          <td class="elog-cell-asunto" title="{{ r.asunto or '' }}">{{ r.asunto or '—' }}</td>
+          <td>{% if r.evento %}<span class="elog-evento">{{ r.evento }}</span>{% else %}—{% endif %}</td>
+          <td><span class="elog-actor">{{ r.actor or '—' }}</span></td>
           <td>
-            <span class="estado-{{ r.estado }}">
-              {% if r.estado == 'enviado' %}<i class="bi bi-check-circle-fill"></i> Enviado{% else %}<i class="bi bi-x-circle-fill"></i> Fallido{% endif %}
-            </span>
+            {% if r.estado == 'enviado' %}
+              <span class="elog-status ok"><i class="bi bi-check-circle-fill"></i>Enviado</span>
+            {% else %}
+              <span class="elog-status fail"><i class="bi bi-x-circle-fill"></i>Fallido</span>
+            {% endif %}
             {% if r.error_msg %}
-            <div style="font-size:.66rem;color:#dc2626;margin-top:3px;max-width:280px;word-wrap:break-word">
-              {{ r.error_msg|truncate(140,True,'…') }}
-            </div>
+            <div class="elog-error-box">{{ r.error_msg|truncate(140,True,'…') }}</div>
             {% endif %}
           </td>
           <td>
             {% if r.estado == 'fallido' %}
-            <button class="btn btn-xs btn-outline-secondary" onclick="reintentar({{ r.id }}, this)">
-              <i class="bi bi-arrow-clockwise"></i>
+            <button class="elog-action-btn" onclick="reintentar({{ r.id }}, this)" title="Reintentar envío">
+              <i class="bi bi-arrow-clockwise"></i>Reintentar
             </button>
             {% endif %}
           </td>
@@ -126,7 +156,7 @@ async function reintentar(lid, btn) {
   const r = await fetch(`/comunicaciones/log/${lid}/reintentar`, {method:'POST'});
   const d = await r.json();
   if (d.ok) { alert('Reintento OK'); location.reload(); }
-  else { alert('Reintento falló'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>'; }
+  else { alert('Reintento falló'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Reintentar'; }
 }
 </script>
 {% endblock %}

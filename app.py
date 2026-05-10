@@ -115,6 +115,30 @@ def from_json_filter(value):
     except Exception:
         return []
 
+
+@app.template_filter('to_chile')
+def to_chile_filter(value):
+    """
+    Convierte un datetime UTC (o naive asumido UTC) a hora local Chile.
+    Útil para mostrar timestamps de la BD (que están en UTC) en hora local.
+    Chile: UTC-4 invierno, UTC-3 verano (DST). Para simplicidad usamos UTC-3
+    (que es el offset estándar continental los meses no-DST y la mayor parte
+     del año tras la unificación horaria).
+    """
+    if not value:
+        return value
+    try:
+        from datetime import timezone, timedelta
+        # Si es naive, asumimos que está en UTC (que es como MySQL guarda por
+        # default en servidores cloud como Railway).
+        if hasattr(value, 'tzinfo'):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone(timedelta(hours=-3)))
+    except Exception:
+        pass
+    return value
+
 @app.template_filter('fkg')
 def fkg_filter(value, decimals=1):
     """Formato kg estilo chileno: 2926.0 → '2.926,0' (punto miles, coma decimal, 1 decimal)"""
