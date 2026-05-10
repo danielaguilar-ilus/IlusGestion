@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solicitud de retiro - ILUS</title>
+  <title>Solicitud de retiro — ILUS</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -27,16 +27,28 @@
     .section-mark{border-left:4px solid var(--ilus-red);padding-left:12px;margin:0 0 16px}
     .section-mark h5{font-size:1rem;font-weight:900;margin:0}
     .req{color:var(--ilus-red)}
-    .info-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px}
-    .info-card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:18px;box-shadow:0 8px 20px rgba(15,23,42,.06)}
-    .info-icon{width:40px;height:40px;border-radius:8px;background:#111;color:#fff;display:grid;place-items:center;margin-bottom:12px}
+    .info-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:24px}
+    .info-card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;box-shadow:0 6px 18px rgba(15,23,42,.06)}
+    .info-icon{width:36px;height:36px;border-radius:8px;background:#111;color:#fff;display:grid;place-items:center;margin-bottom:10px}
+    .info-card h6{font-weight:900;margin:0 0 4px;font-size:.95rem}
+    .info-card p{margin:0;font-size:.78rem;color:#6b7280;line-height:1.4}
+    .step-num{position:absolute;top:-10px;right:-10px;background:var(--ilus-red);color:#fff;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:900;font-size:.85rem;box-shadow:0 4px 10px rgba(230,0,0,.4)}
+    .info-card{position:relative}
     .warehouse-strip{margin-top:18px;background:#111;color:#fff;border-radius:8px;padding:20px;display:flex;gap:16px;align-items:center;justify-content:space-between}
     .warehouse-strip p{margin:4px 0 0;color:#d1d5db}
     .footer{background:#050505;color:#9ca3af;padding:28px 22px;margin-top:10px;text-align:center}
     .footer img{width:120px;margin-bottom:10px}
     .footer-row{max-width:1180px;margin:auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start;text-align:left}
     .footer-logo{text-align:center}
-    @media(max-width:900px){.public-top-inner{grid-template-columns:1fr}.photo-grid img,.photo-grid img:first-child{height:145px}.info-grid,.footer-row{grid-template-columns:1fr}.warehouse-strip{display:block}.warehouse-strip a{margin-top:12px}}
+    .input-help{font-size:.7rem;color:#6b7280;margin-top:3px}
+    .input-error{font-size:.74rem;color:var(--ilus-red);margin-top:3px;font-weight:600;display:none}
+    .field-valid{border-color:#22c55e !important}
+    .field-invalid{border-color:#dc2626 !important;background:#fef2f2}
+    .toggle-bultos{background:#f9fafb;border:2px dashed #d1d5db;border-radius:8px;padding:14px 18px;cursor:pointer;text-align:center;font-weight:600;font-size:.86rem;color:#374151;transition:all .15s}
+    .toggle-bultos:hover{background:#fff;border-color:#111;color:#111}
+    .toggle-bultos.active{background:#fff;border-color:var(--ilus-red);border-style:solid}
+    @media(max-width:900px){.public-top-inner{grid-template-columns:1fr}.photo-grid img,.photo-grid img:first-child{height:145px}.info-grid{grid-template-columns:1fr 1fr}.footer-row{grid-template-columns:1fr}.warehouse-strip{display:block}.warehouse-strip a{margin-top:12px}}
+    @media(max-width:600px){.info-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -46,13 +58,14 @@
         <img src="{{ url_for('static', filename='Logo.png') }}" class="brand-logo" alt="ILUS">
         <h1 class="hero-title">Solicitud de retiro en bodega</h1>
         <p class="hero-copy">
-          Ingresa los datos del documento y la persona autorizada. ILUS revisara la solicitud y respondera
-          con confirmacion o una propuesta alternativa. Esta pagina es publica y no da acceso al sistema interno.
+          Este formulario es <strong>público</strong>. Llena tus datos y te enviaremos un enlace
+          para hacer seguimiento al estado del retiro. La fecha queda confirmada solo cuando
+          ambas partes (tú e ILUS) acepten el día y horario.
         </p>
         <div class="pill-row">
-          <span class="pill"><i class="bi bi-shield-check me-1 text-danger"></i>Validacion de retiro</span>
-          <span class="pill"><i class="bi bi-geo-alt me-1 text-danger"></i>Bodega Quilicura</span>
-          <span class="pill"><i class="bi bi-envelope-paper me-1 text-danger"></i>Seguimiento por link</span>
+          <span class="pill"><i class="bi bi-shield-check me-1 text-danger"></i>Validación interna</span>
+          <span class="pill"><i class="bi bi-clock-history me-1 text-danger"></i>Mínimo 24 horas de anticipación</span>
+          <span class="pill"><i class="bi bi-envelope-paper me-1 text-danger"></i>Seguimiento por email</span>
         </div>
       </div>
       <div class="photo-grid">
@@ -63,15 +76,49 @@
     </div>
   </header>
 
+  {# ── Pasos del proceso ────────────────────────────────────────────── #}
+  <div class="shell">
+    <section class="info-grid">
+      <div class="info-card">
+        <div class="step-num">1</div>
+        <div class="info-icon"><i class="bi bi-pencil-square"></i></div>
+        <h6>Envías la solicitud</h6>
+        <p>Completas datos del documento y de la persona autorizada. No es una reserva todavía.</p>
+      </div>
+      <div class="info-card">
+        <div class="step-num">2</div>
+        <div class="info-icon"><i class="bi bi-shield-check"></i></div>
+        <h6>ILUS revisa</h6>
+        <p>Validamos disponibilidad. Si todo está OK confirmamos. Si no, te proponemos otra fecha.</p>
+      </div>
+      <div class="info-card">
+        <div class="step-num">3</div>
+        <div class="info-icon"><i class="bi bi-envelope-check"></i></div>
+        <h6>Confirmación final</h6>
+        <p>Recibirás un email con la fecha definitiva. La cita queda agendada cuando aceptas la propuesta.</p>
+      </div>
+      <div class="info-card">
+        <div class="step-num">4</div>
+        <div class="info-icon"><i class="bi bi-truck"></i></div>
+        <h6>Día del retiro</h6>
+        <p>La persona autorizada presenta su carnet en bodega. Firmará al recibir los productos.</p>
+      </div>
+    </section>
+  </div>
+
   <main class="shell">
-    <form method="post" class="cardx">
+    <form method="post" class="cardx" id="solicitudForm" novalidate>
       <div class="cardx-head"><i class="bi bi-clipboard2-check me-2"></i>Datos para solicitar retiro</div>
       <div class="cardx-body">
         {% if errors %}
-        <div class="alert alert-danger py-2">{% for e in errors %}<div>{{ e }}</div>{% endfor %}</div>
+        <div class="alert alert-danger py-2">{% for e in errors %}<div><i class="bi bi-exclamation-triangle me-1"></i>{{ e }}</div>{% endfor %}</div>
         {% endif %}
 
-        <div class="section-mark"><h5>Documento y cliente</h5><small class="text-muted">Solo validaremos la solicitud con documento y datos del cliente.</small></div>
+        {# ── Documento y cliente ───────────────────────────────────── #}
+        <div class="section-mark">
+          <h5>1. Documento del retiro</h5>
+          <small class="text-muted">El documento que respalda los productos a retirar.</small>
+        </div>
         <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label small fw-bold">Tipo documento <span class="req">*</span></label>
@@ -82,88 +129,282 @@
               <option value="pedido">N° pedido</option>
             </select>
           </div>
-          <div class="col-md-4"><label class="form-label small fw-bold">Numero factura <span class="req">*</span></label><input name="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">Numero documento</label><input name="invoice_total_amount" type="hidden" value="0"><input class="form-control" name="observations" value="{{ fd.get('observations','') }}" placeholder="Opcional"></div>
-          <input type="hidden" name="requested_date" value="">
-          <div class="col-md-8"><label class="form-label small fw-bold">Razon social o nombre <span class="req">*</span></label><input name="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">RUT <span class="req">*</span></label><input name="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}" required></div>
-        </div>
-
-        <hr>
-        <div class="section-mark"><h5>Contacto</h5><small class="text-muted">Estos datos son obligatorios para avanzar.</small></div>
-        <div class="row g-3">
-          <div class="col-md-4"><label class="form-label small fw-bold">Contacto de quien retira <span class="req">*</span></label><input name="contact_name" class="form-control" value="{{ fd.get('contact_name','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">Email <span class="req">*</span></label><input name="contact_email" type="email" class="form-control" value="{{ fd.get('contact_email','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">Telefono <span class="req">*</span></label><input name="contact_phone" class="form-control" value="{{ fd.get('contact_phone','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">WhatsApp</label><input name="whatsapp_phone" class="form-control" value="{{ fd.get('whatsapp_phone','') }}" placeholder="Si es distinto al telefono"></div>
-        </div>
-
-        <hr>
-        <div class="section-mark"><h5>Persona autorizada</h5><small class="text-muted">La persona debera presentar documento de identidad al retirar.</small></div>
-        <div class="row g-3">
-          <div class="col-md-4"><label class="form-label small fw-bold">Persona que retira <span class="req">*</span></label><input name="pickup_person_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" required></div>
-          <div class="col-md-4"><label class="form-label small fw-bold">Telefono persona <span class="req">*</span></label><input name="pickup_person_phone" class="form-control" value="{{ fd.get('pickup_person_phone','') }}" required></div>
           <div class="col-md-4">
-            <label class="form-label small fw-bold">Relacion <span class="req">*</span></label>
+            <label class="form-label small fw-bold">N° documento <span class="req">*</span></label>
+            <input name="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required>
+            <div class="input-help">Ej: 12345 o VD0008827</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-bold">Comentarios del retiro</label>
+            <input class="form-control" name="observations" value="{{ fd.get('observations','') }}" placeholder="Opcional — algo que debamos saber">
+            <input type="hidden" name="invoice_total_amount" value="0">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small fw-bold">Razón social o nombre <span class="req">*</span></label>
+            <input name="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small fw-bold">RUT del cliente <span class="req">*</span></label>
+            <input name="customer_rut" id="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}"
+                   placeholder="11.111.111-1" required oninput="formatRUT(this)" onblur="validateRUT(this)">
+            <div class="input-help">Formato: 12.345.678-9 (con dígito verificador)</div>
+            <div class="input-error" id="customer_rut_err">RUT inválido — revisa el dígito verificador</div>
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        {# ── Persona autorizada para retirar ─────────────────────── #}
+        <div class="section-mark">
+          <h5>2. Persona autorizada para retirar</h5>
+          <small class="text-muted">Esta persona deberá presentar su cédula al llegar a bodega. Le enviaremos el seguimiento por email.</small>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small fw-bold">Nombre completo <span class="req">*</span></label>
+            <input name="pickup_person_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" required>
+            <div class="input-help">Mismo nombre que aparecerá en el carnet</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">RUT <span class="req">*</span></label>
+            <input name="pickup_person_rut" id="pickup_person_rut" class="form-control"
+                   value="{{ fd.get('pickup_person_rut','') }}"
+                   placeholder="11.111.111-1" required oninput="formatRUT(this)" onblur="validateRUT(this)">
+            <div class="input-error" id="pickup_person_rut_err">RUT inválido</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-bold">Relación</label>
             <select name="pickup_person_relation" class="form-select">{% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
           </div>
-          <input type="hidden" name="pickup_person_rut" value="PENDIENTE">
+
+          <div class="col-md-6">
+            <label class="form-label small fw-bold">Email <span class="req">*</span></label>
+            <input name="contact_email" id="contact_email" type="email" class="form-control"
+                   value="{{ fd.get('contact_email','') }}" required>
+            <div class="input-help">Aquí recibirás el link de seguimiento</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-bold">Teléfono <span class="req">*</span></label>
+            <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
+                   value="{{ fd.get('contact_phone','') }}"
+                   placeholder="+56 9 1234 5678" required oninput="formatPhone(this)" onblur="validatePhone(this)">
+            <div class="input-help">Formato chileno: +56 9 XXXX XXXX</div>
+            <div class="input-error" id="contact_phone_err">Teléfono chileno inválido (debe empezar con +56 9)</div>
+            {# Sincronizamos el teléfono de contacto y de persona automáticamente #}
+            <input type="hidden" name="pickup_person_phone" id="pickup_person_phone">
+            <input type="hidden" name="contact_name" id="contact_name">
+          </div>
         </div>
 
-        <hr>
-        <div class="section-mark"><h5>Fecha y hora del retiro</h5><small class="text-muted">Selecciona un día y bloque horario disponible. Los bloques en gris ya están ocupados.</small></div>
+        <hr class="my-4">
+
+        {# ── Fecha y hora ────────────────────────────────────────── #}
+        <div class="section-mark">
+          <h5>3. Fecha y horario</h5>
+          <small class="text-muted">Mínimo 24 horas de anticipación. Los bloques en gris ya están ocupados.</small>
+        </div>
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
             <input type="date" id="cal_fecha" class="form-control" required>
-            <small id="cal_fecha_msg" class="text-muted"></small>
+            <small id="cal_fecha_msg" class="input-help"></small>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-bold">Bloque horario <span class="req">*</span></label>
             <select id="cal_slot" class="form-select" required disabled>
               <option value="">— Selecciona fecha primero —</option>
             </select>
-            <small id="cal_slot_msg" class="text-muted"></small>
+            <small id="cal_slot_msg" class="input-help"></small>
           </div>
           <input type="hidden" name="requested_date">
           <input type="hidden" name="requested_time_from">
           <input type="hidden" name="requested_time_to">
         </div>
 
-        <hr>
-        <div class="section-mark"><h5>Bultos a retirar</h5><small class="text-muted">Indica cuántos bultos vas a retirar y sus dimensiones aproximadas (ayuda a planificar el cargamento).</small></div>
-        <div id="bultosContainer">
-          <div class="row g-2 align-items-end mb-2 bulto-row" data-idx="1">
-            <div class="col-1 fw-bold text-center" style="background:#111;color:#fff;border-radius:6px;padding:8px 0">1</div>
-            <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-            <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-            <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-            <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-            <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled><i class="bi bi-trash"></i></button></div>
+        <hr class="my-4">
+
+        {# ── Bultos (colapsado por default) ─────────────────────── #}
+        <div class="section-mark">
+          <h5>4. Bultos a retirar <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h5>
+          <small class="text-muted">Si conoces las medidas exactas, ingresálas para planificar mejor el retiro.</small>
+        </div>
+
+        <div id="bultosToggleWrap">
+          <div class="toggle-bultos" id="bultosToggle" onclick="toggleBultos()">
+            <i class="bi bi-rulers me-2"></i>Tengo las medidas exactas — quiero ingresarlas
+            <i class="bi bi-chevron-down ms-2"></i>
           </div>
         </div>
-        <div class="d-flex gap-2 mb-2">
-          <button type="button" class="btn btn-sm btn-outline-dark" onclick="addBulto()"><i class="bi bi-plus-lg me-1"></i>Agregar bulto</button>
-          <div class="ms-auto small text-muted" id="bultosResumen"><strong id="b_count">1</strong> bulto · <strong id="b_kg">0</strong> kg · <strong id="b_m3">0</strong> m³</div>
+
+        <div id="bultosWrap" style="display:none">
+          <div id="bultosContainer" class="mt-3">
+            <div class="row g-2 align-items-end mb-2 bulto-row" data-idx="1">
+              <div class="col-1 fw-bold text-center" style="background:#111;color:#fff;border-radius:6px;padding:8px 0">1</div>
+              <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+              <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+              <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+              <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+              <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled><i class="bi bi-trash"></i></button></div>
+            </div>
+          </div>
+          <div class="d-flex gap-2 mb-2">
+            <button type="button" class="btn btn-sm btn-outline-dark" onclick="addBulto()"><i class="bi bi-plus-lg me-1"></i>Agregar bulto</button>
+            <div class="ms-auto small text-muted" id="bultosResumen"><strong id="b_count">1</strong> bulto · <strong id="b_kg">0</strong> kg · <strong id="b_m3">0</strong> m³</div>
+          </div>
         </div>
-        <input type="hidden" name="total_packages" id="total_packages" value="1">
+        <input type="hidden" name="total_packages" id="total_packages" value="0">
+
+        <hr class="my-4">
+
+        {# ── Aceptar y enviar ───────────────────────────────────── #}
         <div class="form-check mt-4 p-3 rounded" style="background:#fff8f8;border:1px solid #f4c2c2">
           <input class="form-check-input" type="checkbox" name="accept_terms" id="acceptTerms" required>
-          <label class="form-check-label fw-semibold" for="acceptTerms">Declaro que los datos son correctos y que la persona indicada esta autorizada para retirar.</label>
+          <label class="form-check-label fw-semibold" for="acceptTerms">
+            Declaro que los datos son correctos y que la persona indicada está autorizada para retirar.
+          </label>
         </div>
-        <button class="btn btn-danger btn-lg fw-bold mt-3 w-100"><i class="bi bi-send-check me-2"></i>Enviar solicitud</button>
+        <button class="btn btn-danger btn-lg fw-bold mt-3 w-100" id="submitBtn">
+          <i class="bi bi-send-check me-2"></i>Enviar solicitud
+        </button>
+        <div class="text-center mt-2 small text-muted">
+          <i class="bi bi-shield-lock me-1"></i>
+          Tus datos solo se usan para procesar este retiro. No se comparten con terceros.
+        </div>
+      </div>
+    </form>
+
+    <section class="warehouse-strip">
+      <div>
+        <div class="fw-bold"><i class="bi bi-geo-alt-fill text-danger me-2"></i>{{ settings.warehouse_name }}</div>
+        <p>{{ settings.warehouse_addr }}</p>
+      </div>
+      <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-danger fw-bold"><i class="bi bi-map me-1"></i>Abrir mapa</a>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-row">
+      <div>
+        <div class="fw-bold text-white mb-2">Antes de retirar</div>
+        <div class="small">Espera la confirmación de ILUS por email. La solicitud queda válida solo cuando ambas partes aceptan fecha y horario.</div>
+      </div>
+      <div class="footer-logo">
+        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+        <div class="fw-bold text-white">ILUS Fitness</div>
+      </div>
+      <div>
+        <div class="fw-bold text-white mb-2">Al llegar a bodega</div>
+        <div class="small">Presenta documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.</div>
+      </div>
+    </div>
+  </footer>
+
+  {% if settings.alert_enabled and settings.alert_message %}
+  <div class="modal fade" id="pickupAlertModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow"><div class="modal-header bg-dark text-white"><h5 class="modal-title">{{ settings.alert_title }}</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body">{{ settings.alert_message }}</div></div></div>
+  </div>
+  {% endif %}
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {% if settings.alert_enabled and settings.alert_message %}<script>window.addEventListener('load',()=>new bootstrap.Modal(document.getElementById('pickupAlertModal')).show());</script>{% endif %}
 
 <script>
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN RUT CHILENO
+//  Algoritmo módulo 11 — verifica dígito verificador
+// ════════════════════════════════════════════════════════
+function cleanRUT(rut){
+  return String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+}
+function calcDV(num){
+  let suma = 0, mul = 2;
+  for (let i = num.length - 1; i >= 0; i--){
+    suma += parseInt(num[i],10) * mul;
+    mul = mul === 7 ? 2 : mul + 1;
+  }
+  const r = 11 - (suma % 11);
+  if (r === 11) return '0';
+  if (r === 10) return 'K';
+  return String(r);
+}
+function isValidRUT(rut){
+  const c = cleanRUT(rut);
+  if (c.length < 8 || c.length > 9) return false;
+  const num = c.slice(0,-1);
+  const dv  = c.slice(-1);
+  if (!/^\d+$/.test(num)) return false;
+  return calcDV(num) === dv;
+}
+function formatRUT(input){
+  const c = cleanRUT(input.value);
+  if (c.length < 2){ input.value = c; return; }
+  const num = c.slice(0,-1);
+  const dv  = c.slice(-1);
+  // Formato 12.345.678-9
+  let formatted = '';
+  let rev = num.split('').reverse().join('');
+  for (let i = 0; i < rev.length; i++){
+    formatted = rev[i] + formatted;
+    if ((i+1) % 3 === 0 && i !== rev.length-1) formatted = '.' + formatted;
+  }
+  input.value = formatted + '-' + dv;
+}
+function validateRUT(input){
+  const ok = isValidRUT(input.value);
+  const errEl = document.getElementById(input.id + '_err');
+  input.classList.toggle('field-valid', ok && input.value.length > 0);
+  input.classList.toggle('field-invalid', !ok && input.value.length > 0);
+  if (errEl) errEl.style.display = (!ok && input.value.length > 0) ? 'block' : 'none';
+  return ok;
+}
+
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN TELÉFONO CHILENO
+//  Acepta: +56 9 XXXX XXXX | 9 XXXX XXXX | 569XXXXXXXX
+// ════════════════════════════════════════════════════════
+function cleanPhone(phone){
+  return String(phone||'').replace(/[^\d+]/g,'');
+}
+function isValidCLPhone(phone){
+  const c = cleanPhone(phone).replace(/^\+/,'');
+  // 569XXXXXXXX (11 dígitos) ó 9XXXXXXXX (9 dígitos)
+  return /^(56)?9\d{8}$/.test(c);
+}
+function formatPhone(input){
+  let c = cleanPhone(input.value).replace(/^\+/,'');
+  if (c.startsWith('56') && c.length > 2) c = c.slice(2);
+  if (c.length > 9) c = c.slice(0, 9);
+  // Formato +56 9 XXXX XXXX
+  if (c.length === 0){ input.value = ''; return; }
+  let out = '+56 ';
+  if (c.length >= 1) out += c[0];
+  if (c.length >= 2) out += ' ' + c.slice(1, 5);
+  if (c.length >= 6) out += ' ' + c.slice(5, 9);
+  input.value = out;
+}
+function validatePhone(input){
+  const ok = isValidCLPhone(input.value);
+  const errEl = document.getElementById(input.id + '_err');
+  input.classList.toggle('field-valid', ok && input.value.length > 0);
+  input.classList.toggle('field-invalid', !ok && input.value.length > 0);
+  if (errEl) errEl.style.display = (!ok && input.value.length > 0) ? 'block' : 'none';
+  return ok;
+}
+
+// ════════════════════════════════════════════════════════
+//  DISPONIBILIDAD DE FECHAS Y HORARIOS
+// ════════════════════════════════════════════════════════
 let _disponibilidad = null;
-let _bultoCount = 1;
 
 async function cargarDisponibilidad() {
   try {
     const r = await fetch('/retiros/api/disponibilidad-publica');
     _disponibilidad = await r.json();
-    // Configurar input fecha con min/max
     const fechaInput = document.getElementById('cal_fecha');
-    fechaInput.min = _disponibilidad.from;
+    // Mínimo +24h: si la API devuelve "from" pero es < mañana, ajustamos
+    const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
+    const tomorrowStr = tomorrow.toISOString().slice(0,10);
+    fechaInput.min = (_disponibilidad.from < tomorrowStr) ? tomorrowStr : _disponibilidad.from;
     fechaInput.max = _disponibilidad.to;
     fechaInput.addEventListener('change', onFechaChange);
   } catch (e) {
@@ -175,25 +416,39 @@ function onFechaChange() {
   const fecha = document.getElementById('cal_fecha').value;
   const sel   = document.getElementById('cal_slot');
   const msg   = document.getElementById('cal_fecha_msg');
+
+  // Validar mínimo +24h
+  const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
+  if (fecha && new Date(fecha + 'T00:00:00') < minDate){
+    msg.textContent = '⚠ Necesitamos mínimo 24 horas de anticipación.';
+    msg.style.color = '#dc2626';
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">— Elige una fecha desde mañana —</option>';
+    return;
+  }
+
   document.querySelector('input[name=requested_date]').value = fecha;
   if (!fecha || !_disponibilidad) {
-    sel.disabled = true; sel.innerHTML = '<option value="">— Selecciona fecha primero —</option>';
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">— Selecciona fecha primero —</option>';
     return;
   }
   const dia = _disponibilidad.dias[fecha];
   if (!dia || !dia.disponible) {
-    sel.disabled = true; sel.innerHTML = `<option value="">— ${(dia&&dia.razon)||'Sin disponibilidad'} —</option>`;
-    msg.textContent = (dia && dia.razon) || 'Día sin disponibilidad';
+    sel.disabled = true;
+    sel.innerHTML = `<option value="">— ${(dia&&dia.razon)||'Sin disponibilidad este día'} —</option>`;
+    msg.textContent = '✕ ' + ((dia && dia.razon) || 'Día sin cupos disponibles');
     msg.style.color = '#dc2626';
     return;
   }
-  msg.textContent = `Día disponible · ${dia.slots.filter(s=>s.disponible).length} bloque(s) libre(s)`;
+  const libres = dia.slots.filter(s => s.disponible).length;
+  msg.textContent = `✓ ${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
   msg.style.color = '#16a34a';
   sel.disabled = false;
   sel.innerHTML = '<option value="">— Selecciona bloque —</option>' +
     dia.slots.map(s => {
       const lbl = `${s.hora} (${s.ocupados}/${s.max} ocupados)`;
-      return `<option value="${s.hora}" ${!s.disponible?'disabled':''}>${s.disponible?'✓ ':'✕ '}${lbl}${!s.disponible?' — completo':''}</option>`;
+      return `<option value="${s.hora}" ${!s.disponible?'disabled':''}>${s.disponible?'🟢 ':'⛔ '}${lbl}${!s.disponible?' — completo':''}</option>`;
     }).join('');
   sel.onchange = onSlotChange;
 }
@@ -217,7 +472,28 @@ function onSlotChange() {
   msg.style.color = '#16a34a';
 }
 
-// ── Bultos ──
+// ════════════════════════════════════════════════════════
+//  BULTOS — toggle + cálculo dinámico
+// ════════════════════════════════════════════════════════
+let _bultoCount = 1;
+
+function toggleBultos(){
+  const wrap = document.getElementById('bultosWrap');
+  const btn = document.getElementById('bultosToggle');
+  if (wrap.style.display === 'none'){
+    wrap.style.display = 'block';
+    btn.classList.add('active');
+    btn.innerHTML = '<i class="bi bi-rulers me-2"></i>Editando bultos · clic para ocultar <i class="bi bi-chevron-up ms-2"></i>';
+    document.getElementById('total_packages').value = 1;
+    actualizarBultos();
+  } else {
+    wrap.style.display = 'none';
+    btn.classList.remove('active');
+    btn.innerHTML = '<i class="bi bi-rulers me-2"></i>Tengo las medidas exactas — quiero ingresarlas <i class="bi bi-chevron-down ms-2"></i>';
+    document.getElementById('total_packages').value = 0;
+  }
+}
+
 function addBulto() {
   _bultoCount++;
   const i = _bultoCount;
@@ -226,10 +502,10 @@ function addBulto() {
   row.dataset.idx = i;
   row.innerHTML = `
     <div class="col-1 fw-bold text-center" style="background:#111;color:#fff;border-radius:6px;padding:8px 0">${i}</div>
-    <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_${i}" class="form-control form-control-sm bulto-l" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_${i}" class="form-control form-control-sm bulto-w" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_${i}" class="form-control form-control-sm bulto-h" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_${i}" class="form-control form-control-sm bulto-kg" min="0" step="0.1" placeholder="0"></div>
+    <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+    <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+    <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
+    <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
     <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.bulto-row').remove();actualizarBultos()"><i class="bi bi-trash"></i></button></div>
   `;
   document.getElementById('bultosContainer').appendChild(row);
@@ -241,7 +517,6 @@ function actualizarBultos() {
   const rows = document.querySelectorAll('.bulto-row');
   let kg = 0, m3 = 0;
   rows.forEach((r,i) => {
-    // Renumerar visual
     r.querySelector('.col-1').textContent = i+1;
     const l = parseFloat(r.querySelector('input[name^=length]').value) || 0;
     const w = parseFloat(r.querySelector('input[name^=width]').value) || 0;
@@ -256,65 +531,37 @@ function actualizarBultos() {
   document.getElementById('b_m3').textContent = m3.toFixed(3);
 }
 
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN DEL FORM AL ENVIAR
+// ════════════════════════════════════════════════════════
+document.getElementById('solicitudForm').addEventListener('submit', function(e){
+  // Sincronizar campos hidden requeridos por el backend (compatibilidad)
+  document.getElementById('contact_name').value = document.querySelector('input[name=pickup_person_name]').value;
+  document.getElementById('pickup_person_phone').value = document.getElementById('contact_phone').value;
+
+  const errores = [];
+  if (!isValidRUT(document.getElementById('customer_rut').value))
+    errores.push('RUT del cliente inválido');
+  if (!isValidRUT(document.getElementById('pickup_person_rut').value))
+    errores.push('RUT de la persona que retira inválido');
+  if (!isValidCLPhone(document.getElementById('contact_phone').value))
+    errores.push('Teléfono debe ser chileno (+56 9 XXXX XXXX)');
+
+  if (errores.length){
+    e.preventDefault();
+    alert('Revisa estos errores:\n• ' + errores.join('\n• '));
+    return false;
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   cargarDisponibilidad();
   document.querySelectorAll('.bulto-row input').forEach(inp =>
     inp.addEventListener('input', actualizarBultos));
 });
 </script>
-      </div>
-    </form>
-
-    <section class="info-grid">
-      <div class="info-card">
-        <div class="info-icon"><i class="bi bi-send-check"></i></div>
-        <h5 class="fw-black">1. Envia tu solicitud</h5>
-        <p class="small text-muted mb-0">Ingresa documento, cliente, contacto y persona autorizada. No es una reserva automatica.</p>
-      </div>
-      <div class="info-card">
-        <div class="info-icon"><i class="bi bi-shield-check"></i></div>
-        <h5 class="fw-black">2. Validacion de retiro</h5>
-        <p class="small text-muted mb-0">ILUS revisa la informacion y confirma o propone una alternativa segun disponibilidad.</p>
-      </div>
-      <div class="info-card">
-        <div class="info-icon"><i class="bi bi-envelope-paper"></i></div>
-        <h5 class="fw-black">3. Seguimiento por link</h5>
-        <p class="small text-muted mb-0">Recibiras un enlace para revisar el estado y responder propuestas de agenda.</p>
-      </div>
-    </section>
-
-    <section class="warehouse-strip">
-      <div>
-        <div class="fw-bold"><i class="bi bi-geo-alt-fill text-danger me-2"></i>{{ settings.warehouse_name }}</div>
-        <p>{{ settings.warehouse_addr }}</p>
-      </div>
-      <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-danger fw-bold"><i class="bi bi-map me-1"></i>Abrir mapa</a>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <div class="footer-row">
-      <div>
-        <div class="fw-bold text-white mb-2">Antes de retirar</div>
-        <div class="small">Espera la confirmacion de ILUS. La solicitud queda valida solo cuando ambas partes aceptan fecha y horario.</div>
-      </div>
-      <div class="footer-logo">
-        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
-        <div class="fw-bold text-white">ILUS Fitness</div>
-      </div>
-      <div>
-        <div class="fw-bold text-white mb-2">Al llegar a bodega</div>
-        <div class="small">Presenta documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.</div>
-      </div>
-    </div>
-  </footer>
-
-  {% if settings.alert_enabled and settings.alert_message %}
-  <div class="modal fade" id="pickupAlertModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow"><div class="modal-header bg-dark text-white"><h5 class="modal-title">{{ settings.alert_title }}</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body">{{ settings.alert_message }}</div></div></div>
-  </div>
-  {% endif %}
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  {% if settings.alert_enabled and settings.alert_message %}<script>window.addEventListener('load',()=>new bootstrap.Modal(document.getElementById('pickupAlertModal')).show());</script>{% endif %}
 </body>
 </html>

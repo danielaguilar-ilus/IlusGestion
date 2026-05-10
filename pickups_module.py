@@ -49,6 +49,59 @@ PICKUP_RELATIONS = [
 ]
 
 
+# ── VALIDADORES CHILENOS ──────────────────────────────────────────────
+
+def _clean_rut(rut: str) -> str:
+    """Normaliza RUT: solo números y K, en mayúsculas."""
+    return re.sub(r"[^0-9kK]", "", str(rut or "")).upper()
+
+
+def _calc_dv(num: str) -> str:
+    """Calcula el dígito verificador del RUT (módulo 11)."""
+    suma, mul = 0, 2
+    for ch in reversed(num):
+        suma += int(ch) * mul
+        mul = 2 if mul == 7 else mul + 1
+    r = 11 - (suma % 11)
+    return "0" if r == 11 else "K" if r == 10 else str(r)
+
+
+def is_valid_rut(rut: str) -> bool:
+    """Valida RUT chileno usando módulo 11. Acepta cualquier formato."""
+    c = _clean_rut(rut)
+    if not 8 <= len(c) <= 9:
+        return False
+    num, dv = c[:-1], c[-1]
+    return num.isdigit() and _calc_dv(num) == dv
+
+
+def format_rut(rut: str) -> str:
+    """Formatea RUT como '12.345.678-9'."""
+    c = _clean_rut(rut)
+    if len(c) < 2:
+        return c
+    num, dv = c[:-1], c[-1]
+    rev = "".join(reversed(num))
+    parts = [rev[i:i+3] for i in range(0, len(rev), 3)]
+    return ".".join("".join(reversed(p)) for p in reversed(parts)) + "-" + dv
+
+
+def is_valid_cl_phone(phone: str) -> bool:
+    """Valida teléfono chileno: +56 9 XXXX XXXX (móvil)."""
+    c = re.sub(r"[^\d+]", "", str(phone or "")).lstrip("+")
+    return bool(re.match(r"^(56)?9\d{8}$", c))
+
+
+def format_cl_phone(phone: str) -> str:
+    """Devuelve teléfono normalizado a formato +569XXXXXXXX (sin espacios)."""
+    c = re.sub(r"[^\d+]", "", str(phone or "")).lstrip("+")
+    if c.startswith("56"):
+        c = c[2:]
+    if c.startswith("9") and len(c) == 9:
+        return "+56" + c
+    return phone
+
+
 def register_pickup_routes(app, ctx):
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
@@ -291,18 +344,53 @@ def register_pickup_routes(app, ctx):
             }
             if not data["requested_date"]:
                 data["requested_date"] = next_allowed_date(cfg)
+
+            # Si la persona autorizada es la misma que el contacto, sincronizamos
+            # los campos de respaldo (compatibilidad con flujos antiguos).
+            if not data.get("contact_name") and data.get("pickup_person_name"):
+                data["contact_name"] = data["pickup_person_name"]
+            if not data.get("pickup_person_phone") and data.get("contact_phone"):
+                data["pickup_person_phone"] = data["contact_phone"]
+
             errors = []
-            required = ["document_number", "customer_name", "customer_rut", "contact_name", "contact_email",
-                        "contact_phone", "pickup_person_name", "pickup_person_phone", "requested_time_from",
-                        "requested_time_to"]
+            required = ["document_number", "customer_name", "customer_rut",
+                        "contact_email", "contact_phone",
+                        "pickup_person_name", "pickup_person_rut",
+                        "requested_time_from", "requested_time_to"]
             if any(not data.get(k) for k in required):
                 errors.append("Completa todos los campos obligatorios.")
+
+            # Validación email
             if data["contact_email"] and not EMAIL_RE.match(data["contact_email"]):
-                errors.append("El email no tiene formato valido.")
-            if data["contact_phone"] and not re.match(r"^\+?[0-9\s\-]{7,20}$", data["contact_phone"]):
-                errors.append("El telefono/WhatsApp no tiene formato valido.")
-            if data["whatsapp_phone"] and not re.match(r"^\+?[0-9\s\-]{7,20}$", data["whatsapp_phone"]):
-                errors.append("El WhatsApp no tiene formato valido.")
+                errors.append("El email no tiene formato válido.")
+
+            # Validación teléfono chileno (+56 9)
+            if data["contact_phone"] and not is_valid_cl_phone(data["contact_phone"]):
+                errors.append("El teléfono debe ser un móvil chileno (+56 9 XXXX XXXX).")
+            else:
+                data["contact_phone"] = format_cl_phone(data["contact_phone"])
+                data["pickup_person_phone"] = format_cl_phone(data["pickup_person_phone"] or data["contact_phone"])
+
+            # Validación RUT chileno (cliente y persona autorizada)
+            if data["customer_rut"] and not is_valid_rut(data["customer_rut"]):
+                errors.append("El RUT del cliente no es válido (revisa el dígito verificador).")
+            else:
+                data["customer_rut"] = format_rut(data["customer_rut"])
+
+            if data["pickup_person_rut"] and not is_valid_rut(data["pickup_person_rut"]):
+                errors.append("El RUT de la persona que retira no es válido.")
+            else:
+                data["pickup_person_rut"] = format_rut(data["pickup_person_rut"])
+
+            # Validación fecha mínima +24 horas
+            if data["requested_date"]:
+                try:
+                    fecha_solicitada = datetime.strptime(data["requested_date"], "%Y-%m-%d").date()
+                    fecha_minima = (datetime.now() + timedelta(hours=24)).date()
+                    if fecha_solicitada < fecha_minima:
+                        errors.append("La fecha de retiro debe ser al menos 24 horas después de hoy.")
+                except ValueError:
+                    errors.append("Fecha inválida.")
             ok_date = True
             msg_date = ""
             if data["requested_date"]:
