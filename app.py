@@ -5536,6 +5536,70 @@ def _invalidate_couriers_cache():
     _COURIERS_CACHE["data"] = None
 
 
+# ── Endpoint DEBUG: muestra el RAW del ERP para diagnosticar campos ──
+@app.route("/api/erp/documento-raw", methods=["GET", "POST"])
+@login_required
+def erp_documento_raw():
+    """Devuelve el JSON crudo del ERP Random para diagnosticar qué campos
+    vienen en cada tipo de documento. Útil cuando un documento (ej. 10599
+    de NV) no muestra cliente/dirección — aquí se ve si el problema es
+    falta de campos o nombres distintos."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"error":"Solo admin/superadmin"}), 403
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        tido = (d.get("tido") or "").strip().upper()
+        nudo = (d.get("nudo") or "").strip()
+    else:
+        tido = (request.args.get("tido") or "").strip().upper()
+        nudo = (request.args.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"error":"tido y nudo son obligatorios"}), 400
+
+    # Mapear VD/WEB → NVV con prefijo
+    if tido in _ERP_TIDO_NUDO_MAP:
+        erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
+        erp_nudo = nudo_fn(nudo)
+    else:
+        erp_tido = tido
+        erp_nudo = nudo
+
+    nudos = _nudo_variants(erp_nudo)
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    raw_body = None
+    used_nudo = ""
+    for nv in nudos:
+        try:
+            raw_body = _erp_get(
+                "/documentos/render",
+                {"tido": erp_tido, "nudo": nv, "empresa": "01"},
+                TOKEN, timeout=10,
+            )
+            data = raw_body.get("data") or []
+            if data:
+                used_nudo = nv
+                break
+        except Exception as exc:
+            return jsonify({"error": f"ERP no respondió: {exc}"}), 503
+
+    if not raw_body or not raw_body.get("data"):
+        return jsonify({"error": "Documento no encontrado"}), 404
+
+    raw_header = raw_body["data"][0].get("maeedo") or {}
+    raw_lineas = raw_body["data"][0].get("maeddo") or []
+
+    return jsonify({
+        "tido_buscado":    tido,
+        "tido_erp":        erp_tido,
+        "nudo_buscado":    nudo,
+        "nudo_usado":      used_nudo,
+        "header_keys":     sorted(raw_header.keys()),
+        "header":          raw_header,
+        "n_lineas":        len(raw_lineas),
+        "primera_linea":   raw_lineas[0] if raw_lineas else None,
+    })
+
+
 # ── Endpoint UNIFICADO de búsqueda de documentos ERP ──────────────────
 # Reutilizable desde Cubicador, Asignar/Cotizar y Mantenciones (repuestos)
 @app.route("/api/erp/documento", methods=["GET","POST"])
@@ -5654,21 +5718,25 @@ def _cubicador_fetch(tido, nudo):
         return None, []
 
     # ── 2. Datos completos del cliente (entidades) ─────────────────────
-    # Para NV (VD/WEB) el campo ENDO a veces viene vacío; probamos varios
-    # campos del header como fallback.
-    endo_candidates = [
-        raw_header.get("ENDO"),
-        raw_header.get("RTEN"),     # rut entidad
-        raw_header.get("RUT"),      # variante
-        raw_header.get("CLEN"),     # codigo cliente
-        raw_header.get("ENDODESP"), # entidad despacho
-        raw_header.get("RTENDESP"), # rut despacho
-    ]
-    endo = ""
-    for cand in endo_candidates:
-        if cand and str(cand).strip():
-            endo = str(cand).strip()
-            break
+    # Para NV (VD/WEB) y algunos documentos del ERP Random los campos
+    # cambian de nombre. Probamos MUCHAS variantes para maximizar la
+    # captura de datos sin importar el tipo de documento.
+
+    # Helper para buscar valor entre múltiples claves del header
+    def _hdr(*keys):
+        for k in keys:
+            v = raw_header.get(k) or raw_header.get(k.lower())
+            if v and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    # RUT del cliente — buscar en muchos campos posibles
+    endo = _hdr(
+        "ENDO", "RTEN", "RUT", "CLEN",
+        "ENDODESP", "RTENDESP",
+        "RTENDO", "RUTEN", "RUTEMP",        # variantes adicionales
+        "RUTCLI", "ENDOFAC", "ENDOEMI",     # más variantes
+    )
 
     cliente_nombre  = ""
     cliente_rut     = endo
@@ -5680,13 +5748,32 @@ def _cubicador_fetch(tido, nudo):
     cliente_obs     = ""
     cliente_comuna_nombre = ""
 
-    # También extraemos lo que ya viene en el HEADER del documento
-    # (algunos campos están duplicados ahí y son fallback útil para NV)
-    header_nombre  = (raw_header.get("NOKOEN") or raw_header.get("NRAZON") or "").strip().title()
-    header_email   = (raw_header.get("EMAIL")  or raw_header.get("EMAILEN") or "").strip()
-    header_fono    = (raw_header.get("FOEN")   or raw_header.get("FONOEN")  or "").strip()
-    header_dir     = (raw_header.get("DIEN")   or raw_header.get("DIRECEN") or "").strip().title()
-    header_obs     = (raw_header.get("OBEN")   or raw_header.get("OBENEN")  or raw_header.get("OBDO") or "").strip()
+    # ── FALLBACKS DEL HEADER (para NV/ventas directas/web) ──────────────
+    # Buscamos en muchas variantes porque el ERP Random a veces nombra
+    # los campos distinto según el tipo de documento.
+    header_nombre = _hdr(
+        "NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL",
+        "NRAZONSOC", "NRAZONFINAL", "RAZON",
+        "NOKEN", "NOKO", "NOMBRE", "NOMENDO",
+    ).title() if _hdr("NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL", "NRAZONSOC", "NRAZONFINAL", "RAZON", "NOKEN", "NOKO", "NOMBRE", "NOMENDO") else ""
+
+    header_email = _hdr(
+        "EMAIL", "EMAILEN", "EMAILCOMER", "MAIL", "MAILEN",
+        "CORREO", "EMAILCLI", "EMAILDESP", "MAILCOMERCIAL",
+    )
+    header_fono = _hdr(
+        "FOEN", "FONOEN", "TELEFONOEN", "FONO", "TEL",
+        "TELEFONO", "FONOMOVIL", "CELULAR", "FAEN",
+    )
+    header_dir = _hdr(
+        "DIEN", "DIRECEN", "DIRECCION", "DIENDESP", "DIENDE",
+        "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP",
+    ).title() if _hdr("DIEN", "DIRECEN", "DIRECCION", "DIENDESP", "DIENDE", "DIRENDESP", "DIRECCIONEN", "DIRECCIONDESP") else ""
+
+    header_obs = _hdr(
+        "OBEN", "OBENEN", "OBDO", "OBSERVACIONES",
+        "OBSCLI", "OBSDOC", "NOTAS", "COMENTARIO",
+    )
 
     if endo:
         # Cache de entidades (TTL 5 min)

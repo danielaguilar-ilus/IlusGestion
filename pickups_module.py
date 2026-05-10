@@ -468,17 +468,33 @@ def register_pickup_routes(app, ctx):
             if not data["requested_date"]:
                 data["requested_date"] = next_allowed_date(cfg)
 
-            # Si la persona autorizada es la misma que el contacto, sincronizamos
-            # los campos de respaldo (compatibilidad con flujos antiguos).
-            if not data.get("contact_name") and data.get("pickup_person_name"):
-                data["contact_name"] = data["pickup_person_name"]
-            if not data.get("pickup_person_phone") and data.get("contact_phone"):
-                data["pickup_person_phone"] = data["contact_phone"]
+            # ──────────────────────────────────────────────────────────────
+            # FORMULARIO SIMPLIFICADO (a pedido):
+            # La persona autorizada es OPCIONAL. Si el cliente NO marca el
+            # toggle, asumimos que el cliente mismo retira → copiamos sus
+            # datos a los campos pickup_person_*.
+            # ──────────────────────────────────────────────────────────────
+            auth_active = (form.get("auth_active") or "0") == "1"
+            if not auth_active or not data.get("pickup_person_name"):
+                # El cliente retira por sí mismo
+                data["pickup_person_name"]     = data.get("customer_name") or ""
+                data["pickup_person_rut"]      = data.get("customer_rut") or ""
+                data["pickup_person_phone"]    = data.get("contact_phone") or ""
+                data["pickup_person_relation"] = "dueno"
+            else:
+                # Cliente autorizó a un tercero — completar campos faltantes con respaldos
+                if not data.get("pickup_person_phone"):
+                    data["pickup_person_phone"] = data.get("contact_phone") or ""
+                if not data.get("pickup_person_rut"):
+                    data["pickup_person_rut"] = data.get("customer_rut") or ""
+
+            # contact_name es el "nombre de quien retira" (puede ser el cliente o el autorizado)
+            if not data.get("contact_name"):
+                data["contact_name"] = data.get("pickup_person_name") or data.get("customer_name") or ""
 
             errors = []
             required = ["document_number", "customer_name", "customer_rut",
                         "contact_email", "contact_phone",
-                        "pickup_person_name", "pickup_person_rut",
                         "requested_time_from", "requested_time_to"]
             if any(not data.get(k) for k in required):
                 errors.append("Completa todos los campos obligatorios.")
@@ -500,9 +516,11 @@ def register_pickup_routes(app, ctx):
             else:
                 data["customer_rut"] = format_rut(data["customer_rut"])
 
-            if data["pickup_person_rut"] and not is_valid_rut(data["pickup_person_rut"]):
+            # El RUT del autorizado se valida solo si el cliente activó el toggle
+            # y lo escribió. Si no lo escribió, usamos el del cliente como respaldo.
+            if auth_active and data["pickup_person_rut"] and not is_valid_rut(data["pickup_person_rut"]):
                 errors.append("El RUT de la persona que retira no es válido.")
-            else:
+            elif data["pickup_person_rut"] and is_valid_rut(data["pickup_person_rut"]):
                 data["pickup_person_rut"] = format_rut(data["pickup_person_rut"])
 
             # Validación fecha mínima +24 horas

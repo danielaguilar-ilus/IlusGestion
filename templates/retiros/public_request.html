@@ -137,10 +137,19 @@
     .field-invalid{border-color:#dc2626 !important;background:#fef2f2}
     .form-control,.form-select{font-size:.92rem;padding:10px 12px}
 
-    /* Toggle bultos */
-    .toggle-bultos{background:#f9fafb;border:2px dashed #d1d5db;border-radius:10px;padding:14px 18px;cursor:pointer;text-align:center;font-weight:600;font-size:.86rem;color:#374151;transition:all .15s;width:100%;display:flex;align-items:center;justify-content:center;gap:10px}
-    .toggle-bultos:hover{background:#fff;border-color:#0a0a0a;color:#0a0a0a}
-    .toggle-bultos.active{background:#fff;border-color:var(--ilus-red);border-style:solid;color:var(--ilus-red)}
+    /* Toggle "Autorizar a otra persona" */
+    .auth-toggle{
+      background:#f9fafb;border:2px dashed #d1d5db;border-radius:10px;padding:13px 16px;
+      cursor:pointer;display:flex;align-items:center;gap:10px;transition:all .15s;
+    }
+    .auth-toggle:hover{background:#fff;border-color:#0a0a0a}
+    .auth-toggle.active{background:#fff;border-color:var(--ilus-red);border-style:solid}
+    .auth-toggle input[type=checkbox]{flex-shrink:0;cursor:pointer}
+    .auth-toggle-text{flex:1;font-size:.88rem;color:#374151}
+    .auth-toggle-text strong{display:block;color:#0a0a0a}
+    .auth-toggle-text .auth-toggle-sub{font-size:.74rem;color:#6b7280;margin-top:2px;display:block}
+    .auth-toggle-icon{transition:transform .25s;color:#9ca3af}
+    .auth-toggle.active .auth-toggle-icon{transform:rotate(180deg);color:var(--ilus-red)}
 
     /* ════════════════════════════════════════════════════════════
        SELECTOR DE BLOQUE HORARIO INTELIGENTE — grid de slots
@@ -451,13 +460,13 @@
         </div>
         {% endif %}
 
-        {# ── 1. Documento ─────────────────────────────────────── #}
+        {# ── 1. Documento + datos del cliente ──────────────────── #}
         <div class="section-mark">
           <span class="sm-num">1</span>
           <h5>Documento del retiro</h5>
-          <span class="sm-help">El que respalda tus productos</span>
+          <span class="sm-help">Datos para validar y avisarte</span>
         </div>
-        <div class="row g-3 mb-4">
+        <div class="row g-3 mb-3">
           <div class="col-md-3">
             <label class="form-label small fw-bold">Tipo <span class="req">*</span></label>
             <select name="document_type" class="form-select" required>
@@ -487,34 +496,6 @@
             <div class="input-help">Con dígito verificador</div>
             <div class="input-error" id="customer_rut_err">RUT inválido — revisa el dígito</div>
           </div>
-        </div>
-
-        {# ── 2. Persona autorizada ─────────────────────────────── #}
-        <div class="section-mark">
-          <span class="sm-num">2</span>
-          <h5>Persona autorizada para retirar</h5>
-          <span class="sm-help">Le enviaremos el seguimiento</span>
-        </div>
-        <div class="row g-3 mb-4">
-          <div class="col-md-6">
-            <label class="form-label small fw-bold">Nombre completo <span class="req">*</span></label>
-            <input name="pickup_person_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" required placeholder="Juan Pérez González">
-            <div class="input-help">Mismo que aparece en el carnet</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">RUT <span class="req">*</span></label>
-            <input name="pickup_person_rut" id="pickup_person_rut" class="form-control"
-                   value="{{ fd.get('pickup_person_rut','') }}"
-                   placeholder="11.111.111-1" required oninput="formatRUT(this)" onblur="validateRUT(this)">
-            <div class="input-error" id="pickup_person_rut_err">RUT inválido</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">Relación</label>
-            <select name="pickup_person_relation" class="form-select">
-              {% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}
-            </select>
-          </div>
-
           <div class="col-md-6">
             <label class="form-label small fw-bold">Email <span class="req">*</span></label>
             <input name="contact_email" id="contact_email" type="email" class="form-control"
@@ -528,14 +509,56 @@
                    placeholder="+56 9 1234 5678" required oninput="formatPhone(this)" onblur="validatePhone(this)">
             <div class="input-help">Móvil chileno: +56 9 XXXX XXXX</div>
             <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
-            <input type="hidden" name="pickup_person_phone" id="pickup_person_phone">
-            <input type="hidden" name="contact_name" id="contact_name">
           </div>
         </div>
 
-        {# ── 3. Fecha y horario INTELIGENTE ─────────────────── #}
+        {# ── Toggle OPCIONAL: ¿Autorizo a otra persona? ──────── #}
+        <div class="mb-4">
+          <div class="auth-toggle" onclick="toggleAutorizado()" id="authToggle">
+            <input type="checkbox" id="authCheckbox" class="form-check-input me-2" onclick="event.stopPropagation();toggleAutorizado()">
+            <span class="auth-toggle-text">
+              <strong>¿Quieres autorizar a otra persona para que retire?</strong>
+              <span class="auth-toggle-sub">Marca esta casilla solo si <u>no</u> retiras tú mismo.</span>
+            </span>
+            <i class="bi bi-chevron-down auth-toggle-icon" id="authToggleIcon"></i>
+          </div>
+
+          <div id="authFields" style="display:none">
+            <div class="row g-3 mt-1 p-3 rounded-3" style="background:#fff8f8;border:1px solid #fecaca">
+              <div class="col-md-5">
+                <label class="form-label small fw-bold">Nombre completo del autorizado</label>
+                <input name="pickup_person_name" id="auth_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" placeholder="Juan Pérez González">
+                <div class="input-help">Mismo que aparece en el carnet</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-bold">RUT</label>
+                <input name="pickup_person_rut" id="pickup_person_rut" class="form-control"
+                       value="{{ fd.get('pickup_person_rut','') }}"
+                       placeholder="11.111.111-1" oninput="formatRUT(this)" onblur="validateRUT(this)">
+                <div class="input-error" id="pickup_person_rut_err">RUT inválido</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Teléfono</label>
+                <input name="pickup_person_phone" id="auth_phone" type="tel" class="form-control"
+                       value="{{ fd.get('pickup_person_phone','') }}"
+                       placeholder="+56 9 1234 5678" oninput="formatPhone(this)" onblur="validatePhone(this)">
+              </div>
+              <div class="col-md-12">
+                <label class="form-label small fw-bold">Relación con el cliente</label>
+                <select name="pickup_person_relation" class="form-select">
+                  {% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}
+                </select>
+                <div class="input-help">Ej: chofer, transporte externo, familiar autorizado…</div>
+              </div>
+            </div>
+          </div>
+          <input type="hidden" name="contact_name" id="contact_name">
+          <input type="hidden" id="auth_active" name="auth_active" value="0">
+        </div>
+
+        {# ── 2. Fecha y horario INTELIGENTE ─────────────────── #}
         <div class="section-mark">
-          <span class="sm-num">3</span>
+          <span class="sm-num">2</span>
           <h5>Fecha y horario</h5>
           <span class="sm-help">Mínimo +24h · Selecciona rango</span>
         </div>
@@ -582,39 +605,10 @@
           </div>
         </div>
 
-        {# ── 4. Bultos (opcional, colapsado) ────────────────────── #}
-        <div class="section-mark">
-          <span class="sm-num">4</span>
-          <h5>Bultos a retirar <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h5>
-          <span class="sm-help">Si conoces las medidas</span>
-        </div>
-        <div class="mb-4">
-          <div class="toggle-bultos" id="bultosToggle" onclick="toggleBultos()">
-            <i class="bi bi-rulers"></i>
-            <span id="bultosToggleText">Tengo las medidas exactas — quiero ingresarlas</span>
-            <i class="bi bi-chevron-down" id="bultosToggleIcon"></i>
-          </div>
+        {# Bultos a retirar — ELIMINADO (a pedido). Backend usará 0 bultos. #}
+        <input type="hidden" name="total_packages" id="total_packages" value="0">
 
-          <div id="bultosWrap" style="display:none;margin-top:14px">
-            <div id="bultosContainer">
-              <div class="row g-2 align-items-end mb-2 bulto-row" data-idx="1">
-                <div class="col-1 fw-bold text-center" style="background:#0a0a0a;color:#fff;border-radius:6px;padding:8px 0">1</div>
-                <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-                <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-                <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-                <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_1" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-                <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled><i class="bi bi-trash"></i></button></div>
-              </div>
-            </div>
-            <div class="d-flex gap-2 mt-2">
-              <button type="button" class="btn btn-sm btn-outline-dark" onclick="addBulto()"><i class="bi bi-plus-lg me-1"></i>Agregar bulto</button>
-              <div class="ms-auto small text-muted" id="bultosResumen"><strong id="b_count">1</strong> bulto · <strong id="b_kg">0</strong> kg · <strong id="b_m3">0</strong> m³</div>
-            </div>
-          </div>
-          <input type="hidden" name="total_packages" id="total_packages" value="0">
-        </div>
-
-        {# ── 5. Aceptar y enviar — Declaración con diseño atractivo ──── #}
+        {# ── 3. Aceptar y enviar — Declaración con diseño atractivo ──── #}
         <div class="declaracion-box">
           <label class="declaracion-label" for="acceptTerms">
             <span class="dec-check">
@@ -944,77 +938,60 @@ function updateSlotSummary(){
 }
 
 // ════════════════════════════════════════════════════════
-//  BULTOS — toggle + cálculo dinámico
+//  TOGGLE: ¿Autorizar a otra persona?
 // ════════════════════════════════════════════════════════
-let _bultoCount = 1;
-function toggleBultos(){
-  const wrap = document.getElementById('bultosWrap');
-  const btn = document.getElementById('bultosToggle');
-  const txt = document.getElementById('bultosToggleText');
-  const ico = document.getElementById('bultosToggleIcon');
-  if (wrap.style.display === 'none'){
-    wrap.style.display = 'block';
-    btn.classList.add('active');
-    txt.textContent = 'Editando bultos · clic para ocultar';
-    ico.className = 'bi bi-chevron-up';
-    document.getElementById('total_packages').value = 1;
-    actualizarBultos();
-  } else {
-    wrap.style.display = 'none';
-    btn.classList.remove('active');
-    txt.textContent = 'Tengo las medidas exactas — quiero ingresarlas';
-    ico.className = 'bi bi-chevron-down';
-    document.getElementById('total_packages').value = 0;
+function toggleAutorizado(){
+  const cb = document.getElementById('authCheckbox');
+  const wrap = document.getElementById('authToggle');
+  const fields = document.getElementById('authFields');
+  const flag = document.getElementById('auth_active');
+  // Si fue click en el div, alternamos el checkbox
+  if (event && event.target && event.target.id !== 'authCheckbox'){
+    cb.checked = !cb.checked;
   }
-}
-function addBulto(){
-  _bultoCount++;
-  const i = _bultoCount;
-  const row = document.createElement('div');
-  row.className = 'row g-2 align-items-end mb-2 bulto-row';
-  row.dataset.idx = i;
-  row.innerHTML = `
-    <div class="col-1 fw-bold text-center" style="background:#0a0a0a;color:#fff;border-radius:6px;padding:8px 0">${i}</div>
-    <div class="col"><label class="form-label small">Largo (cm)</label><input type="number" name="length_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Ancho (cm)</label><input type="number" name="width_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Alto (cm)</label><input type="number" name="height_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-    <div class="col"><label class="form-label small">Peso (kg)</label><input type="number" name="weight_${i}" class="form-control form-control-sm" min="0" step="0.1" placeholder="0"></div>
-    <div class="col-auto"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.bulto-row').remove();actualizarBultos()"><i class="bi bi-trash"></i></button></div>
-  `;
-  document.getElementById('bultosContainer').appendChild(row);
-  row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', actualizarBultos));
-  actualizarBultos();
-}
-function actualizarBultos(){
-  const rows = document.querySelectorAll('.bulto-row');
-  let kg = 0, m3 = 0;
-  rows.forEach((r,i) => {
-    r.querySelector('.col-1').textContent = i+1;
-    const l = parseFloat(r.querySelector('input[name^=length]').value) || 0;
-    const w = parseFloat(r.querySelector('input[name^=width]').value) || 0;
-    const h = parseFloat(r.querySelector('input[name^=height]').value) || 0;
-    const k = parseFloat(r.querySelector('input[name^=weight]').value) || 0;
-    kg += k;
-    m3 += (l*w*h) / 1000000;
-  });
-  document.getElementById('total_packages').value = rows.length;
-  document.getElementById('b_count').textContent = rows.length;
-  document.getElementById('b_kg').textContent = kg.toFixed(1);
-  document.getElementById('b_m3').textContent = m3.toFixed(3);
+  if (cb.checked){
+    fields.style.display = 'block';
+    wrap.classList.add('active');
+    flag.value = '1';
+  } else {
+    fields.style.display = 'none';
+    wrap.classList.remove('active');
+    flag.value = '0';
+    // Limpiar campos al desactivar para que no se envíen
+    document.getElementById('auth_name').value = '';
+    document.getElementById('pickup_person_rut').value = '';
+    document.getElementById('auth_phone').value = '';
+  }
 }
 
 // ════════════════════════════════════════════════════════
 //  VALIDACIÓN AL ENVIAR
 // ════════════════════════════════════════════════════════
 document.getElementById('form-solicitud').addEventListener('submit', function(e){
-  document.getElementById('contact_name').value = document.querySelector('input[name=pickup_person_name]').value;
-  document.getElementById('pickup_person_phone').value = document.getElementById('contact_phone').value;
+  // Si NO autorizó a otra persona, copiar datos del cliente al "autorizado"
+  // (en backend se asume que el cliente mismo retira)
+  const authActive = document.getElementById('auth_active').value === '1';
+  if (!authActive){
+    // El "contact_name" es el del cliente — usar customer_name
+    document.getElementById('contact_name').value = document.querySelector('input[name=customer_name]').value;
+  } else {
+    // El "contact_name" sería el del autorizado
+    document.getElementById('contact_name').value = document.getElementById('auth_name').value;
+  }
 
   const errores = [];
   if (!isValidRUT(document.getElementById('customer_rut').value))
     errores.push('RUT del cliente inválido');
-  if (!isValidRUT(document.getElementById('pickup_person_rut').value))
-    errores.push('RUT de la persona que retira inválido');
+
+  // Validar autorizado SOLO si está activo el toggle
+  if (authActive){
+    const authRut = document.getElementById('pickup_person_rut').value;
+    const authName = document.getElementById('auth_name').value.trim();
+    if (!authName) errores.push('Nombre del autorizado obligatorio');
+    if (authRut && !isValidRUT(authRut))
+      errores.push('RUT del autorizado inválido');
+  }
+
   if (!isValidCLPhone(document.getElementById('contact_phone').value))
     errores.push('Teléfono debe ser chileno (+56 9 XXXX XXXX)');
   if (!document.querySelector('input[name=requested_time_from]').value)
@@ -1029,8 +1006,6 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
 
 document.addEventListener('DOMContentLoaded', () => {
   cargarDisponibilidad();
-  document.querySelectorAll('.bulto-row input').forEach(inp =>
-    inp.addEventListener('input', actualizarBultos));
 });
 </script>
 </body>
