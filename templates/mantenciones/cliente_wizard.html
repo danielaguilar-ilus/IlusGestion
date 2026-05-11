@@ -2847,10 +2847,25 @@ async function crearCliente(){
   // Notas
   fd.append('notas',           $v('s1_notas'));
   fd.append('estado',          document.getElementById('s1_estado').value);
-  const r=await fetch('/mantenciones/clientes/nuevo',{method:'POST',headers:{'X-Wizard':'1'},body:fd});
-  const data=await r.json();
-  if(data.ok){WZ.cid=data.id;return true;}
-  alert('Error al crear cliente');return false;
+  let r, data;
+  try {
+    r = await fetch('/mantenciones/clientes/nuevo',{method:'POST',headers:{'X-Wizard':'1'},body:fd});
+  } catch(e) {
+    alert(`No se pudo conectar con el servidor.\n\nError: ${e.message || e}\n\nVerifica tu conexión a internet e intenta nuevamente.`);
+    return false;
+  }
+  try { data = await r.json(); } catch(_) { data = null; }
+  if (data && data.ok) { WZ.cid = data.id; return true; }
+
+  // Mostrar el error específico del backend (validación de RUT, email, duplicado, etc.)
+  const errMsg = (data && data.error) || `HTTP ${r.status} ${r.statusText}` || 'Error desconocido';
+  let detalle = '';
+  if (data && data.duplicate_id) {
+    detalle = `\n\nYa existe un cliente con ese RUT (ID ${data.duplicate_id}).\nPuedes abrir esa ficha en vez de crear uno nuevo.`;
+  }
+  alert(`No se pudo crear el cliente:\n\n${errMsg}${detalle}\n\nRevisa los campos del paso 1 (Razón social, RUT, emails).`);
+  console.error('[crearCliente] error backend:', data, 'status:', r?.status);
+  return false;
 }
 async function subirContrato(){
   const arch = WZ.archivoContrato || document.getElementById('ct_archivo').files[0];
