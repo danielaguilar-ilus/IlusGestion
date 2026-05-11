@@ -1394,6 +1394,113 @@ def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  VALIDACIONES DE DATOS — para uso con datos reales del cliente
+# ══════════════════════════════════════════════════════════════════════
+
+def normalizar_rut(rut):
+    """Normaliza RUT chileno: '12.345.678-9' → '123456789'.
+    Devuelve None si vacío. Conserva el dígito verificador como último char."""
+    if not rut:
+        return None
+    s = str(rut).strip().upper()
+    if not s:
+        return None
+    # Quitar puntos, guiones, espacios
+    return s.replace(".", "").replace("-", "").replace(" ", "")
+
+
+def formatear_rut(rut_normalizado):
+    """Da formato chileno con puntos y guión: '123456789' → '12.345.678-9'."""
+    rut = normalizar_rut(rut_normalizado)
+    if not rut or len(rut) < 2:
+        return rut or ""
+    num, dv = rut[:-1], rut[-1]
+    # Insertar puntos cada 3 dígitos
+    num_rev = num[::-1]
+    chunks = [num_rev[i:i+3] for i in range(0, len(num_rev), 3)]
+    num_fmt = ".".join(chunks)[::-1]
+    return f"{num_fmt}-{dv}"
+
+
+def validar_rut(rut):
+    """Valida RUT chileno con dígito verificador (algoritmo módulo 11).
+    Acepta cualquier formato (con/sin puntos, con/sin guión).
+    Devuelve (True, rut_normalizado) o (False, mensaje_error)."""
+    rut_norm = normalizar_rut(rut)
+    if not rut_norm:
+        return False, "RUT vacío"
+    if len(rut_norm) < 2:
+        return False, "RUT muy corto"
+    if len(rut_norm) > 12:
+        return False, "RUT muy largo"
+    num, dv = rut_norm[:-1], rut_norm[-1]
+    if not num.isdigit():
+        return False, "RUT contiene caracteres no numéricos"
+    if dv not in "0123456789K":
+        return False, "Dígito verificador inválido"
+
+    # Calcular DV esperado con módulo 11
+    suma = 0
+    multiplicador = 2
+    for d in reversed(num):
+        suma += int(d) * multiplicador
+        multiplicador = 2 if multiplicador == 7 else multiplicador + 1
+    resto = suma % 11
+    dv_esperado = 11 - resto
+    if dv_esperado == 11:
+        dv_esperado = "0"
+    elif dv_esperado == 10:
+        dv_esperado = "K"
+    else:
+        dv_esperado = str(dv_esperado)
+
+    if dv != dv_esperado:
+        return False, f"Dígito verificador inválido (esperado: {dv_esperado})"
+    return True, rut_norm
+
+
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def validar_email(email):
+    """Valida formato básico de email. Devuelve (True, email_normalizado) o (False, error)."""
+    if not email:
+        return True, None  # email es opcional
+    e = str(email).strip().lower()
+    if not e:
+        return True, None
+    if len(e) > 200:
+        return False, "Email muy largo (máx 200 caracteres)"
+    if not _EMAIL_RE.match(e):
+        return False, "Formato de email inválido"
+    return True, e
+
+
+def normalizar_telefono(tel):
+    """Normaliza teléfono chileno: quita espacios, paréntesis, etc.
+    Acepta '+56 9 1234 5678', '9 1234 5678', '912345678', etc.
+    Devuelve número limpio con prefijo +56 si aplica."""
+    if not tel:
+        return None
+    s = str(tel).strip()
+    if not s:
+        return None
+    # Mantener solo dígitos y el '+' inicial
+    s_clean = "".join(c for c in s if c.isdigit() or c == "+")
+    if not s_clean:
+        return None
+    # Si no empieza con +, agregar +56 si parece chileno
+    if not s_clean.startswith("+"):
+        # 9XXXXXXXX (móvil chileno: 9 dígitos sin código país)
+        if len(s_clean) == 9 and s_clean.startswith("9"):
+            return "+56" + s_clean
+        if len(s_clean) == 8:  # fijo Santiago 8 dígitos
+            return "+562" + s_clean
+        return s_clean  # devolver tal cual si no matchea
+    return s_clean
+
+
 def delete_photo_file(filename):
     """Elimina foto local o de Cloudinary según el contenido de filename."""
     _cloud_delete(filename)
@@ -11731,6 +11838,25 @@ def init_mantenciones_tables():
                 # app_products: filtrar por estado / created_by sin full scan
                 f"CREATE INDEX idx_prod_estado ON `{PRODUCTS_TABLE}` (estado)",
                 f"CREATE INDEX idx_prod_created_by ON `{PRODUCTS_TABLE}` (created_by)",
+                # ── REFORZAMIENTOS DE INTEGRIDAD (datos reales) ────────────────
+                # Previene duplicados de cliente con mismo RUT
+                # NOTA: en MySQL, índice UNIQUE permite múltiples NULL (lo que queremos
+                # para clientes sin RUT). Solo bloquea duplicados con RUT presente.
+                "CREATE UNIQUE INDEX uq_mc_rut ON mant_clientes (rut)",
+                # Performance en módulo OT (queries frecuentes)
+                "CREATE INDEX idx_vt_visita_completada ON mant_visita_tareas (visita_id, completada)",
+                "CREATE INDEX idx_vf_visita_tipo ON mant_visita_fotos (visita_id, tipo_foto)",
+                "CREATE INDEX idx_vfo_visita_tomada ON mant_visita_fotos (visita_id, tomada_at)",
+                # mant_maquinas: buscar por serie (búsqueda diaria en sala)
+                "CREATE INDEX idx_mm_serie ON mant_maquinas (serie)",
+                "CREATE INDEX idx_mm_sku ON mant_maquinas (sku)",
+                "CREATE INDEX idx_mm_cliente_estado ON mant_maquinas (cliente_id, estado)",
+                # mant_logs: trazabilidad por usuario
+                "CREATE INDEX idx_logs_usuario_fecha ON mant_logs (usuario, created_at)",
+                # mant_visitas: lookup por numero_ot
+                "CREATE INDEX idx_v_numero_ot ON mant_visitas (numero_ot)",
+                # mant_sucursales: lookup principal por cliente
+                "CREATE INDEX idx_ms_cliente_principal ON mant_sucursales (cliente_id, es_principal)",
             ]:
                 try:
                     cur.execute(idx_sql)
@@ -12263,6 +12389,139 @@ def _mant_actualizar_estado_contratos(force=False):
         _MANT_ESTADOS_LAST_RUN = now
     except Exception:
         pass
+
+
+# ══════════════════════════════════════════════════════════════════════
+# RESET DATOS DE MANTENCIONES (solo superadmin)
+#
+# Wipe completo y atómico para transición de datos demo → datos reales.
+# Borra: clientes (CASCADE: contratos, visitas, maquinas, sucursales,
+#         visita_tareas, visita_fotos, visita_tecnicos, visita_repuestos,
+#         adjuntos, maquina_fotos)
+#       + logs + maquina_audit
+# Conserva: técnicos (trabajadores reales), tablas de configuración.
+# Resetea AUTO_INCREMENT para empezar IDs desde 1.
+# Borra opcionalmente los archivos físicos de static/uploads/mantenciones/
+#
+# Doble confirmación requerida: body JSON {"confirm":"RESET"}.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/admin/mantenciones/reset", methods=["POST"])
+@login_required
+def admin_mantenciones_reset():
+    """Borra todos los datos transaccionales de mantenciones. SOLO superadmin."""
+    # Doble check de permisos (no usamos require_permission porque queremos
+    # ser estrictos: SOLO superadmin)
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede ejecutar este reset."}), 403
+
+    body = request.get_json(silent=True) or {}
+    if (body.get("confirm") or "").strip() != "RESET":
+        return jsonify({"ok": False,
+                        "error": "Confirmación incorrecta. Enviar {\"confirm\":\"RESET\"} en el body."}), 400
+
+    user = current_username() or "sistema"
+    incluir_archivos = bool(body.get("borrar_archivos", True))
+
+    # Snapshot de contadores ANTES de borrar (para reporte al usuario)
+    counts_before = {}
+    try:
+        for t in ("mant_clientes", "mant_contratos", "mant_visitas", "mant_maquinas",
+                  "mant_visita_tareas", "mant_visita_fotos", "mant_visita_tecnicos",
+                  "mant_visita_repuestos", "mant_sucursales", "mant_adjuntos",
+                  "mant_maquina_fotos", "mant_maquina_audit", "mant_logs"):
+            try:
+                r = mysql_fetchone(f"SELECT COUNT(*) AS n FROM {t}")
+                counts_before[t] = int(r.get("n", 0)) if r else 0
+            except Exception:
+                counts_before[t] = None  # tabla no existe
+
+    except Exception:
+        pass
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Apagar FK checks para limpiar en cualquier orden de manera segura
+            cur.execute("SET FOREIGN_KEY_CHECKS = 0")
+            try:
+                # Orden: hijo → padre. Por si alguna FK no es CASCADE perfecta.
+                for t in (
+                    "mant_logs",
+                    "mant_maquina_audit",
+                    "mant_visita_repuestos",
+                    "mant_visita_fotos",
+                    "mant_visita_tareas",
+                    "mant_visita_tecnicos",
+                    "mant_maquina_fotos",
+                    "mant_adjuntos",
+                    "mant_visitas",
+                    "mant_maquinas",
+                    "mant_contratos",
+                    "mant_sucursales",
+                    "mant_clientes",
+                ):
+                    try:
+                        cur.execute(f"DELETE FROM {t}")
+                    except Exception:
+                        pass  # tabla no existe → skip
+                    try:
+                        cur.execute(f"ALTER TABLE {t} AUTO_INCREMENT = 1")
+                    except Exception:
+                        pass
+
+                # Re-activar FK checks
+                cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+
+                # Log de auditoría (en mant_logs ya vaciada, pero queda como primera entrada)
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                    "VALUES ('cliente', 0, 'reset_datos', %s, %s)",
+                    (f"Reset completo ejecutado. Snapshot anterior: {json.dumps(counts_before)}", user)
+                )
+            finally:
+                # Garantizar que FK checks queden activos pase lo que pase
+                try: cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+                except Exception: pass
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error al borrar: {e}"}), 500
+    finally:
+        conn.close()
+
+    # Borrar archivos físicos de fotos (opcional pero recomendado)
+    archivos_borrados = 0
+    if incluir_archivos:
+        try:
+            import shutil
+            fotos_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "static", "uploads", "mantenciones"
+            )
+            if os.path.isdir(fotos_dir):
+                # Contar archivos antes de borrar
+                for root, _, files in os.walk(fotos_dir):
+                    archivos_borrados += len(files)
+                shutil.rmtree(fotos_dir, ignore_errors=True)
+                os.makedirs(fotos_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    # Recargar tablas vacías para garantizar schema
+    try:
+        init_mantenciones_tables()
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "mensaje": "Datos de mantenciones limpiados. Listo para entrar datos reales.",
+        "borrado": counts_before,
+        "archivos_borrados": archivos_borrados,
+        "usuario": user,
+    })
 
 
 # ── DECORATOR de acceso ────────────────────────────────────────────────
@@ -12952,42 +13211,115 @@ def mant_contrato_ai_editar(ctid):
 def mant_cliente_nuevo():
     if request.method == "POST":
         d = request.form
+        is_wizard = request.headers.get("X-Wizard") == "1"
+
+        # ── VALIDACIONES de datos reales ─────────────────────────────────
+        razon = (d.get("razon_social") or "").strip()
+        if not razon:
+            err = "La razón social es obligatoria."
+            if is_wizard: return jsonify({"ok": False, "error": err}), 400
+            flash(err, "danger")
+            return render_template("mantenciones/cliente_form.html", cliente=None)
+        if len(razon) > 200:
+            err = "La razón social excede 200 caracteres."
+            if is_wizard: return jsonify({"ok": False, "error": err}), 400
+            flash(err, "danger")
+            return render_template("mantenciones/cliente_form.html", cliente=None)
+
+        # RUT (opcional, pero si viene debe ser válido + único)
+        rut_input = (d.get("rut") or "").strip()
+        rut_norm = None
+        if rut_input:
+            ok, val_or_err = validar_rut(rut_input)
+            if not ok:
+                err = f"RUT inválido: {val_or_err}"
+                if is_wizard: return jsonify({"ok": False, "error": err}), 400
+                flash(err, "danger")
+                return render_template("mantenciones/cliente_form.html", cliente=None)
+            rut_norm = val_or_err
+            # Check duplicado (UNIQUE index nos protege, pero damos error amigable antes)
+            existing = mysql_fetchone(
+                "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
+                (rut_norm,)
+            )
+            if existing:
+                err = (f"Ya existe un cliente con ese RUT: "
+                       f"«{existing.get('razon_social','')}» (ID {existing.get('id')}).")
+                if is_wizard: return jsonify({"ok": False, "error": err,
+                                              "duplicate_id": existing.get("id")}), 409
+                flash(err, "warning")
+                return redirect(url_for("mant_ficha", cid=existing.get("id")))
+
+        # Emails (institucional + 2 contactos)
+        emails_to_check = [
+            ("email_empresa",   d.get("email_empresa")),
+            ("contacto_email",  d.get("contacto_email")),
+            ("contacto2_email", d.get("contacto2_email")),
+        ]
+        emails_norm = {}
+        for campo, val in emails_to_check:
+            ok, val_or_err = validar_email(val)
+            if not ok:
+                err = f"Email inválido ({campo}): {val_or_err}"
+                if is_wizard: return jsonify({"ok": False, "error": err}), 400
+                flash(err, "danger")
+                return render_template("mantenciones/cliente_form.html", cliente=None)
+            emails_norm[campo] = val_or_err
+
+        # Teléfonos (normalizados pero no rechazamos por formato — formato chileno es flexible)
+        tel_empresa     = normalizar_telefono(d.get("tel_empresa"))
+        tel_contacto    = normalizar_telefono(d.get("contacto_tel"))
+        tel_contacto2   = normalizar_telefono(d.get("contacto2_tel"))
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO mant_clientes
-                       (razon_social, rut,
-                        email_empresa, tel_empresa,
-                        contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
-                        contacto2_nombre, contacto2_cargo, contacto2_tel, contacto2_email,
-                        direccion, comuna, ciudad, region, giro,
-                        notas, notas_confidenciales,
-                        estado, created_by, updated_by)
-                       VALUES (%s,%s, %s,%s,
-                               %s,%s,%s,%s,
-                               %s,%s,%s,%s,
-                               %s,%s,%s,%s,%s,
-                               %s,%s,
-                               %s,%s,%s)""",
-                    (d.get("razon_social","").strip(), d.get("rut","").strip().replace(".",""),
-                     d.get("email_empresa","").strip(), d.get("tel_empresa","").strip(),
-                     d.get("contacto_nombre","").strip(), d.get("contacto_cargo","").strip(),
-                     d.get("contacto_tel","").strip(), d.get("contacto_email","").strip(),
-                     d.get("contacto2_nombre","").strip(), d.get("contacto2_cargo","").strip(),
-                     d.get("contacto2_tel","").strip(), d.get("contacto2_email","").strip(),
-                     d.get("direccion","").strip(), d.get("comuna","").strip(),
-                     d.get("ciudad","").strip(), d.get("region","").strip(),
-                     d.get("giro","").strip(),
-                     d.get("notas","").strip(), d.get("notas_confidenciales","").strip(),
-                     d.get("estado","activo"),
-                     current_username(), current_username())
-                )
-                cid = cur.lastrowid
+                try:
+                    cur.execute(
+                        """INSERT INTO mant_clientes
+                           (razon_social, rut,
+                            email_empresa, tel_empresa,
+                            contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
+                            contacto2_nombre, contacto2_cargo, contacto2_tel, contacto2_email,
+                            direccion, comuna, ciudad, region, giro,
+                            notas, notas_confidenciales,
+                            estado, created_by, updated_by)
+                           VALUES (%s,%s, %s,%s,
+                                   %s,%s,%s,%s,
+                                   %s,%s,%s,%s,
+                                   %s,%s,%s,%s,%s,
+                                   %s,%s,
+                                   %s,%s,%s)""",
+                        (razon, rut_norm,
+                         emails_norm["email_empresa"], tel_empresa,
+                         (d.get("contacto_nombre") or "").strip()[:200],
+                         (d.get("contacto_cargo")  or "").strip()[:120],
+                         tel_contacto, emails_norm["contacto_email"],
+                         (d.get("contacto2_nombre") or "").strip()[:200],
+                         (d.get("contacto2_cargo")  or "").strip()[:120],
+                         tel_contacto2, emails_norm["contacto2_email"],
+                         (d.get("direccion") or "").strip(),
+                         (d.get("comuna")    or "").strip()[:100],
+                         (d.get("ciudad")    or "").strip()[:100],
+                         (d.get("region")    or "").strip()[:100],
+                         (d.get("giro")      or "").strip()[:200],
+                         (d.get("notas")     or "").strip(),
+                         (d.get("notas_confidenciales") or "").strip(),
+                         (d.get("estado") or "activo"),
+                         current_username(), current_username())
+                    )
+                    cid = cur.lastrowid
+                except Exception as e:
+                    # Manejo amigable del error de UNIQUE rut (carrera con check anterior)
+                    if "Duplicate entry" in str(e) and "uq_mc_rut" in str(e):
+                        err = "Ya existe un cliente con ese RUT (revisar lista de clientes)."
+                        if is_wizard: return jsonify({"ok": False, "error": err}), 409
+                        flash(err, "warning")
+                        return redirect(url_for("mant_clientes"))
+                    raise
             conn.commit()
-            _mant_log("cliente", cid, "creado", d.get("razon_social",""))
-            # Si viene del wizard (header especial), devolver JSON
-            if request.headers.get("X-Wizard") == "1":
+            _mant_log("cliente", cid, "creado", razon)
+            if is_wizard:
                 return jsonify({"ok": True, "id": cid})
             return redirect(url_for("mant_ficha", cid=cid))
         finally:

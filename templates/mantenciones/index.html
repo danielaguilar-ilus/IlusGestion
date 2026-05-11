@@ -45,9 +45,125 @@
       <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
         <i class="bi bi-calendar3 me-1"></i>Calendario
       </a>
+      {% if permissions.superadmin %}
+      <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#modalResetMant"
+              title="Borrar todos los datos de mantenciones (solo superadmin)">
+        <i class="bi bi-trash3"></i>
+      </button>
+      {% endif %}
     </div>
   </div>
 </div>
+
+{# ══════════════════════════════════════════════════════════════════
+   MODAL: Reset completo de datos de mantenciones (SOLO superadmin)
+   Doble confirmación: tipear "RESET" para habilitar el botón.
+══════════════════════════════════════════════════════════════════ #}
+{% if permissions.superadmin %}
+<div class="modal fade" id="modalResetMant" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Reiniciar datos de mantenciones
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger" style="font-size:.85rem">
+          <strong>⚠ Acción IRREVERSIBLE.</strong> Esto borrará permanentemente:
+          <ul class="mb-1 mt-1" style="font-size:.82rem;padding-left:1.2rem">
+            <li>Todos los <strong>clientes</strong> y sus contactos</li>
+            <li>Todos los <strong>contratos</strong> y archivos adjuntos</li>
+            <li>Todas las <strong>visitas / OTs</strong>, tareas, fotos, repuestos</li>
+            <li>Todas las <strong>máquinas</strong> y su historial</li>
+            <li>Todas las <strong>sucursales</strong></li>
+            <li>Toda la <strong>bitácora de actividad</strong> (mant_logs)</li>
+          </ul>
+        </div>
+        <div class="alert alert-info py-2" style="font-size:.82rem">
+          <i class="bi bi-info-circle me-1"></i>
+          <strong>Se conservan:</strong> técnicos, roles, usuarios y configuración del sistema.
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">
+            Para confirmar, tipea exactamente: <code class="text-danger fw-bold">RESET</code>
+          </label>
+          <input type="text" id="resetConfirmInput" class="form-control"
+                 placeholder="RESET" autocomplete="off"
+                 oninput="this.value=this.value.toUpperCase();
+                          document.getElementById('btnResetConfirm').disabled = (this.value !== 'RESET')">
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="resetBorrarArchivos" checked>
+          <label class="form-check-label small" for="resetBorrarArchivos">
+            También borrar archivos físicos de fotos (recomendado)
+          </label>
+        </div>
+        <div id="resetResultBox" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" id="btnResetConfirm" class="btn btn-danger fw-bold" disabled
+                onclick="ejecutarResetMantenciones()">
+          <i class="bi bi-trash3 me-1"></i>Borrar todo permanentemente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function ejecutarResetMantenciones(){
+  const btn = document.getElementById('btnResetConfirm');
+  const box = document.getElementById('resetResultBox');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Borrando...';
+
+  try {
+    const r = await fetch('/admin/mantenciones/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        confirm: 'RESET',
+        borrar_archivos: document.getElementById('resetBorrarArchivos').checked
+      })
+    });
+    const d = await r.json();
+    if (d.ok){
+      const items = Object.entries(d.borrado || {})
+        .filter(([k,v]) => v !== null && v > 0)
+        .map(([k,v]) => `<li><code>${k}</code>: ${v} registro(s)</li>`)
+        .join('');
+      box.innerHTML = `
+        <div class="alert alert-success" style="font-size:.85rem">
+          <i class="bi bi-check-circle-fill me-1"></i>
+          <strong>${d.mensaje}</strong>
+          ${items ? '<div class="mt-2 small">Registros borrados:<ul class="mb-0" style="font-size:.78rem">' + items + '</ul></div>' : ''}
+          ${d.archivos_borrados ? '<div class="small mt-2">Archivos de fotos eliminados: <strong>' + d.archivos_borrados + '</strong></div>' : ''}
+          <div class="mt-3"><a href="${window.location.pathname}" class="btn btn-sm btn-success fw-bold">
+            <i class="bi bi-arrow-clockwise me-1"></i>Recargar dashboard
+          </a></div>
+        </div>`;
+      box.style.display = '';
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Listo';
+    } else {
+      box.innerHTML = `<div class="alert alert-danger" style="font-size:.85rem">
+        <i class="bi bi-x-circle me-1"></i>${d.error || 'Error desconocido'}
+      </div>`;
+      box.style.display = '';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Borrar todo permanentemente';
+    }
+  } catch(e){
+    box.innerHTML = `<div class="alert alert-danger" style="font-size:.85rem">Error de red: ${e}</div>`;
+    box.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Borrar todo permanentemente';
+  }
+}
+</script>
+{% endif %}
 
 {# ── KPIs ── #}
 <div class="row g-3 mb-4">
