@@ -8572,6 +8572,57 @@ def tr_courier_nuevo():
     return redirect(url_for("tr_couriers"))
 
 
+@app.route("/transporte/couriers/import-tariffs", methods=["POST"])
+@_tr_required
+def tr_couriers_import_tariffs():
+    """Importa tarifas de couriers desde Excel multi-hoja.
+
+    Sube un archivo Excel (.xlsx) con una hoja por courier. Cada hoja debe
+    tener columnas: Comuna/Destino, Sucursal, Zona, Días Tránsito, y luego
+    columnas numéricas (1, 2, ..., 99) y/o rangos ("100-499", "500-1999"...).
+
+    Soporta el formato de Libro1.xlsx (FedEx/Clickex/Felca/Milling).
+    Reemplaza todas las tarifas existentes del courier (DELETE + INSERT).
+    """
+    if not g.permissions.get("transporte_admin") and not g.permissions.get("superadmin"):
+        flash("Necesitás permiso de transporte admin.", "danger")
+        return redirect(url_for("tr_couriers"))
+
+    if "file" not in request.files:
+        flash("Debes seleccionar un archivo Excel.", "warning")
+        return redirect(url_for("tr_couriers"))
+
+    f = request.files["file"]
+    if not f.filename:
+        flash("Archivo vacío.", "warning")
+        return redirect(url_for("tr_couriers"))
+    if not f.filename.lower().endswith((".xlsx", ".xlsm")):
+        flash("Solo .xlsx / .xlsm.", "warning")
+        return redirect(url_for("tr_couriers"))
+
+    # Guardar temporal
+    import tempfile
+    import courier_tariff_import as cti
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            f.save(tmp.name)
+            tmp_path = tmp.name
+        conn = get_db()
+        result = cti.import_excel_to_db(tmp_path, conn)
+        os.unlink(tmp_path)
+        _invalidate_couriers_cache()
+        total = sum(result.values())
+        flash(
+            f"Tarifas importadas: " +
+            ", ".join(f"{k}={v}" for k, v in result.items()) +
+            f" ({total} comunas total).",
+            "success"
+        )
+    except Exception as e:
+        flash(f"Error importando tarifas: {e}", "danger")
+    return redirect(url_for("tr_couriers"))
+
+
 @app.route("/transporte/couriers/<int:cid>", methods=["GET"])
 @_tr_required
 def tr_courier_ficha(cid):

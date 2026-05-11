@@ -17,6 +17,17 @@
       <button class="btn btn-outline-light btn-sm" onclick="abrirImport()">
         <i class="bi bi-upload me-1"></i>Importar Excel
       </button>
+      {# NUEVO: importador multi-hoja con auto-creación de couriers #}
+      <form method="post" action="{{ url_for('tr_couriers_import_tariffs') }}"
+            enctype="multipart/form-data" class="d-inline" id="formImportMulti">
+        <input type="file" name="file" id="fileImportMulti" accept=".xlsx,.xlsm"
+               style="display:none" onchange="document.getElementById('formImportMulti').submit()">
+        <button type="button" class="btn btn-success btn-sm fw-bold"
+                onclick="document.getElementById('fileImportMulti').click()"
+                title="Sube un Excel con una hoja por courier (FedEx, Clickex, Felca, Milling). Crea couriers nuevos y reemplaza tarifas existentes.">
+          <i class="bi bi-cloud-arrow-up me-1"></i>Importar tarifas multi-hoja
+        </button>
+      </form>
       <button class="btn btn-ilus btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevo">
         <i class="bi bi-plus-lg me-1"></i>Nuevo courier
       </button>
