@@ -922,10 +922,132 @@
 {% block scripts %}
 <script>
 // ══ Estado ══════════════════════════════════════════════════
-const WZ = { paso:1, cid:null, ctid:null, equipos:[], aiData:null, calPreview:[] };
+const WZ = { paso:1, cid:null, ctid:null, equipos:[], aiData:null, calPreview:[], rut_override:false };
 const adjFiles = [];
 let eqCounter  = 0;
 let erpEqSel   = {};
+
+// ══════════════════════════════════════════════════════════════════
+// DRAFT AUTOSAVE — localStorage para no perder trabajo si refrescas/cierras
+// ══════════════════════════════════════════════════════════════════
+const WZ_DRAFT_KEY = 'wiz_cliente_draft_v1';
+
+function _wzCamposPaso1() {
+  return [
+    's1_razon','s1_rut','s1_email_empresa','s1_tel_empresa','s1_giro',
+    's1_direccion','s1_comuna','s1_ciudad','s1_estado','s1_notas',
+    's1_contacto_nombre','s1_contacto_cargo','s1_contacto_tel','s1_contacto_email',
+    's1_contacto2_nombre','s1_contacto2_cargo','s1_contacto2_tel','s1_contacto2_email',
+    'ct_nombre','ct_inicio','ct_vencimiento','ct_indefinido','ct_monto_mensual','ct_frecuencia',
+  ];
+}
+
+let _wzDraftTimer = null;
+function wzGuardarDraft() {
+  try {
+    const campos = {};
+    _wzCamposPaso1().forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      campos[id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    const equipos = (typeof leerEquipos === 'function') ? leerEquipos() : [];
+    const draft = {
+      paso: WZ.paso || 1,
+      ts: Date.now(),
+      campos,
+      equipos,
+      rut_override: WZ.rut_override || false,
+    };
+    localStorage.setItem(WZ_DRAFT_KEY, JSON.stringify(draft));
+  } catch(e) { /* localStorage lleno o no disponible — silencio */ }
+}
+
+function wzGuardarDraftDebounced() {
+  if (_wzDraftTimer) clearTimeout(_wzDraftTimer);
+  _wzDraftTimer = setTimeout(wzGuardarDraft, 600);
+}
+
+function wzCargarDraft() {
+  try {
+    const raw = localStorage.getItem(WZ_DRAFT_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (!d || !d.campos) return;
+    const ageMs = Date.now() - (d.ts || 0);
+    const ageMin = Math.round(ageMs / 60000);
+    const fechaTxt = new Date(d.ts || Date.now()).toLocaleString('es-CL');
+    // Si tiene más de 7 días, ignorar (draft muy viejo)
+    if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(WZ_DRAFT_KEY);
+      return;
+    }
+    const tieneRazon = (d.campos.s1_razon || '').trim();
+    if (!tieneRazon && (d.equipos || []).length === 0) return;
+
+    const resumen = (tieneRazon ? `Cliente: ${tieneRazon}\n` : '') +
+                    `Equipos: ${(d.equipos||[]).length}\n` +
+                    `Guardado: ${fechaTxt} (hace ${ageMin} min)`;
+
+    if (confirm(
+      `📋 Hay un borrador del wizard sin guardar:\n\n${resumen}\n\n` +
+      `¿Recuperar este borrador?\n\n` +
+      `• Aceptar = restaurar datos\n` +
+      `• Cancelar = empezar desde cero (borra el borrador)`
+    )) {
+      // Restaurar campos del paso 1
+      Object.entries(d.campos).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.type === 'checkbox') el.checked = !!val;
+        else el.value = val || '';
+      });
+      // Restaurar equipos
+      if (typeof agregarFilaEquipo === 'function' && (d.equipos || []).length > 0) {
+        // Limpiar tabla actual
+        const tbody = document.getElementById('equiposTbody');
+        if (tbody) tbody.innerHTML = '<tr id="eq-placeholder"><td colspan="11" class="text-center text-muted py-4">Sin equipos</td></tr>';
+        d.equipos.forEach(eq => agregarFilaEquipo(eq));
+      }
+      WZ.rut_override = d.rut_override || false;
+      // Refrescar validaciones
+      if (typeof qfActualizar === 'function') qfActualizar();
+      if (typeof qfRutValidar === 'function') {
+        const rutEl = document.getElementById('s1_rut');
+        if (rutEl) qfRutValidar(rutEl);
+      }
+    } else {
+      localStorage.removeItem(WZ_DRAFT_KEY);
+    }
+  } catch(e) { /* JSON corrupto, ignorar */ }
+}
+
+function wzBorrarDraft() {
+  try { localStorage.removeItem(WZ_DRAFT_KEY); } catch(_){}
+}
+
+// Conectar autosave a TODOS los inputs del paso 1 (+ contrato) en cuanto carga la página
+document.addEventListener('DOMContentLoaded', () => {
+  _wzCamposPaso1().forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input',  wzGuardarDraftDebounced);
+    el.addEventListener('change', wzGuardarDraftDebounced);
+  });
+  // Intentar cargar draft existente
+  setTimeout(wzCargarDraft, 300);
+});
+
+// Warning al cerrar la pestaña si hay datos sin guardar
+window.addEventListener('beforeunload', (e) => {
+  if (WZ.cid) return;   // ya guardado
+  const razon = (document.getElementById('s1_razon') || {}).value;
+  if (razon && razon.trim()) {
+    e.preventDefault();
+    e.returnValue = 'Tienes datos del wizard sin guardar. ¿Salir?';
+    return e.returnValue;
+  }
+});
 
 // ══ Progress ═════════════════════════════════════════════════
 function actualizarProgress(p) {
@@ -976,14 +1098,35 @@ function _validarRut(rut) {
   return dv === dvOk;
 }
 
+function _dvEsperado(rut) {
+  // Calcula el DV esperado para un RUT (módulo 11). Devuelve string DV o null.
+  const limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+  if (limpio.length < 2) return null;
+  const cuerpo = limpio.slice(0,-1);
+  if (!/^\d+$/.test(cuerpo)) return null;
+  let suma = 0, mul = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += parseInt(cuerpo[i]) * mul;
+    mul = mul === 7 ? 2 : mul + 1;
+  }
+  const resto = suma % 11;
+  const calc = 11 - resto;
+  return calc === 11 ? '0' : calc === 10 ? 'K' : String(calc);
+}
+
 function qfRutValidar(input) {
   const v = input.value.trim();
   const stat = document.getElementById('rut_status');
-  if (!v) { stat.innerHTML = ''; return; }
+  if (!v) { stat.innerHTML = ''; input.style.borderColor=''; return; }
   if (_validarRut(v)) {
     stat.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Válido</span>';
+    input.style.borderColor = '#16a34a';
   } else {
-    stat.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> RUT inválido</span>';
+    const dvEsp = _dvEsperado(v);
+    const sugerencia = dvEsp ?
+      ` <small class="text-muted">(DV esperado: <strong>${dvEsp}</strong>)</small>` : '';
+    stat.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle-fill"></i> RUT inválido</span>${sugerencia}`;
+    input.style.borderColor = '#dc2626';
   }
 }
 
@@ -2749,7 +2892,39 @@ function leerAiEditado(){
 
 // ══ Navegación entre pasos ════════════════════════════════════
 function irPaso2(){
-  if(!document.getElementById('s1_razon').value.trim()){alert('La Razón Social es obligatoria');return;}
+  const razonEl = document.getElementById('s1_razon');
+  if(!razonEl.value.trim()){
+    razonEl.focus();
+    razonEl.classList.add('is-invalid');
+    alert('La Razón Social es obligatoria');
+    return;
+  }
+  razonEl.classList.remove('is-invalid');
+
+  // Validación de RUT con override consciente: si el RUT está rellenado
+  // pero su DV no coincide, preguntar antes de avanzar (no esperar al final).
+  const rutEl = document.getElementById('s1_rut');
+  const rutVal = (rutEl.value || '').trim();
+  WZ.rut_override = false;
+  if (rutVal && !_validarRut(rutVal)) {
+    const dvEsp = (typeof _dvEsperado === 'function') ? _dvEsperado(rutVal) : null;
+    const msg =
+      `⚠ El RUT "${rutVal}" tiene dígito verificador inválido` +
+      (dvEsp ? ` (DV esperado: ${dvEsp}).\n\n` : '.\n\n') +
+      `¿Cómo quieres continuar?\n\n` +
+      `• Aceptar = continuar con este RUT igual (RUT antiguo, dummy, ` +
+      `extranjero o el sistema se equivoca)\n` +
+      `• Cancelar = corregir el RUT antes de avanzar`;
+    if (!confirm(msg)) {
+      rutEl.focus();
+      rutEl.classList.add('is-invalid');
+      rutEl.scrollIntoView({block:'center', behavior:'smooth'});
+      return;
+    }
+    WZ.rut_override = true;   // se aplicará al llamar /clientes/nuevo
+  }
+  rutEl.classList.remove('is-invalid');
+
   WZ.equipos=leerEquipos();
   document.getElementById('erpEqQ').value=document.getElementById('s1_rut').value||document.getElementById('s1_razon').value;
   irPaso(2);
@@ -2859,9 +3034,15 @@ async function crearCliente(){
   // Notas
   fd.append('notas',           $v('s1_notas'));
   fd.append('estado',          document.getElementById('s1_estado').value);
+  // Si el usuario ya confirmó en paso 1 que el RUT es correcto aunque DV
+  // falle, pasamos rut_force=1 desde el inicio para evitar el segundo prompt.
+  if (WZ.rut_override) fd.append('rut_force', '1');
+
   let r, data;
+  const fetchHeaders = {'X-Wizard':'1'};
+  if (WZ.rut_override) fetchHeaders['X-RUT-Force'] = '1';
   try {
-    r = await fetch('/mantenciones/clientes/nuevo',{method:'POST',headers:{'X-Wizard':'1'},body:fd});
+    r = await fetch('/mantenciones/clientes/nuevo',{method:'POST', headers: fetchHeaders, body: fd});
   } catch(e) {
     alert(`No se pudo conectar con el servidor.\n\nError: ${e.message || e}\n\nVerifica tu conexión a internet e intenta nuevamente.`);
     return false;
@@ -2869,13 +3050,82 @@ async function crearCliente(){
   try { data = await r.json(); } catch(_) { data = null; }
   if (data && data.ok) { WZ.cid = data.id; return true; }
 
-  // Mostrar el error específico del backend (validación de RUT, email, duplicado, etc.)
-  const errMsg = (data && data.error) || `HTTP ${r.status} ${r.statusText}` || 'Error desconocido';
-  let detalle = '';
-  if (data && data.duplicate_id) {
-    detalle = `\n\nYa existe un cliente con ese RUT (ID ${data.duplicate_id}).\nPuedes abrir esa ficha en vez de crear uno nuevo.`;
+  // ── CASO ESPECIAL: RUT con DV inválido ───────────────────────────
+  // Le ofrecemos al usuario "guardar de todos modos" para que no pierda
+  // el trabajo. Útil cuando el RUT es real pero el cálculo módulo-11
+  // falla (RUTs antiguos, dummy, extranjeros, datos del ERP).
+  if (data && data.error_codigo === 'RUT_DV_INVALIDO') {
+    const rutMostrado = data.rut_input || $v('s1_rut');
+    const conf = confirm(
+      `⚠ El RUT "${rutMostrado}" tiene el dígito verificador incorrecto según el cálculo estándar (módulo-11).\n\n` +
+      `${data.error}\n\n` +
+      `Si estás SEGURO que el RUT es correcto (puede ser un RUT antiguo, ` +
+      `dummy o de empresa extranjera), pulsa Aceptar para guardar de todos modos.\n\n` +
+      `Si no estás seguro, pulsa Cancelar y corrige el RUT en el paso 1.`
+    );
+    if (conf) {
+      // Reintentar con rut_force=1
+      fd.append('rut_force', '1');
+      try {
+        r = await fetch('/mantenciones/clientes/nuevo',{method:'POST',headers:{'X-Wizard':'1','X-RUT-Force':'1'},body:fd});
+        data = await r.json();
+        if (data && data.ok) { WZ.cid = data.id; return true; }
+      } catch(e) {
+        alert('Error al reintentar: ' + (e.message || e));
+        return false;
+      }
+    } else {
+      // Cancela → ir a paso 1
+      if (typeof goStep === 'function') goStep(1);
+      return false;
+    }
   }
-  alert(`No se pudo crear el cliente:\n\n${errMsg}${detalle}\n\nRevisa los campos del paso 1 (Razón social, RUT, emails).`);
+
+  // ── CASO DUPLICADO: ofrecer abrir el cliente existente ──
+  if (data && data.duplicate_id) {
+    const irExistente = confirm(
+      `Ya existe un cliente con ese RUT (ID ${data.duplicate_id}).\n\n` +
+      `• Aceptar = abrir la ficha existente\n` +
+      `• Cancelar = corregir el RUT en el paso 1`
+    );
+    if (irExistente) {
+      // Borrar draft local (vamos a la ficha real)
+      try { localStorage.removeItem('wiz_cliente_draft_v1'); } catch(_){}
+      window.location.href = `/mantenciones/clientes/${data.duplicate_id}`;
+      return false;
+    } else {
+      if (typeof goStep === 'function') goStep(1);
+      else if (typeof irPaso === 'function') irPaso(1);
+      setTimeout(() => {
+        const el = document.getElementById('s1_rut');
+        if (el) { el.focus(); el.classList.add('is-invalid'); el.scrollIntoView({block:'center'}); }
+      }, 150);
+      return false;
+    }
+  }
+
+  // ── ERROR GENÉRICO con focus al campo culpable ──
+  const errMsg = (data && data.error) || `HTTP ${r.status} ${r.statusText}` || 'Error desconocido';
+  alert(`No se pudo crear el cliente:\n\n${errMsg}\n\nRevisa los campos del paso 1.`);
+
+  // Si conocemos el campo culpable, llevar al usuario a corregirlo
+  if (data && data.error) {
+    // Detectar campo desde el mensaje (RUT, email, etc.)
+    let campoId = null;
+    if (/RUT/i.test(data.error)) campoId = 's1_rut';
+    else if (/email_empresa/i.test(data.error)) campoId = 's1_email_empresa';
+    else if (/contacto_email/i.test(data.error)) campoId = 's1_contacto_email';
+    else if (/contacto2_email/i.test(data.error)) campoId = 's1_contacto2_email';
+    else if (/raz[oó]n social/i.test(data.error)) campoId = 's1_razon';
+
+    if (campoId) {
+      if (typeof irPaso === 'function') irPaso(1);
+      setTimeout(() => {
+        const el = document.getElementById(campoId);
+        if (el) { el.focus(); el.classList.add('is-invalid'); el.scrollIntoView({block:'center'}); }
+      }, 150);
+    }
+  }
   console.error('[crearCliente] error backend:', data, 'status:', r?.status);
   return false;
 }
@@ -2982,6 +3232,8 @@ async function finalizar(){
       await fetch(`/mantenciones/api/clientes/${WZ.cid}/generar-calendario`,{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({dry_run:false,tipo:document.getElementById('cal_tipo').value,meses:parseInt(document.getElementById('cal_meses').value)||12})});
     }
+    // Cliente guardado correctamente → limpiar el draft local
+    wzBorrarDraft();
     window.location.href=`/mantenciones/clientes/${WZ.cid}`;
   }catch(e){btn.disabled=false;btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';alert('Error: '+e.message);}
 }

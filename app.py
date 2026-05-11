@@ -13633,16 +13633,31 @@ def mant_cliente_nuevo():
             return render_template("mantenciones/cliente_form.html", cliente=None)
 
         # RUT (opcional, pero si viene debe ser válido + único)
+        # rut_force=1 (form field o header) permite saltar la validación de DV
+        # — útil para RUTs antiguos, dummy, extranjeros o casos donde el
+        # ejecutivo está SEGURO que el RUT es correcto aunque módulo-11 falle.
         rut_input = (d.get("rut") or "").strip()
+        rut_force = (d.get("rut_force") == "1") or (request.headers.get("X-RUT-Force") == "1")
         rut_norm = None
         if rut_input:
             ok, val_or_err = validar_rut(rut_input)
-            if not ok:
+            if not ok and not rut_force:
                 err = f"RUT inválido: {val_or_err}"
-                if is_wizard: return jsonify({"ok": False, "error": err}), 400
+                # Devolvemos error_codigo para que el frontend pueda ofrecer
+                # "guardar de todos modos" sin perder el resto del wizard.
+                if is_wizard: return jsonify({
+                    "ok": False,
+                    "error": err,
+                    "error_codigo": "RUT_DV_INVALIDO",
+                    "rut_input": rut_input,
+                }), 400
                 flash(err, "danger")
                 return render_template("mantenciones/cliente_form.html", cliente=None)
-            rut_norm = val_or_err
+            # Si force=true y la validación falló, igual normalizar y guardar
+            if not ok and rut_force:
+                rut_norm = normalizar_rut(rut_input) or rut_input
+            else:
+                rut_norm = val_or_err
             # Check duplicado (UNIQUE index nos protege, pero damos error amigable antes)
             existing = mysql_fetchone(
                 "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
