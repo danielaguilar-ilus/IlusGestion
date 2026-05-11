@@ -4066,7 +4066,11 @@ function abrirEmailManual() {
       <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-calendar-week me-2" style="color:var(--ilus-red)"></i>Mantenciones y Visitas</span>
       <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ visitas|length }}</span>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-sm btn-outline-secondary" onclick="abrirVisitaHistorica()"
+              title="El cliente migra al sistema con historial — registra una mantención que ya ocurrió y el sistema sugiere la próxima">
+        <i class="bi bi-clock-history me-1"></i>Mantención anterior
+      </button>
       <button class="btn btn-sm btn-outline-success" onclick="abrirNuevaVisita('preventiva')" title="Programar una mantención preventiva">
         <i class="bi bi-tools me-1"></i>Programar mantención
       </button>
@@ -4462,6 +4466,150 @@ function abrirEmailManual() {
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
         <button type="button" class="btn btn-ilus fw-bold" onclick="gcGuardar()">
           <i class="bi bi-floppy me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal: Eliminar contrato (solo superadmin) ── #}
+{% if permissions.superadmin %}
+<div class="modal fade" id="modalEliminarContrato" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Eliminar contrato — acción irreversible
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="elimCtrId">
+        <div class="alert alert-danger" style="font-size:.85rem">
+          <strong>⚠ Vas a eliminar permanentemente:</strong>
+          <ul class="mt-1 mb-1" style="font-size:.82rem;padding-left:1.2rem">
+            <li><strong id="elimCtrNombre"></strong></li>
+            <li>El archivo PDF/Word físico</li>
+            <li>El análisis IA del contrato</li>
+            <li>Los adjuntos asociados</li>
+          </ul>
+        </div>
+        <div class="alert alert-info py-2" style="font-size:.82rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Las visitas vinculadas <strong>NO se eliminan</strong> (quedan como "sin contrato").
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">
+            Para confirmar, escribe exactamente: <code class="text-danger fw-bold">ELIMINAR</code>
+          </label>
+          <input type="text" id="elimCtrInput" class="form-control" autocomplete="off"
+                 placeholder="ELIMINAR"
+                 oninput="this.value=this.value.toUpperCase();
+                          document.getElementById('elimCtrBtn').disabled = (this.value !== 'ELIMINAR')">
+        </div>
+        <div id="elimCtrResult" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" id="elimCtrBtn" class="btn btn-danger fw-bold" disabled
+                onclick="_ejecutarEliminarContrato()">
+          <i class="bi bi-trash3 me-1"></i>Eliminar definitivamente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
+   MODAL: Registrar mantención histórica (cliente migrado con historial)
+   El sistema calcula automáticamente la próxima visita según frecuencia.
+════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalVisitaHistorica" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a,#334155);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-clock-history me-2"></i>Registrar mantención anterior
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2" style="font-size:.85rem">
+          <i class="bi bi-info-circle me-1"></i>
+          <strong>Cliente migrado con historial.</strong> Registra una mantención que YA ocurrió
+          en una fecha pasada. El sistema calculará automáticamente la PRÓXIMA fecha sugerida
+          según la frecuencia del contrato.
+        </div>
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">
+              Fecha de la mantención <span class="text-danger">*</span>
+              <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+                 title="Fecha real cuando se hizo la mantención (debe ser pasada)"></i>
+            </label>
+            <input type="date" id="vh_fecha" class="form-control"
+                   max="{{ hoy.strftime('%Y-%m-%d') }}"
+                   onchange="vhPreview()">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Tipo</label>
+            <select id="vh_tipo" class="form-select">
+              <option value="preventiva">Preventiva (planificada)</option>
+              <option value="correctiva">Correctiva (falla)</option>
+              <option value="garantia">Garantía</option>
+              <option value="inspeccion">Inspección</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Técnico</label>
+            <input type="text" id="vh_tecnico" class="form-control"
+                   placeholder="Nombre del técnico (opcional)">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">
+              Costo (opcional)
+              <span class="text-muted small">— solo si tienes el dato</span>
+            </label>
+            <input type="number" id="vh_costo" class="form-control" min="0" step="1000" placeholder="0">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Título</label>
+            <input type="text" id="vh_titulo" class="form-control"
+                   placeholder="Ej: Mantención preventiva trimestral">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Observaciones (opcional)</label>
+            <textarea id="vh_observaciones" class="form-control" rows="2"
+                      placeholder="Qué se hizo, qué se cambió, qué quedó pendiente…"></textarea>
+          </div>
+        </div>
+
+        {# ── Preview de cálculo inteligente ── #}
+        <div id="vh_preview" class="mt-3" style="display:none">
+          <div class="card border-primary">
+            <div class="card-body py-2 px-3" style="font-size:.85rem">
+              <div class="fw-bold mb-1"><i class="bi bi-stars me-1 text-primary"></i>Cálculo automático</div>
+              <div id="vh_preview_text">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" id="vh_crear_proxima" checked>
+          <label class="form-check-label small" for="vh_crear_proxima">
+            <strong>Crear automáticamente la próxima visita</strong>
+            en la fecha sugerida (programada, pendiente de asignar técnico)
+          </label>
+        </div>
+
+        <div id="vh_result" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" id="vh_btn" class="btn btn-ilus fw-bold" onclick="vhGuardar()">
+          <i class="bi bi-save me-1"></i>Registrar mantención
         </button>
       </div>
     </div>
@@ -7046,29 +7194,167 @@ function toggleAiPanel(ctid) {
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
-async function eliminarContrato(ctid, nombre) {
-  // Solo superadmin — el backend valida igual. Doble confirmación.
-  const conf1 = confirm(
-    `⚠️ Vas a ELIMINAR el contrato:\n\n` +
-    `«${nombre}» (ID ${ctid})\n\n` +
-    `Esta acción borra:\n` +
-    `• El archivo PDF/Word físico\n` +
-    `• El análisis IA del contrato\n` +
-    `• Los adjuntos asociados\n\n` +
-    `Las visitas vinculadas NO se eliminan (quedan como "sin contrato").\n\n` +
-    `¿Continuar?`
-  );
-  if (!conf1) return;
+// ════════════════════════════════════════════════════════════════════
+// MANTENCIÓN HISTÓRICA — registro de visitas pasadas + cálculo de próxima
+// ════════════════════════════════════════════════════════════════════
+function abrirVisitaHistorica() {
+  // Reset
+  document.getElementById('vh_fecha').value = '';
+  document.getElementById('vh_tipo').value = 'preventiva';
+  document.getElementById('vh_tecnico').value = '';
+  document.getElementById('vh_costo').value = '';
+  document.getElementById('vh_titulo').value = 'Mantención preventiva';
+  document.getElementById('vh_observaciones').value = '';
+  document.getElementById('vh_crear_proxima').checked = true;
+  document.getElementById('vh_preview').style.display = 'none';
+  document.getElementById('vh_result').style.display = 'none';
+  document.getElementById('vh_btn').disabled = false;
+  document.getElementById('vh_btn').innerHTML = '<i class="bi bi-save me-1"></i>Registrar mantención';
+  new bootstrap.Modal(document.getElementById('modalVisitaHistorica')).show();
+}
 
-  const conf2 = prompt(
-    `Para confirmar, escribe exactamente la palabra: ELIMINAR\n\n` +
-    `(en mayúsculas, sin comillas)`
-  );
-  if ((conf2 || '').trim().toUpperCase() !== 'ELIMINAR') {
-    alert('Cancelado — la confirmación no coincide.');
+// Preview en vivo: cuando el usuario elige fecha, mostramos la sugerencia
+async function vhPreview() {
+  const fecha = document.getElementById('vh_fecha').value;
+  const box = document.getElementById('vh_preview');
+  const txt = document.getElementById('vh_preview_text');
+  if (!fecha) { box.style.display = 'none'; return; }
+
+  // Pedimos al backend la sugerencia de próxima (basada en frecuencia del contrato)
+  // pero le decimos que la "última" es la fecha que el usuario está por registrar.
+  // Para hacerlo simple: usamos el endpoint sugerir-proxima del cliente actual.
+  // Si el cliente no tiene visitas previas, calculamos nosotros con la fecha tipeada.
+  try {
+    // Buscar frecuencia del contrato vigente
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/sugerir-proxima`);
+    const d = await r.json();
+    if (d.sin_frecuencia) {
+      txt.innerHTML = `<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>${d.mensaje}</span>`;
+      box.style.display = '';
+      return;
+    }
+    const freq = d.frecuencia_meses;
+    if (!freq) {
+      txt.innerHTML = `<span class="text-muted">Sin frecuencia configurada en el contrato — la próxima visita se debe programar manualmente.</span>`;
+      box.style.display = '';
+      return;
+    }
+
+    // Calcular fecha sugerida en frontend
+    const fechaD = new Date(fecha + 'T00:00:00');
+    const proxima = new Date(fechaD);
+    proxima.setMonth(proxima.getMonth() + freq);
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+    const diasAlHoy = Math.round((proxima - hoy) / 86400000);
+    const fmt = (d) => d.toLocaleDateString('es-CL', {day:'2-digit',month:'2-digit',year:'numeric'});
+
+    let estadoTxt = '';
+    let colorClass = 'text-success';
+    if (diasAlHoy < 0) {
+      const hoyMas7 = new Date(hoy);
+      hoyMas7.setDate(hoyMas7.getDate() + 7);
+      estadoTxt = `<br><span class="text-danger fw-bold">⚠ Esta fecha YA pasó hace ${-diasAlHoy} día(s)</span>. ` +
+                  `Sugerencia: programar lo antes posible → <strong>${fmt(hoyMas7)}</strong> (hoy + 7 días).`;
+      colorClass = 'text-danger';
+    } else if (diasAlHoy <= 15) {
+      estadoTxt = `<br><span class="text-warning fw-bold">Próxima visita en ${diasAlHoy} día(s)</span>`;
+      colorClass = 'text-warning';
+    } else {
+      estadoTxt = `<br><span class="text-success">Próxima visita en ${diasAlHoy} días</span>`;
+    }
+
+    txt.innerHTML = `
+      Última mantención: <strong>${fmt(fechaD)}</strong> ·
+      Frecuencia contrato: <strong>cada ${freq} mes(es)</strong>
+      <br>Próxima IDEAL: <strong class="${colorClass}">${fmt(proxima)}</strong>
+      ${estadoTxt}
+    `;
+    box.style.display = '';
+  } catch(e) {
+    txt.innerHTML = `<span class="text-muted">No se pudo calcular: ${e.message}</span>`;
+    box.style.display = '';
+  }
+}
+
+async function vhGuardar() {
+  const btn = document.getElementById('vh_btn');
+  const box = document.getElementById('vh_result');
+  const fecha = document.getElementById('vh_fecha').value;
+  if (!fecha) {
+    box.innerHTML = '<div class="alert alert-warning py-2 mb-0">Selecciona la fecha de la mantención.</div>';
+    box.style.display = '';
     return;
   }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
 
+  try {
+    const payload = {
+      fecha_realizada:    fecha,
+      tipo:               document.getElementById('vh_tipo').value,
+      tecnico:            document.getElementById('vh_tecnico').value.trim(),
+      titulo:             document.getElementById('vh_titulo').value.trim(),
+      observaciones:      document.getElementById('vh_observaciones').value.trim(),
+      costo:              parseFloat(document.getElementById('vh_costo').value || 0),
+      crear_proxima:      document.getElementById('vh_crear_proxima').checked,
+    };
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/visita-historica`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const sug = d.sugerencia || {};
+      const proxMsg = d.proxima_creada_id
+        ? `<div class="mt-2"><i class="bi bi-check-circle text-success me-1"></i>
+           Próxima visita creada automáticamente (ID ${d.proxima_creada_id}) para
+           <strong>${sug.fecha_sugerida || '—'}</strong></div>`
+        : (sug.mensaje ? `<div class="mt-2 small text-muted">${sug.mensaje}</div>` : '');
+      box.innerHTML = `
+        <div class="alert alert-success mb-0" style="font-size:.85rem">
+          <i class="bi bi-check-circle-fill me-1"></i>
+          <strong>Mantención registrada.</strong>
+          ${proxMsg}
+          <div class="text-center mt-2">
+            <button class="btn btn-sm btn-success" onclick="location.reload()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Recargar ficha
+            </button>
+          </div>
+        </div>`;
+      box.style.display = '';
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Listo';
+    } else {
+      box.innerHTML = `<div class="alert alert-danger py-2 mb-0" style="font-size:.85rem">
+        <i class="bi bi-x-circle me-1"></i>${d.error || 'Error'}
+      </div>`;
+      box.style.display = '';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar mantención';
+    }
+  } catch(e) {
+    box.innerHTML = `<div class="alert alert-danger py-2 mb-0">Error de red: ${e.message}</div>`;
+    box.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar mantención';
+  }
+}
+
+// Modal de eliminar contrato — Bootstrap custom, no confirm/prompt nativos
+function eliminarContrato(ctid, nombre) {
+  document.getElementById('elimCtrId').value = ctid;
+  document.getElementById('elimCtrNombre').textContent = nombre || `Contrato #${ctid}`;
+  document.getElementById('elimCtrInput').value = '';
+  document.getElementById('elimCtrBtn').disabled = true;
+  document.getElementById('elimCtrResult').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('modalEliminarContrato')).show();
+}
+
+async function _ejecutarEliminarContrato() {
+  const ctid = document.getElementById('elimCtrId').value;
+  const btn  = document.getElementById('elimCtrBtn');
+  const box  = document.getElementById('elimCtrResult');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando…';
   try {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}`, {
       method: 'DELETE',
@@ -7077,13 +7363,32 @@ async function eliminarContrato(ctid, nombre) {
     });
     const d = await r.json();
     if (d.ok) {
-      alert(`✅ Contrato eliminado.\n\n${d.archivos_borrados} archivo(s) físicos borrados.\n\nRecargando ficha…`);
-      location.reload();
+      box.innerHTML = `
+        <div class="alert alert-success mb-0" style="font-size:.85rem">
+          <i class="bi bi-check-circle-fill me-1"></i>
+          <strong>Contrato eliminado.</strong>
+          ${d.archivos_borrados ? `${d.archivos_borrados} archivo(s) físicos borrados.` : ''}
+          Recargando ficha…
+        </div>`;
+      box.style.display = '';
+      setTimeout(() => location.reload(), 1400);
     } else {
-      alert(`No se pudo eliminar:\n\n${d.error || 'Error desconocido'}`);
+      box.innerHTML = `
+        <div class="alert alert-danger mb-0" style="font-size:.85rem">
+          <i class="bi bi-x-circle me-1"></i>${d.error || 'Error desconocido'}
+        </div>`;
+      box.style.display = '';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar definitivamente';
     }
   } catch(e) {
-    alert('Error de red: ' + e.message);
+    box.innerHTML = `
+      <div class="alert alert-danger mb-0" style="font-size:.85rem">
+        Error de red: ${e.message || e}
+      </div>`;
+    box.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar definitivamente';
   }
 }
 

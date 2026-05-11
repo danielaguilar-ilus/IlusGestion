@@ -16389,6 +16389,274 @@ def mant_visitas_api():
     return jsonify(events)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# MANTENCIONES HISTÓRICAS — backdating + cálculo de próxima visita
+#
+# Caso de uso: el cliente migra al sistema con historial. Hay que registrar
+# visitas que YA ocurrieron (estado=completada, fecha_realizada anterior)
+# y el sistema sugiere automáticamente la PRÓXIMA según la frecuencia
+# del contrato.
+#
+# Ejemplo:
+#   - Contrato: cada 3 meses
+#   - Última mantención hecha: 2025-12-15
+#   - Hoy: 2026-05-11
+#   - Sugerencia: próxima = 2025-12-15 + 3 meses = 2026-03-15
+#                 (ya pasó → marcar VENCIDA y proponer hoy + 7 días)
+#                 si no había vencido → proponer la fecha calculada
+# ══════════════════════════════════════════════════════════════════════
+
+def _sugerir_proxima_visita(ultima_fecha, frecuencia_meses=None, contrato_id=None):
+    """Calcula la próxima visita ideal.
+    Si la próxima ya pasó, sugiere fecha de catch-up (hoy + 7 días).
+    Devuelve dict con detalles."""
+    from datetime import date, datetime, timedelta
+    import calendar as _cal
+
+    # Normalizar última fecha a date
+    if isinstance(ultima_fecha, datetime):
+        ultima_d = ultima_fecha.date()
+    elif isinstance(ultima_fecha, date):
+        ultima_d = ultima_fecha
+    elif isinstance(ultima_fecha, str):
+        try: ultima_d = datetime.strptime(ultima_fecha[:10], "%Y-%m-%d").date()
+        except Exception: return None
+    else:
+        return None
+
+    # Obtener frecuencia del contrato si no vino
+    if not frecuencia_meses and contrato_id:
+        try:
+            row = mysql_fetchone(
+                "SELECT frecuencia_meses, ai_frecuencia_sug FROM mant_contratos WHERE id=%s",
+                (contrato_id,)
+            )
+            if row:
+                frecuencia_meses = row.get("frecuencia_meses") or row.get("ai_frecuencia_sug") or 0
+        except Exception:
+            pass
+
+    if not frecuencia_meses or frecuencia_meses <= 0:
+        return {
+            "proxima_ideal": None,
+            "sin_frecuencia": True,
+            "mensaje": "El contrato no tiene frecuencia definida — asigna una para que el sistema sugiera próximas visitas.",
+        }
+
+    # Sumar N meses a la última fecha
+    año = ultima_d.year
+    mes = ultima_d.month + int(frecuencia_meses)
+    while mes > 12:
+        mes -= 12
+        año += 1
+    # Ajustar día si el mes destino tiene menos días (ej: 31 enero + 1 mes = 28/29 feb)
+    dia_max = _cal.monthrange(año, mes)[1]
+    dia = min(ultima_d.day, dia_max)
+    proxima_ideal = date(año, mes, dia)
+    hoy = date.today()
+    dias_vencimiento = (proxima_ideal - hoy).days
+
+    estado = "futura"
+    fecha_sugerida = proxima_ideal
+    if dias_vencimiento < 0:
+        estado = "vencida"
+        # Catch-up: hoy + 7 días (ventana razonable)
+        fecha_sugerida = hoy + timedelta(days=7)
+    elif dias_vencimiento <= 15:
+        estado = "proxima"
+
+    return {
+        "ultima_fecha": ultima_d.isoformat(),
+        "frecuencia_meses": int(frecuencia_meses),
+        "proxima_ideal": proxima_ideal.isoformat(),
+        "fecha_sugerida": fecha_sugerida.isoformat(),
+        "dias_vencimiento": dias_vencimiento,
+        "estado": estado,  # vencida | proxima | futura
+        "mensaje": (
+            f"Última mantención: {ultima_d.strftime('%d/%m/%Y')} · "
+            f"Frecuencia: cada {int(frecuencia_meses)} mes(es) · "
+            + (f"Próxima IDEAL era {proxima_ideal.strftime('%d/%m/%Y')} "
+               f"(VENCIDA hace {-dias_vencimiento} días) → "
+               f"sugerencia: {fecha_sugerida.strftime('%d/%m/%Y')}"
+               if estado == "vencida"
+               else f"Próxima: {fecha_sugerida.strftime('%d/%m/%Y')}"
+                    + (f" (en {dias_vencimiento} días)" if dias_vencimiento > 0 else " (HOY)"))
+        ),
+    }
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/sugerir-proxima", methods=["GET"])
+@_mant_required
+def mant_sugerir_proxima(cid):
+    """Devuelve la próxima visita sugerida basada en la última mantención
+    completada del cliente + frecuencia del contrato más reciente.
+
+    Útil para mostrar al usuario antes de crear una visita futura."""
+    # Última visita completada del cliente
+    ultima = mysql_fetchone(
+        "SELECT fecha_realizada, fecha_programada, contrato_id "
+        "  FROM mant_visitas "
+        " WHERE cliente_id=%s AND estado='completada' "
+        " ORDER BY COALESCE(fecha_realizada, fecha_programada) DESC LIMIT 1",
+        (cid,)
+    )
+
+    # Frecuencia del contrato vigente más reciente
+    contrato = mysql_fetchone(
+        "SELECT id, frecuencia_meses, ai_frecuencia_sug "
+        "  FROM mant_contratos "
+        " WHERE cliente_id=%s AND estado IN ('vigente','indefinido') "
+        " ORDER BY created_at DESC LIMIT 1",
+        (cid,)
+    )
+
+    if not ultima:
+        # Sin historial → sugerir hoy + 7 días como fecha tentativa
+        from datetime import date, timedelta
+        return jsonify({
+            "ok": True,
+            "sin_historial": True,
+            "fecha_sugerida": (date.today() + timedelta(days=7)).isoformat(),
+            "mensaje": "Sin historial previo — sugerencia: comenzar dentro de 7 días.",
+            "frecuencia_meses": (contrato.get("frecuencia_meses") if contrato else None),
+        })
+
+    freq = None
+    if contrato:
+        freq = contrato.get("frecuencia_meses") or contrato.get("ai_frecuencia_sug")
+    ultima_fecha = ultima.get("fecha_realizada") or ultima.get("fecha_programada")
+
+    sug = _sugerir_proxima_visita(ultima_fecha, freq, ultima.get("contrato_id"))
+    if not sug:
+        return jsonify({"ok": False, "error": "No se pudo calcular"}), 500
+    sug["ok"] = True
+    return jsonify(sug)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/visita-historica", methods=["POST"])
+@_mant_required
+def mant_visita_historica(cid):
+    """Registra una mantención que YA ocurrió (backdating) y calcula próxima.
+
+    Body JSON:
+      fecha_realizada: 'YYYY-MM-DD' (obligatoria, fecha del pasado)
+      tipo: 'preventiva' | 'correctiva' | 'garantia' | 'inspeccion'
+      tecnico: string
+      titulo: string opcional
+      observaciones: string opcional
+      costo: número opcional
+      contrato_id: int opcional (si no, usa el vigente más reciente)
+      crear_proxima: bool — si true, además crea automáticamente la próxima
+                            visita programada en la fecha sugerida
+    """
+    d = request.get_json(silent=True) or {}
+    from datetime import date, datetime
+
+    fecha_real_str = (d.get("fecha_realizada") or "").strip()
+    if not fecha_real_str:
+        return jsonify({"ok": False, "error": "fecha_realizada requerida"}), 400
+    try:
+        fecha_real = datetime.strptime(fecha_real_str[:10], "%Y-%m-%d").date()
+    except Exception:
+        return jsonify({"ok": False, "error": "fecha_realizada con formato inválido (usa YYYY-MM-DD)"}), 400
+
+    if fecha_real > date.today():
+        return jsonify({
+            "ok": False,
+            "error": "La fecha realizada no puede ser futura. Usa el módulo de programar visita."
+        }), 400
+
+    # Verificar cliente
+    cliente = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    # Contrato (opcional — toma el vigente si no viene)
+    contrato_id = d.get("contrato_id")
+    if not contrato_id:
+        ct = mysql_fetchone(
+            "SELECT id FROM mant_contratos "
+            "WHERE cliente_id=%s AND estado IN ('vigente','indefinido') "
+            "ORDER BY created_at DESC LIMIT 1", (cid,)
+        )
+        if ct:
+            contrato_id = ct.get("id")
+
+    titulo = (d.get("titulo") or "Mantención histórica").strip()[:200]
+    tipo = (d.get("tipo") or "preventiva").strip().lower()
+    if tipo not in ("preventiva", "correctiva", "garantia", "inspeccion"):
+        tipo = "preventiva"
+    tecnico = (d.get("tecnico") or "").strip()[:200]
+    observ  = (d.get("observaciones") or "").strip()
+    costo   = float(d.get("costo") or 0)
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (cliente_id, contrato_id, titulo, fecha_programada, fecha_realizada,
+                    tipo, estado, tecnico, observaciones, costo, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,'completada',%s,%s,%s,%s)""",
+                (cid, contrato_id, titulo, fecha_real, fecha_real,
+                 tipo, tecnico, observ, costo, current_username())
+            )
+            vid_historica = cur.lastrowid
+        conn.commit()
+        try:
+            _mant_log("visita", vid_historica, "registrada_historica",
+                      f"Mantención de {fecha_real.strftime('%d/%m/%Y')} retroactiva")
+        except Exception: pass
+    finally:
+        conn.close()
+
+    # ─── Calcular próxima sugerida ───
+    freq = None
+    if contrato_id:
+        ctr = mysql_fetchone(
+            "SELECT frecuencia_meses, ai_frecuencia_sug FROM mant_contratos WHERE id=%s",
+            (contrato_id,)
+        )
+        if ctr:
+            freq = ctr.get("frecuencia_meses") or ctr.get("ai_frecuencia_sug")
+
+    sugerencia = _sugerir_proxima_visita(fecha_real, freq, contrato_id) or {}
+
+    # ─── Si se pidió, crear automáticamente la próxima ───
+    proxima_creada = None
+    if d.get("crear_proxima") and sugerencia.get("fecha_sugerida"):
+        try:
+            conn2 = get_mysql()
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (cliente_id, contrato_id, titulo, fecha_programada,
+                        tipo, estado, created_by)
+                       VALUES (%s,%s,%s,%s,%s,'programada',%s)""",
+                    (cid, contrato_id,
+                     f"Mantención preventiva (sugerida por sistema)",
+                     sugerencia["fecha_sugerida"], tipo, current_username())
+                )
+                proxima_creada = cur.lastrowid
+            conn2.commit()
+            conn2.close()
+            try:
+                _mant_log("visita", proxima_creada, "programada_auto",
+                          f"Generada por sistema tras mantención histórica {vid_historica}")
+            except Exception: pass
+        except Exception as e:
+            print(f"[mant_visita_historica] error creando próxima: {e}")
+
+    return jsonify({
+        "ok": True,
+        "visita_historica_id": vid_historica,
+        "proxima_creada_id": proxima_creada,
+        "sugerencia": sugerencia,
+        "mensaje": (f"Mantención del {fecha_real.strftime('%d/%m/%Y')} registrada. "
+                    + (sugerencia.get("mensaje","") if sugerencia else "")),
+    })
+
+
 @app.route("/mantenciones/api/visitas", methods=["POST"])
 @_mant_required
 def mant_visita_crear():
