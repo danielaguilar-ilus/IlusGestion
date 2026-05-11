@@ -207,6 +207,78 @@
   position:absolute;top:20px;right:24px;color:#fff;background:none;border:none;
   font-size:2rem;cursor:pointer;
 }
+
+/* ──────────────────────────────────────────────────────────────
+   PROTOCOLOS RÁPIDOS — bloque SaaS premium
+   ────────────────────────────────────────────────────────────── */
+.protocolos-box{
+  background:linear-gradient(135deg,#fafbfc 0%,#f3f4f6 100%);
+  border:1px solid #e5e7eb;border-radius:14px;padding:18px 20px;margin-bottom:18px;
+  position:relative;overflow:hidden;
+}
+.protocolos-box::before{
+  content:'';position:absolute;right:-30px;top:-30px;width:180px;height:180px;
+  background:radial-gradient(circle,rgba(220,38,38,.05),transparent 70%);
+  border-radius:50%;pointer-events:none;
+}
+.protocolos-title{
+  font-size:.92rem;font-weight:900;color:#0f172a;letter-spacing:-.01em;
+  display:flex;align-items:center;gap:6px;
+}
+.protocolos-title i{color:#f59e0b;}
+.protocolos-sub{font-size:.78rem;color:#6b7280;max-width:560px;line-height:1.45;}
+
+.protocolos-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:10px;position:relative;z-index:1;
+}
+.proto-card{
+  display:flex;align-items:flex-start;gap:12px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:14px 16px;text-align:left;cursor:pointer;
+  transition:all .16s;width:100%;
+  border-left:4px solid transparent;
+}
+.proto-card:hover{
+  transform:translateY(-2px);
+  box-shadow:0 8px 22px rgba(0,0,0,.09);
+}
+.proto-lev{border-left-color:#0ea5e9;}
+.proto-gar{border-left-color:#dc2626;}
+.proto-pm{ border-left-color:#16a34a;}
+.proto-inst{border-left-color:#f59e0b;}
+
+.proto-ico{
+  width:42px;height:42px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.3rem;flex-shrink:0;
+}
+.proto-lev .proto-ico{background:#e0f2fe;color:#0369a1;}
+.proto-gar .proto-ico{background:#fee2e2;color:#991b1b;}
+.proto-pm  .proto-ico{background:#dcfce7;color:#166534;}
+.proto-inst .proto-ico{background:#fef3c7;color:#92400e;}
+
+.proto-body{flex:1;min-width:0;}
+.proto-name{font-weight:800;font-size:.92rem;color:#0f172a;margin-bottom:3px;letter-spacing:-.01em;}
+.proto-desc{font-size:.74rem;color:#6b7280;line-height:1.4;}
+.proto-tag{
+  display:inline-block;font-size:.66rem;color:#374151;background:#f3f4f6;
+  padding:2px 8px;border-radius:50px;border:1px solid #e5e7eb;
+  margin-top:6px;font-weight:600;
+}
+
+/* Modal selector de máquinas */
+.maq-proto-row{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;
+  margin-bottom:6px;cursor:pointer;
+  transition:all .12s;
+}
+.maq-proto-row:hover{background:#f9fafb;border-color:#d1d5db;}
+.maq-proto-row input{
+  width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:#dc2626;
+}
+.maq-proto-row:has(input:checked){background:#fef2f2;border-color:#fca5a5;}
 </style>
 
 {# ════════ HERO ════════ #}
@@ -313,10 +385,124 @@
 
 {# ════════ PANE TAREAS ════════ #}
 <div class="ot-pane active" id="ot-tareas">
+
+  {# ── PROTOCOLOS RÁPIDOS — generadores 1-click ─────────────────── #}
+  <div class="protocolos-box">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <div>
+        <div class="protocolos-title">
+          <i class="bi bi-stars"></i> Protocolos rápidos
+        </div>
+        <div class="protocolos-sub">Genera todas las tareas del checklist con 1 click. Pensado para acelerar el trabajo del técnico en sala.</div>
+      </div>
+      <span class="badge bg-light text-dark" style="font-size:.66rem;border:1px solid #e5e7eb">
+        <i class="bi bi-building me-1"></i>{{ maquinas|length }} máquina(s) del cliente
+      </span>
+    </div>
+
+    <div class="protocolos-grid">
+      {# Levantamiento fotográfico completo #}
+      <button class="proto-card proto-lev" onclick="aplicarProtocolo('levantamiento')">
+        <div class="proto-ico"><i class="bi bi-camera-fill"></i></div>
+        <div class="proto-body">
+          <div class="proto-name">Levantamiento fotográfico</div>
+          <div class="proto-desc">1 tarea por <strong>cada máquina</strong> del cliente · fotos generales, serie, marca, daños, instalación.</div>
+          <div class="proto-tag">📸 Genera {{ maquinas|length }} tarea(s)</div>
+        </div>
+      </button>
+
+      {# Cambio por garantía #}
+      <button class="proto-card proto-gar" onclick="abrirSelectorMaquinas('cambio_garantia')">
+        <div class="proto-ico"><i class="bi bi-arrow-repeat"></i></div>
+        <div class="proto-body">
+          <div class="proto-name">Cambio por garantía</div>
+          <div class="proto-desc">Seleccioná las máquinas a cambiar · checklist completo: foto saliente, falla, equipo nuevo, instalación, firma.</div>
+          <div class="proto-tag">🔄 Seleccionás equipos</div>
+        </div>
+      </button>
+
+      {# Inspección preventiva #}
+      <button class="proto-card proto-pm" onclick="aplicarProtocolo('inspeccion_pm')">
+        <div class="proto-ico"><i class="bi bi-shield-check"></i></div>
+        <div class="proto-body">
+          <div class="proto-name">Inspección preventiva</div>
+          <div class="proto-desc">Checklist estándar de PM · 8 ítems · inspección visual, limpieza, lubricación, voltaje, test de carga.</div>
+          <div class="proto-tag">🔧 8 tareas estándar</div>
+        </div>
+      </button>
+
+      {# Instalación nueva #}
+      <button class="proto-card proto-inst" onclick="aplicarProtocolo('instalacion_pm')">
+        <div class="proto-ico"><i class="bi bi-box-seam"></i></div>
+        <div class="proto-body">
+          <div class="proto-name">Instalación nueva</div>
+          <div class="proto-desc">Embalaje, ensamble, nivelación, conexión, encendido, capacitación, conformidad firmada.</div>
+          <div class="proto-tag">📦 9 tareas estándar</div>
+        </div>
+      </button>
+    </div>
+  </div>
+
+  {# ── Modal selector de máquinas (cambio por garantía) ──────── #}
+  <div class="modal fade" id="modalMaqProto" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d);color:#fff">
+          <h5 class="modal-title fw-bold"><i class="bi bi-arrow-repeat me-2"></i><span id="protoModalTitle">Cambio por garantía</span></h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning py-2" style="font-size:.85rem">
+            <i class="bi bi-info-circle me-1"></i>
+            Seleccioná las máquinas que se van a cambiar. Se generará una tarea de tipo <strong>cambio</strong> por cada una, con el checklist completo del protocolo de garantía.
+          </div>
+          <input type="text" id="maqProtoBuscar" class="form-control form-control-sm mb-2"
+                 placeholder="🔍 Buscar máquina por nombre o N° serie…"
+                 onkeyup="filtrarMaqProto()">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="seleccionarTodasMaq(true)"><i class="bi bi-check-all me-1"></i>Seleccionar todas</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="seleccionarTodasMaq(false)"><i class="bi bi-x-square me-1"></i>Limpiar</button>
+            <span class="small text-muted"><strong id="maqProtoCount">0</strong> seleccionada(s)</span>
+          </div>
+          <div id="maqProtoList" style="max-height:50vh;overflow-y:auto">
+            {% if maquinas %}
+              {% for m in maquinas %}
+              <label class="maq-proto-row" data-search="{{ (m.nombre or '')|lower }} {{ (m.serie or '')|lower }} {{ (m.sku or '')|lower }}">
+                <input type="checkbox" class="maq-proto-chk" value="{{ m.id }}" onchange="actualizarMaqProtoCount()">
+                <div class="flex-grow-1">
+                  <div class="fw-bold">{{ m.nombre or 'Máquina #' ~ m.id }}</div>
+                  <div class="small text-muted">
+                    {% if m.serie %}<i class="bi bi-tag me-1"></i>S/N: <code>{{ m.serie }}</code>{% endif %}
+                    {% if m.sku %} · SKU: <code>{{ m.sku }}</code>{% endif %}
+                  </div>
+                </div>
+              </label>
+              {% endfor %}
+            {% else %}
+              <div class="text-center text-muted py-4">
+                <i class="bi bi-building" style="font-size:2rem;opacity:.3"></i>
+                <div class="small mt-2">Este cliente no tiene máquinas registradas.</div>
+                <a href="{{ url_for('mant_cliente_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-2">
+                  <i class="bi bi-plus-lg me-1"></i>Agregar máquinas
+                </a>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-ilus fw-bold" onclick="aplicarProtocoloMaquinas()">
+            <i class="bi bi-magic me-1"></i>Generar tareas
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="task-add-form">
     <div class="row g-2 align-items-end">
       <div class="col-md-5">
-        <label class="form-label small fw-semibold mb-1">Nueva tarea <span class="text-danger">*</span></label>
+        <label class="form-label small fw-semibold mb-1">Nueva tarea (manual) <span class="text-danger">*</span></label>
         <input type="text" id="newTaskTitulo" class="form-control form-control-sm"
                placeholder="Ej: Cambio de trotadora N°1">
       </div>
@@ -701,6 +887,92 @@ function cerrarLightbox(){
     if (e.dataTransfer && e.dataTransfer.files) subirFotos(e.dataTransfer.files);
   });
 })();
+
+// ════════════════════════════════════════════════════════════════
+// PROTOCOLOS RÁPIDOS — generadores 1-click
+// ════════════════════════════════════════════════════════════════
+
+const PROTO_LABELS = {
+  levantamiento:   'Levantamiento fotográfico completo',
+  cambio_garantia: 'Cambio por garantía',
+  inspeccion_pm:   'Inspección preventiva (8 ítems)',
+  instalacion_pm:  'Instalación nueva (9 ítems)'
+};
+
+async function aplicarProtocolo(protocolo, maquinas_ids){
+  const label = PROTO_LABELS[protocolo] || protocolo;
+  const tieneTareas = document.querySelectorAll('#taskList .task-item').length > 0;
+
+  let confirmMsg = `¿Aplicar protocolo "${label}"?\n\nSe generarán las tareas estándar de este protocolo.`;
+  if (tieneTareas){
+    confirmMsg += `\n\n⚠ Ya hay tareas en esta OT. Las NUEVAS se agregarán abajo (no se borran las existentes).`;
+  }
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    const body = { reset: false };
+    if (maquinas_ids && maquinas_ids.length) body.maquinas_ids = maquinas_ids;
+
+    const r = await fetch(API_BASE + '/protocolo/' + protocolo, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!d.ok){
+      alert('❌ ' + (d.error || 'No se pudo aplicar el protocolo'));
+      return;
+    }
+    alert(`✅ Protocolo "${label}" aplicado\n\n• ${d.tareas_creadas} tarea(s) creada(s)` +
+          (d.maquinas_afectadas ? `\n• ${d.maquinas_afectadas} máquina(s) afectada(s)` : ''));
+    cargarTareas();
+  } catch(e){
+    alert('❌ Error de red: ' + e);
+  }
+}
+
+// Modal selector de máquinas (para cambio_garantia)
+function abrirSelectorMaquinas(protocolo){
+  document.getElementById('protoModalTitle').textContent = PROTO_LABELS[protocolo] || protocolo;
+  document.querySelectorAll('.maq-proto-chk').forEach(c => c.checked = false);
+  actualizarMaqProtoCount();
+  const modal = new bootstrap.Modal(document.getElementById('modalMaqProto'));
+  modal._protocolo = protocolo;
+  window._maqProtoModal = modal;
+  modal.show();
+}
+
+function actualizarMaqProtoCount(){
+  const n = document.querySelectorAll('.maq-proto-chk:checked').length;
+  document.getElementById('maqProtoCount').textContent = n;
+}
+
+function seleccionarTodasMaq(state){
+  document.querySelectorAll('.maq-proto-chk').forEach(c => {
+    // Solo seleccionar las visibles (filtradas)
+    if (c.closest('.maq-proto-row').style.display !== 'none') c.checked = state;
+  });
+  actualizarMaqProtoCount();
+}
+
+function filtrarMaqProto(){
+  const q = (document.getElementById('maqProtoBuscar').value || '').toLowerCase().trim();
+  document.querySelectorAll('.maq-proto-row').forEach(row => {
+    const txt = row.dataset.search || '';
+    row.style.display = (!q || txt.indexOf(q) >= 0) ? '' : 'none';
+  });
+}
+
+async function aplicarProtocoloMaquinas(){
+  const ids = Array.from(document.querySelectorAll('.maq-proto-chk:checked')).map(c => parseInt(c.value));
+  if (!ids.length){
+    alert('⚠ Selecciona al menos una máquina.');
+    return;
+  }
+  const protocolo = (window._maqProtoModal && window._maqProtoModal._protocolo) || 'cambio_garantia';
+  if (window._maqProtoModal) window._maqProtoModal.hide();
+  await aplicarProtocolo(protocolo, ids);
+}
 
 // Init
 cargarTareas();

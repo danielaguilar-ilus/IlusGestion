@@ -115,6 +115,14 @@
   </div>
 </div>
 
+{% if fatal_error %}
+<div class="alert alert-danger" style="font-size:.85rem">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  <strong>Diagnóstico interno:</strong> {{ fatal_error }}
+  <div class="small mt-1 text-muted">Avisá a Daniel — esta tarjeta sólo aparece cuando hay un problema de BD.</div>
+</div>
+{% endif %}
+
 {# ── KPIs globales ── #}
 <div class="ots-kpi-row">
   <div class="ots-kpi tot">
@@ -196,10 +204,10 @@
     <div class="ot-meta">
       <div class="ot-cliente">
         <a href="{{ url_for('mant_ficha', cid=o.cliente_id) }}" title="Ver ficha del cliente">
-          <i class="bi bi-building me-1"></i>{{ o.razon_social }}
+          <i class="bi bi-building me-1"></i>{{ o.razon_social or 'Cliente' }}
         </a>
       </div>
-      <div class="ot-titulo">{{ o.titulo or (o.tipo|title + ' programada') }}</div>
+      <div class="ot-titulo">{{ o.titulo or ((o.tipo or 'visita')|title + ' programada') }}</div>
       <div class="ot-info-pills">
         {% if o.tipo %}
         <span class="ot-pill"><i class="bi bi-tag"></i>{{ o.tipo|title }}</span>
@@ -211,7 +219,7 @@
         <span class="ot-pill"><i class="bi bi-geo-alt"></i>{{ o.cli_comuna }}</span>
         {% endif %}
         {% if o.costo %}
-        <span class="ot-pill"><i class="bi bi-cash"></i>${{ "{:,.0f}".format(o.costo).replace(",",".") }}</span>
+        <span class="ot-pill"><i class="bi bi-cash"></i>${{ "{:,.0f}".format(o.costo|float).replace(",",".") }}</span>
         {% endif %}
       </div>
     </div>
@@ -235,17 +243,17 @@
     {# Fecha + Estado #}
     <div class="ot-fecha">
       {% if o.fecha_programada %}
-        <div class="dia">{{ o.fecha_programada.strftime('%d/%m') }}</div>
-        <div>{{ o.fecha_programada.strftime('%Y') }}</div>
-        {% if o.hora_inicio %}
-        <div class="hora">
-          {% if o.hora_inicio.__class__.__name__ != 'str' %}{{ o.hora_inicio.strftime('%H:%M') }}{% else %}{{ o.hora_inicio }}{% endif %}
-        </div>
+        {% if o.fecha_programada.__class__.__name__ in ('date','datetime') %}
+          <div class="dia">{{ o.fecha_programada.strftime('%d/%m') }}</div>
+          <div>{{ o.fecha_programada.strftime('%Y') }}</div>
+        {% else %}
+          <div class="dia">{{ o.fecha_programada }}</div>
         {% endif %}
+        {% if o.hora_inicio %}<div class="hora">{{ o.hora_inicio|hm }}</div>{% endif %}
       {% else %}
         <div class="text-muted">—</div>
       {% endif %}
-      <span class="badge-estado bs-{{ o.estado }} mt-1 d-inline-block">{{ o.estado.replace('_',' ').title() }}</span>
+      <span class="badge-estado bs-{{ o.estado or 'programada' }} mt-1 d-inline-block">{{ (o.estado or 'programada').replace('_',' ').title() }}</span>
     </div>
 
     {# Acción principal: Abrir OT #}

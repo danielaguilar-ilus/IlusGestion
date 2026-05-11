@@ -14737,43 +14737,74 @@ def mant_ots_list():
         like = f"%{q}%"
         params.extend([like, like, like])
 
-    sql = (
-        "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.titulo, v.descripcion, "
-        "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
-        "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
-        "       v.tecnico_id, t.nombre AS tecnico_nombre, "
-        "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
-        "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas, "
-        "       (SELECT COUNT(*) FROM mant_visita_fotos WHERE visita_id=v.id) AS n_fotos "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
-        "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
-        f" WHERE {' AND '.join(where)} "
-        " ORDER BY v.fecha_programada DESC, v.id DESC "
-        " LIMIT 200"
-    )
-    ots = mysql_fetchall(sql, tuple(params)) or []
-    ots = [dict(o) for o in ots]
+    ots = []
+    kpis = {"total": 0, "programadas": 0, "completadas": 0, "atrasadas": 0}
+    tecnicos = []
+    fatal_error = None
+    try:
+        sql = (
+            "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.titulo, v.descripcion, "
+            "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
+            "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
+            "       v.tecnico_id, t.nombre AS tecnico_nombre, "
+            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
+            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas, "
+            "       (SELECT COUNT(*) FROM mant_visita_fotos WHERE visita_id=v.id) AS n_fotos "
+            "  FROM mant_visitas v "
+            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+            f" WHERE {' AND '.join(where)} "
+            " ORDER BY v.fecha_programada DESC, v.id DESC "
+            " LIMIT 200"
+        )
+        ots = mysql_fetchall(sql, tuple(params)) or []
+        ots = [dict(o) for o in ots]
+    except Exception as e:
+        # Fallback simple si subqueries fallan (ej. tablas no migradas aún)
+        try:
+            ots = mysql_fetchall(
+                "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.titulo, v.descripcion, "
+                "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
+                "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
+                "       v.tecnico_id, v.tecnico AS tecnico_nombre, "
+                "       0 AS n_tareas, 0 AS n_completas, 0 AS n_fotos "
+                "  FROM mant_visitas v "
+                "  JOIN mant_clientes c ON c.id=v.cliente_id "
+                f" WHERE {' AND '.join(where)} "
+                " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 200",
+                tuple(params)
+            ) or []
+            ots = [dict(o) for o in ots]
+        except Exception as e2:
+            fatal_error = f"{e} / fallback: {e2}"
+            ots = []
 
-    # KPIs globales (sin filtros)
-    kpis = mysql_fetchone(
-        "SELECT "
-        " COUNT(*) AS total, "
-        " SUM(CASE WHEN estado='programada' THEN 1 ELSE 0 END) AS programadas, "
-        " SUM(CASE WHEN estado='completada' THEN 1 ELSE 0 END) AS completadas, "
-        " SUM(CASE WHEN estado='programada' AND fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
-        "FROM mant_visitas"
-    ) or {}
+    try:
+        kpis = mysql_fetchone(
+            "SELECT "
+            " COUNT(*) AS total, "
+            " SUM(CASE WHEN estado='programada' THEN 1 ELSE 0 END) AS programadas, "
+            " SUM(CASE WHEN estado='completada' THEN 1 ELSE 0 END) AS completadas, "
+            " SUM(CASE WHEN estado='programada' AND fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
+            "FROM mant_visitas"
+        ) or kpis
+    except Exception:
+        pass
 
-    tecnicos = mysql_fetchall(
-        "SELECT id, nombre FROM mant_tecnicos WHERE estado='activo' ORDER BY nombre"
-    ) or []
+    try:
+        tecnicos = mysql_fetchall(
+            "SELECT id, nombre FROM mant_tecnicos WHERE estado='activo' ORDER BY nombre"
+        ) or []
+        tecnicos = [dict(t) for t in tecnicos]
+    except Exception:
+        tecnicos = []
 
     return render_template(
         "mantenciones/ots_list.html",
         ots=ots,
         kpis=kpis,
-        tecnicos=[dict(t) for t in tecnicos],
+        tecnicos=tecnicos,
+        fatal_error=fatal_error,
         filtros={
             "estado": estado, "tipo": tipo,
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
@@ -14988,6 +15019,193 @@ def mant_visita_tarea_update(vid, tid):
         tuple(vals)
     )
     return jsonify({"ok": True})
+
+
+# ═════════════════════════════════════════════════════════════════════
+# OT — PROTOCOLOS RÁPIDOS (generadores de checklist 1-click)
+# Crean en lote N tareas estándar sobre una OT existente.
+#
+# Protocolos disponibles:
+#   · levantamiento     → 1 tarea por máquina del cliente (fotos + serie)
+#   · cambio_garantia   → 1 tarea cambio por máquina seleccionada
+#   · inspeccion_pm     → checklist estándar preventivo (8 ítems)
+#   · instalacion_pm    → checklist de instalación nueva
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/protocolo/<protocolo>", methods=["POST"])
+@_mant_required
+def mant_visita_protocolo(vid, protocolo):
+    """Aplica un protocolo a la OT: genera N tareas estándar.
+
+    POST JSON:
+      maquinas_ids: [int]  (opcional, p/ cambio_garantia restringe a IDs específicos)
+      reset:        bool   (default false; si true borra tareas existentes antes)
+    """
+    visita = mysql_fetchone(
+        "SELECT id, cliente_id, tipo FROM mant_visitas WHERE id=%s", (vid,)
+    )
+    if not visita:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    visita = dict(visita)
+    cliente_id = visita["cliente_id"]
+    d = request.get_json(silent=True) or {}
+    reset = bool(d.get("reset"))
+    maquinas_ids = d.get("maquinas_ids") or []
+    user = current_username()
+
+    # Validar protocolo
+    if protocolo not in ("levantamiento", "cambio_garantia", "inspeccion_pm", "instalacion_pm"):
+        return jsonify({"ok": False, "error": "Protocolo desconocido"}), 400
+
+    # Obtener máquinas del cliente
+    if maquinas_ids:
+        placeholders = ",".join(["%s"] * len(maquinas_ids))
+        maquinas = mysql_fetchall(
+            f"SELECT id, nombre, serie, sku FROM mant_maquinas "
+            f"WHERE cliente_id=%s AND id IN ({placeholders})",
+            tuple([cliente_id] + [int(x) for x in maquinas_ids])
+        ) or []
+    else:
+        maquinas = mysql_fetchall(
+            "SELECT id, nombre, serie, sku FROM mant_maquinas "
+            "WHERE cliente_id=%s ORDER BY nombre",
+            (cliente_id,)
+        ) or []
+    maquinas = [dict(m) for m in maquinas]
+
+    # Si reset, borrar tareas existentes
+    if reset:
+        mysql_execute("DELETE FROM mant_visita_tareas WHERE visita_id=%s", (vid,))
+
+    # Orden inicial = max(orden) + 1
+    last_orden = mysql_fetchone(
+        "SELECT COALESCE(MAX(orden),0) AS n FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    ) or {"n": 0}
+    orden_base = int(last_orden.get("n", 0)) + 1
+
+    creadas = 0
+
+    # ─── PROTOCOLO 1: LEVANTAMIENTO FOTOGRÁFICO COMPLETO ──────────────
+    # Para cada máquina del cliente: 1 tarea con checklist visual
+    # ──────────────────────────────────────────────────────────────────
+    if protocolo == "levantamiento":
+        if not maquinas:
+            return jsonify({
+                "ok": False,
+                "error": "El cliente no tiene máquinas registradas. Agrega máquinas desde la ficha del cliente."
+            }), 400
+        for i, m in enumerate(maquinas):
+            mant_titulo = f"📸 Levantamiento: {m['nombre'] or 'Máquina'}"
+            if m.get("serie"):
+                mant_titulo += f" (S/N: {m['serie']})"
+            descripcion = (
+                "Protocolo de levantamiento fotográfico:\n"
+                "  1) Foto general del equipo (frontal y lateral)\n"
+                "  2) Foto de la placa / número de serie legible\n"
+                "  3) Foto de la marca y modelo\n"
+                "  4) Detalle de cualquier daño visible (si aplica)\n"
+                "  5) Foto del equipo instalado / ubicado en sala"
+            )
+            mysql_execute(
+                "INSERT INTO mant_visita_tareas "
+                "(visita_id, orden, titulo, descripcion, tipo, maquina_id, cantidad, created_by) "
+                "VALUES (%s,%s,%s,%s,'levantamiento',%s,1,%s)",
+                (vid, orden_base + i, mant_titulo[:300], descripcion, m["id"], user)
+            )
+            creadas += 1
+
+    # ─── PROTOCOLO 2: CAMBIO POR GARANTÍA ─────────────────────────────
+    # Para cada máquina seleccionada: 1 tarea de cambio con checklist
+    # ──────────────────────────────────────────────────────────────────
+    elif protocolo == "cambio_garantia":
+        if not maquinas:
+            return jsonify({
+                "ok": False,
+                "error": "Selecciona al menos una máquina a cambiar."
+            }), 400
+        for i, m in enumerate(maquinas):
+            mant_titulo = f"🔄 Cambio por garantía: {m['nombre'] or 'Máquina'}"
+            if m.get("serie"):
+                mant_titulo += f" (S/N saliente: {m['serie']})"
+            descripcion = (
+                "Protocolo de cambio por garantía:\n"
+                "  1) Foto del equipo SALIENTE antes del retiro\n"
+                "  2) Foto de la placa / N° serie del equipo saliente\n"
+                "  3) Foto de la falla / motivo de garantía (si aplica)\n"
+                "  4) Foto del equipo NUEVO (entrante) con su serie\n"
+                "  5) Foto del equipo instalado y funcionando\n"
+                "  6) Registrar N° de serie nuevo en el sistema (campo abajo)\n"
+                "  7) Firma / conformidad del cliente"
+            )
+            mysql_execute(
+                "INSERT INTO mant_visita_tareas "
+                "(visita_id, orden, titulo, descripcion, tipo, maquina_id, cantidad, created_by) "
+                "VALUES (%s,%s,%s,%s,'cambio',%s,1,%s)",
+                (vid, orden_base + i, mant_titulo[:300], descripcion, m["id"], user)
+            )
+            creadas += 1
+
+    # ─── PROTOCOLO 3: INSPECCIÓN PREVENTIVA ───────────────────────────
+    elif protocolo == "inspeccion_pm":
+        items = [
+            ("inspeccion", "🔍 Inspección visual general del equipo", None),
+            ("limpieza",   "🧹 Limpieza profunda de componentes", None),
+            ("inspeccion", "🔋 Verificar tensión y voltaje", None),
+            ("inspeccion", "⚙️ Lubricación de partes móviles", None),
+            ("inspeccion", "🔌 Verificar conexiones eléctricas y aislantes", None),
+            ("inspeccion", "📊 Test de funcionamiento bajo carga", None),
+            ("inspeccion", "🩺 Diagnóstico de software / firmware (si aplica)", None),
+            ("inspeccion", "📋 Registrar lecturas y observaciones finales", None),
+        ]
+        for i, (tipo, titulo, mid) in enumerate(items):
+            mysql_execute(
+                "INSERT INTO mant_visita_tareas "
+                "(visita_id, orden, titulo, tipo, maquina_id, cantidad, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,1,%s)",
+                (vid, orden_base + i, titulo[:300], tipo, mid, user)
+            )
+            creadas += 1
+
+    # ─── PROTOCOLO 4: INSTALACIÓN NUEVA ───────────────────────────────
+    elif protocolo == "instalacion_pm":
+        items = [
+            "📦 Verificar embalaje y accesorios completos",
+            "🧰 Armado / ensamble del equipo",
+            "📍 Ubicación y nivelación en sala",
+            "🔌 Conexión eléctrica y verificación de toma",
+            "⚡ Encendido inicial y test de funciones básicas",
+            "📊 Configuración de software / firmware",
+            "👤 Capacitación al cliente sobre uso básico",
+            "📸 Foto del equipo instalado funcionando",
+            "✍️ Firma de conformidad del cliente",
+        ]
+        for i, t in enumerate(items):
+            mysql_execute(
+                "INSERT INTO mant_visita_tareas "
+                "(visita_id, orden, titulo, tipo, cantidad, created_by) "
+                "VALUES (%s,%s,%s,'instalacion',1,%s)",
+                (vid, orden_base + i, t[:300], user)
+            )
+            creadas += 1
+
+    # Log de auditoría
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, %s, %s, %s)",
+            (vid, "protocolo_aplicado", f"{protocolo} → {creadas} tareas", user)
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "protocolo": protocolo,
+        "tareas_creadas": creadas,
+        "maquinas_afectadas": len(maquinas) if protocolo in ("levantamiento", "cambio_garantia") else 0,
+    })
 
 
 # ═════════════════════════════════════════════════════════════════════
