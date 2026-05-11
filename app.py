@@ -12530,6 +12530,138 @@ def admin_mantenciones_reset():
     })
 
 
+# ══════════════════════════════════════════════════════════════════════
+# LIMPIEZA DE HUÉRFANOS — borra registros cuyo padre (cliente) ya no
+# existe. Útil cuando las FK CASCADE no estaban en la BD original y
+# quedan ghosts después de borrar clientes.
+#
+# POST /admin/mantenciones/clean-orphans  (solo superadmin)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/admin/mantenciones/clean-orphans", methods=["POST"])
+@login_required
+def admin_mantenciones_clean_orphans():
+    """Borra registros huérfanos (sin cliente padre). SOLO superadmin."""
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    user = current_username() or "sistema"
+
+    # Snapshot ANTES
+    before = {}
+    targets = [
+        # Tablas hijas DIRECTAS de mant_clientes
+        "mant_contratos",
+        "mant_visitas",
+        "mant_maquinas",
+        "mant_sucursales",
+        "mant_reportes",
+        "mant_repuestos",
+        "mant_notificaciones",
+    ]
+    try:
+        for t in targets:
+            try:
+                r = mysql_fetchone(f"SELECT COUNT(*) AS n FROM {t}")
+                before[t] = int(r.get("n", 0)) if r else 0
+            except Exception:
+                before[t] = None
+    except Exception:
+        pass
+
+    conn = get_mysql()
+    deleted = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET FOREIGN_KEY_CHECKS = 0")
+            try:
+                # 1) Limpiar huérfanos directos de cliente (las 7 tablas hijas)
+                for t in targets:
+                    try:
+                        cur.execute(f"""
+                            DELETE FROM {t}
+                            WHERE cliente_id IS NULL
+                               OR cliente_id NOT IN (SELECT id FROM mant_clientes)
+                        """)
+                        deleted[t] = cur.rowcount
+                    except Exception as e:
+                        deleted[t] = f"error: {e}"
+
+                # 2) Limpiar nietos (que dependen de las hijas)
+                # Visitas: tareas, fotos, técnicos, repuestos, adjuntos
+                grand_targets = [
+                    ("mant_visita_tareas",    "visita_id",   "mant_visitas"),
+                    ("mant_visita_fotos",     "visita_id",   "mant_visitas"),
+                    ("mant_visita_tecnicos",  "visita_id",   "mant_visitas"),
+                    ("mant_visita_repuestos", "visita_id",   "mant_visitas"),
+                    ("mant_adjuntos",         "contrato_id", "mant_contratos"),
+                    ("mant_maquina_fotos",    "maquina_id",  "mant_maquinas"),
+                    ("mant_maquina_audit",    "maquina_id",  "mant_maquinas"),
+                ]
+                for child, fk, parent in grand_targets:
+                    try:
+                        cur.execute(f"""
+                            DELETE FROM {child}
+                            WHERE {fk} IS NULL
+                               OR {fk} NOT IN (SELECT id FROM {parent})
+                        """)
+                        deleted[child] = cur.rowcount
+                    except Exception as e:
+                        deleted[child] = f"error: {e}"
+
+                # 3) Limpiar logs huérfanos (sin padre real)
+                try:
+                    cur.execute("""
+                        DELETE FROM mant_logs
+                        WHERE (entidad='cliente'  AND entidad_id NOT IN (SELECT id FROM mant_clientes)  AND entidad_id <> 0)
+                           OR (entidad='visita'   AND entidad_id NOT IN (SELECT id FROM mant_visitas)   AND entidad_id <> 0)
+                           OR (entidad='maquina'  AND entidad_id NOT IN (SELECT id FROM mant_maquinas)  AND entidad_id <> 0)
+                           OR (entidad='contrato' AND entidad_id NOT IN (SELECT id FROM mant_contratos) AND entidad_id <> 0)
+                    """)
+                    deleted["mant_logs_huerfanos"] = cur.rowcount
+                except Exception as e:
+                    deleted["mant_logs_huerfanos"] = f"error: {e}"
+
+                # Auditoría
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                        "VALUES ('cliente', 0, 'clean_orphans', %s, %s)",
+                        (f"Snapshot antes: {json.dumps(before)} — borrado: {json.dumps(deleted, default=str)}",
+                         user)
+                    )
+                except Exception:
+                    pass
+
+                # Reset AUTO_INCREMENT si todas las tablas hijas quedaron vacías
+                try:
+                    for t in targets:
+                        check = mysql_fetchone(f"SELECT COUNT(*) AS n FROM {t}")
+                        if check and check.get("n", 0) == 0:
+                            try: cur.execute(f"ALTER TABLE {t} AUTO_INCREMENT = 1")
+                            except Exception: pass
+                except Exception:
+                    pass
+            finally:
+                try: cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+                except Exception: pass
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error al limpiar: {e}"}), 500
+    finally:
+        conn.close()
+
+    return jsonify({
+        "ok": True,
+        "mensaje": "Limpieza de huérfanos completada.",
+        "antes": before,
+        "borrado": deleted,
+        "usuario": user,
+    })
+
+
 # ── DECORATOR de acceso ────────────────────────────────────────────────
 
 # ── RUTAS PRINCIPALES ─────────────────────────────────────────────────
@@ -12696,6 +12828,36 @@ def mant_clientes():
     """)
     global_stats = dict(gs) if gs else {}
 
+    # ── Detección de registros HUÉRFANOS (sin cliente padre) ──
+    # Solo si el usuario es superadmin y vale la pena (caso típico:
+    # acabamos de borrar todos los clientes pero quedan ghosts).
+    orphans_detected = None
+    try:
+        if g.permissions.get("superadmin"):
+            orphan_q = mysql_fetchone("""
+                SELECT
+                  (SELECT COUNT(*) FROM mant_contratos ct
+                   WHERE ct.cliente_id IS NULL OR ct.cliente_id NOT IN
+                     (SELECT id FROM mant_clientes))                              AS n_contratos,
+                  (SELECT COUNT(*) FROM mant_maquinas m
+                   WHERE m.cliente_id IS NULL OR m.cliente_id NOT IN
+                     (SELECT id FROM mant_clientes))                              AS n_maquinas,
+                  (SELECT COUNT(*) FROM mant_visitas v
+                   WHERE v.cliente_id IS NULL OR v.cliente_id NOT IN
+                     (SELECT id FROM mant_clientes))                              AS n_visitas,
+                  (SELECT COUNT(*) FROM mant_sucursales s
+                   WHERE s.cliente_id IS NULL OR s.cliente_id NOT IN
+                     (SELECT id FROM mant_clientes))                              AS n_sucursales
+            """)
+            if orphan_q:
+                total_orphans = sum(int(orphan_q.get(k) or 0)
+                                    for k in ("n_contratos","n_maquinas","n_visitas","n_sucursales"))
+                if total_orphans > 0:
+                    orphans_detected = dict(orphan_q)
+                    orphans_detected["total"] = total_orphans
+    except Exception:
+        pass
+
     # Completaje promedio + notificaciones pendientes
     if clientes:
         global_stats['completaje_avg'] = round(sum(c['completaje'] for c in clientes) / len(clientes))
@@ -12707,9 +12869,10 @@ def mant_clientes():
     global_stats['notificaciones'] = (notif_r['n'] if notif_r else 0)
 
     return render_template("mantenciones/clientes.html",
-        clientes     = clientes,
-        filtros      = {"q": q, "estado": estado, "contrato": contrato_fil, "vista": vista},
-        global_stats = global_stats,
+        clientes         = clientes,
+        filtros          = {"q": q, "estado": estado, "contrato": contrato_fil, "vista": vista},
+        global_stats     = global_stats,
+        orphans_detected = orphans_detected,
     )
 
 
@@ -13762,6 +13925,21 @@ def mant_cliente_delete(cid):
                      f"— {counts}",
                      current_username())
                 )
+
+                # ── Auto-limpieza de huérfanos (defensa contra FK CASCADE que
+                # no se aplicaron por datos legacy o estructura antigua) ──
+                # Esto garantiza que tras borrar un cliente, NUNCA queden
+                # contratos/visitas/máquinas/sucursales sin padre.
+                for child_tbl in ("mant_contratos", "mant_visitas", "mant_maquinas",
+                                  "mant_sucursales", "mant_reportes", "mant_repuestos",
+                                  "mant_notificaciones"):
+                    try:
+                        cur.execute(f"""
+                            DELETE FROM {child_tbl}
+                            WHERE cliente_id IS NULL
+                               OR cliente_id NOT IN (SELECT id FROM mant_clientes)
+                        """)
+                    except Exception: pass
             finally:
                 try: cur.execute("SET FOREIGN_KEY_CHECKS = 1")
                 except Exception: pass

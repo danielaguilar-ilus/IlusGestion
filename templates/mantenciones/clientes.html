@@ -201,6 +201,64 @@
   </div>
 </div>
 
+{# ── BANNER DE HUÉRFANOS — solo si superadmin y hay datos sin cliente padre ── #}
+{% if orphans_detected and orphans_detected.total > 0 %}
+<div class="alert alert-warning d-flex justify-content-between align-items-start gap-3 flex-wrap"
+     style="border-left:5px solid #f59e0b;border-radius:10px;padding:14px 18px;margin-bottom:18px">
+  <div>
+    <div class="fw-bold mb-1" style="font-size:.95rem;color:#92400e">
+      <i class="bi bi-exclamation-triangle-fill me-1"></i>
+      Hay {{ orphans_detected.total }} registro(s) huérfano(s) en la BD
+    </div>
+    <div class="small" style="color:#78350f">
+      Estos registros tienen <code>cliente_id</code> apuntando a clientes que ya no existen
+      (posiblemente porque la BD original no tenía FK CASCADE).
+      Se reflejan en los KPIs aunque no haya clientes.
+      <ul class="mb-0 mt-1" style="font-size:.82rem;padding-left:1.2rem">
+        {% if orphans_detected.n_contratos %}<li><strong>{{ orphans_detected.n_contratos }}</strong> contrato(s) sin cliente</li>{% endif %}
+        {% if orphans_detected.n_maquinas %}<li><strong>{{ orphans_detected.n_maquinas }}</strong> máquina(s) sin cliente</li>{% endif %}
+        {% if orphans_detected.n_visitas %}<li><strong>{{ orphans_detected.n_visitas }}</strong> visita(s)/OT(s) sin cliente</li>{% endif %}
+        {% if orphans_detected.n_sucursales %}<li><strong>{{ orphans_detected.n_sucursales }}</strong> sucursal(es) sin cliente</li>{% endif %}
+      </ul>
+    </div>
+  </div>
+  <button type="button" id="btnCleanOrphans" class="btn btn-warning fw-bold"
+          onclick="limpiarHuerfanos()" style="white-space:nowrap">
+    <i class="bi bi-eraser me-1"></i>Limpiar huérfanos
+  </button>
+</div>
+<script>
+async function limpiarHuerfanos(){
+  if (!confirm('¿Borrar todos los registros huérfanos?\n\nEsto borrará permanentemente contratos, máquinas, visitas y sucursales que no tengan cliente padre. Los clientes existentes NO se tocan.')) return;
+  const btn = document.getElementById('btnCleanOrphans');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando...';
+  try {
+    const r = await fetch('/admin/mantenciones/clean-orphans', {
+      method:'POST', headers:{'Content-Type':'application/json'}
+    });
+    const d = await r.json();
+    if (d.ok){
+      const items = Object.entries(d.borrado || {})
+        .filter(([k,v]) => typeof v === 'number' && v > 0)
+        .map(([k,v]) => `${k}: ${v}`).join(', ');
+      alert('✅ Limpieza completada\n\n' + (items || 'Nada que limpiar.') +
+            '\n\nLa página se va a recargar para mostrar los KPIs actualizados.');
+      window.location.reload();
+    } else {
+      alert('❌ ' + (d.error || 'Error al limpiar'));
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Limpiar huérfanos';
+    }
+  } catch(e){
+    alert('❌ Error de red: ' + e);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Limpiar huérfanos';
+  }
+}
+</script>
+{% endif %}
+
 {# ── KPI STRIP (compacto: 6 mini-cards en una sola fila) ────────────── #}
 {%- set tot   = global_stats.total or 0 %}
 <div class="kpi-strip">
