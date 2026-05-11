@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Órdenes de Trabajo — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.ots-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);
+}
+.ots-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.ots-hero .sub{font-size:.86rem;color:#cfd3da;}
+
+.ots-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;margin-bottom:18px;}
+.ots-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:14px 16px;display:flex;flex-direction:column;gap:2px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.ots-kpi .num{font-size:1.7rem;font-weight:900;line-height:1;letter-spacing:-.02em;}
+.ots-kpi .lbl{font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.ots-kpi.tot .num{color:#0f172a;}
+.ots-kpi.prog .num{color:#1d4ed8;}
+.ots-kpi.done .num{color:#16a34a;}
+.ots-kpi.atra .num{color:#dc2626;}
+
+.filtros-bar{
+  background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:12px 14px;margin-bottom:14px;
+}
+
+.ot-row{
+  background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:14px 18px;margin-bottom:10px;
+  display:grid;grid-template-columns:auto 1fr auto auto auto;gap:14px;
+  align-items:center;transition:all .14s;
+  border-left:4px solid #e5e7eb;
+}
+.ot-row:hover{
+  transform:translateY(-1px);
+  box-shadow:0 4px 14px rgba(0,0,0,.08);
+  border-left-color:var(--ilus-red);
+}
+.ot-row.estado-programada{border-left-color:#f59e0b;}
+.ot-row.estado-completada{border-left-color:#16a34a;}
+.ot-row.estado-cancelada{border-left-color:#9ca3af;}
+
+.ot-num{
+  background:#fee2e2;color:#991b1b;
+  padding:6px 12px;border-radius:8px;
+  font-family:'JetBrains Mono',monospace;
+  font-size:.78rem;font-weight:800;letter-spacing:.04em;white-space:nowrap;
+}
+.ot-num.sinot{background:#f3f4f6;color:#6b7280;}
+
+.ot-meta{flex:1;min-width:0;}
+.ot-cliente{font-weight:800;font-size:1rem;color:#0f172a;letter-spacing:-.01em;}
+.ot-cliente a{color:inherit;text-decoration:none;}
+.ot-cliente a:hover{color:var(--ilus-red);}
+.ot-titulo{font-size:.84rem;color:#6b7280;margin-top:2px;}
+.ot-info-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.ot-pill{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:.7rem;color:#6b7280;background:#f9fafb;
+  padding:2px 8px;border-radius:50px;border:1px solid #e5e7eb;
+}
+
+.ot-stats{display:flex;gap:14px;font-size:.75rem;}
+.ot-stat{text-align:center;}
+.ot-stat .n{font-size:1.1rem;font-weight:800;line-height:1;}
+.ot-stat .l{font-size:.6rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;}
+.ot-stat.tar .n{color:#1d4ed8;}
+.ot-stat.don .n{color:#16a34a;}
+.ot-stat.fot .n{color:#dc2626;}
+
+.ot-fecha{font-size:.78rem;color:#374151;font-weight:600;text-align:right;white-space:nowrap;}
+.ot-fecha .dia{font-size:1.1rem;font-weight:800;color:#0f172a;}
+.ot-fecha .hora{font-size:.7rem;color:#9ca3af;}
+
+.badge-estado{padding:4px 12px;border-radius:50px;font-size:.66rem;font-weight:800;
+  letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;}
+.bs-programada{background:#fef3c7;color:#92400e;}
+.bs-completada{background:#dcfce7;color:#166534;}
+.bs-cancelada{background:#fee2e2;color:#991b1b;}
+.bs-reagendada{background:#dbeafe;color:#1e40af;}
+.bs-en_curso{background:#e0f2fe;color:#075985;}
+
+.empty-state{
+  background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  padding:50px 30px;text-align:center;
+}
+.empty-state i{font-size:3.4rem;opacity:.25;display:block;margin-bottom:10px;color:#9ca3af;}
+
+@media (max-width:768px){
+  .ot-row{grid-template-columns:1fr;gap:8px;}
+  .ot-fecha{text-align:left;}
+}
+</style>
+
+<div class="ots-hero">
+  <div>
+    <h4><i class="bi bi-clipboard2-pulse me-2"></i>Órdenes de Trabajo</h4>
+    <div class="sub">Todas las OTs · {{ ots|length }} resultado(s) · gestiona tareas, fotos y técnicos</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Dashboard
+    </a>
+    <a href="{{ url_for('mant_calendario') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-calendar3 me-1"></i>Calendario
+    </a>
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-light fw-bold">
+      <i class="bi bi-building-add me-1"></i>Nueva visita
+    </a>
+  </div>
+</div>
+
+{# ── KPIs globales ── #}
+<div class="ots-kpi-row">
+  <div class="ots-kpi tot">
+    <div class="num">{{ kpis.total or 0 }}</div>
+    <div class="lbl"><i class="bi bi-clipboard2 me-1"></i>Total OTs</div>
+  </div>
+  <div class="ots-kpi prog">
+    <div class="num">{{ kpis.programadas or 0 }}</div>
+    <div class="lbl"><i class="bi bi-calendar-event me-1"></i>Programadas</div>
+  </div>
+  <div class="ots-kpi done">
+    <div class="num">{{ kpis.completadas or 0 }}</div>
+    <div class="lbl"><i class="bi bi-check-circle me-1"></i>Completadas</div>
+  </div>
+  <div class="ots-kpi atra">
+    <div class="num">{{ kpis.atrasadas or 0 }}</div>
+    <div class="lbl"><i class="bi bi-exclamation-triangle me-1"></i>Atrasadas</div>
+  </div>
+</div>
+
+{# ── Filtros ── #}
+<form method="get" class="filtros-bar">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label small fw-semibold mb-1">Buscar</label>
+      <input type="text" name="q" class="form-control form-control-sm"
+             value="{{ filtros.q }}" placeholder="Cliente, título o N° OT">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold mb-1">Estado</label>
+      <select name="estado" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for est in ['programada','en_curso','completada','reagendada','cancelada'] %}
+        <option value="{{ est }}" {% if filtros.estado==est %}selected{% endif %}>{{ est.replace('_',' ').title() }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold mb-1">Tipo</label>
+      <select name="tipo" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for t in ['preventiva','correctiva','garantia','inspeccion','levantamiento','instalacion'] %}
+        <option value="{{ t }}" {% if filtros.tipo==t %}selected{% endif %}>{{ t.title() }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small fw-semibold mb-1">Técnico</label>
+      <select name="tecnico_id" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for t in tecnicos %}
+        <option value="{{ t.id }}" {% if filtros.tecnico_id and filtros.tecnico_id|int==t.id %}selected{% endif %}>{{ t.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2 d-flex gap-1">
+      <button class="btn btn-ilus btn-sm flex-grow-1"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+      <a href="{{ url_for('mant_ots_list') }}" class="btn btn-outline-secondary btn-sm" title="Limpiar">
+        <i class="bi bi-x-lg"></i>
+      </a>
+    </div>
+  </div>
+</form>
+
+{# ── Lista de OTs ── #}
+{% if ots %}
+  {% for o in ots %}
+  <div class="ot-row estado-{{ o.estado }}">
+    {# N° OT #}
+    <div>
+      {% if o.numero_ot %}
+        <span class="ot-num">{{ o.numero_ot }}</span>
+      {% else %}
+        <span class="ot-num sinot">VS-{{ '%05d'|format(o.id) }}</span>
+      {% endif %}
+    </div>
+
+    {# Meta (cliente + título + pills) #}
+    <div class="ot-meta">
+      <div class="ot-cliente">
+        <a href="{{ url_for('mant_ficha', cid=o.cliente_id) }}" title="Ver ficha del cliente">
+          <i class="bi bi-building me-1"></i>{{ o.razon_social }}
+        </a>
+      </div>
+      <div class="ot-titulo">{{ o.titulo or (o.tipo|title + ' programada') }}</div>
+      <div class="ot-info-pills">
+        {% if o.tipo %}
+        <span class="ot-pill"><i class="bi bi-tag"></i>{{ o.tipo|title }}</span>
+        {% endif %}
+        {% if o.tecnico_nombre %}
+        <span class="ot-pill"><i class="bi bi-person-badge"></i>{{ o.tecnico_nombre }}</span>
+        {% endif %}
+        {% if o.cli_comuna %}
+        <span class="ot-pill"><i class="bi bi-geo-alt"></i>{{ o.cli_comuna }}</span>
+        {% endif %}
+        {% if o.costo %}
+        <span class="ot-pill"><i class="bi bi-cash"></i>${{ "{:,.0f}".format(o.costo).replace(",",".") }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Stats (tareas / completas / fotos) #}
+    <div class="ot-stats">
+      <div class="ot-stat tar">
+        <div class="n">{{ o.n_tareas or 0 }}</div>
+        <div class="l">Tareas</div>
+      </div>
+      <div class="ot-stat don">
+        <div class="n">{{ o.n_completas or 0 }}</div>
+        <div class="l">OK</div>
+      </div>
+      <div class="ot-stat fot">
+        <div class="n">{{ o.n_fotos or 0 }}</div>
+        <div class="l">Fotos</div>
+      </div>
+    </div>
+
+    {# Fecha + Estado #}
+    <div class="ot-fecha">
+      {% if o.fecha_programada %}
+        <div class="dia">{{ o.fecha_programada.strftime('%d/%m') }}</div>
+        <div>{{ o.fecha_programada.strftime('%Y') }}</div>
+        {% if o.hora_inicio %}
+        <div class="hora">
+          {% if o.hora_inicio.__class__.__name__ != 'str' %}{{ o.hora_inicio.strftime('%H:%M') }}{% else %}{{ o.hora_inicio }}{% endif %}
+        </div>
+        {% endif %}
+      {% else %}
+        <div class="text-muted">—</div>
+      {% endif %}
+      <span class="badge-estado bs-{{ o.estado }} mt-1 d-inline-block">{{ o.estado.replace('_',' ').title() }}</span>
+    </div>
+
+    {# Acción principal: Abrir OT #}
+    <div>
+      <a href="{{ url_for('mant_ot_ficha', vid=o.id) }}" class="btn btn-ilus btn-sm fw-bold">
+        <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
+      </a>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state">
+    <i class="bi bi-clipboard2"></i>
+    <div class="fw-bold" style="font-size:1.05rem;color:#374151">
+      {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
+        Sin resultados con los filtros aplicados
+      {% else %}
+        Aún no hay Órdenes de Trabajo creadas
+      {% endif %}
+    </div>
+    <div class="small text-muted mt-1">
+      {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
+        Probá limpiar los filtros para ver todas las OTs.
+      {% else %}
+        Las OTs se crean automáticamente al programar una visita desde la ficha del cliente.
+      {% endif %}
+    </div>
+    {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
+    <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary mt-3">
+      <i class="bi bi-x-circle me-1"></i>Limpiar filtros
+    </a>
+    {% else %}
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-ilus mt-3">
+      <i class="bi bi-building-add me-1"></i>Ir a clientes para programar la primera
+    </a>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% endblock %}

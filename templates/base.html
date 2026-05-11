@@ -157,6 +157,10 @@
          class="sidebar-link{% if request.endpoint == 'mant_calendario' %} active{% endif %}">
         <i class="bi bi-calendar3"></i><span>Calendario</span>
       </a>
+      <a href="{{ url_for('mant_ots_list') }}"
+         class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha'] %} active{% endif %}">
+        <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
+      </a>
       <a href="{{ url_for('mant_tecnicos_index') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnico_ficha'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Técnicos</span>

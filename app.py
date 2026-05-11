@@ -14697,6 +14697,91 @@ def mant_visita_del(vid):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# OT — LISTADO GLOBAL DE ÓRDENES DE TRABAJO
+# Vista pro: todas las OTs con filtros (estado, técnico, cliente, rango)
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ots")
+@_mant_required
+def mant_ots_list():
+    """Listado global de todas las Órdenes de Trabajo (visitas) con filtros."""
+    estado     = (request.args.get("estado") or "").strip().lower()
+    tipo       = (request.args.get("tipo") or "").strip().lower()
+    tecnico_id = request.args.get("tecnico_id")
+    cliente_id = request.args.get("cliente_id")
+    q          = (request.args.get("q") or "").strip()
+
+    where = ["1=1"]
+    params = []
+
+    if estado in ("programada", "completada", "cancelada", "reagendada", "en_curso"):
+        where.append("v.estado=%s")
+        params.append(estado)
+    if tipo in ("preventiva", "correctiva", "garantia", "inspeccion", "levantamiento", "instalacion"):
+        where.append("v.tipo=%s")
+        params.append(tipo)
+    if tecnico_id:
+        try:
+            params.append(int(tecnico_id))
+            where.append("v.tecnico_id=%s")
+        except (TypeError, ValueError):
+            pass
+    if cliente_id:
+        try:
+            params.append(int(cliente_id))
+            where.append("v.cliente_id=%s")
+        except (TypeError, ValueError):
+            pass
+    if q:
+        where.append("(c.razon_social LIKE %s OR v.titulo LIKE %s OR v.numero_ot LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+
+    sql = (
+        "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.titulo, v.descripcion, "
+        "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
+        "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
+        "       v.tecnico_id, t.nombre AS tecnico_nombre, "
+        "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
+        "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos WHERE visita_id=v.id) AS n_fotos "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+        f" WHERE {' AND '.join(where)} "
+        " ORDER BY v.fecha_programada DESC, v.id DESC "
+        " LIMIT 200"
+    )
+    ots = mysql_fetchall(sql, tuple(params)) or []
+    ots = [dict(o) for o in ots]
+
+    # KPIs globales (sin filtros)
+    kpis = mysql_fetchone(
+        "SELECT "
+        " COUNT(*) AS total, "
+        " SUM(CASE WHEN estado='programada' THEN 1 ELSE 0 END) AS programadas, "
+        " SUM(CASE WHEN estado='completada' THEN 1 ELSE 0 END) AS completadas, "
+        " SUM(CASE WHEN estado='programada' AND fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
+        "FROM mant_visitas"
+    ) or {}
+
+    tecnicos = mysql_fetchall(
+        "SELECT id, nombre FROM mant_tecnicos WHERE estado='activo' ORDER BY nombre"
+    ) or []
+
+    return render_template(
+        "mantenciones/ots_list.html",
+        ots=ots,
+        kpis=kpis,
+        tecnicos=[dict(t) for t in tecnicos],
+        filtros={
+            "estado": estado, "tipo": tipo,
+            "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
+        },
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════
 # OT — PÁGINA FICHA (ficha completa con tabs)
 # ═════════════════════════════════════════════════════════════════════
 
