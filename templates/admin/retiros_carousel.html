@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block title %}Carrusel de Retiros — ILUS{% endblock %}
+{% block content %}
+<style>
+.rc-dropzone{
+  border:2px dashed #d1d5db;border-radius:14px;
+  padding:32px 24px;text-align:center;
+  background:#fafafa;cursor:pointer;
+  transition:all .18s;
+}
+.rc-dropzone:hover,.rc-dropzone.is-drag{
+  border-color:var(--ilus-red);background:#fff5f5;
+  transform:scale(1.005);
+}
+.rc-dropzone i{font-size:2.4rem;color:#9ca3af;display:block;margin-bottom:8px;}
+.rc-dropzone.is-drag i{color:var(--ilus-red);}
+
+.rc-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04);
+  transition:transform .15s,box-shadow .15s;
+}
+.rc-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08);}
+.rc-thumb{width:100%;aspect-ratio:16/10;object-fit:cover;display:block;background:#f3f4f6;}
+.rc-form-row{padding:14px;display:flex;flex-direction:column;gap:8px;}
+.rc-status-on{
+  background:#dcfce7;color:#166534;padding:2px 10px;border-radius:50px;
+  font-size:.62rem;font-weight:800;letter-spacing:.04em;
+}
+.rc-status-off{
+  background:#f3f4f6;color:#6b7280;padding:2px 10px;border-radius:50px;
+  font-size:.62rem;font-weight:800;letter-spacing:.04em;
+}
+.rc-empty{
+  text-align:center;padding:64px 24px;border:2px dashed #e5e7eb;border-radius:14px;
+  background:#fafafa;color:#6b7280;
+}
+.rc-empty i{font-size:3rem;opacity:.25;display:block;margin-bottom:12px;}
+
+/* Preview de upload */
+.rc-preview-strip{
+  display:flex;flex-wrap:wrap;gap:8px;
+  padding:10px;background:#fff;border-radius:10px;
+  border:1px solid #eaecf0;margin-top:10px;
+  min-height:80px;align-items:center;
+}
+.rc-preview-thumb{
+  width:80px;height:60px;border-radius:6px;
+  object-fit:cover;border:1px solid #d1d5db;
+  position:relative;
+}
+.rc-preview-strip:empty::before{
+  content:"Sin archivos seleccionados";
+  color:#9ca3af;font-size:.78rem;font-style:italic;width:100%;text-align:center;
+}
+</style>
+
+<div class="mod-hero">
+  <div>
+    <h4><i class="bi bi-images me-2"></i>Carrusel público de Retiros</h4>
+    <div class="mod-sub">Sube las imágenes que se muestran rotando en la página pública <code>/retiros/solicitar</code>.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('admin_marketing') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Volver a Marketing
+    </a>
+    <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-eye me-1"></i>Ver página pública
+    </a>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 mb-3" style="font-size:.84rem">
+  <i class="bi bi-info-circle me-1"></i>
+  Las imágenes activas aparecen rotando en el hero del formulario público de retiros.
+  Recomendado: JPG/PNG/WEBP <strong>horizontales 1600×1000</strong> (8 MB máx por archivo).
+  Podés subir <strong>varias a la vez</strong> arrastrando o usando el botón.
+</div>
+
+{# ── Drop zone + multi-upload ── #}
+<form method="post" action="{{ url_for('admin_retiros_carousel_subir') }}"
+      enctype="multipart/form-data" id="formUpload" class="mb-4">
+  <div class="rc-dropzone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <i class="bi bi-cloud-arrow-up"></i>
+    <div class="fw-bold" style="font-size:1.05rem;color:#374151">
+      Arrastra imágenes aquí o hacé clic
+    </div>
+    <div style="font-size:.82rem;color:#6b7280;margin-top:4px">
+      Podés seleccionar varias a la vez. PNG · JPG · WEBP · máx 8 MB cada una
+    </div>
+    <input type="file" name="imagenes" id="fileInput" multiple
+           accept="image/png,image/jpeg,image/webp" style="display:none"
+           onchange="previewFiles(this.files)">
+  </div>
+
+  {# Preview de archivos seleccionados #}
+  <div class="rc-preview-strip" id="previewStrip"></div>
+
+  <div class="row g-2 mt-3">
+    <div class="col-md-4">
+      <label class="form-label small fw-semibold mb-1">Título (opcional, aplica a todas)</label>
+      <input type="text" name="titulo" class="form-control form-control-sm" placeholder="Ej: Bodega ILUS Quilicura">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label small fw-semibold mb-1">Subtítulo (opcional)</label>
+      <input type="text" name="subtitulo" class="form-control form-control-sm" placeholder="Despacho organizado y profesional">
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+      <div class="form-check m-0">
+        <input type="checkbox" name="activa" class="form-check-input" id="activaUpload" checked>
+        <label class="form-check-label small" for="activaUpload">Activar al subir</label>
+      </div>
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+      <button type="submit" class="btn btn-ilus w-100 fw-bold" id="btnSubir" disabled>
+        <i class="bi bi-cloud-arrow-up me-1"></i>Subir
+      </button>
+    </div>
+  </div>
+</form>
+
+{# ── Lista de imágenes ── #}
+{% if imagenes %}
+<div class="row g-3">
+  {% for img in imagenes %}
+  <div class="col-12 col-md-6 col-xl-4">
+    <div class="rc-card">
+      <img src="{{ url_for('static', filename=img.archivo_path) }}" class="rc-thumb" alt="{{ img.titulo or 'Carrusel #' + img.id|string }}">
+      <form method="post" action="{{ url_for('admin_retiros_carousel_update', iid=img.id) }}" id="form-img-{{ img.id }}">
+        <div class="rc-form-row">
+          <div class="d-flex align-items-center justify-content-between">
+            <span class="{% if img.activa %}rc-status-on{% else %}rc-status-off{% endif %}">
+              {{ 'Activa' if img.activa else 'Inactiva' }}
+            </span>
+            <small class="text-muted">#{{ img.id }} · orden {{ img.orden }}</small>
+          </div>
+          <input type="text" name="titulo" class="form-control form-control-sm"
+                 value="{{ img.titulo or '' }}" placeholder="Título (opcional)">
+          <input type="text" name="subtitulo" class="form-control form-control-sm"
+                 value="{{ img.subtitulo or '' }}" placeholder="Subtítulo (opcional)">
+          <div class="d-flex gap-2 align-items-center">
+            <input type="number" name="orden" class="form-control form-control-sm"
+                   value="{{ img.orden }}" min="0" max="999" style="width:90px"
+                   title="Orden (menor primero)">
+            <div class="form-check m-0">
+              <input type="checkbox" name="activa" id="act_{{ img.id }}"
+                     class="form-check-input" {% if img.activa %}checked{% endif %}>
+              <label class="form-check-label small" for="act_{{ img.id }}">Activa</label>
+            </div>
+            <button class="btn btn-sm btn-ilus ms-auto" title="Guardar cambios">
+              <i class="bi bi-check-lg"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    onclick="confirmDelete({{ img.id }}, '{{ (img.titulo or 'Imagen #' + img.id|string)|e }}')"
+                    title="Eliminar">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="rc-empty">
+  <i class="bi bi-images"></i>
+  <div class="fw-bold" style="font-size:1.05rem;color:#374151">
+    Aún no hay imágenes en el carrusel de retiros
+  </div>
+  <div style="font-size:.85rem;color:#6b7280;margin-top:6px">
+    Subí la primera arrastrándola al cuadro de arriba.
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════
+    MODAL CUSTOM DE CONFIRMACIÓN DE BORRADO
+    (reemplaza confirm() del navegador con UX limpia ILUS)
+════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalConfirmDelete" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:14px;overflow:hidden">
+      <div class="modal-body p-0">
+        <div style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:24px 28px">
+          <div class="d-flex align-items-start gap-3">
+            <i class="bi bi-exclamation-triangle-fill" style="font-size:2.5rem;opacity:.85"></i>
+            <div>
+              <h5 class="mb-1 fw-bold">¿Eliminar imagen del carrusel?</h5>
+              <div style="font-size:.86rem;opacity:.92" id="confirmDeleteName">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="p-4">
+          <p class="mb-3" style="color:#374151;font-size:.92rem">
+            Esta acción <strong>elimina permanentemente</strong> la imagen del carrusel y del servidor.
+            No se puede deshacer.
+          </p>
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+              <i class="bi bi-x-lg me-1"></i>Cancelar
+            </button>
+            <button type="button" class="btn btn-danger fw-bold" id="btnDoDelete">
+              <i class="bi bi-trash me-1"></i>Sí, eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Drag & drop + preview de archivos seleccionados ──
+(function(){
+  var dz = document.getElementById('dropZone');
+  var fi = document.getElementById('fileInput');
+  var btn = document.getElementById('btnSubir');
+  var strip = document.getElementById('previewStrip');
+
+  function enableBtn(){
+    btn.disabled = !fi.files || fi.files.length === 0;
+  }
+
+  ['dragenter','dragover'].forEach(function(ev){
+    dz.addEventListener(ev, function(e){
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.add('is-drag');
+    });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    dz.addEventListener(ev, function(e){
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.remove('is-drag');
+    });
+  });
+  dz.addEventListener('drop', function(e){
+    if (e.dataTransfer && e.dataTransfer.files) {
+      fi.files = e.dataTransfer.files;
+      previewFiles(fi.files);
+    }
+  });
+})();
+
+function previewFiles(files){
+  var strip = document.getElementById('previewStrip');
+  var btn = document.getElementById('btnSubir');
+  strip.innerHTML = '';
+  if (!files || files.length === 0){ btn.disabled = true; return; }
+  Array.from(files).forEach(function(f){
+    if (!f.type.startsWith('image/')) return;
+    var url = URL.createObjectURL(f);
+    var img = document.createElement('img');
+    img.src = url;
+    img.className = 'rc-preview-thumb';
+    img.title = f.name + ' (' + (f.size/1024).toFixed(0) + ' KB)';
+    strip.appendChild(img);
+  });
+  btn.disabled = false;
+}
+
+// ── Modal de confirmación de borrado (custom ILUS) ──
+var pendingDeleteId = null;
+function confirmDelete(id, nombre){
+  pendingDeleteId = id;
+  document.getElementById('confirmDeleteName').textContent = nombre || ('Imagen #' + id);
+  var modal = new bootstrap.Modal(document.getElementById('modalConfirmDelete'));
+  modal.show();
+}
+document.getElementById('btnDoDelete').addEventListener('click', function(){
+  if (!pendingDeleteId) return;
+  var form = document.getElementById('form-img-' + pendingDeleteId);
+  if (!form) return;
+  var input = document.createElement('input');
+  input.type = 'hidden'; input.name = 'action'; input.value = 'delete';
+  form.appendChild(input);
+  form.submit();
+});
+</script>
+{% endblock %}

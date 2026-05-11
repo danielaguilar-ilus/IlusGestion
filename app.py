@@ -4315,6 +4315,160 @@ def admin_login_imagen_update(iid):
     return redirect(url_for("admin_login_imagenes"))
 
 
+# ═════════════════════════════════════════════════════════════════════
+# CARRUSEL PÚBLICO DE RETIROS (multi-imagen desde BD)
+# Mismo patrón que login_images: subir, actualizar, eliminar.
+# ═════════════════════════════════════════════════════════════════════
+
+RETIROS_IMAGES_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "static", "uploads", "retiros"
+)
+os.makedirs(RETIROS_IMAGES_DIR, exist_ok=True)
+
+
+def _retiros_carousel_active():
+    """Devuelve lista de imágenes activas ordenadas para el carrusel público."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, archivo_path, titulo, subtitulo FROM retiros_carousel "
+            "WHERE activa=1 ORDER BY orden ASC, id ASC"
+        )
+        return [dict(r) for r in (rows or [])]
+    except Exception:
+        return []
+
+
+# Helper de validación reutilizable (seguridad: extensión + tamaño + MIME)
+_ALLOWED_IMAGE_EXTS = {"png", "jpg", "jpeg", "webp"}
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
+
+
+def _validate_uploaded_image(f, label="imagen"):
+    """Valida un FileStorage de imagen. Retorna (ext_ok, error_msg)."""
+    if not f or not f.filename:
+        return None, f"Selecciona un archivo ({label})."
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in _ALLOWED_IMAGE_EXTS:
+        return None, f"Formato no permitido en {label}. Usa PNG/JPG/WEBP."
+    # Tamaño aproximado (lee header sin cargar todo)
+    f.stream.seek(0, 2)
+    size = f.stream.tell()
+    f.stream.seek(0)
+    if size > _MAX_IMAGE_BYTES:
+        return None, f"{label}: archivo muy grande ({size//(1024*1024)} MB). Máx 8 MB."
+    if size == 0:
+        return None, f"{label}: archivo vacío."
+    return ext, None
+
+
+@app.route("/admin/retiros-carousel", methods=["GET"])
+@require_permission("marketing")
+def admin_retiros_carousel():
+    """Listado del carrusel público de retiros (admin)."""
+    rows = mysql_fetchall(
+        "SELECT * FROM retiros_carousel ORDER BY orden ASC, id ASC"
+    )
+    return render_template(
+        "admin/retiros_carousel.html",
+        imagenes=[dict(r) for r in (rows or [])],
+    )
+
+
+@app.route("/admin/retiros-carousel/subir", methods=["POST"])
+@require_permission("marketing")
+def admin_retiros_carousel_subir():
+    """Sube UNA O VARIAS imágenes al carrusel público de retiros.
+
+    Soporta multi-upload (input name="imagenes" multiple). Valida cada
+    archivo por extensión y tamaño máx 8MB.
+    """
+    files = request.files.getlist("imagenes")
+    if not files or all(not f.filename for f in files):
+        flash("Selecciona al menos una imagen.", "warning")
+        return redirect(url_for("admin_retiros_carousel"))
+
+    # Determinar orden inicial = max actual + 1
+    row = mysql_fetchone("SELECT COALESCE(MAX(orden),0) AS mx FROM retiros_carousel")
+    nx = (row or {}).get("mx", 0) + 1
+
+    titulo_base = (request.form.get("titulo") or "").strip()[:200]
+    subtitulo_base = (request.form.get("subtitulo") or "").strip()[:300]
+    activa = 1 if request.form.get("activa") else 0
+
+    saved = 0
+    errors = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        ext, err = _validate_uploaded_image(f, label=f.filename)
+        if err:
+            errors.append(err)
+            continue
+        fname = f"retiros_{int(time.time())}_{saved}_{secure_filename(f.filename)}"
+        fpath = os.path.join(RETIROS_IMAGES_DIR, fname)
+        try:
+            f.save(fpath)
+        except Exception as e:
+            errors.append(f"Error guardando {f.filename}: {e}")
+            continue
+        try:
+            mysql_execute(
+                "INSERT INTO retiros_carousel "
+                "(archivo_path,titulo,subtitulo,orden,activa,created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    f"uploads/retiros/{fname}",
+                    titulo_base or None,
+                    subtitulo_base or None,
+                    nx + saved,
+                    activa,
+                    current_username(),
+                )
+            )
+            saved += 1
+        except Exception as e:
+            errors.append(f"Error BD {f.filename}: {e}")
+    if saved:
+        flash(f"✅ {saved} imagen(es) agregadas al carrusel de retiros.", "success")
+    for err in errors[:3]:
+        flash(err, "warning")
+    return redirect(url_for("admin_retiros_carousel"))
+
+
+@app.route("/admin/retiros-carousel/<int:iid>", methods=["POST"])
+@require_permission("marketing")
+def admin_retiros_carousel_update(iid):
+    """Actualiza o elimina una imagen del carrusel."""
+    action = request.form.get("action") or ""
+    if action == "delete":
+        row = mysql_fetchone("SELECT archivo_path FROM retiros_carousel WHERE id=%s", (iid,))
+        if row:
+            try:
+                fp = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    "static", row["archivo_path"]
+                )
+                if os.path.exists(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
+        mysql_execute("DELETE FROM retiros_carousel WHERE id=%s", (iid,))
+        flash("Imagen eliminada del carrusel.", "success")
+    else:
+        titulo    = (request.form.get("titulo") or "").strip()[:200]
+        subtitulo = (request.form.get("subtitulo") or "").strip()[:300]
+        orden     = int(request.form.get("orden") or 0)
+        activa    = 1 if request.form.get("activa") else 0
+        mysql_execute(
+            "UPDATE retiros_carousel "
+            "SET titulo=%s, subtitulo=%s, orden=%s, activa=%s WHERE id=%s",
+            (titulo or None, subtitulo or None, orden, activa, iid)
+        )
+        flash("Imagen actualizada.", "success")
+    return redirect(url_for("admin_retiros_carousel"))
+
+
 HRM_AREAS_TABLE  = "hrm_areas"
 HRM_CARGOS_TABLE = "hrm_cargos"
 HRM_COLAB_TABLE  = "hrm_colaboradores"
@@ -11564,6 +11718,22 @@ def init_mantenciones_tables():
             # ── Imágenes carrusel del login ────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS login_images (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    archivo_path VARCHAR(500) NOT NULL,
+                    titulo       VARCHAR(200),
+                    subtitulo    VARCHAR(300),
+                    orden        INT DEFAULT 0,
+                    activa       TINYINT(1) DEFAULT 1,
+                    created_by   VARCHAR(190),
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_orden (orden),
+                    INDEX idx_activa (activa)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Imágenes carrusel público de RETIROS ───────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS retiros_carousel (
                     id           INT AUTO_INCREMENT PRIMARY KEY,
                     archivo_path VARCHAR(500) NOT NULL,
                     titulo       VARCHAR(200),

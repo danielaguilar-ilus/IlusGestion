@@ -341,11 +341,24 @@
 
       <div>
         <div class="hero-slides" id="heroSlides">
-          {% set _slides = [
-            (settings.get('hero_image_1') or 'uploads/p2530_1777290755.jpg', 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más'),
-            (settings.get('hero_image_2') or 'uploads/p1257_1777170890.jpeg', 'Calidad ILUS', 'Productos que duran toda la vida'),
-            (settings.get('hero_image_3') or 'uploads/p1271_1777153752.jpeg', 'Bodega central', 'Despacho organizado y profesional'),
-          ] %}
+          {# ★ Carrusel desde BD: tabla retiros_carousel (multi-imagen)
+             Si no hay imágenes activas, usa las 3 default históricas. #}
+          {% if carousel_images %}
+            {% set _slides = [] %}
+            {% for img in carousel_images %}
+              {% set _ = _slides.append((
+                img.archivo_path,
+                img.titulo or 'ILUS',
+                img.subtitulo or 'Calidad que se siente'
+              )) %}
+            {% endfor %}
+          {% else %}
+            {% set _slides = [
+              ('uploads/p2530_1777290755.jpg', 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más'),
+              ('uploads/p1257_1777170890.jpeg', 'Calidad ILUS', 'Productos que duran toda la vida'),
+              ('uploads/p1271_1777153752.jpeg', 'Bodega central', 'Despacho organizado y profesional'),
+            ] %}
+          {% endif %}
           {% for img, title, sub in _slides %}
           <div class="hero-slide {% if loop.first %}active{% endif %}"
                style="background-image:url('{{ url_for('static', filename=img) }}')">

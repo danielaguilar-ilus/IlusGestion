@@ -11,27 +11,49 @@
       <div class="mod-sub">Gestión de empresas de transporte y tarifas por comuna</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-      <a href="/transporte/couriers/export" class="btn btn-outline-light btn-sm">
-        <i class="bi bi-download me-1"></i>Exportar tarifas
-      </a>
-      <button class="btn btn-outline-light btn-sm" onclick="abrirImport()">
-        <i class="bi bi-upload me-1"></i>Importar Excel
-      </button>
-      {# NUEVO: importador multi-hoja con auto-creación de couriers #}
-      <form method="post" action="{{ url_for('tr_couriers_import_tariffs') }}"
-            enctype="multipart/form-data" class="d-inline" id="formImportMulti">
-        <input type="file" name="file" id="fileImportMulti" accept=".xlsx,.xlsm"
-               style="display:none" onchange="document.getElementById('formImportMulti').submit()">
-        <button type="button" class="btn btn-success btn-sm fw-bold"
-                onclick="document.getElementById('fileImportMulti').click()"
-                title="Sube un Excel con una hoja por courier (FedEx, Clickex, Felca, Milling). Crea couriers nuevos y reemplaza tarifas existentes.">
-          <i class="bi bi-cloud-arrow-up me-1"></i>Importar tarifas multi-hoja
-        </button>
-      </form>
       <button class="btn btn-ilus btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevo">
         <i class="bi bi-plus-lg me-1"></i>Nuevo courier
       </button>
+      {# Menú discreto de acciones avanzadas (importar tarifas / exportar) #}
+      <div class="dropdown">
+        <button class="btn btn-outline-light btn-sm dropdown-toggle"
+                type="button" data-bs-toggle="dropdown" aria-expanded="false"
+                title="Más acciones">
+          <i class="bi bi-three-dots"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li>
+            <button class="dropdown-item" type="button"
+                    onclick="document.getElementById('fileImportMulti').click()">
+              <i class="bi bi-cloud-arrow-up me-2 text-success"></i>
+              Importar tarifas (Excel multi-hoja)
+            </button>
+          </li>
+          <li>
+            <a class="dropdown-item" href="/transporte/couriers/export">
+              <i class="bi bi-download me-2"></i>Exportar tarifas
+            </a>
+          </li>
+        </ul>
+      </div>
+      {# Form invisible para upload de tarifas multi-hoja #}
+      <form method="post" action="{{ url_for('tr_couriers_import_tariffs') }}"
+            enctype="multipart/form-data" class="d-none" id="formImportMulti">
+        <input type="file" name="file" id="fileImportMulti" accept=".xlsx,.xlsm"
+               onchange="document.getElementById('formImportMulti').submit()">
+      </form>
     </div>
+  </div>
+
+  {# ── BARRA DE PAGINACIÓN Y FILTRO (6 por página) ── #}
+  <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+    <div style="font-size:.86rem;color:#6b7280" id="couriersInfo">
+      <i class="bi bi-truck me-1"></i>
+      <span id="couriersTotal">{{ couriers|length }}</span> couriers registrados
+    </div>
+    <nav id="couriersPagination" style="display:none">
+      <ul class="pagination pagination-sm mb-0" id="paginationList"></ul>
+    </nav>
   </div>
 
   {# ── COURIER CARDS ── #}
@@ -539,5 +561,64 @@ async function toggleActivo(id, nuevoValor) {
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function gval(id){ return (document.getElementById(id)||{}).value||''; }
 function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+/* ════════════════════════════════════════════════════════════════════
+   PAGINACIÓN CLIENT-SIDE — 6 cards por página
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  var PAGE_SIZE = 6;
+  var grid = document.getElementById('couriersGrid');
+  if (!grid) return;
+  var allCards = Array.from(grid.querySelectorAll('[id^="cardWrap"]'));
+  if (allCards.length <= PAGE_SIZE){
+    // no se necesita paginación
+    return;
+  }
+  var currentPage = 1;
+  var totalPages = Math.ceil(allCards.length / PAGE_SIZE);
+  var pagiNav = document.getElementById('couriersPagination');
+  var pagiList = document.getElementById('paginationList');
+  pagiNav.style.display = '';
+
+  function render(){
+    var start = (currentPage - 1) * PAGE_SIZE;
+    var end = start + PAGE_SIZE;
+    allCards.forEach(function(c, i){
+      c.style.display = (i >= start && i < end) ? '' : 'none';
+    });
+    // Botones de paginación
+    pagiList.innerHTML = '';
+    function addBtn(label, page, disabled, active){
+      var li = document.createElement('li');
+      li.className = 'page-item' + (disabled?' disabled':'') + (active?' active':'');
+      var a = document.createElement('a');
+      a.className = 'page-link';
+      a.href = '#';
+      a.innerHTML = label;
+      a.addEventListener('click', function(ev){
+        ev.preventDefault();
+        if (disabled || active) return;
+        currentPage = page;
+        render();
+        window.scrollTo({top: grid.offsetTop - 100, behavior: 'smooth'});
+      });
+      li.appendChild(a);
+      pagiList.appendChild(li);
+    }
+    addBtn('<i class="bi bi-chevron-left"></i>', currentPage-1, currentPage===1, false);
+    for (var p = 1; p <= totalPages; p++){
+      addBtn(String(p), p, false, p===currentPage);
+    }
+    addBtn('<i class="bi bi-chevron-right"></i>', currentPage+1, currentPage===totalPages, false);
+    // info
+    var info = document.getElementById('couriersInfo');
+    if (info){
+      info.innerHTML = '<i class="bi bi-truck me-1"></i>Mostrando <strong>' +
+        (start+1) + '–' + Math.min(end, allCards.length) + '</strong> de <strong>' +
+        allCards.length + '</strong> couriers';
+    }
+  }
+  render();
+})();
 </script>
 {% endblock %}

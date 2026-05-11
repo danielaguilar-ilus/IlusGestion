@@ -105,7 +105,7 @@
     <div class="col-12 col-md-6 col-xl-4">
       <div class="li-card">
         <img src="{{ url_for('static', filename=img.archivo_path) }}" class="li-thumb" alt="">
-        <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}">
+        <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}" id="form-login-img-{{ img.id }}">
           <div class="li-form-row">
             <div class="d-flex align-items-center justify-content-between">
               <span class="{% if img.activa %}li-status-on{% else %}li-status-off{% endif %}">
@@ -129,9 +129,9 @@
               <button class="btn btn-sm btn-ilus ms-auto">
                 <i class="bi bi-check-lg"></i>
               </button>
-              <button type="submit" name="action" value="delete"
-                      onclick="return confirm('¿Eliminar esta imagen?')"
-                      class="btn btn-sm btn-outline-danger">
+              <button type="button"
+                      onclick="confirmDeleteLoginImg({{ img.id }}, '{{ (img.titulo or 'Imagen #' + img.id|string)|e }}')"
+                      class="btn btn-sm btn-outline-danger" title="Eliminar">
                 <i class="bi bi-trash"></i>
               </button>
             </div>
@@ -152,70 +152,31 @@
 </div>
 
 {# ══════════════════════════════════════════════════════════════════
-   PANE: COLLAGE RETIROS
+   PANE: CARRUSEL PÚBLICO RETIROS — ahora con BD multi-imagen
 ══════════════════════════════════════════════════════════════════ #}
 <div class="mk-pane" id="mk-retiros">
 
   <div class="alert alert-info py-2" style="font-size:.84rem">
     <i class="bi bi-info-circle me-1"></i>
-    Estas 3 imágenes alimentan el collage de la página pública de retiros. Usa fotos limpias de bodega,
-    productos o preparación de carga para transmitir confianza.
+    El carrusel del hero de retiros ahora soporta <strong>múltiples imágenes en base de datos</strong>.
+    Podés subir varias a la vez, reordenar y activar/desactivar.
   </div>
 
-  <div class="row g-4">
-    <div class="col-xl-5">
-      <form method="post" enctype="multipart/form-data" class="ilus-card p-0 overflow-hidden">
-        <div class="bg-dark text-white p-3 fw-bold">
-          <i class="bi bi-cloud-arrow-up me-2 text-danger"></i>Fotos para páginas públicas
-        </div>
-        <div class="p-4">
-          <div class="mb-3">
-            <label class="form-label fw-bold">Header / foto principal</label>
-            <input type="file" name="hero_image_1" class="form-control" accept="image/png,image/jpeg,image/webp">
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-bold">Lateral / producto</label>
-            <input type="file" name="hero_image_2" class="form-control" accept="image/png,image/jpeg,image/webp">
-          </div>
-          <div class="mb-4">
-            <label class="form-label fw-bold">Footer visual / carga</label>
-            <input type="file" name="hero_image_3" class="form-control" accept="image/png,image/jpeg,image/webp">
-          </div>
-          <button class="btn btn-ilus w-100 fw-bold">
-            <i class="bi bi-save2 me-2"></i>Guardar marketing retiros
-          </button>
-        </div>
-      </form>
-    </div>
-
-    <div class="col-xl-7">
-      <div class="ilus-card p-0 overflow-hidden">
-        <div class="bg-dark text-white p-3 fw-bold">
-          <i class="bi bi-window-sidebar me-2 text-danger"></i>Preview visual
-        </div>
-        <div class="p-4">
-          <div class="row g-3">
-            {% set imgs = [
-              settings.get('hero_image_1') or 'uploads/p2530_1777290755.jpg',
-              settings.get('hero_image_2') or 'uploads/p1257_1777170890.jpeg',
-              settings.get('hero_image_3') or 'uploads/p1271_1777153752.jpeg'
-            ] %}
-            {% for img in imgs %}
-            <div class="col-md-4">
-              <div class="border rounded overflow-hidden bg-light">
-                <img src="{{ url_for('static', filename=img) }}" style="width:100%;height:180px;object-fit:cover;filter:grayscale(1) contrast(1.05)" alt="Marketing">
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          <div class="alert alert-warning mt-4 mb-0 small">
-            <i class="bi bi-lightbulb-fill me-2"></i>
-            Recomendación: usa imágenes horizontales, con buena luz, sin texto encima y sin datos sensibles de clientes.
-          </div>
-        </div>
-      </div>
+  <div class="ilus-card p-4 text-center" style="background:linear-gradient(135deg,#0a0a0a,#1c1c1c);color:#fff">
+    <i class="bi bi-images" style="font-size:3.4rem;color:var(--ilus-red);opacity:.85;margin-bottom:10px;display:block"></i>
+    <h5 class="fw-bold mb-2">Gestor avanzado de carrusel</h5>
+    <p class="mb-3" style="color:#cfd3da;max-width:520px;margin:0 auto">
+      Arrastrá y soltá varias imágenes a la vez, ordená por prioridad, activá o desactivá
+      sin perderlas. Todo se guarda en base de datos.
+    </p>
+    <a href="{{ url_for('admin_retiros_carousel') }}" class="btn btn-ilus btn-lg fw-bold">
+      <i class="bi bi-arrow-up-right-circle me-2"></i>Abrir gestor de carrusel
+    </a>
+    <div class="mt-3" style="font-size:.78rem;color:#9aa1ad">
+      Las imágenes aparecen rotando en la página pública <code style="color:#fca5a5">/retiros/solicitar</code>
     </div>
   </div>
+
 </div>
 
 {# ══════════════════════════════════════════════════════════════════
@@ -337,6 +298,42 @@
   </div>
 </div>
 
+{# ════════════════════════════════════════════════════════════
+    MODAL CUSTOM DE CONFIRMACIÓN DE BORRADO (login imágenes)
+    Reemplaza confirm() del navegador.
+════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalDeleteLoginImg" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:14px;overflow:hidden">
+      <div class="modal-body p-0">
+        <div style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:24px 28px">
+          <div class="d-flex align-items-start gap-3">
+            <i class="bi bi-exclamation-triangle-fill" style="font-size:2.5rem;opacity:.85"></i>
+            <div>
+              <h5 class="mb-1 fw-bold">¿Eliminar imagen del login?</h5>
+              <div style="font-size:.86rem;opacity:.92" id="delLoginImgName">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="p-4">
+          <p class="mb-3" style="color:#374151;font-size:.92rem">
+            Esta acción <strong>elimina permanentemente</strong> la imagen del carrusel y del servidor.
+            No se puede deshacer.
+          </p>
+          <div class="d-flex gap-2 justify-content-end">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+              <i class="bi bi-x-lg me-1"></i>Cancelar
+            </button>
+            <button type="button" class="btn btn-danger fw-bold" id="btnDoDeleteLoginImg">
+              <i class="bi bi-trash me-1"></i>Sí, eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 function mkTab(tab, btn) {
   document.querySelectorAll('.mk-tab').forEach(t => t.classList.remove('active'));
@@ -353,5 +350,23 @@ if (location.hash === '#retiros' || location.hash === '#bloqueos') {
     if (btn) btn.click();
   });
 }
+
+// ── Modal custom para confirmar borrado de imagen del login ──
+var pendingDelLoginImg = null;
+function confirmDeleteLoginImg(id, nombre){
+  pendingDelLoginImg = id;
+  document.getElementById('delLoginImgName').textContent = nombre || ('Imagen #' + id);
+  var modal = new bootstrap.Modal(document.getElementById('modalDeleteLoginImg'));
+  modal.show();
+}
+document.getElementById('btnDoDeleteLoginImg').addEventListener('click', function(){
+  if (!pendingDelLoginImg) return;
+  var form = document.getElementById('form-login-img-' + pendingDelLoginImg);
+  if (!form) return;
+  var input = document.createElement('input');
+  input.type = 'hidden'; input.name = 'action'; input.value = 'delete';
+  form.appendChild(input);
+  form.submit();
+});
 </script>
 {% endblock %}

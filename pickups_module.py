@@ -546,7 +546,12 @@ def register_pickup_routes(app, ctx):
             if not form.get("accept_terms"):
                 errors.append("Debes aceptar la declaracion de responsabilidad y autorizacion.")
             if errors:
-                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form)
+                try:
+                    _car_rows = mysql_fetchall("SELECT archivo_path, titulo, subtitulo FROM retiros_carousel WHERE activa=1 ORDER BY orden ASC, id ASC")
+                    _car_imgs = [dict(r) for r in (_car_rows or [])]
+                except Exception:
+                    _car_imgs = []
+                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs)
 
             files = [f for f in request.files.getlist("attachments") if f and f.filename]
             quality, risk = quality_score(data, packages, signed=True, attachments=len(files))
@@ -614,7 +619,20 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_public_tracking", token=token, created=1))
         # Anti-cache para forzar al navegador a recargar diseño actualizado
         from flask import make_response
-        resp = make_response(render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={}))
+        # Cargar imágenes activas del carrusel desde BD (retiros_carousel)
+        try:
+            carousel_rows = mysql_fetchall(
+                "SELECT archivo_path, titulo, subtitulo FROM retiros_carousel "
+                "WHERE activa=1 ORDER BY orden ASC, id ASC"
+            )
+            carousel_images = [dict(r) for r in (carousel_rows or [])]
+        except Exception:
+            carousel_images = []
+        resp = make_response(render_template(
+            "retiros/public_request.html",
+            settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={},
+            carousel_images=carousel_images,
+        ))
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
