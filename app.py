@@ -11964,6 +11964,22 @@ def init_mantenciones_tables():
                 # ── UNIQUE: serie única POR CLIENTE para evitar colisiones de
                 # _generar_serie_ilus en requests concurrentes (auditoría QW1)
                 "ALTER TABLE mant_maquinas ADD UNIQUE KEY uq_cliente_serie (cliente_id, serie)",
+                # ── Normalizar doc_origen existentes a formato canónico
+                # 'TIDO NUDO' (sin leading zeros, sin guiones) para que
+                # _asignados_por_sku haga match con NUEVAS consultas.
+                # Idempotente: una vez normalizados, queda igual.
+                """UPDATE mant_maquinas
+                      SET doc_origen = UPPER(
+                          CONCAT(
+                              TRIM(REGEXP_SUBSTR(doc_origen, '^[A-Za-z]{2,4}')),
+                              ' ',
+                              TRIM(LEADING '0' FROM
+                                   REGEXP_REPLACE(doc_origen, '[^0-9]', ''))
+                          )
+                      )
+                   WHERE doc_origen IS NOT NULL
+                     AND doc_origen <> ''
+                     AND doc_origen REGEXP '^[A-Za-z]{2,4}[\\s\\-_]*[0-9]+$'""",
                 # ── QW3: monto_anual auto-sincronizado con monto_mensual ──
                 # Triggers BEFORE INSERT/UPDATE para mantener consistencia
                 # sin obligar al usuario a ingresar 2 valores que deben coincidir.
@@ -14275,8 +14291,11 @@ def mant_maquina_add(cid):
     split_rows   = bool(d.get("split_to_rows", False))
     validar      = bool(d.get("validar_saldo", False))
     force        = bool(d.get("force", False))
-    sku          = (d.get("sku","") or "").strip()
-    doc_origen   = (d.get("doc_origen","") or "").strip()
+    # SKU siempre en upper para que matchee con saldos y queries
+    sku          = (d.get("sku","") or "").strip().upper()
+    # doc_origen NORMALIZADO al formato canónico 'TIDO NUDO' (sin leading zeros)
+    # Esto garantiza que _asignados_por_sku encuentre el match en futuras consultas.
+    doc_origen   = _doc_origen_normalizar((d.get("doc_origen","") or "").strip())
 
     # ── Validación de saldo (sólo si vienen los datos del documento ERP) ──
     if validar and not force and doc_origen and sku:
@@ -17317,30 +17336,122 @@ def mant_documento_erp():
 # ══════════════════════════════════════════════════════════════════════
 
 def _doc_origen_key(tido, nudo):
-    """Construye la clave canónica con que se guarda doc_origen en mant_maquinas."""
-    return f"{(tido or '').strip().upper()} {(nudo or '').strip()}"
+    """Construye la clave CANÓNICA con que se guarda doc_origen en mant_maquinas.
+    Siempre: 'TIDO_UPPER NUDO_SIN_LEADING_ZEROS'.
+    Ej: '00012345' → '12345' → 'FCV 12345'
+    """
+    tido_n = (tido or "").strip().upper()
+    nudo_raw = str(nudo or "").strip()
+    # Quitar leading zeros (ERPs guardan 00012345, usuarios tipean 12345)
+    nudo_n = nudo_raw.lstrip("0") or nudo_raw or "0"
+    return f"{tido_n} {nudo_n}"
+
+
+def _doc_origen_normalizar(doc_origen):
+    """Normaliza cualquier doc_origen al formato canónico 'TIDO NUDO'.
+    Acepta 'FCV-12345', 'FCV12345', 'fcv 00012345', etc.
+    Si no logra parsear, devuelve el original sin cambios.
+    """
+    if not doc_origen:
+        return doc_origen
+    s = str(doc_origen).strip().upper()
+    # Separador típico: espacio, guión o pegado (TIDO siempre 2-4 letras)
+    import re as _re
+    m = _re.match(r"^([A-Z]{2,4})[\s\-_]*([0-9]+)$", s)
+    if not m:
+        return s   # devolver tal cual si no parseó
+    tido, nudo = m.group(1), m.group(2)
+    nudo_clean = nudo.lstrip("0") or nudo
+    return f"{tido} {nudo_clean}"
 
 
 def _asignados_por_sku(tido, nudo):
     """Suma cantidad ya asignada de cada SKU para un documento ERP dado.
     Devuelve: {sku_upper: total_asignado}
-    Considera matches con/sin espacio, variantes de tido."""
-    key1 = _doc_origen_key(tido, nudo)               # 'FCV 12345'
-    key2 = f"{tido.strip().upper()}-{nudo.strip()}"  # 'FCV-12345' (variante)
-    key3 = f"{tido.strip().upper()}{nudo.strip()}"   # 'FCV12345'  (variante)
+
+    Búsqueda ULTRA-TOLERANTE: matchea cualquier formato de doc_origen que
+    contenga el nudo (con/sin espacio, guión, leading zeros, may/min).
+    """
+    tido_n = (tido or "").strip().upper()
+    nudo_n = str(nudo or "").strip().lstrip("0") or str(nudo or "").strip() or "0"
+    nudo_raw = str(nudo or "").strip()
+
+    # Patrón canónico de match: doc_origen tiene el TIDO y el NUDO sin separador
+    # (LIKE flexible que ignora espacios, guiones, leading zeros).
     rows = mysql_fetchall(
-        "SELECT UPPER(sku) AS sku, COALESCE(SUM(cantidad),0) AS total "
-        "  FROM mant_maquinas "
-        " WHERE (doc_origen=%s OR doc_origen=%s OR doc_origen=%s "
-        "        OR doc_origen LIKE %s) "
-        "   AND sku IS NOT NULL AND sku <> '' "
-        " GROUP BY UPPER(sku)",
-        (key1, key2, key3, f"%{nudo.strip()}%")
+        """
+        SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(cantidad),0) AS total
+          FROM mant_maquinas
+         WHERE UPPER(REPLACE(REPLACE(REPLACE(doc_origen,' ',''),'-',''),'_',''))
+               LIKE %s
+           AND sku IS NOT NULL AND TRIM(sku) <> ''
+        GROUP BY UPPER(TRIM(sku))
+        """,
+        (f"%{tido_n}%{nudo_n}%",)
     ) or []
+
     out = {}
     for r in rows:
         out[(r["sku"] or "").strip().upper()] = int(r["total"] or 0)
     return out
+
+
+def _maquinas_de_doc(tido, nudo, limit=20):
+    """Devuelve las máquinas existentes con doc_origen que matchea (diagnóstico)."""
+    tido_n = (tido or "").strip().upper()
+    nudo_n = str(nudo or "").strip().lstrip("0") or str(nudo or "").strip() or "0"
+    rows = mysql_fetchall(
+        f"""
+        SELECT m.id, m.cliente_id, m.sku, m.serie, m.cantidad, m.doc_origen, m.created_at,
+               c.razon_social
+          FROM mant_maquinas m
+          LEFT JOIN mant_clientes c ON c.id = m.cliente_id
+         WHERE UPPER(REPLACE(REPLACE(REPLACE(m.doc_origen,' ',''),'-',''),'_',''))
+               LIKE %s
+         ORDER BY m.created_at DESC
+         LIMIT {int(limit)}
+        """,
+        (f"%{tido_n}%{nudo_n}%",)
+    ) or []
+    return [dict(r) for r in rows]
+
+
+@app.route("/mantenciones/api/erp/saldo-debug", methods=["GET"])
+@_mant_required
+def mant_saldo_debug():
+    """Diagnóstico: muestra qué máquinas en BD están asociadas al doc dado.
+    Útil cuando el saldo 'no se descuenta' — permite ver si el doc_origen
+    guardado matchea con el que se busca.
+    GET /mantenciones/api/erp/saldo-debug?tido=FCV&nudo=12345
+    """
+    tido = (request.args.get("tido") or "").strip().upper()
+    nudo = (request.args.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "tido + nudo requeridos"}), 400
+
+    asignados   = _asignados_por_sku(tido, nudo)
+    maquinas    = _maquinas_de_doc(tido, nudo, limit=50)
+    doc_canon   = _doc_origen_key(tido, nudo)
+    nudo_clean  = nudo.lstrip("0") or nudo
+
+    return jsonify({
+        "ok": True,
+        "buscando": {
+            "tido": tido,
+            "nudo_input": nudo,
+            "nudo_normalizado": nudo_clean,
+            "doc_canonico": doc_canon,
+        },
+        "asignados_por_sku": asignados,
+        "total_maquinas_match": len(maquinas),
+        "maquinas_match": maquinas,
+        "explicacion": (
+            "Si 'asignados_por_sku' está vacío pero 'maquinas_match' tiene "
+            "entradas, el SKU no matcheó (revisar mayúsculas o trim). "
+            "Si ambos están vacíos, no hay máquinas guardadas con este doc — "
+            "puede que doc_origen tenga un formato diferente."
+        ),
+    })
 
 
 @app.route("/mantenciones/api/erp/documento-saldos", methods=["GET"])
