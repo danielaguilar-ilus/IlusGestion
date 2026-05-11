@@ -15498,19 +15498,70 @@ def mant_contrato_update(ctid):
 @app.route("/mantenciones/api/contratos/<int:ctid>/archivo")
 @_mant_required
 def mant_contrato_archivo(ctid):
-    """Sirve el archivo del contrato. Todos los usuarios mant pueden VER; solo superadmin descarga."""
-    from flask import send_from_directory
-    ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
+    """Sirve el archivo del contrato.
+
+    Comportamiento por rol:
+      - Usuario normal con permiso mantenciones → VE el PDF inline en el
+        navegador (sin botón descargar). NO puede usar ?download=1.
+      - Superadmin → VE y puede DESCARGAR (download=1).
+
+    El visor del navegador puede igual permitir Ctrl+S por su cuenta —
+    eso es limitación inherente de la web. Pero al menos el sistema
+    NO ofrece el archivo como descarga adjunta (Content-Disposition: inline).
+    """
+    from flask import send_from_directory, make_response
+    ct = mysql_fetchone(
+        "SELECT id, archivo_path, archivo_nombre, archivo_tipo "
+        "  FROM mant_contratos WHERE id=%s",
+        (ctid,)
+    )
     if not ct or not ct.get("archivo_path"):
         return "Archivo no encontrado", 404
+
     as_dl = request.args.get("download") == "1"
     # Descargar: solo superadmin
     if as_dl and not g.permissions.get("superadmin"):
         return ("Acceso restringido — solo el Superadministrador puede "
-                "descargar archivos de contratos."), 403
-    return send_from_directory(MANT_UPLOADS, ct["archivo_path"],
-                               as_attachment=as_dl,
-                               download_name=ct["archivo_nombre"] if as_dl else None)
+                "descargar archivos de contratos. Puedes visualizarlo en "
+                "el navegador."), 403
+
+    # Verificar que el archivo existe en disco
+    full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
+    if not os.path.exists(full_path):
+        return f"Archivo no encontrado en disco: {ct['archivo_path']}", 404
+
+    # Servir el archivo
+    resp = make_response(send_from_directory(
+        MANT_UPLOADS, ct["archivo_path"],
+        as_attachment=as_dl,
+        download_name=ct["archivo_nombre"] if as_dl else None,
+    ))
+
+    # Headers explícitos para garantizar visualización inline en iframe
+    nombre = ct.get("archivo_nombre") or f"contrato_{ctid}.pdf"
+    if as_dl:
+        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    else:
+        # Inline: el browser debe mostrarlo (PDF viewer integrado o plugin)
+        resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+
+    # Tipo MIME explícito según extensión (no fiarse de la auto-detección)
+    ext = (ct.get("archivo_path") or "").rsplit(".", 1)[-1].lower()
+    mime_map = {
+        "pdf":  "application/pdf",
+        "doc":  "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    if ext in mime_map:
+        resp.headers["Content-Type"] = mime_map[ext]
+
+    # Permitir iframe desde nuestro propio dominio (PDF viewer en modal)
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+
+    # Anti-cache para que cambios al archivo se reflejen al instante
+    resp.headers["Cache-Control"] = "private, max-age=60"
+    return resp
 
 
 # ══════════════════════════════════════════════════════════════════════
