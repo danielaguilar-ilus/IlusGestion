@@ -12562,6 +12562,122 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ════════════════════════════════════════════════════════════
+            # MÓDULO TICKETS — sistema de solicitudes/incidencias del cliente
+            # Paralelo al sistema de OT/Visitas (más liviano, helpdesk-style).
+            # Casos típicos: cambios de equipos, fallas urgentes, consultas
+            # del cliente, garantías, presupuestos.
+            #
+            # Diferencia con OT/visita:
+            #   - Ticket: registro de UNA solicitud puntual, no requiere ir
+            #     en terreno necesariamente. Puede generar una OT después.
+            #   - OT/visita: ejecución concreta con técnico, fecha, tareas.
+            #
+            # Un ticket puede generar 1+ OTs como resolución.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tickets (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    numero_ticket   VARCHAR(30) UNIQUE COMMENT 'TKT-2026-00001',
+                    cliente_id      INT NOT NULL,
+                    titulo          VARCHAR(300) NOT NULL,
+                    descripcion     TEXT,
+                    tipo            ENUM('cambio','garantia','falla','consulta',
+                                          'cotizacion','presupuesto','seguimiento','otro')
+                                    DEFAULT 'consulta',
+                    prioridad       ENUM('baja','media','alta','urgente')
+                                    DEFAULT 'media',
+                    estado          ENUM('abierto','en_proceso','esperando_cliente',
+                                          'esperando_repuesto','resuelto','cerrado','cancelado')
+                                    DEFAULT 'abierto',
+                    canal_origen    ENUM('email','whatsapp','telefono','presencial',
+                                          'sistema','otro')
+                                    DEFAULT 'sistema'
+                                    COMMENT 'Por dónde llegó el ticket',
+                    solicitante     VARCHAR(200)
+                                    COMMENT 'Nombre/contacto del solicitante en el cliente',
+                    solicitante_tel VARCHAR(50),
+                    solicitante_email VARCHAR(200),
+                    asignado_a      VARCHAR(190)
+                                    COMMENT 'Usuario interno asignado',
+                    tecnico_id      INT NULL
+                                    COMMENT 'FK opcional a mant_tecnicos cuando se requiere terreno',
+                    fecha_limite    DATE
+                                    COMMENT 'SLA: cuándo se prometió resolver',
+                    visita_id       INT NULL
+                                    COMMENT 'OT/visita que se generó para resolver este ticket',
+                    notas_internas  TEXT,
+                    created_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                                    ON UPDATE CURRENT_TIMESTAMP,
+                    cerrado_at      DATETIME NULL,
+                    cerrado_por     VARCHAR(190),
+                    FOREIGN KEY (cliente_id) REFERENCES mant_clientes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tecnico_id) REFERENCES mant_tecnicos(id) ON DELETE SET NULL,
+                    FOREIGN KEY (visita_id)  REFERENCES mant_visitas(id)  ON DELETE SET NULL,
+                    INDEX idx_cliente  (cliente_id),
+                    INDEX idx_estado   (estado),
+                    INDEX idx_prioridad(prioridad),
+                    INDEX idx_tipo     (tipo),
+                    INDEX idx_created  (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Equipos afectados por un ticket (N:N) ──────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_ticket_equipos (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    ticket_id   INT NOT NULL,
+                    maquina_id  INT NOT NULL,
+                    cantidad    INT DEFAULT 1,
+                    notas       VARCHAR(500),
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ticket_id)  REFERENCES mant_tickets(id) ON DELETE CASCADE,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                    UNIQUE KEY uq_ticket_maquina (ticket_id, maquina_id),
+                    INDEX idx_ticket (ticket_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Bitácora del ticket (timeline de comentarios/eventos) ───────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_ticket_bitacora (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    ticket_id   INT NOT NULL,
+                    tipo        ENUM('comentario','cambio_estado','asignacion',
+                                      'archivo','email_enviado','whatsapp_enviado',
+                                      'creacion','cierre','reapertura','otro')
+                                DEFAULT 'comentario',
+                    contenido   TEXT,
+                    metadata    TEXT COMMENT 'JSON: estado anterior, asignado anterior, etc',
+                    usuario     VARCHAR(190),
+                    es_interno  TINYINT(1) DEFAULT 1
+                                COMMENT '0 = visible al cliente, 1 = solo interno',
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ticket_id) REFERENCES mant_tickets(id) ON DELETE CASCADE,
+                    INDEX idx_ticket  (ticket_id),
+                    INDEX idx_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Adjuntos de ticket (fotos, PDFs, etc.) ──────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_ticket_adjuntos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    ticket_id       INT NOT NULL,
+                    archivo_path    VARCHAR(500) NOT NULL,
+                    archivo_nombre  VARCHAR(300),
+                    tipo_archivo    VARCHAR(50),
+                    descripcion     VARCHAR(500),
+                    file_size_kb    INT,
+                    subido_por      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ticket_id) REFERENCES mant_tickets(id) ON DELETE CASCADE,
+                    INDEX idx_ticket (ticket_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # ── Log de emails enviados (trazabilidad global) ───────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS email_log (
@@ -17028,6 +17144,484 @@ def mant_visita_del(vid):
         return jsonify({"ok": True})
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MÓDULO TICKETS — sistema de solicitudes/incidencias del cliente
+#
+# Paralelo a OT/visitas. Útil para tracking de:
+#   - Cambios de equipos (ej: 4 trotadoras Deportes Bitácora)
+#   - Fallas urgentes reportadas por el cliente
+#   - Consultas/cotizaciones
+#   - Garantías
+#
+# Un ticket puede vincularse a una OT/visita cuando requiere terreno.
+# ══════════════════════════════════════════════════════════════════════
+
+def _next_ticket_number():
+    """Genera el próximo N° ticket. Formato: TKT-YYYY-NNNNN"""
+    year = datetime.now().year
+    prefix = f"TKT-{year}-"
+    last = mysql_fetchone(
+        "SELECT numero_ticket FROM mant_tickets "
+        "WHERE numero_ticket LIKE %s ORDER BY id DESC LIMIT 1",
+        (f"{prefix}%",)
+    )
+    next_n = 1
+    if last and last.get("numero_ticket"):
+        try:
+            seq = last["numero_ticket"].split("-")[-1]
+            next_n = int(seq) + 1
+        except Exception:
+            next_n = 1
+    return f"{prefix}{next_n:05d}"
+
+
+def _ticket_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True):
+    """Agrega entrada a la bitácora del ticket."""
+    try:
+        mysql_execute(
+            "INSERT INTO mant_ticket_bitacora "
+            "(ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (ticket_id, tipo, contenido,
+             json.dumps(metadata) if metadata else None,
+             usuario or current_username(),
+             1 if es_interno else 0)
+        )
+    except Exception as e:
+        print(f"[ticket_log] error: {e}")
+
+
+@app.route("/mantenciones/api/tickets", methods=["GET"])
+@_mant_required
+def mant_tickets_list_api():
+    """Lista tickets con filtros opcionales (estado, prioridad, cliente, tipo, q)."""
+    where = ["1=1"]
+    params = []
+    estado = (request.args.get("estado") or "").strip().lower()
+    prio   = (request.args.get("prioridad") or "").strip().lower()
+    tipo   = (request.args.get("tipo") or "").strip().lower()
+    cid    = request.args.get("cliente_id")
+    q      = (request.args.get("q") or "").strip()
+    if estado in ("abierto","en_proceso","esperando_cliente","esperando_repuesto","resuelto","cerrado","cancelado"):
+        where.append("t.estado=%s"); params.append(estado)
+    if prio in ("baja","media","alta","urgente"):
+        where.append("t.prioridad=%s"); params.append(prio)
+    if tipo in ("cambio","garantia","falla","consulta","cotizacion","presupuesto","seguimiento","otro"):
+        where.append("t.tipo=%s"); params.append(tipo)
+    if cid:
+        try:
+            params.append(int(cid))
+            where.append("t.cliente_id=%s")
+        except (TypeError, ValueError): pass
+    if q:
+        where.append("(t.titulo LIKE %s OR t.descripcion LIKE %s OR t.numero_ticket LIKE %s OR c.razon_social LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+
+    sql = (
+        "SELECT t.id, t.numero_ticket, t.titulo, t.tipo, t.prioridad, t.estado, "
+        "       t.cliente_id, c.razon_social, c.rut AS cliente_rut, "
+        "       t.solicitante, t.asignado_a, t.tecnico_id, "
+        "       mt.nombre AS tecnico_nombre, "
+        "       t.fecha_limite, t.visita_id, "
+        "       t.created_by, t.created_at, t.cerrado_at, "
+        "       (SELECT COUNT(*) FROM mant_ticket_equipos WHERE ticket_id=t.id) AS n_equipos, "
+        "       (SELECT COUNT(*) FROM mant_ticket_bitacora WHERE ticket_id=t.id) AS n_eventos "
+        "  FROM mant_tickets t "
+        "  JOIN mant_clientes c ON c.id=t.cliente_id "
+        "  LEFT JOIN mant_tecnicos mt ON mt.id=t.tecnico_id "
+        f" WHERE {' AND '.join(where)} "
+        " ORDER BY "
+        "   CASE t.estado WHEN 'abierto' THEN 1 WHEN 'en_proceso' THEN 2 "
+        "                  WHEN 'esperando_cliente' THEN 3 WHEN 'esperando_repuesto' THEN 4 "
+        "                  WHEN 'resuelto' THEN 5 WHEN 'cerrado' THEN 6 ELSE 7 END, "
+        "   CASE t.prioridad WHEN 'urgente' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END, "
+        "   t.created_at DESC "
+        " LIMIT 300"
+    )
+    try:
+        rows = mysql_fetchall(sql, tuple(params)) or []
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error consulta: {e}"}), 500
+
+    # KPIs
+    try:
+        kpis = mysql_fetchone(
+            "SELECT "
+            " COUNT(*) AS total, "
+            " SUM(CASE WHEN estado IN ('abierto','en_proceso') THEN 1 ELSE 0 END) AS activos, "
+            " SUM(CASE WHEN prioridad='urgente' AND estado NOT IN ('cerrado','cancelado') THEN 1 ELSE 0 END) AS urgentes, "
+            " SUM(CASE WHEN fecha_limite < CURDATE() AND estado NOT IN ('cerrado','cancelado','resuelto') THEN 1 ELSE 0 END) AS vencidos "
+            "FROM mant_tickets"
+        ) or {}
+    except Exception:
+        kpis = {}
+
+    return jsonify({
+        "ok": True,
+        "tickets": [dict(r) for r in rows],
+        "kpis": dict(kpis),
+        "total": len(rows),
+    })
+
+
+@app.route("/mantenciones/api/tickets", methods=["POST"])
+@_mant_required
+def mant_ticket_create():
+    """Crea un ticket nuevo.
+
+    Body JSON:
+      cliente_id, titulo (obligatorios)
+      descripcion, tipo, prioridad, canal_origen, solicitante,
+      solicitante_tel, solicitante_email, asignado_a, tecnico_id,
+      fecha_limite, notas_internas
+      equipos_ids: [int] — máquinas afectadas
+    """
+    d = request.get_json(silent=True) or {}
+    if not d.get("cliente_id") or not (d.get("titulo") or "").strip():
+        return jsonify({"ok": False, "error": "cliente_id y titulo son obligatorios"}), 400
+
+    cliente = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (d["cliente_id"],))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    numero = _next_ticket_number()
+    user = current_username() or "sistema"
+
+    tipo = (d.get("tipo") or "consulta").lower()
+    if tipo not in ("cambio","garantia","falla","consulta","cotizacion","presupuesto","seguimiento","otro"):
+        tipo = "consulta"
+    prio = (d.get("prioridad") or "media").lower()
+    if prio not in ("baja","media","alta","urgente"): prio = "media"
+    canal = (d.get("canal_origen") or "sistema").lower()
+    if canal not in ("email","whatsapp","telefono","presencial","sistema","otro"):
+        canal = "sistema"
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_tickets
+                   (numero_ticket, cliente_id, titulo, descripcion, tipo, prioridad,
+                    canal_origen, solicitante, solicitante_tel, solicitante_email,
+                    asignado_a, tecnico_id, fecha_limite, notas_internas, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (numero, d["cliente_id"], d["titulo"].strip()[:300],
+                 (d.get("descripcion") or "").strip()[:5000],
+                 tipo, prio, canal,
+                 (d.get("solicitante") or "").strip()[:200],
+                 (d.get("solicitante_tel") or "").strip()[:50],
+                 (d.get("solicitante_email") or "").strip()[:200],
+                 (d.get("asignado_a") or "").strip()[:190] or user,
+                 int(d["tecnico_id"]) if d.get("tecnico_id") else None,
+                 d.get("fecha_limite") or None,
+                 (d.get("notas_internas") or "").strip()[:5000],
+                 user)
+            )
+            ticket_id = cur.lastrowid
+            # Equipos asociados
+            equipos_ids = d.get("equipos_ids") or []
+            for mid in equipos_ids:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO mant_ticket_equipos (ticket_id, maquina_id, cantidad) "
+                        "VALUES (%s,%s,1)",
+                        (ticket_id, int(mid))
+                    )
+                except Exception: pass
+        conn.commit()
+        # Log en bitácora
+        _ticket_log(ticket_id, "creacion",
+                    f"Ticket {numero} creado por {user} — tipo: {tipo} · prioridad: {prio}"
+                    + (f" · {len(equipos_ids)} equipo(s)" if equipos_ids else ""))
+        # Log general
+        try:
+            _mant_log("cliente", d["cliente_id"], "ticket_creado", f"{numero}: {d['titulo']}")
+        except Exception: pass
+        return jsonify({"ok": True, "id": ticket_id, "numero_ticket": numero})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>", methods=["GET"])
+@_mant_required
+def mant_ticket_get_api(tid):
+    """Devuelve detalle del ticket + equipos + bitácora."""
+    t = mysql_fetchone(
+        "SELECT t.*, c.razon_social, c.rut AS cliente_rut, c.contacto_nombre, "
+        "       c.contacto_tel, c.contacto_email, "
+        "       mt.nombre AS tecnico_nombre, mt.telefono AS tecnico_tel "
+        "  FROM mant_tickets t "
+        "  JOIN mant_clientes c ON c.id=t.cliente_id "
+        "  LEFT JOIN mant_tecnicos mt ON mt.id=t.tecnico_id "
+        " WHERE t.id=%s", (tid,)
+    )
+    if not t:
+        return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+    equipos = mysql_fetchall(
+        "SELECT te.cantidad, te.notas, m.id AS maquina_id, m.nombre, m.sku, m.serie, m.estado_op "
+        "  FROM mant_ticket_equipos te "
+        "  JOIN mant_maquinas m ON m.id=te.maquina_id "
+        " WHERE te.ticket_id=%s ORDER BY m.nombre", (tid,)
+    ) or []
+    bitacora = mysql_fetchall(
+        "SELECT * FROM mant_ticket_bitacora WHERE ticket_id=%s ORDER BY created_at DESC LIMIT 100",
+        (tid,)
+    ) or []
+    return jsonify({
+        "ok": True,
+        "ticket": dict(t),
+        "equipos": [dict(r) for r in equipos],
+        "bitacora": [dict(r) for r in bitacora],
+    })
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>", methods=["PATCH"])
+@_mant_required
+def mant_ticket_update(tid):
+    """Actualiza campos del ticket. Loguea cambios sensibles en bitácora."""
+    d = request.get_json(silent=True) or {}
+    t_old = mysql_fetchone("SELECT * FROM mant_tickets WHERE id=%s", (tid,))
+    if not t_old:
+        return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+    allowed = ["titulo","descripcion","tipo","prioridad","estado","canal_origen",
+               "solicitante","solicitante_tel","solicitante_email","asignado_a",
+               "tecnico_id","fecha_limite","notas_internas","visita_id"]
+    sets, vals, eventos = [], [], []
+    user = current_username() or "sistema"
+    for f in allowed:
+        if f in d:
+            sets.append(f"{f}=%s")
+            vals.append(d[f] if d[f] not in ("",) else None)
+            # Trackear cambios sensibles
+            if t_old.get(f) != d[f] and f in ("estado","prioridad","asignado_a","tecnico_id"):
+                eventos.append((f, t_old.get(f), d[f]))
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin cambios"}), 400
+
+    # Si pasa a cerrado/resuelto, setear cerrado_at/cerrado_por
+    nuevo_estado = d.get("estado")
+    if nuevo_estado in ("cerrado", "resuelto") and t_old.get("estado") not in ("cerrado", "resuelto"):
+        sets.append("cerrado_at=NOW()");
+        sets.append("cerrado_por=%s"); vals.append(user)
+
+    try:
+        mysql_execute(
+            f"UPDATE mant_tickets SET {','.join(sets)} WHERE id=%s",
+            tuple(vals) + (tid,)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error: {e}"}), 500
+
+    # Bitácora de cambios
+    for campo, antes, nuevo in eventos:
+        _ticket_log(tid, "cambio_estado" if campo == "estado" else "asignacion",
+                    f"{campo}: '{antes or '—'}' → '{nuevo or '—'}'",
+                    metadata={"campo": campo, "antes": antes, "nuevo": str(nuevo)})
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>/comentario", methods=["POST"])
+@_mant_required
+def mant_ticket_comentario(tid):
+    """Agrega un comentario a la bitácora del ticket."""
+    d = request.get_json(silent=True) or {}
+    texto = (d.get("contenido") or "").strip()
+    if not texto:
+        return jsonify({"ok": False, "error": "Comentario vacío"}), 400
+    es_interno = d.get("es_interno", True)
+    _ticket_log(tid, "comentario", texto[:2000], es_interno=bool(es_interno))
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>/equipos", methods=["POST"])
+@_mant_required
+def mant_ticket_add_equipo(tid):
+    """Agrega un equipo (máquina) al ticket."""
+    d = request.get_json(silent=True) or {}
+    mid = d.get("maquina_id")
+    if not mid:
+        return jsonify({"ok": False, "error": "maquina_id requerido"}), 400
+    cant = int(d.get("cantidad", 1) or 1)
+    try:
+        mysql_execute(
+            "INSERT INTO mant_ticket_equipos (ticket_id, maquina_id, cantidad, notas) "
+            "VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE cantidad=VALUES(cantidad), notas=VALUES(notas)",
+            (tid, int(mid), cant, (d.get("notas") or "")[:500])
+        )
+        _ticket_log(tid, "otro", f"Equipo #{mid} agregado al ticket (cantidad {cant})")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>/equipos/<int:mid>", methods=["DELETE"])
+@_mant_required
+def mant_ticket_del_equipo(tid, mid):
+    try:
+        mysql_execute(
+            "DELETE FROM mant_ticket_equipos WHERE ticket_id=%s AND maquina_id=%s",
+            (tid, mid)
+        )
+        _ticket_log(tid, "otro", f"Equipo #{mid} quitado del ticket")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>/convertir-en-ot", methods=["POST"])
+@_mant_required
+def mant_ticket_convertir_ot(tid):
+    """Convierte un ticket en una OT/visita programada. Vincula bidireccionalmente."""
+    t = mysql_fetchone(
+        "SELECT id, cliente_id, titulo, descripcion, tipo, tecnico_id, fecha_limite, visita_id "
+        "  FROM mant_tickets WHERE id=%s", (tid,)
+    )
+    if not t:
+        return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+    if t.get("visita_id"):
+        return jsonify({"ok": False, "error": f"Este ticket ya tiene una OT vinculada (ID {t['visita_id']})",
+                        "visita_id_existente": t["visita_id"]}), 409
+
+    d = request.get_json(silent=True) or {}
+    fecha = d.get("fecha_programada") or t.get("fecha_limite")
+    from datetime import date, timedelta
+    if not fecha:
+        fecha = (date.today() + timedelta(days=2)).isoformat()
+
+    tipo_visita = "correctiva" if t.get("tipo") in ("falla","cambio","garantia") else "preventiva"
+
+    # Crear la visita
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            numero_ot = _next_ot_number()
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (numero_ot, cliente_id, titulo, fecha_programada, tipo,
+                    estado, descripcion, tecnico_id, created_by)
+                   VALUES (%s,%s,%s,%s,%s,'programada',%s,%s,%s)""",
+                (numero_ot, t["cliente_id"], f"[{tipo_visita.upper()}] {t['titulo']}"[:200],
+                 fecha, tipo_visita,
+                 f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}",
+                 t.get("tecnico_id"), current_username())
+            )
+            vid = cur.lastrowid
+
+            # Vincular ticket → visita
+            cur.execute("UPDATE mant_tickets SET visita_id=%s WHERE id=%s", (vid, tid))
+
+            # Copiar equipos del ticket como tareas de la visita
+            equipos = mysql_fetchall(
+                "SELECT te.cantidad, m.id, m.nombre, m.serie "
+                "  FROM mant_ticket_equipos te JOIN mant_maquinas m ON m.id=te.maquina_id "
+                " WHERE te.ticket_id=%s", (tid,)
+            ) or []
+            for i, eq in enumerate(equipos):
+                tipo_tarea = "cambio" if t["tipo"] in ("cambio","garantia") else "inspeccion"
+                titulo_tarea = f"{tipo_tarea.capitalize()}: {eq['nombre'] or 'Equipo'}"
+                if eq.get("serie"): titulo_tarea += f" (S/N: {eq['serie']})"
+                cur.execute(
+                    """INSERT INTO mant_visita_tareas
+                       (visita_id, orden, titulo, tipo, maquina_id, cantidad, created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                    (vid, i+1, titulo_tarea[:300], tipo_tarea,
+                     eq["id"], eq.get("cantidad") or 1, current_username())
+                )
+        conn.commit()
+        _ticket_log(tid, "otro",
+                    f"Ticket convertido en OT {numero_ot} (visita #{vid}) — fecha {fecha}")
+        try:
+            _mant_log("visita", vid, "creada_desde_ticket", f"Ticket #{tid} → {numero_ot}")
+        except Exception: pass
+        return jsonify({
+            "ok": True,
+            "visita_id": vid,
+            "numero_ot": numero_ot,
+            "fecha_programada": fecha,
+            "tareas_creadas": len(equipos),
+        })
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/tickets/<int:tid>", methods=["DELETE"])
+@_mant_required
+def mant_ticket_del(tid):
+    """Elimina un ticket (solo superadmin o creador). Cascade arrastra equipos/bitácora/adjuntos."""
+    if not g.permissions.get("superadmin"):
+        # Permitir al creador borrar SU propio ticket
+        t = mysql_fetchone("SELECT created_by FROM mant_tickets WHERE id=%s", (tid,))
+        if not t or t.get("created_by") != current_username():
+            return jsonify({"ok": False,
+                            "error": "Solo el superadministrador o el creador del ticket puede eliminarlo."}), 403
+    try:
+        mysql_execute("DELETE FROM mant_tickets WHERE id=%s", (tid,))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ─── PÁGINAS DE TICKETS ─────────────────────────────────────────────
+
+@app.route("/mantenciones/tickets")
+@_mant_required
+def mant_tickets_list():
+    """Listado global de tickets con filtros."""
+    return render_template("mantenciones/tickets_list.html")
+
+
+@app.route("/mantenciones/tickets/nuevo")
+@_mant_required
+def mant_ticket_nuevo():
+    """Form para crear un ticket nuevo."""
+    cid_default = request.args.get("cliente_id") or ""
+    clientes = mysql_fetchall(
+        "SELECT id, razon_social, rut FROM mant_clientes WHERE estado='activo' "
+        "ORDER BY razon_social LIMIT 500"
+    ) or []
+    tecnicos = mysql_fetchall(
+        "SELECT id, nombre FROM mant_tecnicos WHERE estado='activo' ORDER BY nombre"
+    ) or []
+    maquinas = []
+    cliente_sel = None
+    if cid_default:
+        try:
+            cliente_sel = mysql_fetchone(
+                "SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (int(cid_default),)
+            )
+            maquinas = mysql_fetchall(
+                "SELECT id, nombre, sku, serie FROM mant_maquinas WHERE cliente_id=%s ORDER BY nombre",
+                (int(cid_default),)
+            ) or []
+        except Exception: pass
+    return render_template("mantenciones/ticket_nuevo.html",
+                            clientes=[dict(c) for c in clientes],
+                            tecnicos=[dict(t) for t in tecnicos],
+                            maquinas=[dict(m) for m in maquinas],
+                            cliente_sel=dict(cliente_sel) if cliente_sel else None,
+                            cliente_id_default=cid_default)
+
+
+@app.route("/mantenciones/tickets/<int:tid>")
+@_mant_required
+def mant_ticket_ficha(tid):
+    """Ficha completa del ticket."""
+    return render_template("mantenciones/ticket_ficha.html", ticket_id=tid)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/maquinas-list", methods=["GET"])
+@_mant_required
+def mant_cliente_maquinas_list(cid):
+    """Lista máquinas del cliente — para el selector en ticket nuevo."""
+    rows = mysql_fetchall(
+        "SELECT id, nombre, sku, serie, estado_op "
+        "  FROM mant_maquinas WHERE cliente_id=%s ORDER BY nombre", (cid,)
+    ) or []
+    return jsonify([dict(r) for r in rows])
 
 
 # ═════════════════════════════════════════════════════════════════════

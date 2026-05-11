@@ -165,6 +165,10 @@
          class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha'] %} active{% endif %}">
         <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
       </a>
+      <a href="{{ url_for('mant_tickets_list') }}"
+         class="sidebar-link{% if request.endpoint in ['mant_tickets_list','mant_ticket_nuevo','mant_ticket_ficha'] %} active{% endif %}">
+        <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
+      </a>
       <a href="{{ url_for('mant_tecnicos_index') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnico_ficha'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Técnicos</span>

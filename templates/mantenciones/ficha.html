@@ -593,6 +593,12 @@
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
         <i class="bi bi-calendar-plus me-1"></i>Nueva visita
       </button>
+      <a href="{{ url_for('mant_ticket_nuevo') }}?cliente_id={{ cliente.id }}"
+         class="btn btn-sm fw-bold"
+         style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:0"
+         title="Crear ticket de solicitud (paralelo a OT)">
+        <i class="bi bi-ticket-perforated me-1"></i>Ticket
+      </a>
 
       {# ── Dropdown de acciones IA ─────────────────────────────────── #}
       <div class="dropdown">
