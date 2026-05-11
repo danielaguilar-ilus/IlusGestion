@@ -593,7 +593,33 @@
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
         <i class="bi bi-calendar-plus me-1"></i>Nueva visita
       </button>
-      {% if permissions.admin or permissions.superadmin %}
+
+      {# ── Dropdown de acciones IA ─────────────────────────────────── #}
+      <div class="dropdown">
+        <button class="btn btn-sm fw-bold dropdown-toggle"
+                style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border:0"
+                data-bs-toggle="dropdown" title="Acciones con Inteligencia Artificial">
+          <i class="bi bi-stars me-1"></i>IA
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><h6 class="dropdown-header"><i class="bi bi-stars me-1"></i>Asistente Claude</h6></li>
+          <li><a class="dropdown-item" href="#" onclick="aiAnalisisCliente();return false">
+            <i class="bi bi-graph-up me-2 text-primary"></i>Análisis económico y operativo
+            <div class="small text-muted">Score, MRR, riesgos, oportunidades</div>
+          </a></li>
+          <li><a class="dropdown-item" href="#" onclick="aiCompletarFichaCliente();return false">
+            <i class="bi bi-magic me-2 text-purple"></i>Completar ficha del cliente
+            <div class="small text-muted">Sugerir giro, comuna, región</div>
+          </a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item" href="#" onclick="aiHealth();return false">
+            <i class="bi bi-heart-pulse me-2 text-success"></i>Diagnóstico de la IA
+            <div class="small text-muted">Verificar si Claude API responde</div>
+          </a></li>
+        </ul>
+      </div>
+
+      {% if permissions.superadmin %}
       <div class="dropdown">
         <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
                 style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)"
@@ -607,6 +633,7 @@
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item text-danger" href="#" onclick="abrirEliminarCliente();return false">
             <i class="bi bi-trash me-2"></i>Eliminar cliente
+            <div class="small text-muted">Solo superadmin · arrastra contratos, visitas y equipos</div>
           </a></li>
         </ul>
       </div>
@@ -5471,11 +5498,200 @@ function abrirEmailManual() {
   </div>
 </div>
 
+{# ════════════════════════════════════════════════════════════════════
+   MODAL: Resultado de Análisis IA del cliente
+════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalAIResult" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-stars me-2"></i><span id="aiResultTitle">Resultado del análisis</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="aiResultBody">
+        <div class="text-center py-5">
+          <div class="spinner-border text-primary"></div>
+          <div class="small text-muted mt-3">Consultando a Claude...</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
 const CID = {{ cliente.id }};
+
+// ════════════════════════════════════════════════════════════════════
+// ACCIONES DE IA (Claude)
+// ════════════════════════════════════════════════════════════════════
+
+function _aiOpenModal(title){
+  document.getElementById('aiResultTitle').textContent = title;
+  document.getElementById('aiResultBody').innerHTML = `
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary"></div>
+      <div class="small text-muted mt-3">Consultando a Claude... (~5-15s)</div>
+    </div>`;
+  new bootstrap.Modal(document.getElementById('modalAIResult')).show();
+}
+
+function _aiRenderError(err){
+  document.getElementById('aiResultBody').innerHTML = `
+    <div class="alert alert-danger">
+      <strong><i class="bi bi-exclamation-triangle me-1"></i>La IA no pudo responder.</strong>
+      <div class="mt-2 small">${err}</div>
+      <hr class="my-2">
+      <div class="small">
+        <strong>Diagnóstico rápido:</strong>
+        <ul class="mb-0 mt-1">
+          <li>Verificá que <code>ANTHROPIC_API_KEY</code> esté seteada en Railway → Variables</li>
+          <li>Click en <strong>IA → Diagnóstico de la IA</strong> para ver detalle</li>
+        </ul>
+      </div>
+    </div>`;
+}
+
+// ── Análisis económico y operativo del cliente ─────────────────────
+async function aiAnalisisCliente(){
+  _aiOpenModal('Análisis económico y operativo · Claude');
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ai-analisis`, {method:'POST'});
+    const d = await r.json();
+    if (!d.ok){ _aiRenderError(d.error || 'Error desconocido'); return; }
+    const a = d.ai;
+    const saludColor = {
+      'excelente':'#16a34a', 'buena':'#22c55e', 'regular':'#f59e0b',
+      'riesgo':'#dc2626', 'critica':'#7f1d1d'
+    }[a.salud_cuenta] || '#6b7280';
+    const oppsHtml = (a.oportunidades_venta||[]).map(o=>`
+      <li><strong>${o.titulo}</strong>
+        <span class="badge bg-success ms-1">$${(o.valor_estimado_clp||0).toLocaleString('es-CL')}</span>
+        <span class="badge bg-secondary ms-1">plazo ${o.plazo}</span></li>
+    `).join('') || '<li class="text-muted">No detectadas</li>';
+    const accHtml = (a.proximas_acciones||[]).map(x=>`
+      <li><span class="badge" style="background:${ {alta:'#dc2626',media:'#f59e0b',baja:'#6b7280'}[x.prioridad] || '#6b7280' }">${x.prioridad}</span>
+        ${x.accion} <small class="text-muted">(${x.plazo_dias}d)</small></li>
+    `).join('') || '<li class="text-muted">Sin acciones</li>';
+
+    document.getElementById('aiResultBody').innerHTML = `
+      <div class="row g-3">
+        <div class="col-md-4 text-center">
+          <div style="font-size:.7rem;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">Salud de cuenta</div>
+          <div style="font-size:1.5rem;font-weight:900;color:${saludColor}">${(a.salud_cuenta||'—').toUpperCase()}</div>
+          <div class="small text-muted">Score: <strong>${a.score_general||0}/100</strong></div>
+        </div>
+        <div class="col-md-4 text-center">
+          <div style="font-size:.7rem;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">MRR estimado</div>
+          <div style="font-size:1.4rem;font-weight:900;color:#0f172a">$${(a.mrr_estimado_clp||0).toLocaleString('es-CL')}</div>
+          <div class="small text-muted">/ Anual: $${(a.valor_anual_estimado_clp||0).toLocaleString('es-CL')}</div>
+        </div>
+        <div class="col-md-4 text-center">
+          <div style="font-size:.7rem;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">Rentabilidad</div>
+          <div style="font-size:1.4rem;font-weight:900;color:#0f172a">${a.rentabilidad_estimada||'—'}</div>
+          <div class="small text-muted">Visita cada ${a.frecuencia_visitas_recomendada_meses||'—'} mes(es)</div>
+        </div>
+        <div class="col-12">
+          <div class="alert alert-info py-2 mb-0"><i class="bi bi-info-circle me-1"></i>${a.resumen_ejecutivo||''}</div>
+        </div>
+        <div class="col-md-6">
+          <h6 class="fw-bold mt-2"><i class="bi bi-check-circle text-success me-1"></i>Fortalezas</h6>
+          <ul class="small">${(a.fortalezas||[]).map(x=>'<li>'+x+'</li>').join('')||'<li class="text-muted">—</li>'}</ul>
+          <h6 class="fw-bold mt-2"><i class="bi bi-x-circle text-danger me-1"></i>Debilidades</h6>
+          <ul class="small">${(a.debilidades||[]).map(x=>'<li>'+x+'</li>').join('')||'<li class="text-muted">—</li>'}</ul>
+        </div>
+        <div class="col-md-6">
+          <h6 class="fw-bold mt-2"><i class="bi bi-graph-up-arrow text-success me-1"></i>Oportunidades de venta</h6>
+          <ul class="small">${oppsHtml}</ul>
+          <h6 class="fw-bold mt-2"><i class="bi bi-exclamation-triangle text-warning me-1"></i>Riesgos inmediatos</h6>
+          <ul class="small">${(a.riesgos_inmediatos||[]).map(x=>'<li>'+x+'</li>').join('')||'<li class="text-muted">—</li>'}</ul>
+        </div>
+        <div class="col-12">
+          <h6 class="fw-bold mt-2"><i class="bi bi-list-check text-primary me-1"></i>Próximas acciones</h6>
+          <ul class="small">${accHtml}</ul>
+        </div>
+        <div class="col-12">
+          <div class="alert alert-warning py-2 mb-0"><i class="bi bi-bell me-1"></i><strong>Contrato:</strong> ${a.alerta_contrato||'—'}</div>
+        </div>
+      </div>`;
+  } catch(e){ _aiRenderError(e.message || e); }
+}
+
+// ── Completar ficha del cliente con sugerencias IA ────────────────
+async function aiCompletarFichaCliente(){
+  _aiOpenModal('Completar ficha del cliente · Claude');
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ai-completar-ficha`, {method:'POST'});
+    const d = await r.json();
+    if (!d.ok){ _aiRenderError(d.error || 'Error'); return; }
+    const a = d.ai;
+    const aplicadoHtml = Object.entries(d.aplicado||{}).map(([k,v]) =>
+      `<li><strong>${k}:</strong> ${v}</li>`
+    ).join('') || '<li class="text-muted">No había campos vacíos para llenar</li>';
+    const faltantesHtml = (a.campos_faltantes_criticos||[]).map(f=>'<li>'+f+'</li>').join('')
+      || '<li class="text-muted">Ninguno</li>';
+    const preguntasHtml = (a.preguntas_para_ejecutivo||[]).map(p=>'<li>'+p+'</li>').join('')
+      || '<li class="text-muted">Ninguna</li>';
+
+    document.getElementById('aiResultBody').innerHTML = `
+      <div class="alert alert-success py-2"><i class="bi bi-magic me-1"></i>
+        Confianza del análisis: <strong>${a.confianza||0}%</strong>
+      </div>
+      <h6 class="fw-bold mt-3"><i class="bi bi-check2-square text-success me-1"></i>Campos completados automáticamente</h6>
+      <ul class="small">${aplicadoHtml}</ul>
+      <div class="row g-2 mt-2">
+        <div class="col-md-6"><strong class="small">Giro sugerido:</strong> ${a.giro_sugerido||'—'}</div>
+        <div class="col-md-6"><strong class="small">Tipo de cliente:</strong> ${a.tipo_cliente||'—'}</div>
+        <div class="col-md-6"><strong class="small">Comuna estimada:</strong> ${a.comuna_estimada_segun_direccion||'—'}</div>
+        <div class="col-md-6"><strong class="small">Región estimada:</strong> ${a.region_estimada||'—'}</div>
+        <div class="col-12 mt-2">
+          <strong class="small">Observaciones operativas:</strong>
+          <div class="small text-muted">${a.observaciones_operativas||'—'}</div>
+        </div>
+      </div>
+      <h6 class="fw-bold mt-3"><i class="bi bi-exclamation-circle text-warning me-1"></i>Campos críticos faltantes</h6>
+      <ul class="small">${faltantesHtml}</ul>
+      <h6 class="fw-bold mt-3"><i class="bi bi-question-circle text-info me-1"></i>Preguntas que deberías hacer al cliente</h6>
+      <ul class="small">${preguntasHtml}</ul>
+      <div class="text-center mt-3">
+        <button class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
+          <i class="bi bi-arrow-clockwise me-1"></i>Recargar ficha
+        </button>
+      </div>`;
+  } catch(e){ _aiRenderError(e.message || e); }
+}
+
+// ── Diagnóstico de la IA ───────────────────────────────────────────
+async function aiHealth(){
+  _aiOpenModal('Diagnóstico de la IA · Claude');
+  try {
+    const r = await fetch('/mantenciones/api/ai/health');
+    const d = await r.json();
+    const row = (lbl, ok, val) => `
+      <tr>
+        <td class="fw-semibold">${lbl}</td>
+        <td><span class="badge bg-${ok?'success':'danger'}">${ok?'OK':'FALLA'}</span></td>
+        <td class="small text-muted">${val||''}</td>
+      </tr>`;
+    document.getElementById('aiResultBody').innerHTML = `
+      <table class="table table-sm">
+        <tbody>
+          ${row('API Key configurada', d.key_configurada, d.key_configurada?'ANTHROPIC_API_KEY presente':'Configurar en Railway → Variables')}
+          ${row('Librería anthropic instalada', d.anthropic_lib, d.anthropic_lib?'OK':'Agregar a requirements.txt')}
+          ${row('Modelo Claude responde', d.modelo_funciona, d.modelo_usado||'')}
+        </tbody>
+      </table>
+      ${d.error ? `<div class="alert alert-danger small"><i class="bi bi-x-circle me-1"></i>${d.error}</div>` : ''}
+      ${d.modelo_funciona ? '<div class="alert alert-success small"><i class="bi bi-check-circle me-1"></i>La IA está completamente funcional.</div>' : ''}`;
+  } catch(e){ _aiRenderError(e.message || e); }
+}
 
 // ─── Tabs con localStorage ─────────────────────────────────────
 const TAB_KEY = `ficha_tab_${CID}`;
