@@ -1389,6 +1389,11 @@ def require_permission(permission):
             if not g.user:
                 flash("Inicia sesion para continuar.", "warning")
                 return redirect(url_for("login", next=request.path))
+            # ★ superadmin SIEMPRE pasa todos los checks de permiso
+            # (es la cuenta dueña del sistema; no debe quedar bloqueada
+            # de ningún módulo aunque sea nuevo y no esté en su matriz)
+            if g.permissions.get("superadmin"):
+                return view(*a, **kw)
             if not g.permissions.get(permission):
                 flash("No tienes permisos para realizar esta accion.", "danger")
                 return redirect(url_for("index"))
@@ -4244,39 +4249,76 @@ def admin_login_imagenes():
 @app.route("/admin/login-imagenes", methods=["POST"])
 @require_permission("admin")
 def admin_login_imagenes_subir():
-    """Sube una nueva imagen al carrusel del login (máx 5 activas)."""
-    f = request.files.get("imagen")
-    if not f or not f.filename:
-        flash("Selecciona una imagen.", "danger")
+    """Sube UNA O VARIAS imágenes al carrusel del login (máx 5 activas).
+
+    Soporta multi-upload (input name="imagenes" multiple) y también el
+    legacy input name="imagen" (single) para compatibilidad. Valida cada
+    archivo con _validate_uploaded_image() y respeta el límite de 5
+    activas — si se exceden, las restantes se cargan como inactivas.
+    """
+    # Soporta multi-upload (imagenes[]) y legacy single (imagen)
+    files = request.files.getlist("imagenes")
+    legacy = request.files.get("imagen")
+    if legacy and legacy.filename and legacy not in files:
+        files.append(legacy)
+    if not files or all(not f.filename for f in files):
+        flash("Selecciona al menos una imagen.", "warning")
         return redirect(url_for("admin_login_imagenes"))
-    ext = f.filename.rsplit(".",1)[-1].lower() if "." in f.filename else ""
-    if ext not in {"png","jpg","jpeg","webp"}:
-        flash("Formato no permitido. Usa PNG/JPG/WEBP.", "danger")
-        return redirect(url_for("admin_login_imagenes"))
-    fname = f"login_{int(time.time())}_{secure_filename(f.filename)}"
-    fpath = os.path.join(LOGIN_IMAGES_DIR, fname)
-    f.save(fpath)
 
-    titulo    = (request.form.get("titulo") or "").strip()[:200]
-    subtitulo = (request.form.get("subtitulo") or "").strip()[:300]
-    activa    = 1 if request.form.get("activa") else 0
+    titulo_base    = (request.form.get("titulo") or "").strip()[:200]
+    subtitulo_base = (request.form.get("subtitulo") or "").strip()[:300]
+    want_active    = 1 if request.form.get("activa") else 0
 
-    # Determinar orden = max + 1
-    row = mysql_fetchone("SELECT COALESCE(MAX(orden),0)+1 AS nx FROM login_images")
-    nx = (row or {}).get("nx", 1)
+    # Determinar orden inicial
+    row = mysql_fetchone("SELECT COALESCE(MAX(orden),0) AS mx FROM login_images")
+    nx = (row or {}).get("mx", 0) + 1
 
-    # Si ya hay 5 activas y se envía activa=1, advertir
-    activas = mysql_fetchone("SELECT COUNT(*) AS n FROM login_images WHERE activa=1")
-    if activa and activas and activas.get("n",0) >= 5:
-        activa = 0
-        flash("Ya hay 5 imágenes activas. Esta se subió como inactiva.", "warning")
+    # Contar activas actuales
+    activas_row = mysql_fetchone("SELECT COUNT(*) AS n FROM login_images WHERE activa=1")
+    activas = (activas_row or {}).get("n", 0)
 
-    mysql_execute(
-        "INSERT INTO login_images (archivo_path,titulo,subtitulo,orden,activa,created_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s)",
-        (f"uploads/login/{fname}", titulo, subtitulo, nx, activa, current_username())
-    )
-    flash("Imagen agregada al carrusel.", "success")
+    saved = 0
+    errors: list[str] = []
+    for i, f in enumerate(files):
+        if not f or not f.filename:
+            continue
+        ext, err = _validate_uploaded_image(f, label=f.filename)
+        if err:
+            errors.append(err)
+            continue
+        fname = f"login_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+        fpath = os.path.join(LOGIN_IMAGES_DIR, fname)
+        try:
+            f.save(fpath)
+        except Exception as e:
+            errors.append(f"Error guardando {f.filename}: {e}")
+            continue
+        # Si excede 5 activas, marcar como inactiva
+        activa = want_active
+        if activa and activas >= 5:
+            activa = 0
+        else:
+            activas += activa
+        try:
+            mysql_execute(
+                "INSERT INTO login_images (archivo_path,titulo,subtitulo,orden,activa,created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    f"uploads/login/{fname}",
+                    titulo_base or None,
+                    subtitulo_base or None,
+                    nx + saved,
+                    activa,
+                    current_username(),
+                )
+            )
+            saved += 1
+        except Exception as e:
+            errors.append(f"Error BD {f.filename}: {e}")
+    if saved:
+        flash(f"✅ {saved} imagen(es) agregadas al carrusel.", "success")
+    for err in errors[:3]:
+        flash(err, "warning")
     return redirect(url_for("admin_login_imagenes"))
 
 
@@ -4434,6 +4476,94 @@ def admin_retiros_carousel_subir():
     for err in errors[:3]:
         flash(err, "warning")
     return redirect(url_for("admin_retiros_carousel"))
+
+
+# ═════════════════════════════════════════════════════════════════════
+# BANNER PÚBLICO DE RETIROS (avisos)
+# Anuncios temporales que se muestran arriba del hero en /retiros/solicitar
+# (ej. "Cierre anticipado por inventario", "Feriado regional", etc.)
+# ═════════════════════════════════════════════════════════════════════
+
+def _retiros_announcements_active():
+    """Devuelve lista de avisos vigentes para el banner público."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, titulo, mensaje, tipo, icon FROM retiros_announcements "
+            "WHERE activa=1 "
+            "  AND (fecha_desde IS NULL OR fecha_desde <= NOW()) "
+            "  AND (fecha_hasta IS NULL OR fecha_hasta >= NOW()) "
+            "ORDER BY orden ASC, id DESC"
+        )
+        return [dict(r) for r in (rows or [])]
+    except Exception:
+        return []
+
+
+@app.route("/admin/retiros-avisos", methods=["GET"])
+@require_permission("marketing")
+def admin_retiros_avisos():
+    rows = mysql_fetchall(
+        "SELECT * FROM retiros_announcements ORDER BY activa DESC, orden ASC, id DESC"
+    )
+    return render_template(
+        "admin/retiros_avisos.html",
+        avisos=[dict(r) for r in (rows or [])],
+    )
+
+
+@app.route("/admin/retiros-avisos/nuevo", methods=["POST"])
+@require_permission("marketing")
+def admin_retiros_avisos_nuevo():
+    titulo = (request.form.get("titulo") or "").strip()[:200]
+    if not titulo:
+        flash("El título es obligatorio.", "warning")
+        return redirect(url_for("admin_retiros_avisos"))
+    mensaje      = (request.form.get("mensaje") or "").strip()
+    tipo         = (request.form.get("tipo") or "info").strip().lower()
+    if tipo not in ("info", "warning", "danger", "success"):
+        tipo = "info"
+    icon         = (request.form.get("icon") or "info-circle").strip()[:40]
+    fecha_desde  = (request.form.get("fecha_desde") or "").strip() or None
+    fecha_hasta  = (request.form.get("fecha_hasta") or "").strip() or None
+    activa       = 1 if request.form.get("activa") else 0
+    orden        = int(request.form.get("orden") or 0)
+    mysql_execute(
+        "INSERT INTO retiros_announcements "
+        "(titulo,mensaje,tipo,icon,fecha_desde,fecha_hasta,activa,orden,created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (titulo, mensaje, tipo, icon, fecha_desde, fecha_hasta, activa, orden, current_username())
+    )
+    flash("Aviso publicado.", "success")
+    return redirect(url_for("admin_retiros_avisos"))
+
+
+@app.route("/admin/retiros-avisos/<int:aid>", methods=["POST"])
+@require_permission("marketing")
+def admin_retiros_avisos_update(aid):
+    action = request.form.get("action") or ""
+    if action == "delete":
+        mysql_execute("DELETE FROM retiros_announcements WHERE id=%s", (aid,))
+        flash("Aviso eliminado.", "success")
+        return redirect(url_for("admin_retiros_avisos"))
+    titulo = (request.form.get("titulo") or "").strip()[:200]
+    mensaje = (request.form.get("mensaje") or "").strip()
+    tipo = (request.form.get("tipo") or "info").strip().lower()
+    if tipo not in ("info", "warning", "danger", "success"):
+        tipo = "info"
+    icon = (request.form.get("icon") or "info-circle").strip()[:40]
+    fecha_desde = (request.form.get("fecha_desde") or "").strip() or None
+    fecha_hasta = (request.form.get("fecha_hasta") or "").strip() or None
+    activa = 1 if request.form.get("activa") else 0
+    orden = int(request.form.get("orden") or 0)
+    mysql_execute(
+        "UPDATE retiros_announcements "
+        "SET titulo=%s, mensaje=%s, tipo=%s, icon=%s, "
+        "fecha_desde=%s, fecha_hasta=%s, activa=%s, orden=%s "
+        "WHERE id=%s",
+        (titulo, mensaje, tipo, icon, fecha_desde, fecha_hasta, activa, orden, aid)
+    )
+    flash("Aviso actualizado.", "success")
+    return redirect(url_for("admin_retiros_avisos"))
 
 
 @app.route("/admin/retiros-carousel/<int:iid>", methods=["POST"])
@@ -11744,6 +11874,27 @@ def init_mantenciones_tables():
                     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_orden (orden),
                     INDEX idx_activa (activa)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── Banner / Avisos en la página pública de retiros ────────
+            # Muestra banner amarillo/rojo/azul/verde encima del hero
+            # cuando hay info importante (cierre anticipado, inventario, etc.)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS retiros_announcements (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    titulo       VARCHAR(200) NOT NULL,
+                    mensaje      TEXT,
+                    tipo         ENUM('info','warning','danger','success') DEFAULT 'info',
+                    icon         VARCHAR(40) DEFAULT 'info-circle',
+                    fecha_desde  DATETIME NULL COMMENT 'NULL=siempre vigente',
+                    fecha_hasta  DATETIME NULL COMMENT 'NULL=sin caducidad',
+                    activa       TINYINT(1) DEFAULT 1,
+                    orden        INT DEFAULT 0,
+                    created_by   VARCHAR(190),
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_activa (activa),
+                    INDEX idx_fechas (fecha_desde, fecha_hasta)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 

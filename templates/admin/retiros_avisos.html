@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Avisos públicos de Retiros — ILUS{% endblock %}
+{% block content %}
+<style>
+.av-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.av-card-info{border-left:4px solid #0ea5e9;}
+.av-card-warning{border-left:4px solid #f59e0b;}
+.av-card-danger{border-left:4px solid #dc2626;}
+.av-card-success{border-left:4px solid #16a34a;}
+
+.av-preview-info{background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;}
+.av-preview-warning{background:#fef3c7;color:#854d0e;border:1px solid #fbbf24;}
+.av-preview-danger{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;}
+.av-preview-success{background:#dcfce7;color:#166534;border:1px solid #86efac;}
+
+.av-status-on{background:#dcfce7;color:#166534;padding:3px 10px;border-radius:50px;font-size:.62rem;font-weight:800;letter-spacing:.04em;}
+.av-status-off{background:#f3f4f6;color:#6b7280;padding:3px 10px;border-radius:50px;font-size:.62rem;font-weight:800;letter-spacing:.04em;}
+
+.icon-picker label{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:42px;height:42px;border:1px solid #d1d5db;border-radius:8px;
+  background:#fff;cursor:pointer;font-size:1.1rem;color:#374151;
+  transition:all .15s;
+}
+.icon-picker input[type="radio"]:checked + label{
+  background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
+}
+.icon-picker input[type="radio"]{display:none;}
+</style>
+
+<div class="mod-hero">
+  <div>
+    <h4><i class="bi bi-megaphone me-2"></i>Avisos públicos de Retiros</h4>
+    <div class="mod-sub">Banners que ven los clientes al entrar a <code>/retiros/solicitar</code></div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('admin_marketing') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Volver a Marketing
+    </a>
+    <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-eye me-1"></i>Ver página pública
+    </a>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 mb-3" style="font-size:.84rem">
+  <i class="bi bi-info-circle me-1"></i>
+  Usá esto para avisar a tus clientes sobre <strong>cierre anticipado</strong>,
+  <strong>fiesta laboral</strong>, <strong>inventario</strong>, <strong>cambio de horario</strong>, etc.
+  Los avisos activos se muestran arriba del hero apenas el cliente abre la página de retiros.
+</div>
+
+{# ── Form nuevo aviso ── #}
+<div class="av-card mb-4 p-4">
+  <h6 class="mb-3"><i class="bi bi-plus-circle me-2 text-danger"></i>Publicar nuevo aviso</h6>
+  <form method="post" action="{{ url_for('admin_retiros_avisos_nuevo') }}">
+    <div class="row g-3">
+      <div class="col-md-8">
+        <label class="form-label small fw-semibold">Título del aviso <span class="text-danger">*</span></label>
+        <input type="text" name="titulo" class="form-control" required
+               placeholder="Ej: Cierre anticipado por inventario el viernes 15">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small fw-semibold">Tipo</label>
+        <select name="tipo" class="form-select" onchange="updatePreview()">
+          <option value="info">Información (azul)</option>
+          <option value="warning" selected>Atención (amarillo)</option>
+          <option value="danger">Importante (rojo)</option>
+          <option value="success">Buena noticia (verde)</option>
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Mensaje (opcional)</label>
+        <textarea name="mensaje" class="form-control" rows="2" onkeyup="updatePreview()"
+                  placeholder="Detalles adicionales: por ejemplo, recomendaciones, horarios de excepción, etc."></textarea>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Desde (opcional)</label>
+        <input type="datetime-local" name="fecha_desde" class="form-control form-control-sm">
+        <small class="text-muted">Si está vacío, vigente ya</small>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Hasta (opcional)</label>
+        <input type="datetime-local" name="fecha_hasta" class="form-control form-control-sm">
+        <small class="text-muted">Si está vacío, sin caducidad</small>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold">Orden</label>
+        <input type="number" name="orden" class="form-control form-control-sm" value="0" min="0">
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <div class="form-check">
+          <input type="checkbox" name="activa" class="form-check-input" id="av_activa" checked>
+          <label class="form-check-label small" for="av_activa">Publicar activo</label>
+        </div>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-ilus w-100 fw-bold">
+          <i class="bi bi-megaphone-fill me-1"></i>Publicar
+        </button>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Icono</label>
+        <div class="icon-picker d-flex flex-wrap gap-2">
+          {% for ic in ['info-circle', 'exclamation-triangle', 'megaphone', 'calendar-event', 'box-seam', 'truck', 'clock', 'star', 'gift', 'snow'] %}
+          <input type="radio" name="icon" id="ic_{{ ic }}" value="{{ ic }}" {% if loop.first %}checked{% endif %} onchange="updatePreview()">
+          <label for="ic_{{ ic }}" title="{{ ic }}"><i class="bi bi-{{ ic }}"></i></label>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# Preview vivo #}
+      <div class="col-12 mt-2">
+        <small class="text-muted fw-semibold">Vista previa:</small>
+        <div id="avPreview" class="av-preview-warning mt-1" style="padding:12px 16px;border-radius:8px">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-info-circle" id="avPreviewIcon" style="font-size:1.2rem"></i>
+            <strong id="avPreviewTitle">Título del aviso</strong>
+          </div>
+          <div id="avPreviewMsg" class="mt-1" style="font-size:.88rem"></div>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
+{# ── Lista de avisos ── #}
+{% if avisos %}
+<div class="row g-3">
+  {% for av in avisos %}
+  <div class="col-12 col-lg-6">
+    <div class="av-card av-card-{{ av.tipo }}">
+      <form method="post" action="{{ url_for('admin_retiros_avisos_update', aid=av.id) }}" class="p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-{{ av.icon or 'info-circle' }}" style="font-size:1.3rem"></i>
+            <span class="fw-bold">{{ av.titulo }}</span>
+          </div>
+          <span class="{% if av.activa %}av-status-on{% else %}av-status-off{% endif %}">
+            {{ 'Activo' if av.activa else 'Inactivo' }}
+          </span>
+        </div>
+
+        <div class="row g-2">
+          <div class="col-md-8">
+            <input type="text" name="titulo" class="form-control form-control-sm"
+                   value="{{ av.titulo }}" required>
+          </div>
+          <div class="col-md-4">
+            <select name="tipo" class="form-select form-select-sm">
+              {% for t,label in [('info','Info'),('warning','Atención'),('danger','Importante'),('success','Buena noticia')] %}
+              <option value="{{ t }}" {% if av.tipo==t %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <textarea name="mensaje" class="form-control form-control-sm" rows="2">{{ av.mensaje or '' }}</textarea>
+          </div>
+          <div class="col-md-4">
+            <input type="datetime-local" name="fecha_desde" class="form-control form-control-sm"
+                   value="{% if av.fecha_desde %}{{ av.fecha_desde.strftime('%Y-%m-%dT%H:%M') }}{% endif %}">
+          </div>
+          <div class="col-md-4">
+            <input type="datetime-local" name="fecha_hasta" class="form-control form-control-sm"
+                   value="{% if av.fecha_hasta %}{{ av.fecha_hasta.strftime('%Y-%m-%dT%H:%M') }}{% endif %}">
+          </div>
+          <div class="col-md-2">
+            <input type="number" name="orden" class="form-control form-control-sm" value="{{ av.orden }}" min="0">
+          </div>
+          <div class="col-md-2">
+            <input type="hidden" name="icon" value="{{ av.icon }}">
+          </div>
+          <div class="col-12 d-flex align-items-center gap-2">
+            <div class="form-check">
+              <input type="checkbox" name="activa" class="form-check-input" id="act_{{ av.id }}" {% if av.activa %}checked{% endif %}>
+              <label class="form-check-label small" for="act_{{ av.id }}">Activo</label>
+            </div>
+            <button type="submit" class="btn btn-sm btn-ilus ms-auto">
+              <i class="bi bi-check-lg"></i> Guardar
+            </button>
+            <button type="submit" name="action" value="delete" class="btn btn-sm btn-outline-danger"
+                    onclick="return confirm('¿Eliminar este aviso?')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="av-card text-center p-5">
+  <i class="bi bi-megaphone" style="font-size:3rem;opacity:.2;color:#9ca3af"></i>
+  <div class="fw-bold mt-3" style="font-size:1rem;color:#374151">Aún no hay avisos publicados</div>
+  <div class="small text-muted mt-1">Crea uno con el formulario de arriba para informar a tus clientes.</div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updatePreview(){
+  var tipo = (document.querySelector('select[name="tipo"]')||{}).value || 'info';
+  var titulo = (document.querySelector('input[name="titulo"]')||{}).value || 'Título del aviso';
+  var msg = (document.querySelector('textarea[name="mensaje"]')||{}).value || '';
+  var iconRadio = document.querySelector('input[name="icon"]:checked');
+  var icon = iconRadio ? iconRadio.value : 'info-circle';
+  var box = document.getElementById('avPreview');
+  box.className = 'av-preview-' + tipo + ' mt-1';
+  box.style.padding = '12px 16px'; box.style.borderRadius = '8px';
+  document.getElementById('avPreviewTitle').textContent = titulo;
+  document.getElementById('avPreviewMsg').textContent = msg;
+  var iconEl = document.getElementById('avPreviewIcon');
+  iconEl.className = 'bi bi-' + icon;
+}
+document.querySelector('input[name="titulo"]').addEventListener('keyup', updatePreview);
+updatePreview();
+</script>
+{% endblock %}

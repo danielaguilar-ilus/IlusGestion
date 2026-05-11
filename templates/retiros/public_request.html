@@ -263,6 +263,31 @@
 </head>
 <body>
 
+  {# ── BANNER DE AVISOS (cierre anticipado, inventario, feriado, etc.) ── #}
+  {% if announcements %}
+  <style>
+    .anuncio-banner{padding:14px 22px;font-size:.95rem;border-bottom:1px solid rgba(0,0,0,.06);}
+    .anuncio-info{background:#dbeafe;color:#1e3a8a;}
+    .anuncio-warning{background:#fef3c7;color:#78350f;}
+    .anuncio-danger{background:#fee2e2;color:#7f1d1d;}
+    .anuncio-success{background:#dcfce7;color:#14532d;}
+    .anuncio-banner .anuncio-title{font-weight:800;letter-spacing:.01em;}
+    .anuncio-banner .anuncio-msg{font-size:.86rem;opacity:.95;margin-top:2px;}
+    .anuncio-banner i{font-size:1.2rem;}
+  </style>
+  {% for ann in announcements %}
+  <div class="anuncio-banner anuncio-{{ ann.tipo }}">
+    <div class="container-fluid d-flex align-items-start gap-2" style="max-width:1320px">
+      <i class="bi bi-{{ ann.icon or 'info-circle' }} mt-1"></i>
+      <div class="flex-grow-1">
+        <div class="anuncio-title">{{ ann.titulo }}</div>
+        {% if ann.mensaje %}<div class="anuncio-msg">{{ ann.mensaje }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+
   {# ── MINI BAR (banner pequeño con CTA seguimiento) ─────────────── #}
   <div class="mini-bar">
     <span class="mini-pill"><i class="bi bi-truck me-1"></i>Solicitud de retiro</span>

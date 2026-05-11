@@ -628,10 +628,23 @@ def register_pickup_routes(app, ctx):
             carousel_images = [dict(r) for r in (carousel_rows or [])]
         except Exception:
             carousel_images = []
+        # Cargar avisos vigentes (retiros_announcements)
+        try:
+            anuncios_rows = mysql_fetchall(
+                "SELECT id, titulo, mensaje, tipo, icon FROM retiros_announcements "
+                "WHERE activa=1 "
+                "  AND (fecha_desde IS NULL OR fecha_desde <= NOW()) "
+                "  AND (fecha_hasta IS NULL OR fecha_hasta >= NOW()) "
+                "ORDER BY orden ASC, id DESC"
+            )
+            anuncios = [dict(r) for r in (anuncios_rows or [])]
+        except Exception:
+            anuncios = []
         resp = make_response(render_template(
             "retiros/public_request.html",
             settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={},
             carousel_images=carousel_images,
+            announcements=anuncios,
         ))
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
@@ -954,6 +967,64 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             flash(f"Error al crear bloqueo: {exc}", "danger")
         return redirect(url_for("marketing_settings"))
+
+
+    @app.route("/retiros/bloqueos/batch", methods=["POST"])
+    @require_permission("admin")
+    def pickup_blocks_new_batch():
+        """Crea múltiples bloqueos en una sola operación.
+
+        Recibe del formulario:
+          fecha: YYYY-MM-DD (obligatorio)
+          motivo: str (opcional)
+          slots[]: lista de pares "HH:MM-HH:MM" (uno por franja seleccionada)
+          full_day: si está en 1, ignora slots y bloquea día completo
+
+        Si no se envían slots ni full_day, falla amablemente.
+        """
+        fecha = (request.form.get("fecha") or "").strip()
+        motivo = (request.form.get("motivo") or "").strip()[:200]
+        if not fecha:
+            flash("La fecha es obligatoria.", "danger")
+            return redirect(url_for("marketing_settings"))
+        # Día completo
+        full_day = request.form.get("full_day")
+        slots = request.form.getlist("slots[]") or request.form.getlist("slots")
+        creado_por = g.user["nombre"] if getattr(g, "user", None) else None
+        inserted = 0
+        try:
+            if full_day:
+                mysql_execute(
+                    "INSERT INTO pickup_blocks (fecha, hora_inicio, hora_fin, motivo, created_by) "
+                    "VALUES (%s, NULL, NULL, %s, %s)",
+                    (fecha, motivo or "Día completo bloqueado", creado_por)
+                )
+                inserted = 1
+            elif slots:
+                for s in slots:
+                    if "-" not in s:
+                        continue
+                    hi, hf = s.split("-", 1)
+                    hi = hi.strip()
+                    hf = hf.strip()
+                    if not hi or not hf:
+                        continue
+                    try:
+                        mysql_execute(
+                            "INSERT INTO pickup_blocks (fecha, hora_inicio, hora_fin, motivo, created_by) "
+                            "VALUES (%s, %s, %s, %s, %s)",
+                            (fecha, hi, hf, motivo, creado_por)
+                        )
+                        inserted += 1
+                    except Exception:
+                        continue
+            else:
+                flash("Selecciona al menos una franja o marca 'día completo'.", "warning")
+                return redirect(url_for("marketing_settings"))
+            flash(f"✅ {inserted} franja(s) bloqueadas para {fecha}.", "success")
+        except Exception as exc:
+            flash(f"Error al crear bloqueos: {exc}", "danger")
+        return redirect(url_for("marketing_settings") + "#bloqueos")
 
 
     @app.route("/retiros/bloqueos/<int:bid>/eliminar", methods=["POST"])
