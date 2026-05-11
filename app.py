@@ -1456,10 +1456,35 @@ def formatear_rut(rut_normalizado):
     return f"{num_fmt}-{dv}"
 
 
-def validar_rut(rut):
+def _calcular_dv_rut(num_str):
+    """Calcula el DV de módulo 11 para un cuerpo de RUT (solo dígitos)."""
+    if not num_str or not num_str.isdigit():
+        return None
+    suma = 0
+    multiplicador = 2
+    for d in reversed(num_str):
+        suma += int(d) * multiplicador
+        multiplicador = 2 if multiplicador == 7 else multiplicador + 1
+    resto = suma % 11
+    dv = 11 - resto
+    if dv == 11:
+        return "0"
+    if dv == 10:
+        return "K"
+    return str(dv)
+
+
+def validar_rut(rut, auto_completar_dv=True):
     """Valida RUT chileno con dígito verificador (algoritmo módulo 11).
-    Acepta cualquier formato (con/sin puntos, con/sin guión).
-    Devuelve (True, rut_normalizado) o (False, mensaje_error)."""
+    Acepta cualquier formato (con/sin puntos, con/sin guión, con/sin DV).
+
+    Modo tolerante (auto_completar_dv=True, default):
+      - Si el RUT viene SIN DV (solo cuerpo numérico, 7-8 dígitos),
+        se calcula automáticamente el DV y se devuelve el RUT completo.
+      - Si el RUT viene CON DV correcto → válido.
+      - Si el RUT viene CON DV incorrecto → inválido (con mensaje claro).
+
+    Devuelve (True, rut_normalizado_con_dv) o (False, mensaje_error)."""
     rut_norm = normalizar_rut(rut)
     if not rut_norm:
         return False, "RUT vacío"
@@ -1467,27 +1492,22 @@ def validar_rut(rut):
         return False, "RUT muy corto"
     if len(rut_norm) > 12:
         return False, "RUT muy largo"
+
+    # CASO ESPECIAL: cuerpo de RUT SIN DV (solo dígitos, 6-9 chars).
+    # Empresas chilenas tienen 7-8 dígitos (ej: 76123456). Si auto_completar
+    # está activo, calculamos el DV y devolvemos el RUT completo.
+    if auto_completar_dv and rut_norm.isdigit() and 6 <= len(rut_norm) <= 9:
+        dv_calculado = _calcular_dv_rut(rut_norm)
+        if dv_calculado is not None:
+            return True, f"{rut_norm}{dv_calculado}"
+
     num, dv = rut_norm[:-1], rut_norm[-1]
     if not num.isdigit():
         return False, "RUT contiene caracteres no numéricos"
     if dv not in "0123456789K":
         return False, "Dígito verificador inválido"
 
-    # Calcular DV esperado con módulo 11
-    suma = 0
-    multiplicador = 2
-    for d in reversed(num):
-        suma += int(d) * multiplicador
-        multiplicador = 2 if multiplicador == 7 else multiplicador + 1
-    resto = suma % 11
-    dv_esperado = 11 - resto
-    if dv_esperado == 11:
-        dv_esperado = "0"
-    elif dv_esperado == 10:
-        dv_esperado = "K"
-    else:
-        dv_esperado = str(dv_esperado)
-
+    dv_esperado = _calcular_dv_rut(num)
     if dv != dv_esperado:
         return False, f"Dígito verificador inválido (esperado: {dv_esperado})"
     return True, rut_norm
@@ -13849,21 +13869,66 @@ def mant_ficha(cid):
         return r
 
     maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-    contratos_raw = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-    visitas_raw   = mysql_fetchall(
-        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC", (cid,)
+
+    # PERF: SELECT explícito de columnas de contratos — evitamos TEXT pesado
+    # (archivo_path puede ser grande, ai_cobertura/ai_clausulas pueden ser miles
+    # de chars; solo traemos lo que la ficha realmente muestra).
+    contratos_raw = mysql_fetchall(
+        "SELECT id, cliente_id, nombre, archivo_nombre, archivo_path, archivo_tipo, "
+        "       fecha_inicio, fecha_vencimiento, es_indefinido, "
+        "       monto_mensual, frecuencia_meses, "
+        "       ai_analizado, ai_fecha, ai_resumen, ai_tipo_contrato, "
+        "       ai_score, nivel_riesgo, sla_horas, "
+        "       ai_alertas, ai_puntos_criticos, ai_clausulas, ai_mejoras, "
+        "       ai_cobertura, ai_frecuencia_sug, ai_usuario, "
+        "       ai_vigencia_inicio, ai_vigencia_fin, "
+        "       incluye_mant_gratis, incluye_repuestos, "
+        "       costo_mensual, costo_por_mant, costo_total, "
+        "       estado, created_at, updated_at, notas "
+        "  FROM mant_contratos "
+        " WHERE cliente_id=%s ORDER BY created_at DESC",
+        (cid,)
     )
-    # Historial: traer hasta 250 registros del cliente, sus contratos, equipos, visitas y reportes
-    # asociados — el frontend luego permite filtrar por acción, usuario y texto.
+
+    # PERF: LIMIT 200 en visitas (template usa [:50] y stats necesitan 12 meses)
+    visitas_raw   = mysql_fetchall(
+        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
+        (cid,)
+    )
+    # PERF: recolectar IDs hijos primero (3 queries baratas con índice idx_cliente)
+    # y usarlos en una sola query de logs sin subqueries correlacionadas.
+    ids_contratos = [int(r["id"]) for r in (mysql_fetchall(
+        "SELECT id FROM mant_contratos WHERE cliente_id=%s", (cid,)) or [])]
+    ids_maquinas  = [int(r["id"]) for r in (maquinas_raw or [])]
+    ids_visitas   = [int(r["id"]) for r in (visitas_raw or [])]
+    ids_reportes  = [int(r["id"]) for r in (mysql_fetchall(
+        "SELECT id FROM mant_reportes WHERE cliente_id=%s", (cid,)) or [])]
+
+    # PERF: LIMIT 50 (antes 250). Si el usuario quiere más logs, vendrá un
+    # endpoint paginado /api/clientes/<cid>/logs?offset=N (TODO siguiente push).
+    _log_clauses = ["(entidad='cliente' AND entidad_id=%s)"]
+    _log_params  = [cid]
+    if ids_contratos:
+        _log_clauses.append(
+            f"(entidad='contrato' AND entidad_id IN ({','.join(['%s']*len(ids_contratos))}))")
+        _log_params.extend(ids_contratos)
+    if ids_maquinas:
+        _log_clauses.append(
+            f"(entidad='maquina' AND entidad_id IN ({','.join(['%s']*len(ids_maquinas))}))")
+        _log_params.extend(ids_maquinas)
+    if ids_visitas:
+        _log_clauses.append(
+            f"(entidad='visita' AND entidad_id IN ({','.join(['%s']*len(ids_visitas))}))")
+        _log_params.extend(ids_visitas)
+    if ids_reportes:
+        _log_clauses.append(
+            f"(entidad='reporte' AND entidad_id IN ({','.join(['%s']*len(ids_reportes))}))")
+        _log_params.extend(ids_reportes)
     logs = mysql_fetchall(
-        """SELECT * FROM mant_logs
-           WHERE (entidad='cliente' AND entidad_id=%s)
-              OR (entidad='contrato' AND entidad_id IN (SELECT id FROM mant_contratos WHERE cliente_id=%s))
-              OR (entidad='maquina'  AND entidad_id IN (SELECT id FROM mant_maquinas  WHERE cliente_id=%s))
-              OR (entidad='visita'   AND entidad_id IN (SELECT id FROM mant_visitas   WHERE cliente_id=%s))
-              OR (entidad='reporte'  AND entidad_id IN (SELECT id FROM mant_reportes  WHERE cliente_id=%s))
-           ORDER BY created_at DESC LIMIT 250""",
-        (cid, cid, cid, cid, cid)
+        f"""SELECT * FROM mant_logs
+            WHERE {' OR '.join(_log_clauses)}
+            ORDER BY created_at DESC LIMIT 50""",
+        tuple(_log_params)
     )
 
     # Normalizar todas las fechas a datetime.date
@@ -15267,6 +15332,93 @@ os.makedirs(MANT_UPLOADS, exist_ok=True)
 ALLOWED_CONTRATO = {"pdf", "doc", "docx"}
 
 
+@app.route("/mantenciones/api/contratos/<int:ctid>", methods=["DELETE"])
+@_mant_required
+def mant_contrato_delete(ctid):
+    """Elimina un contrato — SOLO superadmin.
+
+    Borra archivo físico + análisis IA + adjuntos asociados.
+    Esta acción es irreversible. Requiere doble confirmación en body:
+      {"confirm": "ELIMINAR"}
+    """
+    # Solo superadmin
+    if not g.permissions.get("superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": "Solo el superadministrador puede eliminar contratos. "
+                     "Esta acción borra el archivo, el análisis IA y los adjuntos.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm") or "").strip().upper() != "ELIMINAR":
+        return jsonify({
+            "ok": False,
+            "error": "Confirmación incorrecta. Envía {\"confirm\":\"ELIMINAR\"}",
+        }), 400
+
+    contrato = mysql_fetchone(
+        "SELECT id, cliente_id, nombre, archivo_path FROM mant_contratos WHERE id=%s",
+        (ctid,)
+    )
+    if not contrato:
+        return jsonify({"ok": False, "error": "Contrato no encontrado"}), 404
+
+    contrato = dict(contrato)
+    cid       = contrato.get("cliente_id")
+    nombre    = contrato.get("nombre") or "(sin nombre)"
+    arch_path = contrato.get("archivo_path")
+
+    # Borrar archivo físico (best-effort)
+    archivos_borrados = 0
+    if arch_path:
+        try:
+            full_path = os.path.join(MANT_UPLOADS, arch_path)
+            if os.path.exists(full_path):
+                os.remove(full_path)
+                archivos_borrados += 1
+        except Exception:
+            pass
+
+    # Borrar adjuntos físicos del contrato (best-effort)
+    try:
+        adjuntos = mysql_fetchall(
+            "SELECT archivo_path FROM mant_adjuntos WHERE contrato_id=%s", (ctid,)
+        ) or []
+        for a in adjuntos:
+            try:
+                ap = a.get("archivo_path")
+                if ap:
+                    fp = os.path.join(MANT_UPLOADS, ap)
+                    if os.path.exists(fp):
+                        os.remove(fp)
+                        archivos_borrados += 1
+            except Exception: pass
+    except Exception: pass
+
+    # Borrar BD — CASCADE arrastra adjuntos, IA history, visitas SET NULL
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mant_contratos WHERE id=%s", (ctid,))
+        conn.commit()
+        try:
+            _mant_log("contrato", ctid, "eliminado",
+                      f"Contrato #{ctid} '{nombre}' borrado por {current_username()}. "
+                      f"{archivos_borrados} archivo(s) físicos eliminados.")
+        except Exception: pass
+        return jsonify({
+            "ok": True,
+            "mensaje": f"Contrato #{ctid} eliminado.",
+            "archivos_borrados": archivos_borrados,
+            "cliente_id": cid,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al eliminar: {e}"}), 500
+    finally:
+        conn.close()
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
 def mant_contrato_subir(cid):
@@ -15870,6 +16022,48 @@ def mant_contrato_analizar(ctid):
             except Exception:
                 pass
 
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-CHECK IA: ¿es realmente un contrato de servicio?
+    # Validador rápido (Haiku-tier) que evita gastar Sonnet/Opus analizando
+    # listas de productos, facturas u otros documentos que NO son contratos.
+    # ══════════════════════════════════════════════════════════════════
+    tipo_doc_detectado = None
+    razon_deteccion = None
+    if texto_contrato and len(texto_contrato.strip()) > 100:
+        precheck_sistema = (
+            "Eres un clasificador de documentos. Recibes el texto de un archivo "
+            "y debes decidir si es un CONTRATO DE SERVICIO/MANTENCIÓN. "
+            "Responde SIEMPRE en JSON: "
+            '{"tipo":"contrato_servicio|lista_productos|factura|cotizacion|'
+            'guia_despacho|reporte_tecnico|otro","confianza":0-100,"razon":"frase corta"}'
+        )
+        precheck_usuario = (
+            f"Clasifica este documento (extracto):\n\n{texto_contrato[:2500]}\n\n"
+            "¿Es un contrato de servicio/mantención? Responde el JSON."
+        )
+        precheck, precheck_err = _claude_call(
+            precheck_usuario, precheck_sistema,
+            max_tokens=200, expect_json=True, temperature=0.1
+        )
+        if precheck and isinstance(precheck, dict):
+            tipo_doc_detectado = precheck.get("tipo")
+            razon_deteccion = precheck.get("razon")
+            confianza = int(precheck.get("confianza") or 0)
+            # Si la IA está MUY segura que NO es contrato (>= 70) → bloquear
+            if (tipo_doc_detectado and
+                tipo_doc_detectado != "contrato_servicio" and
+                confianza >= 70):
+                return jsonify({
+                    "ok": False,
+                    "error_codigo": "NO_ES_CONTRATO",
+                    "error": (f"Este archivo NO es un contrato. Detectado como "
+                              f"'{tipo_doc_detectado}' (confianza {confianza}%). "
+                              f"{razon_deteccion or ''}"),
+                    "tipo_doc_detectado": tipo_doc_detectado,
+                    "razon_deteccion": razon_deteccion,
+                    "confianza": confianza,
+                }), 422  # 422 Unprocessable Entity
+
     # Datos del contrato para enriquecer el prompt
     datos_extra = (
         f"Cliente: {ct['razon_social']}\n"
@@ -15878,6 +16072,8 @@ def mant_contrato_analizar(ctid):
         f"Monto mensual: ${ct['monto_mensual']}\n"
         f"Frecuencia declarada: {ct['frecuencia_meses']} meses\n"
         + (f"NOTA: PDF escaneado (imagen) — analizado visualmente.\n" if es_escaneado else "")
+        + (f"NOTA: tipo detectado por IA = {tipo_doc_detectado} (puede no ser un contrato típico)\n"
+           if tipo_doc_detectado and tipo_doc_detectado != "contrato_servicio" else "")
     )
     if not texto_contrato:
         texto_contrato = "(Texto no extraíble — análisis visual del PDF)" if es_escaneado else "(Texto no extraíble — análisis basado en metadatos)"
@@ -15987,8 +16183,15 @@ Devuelve SOLO el JSON, sin texto adicional."""
                  ctid)
             )
         conn.commit()
-        _mant_log("contrato", ctid, "analizado_ia", f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}")
-        return jsonify({"ok": True, "resultado": resultado})
+        _mant_log("contrato", ctid, "analizado_ia",
+                  f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}"
+                  + (f" · tipo_doc={tipo_doc_detectado}" if tipo_doc_detectado else ""))
+        return jsonify({
+            "ok": True,
+            "resultado": resultado,
+            "tipo_doc_detectado": tipo_doc_detectado,
+            "razon_deteccion": razon_deteccion,
+        })
     except Exception as db_err:
         conn.rollback()
         print(f"[MANT] ERROR guardando análisis contrato {ctid}: {db_err}")

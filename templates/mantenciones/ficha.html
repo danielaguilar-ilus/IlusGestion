@@ -2496,6 +2496,12 @@ async function confirmarVisitaMulti() {
             <button class="btn btn-sm btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Re-analizar con IA">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
+            {% if permissions.superadmin %}
+            <button class="btn btn-sm btn-outline-danger" onclick="eliminarContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"
+                    title="Eliminar contrato (solo superadmin)">
+              <i class="bi bi-trash"></i>
+            </button>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -3581,8 +3587,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.ftab-btn[data-tab="repuestos"]').forEach(btn => {
     btn.addEventListener('click', () => { if (!_repCache.length) cargarRepuestos(); });
   });
-  // Cargar contador en background al cargar la ficha
-  cargarRepuestos();
+  // PERF: NO cargar repuestos al inicio. Lazy load al primer click del tab.
+  // (Antes se cargaba siempre, retrasando el TTI ~500ms aunque el usuario
+  // no abriera nunca la pestaña.)
 });
 </script>
 
@@ -7039,6 +7046,47 @@ function toggleAiPanel(ctid) {
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+async function eliminarContrato(ctid, nombre) {
+  // Solo superadmin — el backend valida igual. Doble confirmación.
+  const conf1 = confirm(
+    `⚠️ Vas a ELIMINAR el contrato:\n\n` +
+    `«${nombre}» (ID ${ctid})\n\n` +
+    `Esta acción borra:\n` +
+    `• El archivo PDF/Word físico\n` +
+    `• El análisis IA del contrato\n` +
+    `• Los adjuntos asociados\n\n` +
+    `Las visitas vinculadas NO se eliminan (quedan como "sin contrato").\n\n` +
+    `¿Continuar?`
+  );
+  if (!conf1) return;
+
+  const conf2 = prompt(
+    `Para confirmar, escribe exactamente la palabra: ELIMINAR\n\n` +
+    `(en mayúsculas, sin comillas)`
+  );
+  if ((conf2 || '').trim().toUpperCase() !== 'ELIMINAR') {
+    alert('Cancelado — la confirmación no coincide.');
+    return;
+  }
+
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}`, {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: 'ELIMINAR'})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`✅ Contrato eliminado.\n\n${d.archivos_borrados} archivo(s) físicos borrados.\n\nRecargando ficha…`);
+      location.reload();
+    } else {
+      alert(`No se pudo eliminar:\n\n${d.error || 'Error desconocido'}`);
+    }
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+
 async function analizarContrato(ctid, btn) {
   const orig = btn.innerHTML;
   btn.disabled = true;
@@ -7047,10 +7095,30 @@ async function analizarContrato(ctid, btn) {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
     if (data.ok) {
+      // Si la IA detectó que NO es un contrato, mostramos el aviso del tipo detectado
+      if (data.tipo_doc_detectado && data.tipo_doc_detectado !== 'contrato_servicio') {
+        alert(
+          `⚠️ Atención: la IA detectó que este documento NO es un contrato de servicio.\n\n` +
+          `Tipo detectado: ${data.tipo_doc_detectado}\n` +
+          `Razón: ${data.razon_deteccion || 'sin detalle'}\n\n` +
+          `El análisis se completó igual (con confianza baja). ` +
+          `Considera reemplazar el archivo por el contrato real.`
+        );
+      }
       _planTabActualizarStatus(true);
       location.reload();
     } else {
-      alert('Error en análisis IA:\n' + (data.error || 'Error desconocido'));
+      // Si el documento fue RECHAZADO por la IA validadora
+      if (data.error_codigo === 'NO_ES_CONTRATO') {
+        alert(
+          `❌ El archivo subido NO es un contrato de servicio.\n\n` +
+          `La IA detectó: ${data.tipo_doc_detectado || 'documento desconocido'}\n` +
+          `Razón: ${data.razon_deteccion || ''}\n\n` +
+          `Sube el contrato correcto y vuelve a intentar.`
+        );
+      } else {
+        alert('Error en análisis IA:\n' + (data.error || 'Error desconocido'));
+      }
       btn.disabled = false;
       btn.innerHTML = orig;
     }
