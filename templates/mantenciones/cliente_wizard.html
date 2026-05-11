@@ -1734,6 +1734,8 @@ function agregarFilaEquipo(datos={}) {
     <td>
       <input type="hidden" data-field="doc_origen" value="${esc(docOrigen)}">
       <input type="hidden" data-field="doc_fecha"  value="${esc(datos.doc_fecha||datos.fecha||'')}">
+      <input type="hidden" data-field="cantidad_original" value="${parseInt(datos.cantidad_original||0)||0}">
+      <input type="hidden" data-field="split_to_rows" value="${datos._split_to_rows ? '1':'0'}">
       <input type="hidden" data-field="justif_doc_mismatch" value="${esc(datos.justif_doc_mismatch||'')}">
       <input type="hidden" data-field="justif_fecha_inst"   value="">
       ${docBadge}
@@ -2145,6 +2147,40 @@ function importarEq() {
     }
   }
 
+  // ── Detección de items con cantidad > 1 que NO se decidió cómo cargar ──
+  // El dropdown default está en "1 fila". Si el usuario seleccionó items
+  // con cantidad > 1 y no abrió el dropdown, le preguntamos explícitamente
+  // antes de importar — UX clara, sin sorpresas.
+  const ambiguos = [];
+  for (const [key, l] of lineas) {
+    if (l._completo) continue;
+    const qty = parseInt(l.cantidad) || 1;
+    if (qty <= 1) continue;
+    const sel = document.querySelector(`select[data-fichas-key="${key}"]`);
+    const fichasElegidas = sel ? parseInt(sel.value) : 1;
+    if (fichasElegidas === 1) {
+      ambiguos.push({ key, l, qty });
+    }
+  }
+
+  if (ambiguos.length > 0) {
+    // Pregunta agregada: 1 fila vs N fichas individuales.
+    const listaText = ambiguos.map(a => `  · ${a.l.sku || '—'}: ${a.l.nombre} (cantidad ${a.qty})`).join('\n');
+    const ans = confirm(
+      `Tenés ${ambiguos.length} producto(s) con cantidad > 1 marcado(s) como "1 fila":\n\n${listaText}\n\n` +
+      `¿Querés crear UNA FILA POR UNIDAD (con N° serie único por equipo)?\n\n` +
+      `• Aceptar = crear N fichas individuales (recomendado para trotadoras, bicicletas, etc.)\n` +
+      `• Cancelar = mantener 1 sola fila con cantidad=${ambiguos[0].qty} (recomendado para ítems idénticos sin serie)`
+    );
+    if (ans) {
+      // Forzar split para todos los ambiguos
+      for (const a of ambiguos) {
+        const sel = document.querySelector(`select[data-fichas-key="${a.key}"]`);
+        if (sel) sel.value = String(a.qty);
+      }
+    }
+  }
+
   let creados = 0;
   let bloqueados = 0;
   for (const [key, l] of lineas) {
@@ -2153,18 +2189,22 @@ function importarEq() {
       continue;
     }
     const qty = parseInt(l.cantidad) || 1;     // cantidad ya viene como SALDO disponible
+    const qtyOriginal = parseInt(l.cantidad_original) || qty;
     const nombre = l.nombre || l.producto || '';
-    // Leer la elección del usuario: 1 ficha o N fichas
+    // Leer la elección final del usuario: 1 ficha o N fichas
     const sel = document.querySelector(`select[data-fichas-key="${key}"]`);
     const fichasElegidas = sel ? parseInt(sel.value) : 1;
-    const filas = (fichasElegidas > 1) ? Math.min(fichasElegidas, qty) : 1;
-    const cantidadCadaUna = (fichasElegidas > 1) ? 1 : qty;
+    const splitToRows = fichasElegidas > 1;
+    const filas = splitToRows ? Math.min(fichasElegidas, qty) : 1;
+    const cantidadCadaUna = splitToRows ? 1 : qty;
     for (let n = 1; n <= filas; n++) {
       agregarFilaEquipo({
         nombre,
         sku: l.sku || '',
         serie: _serieTmpAuto(l.sku),
         cantidad: cantidadCadaUna,
+        cantidad_original: qtyOriginal,   // para validar saldo en backend
+        _split_to_rows: splitToRows,
         doc_origen: l.doc_origen || '',
         doc_fecha: l.doc_fecha || l.fecha || '',
         fecha_instalacion: l.doc_fecha || l.fecha || '',
@@ -2172,6 +2212,9 @@ function importarEq() {
       });
       creados++;
     }
+  }
+  if (bloqueados > 0) {
+    console.warn(`${bloqueados} producto(s) bloqueado(s) por saldo agotado`);
   }
 
   // Reset y cerrar modal
@@ -2193,17 +2236,20 @@ function abrirErpEquipos(){
   new bootstrap.Modal(document.getElementById('modalErpEq')).show();
 }
 
-// ── Buscar por documento REST API ────────────────────────────
+// ── Buscar por documento REST API (con saldo global) ─────────
 async function buscarDocErp() {
   const tido = document.getElementById('docTido').value;
   const nudo = document.getElementById('docNudo').value.trim();
   const cont = document.getElementById('docErpRes');
   if(!nudo) { cont.innerHTML='<div class="text-center text-warning py-3">Ingresa el número de documento</div>'; return; }
 
-  cont.innerHTML=`<div class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP para ${tido} ${nudo}…</div>`;
+  cont.innerHTML=`<div class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP y calculando saldos…</div>`;
 
   try {
-    const r = await fetch(`/mantenciones/api/documento?tido=${tido}&nudo=${encodeURIComponent(nudo)}`);
+    // Nuevo endpoint: además del documento, devuelve cantidad_original,
+    // cantidad_asignada (GLOBAL, en TODA la BD), saldo_disponible y
+    // asignaciones existentes en otros clientes.
+    const r = await fetch(`/mantenciones/api/erp/documento-saldos?tido=${tido}&nudo=${encodeURIComponent(nudo)}`);
     const data = await r.json();
 
     if(!data.ok) {
@@ -2222,32 +2268,43 @@ async function buscarDocErp() {
       return;
     }
 
-    // Validación: ¿este documento ya fue agregado a la lista de equipos?
     const docOrigKey = `${tido} ${nudo}`;
-    const yaAgregadosCount = Array.from(document.querySelectorAll('#equiposTbody [data-field="doc_origen"]'))
-      .filter(el => el.value === docOrigKey).length;
-    let dupBanner = '';
-    if (yaAgregadosCount > 0) {
-      dupBanner = `<div class="alert alert-warning py-2 mb-2" style="font-size:.82rem">
+
+    // BANNER: si TODO el documento ya está asignado en otros clientes
+    let topBanner = '';
+    if (data.doc_completo) {
+      topBanner = `<div class="alert alert-warning py-2 mb-2" style="font-size:.85rem">
         <i class="bi bi-exclamation-triangle-fill me-1"></i>
-        Este documento <strong>${docOrigKey}</strong> ya tiene <strong>${yaAgregadosCount}</strong> equipo(s) en tu lista.
-        Si seleccionas e importas, se agregarán de nuevo. Marca solo lo que falte.
+        <strong>Documento ${docOrigKey} ya está totalmente asignado</strong>
+        a otros clientes. No queda saldo disponible para importar.
+        Si necesitás cambiar la asignación, primero eliminá los equipos
+        del cliente anterior, o usa el modo override (no recomendado).
+      </div>`;
+    } else if (data.total_disponible > 0 && data.total_disponible < data.items.reduce((s,i)=>s+i.cantidad_original,0)) {
+      topBanner = `<div class="alert alert-info py-2 mb-2" style="font-size:.85rem">
+        <i class="bi bi-info-circle me-1"></i>
+        Este documento tiene asignaciones parciales en otros clientes.
+        Saldo total disponible: <strong>${data.total_disponible}</strong> unidad(es).
       </div>`;
     }
 
-    // Guardar items en variable global para que erpEqToggle no dependa de inline JSON
+    // Guardar items: usamos saldo como cantidad "asignable"
     window._docItems = data.items.map(it => ({
       sku: it.sku || '',
       nombre: it.nombre || '',
-      cantidad: parseInt(it.cantidad) || 1,
+      cantidad: it.saldo_disponible || 0,       // ← lo que se puede aún asignar
+      cantidad_original: it.cantidad_original,  // ← lo original (para validar al guardar)
+      cantidad_asignada: it.cantidad_asignada,
       doc_origen: docOrigKey,
       doc_fecha: data.fecha || '',
       rut: data.rut || '',
-      cliente_doc: data.cliente || ''
+      cliente_doc: data.cliente || '',
+      asignaciones: it.asignaciones || [],
+      _completo: it.ya_completo
     }));
 
     // Header del documento
-    let html = dupBanner + `<div class="alert alert-success py-2 mb-3" style="font-size:.82rem">
+    let html = topBanner + `<div class="alert alert-success py-2 mb-3" style="font-size:.82rem">
       <strong><i class="bi bi-check-circle me-1"></i>${data.tido} ${data.nudo}</strong>
       ${data.fecha ? ` — ${data.fecha}` : ''}
       ${data.cliente ? ` &nbsp;·&nbsp; <strong>${esc(data.cliente)}</strong>` : ''}
@@ -2259,63 +2316,83 @@ async function buscarDocErp() {
         <th style="width:36px"></th>
         <th style="width:110px">SKU</th>
         <th>Producto</th>
-        <th style="width:90px;text-align:center">Cant.</th>
-        <th style="width:140px;text-align:center" title="Si tiene cantidad &gt; 1, ¿crear N fichas individuales con N° serie único?">Crear<br>fichas</th>
+        <th style="width:130px;text-align:center" title="Saldo = lo que falta por asignar de este documento">Saldo disponible</th>
+        <th style="width:170px;text-align:center" title="Si tiene cantidad &gt; 1, ¿una sola fila o N fichas con N° serie único?">¿Cómo agregar?</th>
       </tr></thead><tbody>`;
 
-    // Calcular saldo disponible: cuántas unidades de cada SKU YA tiene en la tabla
-    // local desde este mismo documento. Restamos para no permitir duplicar.
-    const saldoPorSku = {};
+    // También considerar saldo LOCAL: lo que ya está en la tabla del wizard
+    // (sumado al saldo global ya calculado por el backend)
+    const saldoLocalPorSku = {};
     Array.from(document.querySelectorAll('#equiposTbody tr:not(#eq-placeholder)')).forEach(tr => {
       const docF = tr.querySelector('[data-field="doc_origen"]')?.value || '';
       if (docF !== docOrigKey) return;
       const skuF = tr.querySelector('[data-field="sku"]')?.value || '';
       const qF   = parseInt(tr.querySelector('[data-field="cantidad"]')?.value || '1') || 1;
-      saldoPorSku[skuF] = (saldoPorSku[skuF] || 0) + qF;
+      saldoLocalPorSku[skuF] = (saldoLocalPorSku[skuF] || 0) + qF;
     });
 
     data.items.forEach((it, i) => {
       const key = `doc-${tido}-${nudo}-${i}`;
-      const qty = parseInt(it.cantidad) || 1;
-      const yaImportado = saldoPorSku[it.sku || ''] || 0;
-      const saldo = Math.max(0, qty - yaImportado);
-      const completo = saldo === 0;
+      const qtyOriginal = it.cantidad_original;
+      const yaGlobal    = it.cantidad_asignada;
+      const yaLocal     = saldoLocalPorSku[it.sku || ''] || 0;
+      const saldoFinal  = Math.max(0, it.saldo_disponible - yaLocal);
+      const completo    = saldoFinal === 0;
 
-      // Default SIEMPRE "1 ficha" — el usuario decide explícitamente si quiere N
-      // (tu queja: te obligaba a N fichas; ahora 1 ficha es el default conservador)
-      const opciones = (saldo > 1)
-        ? `<select class="form-select form-select-sm" data-fichas-key="${key}" style="font-size:.72rem">
-              <option value="1" selected>1 ficha (cant. ${saldo})</option>
-              <option value="${saldo}">${saldo} fichas individuales</option>
-           </select>`
+      // Tooltip de asignaciones existentes
+      let tipAsignaciones = '';
+      if ((it.asignaciones || []).length > 0) {
+        const clientes = it.asignaciones
+          .map(a => `${a.razon_social || 'Cliente #'+a.cliente_id} (${a.cantidad}u)`)
+          .join(' | ');
+        tipAsignaciones = `Ya asignado en: ${clientes}`;
+      }
+
+      // Selector "¿Cómo agregar?" — pregunta explícita por fila/cantidad
+      const opciones = (saldoFinal > 1)
+        ? `<select class="form-select form-select-sm wz-modo-fichas" data-fichas-key="${key}" style="font-size:.74rem;font-weight:600">
+              <option value="1" selected>📋 1 fila (cantidad ${saldoFinal})</option>
+              <option value="${saldoFinal}">🔢 ${saldoFinal} fichas individuales</option>
+           </select>
+           <div class="small text-muted" style="font-size:.66rem;margin-top:2px">
+             Click el dropdown para elegir
+           </div>`
         : `<span class="text-muted small">1 ficha</span>`;
 
-      // Indicador de saldo
-      const saldoCell = (yaImportado > 0)
-        ? (completo
-            ? `<span class="badge bg-success" title="Las ${qty} unidades ya están en tu lista">
-                 <i class="bi bi-check-circle-fill me-1"></i>Completo
-               </span>`
-            : `<span class="badge bg-warning text-dark" title="${yaImportado} ya en tu lista de ${qty} totales">
-                 ${yaImportado}/${qty} agregadas · saldo ${saldo}
-               </span>`)
-        : `<span class="text-muted small">${qty}</span>`;
+      // Saldo cell con info detallada
+      let saldoCell;
+      if (completo) {
+        saldoCell = `<span class="badge bg-success" title="${esc(tipAsignaciones || 'Asignado completo')}">
+          <i class="bi bi-check-circle-fill me-1"></i>Sin saldo
+        </span>
+        <div class="small text-muted" style="font-size:.66rem">
+          ${yaGlobal}/${qtyOriginal} ya asignadas
+        </div>`;
+      } else if (yaGlobal > 0 || yaLocal > 0) {
+        saldoCell = `<span class="badge bg-warning text-dark" title="${esc(tipAsignaciones)}">
+          ${saldoFinal} disp. de ${qtyOriginal}
+        </span>
+        <div class="small text-muted" style="font-size:.66rem">
+          ${yaGlobal} otras fichas · ${yaLocal} en esta lista
+        </div>`;
+      } else {
+        saldoCell = `<span class="badge bg-secondary">${qtyOriginal}</span>`;
+      }
 
-      // Si está completo, deshabilitar el checkbox
       const chkAttrs = completo ? 'disabled' : '';
       const trStyle = completo ? 'opacity:.55;background:#f8f9fa' : '';
 
       html += `<tr style="${trStyle}">
         <td><input type="checkbox" class="form-check-input wz-doc-chk" data-key="${key}" data-idx="${i}" ${chkAttrs}></td>
         <td class="font-monospace text-primary fw-bold">${esc(it.sku||'—')}</td>
-        <td>${esc(it.nombre)}</td>
+        <td>${esc(it.nombre)}${tipAsignaciones ? `<div class="small text-muted" style="font-size:.7rem"><i class="bi bi-info-circle me-1"></i>${esc(tipAsignaciones)}</div>` : ''}</td>
         <td class="text-center">${saldoCell}</td>
         <td class="text-center">${completo ? '<span class="text-muted small">—</span>' : opciones}</td>
       </tr>`;
 
-      // Para que importarEq sepa el saldo (no la cantidad total), guardamos en el item
+      // Para que importarEq sepa cuánto puede asignar
       if (window._docItems && window._docItems[i]) {
-        window._docItems[i].cantidad = saldo;       // ← cantidad disponible, no total
+        window._docItems[i].cantidad = saldoFinal;
         window._docItems[i]._completo = completo;
       }
     });
@@ -2794,28 +2871,52 @@ async function subirContrato(){
 }
 async function subirMaquinas(){
   const eqs=leerEquipos();
+  const errores = [];
   for(const eq of eqs){
-    // Si el código interno está como "(auto)" o "(auto N/M)", lo dejamos vacío
-    // para que el backend genere el correcto basado en cliente_id.
     const codInt = (eq.codigo_interno || '').trim();
     const codigoFinal = (codInt.startsWith('(auto') || !codInt) ? '' : codInt;
-    await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        nombre:             eq.nombre,
-        sku:                eq.sku,
-        codigo_interno:     codigoFinal,
-        serie:              eq.serie,
-        cantidad:           parseInt(eq.cantidad)||1,
-        ubicacion_cliente:  eq.ubicacion,
-        estado_op:          eq.estado_op,
-        fecha_instalacion:  eq.fecha_instalacion||null,
-        doc_origen:         eq.doc_origen||'',
-        doc_fecha:          eq.doc_fecha||null,
-        justif_fecha_inst:  eq.justif_fecha_inst||'',
-        justif_doc_mismatch:eq.justif_doc_mismatch||'',
-      })
-    });
+    const qtyOriginal = parseInt(eq.cantidad_original || 0) || 0;
+    const splitFlag   = String(eq.split_to_rows||'') === '1';
+    const tieneDoc    = !!(eq.doc_origen && eq.sku);
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          nombre:             eq.nombre,
+          sku:                eq.sku,
+          codigo_interno:     codigoFinal,
+          serie:              eq.serie,
+          cantidad:           parseInt(eq.cantidad)||1,
+          // ── Saldo / split ──
+          cantidad_original:  qtyOriginal,
+          split_to_rows:      splitFlag,
+          validar_saldo:      tieneDoc && qtyOriginal > 0,
+          // ── Datos estándar ──
+          ubicacion_cliente:  eq.ubicacion,
+          estado_op:          eq.estado_op,
+          fecha_instalacion:  eq.fecha_instalacion||null,
+          doc_origen:         eq.doc_origen||'',
+          doc_fecha:          eq.doc_fecha||null,
+          justif_fecha_inst:  eq.justif_fecha_inst||'',
+          justif_doc_mismatch:eq.justif_doc_mismatch||'',
+        })
+      });
+      const d = await r.json();
+      if (!d.ok && d.error_codigo === 'SALDO_INSUFICIENTE') {
+        errores.push(`⚠ ${eq.sku} (${eq.nombre}): ${d.error}`);
+      } else if (!d.ok) {
+        errores.push(`✗ ${eq.sku || eq.nombre}: ${d.error || 'error desconocido'}`);
+      }
+    } catch(e) {
+      errores.push(`✗ ${eq.sku || eq.nombre}: error de red`);
+    }
+  }
+  if (errores.length > 0) {
+    alert(
+      `Algunos equipos no se pudieron guardar:\n\n${errores.join('\n')}\n\n` +
+      `Si el problema es saldo de documento, eliminá los equipos duplicados ` +
+      `del cliente anterior o pedile a un superadmin que use el modo override.`
+    );
   }
 }
 

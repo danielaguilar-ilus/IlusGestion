@@ -14104,38 +14104,118 @@ def _generar_serie_ilus(cid: int, sku: str = "") -> str:
 @app.route("/mantenciones/api/clientes/<int:cid>/maquinas", methods=["POST"])
 @_mant_required
 def mant_maquina_add(cid):
+    """Agrega máquina(s) a la ficha del cliente.
+
+    Nuevos parámetros (opcionales) para soportar carga desde documento ERP:
+      split_to_rows: bool — si true y cantidad>1, crea N filas con cantidad=1
+                            cada una (cada equipo con su propia serie).
+                            Si false, crea 1 fila con cantidad=N (gestión grupal).
+      validar_saldo: bool — si true, verifica que el saldo del documento
+                            (cantidad_original - ya_asignadas) sea ≥ cantidad
+                            solicitada. Default false.
+      force:         bool — si true, ignora la validación de saldo (admin override).
+                            Para casos donde el ERP devolvió mal la cantidad.
+    """
     d = request.get_json(silent=True) or {}
-    # N° Serie: si viene del front lo usamos, si no auto-generamos uno único.
-    # Esto cubre los 2 casos: (a) representación trae serial, (b) sistema lo crea
-    serie = (d.get("serie") or "").strip()
-    if not serie or serie.startswith("(auto"):
-        serie = _generar_serie_ilus(cid, d.get("sku", ""))
+
+    cantidad     = int(d.get("cantidad", 1) or 1)
+    if cantidad < 1: cantidad = 1
+    split_rows   = bool(d.get("split_to_rows", False))
+    validar      = bool(d.get("validar_saldo", False))
+    force        = bool(d.get("force", False))
+    sku          = (d.get("sku","") or "").strip()
+    doc_origen   = (d.get("doc_origen","") or "").strip()
+
+    # ── Validación de saldo (sólo si vienen los datos del documento ERP) ──
+    if validar and not force and doc_origen and sku:
+        try:
+            # Extraer tido + nudo desde doc_origen (formato "TIDO NUDO" o "TIDO-NUDO")
+            partes = doc_origen.replace("-", " ").split()
+            if len(partes) >= 2:
+                tido_d, nudo_d = partes[0], partes[1]
+                # Cantidad original en el documento: viene en el body (front lo manda)
+                qty_original = int(d.get("cantidad_original") or 0)
+                if qty_original > 0:
+                    asignados = _asignados_por_sku(tido_d, nudo_d)
+                    ya_asig   = int(asignados.get(sku.upper(), 0))
+                    saldo     = qty_original - ya_asig
+                    if cantidad > saldo:
+                        return jsonify({
+                            "ok": False,
+                            "error_codigo": "SALDO_INSUFICIENTE",
+                            "error": (f"Saldo insuficiente para SKU {sku} en {doc_origen}. "
+                                      f"Documento tenía {qty_original}, ya hay {ya_asig} asignadas, "
+                                      f"sólo quedan {saldo} disponibles. "
+                                      f"Estás intentando agregar {cantidad}."),
+                            "saldo_disponible": saldo,
+                            "cantidad_solicitada": cantidad,
+                            "ya_asignadas": ya_asig,
+                        }), 409  # 409 Conflict (estado actual de recurso)
+        except Exception:
+            pass  # si la validación misma falla, no bloqueamos
+
     conn = get_mysql()
+    creadas = []
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO mant_maquinas
-                   (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
-                    ubicacion_cliente,estado_op,fecha_instalacion,
-                    tag_1,tag_2,
-                    justif_fecha_inst,justif_doc_mismatch,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (cid, d.get("sku",""), d.get("nombre",""), serie,
-                 d.get("doc_origen",""), d.get("doc_fecha") or None,
-                 int(d.get("cantidad",1)), d.get("notas",""),
-                 d.get("ubicacion_cliente",""),
-                 d.get("estado_op","operativo"),
-                 d.get("fecha_instalacion") or None,
-                 (d.get("tag_1") or "").strip()[:120] or None,
-                 (d.get("tag_2") or "").strip()[:120] or None,
-                 d.get("justif_fecha_inst") or None,
-                 d.get("justif_doc_mismatch") or None,
-                 current_username())
-            )
-            mid = cur.lastrowid
+            # Modo SPLIT: N filas con cantidad=1 (cada equipo con su propia serie)
+            if split_rows and cantidad > 1:
+                for _ in range(cantidad):
+                    serie_nueva = _generar_serie_ilus(cid, sku)
+                    cur.execute(
+                        """INSERT INTO mant_maquinas
+                           (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
+                            ubicacion_cliente,estado_op,fecha_instalacion,
+                            tag_1,tag_2,
+                            justif_fecha_inst,justif_doc_mismatch,created_by)
+                           VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (cid, sku, d.get("nombre",""), serie_nueva,
+                         doc_origen, d.get("doc_fecha") or None,
+                         d.get("notas",""),
+                         d.get("ubicacion_cliente",""),
+                         d.get("estado_op","operativo"),
+                         d.get("fecha_instalacion") or None,
+                         (d.get("tag_1") or "").strip()[:120] or None,
+                         (d.get("tag_2") or "").strip()[:120] or None,
+                         d.get("justif_fecha_inst") or None,
+                         d.get("justif_doc_mismatch") or None,
+                         current_username())
+                    )
+                    creadas.append({"id": cur.lastrowid, "serie": serie_nueva})
+            else:
+                # Modo CLÁSICO: 1 fila con cantidad=N
+                serie = (d.get("serie") or "").strip()
+                if not serie or serie.startswith("(auto"):
+                    serie = _generar_serie_ilus(cid, sku)
+                cur.execute(
+                    """INSERT INTO mant_maquinas
+                       (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
+                        ubicacion_cliente,estado_op,fecha_instalacion,
+                        tag_1,tag_2,
+                        justif_fecha_inst,justif_doc_mismatch,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (cid, sku, d.get("nombre",""), serie,
+                     doc_origen, d.get("doc_fecha") or None,
+                     cantidad, d.get("notas",""),
+                     d.get("ubicacion_cliente",""),
+                     d.get("estado_op","operativo"),
+                     d.get("fecha_instalacion") or None,
+                     (d.get("tag_1") or "").strip()[:120] or None,
+                     (d.get("tag_2") or "").strip()[:120] or None,
+                     d.get("justif_fecha_inst") or None,
+                     d.get("justif_doc_mismatch") or None,
+                     current_username())
+                )
+                creadas.append({"id": cur.lastrowid, "serie": serie})
         conn.commit()
-        _mant_log("maquina", mid, "agregada", d.get("nombre",""))
-        return jsonify({"ok": True, "id": mid, "serie": serie})
+        # Log unificado
+        for c in creadas:
+            _mant_log("maquina", c["id"], "agregada", d.get("nombre",""))
+        # Respuesta compatible con clientes existentes (1 fila → mismo shape antiguo)
+        if len(creadas) == 1:
+            return jsonify({"ok": True, "id": creadas[0]["id"], "serie": creadas[0]["serie"],
+                            "filas_creadas": 1})
+        return jsonify({"ok": True, "filas_creadas": len(creadas), "items": creadas})
     finally:
         conn.close()
 
@@ -17009,6 +17089,150 @@ def mant_documento_erp():
             "keys":  list(l.keys())[:12],
         } for l in lineas[:20]]
     return jsonify(resp)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CONTROL DE SALDO POR DOCUMENTO ERP
+#
+# Para evitar duplicar productos: cuando un cliente compra una factura
+# con 4 trotadoras, el sistema debe saber cuántas YA fueron asignadas
+# a fichas de mantención. Si quedan 0 → no permitir importar más.
+# ══════════════════════════════════════════════════════════════════════
+
+def _doc_origen_key(tido, nudo):
+    """Construye la clave canónica con que se guarda doc_origen en mant_maquinas."""
+    return f"{(tido or '').strip().upper()} {(nudo or '').strip()}"
+
+
+def _asignados_por_sku(tido, nudo):
+    """Suma cantidad ya asignada de cada SKU para un documento ERP dado.
+    Devuelve: {sku_upper: total_asignado}
+    Considera matches con/sin espacio, variantes de tido."""
+    key1 = _doc_origen_key(tido, nudo)               # 'FCV 12345'
+    key2 = f"{tido.strip().upper()}-{nudo.strip()}"  # 'FCV-12345' (variante)
+    key3 = f"{tido.strip().upper()}{nudo.strip()}"   # 'FCV12345'  (variante)
+    rows = mysql_fetchall(
+        "SELECT UPPER(sku) AS sku, COALESCE(SUM(cantidad),0) AS total "
+        "  FROM mant_maquinas "
+        " WHERE (doc_origen=%s OR doc_origen=%s OR doc_origen=%s "
+        "        OR doc_origen LIKE %s) "
+        "   AND sku IS NOT NULL AND sku <> '' "
+        " GROUP BY UPPER(sku)",
+        (key1, key2, key3, f"%{nudo.strip()}%")
+    ) or []
+    out = {}
+    for r in rows:
+        out[(r["sku"] or "").strip().upper()] = int(r["total"] or 0)
+    return out
+
+
+@app.route("/mantenciones/api/erp/documento-saldos", methods=["GET"])
+@_mant_required
+def mant_documento_erp_saldos():
+    """Igual que /mantenciones/api/erp/documento PERO enriquecido con saldos.
+
+    Para cada línea del documento agrega:
+      cantidad_original:  lo que dice la factura
+      cantidad_asignada:  cuánto ya está en mant_maquinas (ANY cliente)
+      saldo_disponible:   cantidad_original - cantidad_asignada
+      ya_completo:        bool — saldo == 0
+    """
+    tido = request.args.get("tido", "").strip().upper()
+    nudo = request.args.get("nudo", "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "Ingresa tipo y número de documento"}), 400
+
+    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","GDP","VD","WEB","FCO"}
+    if tido not in TIDOS_VALIDOS:
+        return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
+
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except ConnectionError as ce:
+        return jsonify({"error": str(ce)}), 503
+    except Exception as e:
+        return jsonify({"error": f"Error al consultar ERP: {e}"}), 500
+
+    if not header:
+        return jsonify({"error": f"Documento {tido} {nudo} no encontrado"}), 404
+
+    _ZZ_SKUS = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
+
+    # Mapa de asignaciones existentes
+    asignados = _asignados_por_sku(tido, nudo)
+
+    items = []
+    total_lineas = len(lineas)
+    filtradas = 0
+    doc_completo = True  # se vuelve False si hay aunque sea 1 línea con saldo
+    total_disponible = 0
+
+    for l in lineas:
+        sku  = (l.get("sku") or l.get("KOPRCT") or "").strip().upper()
+        nom  = (l.get("descripcion_erp") or l.get("descripcion") or l.get("nombre") or l.get("NOKOPR") or "").strip()
+        qty_orig = int(float(l.get("cantidad") or l.get("qty") or 1))
+        if not nom and not sku:
+            filtradas += 1
+            continue
+        if l.get("es_zz") or sku.upper() in _ZZ_SKUS:
+            filtradas += 1
+            continue
+
+        ya_asig = int(asignados.get(sku, 0))
+        saldo   = max(qty_orig - ya_asig, 0)
+        if saldo > 0:
+            doc_completo = False
+            total_disponible += saldo
+
+        # Buscar dónde está asignado (para mostrar "ya en cliente X")
+        asignaciones_existentes = []
+        if ya_asig > 0:
+            try:
+                aexist = mysql_fetchall(
+                    "SELECT m.id, m.cliente_id, m.cantidad, m.serie, "
+                    "       c.razon_social "
+                    "  FROM mant_maquinas m "
+                    "  LEFT JOIN mant_clientes c ON c.id=m.cliente_id "
+                    " WHERE UPPER(m.sku)=%s AND m.doc_origen LIKE %s "
+                    " ORDER BY m.created_at DESC LIMIT 5",
+                    (sku, f"%{nudo}%")
+                ) or []
+                asignaciones_existentes = [{
+                    "maquina_id":   int(r["id"]),
+                    "cliente_id":   int(r["cliente_id"]) if r.get("cliente_id") else None,
+                    "razon_social": r.get("razon_social") or "",
+                    "cantidad":     int(r["cantidad"] or 0),
+                    "serie":        r.get("serie") or "",
+                } for r in aexist]
+            except Exception:
+                pass
+
+        items.append({
+            "sku": sku,
+            "nombre": nom or sku,
+            "cantidad_original":   qty_orig,
+            "cantidad_asignada":   ya_asig,
+            "saldo_disponible":    saldo,
+            "ya_completo":         saldo == 0,
+            "asignaciones":        asignaciones_existentes,
+        })
+
+    return jsonify({
+        "ok":               True,
+        "tido":             header.get("tido", tido),
+        "nudo":             header.get("nudo_display", nudo),
+        "fecha":            header.get("fecha",""),
+        "cliente":          header.get("cliente_nombre",""),
+        "rut":              header.get("cliente_rut",""),
+        "direccion":        header.get("direccion",""),
+        "comuna":           header.get("comuna",""),
+        "items":            items,
+        "total_lineas":     total_lineas,
+        "filtradas":        filtradas,
+        "doc_completo":     doc_completo,
+        "total_disponible": total_disponible,
+        "doc_origen_key":   _doc_origen_key(tido, nudo),
+    })
 
 
 # ── BÚSQUEDA ERP ─────────────────────────────────────────────────────
