@@ -612,7 +612,13 @@ def register_pickup_routes(app, ctx):
             if sent_wa:
                 log_event(rid, "whatsapp_enviado", "solicitud_recibida", "solicitud_recibida", "WhatsApp de solicitud enviado.", "sistema", "Comunicaciones")
             return redirect(url_for("pickup_public_tracking", token=token, created=1))
-        return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={})
+        # Anti-cache para forzar al navegador a recargar diseño actualizado
+        from flask import make_response
+        resp = make_response(render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=[], fd={}))
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
 
     @app.route("/retiros/seguimiento/<token>", methods=["GET", "POST"])
     def pickup_public_tracking(token):

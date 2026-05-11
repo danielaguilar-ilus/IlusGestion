@@ -2221,7 +2221,12 @@ def login():
         session["user_id"] = user["id"]
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
-    return render_template("login.html", next_url=next_url, username="", login_images=imgs)
+    # Anti-cache para forzar al navegador a recargar diseño actualizado
+    resp = make_response(render_template("login.html", next_url=next_url, username="", login_images=imgs))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/logout", methods=["POST"])

@@ -13,32 +13,76 @@
 .login-carousel-slide.active{opacity:1;}
 .login-carousel-overlay{
   position:absolute;inset:0;z-index:1;
-  background:linear-gradient(135deg,rgba(15,23,42,.78),rgba(204,0,0,.45));
+  background:linear-gradient(135deg,rgba(10,10,10,.55) 0%,rgba(10,10,10,.85) 70%,rgba(10,10,10,.95) 100%);
 }
-.login-hero-content{position:relative;z-index:2;}
-.login-slide-caption{
-  position:absolute;bottom:30px;left:40px;right:40px;z-index:3;
+.login-hero-content{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;width:100%;padding:0;}
+
+/* ── Logo arriba ── */
+.login-brand-top{margin-bottom:auto;}
+.login-brand-top img{
+  width:165px;height:auto;display:block;
+  filter:drop-shadow(0 3px 12px rgba(0,0,0,.6));
+}
+
+/* ── Mensaje JUNTOS SOMOS MÁS FUERTES ── */
+.login-tagline-hero{
+  font-family:'Inter',-apple-system,system-ui,sans-serif;
+  font-weight:900;
+  font-size:clamp(2.4rem,4.5vw,3.6rem);
+  line-height:1.02;
+  letter-spacing:-.01em;
   color:#fff;
+  margin-bottom:18px;
+  text-shadow:0 2px 14px rgba(0,0,0,.6);
 }
-.login-slide-caption .lc-title{
-  font-size:1.1rem;font-weight:800;letter-spacing:.3px;
-  text-shadow:0 2px 12px rgba(0,0,0,.5);margin-bottom:4px;
-  opacity:0;transform:translateY(8px);transition:opacity .8s,transform .8s;
+.login-tagline-hero .ln-red{color:var(--ilus-red);}
+.login-tagline-hero .ln-dot{color:var(--ilus-red);}
+.login-tagline-body{
+  font-size:.94rem;color:#cfd3da;line-height:1.55;
+  max-width:550px;font-weight:500;margin-bottom:6px;
+  text-shadow:0 1px 6px rgba(0,0,0,.55);
 }
-.login-slide-caption .lc-sub{
-  font-size:.78rem;color:#e5e7eb;text-shadow:0 1px 6px rgba(0,0,0,.5);
-  opacity:0;transform:translateY(8px);transition:opacity .8s .15s,transform .8s .15s;
+.login-tagline-body strong{color:#fff;font-weight:700;}
+.login-tagline-divider{
+  display:block;width:36px;height:3px;background:var(--ilus-red);
+  border-radius:2px;margin:24px 0 18px;
 }
-.login-slide-caption.active .lc-title,.login-slide-caption.active .lc-sub{opacity:1;transform:translateY(0);}
-.login-carousel-dots{
-  position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
-  display:flex;gap:7px;z-index:4;
+
+/* ── 3 Cards de valores ── */
+.login-value-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  gap:14px;margin-top:28px;max-width:600px;
 }
-.login-carousel-dot{
-  width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.35);
-  cursor:pointer;transition:background .25s,width .25s;
+.login-value-card{
+  background:rgba(0,0,0,.30);
+  border-left:3px solid var(--ilus-red);
+  padding:12px 14px;border-radius:0 6px 6px 0;
+  backdrop-filter:blur(6px);
 }
-.login-carousel-dot.active{background:#fff;width:22px;border-radius:4px;}
+.login-value-card .lv-icon{
+  color:var(--ilus-red);font-size:1.05rem;margin-bottom:6px;display:block;
+}
+.login-value-card .lv-title{
+  font-size:.78rem;font-weight:800;color:#fff;
+  letter-spacing:.02em;line-height:1.2;margin-bottom:4px;
+}
+.login-value-card .lv-sub{
+  font-size:.7rem;color:#9aa1ad;line-height:1.4;
+}
+
+/* ── Dots pequeños abajo (estilo carrusel) ── */
+.login-tagline-dots{
+  display:flex;gap:5px;margin-top:24px;
+}
+.login-tagline-dot{
+  width:24px;height:3px;background:rgba(255,255,255,.18);
+  border-radius:2px;transition:background .25s;
+}
+.login-tagline-dot.active{background:var(--ilus-red);}
+
+@media (max-width:1100px){
+  .login-value-grid{grid-template-columns:1fr;}
+}
 </style>
 <div class="login-wrap">
 
@@ -72,19 +116,54 @@
     <div class="login-hero-overlay"></div>
     {% endif %}
 
-    <div class="login-hero-content">
-      {% if has_logo %}
-      <img src="{{ url_for('static', filename='Logo.png') }}"
-           alt="ILUS Sport & Health" class="login-hero-logo">
-      {% else %}
-      <div class="login-hero-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
-      {% endif %}
-      <span class="login-hero-accent"></span>
-      <div class="login-hero-tagline">
-        ILUS Fitness<br>
-        <strong>Sport &amp; Health</strong>
+    <div class="login-hero-content" style="padding:52px;">
+      {# Logo arriba #}
+      <div class="login-brand-top">
+        {% if has_logo %}
+        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS Sport & Health">
+        {% else %}
+        <div class="login-hero-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
+        {% endif %}
       </div>
-      <div class="login-hero-sub">Sistema de gestión interno</div>
+
+      {# Mensaje principal: JUNTOS SOMOS MÁS FUERTES #}
+      <h1 class="login-tagline-hero">
+        JUNTOS<br>
+        <span class="ln-red">SOMOS MÁS<br>FUERTES<span class="ln-dot">.</span></span>
+      </h1>
+
+      <span class="login-tagline-divider"></span>
+
+      <p class="login-tagline-body">
+        Cada entrega, cada ruta y cada esfuerzo suman para llevar lo mejor a más personas.
+        <strong>Sigamos construyendo grandes resultados.</strong>
+      </p>
+
+      {# 3 cards de valores #}
+      <div class="login-value-grid">
+        <div class="login-value-card">
+          <span class="lv-icon"><i class="bi bi-shield-check"></i></span>
+          <div class="lv-title">Compromiso<br>que se entrega</div>
+          <div class="lv-sub">Trabajamos con responsabilidad en cada detalle.</div>
+        </div>
+        <div class="login-value-card">
+          <span class="lv-icon"><i class="bi bi-people-fill"></i></span>
+          <div class="lv-title">Un equipo que<br>se mueve junto</div>
+          <div class="lv-sub">La colaboración es nuestra mayor fortaleza.</div>
+        </div>
+        <div class="login-value-card">
+          <span class="lv-icon"><i class="bi bi-bullseye"></i></span>
+          <div class="lv-title">Resultados que<br>nos impulsan</div>
+          <div class="lv-sub">Buscamos la excelencia en cada entrega.</div>
+        </div>
+      </div>
+
+      {# Dots decorativos abajo #}
+      <div class="login-tagline-dots">
+        <div class="login-tagline-dot active"></div>
+        <div class="login-tagline-dot"></div>
+        <div class="login-tagline-dot"></div>
+      </div>
     </div>
   </div>
 
@@ -100,7 +179,7 @@
       <div class="login-mini-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
       {% endif %}
 
-      <h2 class="login-title-main">Bienvenido</h2>
+      <h2 class="login-title-main">Bienvenido de vuelta</h2>
       <p class="login-sub-main">Ingresa tus credenciales para continuar</p>
 
       <form method="post" class="login-form" autocomplete="on">
@@ -137,7 +216,7 @@
       </div>
 
       <div class="login-footer-text">
-        ILUS Sport &amp; Health &copy; 2026 — Plataforma de Gestión Interna
+        ILUS &copy; 2025 — Plataforma de Gestión Interna
       </div>
 
     </div>
