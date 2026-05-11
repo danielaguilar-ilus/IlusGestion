@@ -236,7 +236,22 @@
       <i class="bi bi-file-earmark-text me-2" style="color:var(--ilus-red)"></i>
       <span style="font-size:1.1rem">{{ h.tido }} N° {{ h.nudo_display }}</span>
     </span>
-    <span class="small" style="color:#9ca3af">{{ h.fecha }}</span>
+    <div class="d-flex align-items-center gap-2">
+      {% if h.tipo_operacion %}
+      {# Badge prominente con el tipo de operación (Retiro/Despacho/Instalación) #}
+      {% set tc = (h.tipo_codigo or '').upper() %}
+      {% if tc == 'ZZRETIRO' %}{% set badge_color = '#dc2626' %}{% set badge_icon = '📦' %}
+      {% elif tc == 'ZZINSTALACION' %}{% set badge_color = '#7c3aed' %}{% set badge_icon = '🔧' %}
+      {% elif tc == 'ZZSERVTEC' or tc == 'ZZMANTENCION' %}{% set badge_color = '#0891b2' %}{% set badge_icon = '🛠️' %}
+      {% elif tc == 'ZZINGREPUESTO' or tc == 'ZZINGARREQUIP' %}{% set badge_color = '#ea580c' %}{% set badge_icon = '⚙️' %}
+      {% else %}{% set badge_color = '#16a34a' %}{% set badge_icon = '🚚' %}
+      {% endif %}
+      <span style="background:{{ badge_color }};color:#fff;padding:5px 12px;border-radius:50px;font-size:.78rem;font-weight:800;letter-spacing:.04em;box-shadow:0 2px 6px rgba(0,0,0,.3)">
+        {{ badge_icon }} {{ h.tipo_operacion|upper }}
+      </span>
+      {% endif %}
+      <span class="small" style="color:#9ca3af">{{ h.fecha }}</span>
+    </div>
   </div>
   <div class="card-body p-3">
 

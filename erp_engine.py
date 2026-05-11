@@ -809,10 +809,14 @@ class ERPClient:
 
         Aplica fix_yen_to_n (¥ → Ñ) a textos legibles.
         """
-        out = {"nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": ""}
+        out = {
+            "nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": "",
+            "tipo_operacion": "", "tipo_codigo": "",
+        }
         if not lines:
             return out
         obs_seen: list[str] = []  # observaciones únicas en orden
+        zz_skus_found: list[tuple[str, str]] = []  # [(sku, descripcion)]
         for ln in lines:
             if not isinstance(ln, dict):
                 continue
@@ -836,8 +840,49 @@ class ERPClient:
                 clean = obs_line.lstrip("#").strip()
                 if not (clean.isdigit() and len(clean) <= 6):
                     obs_seen.append(obs_line)
+            # TIPO DE OPERACIÓN: detectar SKU ZZ y guardar su descripción
+            sku = (cls._pick(ln, ("KOPRCT", "SKU")) or "").upper()
+            if sku.startswith("ZZ"):
+                desc = cls._pick(ln, ("NOKOPR", "DESCRIPCION", "NOMBRE"))
+                zz_skus_found.append((sku, desc))
         if obs_seen:
             out["obs"] = " / ".join(obs_seen[:3])  # max 3 distintas
+        # ★★★ TIPO DE OPERACIÓN derivado de SKUs ZZ ★★★
+        # Mapeo de prioridad (en orden de importancia para clasificar):
+        #   ZZRETIRO       → "Retiro en Bodega"
+        #   ZZINSTALACION  → "Instalación"
+        #   ZZSERVTEC      → "Visita Técnica"
+        #   ZZMANTENCION   → "Mantención"
+        #   ZZINGREPUESTO  → "Repuestos"
+        #   ZZINGARREQUIP  → "Ingreso/Arreglo Equipo"
+        #   ZZBODEGA       → "Bodega"
+        #   ZZENVIO        → "Despacho"
+        op_priority = [
+            ("ZZRETIRO",       "Retiro en Bodega"),
+            ("ZZINSTALACION",  "Instalación"),
+            ("ZZSERVTEC",      "Visita Técnica"),
+            ("ZZMANTENCION",   "Mantención"),
+            ("ZZINGREPUESTO",  "Venta de Repuestos"),
+            ("ZZINGARREQUIP",  "Ingreso/Arreglo Equipo"),
+            ("ZZBODEGA",       "Arriendo de Bodega"),
+            ("ZZENVIO",        "Despacho de Productos"),
+        ]
+        zz_codes_found = [s for s, _ in zz_skus_found]
+        for code, label in op_priority:
+            if code in zz_codes_found:
+                out["tipo_operacion"] = label
+                out["tipo_codigo"] = code
+                break
+        # Si hay descripción específica del ERP (NOKOPR del SKU ZZ), úsala
+        # — el ERP a veces tiene "Retiro en Bodega" como descripción exacta
+        if out["tipo_codigo"]:
+            for sku, desc in zz_skus_found:
+                if sku == out["tipo_codigo"] and desc:
+                    # Usar la descripción del ERP solo si es informativa
+                    desc_clean = desc.strip()
+                    if len(desc_clean) > 3:
+                        out["tipo_operacion"] = desc_clean
+                        break
         return out
 
     def fetch_document(self, tido: str, nudo: str) -> Optional[dict]:
@@ -1071,6 +1116,9 @@ class ERPClient:
             "direccion":        cliente_dir_final,
             "comuna":           comuna_final,
             "observaciones":    cliente_obs,
+            # Tipo de operación derivado de SKUs ZZ
+            "tipo_operacion":   line_data.get("tipo_operacion", ""),
+            "tipo_codigo":      line_data.get("tipo_codigo", ""),
             # Totales
             "valor_neto":       float(raw_header.get("VANEDO") or 0),
             "valor_iva":        float(raw_header.get("VAIVDO") or 0),

@@ -5992,6 +5992,9 @@ def _cubicador_fetch(tido, nudo):
         "direccion":        doc.get("direccion"),
         "comuna":           doc.get("comuna"),
         "observaciones":    doc.get("observaciones"),
+        # Tipo de operación derivado de SKUs ZZ del documento
+        "tipo_operacion":   doc.get("tipo_operacion", ""),
+        "tipo_codigo":      doc.get("tipo_codigo", ""),
         # Diagnóstico para el frontend (botón "Diagnosticar ERP")
         "all_fields":       doc.get("all_fields", []),
         "raw_sample":       doc.get("raw_sample", {}),
