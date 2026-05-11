@@ -11807,6 +11807,97 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ════════════════════════════════════════════════════════════
+            # CHECKLIST DE TAREAS DENTRO DE UNA OT/VISITA
+            # Cada visita puede tener N tareas concretas (cambio de
+            # trotadora, inspección, limpieza, foto, etc.) que el técnico
+            # marca como completadas a medida que ejecuta.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visita_tareas (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id       INT NOT NULL,
+                    orden           INT DEFAULT 0,
+                    titulo          VARCHAR(300) NOT NULL,
+                    descripcion     TEXT,
+                    tipo            ENUM('inspeccion','cambio','reparacion','limpieza',
+                                          'levantamiento','instalacion','garantia','otro')
+                                    DEFAULT 'otro',
+                    maquina_id      INT NULL
+                                    COMMENT 'FK opcional a la máquina afectada',
+                    cantidad        INT DEFAULT 1
+                                    COMMENT 'ej. cambio de 4 trotadoras → cantidad=4',
+                    completada      TINYINT(1) DEFAULT 0,
+                    completada_at   DATETIME NULL,
+                    completada_por  VARCHAR(190) NULL,
+                    observaciones   TEXT,
+                    created_by      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (visita_id)  REFERENCES mant_visitas(id)  ON DELETE CASCADE,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE SET NULL,
+                    INDEX idx_visita   (visita_id),
+                    INDEX idx_completa (completada)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ════════════════════════════════════════════════════════════
+            # FOTOS DE LA VISITA / OT
+            # Galería con clasificación: antes / durante / después / serie /
+            # falla / reparación / general. Cada foto puede asociarse a una
+            # tarea específica (mant_visita_tareas) o a una máquina.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visita_fotos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id       INT NOT NULL,
+                    tarea_id        INT NULL,
+                    maquina_id      INT NULL,
+                    archivo_path    VARCHAR(500) NOT NULL,
+                    archivo_nombre  VARCHAR(300),
+                    tipo_foto       ENUM('antes','durante','despues','serie',
+                                         'falla','reparacion','general','levantamiento')
+                                    DEFAULT 'general',
+                    descripcion     VARCHAR(500),
+                    tomada_por      VARCHAR(190),
+                    tomada_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    file_size_kb    INT,
+                    FOREIGN KEY (visita_id)  REFERENCES mant_visitas(id)       ON DELETE CASCADE,
+                    FOREIGN KEY (tarea_id)   REFERENCES mant_visita_tareas(id) ON DELETE SET NULL,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id)      ON DELETE SET NULL,
+                    INDEX idx_visita  (visita_id),
+                    INDEX idx_maquina (maquina_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ════════════════════════════════════════════════════════════
+            # GALERÍA POR MÁQUINA (inventario fotográfico permanente)
+            # Independiente de las visitas: foto de la máquina en sí, su
+            # número de serie, estado al ingresar, etc. Útil para tener
+            # un "perfil visual" de cada equipo en la ficha del cliente.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_maquina_fotos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    maquina_id      INT NOT NULL,
+                    archivo_path    VARCHAR(500) NOT NULL,
+                    archivo_nombre  VARCHAR(300),
+                    tipo_foto       ENUM('principal','serie','marca','detalle',
+                                         'instalada','daño','antes_reparacion','despues_reparacion')
+                                    DEFAULT 'principal',
+                    descripcion     VARCHAR(500),
+                    es_principal    TINYINT(1) DEFAULT 0
+                                    COMMENT 'Foto que aparece en cards y listados',
+                    visita_origen   INT NULL
+                                    COMMENT 'Si la foto se tomó durante una visita específica',
+                    tomada_por      VARCHAR(190),
+                    tomada_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (maquina_id)    REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                    FOREIGN KEY (visita_origen) REFERENCES mant_visitas(id)  ON DELETE SET NULL,
+                    INDEX idx_maquina  (maquina_id),
+                    INDEX idx_principal(es_principal)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Tabla N:N para múltiples técnicos asignados a una visita
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_visita_tecnicos (
@@ -14603,6 +14694,334 @@ def mant_visita_del(vid):
         return jsonify({"ok": True})
     finally:
         conn.close()
+
+
+# ═════════════════════════════════════════════════════════════════════
+# OT — TAREAS DENTRO DE UNA VISITA
+# Checklist que el técnico ejecuta paso a paso. Cada tarea puede estar
+# asociada a una máquina específica (mant_maquinas) para trazabilidad.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas", methods=["GET"])
+@_mant_required
+def mant_visita_tareas_get(vid):
+    """Lista las tareas de una OT con su estado."""
+    rows = mysql_fetchall(
+        "SELECT t.id, t.orden, t.titulo, t.descripcion, t.tipo, t.cantidad, "
+        "       t.completada, t.completada_at, t.completada_por, t.observaciones, "
+        "       t.maquina_id, m.nombre AS maquina_nombre, m.serie AS maquina_serie "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN mant_maquinas m ON m.id=t.maquina_id "
+        " WHERE t.visita_id=%s ORDER BY t.orden ASC, t.id ASC",
+        (vid,)
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/nueva", methods=["POST"])
+@_mant_required
+def mant_visita_tarea_nueva(vid):
+    """Crea una tarea dentro de la OT. Acepta JSON o form-data."""
+    d = request.get_json(silent=True) or request.form
+    titulo = (d.get("titulo") or "").strip()[:300]
+    if not titulo:
+        return jsonify({"ok": False, "error": "Título requerido"}), 400
+    descripcion = (d.get("descripcion") or "").strip()
+    tipo = (d.get("tipo") or "otro").strip().lower()
+    if tipo not in ("inspeccion", "cambio", "reparacion", "limpieza",
+                    "levantamiento", "instalacion", "garantia", "otro"):
+        tipo = "otro"
+    maquina_id = d.get("maquina_id")
+    try:
+        maquina_id = int(maquina_id) if maquina_id else None
+    except (TypeError, ValueError):
+        maquina_id = None
+    cantidad = int(d.get("cantidad") or 1)
+    # Determinar orden = max + 1
+    row = mysql_fetchone(
+        "SELECT COALESCE(MAX(orden),0)+1 AS nx FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    )
+    orden = (row or {}).get("nx", 1)
+    nid = mysql_execute(
+        "INSERT INTO mant_visita_tareas "
+        "(visita_id, orden, titulo, descripcion, tipo, maquina_id, cantidad, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+        (vid, orden, titulo, descripcion, tipo, maquina_id, cantidad, current_username())
+    )
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, 'tarea_agregada', %s, %s)",
+            (vid, f"Tarea: {titulo}", current_username())
+        )
+    except Exception:
+        pass
+    return jsonify({"ok": True, "id": nid, "orden": orden})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>", methods=["POST", "PATCH", "DELETE"])
+@_mant_required
+def mant_visita_tarea_update(vid, tid):
+    """Actualiza, completa o elimina una tarea."""
+    if request.method == "DELETE":
+        mysql_execute("DELETE FROM mant_visita_tareas WHERE id=%s AND visita_id=%s", (tid, vid))
+        return jsonify({"ok": True, "deleted": True})
+
+    d = request.get_json(silent=True) or request.form
+    action = (d.get("action") or "").strip().lower()
+    user = current_username()
+
+    if action == "toggle":
+        # Cambiar estado completada
+        row = mysql_fetchone(
+            "SELECT completada FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+            (tid, vid)
+        )
+        if not row:
+            return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+        new_state = 0 if row["completada"] else 1
+        mysql_execute(
+            "UPDATE mant_visita_tareas "
+            "   SET completada=%s, "
+            "       completada_at=%s, "
+            "       completada_por=%s "
+            " WHERE id=%s AND visita_id=%s",
+            (
+                new_state,
+                datetime.now() if new_state else None,
+                user if new_state else None,
+                tid, vid
+            )
+        )
+        try:
+            mysql_execute(
+                "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+                "VALUES ('visita', %s, %s, %s, %s)",
+                (vid,
+                 "tarea_completada" if new_state else "tarea_reabierta",
+                 f"Tarea ID {tid}",
+                 user)
+            )
+        except Exception:
+            pass
+        return jsonify({"ok": True, "completada": bool(new_state)})
+
+    # Update genérico
+    fields = []
+    vals = []
+    for f in ("titulo", "descripcion", "tipo", "observaciones"):
+        if f in d:
+            fields.append(f"{f}=%s")
+            vals.append((d.get(f) or "").strip()[:500])
+    for f in ("cantidad", "orden", "maquina_id"):
+        if f in d:
+            try:
+                fields.append(f"{f}=%s")
+                vals.append(int(d.get(f)) if d.get(f) else None)
+            except (TypeError, ValueError):
+                continue
+    if not fields:
+        return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
+    vals.extend([tid, vid])
+    mysql_execute(
+        f"UPDATE mant_visita_tareas SET {', '.join(fields)} WHERE id=%s AND visita_id=%s",
+        tuple(vals)
+    )
+    return jsonify({"ok": True})
+
+
+# ═════════════════════════════════════════════════════════════════════
+# OT — FOTOS DE LA VISITA (galería con multi-upload)
+# ═════════════════════════════════════════════════════════════════════
+
+MANT_FOTOS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "static", "uploads", "mantenciones"
+)
+os.makedirs(MANT_FOTOS_DIR, exist_ok=True)
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos", methods=["GET"])
+@_mant_required
+def mant_visita_fotos_get(vid):
+    """Lista las fotos de una OT."""
+    rows = mysql_fetchall(
+        "SELECT id, archivo_path, archivo_nombre, tipo_foto, descripcion, "
+        "       tarea_id, maquina_id, tomada_por, tomada_at, file_size_kb "
+        "  FROM mant_visita_fotos "
+        " WHERE visita_id=%s ORDER BY tomada_at DESC, id DESC",
+        (vid,)
+    ) or []
+    out = []
+    for r in rows:
+        rd = dict(r)
+        # tomada_at puede ser datetime → string ISO
+        if rd.get("tomada_at"):
+            rd["tomada_at_iso"] = rd["tomada_at"].isoformat() if hasattr(rd["tomada_at"], "isoformat") else str(rd["tomada_at"])
+        out.append(rd)
+    return jsonify(out)
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/subir", methods=["POST"])
+@_mant_required
+def mant_visita_fotos_subir(vid):
+    """Sube una o varias fotos a la OT. Soporta multi-upload."""
+    files = request.files.getlist("fotos") or request.files.getlist("imagenes")
+    if not files or all(not f.filename for f in files):
+        return jsonify({"ok": False, "error": "No se envió ningún archivo"}), 400
+
+    tipo_foto    = (request.form.get("tipo_foto") or "general").strip().lower()
+    if tipo_foto not in ("antes", "durante", "despues", "serie", "falla",
+                          "reparacion", "general", "levantamiento"):
+        tipo_foto = "general"
+    descripcion  = (request.form.get("descripcion") or "").strip()[:500]
+    tarea_id     = request.form.get("tarea_id")
+    maquina_id   = request.form.get("maquina_id")
+    try:
+        tarea_id = int(tarea_id) if tarea_id else None
+    except (TypeError, ValueError):
+        tarea_id = None
+    try:
+        maquina_id = int(maquina_id) if maquina_id else None
+    except (TypeError, ValueError):
+        maquina_id = None
+
+    saved = 0
+    errors = []
+    user = current_username()
+    for i, f in enumerate(files):
+        if not f or not f.filename:
+            continue
+        ext, err = _validate_uploaded_image(f, label=f.filename)
+        if err:
+            errors.append(err)
+            continue
+        # Carpeta por visita (organización)
+        visita_dir = os.path.join(MANT_FOTOS_DIR, f"v{vid}")
+        os.makedirs(visita_dir, exist_ok=True)
+        fname = f"v{vid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+        fpath = os.path.join(visita_dir, fname)
+        try:
+            f.save(fpath)
+            size_kb = os.path.getsize(fpath) // 1024
+        except Exception as e:
+            errors.append(f"Error guardando {f.filename}: {e}")
+            continue
+        try:
+            mysql_execute(
+                "INSERT INTO mant_visita_fotos "
+                "(visita_id, tarea_id, maquina_id, archivo_path, archivo_nombre, "
+                " tipo_foto, descripcion, tomada_por, file_size_kb) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    vid, tarea_id, maquina_id,
+                    f"uploads/mantenciones/v{vid}/{fname}",
+                    f.filename[:300],
+                    tipo_foto, descripcion or None, user, size_kb
+                )
+            )
+            saved += 1
+        except Exception as e:
+            errors.append(f"Error BD {f.filename}: {e}")
+    try:
+        if saved:
+            mysql_execute(
+                "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+                "VALUES ('visita', %s, 'fotos_subidas', %s, %s)",
+                (vid, f"{saved} foto(s) tipo={tipo_foto}", user)
+            )
+    except Exception:
+        pass
+    return jsonify({"ok": True, "saved": saved, "errors": errors[:3]})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>", methods=["DELETE"])
+@_mant_required
+def mant_visita_foto_delete(vid, fid):
+    """Elimina una foto de la OT (archivo + registro)."""
+    row = mysql_fetchone(
+        "SELECT archivo_path FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
+        (fid, vid)
+    )
+    if row and row.get("archivo_path"):
+        try:
+            fp = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "static", row["archivo_path"]
+            )
+            if os.path.exists(fp):
+                os.remove(fp)
+        except Exception:
+            pass
+    mysql_execute("DELETE FROM mant_visita_fotos WHERE id=%s AND visita_id=%s", (fid, vid))
+    return jsonify({"ok": True, "deleted": True})
+
+
+# ═════════════════════════════════════════════════════════════════════
+# GALERÍA POR MÁQUINA (inventario fotográfico permanente)
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/fotos", methods=["GET"])
+@_mant_required
+def mant_maquina_fotos_get(mid):
+    rows = mysql_fetchall(
+        "SELECT id, archivo_path, archivo_nombre, tipo_foto, descripcion, "
+        "       es_principal, visita_origen, tomada_por, tomada_at "
+        "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+        "ORDER BY es_principal DESC, tomada_at DESC",
+        (mid,)
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/fotos/subir", methods=["POST"])
+@_mant_required
+def mant_maquina_fotos_subir(mid):
+    files = request.files.getlist("fotos") or request.files.getlist("imagenes")
+    if not files or all(not f.filename for f in files):
+        return jsonify({"ok": False, "error": "No se envió ningún archivo"}), 400
+    tipo_foto = (request.form.get("tipo_foto") or "principal").strip().lower()
+    if tipo_foto not in ("principal", "serie", "marca", "detalle",
+                          "instalada", "daño", "antes_reparacion", "despues_reparacion"):
+        tipo_foto = "principal"
+    descripcion = (request.form.get("descripcion") or "").strip()[:500]
+    user = current_username()
+
+    saved = 0
+    errors = []
+    for i, f in enumerate(files):
+        if not f or not f.filename:
+            continue
+        ext, err = _validate_uploaded_image(f, label=f.filename)
+        if err:
+            errors.append(err)
+            continue
+        mq_dir = os.path.join(MANT_FOTOS_DIR, f"m{mid}")
+        os.makedirs(mq_dir, exist_ok=True)
+        fname = f"m{mid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+        fpath = os.path.join(mq_dir, fname)
+        try:
+            f.save(fpath)
+        except Exception as e:
+            errors.append(f"Error guardando {f.filename}: {e}")
+            continue
+        try:
+            mysql_execute(
+                "INSERT INTO mant_maquina_fotos "
+                "(maquina_id, archivo_path, archivo_nombre, tipo_foto, descripcion, tomada_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    mid,
+                    f"uploads/mantenciones/m{mid}/{fname}",
+                    f.filename[:300],
+                    tipo_foto, descripcion or None, user
+                )
+            )
+            saved += 1
+        except Exception as e:
+            errors.append(f"Error BD {f.filename}: {e}")
+    return jsonify({"ok": True, "saved": saved, "errors": errors[:3]})
 
 
 # ── REPUESTOS DE UNA VISITA ──────────────────────────────────────────
