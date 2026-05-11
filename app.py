@@ -1430,13 +1430,14 @@ def load_current_user():
     """
     Carga el usuario actual y sus permisos.
 
-    Estrategia anti-stale:
-    — SIEMPRE consulta la BD para obtener el role actualizado del usuario.
-      Esto permite que cambios de rol y de matriz de permisos apliquen
-      en el siguiente request, SIN requerir logout.
-    — El costo es 1 query indexada por request (~<1 ms con índice PRIMARY).
-    — `permission_set(role)` usa un caché en proceso por rol, así que la
-      computación de permisos sólo va a BD la primera vez por rol/worker.
+    Estrategia híbrida (perf + freshness):
+    — Cachea user en session con TTL=10s.
+    — Mientras el TTL es válido, NO toca BD (~ahorra 10-40 ms por request).
+    — Cuando expira, re-lee de BD (1 query indexada).
+    — `permission_set(role)` usa caché en proceso por rol (invalidado por
+      `admin_roles_matrix_save`), así que cambios de matriz aplican
+      a más tardar 10s después.
+    — Cambios de rol del usuario aplican al expirar el TTL o tras logout.
     """
     g.user = None
     g.permissions = permission_set(None)
@@ -1444,6 +1445,17 @@ def load_current_user():
     if not user_id:
         return
 
+    # ── Intento 1: cache de session si aún fresco (TTL 10s) ─────────
+    cached = session.get("_uc")
+    if cached and cached.get("id") == user_id:
+        cached_ts = cached.get("ts", 0)
+        if (time.time() - cached_ts) < 10:
+            g.user = cached
+            g.permissions = permission_set(cached["role"])
+            return
+        # TTL expirado → cae a fetch fresh abajo
+
+    # ── Intento 2: consulta BD ───────────────────────────────────────
     try:
         user = get_auth_user_by_id(user_id)
     except Exception as exc:
@@ -1459,14 +1471,14 @@ def load_current_user():
     g.user = user
     g.permissions = permission_set(user["role"])
 
-    # Caché ligero en session para usos sin chequeo de permisos (ej. nombre en UI)
-    # Aclaración: estos campos NO se usan para autorizar. La autorización va por g.permissions.
+    # Renovar cache con timestamp
     session["_uc"] = {
         "id":       user["id"],
         "username": user["username"],
         "nombre":   user["nombre"],
         "role":     user["role"],
         "active":   user["active"],
+        "ts":       time.time(),
     }
 
 
@@ -7818,6 +7830,9 @@ def _tr_fetch_from_erp(tido, nudo):
     # Guía (si CAPRAD1 >= CAPRCO1 en todas → tiene guía)
     guia_numero = (raw_header.get("NUDO_GIA") or raw_header.get("NUDGIA") or "").strip() or None
 
+    # NOTA: get_db() devuelve conexión del pool via g. NO llamar conn.close()
+    # al final — teardown_appcontext la cierra. Cerrar aquí deja g._db
+    # apuntando a una conexión cerrada.
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -7870,8 +7885,11 @@ def _tr_fetch_from_erp(tido, nudo):
                       cant, cantd, cant - cantd,
                       (l.get("BOSULIDO") or "").strip()))
         conn.commit()
-    finally:
-        conn.close()
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        raise
+    # Importante: NO cerrar conn aquí (es del pool). teardown_appcontext lo hace.
 
     return comm_id, None
 
@@ -12144,16 +12162,14 @@ def init_mantenciones_tables():
 
 
 def _mant_log(entidad, entidad_id, accion, detalle=""):
+    """Registra acción en mant_logs. Usa mysql_execute (pool) — evita
+    el TCP handshake de get_mysql() en cada llamada (~250-400ms en cloud)."""
     try:
-        conn = get_mysql()
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (entidad, entidad_id, accion, detalle, current_username())
-            )
-        conn.commit()
-        conn.close()
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            (entidad, entidad_id, accion, detalle, current_username())
+        )
     except Exception:
         pass
 
@@ -12206,8 +12222,25 @@ def _normalize_hora(s):
     return None
 
 
-def _mant_actualizar_estado_contratos():
-    """Actualiza automáticamente el estado de los contratos según fechas."""
+# Timestamp del último UPDATE de estado de contratos.
+# El UPDATE es deterministic (depende sólo de la fecha) — basta 1 vez/día.
+_MANT_ESTADOS_LAST_RUN = 0.0
+
+
+def _mant_actualizar_estado_contratos(force=False):
+    """Actualiza estado de contratos según fechas.
+
+    Optimización: ejecuta como mucho 1 vez cada hora por worker. El usuario
+    final no paga 100-300ms en cada hit a /mantenciones. El UPDATE es
+    deterministic (depende solo de hoy), así que basta refrescarlo
+    periódicamente.
+
+    Para forzar (ej. tras crear/editar un contrato): pasar force=True.
+    """
+    global _MANT_ESTADOS_LAST_RUN
+    now = time.time()
+    if not force and (now - _MANT_ESTADOS_LAST_RUN) < 3600:
+        return  # ya se corrió hace menos de 1h
     try:
         conn = get_mysql()
         hoy = datetime.now().date()
@@ -12227,6 +12260,7 @@ def _mant_actualizar_estado_contratos():
             """, (hoy, pronto, hoy))
         conn.commit()
         conn.close()
+        _MANT_ESTADOS_LAST_RUN = now
     except Exception:
         pass
 
@@ -14842,17 +14876,31 @@ def mant_ots_list():
     tecnicos = []
     fatal_error = None
     try:
+        # ── PERF: en vez de 3 subqueries correlacionadas POR fila (~600 queries
+        # con LIMIT 200), usamos LEFT JOIN a derivadas agregadas. Total: 1 query.
         sql = (
             "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.titulo, v.descripcion, "
             "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
             "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
             "       v.tecnico_id, t.nombre AS tecnico_nombre, "
-            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
-            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas, "
-            "       (SELECT COUNT(*) FROM mant_visita_fotos WHERE visita_id=v.id) AS n_fotos "
+            "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
+            "       COALESCE(tar.n_completas, 0) AS n_completas, "
+            "       COALESCE(fot.n_fotos, 0)     AS n_fotos "
             "  FROM mant_visitas v "
             "  JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+            "  LEFT JOIN ( "
+            "       SELECT visita_id, "
+            "              COUNT(*) AS n_tareas, "
+            "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS n_completas "
+            "         FROM mant_visita_tareas "
+            "       GROUP BY visita_id"
+            "  ) tar ON tar.visita_id = v.id "
+            "  LEFT JOIN ( "
+            "       SELECT visita_id, COUNT(*) AS n_fotos "
+            "         FROM mant_visita_fotos "
+            "       GROUP BY visita_id"
+            "  ) fot ON fot.visita_id = v.id "
             f" WHERE {' AND '.join(where)} "
             " ORDER BY v.fecha_programada DESC, v.id DESC "
             " LIMIT 200"
@@ -15727,9 +15775,19 @@ def mant_analisis():
     )
 
 
+# Cache global de UF — la UF cambia 1 vez al día, no tiene sentido pegarle
+# a mindicador.cl en cada request (~200-600ms por hit).
+_UF_CACHE = {"ts": 0, "uf": None, "fecha": None, "error": None}
+_UF_CACHE_TTL = 3600  # 1 hora
+
+
 @app.route("/api/uf-actual")
 def api_uf_actual():
-    """Devuelve el valor actual de la UF desde mindicador.cl"""
+    """Devuelve el valor actual de la UF desde mindicador.cl (cacheado 1h)."""
+    now = time.time()
+    if _UF_CACHE["uf"] is not None and (now - _UF_CACHE["ts"]) < _UF_CACHE_TTL:
+        return jsonify({"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
+                        "ok": True, "cached": True})
     try:
         import urllib.request as _ur
         req = _ur.Request(
@@ -15740,8 +15798,13 @@ def api_uf_actual():
             data = json.loads(resp.read().decode("utf-8"))
         uf_val = float(data["serie"][0]["valor"])
         fecha  = data["serie"][0]["fecha"][:10]
+        _UF_CACHE.update({"ts": now, "uf": uf_val, "fecha": fecha, "error": None})
         return jsonify({"uf": uf_val, "fecha": fecha, "ok": True})
     except Exception as e:
+        # Si tenemos un valor cacheado aunque sea viejo, devolverlo en lugar de error
+        if _UF_CACHE["uf"] is not None:
+            return jsonify({"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
+                            "ok": True, "cached": True, "stale": True})
         return jsonify({"uf": None, "error": str(e), "ok": False})
 
 
