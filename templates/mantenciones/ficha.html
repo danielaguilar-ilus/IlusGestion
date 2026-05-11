@@ -2501,6 +2501,10 @@ async function confirmarVisitaMulti() {
               <i class="bi bi-arrow-clockwise"></i>
             </button>
             {% if permissions.superadmin %}
+            <button class="btn btn-sm btn-outline-warning" onclick="reSubirContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"
+                    title="Re-subir archivo (si se perdió por deploy)">
+              <i class="bi bi-cloud-upload"></i>
+            </button>
             <button class="btn btn-sm btn-outline-danger" onclick="eliminarContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"
                     title="Eliminar contrato (solo superadmin)">
               <i class="bi bi-trash"></i>
@@ -7341,6 +7345,45 @@ async function vhGuardar() {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar mantención';
   }
+}
+
+// ─── Re-subir archivo de contrato (cuando se perdió por deploy de Railway) ──
+function reSubirContrato(ctid, nombre) {
+  // Crear input file invisible y disparar el dialog del browser
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.pdf,.doc,.docx';
+  inp.style.display = 'none';
+  inp.onchange = async () => {
+    const f = inp.files[0];
+    if (!f) return;
+    if (!confirm(
+      `¿Re-subir archivo para el contrato:\n\n«${nombre}»?\n\n` +
+      `Archivo nuevo: ${f.name}\n\n` +
+      `Esto reemplaza el archivo anterior (si existía). Conserva los datos ` +
+      `del contrato y el análisis IA actual.`
+    )) return;
+
+    const fd = new FormData();
+    fd.append('archivo', f);
+    try {
+      const r = await fetch(`/mantenciones/api/contratos/${ctid}/re-subir`, {
+        method: 'POST', body: fd
+      });
+      const d = await r.json();
+      if (d.ok) {
+        alert(`✅ Archivo re-subido correctamente: ${d.archivo_nombre}`);
+        location.reload();
+      } else {
+        alert(`❌ ${d.error || 'Error al re-subir'}`);
+      }
+    } catch(e) {
+      alert(`Error de red: ${e.message}`);
+    }
+  };
+  document.body.appendChild(inp);
+  inp.click();
+  setTimeout(() => inp.remove(), 1000);
 }
 
 // Modal de eliminar contrato — Bootstrap custom, no confirm/prompt nativos

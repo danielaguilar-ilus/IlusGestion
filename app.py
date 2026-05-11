@@ -218,8 +218,30 @@ def fvol_filter(value):
         return '—'
 
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER   = os.path.join(BASE_DIR, "static", "uploads")
-COLABS_FOLDER   = os.path.join(BASE_DIR, "static", "uploads", "colaboradores")
+
+# ══════════════════════════════════════════════════════════════════════
+# UPLOADS_BASE — directorio raíz para archivos subidos por usuarios
+#
+# En LOCAL/desarrollo:    static/uploads/ (default — sin env var)
+# En PRODUCCIÓN (Railway): /data/uploads/ (montado como volume persistente)
+#
+# CRÍTICO: en Railway, sin el volume mount, los archivos se BORRAN en cada
+# deploy. Para activar persistencia:
+#   1. Railway Dashboard → Service → Settings → Volumes
+#      Mount path: /data/uploads
+#   2. Variables → UPLOADS_BASE=/data/uploads
+#   3. Redeploy
+#
+# El archivo railway.toml en la raíz tiene la config declarativa.
+# ══════════════════════════════════════════════════════════════════════
+UPLOADS_BASE    = os.environ.get("UPLOADS_BASE") or os.path.join(BASE_DIR, "static", "uploads")
+try:
+    os.makedirs(UPLOADS_BASE, exist_ok=True)
+except Exception as _e:
+    print(f"[UPLOADS_BASE] No se pudo crear {UPLOADS_BASE}: {_e}")
+
+UPLOAD_FOLDER   = UPLOADS_BASE
+COLABS_FOLDER   = os.path.join(UPLOADS_BASE, "colaboradores")
 ERP_TABLE_PRODUCTS = ERP_CONFIG.get("table_products", "MAEPR")
 ALLOWED_EXT     = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_PHOTOS      = 2
@@ -2833,12 +2855,132 @@ def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=No
         print(f"[EMAIL LOG] {exc}")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# KILL SWITCH GLOBAL DE COMUNICACIONES
+#
+# Permite al superadministrador apagar todo envío de email y/o WhatsApp
+# sin tocar credenciales (útil cuando el proveedor está caído, durante
+# migración, mantenimiento, o para evitar spam masivo accidental).
+#
+# Tabla: app_kill_switch (key, enabled, updated_by, updated_at)
+#   keys: 'email', 'whatsapp'
+#
+# Funciones:
+#   comm_is_enabled('email')  → bool   (default True si no hay registro)
+#   comm_set_enabled('email', False, usuario)
+#   _send_ilus_email() respeta el switch automáticamente
+# ══════════════════════════════════════════════════════════════════════
+
+# Cache en proceso para no consultar BD en cada envío
+_COMM_SWITCH_CACHE = {"email": None, "whatsapp": None, "ts": 0}
+_COMM_SWITCH_TTL = 30  # segundos
+
+
+def comm_is_enabled(canal: str) -> bool:
+    """Devuelve True si el canal está habilitado. Default True."""
+    import time as _t
+    now = _t.time()
+    # Cache hit
+    if (now - _COMM_SWITCH_CACHE["ts"]) < _COMM_SWITCH_TTL and _COMM_SWITCH_CACHE.get(canal) is not None:
+        return bool(_COMM_SWITCH_CACHE[canal])
+    # Recargar de BD
+    try:
+        rows = mysql_fetchall(
+            "SELECT `key`, enabled FROM app_kill_switch WHERE `key` IN ('email','whatsapp')"
+        ) or []
+        _COMM_SWITCH_CACHE["ts"] = now
+        for r in rows:
+            _COMM_SWITCH_CACHE[r["key"]] = bool(r["enabled"])
+        # Defaults para keys que no existen
+        if _COMM_SWITCH_CACHE.get("email") is None: _COMM_SWITCH_CACHE["email"] = True
+        if _COMM_SWITCH_CACHE.get("whatsapp") is None: _COMM_SWITCH_CACHE["whatsapp"] = True
+    except Exception:
+        # Si la tabla aún no existe, todo habilitado por default
+        return True
+    return bool(_COMM_SWITCH_CACHE.get(canal, True))
+
+
+def comm_set_enabled(canal: str, enabled: bool, usuario: str = "sistema") -> bool:
+    """Setea el switch. Solo válido para 'email' o 'whatsapp'."""
+    if canal not in ("email", "whatsapp"):
+        return False
+    try:
+        # Asegurar tabla existe (idempotente)
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS app_kill_switch (
+              `key` VARCHAR(40) PRIMARY KEY,
+              enabled TINYINT(1) DEFAULT 1,
+              updated_by VARCHAR(190),
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute(
+            "INSERT INTO app_kill_switch (`key`,enabled,updated_by) VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), updated_by=VALUES(updated_by)",
+            (canal, 1 if enabled else 0, usuario)
+        )
+        # Invalidar cache
+        _COMM_SWITCH_CACHE["ts"] = 0
+        return True
+    except Exception as e:
+        print(f"[KILL_SWITCH] Error setting {canal}={enabled}: {e}")
+        return False
+
+
+@app.route("/comunicaciones/kill-switch", methods=["GET"])
+def comm_kill_switch_get():
+    """Devuelve el estado actual del kill switch (cualquier usuario logueado puede leer)."""
+    if not g.get("user"):
+        return jsonify({"error": "Sin sesión"}), 401
+    return jsonify({
+        "email":    comm_is_enabled("email"),
+        "whatsapp": comm_is_enabled("whatsapp"),
+    })
+
+
+@app.route("/comunicaciones/kill-switch", methods=["POST"])
+def comm_kill_switch_set():
+    """Cambia el estado del kill switch (solo superadmin).
+    Body JSON: {"email": bool, "whatsapp": bool} — campos opcionales."""
+    if not (g.get("user") and g.permissions.get("superadmin")):
+        return jsonify({"error": "Solo superadmin"}), 403
+    d = request.get_json(silent=True) or {}
+    user = current_username() or "sistema"
+    cambios = {}
+    if "email" in d:
+        ok = comm_set_enabled("email", bool(d["email"]), user)
+        cambios["email"] = {"requested": bool(d["email"]), "ok": ok}
+    if "whatsapp" in d:
+        ok = comm_set_enabled("whatsapp", bool(d["whatsapp"]), user)
+        cambios["whatsapp"] = {"requested": bool(d["whatsapp"]), "ok": ok}
+    return jsonify({
+        "ok": True,
+        "cambios": cambios,
+        "estado_actual": {
+            "email":    comm_is_enabled("email"),
+            "whatsapp": comm_is_enabled("whatsapp"),
+        }
+    })
+
+
 def _send_ilus_email(to_addr: str, subject: str, html_body: str, *, evento: str = None, **kwargs) -> bool:
     """
     Envía un correo HTML usando la configuración SMTP dinámica.
     Prioridad: Resend API (Railway) → SMTP con env vars → SMTP BD → SMTP config.py
     Loguea automáticamente el resultado en email_log.
+
+    KILL SWITCH: si el switch global de email está OFF, devuelve False
+    sin intentar enviar. Log queda con razon='kill_switch_off'.
     """
+    # KILL SWITCH check
+    if not comm_is_enabled("email"):
+        try:
+            _email_log(to_addr, subject, evento, 'bloqueado',
+                       error_msg='Email deshabilitado por superadmin (kill switch ON)')
+        except Exception: pass
+        print(f"[EMAIL][KILL_SWITCH] Bloqueado a {to_addr}: kill switch OFF")
+        return False
+
     # _send_ilus_email_inner hace el envío real; lo wrappeamos
     sent = False
     err  = None
@@ -4537,8 +4679,7 @@ def user_password_link(user_id):
 # ══════════════════════════════════════════════════════════════════════
 #  IMÁGENES DEL LOGIN — carrusel hasta 5 fotos
 # ══════════════════════════════════════════════════════════════════════
-LOGIN_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "static", "uploads", "login")
+LOGIN_IMAGES_DIR = os.path.join(UPLOADS_BASE, "login")
 os.makedirs(LOGIN_IMAGES_DIR, exist_ok=True)
 
 
@@ -4678,10 +4819,7 @@ def admin_login_imagen_update(iid):
 # Mismo patrón que login_images: subir, actualizar, eliminar.
 # ═════════════════════════════════════════════════════════════════════
 
-RETIROS_IMAGES_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "static", "uploads", "retiros"
-)
+RETIROS_IMAGES_DIR = os.path.join(UPLOADS_BASE, "retiros")
 os.makedirs(RETIROS_IMAGES_DIR, exist_ok=True)
 
 
@@ -15333,7 +15471,7 @@ def mant_sucursal_del(sid):
 
 # ── CONTRATOS ─────────────────────────────────────────────────────────
 
-MANT_UPLOADS = os.path.join(BASE_DIR, "static", "uploads", "mantenciones")
+MANT_UPLOADS = os.path.join(UPLOADS_BASE, "mantenciones")
 os.makedirs(MANT_UPLOADS, exist_ok=True)
 
 ALLOWED_CONTRATO = {"pdf", "doc", "docx"}
@@ -15467,6 +15605,90 @@ def mant_contrato_subir(cid):
         conn.close()
 
 
+@app.route("/mantenciones/api/contratos/<int:ctid>/check-archivo")
+@_mant_required
+def mant_contrato_check_archivo(ctid):
+    """Verifica si el archivo físico existe. Devuelve {existe, archivo_nombre, path}."""
+    ct = mysql_fetchone(
+        "SELECT archivo_path, archivo_nombre FROM mant_contratos WHERE id=%s", (ctid,)
+    )
+    if not ct:
+        return jsonify({"existe": False, "error": "Contrato no encontrado"}), 404
+    if not ct.get("archivo_path"):
+        return jsonify({"existe": False, "razon": "no_subido"})
+    full = os.path.join(MANT_UPLOADS, ct["archivo_path"])
+    existe = os.path.exists(full)
+    return jsonify({
+        "existe":         existe,
+        "archivo_nombre": ct.get("archivo_nombre") or "",
+        "razon":          "ok" if existe else "borrado_filesystem_efimero",
+    })
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/re-subir", methods=["POST"])
+@_mant_required
+def mant_contrato_re_subir(ctid):
+    """Re-sube el archivo físico de un contrato existente.
+
+    Usado cuando el filesystem efímero de Railway borra el PDF tras un deploy.
+    Solo superadmin (operación delicada — reemplaza el archivo).
+    Conserva: nombre, fechas, montos, análisis IA. SOLO reemplaza el archivo.
+    """
+    if not g.permissions.get("superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": "Solo el superadministrador puede re-subir archivos de contrato.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+
+    ct = mysql_fetchone(
+        "SELECT id, cliente_id, archivo_path, archivo_nombre, nombre "
+        "  FROM mant_contratos WHERE id=%s", (ctid,)
+    )
+    if not ct:
+        return jsonify({"ok": False, "error": "Contrato no encontrado"}), 404
+
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Sin archivo adjunto"}), 400
+    ext = f.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_CONTRATO:
+        return jsonify({"ok": False, "error": f"Tipo '{ext}' no permitido. Usa: {', '.join(sorted(ALLOWED_CONTRATO))}"}), 400
+
+    # Borrar el archivo viejo si existe (cleanup)
+    if ct.get("archivo_path"):
+        try:
+            old_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        except Exception:
+            pass
+
+    # Guardar el nuevo
+    fname = secure_filename(f"{ct['cliente_id']}_{int(time.time())}_{f.filename}")
+    fpath = os.path.join(MANT_UPLOADS, fname)
+    f.save(fpath)
+
+    tipo_archivo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
+    try:
+        mysql_execute(
+            "UPDATE mant_contratos SET archivo_path=%s, archivo_nombre=%s, archivo_tipo=%s "
+            "WHERE id=%s",
+            (fname, f.filename, tipo_archivo, ctid)
+        )
+        try:
+            _mant_log("contrato", ctid, "archivo_resubido",
+                      f"Re-subido por {current_username()}: {f.filename}")
+        except Exception: pass
+        return jsonify({
+            "ok": True,
+            "mensaje": "Archivo re-subido correctamente.",
+            "archivo_nombre": f.filename,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500
+
+
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["PUT"])
 @_mant_required
 def mant_contrato_update(ctid):
@@ -15528,7 +15750,35 @@ def mant_contrato_archivo(ctid):
     # Verificar que el archivo existe en disco
     full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
     if not os.path.exists(full_path):
-        return f"Archivo no encontrado en disco: {ct['archivo_path']}", 404
+        # IMPORTANTE: Railway usa filesystem efímero por defecto. Si hubo un
+        # deploy desde la última subida, los archivos físicos se pierden
+        # (aunque la BD aún tenga el archivo_path). El usuario debe re-subir.
+        es_super = bool(g.permissions.get("superadmin"))
+        nombre_visible = ct.get("archivo_nombre") or ct["archivo_path"]
+        html = f"""
+        <!doctype html><html><head><meta charset='utf-8'>
+        <title>Archivo no disponible</title>
+        <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>
+        <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css'>
+        </head><body style='padding:40px;font-family:system-ui'>
+          <div class='alert alert-warning'>
+            <h5><i class='bi bi-exclamation-triangle-fill me-2'></i>El archivo físico no está disponible</h5>
+            <p class='mb-2'>El sistema tiene registrado el contrato pero el PDF físico ya no está en el servidor.
+            Esto sucede cuando Railway hace un deploy nuevo: los archivos subidos se borran
+            porque el sistema de archivos es <strong>efímero</strong>.</p>
+            <hr>
+            <div class='small text-muted mb-3'>
+              Archivo perdido: <code>{nombre_visible}</code><br>
+              ID del contrato: <strong>#{ctid}</strong>
+            </div>
+            {"<p class='mb-2'><strong>Acción recomendada:</strong> vuelve a la ficha del cliente y usa el botón <strong>'Re-subir archivo'</strong> en el contrato.</p>" if es_super else "<p class='mb-2'>Avisa al superadministrador para que vuelva a subir el contrato.</p>"}
+            <p class='small text-muted mb-0'>Solución permanente: configurar Cloudinary o Railway Volume para que los
+            archivos persistan entre deploys. Estamos trabajando en eso.</p>
+          </div>
+          <a href='javascript:window.close()' class='btn btn-secondary'>Cerrar</a>
+        </body></html>
+        """
+        return html, 404
 
     # Servir el archivo
     resp = make_response(send_from_directory(
@@ -17310,10 +17560,7 @@ def mant_visita_protocolo(vid, protocolo):
 # OT — FOTOS DE LA VISITA (galería con multi-upload)
 # ═════════════════════════════════════════════════════════════════════
 
-MANT_FOTOS_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "static", "uploads", "mantenciones"
-)
+MANT_FOTOS_DIR = os.path.join(UPLOADS_BASE, "mantenciones")
 os.makedirs(MANT_FOTOS_DIR, exist_ok=True)
 
 
@@ -18505,8 +18752,8 @@ def mant_documentos_por_rut(cid):
 #  REPORTES DE SERVICIO — INFORME POST SERVICIO
 # ══════════════════════════════════════════════════════════════════════
 
-MANT_REPORTES_UPLOADS = os.path.join(BASE_DIR, "static", "uploads", "mantenciones", "reportes")
-MANT_REPORTES_HTML    = os.path.join(BASE_DIR, "static", "uploads", "mantenciones", "reportes", "html")
+MANT_REPORTES_UPLOADS = os.path.join(UPLOADS_BASE, "mantenciones", "reportes")
+MANT_REPORTES_HTML    = os.path.join(UPLOADS_BASE, "mantenciones", "reportes", "html")
 os.makedirs(MANT_REPORTES_UPLOADS, exist_ok=True)
 os.makedirs(MANT_REPORTES_HTML, exist_ok=True)
 
