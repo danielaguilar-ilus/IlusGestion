@@ -1,0 +1,708 @@
+{% extends "base.html" %}
+{% block title %}OT {{ visita.numero_ot or visita.id }} — {{ visita.razon_social }} — ILUS{% endblock %}
+{% block content %}
+<style>
+/* ════════════════════════════════════════════════════════════
+   FICHA OT — diseño pro level SaaS
+════════════════════════════════════════════════════════════ */
+.ot-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:16px;padding:24px 28px;margin-bottom:20px;
+  position:relative;overflow:hidden;
+  box-shadow:0 6px 24px rgba(0,0,0,.18);
+}
+.ot-hero::before{
+  content:'';position:absolute;right:-40px;top:-40px;
+  width:240px;height:240px;border-radius:50%;
+  background:radial-gradient(circle,rgba(220,38,38,.18),transparent 70%);
+}
+.ot-hero-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:relative;z-index:1;}
+.ot-numero{
+  background:rgba(220,38,38,.18);color:#fca5a5;
+  padding:6px 14px;border-radius:50px;
+  font-size:.78rem;font-weight:800;letter-spacing:.05em;
+  border:1px solid rgba(220,38,38,.35);
+}
+.ot-estado-badge{
+  padding:6px 14px;border-radius:50px;font-size:.74rem;font-weight:800;
+  letter-spacing:.04em;text-transform:uppercase;
+}
+.ot-estado-programada{background:#fef3c7;color:#92400e;}
+.ot-estado-completada{background:#dcfce7;color:#166534;}
+.ot-estado-cancelada{background:#fee2e2;color:#991b1b;}
+.ot-estado-reagendada{background:#dbeafe;color:#1e40af;}
+
+.ot-title{font-size:1.55rem;font-weight:900;margin:6px 0 2px;letter-spacing:-.01em;}
+.ot-subtitle{font-size:.92rem;color:#cfd3da;font-weight:500;}
+
+.ot-meta-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:12px;margin-top:18px;position:relative;z-index:1;
+}
+.ot-meta-card{
+  background:rgba(255,255,255,.05);
+  border-left:3px solid var(--ilus-red);
+  border-radius:0 8px 8px 0;padding:8px 12px;
+}
+.ot-meta-lbl{font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px;}
+.ot-meta-val{color:#fff;font-weight:700;font-size:.92rem;}
+
+/* Stats progreso */
+.ot-progress-card{
+  background:#fff;border-radius:12px;padding:14px 18px;
+  margin-bottom:16px;border:1px solid #eaecf0;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+}
+.ot-progress-bar-wrap{flex:1;min-width:220px;}
+.ot-progress-bar{
+  background:#f3f4f6;height:10px;border-radius:50px;overflow:hidden;
+}
+.ot-progress-fill{
+  height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);
+  border-radius:50px;transition:width .5s;
+}
+.ot-progress-stat{
+  text-align:center;min-width:80px;
+}
+.ot-progress-stat .num{font-size:1.6rem;font-weight:900;color:#0f172a;line-height:1;}
+.ot-progress-stat .lbl{font-size:.62rem;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;}
+
+/* Tabs */
+.ot-tabs{
+  display:flex;border-bottom:2px solid #eaecf0;background:#fff;
+  border-radius:12px 12px 0 0;padding:0 8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);overflow-x:auto;
+}
+.ot-tab{
+  padding:14px 22px;border:none;background:none;
+  font-size:.86rem;font-weight:700;color:#6b7280;cursor:pointer;
+  border-bottom:3px solid transparent;margin-bottom:-2px;
+  transition:all .15s;display:inline-flex;align-items:center;gap:8px;
+  white-space:nowrap;
+}
+.ot-tab:hover{color:#374151;}
+.ot-tab.active{color:#cc0000;border-bottom-color:#cc0000;}
+.ot-tab .badge{
+  background:#dc2626;color:#fff;padding:1px 8px;border-radius:50px;
+  font-size:.66rem;font-weight:700;
+}
+
+.ot-pane{
+  display:none;background:#fff;border-radius:0 0 12px 12px;
+  padding:24px;border:1px solid #eaecf0;border-top:none;
+  min-height:300px;
+}
+.ot-pane.active{display:block;}
+
+/* ── Tareas (checklist) ── */
+.task-item{
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:14px 16px;margin-bottom:10px;
+  display:flex;align-items:flex-start;gap:14px;
+  transition:all .15s;
+}
+.task-item:hover{border-color:#cbd5e1;transform:translateX(2px);}
+.task-item.done{background:#f0fdf4;border-color:#86efac;}
+.task-item.done .task-title{text-decoration:line-through;color:#16a34a;}
+
+.task-check{
+  width:28px;height:28px;border-radius:50%;
+  border:2px solid #cbd5e1;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .2s;background:#fff;
+  font-size:1rem;color:transparent;
+}
+.task-check:hover{border-color:#16a34a;background:#f0fdf4;}
+.task-item.done .task-check{
+  background:#16a34a;border-color:#16a34a;color:#fff;
+}
+
+.task-body{flex:1;min-width:0;}
+.task-title{font-weight:700;color:#0f172a;font-size:.96rem;margin-bottom:2px;}
+.task-desc{font-size:.82rem;color:#6b7280;margin-bottom:4px;}
+.task-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:.7rem;color:#6b7280;}
+.task-meta .pill{background:#f3f4f6;padding:2px 8px;border-radius:50px;font-weight:600;}
+.task-meta .pill-tipo{background:#dbeafe;color:#1e40af;}
+.task-meta .pill-cant{background:#fef3c7;color:#92400e;}
+.task-meta .pill-maq{background:#e0e7ff;color:#3730a3;}
+.task-actions{display:flex;gap:4px;flex-shrink:0;}
+
+/* Form nueva tarea */
+.task-add-form{
+  background:#f9fafb;border:2px dashed #d1d5db;border-radius:10px;
+  padding:14px;margin-bottom:14px;
+}
+
+/* ── Fotos (galería) ── */
+.foto-dropzone{
+  border:2px dashed #d1d5db;border-radius:12px;
+  padding:28px 20px;text-align:center;
+  background:#fafafa;cursor:pointer;transition:all .18s;margin-bottom:18px;
+}
+.foto-dropzone:hover,.foto-dropzone.is-drag{
+  border-color:var(--ilus-red);background:#fff5f5;transform:scale(1.005);
+}
+.foto-dropzone i{font-size:2.4rem;color:#9ca3af;display:block;margin-bottom:6px;}
+.foto-dropzone.is-drag i{color:var(--ilus-red);}
+
+.foto-gallery{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:12px;
+}
+.foto-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:10px;
+  overflow:hidden;position:relative;
+  transition:transform .15s,box-shadow .15s;cursor:pointer;
+}
+.foto-card:hover{transform:translateY(-3px);box-shadow:0 8px 20px rgba(0,0,0,.10);}
+.foto-thumb{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#f3f4f6;}
+.foto-meta{padding:8px 10px;font-size:.72rem;color:#6b7280;}
+.foto-meta .tipo-badge{
+  display:inline-block;padding:1px 8px;border-radius:50px;
+  font-weight:700;font-size:.66rem;letter-spacing:.04em;
+}
+.tipo-antes{background:#dbeafe;color:#1e40af;}
+.tipo-durante{background:#fef3c7;color:#92400e;}
+.tipo-despues{background:#dcfce7;color:#166534;}
+.tipo-serie{background:#e0e7ff;color:#3730a3;}
+.tipo-falla{background:#fee2e2;color:#991b1b;}
+.tipo-reparacion{background:#fed7aa;color:#9a3412;}
+.tipo-general{background:#f3f4f6;color:#374151;}
+.tipo-levantamiento{background:#cffafe;color:#155e75;}
+
+.foto-delete-btn{
+  position:absolute;top:6px;right:6px;
+  background:rgba(220,38,38,.92);color:#fff;border:none;
+  width:28px;height:28px;border-radius:50%;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .15s;
+}
+.foto-card:hover .foto-delete-btn{opacity:1;}
+
+/* ── Técnicos ── */
+.tecnico-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:10px;
+  padding:12px 14px;display:flex;align-items:center;gap:12px;
+  margin-bottom:8px;
+}
+.tecnico-avatar{
+  width:42px;height:42px;border-radius:50%;background:#0a0a0a;
+  color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;
+  font-size:.95rem;
+}
+
+.empty-state{
+  text-align:center;padding:48px 20px;color:#9ca3af;
+}
+.empty-state i{font-size:3rem;opacity:.3;display:block;margin-bottom:10px;}
+
+/* Modal lightbox para foto fullscreen */
+.lightbox{
+  position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;
+  display:none;align-items:center;justify-content:center;
+}
+.lightbox.show{display:flex;}
+.lightbox img{max-width:92vw;max-height:92vh;border-radius:8px;}
+.lightbox-close{
+  position:absolute;top:20px;right:24px;color:#fff;background:none;border:none;
+  font-size:2rem;cursor:pointer;
+}
+</style>
+
+{# ════════ HERO ════════ #}
+<div class="ot-hero">
+  <div class="ot-hero-row">
+    <span class="ot-numero">
+      <i class="bi bi-clipboard2-check me-1"></i>
+      OT N° {{ visita.numero_ot or ('VS-' ~ '%05d'|format(visita.id)) }}
+    </span>
+    <span class="ot-estado-badge ot-estado-{{ visita.estado }}">
+      {{ visita.estado|title }}
+    </span>
+    {% if visita.tipo %}
+    <span class="ot-numero" style="background:rgba(255,255,255,.08);color:#cfd3da;border-color:rgba(255,255,255,.18)">
+      {{ visita.tipo|title }}
+    </span>
+    {% endif %}
+  </div>
+  <h2 class="ot-title">{{ visita.titulo or 'Orden de Trabajo' }}</h2>
+  <div class="ot-subtitle">
+    <i class="bi bi-building me-1"></i>{{ visita.razon_social }}
+  </div>
+
+  <div class="ot-meta-grid">
+    <div class="ot-meta-card">
+      <div class="ot-meta-lbl">📅 Fecha programada</div>
+      <div class="ot-meta-val">
+        {% if visita.fecha_programada.__class__.__name__ == 'date' or visita.fecha_programada.__class__.__name__ == 'datetime' %}
+          {{ visita.fecha_programada.strftime('%d/%m/%Y') }}
+        {% else %}{{ visita.fecha_programada }}{% endif %}
+      </div>
+    </div>
+    {% if visita.hora_inicio %}
+    <div class="ot-meta-card">
+      <div class="ot-meta-lbl">🕐 Horario</div>
+      <div class="ot-meta-val">{{ visita.hora_inicio|hm }}{% if visita.hora_fin %} – {{ visita.hora_fin|hm }}{% endif %}</div>
+    </div>
+    {% endif %}
+    {% if visita.tecnico_principal %}
+    <div class="ot-meta-card">
+      <div class="ot-meta-lbl">👷 Técnico principal</div>
+      <div class="ot-meta-val">{{ visita.tecnico_principal }}</div>
+    </div>
+    {% endif %}
+    {% if visita.cli_direccion %}
+    <div class="ot-meta-card">
+      <div class="ot-meta-lbl">📍 Ubicación</div>
+      <div class="ot-meta-val" style="font-size:.82rem">{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>
+    </div>
+    {% endif %}
+    {% if visita.cli_contacto %}
+    <div class="ot-meta-card">
+      <div class="ot-meta-lbl">📞 Contacto</div>
+      <div class="ot-meta-val" style="font-size:.82rem">{{ visita.cli_contacto }}{% if visita.cli_contacto_tel %} · {{ visita.cli_contacto_tel }}{% endif %}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════ PROGRESO ════════ #}
+<div class="ot-progress-card">
+  <div class="ot-progress-stat">
+    <div class="num" id="statTotal">{{ stats.total_tareas }}</div>
+    <div class="lbl">Tareas</div>
+  </div>
+  <div class="ot-progress-stat">
+    <div class="num" style="color:#16a34a" id="statDone">{{ stats.completas }}</div>
+    <div class="lbl">Completas</div>
+  </div>
+  <div class="ot-progress-stat">
+    <div class="num" style="color:#dc2626" id="statFotos">{{ stats.fotos }}</div>
+    <div class="lbl">Fotos</div>
+  </div>
+  <div class="ot-progress-bar-wrap">
+    <div class="d-flex justify-content-between mb-1" style="font-size:.78rem;color:#6b7280;font-weight:600">
+      <span>Progreso de ejecución</span>
+      <span id="progressPct">{% if stats.total_tareas %}{{ (stats.completas * 100 / stats.total_tareas)|round|int }}{% else %}0{% endif %}%</span>
+    </div>
+    <div class="ot-progress-bar">
+      <div class="ot-progress-fill" id="progressFill"
+           style="width:{% if stats.total_tareas %}{{ (stats.completas * 100 / stats.total_tareas)|round|int }}{% else %}0{% endif %}%"></div>
+    </div>
+  </div>
+</div>
+
+{# ════════ TABS ════════ #}
+<div class="ot-tabs">
+  <button class="ot-tab active" onclick="otTab('tareas',this)">
+    <i class="bi bi-check2-square"></i>Tareas
+    <span class="badge" id="badgeTareas">{{ stats.total_tareas }}</span>
+  </button>
+  <button class="ot-tab" onclick="otTab('fotos',this)">
+    <i class="bi bi-camera"></i>Fotos
+    <span class="badge" id="badgeFotos">{{ stats.fotos }}</span>
+  </button>
+  <button class="ot-tab" onclick="otTab('tecnicos',this)">
+    <i class="bi bi-people"></i>Técnicos
+    <span class="badge">{{ tecnicos|length }}</span>
+  </button>
+  <button class="ot-tab" onclick="otTab('info',this)">
+    <i class="bi bi-info-circle"></i>Información
+  </button>
+</div>
+
+{# ════════ PANE TAREAS ════════ #}
+<div class="ot-pane active" id="ot-tareas">
+  <div class="task-add-form">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold mb-1">Nueva tarea <span class="text-danger">*</span></label>
+        <input type="text" id="newTaskTitulo" class="form-control form-control-sm"
+               placeholder="Ej: Cambio de trotadora N°1">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold mb-1">Tipo</label>
+        <select id="newTaskTipo" class="form-select form-select-sm">
+          <option value="cambio">Cambio de equipo</option>
+          <option value="inspeccion">Inspección</option>
+          <option value="reparacion">Reparación</option>
+          <option value="limpieza">Limpieza</option>
+          <option value="levantamiento">Levantamiento fotográfico</option>
+          <option value="instalacion">Instalación</option>
+          <option value="garantia">Garantía</option>
+          <option value="otro">Otro</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold mb-1">Máquina (opcional)</label>
+        <select id="newTaskMaquina" class="form-select form-select-sm">
+          <option value="">— Sin máquina específica —</option>
+          {% for m in maquinas %}
+          <option value="{{ m.id }}">{{ m.nombre or 'Máquina #' ~ m.id }}{% if m.serie %} · {{ m.serie }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="form-label small fw-semibold mb-1">Cant.</label>
+        <input type="number" id="newTaskCant" class="form-control form-control-sm" value="1" min="1">
+      </div>
+      <div class="col-md-1">
+        <button class="btn btn-ilus btn-sm w-100" onclick="agregarTarea()" title="Agregar tarea">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="taskList">
+    <div class="empty-state" id="taskEmpty" style="display:none">
+      <i class="bi bi-clipboard"></i>
+      <div class="fw-bold" style="font-size:1rem;color:#374151">Aún no hay tareas asignadas a esta OT</div>
+      <div class="small">Agrega la primera tarea con el formulario de arriba.</div>
+    </div>
+  </div>
+</div>
+
+{# ════════ PANE FOTOS ════════ #}
+<div class="ot-pane" id="ot-fotos">
+  <div class="foto-dropzone" id="fotoDropzone" onclick="document.getElementById('fotoInput').click()">
+    <i class="bi bi-camera-fill"></i>
+    <div class="fw-bold" style="font-size:1rem;color:#374151">
+      📸 Arrastra fotos aquí o hacé clic para subir varias
+    </div>
+    <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
+      PNG · JPG · WEBP · máx 8 MB cada una · multi-upload
+    </div>
+    <input type="file" id="fotoInput" multiple accept="image/*"
+           style="display:none" onchange="subirFotos(this.files)">
+  </div>
+
+  <div class="row g-2 mb-3 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label small fw-semibold mb-1">Tipo de foto al subir</label>
+      <select id="fotoTipo" class="form-select form-select-sm">
+        <option value="general">General</option>
+        <option value="antes">Antes</option>
+        <option value="durante">Durante</option>
+        <option value="despues">Después</option>
+        <option value="serie">N° de serie</option>
+        <option value="falla">Falla</option>
+        <option value="reparacion">Reparación</option>
+        <option value="levantamiento">Levantamiento</option>
+      </select>
+    </div>
+    <div class="col-md-7">
+      <label class="form-label small fw-semibold mb-1">Descripción (opcional)</label>
+      <input type="text" id="fotoDesc" class="form-control form-control-sm" placeholder="Ej: Estado inicial trotadora N°1">
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-outline-secondary btn-sm w-100" onclick="cargarFotos()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+      </button>
+    </div>
+  </div>
+
+  <div id="fotoGallery" class="foto-gallery">
+    <div class="empty-state" id="fotoEmpty" style="display:none;grid-column:1/-1">
+      <i class="bi bi-camera"></i>
+      <div class="fw-bold" style="font-size:1rem;color:#374151">Aún no hay fotos subidas</div>
+      <div class="small">Arrastra una o varias imágenes al cuadro de arriba.</div>
+    </div>
+  </div>
+</div>
+
+{# ════════ PANE TÉCNICOS ════════ #}
+<div class="ot-pane" id="ot-tecnicos">
+  {% if visita.tecnico_principal %}
+  <h6 class="text-muted mb-3"><i class="bi bi-person-badge me-1"></i>Técnico principal</h6>
+  <div class="tecnico-card">
+    <div class="tecnico-avatar">{{ visita.tecnico_principal[0]|upper }}</div>
+    <div class="flex-grow-1">
+      <div class="fw-bold">{{ visita.tecnico_principal }}</div>
+      <div class="small text-muted">
+        {% if visita.tecnico_tel %}<i class="bi bi-telephone me-1"></i>{{ visita.tecnico_tel }}{% endif %}
+        {% if visita.tecnico_email %} · <i class="bi bi-envelope me-1"></i>{{ visita.tecnico_email }}{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if tecnicos %}
+  <h6 class="text-muted mb-3 mt-4"><i class="bi bi-people me-1"></i>Equipo asignado</h6>
+  {% for t in tecnicos %}
+  <div class="tecnico-card">
+    <div class="tecnico-avatar">{{ t.nombre[0]|upper }}</div>
+    <div class="flex-grow-1">
+      <div class="d-flex align-items-center gap-2">
+        <span class="fw-bold">{{ t.nombre }}</span>
+        {% if t.rol == 'lider' %}<span class="badge bg-danger" style="font-size:.62rem">LÍDER</span>{% endif %}
+        {% if t.nivel %}<span class="badge bg-secondary" style="font-size:.62rem">{{ t.nivel|upper }}</span>{% endif %}
+      </div>
+      <div class="small text-muted">
+        {% if t.especialidad %}{{ t.especialidad }}{% endif %}
+        {% if t.telefono %} · <i class="bi bi-telephone me-1"></i>{{ t.telefono }}{% endif %}
+      </div>
+    </div>
+    {% if t.horas %}
+    <div class="text-end">
+      <div class="small text-muted">Horas</div>
+      <div class="fw-bold">{{ t.horas }}h</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if not visita.tecnico_principal and not tecnicos %}
+  <div class="empty-state">
+    <i class="bi bi-people"></i>
+    <div class="fw-bold" style="font-size:1rem;color:#374151">Sin técnicos asignados</div>
+    <div class="small">Asigna técnicos desde la vista de cliente o el calendario.</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ════════ PANE INFO ════════ #}
+<div class="ot-pane" id="ot-info">
+  <div class="row g-3">
+    <div class="col-md-6">
+      <h6 class="text-muted mb-3"><i class="bi bi-info-circle me-1"></i>Datos de la OT</h6>
+      <div class="task-item" style="cursor:default">
+        <div class="task-body">
+          <div class="task-meta mb-1">
+            <span class="pill"><strong>N° OT:</strong> {{ visita.numero_ot or 'VS-' ~ '%05d'|format(visita.id) }}</span>
+            <span class="pill"><strong>Tipo:</strong> {{ visita.tipo|title }}</span>
+            <span class="pill"><strong>Estado:</strong> {{ visita.estado|title }}</span>
+            {% if visita.costo %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
+          </div>
+          {% if visita.descripcion %}<div class="mt-2"><strong>Descripción:</strong><br>{{ visita.descripcion }}</div>{% endif %}
+          {% if visita.observaciones %}<div class="mt-2"><strong>Observaciones:</strong><br>{{ visita.observaciones }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <h6 class="text-muted mb-3"><i class="bi bi-building me-1"></i>Datos del cliente</h6>
+      <div class="task-item" style="cursor:default">
+        <div class="task-body">
+          <div class="fw-bold mb-2">{{ visita.razon_social }}</div>
+          {% if visita.cli_direccion %}<div><i class="bi bi-geo-alt me-1"></i>{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>{% endif %}
+          {% if visita.cli_email %}<div class="mt-1"><i class="bi bi-envelope me-1"></i>{{ visita.cli_email }}</div>{% endif %}
+          {% if visita.cli_tel %}<div class="mt-1"><i class="bi bi-telephone me-1"></i>{{ visita.cli_tel }}</div>{% endif %}
+          <a href="{{ url_for('mant_cliente_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-3">
+            <i class="bi bi-arrow-right me-1"></i>Ver ficha completa del cliente
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Lightbox #}
+<div class="lightbox" id="lightbox" onclick="cerrarLightbox()">
+  <button class="lightbox-close" onclick="cerrarLightbox()"><i class="bi bi-x-lg"></i></button>
+  <img id="lightboxImg" src="" alt="">
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const VID = {{ visita.id }};
+const API_BASE = '/mantenciones/api/visitas/' + VID;
+
+// ── Tabs ──
+function otTab(tab, btn){
+  document.querySelectorAll('.ot-tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.ot-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('ot-' + tab).classList.add('active');
+  if (tab === 'fotos' && document.getElementById('fotoGallery').children.length <= 1) cargarFotos();
+}
+
+// ── TAREAS ──
+async function cargarTareas(){
+  try {
+    const r = await fetch(API_BASE + '/tareas');
+    const arr = await r.json();
+    const list = document.getElementById('taskList');
+    const empty = document.getElementById('taskEmpty');
+    list.innerHTML = '';
+    if (!arr.length){
+      list.appendChild(empty); empty.style.display = '';
+      document.getElementById('statTotal').textContent = '0';
+      document.getElementById('badgeTareas').textContent = '0';
+      actualizarProgreso(0, 0);
+      return;
+    }
+    let completas = 0;
+    arr.forEach(t => {
+      if (t.completada) completas++;
+      list.appendChild(renderTarea(t));
+    });
+    document.getElementById('statTotal').textContent = arr.length;
+    document.getElementById('statDone').textContent = completas;
+    document.getElementById('badgeTareas').textContent = arr.length;
+    actualizarProgreso(completas, arr.length);
+  } catch(e){ console.error(e); }
+}
+
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderTarea(t){
+  const div = document.createElement('div');
+  div.className = 'task-item' + (t.completada ? ' done' : '');
+  div.dataset.tid = t.id;
+  div.innerHTML = `
+    <div class="task-check" onclick="toggleTarea(${t.id})" title="${t.completada?'Marcar pendiente':'Marcar completada'}">
+      <i class="bi bi-check-lg"></i>
+    </div>
+    <div class="task-body">
+      <div class="task-title">${escHtml(t.titulo)}</div>
+      ${t.descripcion?`<div class="task-desc">${escHtml(t.descripcion)}</div>`:''}
+      <div class="task-meta">
+        <span class="pill pill-tipo">${escHtml(t.tipo||'otro')}</span>
+        ${t.cantidad>1?`<span class="pill pill-cant">×${t.cantidad}</span>`:''}
+        ${t.maquina_nombre?`<span class="pill pill-maq">🔧 ${escHtml(t.maquina_nombre)}${t.maquina_serie?' · '+escHtml(t.maquina_serie):''}</span>`:''}
+        ${t.completada_por?`<span class="pill">✓ ${escHtml(t.completada_por)}</span>`:''}
+      </div>
+      ${t.observaciones?`<div class="task-desc mt-2">📝 ${escHtml(t.observaciones)}</div>`:''}
+    </div>
+    <div class="task-actions">
+      <button class="btn btn-sm btn-outline-danger" onclick="eliminarTarea(${t.id})" title="Eliminar">
+        <i class="bi bi-trash"></i>
+      </button>
+    </div>
+  `;
+  return div;
+}
+
+async function agregarTarea(){
+  const titulo = document.getElementById('newTaskTitulo').value.trim();
+  if (!titulo){ alert('Ingresa el título de la tarea'); return; }
+  const body = {
+    titulo,
+    tipo: document.getElementById('newTaskTipo').value,
+    maquina_id: document.getElementById('newTaskMaquina').value || null,
+    cantidad: parseInt(document.getElementById('newTaskCant').value || '1'),
+  };
+  const r = await fetch(API_BASE + '/tareas/nueva', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.ok){
+    document.getElementById('newTaskTitulo').value = '';
+    document.getElementById('newTaskCant').value = '1';
+    cargarTareas();
+  } else {
+    alert(d.error || 'Error al agregar tarea');
+  }
+}
+
+async function toggleTarea(tid){
+  const r = await fetch(API_BASE + '/tareas/' + tid, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'toggle'})
+  });
+  const d = await r.json();
+  if (d.ok) cargarTareas();
+}
+
+async function eliminarTarea(tid){
+  if (!confirm('¿Eliminar esta tarea?')) return;
+  await fetch(API_BASE + '/tareas/' + tid, {method:'DELETE'});
+  cargarTareas();
+}
+
+function actualizarProgreso(done, total){
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+// ── FOTOS ──
+async function cargarFotos(){
+  try {
+    const r = await fetch(API_BASE + '/fotos');
+    const arr = await r.json();
+    const gallery = document.getElementById('fotoGallery');
+    const empty = document.getElementById('fotoEmpty');
+    gallery.innerHTML = '';
+    if (!arr.length){
+      gallery.appendChild(empty); empty.style.display = '';
+      document.getElementById('statFotos').textContent = '0';
+      document.getElementById('badgeFotos').textContent = '0';
+      return;
+    }
+    arr.forEach(f => gallery.appendChild(renderFoto(f)));
+    document.getElementById('statFotos').textContent = arr.length;
+    document.getElementById('badgeFotos').textContent = arr.length;
+  } catch(e){ console.error(e); }
+}
+
+function renderFoto(f){
+  const div = document.createElement('div');
+  div.className = 'foto-card';
+  const url = '/static/' + f.archivo_path;
+  div.innerHTML = `
+    <img class="foto-thumb" src="${url}" onclick="verFoto('${url}')" alt="${escHtml(f.descripcion||'')}">
+    <button class="foto-delete-btn" onclick="eliminarFoto(${f.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
+    <div class="foto-meta">
+      <span class="tipo-badge tipo-${f.tipo_foto}">${escHtml(f.tipo_foto)}</span>
+      ${f.descripcion?`<div class="mt-1">${escHtml(f.descripcion).slice(0,80)}</div>`:''}
+      ${f.tomada_por?`<div class="mt-1" style="opacity:.7">📷 ${escHtml(f.tomada_por)}</div>`:''}
+    </div>
+  `;
+  return div;
+}
+
+async function subirFotos(files){
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  for (let i = 0; i < files.length; i++) fd.append('fotos', files[i]);
+  fd.append('tipo_foto', document.getElementById('fotoTipo').value);
+  fd.append('descripcion', document.getElementById('fotoDesc').value);
+  const r = await fetch(API_BASE + '/fotos/subir', { method: 'POST', body: fd });
+  const d = await r.json();
+  if (d.ok){
+    document.getElementById('fotoInput').value = '';
+    if (d.errors && d.errors.length) alert(d.errors.join('\n'));
+    cargarFotos();
+  } else {
+    alert(d.error || 'Error al subir');
+  }
+}
+
+async function eliminarFoto(fid){
+  if (!confirm('¿Eliminar esta foto?')) return;
+  await fetch(API_BASE + '/fotos/' + fid, {method:'DELETE'});
+  cargarFotos();
+}
+
+function verFoto(url){
+  document.getElementById('lightboxImg').src = url;
+  document.getElementById('lightbox').classList.add('show');
+}
+function cerrarLightbox(){
+  document.getElementById('lightbox').classList.remove('show');
+}
+
+// Drop zone
+(function(){
+  const dz = document.getElementById('fotoDropzone');
+  ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('is-drag');
+  }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.remove('is-drag');
+  }));
+  dz.addEventListener('drop', e => {
+    if (e.dataTransfer && e.dataTransfer.files) subirFotos(e.dataTransfer.files);
+  });
+})();
+
+// Init
+cargarTareas();
+</script>
+{% endblock %}

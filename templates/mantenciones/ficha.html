@@ -4108,7 +4108,11 @@ function abrirEmailManual() {
             <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>
           </td>
           <td class="py-2 pe-2 text-nowrap">
-            <button class="btn btn-xs btn-outline-secondary" onclick='editarVisita({{ v|tojson }})' title="Editar">
+            <a href="{{ url_for('mant_ot_ficha', vid=v.id) }}"
+               class="btn btn-xs btn-ilus" title="Abrir OT — Tareas, Fotos, Técnicos">
+              <i class="bi bi-clipboard2-pulse"></i> Abrir OT
+            </a>
+            <button class="btn btn-xs btn-outline-secondary ms-1" onclick='editarVisita({{ v|tojson }})' title="Editar">
               <i class="bi bi-pencil"></i>
             </button>
             <button class="btn btn-xs btn-outline-danger ms-1" onclick="eliminarVisitaFromTabla({{ v.id }}, '{{ (v.titulo or v.tipo or 'visita')|replace("'", "\\'") }}')" title="Eliminar">

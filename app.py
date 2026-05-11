@@ -14697,6 +14697,80 @@ def mant_visita_del(vid):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# OT — PÁGINA FICHA (ficha completa con tabs)
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ot/<int:vid>")
+@_mant_required
+def mant_ot_ficha(vid):
+    """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora)."""
+    visita = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.direccion AS cli_direccion, "
+        "       c.comuna AS cli_comuna, c.email_empresa AS cli_email, "
+        "       c.tel_empresa AS cli_tel, c.contacto_nombre AS cli_contacto, "
+        "       c.contacto_telefono AS cli_contacto_tel, "
+        "       ct.nombre AS contrato_nombre, "
+        "       t.nombre AS tecnico_principal, t.telefono AS tecnico_tel, "
+        "       t.email AS tecnico_email, t.foto_url AS tecnico_foto "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN mant_contratos ct ON ct.id=v.contrato_id "
+        "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+        " WHERE v.id=%s",
+        (vid,)
+    )
+    if not visita:
+        flash("OT no encontrada.", "danger")
+        return redirect(url_for("mant_index"))
+
+    visita = dict(visita)
+
+    # Técnicos adicionales asignados (N:N)
+    tecnicos = mysql_fetchall(
+        "SELECT vt.rol, vt.horas, vt.costo, t.id, t.nombre, t.telefono, "
+        "       t.email, t.foto_url, t.especialidad, t.nivel "
+        "  FROM mant_visita_tecnicos vt "
+        "  JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+        " WHERE vt.visita_id=%s ORDER BY (vt.rol='lider') DESC, t.nombre",
+        (vid,)
+    ) or []
+    tecnicos = [dict(t) for t in tecnicos]
+
+    # Máquinas del cliente (para asignar a tareas)
+    maquinas = mysql_fetchall(
+        "SELECT id, nombre, serie, sku FROM mant_maquinas "
+        " WHERE cliente_id=%s ORDER BY nombre",
+        (visita["cliente_id"],)
+    ) or []
+    maquinas = [dict(m) for m in maquinas]
+
+    # Tareas con stats
+    tareas_stats = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        "       SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS completas "
+        "  FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    ) or {"total": 0, "completas": 0}
+
+    fotos_count = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s",
+        (vid,)
+    ) or {"n": 0}
+
+    return render_template(
+        "mantenciones/ot_ficha.html",
+        visita=visita,
+        tecnicos=tecnicos,
+        maquinas=maquinas,
+        stats={
+            "total_tareas":    tareas_stats.get("total", 0),
+            "completas":       tareas_stats.get("completas", 0) or 0,
+            "fotos":           fotos_count.get("n", 0),
+        },
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════
 # OT — TAREAS DENTRO DE UNA VISITA
 # Checklist que el técnico ejecuta paso a paso. Cada tarea puede estar
 # asociada a una máquina específica (mant_maquinas) para trazabilidad.
