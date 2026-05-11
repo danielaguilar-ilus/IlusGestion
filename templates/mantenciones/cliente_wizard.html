@@ -827,15 +827,27 @@
             <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
               <div>
                 <label class="form-label fw-semibold mb-1" style="font-size:.78rem">Tipo</label>
-                <select id="docTido" class="form-select form-select-sm" style="width:155px">
-                  <option value="FCV">FCV — Factura</option>
-                  <option value="BLV">BLV — Boleta</option>
-                  <option value="VD">VD — N. Venta Directa</option>
-                  <option value="WEB">WEB — N. Venta Web</option>
-                  <option value="NVI">NVI — N. Venta Interna</option>
-                  <option value="GDV">GDV — Guía despacho</option>
-                  <option value="GDI">GDI — Guía Desp. Interna</option>
-                  <option value="GTI">GTI — Guía Traspaso Int.</option>
+                <select id="docTido" class="form-select form-select-sm" style="width:175px">
+                  <optgroup label="Más comunes">
+                    <option value="FCV">FCV — Factura</option>
+                    <option value="BLV">BLV — Boleta</option>
+                    <option value="GDV">GDV — Guía despacho</option>
+                    <option value="GDP">GDP — Guía Despacho Prov. (préstamo)</option>
+                  </optgroup>
+                  <optgroup label="Notas de venta">
+                    <option value="VD">VD — N. Venta Directa</option>
+                    <option value="WEB">WEB — N. Venta Web</option>
+                    <option value="NVI">NVI — N. Venta Interna</option>
+                    <option value="NVV">NVV — N. Venta</option>
+                  </optgroup>
+                  <optgroup label="Otros">
+                    <option value="FCO">FCO — Factura otro</option>
+                    <option value="NCV">NCV — Nota Crédito</option>
+                    <option value="COV">COV — Cotización</option>
+                    <option value="GR">GR — Guía Retiro</option>
+                    <option value="GDI">GDI — Guía Desp. Interna</option>
+                    <option value="GTI">GTI — Guía Traspaso Int.</option>
+                  </optgroup>
                 </select>
               </div>
               <div style="flex:1;min-width:140px">

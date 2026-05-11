@@ -34,6 +34,39 @@ _ERP = erp_engine.init_engine(
     retries=2,
 )
 
+# ══════════════════════════════════════════════════════════════════════
+# TIPOS DE DOCUMENTO ERP (TIDO) — fuente única de verdad
+#
+# Cualquier endpoint que busque documentos en el ERP debe usar
+# ERP_TIDOS_DOCUMENTOS_CLIENTE para no excluir tipos accidentalmente.
+#
+# Tipos que ENTREGAN equipos al cliente (cualquiera puede traer máquinas
+# a la ficha de mantención):
+#   FCV  Factura Venta
+#   BLV  Boleta Venta
+#   GDV  Guía Despacho Venta
+#   GDP  Guía Despacho Provisorio  ← PRÉSTAMOS (importante)
+#   NVI  Nota Venta Instalación
+#   NVV  Nota Venta Venta
+#   VD   Venta Directa
+#   WEB  Venta Web
+#   FCO  Factura Compra/Otro
+#   NCV  Nota Crédito Venta
+#   GR   Guía Retiro (cliente devuelve)
+#   COV  Cotización Venta (no consume saldo, pero útil para ver propuestas)
+# ══════════════════════════════════════════════════════════════════════
+
+ERP_TIDOS_DOCUMENTOS_CLIENTE = (
+    "FCV", "BLV", "GDV", "GDP", "NVI", "NVV", "VD", "WEB", "FCO",
+    "NCV", "GR", "COV", "GDI", "GTI",
+)
+
+
+def _erp_tidos_filter_sql():
+    """SQL fragment 'IN (...)' con los TIDOs canónicos. Listo para concatenar."""
+    return "(" + ",".join(f"'{t}'" for t in ERP_TIDOS_DOCUMENTOS_CLIENTE) + ")"
+
+
 def _get_ai_key():
     """Resuelve la API key de Anthropic: env var > config.py"""
     return os.environ.get("ANTHROPIC_API_KEY") or _ANTHROPIC_KEY_CFG or ""
@@ -13096,7 +13129,7 @@ def _erp_buscar_clientes(q, limit=20):
                         OR TRIM(d.NRUC)   LIKE %s
                         OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
                     )
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV')
+                      AND d.TIDO IN {_erp_tidos_filter_sql()}
                     ORDER BY d.NRAZON
                     LIMIT {int(limit)}""",
                 (q_like, q_like, q_sin_like)
@@ -17217,7 +17250,7 @@ def mant_documento_erp():
     # GDP = Guía Despacho Provisional (despachos parciales). El ERP usa GDP para
     # documentos en estado "Parc" antes de facturación final. Incluido para
     # importar equipos desde guías de despacho provisorias.
-    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","GDP","VD","WEB","FCO"}
+    TIDOS_VALIDOS = set(ERP_TIDOS_DOCUMENTOS_CLIENTE)
     if tido not in TIDOS_VALIDOS:
         return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
 
@@ -17326,7 +17359,7 @@ def mant_documento_erp_saldos():
     if not tido or not nudo:
         return jsonify({"error": "Ingresa tipo y número de documento"}), 400
 
-    TIDOS_VALIDOS = {"FCV","BLV","NVI","NVV","GDV","GDP","VD","WEB","FCO"}
+    TIDOS_VALIDOS = set(ERP_TIDOS_DOCUMENTOS_CLIENTE)
     if tido not in TIDOS_VALIDOS:
         return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
 
@@ -17664,9 +17697,9 @@ def mant_buscar_erp():
                        OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
                        OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
                     )
-                      AND d.TIDO IN ('FCV','BLV','NVV','VD','WEB','FCO','NVI','GDV','GDP')
+                      AND d.TIDO IN {_erp_tidos_filter_sql()}
                     ORDER BY d.FEMIS DESC
-                    LIMIT 100""",
+                    LIMIT 200""",
                 (q_like, q_like_clean, q_like_clean, q_like_sindv)
             )
             rows = cur.fetchall()
@@ -17744,6 +17777,7 @@ def mant_documentos_por_rut(cid):
         with erp_conn.cursor() as cur:
             # IN con literales exactos → el ERP puede usar índice en NRUC.
             # Sin funciones sobre la columna = mucho más rápido.
+            # TIDO IN usa la constante centralizada (incluye GDP=préstamos)
             cur.execute(
                 f"""SELECT
                        TRIM(d.NRAZON) AS razon_social,
@@ -17755,10 +17789,10 @@ def mant_documentos_por_rut(cid):
                        TRIM(d.KOPRCT) AS sku,
                        d.CANTD        AS cantidad
                     FROM `{ERP_SALES}` d
-                    WHERE d.TIDO IN ('FCV','BLV','GDV','VD','WEB','NVI','NVV')
+                    WHERE d.TIDO IN {_erp_tidos_filter_sql()}
                       AND TRIM(d.NRUC) IN ({placeholders})
                     ORDER BY d.FEMIS DESC
-                    LIMIT 300""",
+                    LIMIT 500""",
                 params_rut
             )
             rows = cur.fetchall()
@@ -17786,11 +17820,21 @@ def mant_documentos_por_rut(cid):
                     "cantidad": int(float(r["cantidad"] or 1)),
                 })
 
+        # Conteo por tipo de documento — diagnóstico visual al usuario
+        conteo_por_tipo = {}
+        for doc in docs.values():
+            t = doc["tipo_doc"]
+            conteo_por_tipo[t] = conteo_por_tipo.get(t, 0) + 1
+
         return jsonify({
-            "ok":         True,
-            "rut":        rut,
-            "cliente":    cliente["razon_social"],
-            "documentos": list(docs.values())
+            "ok":            True,
+            "rut":           rut,
+            "cliente":       cliente["razon_social"],
+            "documentos":    list(docs.values()),
+            "total":         len(docs),
+            "conteo_por_tipo": conteo_por_tipo,
+            "tipos_buscados": list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
+            "filas_erp":     len(rows),
         })
     except Exception as e:
         erp_conn and erp_conn.close()
