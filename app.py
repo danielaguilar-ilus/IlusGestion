@@ -11857,6 +11857,12 @@ def init_mantenciones_tables():
                 "CREATE INDEX idx_v_numero_ot ON mant_visitas (numero_ot)",
                 # mant_sucursales: lookup principal por cliente
                 "CREATE INDEX idx_ms_cliente_principal ON mant_sucursales (cliente_id, es_principal)",
+                # ── MIGRACIÓN: ENUM entidad → VARCHAR para soportar valores nuevos
+                # sin tener que hacer ALTER cada vez (ej. 'global', 'tecnico', etc).
+                # Si la columna ya es VARCHAR no hace nada.
+                "ALTER TABLE mant_logs MODIFY COLUMN entidad VARCHAR(40) NOT NULL",
+                # Re-crear índice (si ALTER lo recreó implícitamente lo ignora)
+                "CREATE INDEX idx_entidad_v2 ON mant_logs (entidad, entidad_id)",
             ]:
                 try:
                     cur.execute(idx_sql)
@@ -13692,24 +13698,73 @@ def mant_cliente_delete(cid):
             counts[label] = (row or {}).get("n", 0)
     except Exception: pass
 
+    # Recolectar IDs hijos para limpiar sus logs (mant_logs no tiene FK)
+    ids_visitas    = [r["id"] for r in (mysql_fetchall(
+        "SELECT id FROM mant_visitas WHERE cliente_id=%s", (cid,)) or [])]
+    ids_maquinas   = [r["id"] for r in (mysql_fetchall(
+        "SELECT id FROM mant_maquinas WHERE cliente_id=%s", (cid,)) or [])]
+    ids_contratos  = [r["id"] for r in (mysql_fetchall(
+        "SELECT id FROM mant_contratos WHERE cliente_id=%s", (cid,)) or [])]
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            # Borrar dependencias que NO tienen ON DELETE CASCADE explícito
-            cur.execute("DELETE FROM mant_repuestos WHERE cliente_id=%s", (cid,))
-            cur.execute("DELETE FROM mant_reportes WHERE cliente_id=%s", (cid,))
-            cur.execute("DELETE FROM mant_notificaciones WHERE cliente_id=%s", (cid,))
-            cur.execute("DELETE FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s", (cid,))
-            # mant_maquinas, mant_contratos, mant_visitas tienen ON DELETE CASCADE
-            cur.execute("DELETE FROM mant_clientes WHERE id=%s", (cid,))
-            # AUDIT: registrar la eliminación con entidad='global' para que persista
-            cur.execute(
-                "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
-                "VALUES ('global', 0, 'cliente_eliminado', %s, %s)",
-                (f"#{cid} {cliente.get('razon_social') or ''} (RUT {cliente.get('rut') or '—'}) "
-                 f"— {counts}",
-                 current_username())
-            )
+            # Apagar FK checks por si quedan logs huérfanos o relaciones legacy
+            cur.execute("SET FOREIGN_KEY_CHECKS = 0")
+            try:
+                # Borrar dependencias que NO tienen ON DELETE CASCADE explícito
+                cur.execute("DELETE FROM mant_repuestos WHERE cliente_id=%s", (cid,))
+                cur.execute("DELETE FROM mant_reportes WHERE cliente_id=%s", (cid,))
+                cur.execute("DELETE FROM mant_notificaciones WHERE cliente_id=%s", (cid,))
+
+                # Limpiar logs huérfanos de los hijos antes del DELETE en cascada
+                cur.execute(
+                    "DELETE FROM mant_logs WHERE entidad='cliente' AND entidad_id=%s",
+                    (cid,)
+                )
+                if ids_visitas:
+                    placeholders = ",".join(["%s"] * len(ids_visitas))
+                    cur.execute(
+                        f"DELETE FROM mant_logs WHERE entidad='visita' AND entidad_id IN ({placeholders})",
+                        tuple(ids_visitas)
+                    )
+                if ids_maquinas:
+                    placeholders = ",".join(["%s"] * len(ids_maquinas))
+                    cur.execute(
+                        f"DELETE FROM mant_logs WHERE entidad='maquina' AND entidad_id IN ({placeholders})",
+                        tuple(ids_maquinas)
+                    )
+                    # mant_maquina_audit
+                    try:
+                        cur.execute(
+                            f"DELETE FROM mant_maquina_audit WHERE maquina_id IN ({placeholders})",
+                            tuple(ids_maquinas)
+                        )
+                    except Exception: pass
+                if ids_contratos:
+                    placeholders = ",".join(["%s"] * len(ids_contratos))
+                    cur.execute(
+                        f"DELETE FROM mant_logs WHERE entidad='contrato' AND entidad_id IN ({placeholders})",
+                        tuple(ids_contratos)
+                    )
+
+                # mant_maquinas, mant_contratos, mant_visitas tienen ON DELETE CASCADE
+                # → al borrar cliente, esos hijos se borran solos y a su vez
+                # arrastran sus visitas_tareas, visitas_fotos, etc. también CASCADE.
+                cur.execute("DELETE FROM mant_clientes WHERE id=%s", (cid,))
+
+                # AUDIT: registrar la eliminación. Usamos 'cliente' (valor válido
+                # del ENUM) con entidad_id=0 para indicar acción global sobre cliente.
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                    "VALUES ('cliente', 0, 'cliente_eliminado', %s, %s)",
+                    (f"#{cid} {cliente.get('razon_social') or ''} (RUT {cliente.get('rut') or '—'}) "
+                     f"— {counts}",
+                     current_username())
+                )
+            finally:
+                try: cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+                except Exception: pass
         conn.commit()
         print(f"[MANT][DEL] cliente#{cid} '{cliente.get('razon_social')}' eliminado por {current_username()} — {counts}")
         return jsonify({
@@ -13719,6 +13774,8 @@ def mant_cliente_delete(cid):
             "eliminado": counts,
         })
     except Exception as exc:
+        try: conn.rollback()
+        except Exception: pass
         return jsonify({"error": f"No se pudo eliminar: {exc}"}), 500
     finally:
         conn.close()
