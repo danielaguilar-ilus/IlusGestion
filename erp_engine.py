@@ -920,6 +920,7 @@ class ERPClient:
 
         raw_header: dict = {}
         raw_lines: list[dict] = []
+        raw_obs_table: dict = {}   # ★ NUEVO: MAEEDOOB (tabla de observaciones)
         last_err: Optional[Exception] = None
         matched_nudo: Optional[str] = None
 
@@ -930,11 +931,38 @@ class ERPClient:
                                  {"tido": erp_tido, "nudo": nv, "empresa": "01"})
                 data = body.get("data") or []
                 if data:
-                    raw_header = data[0].get("maeedo") or {}
-                    raw_lines = data[0].get("maeddo") or []
+                    item = data[0]
+                    raw_header = item.get("maeedo") or {}
+                    raw_lines  = item.get("maeddo") or []
+                    # ★★★ TABLA MAEEDOOB — observaciones del documento ★★★
+                    # Según el diccionario Random, OBDO vive en tabla separada
+                    # llamada MAEEDOOB (página 5 del diccionario). La API puede
+                    # devolverla en varias ubicaciones posibles del JSON:
+                    #   1. data[0].maeedoob  (sibling de maeedo/maeddo)
+                    #   2. data[0].maeedoob[0]  (a veces es array)
+                    #   3. data[0].maeedo.maeedoob  (anidado en header)
+                    # Intentamos todas.
+                    raw_obs_table = {}
+                    cand = (
+                        item.get("maeedoob")
+                        or item.get("MAEEDOOB")
+                        or raw_header.get("maeedoob")
+                        or raw_header.get("MAEEDOOB")
+                        or {}
+                    )
+                    if isinstance(cand, list) and cand:
+                        # Si es array, tomar el primer registro
+                        raw_obs_table = cand[0] if isinstance(cand[0], dict) else {}
+                    elif isinstance(cand, dict):
+                        raw_obs_table = cand
+
                     matched_nudo = nv
                     diag["match_nudo"] = nv
                     diag["fallback_chain"].append(f"render OK con nudo={nv}")
+                    if raw_obs_table:
+                        diag["fallback_chain"].append(
+                            f"maeedoob encontrada ({len(raw_obs_table)} campos)"
+                        )
                     break
             except Exception as e:
                 last_err = e
@@ -948,7 +976,32 @@ class ERPClient:
                           tido, nudo, len(diag["nudo_tried"]))
             return None
 
-        # ── Extraer datos del cliente desde el header ───────────────
+        # ── Extraer OBSERVACIÓN DEL DOCUMENTO desde MAEEDOOB ──────────
+        # ★★★ FUENTE PRIMARIA: tabla MAEEDOOB (página 5 del diccionario) ★★★
+        # Campo OBDO = "Observacion". También se concatenan TEXTO1..TEXTO15
+        # como información adicional si vienen llenos.
+        obs_table_main = fix_yen_to_n(self._pick(raw_obs_table, ("OBDO",)))
+        # Textos adicionales TEXTO1..TEXTO15
+        obs_extra_texts: list[str] = []
+        for n in range(1, 16):
+            txt = self._pick(raw_obs_table, (f"TEXTO{n}",))
+            if txt:
+                txt_clean = fix_yen_to_n(txt).strip()
+                if txt_clean and txt_clean not in obs_extra_texts:
+                    obs_extra_texts.append(txt_clean)
+        # Construir observación final desde MAEEDOOB
+        obs_from_maeedoob = ""
+        if obs_table_main:
+            obs_from_maeedoob = obs_table_main
+            if obs_extra_texts:
+                obs_from_maeedoob += " / " + " / ".join(obs_extra_texts[:3])
+        elif obs_extra_texts:
+            obs_from_maeedoob = " / ".join(obs_extra_texts[:5])
+
+        # DIENDESP (dirección de despacho) también vive en MAEEDOOB
+        dir_despacho_obs = fix_yen_to_n(self._pick(raw_obs_table, ("DIENDESP",)))
+
+        # ── Extraer datos del cliente desde el header (MAEEDO) ───────
         # IMPORTANTE: aplicar fix_yen_to_n a todos los textos legibles
         # porque el ERP guarda Ñ como ¥ (codificación CP437/CP850 antigua).
         endo = self._pick(raw_header, self.HDR_RUT_KEYS)
@@ -965,7 +1018,13 @@ class ERPClient:
         # Aplicar como fallback si el header no los trajo
         nombre_efectivo = header_nombre or line_data["nombre"]
         dir_efectivo = header_dir or line_data["direccion"]
-        obs_efectivo = header_obs or line_data["obs"]
+        # ★★★ OBSERVACIÓN — orden de prioridad:
+        # 1. MAEEDOOB.OBDO (+ TEXTO1..TEXTO15)  ← FUENTE OFICIAL del ERP
+        # 2. Campos viejos del header (compat con respuestas raras)
+        # 3. OBDO en líneas (extraído por _scan_lines)
+        obs_efectivo = obs_from_maeedoob or header_obs or line_data["obs"]
+        if obs_from_maeedoob:
+            diag["fallback_chain"].append(f"obs desde MAEEDOOB: {obs_from_maeedoob[:40]}")
 
         # ── Consultar /entidades para enriquecer datos ──────────────
         cliente_nombre = ""
@@ -1023,8 +1082,13 @@ class ERPClient:
         cliente_nombre = cliente_nombre or nombre_efectivo
         cliente_email = cliente_email or header_email
         cliente_telefono = cliente_telefono or normalize_phone_cl(header_fono)
+        # Dirección — prioridad:
+        # 1. DIENDESP en MAEEDOOB (dirección oficial de despacho del doc)
+        # 2. DIENDESP en header (compat)
+        # 3. Dirección efectiva de líneas o entidad
         cliente_dir_final = (
-            fix_yen_to_n(self._pick(raw_header, ("DIENDESP", "DIENDE")))   # despacho del doc
+            dir_despacho_obs                                                 # MAEEDOOB.DIENDESP
+            or fix_yen_to_n(self._pick(raw_header, ("DIENDESP", "DIENDE")))  # header
             or dir_efectivo
             or cliente_dir_base
         )
@@ -1084,7 +1148,7 @@ class ERPClient:
                     raw_line_sample[k] = sv[:200]
 
         diag["latency_ms"] = int((time.time() - t0) * 1000)
-        # Telemetría de qué se extrajo (para Railway logs)
+        # Telemetría de qué se extrajo (para Railway logs y /api/erp/peek)
         diag["extracted"] = {
             "cliente_nombre": bool(cliente_nombre),
             "email": bool(cliente_email),
@@ -1093,12 +1157,24 @@ class ERPClient:
             "comuna": bool(comuna_final),
             "observaciones": bool(cliente_obs),
             "obs_source": (
+                "maeedoob.OBDO" if obs_from_maeedoob and obs_table_main else
+                "maeedoob.TEXTOn" if obs_from_maeedoob else
                 "header" if header_obs else
                 "linea_obdo" if line_data.get("obs") else
                 "entidad_oben" if cliente_obs else
                 "ninguno"
             ),
+            "maeedoob_present": bool(raw_obs_table),
+            "maeedoob_obdo_value": obs_table_main[:120] if obs_table_main else "",
         }
+        # Snapshot de MAEEDOOB para diagnóstico
+        raw_obs_sample = {}
+        for k, v in (raw_obs_table or {}).items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if sv:
+                raw_obs_sample[k] = sv[:200]
 
         doc = {
             # Identificación
@@ -1129,6 +1205,7 @@ class ERPClient:
             "all_fields":       list(raw_header.keys()),
             "raw_sample":       raw_sample,
             "raw_linea_sample": raw_line_sample,
+            "raw_obs_sample":   raw_obs_sample,   # ★ NUEVO: campos de MAEEDOOB
             "n_lineas":         len(raw_lines),
             "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
             "diagnostics":      diag,

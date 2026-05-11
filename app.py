@@ -5768,6 +5768,8 @@ def erp_engine_peek():
         "primeras_3_lineas": first_3,
         "header_keys_disponibles": sorted((doc.get("raw_sample") or {}).keys()),
         "primera_linea_keys_disponibles": sorted((doc.get("raw_linea_sample") or {}).keys()),
+        # ★ NUEVO: contenido de MAEEDOOB (tabla de observaciones del doc)
+        "maeedoob_campos": doc.get("raw_obs_sample", {}),
         "totales": {
             "neto":  doc.get("valor_neto"),
             "iva":   doc.get("valor_iva"),
