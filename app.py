@@ -13868,68 +13868,75 @@ def mant_ficha(cid):
             r['created_at'] = _d(r['created_at'])
         return r
 
-    maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,))
-
-    # PERF: SELECT explícito de columnas de contratos — evitamos TEXT pesado
-    # (archivo_path puede ser grande, ai_cobertura/ai_clausulas pueden ser miles
-    # de chars; solo traemos lo que la ficha realmente muestra).
+    maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)) or []
+    # SELECT * para máxima compatibilidad con el template (revertido del SELECT
+    # explícito que causó error al perder alguna columna como monto_anual,
+    # clausulas_custom, variables_extra, ai_editable, etc.)
     contratos_raw = mysql_fetchall(
-        "SELECT id, cliente_id, nombre, archivo_nombre, archivo_path, archivo_tipo, "
-        "       fecha_inicio, fecha_vencimiento, es_indefinido, "
-        "       monto_mensual, frecuencia_meses, "
-        "       ai_analizado, ai_fecha, ai_resumen, ai_tipo_contrato, "
-        "       ai_score, nivel_riesgo, sla_horas, "
-        "       ai_alertas, ai_puntos_criticos, ai_clausulas, ai_mejoras, "
-        "       ai_cobertura, ai_frecuencia_sug, ai_usuario, "
-        "       ai_vigencia_inicio, ai_vigencia_fin, "
-        "       incluye_mant_gratis, incluye_repuestos, "
-        "       costo_mensual, costo_por_mant, costo_total, "
-        "       estado, created_at, updated_at, notas "
-        "  FROM mant_contratos "
-        " WHERE cliente_id=%s ORDER BY created_at DESC",
+        "SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC",
         (cid,)
-    )
-
-    # PERF: LIMIT 200 en visitas (template usa [:50] y stats necesitan 12 meses)
+    ) or []
+    # PERF: LIMIT 200 en visitas (stats 12m + tab visitas no requieren más)
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
         (cid,)
-    )
-    # PERF: recolectar IDs hijos primero (3 queries baratas con índice idx_cliente)
-    # y usarlos en una sola query de logs sin subqueries correlacionadas.
-    ids_contratos = [int(r["id"]) for r in (mysql_fetchall(
-        "SELECT id FROM mant_contratos WHERE cliente_id=%s", (cid,)) or [])]
-    ids_maquinas  = [int(r["id"]) for r in (maquinas_raw or [])]
-    ids_visitas   = [int(r["id"]) for r in (visitas_raw or [])]
-    ids_reportes  = [int(r["id"]) for r in (mysql_fetchall(
-        "SELECT id FROM mant_reportes WHERE cliente_id=%s", (cid,)) or [])]
+    ) or []
 
-    # PERF: LIMIT 50 (antes 250). Si el usuario quiere más logs, vendrá un
-    # endpoint paginado /api/clientes/<cid>/logs?offset=N (TODO siguiente push).
-    _log_clauses = ["(entidad='cliente' AND entidad_id=%s)"]
-    _log_params  = [cid]
-    if ids_contratos:
-        _log_clauses.append(
-            f"(entidad='contrato' AND entidad_id IN ({','.join(['%s']*len(ids_contratos))}))")
-        _log_params.extend(ids_contratos)
-    if ids_maquinas:
-        _log_clauses.append(
-            f"(entidad='maquina' AND entidad_id IN ({','.join(['%s']*len(ids_maquinas))}))")
-        _log_params.extend(ids_maquinas)
-    if ids_visitas:
-        _log_clauses.append(
-            f"(entidad='visita' AND entidad_id IN ({','.join(['%s']*len(ids_visitas))}))")
-        _log_params.extend(ids_visitas)
-    if ids_reportes:
-        _log_clauses.append(
-            f"(entidad='reporte' AND entidad_id IN ({','.join(['%s']*len(ids_reportes))}))")
-        _log_params.extend(ids_reportes)
-    logs = mysql_fetchall(
-        f"""SELECT * FROM mant_logs
-            WHERE {' OR '.join(_log_clauses)}
-            ORDER BY created_at DESC LIMIT 50""",
-        tuple(_log_params)
-    )
+    # PERF: logs sin subqueries correlacionadas. Recolectamos IDs primero.
+    # Envuelto en try/except por defensivo: si algo falla, fallback a query original.
+    logs = []
+    try:
+        ids_contratos = [int(r["id"]) for r in contratos_raw]
+        ids_maquinas  = [int(r["id"]) for r in maquinas_raw]
+        ids_visitas   = [int(r["id"]) for r in visitas_raw]
+        try:
+            _rep_rows = mysql_fetchall(
+                "SELECT id FROM mant_reportes WHERE cliente_id=%s", (cid,)
+            ) or []
+        except Exception:
+            _rep_rows = []
+        ids_reportes  = [int(r["id"]) for r in _rep_rows]
+
+        _log_clauses = ["(entidad='cliente' AND entidad_id=%s)"]
+        _log_params  = [cid]
+        if ids_contratos:
+            _log_clauses.append(
+                f"(entidad='contrato' AND entidad_id IN ({','.join(['%s']*len(ids_contratos))}))")
+            _log_params.extend(ids_contratos)
+        if ids_maquinas:
+            _log_clauses.append(
+                f"(entidad='maquina' AND entidad_id IN ({','.join(['%s']*len(ids_maquinas))}))")
+            _log_params.extend(ids_maquinas)
+        if ids_visitas:
+            _log_clauses.append(
+                f"(entidad='visita' AND entidad_id IN ({','.join(['%s']*len(ids_visitas))}))")
+            _log_params.extend(ids_visitas)
+        if ids_reportes:
+            _log_clauses.append(
+                f"(entidad='reporte' AND entidad_id IN ({','.join(['%s']*len(ids_reportes))}))")
+            _log_params.extend(ids_reportes)
+        logs = mysql_fetchall(
+            f"""SELECT * FROM mant_logs
+                WHERE {' OR '.join(_log_clauses)}
+                ORDER BY created_at DESC LIMIT 50""",
+            tuple(_log_params)
+        ) or []
+    except Exception as _e:
+        # Fallback: query original con subqueries (más lenta pero garantizada)
+        try:
+            logs = mysql_fetchall(
+                """SELECT * FROM mant_logs
+                   WHERE (entidad='cliente' AND entidad_id=%s)
+                      OR (entidad='contrato' AND entidad_id IN (SELECT id FROM mant_contratos WHERE cliente_id=%s))
+                      OR (entidad='maquina'  AND entidad_id IN (SELECT id FROM mant_maquinas  WHERE cliente_id=%s))
+                      OR (entidad='visita'   AND entidad_id IN (SELECT id FROM mant_visitas   WHERE cliente_id=%s))
+                   ORDER BY created_at DESC LIMIT 50""",
+                (cid, cid, cid, cid)
+            ) or []
+            print(f"[MANT][ficha] fallback logs query usado: {_e}")
+        except Exception as _e2:
+            print(f"[MANT][ficha] error CRÍTICO en logs: {_e2}")
+            logs = []
 
     # Normalizar todas las fechas a datetime.date
     maquinas     = [_norm_maquina(r)  for r in maquinas_raw]
