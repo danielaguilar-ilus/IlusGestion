@@ -11869,6 +11869,93 @@ def init_mantenciones_tables():
                 except Exception:
                     pass  # índice ya existe
 
+            # ══════════════════════════════════════════════════════════════
+            # MIGRACIÓN CRÍTICA: forzar FK ON DELETE CASCADE en hijas de
+            # mant_clientes. Si la BD original tenía las FKs sin CASCADE
+            # (o sin FK), al borrar cliente quedaban huérfanos.
+            #
+            # Estrategia: detectar el constraint actual y reemplazarlo.
+            # Es idempotente: si ya está bien, no hace nada.
+            # ══════════════════════════════════════════════════════════════
+            fk_targets = [
+                # (tabla, nombre_fk_hint, columna_fk, parent_table, parent_col)
+                ("mant_contratos",     "cliente_id", "mant_clientes",  "id"),
+                ("mant_visitas",       "cliente_id", "mant_clientes",  "id"),
+                ("mant_maquinas",      "cliente_id", "mant_clientes",  "id"),
+                ("mant_sucursales",    "cliente_id", "mant_clientes",  "id"),
+                ("mant_reportes",      "cliente_id", "mant_clientes",  "id"),
+                ("mant_repuestos",     "cliente_id", "mant_clientes",  "id"),
+                ("mant_notificaciones","cliente_id", "mant_clientes",  "id"),
+                # Hijas de visitas
+                ("mant_visita_tareas",    "visita_id", "mant_visitas", "id"),
+                ("mant_visita_fotos",     "visita_id", "mant_visitas", "id"),
+                ("mant_visita_tecnicos",  "visita_id", "mant_visitas", "id"),
+                ("mant_visita_repuestos", "visita_id", "mant_visitas", "id"),
+                # Hijas de máquinas
+                ("mant_maquina_fotos", "maquina_id", "mant_maquinas", "id"),
+                # Hijas de contratos
+                ("mant_adjuntos",      "contrato_id", "mant_contratos", "id"),
+            ]
+            for child_tbl, col, parent_tbl, parent_col in fk_targets:
+                try:
+                    # 1) ¿La tabla existe?
+                    r = mysql_fetchone(
+                        "SELECT COUNT(*) AS n FROM information_schema.tables "
+                        "WHERE table_schema=DATABASE() AND table_name=%s",
+                        (child_tbl,)
+                    )
+                    if not r or not r.get("n"):
+                        continue
+
+                    # 2) Detectar FK actual sobre esa columna
+                    fk_row = mysql_fetchone(
+                        "SELECT k.CONSTRAINT_NAME, rc.DELETE_RULE "
+                        "  FROM information_schema.KEY_COLUMN_USAGE k "
+                        "  LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
+                        "    ON rc.CONSTRAINT_NAME=k.CONSTRAINT_NAME "
+                        "   AND rc.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA "
+                        " WHERE k.TABLE_SCHEMA=DATABASE() "
+                        "   AND k.TABLE_NAME=%s AND k.COLUMN_NAME=%s "
+                        "   AND k.REFERENCED_TABLE_NAME=%s "
+                        " LIMIT 1",
+                        (child_tbl, col, parent_tbl)
+                    )
+
+                    # 3) Si ya es CASCADE → skip
+                    if fk_row and fk_row.get("DELETE_RULE") == "CASCADE":
+                        continue
+
+                    # 4) Si existe pero NO es CASCADE → dropear
+                    if fk_row and fk_row.get("CONSTRAINT_NAME"):
+                        try:
+                            cur.execute(
+                                f"ALTER TABLE {child_tbl} DROP FOREIGN KEY {fk_row['CONSTRAINT_NAME']}"
+                            )
+                        except Exception:
+                            pass
+
+                    # 5) Limpiar huérfanos antes de re-crear FK (no falla el ADD)
+                    try:
+                        cur.execute(
+                            f"DELETE FROM {child_tbl} "
+                            f"WHERE {col} IS NULL OR {col} NOT IN "
+                            f"(SELECT {parent_col} FROM {parent_tbl})"
+                        )
+                    except Exception: pass
+
+                    # 6) Crear FK con CASCADE
+                    try:
+                        cur.execute(
+                            f"ALTER TABLE {child_tbl} "
+                            f"ADD CONSTRAINT fk_{child_tbl}_{col} "
+                            f"FOREIGN KEY ({col}) REFERENCES {parent_tbl}({parent_col}) "
+                            f"ON DELETE CASCADE ON UPDATE CASCADE"
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    pass  # tabla no existe o info_schema bloqueado
+
             # ── Tabla: Reportes de servicio (Informe Post Servicio) ─────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_reportes (
@@ -13820,13 +13907,19 @@ def mant_cliente_update(cid):
 def mant_cliente_delete(cid):
     """Elimina un cliente y TODOS sus datos asociados.
 
-    Doble protección:
-      1. Solo admin/superadmin puede ejecutar (verificado por permisos).
+    Triple protección:
+      1. Solo SUPERADMIN puede ejecutar (NO admin general).
       2. Requiere confirm_text en el body que coincida con razón social o RUT.
+      3. Auto-cleanup de huérfanos al final (defensa contra FK legacy).
     """
-    # Verificación de rol
-    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
-        return jsonify({"error":"Solo administradores pueden eliminar clientes"}), 403
+    # ★ Restricción estricta: SOLO superadmin puede borrar clientes.
+    # Borrar arrastra contratos, visitas, máquinas y fotos en cascada — es
+    # una operación delicada que debe quedar reservada al dueño del sistema.
+    if not g.permissions.get("superadmin"):
+        return jsonify({
+            "error": "Solo el superadministrador puede eliminar clientes. "
+                     "Esta acción borra contratos, visitas, máquinas y fotos en cascada."
+        }), 403
 
     cliente = mysql_fetchone(
         "SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (cid,)
@@ -14981,6 +15074,450 @@ def mant_contrato_archivo(ctid):
                                download_name=ct["archivo_nombre"] if as_dl else None)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# CLAUDE AI — HELPER UNIFICADO + ENDPOINTS DE MANTENCIONES
+#
+# Centraliza la llamada a Claude para que todo el módulo use el mismo
+# modelo, manejo de errores y logging.
+#
+# Modelo: usamos un alias estable que funciona bien para JSON estructurado
+#          y razonamiento técnico (analisis de equipos, contratos, etc.)
+# ══════════════════════════════════════════════════════════════════════
+
+# Modelo principal de Claude para mantenciones. Si cambia el modelo, sólo
+# se edita aquí. Fallbacks si el principal falla.
+_CLAUDE_MODELS_FALLBACK = [
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-3-5-sonnet-20241022",
+]
+
+
+def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
+                 expect_json=True, model=None, temperature=0.2):
+    """Llama a Claude API. Retorna (data, error) — data es dict si expect_json.
+
+    - Maneja la limpieza de bloques ```json ... ```
+    - Reintenta con modelos fallback si el principal no existe
+    - Logs detallados para diagnóstico
+    """
+    ai_key = _get_ai_key()
+    if not ai_key:
+        return None, "ANTHROPIC_API_KEY no configurada. Agregala en Railway → Variables."
+
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        return None, "Librería anthropic no instalada. Agregar al requirements.txt"
+
+    models_to_try = [model] if model else _CLAUDE_MODELS_FALLBACK
+    last_err = None
+    client = _anthropic.Anthropic(api_key=ai_key)
+
+    for m in models_to_try:
+        try:
+            msg = client.messages.create(
+                model=m,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=prompt_sistema,
+                messages=[{"role": "user", "content": prompt_usuario}]
+            )
+            raw = msg.content[0].text.strip()
+            if not expect_json:
+                return raw, None
+            # Limpiar bloque ```json ... ```
+            if raw.startswith("```"):
+                raw = raw.split("```")[1] if "```" in raw[3:] else raw
+                if raw.lower().startswith("json"):
+                    raw = raw[4:].lstrip()
+                raw = raw.split("```")[0].strip()
+            try:
+                return json.loads(raw), None
+            except json.JSONDecodeError:
+                # Intentar extraer JSON aunque haya texto adicional
+                idx_start = raw.find("{")
+                idx_end   = raw.rfind("}")
+                if idx_start >= 0 and idx_end > idx_start:
+                    try:
+                        return json.loads(raw[idx_start:idx_end+1]), None
+                    except Exception:
+                        pass
+                last_err = f"Respuesta no parseable como JSON: {raw[:200]}"
+        except Exception as e:
+            err_str = str(e)
+            last_err = err_str
+            # Si es error de modelo, intentar el siguiente
+            if "model" in err_str.lower() or "not_found" in err_str.lower():
+                continue
+            # Otros errores (auth, rate limit, etc.) → cortar acá
+            return None, f"Error Claude API: {err_str}"
+
+    return None, last_err or "Todos los modelos fallaron"
+
+
+@app.route("/mantenciones/api/ai/health", methods=["GET"])
+@_mant_required
+def mant_ai_health():
+    """Diagnóstico: verifica si la IA está configurada y responde correctamente.
+    Útil para que el técnico/admin vea por qué la IA no funciona."""
+    status = {
+        "key_configurada": bool(_get_ai_key()),
+        "anthropic_lib": False,
+        "modelo_funciona": False,
+        "modelo_usado": None,
+        "error": None,
+    }
+    try:
+        import anthropic as _anthropic
+        status["anthropic_lib"] = True
+    except ImportError:
+        status["error"] = "Librería anthropic NO instalada. Agregar a requirements.txt"
+        return jsonify(status)
+
+    if not status["key_configurada"]:
+        status["error"] = "ANTHROPIC_API_KEY no configurada en Railway"
+        return jsonify(status)
+
+    # Test ping a Claude con prompt mínimo
+    data, err = _claude_call(
+        prompt_usuario="Devuelve EXACTAMENTE este JSON: {\"ok\":true,\"test\":\"ping\"}",
+        prompt_sistema="Eres un servicio de health check. Responde SOLO el JSON pedido.",
+        max_tokens=50, expect_json=True
+    )
+    if err:
+        status["error"] = err
+    elif data and data.get("ok"):
+        status["modelo_funciona"] = True
+        # Inferir cuál modelo respondió (intentamos el principal primero)
+        status["modelo_usado"] = _CLAUDE_MODELS_FALLBACK[0]
+    else:
+        status["error"] = f"Respuesta inesperada: {data}"
+
+    return jsonify(status)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — COMPLETAR FICHA DE MÁQUINA
+#
+# Toma una máquina con datos parciales (SKU, nombre, serie) y usa Claude
+# para sugerir/completar: marca, modelo, especificaciones técnicas,
+# ubicación recomendada, tag de zona, vida útil estimada, riesgos típicos.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/ai-completar", methods=["POST"])
+@_mant_required
+def mant_maquina_ai_completar(mid):
+    """Usa Claude para completar la ficha técnica de una máquina."""
+    maq = mysql_fetchone(
+        "SELECT m.*, c.razon_social, c.comuna "
+        "  FROM mant_maquinas m "
+        "  LEFT JOIN mant_clientes c ON c.id=m.cliente_id "
+        " WHERE m.id=%s", (mid,)
+    )
+    if not maq:
+        return jsonify({"ok": False, "error": "Máquina no encontrada"}), 404
+
+    sistema = """Eres un ingeniero experto en equipos de fitness comercial (ILUS Fitness, Chile).
+Tu trabajo es identificar y completar la ficha técnica de una máquina basándote en datos parciales.
+Responde SIEMPRE en JSON con esta estructura EXACTA, sin texto adicional:
+{
+  "marca_estimada": "marca probable (ej: Life Fitness, Precor, Matrix, Technogym, BH, Sportek)",
+  "modelo_estimado": "modelo si se puede inferir del SKU",
+  "categoria": "cardio|fuerza|funcional|accesorio|libre",
+  "subcategoria": "treadmill|elliptical|bike_spinning|bike_recumbent|stairmaster|rower|smith|multipower|mancuernas|barra|cable_cruzado|otro",
+  "voltaje_recomendado": "220V|380V|N/A",
+  "potencia_kw_estimada": número_o_null,
+  "peso_kg_estimado": número_o_null,
+  "vida_util_anos": número_entero,
+  "puntos_inspeccion_pm": [
+    "ítem 1 de inspección preventiva mensual/anual",
+    "ítem 2",
+    "..."
+  ],
+  "riesgos_tipicos": ["riesgo 1", "riesgo 2"],
+  "repuestos_consumo_frecuente": ["repuesto 1", "repuesto 2"],
+  "frecuencia_pm_sugerida_meses": número_entero,
+  "ubicacion_recomendada": "ej: sala cardio, sala pesas, zona libre",
+  "confianza": 0-100,
+  "notas": "observaciones libres para el técnico"
+}
+Sé preciso. Si no se puede inferir un campo con razonable certeza, devuelve null o lista vacía.
+"""
+
+    usuario = f"""Completa la ficha técnica de esta máquina:
+
+SKU: {maq.get('sku') or '(no informado)'}
+Nombre/Descripción: {maq.get('nombre') or '(no informado)'}
+N° Serie: {maq.get('serie') or '(no informado)'}
+Tag 1 actual: {maq.get('tag_1') or '(no informado)'}
+Tag 2 actual: {maq.get('tag_2') or '(no informado)'}
+Cliente: {maq.get('razon_social') or '(no informado)'} ({maq.get('comuna') or 'comuna sin dato'})
+Cantidad: {maq.get('cantidad') or 1}
+
+Devuelve el JSON completo."""
+
+    data, err = _claude_call(usuario, sistema, max_tokens=1200, expect_json=True)
+    if err:
+        return jsonify({"ok": False, "error": err}), 503
+    if not data:
+        return jsonify({"ok": False, "error": "Sin respuesta"}), 503
+
+    # Aplicar sugerencias seguras a la máquina (sin pisar lo que el usuario ya editó)
+    updates = {}
+    if not maq.get("nombre") or maq.get("nombre") == "":
+        if data.get("marca_estimada") and data.get("modelo_estimado"):
+            updates["nombre"] = f"{data['marca_estimada']} {data['modelo_estimado']}"[:400]
+    if not maq.get("tag_1"):
+        if data.get("ubicacion_recomendada"):
+            updates["tag_1"] = data["ubicacion_recomendada"][:120]
+    if not maq.get("tag_2"):
+        if data.get("categoria"):
+            cat_sub = data.get("categoria")
+            if data.get("subcategoria"):
+                cat_sub += f" / {data['subcategoria']}"
+            updates["tag_2"] = cat_sub[:120]
+
+    if updates:
+        try:
+            sets = ", ".join(f"{k}=%s" for k in updates.keys())
+            vals = list(updates.values()) + [mid]
+            mysql_execute(f"UPDATE mant_maquinas SET {sets} WHERE id=%s", tuple(vals))
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": True,
+        "ai": data,
+        "aplicado": updates,
+        "mensaje": ("Sugerencias generadas. Aplicadas a campos vacíos."
+                    if updates else "Sugerencias generadas. La ficha ya estaba completa.")
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — ANÁLISIS ECONÓMICO Y OPERATIVO DEL CLIENTE
+#
+# Analiza el cliente con todos sus datos: contratos, visitas, máquinas,
+# notas. Devuelve: MRR estimado, salud financiera, oportunidades,
+# riesgos operativos, próximas acciones recomendadas.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ai-analisis", methods=["POST"])
+@_mant_required
+def mant_cliente_ai_analisis(cid):
+    """Análisis integral del cliente con Claude: economía + ops + recomendaciones."""
+    cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    cliente = dict(cliente)
+
+    # Recopilar contexto: contratos, visitas, máquinas
+    contratos = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, fecha_inicio, fecha_vencimiento, monto_mensual, estado, "
+        "       frecuencia_meses, ai_tipo_contrato "
+        "  FROM mant_contratos WHERE cliente_id=%s "
+        " ORDER BY created_at DESC", (cid,)) or [])]
+
+    visitas = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, tipo, estado, fecha_programada, fecha_realizada, costo "
+        "  FROM mant_visitas WHERE cliente_id=%s "
+        " ORDER BY fecha_programada DESC LIMIT 30", (cid,)) or [])]
+
+    maquinas = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, nombre, sku, serie, estado, estado_op, fecha_instalacion "
+        "  FROM mant_maquinas WHERE cliente_id=%s "
+        " ORDER BY nombre LIMIT 100", (cid,)) or [])]
+
+    # Resumen de números clave
+    n_visitas_done = sum(1 for v in visitas if (v.get("estado") or "") == "completada")
+    n_visitas_prog = sum(1 for v in visitas if (v.get("estado") or "") == "programada")
+    mrr_total = sum(float(c.get("monto_mensual") or 0)
+                    for c in contratos if (c.get("estado") or "") in ("vigente","indefinido"))
+    costo_promedio_visita = (
+        sum(float(v.get("costo") or 0) for v in visitas if v.get("estado")=="completada")
+        / max(n_visitas_done, 1)
+    )
+
+    sistema = """Eres un analista senior de cuentas para una empresa de servicio técnico
+de equipos fitness (ILUS Fitness, Chile). Tu trabajo es analizar la relación con un cliente
+y dar insights accionables al ejecutivo SSTT (Servicio Técnico).
+
+Considera:
+- MRR (Monthly Recurring Revenue) y tendencia
+- Frecuencia de visitas vs lo contratado
+- Estado del parque de equipos (vida útil, mantenimiento, riesgos)
+- Oportunidades de venta cruzada (repuestos, upgrade contrato, equipos nuevos)
+- Riesgos de churn / contrato por vencer / impago
+
+Responde SIEMPRE en JSON con esta estructura EXACTA:
+{
+  "salud_cuenta": "excelente|buena|regular|riesgo|critica",
+  "score_general": 0-100,
+  "mrr_estimado_clp": número,
+  "valor_anual_estimado_clp": número,
+  "rentabilidad_estimada": "alta|media|baja|negativa",
+  "fortalezas": ["fortaleza 1","fortaleza 2","..."],
+  "debilidades": ["debilidad 1","debilidad 2","..."],
+  "oportunidades_venta": [
+    {"titulo":"oportunidad 1","valor_estimado_clp":número,"plazo":"corto|medio|largo"}
+  ],
+  "riesgos_inmediatos": ["riesgo 1","riesgo 2"],
+  "proximas_acciones": [
+    {"accion":"qué hacer","prioridad":"alta|media|baja","plazo_dias":número}
+  ],
+  "frecuencia_visitas_recomendada_meses": número_entero,
+  "alerta_contrato": "sin contrato|contrato vencido|por vencer|vigente OK",
+  "resumen_ejecutivo": "2-3 oraciones para reporte gerencial"
+}
+Sé específico con cifras en CLP (pesos chilenos). No inventes datos del cliente — si
+faltan, dilo en los riesgos."""
+
+    usuario = f"""Analiza esta cuenta de ILUS Fitness:
+
+CLIENTE: {cliente.get('razon_social') or '(sin nombre)'}
+  RUT: {cliente.get('rut') or '(sin RUT)'}
+  Comuna: {cliente.get('comuna') or '(sin comuna)'}
+  Giro: {cliente.get('giro') or '(sin giro)'}
+  Estado: {cliente.get('estado')}
+  Notas: {cliente.get('notas') or '(sin notas)'}
+  Notas confidenciales: {cliente.get('notas_confidenciales') or '(no hay)'}
+
+CONTRATOS ({len(contratos)}):
+{json.dumps(contratos, ensure_ascii=False, default=str)[:1500]}
+
+VISITAS recientes ({len(visitas)} — {n_visitas_done} completadas, {n_visitas_prog} programadas):
+{json.dumps(visitas[:15], ensure_ascii=False, default=str)[:1500]}
+
+EQUIPOS ({len(maquinas)}):
+{json.dumps(maquinas[:20], ensure_ascii=False, default=str)[:1500]}
+
+NÚMEROS CALCULADOS:
+  MRR vigente: ${int(mrr_total):,}
+  Visitas completadas: {n_visitas_done}
+  Costo promedio por visita: ${int(costo_promedio_visita):,}
+
+Devuelve SOLO el JSON solicitado."""
+
+    data, err = _claude_call(usuario, sistema, max_tokens=2000, expect_json=True)
+    if err:
+        return jsonify({"ok": False, "error": err}), 503
+    if not data:
+        return jsonify({"ok": False, "error": "Sin respuesta de IA"}), 503
+
+    # Guardar resumen ejecutivo en notas_confidenciales (opcional)
+    try:
+        analisis_resumido = (
+            f"[Análisis IA · {datetime.now().strftime('%Y-%m-%d %H:%M')} · "
+            f"{current_username()}] "
+            f"{data.get('resumen_ejecutivo','')[:500]}"
+        )
+        # Append (no pisar). Si excede 5000 char, truncar.
+        nota_actual = (cliente.get("notas_confidenciales") or "")[:4000]
+        nueva = (analisis_resumido + "\n\n" + nota_actual).strip()[:5000]
+        mysql_execute(
+            "UPDATE mant_clientes SET notas_confidenciales=%s, updated_by=%s WHERE id=%s",
+            (nueva, current_username(), cid)
+        )
+    except Exception:
+        pass
+
+    # Log de auditoría
+    try:
+        _mant_log("cliente", cid, "ai_analisis",
+                  f"Score: {data.get('score_general')} · Salud: {data.get('salud_cuenta')}")
+    except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "ai": data,
+        "contexto": {
+            "n_contratos": len(contratos),
+            "n_visitas": len(visitas),
+            "n_maquinas": len(maquinas),
+            "mrr_total": mrr_total,
+        }
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — COMPLETAR FICHA DEL CLIENTE (cuando faltan datos)
+#
+# Usa el nombre/RUT y lo que ya hay en la ficha para sugerir campos
+# faltantes: giro probable, comuna probable según dirección, contacto
+# típico, observaciones operativas.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ai-completar-ficha", methods=["POST"])
+@_mant_required
+def mant_cliente_ai_completar(cid):
+    """Sugiere completar campos faltantes de la ficha del cliente."""
+    cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    cliente = dict(cliente)
+
+    sistema = """Eres un asistente de back-office de ILUS Fitness, empresa de servicio
+técnico de equipos fitness en Chile. Tu trabajo es completar la ficha de un cliente
+basándote en lo que ya hay. Solo sugieres — NO inventes datos que no se puedan deducir
+de la información disponible.
+
+Devuelve SIEMPRE este JSON, con null donde no haya base para sugerir:
+{
+  "giro_sugerido": "ej. Gimnasio comercial | Centro deportivo municipal | Hotel | Club",
+  "tipo_cliente": "premium|estandar|emergente|institucional",
+  "comuna_estimada_segun_direccion": "comuna probable o null",
+  "region_estimada": "región probable o null",
+  "observaciones_operativas": "ej. exige facturación a 30 días, ventana de servicio sólo en madrugada, etc.",
+  "campos_faltantes_criticos": ["lista de campos que urgen completar"],
+  "preguntas_para_ejecutivo": ["pregunta 1","pregunta 2"],
+  "confianza": 0-100
+}"""
+
+    usuario = f"""Analiza esta ficha de cliente y sugiere campos faltantes:
+
+Razón social: {cliente.get('razon_social') or '(VACÍO)'}
+RUT: {cliente.get('rut') or '(VACÍO)'}
+Giro actual: {cliente.get('giro') or '(VACÍO)'}
+Dirección: {cliente.get('direccion') or '(VACÍO)'}
+Comuna: {cliente.get('comuna') or '(VACÍO)'}
+Ciudad: {cliente.get('ciudad') or '(VACÍO)'}
+Región: {cliente.get('region') or '(VACÍO)'}
+Email empresa: {cliente.get('email_empresa') or '(VACÍO)'}
+Teléfono empresa: {cliente.get('tel_empresa') or '(VACÍO)'}
+Contacto principal: {cliente.get('contacto_nombre') or '(VACÍO)'} ({cliente.get('contacto_cargo') or 'sin cargo'})
+Notas: {cliente.get('notas') or '(VACÍO)'}
+
+Devuelve SOLO el JSON."""
+
+    data, err = _claude_call(usuario, sistema, max_tokens=900, expect_json=True)
+    if err:
+        return jsonify({"ok": False, "error": err}), 503
+    if not data:
+        return jsonify({"ok": False, "error": "Sin respuesta"}), 503
+
+    # Aplicar SOLO a campos vacíos (no pisar lo que el usuario ya editó)
+    updates = {}
+    if not cliente.get("giro") and data.get("giro_sugerido"):
+        updates["giro"] = data["giro_sugerido"][:200]
+    if not cliente.get("comuna") and data.get("comuna_estimada_segun_direccion"):
+        updates["comuna"] = data["comuna_estimada_segun_direccion"][:100]
+    if not cliente.get("region") and data.get("region_estimada"):
+        updates["region"] = data["region_estimada"][:100]
+
+    if updates:
+        try:
+            sets = ", ".join(f"{k}=%s" for k in updates.keys())
+            vals = list(updates.values()) + [current_username(), cid]
+            mysql_execute(
+                f"UPDATE mant_clientes SET {sets}, updated_by=%s WHERE id=%s",
+                tuple(vals)
+            )
+        except Exception: pass
+
+    return jsonify({"ok": True, "ai": data, "aplicado": updates})
+
+
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/analizar", methods=["POST"])
@@ -15066,27 +15603,13 @@ TEXTO DEL CONTRATO:
 
 Devuelve SOLO el JSON, sin texto adicional."""
 
-    ai_key = _get_ai_key()
-    if not ai_key:
-        return jsonify({"error": "⚠️ API de IA no configurada. Agrega ANTHROPIC_API_KEY en Railway."}), 503
-    try:
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=ai_key)
-        msg = client.messages.create(
-            model   = "claude-opus-4-5",
-            max_tokens = 1500,
-            system  = prompt_sistema,
-            messages = [{"role": "user", "content": prompt_usuario}]
-        )
-        raw = msg.content[0].text.strip()
-        # Limpiar posibles bloques de código
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        resultado = json.loads(raw)
-    except Exception as e:
-        return jsonify({"error": f"Error IA: {str(e)}"}), 500
+    # Llamada unificada con fallback de modelos
+    resultado, err = _claude_call(prompt_usuario, prompt_sistema,
+                                   max_tokens=1500, expect_json=True)
+    if err:
+        return jsonify({"error": f"Error IA: {err}"}), 503
+    if not resultado:
+        return jsonify({"error": "Sin respuesta de IA"}), 503
 
     # Guardar resultado en DB (estructura expandida + trazabilidad de usuario)
     conn = get_mysql()
