@@ -1280,21 +1280,44 @@ function renderDoc(d, elapsedMs){
   const banner = document.getElementById('docBanner');
   if (banner){
     const tiempoTxt = elapsedMs ? `<span style="background:rgba(255,255,255,.15);padding:2px 8px;border-radius:50px;font-size:.66rem;font-weight:700">⚡ ${(elapsedMs/1000).toFixed(1)}s</span>` : '';
+
+    // ★★★ Badge de tipo de operación derivado de SKUs ZZ ★★★
+    let tipoOpBadge = '';
+    if (h.tipo_operacion) {
+      const tc = (h.tipo_codigo || '').toUpperCase();
+      let bgColor = '#16a34a', icon = '🚚';
+      if (tc === 'ZZRETIRO')        { bgColor = '#dc2626'; icon = '📦'; }
+      else if (tc === 'ZZINSTALACION') { bgColor = '#7c3aed'; icon = '🔧'; }
+      else if (tc === 'ZZSERVTEC' || tc === 'ZZMANTENCION') { bgColor = '#0891b2'; icon = '🛠️'; }
+      else if (tc === 'ZZINGREPUESTO' || tc === 'ZZINGARREQUIP') { bgColor = '#ea580c'; icon = '⚙️'; }
+      tipoOpBadge = `<span style="background:${bgColor};color:#fff;padding:5px 12px;border-radius:50px;font-size:.78rem;font-weight:800;letter-spacing:.04em;box-shadow:0 2px 6px rgba(0,0,0,.3)">${icon} ${escHtml(h.tipo_operacion).toUpperCase()}</span>`;
+    }
+
     const zzTxt = d.zzenvio_valor > 0
       ? `<span class="db-pill" style="background:rgba(34,197,94,.2);color:#86efac"><i class="bi bi-truck me-1"></i>ZZ Envío: ${fClp(d.zzenvio_valor)}</span>`
       : '<span class="db-pill" style="background:rgba(156,163,175,.15);color:#9ca3af"><i class="bi bi-truck me-1"></i>Sin ZZ Envío</span>';
+
+    // Observación: SIEMPRE visible (con o sin valor), con fuente si vacía
+    const obsSource = (h.diagnostics && h.diagnostics.obs_source) || 'desconocido';
     const obsTxt = h.observaciones
       ? `<div class="db-row" style="background:rgba(251,146,60,.15);border-left:3px solid #fb923c">
-           <strong style="color:#fed7aa">📝 Observaciones</strong>
+           <strong style="color:#fed7aa">📝 Observaciones del documento</strong>
            <span style="color:#fff;font-weight:500">${escHtml(h.observaciones)}</span>
          </div>`
-      : '';
+      : `<div class="db-row" style="background:rgba(107,114,128,.18);border:1px dashed rgba(156,163,175,.40)">
+           <strong style="color:#9ca3af">📝 Observaciones</strong>
+           <span style="color:#9ca3af;font-style:italic">Sin observaciones <span style="font-size:.66rem;opacity:.7">(fuente intentada: ${escHtml(obsSource)})</span></span>
+         </div>`;
+
     banner.innerHTML = `
       <div style="background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:10px;padding:16px 20px;margin-bottom:14px;border-left:4px solid #dc2626">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div>
-            <div style="font-size:.65rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em">Documento ERP encontrado</div>
-            <div style="font-size:1.25rem;font-weight:900;color:#fff">${h.tido||''} ${h.nudo_display||h.nudo||''}</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div>
+              <div style="font-size:.65rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em">Documento ERP encontrado</div>
+              <div style="font-size:1.25rem;font-weight:900;color:#fff">${h.tido||''} ${h.nudo_display||h.nudo||''}</div>
+            </div>
+            ${tipoOpBadge}
           </div>
           ${tiempoTxt}
         </div>
@@ -1308,7 +1331,7 @@ function renderDoc(d, elapsedMs){
           <div class="db-row"><strong>📅 Fecha</strong><span>${escHtml(h.fecha||'—')}</span></div>
           <div class="db-row"><strong>💵 Neto</strong><span class="font-mono">${fClp(h.valor_neto)}</span></div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${zzTxt}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${zzTxt}</div>
         ${obsTxt}
       </div>
     `;
