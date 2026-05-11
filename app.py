@@ -1599,19 +1599,63 @@ def login_required(view):
     return wrapped
 
 
+def _is_ajax_request():
+    """True si la petición espera JSON (AJAX/wizard/API)."""
+    return (
+        request.headers.get("X-Wizard") == "1"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.headers.get("Accept") or "").startswith("application/json")
+        or request.is_json
+        or "/api/" in request.path
+    )
+
+
+@app.route("/api/whoami")
+def api_whoami():
+    """Diagnóstico: qué permisos efectivos tiene el usuario actual.
+    Útil cuando el usuario reporta 'no puedo crear cliente' o 'no veo X módulo'.
+    """
+    if not g.user:
+        return jsonify({"ok": False, "error": "Sin sesión"}), 401
+    perms_dict = dict(g.permissions or {})
+    return jsonify({
+        "ok": True,
+        "usuario": {
+            "id":       g.user.get("id"),
+            "username": g.user.get("username"),
+            "nombre":   g.user.get("nombre"),
+            "role":     g.user.get("role"),
+        },
+        "permissions": perms_dict,
+        "modulos_visibles": [k for k in
+            ("etiquetas","retiros","mantenciones","transporte","cubicador",
+             "comunicaciones","admin","superadmin","ajustes")
+            if perms_dict.get(k)],
+    })
+
+
 def require_permission(permission):
     def decorator(view):
         @wraps(view)
         def wrapped(*a, **kw):
             if not g.user:
+                if _is_ajax_request():
+                    return jsonify({"ok": False,
+                                    "error": "Sesión expirada. Vuelve a iniciar sesión.",
+                                    "error_codigo": "SIN_SESION"}), 401
                 flash("Inicia sesion para continuar.", "warning")
                 return redirect(url_for("login", next=request.path))
             # ★ superadmin SIEMPRE pasa todos los checks de permiso
-            # (es la cuenta dueña del sistema; no debe quedar bloqueada
-            # de ningún módulo aunque sea nuevo y no esté en su matriz)
             if g.permissions.get("superadmin"):
                 return view(*a, **kw)
             if not g.permissions.get(permission):
+                if _is_ajax_request():
+                    return jsonify({"ok": False,
+                                    "error": f"No tienes el permiso '{permission}'. "
+                                             "Pide al superadministrador que lo active "
+                                             "para tu rol en /admin/roles.",
+                                    "error_codigo": "SIN_PERMISO",
+                                    "permiso_requerido": permission}), 403
                 flash("No tienes permisos para realizar esta accion.", "danger")
                 return redirect(url_for("index"))
             return view(*a, **kw)
@@ -11567,10 +11611,33 @@ def comm_log_reintentar(lid):
 # ══════════════════════════════════════════════════════════════
 
 def _mant_required(view):
-    """Decorador: requiere permiso 'mantenciones'."""
+    """Decorador: requiere permiso 'mantenciones'.
+
+    Si la petición viene de AJAX/wizard (X-Wizard, JSON o XMLHttpRequest),
+    devuelve 403 JSON en lugar de redirect 302. Esto evita que el frontend
+    reciba HTML cuando esperaba JSON y muestre un error genérico.
+    """
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not g.get("permissions", {}).get("mantenciones"):
+        perms = g.get("permissions") or {}
+        if not (perms.get("mantenciones") or perms.get("superadmin")):
+            # ¿Es una petición AJAX/JSON/Wizard?
+            is_ajax = (
+                request.headers.get("X-Wizard") == "1"
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+                or request.is_json
+                or request.path.startswith("/mantenciones/api/")
+            )
+            if is_ajax:
+                return jsonify({
+                    "ok": False,
+                    "error": "Tu usuario no tiene permiso para Mantenciones. "
+                             "Pide al superadministrador que active 'mantenciones.ver' "
+                             "en /admin/roles para tu rol.",
+                    "error_codigo": "SIN_PERMISO_MANTENCIONES",
+                }), 403
+            flash("Tu usuario no tiene permiso para Mantenciones.", "warning")
             return redirect(url_for("index"))
         return view(*args, **kwargs)
     return login_required(wrapped)
@@ -13507,6 +13574,9 @@ def mant_cliente_nuevo():
                 return redirect(url_for("mant_ficha", cid=existing.get("id")))
 
         # Emails (institucional + 2 contactos)
+        # Modo tolerante: si el ERP devolvió basura (string sin @, espacios, etc.)
+        # auto-limpiamos en vez de bloquear. Solo bloqueamos si el usuario tipeó
+        # un email con formato inválido conscientemente.
         emails_to_check = [
             ("email_empresa",   d.get("email_empresa")),
             ("contacto_email",  d.get("contacto_email")),
@@ -13514,9 +13584,15 @@ def mant_cliente_nuevo():
         ]
         emails_norm = {}
         for campo, val in emails_to_check:
-            ok, val_or_err = validar_email(val)
+            val_clean = (val or "").strip()
+            # Si vino vacío o sin '@', tratar como vacío (vino del ERP corrupto)
+            if not val_clean or "@" not in val_clean:
+                emails_norm[campo] = None
+                continue
+            ok, val_or_err = validar_email(val_clean)
             if not ok:
-                err = f"Email inválido ({campo}): {val_or_err}"
+                # Solo bloqueamos si tiene '@' pero formato corrupto
+                err = f"Email inválido en '{campo}': {val_or_err}. Corrige o deja vacío."
                 if is_wizard: return jsonify({"ok": False, "error": err}), 400
                 flash(err, "danger")
                 return render_template("mantenciones/cliente_form.html", cliente=None)
