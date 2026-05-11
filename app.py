@@ -11785,7 +11785,11 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
-            # ── Adjuntos de contrato (hasta 4 extra) ───────────────
+            # ── ⚠ DEPRECATED: mant_adjuntos ────────────────────────────
+            # Esta tabla se mantiene solo por compatibilidad con datos legacy.
+            # El módulo usa actualmente `mant_contrato_adjuntos` (ver más abajo).
+            # No agregar nuevos endpoints contra mant_adjuntos. Si está vacía,
+            # se podrá DROP en una migración futura.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_adjuntos (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -11797,7 +11801,7 @@ def init_mantenciones_tables():
                     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (contrato_id) REFERENCES mant_contratos(id) ON DELETE CASCADE,
                     INDEX idx_contrato (contrato_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT 'DEPRECATED — usar mant_contrato_adjuntos'
             """)
 
             # ── Columnas extra mant_maquinas (migracion) ───────────
@@ -11924,6 +11928,36 @@ def init_mantenciones_tables():
                 "CREATE INDEX idx_v_numero_ot ON mant_visitas (numero_ot)",
                 # mant_sucursales: lookup principal por cliente
                 "CREATE INDEX idx_ms_cliente_principal ON mant_sucursales (cliente_id, es_principal)",
+                # ── UNIQUE: serie única POR CLIENTE para evitar colisiones de
+                # _generar_serie_ilus en requests concurrentes (auditoría QW1)
+                "ALTER TABLE mant_maquinas ADD UNIQUE KEY uq_cliente_serie (cliente_id, serie)",
+                # ── QW3: monto_anual auto-sincronizado con monto_mensual ──
+                # Triggers BEFORE INSERT/UPDATE para mantener consistencia
+                # sin obligar al usuario a ingresar 2 valores que deben coincidir.
+                """DROP TRIGGER IF EXISTS trg_mant_contratos_anual_ins""",
+                """CREATE TRIGGER trg_mant_contratos_anual_ins
+                   BEFORE INSERT ON mant_contratos
+                   FOR EACH ROW
+                     SET NEW.monto_anual =
+                       CASE
+                         WHEN NEW.monto_mensual IS NOT NULL AND NEW.monto_mensual > 0
+                              AND (NEW.monto_anual IS NULL OR NEW.monto_anual = 0)
+                         THEN NEW.monto_mensual * 12
+                         ELSE NEW.monto_anual
+                       END""",
+                """DROP TRIGGER IF EXISTS trg_mant_contratos_anual_upd""",
+                """CREATE TRIGGER trg_mant_contratos_anual_upd
+                   BEFORE UPDATE ON mant_contratos
+                   FOR EACH ROW
+                     SET NEW.monto_anual =
+                       CASE
+                         WHEN NEW.monto_mensual IS NOT NULL AND NEW.monto_mensual > 0
+                              AND (NEW.monto_mensual <> OLD.monto_mensual
+                                   OR NEW.monto_anual IS NULL
+                                   OR NEW.monto_anual = 0)
+                         THEN NEW.monto_mensual * 12
+                         ELSE NEW.monto_anual
+                       END""",
                 # ── MIGRACIÓN: ENUM entidad → VARCHAR para soportar valores nuevos
                 # sin tener que hacer ALTER cada vez (ej. 'global', 'tecnico', etc).
                 # Si la columna ya es VARCHAR no hace nada.
@@ -14130,7 +14164,7 @@ def mant_cliente_delete(cid):
 
 # ── MÁQUINAS ──────────────────────────────────────────────────────────
 
-def _generar_serie_ilus(cid: int, sku: str = "") -> str:
+def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
     """
     Genera un N° Serie único para un equipo físico cuando el fabricante no
     proporciona uno.
@@ -14145,9 +14179,14 @@ def _generar_serie_ilus(cid: int, sku: str = "") -> str:
       65206047-0905-2   (segunda trotadora del mismo modelo)
       65206047-4640-1   (otro equipo, SKU termina en 4640)
 
-    Único globalmente porque incluye RUT del cliente (identidad legal).
+    SEGURIDAD CONCURRENCIA: si dos workers leen 'usados' simultáneamente,
+    podrían intentar la misma serie. La UNIQUE KEY uq_cliente_serie en
+    mant_maquinas garantiza que el INSERT fallará. La función `mant_maquina_add`
+    atrapa Duplicate entry y reintenta con _intento+1.
+
     Editable: el usuario puede reemplazar con el serial real del fabricante.
     """
+    import random
     # Obtener RUT del cliente (sin DV, sin puntos)
     rut_clean = "00000000"
     try:
@@ -14174,6 +14213,10 @@ def _generar_serie_ilus(cid: int, sku: str = "") -> str:
     seq = 1
     while seq in usados:
         seq += 1
+    # Si es reintento por colisión concurrente, agregar offset aleatorio para
+    # evitar volver a chocar con el mismo número que otro worker eligió
+    if _intento > 0:
+        seq += random.randint(_intento, _intento * 10)
     return f"{base}-{seq}"
 
 
@@ -14230,6 +14273,32 @@ def mant_maquina_add(cid):
         except Exception:
             pass  # si la validación misma falla, no bloqueamos
 
+    def _insert_con_retry(cur, base_params, serie_inicial, max_intentos=5):
+        """INSERT con retry si la UNIQUE (cliente_id, serie) está tomada
+        por concurrencia. Devuelve (last_id, serie_efectiva)."""
+        serie = serie_inicial
+        for intento in range(max_intentos):
+            try:
+                cur.execute(
+                    """INSERT INTO mant_maquinas
+                       (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
+                        ubicacion_cliente,estado_op,fecha_instalacion,
+                        tag_1,tag_2,
+                        justif_fecha_inst,justif_doc_mismatch,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    base_params(serie)
+                )
+                return cur.lastrowid, serie
+            except Exception as e:
+                msg = str(e)
+                # MySQL error 1062 = Duplicate entry. Regenerar serie y reintentar.
+                if "1062" in msg or "Duplicate entry" in msg:
+                    serie = _generar_serie_ilus(cid, sku, _intento=intento + 1)
+                    continue
+                raise
+        # Si pasamos los 5 intentos sin éxito, devolver error claro
+        raise Exception(f"No se pudo generar serie única tras {max_intentos} intentos para cliente {cid}, SKU {sku}")
+
     conn = get_mysql()
     creadas = []
     try:
@@ -14238,51 +14307,39 @@ def mant_maquina_add(cid):
             if split_rows and cantidad > 1:
                 for _ in range(cantidad):
                     serie_nueva = _generar_serie_ilus(cid, sku)
-                    cur.execute(
-                        """INSERT INTO mant_maquinas
-                           (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
-                            ubicacion_cliente,estado_op,fecha_instalacion,
-                            tag_1,tag_2,
-                            justif_fecha_inst,justif_doc_mismatch,created_by)
-                           VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (cid, sku, d.get("nombre",""), serie_nueva,
-                         doc_origen, d.get("doc_fecha") or None,
-                         d.get("notas",""),
-                         d.get("ubicacion_cliente",""),
-                         d.get("estado_op","operativo"),
-                         d.get("fecha_instalacion") or None,
-                         (d.get("tag_1") or "").strip()[:120] or None,
-                         (d.get("tag_2") or "").strip()[:120] or None,
-                         d.get("justif_fecha_inst") or None,
-                         d.get("justif_doc_mismatch") or None,
-                         current_username())
-                    )
-                    creadas.append({"id": cur.lastrowid, "serie": serie_nueva})
+                    def build(s, _r=d):
+                        return (cid, sku, _r.get("nombre",""), s,
+                                doc_origen, _r.get("doc_fecha") or None, 1,
+                                _r.get("notas",""),
+                                _r.get("ubicacion_cliente",""),
+                                _r.get("estado_op","operativo"),
+                                _r.get("fecha_instalacion") or None,
+                                (_r.get("tag_1") or "").strip()[:120] or None,
+                                (_r.get("tag_2") or "").strip()[:120] or None,
+                                _r.get("justif_fecha_inst") or None,
+                                _r.get("justif_doc_mismatch") or None,
+                                current_username())
+                    mid_new, serie_efectiva = _insert_con_retry(cur, build, serie_nueva)
+                    creadas.append({"id": mid_new, "serie": serie_efectiva})
             else:
                 # Modo CLÁSICO: 1 fila con cantidad=N
                 serie = (d.get("serie") or "").strip()
                 if not serie or serie.startswith("(auto"):
                     serie = _generar_serie_ilus(cid, sku)
-                cur.execute(
-                    """INSERT INTO mant_maquinas
-                       (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
-                        ubicacion_cliente,estado_op,fecha_instalacion,
-                        tag_1,tag_2,
-                        justif_fecha_inst,justif_doc_mismatch,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (cid, sku, d.get("nombre",""), serie,
-                     doc_origen, d.get("doc_fecha") or None,
-                     cantidad, d.get("notas",""),
-                     d.get("ubicacion_cliente",""),
-                     d.get("estado_op","operativo"),
-                     d.get("fecha_instalacion") or None,
-                     (d.get("tag_1") or "").strip()[:120] or None,
-                     (d.get("tag_2") or "").strip()[:120] or None,
-                     d.get("justif_fecha_inst") or None,
-                     d.get("justif_doc_mismatch") or None,
-                     current_username())
-                )
-                creadas.append({"id": cur.lastrowid, "serie": serie})
+                def build(s, _r=d, _q=cantidad):
+                    return (cid, sku, _r.get("nombre",""), s,
+                            doc_origen, _r.get("doc_fecha") or None, _q,
+                            _r.get("notas",""),
+                            _r.get("ubicacion_cliente",""),
+                            _r.get("estado_op","operativo"),
+                            _r.get("fecha_instalacion") or None,
+                            (_r.get("tag_1") or "").strip()[:120] or None,
+                            (_r.get("tag_2") or "").strip()[:120] or None,
+                            _r.get("justif_fecha_inst") or None,
+                            _r.get("justif_doc_mismatch") or None,
+                            current_username())
+                mid_new, serie_efectiva = _insert_con_retry(cur, build, serie)
+                creadas.append({"id": mid_new, "serie": serie_efectiva})
         conn.commit()
         # Log unificado
         for c in creadas:
@@ -15250,12 +15307,17 @@ _CLAUDE_MODELS_FALLBACK = [
 
 
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
-                 expect_json=True, model=None, temperature=0.2):
+                 expect_json=True, model=None, temperature=0.2,
+                 attachments=None):
     """Llama a Claude API. Retorna (data, error) — data es dict si expect_json.
 
     - Maneja la limpieza de bloques ```json ... ```
     - Reintenta con modelos fallback si el principal no existe
     - Logs detallados para diagnóstico
+    - attachments: lista opcional de dicts tipo
+        {"type":"document","source":{...}} para PDFs escaneados, o
+        {"type":"image","source":{...}} para imágenes.
+        Si está presente, se concatenan al content del primer message.
     """
     ai_key = _get_ai_key()
     if not ai_key:
@@ -15270,6 +15332,12 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
     last_err = None
     client = _anthropic.Anthropic(api_key=ai_key)
 
+    # Si hay attachments, construir content como lista (texto + adjuntos)
+    if attachments:
+        content_blocks = list(attachments) + [{"type": "text", "text": prompt_usuario}]
+    else:
+        content_blocks = prompt_usuario
+
     for m in models_to_try:
         try:
             msg = client.messages.create(
@@ -15277,7 +15345,7 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=prompt_sistema,
-                messages=[{"role": "user", "content": prompt_usuario}]
+                messages=[{"role": "user", "content": content_blocks}]
             )
             raw = msg.content[0].text.strip()
             if not expect_json:
@@ -15691,6 +15759,8 @@ def mant_contrato_analizar(ctid):
 
     # Leer texto del contrato si es PDF
     texto_contrato = ""
+    pdf_b64_paginas = []   # base64 de las primeras N páginas (fallback visión)
+    es_escaneado = False
     fpath = os.path.join(MANT_UPLOADS, ct["archivo_path"] or "")
     if os.path.exists(fpath):
         ext = ct["archivo_path"].rsplit(".", 1)[-1].lower()
@@ -15703,6 +15773,28 @@ def mant_contrato_analizar(ctid):
                     )
             except Exception:
                 pass
+            # QW5: si el texto extraído está vacío o casi vacío, es un PDF
+            # escaneado (imagen). Caemos a Claude visión: enviamos el PDF
+            # como base64 + Claude lo procesa visualmente.
+            if len(texto_contrato.strip()) < 50:
+                es_escaneado = True
+                try:
+                    import base64
+                    with open(fpath, "rb") as f:
+                        pdf_bytes = f.read()
+                    # Claude soporta PDFs directamente (hasta ~30MB).
+                    # Si el archivo es muy grande, lo skippeamos.
+                    if len(pdf_bytes) < 30 * 1024 * 1024:
+                        pdf_b64_paginas.append({
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": base64.standard_b64encode(pdf_bytes).decode("utf-8"),
+                            }
+                        })
+                except Exception:
+                    pass
         elif ext in ("doc", "docx"):
             try:
                 import docx
@@ -15718,9 +15810,10 @@ def mant_contrato_analizar(ctid):
         f"Fecha vencimiento: {ct['fecha_vencimiento']}\n"
         f"Monto mensual: ${ct['monto_mensual']}\n"
         f"Frecuencia declarada: {ct['frecuencia_meses']} meses\n"
+        + (f"NOTA: PDF escaneado (imagen) — analizado visualmente.\n" if es_escaneado else "")
     )
     if not texto_contrato:
-        texto_contrato = "(Texto no extraíble — análisis basado en metadatos)"
+        texto_contrato = "(Texto no extraíble — análisis visual del PDF)" if es_escaneado else "(Texto no extraíble — análisis basado en metadatos)"
 
     prompt_sistema = """Eres un experto jurídico y técnico en contratos de mantención
 de equipos de fitness para gimnasios y centros deportivos en Chile (ILUS Fitness).
@@ -15749,7 +15842,18 @@ Analiza el contrato con criterio profesional. Responde SIEMPRE en JSON con esta 
 Sé específico sobre equipos fitness (treadmills, bikes, elípticas, pesas, etc.).
 Detecta SLA, penalidades, cláusulas de exclusión y riesgos operativos para el prestador."""
 
-    prompt_usuario = f"""Analiza este contrato de mantención:
+    if es_escaneado and pdf_b64_paginas:
+        prompt_usuario = f"""Analiza este contrato de mantención. El PDF adjunto
+es ESCANEADO (imagen), no texto extraíble. Léelo visualmente.
+
+METADATOS:
+{datos_extra}
+
+(El texto del contrato está en el PDF adjunto — léelo visualmente)
+
+Devuelve SOLO el JSON, sin texto adicional."""
+    else:
+        prompt_usuario = f"""Analiza este contrato de mantención:
 
 METADATOS:
 {datos_extra}
@@ -15759,9 +15863,13 @@ TEXTO DEL CONTRATO:
 
 Devuelve SOLO el JSON, sin texto adicional."""
 
-    # Llamada unificada con fallback de modelos
-    resultado, err = _claude_call(prompt_usuario, prompt_sistema,
-                                   max_tokens=1500, expect_json=True)
+    # Llamada unificada con fallback de modelos. Si el PDF es escaneado,
+    # mandamos el PDF como attachment para que Claude lo procese visualmente.
+    resultado, err = _claude_call(
+        prompt_usuario, prompt_sistema,
+        max_tokens=2000, expect_json=True,
+        attachments=pdf_b64_paginas if es_escaneado else None
+    )
     if err:
         return jsonify({"error": f"Error IA: {err}"}), 503
     if not resultado:

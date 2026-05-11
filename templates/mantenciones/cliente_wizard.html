@@ -2887,6 +2887,7 @@ async function subirContrato(){
 async function subirMaquinas(){
   const eqs=leerEquipos();
   const errores = [];
+  let exitosos = 0;
   for(const eq of eqs){
     const codInt = (eq.codigo_interno || '').trim();
     const codigoFinal = (codInt.startsWith('(auto') || !codInt) ? '' : codInt;
@@ -2917,22 +2918,19 @@ async function subirMaquinas(){
         })
       });
       const d = await r.json();
-      if (!d.ok && d.error_codigo === 'SALDO_INSUFICIENTE') {
+      if (d.ok) {
+        exitosos += (d.filas_creadas || 1);
+      } else if (d.error_codigo === 'SALDO_INSUFICIENTE') {
         errores.push(`⚠ ${eq.sku} (${eq.nombre}): ${d.error}`);
-      } else if (!d.ok) {
+      } else {
         errores.push(`✗ ${eq.sku || eq.nombre}: ${d.error || 'error desconocido'}`);
       }
     } catch(e) {
       errores.push(`✗ ${eq.sku || eq.nombre}: error de red`);
     }
   }
-  if (errores.length > 0) {
-    alert(
-      `Algunos equipos no se pudieron guardar:\n\n${errores.join('\n')}\n\n` +
-      `Si el problema es saldo de documento, eliminá los equipos duplicados ` +
-      `del cliente anterior o pedile a un superadmin que use el modo override.`
-    );
-  }
+  // Devolvemos resultado para que finalizar() decida si seguir o abortar
+  return { total: eqs.length, exitosos, errores };
 }
 
 async function finalizar(){
@@ -2940,7 +2938,29 @@ async function finalizar(){
   btn.disabled=true;btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
   try{
     if(!WZ.cid){const ok=await crearCliente();if(!ok){btn.disabled=false;btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';return;}}
-    await subirMaquinas();
+    // QW2: si TODOS los equipos fallaron, abortar antes de redirect para que
+    // el usuario corrija (no terminar con un cliente vacío).
+    const resMaq = await subirMaquinas();
+    if (resMaq && resMaq.total > 0 && resMaq.exitosos === 0) {
+      btn.disabled=false;
+      btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';
+      const detalle = (resMaq.errores || []).slice(0,8).join('\n');
+      alert(
+        `⚠️ Ningún equipo se pudo guardar (0 de ${resMaq.total}).\n\n` +
+        `Detalles:\n${detalle}\n\n` +
+        `El cliente quedó creado pero SIN equipos. Corrige los errores ` +
+        `y vuelve a la pestaña de equipos antes de finalizar.`
+      );
+      return;
+    }
+    if (resMaq && resMaq.errores && resMaq.errores.length > 0) {
+      // Algunos sí, algunos no — avisar pero continuar
+      const detalle = resMaq.errores.slice(0,8).join('\n');
+      alert(
+        `Se importaron ${resMaq.exitosos} de ${resMaq.total} equipos.\n\n` +
+        `Los siguientes NO se guardaron:\n${detalle}`
+      );
+    }
     if(!WZ.ctid)await subirContrato();
     if(WZ.ctid&&adjFiles.length){
       for(const f of adjFiles){const fd=new FormData();fd.append('archivo',f);await fetch(`/mantenciones/api/contratos/${WZ.ctid}/adjuntos`,{method:'POST',body:fd});}
