@@ -694,7 +694,7 @@ def register_pickup_routes(app, ctx):
         return render_template("retiros/public_tracking.html", req=req, packages=packages, proposals=proposals, logs=logs, attachments=attachments, settings=cfg, status_badge=status_badge, created=request.args.get("created"))
 
     @app.route("/retiros")
-    @require_permission("view")
+    @require_permission("retiros")
     def pickup_dashboard():
         filtros = {"q": request.args.get("q", "").strip(), "status": request.args.get("status", "").strip(), "date": request.args.get("date", "").strip(), "view": request.args.get("view", "monitor").strip()}
         where, params = ["1=1"], []
@@ -1060,7 +1060,7 @@ def register_pickup_routes(app, ctx):
         return f"{date_str}_{_slot_label(time_from)}"
 
     @app.route("/retiros/calendario")
-    @require_permission("view")
+    @require_permission("retiros")
     def pickup_calendar():
         """Vista calendario operativo de retiros."""
         return render_template("retiros/calendario.html",

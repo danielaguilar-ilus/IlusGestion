@@ -1249,49 +1249,145 @@ def current_username():
     return g.user["nombre"] if getattr(g, "user", None) else None
 
 
-def permission_set(role):
-    """
-    Roles del sistema:
-      superadmin — acceso total + preguntas genéricas + gestión avanzada
-      admin      — igual que superadmin menos preguntas genéricas
-      ejecutivo  — acceso al módulo Mantenciones (vista + edición) solamente
-      editor     — crear/editar evaluaciones y colaboradores (sin borrar, sin admin)
-      lector     — solo lectura
-      vendedor   — acceso al módulo Cubicador (solo lectura de productos)
-    """
-    base = {
-        "view":          False,
-        "edit":          False,
-        "print":         False,
-        "create":        False,
-        "delete":        False,
-        "admin":         False,   # gestión usuarios / configuración
-        "superadmin":    False,   # preguntas genéricas + acciones irreversibles
-        "ajustes":       False,   # acceso al menú de Ajustes (Comunicaciones, Usuarios, Marketing)
-        "hrm":           False,   # módulo colaboradores
-        "cubicador":     False,   # módulo cubicador de documentos
-        "transporte":    False,   # módulo Transporte y Distribución
-        "mantenciones":  False,   # módulo Mantenciones (superadmin + ejecutivo)
-    }
+# ══════════════════════════════════════════════════════════════════════
+#  PERMISOS — sistema unificado
+#
+#  Dos fuentes de verdad combinadas:
+#    1) Matriz dinámica `rol_permisos` (admin edita en /admin/roles)
+#       → fuente principal cuando el rol tiene filas en esa tabla
+#    2) Fallback legacy hardcoded
+#       → roles del sistema que aún no han sido editados en la matriz
+#
+#  Las "keys" de g.permissions son lo que leen templates y decoradores:
+#    view / edit / create / delete / print
+#    etiquetas / retiros / mantenciones / transporte / cubicador
+#    comunicaciones / admin / ajustes / hrm / superadmin
+#
+#  Caché en proceso: `_ROLE_PERMS_CACHE[role] = dict`
+#  Se invalida cuando admin guarda la matriz → `invalidate_role_cache(role)`
+# ══════════════════════════════════════════════════════════════════════
+
+PERMS_KEYS = (
+    "view", "edit", "print", "create", "delete",
+    "admin", "superadmin", "ajustes", "hrm",
+    "cubicador", "transporte", "mantenciones",
+    "etiquetas", "retiros", "comunicaciones",
+)
+
+_ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
+
+
+def _empty_perms():
+    return {k: False for k in PERMS_KEYS}
+
+
+def _legacy_permission_set(role):
+    """Fallback hardcoded para roles del sistema NO presentes en rol_permisos."""
+    base = _empty_perms()
     if role == "superadmin":
-        return {k: True for k in base}
+        return {k: True for k in PERMS_KEYS}
     if role == "admin":
-        return {**base, "view": True, "edit": True, "print": True,
+        return {**base,
+                "view": True, "edit": True, "print": True,
                 "create": True, "delete": True, "admin": True, "hrm": True,
                 "cubicador": True, "transporte": True, "mantenciones": True,
-                "ajustes": True}
+                "ajustes": True,
+                "etiquetas": True, "retiros": True, "comunicaciones": True}
     if role == "ejecutivo":
-        # Sólo mantenciones — sin acceso al resto del sistema
+        # Histórico: sólo mantenciones (alguna versión vieja)
         return {**base, "mantenciones": True, "view": True,
                 "edit": True, "create": True, "print": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
-                "create": True, "hrm": True, "cubicador": True, "transporte": True}
+                "create": True, "hrm": True, "cubicador": True, "transporte": True,
+                "etiquetas": True, "retiros": True}
     if role == "lector":
-        return {**base, "view": True}
+        return {**base, "view": True, "etiquetas": True, "retiros": True}
     if role == "vendedor":
-        return {**base, "view": True, "cubicador": True}
+        return {**base, "view": True, "cubicador": True, "etiquetas": True}
     return base
+
+
+def _build_perms_from_matrix(role):
+    """Compila g.permissions desde la matriz rol_permisos. Llama get_role_permissions()."""
+    base = _empty_perms()
+    try:
+        matrix = get_role_permissions(role)   # {modulo: {accion: bool}}
+    except Exception:
+        return _legacy_permission_set(role)
+
+    eti = matrix.get("etiquetas", {})
+    ret = matrix.get("retiros", {})
+    man = matrix.get("mantenciones", {})
+    tra = matrix.get("transporte", {})
+    com = matrix.get("comunicaciones", {})
+    adm = matrix.get("admin", {})
+
+    # Flags de módulo (gates de sidebar)
+    base["etiquetas"]      = bool(eti.get("ver"))
+    base["retiros"]        = bool(ret.get("ver"))
+    base["mantenciones"]   = bool(man.get("ver"))
+    base["transporte"]     = bool(tra.get("ver"))
+    base["cubicador"]      = bool(tra.get("cubicador"))
+    base["comunicaciones"] = bool(com.get("ver"))
+
+    # Acciones legacy — mapeadas desde Etiquetas (campo "view" controla el primer producto)
+    base["view"]    = bool(eti.get("ver") or ret.get("ver") or man.get("ver")
+                            or tra.get("ver") or com.get("ver"))
+    base["create"]  = bool(eti.get("crear")    or man.get("crear"))
+    base["edit"]    = bool(eti.get("editar")   or man.get("editar"))
+    base["delete"]  = bool(eti.get("eliminar") or man.get("eliminar"))
+    base["print"]   = bool(eti.get("imprimir"))
+
+    # Admin / ajustes
+    base["admin"]   = bool(adm.get("usuarios") or adm.get("roles"))
+    base["ajustes"] = bool(adm.get("ajustes")  or adm.get("usuarios") or adm.get("roles")
+                            or adm.get("marketing") or adm.get("login_imagenes"))
+
+    # HRM no está en la matriz actual → fallback: lo permitimos si tiene admin general
+    base["hrm"]        = bool(adm.get("usuarios") or adm.get("roles"))
+    base["superadmin"] = False
+    return base
+
+
+def _role_has_matrix_rows(role):
+    """True si el rol tiene filas en rol_permisos (== matriz fue editada al menos 1 vez)."""
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM rol_permisos WHERE rol_slug=%s", (role,)
+        )
+        return bool(row and (row.get("n") or 0) > 0)
+    except Exception:
+        return False
+
+
+def permission_set(role):
+    """Devuelve dict de permisos para un rol. Con caché en proceso."""
+    if role is None:
+        return _empty_perms()
+    if role == "superadmin":
+        return {k: True for k in PERMS_KEYS}
+    # Cache check
+    cached = _ROLE_PERMS_CACHE.get(role)
+    if cached is not None:
+        return cached
+    # Si la matriz tiene filas para este rol → usar matriz dinámica
+    # Si no → fallback legacy hardcoded
+    if _role_has_matrix_rows(role):
+        perms = _build_perms_from_matrix(role)
+    else:
+        perms = _legacy_permission_set(role)
+    _ROLE_PERMS_CACHE[role] = perms
+    return perms
+
+
+def invalidate_role_cache(role=None):
+    """Borra el caché de permisos de un rol (o todos si role=None).
+    Debe llamarse después de guardar la matriz de un rol."""
+    if role:
+        _ROLE_PERMS_CACHE.pop(role, None)
+    else:
+        _ROLE_PERMS_CACHE.clear()
 
 
 def allowed_file(filename):
@@ -1332,10 +1428,15 @@ def get_auth_user_by_username(username):
 
 def load_current_user():
     """
-    Carga el usuario actual.
-    — Primer intento: datos cacheados en session (sin query a BD).
-    — Si no hay caché o el ID no coincide: consulta la BD y guarda en caché.
-    Elimina ~1 query MySQL por cada página cargada.
+    Carga el usuario actual y sus permisos.
+
+    Estrategia anti-stale:
+    — SIEMPRE consulta la BD para obtener el role actualizado del usuario.
+      Esto permite que cambios de rol y de matriz de permisos apliquen
+      en el siguiente request, SIN requerir logout.
+    — El costo es 1 query indexada por request (~<1 ms con índice PRIMARY).
+    — `permission_set(role)` usa un caché en proceso por rol, así que la
+      computación de permisos sólo va a BD la primera vez por rol/worker.
     """
     g.user = None
     g.permissions = permission_set(None)
@@ -1343,33 +1444,30 @@ def load_current_user():
     if not user_id:
         return
 
-    # ── Intento 1: caché en session ───────────────────────────
-    cached = session.get("_uc")       # _uc = user cache
-    if cached and cached.get("id") == user_id:
-        g.user = cached
-        g.permissions = permission_set(cached["role"])
-        return
-
-    # ── Intento 2: consulta BD (y guarda en caché) ────────────
     try:
         user = get_auth_user_by_id(user_id)
     except Exception as exc:
         session.clear()
         flash(f"No fue posible validar la sesion: {exc}", "danger")
         return
-    if user and user["active"]:
-        g.user = user
-        g.permissions = permission_set(user["role"])
-        # Guarda en session sin el hash de contraseña
-        session["_uc"] = {
-            "id":       user["id"],
-            "username": user["username"],
-            "nombre":   user["nombre"],
-            "role":     user["role"],
-            "active":   user["active"],
-        }
-    else:
+
+    if not user or not user["active"]:
         session.clear()
+        return
+
+    user = dict(user)
+    g.user = user
+    g.permissions = permission_set(user["role"])
+
+    # Caché ligero en session para usos sin chequeo de permisos (ej. nombre en UI)
+    # Aclaración: estos campos NO se usan para autorizar. La autorización va por g.permissions.
+    session["_uc"] = {
+        "id":       user["id"],
+        "username": user["username"],
+        "nombre":   user["nombre"],
+        "role":     user["role"],
+        "active":   user["active"],
+    }
 
 
 def login_required(view):
@@ -4140,6 +4238,8 @@ def admin_roles_matrix_save():
                         (rol_slug, modulo, accion, permitido)
                     )
         conn.commit()
+        # CRÍTICO: invalidar caché para que el cambio aplique en próximo request
+        invalidate_role_cache(rol_slug)
         return jsonify({"ok":True, "rol":rol_slug,
                         "permisos":len(permisos_recibidos)})
     finally:
