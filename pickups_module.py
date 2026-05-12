@@ -107,6 +107,10 @@ def register_pickup_routes(app, ctx):
     mysql_fetchall = ctx["mysql_fetchall"]
     mysql_execute = ctx["mysql_execute"]
     get_db = ctx["get_db"]
+    # get_mysql: conexión directa para transacciones explícitas con
+    # SELECT FOR UPDATE (usado en confirmación de retiros para evitar
+    # double-booking). Ver pickup_public_tracking acción 'confirm'.
+    get_mysql = ctx["get_mysql"]
     require_permission = ctx["require_permission"]
     EMAIL_RE = ctx["EMAIL_RE"]
     BASE_DIR = ctx["BASE_DIR"]
@@ -871,9 +875,23 @@ def register_pickup_routes(app, ctx):
             if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
                 if proposal:
-                    # RE-VALIDAR capacidad antes de confirmar. Entre el envío de la
-                    # propuesta y este click puede haberse llenado el slot (otro
-                    # cliente confirmó primero, se bloqueó el día, etc.).
+                    # ═══════════════════════════════════════════════════════════
+                    # FIX RACE CONDITION (2026-05-12):
+                    # Entre la lectura de capacidad y el UPDATE puede entrar otro
+                    # cliente que tome el último cupo. Usamos transacción explícita
+                    # con SELECT ... FOR UPDATE para bloquear las filas del mismo
+                    # slot mientras hacemos el conteo + UPDATE atómico.
+                    #
+                    # Estrategia en 2 fases:
+                    #  1. Validar condiciones estáticas (día, horario, bloqueos)
+                    #     sin lock — son inmutables entre clics
+                    #  2. Abrir transacción → SELECT FOR UPDATE sobre el slot →
+                    #     re-contar capacidad numérica → si OK, UPDATE → COMMIT.
+                    #     Si OTRO cliente confirmó antes y llenó el slot, este
+                    #     SELECT FOR UPDATE espera y luego ve el nuevo conteo.
+                    # ═══════════════════════════════════════════════════════════
+
+                    # FASE 1: Validar condiciones estáticas (sin lock)
                     ok_slot, motivo = _validar_disponibilidad_slot(
                         proposal["date"], proposal["time_from"], proposal["time_to"],
                         exclude_request_id=req["id"],
@@ -897,11 +915,114 @@ def register_pickup_routes(app, ctx):
                             "warning",
                         )
                         return redirect(url_for("pickup_public_tracking", token=token))
-                    mysql_execute(
-                        f"""UPDATE `{REQ}` SET status='agenda_confirmada', confirmed_date=%s, confirmed_time_from=%s, confirmed_time_to=%s WHERE id=%s""",
-                        (proposal["date"], proposal["time_from"], proposal["time_to"], req["id"]),
-                    )
-                    mysql_execute(f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() WHERE id=%s", (proposal["id"],))
+
+                    # FASE 2: Transacción con lock para garantizar atomicidad
+                    confirm_ok = False
+                    confirm_motivo = ""
+                    conn_tx = None
+                    try:
+                        conn_tx = get_mysql()
+                        with conn_tx.cursor() as cur_tx:
+                            # 2a. SELECT FOR UPDATE sobre TODOS los retiros que comparten
+                            #     el slot (mismo date+time_from). Bloquea esas filas para
+                            #     que ningún otro proceso pueda confirmar/contar mientras
+                            #     estamos en esta transacción.
+                            extra_kg = float(req.get("total_weight_kg") or 0)
+                            extra_m3 = float(req.get("total_volume_m3") or 0)
+                            date_str = str(proposal["date"])[:10]
+                            tf_str   = str(proposal["time_from"])[:5]
+
+                            cur_tx.execute(
+                                f"""SELECT COUNT(*) AS n,
+                                            COALESCE(SUM(total_weight_kg),0) AS kg,
+                                            COALESCE(SUM(total_volume_m3),0) AS m3
+                                     FROM `{REQ}`
+                                     WHERE status NOT IN ('rechazada','cerrada','fallida')
+                                       AND id <> %s
+                                       AND (
+                                         (confirmed_date=%s AND TIME_FORMAT(confirmed_time_from,'%%H:%%i')=%s)
+                                         OR
+                                         (confirmed_date IS NULL AND proposed_date=%s
+                                          AND TIME_FORMAT(proposed_time_from,'%%H:%%i')=%s)
+                                       )
+                                     FOR UPDATE""",
+                                (req["id"], date_str, tf_str, date_str, tf_str),
+                            )
+                            slot_row = cur_tx.fetchone() or {}
+                            picks_now = int(slot_row.get("n") or 0)
+                            kg_now    = float(slot_row.get("kg") or 0)
+                            m3_now    = float(slot_row.get("m3") or 0)
+
+                            cfg_lock = settings()
+                            max_picks_slot = int(cfg_lock.get("max_picks_per_slot") or 5)
+                            max_kg_slot    = float(cfg_lock.get("max_kg_per_slot") or 500)
+                            max_m3_slot    = float(cfg_lock.get("max_m3_per_slot") or 5)
+
+                            # 2b. Re-validar capacidad bajo el lock
+                            if picks_now + 1 > max_picks_slot:
+                                confirm_motivo = f"Slot lleno por otro retiro: {picks_now} de {max_picks_slot}."
+                            elif kg_now + extra_kg > max_kg_slot:
+                                confirm_motivo = f"Capacidad de peso excedida: {kg_now:.1f}+{extra_kg:.1f} > {max_kg_slot:.0f} kg."
+                            elif m3_now + extra_m3 > max_m3_slot:
+                                confirm_motivo = f"Capacidad de volumen excedida: {m3_now:.2f}+{extra_m3:.2f} > {max_m3_slot:.2f} m³."
+                            else:
+                                # 2c. UPDATE atómico dentro de la transacción
+                                cur_tx.execute(
+                                    f"""UPDATE `{REQ}`
+                                          SET status='agenda_confirmada',
+                                              confirmed_date=%s,
+                                              confirmed_time_from=%s,
+                                              confirmed_time_to=%s
+                                        WHERE id=%s
+                                          AND status <> 'agenda_confirmada'""",
+                                    (proposal["date"], proposal["time_from"],
+                                     proposal["time_to"], req["id"]),
+                                )
+                                if cur_tx.rowcount == 0:
+                                    # Alguien más confirmó este mismo retiro entre clics
+                                    confirm_motivo = "El retiro ya fue confirmado anteriormente."
+                                else:
+                                    cur_tx.execute(
+                                        f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() WHERE id=%s",
+                                        (proposal["id"],),
+                                    )
+                                    confirm_ok = True
+
+                        if confirm_ok:
+                            conn_tx.commit()
+                        else:
+                            conn_tx.rollback()
+                    except Exception as _tx_err:
+                        if conn_tx is not None:
+                            try: conn_tx.rollback()
+                            except Exception: pass
+                        confirm_motivo = f"Error técnico al confirmar: {_tx_err}"
+                        print(f"[pickup_confirm] tx error req={req['id']}: {_tx_err}", flush=True)
+                    finally:
+                        if conn_tx is not None:
+                            try: conn_tx.close()
+                            except Exception: pass
+
+                    if not confirm_ok:
+                        # Marcar propuesta como declined y avisar
+                        try:
+                            mysql_execute(
+                                f"UPDATE `{PROP}` SET status='declined', answered_at=NOW() WHERE id=%s",
+                                (proposal["id"],),
+                            )
+                        except Exception: pass
+                        log_event(
+                            req["id"], "confirm_bloqueada", old, old,
+                            f"Cliente intentó confirmar pero falló (race): {confirm_motivo}",
+                            "sistema", "Validación bajo lock",
+                        )
+                        flash(
+                            f"Lo sentimos, este horario ya no está disponible. {confirm_motivo} "
+                            "Te enviamos una nueva propuesta a la brevedad.",
+                            "warning",
+                        )
+                        return redirect(url_for("pickup_public_tracking", token=token))
+
                     log_event(req["id"], "cliente_confirmo", old, "agenda_confirmada", "Cliente acepto propuesta", "cliente", req["contact_name"])
             elif action == "reject":
                 reason = request.form.get("reason", "")
