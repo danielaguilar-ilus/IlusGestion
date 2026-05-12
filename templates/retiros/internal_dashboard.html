@@ -9,6 +9,9 @@
   <div class="d-flex gap-2 flex-wrap">
     <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
     {% if permissions.admin %}
+    <button id="btn-recordatorios-24h" type="button" class="btn btn-sm btn-outline-warning" title="Avisar por email/WA a clientes con retiro mañana">
+      <i class="bi bi-bell me-1"></i>Enviar recordatorios 24h
+    </button>
     <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-gear me-1"></i>Horarios y alertas</button>
     {% endif %}
   </div>
@@ -207,6 +210,44 @@
     loadBandeja();
     var btn = document.getElementById('btn-bandeja-refresh');
     if (btn) btn.addEventListener('click', loadBandeja);
+
+    // Botón recordatorios 24h (solo admins)
+    var btnRem = document.getElementById('btn-recordatorios-24h');
+    if (btnRem){
+      btnRem.addEventListener('click', function(){
+        if (!confirm('¿Enviar recordatorios a todos los clientes con retiro confirmado para MAÑANA?')) return;
+        btnRem.disabled = true;
+        var orig = btnRem.innerHTML;
+        btnRem.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando...';
+        fetch('{{ url_for("pickup_enviar_recordatorios_24h") }}', {
+          method:'POST',
+          credentials:'same-origin',
+          headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'}
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var msg = 'Recordatorios 24h:\n' +
+                    '• Enviados: ' + (data.enviados || 0) + '\n' +
+                    '• Omitidos: ' + (data.omitidos || 0) + '\n' +
+                    '• Total candidatos: ' + (data.total_candidatos || 0);
+          if (data.errores && data.errores.length){
+            msg += '\n\nErrores (' + data.errores.length + '):';
+            data.errores.slice(0, 5).forEach(function(e){
+              msg += '\n  - ' + (e.code || '?') + ': ' + (e.error || '');
+            });
+          }
+          alert(msg);
+        })
+        .catch(function(err){
+          alert('Error al enviar recordatorios. Revisa la consola.');
+          console.error('[recordatorios-24h]', err);
+        })
+        .finally(function(){
+          btnRem.disabled = false;
+          btnRem.innerHTML = orig;
+        });
+      });
+    }
   });
 })();
 </script>

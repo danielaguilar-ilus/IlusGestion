@@ -137,6 +137,18 @@ def register_pickup_routes(app, ctx):
 
     ensure_marketing_columns()
 
+    def ensure_reminder_columns():
+        """Migración: timestamp del envío del recordatorio 24h."""
+        try:
+            mysql_execute(
+                f"ALTER TABLE `{REQ}` ADD COLUMN reminder_24h_sent DATETIME NULL "
+                f"COMMENT 'Timestamp del recordatorio 24h enviado al cliente'"
+            )
+        except Exception:
+            pass
+
+    ensure_reminder_columns()
+
     def settings():
         row = mysql_fetchone(f"SELECT * FROM `{SET}` WHERE id=1") or {}
         # Migración: subir close_time a 17:30 (bodega trabaja hasta 17:00, recibe
@@ -472,6 +484,7 @@ def register_pickup_routes(app, ctx):
         "done":      "retirada",
         "rejected":  "rechazada",
         "rescheduled": "reagendada",
+        "reminder_24h": "recordatorio_24h",  # nuevo kind para recordatorio del día previo
         "message":   None,    # custom — sin plantilla
     }
 
@@ -517,6 +530,7 @@ def register_pickup_routes(app, ctx):
                     "created": "Solicitud de retiro recibida",
                     "proposal": "ILUS propuso una agenda de retiro",
                     "confirmed": "Agenda de retiro confirmada",
+                    "reminder_24h": "Recordatorio: tu retiro es mañana",
                     "message": "Actualización de tu solicitud de retiro",
                 }
                 title = titles.get(kind, "Actualización de retiro ILUS")
@@ -535,6 +549,13 @@ def register_pickup_routes(app, ctx):
                     paragraphs = [
                         "Tu agenda de retiro fue confirmada.",
                         "Recuerda presentar documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
+                    ]
+                elif kind == "reminder_24h":
+                    paragraphs = [
+                        f"Te recordamos que <strong>mañana retiramos tus productos</strong>.",
+                        f"Hora: <strong>{variables['horario']}</strong>.",
+                        f"Dirección: {variables['warehouse_addr'] or variables['warehouse_name']}.",
+                        "Por favor presentarse con documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
                     ]
                 else:
                     paragraphs = [custom_message or "Hay una actualización disponible para tu solicitud de retiro."]
@@ -573,15 +594,26 @@ def register_pickup_routes(app, ctx):
                         "created": "Solicitud de retiro recibida",
                         "proposal": "ILUS propuso una agenda de retiro",
                         "confirmed": "Agenda de retiro confirmada",
+                        "reminder_24h": "Recordatorio: tu retiro es mañana",
                         "message": "Actualización de tu retiro",
                     }
                     title = titles.get(kind, "Actualización retiro ILUS")
-                    wa_body = (
-                        f"ILUS - {title}\n\nSolicitud: {req['code']}\n"
-                        f"Documento: {variables['documento']}\n"
-                        f"Bodega: {variables['warehouse_name']}\n"
-                        f"Seguimiento: {follow_url}"
-                    )
+                    if kind == "reminder_24h":
+                        wa_body = (
+                            f"ILUS - {title}\n\nSolicitud: {req['code']}\n"
+                            f"Mañana retiramos tus productos.\n"
+                            f"Hora: {variables['horario']}\n"
+                            f"Bodega: {variables['warehouse_name']}\n"
+                            f"Dirección: {variables['warehouse_addr']}\n"
+                            f"Seguimiento: {follow_url}"
+                        )
+                    else:
+                        wa_body = (
+                            f"ILUS - {title}\n\nSolicitud: {req['code']}\n"
+                            f"Documento: {variables['documento']}\n"
+                            f"Bodega: {variables['warehouse_name']}\n"
+                            f"Seguimiento: {follow_url}"
+                        )
                 sent_wa = _send_whatsapp(
                     wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"],
                     req["contact_phone"], wa_body
@@ -1036,6 +1068,68 @@ def register_pickup_routes(app, ctx):
             "sin_respuesta":   _norm(sin_respuesta),
             "confirmados_hoy": _norm(confirmados_hoy),
             "sin_firma":       _norm(sin_firma),
+        })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  RECORDATORIO 24h — disparo manual o cron-style
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/admin/enviar-recordatorios-24h", methods=["POST"])
+    @require_permission("admin")
+    def pickup_enviar_recordatorios_24h():
+        """Envía recordatorio a clientes con retiro confirmado para MAÑANA.
+
+        Selecciona pickup_requests con status='agenda_confirmada' y
+        confirmed_date = CURDATE()+1 que no tengan reminder_24h_sent
+        registrado, dispara notify(req, 'reminder_24h') y marca el envío.
+
+        Devuelve JSON: {enviados, omitidos, errores: [{code, error}]}.
+        Apto para disparo manual desde el dashboard o vía cron externo.
+        """
+        rows = mysql_fetchall(
+            f"""SELECT * FROM `{REQ}`
+                WHERE status = 'agenda_confirmada'
+                  AND DATE(confirmed_date) = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+                  AND reminder_24h_sent IS NULL"""
+        ) or []
+
+        enviados = 0
+        omitidos = 0
+        errores = []
+        for r in rows:
+            try:
+                req_dict = dict(r)
+                sent_mail, sent_wa = notify(req_dict, "reminder_24h")
+                if sent_mail or sent_wa:
+                    mysql_execute(
+                        f"UPDATE `{REQ}` SET reminder_24h_sent=NOW() WHERE id=%s",
+                        (req_dict["id"],),
+                    )
+                    log_event(
+                        req_dict["id"], "recordatorio_24h_enviado",
+                        req_dict.get("status"), req_dict.get("status"),
+                        "Recordatorio 24h enviado al cliente.",
+                        "sistema", "Recordatorios",
+                    )
+                    enviados += 1
+                else:
+                    omitidos += 1
+                    errores.append({
+                        "code": req_dict.get("code"),
+                        "error": "No se pudo enviar por ningún canal (email/WA).",
+                    })
+            except Exception as exc:
+                omitidos += 1
+                errores.append({
+                    "code": dict(r).get("code"),
+                    "error": str(exc)[:200],
+                })
+
+        return jsonify({
+            "ok": True,
+            "enviados": enviados,
+            "omitidos": omitidos,
+            "errores": errores,
+            "total_candidatos": len(rows),
         })
 
     @app.route("/retiros/<int:rid>")
