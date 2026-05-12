@@ -184,8 +184,8 @@
             <button type="submit" class="btn btn-sm btn-ilus ms-auto">
               <i class="bi bi-check-lg"></i> Guardar
             </button>
-            <button type="submit" name="action" value="delete" class="btn btn-sm btn-outline-danger"
-                    onclick="return confirm('¿Eliminar este aviso?')">
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    onclick="if(confirm('¿Eliminar este aviso?\n\n«{{ (av.titulo or 'aviso')|e }}»\n\nEsta acción no se puede deshacer.')){this.previousElementSibling.value='check'; const btn=document.createElement('input'); btn.type='hidden'; btn.name='action'; btn.value='delete'; this.closest('form').appendChild(btn); this.closest('form').submit();}">
               <i class="bi bi-trash"></i>
             </button>
           </div>
