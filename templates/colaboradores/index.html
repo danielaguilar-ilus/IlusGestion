@@ -137,7 +137,7 @@
               {% endif %}
               {% if permissions.delete %}
               <form method="post" action="{{ url_for('colab_eliminar', cid=col.id) }}"
-                    onsubmit="return confirm('¿Eliminar a {{ col.nombre_completo }}? Esta acción no se puede deshacer.')">
+                    onsubmit="return confirmarEliminarColab(event, {{ col.nombre_completo|tojson }})">
                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"
                         style="padding:6px 9px">
                   <i class="bi bi-trash3"></i>
@@ -168,4 +168,21 @@
   {% endif %}
 
 </div>
+
+<script>
+function confirmarEliminarColab(ev, nombre){
+  ev.preventDefault();
+  const form = ev.target;
+  (async () => {
+    const ok = await ilusConfirm({
+      title: 'Eliminar colaborador',
+      message: `¿Eliminar a "${nombre}"?`,
+      sub: 'Esta acción no se puede deshacer.',
+      okLabel: 'Eliminar', danger: true,
+    });
+    if (ok) HTMLFormElement.prototype.submit.call(form);
+  })();
+  return false;
+}
+</script>
 {% endblock %}

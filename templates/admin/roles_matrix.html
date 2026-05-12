@@ -115,7 +115,7 @@
       <div class="d-flex gap-2">
         {% if not r.is_system %}
         <button type="button" class="btn btn-sm btn-outline-danger"
-                onclick="if(confirm('Eliminar el rol \'{{ r.nombre }}\'? Los usuarios pasarán a \'lector\'.')) location.href='{{ url_for('admin_rol_eliminar', slug=r.slug) }}'">
+                onclick="confirmarEliminarRolMatrix('{{ r.slug }}', {{ r.nombre|tojson }})">
           <i class="bi bi-trash me-1"></i>Eliminar rol
         </button>
         {% endif %}
@@ -179,6 +179,16 @@ function rmSelectRol(slug, btn) {
   document.querySelectorAll('.rm-form').forEach(f => f.style.display = 'none');
   const form = document.getElementById('form-' + slug);
   if (form) form.style.display = '';
+}
+async function confirmarEliminarRolMatrix(slug, nombre) {
+  const ok = await ilusConfirm({
+    title: 'Eliminar rol',
+    message: `¿Eliminar el rol "${nombre}"?`,
+    sub: "Todos los usuarios con este rol pasarán a 'lector'.",
+    okLabel: 'Sí, eliminar', danger: true,
+  });
+  if (!ok) return;
+  location.href = '/admin/roles/' + encodeURIComponent(slug) + '/eliminar';
 }
 </script>
 {% endblock %}

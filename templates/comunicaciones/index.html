@@ -1857,7 +1857,13 @@ async function tplGuardar() {
 async function tplRestaurar() {
   if (!_tplEstado) return;
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
-  if (!confirm(`¿Restaurar la plantilla "${meta.label}" — ${_tplCanal} a su versión original?`)) return;
+  const ok = await ilusConfirm({
+    title: 'Restaurar plantilla',
+    message: `¿Restaurar la plantilla "${meta.label}" — ${_tplCanal} a su versión original?`,
+    sub: 'Tu versión editada se perderá.',
+    okLabel: 'Sí, restaurar', danger: true,
+  });
+  if (!ok) return;
   const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
   const r   = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
     method:'PUT', headers:{'Content-Type':'application/json'},
@@ -1875,14 +1881,21 @@ async function tplRestaurar() {
 }
 
 async function tplRestaurarTodo() {
-  if (!confirm('Esto reemplazara todas las plantillas guardadas por la base oficial ILUS. Continuar?')) return;
+  const ok = await ilusConfirm({
+    title: 'Restaurar TODAS las plantillas',
+    message: 'Esto reemplazará todas las plantillas guardadas por la base oficial ILUS.',
+    sub: 'Acción irreversible — todas tus ediciones se perderán.',
+    okLabel: 'Sí, restaurar todo', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch('/comunicaciones/templates/restaurar-todo', {
     method:'POST',
     headers:{'Content-Type':'application/json'}
   });
   const d = await r.json();
   if (!d.ok) {
-    alert(d.error || 'No se pudieron restaurar las plantillas');
+    if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudieron restaurar las plantillas', { type:'error' });
+    else alert(d.error || 'No se pudieron restaurar las plantillas');
     return;
   }
   _tplLoaded = false;

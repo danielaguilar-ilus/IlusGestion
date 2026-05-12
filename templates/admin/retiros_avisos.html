@@ -185,7 +185,7 @@
               <i class="bi bi-check-lg"></i> Guardar
             </button>
             <button type="button" class="btn btn-sm btn-outline-danger"
-                    onclick="if(confirm('¿Eliminar este aviso?\n\n«{{ (av.titulo or 'aviso')|e }}»\n\nEsta acción no se puede deshacer.')){this.previousElementSibling.value='check'; const btn=document.createElement('input'); btn.type='hidden'; btn.name='action'; btn.value='delete'; this.closest('form').appendChild(btn); this.closest('form').submit();}">
+                    onclick="confirmarEliminarAviso(this, {{ (av.titulo or 'aviso')|tojson }})">
               <i class="bi bi-trash"></i>
             </button>
           </div>
@@ -223,5 +223,21 @@ function updatePreview(){
 }
 document.querySelector('input[name="titulo"]').addEventListener('keyup', updatePreview);
 updatePreview();
+
+async function confirmarEliminarAviso(btn, titulo){
+  const ok = await ilusConfirm({
+    title: 'Eliminar aviso',
+    message: `¿Eliminar el aviso «${titulo || 'aviso'}»?`,
+    sub: 'Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
+  // Inyectar action=delete y submit el form contenedor
+  const form = btn.closest('form');
+  const hid = document.createElement('input');
+  hid.type = 'hidden'; hid.name = 'action'; hid.value = 'delete';
+  form.appendChild(hid);
+  form.submit();
+}
 </script>
 {% endblock %}

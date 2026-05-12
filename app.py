@@ -414,7 +414,11 @@ except Exception as _cld_err:
 
 
 def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
-    """Sube a Cloudinary y devuelve la URL segura. Lanza excepción si falla."""
+    """Sube a Cloudinary y devuelve la URL segura. Lanza excepción si falla.
+
+    LEGACY: solo devuelve la URL. Para nuevos códigos que necesiten public_id
+    para borrar después, usar _cloud_upload_image_full() que devuelve dict.
+    """
     result = _cloudinary_uploader.upload(
         file_obj,
         public_id     = public_id,
@@ -423,6 +427,30 @@ def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
         resource_type = "image",
     )
     return result["secure_url"]
+
+
+def _cloud_upload_image_full(file_obj, public_id: str, folder: str = "ilus") -> dict:
+    """Sube imagen a Cloudinary y devuelve dict completo {url, public_id, size}.
+
+    A diferencia de _cloud_upload (legacy) que solo devuelve la URL, esta
+    versión devuelve el public_id EXACTO que Cloudinary asignó. Esto evita
+    parsearlo después con regex frágil (que fallaba con transformaciones
+    en la URL tipo /upload/c_fill,w_500/...).
+    """
+    if not _CLD_READY or not _cloudinary_uploader:
+        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
+    result = _cloudinary_uploader.upload(
+        file_obj,
+        public_id     = public_id,
+        folder        = folder,
+        overwrite     = True,
+        resource_type = "image",
+    )
+    return {
+        "url":       result["secure_url"],
+        "public_id": result["public_id"],
+        "size":      result.get("bytes", 0),
+    }
 
 
 def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") -> dict:
@@ -2722,7 +2750,8 @@ def login():
     if g.user:
         return redirect(url_for("index"))
     next_url = request.args.get("next") or request.form.get("next") or url_for("index")
-    imgs = _login_images_active()
+    # solo_activas=True → filtra WHERE activa=1 LIMIT 5 para el login público
+    imgs = _login_images_active(solo_activas=True)
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
@@ -5290,15 +5319,12 @@ LOGIN_IMAGES_DIR = os.path.join(UPLOADS_BASE, "login")
 os.makedirs(LOGIN_IMAGES_DIR, exist_ok=True)
 
 
-def _login_images_active():
-    try:
-        rows = mysql_fetchall(
-            "SELECT id,archivo_path,titulo,subtitulo,orden FROM login_images "
-            "WHERE activa=1 ORDER BY orden ASC, id ASC LIMIT 5"
-        )
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
+# NOTA: la función _login_images_active() está definida más abajo (~línea 5505)
+# en su versión unificada que incluye cloudinary_url, src y badge persistente.
+# Antes había una versión duplicada acá que filtraba SOLO activas con LIMIT 5,
+# pero Python usaba la de abajo (la última gana) y el filtro nunca se aplicaba.
+# Para el login público (que necesita SOLO activas) usar
+# _login_images_active(solo_activas=True).
 
 
 @app.route("/admin/login-imagenes", methods=["GET"])
@@ -5361,12 +5387,12 @@ def admin_login_imagenes_subir():
             try:
                 f.stream.seek(0)
                 public_id = f"login_{int(time.time())}_{i}"
-                cloud_url = _cloud_upload(f.stream, public_id, folder="ilus/login_carousel")
-                # Extraer public_id de la URL para poder borrar después
-                import re as _re_cld
-                m = _re_cld.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", cloud_url)
-                cloud_pid = m.group(1) if m else f"ilus/login_carousel/{public_id}"
-                print(f"[login_imagenes] Cloudinary OK {fname} → {cloud_url}", flush=True)
+                # _cloud_upload_image_full devuelve {url, public_id, size}
+                # — usa el public_id REAL de Cloudinary (sin regex frágil).
+                _cld_res = _cloud_upload_image_full(f.stream, public_id, folder="ilus/login_carousel")
+                cloud_url = _cld_res["url"]
+                cloud_pid = _cld_res["public_id"]
+                print(f"[login_imagenes] Cloudinary OK {fname} → {cloud_url} (pid={cloud_pid})", flush=True)
             except Exception as e_cld:
                 print(f"[login_imagenes] Cloudinary FAIL {fname}: {e_cld}", flush=True)
                 cloud_url = None
@@ -5502,13 +5528,31 @@ def _retiros_carousel_active():
         return []
 
 
-def _login_images_active():
-    """Misma utilidad para el carrusel de login (admin)."""
+def _login_images_active(solo_activas=False):
+    """Devuelve imágenes del carrusel del login con src resuelto.
+
+    Cada item incluye:
+      - id, titulo, subtitulo, orden, activa, archivo_path, cloudinary_url
+      - src       → URL final (cloudinary primero, filesystem fallback)
+      - persistente → bool, True si está en Cloudinary
+
+    Args:
+      solo_activas: si True, filtra activa=1 y LIMIT 5 (para login público).
+                    si False (default), trae todas (para admin/gestión).
+    """
     try:
-        rows = mysql_fetchall(
-            "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo, orden, activa, created_by, created_at "
-            "FROM login_images ORDER BY orden ASC, id ASC"
-        )
+        if solo_activas:
+            rows = mysql_fetchall(
+                "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo, orden, activa "
+                "FROM login_images WHERE activa=1 "
+                "ORDER BY orden ASC, id ASC LIMIT 5"
+            )
+        else:
+            rows = mysql_fetchall(
+                "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo, orden, activa, "
+                "       created_by, created_at "
+                "FROM login_images ORDER BY orden ASC, id ASC"
+            )
         out = []
         for r in (rows or []):
             d = dict(r)
@@ -5598,11 +5642,10 @@ def admin_retiros_carousel_subir():
             try:
                 f.stream.seek(0)
                 public_id = f"retiros_{int(time.time())}_{saved}"
-                cloud_url = _cloud_upload(f.stream, public_id, folder="ilus/retiros_carousel")
-                import re as _re_cld
-                m = _re_cld.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", cloud_url)
-                cloud_pid = m.group(1) if m else f"ilus/retiros_carousel/{public_id}"
-                print(f"[retiros_carousel] Cloudinary OK {fname} → {cloud_url}", flush=True)
+                _cld_res = _cloud_upload_image_full(f.stream, public_id, folder="ilus/retiros_carousel")
+                cloud_url = _cld_res["url"]
+                cloud_pid = _cld_res["public_id"]
+                print(f"[retiros_carousel] Cloudinary OK {fname} → {cloud_url} (pid={cloud_pid})", flush=True)
             except Exception as e_cld:
                 print(f"[retiros_carousel] Cloudinary FAIL {fname}: {e_cld}", flush=True)
                 cloud_url = None
@@ -10167,6 +10210,171 @@ def tr_asignar_a_manifiesto():
 
     conn.commit()
     return jsonify({"ok": True, "manifest_id": mid, "correlativo": correlativo, "added": added, "duplicados": dupes})
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  CUBICADOR → MANIFIESTO
+#  Endpoint para enviar el resultado de la cotización del cubicador
+#  directamente a un manifiesto (existente o nuevo).
+# ════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/api/manifiestos/abiertos", methods=["GET"])
+@_tr_required
+def tr_manifiestos_abiertos():
+    """Devuelve manifiestos abiertos para el selector del cubicador.
+
+    Estados considerados "abiertos": 'En preparación', 'En curso'.
+    Si se pasa ?courier=Nombre, ordena los del mismo courier primero
+    (mejor UX: el courier elegido en la cotización aparece arriba).
+    """
+    courier_pref = (request.args.get("courier") or "").strip()
+    try:
+        rows = mysql_fetchall("""
+            SELECT id, correlativo, fecha, courier, estado,
+                   COALESCE(total_items, 0) AS total_items,
+                   COALESCE(costo_total, 0) AS costo_total
+              FROM transport_manifests
+             WHERE estado IN ('En preparación','En curso')
+             ORDER BY (courier=%s) DESC, fecha DESC, id DESC
+             LIMIT 50
+        """, (courier_pref,)) or []
+    except Exception as e:
+        return jsonify({"error": f"Error consultando manifiestos: {e}"}), 500
+
+    for r in rows:
+        # Normalizar fecha a YYYY-MM-DD para el frontend
+        if r.get("fecha"):
+            r["fecha"] = r["fecha"].isoformat() if hasattr(r["fecha"], "isoformat") else str(r["fecha"])
+    return jsonify({"ok": True, "manifiestos": rows})
+
+
+@app.route("/transporte/api/cubicador/enviar-manifiesto", methods=["POST"])
+@_tr_required
+def tr_cubicador_enviar_manifiesto():
+    """Flujo unificado: desde el cubicador, persiste el commitment (tido,nudo)
+    y lo adjunta a un manifiesto existente o crea uno nuevo.
+
+    Body JSON:
+      tido, nudo:        documento del cubicador (obligatorio)
+      courier:           nombre del courier (obligatorio, ej. 'FedEx')
+      costo_cotizado:    costo a guardar en transport_commitments.costo_zz
+      manifest_id:       ID si va a manifiesto existente, None para crear nuevo
+      fecha:             solo si crea nuevo (YYYY-MM-DD)
+      notas:             solo si crea nuevo (opcional)
+    """
+    data = request.get_json(silent=True) or {}
+    tido = (data.get("tido") or "").strip().upper()
+    nudo = str(data.get("nudo") or "").strip()
+    courier = (data.get("courier") or "").strip()[:80]
+    costo_cot = data.get("costo_cotizado")
+    mid_in = data.get("manifest_id")
+
+    if not tido or not nudo:
+        return jsonify({"error": "tido y nudo son obligatorios"}), 400
+    if not courier:
+        return jsonify({"error": "Selecciona un courier antes de enviar"}), 400
+
+    # 1) Upsert commitment desde ERP (helper existente, ya probado)
+    comm_id, err = _tr_fetch_from_erp(tido, nudo)
+    if err:
+        return jsonify({"error": f"ERP: {err}"}), 404
+
+    # 2) Persistir costo cotizado (no es fatal si falla)
+    try:
+        if costo_cot is not None and float(costo_cot) > 0:
+            mysql_execute(
+                "UPDATE transport_commitments SET costo_zz=%s WHERE id=%s",
+                (float(costo_cot), comm_id)
+            )
+    except Exception as e_cost:
+        print(f"[cub_enviar_manif] no se pudo guardar costo: {e_cost}", flush=True)
+
+    # 3) Resolver manifest_id (crear si hace falta) y agregar el item.
+    conn = get_db()
+    correlativo = None
+    added = False
+    try:
+        with conn.cursor() as cur:
+            if not mid_in:
+                # Crear manifiesto nuevo
+                fecha_in = (data.get("fecha") or "").strip()
+                if not fecha_in:
+                    fecha_in = datetime.now().date().isoformat()
+                notas = (data.get("notas") or "").strip()[:500]
+                # Correlativo MAN-AAAA-NNNN (sincronizado con tr_crear_manifiesto)
+                cur.execute(
+                    "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+                    "WHERE YEAR(created_at)=YEAR(NOW())"
+                )
+                _r = cur.fetchone() or {}
+                n = int(_r.get("n", 1))
+                correlativo = f"MAN-{datetime.now().year}-{n:04d}"
+                cur.execute(
+                    """INSERT INTO transport_manifests
+                       (correlativo, fecha, courier, notas, created_by)
+                       VALUES (%s,%s,%s,%s,%s)""",
+                    (correlativo, fecha_in, courier, notas, current_username())
+                )
+                mid = cur.lastrowid
+                try: _tr_log("manifest", mid, "creado (cubicador)",
+                            f"courier={courier} fecha={fecha_in}")
+                except Exception: pass
+            else:
+                # Validar manifiesto existente
+                mid = int(mid_in)
+                row = mysql_fetchone(
+                    "SELECT estado, correlativo FROM transport_manifests WHERE id=%s",
+                    (mid,)
+                )
+                if not row:
+                    return jsonify({"error": "Manifiesto no encontrado"}), 404
+                if row["estado"] in ("Cerrado", "Entregado completo"):
+                    return jsonify({
+                        "error": "El manifiesto está cerrado y no acepta más items."
+                    }), 409
+                correlativo = row["correlativo"]
+
+            # 4) Adjuntar item (idempotente por UNIQUE)
+            cur.execute(
+                "INSERT IGNORE INTO transport_manifest_items "
+                "(manifest_id, commitment_id) VALUES (%s,%s)",
+                (mid, comm_id)
+            )
+            added = bool(cur.rowcount)
+
+            # 5) Recalcular totales del manifiesto
+            cur.execute("""
+                UPDATE transport_manifests m SET
+                  total_items = (SELECT COUNT(*) FROM transport_manifest_items
+                                  WHERE manifest_id = m.id),
+                  costo_total = (SELECT COALESCE(SUM(c.costo_zz), 0)
+                                   FROM transport_manifest_items mi
+                                   JOIN transport_commitments c ON c.id = mi.commitment_id
+                                  WHERE mi.manifest_id = m.id)
+                WHERE m.id = %s
+            """, (mid,))
+        conn.commit()
+    except Exception as e_tx:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": f"Error al adjuntar al manifiesto: {e_tx}"}), 500
+
+    try:
+        _tr_log(
+            "manifest", mid,
+            "item agregado (cubicador)" if added else "item duplicado (cubicador)",
+            f"commitment_id={comm_id} tido={tido} nudo={nudo} courier={courier}"
+        )
+    except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "manifest_id": mid,
+        "correlativo": correlativo,
+        "commitment_id": comm_id,
+        "added": added,
+        "duplicate": not added,
+    })
 
 
 # ── COURIERS — helper functions ──────────────────────────────────────────────

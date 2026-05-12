@@ -312,8 +312,14 @@
       .catch(function(){ toast('Error.', 'err'); });
   };
 
-  window.eliminarPG = function(pid, sec){
-    if(!confirm('¿Eliminar esta pregunta genérica? No se puede deshacer.')) return;
+  window.eliminarPG = async function(pid, sec){
+    const ok = await ilusConfirm({
+      title: 'Eliminar pregunta genérica',
+      message: '¿Eliminar esta pregunta?',
+      sub: 'No se puede deshacer.',
+      okLabel: 'Eliminar', danger: true,
+    });
+    if (!ok) return;
     fetch('/admin/preguntas-genericas/' + pid + '/eliminar', { method:'POST' })
       .then(function(r){ return r.json(); })
       .then(function(d){

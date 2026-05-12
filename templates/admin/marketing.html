@@ -380,8 +380,8 @@
             <td class="text-muted small">{{ b.created_by or '—' }}</td>
             <td class="text-end pe-3">
               <form method="post" action="{{ url_for('pickup_blocks_delete', bid=b.id) }}"
-                    onsubmit="return confirm('¿Eliminar este bloqueo?')" style="display:inline">
-                <button class="btn btn-sm btn-outline-danger" title="Eliminar">
+                    onsubmit="return confirmarEliminarBloqueo(event)" style="display:inline">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>
               </form>
@@ -562,6 +562,26 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   });
 });
+
+// Confirmación destructiva con modal del sistema (ilusConfirm)
+// — interrumpe el submit del form y lo dispara solo si el usuario acepta.
+function confirmarEliminarBloqueo(ev){
+  ev.preventDefault();
+  const form = ev.target;
+  (async () => {
+    const ok = await ilusConfirm({
+      title: 'Eliminar bloqueo',
+      message: '¿Eliminar este bloqueo?',
+      sub: 'La fecha/franja volverá a estar disponible para los clientes.',
+      okLabel: 'Eliminar', danger: true,
+    });
+    if (ok) {
+      // submit sin volver a pasar por onsubmit (que retornaría false otra vez)
+      HTMLFormElement.prototype.submit.call(form);
+    }
+  })();
+  return false;
+}
 
 function mkTab(tab, btn) {
   document.querySelectorAll('.mk-tab').forEach(t => t.classList.remove('active'));

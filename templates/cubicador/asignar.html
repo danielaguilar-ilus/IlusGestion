@@ -1635,9 +1635,160 @@ function validarParaManifiesto(){
 // ════════════════════════════════════════════════════════════
 //  ACCIONES
 // ════════════════════════════════════════════════════════════
+const _COURIER_NAMES = {
+  fedex:'FedEx', starken:'Starken', blue:'Blue Express',
+  chilexpress:'Chilexpress', felca:'Trans. Felca', milling:'Trans. Milling'
+};
+
 function enviarManifiesto(){
   if(!validarParaManifiesto()) return;
-  alert('Función Manifiesto — próximamente disponible.');
+  abrirEnvioManifiesto();
+}
+
+async function abrirEnvioManifiesto(){
+  const h = _docData.header || {};
+  const courierNom = _COURIER_NAMES[_courierSel] || _courierSel;
+  const costo = (_courierSel === 'fedex') ? _precioFedex : (_preciosManuales?.[_courierSel] || 0);
+
+  // Resumen del envío en el modal
+  document.getElementById('mfResumen').innerHTML = `
+    <div><b>Documento:</b> ${document.getElementById('docTipo').value} N° ${h.nudo || '—'}</div>
+    <div><b>Cliente:</b> ${h.cliente_nombre || '—'}</div>
+    <div><b>Destino:</b> ${h.comuna || '—'}</div>
+    <div><b>Bultos:</b> ${document.getElementById('cli-bultos').value || _docData.totales?.total_bultos || 0}
+         &nbsp;·&nbsp;
+         <b>Courier:</b> ${courierNom}</div>
+    <div><b>Costo cotizado:</b> ${costo ? '$' + Math.round(costo).toLocaleString('es-CL') : '—'}</div>
+  `;
+  // Inputs por defecto
+  document.getElementById('mfFecha').value = new Date().toISOString().slice(0,10);
+  document.getElementById('mfNotas').value = '';
+  document.getElementById('mfAlert').style.display = 'none';
+  // Por defecto: agregar a existente
+  const radioExist = document.querySelector('input[name=mfModo][value=existente]');
+  if (radioExist) radioExist.checked = true;
+  _mfToggleModo();
+  document.getElementById('modalManifiesto').style.display = 'flex';
+
+  // Cargar manifiestos abiertos del mismo courier (ordenados primero)
+  const sel = document.getElementById('mfSelectExistente');
+  sel.innerHTML = '<option value="">— Cargando… —</option>';
+  try {
+    const r = await fetch(`/transporte/api/manifiestos/abiertos?courier=${encodeURIComponent(courierNom)}`);
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    const items = d.manifiestos || [];
+    if (!items.length) {
+      sel.innerHTML = '<option value="">(no hay manifiestos abiertos)</option>';
+      document.getElementById('mfHintExistente').textContent =
+        'No hay manifiestos en preparación — crea uno nuevo.';
+      // Auto-cambiar a "Crear nuevo"
+      const radioNuevo = document.querySelector('input[name=mfModo][value=nuevo]');
+      if (radioNuevo) { radioNuevo.checked = true; _mfToggleModo(); }
+    } else {
+      sel.innerHTML = items.map(m =>
+        `<option value="${m.id}" data-courier="${m.courier || ''}" data-estado="${m.estado || ''}">${m.correlativo} · ${m.courier || '—'} · ${m.fecha || ''} · ${m.total_items} ítems · ${m.estado}</option>`
+      ).join('');
+      document.getElementById('mfHintExistente').textContent =
+        `${items.length} manifiesto(s) abierto(s). Los de "${courierNom}" aparecen primero.`;
+    }
+  } catch(e) {
+    sel.innerHTML = '<option value="">(error cargando)</option>';
+    document.getElementById('mfAlert').textContent = 'Error cargando manifiestos: ' + e.message;
+    document.getElementById('mfAlert').style.display = '';
+  }
+}
+
+function _mfToggleModo(){
+  const sel = document.querySelector('input[name=mfModo]:checked');
+  const modo = sel ? sel.value : 'existente';
+  document.getElementById('mfBoxExistente').style.display = (modo === 'existente') ? '' : 'none';
+  document.getElementById('mfBoxNuevo').style.display     = (modo === 'nuevo')     ? '' : 'none';
+}
+
+function cerrarModalManifiesto(){
+  document.getElementById('modalManifiesto').style.display = 'none';
+}
+
+async function enviarAManifiesto(){
+  const btn = document.getElementById('mfBtnEnviar');
+  const alertBox = document.getElementById('mfAlert');
+  alertBox.style.display = 'none';
+
+  const modoEl = document.querySelector('input[name=mfModo]:checked');
+  const modo = modoEl ? modoEl.value : 'existente';
+  const tido = document.getElementById('docTipo').value;
+  const nudo = (document.getElementById('docNudo').value || '').trim();
+  const courierNom = _COURIER_NAMES[_courierSel] || _courierSel;
+  const costo = (_courierSel === 'fedex') ? _precioFedex : (_preciosManuales?.[_courierSel] || 0);
+
+  const payload = {
+    tido, nudo,
+    courier: courierNom,
+    costo_cotizado: costo,
+  };
+
+  if (modo === 'existente') {
+    const sel = document.getElementById('mfSelectExistente');
+    const mid = sel.value;
+    if (!mid) {
+      alertBox.textContent = 'Selecciona un manifiesto o crea uno nuevo.';
+      alertBox.style.display = ''; return;
+    }
+    const opt = sel.options[sel.selectedIndex];
+    if (opt.dataset.estado === 'Cerrado' || opt.dataset.estado === 'Entregado completo') {
+      alertBox.textContent = 'El manifiesto seleccionado está cerrado.';
+      alertBox.style.display = ''; return;
+    }
+    if (opt.dataset.courier && opt.dataset.courier !== courierNom) {
+      const ok = await ilusConfirm({
+        title: 'Mismatch de courier',
+        message: `El manifiesto es de ${opt.dataset.courier} pero la cotización es ${courierNom}.`,
+        sub: '¿Continuar igual?',
+        okLabel: 'Sí, continuar',
+      });
+      if (!ok) return;
+    }
+    payload.manifest_id = parseInt(mid, 10);
+  } else {
+    payload.manifest_id = null;
+    payload.fecha = document.getElementById('mfFecha').value;
+    payload.notas = document.getElementById('mfNotas').value.trim();
+    if (!payload.fecha) {
+      alertBox.textContent = 'La fecha es obligatoria para crear un manifiesto nuevo.';
+      alertBox.style.display = ''; return;
+    }
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando…';
+  try {
+    const r = await fetch('/transporte/api/cubicador/enviar-manifiesto', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    cerrarModalManifiesto();
+    if (window.ilusToast) {
+      ilusToast(
+        d.duplicate
+          ? `Ya estaba en el manifiesto ${d.correlativo || ('#'+d.manifest_id)}`
+          : `Enviado al manifiesto ${d.correlativo || ('#'+d.manifest_id)}`,
+        { type: d.duplicate ? 'warning' : 'success' }
+      );
+    }
+    // Redirigir al detalle del manifiesto
+    setTimeout(() => { window.location.href = `/transporte/manifiestos/${d.manifest_id}`; }, 1100);
+  } catch(e) {
+    alertBox.textContent = 'Error: ' + e.message;
+    alertBox.style.display = '';
+    if (window.ilusToast) ilusToast('Error al enviar: ' + e.message, { type:'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar al manifiesto';
+  }
 }
 function imprimir()      { window.print(); }
 function exportarExcel() { if(!_docData) return; alert('Generando Excel…'); }
@@ -1659,4 +1810,99 @@ function setBuscarLoading(on){
   document.getElementById('txtBuscar').textContent    = on?'Consultando ERP…':'Buscar en ERP';
 }
 </script>
+
+{# ════════════════════════════════════════════════════════════
+   MODAL: ENVIAR A MANIFIESTO
+   Permite agregar el documento cotizado a un manifiesto existente
+   o crear uno nuevo. Backend: /transporte/api/cubicador/enviar-manifiesto
+═════════════════════════════════════════════════════════════════ #}
+<div id="modalManifiesto" class="modal-mf" style="display:none">
+  <div class="modal-mf-backdrop" onclick="cerrarModalManifiesto()"></div>
+  <div class="modal-mf-box">
+    <div class="modal-mf-hdr">
+      <i class="bi bi-send-fill" style="color:#CC0000;font-size:1.2rem"></i>
+      <h3>Enviar al manifiesto</h3>
+      <button class="modal-mf-x" onclick="cerrarModalManifiesto()" aria-label="Cerrar">&times;</button>
+    </div>
+
+    <div class="modal-mf-body">
+      <div class="mf-resumen" id="mfResumen"></div>
+
+      <div class="mf-opciones">
+        <label class="mf-radio">
+          <input type="radio" name="mfModo" value="existente" checked onchange="_mfToggleModo()">
+          <span>
+            <b>Agregar a manifiesto existente</b>
+            <small>Selecciona uno en preparación</small>
+          </span>
+        </label>
+        <label class="mf-radio">
+          <input type="radio" name="mfModo" value="nuevo" onchange="_mfToggleModo()">
+          <span>
+            <b>Crear nuevo manifiesto</b>
+            <small>Genera un MAN-AAAA-NNNN</small>
+          </span>
+        </label>
+      </div>
+
+      <div id="mfBoxExistente">
+        <label class="mf-label">Manifiesto</label>
+        <select id="mfSelectExistente" class="mf-input">
+          <option value="">— Cargando… —</option>
+        </select>
+        <small id="mfHintExistente" style="color:#888;display:block;margin-top:4px"></small>
+      </div>
+
+      <div id="mfBoxNuevo" style="display:none">
+        <label class="mf-label">Fecha despacho <span style="color:#CC0000">*</span></label>
+        <input type="date" id="mfFecha" class="mf-input">
+        <label class="mf-label" style="margin-top:10px">Notas (opcional)</label>
+        <textarea id="mfNotas" class="mf-input" rows="2"
+                  placeholder="Ej: Despacho jueves AM"></textarea>
+      </div>
+
+      <div id="mfAlert" class="mf-alert" style="display:none"></div>
+    </div>
+
+    <div class="modal-mf-foot">
+      <button class="btn btn-light" onclick="cerrarModalManifiesto()">Cancelar</button>
+      <button class="btn btn-primary" id="mfBtnEnviar" onclick="enviarAManifiesto()">
+        <i class="bi bi-send me-1"></i>Enviar al manifiesto
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+.modal-mf{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center}
+.modal-mf-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.7)}
+.modal-mf-box{position:relative;background:#fff;border-radius:12px;width:min(540px,94vw);
+              max-height:92vh;display:flex;flex-direction:column;
+              box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden}
+.modal-mf-hdr{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #eee;
+              background:#0f172a;color:#fff}
+.modal-mf-hdr h3{margin:0;flex:1;font-size:1.0rem;font-weight:700;color:#fff}
+.modal-mf-x{background:none;border:none;color:#cbd5e1;font-size:1.5rem;cursor:pointer;line-height:1;padding:0 4px}
+.modal-mf-x:hover{color:#fff}
+.modal-mf-body{padding:16px 18px;overflow:auto;flex:1}
+.modal-mf-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #eee;
+               background:#fafafa}
+.mf-resumen{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;
+            margin-bottom:14px;font-size:.82rem;line-height:1.55;color:#1e293b}
+.mf-resumen b{color:#0f172a}
+.mf-opciones{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.mf-radio{display:flex;gap:10px;padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:8px;cursor:pointer;
+          transition:all .12s}
+.mf-radio:has(input:checked){border-color:#CC0000;background:rgba(204,0,0,.04)}
+.mf-radio input{margin-top:3px}
+.mf-radio span{display:flex;flex-direction:column}
+.mf-radio small{color:#64748b;font-size:.72rem;margin-top:2px}
+.mf-label{display:block;font-size:.72rem;color:#64748b;font-weight:700;margin-bottom:4px;
+          text-transform:uppercase;letter-spacing:.5px}
+.mf-input{width:100%;background:#fff;border:1.5px solid #e2e8f0;color:#0f172a;
+          padding:8px 10px;border-radius:6px;font-size:.88rem;outline:none;font-family:inherit}
+.mf-input:focus{border-color:#CC0000;box-shadow:0 0 0 3px rgba(204,0,0,.12)}
+.mf-alert{background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:9px 12px;
+          border-radius:6px;font-size:.82rem;margin-top:12px}
+</style>
 {% endblock %}

@@ -997,13 +997,20 @@ async function guardarContrato() {
 }
 
 async function eliminarContrato(kid) {
-  if (!confirm('¿Eliminar este contrato?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar contrato',
+    message: '¿Eliminar este contrato del courier?',
+    sub: 'Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/transporte/couriers/${COURIER_ID}/contratos/${kid}`, {method:'DELETE'});
   if (r.ok) {
     _contratosCache = _contratosCache.filter(c => c.id !== kid);
     renderContratos(_contratosCache);
   } else {
-    alert('Error al eliminar');
+    if (typeof ilusToast === 'function') ilusToast('Error al eliminar el contrato', { type:'error' });
+    else alert('Error al eliminar');
   }
 }
 

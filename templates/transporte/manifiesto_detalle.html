@@ -297,8 +297,14 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
   });
 }
 
-function quitarItem(mid, itemId) {
-  if (!confirm('¿Quitar este ítem del manifiesto?')) return;
+async function quitarItem(mid, itemId) {
+  const ok = await ilusConfirm({
+    title: 'Quitar ítem del manifiesto',
+    message: '¿Quitar este ítem del manifiesto?',
+    sub: 'El compromiso volverá a estar disponible para asignar.',
+    okLabel: 'Sí, quitar', danger: true,
+  });
+  if (!ok) return;
   fetch('/transporte/manifiestos/' + mid + '/items/' + itemId, {method:'DELETE'})
     .then(function(r){ return r.json(); })
     .then(function(d) {
