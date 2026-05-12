@@ -233,6 +233,68 @@
   .list-row{grid-template-columns:100px 1fr 100px 60px;gap:8px}
   .list-row > *:nth-child(n+5):not(:last-child){display:none}
 }
+
+/* ── MODAL DETALLE DEL DÍA ───────────────────────────────────── */
+.dia-kpis{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+  gap:10px;margin-bottom:16px;
+}
+.dia-kpi{
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:10px 12px;text-align:center;
+}
+.dia-kpi .num{font-size:1.5rem;font-weight:900;color:#0f172a;line-height:1;}
+.dia-kpi .lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;
+              letter-spacing:.05em;color:#6b7280;margin-top:3px;}
+.dia-kpi.ok    .num{color:#16a34a;}
+.dia-kpi.warn  .num{color:#c2410c;}
+.dia-kpi.danger .num{color:#dc2626;}
+.dia-kpi.muted .num{color:#6b7280;}
+
+.dia-tec-row{
+  display:grid;grid-template-columns:1fr auto auto auto auto;gap:14px;
+  padding:10px 12px;border-bottom:1px solid #f3f4f6;
+  align-items:center;font-size:.86rem;
+}
+.dia-tec-row:last-child{border-bottom:none;}
+.dia-tec-nombre{font-weight:700;color:#0f172a;}
+.dia-tec-vbar{
+  height:6px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  position:relative;min-width:80px;
+}
+.dia-tec-vbar-fill{
+  height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);
+  border-radius:3px;
+}
+.dia-tec-vbar-fill.over{background:linear-gradient(90deg,#dc2626,#ef4444);}
+.dia-tec-vbar-fill.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24);}
+.dia-tec-stat{font-family:monospace;font-size:.78rem;}
+.dia-tec-delta{
+  font-weight:700;font-size:.74rem;padding:2px 7px;border-radius:50px;
+}
+.dia-tec-delta.ok  {background:#dcfce7;color:#166534;}
+.dia-tec-delta.over{background:#fee2e2;color:#991b1b;}
+.dia-tec-delta.warn{background:#fef3c7;color:#92400e;}
+
+.dia-visit-row{
+  display:grid;grid-template-columns:90px 1fr 110px 110px 80px 70px 40px;
+  gap:10px;padding:9px 12px;border-bottom:1px solid #f3f4f6;
+  align-items:center;font-size:.84rem;cursor:pointer;transition:background .12s;
+}
+.dia-visit-row:hover{background:#f9fafb;}
+.dia-visit-row:last-child{border-bottom:none;}
+.dia-visit-row.head{
+  background:#fafafa;font-size:.65rem;font-weight:800;
+  text-transform:uppercase;color:#6b7280;letter-spacing:.05em;cursor:default;
+}
+.dia-visit-row.head:hover{background:#fafafa;}
+.dia-visit-ot{font-weight:800;color:#0f172a;font-family:monospace;}
+.dia-visit-cli{font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dia-visit-delta{font-weight:700;font-family:monospace;font-size:.78rem;}
+.dia-visit-delta.ok  {color:#166534;}
+.dia-visit-delta.over{color:#991b1b;}
+.dia-visit-delta.warn{color:#92400e;}
+.dia-visit-delta.muted{color:#9ca3af;}
 </style>
 
 {# ─────────── HEADER NEGRO ─────────── #}
@@ -367,6 +429,32 @@
       <div class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>Correctiva</div>
       <div class="legend-item"><span class="legend-dot" style="background:#2563eb"></span>Garantía</div>
       <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Inspección</div>
+    </div>
+  </div>
+</div>
+
+{# ─────────── MODAL DETALLE DEL DÍA (drill-down) ─────────── #}
+<div class="modal fade" id="modalDiaDetalle" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold" id="modalDiaTitulo">
+          <i class="bi bi-calendar3 me-2" style="color:var(--ilus-red)"></i>Detalle del día
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="modalDiaBody">
+        <div class="text-center text-muted py-5">
+          <div class="spinner-border" role="status"></div>
+          <div class="mt-2 small">Cargando datos del día…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-ilus fw-bold" id="btnNuevaVisitaDia">
+          <i class="bi bi-calendar-plus me-1"></i>Nueva visita ese día
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -658,7 +746,10 @@ function renderSemana(){
   for (const d of dias){
     const today = isToday(d);
     const wknd  = d.getDay()===0 || d.getDay()===6;
-    html.push(`<div class="week-head ${today?'today':''}" style="${wknd?'background:#f1f5f9':''}">
+    html.push(`<div class="week-head ${today?'today':''}"
+                     style="${wknd?'background:#f1f5f9;':''}cursor:pointer"
+                     onclick="abrirDetalleDia('${fmtFecha(d)}')"
+                     title="Click para ver detalle del día">
       ${fmtDiaCorto(d)}
       <span class="wh-num">${d.getDate()}</span>
     </div>`);
@@ -722,10 +813,14 @@ function renderMes(){
       html.push(`<div style="min-height:100px;border-radius:8px;padding:6px;
                               background:${today?'#fff8f8':otro?'#fafafa':'#fff'};
                               border:1px solid ${today?'var(--ilus-red)':'#f3f4f6'};
-                              cursor:pointer;${otro?'opacity:.45;':''}"
-                      onclick="nuevaVisitaEnSlot('${fmtFecha(d)}','09:00')">
-        <div style="font-size:.8rem;font-weight:700;color:${today?'var(--ilus-red)':'#333'};margin-bottom:4px">
-          ${d.getDate()}
+                              cursor:pointer;position:relative;${otro?'opacity:.45;':''}"
+                      onclick="abrirDetalleDia('${fmtFecha(d)}')"
+                      title="Click para ver detalle del día">
+        <div style="font-size:.8rem;font-weight:700;color:${today?'var(--ilus-red)':'#333'};margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+          <span>${d.getDate()}</span>
+          <button onclick="event.stopPropagation();nuevaVisitaEnSlot('${fmtFecha(d)}','09:00')"
+                  style="background:none;border:none;color:#9ca3af;font-size:.85rem;padding:0;line-height:1;cursor:pointer"
+                  title="Nueva visita ese día">+</button>
         </div>
         ${evDay.slice(0,3).map(ev => {
           const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
@@ -816,10 +911,11 @@ function renderAgenda(){
     const today = isToday(d);
     const evs = groups[f].sort((a,b) => (a.hora_inicio||'99') > (b.hora_inicio||'99') ? 1 : -1);
     html.push(`<div class="agenda-day">
-      <div class="agenda-day-head ${today?'today':''}">
+      <div class="agenda-day-head ${today?'today':''}" style="cursor:pointer"
+           onclick="abrirDetalleDia('${f}')" title="Click para ver detalle del día">
         <span class="ad-circle">${d.getDate()}</span>
         <div>
-          <div>${fmtDiaCorto(d)} ${d.getDate()} de ${fmtMesEs(d.getMonth())}</div>
+          <div>${fmtDiaCorto(d)} ${d.getDate()} de ${fmtMesEs(d.getMonth())} <i class="bi bi-chevron-right ms-1" style="font-size:.7rem;color:#9ca3af"></i></div>
           <div class="small text-muted" style="font-weight:500">${evs.length} visita(s)</div>
         </div>
       </div>
@@ -1037,6 +1133,180 @@ function exportarVisitas(){
   a.href = URL.createObjectURL(blob);
   a.download = `visitas-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  MODAL "DETALLE DEL DÍA" — drill-down con KPIs + heatmap + visitas
+// ════════════════════════════════════════════════════════════════════
+
+function fmtMin(min){
+  if (min == null || min === 0) return '0';
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  if (h && m) return `${h}h ${m}min`;
+  if (h)      return `${h}h`;
+  return `${m}min`;
+}
+
+function deltaClass(deltaMin){
+  if (deltaMin == null) return 'muted';
+  if (deltaMin >= 30 || deltaMin <= -60) return 'over';
+  if (deltaMin > 0)      return 'warn';
+  return 'ok';
+}
+
+async function abrirDetalleDia(fecha){
+  // fecha en YYYY-MM-DD
+  const fObj = new Date(fecha + 'T00:00:00');
+  const nombreDia = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'][fObj.getDay()];
+  const fLabel = `${nombreDia} ${fObj.getDate()} ${fmtMesEs(fObj.getMonth())} ${fObj.getFullYear()}`;
+  document.getElementById('modalDiaTitulo').innerHTML =
+    `<i class="bi bi-calendar3 me-2" style="color:var(--ilus-red)"></i>Detalle del día — ${escHtml(fLabel)}`;
+  document.getElementById('modalDiaBody').innerHTML =
+    `<div class="text-center text-muted py-5"><div class="spinner-border" role="status"></div>
+      <div class="mt-2 small">Cargando datos del día…</div></div>`;
+  // Botón "nueva visita ese día"
+  document.getElementById('btnNuevaVisitaDia').onclick = () => {
+    bootstrap.Modal.getInstance(document.getElementById('modalDiaDetalle')).hide();
+    nuevaVisitaEnSlot(fecha, '09:00');
+  };
+  // Mostrar modal
+  const modal = new bootstrap.Modal(document.getElementById('modalDiaDetalle'));
+  modal.show();
+
+  try {
+    const r = await fetch(`/mantenciones/api/calendario/dia/${fecha}`);
+    const d = await r.json();
+    if (!d.ok){
+      document.getElementById('modalDiaBody').innerHTML =
+        `<div class="alert alert-danger">No se pudo cargar: ${escHtml(d.error || 'error')}</div>`;
+      return;
+    }
+    renderDetalleDia(d);
+  } catch(e){
+    document.getElementById('modalDiaBody').innerHTML =
+      `<div class="alert alert-danger">Error de red: ${escHtml(String(e))}</div>`;
+  }
+}
+
+function renderDetalleDia(data){
+  const k = data.kpis || {};
+  const visitas = data.visitas || [];
+  const tecs    = data.tecnicos || [];
+
+  // ── KPIs
+  let html = `<div class="dia-kpis">
+    <div class="dia-kpi"><div class="num">${k.total || 0}</div><div class="lbl">Total OTs</div></div>
+    <div class="dia-kpi ok"><div class="num">${k.completadas || 0}</div><div class="lbl">Completadas</div></div>
+    <div class="dia-kpi warn"><div class="num">${k.en_curso || 0}</div><div class="lbl">En curso</div></div>
+    <div class="dia-kpi muted"><div class="num">${k.pendientes || 0}</div><div class="lbl">Pendientes</div></div>
+    <div class="dia-kpi danger"><div class="num">${k.canceladas || 0}</div><div class="lbl">Canceladas</div></div>
+  </div>`;
+
+  // ── Plan vs Real
+  if ((k.dur_plan_min_total || 0) > 0 || (k.dur_real_min_total || 0) > 0){
+    let overText = '';
+    if (k.overrun_pct_global != null){
+      const cls = k.overrun_pct_global > 15 ? 'over' : (k.overrun_pct_global > 0 ? 'warn' : 'ok');
+      const sign = k.overrun_pct_global >= 0 ? '+' : '';
+      overText = `<span class="dia-tec-delta ${cls}">${sign}${k.overrun_pct_global}% overrun</span>`;
+    }
+    html += `<div class="alert alert-light border d-flex justify-content-between align-items-center py-2 mb-3">
+      <div>
+        <strong>⏱ Plan:</strong> ${fmtMin(k.dur_plan_min_total)}
+        &nbsp;·&nbsp;
+        <strong>Real:</strong> ${fmtMin(k.dur_real_min_total)}
+      </div>
+      <div>${overText}</div>
+    </div>`;
+  }
+
+  // ── Heatmap por técnico
+  if (tecs.length){
+    html += `<h6 class="text-muted mt-4 mb-2"><i class="bi bi-person-badge me-1"></i>Carga por técnico</h6>`;
+    html += `<div class="list-view mb-3">`;
+    // Header
+    html += `<div class="dia-tec-row head" style="background:#fafafa;font-size:.65rem;font-weight:800;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">
+      <div>Técnico</div>
+      <div class="text-end">OTs</div>
+      <div class="text-end">Plan</div>
+      <div class="text-end">Real</div>
+      <div class="text-end">Delta</div>
+    </div>`;
+    // Filas
+    const maxReal = Math.max(...tecs.map(t => t.dur_real_min || 0), 1);
+    for (const t of tecs){
+      const delta = (t.dur_real_min || 0) - (t.dur_plan_min || 0);
+      const dcls = deltaClass(delta);
+      const pct  = Math.min(100, Math.round((t.dur_real_min || 0) * 100 / maxReal));
+      const barCls = dcls === 'over' ? 'over' : (dcls === 'warn' ? 'warn' : '');
+      html += `<div class="dia-tec-row">
+        <div>
+          <div class="dia-tec-nombre">${escHtml(t.nombre || 'Sin asignar')}</div>
+          <div class="dia-tec-vbar" style="margin-top:6px">
+            <div class="dia-tec-vbar-fill ${barCls}" style="width:${pct}%"></div>
+          </div>
+        </div>
+        <div class="text-end dia-tec-stat">${t.n_visitas}</div>
+        <div class="text-end dia-tec-stat">${fmtMin(t.dur_plan_min)}</div>
+        <div class="text-end dia-tec-stat">${fmtMin(t.dur_real_min)}</div>
+        <div class="text-end">
+          <span class="dia-tec-delta ${dcls}">${delta >= 0 ? '+' : ''}${delta} min</span>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Tabla de visitas
+  if (visitas.length){
+    html += `<h6 class="text-muted mt-4 mb-2"><i class="bi bi-list-check me-1"></i>Visitas del día</h6>`;
+    html += `<div class="list-view">`;
+    html += `<div class="dia-visit-row head">
+      <div>OT N°</div>
+      <div>Cliente</div>
+      <div class="text-end">Plan</div>
+      <div class="text-end">Real</div>
+      <div class="text-end">Δ min</div>
+      <div class="text-end">%</div>
+      <div></div>
+    </div>`;
+    for (const v of visitas){
+      const numero = v.numero_ot || ('VS-' + String(v.id).padStart(5, '0'));
+      const horaP = (v.hora_inicio ? String(v.hora_inicio).slice(0,5) : '—') +
+                    (v.hora_fin ? '–' + String(v.hora_fin).slice(0,5) : '');
+      const horaR = (v.hora_real_inicio ? String(v.hora_real_inicio).slice(11,16) : '—') +
+                    (v.hora_real_fin ? '–' + String(v.hora_real_fin).slice(11,16) : '');
+      const planMin = v.duracion_planificada_min;
+      const realMin = v.duracion_real_min;
+      const dcls = v.delta_min != null ? deltaClass(v.delta_min) : 'muted';
+      const deltaTxt = v.delta_min != null ? `${v.delta_min >= 0 ? '+' : ''}${v.delta_min}m` : '—';
+      const pctTxt   = v.overrun_pct != null ? `${v.overrun_pct >= 0 ? '+' : ''}${v.overrun_pct}%` : '—';
+      html += `<div class="dia-visit-row" onclick="window.location='/mantenciones/ot/${v.id}'">
+        <div class="dia-visit-ot">${escHtml(numero)}</div>
+        <div class="dia-visit-cli" title="${escHtml(v.cliente_nombre || '')}">
+          ${escHtml(v.cliente_nombre || '—')}
+          <div class="small text-muted">${horaP} → ${horaR}</div>
+        </div>
+        <div class="text-end dia-tec-stat">${fmtMin(planMin)}</div>
+        <div class="text-end dia-tec-stat">${fmtMin(realMin)}</div>
+        <div class="text-end dia-visit-delta ${dcls}">${deltaTxt}</div>
+        <div class="text-end dia-visit-delta ${dcls}">${pctTxt}</div>
+        <div class="text-end">
+          <i class="bi bi-arrow-right-circle"></i>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div class="alert alert-light text-center py-4 mt-3">
+      <i class="bi bi-calendar-x" style="font-size:1.8rem;color:#9ca3af;display:block;margin-bottom:6px"></i>
+      <div class="fw-bold text-muted">Sin visitas registradas ese día</div>
+      <div class="small text-muted">Crea una nueva con el botón inferior.</div>
+    </div>`;
+  }
+
+  document.getElementById('modalDiaBody').innerHTML = html;
 }
 
 // ── Init ────────────────────────────────────────────────────────────
