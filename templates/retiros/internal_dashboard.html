@@ -14,6 +14,203 @@
   </div>
 </div>
 
+{# ════════════════════════════════════════════════════════════════════
+   BANDEJA "HACER HOY" — 4 secciones colapsables con tareas prioritarias
+   Se llena por AJAX al cargar la página (endpoint /retiros/api/bandeja-hoy)
+   ════════════════════════════════════════════════════════════════════ #}
+<style>
+  .bandeja-card{border-left:4px solid #6c757d;background:#fff;border-radius:8px;padding:.6rem .9rem;margin-bottom:.5rem;transition:.15s}
+  .bandeja-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.08);transform:translateY(-1px)}
+  .bandeja-card.urgente{border-left-color:#dc3545}
+  .bandeja-card.naranjo{border-left-color:#fd7e14}
+  .bandeja-card.azul{border-left-color:#0d6efd}
+  .bandeja-card.gris{border-left-color:#6c757d}
+  .bandeja-acc .accordion-button{font-weight:600;padding:.7rem 1rem}
+  .bandeja-acc .accordion-button:not(.collapsed){background:#fafbfc}
+  .bandeja-acc .badge-count{margin-left:.5rem}
+  .bandeja-empty{color:#94a3b8;font-size:.85rem;padding:.6rem .2rem}
+  .bandeja-skel{height:46px;background:linear-gradient(90deg,#f0f2f5 0%,#e6e9ee 50%,#f0f2f5 100%);background-size:200% 100%;animation:skel 1.2s linear infinite;border-radius:6px;margin-bottom:.4rem}
+  @keyframes skel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+</style>
+
+<div class="ilus-card p-3 mb-3 bandeja-acc">
+  <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+    <h6 class="m-0 fw-bold">
+      <i class="bi bi-inbox me-1" style="color:var(--ilus-red)"></i>
+      Bandeja: hacer hoy
+      <small class="text-muted fw-normal ms-2" id="bandeja-fecha"></small>
+    </h6>
+    <button id="btn-bandeja-refresh" class="btn btn-sm btn-outline-secondary" type="button">
+      <i class="bi bi-arrow-clockwise"></i>
+    </button>
+  </div>
+
+  <div class="accordion" id="bandejaAcc">
+    {# 1. Urgentes #}
+    <div class="accordion-item border-0">
+      <h2 class="accordion-header">
+        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#band-urg">
+          <span style="color:#dc3545">&#9888;</span>&nbsp;Sin validar &middot; fecha &le; 48h
+          <span class="badge bg-danger badge-count" id="cnt-urgentes">0</span>
+        </button>
+      </h2>
+      <div id="band-urg" class="accordion-collapse collapse show" data-bs-parent="#bandejaAcc">
+        <div class="accordion-body py-2">
+          <div id="list-urgentes"><div class="bandeja-skel"></div><div class="bandeja-skel"></div></div>
+        </div>
+      </div>
+    </div>
+
+    {# 2. Sin respuesta #}
+    <div class="accordion-item border-0">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#band-resp">
+          <span style="color:#fd7e14">&#9203;</span>&nbsp;Propuestas sin respuesta &gt; 24h
+          <span class="badge bg-warning text-dark badge-count" id="cnt-sin-respuesta">0</span>
+        </button>
+      </h2>
+      <div id="band-resp" class="accordion-collapse collapse" data-bs-parent="#bandejaAcc">
+        <div class="accordion-body py-2">
+          <div id="list-sin-respuesta"><div class="bandeja-skel"></div></div>
+        </div>
+      </div>
+    </div>
+
+    {# 3. Confirmados hoy #}
+    <div class="accordion-item border-0">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#band-hoy">
+          <span style="color:#0d6efd">&#128230;</span>&nbsp;Confirmados HOY &middot; a preparar
+          <span class="badge bg-primary badge-count" id="cnt-confirmados-hoy">0</span>
+        </button>
+      </h2>
+      <div id="band-hoy" class="accordion-collapse collapse" data-bs-parent="#bandejaAcc">
+        <div class="accordion-body py-2">
+          <div id="list-confirmados-hoy"><div class="bandeja-skel"></div></div>
+        </div>
+      </div>
+    </div>
+
+    {# 4. Sin firma #}
+    <div class="accordion-item border-0">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#band-sig">
+          <span style="color:#6c757d">&#128247;</span>&nbsp;Retirados HOY sin firma/foto
+          <span class="badge bg-secondary badge-count" id="cnt-sin-firma">0</span>
+        </button>
+      </h2>
+      <div id="band-sig" class="accordion-collapse collapse" data-bs-parent="#bandejaAcc">
+        <div class="accordion-body py-2">
+          <div id="list-sin-firma"><div class="bandeja-skel"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  function esc(s){ s = (s==null?'':String(s)); return s.replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function fmtPhone(p){ return esc(p||''); }
+
+  function cardItem(r, klass, meta){
+    var url = r.detail_url || '#';
+    var docu = (r.document_type||'').toUpperCase() + ' ' + (r.document_number||'');
+    return '<a href="'+esc(url)+'" class="text-decoration-none text-dark">' +
+      '<div class="bandeja-card '+klass+'">' +
+        '<div class="d-flex justify-content-between flex-wrap gap-2">' +
+          '<div>' +
+            '<div class="fw-bold">'+esc(r.code||'')+' &middot; '+esc(r.customer_name||'')+'</div>' +
+            '<div class="small text-muted">'+esc(docu)+' &middot; '+fmtPhone(r.contact_phone)+'</div>' +
+          '</div>' +
+          '<div class="text-end small text-muted">'+meta+'</div>' +
+        '</div>' +
+      '</div>' +
+    '</a>';
+  }
+
+  function renderEmpty(el, msg){
+    el.innerHTML = '<div class="bandeja-empty">'+esc(msg)+'</div>';
+  }
+
+  function loadBandeja(){
+    var fechaEl = document.getElementById('bandeja-fecha');
+    if (fechaEl) fechaEl.textContent = '';
+    ['list-urgentes','list-sin-respuesta','list-confirmados-hoy','list-sin-firma'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = '<div class="bandeja-skel"></div>';
+    });
+    fetch('{{ url_for("pickup_bandeja_hoy") }}', {credentials:'same-origin', headers:{'X-Requested-With':'fetch'}})
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (fechaEl) fechaEl.textContent = data.today || '';
+        // Urgentes
+        var elU = document.getElementById('list-urgentes');
+        document.getElementById('cnt-urgentes').textContent = (data.urgentes||[]).length;
+        if (!(data.urgentes||[]).length){
+          renderEmpty(elU, 'Sin tareas urgentes pendientes.');
+        } else {
+          elU.innerHTML = data.urgentes.map(function(r){
+            var meta = 'Fecha: <strong>'+esc(r.requested_date||'')+'</strong>' +
+                       (r.requested_time_from?' '+esc(r.requested_time_from)+'-'+esc(r.requested_time_to||''):'') +
+                       '<br><span class="text-muted">Creada: '+esc((r.created_at||'').slice(0,16))+'</span>';
+            return cardItem(r,'urgente',meta);
+          }).join('');
+        }
+        // Sin respuesta
+        var elR = document.getElementById('list-sin-respuesta');
+        document.getElementById('cnt-sin-respuesta').textContent = (data.sin_respuesta||[]).length;
+        if (!(data.sin_respuesta||[]).length){
+          renderEmpty(elR, 'No hay propuestas pendientes de respuesta.');
+        } else {
+          elR.innerHTML = data.sin_respuesta.map(function(r){
+            var meta = 'Propuesta: <strong>'+esc(r.proposed_date||'')+' '+esc(r.proposed_time_from||'')+'-'+esc(r.proposed_time_to||'')+'</strong>' +
+                       '<br><span class="text-muted">Enviada: '+esc((r.proposal_created_at||'').slice(0,16))+'</span>';
+            return cardItem(r,'naranjo',meta);
+          }).join('');
+        }
+        // Confirmados hoy
+        var elC = document.getElementById('list-confirmados-hoy');
+        document.getElementById('cnt-confirmados-hoy').textContent = (data.confirmados_hoy||[]).length;
+        if (!(data.confirmados_hoy||[]).length){
+          renderEmpty(elC, 'No hay retiros confirmados para hoy.');
+        } else {
+          elC.innerHTML = data.confirmados_hoy.map(function(r){
+            var meta = 'Hoy <strong>'+esc(r.confirmed_time_from||'')+'-'+esc(r.confirmed_time_to||'')+'</strong>' +
+                       '<br><span class="text-muted">'+esc(r.total_packages||0)+' bultos &middot; '+esc(r.total_weight_kg||0)+' kg</span>';
+            return cardItem(r,'azul',meta);
+          }).join('');
+        }
+        // Sin firma
+        var elS = document.getElementById('list-sin-firma');
+        document.getElementById('cnt-sin-firma').textContent = (data.sin_firma||[]).length;
+        if (!(data.sin_firma||[]).length){
+          renderEmpty(elS, 'Todos los retiros de hoy tienen firma registrada.');
+        } else {
+          elS.innerHTML = data.sin_firma.map(function(r){
+            var meta = 'Cerrado: '+esc((r.closed_at||'').slice(0,16))+
+                       '<br><span class="text-muted">Retiró: '+esc(r.pickup_person_name||'-')+'</span>';
+            return cardItem(r,'gris',meta);
+          }).join('');
+        }
+      })
+      .catch(function(err){
+        ['list-urgentes','list-sin-respuesta','list-confirmados-hoy','list-sin-firma'].forEach(function(id){
+          var el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="bandeja-empty text-danger">No se pudo cargar (revisa la consola).</div>';
+        });
+        console.error('[bandeja-hoy]', err);
+      });
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    loadBandeja();
+    var btn = document.getElementById('btn-bandeja-refresh');
+    if (btn) btn.addEventListener('click', loadBandeja);
+  });
+})();
+</script>
+
 <div class="row g-3 mb-3">
   <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Retiros hoy</div><div class="fs-3 fw-black">{{ day.total or 0 }}</div></div></div>
   <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Bultos hoy</div><div class="fs-3 fw-black">{{ day.bultos or 0 }}</div></div></div>
