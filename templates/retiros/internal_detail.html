@@ -303,52 +303,100 @@
         _erpLineas = d.lineas || [];
         const cliente = (d.hdr && d.hdr.razon_social) || '—';
         const rut = (d.hdr && d.hdr.rut) || '—';
+        const observaciones = (d.hdr && (d.hdr.observaciones || d.hdr.obs)) || '';
 
         // Detectar diferencia con el documento del cliente
         const docOriginal = '{{ (req.document_type|upper) }} {{ req.document_number }}';
         const docBuscado = `${tido} ${nudo}`;
         const docCambiado = docOriginal.trim() !== docBuscado.trim();
 
-        // Calcular peso/vol cruzando con catálogo local
-        let totalKg = 0, totalM3 = 0, totalPesoVol = 0, sinCubicaje = 0;
-        const itemsHtml = _erpLineas.map((l, i) => {
+        // Separar líneas en 3 grupos: OK con cubicaje, sin cubicaje (productos reales),
+        // y ZZ (servicios/fletes) — los ZZ NO se cuentan como problema.
+        let totalKg = 0, totalM3 = 0, totalPesoVol = 0;
+        const itemsOK = [];
+        const itemsSinCubic = [];
+        const itemsZZ = [];
+
+        const esc = (s) => String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        _erpLineas.forEach((l, i) => {
+          if (l.es_zz) { itemsZZ.push(l); return; }
           const tieneCubic = l.tiene_ficha && l.tiene_bultos;
+          if (tieneCubic){
+            totalKg     += parseFloat(l.peso_kg_tot || 0);
+            totalM3     += parseFloat(l.vol_tot || 0) / 1000000;
+            totalPesoVol+= parseFloat(l.peso_vol_tot || 0);
+            itemsOK.push(l);
+          } else {
+            itemsSinCubic.push(l);
+          }
+        });
+
+        const renderItemOK = l => {
           const kg = parseFloat(l.peso_kg_tot || 0);
           const m3 = parseFloat(l.vol_tot || 0) / 1000000;
-          const pv = parseFloat(l.peso_vol_tot || 0);
-          if (tieneCubic){
-            totalKg += kg;
-            totalM3 += m3;
-            totalPesoVol += pv;
-          } else {
-            sinCubicaje++;
-          }
           return `<div class="erp-item">
-            <span class="sku">${l.sku || '—'}</span>
-            <span class="name">${l.descripcion_erp || l.nombre_app || '—'}</span>
+            <span class="sku">${esc(l.sku)}</span>
+            <span class="name">${esc(l.descripcion_erp || l.nombre_app)}</span>
             <span class="qty">${l.cantidad || 0} u.</span>
-            ${tieneCubic
-              ? `<span class="badge-cubic has" title="Cubicaje OK: ${kg.toFixed(2)}kg · ${m3.toFixed(3)}m³"><i class="bi bi-check"></i> ${kg.toFixed(1)}kg</span>`
-              : `<span class="badge-cubic no" title="Sin cubicaje en catálogo. Click para gestionar." onclick="solicitarCubicaje('${l.sku}','${l.app_id||''}')"><i class="bi bi-exclamation-triangle"></i> Sin cubicaje</span>`
-            }
+            <span class="badge-cubic has" title="Cubicaje OK: ${kg.toFixed(2)}kg · ${m3.toFixed(3)}m³"><i class="bi bi-check"></i> ${kg.toFixed(1)}kg</span>
           </div>`;
-        }).join('');
+        };
+
+        const renderItemSinCubic = l => `<div class="erp-item" style="background:#fff7ed;border-left:3px solid #f59e0b;padding-left:8px">
+          <span class="sku">${esc(l.sku)}</span>
+          <span class="name">${esc(l.descripcion_erp || l.nombre_app || '(sin descripción)')}</span>
+          <span class="qty">${l.cantidad || 0} u.</span>
+          <span class="badge-cubic no" title="${l.tiene_ficha ? 'Producto en BD pero sin medidas' : 'SKU no está en BD local'}"
+                onclick="solicitarCubicaje('${esc(l.sku)}','${l.app_id||''}','${esc(l.descripcion_erp || '')}')"
+                style="cursor:pointer">
+            <i class="bi bi-${l.tiene_ficha ? 'rulers' : 'plus-circle'}"></i>
+            ${l.tiene_ficha ? 'Falta medir' : 'No en BD'}
+          </span>
+        </div>`;
+
+        const renderItemZZ = l => `<div class="erp-item" style="opacity:.55;background:#f3f4f6">
+          <span class="sku" style="text-decoration:line-through">${esc(l.sku)}</span>
+          <span class="name">${esc(l.descripcion_erp || '')}</span>
+          <span class="qty">${l.cantidad || 0} u.</span>
+          <span class="badge-cubic" style="background:#9ca3af;color:#fff">
+            <i class="bi bi-gear"></i> Servicio/flete
+          </span>
+        </div>`;
+
+        const itemsHtml =
+          (itemsOK.length > 0 ? `<div class="small fw-semibold text-success mt-2 mb-1"><i class="bi bi-check-circle me-1"></i>Con cubicaje (${itemsOK.length})</div>` + itemsOK.map(renderItemOK).join('') : '') +
+          (itemsSinCubic.length > 0 ? `<div class="small fw-semibold text-warning mt-2 mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Sin cubicaje — productos reales (${itemsSinCubic.length})</div>` + itemsSinCubic.map(renderItemSinCubic).join('') : '') +
+          (itemsZZ.length > 0 ? `<div class="small fw-semibold text-muted mt-2 mb-1"><i class="bi bi-gear me-1"></i>Servicios / fletes (no se cubican: ${itemsZZ.length})</div>` + itemsZZ.map(renderItemZZ).join('') : '');
+
+        const nSinCubic = itemsSinCubic.length;
+        const skusSinCubic = itemsSinCubic.map(l => l.sku).filter(Boolean);
 
         resDiv.innerHTML = `
           ${docCambiado ? `<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>El documento original era <strong>${docOriginal}</strong>. Estás validando ahora <strong>${docBuscado}</strong>.</div>` : ''}
           <div class="alert alert-success py-2 small mb-2">
             <i class="bi bi-check-circle me-1"></i><strong>Documento encontrado en ERP</strong>
-            · Cliente: <strong>${cliente}</strong> (${rut})
+            · Cliente: <strong>${esc(cliente)}</strong> (${esc(rut)})
             · ${_erpLineas.length} línea(s)
-            ${sinCubicaje > 0 ? `<br><i class="bi bi-exclamation-triangle text-danger me-1"></i><strong class="text-danger">${sinCubicaje} producto(s) sin cubicaje</strong> — necesitan medidas para calcular envío`: ''}
+            ${nSinCubic > 0 ? `<br><i class="bi bi-exclamation-triangle text-warning me-1"></i>
+              <strong class="text-warning">${nSinCubic} producto(s) reales sin cubicaje</strong> —
+              <button class="btn btn-sm btn-warning fw-bold ms-1" style="padding:1px 8px;font-size:.72rem"
+                      onclick="importarSkusErp(${JSON.stringify(skusSinCubic).replace(/"/g,'&quot;')})">
+                <i class="bi bi-cloud-download me-1"></i>Importar ${nSinCubic} al catálogo
+              </button>` : ''}
+            ${itemsZZ.length > 0 ? `<br><span class="small text-muted">${itemsZZ.length} línea(s) son servicios/fletes — no requieren cubicaje.</span>` : ''}
           </div>
-          <div style="max-height:280px;overflow-y:auto">${itemsHtml}</div>
-          <div class="d-flex gap-2 mt-2 align-items-center" style="font-size:.84rem">
-            <strong>Totales:</strong>
+          ${observaciones ? `<div class="alert alert-info py-2 small mb-2" style="border-left:4px solid #0ea5e9">
+            <strong><i class="bi bi-chat-quote me-1"></i>Observaciones del documento ERP:</strong>
+            <div class="mt-1" style="white-space:pre-wrap;font-size:.82rem">${esc(observaciones)}</div>
+          </div>` : ''}
+          <div style="max-height:320px;overflow-y:auto">${itemsHtml}</div>
+          <div class="d-flex gap-2 mt-2 align-items-center flex-wrap" style="font-size:.84rem">
+            <strong>Totales (solo productos con cubicaje):</strong>
             <span class="badge bg-dark">${totalKg.toFixed(2)} kg reales</span>
             <span class="badge bg-info">${totalPesoVol.toFixed(2)} kg vol.</span>
             <span class="badge bg-secondary">${totalM3.toFixed(3)} m³</span>
-            <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="aplicarTotales(${totalKg.toFixed(2)}, ${totalPesoVol.toFixed(2)}, ${_erpLineas.length})">
+            <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="aplicarTotales(${totalKg.toFixed(2)}, ${totalPesoVol.toFixed(2)}, ${itemsOK.length})">
               <i class="bi bi-arrow-down-circle me-1"></i>Usar estos valores
             </button>
           </div>
@@ -377,16 +425,56 @@
       document.getElementById('val_tiempo').value = Math.max(15, 5 + nLineas * 2);
     }
 
-    function solicitarCubicaje(sku, productId){
+    function solicitarCubicaje(sku, productId, descripcionErp){
       if (!sku){ alert('Sin SKU disponible'); return; }
       if (productId){
-        // Si tenemos product_id, ir directo a editar el producto
+        // Si tenemos product_id, ir directo a editar el producto para llenar medidas
         window.open(`/products/${productId}/edit`, '_blank');
       } else {
-        // Sino, abrir buscador
-        if (confirm(`El SKU "${sku}" no está en tu catálogo. ¿Quieres crearlo ahora?`)){
-          window.open('/products/new?sku=' + encodeURIComponent(sku), '_blank');
+        // Sino, abrir nuevo producto pre-poblando SKU + descripción del ERP
+        const nombre = descripcionErp ? `&nombre=${encodeURIComponent(descripcionErp)}` : '';
+        window.open(`/products/new?sku=${encodeURIComponent(sku)}${nombre}`, '_blank');
+      }
+    }
+
+    // ─── Importar masivo: SKUs sin ficha → crear en BD local con datos del ERP ──
+    async function importarSkusErp(skus){
+      if (!skus || skus.length === 0) return;
+      if (!confirm(
+        `Vas a CREAR ${skus.length} producto(s) en el catálogo local de etiquetas\n` +
+        `usando los datos del ERP (SKU + descripción).\n\n` +
+        `Después podrás agregarles medidas (largo/ancho/alto) para que tengan cubicaje.\n\n` +
+        `¿Continuar?`
+      )) return;
+
+      try {
+        const r = await fetch('/etiquetas/api/importar-desde-erp', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({skus: skus, lineas_erp: _erpLineas})
+        });
+        const d = await r.json();
+        if (!d.ok){
+          alert('Error: ' + (d.error || 'desconocido'));
+          return;
         }
+        alert(
+          `✅ Productos importados:\n\n` +
+          `• Creados: ${d.creados || 0}\n` +
+          `• Ya existían: ${d.existentes || 0}\n` +
+          `• Con errores: ${d.errores || 0}\n\n` +
+          `Ahora ve a Etiquetas → Productos y agrega medidas para que tengan cubicaje.\n` +
+          `Recarga este monitor para ver los cambios.`
+        );
+        // Re-buscar el documento para refrescar el estado
+        const tido = document.getElementById('val_tido').value;
+        const nudo = document.getElementById('val_nudo').value.trim();
+        if (tido && nudo){
+          // Pequeña pausa para que la BD se actualice
+          setTimeout(() => buscarERP({{ req.id }}), 800);
+        }
+      } catch(e){
+        alert('Error de red: ' + e.message);
       }
     }
     </script>

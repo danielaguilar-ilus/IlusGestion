@@ -3756,6 +3756,89 @@ def new_product():
                            max_b=MAX_BULTOS, auto_codigo=auto_codigo)
 
 
+@app.route("/etiquetas/api/importar-desde-erp", methods=["POST"])
+@require_permission("create")
+def etiquetas_importar_desde_erp():
+    """Importa masivamente productos desde un documento del ERP.
+
+    Crea entradas en mant_productos con SKU + nombre del ERP, SIN bultos
+    (el usuario debe agregar medidas después en la ficha del producto).
+
+    Body JSON:
+      skus: [str]  — lista de SKUs a importar
+      lineas_erp: [{sku, descripcion_erp, ...}]  — datos del ERP para enriquecer
+    """
+    d = request.get_json(silent=True) or {}
+    skus = d.get("skus") or []
+    lineas_erp = d.get("lineas_erp") or []
+
+    if not skus:
+        return jsonify({"ok": False, "error": "Sin SKUs para importar"}), 400
+
+    # Mapa SKU → descripción desde lineas_erp
+    desc_map = {}
+    for l in lineas_erp:
+        s = (l.get("sku") or "").strip().upper()
+        if s:
+            desc_map[s] = (l.get("descripcion_erp") or l.get("nombre_app") or l.get("nombre") or "").strip()
+
+    user = current_username() or "sistema"
+    creados, existentes, errores = 0, 0, 0
+    detalles = []
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for sku_raw in skus:
+                sku = (sku_raw or "").strip().upper()
+                if not sku:
+                    errores += 1; continue
+                # Skip ZZ (no es producto físico)
+                if sku.startswith("ZZ"):
+                    detalles.append({"sku": sku, "estado": "SKIP_ZZ"})
+                    continue
+                # ¿Ya existe?
+                exist = mysql_fetchone(
+                    f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(sku)=%s LIMIT 1", (sku,)
+                )
+                if exist:
+                    existentes += 1
+                    detalles.append({"sku": sku, "estado": "YA_EXISTE", "id": exist["id"]})
+                    continue
+                # Crear con nombre del ERP
+                nombre = desc_map.get(sku) or f"Producto {sku}"
+                nombre = nombre[:300]   # límite columna
+                try:
+                    codigo = next_codigo()
+                    cur.execute(
+                        f"""INSERT INTO `{PRODUCTS_TABLE}` (sku,nombre,estado,codigo,created_by,updated_by)
+                            VALUES (%s,%s,'Pendiente',%s,%s,%s)""",
+                        (sku, nombre, codigo, user, user)
+                    )
+                    pid = cur.lastrowid
+                    creados += 1
+                    detalles.append({"sku": sku, "estado": "CREADO", "id": pid, "codigo": codigo, "nombre": nombre})
+                except Exception as e:
+                    errores += 1
+                    detalles.append({"sku": sku, "estado": "ERROR", "msg": str(e)[:200]})
+        conn.commit()
+        try: _invalidate_listing_cache()
+        except Exception: pass
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al importar: {e}"}), 500
+
+    return jsonify({
+        "ok":         True,
+        "creados":    creados,
+        "existentes": existentes,
+        "errores":    errores,
+        "total":      len(skus),
+        "detalles":   detalles,
+        "mensaje":    (f"{creados} producto(s) importado(s), {existentes} ya existían, "
+                       f"{errores} con errores. Agrégales medidas para que tengan cubicaje."),
+    })
+
+
 @app.route("/products/<int:pid>/edit", methods=["GET", "POST"])
 @require_permission("edit")
 def edit_product(pid):
