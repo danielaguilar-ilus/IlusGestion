@@ -3798,6 +3798,42 @@ def etiquetas_importar_desde_erp():
         if s:
             desc_map[s] = (l.get("descripcion_erp") or l.get("nombre_app") or l.get("nombre") or "").strip()
 
+    # ── FALLBACK: SKUs sin descripción → consultar catálogo ERP en paralelo ──
+    skus_sin_desc = []
+    for s in skus:
+        su = (s or "").strip().upper()
+        if su and not su.startswith("ZZ") and not desc_map.get(su):
+            skus_sin_desc.append(su)
+
+    if skus_sin_desc:
+        TOKEN_I = ERP_CONFIG.get("api_token", "")
+        def _lookup_erp(sku_q):
+            try:
+                body = _erp_get(
+                    "/productos",
+                    {"search": sku_q, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true", "limit": "5"},
+                    TOKEN_I, timeout=6
+                )
+                items = body.get("data") or []
+                for it in items:
+                    if (it.get("KOPR") or "").strip().upper() == sku_q:
+                        return (sku_q, (it.get("NOKOPR") or "").strip())
+                if items:
+                    return (sku_q, (items[0].get("NOKOPR") or "").strip())
+            except Exception: pass
+            return (sku_q, "")
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(_lookup_erp, s): s for s in skus_sin_desc[:50]}
+                for fut in as_completed(futures, timeout=20):
+                    try:
+                        sku_r, nombre_r = fut.result()
+                        if nombre_r and not desc_map.get(sku_r):
+                            desc_map[sku_r] = nombre_r
+                    except Exception: pass
+        except Exception: pass
+
     user = current_username() or "sistema"
     creados, existentes, errores = 0, 0, 0
     detalles = []
@@ -7151,11 +7187,81 @@ def _cubicador_fetch(tido, nudo):
         for r in rows_sku:
             sku_data_map[r["sku_norm"]] = dict(r)
 
+    # ── ENRIQUECIMIENTO desde catálogo ERP para SKUs sin descripción ──
+    # Algunos TIDOs del ERP NO traen NOKOPR (nombre del producto) en la
+    # línea del documento — solo el SKU. Cuando eso pasa, consultamos
+    # /productos?search=SKU del ERP para traer la descripción real.
+    # Cache global + ThreadPoolExecutor para no hacer 20 GETs seriados.
+    skus_sin_desc = set()
+    for l in raw_lineas:
+        sku_u = (l.get("KOPRCT") or "").strip().upper()
+        desc  = (l.get("NOKOPR") or "").strip()
+        if sku_u and not desc and not sku_u.startswith("ZZ"):
+            # Si ya tenemos descripción en BD local, no hace falta consultar ERP
+            if sku_u not in sku_data_map or not (sku_data_map[sku_u].get("nombre_app") or "").strip():
+                skus_sin_desc.add(sku_u)
+
+    desc_erp_map = {}   # {sku: nombre_erp}
+    if skus_sin_desc:
+        TOKEN_E = ERP_CONFIG.get("api_token", "")
+        # Cache global con TTL 1h (productos ERP cambian poco)
+        global _ERP_PROD_CACHE
+        try: _ERP_PROD_CACHE
+        except NameError:
+            _ERP_PROD_CACHE = {}
+
+        def _erp_lookup_sku(sku_q):
+            """Devuelve (sku, nombre) desde /productos del ERP. Usa cache."""
+            cached = _ERP_PROD_CACHE.get(sku_q)
+            if cached and (time.time() - cached[0]) < 3600:
+                return (sku_q, cached[1])
+            try:
+                body = _erp_get(
+                    "/productos",
+                    {"search": sku_q, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true", "limit": "5"},
+                    TOKEN_E, timeout=6
+                )
+                items = body.get("data") or []
+                # Match exacto por KOPR primero, sino primer resultado
+                nombre = ""
+                for it in items:
+                    if (it.get("KOPR") or "").strip().upper() == sku_q:
+                        nombre = (it.get("NOKOPR") or "").strip()
+                        break
+                if not nombre and items:
+                    nombre = (items[0].get("NOKOPR") or "").strip()
+                if nombre:
+                    _ERP_PROD_CACHE[sku_q] = (time.time(), nombre)
+                return (sku_q, nombre)
+            except Exception:
+                return (sku_q, "")
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # Limitar a 30 SKUs por seguridad — si hay más, los demás quedan sin descripción
+            sku_list_lookup = list(skus_sin_desc)[:30]
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(_erp_lookup_sku, s): s for s in sku_list_lookup}
+                for fut in as_completed(futures, timeout=15):
+                    try:
+                        sku_r, nombre_r = fut.result()
+                        if nombre_r:
+                            desc_erp_map[sku_r] = nombre_r
+                    except Exception: pass
+        except Exception as _enr_err:
+            print(f"[cubicador] enriquecer descripciones falló: {_enr_err}")
+
     ZZ_CODES = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
     lineas = []
     for l in raw_lineas:
         sku         = (l.get("KOPRCT") or "").strip().upper()
         descripcion = (l.get("NOKOPR") or "").strip()
+        # Fallback: si la línea no trae descripción, usar la del catálogo ERP
+        # (consultada en paralelo arriba). Última opción: nombre_app de la BD local.
+        if not descripcion and sku in desc_erp_map:
+            descripcion = desc_erp_map[sku]
+        if not descripcion and sku in sku_data_map:
+            descripcion = (sku_data_map[sku].get("nombre_app") or "").strip()
         qty          = float(l.get("CAPRCO1") or 0)
         qty_desp     = float(l.get("CAPRAD1") or 0)
         saldo_linea  = max(qty - qty_desp, 0)
