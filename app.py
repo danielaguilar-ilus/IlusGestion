@@ -4098,6 +4098,277 @@ def download_pdf(pid, bnum):
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# CARGA MASIVA DE ETIQUETAS desde Excel
+#
+# Caso: editor sube un Excel con columnas SKU, descripción (opcional),
+# cantidad (opcional). El sistema:
+#   1. Por cada SKU busca el producto en BD
+#   2. Si existe + tiene bultos → genera etiquetas
+#   3. Devuelve reporte:
+#        OK     → impresa con N etiquetas
+#        SIN_BULTO → producto existe pero sin medidas
+#        NO_ENCONTRADO → SKU no en sistema
+#        ERROR  → otro problema
+#   4. Permite descargar ZIP con todos los PDFs generados
+# ══════════════════════════════════════════════════════════════════════
+
+# Cache en memoria de batches procesados (TTL 1h)
+# Estructura: { batch_id: { 'items': [...], 'pdfs': {sku: bytes}, 'ts': time } }
+_ETQ_BATCHES = {}
+_ETQ_BATCH_TTL = 3600
+
+
+def _etq_batch_cleanup():
+    """Borra batches viejos del cache (>1h)."""
+    now = time.time()
+    expired = [k for k, v in _ETQ_BATCHES.items() if (now - v.get("ts", 0)) > _ETQ_BATCH_TTL]
+    for k in expired: _ETQ_BATCHES.pop(k, None)
+
+
+@app.route("/etiquetas/masivo")
+@require_permission("print")
+def etiquetas_masivo_index():
+    """Página principal del módulo de carga masiva."""
+    return render_template("etiquetas_masivo.html")
+
+
+@app.route("/etiquetas/masivo/plantilla.xlsx")
+@require_permission("print")
+def etiquetas_masivo_plantilla():
+    """Descarga la plantilla Excel de ejemplo para carga masiva."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        return "openpyxl no instalado", 500
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Etiquetas"
+
+    # Headers
+    headers = ["SKU", "DESCRIPCION (opcional)", "CANTIDAD (opcional, default 1)"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="DC2626")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Ejemplos
+    ejemplos = [
+        ("1118100137", "Set Discos Training Bumpers ILUS 5 a 25 kg", 1),
+        ("1129100748", "Banco Romano Ajustable ILUS Kairos", 2),
+        ("1124100764", "V2 Squat Rack Integration", 1),
+    ]
+    for r, (sku, desc, qty) in enumerate(ejemplos, 2):
+        ws.cell(row=r, column=1, value=sku)
+        ws.cell(row=r, column=2, value=desc)
+        ws.cell(row=r, column=3, value=qty)
+
+    # Ancho de columnas
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 14
+
+    # Hoja de instrucciones
+    ws2 = wb.create_sheet("Instrucciones")
+    instrucciones = [
+        "CARGA MASIVA DE ETIQUETAS — ILUS",
+        "",
+        "Cómo usar esta plantilla:",
+        "",
+        "1. Llena la hoja 'Etiquetas' con tus SKUs.",
+        "2. La columna SKU es OBLIGATORIA — debe coincidir con un producto registrado.",
+        "3. DESCRIPCION es opcional (solo informativa, no se usa para generar la etiqueta).",
+        "4. CANTIDAD es opcional, default = 1 etiqueta por SKU.",
+        "5. Borra las filas de ejemplo antes de subir.",
+        "6. Guarda el archivo y súbelo en la página 'Carga masiva'.",
+        "",
+        "El sistema te devolverá un informe por cada SKU:",
+        "  ✅ OK            → etiqueta generada correctamente",
+        "  ⚠ SIN_BULTO     → producto existe pero no tiene medidas (largo/ancho/alto)",
+        "  ❌ NO_ENCONTRADO → el SKU no existe en el catálogo",
+        "  ❌ ERROR          → otro problema (se muestra el detalle)",
+        "",
+        "Al final puedes descargar un ZIP con todas las etiquetas (PDF).",
+    ]
+    for i, txt in enumerate(instrucciones, 1):
+        c = ws2.cell(row=i, column=1, value=txt)
+        if i == 1:
+            c.font = Font(bold=True, size=14, color="DC2626")
+    ws2.column_dimensions["A"].width = 80
+
+    # Guardar a bytes
+    import io
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="plantilla_etiquetas_masivo.xlsx"'},
+    )
+
+
+@app.route("/etiquetas/masivo/procesar", methods=["POST"])
+@require_permission("print")
+def etiquetas_masivo_procesar():
+    """Procesa el Excel subido y devuelve informe + batch_id para descargar ZIP."""
+    _etq_batch_cleanup()
+
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No se envió archivo"}), 400
+    ext = f.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("xlsx", "xls"):
+        return jsonify({"ok": False, "error": "Formato no permitido. Usa .xlsx"}), 400
+
+    # Parsear Excel
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(f, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"No se pudo leer el Excel: {e}"}), 400
+
+    items = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if not row or all(c is None for c in row[:3]):
+            continue
+        sku = (str(row[0]).strip() if row[0] is not None else "").upper()
+        if not sku:
+            continue
+        desc = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+        try:
+            qty = int(row[2]) if len(row) > 2 and row[2] else 1
+            if qty < 1: qty = 1
+            if qty > 50: qty = 50
+        except Exception:
+            qty = 1
+        items.append({"row": row_idx, "sku": sku, "descripcion": desc, "cantidad": qty})
+
+    if not items:
+        return jsonify({"ok": False, "error": "El Excel está vacío o no tiene SKUs válidos en la columna A"}), 400
+
+    # Procesar cada SKU
+    fmt = request.form.get("fmt", "150x100")
+    user = current_username() or "anon"
+    batch_id = f"etq_{int(time.time())}_{user[:8]}"
+    resultados = []
+    pdfs = {}
+    ok_count = 0
+    err_count = 0
+
+    for it in items:
+        sku = it["sku"]
+        try:
+            # Buscar producto por SKU
+            prod = mysql_fetchone(
+                f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(sku)=%s LIMIT 1",
+                (sku,)
+            )
+            if not prod:
+                resultados.append({**it, "estado": "NO_ENCONTRADO",
+                                   "mensaje": f"SKU {sku} no existe en el catálogo"})
+                err_count += 1
+                continue
+
+            product, bultos, _ = get_full(prod["id"])
+            if not product:
+                resultados.append({**it, "estado": "NO_ENCONTRADO",
+                                   "mensaje": f"Producto #{prod['id']} no se pudo cargar"})
+                err_count += 1
+                continue
+
+            # Filtrar bultos con medidas
+            valid = []
+            for b in bultos:
+                try:
+                    if float(b["largo"]) > 0 and float(b["ancho"]) > 0 and float(b["alto"]) > 0:
+                        valid.append(b)
+                except Exception:
+                    pass
+            if not valid:
+                resultados.append({**it, "estado": "SIN_BULTO",
+                                   "mensaje": f"Producto sin bultos con medidas (largo/ancho/alto)"})
+                err_count += 1
+                continue
+
+            # Generar el PDF con N copias por bulto = cantidad solicitada
+            label_bultos = []
+            for b in valid:
+                for _ in range(it["cantidad"]):
+                    label_bultos.append(dict(b))
+
+            pdf_bytes = build_labels_pdf(product, label_bultos, len(bultos), fmt)
+            pdfs[sku] = pdf_bytes
+            resultados.append({**it, "estado": "OK",
+                               "mensaje": f"{len(label_bultos)} etiqueta(s) generada(s)",
+                               "n_etiquetas": len(label_bultos),
+                               "nombre_producto": product.get("nombre") or product.get("sku")})
+            ok_count += 1
+        except Exception as e:
+            resultados.append({**it, "estado": "ERROR",
+                               "mensaje": f"{type(e).__name__}: {str(e)[:200]}"})
+            err_count += 1
+
+    # Guardar batch en cache para descarga posterior
+    _ETQ_BATCHES[batch_id] = {
+        "items": resultados,
+        "pdfs": pdfs,
+        "ts": time.time(),
+        "user": user,
+    }
+
+    return jsonify({
+        "ok": True,
+        "batch_id": batch_id,
+        "total":   len(items),
+        "ok":      ok_count,
+        "errores": err_count,
+        "resultados": resultados,
+        "n_pdfs": len(pdfs),
+    })
+
+
+@app.route("/etiquetas/masivo/<batch_id>/zip")
+@require_permission("print")
+def etiquetas_masivo_zip(batch_id):
+    """Descarga un ZIP con todos los PDFs generados en el batch."""
+    batch = _ETQ_BATCHES.get(batch_id)
+    if not batch:
+        return ("Batch no encontrado o expirado (TTL 1h). "
+                "Vuelve a subir el Excel."), 404
+
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Reporte CSV
+        csv_lines = ["SKU,DESCRIPCION,CANTIDAD,ESTADO,MENSAJE"]
+        for it in batch["items"]:
+            csv_lines.append(",".join([
+                f'"{it.get("sku","")}"',
+                f'"{(it.get("descripcion") or "").replace(chr(34),chr(39))}"',
+                str(it.get("cantidad", 1)),
+                it.get("estado", ""),
+                f'"{(it.get("mensaje") or "").replace(chr(34),chr(39))}"',
+            ]))
+        zf.writestr("_REPORTE.csv", "\n".join(csv_lines).encode("utf-8"))
+
+        # PDFs
+        for sku, pdf_bytes in batch["pdfs"].items():
+            zf.writestr(f"{sku}.pdf", pdf_bytes)
+
+    buf.seek(0)
+    fecha = datetime.now().strftime("%Y%m%d_%H%M")
+    return Response(
+        buf.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="ETIQUETAS_MASIVO_{fecha}.zip"'},
+    )
+
+
 # ─────────────────────────────────────────────
 #  Exportar Excel
 # ─────────────────────────────────────────────
@@ -4440,15 +4711,15 @@ def invite_user(user_id):
 
 PERMISSIONS_MATRIX = {
     "etiquetas":      {"label":"Etiquetas",      "icon":"bi-tags",
-                       "acciones":["ver","crear","editar","eliminar","imprimir"]},
+                       "acciones":["ver","crear","editar","eliminar","imprimir","masivo"]},
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
-                       "acciones":["ver","crear","editar","eliminar","contratos","ai","reportes","repuestos"]},
+                       "acciones":["ver","crear","editar","eliminar","contratos","ai","reportes","repuestos","tickets","kanban"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
                        "acciones":["ver","cubicador","asignar","manifiestos","couriers"]},
     "comunicaciones": {"label":"Comunicaciones", "icon":"bi-chat-dots",
-                       "acciones":["ver","configurar","enviar","plantillas"]},
+                       "acciones":["ver","configurar","enviar","plantillas","kill_switch"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
                        "acciones":["ajustes","usuarios","roles","marketing","login_imagenes"]},
 }
@@ -19225,18 +19496,212 @@ def mant_buscar_erp():
         }), 200
 
 
+# ══════════════════════════════════════════════════════════════════════
+# DOCUMENTOS ERP — fallback REST API (cuando SQL directo no funciona)
+#
+# Random tiene una REST API que SÍ es accesible desde Railway.
+# Endpoint /documentos?rten=<RUT> y /documentos?nrazon=<nombre> permiten
+# búsqueda por RUT o nombre con varios formatos.
+# ══════════════════════════════════════════════════════════════════════
+
+def _docs_erp_consolidar_rest(items_raw, rut_input=None, nombre_input=None):
+    """Agrupa items raw del ERP por (TIDO, NUDO) y formatea para frontend."""
+    _ZZ_SKUS = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
+    docs = {}
+    for r in items_raw or []:
+        tido = (r.get("TIDO") or r.get("tipo_doc") or "").strip().upper()
+        nudo = str(r.get("NUDO") or r.get("num_doc") or "").strip()
+        if not tido or not nudo:
+            continue
+        if tido not in ERP_TIDOS_DOCUMENTOS_CLIENTE:
+            continue
+        sku  = (r.get("KOPRCT") or r.get("sku") or "").strip().upper()
+        nom  = (r.get("NOKOPR") or r.get("producto") or r.get("descripcion_erp") or "").strip()
+        # Excluir líneas ZZ (fletes/servicios)
+        if sku in _ZZ_SKUS:
+            continue
+        qty  = int(float(r.get("CANTD") or r.get("cantidad") or r.get("qty") or 1))
+        key  = f"{tido}|{nudo}"
+        if key not in docs:
+            docs[key] = {
+                "razon_social": (r.get("NRAZON") or r.get("razon_social") or nombre_input or "").strip(),
+                "rut":          (r.get("NRUC") or r.get("rut") or rut_input or "").strip(),
+                "tipo_doc":     tido,
+                "num_doc":      nudo.lstrip("0") or nudo,
+                "num_doc_raw":  nudo,
+                "fecha":        str(r.get("FEMIS") or r.get("fecha") or "")[:10],
+                "lineas":       [],
+            }
+        if nom or sku:
+            docs[key]["lineas"].append({
+                "sku":      sku,
+                "nombre":   nom or sku,
+                "cantidad": qty,
+            })
+    return list(docs.values())
+
+
+def _docs_erp_por_rut_rest(rut, razon_social, cid):
+    """Busca documentos del ERP via REST API por RUT con variantes.
+    Si no encuentra por RUT, hace fallback a búsqueda por nombre.
+    """
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    rut_clean = re.sub(r"[^0-9kK]", "", rut or "").upper()
+    cuerpo    = rut_clean[:-1] if len(rut_clean) > 1 else rut_clean
+    dv        = rut_clean[-1] if len(rut_clean) > 1 else ""
+
+    # Variantes a probar (de más probable a menos)
+    variantes_rut = list(filter(None, [
+        cuerpo,
+        rut_clean,
+        f"{cuerpo}-{dv}" if dv else None,
+        (rut or "").strip(),
+    ]))
+
+    all_items = []
+    rut_que_funciono = None
+    for variante in variantes_rut:
+        try:
+            body = _erp_get("/documentos", {"rten": variante, "limit": 500}, TOKEN, timeout=10)
+            items = body.get("data") if isinstance(body, dict) else None
+            if items and isinstance(items, list) and len(items) > 0:
+                all_items = items
+                rut_que_funciono = variante
+                break
+        except Exception as e:
+            print(f"[_docs_erp_por_rut_rest] variante {variante!r} falló: {e}")
+            continue
+
+    # Si NO encontró por RUT → fallback por nombre
+    if not all_items and razon_social:
+        return _docs_erp_por_nombre_rest(razon_social, cid, rut_original=rut)
+
+    docs = _docs_erp_consolidar_rest(all_items, rut_input=rut, nombre_input=razon_social)
+    conteo_por_tipo = {}
+    for d in docs:
+        conteo_por_tipo[d["tipo_doc"]] = conteo_por_tipo.get(d["tipo_doc"], 0) + 1
+
+    return jsonify({
+        "ok":              True,
+        "rut":             rut,
+        "rut_usado":       rut_que_funciono,
+        "cliente":         razon_social or "",
+        "documentos":      docs,
+        "total":           len(docs),
+        "conteo_por_tipo": conteo_por_tipo,
+        "tipos_buscados":  list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
+        "filas_erp":       len(all_items),
+        "fuente":          "rest_api",
+        "msg":             f"Búsqueda vía REST API (RUT='{rut_que_funciono or rut}')." if rut_que_funciono else
+                           ("Sin resultados por RUT — probando por nombre." if razon_social else "Sin resultados."),
+    })
+
+
+def _docs_erp_por_nombre_rest(nombre, cid, rut_original=None):
+    """Búsqueda por razón social (nombre del cliente) cuando el RUT no funciona.
+    Útil para clientes con RUTs inconsistentes en el ERP de Random.
+    Usa endpoint /entidades para buscar el RUT canónico, después documentos."""
+    TOKEN = ERP_CONFIG.get("api_token", "")
+    if not nombre:
+        return jsonify({"sin_resultados": True, "documentos": [],
+                        "msg": "Sin RUT ni nombre para buscar."})
+
+    nombre_clean = (nombre or "").strip()
+    if not nombre_clean:
+        return jsonify({"sin_resultados": True, "documentos": [],
+                        "msg": "Nombre vacío."})
+
+    # 1) Buscar entidad por nombre — devuelve el RUT canónico del ERP
+    candidatos_entidades = []
+    try:
+        # Probar primero coincidencia exacta + variantes
+        body = _erp_get("/entidades", {"nokoen": nombre_clean, "limit": 10}, TOKEN, timeout=10)
+        candidatos_entidades = body.get("data") if isinstance(body, dict) else []
+    except Exception as e:
+        print(f"[_docs_erp_por_nombre_rest] /entidades falló: {e}")
+
+    # Si no hubo match exacto, buscar con primeras 2-3 palabras del nombre (LIKE)
+    if not candidatos_entidades:
+        try:
+            palabras = nombre_clean.split()[:3]
+            q = " ".join(palabras)
+            body = _erp_get("/entidades", {"nokoen": q, "limit": 20}, TOKEN, timeout=10)
+            candidatos_entidades = body.get("data") if isinstance(body, dict) else []
+        except Exception:
+            pass
+
+    if not candidatos_entidades:
+        return jsonify({
+            "sin_resultados": True,
+            "documentos":     [],
+            "fuente":         "rest_api",
+            "buscado_por":    "nombre",
+            "nombre":         nombre,
+            "msg":            f"No se encontró ningún cliente en el ERP con nombre '{nombre}'.",
+        })
+
+    # 2) Buscar documentos de los RUTs encontrados (puede haber varios candidatos)
+    ruts_encontrados = []
+    for ent in candidatos_entidades[:5]:   # Top 5 matches
+        rut_ent = (ent.get("RTEN") or "").strip()
+        if rut_ent and rut_ent not in ruts_encontrados:
+            ruts_encontrados.append(rut_ent)
+
+    all_items = []
+    for rut_ent in ruts_encontrados:
+        try:
+            body = _erp_get("/documentos", {"rten": rut_ent, "limit": 500}, TOKEN, timeout=10)
+            items = body.get("data") if isinstance(body, dict) else None
+            if items and isinstance(items, list):
+                all_items.extend(items)
+        except Exception:
+            continue
+
+    docs = _docs_erp_consolidar_rest(all_items, rut_input=rut_original, nombre_input=nombre)
+    conteo_por_tipo = {}
+    for d in docs:
+        conteo_por_tipo[d["tipo_doc"]] = conteo_por_tipo.get(d["tipo_doc"], 0) + 1
+
+    candidatos_resumen = [{
+        "rut":          (e.get("RTEN") or "").strip(),
+        "razon_social": (e.get("NOKOEN") or "").strip(),
+    } for e in candidatos_entidades[:5]]
+
+    return jsonify({
+        "ok":                True,
+        "rut":               rut_original or "",
+        "cliente":           nombre,
+        "documentos":        docs,
+        "total":             len(docs),
+        "conteo_por_tipo":   conteo_por_tipo,
+        "tipos_buscados":    list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
+        "filas_erp":         len(all_items),
+        "fuente":            "rest_api",
+        "buscado_por":       "nombre",
+        "ruts_encontrados":  ruts_encontrados,
+        "candidatos_entidades": candidatos_resumen,
+        "msg":               (f"Búsqueda por nombre — {len(ruts_encontrados)} RUT(s) "
+                              f"candidato(s) encontrado(s) en el ERP."),
+    })
+
+
 # ── DOCUMENTOS ERP POR RUT (auto-search en tab Equipos) ─────────────────
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos-erp")
 @_mant_required
 def mant_documentos_por_rut(cid):
-    """
-    Busca en ERP todos los documentos (FCV/BLV/GDV) del cliente identificado por su RUT.
-    Estrategia: generar TODOS los formatos posibles del RUT en Python y usar IN(...)
-    para que el ERP pueda aprovechar el índice de NRUC — sin funciones por fila.
-    GET /mantenciones/api/clientes/<cid>/documentos-erp
+    """Busca docs del cliente en ERP.
+
+    Estrategia robusta:
+      1. Intenta SQL directo a Random (rápido pero NO funciona desde Railway)
+      2. Si falla → fallback a REST API (probando RUT en distintas variantes)
+      3. Si RUT no encuentra nada → buscar por NOMBRE (razon_social) con LIKE
+      4. Devolver agregado por documento
     """
     cliente = mysql_fetchone("SELECT rut, razon_social FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente or not cliente.get("rut"):
+        # Si no hay RUT pero sí razón social, intentar por nombre via REST
+        if cliente and cliente.get("razon_social"):
+            return _docs_erp_por_nombre_rest(cliente["razon_social"], cid)
         return jsonify({"sin_rut": True, "documentos": []})
 
     rut = cliente["rut"].strip()
@@ -19261,13 +19726,11 @@ def mant_documentos_por_rut(cid):
     ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
     erp_conn = get_erp_conn()
     if not erp_conn:
-        return jsonify({
-            "sin_conexion": True,
-            "rut": rut,
-            "documentos": [],
-            "msg": "Conexión al ERP no disponible desde Railway. "
-                   "Usa la búsqueda por número de documento."
-        }), 200
+        # ─── FALLBACK REST API ──────────────────────────────────────
+        # Railway no tiene acceso a la red interna de Random, pero SÍ
+        # puede llamar a la REST pública. Probamos por RUT primero.
+        # Si no encuentra → buscamos por nombre.
+        return _docs_erp_por_rut_rest(rut, cliente.get("razon_social"), cid)
 
     try:
         with erp_conn.cursor() as cur:

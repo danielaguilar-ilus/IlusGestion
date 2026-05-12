@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Carga masiva de etiquetas — ILUS{% endblock %}
+{% block content %}
+<style>
+.em-hero{background:linear-gradient(135deg,#0a0a0a,#1a1a1a,#2a0d0d);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+
+.em-dropzone{border:2px dashed #d1d5db;border-radius:14px;padding:42px 24px;
+  text-align:center;cursor:pointer;background:#fafbfc;transition:all .15s;}
+.em-dropzone:hover{border-color:#dc2626;background:#fef2f2;}
+.em-dropzone.has-file{border-style:solid;border-color:#16a34a;background:#f0fdf4;}
+.em-dropzone i.bi-cloud-arrow-up{font-size:3rem;color:#9ca3af;display:block;margin-bottom:8px;}
+
+.em-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;padding:18px 22px;
+  margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+
+.em-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;margin-bottom:14px;}
+.em-kpi{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:10px 14px;}
+.em-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
+.em-kpi .lbl{font-size:.66rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+
+.em-row{display:grid;grid-template-columns:80px 1fr auto auto;gap:10px;padding:8px 12px;
+  border-bottom:1px solid #f3f4f6;align-items:center;font-size:.85rem;}
+.em-badge{padding:3px 9px;border-radius:50px;font-size:.65rem;font-weight:800;letter-spacing:.04em;}
+.bs-OK{background:#dcfce7;color:#166534;}
+.bs-SIN_BULTO{background:#fef3c7;color:#92400e;}
+.bs-NO_ENCONTRADO{background:#fee2e2;color:#991b1b;}
+.bs-ERROR{background:#fce7f3;color:#9d174d;}
+</style>
+
+<div class="em-hero">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-collection me-2"></i>Carga masiva de etiquetas</h4>
+    <div class="small" style="color:#cfd3da">Sube un Excel con SKUs y genera todas las etiquetas a la vez</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('etiquetas_masivo_plantilla') }}" class="btn btn-sm btn-light fw-bold">
+      <i class="bi bi-download me-1"></i>Descargar plantilla Excel
+    </a>
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Volver
+    </a>
+  </div>
+</div>
+
+<div class="em-card">
+  <h6 class="mb-3"><i class="bi bi-1-circle-fill me-1 text-danger"></i>Sube el archivo Excel</h6>
+  <div class="em-dropzone" id="dz" onclick="document.getElementById('fileInput').click()">
+    <i class="bi bi-cloud-arrow-up"></i>
+    <div class="fw-bold" style="font-size:1.05rem">Arrastra el Excel aquí o haz clic para seleccionar</div>
+    <div class="small text-muted mt-1">Formato .xlsx — columnas: SKU, Descripción (opcional), Cantidad (opcional)</div>
+    <div id="fileInfo" class="mt-2 small fw-semibold" style="display:none;color:#16a34a"></div>
+  </div>
+  <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="archivoSeleccionado(this.files[0])">
+
+  <div class="row g-2 mt-3 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label small fw-semibold mb-1">Formato de etiqueta</label>
+      <select id="fmt" class="form-select form-select-sm">
+        <option value="150x100" selected>150 × 100 mm (estándar)</option>
+        <option value="100x70">100 × 70 mm</option>
+        <option value="150x70">150 × 70 mm</option>
+      </select>
+    </div>
+    <div class="col-md-8 text-end">
+      <button id="btnProcesar" class="btn btn-ilus fw-bold px-4" onclick="procesar()" disabled>
+        <i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="resultBox" style="display:none">
+  <div class="em-card">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h6 class="mb-0"><i class="bi bi-2-circle-fill me-1 text-danger"></i>Resultado del procesamiento</h6>
+      <div>
+        <a id="btnZip" href="#" class="btn btn-sm btn-success fw-bold" style="display:none">
+          <i class="bi bi-file-zip me-1"></i>Descargar ZIP con todas las etiquetas
+        </a>
+      </div>
+    </div>
+    <div class="em-kpis">
+      <div class="em-kpi"><div class="num" id="kpi_total" style="color:#0f172a">—</div>
+        <div class="lbl">Total SKUs</div></div>
+      <div class="em-kpi"><div class="num" id="kpi_ok" style="color:#16a34a">—</div>
+        <div class="lbl">✅ OK</div></div>
+      <div class="em-kpi"><div class="num" id="kpi_err" style="color:#dc2626">—</div>
+        <div class="lbl">❌ Errores</div></div>
+      <div class="em-kpi"><div class="num" id="kpi_pdfs" style="color:#7c3aed">—</div>
+        <div class="lbl">PDFs generados</div></div>
+    </div>
+    <div id="lista_resultados"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let SELECTED_FILE = null;
+
+const dz = document.getElementById('dz');
+['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); e.stopPropagation(); dz.style.borderColor = '#dc2626';
+}));
+['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); e.stopPropagation();
+  if (!SELECTED_FILE) dz.style.borderColor = '';
+}));
+dz.addEventListener('drop', e => {
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) archivoSeleccionado(f);
+});
+
+function archivoSeleccionado(f){
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith('.xlsx') && !f.name.toLowerCase().endsWith('.xls')){
+    alert('Por favor sube un archivo .xlsx');
+    return;
+  }
+  SELECTED_FILE = f;
+  dz.classList.add('has-file');
+  document.getElementById('fileInfo').style.display = '';
+  document.getElementById('fileInfo').innerHTML =
+    `<i class="bi bi-check-circle-fill me-1"></i>${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+  document.getElementById('btnProcesar').disabled = false;
+}
+
+async function procesar(){
+  if (!SELECTED_FILE) return;
+  const btn = document.getElementById('btnProcesar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando…';
+  const fd = new FormData();
+  fd.append('archivo', SELECTED_FILE);
+  fd.append('fmt', document.getElementById('fmt').value);
+  try {
+    const r = await fetch('/etiquetas/masivo/procesar', {method:'POST', body: fd});
+    const d = await r.json();
+    if (!d.ok){
+      alert('Error: ' + (d.error || 'desconocido'));
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';
+      return;
+    }
+    mostrarResultados(d);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar de nuevo';
+  } catch(e){
+    alert('Error de red: ' + e.message);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';
+  }
+}
+
+function mostrarResultados(d){
+  document.getElementById('resultBox').style.display = '';
+  document.getElementById('kpi_total').textContent = d.total;
+  document.getElementById('kpi_ok').textContent = d.ok;
+  document.getElementById('kpi_err').textContent = d.errores;
+  document.getElementById('kpi_pdfs').textContent = d.n_pdfs;
+
+  const btnZip = document.getElementById('btnZip');
+  if (d.n_pdfs > 0){
+    btnZip.style.display = '';
+    btnZip.href = `/etiquetas/masivo/${d.batch_id}/zip`;
+  } else {
+    btnZip.style.display = 'none';
+  }
+
+  const esc = s => String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let html = `<div class="em-row" style="font-weight:800;color:#374151;border-bottom:2px solid #e5e7eb">
+    <div>Fila</div><div>SKU / Descripción</div><div>Estado</div><div class="text-end">Detalle</div>
+  </div>`;
+  for (const it of d.resultados){
+    html += `<div class="em-row">
+      <div class="text-muted font-monospace">#${it.row}</div>
+      <div>
+        <span class="font-monospace fw-bold">${esc(it.sku)}</span>
+        ${it.nombre_producto ? `<div class="small text-muted">${esc(it.nombre_producto)}</div>` :
+          (it.descripcion ? `<div class="small text-muted">${esc(it.descripcion)}</div>` : '')}
+      </div>
+      <div><span class="em-badge bs-${it.estado}">${esc(it.estado)}</span></div>
+      <div class="text-end small ${it.estado==='OK' ? 'text-success' : 'text-muted'}">
+        ${esc(it.mensaje || '')}
+      </div>
+    </div>`;
+  }
+  document.getElementById('lista_resultados').innerHTML = html;
+  document.getElementById('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+}
+</script>
+{% endblock %}
