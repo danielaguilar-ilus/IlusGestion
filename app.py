@@ -7375,6 +7375,7 @@ def _fetch_multi_docs(docs):
                 errors.append(f"No se encontró {tido_i} N° {nudo_i} en el ERP.")
             else:
                 headers.append(hdr)
+                doc_label = f"{hdr.get('tido','')} {hdr.get('nudo_display', hdr.get('nudo',''))}".strip()
                 for l in lineas:
                     sku = l["sku"]
                     if sku in merged:
@@ -7384,14 +7385,30 @@ def _fetch_multi_docs(docs):
                         m["peso_vol_tot"] += l["peso_vol_tot"]
                         m["vol_tot"]      += l["vol_tot"]
                         m["pred_tot"]     += l["pred_tot"]
+                        if doc_label and doc_label not in m.get("_docs_origen", []):
+                            m["_docs_origen"].append(doc_label)
                     else:
-                        merged[sku] = dict(l)
+                        new_l = dict(l)
+                        new_l["_docs_origen"] = [doc_label] if doc_label else []
+                        merged[sku] = new_l
         except ConnectionError as ce:
             errors.append(str(ce))
         except Exception as ex:
             errors.append(f"Error {tido_i} N° {nudo_i}: {ex}")
 
-    return headers, list(merged.values()), errors
+    # Cada línea recibe "doc_ref" con los documentos de origen. Repara el bug
+    # del PDF que mostraba el primer doc para TODAS las filas.
+    out = []
+    for l in merged.values():
+        origens = l.get("_docs_origen") or []
+        if len(origens) == 1:
+            l["doc_ref"] = origens[0]
+        elif len(origens) > 1:
+            l["doc_ref"] = " + ".join(origens)
+        else:
+            l["doc_ref"] = ""
+        out.append(l)
+    return headers, out, errors
 
 
 def _cubicador_num(value, default=0.0):
@@ -7464,6 +7481,8 @@ def _cubicador_export_payload(headers, lineas, docs):
                 "peso_kg_tot": _cubicador_num(l.get("peso_kg_tot")),
                 "peso_vol_tot": _cubicador_num(l.get("peso_vol_tot")),
                 "vol_tot": _cubicador_num(l.get("vol_tot")),
+                "doc_ref": str(l.get("doc_ref") or ""),
+                "_docs_origen": list(l.get("_docs_origen") or []),
             }
             for l in (lineas or [])
         ],
@@ -7590,7 +7609,7 @@ def cubicador_export_excel():
         ws.title   = "Cubicador Múltiple"
         title_text = f"CUBICADOR ILUS  ·  {len(docs)} documentos combinados"
 
-    ws.merge_cells("A1:J1")
+    ws.merge_cells("A1:K1")
     c = ws["A1"]
     c.value = title_text
     c.font  = Font(bold=True, size=13, color="FFFFFF")
@@ -7601,7 +7620,7 @@ def cubicador_export_excel():
     # ── Filas 2…N: una por documento ────────────────────────────────
     row_offset = 2
     for hdr in headers:
-        ws.merge_cells(f"A{row_offset}:D{row_offset}")
+        ws.merge_cells(f"A{row_offset}:E{row_offset}")
         ws[f"A{row_offset}"].value = (
             f"{hdr['tido']} N° {hdr.get('nudo_display', hdr.get('nudo',''))}  ·  "
             f"{hdr.get('cliente_nombre','—')}   RUT {hdr.get('cliente_rut','—')}   {hdr.get('fecha','')}"
@@ -7609,20 +7628,20 @@ def cubicador_export_excel():
         ws[f"A{row_offset}"].font = Font(size=9)
         ws[f"A{row_offset}"].alignment = Alignment(horizontal="left", vertical="center")
 
-        ws.merge_cells(f"E{row_offset}:J{row_offset}")
-        ws[f"E{row_offset}"].value = (
+        ws.merge_cells(f"F{row_offset}:K{row_offset}")
+        ws[f"F{row_offset}"].value = (
             f"Neto: {_money_excel(hdr.get('valor_neto'))}   "
             f"IVA: {_money_excel(hdr.get('valor_iva'))}   "
             f"Bruto: {_money_excel(hdr.get('valor_bruto'))}"
         )
-        ws[f"E{row_offset}"].font = Font(bold=True, size=9)
-        ws[f"E{row_offset}"].alignment = Alignment(horizontal="right", vertical="center")
+        ws[f"F{row_offset}"].font = Font(bold=True, size=9)
+        ws[f"F{row_offset}"].alignment = Alignment(horizontal="right", vertical="center")
         ws.row_dimensions[row_offset].height = 18
         row_offset += 1
 
     # ── Fila de encabezados de columna ───────────────────────────────
     hdr_row = row_offset
-    cols = ["SKU", "Descripción ERP", "Cant", "Bultos",
+    cols = ["SKU", "Descripción ERP", "Doc.", "Cant", "Bultos",
             "Kg/u", "PV/u", "Vol cm³/u", "Predom/u", "Total Predom", "Tipo"]
     for ci, h in enumerate(cols, 1):
         _hdr_cell(ws.cell(row=hdr_row, column=ci), h)
@@ -7632,9 +7651,16 @@ def cubicador_export_excel():
     # ── Filas de datos ───────────────────────────────────────────────
     for ri, l in enumerate(lineas, row_offset):
         bg = LGRAY if ri % 2 == 0 else "FFFFFF"
+        # doc_ref viene de _fetch_multi_docs (ej "BLV 19893" o "BLV 19893 + BLV 19892")
+        # Para el Excel de un único doc, payload-mode puede no traer doc_ref → fallback al header
+        doc_ref_val = l.get("doc_ref") or (
+            f"{headers[0].get('tido','')} {headers[0].get('nudo_display', headers[0].get('nudo',''))}"
+            if headers else ""
+        )
         vals = [
             l["sku"],
             l["descripcion_erp"],
+            doc_ref_val,
             int(l["cantidad"]),
             l["total_bultos"] if l["tiene_ficha"] else "s/f",
             l["peso_kg_u"]  if l["tiene_bultos"] else None,
@@ -7647,40 +7673,40 @@ def cubicador_export_excel():
         for ci, val in enumerate(vals, 1):
             cell = ws.cell(row=ri, column=ci, value=val)
             cell.fill = PatternFill("solid", fgColor=bg)
-            cell.font  = Font(size=9, bold=(ci == 9), color=(RED if ci == 9 else "000000"))
+            cell.font  = Font(size=9, bold=(ci == 10), color=(RED if ci == 10 else "000000"))
             cell.alignment = Alignment(
-                horizontal="center" if ci in (3, 4, 10) else ("right" if ci >= 5 else "left"),
+                horizontal="center" if ci in (3, 4, 5, 11) else ("right" if ci >= 6 else "left"),
                 vertical="center",
             )
-            if ci in (5, 6, 7, 8, 9) and val is not None:
+            if ci in (6, 7, 8, 9, 10) and val is not None:
                 cell.number_format = "#,##0.0"
 
     # ── Fila de totales ──────────────────────────────────────────────
     tr = row_offset + len(lineas)
-    ws.merge_cells(f"A{tr}:B{tr}")
+    ws.merge_cells(f"A{tr}:C{tr}")
     ws.cell(row=tr, column=1, value="TOTALES").font = Font(bold=True, color="FFFFFF", size=9)
     ws.cell(row=tr, column=1).fill = PatternFill("solid", fgColor=BLACK)
     ws.cell(row=tr, column=1).alignment = Alignment(horizontal="right")
 
     totales = {
-        3: int(sum(l["cantidad"]     for l in lineas)),
-        5: sum(l["peso_kg_tot"]      for l in lineas),
-        6: sum(l["peso_vol_tot"]     for l in lineas),
-        7: sum(l["vol_tot"]          for l in lineas),
-        9: sum(l["pred_tot"]         for l in lineas),
+        4: int(sum(l["cantidad"]     for l in lineas)),
+        6: sum(l["peso_kg_tot"]      for l in lineas),
+        7: sum(l["peso_vol_tot"]     for l in lineas),
+        8: sum(l["vol_tot"]          for l in lineas),
+        10: sum(l["pred_tot"]        for l in lineas),
     }
-    for ci in range(1, 11):
+    for ci in range(1, 12):
         cell = ws.cell(row=tr, column=ci)
         cell.fill = PatternFill("solid", fgColor=BLACK)
         if ci in totales:
             cell.value = totales[ci]
-            cell.font  = Font(bold=True, color=("CC0000" if ci == 9 else "FFFFFF"), size=9)
-            cell.alignment = Alignment(horizontal="center" if ci == 3 else "right")
-            if ci != 3:
+            cell.font  = Font(bold=True, color=("CC0000" if ci == 10 else "FFFFFF"), size=9)
+            cell.alignment = Alignment(horizontal="center" if ci == 4 else "right")
+            if ci != 4:
                 cell.number_format = "#,##0.0"
 
     # ── Anchos de columna ────────────────────────────────────────────
-    for ci, w in enumerate([14, 42, 7, 8, 10, 10, 12, 12, 14, 7], 1):
+    for ci, w in enumerate([14, 42, 18, 7, 8, 10, 10, 12, 12, 14, 7], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
     ws.freeze_panes = f"A{hdr_row + 1}"
@@ -7722,14 +7748,42 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
     fecha_gen = _dt.now().strftime("%d/%m/%Y %H:%M")
     generated_by = current_username() or "Daniel Aguilar"
     first = headers[0] if headers else {}
-    fecha_doc = first.get("fecha", "")
+
+    # ── Rango de fechas (en multi-doc usar min→max) ──
+    fechas_h = [h.get("fecha") for h in headers if h.get("fecha")]
+    if len(fechas_h) > 1 and len(set(fechas_h)) > 1:
+        fechas_sorted = sorted(set(fechas_h))
+        fecha_doc = f"{fechas_sorted[0]} → {fechas_sorted[-1]}"
+    else:
+        fecha_doc = fechas_h[0] if fechas_h else ""
+
+    # ── Cliente: usar primer header con nombre, sino fallback a RUT ──
+    cliente_nombre = ""
+    cliente_rut = ""
+    for h in headers:
+        if not cliente_nombre and (h.get("cliente_nombre") or "").strip():
+            cliente_nombre = h["cliente_nombre"].strip()
+        if not cliente_rut and (h.get("cliente_rut") or "").strip():
+            cliente_rut = h["cliente_rut"].strip()
+        if cliente_nombre and cliente_rut:
+            break
+    cliente_sincronizado = bool(cliente_nombre)
+    if not cliente_nombre:
+        cliente_nombre = f"Cliente s/nombre (RUT {cliente_rut})" if cliente_rut else "Cliente no informado"
+
+    # ── SKUs únicos por documento (para columna del listado) ──
+    skus_por_doc = {}
+    for l in lineas:
+        for ref in (l.get("_docs_origen") or []):
+            skus_por_doc.setdefault(ref, set()).add(l.get("sku", ""))
+
     docs_count = len(headers)
     sku_count = len(lineas)
     if len(docs) == 1 and headers:
         main_title = f"{first.get('tido','')} Nro {first.get('nudo_display', first.get('nudo',''))}"
         report_type = "REPORTE DOCUMENTO"
     else:
-        main_title = f"{len(docs)} documentos comerciales"
+        main_title = ", ".join(f"{h.get('tido','')} {h.get('nudo_display', h.get('nudo',''))}" for h in headers) or f"{len(docs)} documentos"
         report_type = "REPORTE MULTI-DOCUMENTO"
 
     total_neto = sum(float(h.get("valor_neto") or 0) for h in headers)
@@ -7744,6 +7798,8 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
 
     docs_rows = ""
     for hdr in headers:
+        doc_lbl = f"{hdr.get('tido','')} {hdr.get('nudo_display', hdr.get('nudo',''))}".strip()
+        n_skus_doc = len(skus_por_doc.get(doc_lbl, set()))
         docs_rows += f"""
         <tr>
           <td><span class="pdf-icon">F</span> {_esc(hdr.get('tido'))}</td>
@@ -7752,7 +7808,7 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
           <td class="r">{_money(hdr.get('valor_neto'))}</td>
           <td class="r">{_money(hdr.get('valor_iva'))}</td>
           <td class="r strong">{_money(hdr.get('valor_bruto'))}</td>
-          <td class="c">{sku_count if docs_count == 1 else "-"}</td>
+          <td class="c">{n_skus_doc or "-"}</td>
           <td class="state">Vigente</td>
         </tr>"""
 
@@ -7761,7 +7817,8 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
         sf = not l["tiene_bultos"]
         pred_type = "kg" if (l.get("peso_kg_u") or 0) >= (l.get("peso_vol_u") or 0) else "pv"
         pred_class = "red" if pred_type == "kg" else "green"
-        doc_ref = l.get("doc_ref") or (str(first.get("tido", "")) + " " + str(first.get("nudo_display", first.get("nudo", ""))))
+        # doc_ref ya viene calculado por _fetch_multi_docs (uno o varios docs origen)
+        doc_ref = l.get("doc_ref") or ""
         rows_html += f"""
         <tr>
           <td class="mono">{_esc(l['sku'])}</td>
@@ -7827,10 +7884,10 @@ tbody tr:nth-child(even){{background:#fafafa}}
     <div class="top-grid">
       <div class="card">
         <div class="card-title"><span class="mini-icon">C</span>Cliente</div>
-        <div class="client-name">{_esc(first.get('cliente_nombre') or 'Cliente no informado')}</div>
-        <div class="line">RUT: {_esc(first.get('cliente_rut') or '-')}</div>
+        <div class="client-name">{_esc(cliente_nombre)}</div>
+        <div class="line">RUT: {_esc(cliente_rut or '-')}</div>
         <div class="line">Documento principal: {_esc(main_title)}</div>
-        <div class="ok">Cliente sincronizado</div>
+        {('<div class="ok">Cliente sincronizado</div>' if cliente_sincronizado else '<div class="ok" style="background:#fef3c7;color:#92400e">Solo RUT sin nombre</div>')}
       </div>
       <div class="card">
         <div class="card-title"><span class="mini-icon">R</span>Resumen general</div>
