@@ -366,13 +366,19 @@ async function cambiarEstado(nuevo) {
 }
 
 async function cancelar() {
-  if (!confirm('¿Cancelar esta cotización?')) return;
+  const ok = await ilusConfirm({
+    title: 'Cancelar cotización',
+    message: '¿Cancelar esta cotización?',
+    sub: 'Esta acción no se puede revertir.',
+    okLabel: 'Sí, cancelar', danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}`, {method: 'DELETE'});
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     window.location = '/mantenciones/cotizaciones';
-  } catch(e) { alert('Error: ' + e.message); }
+  } catch(e) { ilusToast('Error: ' + e.message, { type:'error' }); }
 }
 
 async function convertirOT() {

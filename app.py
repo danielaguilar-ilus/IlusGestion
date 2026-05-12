@@ -8,6 +8,14 @@ import smtplib
 import threading
 import time
 from datetime import datetime, timedelta
+
+# ════════════════════════════════════════════════════════════════════
+#  PLAYWRIGHT — fijar PLAYWRIGHT_BROWSERS_PATH antes que NADIE lo importe.
+#  En Railway, el build instala Chromium con esta env var, pero los workers
+#  de gunicorn arrancan SIN la var y Playwright busca en /root/.cache/...
+#  (donde no está). Fijarlo aquí garantiza que TODOS los workers la usen.
+# ════════════════════════════════════════════════════════════════════
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/app/.pw-browsers")
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import wraps
@@ -94,36 +102,60 @@ _pw_install_attempted = False  # Solo intentamos auto-install una vez por proces
 
 def _pw_install_chromium_runtime():
     """Intenta descargar Chromium en runtime cuando el build de Railway
-    no lo hizo. SOLO se ejecuta una vez por proceso (flag _pw_install_attempted).
-    Tarda ~30-60s la primera vez, después queda cacheado.
+    no lo hizo. Solo se intenta UNA VEZ por proceso (flag _pw_install_attempted).
+    Tarda ~30-60s la primera vez, después queda cacheado en disco.
     """
     global _pw_install_attempted
     if _pw_install_attempted:
         return False
-    _pw_install_attempted = True
     import subprocess as _sp, sys as _sys, os as _os
     pw_path = _os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/app/.pw-browsers")
-    print(f"[playwright] Chromium no encontrado. Intentando auto-install en {pw_path}...", flush=True)
+    print(f"[playwright] Chromium no encontrado. Auto-install en {pw_path}...", flush=True)
     try:
-        # Asegurar que el directorio existe y es escribible
+        # 1. Asegurar que el directorio existe y es escribible
         _os.makedirs(pw_path, exist_ok=True)
+        # 2. Verificar permisos de escritura ANTES de descargar 170MB
+        test_file = _os.path.join(pw_path, ".write_test")
+        try:
+            with open(test_file, "w") as _f:
+                _f.write("ok")
+            _os.remove(test_file)
+        except Exception as e_perm:
+            print(f"[playwright] ✗ Sin permiso de escritura en {pw_path}: {e_perm}", flush=True)
+            # Fallback: usar /tmp si /app no es escribible
+            pw_path = "/tmp/.pw-browsers"
+            _os.environ["PLAYWRIGHT_BROWSERS_PATH"] = pw_path
+            _os.makedirs(pw_path, exist_ok=True)
+            print(f"[playwright] Fallback path: {pw_path}", flush=True)
+
+        # 3. Marcar intento (después de validar path) — evita loop infinito
+        _pw_install_attempted = True
+
+        # 4. Ejecutar playwright install con env vars correctas
         env = {**_os.environ, "PLAYWRIGHT_BROWSERS_PATH": pw_path}
         result = _sp.run(
             [_sys.executable, "-m", "playwright", "install", "chromium"],
-            env=env, capture_output=True, text=True, timeout=180
+            env=env, capture_output=True, text=True, timeout=240
         )
         if result.returncode == 0:
-            print(f"[playwright] ✓ Chromium instalado correctamente en {pw_path}", flush=True)
+            print(f"[playwright] ✓ Chromium instalado en {pw_path}", flush=True)
+            # Listar contenido para debug
+            try:
+                contents = _os.listdir(pw_path)
+                print(f"[playwright]   contenido: {contents[:5]}", flush=True)
+            except Exception: pass
             return True
         else:
             print(f"[playwright] ✗ Install falló (exit {result.returncode}):", flush=True)
-            print(f"[playwright]   stdout: {result.stdout[:500]}", flush=True)
-            print(f"[playwright]   stderr: {result.stderr[:500]}", flush=True)
+            print(f"[playwright]   stdout: {result.stdout[-500:]}", flush=True)
+            print(f"[playwright]   stderr: {result.stderr[-500:]}", flush=True)
             return False
     except _sp.TimeoutExpired:
-        print(f"[playwright] ✗ Install timeout (>180s)", flush=True)
+        _pw_install_attempted = True
+        print(f"[playwright] ✗ Install timeout (>240s)", flush=True)
         return False
     except Exception as e:
+        _pw_install_attempted = True
         print(f"[playwright] ✗ Install excepción: {type(e).__name__}: {e}", flush=True)
         return False
 
@@ -15315,6 +15347,31 @@ def mant_ficha(cid):
             return None
         return val.date() if hasattr(val, 'date') else val
 
+    # ── Helper: normaliza hora de MySQL ──────────────────────────────────
+    # MySQL devuelve columnas TIME como datetime.timedelta (¡NO time!).
+    # El template hace .strftime('%H:%M') que rompe con timedelta.
+    # Devolvemos siempre un string "HH:MM" o None.
+    def _h(val):
+        if val is None:
+            return None
+        # timedelta (caso típico MySQL TIME)
+        if isinstance(val, timedelta):
+            total = int(val.total_seconds())
+            if total < 0:
+                total = 0
+            hh = (total // 3600) % 24
+            mm = (total % 3600) // 60
+            return f"{hh:02d}:{mm:02d}"
+        # datetime.time u objeto con strftime
+        if hasattr(val, 'strftime'):
+            try:
+                return val.strftime('%H:%M')
+            except Exception:
+                pass
+        # String que ya viene como "08:00:00" o "08:00"
+        s = str(val).strip()
+        return s[:5] if s else None
+
     # ── Normaliza filas de DB para evitar mezcla datetime/date ───────────
     def _norm_maquina(row):
         r = dict(row)
@@ -15337,6 +15394,13 @@ def mant_ficha(cid):
         r['fecha_programada'] = _d(r.get('fecha_programada'))
         if 'created_at' in r:
             r['created_at'] = _d(r['created_at'])
+        # CRÍTICO: hora_inicio/hora_fin vienen como timedelta desde MySQL.
+        # Sin esta normalización el template falla con
+        # "datetime.timedelta has no attribute strftime"
+        if 'hora_inicio' in r:
+            r['hora_inicio'] = _h(r.get('hora_inicio'))
+        if 'hora_fin' in r:
+            r['hora_fin'] = _h(r.get('hora_fin'))
         return r
 
     maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)) or []

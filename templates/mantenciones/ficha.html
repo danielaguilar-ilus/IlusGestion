@@ -4242,8 +4242,9 @@ function abrirEmailManual() {
             {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
             {% if v.hora_inicio or v.hora_fin %}
             <div style="font-size:.7rem;color:#9ca3af;font-weight:600">
-              {% if v.hora_inicio %}{{ v.hora_inicio.strftime('%H:%M') if v.hora_inicio.__class__.__name__ != 'str' else v.hora_inicio }}{% endif %}
-              {% if v.hora_fin %} – {{ v.hora_fin.strftime('%H:%M') if v.hora_fin.__class__.__name__ != 'str' else v.hora_fin }}{% endif %}
+              {# hora_inicio/hora_fin ya vienen normalizadas como string "HH:MM" desde _norm_visita en app.py #}
+              {% if v.hora_inicio %}{{ v.hora_inicio }}{% endif %}
+              {% if v.hora_fin %} – {{ v.hora_fin }}{% endif %}
             </div>
             {% endif %}
           </td>
@@ -7497,12 +7498,13 @@ function reSubirContrato(ctid, nombre) {
   inp.onchange = async () => {
     const f = inp.files[0];
     if (!f) return;
-    if (!confirm(
-      `¿Re-subir archivo para el contrato:\n\n«${nombre}»?\n\n` +
-      `Archivo nuevo: ${f.name}\n\n` +
-      `Esto reemplaza el archivo anterior (si existía). Conserva los datos ` +
-      `del contrato y el análisis IA actual.`
-    )) return;
+    const ok = await ilusConfirm({
+      title: 'Re-subir archivo del contrato',
+      message: `«${nombre}»`,
+      sub: `Archivo nuevo: ${f.name}\nEsto reemplaza el archivo anterior. Conserva los datos del contrato y el análisis IA actual.`,
+      okLabel: 'Sí, reemplazar',
+    });
+    if (!ok) return;
 
     const fd = new FormData();
     fd.append('archivo', f);
@@ -7512,13 +7514,13 @@ function reSubirContrato(ctid, nombre) {
       });
       const d = await r.json();
       if (d.ok) {
-        alert(`✅ Archivo re-subido correctamente: ${d.archivo_nombre}`);
-        location.reload();
+        ilusToast(`Archivo re-subido: ${d.archivo_nombre}`, { type:'success' });
+        setTimeout(() => location.reload(), 1200);
       } else {
-        alert(`❌ ${d.error || 'Error al re-subir'}`);
+        ilusToast(d.error || 'Error al re-subir', { type:'error' });
       }
     } catch(e) {
-      alert(`Error de red: ${e.message}`);
+      ilusToast(`Error de red: ${e.message}`, { type:'error' });
     }
   };
   document.body.appendChild(inp);
@@ -7651,11 +7653,20 @@ async function guardarVisita() {
 
 async function eliminarVisita() {
   const vid = document.getElementById('vi_id').value;
-  if (!vid || !confirm('¿Eliminar esta visita?')) return;
+  if (!vid) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar visita',
+    message: '¿Eliminar esta visita?',
+    sub: 'No se puede deshacer.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     location.reload();
+  } else {
+    ilusToast('Error al eliminar la visita', { type:'error' });
   }
 }
 

@@ -339,7 +339,8 @@ async function cargarAnalytics(){
     const r = await fetch('/mantenciones/api/analytics/data');
     const d = await r.json();
     if (!d.ok){
-      alert('Error: ' + (d.error || 'no se pudo cargar'));
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error || 'no se pudo cargar'), { type:'error' });
+      else alert('Error: ' + (d.error || 'no se pudo cargar'));
       return;
     }
     renderKpis(d.kpis);
@@ -348,7 +349,8 @@ async function cargarAnalytics(){
     renderHeatmap(d.heatmap || []);
     renderProyeccion(d.proyeccion || {});
   } catch(e){
-    alert('Error de red: ' + e);
+    if (typeof ilusToast === 'function') ilusToast('Error de red: ' + e, { type:'error' });
+    else alert('Error de red: ' + e);
   }
 }
 

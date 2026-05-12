@@ -2,23 +2,31 @@
 #  ⚠️  NIXPACKS.TOML — CONFIGURACIÓN DE BUILD DE RAILWAY
 # ════════════════════════════════════════════════════════════════════
 #
-#  🔴 NO CREAR railway.toml NI railpack.toml EN ESTE PROYECTO.
-#     Cuando existía railway.toml con RAILPACK, los deploys fallaban con
-#     "pip: command not found" (ver commit 43f91f5). El stack correcto
-#     en este proyecto es nixpacks (es el default si no hay railway.toml).
+#  🔴 NO CREAR railway.toml NI railpack.toml — los deploys fallaban con
+#     "pip: command not found" (ver commit 43f91f5).
 #
-#  🔴 NO TOCAR --with-deps. Si Chromium falla en runtime, hay un
-#     auto-install fallback en app.py (_pw_install_chromium_runtime).
-#     Esa función intenta `python -m playwright install chromium` desde
-#     el código si falta el binario al servir el primer PDF.
-#
-#  🔴 NO PINEAR a Python específico (deja el default de Railway).
-#     Hubo intentos previos con `nixPkgs = ["python311"]` y romper Python
-#     3.13 que ya funciona con todo lo demás.
+#  Estrategia anti-frágil para Chromium:
+#    1. Build descarga Chromium en /app/.pw-browsers (path FIJO).
+#    2. La env var PLAYWRIGHT_BROWSERS_PATH se setea con [variables]
+#       (afecta build Y runtime).
+#    3. app.py también fuerza `os.environ.setdefault(...)` al inicio
+#       como cinturón + tirante. Esto garantiza que aunque Railway
+#       no propague la var a gunicorn, Python la setea antes que
+#       playwright se importe.
+#    4. Si el build falla descargando, app.py tiene auto-install
+#       en runtime (_pw_install_chromium_runtime) que reintenta.
 # ════════════════════════════════════════════════════════════════════
 
 [phases.install]
 cmds = [
   "pip install -r requirements.txt",
-  "playwright install chromium --with-deps"
+  # Crear el directorio explícitamente antes del install
+  "mkdir -p /app/.pw-browsers",
+  # Instalar Chromium en el path fijo (no en /root/.cache donde no llega gunicorn)
+  "PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers playwright install chromium --with-deps || (echo '[BUILD WARN] playwright install falló — runtime hará fallback' && true)",
+  # Mostrar lo que se instaló para debug visible en logs Railway
+  "ls -la /app/.pw-browsers/ || echo '(directorio vacío)'",
 ]
+
+[variables]
+PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"
