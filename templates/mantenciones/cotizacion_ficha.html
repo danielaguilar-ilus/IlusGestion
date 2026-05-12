@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+{% block title %}Cotización — ILUS{% endblock %}
+{% block content %}
+<style>
+.co-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 22px;margin-bottom:16px;
+  display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:14px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.co-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;font-size:1.45rem;}
+.co-hero .sub{font-size:.86rem;color:#cfd3da;margin-top:4px;}
+.co-num-big{font-family:'JetBrains Mono',monospace;font-weight:900;letter-spacing:.04em;
+  background:#fff;color:#0f172a;padding:4px 10px;border-radius:8px;font-size:1rem;}
+
+.co-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.co-badge{padding:4px 12px;border-radius:50px;font-size:.7rem;font-weight:800;
+  letter-spacing:.04em;text-transform:uppercase;}
+.b-borrador{background:#f3f4f6;color:#374151;}
+.b-enviada{background:#fef3c7;color:#92400e;}
+.b-aceptada{background:#dcfce7;color:#166534;}
+.b-rechazada{background:#fee2e2;color:#991b1b;}
+.b-vencida{background:#fef3c7;color:#a16207;}
+.b-convertida_ot{background:#e0f2fe;color:#075985;}
+.b-cancelada{background:#e5e7eb;color:#6b7280;}
+.b-prio-normal{background:#dbeafe;color:#1e40af;}
+.b-prio-24h{background:#fed7aa;color:#9a3412;}
+.b-prio-inmediata{background:#fee2e2;color:#991b1b;}
+
+.metacards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:10px;margin-bottom:14px;}
+.metacard{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:12px 14px;}
+.metacard .lbl{font-size:.66rem;color:#6b7280;text-transform:uppercase;
+  letter-spacing:.5px;font-weight:700;}
+.metacard .val{font-size:1.1rem;font-weight:900;color:#0f172a;margin-top:4px;
+  font-variant-numeric:tabular-nums;}
+.metacard .sub{font-size:.74rem;color:#6b7280;margin-top:2px;}
+
+.card-block{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:14px 16px;margin-bottom:12px;}
+.card-block h6{margin:0 0 10px;font-weight:800;color:#0f172a;
+  font-size:.78rem;text-transform:uppercase;letter-spacing:.6px;
+  border-bottom:1px solid #eaecf0;padding-bottom:6px;}
+
+.tbl-items{width:100%;border-collapse:collapse;font-size:.88rem;}
+.tbl-items th{background:#f9fafb;color:#475569;font-size:.7rem;
+  text-transform:uppercase;letter-spacing:.05em;padding:8px 8px;
+  border-bottom:2px solid #e5e7eb;text-align:left;font-weight:800;}
+.tbl-items td{padding:8px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top;}
+.tbl-items td.num{text-align:right;font-variant-numeric:tabular-nums;}
+
+.totales{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:18px;
+  background:#f9fafb;border-radius:10px;padding:14px 16px;}
+.t-line{display:flex;justify-content:space-between;padding:4px 0;font-size:.92rem;}
+.t-line .lbl{color:#6b7280;}
+.t-line .val{font-weight:800;color:#0f172a;font-variant-numeric:tabular-nums;}
+.t-final{display:flex;justify-content:space-between;padding:10px 14px;
+  background:#0f172a;color:#fff;border-radius:8px;margin-top:8px;}
+.t-final .lbl{font-weight:700;}
+.t-final .val{font-size:1.35rem;font-weight:900;font-variant-numeric:tabular-nums;}
+
+.timeline{position:relative;padding-left:18px;border-left:2px solid #e5e7eb;}
+.timeline-item{position:relative;padding:6px 0 12px;}
+.timeline-item::before{content:'';position:absolute;left:-23px;top:10px;
+  width:10px;height:10px;border-radius:50%;background:#dc2626;
+  border:2px solid #fff;box-shadow:0 0 0 1px #e5e7eb;}
+.timeline-fecha{font-size:.7rem;color:#9ca3af;font-weight:700;}
+.timeline-texto{font-size:.86rem;color:#334155;}
+
+.btn-accion{margin-right:6px;margin-bottom:6px;}
+</style>
+
+<div id="ficha-cargando" class="text-center py-5">
+  <div class="spinner-border me-2"></div>Cargando cotización…
+</div>
+
+<div id="ficha-ok" style="display:none">
+
+  <div class="co-hero">
+    <div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="co-num-big" id="x-numero">—</span>
+        <span class="co-badge" id="x-badge-estado">—</span>
+        <span class="co-badge" id="x-badge-urg" style="display:none">—</span>
+      </div>
+      <h4 class="mt-2" id="x-titulo">Cotización</h4>
+      <div class="sub" id="x-cliente">—</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('mant_cotizaciones_list') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <span id="botonera-acciones"></span>
+    </div>
+  </div>
+
+  <div class="metacards">
+    <div class="metacard">
+      <div class="lbl">Fecha emisión</div>
+      <div class="val" id="x-fecha-em">—</div>
+      <div class="sub" id="x-fecha-em-rel"></div>
+    </div>
+    <div class="metacard">
+      <div class="lbl">Vigencia hasta</div>
+      <div class="val" id="x-vigencia">—</div>
+      <div class="sub" id="x-vigencia-rel"></div>
+    </div>
+    <div class="metacard">
+      <div class="lbl">Tipo / Urgencia</div>
+      <div class="val" id="x-tipo">—</div>
+      <div class="sub" id="x-urgencia">—</div>
+    </div>
+    <div class="metacard" style="background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);color:#fff">
+      <div class="lbl" style="color:#cbd5e1">TOTAL FINAL</div>
+      <div class="val" style="color:#fff;font-size:1.5rem" id="x-total">$0</div>
+      <div class="sub" style="color:#cbd5e1" id="x-total-items">— ítems</div>
+    </div>
+  </div>
+
+  <div class="card-block">
+    <h6>Ítems</h6>
+    <div class="table-responsive">
+      <table class="tbl-items">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Descripción</th>
+            <th>Cant.</th>
+            <th>Unidad</th>
+            <th class="num">Precio unit.</th>
+            <th class="num">% Desc</th>
+            <th class="num">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody id="x-items"><tr><td colspan="7" class="text-muted small">Sin ítems</td></tr></tbody>
+      </table>
+    </div>
+    <div class="totales">
+      <div>
+        <div class="t-line"><span class="lbl">Subtotal items</span>
+          <span class="val" id="x-subtotal">$0</span></div>
+        <div class="t-line"><span class="lbl" id="x-desc-lbl">Descuento</span>
+          <span class="val" id="x-descuento">−$0</span></div>
+        <div class="t-line"><span class="lbl" id="x-rec-lbl">Recargo</span>
+          <span class="val" id="x-recargo">+$0</span></div>
+      </div>
+      <div>
+        <div class="t-line"><span class="lbl">Total neto</span>
+          <span class="val" id="x-neto">$0</span></div>
+        <div class="t-line"><span class="lbl">IVA <span id="x-iva-pct">19</span>%</span>
+          <span class="val" id="x-iva">$0</span></div>
+        <div class="t-final"><span class="lbl">TOTAL FINAL</span>
+          <span class="val" id="x-final">$0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-7">
+      <div class="card-block" id="block-notas">
+        <h6>Notas al cliente</h6>
+        <div id="x-notas" class="small text-muted"
+             style="white-space:pre-wrap">—</div>
+      </div>
+    </div>
+    <div class="col-md-5">
+      <div class="card-block">
+        <h6>Timeline</h6>
+        <div class="timeline" id="x-timeline">
+          <div class="timeline-item">
+            <div class="timeline-fecha">—</div>
+            <div class="timeline-texto">Cargando…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="ficha-error" style="display:none" class="alert alert-danger">
+  No se pudo cargar la cotización.
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COT_ID = {{ cotizacion_id }};
+
+const fmtCLP = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return '$0';
+  return '$' + Math.round(Number(n)).toLocaleString('es-CL');
+};
+const fmtFecha = (d) => d ? new Date(d).toLocaleDateString('es-CL',
+  {day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+const esc = (s) => String(s||'').replace(/[&<>"']/g,c=>(
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function diasHasta(fechaStr) {
+  if (!fechaStr) return null;
+  const target = new Date(fechaStr);
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const ms = target - hoy;
+  return Math.floor(ms / (1000*60*60*24));
+}
+
+async function cargar() {
+  try {
+    const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error');
+    const co = d.cotizacion;
+    const items = d.items || [];
+
+    document.getElementById('x-numero').textContent = co.numero || ('#'+co.id);
+    document.getElementById('x-titulo').textContent = co.titulo || 'Cotización sin título';
+    document.getElementById('x-cliente').textContent =
+      (co.razon_social || '—') + (co.cliente_rut ? ' · ' + co.cliente_rut : '');
+
+    // Badge estado
+    const est = co.estado || 'borrador';
+    const badgeEst = document.getElementById('x-badge-estado');
+    badgeEst.className = 'co-badge b-' + est;
+    badgeEst.textContent = est.replace('_',' ');
+
+    // Badge urgencia (solo si != normal)
+    const urg = co.urgencia || 'normal';
+    const badgeUrg = document.getElementById('x-badge-urg');
+    if (urg !== 'normal') {
+      badgeUrg.className = 'co-badge b-prio-' + urg;
+      badgeUrg.textContent = urg;
+      badgeUrg.style.display = '';
+    } else {
+      badgeUrg.style.display = 'none';
+    }
+
+    // Meta
+    document.getElementById('x-fecha-em').textContent = fmtFecha(co.fecha_emision);
+    const dvig = diasHasta(co.vigencia_hasta);
+    document.getElementById('x-vigencia').textContent = fmtFecha(co.vigencia_hasta);
+    document.getElementById('x-vigencia-rel').textContent =
+      dvig === null ? '' : (dvig < 0 ? `vencida hace ${-dvig} días` :
+                            dvig === 0 ? 'vence hoy' : `${dvig} días restantes`);
+    document.getElementById('x-tipo').textContent = co.tipo_servicio || '—';
+    document.getElementById('x-urgencia').textContent = 'Urgencia: ' + urg;
+    document.getElementById('x-total').textContent = fmtCLP(co.total_final);
+    document.getElementById('x-total-items').textContent = items.length + ' ítems';
+
+    // Items
+    const tbody = document.getElementById('x-items');
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted small">Sin ítems</td></tr>';
+    } else {
+      let html = '';
+      items.forEach((it, idx) => {
+        html += `<tr>
+          <td>${idx+1}</td>
+          <td>${esc(it.descripcion)}${it.servicio_codigo ? `<div class="text-muted small">${esc(it.servicio_codigo)}</div>` : ''}</td>
+          <td class="num">${Number(it.cantidad||0).toLocaleString('es-CL')}</td>
+          <td>${esc(it.unidad||'')}</td>
+          <td class="num">${fmtCLP(it.precio_unitario)}</td>
+          <td class="num">${Number(it.descuento_pct||0).toFixed(0)}%</td>
+          <td class="num"><strong>${fmtCLP(it.subtotal)}</strong></td>
+        </tr>`;
+      });
+      tbody.innerHTML = html;
+    }
+
+    // Totales
+    document.getElementById('x-subtotal').textContent  = fmtCLP(co.subtotal);
+    document.getElementById('x-descuento').textContent = co.descuento_monto > 0 ? '−' + fmtCLP(co.descuento_monto) : '$0';
+    document.getElementById('x-desc-lbl').textContent  = `Descuento (${Number(co.descuento_pct||0).toFixed(0)}%)`;
+    document.getElementById('x-recargo').textContent   = co.recargo_monto > 0 ? '+' + fmtCLP(co.recargo_monto) : '$0';
+    document.getElementById('x-rec-lbl').textContent   = `Recargo urgencia (${Number(co.recargo_pct||0).toFixed(0)}%)`;
+    document.getElementById('x-neto').textContent      = fmtCLP(co.total_neto);
+    document.getElementById('x-iva').textContent       = fmtCLP(co.total_iva);
+    document.getElementById('x-iva-pct').textContent   = Number(co.iva_pct||19).toFixed(0);
+    document.getElementById('x-final').textContent     = fmtCLP(co.total_final);
+
+    // Notas
+    document.getElementById('x-notas').textContent = co.notas || '—';
+
+    // Timeline simple (eventos)
+    const tl = [];
+    if (co.created_at)     tl.push({fecha: co.created_at,     texto: 'Cotización creada' + (co.created_by ? ` por ${co.created_by}` : '')});
+    if (co.enviada_at)     tl.push({fecha: co.enviada_at,     texto: 'Enviada al cliente'});
+    if (co.aceptada_at)    tl.push({fecha: co.aceptada_at,    texto: 'Aceptada por el cliente'});
+    if (co.rechazada_at)   tl.push({fecha: co.rechazada_at,   texto: 'Rechazada'});
+    if (co.convertida_at)  tl.push({fecha: co.convertida_at,  texto: `Convertida en OT #${co.visita_id||''}`});
+    if (co.updated_at && co.updated_at !== co.created_at)
+      tl.push({fecha: co.updated_at, texto: 'Última actualización'});
+    tl.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+    const tlEl = document.getElementById('x-timeline');
+    if (tl.length === 0) {
+      tlEl.innerHTML = '<div class="text-muted small">Sin eventos</div>';
+    } else {
+      tlEl.innerHTML = tl.map(ev => `
+        <div class="timeline-item">
+          <div class="timeline-fecha">${new Date(ev.fecha).toLocaleString('es-CL')}</div>
+          <div class="timeline-texto">${esc(ev.texto)}</div>
+        </div>`).join('');
+    }
+
+    // Botonera por estado
+    construirBotonera(est, co);
+
+    document.getElementById('ficha-cargando').style.display = 'none';
+    document.getElementById('ficha-ok').style.display = '';
+  } catch(e) {
+    console.error(e);
+    document.getElementById('ficha-cargando').style.display = 'none';
+    document.getElementById('ficha-error').style.display = '';
+    document.getElementById('ficha-error').textContent = 'Error: ' + e.message;
+  }
+}
+
+function construirBotonera(estado, co) {
+  const box = document.getElementById('botonera-acciones');
+  let h = '';
+  if (estado === 'borrador') {
+    h += `<button class="btn btn-sm btn-warning btn-accion" onclick="cambiarEstado('enviada')">
+            <i class="bi bi-send me-1"></i>Enviar al cliente
+          </button>`;
+    h += `<button class="btn btn-sm btn-outline-light btn-accion" onclick="cancelar()">
+            <i class="bi bi-x-circle me-1"></i>Cancelar
+          </button>`;
+  } else if (estado === 'enviada') {
+    h += `<button class="btn btn-sm btn-success btn-accion" onclick="cambiarEstado('aceptada')">
+            <i class="bi bi-check-circle me-1"></i>Marcar aceptada
+          </button>`;
+    h += `<button class="btn btn-sm btn-danger btn-accion" onclick="cambiarEstado('rechazada')">
+            <i class="bi bi-x-circle me-1"></i>Rechazada
+          </button>`;
+    h += `<button class="btn btn-sm btn-outline-light btn-accion" onclick="cambiarEstado('borrador')">
+            <i class="bi bi-pencil me-1"></i>Volver a borrador
+          </button>`;
+  } else if (estado === 'aceptada') {
+    h += `<button class="btn btn-sm btn-light fw-bold btn-accion" onclick="convertirOT()">
+            <i class="bi bi-clipboard-check me-1"></i>Convertir en OT
+          </button>`;
+  } else if (estado === 'convertida_ot' && co.visita_id) {
+    h += `<a class="btn btn-sm btn-light btn-accion" href="/mantenciones/ot/${co.visita_id}">
+            <i class="bi bi-clipboard-check me-1"></i>Ver OT #${co.visita_id}
+          </a>`;
+  } else if (estado === 'rechazada' || estado === 'vencida' || estado === 'cancelada') {
+    h += `<button class="btn btn-sm btn-outline-light btn-accion" onclick="cambiarEstado('borrador')">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Reabrir como borrador
+          </button>`;
+  }
+  box.innerHTML = h;
+}
+
+async function cambiarEstado(nuevo) {
+  const conf = nuevo === 'cancelada' || nuevo === 'rechazada';
+  if (conf && !confirm(`¿Confirmar marcar como "${nuevo}"?`)) return;
+  try {
+    const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}/cambiar-estado`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({estado: nuevo}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    cargar();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function cancelar() {
+  if (!confirm('¿Cancelar esta cotización?')) return;
+  try {
+    const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}`, {method: 'DELETE'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    window.location = '/mantenciones/cotizaciones';
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function convertirOT() {
+  const fecha = prompt('Fecha de la OT (YYYY-MM-DD), dejar vacío para hoy+3 días:');
+  if (fecha === null) return;
+  try {
+    const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}/convertir-ot`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({fecha_programada: fecha || null}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    if (confirm(`OT ${d.numero_ot} creada con ${d.tareas_creadas} tarea(s). ¿Ir a la OT ahora?`)) {
+      window.location = '/mantenciones/ot/' + d.visita_id;
+    } else {
+      cargar();
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+cargar();
+</script>
+{% endblock %}

@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Cotizaciones — ILUS{% endblock %}
+{% block content %}
+<style>
+.co-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.co-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.co-hero .sub{font-size:.86rem;color:#cfd3da;}
+
+.co-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:10px;margin-bottom:14px;}
+.co-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:12px 14px;display:flex;flex-direction:column;gap:2px;}
+.co-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
+.co-kpi .lbl{font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.co-kpi.t .num{color:#0f172a;}
+.co-kpi.a .num{color:#1d4ed8;}
+.co-kpi.p .num{color:#0f766e;}
+.co-kpi.c .num{color:#16a34a;}
+
+.co-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:10px 12px;margin-bottom:12px;}
+
+.co-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;
+  padding:12px 14px;margin-bottom:8px;display:grid;
+  grid-template-columns:auto 1fr auto auto auto auto;gap:10px;align-items:center;
+  transition:all .12s;border-left:4px solid #cbd5e1;}
+.co-row:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.07);}
+.co-row.e-borrador{border-left-color:#9ca3af;}
+.co-row.e-enviada{border-left-color:#f59e0b;}
+.co-row.e-aceptada{border-left-color:#16a34a;}
+.co-row.e-convertida_ot{border-left-color:#0ea5e9;}
+.co-row.e-rechazada{border-left-color:#dc2626;}
+.co-row.e-vencida{border-left-color:#a16207;}
+.co-row.e-cancelada{border-left-color:#6b7280;opacity:.7;}
+
+.co-num{background:#e0f2fe;color:#075985;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;
+  letter-spacing:.04em;white-space:nowrap;}
+.co-meta{min-width:0;}
+.co-cliente{font-weight:800;font-size:.95rem;color:#0f172a;}
+.co-titulo{font-size:.82rem;color:#374151;margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px;}
+.co-pills{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px;}
+.co-pill{display:inline-flex;align-items:center;gap:3px;font-size:.65rem;
+  padding:1px 7px;border-radius:50px;border:1px solid #e5e7eb;background:#f9fafb;color:#6b7280;}
+
+.co-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;
+  letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
+.b-borrador{background:#f3f4f6;color:#374151;}
+.b-enviada{background:#fef3c7;color:#92400e;}
+.b-aceptada{background:#dcfce7;color:#166534;}
+.b-rechazada{background:#fee2e2;color:#991b1b;}
+.b-vencida{background:#fef3c7;color:#a16207;}
+.b-convertida_ot{background:#e0f2fe;color:#075985;}
+.b-cancelada{background:#e5e7eb;color:#6b7280;}
+
+.co-total{font-weight:900;color:#0f172a;font-size:.95rem;font-variant-numeric:tabular-nums;}
+
+.empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  padding:50px 30px;text-align:center;}
+.empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+</style>
+
+<div class="co-hero">
+  <div>
+    <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
+    <div class="sub">Presupuestos de mantenciones, correctivas y servicios</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Dashboard
+    </a>
+    <a href="{{ url_for('mant_cotizacion_nueva') }}" class="btn btn-sm btn-light fw-bold">
+      <i class="bi bi-plus-circle me-1"></i>Nueva cotización
+    </a>
+  </div>
+</div>
+
+<div class="co-kpi-row">
+  <div class="co-kpi t"><div class="num" id="kpi_total">—</div><div class="lbl"><i class="bi bi-file-earmark me-1"></i>Total</div></div>
+  <div class="co-kpi a"><div class="num" id="kpi_abiertas">—</div><div class="lbl"><i class="bi bi-hourglass-split me-1"></i>Abiertas</div></div>
+  <div class="co-kpi p"><div class="num" id="kpi_pipeline">—</div><div class="lbl"><i class="bi bi-cash-stack me-1"></i>Pipeline (CLP)</div></div>
+  <div class="co-kpi c"><div class="num" id="kpi_tasa">—</div><div class="lbl"><i class="bi bi-arrow-up-right me-1"></i>Tasa conversión</div></div>
+</div>
+
+<div class="co-filtros">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <input type="text" id="f_q" class="form-control form-control-sm"
+             placeholder="Buscar por N°, titulo o cliente…"
+             onkeyup="if(event.key==='Enter') cargar()">
+    </div>
+    <div class="col-md-2">
+      <select id="f_estado" class="form-select form-select-sm" onchange="cargar()">
+        <option value="">Todos los estados</option>
+        <option value="borrador">Borrador</option>
+        <option value="enviada">Enviada</option>
+        <option value="aceptada">Aceptada</option>
+        <option value="convertida_ot">Convertida en OT</option>
+        <option value="rechazada">Rechazada</option>
+        <option value="vencida">Vencida</option>
+        <option value="cancelada">Cancelada</option>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <input type="date" id="f_desde" class="form-control form-control-sm"
+             title="Desde" onchange="cargar()">
+    </div>
+    <div class="col-md-2">
+      <input type="date" id="f_hasta" class="form-control form-control-sm"
+             title="Hasta" onchange="cargar()">
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-sm btn-ilus w-100" onclick="cargar()">
+        <i class="bi bi-funnel me-1"></i>Filtrar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="co_lista">
+  <div class="text-center py-4 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando cotizaciones…
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const fmtCLP = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return '$0';
+  return '$' + Math.round(Number(n)).toLocaleString('es-CL');
+};
+const fmtFecha = (d) => d ? new Date(d).toLocaleDateString('es-CL',
+  {day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+const esc = (s) => String(s||'').replace(/[&<>"']/g,c=>(
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function cargar(){
+  const q       = document.getElementById('f_q').value.trim();
+  const estado  = document.getElementById('f_estado').value;
+  const desde   = document.getElementById('f_desde').value;
+  const hasta   = document.getElementById('f_hasta').value;
+  const params  = new URLSearchParams();
+  if (q)      params.set('q', q);
+  if (estado) params.set('estado', estado);
+  if (desde)  params.set('fecha_desde', desde);
+  if (hasta)  params.set('fecha_hasta', hasta);
+
+  try {
+    const r = await fetch('/mantenciones/api/cotizaciones?' + params.toString());
+    const d = await r.json();
+    if (!d.ok) {
+      document.getElementById('co_lista').innerHTML =
+        `<div class="alert alert-danger">Error: ${esc(d.error)}</div>`;
+      return;
+    }
+    const k = d.kpis || {};
+    document.getElementById('kpi_total').textContent    = k.total || 0;
+    document.getElementById('kpi_abiertas').textContent = k.abiertas || 0;
+    document.getElementById('kpi_pipeline').textContent = fmtCLP(k.pipeline || 0);
+    document.getElementById('kpi_tasa').textContent     = (k.tasa_conv || 0) + '%';
+
+    const list = d.cotizaciones || [];
+    if (list.length === 0) {
+      document.getElementById('co_lista').innerHTML = `
+        <div class="empty-state">
+          <i class="bi bi-file-earmark-text"></i>
+          <div class="fw-bold">Sin cotizaciones ${q||estado||desde||hasta ? 'con esos filtros' : 'aún'}</div>
+          <a href="/mantenciones/cotizaciones/nuevo" class="btn btn-sm btn-ilus mt-2">
+            <i class="bi bi-plus-circle me-1"></i>Crear la primera cotización
+          </a>
+        </div>`;
+      return;
+    }
+    let html = '';
+    for (const co of list) {
+      const est = co.estado || 'borrador';
+      html += `<div class="co-row e-${est}"
+                    onclick="window.location='/mantenciones/cotizaciones/${co.id}'"
+                    style="cursor:pointer">
+        <div><span class="co-num">${esc(co.numero || ('#'+co.id))}</span></div>
+        <div class="co-meta">
+          <div class="co-cliente">${esc(co.razon_social)}</div>
+          <div class="co-titulo">${esc(co.titulo || '— sin título —')}</div>
+          <div class="co-pills">
+            <span class="co-pill"><i class="bi bi-tools"></i>${esc(co.tipo_servicio || '')}</span>
+            ${co.urgencia && co.urgencia !== 'normal' ? `<span class="co-pill" style="background:#fee2e2;color:#991b1b;border-color:#fecaca"><i class="bi bi-lightning"></i>${esc(co.urgencia)}</span>` : ''}
+            <span class="co-pill"><i class="bi bi-list-ol"></i>${co.n_items||0} ítems</span>
+            ${co.visita_id ? `<span class="co-pill" style="background:#dcfce7;color:#166534"><i class="bi bi-clipboard-check"></i>OT #${co.visita_id}</span>` : ''}
+          </div>
+        </div>
+        <div class="text-end co-total">${fmtCLP(co.total_final)}</div>
+        <div class="text-end"><span class="co-badge b-${est}">${est.replace('_',' ')}</span></div>
+        <div class="text-end small text-muted">${fmtFecha(co.fecha_emision)}</div>
+        <div class="text-end"><i class="bi bi-chevron-right text-muted"></i></div>
+      </div>`;
+    }
+    document.getElementById('co_lista').innerHTML = html;
+  } catch(e) {
+    document.getElementById('co_lista').innerHTML =
+      `<div class="alert alert-danger">Error de red: ${esc(e.message)}</div>`;
+  }
+}
+cargar();
+</script>
+{% endblock %}
