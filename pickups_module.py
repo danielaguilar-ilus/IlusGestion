@@ -260,6 +260,155 @@ def register_pickup_routes(app, ctx):
         except Exception as exc:
             print(f"[ILUS][PICKUP LOG] {exc}")
 
+    # ══════════════════════════════════════════════════════════════════
+    #  VALIDACIÓN DE DISPONIBILIDAD REAL DE SLOT (cupos + bloqueos + colación)
+    # ══════════════════════════════════════════════════════════════════
+    def _validar_disponibilidad_slot(date, time_from, time_to, exclude_request_id=None,
+                                      extra_kg=0, extra_m3=0):
+        """Valida que un slot (date + time_from..time_to) pueda usarse.
+
+        Chequea, en este orden:
+          1) Día permitido (work_days + holidays) y horario dentro de open/close
+          2) Solape con colación (lunch_start/lunch_end)
+          3) Solape con pickup_blocks (full day o franja específica)
+          4) Capacidad: max_picks_per_slot, max_kg_per_slot, max_m3_per_slot
+          5) Capacidad diaria: max_picks_per_day
+
+        Args:
+            date: 'YYYY-MM-DD' (str) o date
+            time_from, time_to: 'HH:MM' (str)
+            exclude_request_id: id de pickup_request a excluir del conteo
+                                (útil al revalidar la propia confirmación)
+            extra_kg, extra_m3: peso/volumen del retiro que se está agregando
+                                (se suma al conteo actual del slot)
+
+        Returns:
+            (ok: bool, motivo: str)
+        """
+        cfg = settings()
+        try:
+            date_str = date.isoformat() if hasattr(date, "isoformat") else str(date)
+        except Exception:
+            return False, "Fecha inválida."
+
+        # 1) Día permitido (work_days + holidays) y rango horario válido
+        ok_d, msg_d = date_allowed(date_str, cfg)
+        if not ok_d:
+            return False, msg_d
+        ok_t, msg_t = time_allowed(time_from, time_to, cfg)
+        if not ok_t:
+            return False, msg_t
+
+        # Parsear minutos
+        try:
+            sh, sm = [int(x) for x in str(time_from)[:5].split(":")]
+            eh, em = [int(x) for x in str(time_to)[:5].split(":")]
+            slot_s = sh * 60 + sm
+            slot_e = eh * 60 + em
+        except Exception:
+            return False, "Horario con formato inválido."
+
+        # 2) Solape con colación
+        lunch_s_str = str(cfg.get("lunch_start") or "13:00")[:5]
+        lunch_e_str = str(cfg.get("lunch_end") or "14:00")[:5]
+        try:
+            lh, lm = [int(x) for x in lunch_s_str.split(":")]
+            leh, lem = [int(x) for x in lunch_e_str.split(":")]
+            lunch_s = lh * 60 + lm
+            lunch_e = leh * 60 + lem
+            if lunch_s < lunch_e:
+                # Solape si NO termina antes del almuerzo y NO empieza después
+                if not (slot_e <= lunch_s or slot_s >= lunch_e):
+                    return False, f"El horario solapa la colación ({lunch_s_str}-{lunch_e_str})."
+        except Exception:
+            pass
+
+        # 3) Bloqueos manuales en pickup_blocks
+        try:
+            blk_rows = mysql_fetchall(
+                "SELECT hora_inicio, hora_fin, motivo FROM pickup_blocks WHERE fecha=%s",
+                (date_str,),
+            ) or []
+            for b in blk_rows:
+                hi = b.get("hora_inicio")
+                hf = b.get("hora_fin")
+                motivo = (b.get("motivo") or "bloqueado").strip()
+                # Día completo bloqueado
+                if not hi:
+                    return False, f"Día bloqueado: {motivo}"
+                try:
+                    bh, bm = [int(x) for x in str(hi)[:5].split(":")]
+                    bs = bh * 60 + bm
+                    if hf:
+                        beh, bem = [int(x) for x in str(hf)[:5].split(":")]
+                        be = beh * 60 + bem
+                    else:
+                        be = 24 * 60  # hasta cierre
+                    if not (slot_e <= bs or slot_s >= be):
+                        return False, f"Franja bloqueada: {motivo}"
+                except Exception:
+                    continue
+        except Exception:
+            pass  # tabla puede no existir aún
+
+        # 4) Capacidad del slot (picks + kg + m3)
+        max_picks_slot = int(cfg.get("max_picks_per_slot") or 5)
+        max_kg_slot = float(cfg.get("max_kg_per_slot") or 500)
+        max_m3_slot = float(cfg.get("max_m3_per_slot") or 5)
+        max_picks_day = int(cfg.get("max_picks_per_day") or 30)
+
+        # Conteo en el MISMO slot (mismo time_from). Usamos confirmed_* o proposed_*
+        # según el estado real. Excluimos cancelados/cerrados.
+        exclude_clause = ""
+        params = [date_str, str(time_from)[:5], date_str, str(time_from)[:5]]
+        if exclude_request_id:
+            exclude_clause = "AND id <> %s"
+            params.append(int(exclude_request_id))
+        slot_row = mysql_fetchone(
+            f"""SELECT COUNT(*) AS n,
+                       COALESCE(SUM(total_weight_kg),0) AS kg,
+                       COALESCE(SUM(total_volume_m3),0) AS m3
+                FROM `{REQ}`
+                WHERE status NOT IN ('rechazada','cerrada','fallida')
+                  AND (
+                    (confirmed_date=%s AND TIME_FORMAT(confirmed_time_from,'%%H:%%i')=%s)
+                    OR
+                    (confirmed_date IS NULL AND proposed_date=%s
+                     AND TIME_FORMAT(proposed_time_from,'%%H:%%i')=%s)
+                  )
+                  {exclude_clause}""",
+            tuple(params),
+        ) or {}
+        picks_now = int(slot_row.get("n") or 0)
+        kg_now = float(slot_row.get("kg") or 0)
+        m3_now = float(slot_row.get("m3") or 0)
+
+        if picks_now + 1 > max_picks_slot:
+            return False, f"Slot lleno: {picks_now} retiros (máximo {max_picks_slot})."
+        if kg_now + float(extra_kg or 0) > max_kg_slot:
+            return False, f"Capacidad de peso excedida: {kg_now:.1f}+{float(extra_kg or 0):.1f} kg > {max_kg_slot:.0f} kg."
+        if m3_now + float(extra_m3 or 0) > max_m3_slot:
+            return False, f"Capacidad de volumen excedida: {m3_now:.2f}+{float(extra_m3 or 0):.2f} m³ > {max_m3_slot:.2f} m³."
+
+        # 5) Capacidad diaria
+        day_params = [date_str, date_str]
+        day_exclude = ""
+        if exclude_request_id:
+            day_exclude = "AND id <> %s"
+            day_params.append(int(exclude_request_id))
+        day_row = mysql_fetchone(
+            f"""SELECT COUNT(*) AS n FROM `{REQ}`
+                WHERE status NOT IN ('rechazada','cerrada','fallida')
+                  AND (confirmed_date=%s OR (confirmed_date IS NULL AND proposed_date=%s))
+                  {day_exclude}""",
+            tuple(day_params),
+        ) or {}
+        picks_day = int(day_row.get("n") or 0)
+        if picks_day + 1 > max_picks_day:
+            return False, f"Día completo: {picks_day} retiros (máximo diario {max_picks_day})."
+
+        return True, ""
+
     def _render_pickup_vars(req, proposal=None):
         """Construye el dict de variables disponibles en plantillas de retiros."""
         cfg = settings()
@@ -690,6 +839,32 @@ def register_pickup_routes(app, ctx):
             if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
                 if proposal:
+                    # RE-VALIDAR capacidad antes de confirmar. Entre el envío de la
+                    # propuesta y este click puede haberse llenado el slot (otro
+                    # cliente confirmó primero, se bloqueó el día, etc.).
+                    ok_slot, motivo = _validar_disponibilidad_slot(
+                        proposal["date"], proposal["time_from"], proposal["time_to"],
+                        exclude_request_id=req["id"],
+                        extra_kg=float(req.get("total_weight_kg") or 0),
+                        extra_m3=float(req.get("total_volume_m3") or 0),
+                    )
+                    if not ok_slot:
+                        # Marcar la propuesta como declined y notificar al cliente
+                        mysql_execute(
+                            f"UPDATE `{PROP}` SET status='declined', answered_at=NOW() WHERE id=%s",
+                            (proposal["id"],),
+                        )
+                        log_event(
+                            req["id"], "confirm_bloqueada", old, old,
+                            f"Cliente intentó confirmar pero slot ya no disponible: {motivo}",
+                            "sistema", "Validación capacidad",
+                        )
+                        flash(
+                            "Lo sentimos, este horario ya no está disponible. "
+                            "Te enviamos una nueva propuesta a la brevedad.",
+                            "warning",
+                        )
+                        return redirect(url_for("pickup_public_tracking", token=token))
                     mysql_execute(
                         f"""UPDATE `{REQ}` SET status='agenda_confirmada', confirmed_date=%s, confirmed_time_from=%s, confirmed_time_to=%s WHERE id=%s""",
                         (proposal["date"], proposal["time_from"], proposal["time_to"], req["id"]),
@@ -1014,6 +1189,22 @@ def register_pickup_routes(app, ctx):
         if not okd or not okt:
             flash(md or mt, "warning")
             return redirect(url_for("pickup_detail", rid=rid))
+
+        # Validar capacidad real del slot (cupos, kg, m³, bloqueos, colación)
+        # Excluimos esta misma solicitud porque podría tener una propuesta previa
+        # ocupando el slot que estamos por reemplazar.
+        ok_slot, motivo = _validar_disponibilidad_slot(
+            date, tf, tt,
+            exclude_request_id=rid,
+            extra_kg=float(req.get("total_weight_kg") or 0),
+            extra_m3=float(req.get("total_volume_m3") or 0),
+        )
+        if not ok_slot:
+            flash(f"Slot no disponible: {motivo}", "danger")
+            log_event(rid, "propuesta_bloqueada", req["status"], req["status"],
+                      f"Intento de proponer {date} {tf}-{tt}: {motivo}", "interno")
+            return redirect(url_for("pickup_detail", rid=rid))
+
         mysql_execute(
             f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token)
                 VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s)""",
