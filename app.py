@@ -393,6 +393,31 @@ def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
     return result["secure_url"]
 
 
+def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") -> dict:
+    """Sube PDF/DOCX/Excel/etc a Cloudinary (resource_type='raw' acepta no-imagen).
+
+    Devuelve dict con url, public_id y size para guardar en BD.
+    Persiste entre deploys de Railway (filesystem efímero).
+
+    Usado para contratos de mantenciones, adjuntos y documentos externos.
+    """
+    if not _CLD_READY or not _cloudinary_uploader:
+        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
+    result = _cloudinary_uploader.upload(
+        file_obj,
+        public_id     = public_id,
+        folder        = folder,
+        overwrite     = True,
+        resource_type = "raw",   # Acepta cualquier tipo (PDF, DOCX, XLS, etc.)
+        type          = "upload",
+    )
+    return {
+        "url":       result["secure_url"],
+        "public_id": result["public_id"],
+        "size":      result.get("bytes", 0),
+    }
+
+
 def _cloud_delete(url_or_filename: str) -> None:
     """Elimina de Cloudinary si es URL; del disco si es nombre local."""
     if url_or_filename.startswith("http"):
@@ -406,6 +431,16 @@ def _cloud_delete(url_or_filename: str) -> None:
         path = os.path.join(UPLOAD_FOLDER, url_or_filename)
         if os.path.exists(path):
             os.remove(path)
+
+
+def _cloud_delete_raw(public_id: str) -> None:
+    """Elimina recurso raw (PDF/DOCX) de Cloudinary por public_id."""
+    if not _CLD_READY or not _cloudinary_uploader or not public_id:
+        return
+    try:
+        _cloudinary_uploader.destroy(public_id, resource_type="raw", type="upload")
+    except Exception as exc:
+        print(f"[ILUS] Cloudinary delete raw error ({public_id}): {exc}")
 
 
 # ─────────────────────────────────────────────
@@ -13093,11 +13128,15 @@ def init_mantenciones_tables():
                     id           INT AUTO_INCREMENT PRIMARY KEY,
                     contrato_id  INT NOT NULL,
                     cliente_id   INT NOT NULL,
-                    tipo         ENUM('contrato','imagen','solicitud','cotizacion','reporte','otro')
+                    tipo         ENUM('contrato','imagen','solicitud','cotizacion','reporte','otro','externo','anexo')
                                  DEFAULT 'otro',
+                    subtipo_externo VARCHAR(80) DEFAULT NULL
+                                 COMMENT 'visita_externa, ot_externa, anexo_contrato, otro',
                     nombre       VARCHAR(300),
                     archivo_nombre VARCHAR(300),
                     archivo_path VARCHAR(500),
+                    cloudinary_url VARCHAR(600) DEFAULT NULL,
+                    cloudinary_public_id VARCHAR(400) DEFAULT NULL,
                     mime_type    VARCHAR(100),
                     tamaño_bytes INT,
                     descripcion  TEXT,
@@ -13107,6 +13146,20 @@ def init_mantenciones_tables():
                     INDEX idx_contrato (contrato_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── Migraciones: agregar tipo 'externo'/'anexo' + Cloudinary
+            #    columns a tablas existentes (idempotente) ───────────────
+            for _mig in [
+                "ALTER TABLE mant_contrato_adjuntos MODIFY tipo ENUM('contrato','imagen','solicitud','cotizacion','reporte','otro','externo','anexo') DEFAULT 'otro'",
+                "ALTER TABLE mant_contrato_adjuntos ADD COLUMN subtipo_externo VARCHAR(80) DEFAULT NULL",
+                "ALTER TABLE mant_contrato_adjuntos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
+                "ALTER TABLE mant_contrato_adjuntos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
+                # Tabla contratos: añadir storage Cloudinary también
+                "ALTER TABLE mant_contratos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
+                "ALTER TABLE mant_contratos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
+                "ALTER TABLE mant_contratos ADD COLUMN cloudinary_uploaded_at DATETIME DEFAULT NULL",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
 
             # ── Repuestos por cliente / visita ─────────────────────────
             cur.execute("""
@@ -16703,6 +16756,16 @@ def mant_contrato_delete(ctid):
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
 def mant_contrato_subir(cid):
+    """Sube un contrato PDF/DOC al cliente.
+
+    Estrategia de persistencia:
+      1. PRIMERO intenta subir a Cloudinary (resource_type='raw') — persiste
+         entre deploys de Railway. Si funciona, guarda URL en BD.
+      2. SI Cloudinary falla, fallback a filesystem local (efímero pero
+         útil para desarrollo o casos de emergencia).
+      3. EN AMBOS CASOS guarda también archivo_path/archivo_nombre para
+         compat con código viejo y para mostrar info al usuario.
+    """
     f = request.files.get("archivo")
     d = request.form
     if not f or not f.filename:
@@ -16712,8 +16775,37 @@ def mant_contrato_subir(cid):
         return jsonify({"error": "Tipo no permitido"}), 400
 
     fname  = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
+
+    # ── 1. Intentar Cloudinary primero (persistente) ─────────────────
+    cloud_url = None
+    cloud_pid = None
+    cloud_uploaded_at = None
+    if _CLD_READY:
+        try:
+            f.stream.seek(0)
+            public_id = f"contrato_{cid}_{int(time.time())}"
+            cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+            cloud_url = cloud_result["url"]
+            cloud_pid = cloud_result["public_id"]
+            cloud_uploaded_at = datetime.utcnow()
+            print(f"[mant_contrato] Cloudinary OK cid={cid} url={cloud_url}", flush=True)
+        except Exception as e_cld:
+            print(f"[mant_contrato] Cloudinary FAIL cid={cid}: {e_cld} — fallback a filesystem", flush=True)
+            cloud_url = None  # asegurar que el fallback ocurra abajo
+
+    # ── 2. Filesystem fallback (siempre se guarda copia local si se puede)
+    try:
+        f.stream.seek(0)
+    except Exception:
+        pass
     fpath  = os.path.join(MANT_UPLOADS, fname)
-    f.save(fpath)
+    try:
+        f.save(fpath)
+    except Exception as e_save:
+        # Si NI Cloudinary NI filesystem funcionaron, retornar error
+        if not cloud_url:
+            return jsonify({"error": f"No se pudo guardar el archivo: {e_save}"}), 500
+        print(f"[mant_contrato] filesystem save falló pero Cloudinary OK: {e_save}", flush=True)
 
     tipo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
     conn = get_mysql()
@@ -16722,10 +16814,12 @@ def mant_contrato_subir(cid):
             cur.execute(
                 """INSERT INTO mant_contratos
                    (cliente_id,nombre,archivo_nombre,archivo_path,archivo_tipo,
+                    cloudinary_url,cloudinary_public_id,cloudinary_uploaded_at,
                     fecha_inicio,fecha_vencimiento,es_indefinido,
                     monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("nombre","Contrato"), f.filename, fname, tipo,
+                 cloud_url, cloud_pid, cloud_uploaded_at,
                  d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
                  1 if d.get("es_indefinido") else 0,
                  float(d.get("monto_mensual",0) or 0),
@@ -16735,8 +16829,13 @@ def mant_contrato_subir(cid):
             )
             ctid = cur.lastrowid
         conn.commit()
-        _mant_log("contrato", ctid, "subido", f.filename)
-        return jsonify({"ok": True, "id": ctid})
+        _mant_log("contrato", ctid, "subido",
+                  f"{f.filename} ({'Cloudinary' if cloud_url else 'filesystem'})")
+        return jsonify({
+            "ok": True, "id": ctid,
+            "persistente": bool(cloud_url),
+            "storage": "cloudinary" if cloud_url else "filesystem"
+        })
     finally:
         conn.close()
 
@@ -16867,13 +16966,14 @@ def mant_contrato_archivo(ctid):
     eso es limitación inherente de la web. Pero al menos el sistema
     NO ofrece el archivo como descarga adjunta (Content-Disposition: inline).
     """
-    from flask import send_from_directory, make_response
+    from flask import send_from_directory, make_response, redirect as _redir
     ct = mysql_fetchone(
-        "SELECT id, archivo_path, archivo_nombre, archivo_tipo "
+        "SELECT id, archivo_path, archivo_nombre, archivo_tipo, "
+        "       cloudinary_url, cloudinary_public_id "
         "  FROM mant_contratos WHERE id=%s",
         (ctid,)
     )
-    if not ct or not ct.get("archivo_path"):
+    if not ct or not (ct.get("archivo_path") or ct.get("cloudinary_url")):
         return "Archivo no encontrado", 404
 
     as_dl = request.args.get("download") == "1"
@@ -16883,6 +16983,18 @@ def mant_contrato_archivo(ctid):
                 "descargar archivos de contratos. Puedes visualizarlo en "
                 "el navegador."), 403
 
+    # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
+    # Si el contrato tiene cloudinary_url, redirigir ahí directamente.
+    # Cloudinary sirve PDFs con Content-Disposition: inline por default.
+    if ct.get("cloudinary_url"):
+        cld_url = ct["cloudinary_url"]
+        # Cloudinary acepta ?fl_attachment para forzar descarga
+        if as_dl:
+            sep = "&" if "?" in cld_url else "?"
+            cld_url = f"{cld_url}{sep}fl_attachment=true"
+        return _redir(cld_url, code=302)
+
+    # ── PRIORIDAD 2: Filesystem local (fallback para archivos viejos) ──
     # Verificar que el archivo existe en disco
     full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
     if not os.path.exists(full_path):
@@ -21979,6 +22091,19 @@ def mant_adjuntos_list(ctid):
 @app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["POST"])
 @_mant_required
 def mant_adjunto_subir(ctid):
+    """Sube un adjunto al contrato (anexo, externo, otro tipo).
+
+    Acepta form fields:
+      archivo:         file (requerido)
+      tipo:            ENUM (contrato/imagen/solicitud/cotizacion/reporte/otro/externo/anexo)
+                       Si no viene, se infiere del mime type.
+      subtipo_externo: si tipo='externo' o 'anexo', sub-categoría
+                       (visita_externa, ot_externa, anexo_contrato, otro)
+      nombre:          nombre legible (sino usa filename original)
+      descripcion:     texto libre
+
+    Storage: Cloudinary primero (persistente), filesystem como fallback.
+    """
     ct = mysql_fetchone("SELECT cliente_id FROM mant_contratos WHERE id=%s", (ctid,))
     if not ct: return jsonify({"error":"Contrato no encontrado"}), 404
     f = request.files.get("archivo")
@@ -21986,11 +22111,47 @@ def mant_adjunto_subir(ctid):
     ext  = f.filename.rsplit(".",1)[-1].lower()
     if ext not in ALLOWED_ADJUNTO:
         return jsonify({"error":f"Tipo .{ext} no permitido"}), 400
-    tipo  = ALLOWED_ADJUNTO_TIPOS.get(ext, "otro")
+
+    # Tipo explícito desde form, sino inferido por mime
+    tipo_form = (request.form.get("tipo") or "").strip().lower()
+    if tipo_form in ("contrato","imagen","solicitud","cotizacion","reporte","otro","externo","anexo"):
+        tipo = tipo_form
+    else:
+        tipo = ALLOWED_ADJUNTO_TIPOS.get(ext, "otro")
+    subtipo_externo = (request.form.get("subtipo_externo") or "").strip()[:80] or None
+
     fname = secure_filename(f"ct{ctid}_{int(time.time())}_{f.filename}")
+
+    # ── Cloudinary primero (persistente) ─────────────────────────────
+    cloud_url = None
+    cloud_pid = None
+    if _CLD_READY:
+        try:
+            f.stream.seek(0)
+            folder = f"ilus/contratos/adjuntos/{tipo}"
+            public_id = f"adj_{ctid}_{int(time.time())}"
+            res = _cloud_upload_raw(f.stream, public_id, folder=folder)
+            cloud_url = res["url"]
+            cloud_pid = res["public_id"]
+            print(f"[mant_adjunto] Cloudinary OK ct={ctid} tipo={tipo} url={cloud_url}", flush=True)
+        except Exception as e_cld:
+            print(f"[mant_adjunto] Cloudinary FAIL ct={ctid}: {e_cld} — fallback filesystem", flush=True)
+
+    # ── Filesystem fallback ──────────────────────────────────────────
+    try:
+        f.stream.seek(0)
+    except Exception:
+        pass
     fpath = os.path.join(MANT_UPLOADS, fname)
-    f.save(fpath)
-    size  = os.path.getsize(fpath)
+    size = 0
+    try:
+        f.save(fpath)
+        size = os.path.getsize(fpath)
+    except Exception as e_save:
+        if not cloud_url:
+            return jsonify({"error": f"No se pudo guardar: {e_save}"}), 500
+        print(f"[mant_adjunto] filesystem save fail (Cloudinary OK): {e_save}", flush=True)
+
     nombre = request.form.get("nombre") or f.filename
     descripcion = request.form.get("descripcion","")
     conn = get_mysql()
@@ -21998,20 +22159,28 @@ def mant_adjunto_subir(ctid):
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_contrato_adjuntos
-                   (contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,
+                   (contrato_id,cliente_id,tipo,subtipo_externo,nombre,archivo_nombre,archivo_path,
+                    cloudinary_url,cloudinary_public_id,
                     mime_type,tamaño_bytes,descripcion,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (ctid, ct["cliente_id"], tipo, nombre, fname, fname,
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (ctid, ct["cliente_id"], tipo, subtipo_externo, nombre, fname, fname,
+                 cloud_url, cloud_pid,
                  f.content_type or f"application/{ext}", size,
                  descripcion, current_username())
             )
             aid = cur.lastrowid
         conn.commit()
-        # Log
         _mant_log("contrato", ctid, "adjunto_subido", f"{tipo} · {nombre}")
         _mant_log("cliente", ct["cliente_id"], "adjunto_contrato", f"{tipo} · {nombre}")
-        return jsonify({"ok":True,"id":aid,"nombre":nombre,
-                        "url":f"/static/uploads/mantenciones/{fname}","tipo":tipo})
+        # URL del frontend: Cloudinary si está disponible, sino filesystem
+        url_final = cloud_url or f"/static/uploads/mantenciones/{fname}"
+        return jsonify({
+            "ok": True, "id": aid, "nombre": nombre,
+            "url": url_final, "tipo": tipo,
+            "subtipo_externo": subtipo_externo,
+            "persistente": bool(cloud_url),
+            "storage": "cloudinary" if cloud_url else "filesystem"
+        })
     finally:
         conn.close()
 
@@ -22020,10 +22189,19 @@ def mant_adjunto_subir(ctid):
 @_mant_required
 def mant_adjunto_del(aid):
     adj = mysql_fetchone(
-        "SELECT archivo_nombre, nombre, contrato_id, cliente_id, tipo FROM mant_contrato_adjuntos WHERE id=%s",
+        "SELECT archivo_nombre, nombre, contrato_id, cliente_id, tipo, "
+        "       cloudinary_public_id "
+        "  FROM mant_contrato_adjuntos WHERE id=%s",
         (aid,)
     )
     if not adj: return jsonify({"error":"No encontrado"}),404
+    # Borrar de Cloudinary si está ahí
+    if adj.get("cloudinary_public_id"):
+        try:
+            _cloud_delete_raw(adj["cloudinary_public_id"])
+        except Exception as e:
+            print(f"[mant_adjunto_del] cloudinary delete falló aid={aid}: {e}", flush=True)
+    # Borrar archivo local si existe
     try:
         fpath = os.path.join(MANT_UPLOADS, adj["archivo_nombre"])
         if os.path.exists(fpath): os.remove(fpath)
@@ -22278,22 +22456,34 @@ def mant_cliente_documentos(cid):
     """Devuelve TODOS los documentos asociados al cliente (multi-fuente)."""
     items = []
 
-    # 1. Adjuntos (contratos + multi-archivo)
+    # 1. Adjuntos (contratos + multi-archivo + externos + anexos)
     rows = mysql_fetchall(
-        "SELECT id,tipo,nombre,archivo_nombre,mime_type,tamaño_bytes,created_by,created_at "
-        "FROM mant_contrato_adjuntos WHERE cliente_id=%s", (cid,)
+        "SELECT id,tipo,subtipo_externo,nombre,archivo_nombre,mime_type,tamaño_bytes,"
+        "       cloudinary_url,cloudinary_public_id,created_by,created_at "
+        "  FROM mant_contrato_adjuntos WHERE cliente_id=%s", (cid,)
     )
     for r in rows:
+        # URL: Cloudinary primero (persistente), filesystem como fallback
+        url = r.get("cloudinary_url") or f"/static/uploads/mantenciones/{r['archivo_nombre']}"
+        fuente_label = "Adjunto"
+        if r.get("tipo") == "externo":
+            fuente_label = "Doc. Externo"
+            if r.get("subtipo_externo"):
+                fuente_label += f" · {r['subtipo_externo'].replace('_',' ').title()}"
+        elif r.get("tipo") == "anexo":
+            fuente_label = "Anexo Contrato"
         items.append({
             "kind":   "adjunto",
             "id":     r["id"],
             "tipo":   r["tipo"],
+            "subtipo_externo": r.get("subtipo_externo"),
             "nombre": r["nombre"] or r.get("archivo_nombre"),
-            "url":    f"/static/uploads/mantenciones/{r['archivo_nombre']}",
+            "url":    url,
             "size_kb": round((r.get("tamaño_bytes") or 0)/1024) if r.get("tamaño_bytes") else None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
-            "fuente": "Adjunto",
+            "fuente": fuente_label,
+            "persistente": bool(r.get("cloudinary_url")),
             "deletable": True,
         })
 
@@ -22318,8 +22508,10 @@ def mant_cliente_documentos(cid):
 
     # 3. Contrato — archivo principal
     ct_rows = mysql_fetchall(
-        "SELECT id,nombre,archivo_nombre,archivo_path,archivo_tipo,created_by,created_at "
-        "FROM mant_contratos WHERE cliente_id=%s AND archivo_path IS NOT NULL", (cid,)
+        "SELECT id,nombre,archivo_nombre,archivo_path,archivo_tipo,"
+        "       cloudinary_url,cloudinary_public_id,created_by,created_at "
+        "  FROM mant_contratos WHERE cliente_id=%s "
+        "    AND (archivo_path IS NOT NULL OR cloudinary_url IS NOT NULL)", (cid,)
     )
     for r in ct_rows:
         items.append({
@@ -22327,11 +22519,14 @@ def mant_cliente_documentos(cid):
             "id":     r["id"],
             "tipo":   "contrato",
             "nombre": r.get("nombre") or r.get("archivo_nombre") or f"Contrato #{r['id']}",
+            # Siempre vamos vía el endpoint /contratos/<id>/archivo que ya
+            # sabe redirigir a Cloudinary si está disponible
             "url":    f"/mantenciones/api/contratos/{r['id']}/archivo",
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": "Contrato principal",
+            "persistente": bool(r.get("cloudinary_url")),
             "deletable": False,
         })
 
@@ -22343,22 +22538,66 @@ def mant_cliente_documentos(cid):
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos", methods=["POST"])
 @_mant_required
 def mant_cliente_documento_subir(cid):
-    """Sube un documento suelto al cliente como adjunto general."""
+    """Sube un documento suelto al cliente como adjunto general.
+
+    Form fields:
+      archivo:         file (requerido)
+      tipo:            'contrato'|'imagen'|'reporte'|'otro'|'externo'|'anexo' (opcional)
+      subtipo_externo: si tipo='externo'→'visita_externa'|'ot_externa'|'otro'
+                       si tipo='anexo'→'anexo_contrato'
+      nombre:          nombre legible (sino usa filename)
+
+    Storage: Cloudinary primero (persistente), filesystem como fallback.
+    """
     f = request.files.get("archivo")
     if not f or not f.filename: return jsonify({"error":"Sin archivo"}), 400
     ext = f.filename.rsplit(".",1)[-1].lower() if "." in f.filename else ""
     if ext not in ALLOWED_ADJUNTO: return jsonify({"error":"Tipo no permitido"}), 400
+
+    # Tipo explícito desde form
+    tipo_form = (request.form.get("tipo") or "").strip().lower()
+    if tipo_form in ("contrato","imagen","solicitud","cotizacion","reporte","otro","externo","anexo"):
+        tipo = tipo_form
+    else:
+        tipo = ALLOWED_ADJUNTO_TIPOS.get(ext, "otro")
+    subtipo_externo = (request.form.get("subtipo_externo") or "").strip()[:80] or None
+
     fname = secure_filename(f"cli{cid}_{int(time.time())}_{f.filename}")
+
+    # ── Cloudinary primero ───────────────────────────────────────────
+    cloud_url = None
+    cloud_pid = None
+    if _CLD_READY:
+        try:
+            f.stream.seek(0)
+            folder = f"ilus/contratos/adjuntos/{tipo}"
+            public_id = f"cli_{cid}_{int(time.time())}"
+            res = _cloud_upload_raw(f.stream, public_id, folder=folder)
+            cloud_url = res["url"]
+            cloud_pid = res["public_id"]
+            print(f"[mant_documento] Cloudinary OK cid={cid} tipo={tipo}", flush=True)
+        except Exception as e_cld:
+            print(f"[mant_documento] Cloudinary FAIL cid={cid}: {e_cld}", flush=True)
+
+    # ── Filesystem fallback ──────────────────────────────────────────
+    try:
+        f.stream.seek(0)
+    except Exception:
+        pass
     fpath = os.path.join(MANT_UPLOADS, fname)
-    f.save(fpath)
-    size  = os.path.getsize(fpath)
-    tipo  = ALLOWED_ADJUNTO_TIPOS.get(ext, "otro")
+    size = 0
+    try:
+        f.save(fpath)
+        size = os.path.getsize(fpath)
+    except Exception as e_save:
+        if not cloud_url:
+            return jsonify({"error": f"No se pudo guardar: {e_save}"}), 500
+
     nombre = (request.form.get("nombre") or f.filename)[:300]
 
     # Crear contrato dummy si no existe (para satisfacer FK)
     ct = mysql_fetchone("SELECT id FROM mant_contratos WHERE cliente_id=%s ORDER BY id LIMIT 1", (cid,))
     if not ct:
-        # Si el cliente no tiene contrato, creamos uno mínimo
         conn = get_mysql()
         with conn.cursor() as cur:
             cur.execute(
@@ -22373,12 +22612,20 @@ def mant_cliente_documento_subir(cid):
 
     mysql_execute(
         "INSERT INTO mant_contrato_adjuntos "
-        "(contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,mime_type,tamaño_bytes,created_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-        (ct_id, cid, tipo, nombre, fname, fname, f.mimetype or '', size, current_username())
+        "(contrato_id,cliente_id,tipo,subtipo_externo,nombre,archivo_nombre,archivo_path,"
+        " cloudinary_url,cloudinary_public_id,mime_type,tamaño_bytes,created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (ct_id, cid, tipo, subtipo_externo, nombre, fname, fname,
+         cloud_url, cloud_pid, f.mimetype or '', size, current_username())
     )
-    _mant_log("documento", cid, "subir", nombre)
-    return jsonify({"ok":True})
+    _mant_log("documento", cid, "subir", f"{tipo} · {nombre}")
+    return jsonify({
+        "ok": True,
+        "tipo": tipo,
+        "subtipo_externo": subtipo_externo,
+        "persistente": bool(cloud_url),
+        "storage": "cloudinary" if cloud_url else "filesystem"
+    })
 
 
 @app.route("/mantenciones/api/documentos/<kind>/<int:did>", methods=["DELETE"])

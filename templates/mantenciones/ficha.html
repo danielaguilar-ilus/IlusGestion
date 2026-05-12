@@ -3752,30 +3752,35 @@ async function cargarFinanzas() {
 .doc-tipo-contrato{background:#fee2e2;color:#991b1b;}
 .doc-tipo-imagen{background:#f0fdf4;color:#16a34a;}
 .doc-tipo-reporte{background:#ede9fe;color:#5b21b6;}
+.doc-tipo-externo{background:#fff7ed;color:#c2410c;}
+.doc-tipo-anexo{background:#eff6ff;color:#1d4ed8;}
 .doc-tipo-otro{background:#f3f4f6;color:#6b7280;}
 .doc-filter-tabs{display:flex;gap:4px;margin-bottom:14px;border:1px solid var(--border);
-                 border-radius:8px;overflow:hidden;}
+                 border-radius:8px;overflow:hidden;flex-wrap:wrap;}
 .doc-filter-btn{padding:7px 14px;border:none;background:#fff;font-size:.78rem;font-weight:600;
                 color:#6b7280;cursor:pointer;transition:all .1s;}
 .doc-filter-btn.active{background:#0f172a;color:#fff;}
+.doc-badge-persist{font-size:.6rem;background:#dcfce7;color:#166534;padding:1px 5px;border-radius:4px;
+                    margin-left:4px;}
+.doc-badge-volatil{font-size:.6rem;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;
+                    margin-left:4px;}
 </style>
 
 <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
   <div>
     <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-folder-fill me-2" style="color:var(--ilus-red)"></i>Documentos del cliente</span>
-    <span class="text-muted ms-2" style="font-size:.78rem">Contratos, fotos de servicios, reportes y archivos sueltos</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Contratos · anexos · documentos externos · fotos · reportes</span>
   </div>
-  <button class="btn btn-sm btn-ilus" onclick="document.getElementById('docUploadInput').click()">
+  <button class="btn btn-sm btn-ilus" onclick="docAbrirModal()">
     <i class="bi bi-cloud-arrow-up me-1"></i>Subir documento
   </button>
-  <input type="file" id="docUploadInput" style="display:none" multiple
-         accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp"
-         onchange="docSubir(this.files)">
 </div>
 
 <div class="doc-filter-tabs" id="docFilterTabs">
   <button class="doc-filter-btn active" onclick="docFiltrar('todos',this)">Todos</button>
   <button class="doc-filter-btn" onclick="docFiltrar('contrato',this)">Contratos</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('anexo',this)">Anexos contrato</button>
+  <button class="doc-filter-btn" onclick="docFiltrar('externo',this)">Documentos externos</button>
   <button class="doc-filter-btn" onclick="docFiltrar('imagen',this)">Fotos</button>
   <button class="doc-filter-btn" onclick="docFiltrar('reporte',this)">Reportes HTML</button>
   <button class="doc-filter-btn" onclick="docFiltrar('otro',this)">Otros</button>
@@ -3783,6 +3788,64 @@ async function cargarFinanzas() {
 
 <div id="docListado">
   <div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>
+</div>
+
+{# ── MODAL: subida de documento con selector de tipo ── #}
+<div class="modal fade" id="modalDocSubir" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0f172a;color:#fff">
+        <h6 class="modal-title"><i class="bi bi-cloud-arrow-up me-2"></i>Subir documento al cliente</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Tipo de documento <span class="text-danger">*</span></label>
+          <select class="form-select form-select-sm" id="docModalTipo" onchange="docModalToggleSubtipo()">
+            <option value="contrato">📄 Contrato</option>
+            <option value="anexo">📎 Anexo de contrato</option>
+            <option value="externo" selected>🌐 Documento externo (visita/OT externa)</option>
+            <option value="reporte">📊 Reporte</option>
+            <option value="imagen">🖼️ Foto / imagen</option>
+            <option value="otro">📁 Otro</option>
+          </select>
+        </div>
+        <div class="mb-3" id="docModalSubtipoWrap">
+          <label class="form-label small fw-semibold">Sub-tipo</label>
+          <select class="form-select form-select-sm" id="docModalSubtipo">
+            <option value="visita_externa">Visita externa</option>
+            <option value="ot_externa">OT externa</option>
+            <option value="cotizacion_externa">Cotización externa</option>
+            <option value="otro">Otro</option>
+          </select>
+          <div class="form-text small">Categoría del documento externo para mejor filtrado.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Nombre / descripción</label>
+          <input type="text" class="form-control form-control-sm" id="docModalNombre"
+                 placeholder="Ej: Visita técnica externa enero 2026"
+                 maxlength="280">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Archivo <span class="text-danger">*</span></label>
+          <input type="file" class="form-control form-control-sm" id="docModalArchivo"
+                 accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp">
+          <div class="form-text small">PDF, Word, Excel o imagen. Máx 10 MB.</div>
+        </div>
+        <div class="alert alert-info py-2 px-3 mb-0" style="font-size:.78rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Los archivos se suben a almacenamiento persistente (Cloudinary).
+          No se pierden con los deploys.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus" id="docModalGuardar" onclick="docModalEnviar()">
+          <i class="bi bi-upload me-1"></i>Subir
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -3806,20 +3869,27 @@ function docRender(arr) {
       <div style="font-size:.78rem">Sube el primero con el botón "Subir documento"</div></div>`;
     return;
   }
-  const ico = {contrato:'bi-file-earmark-pdf',imagen:'bi-image',reporte:'bi-file-earmark-richtext',otro:'bi-file-earmark'};
+  const ico = {
+    contrato:'bi-file-earmark-pdf', anexo:'bi-paperclip',
+    externo:'bi-globe', imagen:'bi-image',
+    reporte:'bi-file-earmark-richtext', otro:'bi-file-earmark'
+  };
   cont.innerHTML = arr.map(d => `
     <div class="doc-card">
       <div class="doc-icon doc-tipo-${d.tipo||'otro'}">
         <i class="bi ${ico[d.tipo]||'bi-file-earmark'}"></i>
       </div>
       <div style="flex:1;min-width:0">
-        <div class="doc-name text-truncate">${d.nombre || 'Sin nombre'}</div>
+        <div class="doc-name text-truncate">${d.nombre || 'Sin nombre'}
+          ${d.persistente
+            ? '<span class="doc-badge-persist" title="Persistente en Cloudinary">☁️ persistente</span>'
+            : '<span class="doc-badge-volatil" title="Solo en disco — se pierde con deploy">⚠ volátil</span>'}
+        </div>
         <div class="doc-meta">
-          <span class="me-2">${d.tipo}</span>
+          <span class="me-2">${d.fuente || d.tipo}</span>
           <span class="me-2">${d.created_at || ''}</span>
           ${d.created_by ? `<span class="me-2"><i class="bi bi-person me-1"></i>${d.created_by}</span>` : ''}
           ${d.size_kb ? `<span>${d.size_kb} KB</span>` : ''}
-          ${d.fuente ? `<span class="ms-2 badge bg-light text-dark" style="font-size:.6rem">${d.fuente}</span>` : ''}
         </div>
       </div>
       <div class="d-flex gap-1">
@@ -3835,16 +3905,55 @@ function docFiltrar(tipo, btn) {
   if (tipo === 'todos') docRender(_docCache);
   else docRender(_docCache.filter(d => d.tipo === tipo));
 }
-async function docSubir(files) {
-  if (!files || !files.length) return;
-  for (const f of files) {
-    const fd = new FormData();
-    fd.append('archivo', f);
-    fd.append('tipo', 'otro');
-    fd.append('nombre', f.name);
-    await fetch(`/mantenciones/api/clientes/${CID}/documentos`, {method:'POST', body:fd});
+function docAbrirModal() {
+  document.getElementById('docModalNombre').value = '';
+  document.getElementById('docModalArchivo').value = '';
+  docModalToggleSubtipo();
+  new bootstrap.Modal(document.getElementById('modalDocSubir')).show();
+}
+function docModalToggleSubtipo() {
+  const tipo = document.getElementById('docModalTipo').value;
+  document.getElementById('docModalSubtipoWrap').style.display = (tipo === 'externo') ? '' : 'none';
+}
+async function docModalEnviar() {
+  const tipo = document.getElementById('docModalTipo').value;
+  const subtipo = (tipo === 'externo') ? document.getElementById('docModalSubtipo').value : '';
+  const nombre = document.getElementById('docModalNombre').value.trim();
+  const fileInput = document.getElementById('docModalArchivo');
+  if (!fileInput.files || !fileInput.files[0]) {
+    if (typeof ilusToast === 'function') ilusToast('Selecciona un archivo', { type:'warning' });
+    else alert('Selecciona un archivo');
+    return;
   }
-  cargarDocumentos();
+  const btn = document.getElementById('docModalGuardar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Subiendo…';
+  try {
+    const fd = new FormData();
+    fd.append('archivo', fileInput.files[0]);
+    fd.append('tipo', tipo);
+    if (subtipo) fd.append('subtipo_externo', subtipo);
+    fd.append('nombre', nombre || fileInput.files[0].name);
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/documentos`, { method:'POST', body:fd });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error desconocido');
+    bootstrap.Modal.getInstance(document.getElementById('modalDocSubir')).hide();
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        d.persistente
+          ? `✓ Subido a Cloudinary (persistente)`
+          : `✓ Subido (filesystem — se pierde en deploys)`,
+        { type: d.persistente ? 'success' : 'warning' }
+      );
+    }
+    cargarDocumentos();
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error: '+e.message, { type:'error' });
+    else alert('Error: '+e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload me-1"></i>Subir';
+  }
 }
 async function docEliminar(kind, id) {
   const ok = await ilusConfirm({
