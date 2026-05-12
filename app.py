@@ -21755,6 +21755,654 @@ Estructura JSON requerida:
         return jsonify({"error": f"Error IA: {e}"}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║   COTIZADOR DE MANTENCIONES — MVP                                 ║
+# ║   Mantiene tablas: mant_cotizaciones, mant_cotizacion_items,      ║
+# ║                    mant_tarifas_tecnico, mant_tarifas_servicio    ║
+# ║   Helpers: _next_cotizacion_number(), _calcular_totales_cotizacion║
+# ╚════════════════════════════════════════════════════════════════════╝
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Constantes de pricing ─────────────────────────────────────────────
+COTIZ_RECARGO_24H        = 0.30   # +30% urgencia 24h
+COTIZ_RECARGO_INMEDIATA  = 0.50   # +50% inmediata
+COTIZ_DESC_CONTRATO_PCT  = 5.0    # 5% si cliente tiene contrato vigente
+COTIZ_IVA_PCT            = 19.0   # IVA Chile
+COTIZ_VIGENCIA_DEFAULT_DIAS = 30
+
+
+def _cotiz_calcular_totales(cid):
+    """Recalcula totales de la cotización a partir de sus items.
+
+    Aplica:
+      - descuento por cliente con contrato vigente (5%)
+      - recargo por urgencia 24h (+30%) o inmediata (+50%)
+      - IVA 19% sobre el neto
+    Persiste los totales en mant_cotizaciones.
+    Retorna dict con todos los montos.
+    """
+    cab = mysql_fetchone(
+        "SELECT id, cliente_id, urgencia, iva_pct "
+        "  FROM mant_cotizaciones WHERE id=%s", (cid,)
+    )
+    if not cab:
+        return None
+    items = mysql_fetchall(
+        "SELECT cantidad, precio_unitario, descuento_pct "
+        "  FROM mant_cotizacion_items WHERE cotizacion_id=%s", (cid,)
+    ) or []
+    subtotal = 0.0
+    for it in items:
+        cant = float(it.get("cantidad") or 0)
+        pu   = float(it.get("precio_unitario") or 0)
+        d    = float(it.get("descuento_pct") or 0)
+        subtotal += cant * pu * (1 - d / 100.0)
+    # Descuento si contrato vigente
+    descuento_pct = 0.0
+    try:
+        ct = mysql_fetchone(
+            "SELECT id FROM mant_contratos "
+            " WHERE cliente_id=%s "
+            "   AND (estado IN ('vigente','indefinido','por_vencer') "
+            "        OR fecha_vencimiento >= CURDATE() "
+            "        OR es_indefinido=1) "
+            " LIMIT 1", (cab["cliente_id"],)
+        )
+        if ct:
+            descuento_pct = COTIZ_DESC_CONTRATO_PCT
+    except Exception:
+        pass
+    descuento_monto = subtotal * descuento_pct / 100.0
+    # Recargo urgencia
+    urg = (cab.get("urgencia") or "normal").lower()
+    if urg == "24h":
+        recargo_pct = COTIZ_RECARGO_24H * 100
+    elif urg == "inmediata":
+        recargo_pct = COTIZ_RECARGO_INMEDIATA * 100
+    else:
+        recargo_pct = 0.0
+    recargo_monto = subtotal * recargo_pct / 100.0
+    total_neto = subtotal - descuento_monto + recargo_monto
+    iva_pct = float(cab.get("iva_pct") or COTIZ_IVA_PCT)
+    total_iva = total_neto * iva_pct / 100.0
+    total_final = total_neto + total_iva
+    try:
+        mysql_execute(
+            "UPDATE mant_cotizaciones SET "
+            "  subtotal=%s, descuento_pct=%s, descuento_monto=%s, "
+            "  recargo_pct=%s, recargo_monto=%s, total_neto=%s, "
+            "  iva_pct=%s, total_iva=%s, total_final=%s "
+            "WHERE id=%s",
+            (round(subtotal,2), round(descuento_pct,2), round(descuento_monto,2),
+             round(recargo_pct,2), round(recargo_monto,2), round(total_neto,2),
+             round(iva_pct,2), round(total_iva,2), round(total_final,2), cid)
+        )
+    except Exception:
+        pass
+    return {
+        "subtotal": round(subtotal,2),
+        "descuento_pct": round(descuento_pct,2),
+        "descuento_monto": round(descuento_monto,2),
+        "recargo_pct": round(recargo_pct,2),
+        "recargo_monto": round(recargo_monto,2),
+        "total_neto": round(total_neto,2),
+        "iva_pct": round(iva_pct,2),
+        "total_iva": round(total_iva,2),
+        "total_final": round(total_final,2),
+        "n_items": len(items),
+    }
+
+
+# ── Vistas HTML ───────────────────────────────────────────────────────
+@app.route("/mantenciones/cotizaciones")
+@_mant_required
+def mant_cotizaciones_list():
+    """Listado HTML de cotizaciones."""
+    return render_template("mantenciones/cotizaciones_list.html")
+
+
+@app.route("/mantenciones/cotizaciones/nuevo")
+@_mant_required
+def mant_cotizacion_nueva():
+    """Form para crear cotización nueva."""
+    cid_default = request.args.get("cliente_id") or ""
+    clientes = mysql_fetchall(
+        "SELECT id, razon_social, rut FROM mant_clientes "
+        " WHERE estado IN ('activo','prospecto') "
+        " ORDER BY razon_social LIMIT 500"
+    ) or []
+    servicios = mysql_fetchall(
+        "SELECT id, codigo, nombre, tipo_servicio, categoria_equipo, "
+        "       precio_base, horas_estimadas, unidad "
+        "  FROM mant_tarifas_servicio WHERE activo=1 ORDER BY nombre"
+    ) or []
+    cliente_sel = None
+    if cid_default:
+        try:
+            cliente_sel = mysql_fetchone(
+                "SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s",
+                (int(cid_default),)
+            )
+        except Exception: pass
+    return render_template(
+        "mantenciones/cotizacion_form.html",
+        clientes=[dict(c) for c in clientes],
+        servicios=[dict(s) for s in servicios],
+        cliente_sel=dict(cliente_sel) if cliente_sel else None,
+        cliente_id_default=cid_default,
+        modo="nuevo",
+    )
+
+
+@app.route("/mantenciones/cotizaciones/<int:cid>")
+@_mant_required
+def mant_cotizacion_ficha(cid):
+    """Ficha completa de una cotización."""
+    return render_template("mantenciones/cotizacion_ficha.html", cotizacion_id=cid)
+
+
+# ── API JSON ──────────────────────────────────────────────────────────
+@app.route("/mantenciones/api/cotizaciones", methods=["GET"])
+@_mant_required
+def mant_cotizaciones_api_list():
+    """Lista cotizaciones con filtros (estado, cliente, q, fechas)."""
+    where = ["1=1"]
+    params = []
+    estado = (request.args.get("estado") or "").strip().lower()
+    cid    = request.args.get("cliente_id")
+    q      = (request.args.get("q") or "").strip()
+    fdesde = (request.args.get("fecha_desde") or "").strip()
+    fhasta = (request.args.get("fecha_hasta") or "").strip()
+    if estado in ("borrador","enviada","aceptada","rechazada","vencida","convertida_ot","cancelada"):
+        where.append("co.estado=%s"); params.append(estado)
+    if cid:
+        try:
+            params.append(int(cid)); where.append("co.cliente_id=%s")
+        except (TypeError, ValueError): pass
+    if q:
+        where.append("(co.numero LIKE %s OR co.titulo LIKE %s OR c.razon_social LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    if fdesde:
+        where.append("co.fecha_emision >= %s"); params.append(fdesde)
+    if fhasta:
+        where.append("co.fecha_emision <= %s"); params.append(fhasta)
+    sql = (
+        "SELECT co.id, co.numero, co.titulo, co.estado, co.urgencia, "
+        "       co.tipo_servicio, co.fecha_emision, co.vigencia_hasta, "
+        "       co.total_neto, co.total_final, co.cliente_id, "
+        "       c.razon_social, c.rut AS cliente_rut, "
+        "       co.visita_id, co.created_at, "
+        "       (SELECT COUNT(*) FROM mant_cotizacion_items WHERE cotizacion_id=co.id) AS n_items "
+        "  FROM mant_cotizaciones co "
+        "  JOIN mant_clientes c ON c.id=co.cliente_id "
+        f" WHERE {' AND '.join(where)} "
+        " ORDER BY co.created_at DESC LIMIT 300"
+    )
+    try:
+        rows = mysql_fetchall(sql, tuple(params)) or []
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error consulta: {e}"}), 500
+    # KPIs
+    kpis = {"total": 0, "abiertas": 0, "pipeline": 0.0, "tasa_conv": 0.0}
+    try:
+        k = mysql_fetchone(
+            "SELECT "
+            " COUNT(*) AS total, "
+            " SUM(CASE WHEN estado IN ('borrador','enviada') THEN 1 ELSE 0 END) AS abiertas, "
+            " SUM(CASE WHEN estado IN ('borrador','enviada','aceptada') THEN total_final ELSE 0 END) AS pipeline, "
+            " SUM(CASE WHEN estado IN ('aceptada','convertida_ot') THEN 1 ELSE 0 END) AS aceptadas, "
+            " SUM(CASE WHEN estado IN ('aceptada','convertida_ot','rechazada','vencida') THEN 1 ELSE 0 END) AS cerradas "
+            "FROM mant_cotizaciones"
+        ) or {}
+        kpis["total"]    = int(k.get("total") or 0)
+        kpis["abiertas"] = int(k.get("abiertas") or 0)
+        kpis["pipeline"] = float(k.get("pipeline") or 0)
+        cerradas = int(k.get("cerradas") or 0)
+        aceptadas = int(k.get("aceptadas") or 0)
+        kpis["tasa_conv"] = round(100.0 * aceptadas / cerradas, 1) if cerradas else 0.0
+    except Exception: pass
+    return jsonify({"ok": True, "cotizaciones": [dict(r) for r in rows], "kpis": kpis})
+
+
+@app.route("/mantenciones/api/cotizaciones", methods=["POST"])
+@_mant_required
+def mant_cotizacion_create():
+    """Crear cotización (cabecera). Items se agregan después."""
+    d = request.get_json(silent=True) or {}
+    if not d.get("cliente_id"):
+        return jsonify({"ok": False, "error": "cliente_id es obligatorio"}), 400
+    cli = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (d["cliente_id"],))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    tipo = (d.get("tipo_servicio") or "preventiva").lower()
+    if tipo not in ("preventiva","correctiva","inspeccion","instalacion","levantamiento","garantia","mixto","otro"):
+        tipo = "preventiva"
+    urg = (d.get("urgencia") or "normal").lower()
+    if urg not in ("normal","24h","inmediata"): urg = "normal"
+    fecha = d.get("fecha_emision") or datetime.now().date().isoformat()
+    if d.get("vigencia_hasta"):
+        vig = d["vigencia_hasta"]
+    else:
+        try:
+            base = datetime.strptime(fecha, "%Y-%m-%d").date()
+        except Exception:
+            base = datetime.now().date()
+        vig = (base + timedelta(days=COTIZ_VIGENCIA_DEFAULT_DIAS)).isoformat()
+    numero = _next_cotizacion_number()
+    user = current_username() or "sistema"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_cotizaciones
+                   (numero, cliente_id, titulo, tipo_servicio, urgencia,
+                    fecha_emision, vigencia_hasta, notas, notas_internas, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (numero, int(d["cliente_id"]),
+                 (d.get("titulo") or "")[:300] or None,
+                 tipo, urg, fecha, vig,
+                 (d.get("notas") or "")[:5000] or None,
+                 (d.get("notas_internas") or "")[:5000] or None,
+                 user)
+            )
+            cid_new = cur.lastrowid
+            # Items iniciales (opcional)
+            items = d.get("items") or []
+            for i, it in enumerate(items):
+                desc = (it.get("descripcion") or "").strip()
+                if not desc: continue
+                cur.execute(
+                    """INSERT INTO mant_cotizacion_items
+                       (cotizacion_id, orden, servicio_id, descripcion, detalle,
+                        categoria_equipo, cantidad, unidad, precio_unitario,
+                        descuento_pct, horas_estimadas)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (cid_new, i+1,
+                     int(it["servicio_id"]) if it.get("servicio_id") else None,
+                     desc[:500],
+                     (it.get("detalle") or "")[:2000] or None,
+                     (it.get("categoria_equipo") or "")[:120] or None,
+                     float(it.get("cantidad") or 1),
+                     (it.get("unidad") or "servicio")[:30],
+                     float(it.get("precio_unitario") or 0),
+                     float(it.get("descuento_pct") or 0),
+                     float(it.get("horas_estimadas") or 0))
+                )
+        conn.commit()
+    finally:
+        conn.close()
+    _cotiz_calcular_totales(cid_new)
+    try:
+        _mant_log("cliente", int(d["cliente_id"]), "cotizacion_creada",
+                  f"{numero}: {(d.get('titulo') or '').strip()[:200]}")
+    except Exception: pass
+    return jsonify({"ok": True, "id": cid_new, "numero": numero})
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>", methods=["GET"])
+@_mant_required
+def mant_cotizacion_get(cid):
+    """Detalle JSON de una cotización + items + cliente."""
+    co = mysql_fetchone(
+        "SELECT co.*, c.razon_social, c.rut AS cliente_rut, "
+        "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
+        "       c.contacto_nombre, c.contacto_email, c.contacto_tel "
+        "  FROM mant_cotizaciones co "
+        "  JOIN mant_clientes c ON c.id=co.cliente_id "
+        " WHERE co.id=%s", (cid,)
+    )
+    if not co:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    items = mysql_fetchall(
+        "SELECT i.*, s.codigo AS servicio_codigo, s.nombre AS servicio_nombre "
+        "  FROM mant_cotizacion_items i "
+        "  LEFT JOIN mant_tarifas_servicio s ON s.id=i.servicio_id "
+        " WHERE i.cotizacion_id=%s ORDER BY i.orden, i.id", (cid,)
+    ) or []
+    return jsonify({
+        "ok": True,
+        "cotizacion": dict(co),
+        "items": [dict(r) for r in items],
+    })
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>", methods=["PATCH"])
+@_mant_required
+def mant_cotizacion_update(cid):
+    """Actualiza campos de la cotización (no items)."""
+    d = request.get_json(silent=True) or {}
+    old = mysql_fetchone("SELECT * FROM mant_cotizaciones WHERE id=%s", (cid,))
+    if not old:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    allowed = ["titulo","tipo_servicio","urgencia","fecha_emision","vigencia_hasta",
+               "notas","notas_internas","iva_pct","contrato_id"]
+    sets, vals = [], []
+    for f in allowed:
+        if f in d:
+            sets.append(f"{f}=%s")
+            v = d[f]
+            if v == "": v = None
+            vals.append(v)
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin cambios"}), 400
+    try:
+        mysql_execute(
+            f"UPDATE mant_cotizaciones SET {','.join(sets)} WHERE id=%s",
+            tuple(vals) + (cid,)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error: {e}"}), 500
+    # Recalcular por si cambió urgencia/iva
+    tot = _cotiz_calcular_totales(cid)
+    return jsonify({"ok": True, "totales": tot})
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>", methods=["DELETE"])
+@_mant_required
+def mant_cotizacion_delete(cid):
+    """Soft delete (estado='cancelada'). Solo superadmin o creador puede borrar hard."""
+    co = mysql_fetchone("SELECT id, estado, created_by FROM mant_cotizaciones WHERE id=%s", (cid,))
+    if not co:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    hard = request.args.get("hard") == "1"
+    if hard:
+        if not (g.permissions.get("superadmin") or co.get("created_by") == current_username()):
+            return jsonify({"ok": False, "error": "Sin permiso para borrar definitivamente"}), 403
+        try:
+            mysql_execute("DELETE FROM mant_cotizaciones WHERE id=%s", (cid,))
+            return jsonify({"ok": True, "hard": True})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+    # Soft → cancelada
+    try:
+        mysql_execute(
+            "UPDATE mant_cotizaciones SET estado='cancelada' WHERE id=%s", (cid,)
+        )
+        return jsonify({"ok": True, "hard": False})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ── Items ─────────────────────────────────────────────────────────────
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/items", methods=["POST"])
+@_mant_required
+def mant_cotizacion_item_add(cid):
+    """Agrega un item a la cotización."""
+    co = mysql_fetchone("SELECT id, estado FROM mant_cotizaciones WHERE id=%s", (cid,))
+    if not co:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    desc = (d.get("descripcion") or "").strip()
+    if not desc:
+        return jsonify({"ok": False, "error": "descripcion es obligatoria"}), 400
+    last = mysql_fetchone(
+        "SELECT MAX(orden) AS mx FROM mant_cotizacion_items WHERE cotizacion_id=%s",
+        (cid,)
+    )
+    nuevo_orden = (int((last or {}).get("mx") or 0) + 1)
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_cotizacion_items
+                   (cotizacion_id, orden, servicio_id, descripcion, detalle,
+                    categoria_equipo, maquina_id, cantidad, unidad,
+                    precio_unitario, descuento_pct, horas_estimadas)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, nuevo_orden,
+                 int(d["servicio_id"]) if d.get("servicio_id") else None,
+                 desc[:500],
+                 (d.get("detalle") or "")[:2000] or None,
+                 (d.get("categoria_equipo") or "")[:120] or None,
+                 int(d["maquina_id"]) if d.get("maquina_id") else None,
+                 float(d.get("cantidad") or 1),
+                 (d.get("unidad") or "servicio")[:30],
+                 float(d.get("precio_unitario") or 0),
+                 float(d.get("descuento_pct") or 0),
+                 float(d.get("horas_estimadas") or 0))
+            )
+            iid = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    tot = _cotiz_calcular_totales(cid)
+    return jsonify({"ok": True, "id": iid, "orden": nuevo_orden, "totales": tot})
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/items/<int:iid>", methods=["PATCH"])
+@_mant_required
+def mant_cotizacion_item_update(cid, iid):
+    """Edita un item."""
+    it = mysql_fetchone(
+        "SELECT id FROM mant_cotizacion_items WHERE id=%s AND cotizacion_id=%s",
+        (iid, cid)
+    )
+    if not it:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    allowed = ["servicio_id","descripcion","detalle","categoria_equipo","maquina_id",
+               "cantidad","unidad","precio_unitario","descuento_pct","horas_estimadas","orden"]
+    sets, vals = [], []
+    for f in allowed:
+        if f in d:
+            sets.append(f"{f}=%s")
+            v = d[f]
+            if v == "": v = None
+            vals.append(v)
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin cambios"}), 400
+    try:
+        mysql_execute(
+            f"UPDATE mant_cotizacion_items SET {','.join(sets)} WHERE id=%s",
+            tuple(vals) + (iid,)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    tot = _cotiz_calcular_totales(cid)
+    return jsonify({"ok": True, "totales": tot})
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/items/<int:iid>", methods=["DELETE"])
+@_mant_required
+def mant_cotizacion_item_delete(cid, iid):
+    """Elimina un item."""
+    try:
+        mysql_execute(
+            "DELETE FROM mant_cotizacion_items WHERE id=%s AND cotizacion_id=%s",
+            (iid, cid)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    tot = _cotiz_calcular_totales(cid)
+    return jsonify({"ok": True, "totales": tot})
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/calcular", methods=["POST"])
+@_mant_required
+def mant_cotizacion_recalcular(cid):
+    """Recalcula totales explícitamente."""
+    tot = _cotiz_calcular_totales(cid)
+    if tot is None:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    return jsonify({"ok": True, "totales": tot})
+
+
+# ── Workflow de estados ───────────────────────────────────────────────
+_COTIZ_ESTADOS = {"borrador","enviada","aceptada","rechazada","vencida","convertida_ot","cancelada"}
+_COTIZ_TRANS = {
+    "borrador":      {"enviada","cancelada"},
+    "enviada":       {"aceptada","rechazada","vencida","cancelada","borrador"},
+    "aceptada":      {"convertida_ot","cancelada","rechazada"},
+    "rechazada":     {"borrador"},
+    "vencida":       {"borrador"},
+    "convertida_ot": set(),
+    "cancelada":     {"borrador"},
+}
+
+
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/cambiar-estado", methods=["POST"])
+@_mant_required
+def mant_cotizacion_cambiar_estado(cid):
+    """Workflow de estados con validación de transiciones permitidas."""
+    co = mysql_fetchone("SELECT id, estado FROM mant_cotizaciones WHERE id=%s", (cid,))
+    if not co:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    nuevo = (d.get("estado") or "").strip().lower()
+    if nuevo not in _COTIZ_ESTADOS:
+        return jsonify({"ok": False, "error": f"Estado inválido: {nuevo}"}), 400
+    actual = (co.get("estado") or "borrador").lower()
+    permitidos = _COTIZ_TRANS.get(actual, set())
+    if nuevo not in permitidos and nuevo != actual:
+        return jsonify({
+            "ok": False,
+            "error": f"Transición no permitida: {actual} → {nuevo}",
+            "transiciones_validas": list(permitidos),
+        }), 400
+    sets = ["estado=%s"]
+    vals = [nuevo]
+    now = datetime.now()
+    if nuevo == "enviada":
+        sets.append("enviada_at=%s"); vals.append(now)
+    elif nuevo == "aceptada":
+        sets.append("aceptada_at=%s"); vals.append(now)
+    elif nuevo == "rechazada":
+        sets.append("rechazada_at=%s"); vals.append(now)
+    elif nuevo == "convertida_ot":
+        sets.append("convertida_at=%s"); vals.append(now)
+    try:
+        mysql_execute(
+            f"UPDATE mant_cotizaciones SET {','.join(sets)} WHERE id=%s",
+            tuple(vals) + (cid,)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "estado": nuevo})
+
+
+# ── Convertir a OT ────────────────────────────────────────────────────
+@app.route("/mantenciones/api/cotizaciones/<int:cid>/convertir-ot", methods=["POST"])
+@_mant_required
+def mant_cotizacion_convertir_ot(cid):
+    """Convierte una cotización aceptada en una OT (mant_visitas + tareas)."""
+    co = mysql_fetchone(
+        "SELECT id, numero, cliente_id, titulo, tipo_servicio, urgencia, "
+        "       visita_id, estado, total_final "
+        "  FROM mant_cotizaciones WHERE id=%s", (cid,)
+    )
+    if not co:
+        return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+    if co.get("visita_id"):
+        return jsonify({
+            "ok": False,
+            "error": f"Ya tiene OT vinculada (#{co['visita_id']})",
+            "visita_id_existente": co["visita_id"],
+        }), 409
+    if co.get("estado") not in ("aceptada","enviada"):
+        return jsonify({
+            "ok": False,
+            "error": "Solo cotizaciones aceptadas (o enviadas) pueden convertirse en OT",
+        }), 400
+    d = request.get_json(silent=True) or {}
+    fecha = d.get("fecha_programada")
+    if not fecha:
+        fecha = (datetime.now().date() + timedelta(days=3)).isoformat()
+    tipo_v = co.get("tipo_servicio") or "preventiva"
+    if tipo_v in ("mixto","otro"):
+        tipo_v = "preventiva"
+    if tipo_v not in ("preventiva","correctiva","garantia","inspeccion","levantamiento","instalacion"):
+        tipo_v = "preventiva"
+    items = mysql_fetchall(
+        "SELECT * FROM mant_cotizacion_items WHERE cotizacion_id=%s ORDER BY orden, id",
+        (cid,)
+    ) or []
+    user = current_username() or "sistema"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            numero_ot = _next_ot_number()
+            titulo = co.get("titulo") or f"Servicios cotización {co['numero']}"
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (numero_ot, cliente_id, titulo, fecha_programada, tipo,
+                    estado, descripcion, costo, created_by)
+                   VALUES (%s,%s,%s,%s,%s,'programada',%s,%s,%s)""",
+                (numero_ot, co["cliente_id"], titulo[:200], fecha, tipo_v,
+                 f"Generada desde cotización {co['numero']}",
+                 float(co.get("total_final") or 0), user)
+            )
+            vid = cur.lastrowid
+            # Tareas a partir de items
+            for i, it in enumerate(items):
+                tipo_tarea = "inspeccion" if tipo_v == "preventiva" else tipo_v
+                if tipo_tarea not in ("inspeccion","correctiva","cambio","instalacion","levantamiento","otro"):
+                    tipo_tarea = "inspeccion"
+                try:
+                    cur.execute(
+                        """INSERT INTO mant_visita_tareas
+                           (visita_id, orden, titulo, tipo, maquina_id,
+                            cantidad, created_by)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                        (vid, i+1, (it.get("descripcion") or "Servicio")[:300],
+                         tipo_tarea,
+                         it.get("maquina_id"),
+                         int(float(it.get("cantidad") or 1)), user)
+                    )
+                except Exception:
+                    # Si mant_visita_tareas no tiene la columna tipo o falla, ignorar
+                    pass
+            cur.execute(
+                "UPDATE mant_cotizaciones SET visita_id=%s, estado='convertida_ot', "
+                "  convertida_at=NOW() WHERE id=%s",
+                (vid, cid)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        _mant_log("visita", vid, "creada_desde_cotizacion",
+                  f"Cotización {co['numero']} → {numero_ot}")
+    except Exception: pass
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "numero_ot": numero_ot,
+        "fecha_programada": fecha,
+        "tareas_creadas": len(items),
+    })
+
+
+# ── Catálogos de tarifas ──────────────────────────────────────────────
+@app.route("/mantenciones/api/tarifas/servicios", methods=["GET"])
+@_mant_required
+def mant_tarifas_servicios_list():
+    """Catálogo de servicios para autocompletar items."""
+    rows = mysql_fetchall(
+        "SELECT id, codigo, nombre, tipo_servicio, categoria_equipo, "
+        "       precio_base, horas_estimadas, unidad, descripcion "
+        "  FROM mant_tarifas_servicio WHERE activo=1 ORDER BY nombre"
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/tarifas/tecnicos", methods=["GET"])
+@_mant_required
+def mant_tarifas_tecnicos_list():
+    """Catálogo de tarifas técnico/hora."""
+    rows = mysql_fetchall(
+        "SELECT id, codigo, nombre, tarifa_hora, descripcion "
+        "  FROM mant_tarifas_tecnico WHERE activo=1 ORDER BY tarifa_hora"
+    ) or []
+    return jsonify([dict(r) for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FIN COTIZADOR DE MANTENCIONES
+# ══════════════════════════════════════════════════════════════════════
+
+
 if __name__ == "__main__":
     print("=" * 45)
     print("  ILUS - Sistema de Etiquetas")
