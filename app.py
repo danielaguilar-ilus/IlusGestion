@@ -18993,17 +18993,32 @@ def mant_ot_ficha(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas", methods=["GET"])
 @_mant_required
 def mant_visita_tareas_get(vid):
-    """Lista las tareas de una OT con su estado."""
+    """Lista las tareas de una OT con su estado y métricas de cronómetro."""
     rows = mysql_fetchall(
         "SELECT t.id, t.orden, t.titulo, t.descripcion, t.tipo, t.cantidad, "
         "       t.completada, t.completada_at, t.completada_por, t.observaciones, "
-        "       t.maquina_id, m.nombre AS maquina_nombre, m.serie AS maquina_serie "
+        "       t.maquina_id, m.nombre AS maquina_nombre, m.serie AS maquina_serie, "
+        "       t.estado_trabajo, t.iniciado_at, t.duracion_min, "
+        "       t.duracion_estimada_min, t.pausada_acumulado_seg "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_maquinas m ON m.id=t.maquina_id "
         " WHERE t.visita_id=%s ORDER BY t.orden ASC, t.id ASC",
         (vid,)
     ) or []
-    return jsonify([dict(r) for r in rows])
+    result = []
+    for r in rows:
+        d = dict(r)
+        # Si está en curso, calcular segundos abiertos para UI live
+        if d.get("estado_trabajo") == "en_curso":
+            d["segmento_abierto_seg"] = _crono_seg_desde_ultimo(d["id"])
+            d["duracion_total_seg"]   = _crono_total_seg(d["id"])
+        # Serializar fechas
+        if d.get("iniciado_at") is not None:
+            d["iniciado_at"] = str(d["iniciado_at"])
+        if d.get("completada_at") is not None:
+            d["completada_at"] = str(d["completada_at"])
+        result.append(d)
+    return jsonify(result)
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/nueva", methods=["POST"])

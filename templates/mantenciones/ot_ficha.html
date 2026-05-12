@@ -279,6 +279,82 @@
   width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:#dc2626;
 }
 .maq-proto-row:has(input:checked){background:#fef2f2;border-color:#fca5a5;}
+
+/* ── CRONÓMETRO POR TAREA ────────────────────────────────────── */
+.task-crono{
+  margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding-top:10px;border-top:1px dashed #e5e7eb;
+}
+.crono-state{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:4px 10px;border-radius:50px;
+  font-size:.7rem;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.crono-state.pendiente {background:#f3f4f6;color:#374151;}
+.crono-state.en_curso  {background:#fef3c7;color:#92400e;animation:pulse-crono 2s ease-in-out infinite;}
+.crono-state.pausada   {background:#dbeafe;color:#1e40af;}
+.crono-state.completada{background:#dcfce7;color:#166534;}
+.crono-state.bloqueada {background:#fee2e2;color:#991b1b;}
+@keyframes pulse-crono{
+  0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.4);}
+  50%    {box-shadow:0 0 0 6px rgba(220,38,38,0);}
+}
+.crono-live{
+  background:linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+  color:#fff;padding:6px 14px;border-radius:8px;
+  font-family:monospace;font-weight:700;font-size:.95rem;
+  display:inline-flex;align-items:center;gap:6px;letter-spacing:.05em;
+  box-shadow:0 2px 6px rgba(0,0,0,.15);
+}
+.crono-live i{color:#fca5a5;animation:pulse-dot 1s ease-in-out infinite;}
+@keyframes pulse-dot{
+  0%,100%{opacity:1;}
+  50%    {opacity:.3;}
+}
+.crono-est{
+  font-size:.7rem;color:#6b7280;font-weight:600;
+  background:#f3f4f6;padding:3px 8px;border-radius:50px;cursor:help;
+  border:1px dashed #d1d5db;
+}
+.crono-final{
+  font-size:.74rem;font-weight:700;
+  padding:3px 9px;border-radius:50px;
+}
+.crono-final.ok      {background:#dcfce7;color:#166534;}
+.crono-final.warn    {background:#fef3c7;color:#92400e;}
+.crono-final.over    {background:#fee2e2;color:#991b1b;}
+.crono-btn{
+  font-size:.78rem;padding:5px 12px;border-radius:8px;
+  font-weight:700;display:inline-flex;align-items:center;gap:5px;
+  border:none;cursor:pointer;transition:transform .1s;
+}
+.crono-btn:hover{transform:translateY(-1px);}
+.crono-btn.iniciar  {background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;}
+.crono-btn.pausar   {background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#fff;}
+.crono-btn.reanudar {background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:#fff;}
+.crono-btn.completar{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;}
+
+/* ── BANNER "TAREA EN CURSO" en cabecera ─────────────────── */
+.task-banner-curso{
+  background:linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%);
+  border:2px solid #fde68a;border-radius:12px;padding:10px 16px;
+  margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+}
+.task-banner-curso .b-ico{
+  font-size:1.6rem;color:#d97706;
+}
+.task-banner-curso .b-text{flex:1;min-width:0;}
+.task-banner-curso .b-title{font-weight:800;color:#78350f;font-size:.95rem;}
+.task-banner-curso .b-sub{font-size:.78rem;color:#92400e;}
+
+/* ── MODAL CIERRE OT ─────────────────────────────────────── */
+.cierre-stars{
+  display:flex;gap:6px;font-size:2rem;cursor:pointer;
+}
+.cierre-star{color:#d1d5db;transition:color .15s;}
+.cierre-star.on,.cierre-star:hover,.cierre-star:hover ~ .cierre-star.on{color:#f59e0b;}
+.cierre-star:hover ~ .cierre-star{color:#d1d5db;}
 </style>
 
 {# ════════ HERO ════════ #}
@@ -540,6 +616,16 @@
     </div>
   </div>
 
+  {# Banner "Tarea en curso" — aparece cuando hay una en_curso #}
+  <div id="taskCursoBanner" class="task-banner-curso" style="display:none">
+    <div class="b-ico"><i class="bi bi-stopwatch-fill"></i></div>
+    <div class="b-text">
+      <div class="b-title">▶ Tarea en curso: <span id="cursoBannerTitulo">—</span></div>
+      <div class="b-sub" id="cursoBannerSub">Iniciado a las —</div>
+    </div>
+    <div class="crono-live"><i class="bi bi-circle-fill"></i><span id="cursoBannerLive">00:00:00</span></div>
+  </div>
+
   <div id="taskList">
     <div class="empty-state" id="taskEmpty" style="display:none">
       <i class="bi bi-clipboard"></i>
@@ -683,6 +769,89 @@
   </div>
 </div>
 
+{# Modal: agregar nota o foto al completar una tarea #}
+<div class="modal fade" id="modalTareaNota" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d);color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-check-circle me-2" style="color:#22c55e"></i>Tarea completada</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2 small text-muted">¿Quieres agregar una nota o subir una foto antes de cerrar?</div>
+        <div class="fw-bold mb-3" id="tareaNotaTitulo">—</div>
+        <label class="form-label small fw-semibold">Nota (opcional)</label>
+        <textarea id="tareaNotaTexto" class="form-control form-control-sm" rows="3"
+                  placeholder="Detalles, condiciones, advertencias…"></textarea>
+        <div class="alert alert-info mt-3 mb-0 py-2 small">
+          <i class="bi bi-camera me-1"></i> Para subir fotos asociadas a esta tarea, usa la pestaña <strong>Fotos</strong>.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar sin nota</button>
+        <button class="btn btn-ilus fw-bold" onclick="guardarNotaTareaCompletada()">
+          <i class="bi bi-save me-1"></i>Guardar nota
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Modal: cerrar la OT completa #}
+<div class="modal fade" id="modalCerrarOT" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border:2px solid var(--ilus-red)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-flag-fill me-2" style="color:#fca5a5"></i>Cerrar OT</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-success py-2 small mb-3">
+          <i class="bi bi-check-circle me-1"></i>
+          <strong>¡Excelente!</strong> Todas las tareas están completadas.
+          Antes de cerrar, ayúdanos a capturar 3 datos para mejorar el sistema.
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Causa raíz</label>
+          <select id="cierreCausa" class="form-select">
+            <option value="">— Sin especificar —</option>
+            <option value="desgaste">Desgaste natural</option>
+            <option value="mal_uso">Mal uso</option>
+            <option value="falta_mantencion">Falta de mantención</option>
+            <option value="defecto_fabrica">Defecto de fábrica</option>
+            <option value="accidente">Accidente</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Satisfacción del cliente</label>
+          <div class="cierre-stars" id="cierreStars">
+            {% for i in range(1, 6) %}
+            <i class="bi bi-star-fill cierre-star" data-stars="{{ i }}" onclick="setCierreStars({{ i }})"></i>
+            {% endfor %}
+          </div>
+          <input type="hidden" id="cierreEstrellas" value="">
+          <div class="small text-muted mt-1" id="cierreEstrellasLabel">— Sin calificar —</div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Comentario final (opcional)</label>
+          <textarea id="cierreComentario" class="form-control form-control-sm" rows="3"
+                    placeholder="Observaciones generales del trabajo realizado…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Más tarde</button>
+        <button class="btn btn-ilus fw-bold" onclick="confirmarCierreOT()">
+          <i class="bi bi-flag-fill me-1"></i>Cerrar OT
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# Lightbox #}
 <div class="lightbox" id="lightbox" onclick="cerrarLightbox()">
   <button class="lightbox-close" onclick="cerrarLightbox()"><i class="bi bi-x-lg"></i></button>
@@ -736,15 +905,88 @@ function escHtml(s){
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function fmtHMS(seg){
+  if (!seg || seg < 0) seg = 0;
+  const h = Math.floor(seg/3600);
+  const m = Math.floor((seg%3600)/60);
+  const s = seg%60;
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function fmtHora(iso){
+  if (!iso) return '—';
+  // Acepta "YYYY-MM-DD HH:MM:SS" o ISO
+  const m = String(iso).match(/(\d{2}):(\d{2})/);
+  return m ? (m[1] + ':' + m[2]) : iso;
+}
+
+function renderCronoBloque(t){
+  const est = t.estado_trabajo || 'pendiente';
+  const estLabels = {
+    pendiente:  'Pendiente',
+    en_curso:   '▶ En curso',
+    pausada:    '⏸ Pausada',
+    completada: '✓ Completada',
+    bloqueada:  '⚠ Bloqueada',
+  };
+  const estLabel = estLabels[est] || est;
+  let html = `<span class="crono-state ${est}">${estLabel}</span>`;
+
+  // Duración estimada (siempre que exista)
+  if (t.duracion_estimada_min){
+    html += `<span class="crono-est" title="Sugerencia basada en visitas anteriores. Ayúdate a estimar tiempo."><i class="bi bi-clock-history"></i> Estim. ${t.duracion_estimada_min} min</span>`;
+  }
+
+  // Live timer si está en curso
+  if (est === 'en_curso'){
+    const segIni = (t.duracion_total_seg || 0) + (t.segmento_abierto_seg || 0);
+    html += `<span class="crono-live" data-crono-tid="${t.id}" data-crono-base="${segIni}" data-crono-start-ms="${Date.now()}">
+      <i class="bi bi-circle-fill"></i><span class="crono-display">${fmtHMS(segIni)}</span>
+    </span>`;
+    html += `<button class="crono-btn pausar" onclick="tareaCronometro(${t.id}, 'pausar')"><i class="bi bi-pause-fill"></i>Pausar</button>`;
+    html += `<button class="crono-btn completar" onclick="tareaCronometro(${t.id}, 'completar')"><i class="bi bi-check2-circle"></i>Completar</button>`;
+  } else if (est === 'pausada'){
+    const min = Math.round(((t.pausada_acumulado_seg || 0) / 60));
+    html += `<span class="crono-final warn"><i class="bi bi-pause-fill"></i> ${min} min trabajados</span>`;
+    html += `<button class="crono-btn reanudar" onclick="tareaCronometro(${t.id}, 'reanudar')"><i class="bi bi-play-fill"></i>Reanudar</button>`;
+    html += `<button class="crono-btn completar" onclick="tareaCronometro(${t.id}, 'completar')"><i class="bi bi-check2-circle"></i>Completar</button>`;
+  } else if (est === 'completada' || t.completada){
+    const real = t.duracion_min;
+    const est_ = t.duracion_estimada_min;
+    if (real != null){
+      let cls = 'ok';
+      let extra = '';
+      if (est_ && est_ > 0){
+        const delta = real - est_;
+        const pct = Math.round((delta * 100) / est_);
+        if (delta > 0 && pct > 20) cls = 'over';
+        else if (delta > 0)        cls = 'warn';
+        const signo = delta >= 0 ? '+' : '';
+        extra = ` (${signo}${delta} min sobre estim.)`;
+      }
+      const ini = fmtHora(t.iniciado_at);
+      const fin = fmtHora(t.completada_at);
+      html += `<span class="crono-final ${cls}"><i class="bi bi-stopwatch"></i> ${real} min · ${ini}–${fin}${extra}</span>`;
+    } else {
+      html += `<span class="crono-final ok"><i class="bi bi-check2-circle"></i> Completada</span>`;
+    }
+  } else {
+    // pendiente
+    html += `<button class="crono-btn iniciar" onclick="tareaCronometro(${t.id}, 'iniciar')"><i class="bi bi-play-fill"></i>Iniciar</button>`;
+  }
+  return html;
+}
+
 function renderTarea(t){
   const div = document.createElement('div');
-  div.className = 'task-item' + (t.completada ? ' done' : '');
+  const isDone = (t.completada || t.estado_trabajo === 'completada');
+  div.className = 'task-item' + (isDone ? ' done' : '');
   div.dataset.tid = t.id;
   div.innerHTML = `
-    <div class="task-check" onclick="toggleTarea(${t.id})" title="${t.completada?'Marcar pendiente':'Marcar completada'}">
+    <div class="task-check" onclick="toggleTarea(${t.id})" title="${isDone?'Marcar pendiente':'Marcar completada'}">
       <i class="bi bi-check-lg"></i>
     </div>
-    <div class="task-body">
+    <div class="task-body" style="width:100%">
       <div class="task-title">${escHtml(t.titulo)}</div>
       ${t.descripcion?`<div class="task-desc">${escHtml(t.descripcion)}</div>`:''}
       <div class="task-meta">
@@ -754,6 +996,7 @@ function renderTarea(t){
         ${t.completada_por?`<span class="pill">✓ ${escHtml(t.completada_por)}</span>`:''}
       </div>
       ${t.observaciones?`<div class="task-desc mt-2">📝 ${escHtml(t.observaciones)}</div>`:''}
+      <div class="task-crono">${renderCronoBloque(t)}</div>
     </div>
     <div class="task-actions">
       <button class="btn btn-sm btn-outline-danger" onclick="eliminarTarea(${t.id})" title="Eliminar">
@@ -974,7 +1217,200 @@ async function aplicarProtocoloMaquinas(){
   await aplicarProtocolo(protocolo, ids);
 }
 
-// Init
+// ════════════════════════════════════════════════════════════════
+//  CRONÓMETRO POR TAREA — ticker + acciones
+// ════════════════════════════════════════════════════════════════
+
+let _cronoTickerHandle = null;
+let _ultimaTareaCompletadaId = null;
+let _cierreEstrellas = null;
+
+function startCronoTicker(){
+  if (_cronoTickerHandle) return;
+  _cronoTickerHandle = setInterval(() => {
+    const liveSpans = document.querySelectorAll('.crono-live[data-crono-tid]');
+    let hayEnCurso = false;
+    liveSpans.forEach(span => {
+      hayEnCurso = true;
+      const base = parseInt(span.dataset.cronoBase || '0', 10);
+      const startMs = parseInt(span.dataset.cronoStartMs || '0', 10);
+      const sec = base + Math.floor((Date.now() - startMs) / 1000);
+      const disp = span.querySelector('.crono-display');
+      if (disp) disp.textContent = fmtHMS(sec);
+    });
+    // Banner
+    const banner = document.getElementById('taskCursoBanner');
+    if (hayEnCurso){
+      banner.style.display = 'flex';
+      const primer = document.querySelector('.crono-live[data-crono-tid]');
+      const tid = primer ? primer.dataset.cronoTid : null;
+      if (tid){
+        const item = document.querySelector(`.task-item[data-tid="${tid}"]`);
+        if (item){
+          const titulo = item.querySelector('.task-title');
+          document.getElementById('cursoBannerTitulo').textContent = titulo ? titulo.textContent : '—';
+        }
+        const base = parseInt(primer.dataset.cronoBase || '0', 10);
+        const startMs = parseInt(primer.dataset.cronoStartMs || '0', 10);
+        const sec = base + Math.floor((Date.now() - startMs) / 1000);
+        document.getElementById('cursoBannerLive').textContent = fmtHMS(sec);
+        const horaInicio = new Date(Date.now() - sec*1000);
+        const hh = String(horaInicio.getHours()).padStart(2,'0');
+        const mm = String(horaInicio.getMinutes()).padStart(2,'0');
+        document.getElementById('cursoBannerSub').textContent = `Iniciado a las ${hh}:${mm} · ID #${tid}`;
+      }
+    } else {
+      banner.style.display = 'none';
+    }
+  }, 1000);
+}
+
+function stopCronoTickerSiVacio(){
+  // Si no hay tareas en curso, detenemos el ticker
+  if (!document.querySelector('.crono-live[data-crono-tid]')){
+    if (_cronoTickerHandle){
+      clearInterval(_cronoTickerHandle);
+      _cronoTickerHandle = null;
+    }
+    document.getElementById('taskCursoBanner').style.display = 'none';
+  }
+}
+
+async function tareaCronometro(tid, accion){
+  // Confirmaciones suaves
+  if (accion === 'completar'){
+    if (!confirm('¿Marcar esta tarea como completada? Se detiene el cronómetro.')) return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/tareas/${tid}/cronometro`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ accion: accion }),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      alert('❌ ' + (d.error || 'No se pudo procesar la acción'));
+      return;
+    }
+    // Si fue completar → modal de nota opcional
+    if (accion === 'completar'){
+      _ultimaTareaCompletadaId = tid;
+      // Cargar título de la tarea
+      const item = document.querySelector(`.task-item[data-tid="${tid}"]`);
+      const titulo = item ? (item.querySelector('.task-title')?.textContent || '') : '';
+      document.getElementById('tareaNotaTitulo').textContent = titulo;
+      document.getElementById('tareaNotaTexto').value = '';
+      const modal = new bootstrap.Modal(document.getElementById('modalTareaNota'));
+      modal.show();
+    }
+    await cargarTareas();
+  } catch(e){
+    alert('❌ Error de red: ' + e);
+  }
+}
+
+async function guardarNotaTareaCompletada(){
+  const tid = _ultimaTareaCompletadaId;
+  if (!tid){ bootstrap.Modal.getInstance(document.getElementById('modalTareaNota')).hide(); return; }
+  const nota = document.getElementById('tareaNotaTexto').value.trim();
+  if (nota){
+    try {
+      await fetch(`${API_BASE}/tareas/${tid}`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ observaciones: nota }),
+      });
+    } catch(e){ console.error(e); }
+  }
+  bootstrap.Modal.getInstance(document.getElementById('modalTareaNota')).hide();
+  _ultimaTareaCompletadaId = null;
+  cargarTareas();
+}
+
+// ── Modal cierre OT ────────────────────────────────────────────
+function setCierreStars(n){
+  _cierreEstrellas = n;
+  document.getElementById('cierreEstrellas').value = n;
+  document.querySelectorAll('#cierreStars .cierre-star').forEach(s => {
+    s.classList.toggle('on', parseInt(s.dataset.stars) <= n);
+  });
+  const labels = ['', 'Pésima', 'Mala', 'Aceptable', 'Buena', 'Excelente'];
+  document.getElementById('cierreEstrellasLabel').textContent = `${n}/5 — ${labels[n]}`;
+}
+
+function abrirModalCierreOT(){
+  document.getElementById('cierreCausa').value = '';
+  document.getElementById('cierreEstrellas').value = '';
+  document.getElementById('cierreComentario').value = '';
+  document.getElementById('cierreEstrellasLabel').textContent = '— Sin calificar —';
+  document.querySelectorAll('#cierreStars .cierre-star').forEach(s => s.classList.remove('on'));
+  _cierreEstrellas = null;
+  new bootstrap.Modal(document.getElementById('modalCerrarOT')).show();
+}
+
+async function confirmarCierreOT(){
+  const body = {
+    causa_raiz: document.getElementById('cierreCausa').value || null,
+    satisfaccion_estrellas: _cierreEstrellas,
+    comentario: document.getElementById('cierreComentario').value.trim() || null,
+  };
+  try {
+    const r = await fetch(`${API_BASE}/cerrar`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!d.ok){ alert('❌ ' + (d.error || 'Error al cerrar')); return; }
+    bootstrap.Modal.getInstance(document.getElementById('modalCerrarOT')).hide();
+    alert('✅ OT cerrada exitosamente');
+    // Refrescar página para actualizar estado
+    setTimeout(() => location.reload(), 700);
+  } catch(e){
+    alert('❌ Error de red: ' + e);
+  }
+}
+
+// Hook: detectar cuando se completaron TODAS las tareas para preguntar cierre OT
+async function verificarCierreOT(){
+  try {
+    const r = await fetch(API_BASE + '/cronometro-resumen');
+    const d = await r.json();
+    if (!d.ok || !d.tareas_resumen) return;
+    const tr = d.tareas_resumen;
+    // Si todas completadas y la OT aún no está cerrada → preguntar
+    const cerradaYa = document.querySelector('.ot-estado-completada');
+    if (tr.n_total > 0 && tr.n_total === tr.n_completadas && !cerradaYa){
+      // Esperar un tick para que cierre el modal nota
+      setTimeout(() => {
+        if (confirm(`✅ Todas las ${tr.n_total} tareas están completadas.\n\n¿Cerrar la OT completa ahora?`)){
+          abrirModalCierreOT();
+        }
+      }, 400);
+    }
+  } catch(e){ console.error(e); }
+}
+
+// Hook en cargarTareas: arrancar/detener ticker y verificar cierre
+const _origCargarTareas = cargarTareas;
+cargarTareas = async function(){
+  await _origCargarTareas();
+  // ¿Hay alguna en_curso? → arrancar ticker
+  if (document.querySelector('.crono-live[data-crono-tid]')){
+    startCronoTicker();
+  } else {
+    stopCronoTickerSiVacio();
+  }
+};
+
+// También hook en guardarNotaTareaCompletada para verificar cierre OT después
+const _origGuardarNota = guardarNotaTareaCompletada;
+guardarNotaTareaCompletada = async function(){
+  await _origGuardarNota();
+  setTimeout(verificarCierreOT, 600);
+};
+
+// ── Init
 cargarTareas();
 </script>
 {% endblock %}
