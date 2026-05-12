@@ -7077,20 +7077,22 @@ def erp_documento_unificado():
         "all_fields":     hdr.get("all_fields", []),
     }
 
-    # Normalizar líneas (formato compacto pero útil)
+    # ── Líneas: devolver TODOS los campos que ya trae _cubicador_fetch ──
+    # Antes solo se enviaba un subset compacto, que dejaba al frontend del
+    # retiro sin descripcion_erp, nombre_app, tiene_ficha, peso_kg_tot, etc.
+    # El cubicador funciona porque consume la data completa internamente —
+    # ahora cualquier cliente HTTP del endpoint recibe lo mismo.
     out_lineas = []
     for ln in (lineas or []):
-        out_lineas.append({
-            "sku":         ln.get("sku", ""),
-            "nombre":      ln.get("descripcion_erp") or ln.get("nombre_app", ""),
-            "cantidad":    float(ln.get("cantidad") or 0),
-            "peso_kg_u":   float(ln.get("peso_kg_u") or 0),
-            "peso_vol_u":  float(ln.get("peso_vol_u") or 0),
-            "vol_u":       float(ln.get("vol_u") or 0),
-            "tiene_bultos": bool(ln.get("tiene_bultos")),
-            "es_zz":       bool(ln.get("es_zz")),
-            "vaneli":      float(ln.get("vaneli") or 0),
-        })
+        out = dict(ln)  # snapshot completo
+        # Alias para retrocompat (algunos templates leen "nombre")
+        out["nombre"] = (
+            ln.get("descripcion_erp")
+            or ln.get("nombre_app")
+            or ln.get("nombre")
+            or ""
+        )
+        out_lineas.append(out)
 
     return jsonify({"hdr": h, "lineas": out_lineas})
 
