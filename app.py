@@ -13208,6 +13208,162 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ══════════════════════════════════════════════════════════
+            # ── COTIZADOR DE MANTENCIONES (MVP) ────────────────────────
+            # ══════════════════════════════════════════════════════════
+            # Tarifas técnico (junior/senior/especialista/externo + $/hora)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tarifas_tecnico (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    codigo          VARCHAR(40) UNIQUE NOT NULL,
+                    nombre          VARCHAR(120) NOT NULL,
+                    tarifa_hora     DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    descripcion     VARCHAR(300),
+                    activo          TINYINT(1) DEFAULT 1,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                                    ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_activo (activo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Catálogo de servicios — preformateado para sugerir items
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tarifas_servicio (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    codigo              VARCHAR(60) UNIQUE,
+                    tipo_servicio       ENUM('preventiva','correctiva','inspeccion',
+                                              'instalacion','levantamiento','garantia','otro')
+                                        DEFAULT 'preventiva',
+                    categoria_equipo    VARCHAR(120) COMMENT 'trotadora, eliptica, bicicleta, fuerza, etc.',
+                    nombre              VARCHAR(200) NOT NULL,
+                    descripcion         TEXT,
+                    precio_base         DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    horas_estimadas     DECIMAL(5,2) DEFAULT 1.0,
+                    unidad              VARCHAR(30) DEFAULT 'servicio',
+                    activo              TINYINT(1) DEFAULT 1,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_tipo      (tipo_servicio),
+                    INDEX idx_cat       (categoria_equipo),
+                    INDEX idx_activo    (activo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Cotizaciones (cabecera)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_cotizaciones (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    numero              VARCHAR(30) UNIQUE COMMENT 'COT-2026-00001',
+                    cliente_id          INT NOT NULL,
+                    contrato_id         INT NULL,
+                    titulo              VARCHAR(300),
+                    tipo_servicio       ENUM('preventiva','correctiva','inspeccion',
+                                              'instalacion','levantamiento','garantia','mixto','otro')
+                                        DEFAULT 'preventiva',
+                    urgencia            ENUM('normal','24h','inmediata') DEFAULT 'normal',
+                    fecha_emision       DATE NOT NULL,
+                    vigencia_hasta      DATE,
+                    estado              ENUM('borrador','enviada','aceptada','rechazada',
+                                              'vencida','convertida_ot','cancelada')
+                                        DEFAULT 'borrador',
+                    visita_id           INT NULL COMMENT 'OT generada cuando se convierte',
+                    -- Cálculos almacenados (snapshot)
+                    subtotal            DECIMAL(14,2) DEFAULT 0,
+                    descuento_pct       DECIMAL(5,2) DEFAULT 0 COMMENT 'descuento contrato/cliente',
+                    descuento_monto     DECIMAL(14,2) DEFAULT 0,
+                    recargo_pct         DECIMAL(5,2) DEFAULT 0 COMMENT 'recargo por urgencia',
+                    recargo_monto       DECIMAL(14,2) DEFAULT 0,
+                    total_neto          DECIMAL(14,2) DEFAULT 0,
+                    iva_pct             DECIMAL(5,2) DEFAULT 19,
+                    total_iva           DECIMAL(14,2) DEFAULT 0,
+                    total_final         DECIMAL(14,2) DEFAULT 0,
+                    -- Otros
+                    notas               TEXT,
+                    notas_internas      TEXT,
+                    enviada_at          DATETIME NULL,
+                    aceptada_at         DATETIME NULL,
+                    rechazada_at        DATETIME NULL,
+                    convertida_at       DATETIME NULL,
+                    created_by          VARCHAR(190),
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cliente_id)  REFERENCES mant_clientes(id)  ON DELETE CASCADE,
+                    FOREIGN KEY (contrato_id) REFERENCES mant_contratos(id) ON DELETE SET NULL,
+                    FOREIGN KEY (visita_id)   REFERENCES mant_visitas(id)   ON DELETE SET NULL,
+                    INDEX idx_cliente   (cliente_id),
+                    INDEX idx_estado    (estado),
+                    INDEX idx_fecha     (fecha_emision)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Items de cotización
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_cotizacion_items (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    cotizacion_id       INT NOT NULL,
+                    orden               INT DEFAULT 0,
+                    servicio_id         INT NULL COMMENT 'FK opcional a mant_tarifas_servicio',
+                    descripcion         VARCHAR(500) NOT NULL,
+                    detalle             TEXT,
+                    categoria_equipo    VARCHAR(120),
+                    maquina_id          INT NULL,
+                    cantidad            DECIMAL(10,2) DEFAULT 1,
+                    unidad              VARCHAR(30) DEFAULT 'servicio',
+                    precio_unitario     DECIMAL(12,2) DEFAULT 0,
+                    descuento_pct       DECIMAL(5,2) DEFAULT 0,
+                    -- subtotal calculado, almacenado para reportes rápidos
+                    subtotal            DECIMAL(14,2) AS (
+                        cantidad * precio_unitario * (1 - IFNULL(descuento_pct,0)/100)
+                    ) STORED,
+                    horas_estimadas     DECIMAL(6,2) DEFAULT 0,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (cotizacion_id) REFERENCES mant_cotizaciones(id) ON DELETE CASCADE,
+                    FOREIGN KEY (servicio_id)   REFERENCES mant_tarifas_servicio(id) ON DELETE SET NULL,
+                    FOREIGN KEY (maquina_id)    REFERENCES mant_maquinas(id) ON DELETE SET NULL,
+                    INDEX idx_cot (cotizacion_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Seed: tarifas técnico
+            for codigo, nombre, tarifa, desc in [
+                ('junior',       'Técnico Junior',       18000, 'Mantención preventiva básica'),
+                ('senior',       'Técnico Senior',       28000, 'Diagnóstico y reparaciones complejas'),
+                ('especialista', 'Especialista',         42000, 'Equipos de alta gama / sistemas electrónicos'),
+                ('externo',      'Técnico Externo',      35000, 'Subcontratista certificado'),
+            ]:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO mant_tarifas_tecnico (codigo,nombre,tarifa_hora,descripcion) "
+                        "VALUES (%s,%s,%s,%s)",
+                        (codigo, nombre, tarifa, desc)
+                    )
+                except Exception: pass
+
+            # Seed: servicios típicos (5-10)
+            for codigo, tipo, cat, nombre, precio, horas, unidad in [
+                ('PM-TROT',  'preventiva',  'trotadora',  'Mantención preventiva trotadora',         55000, 2.0, 'servicio'),
+                ('PM-ELIP',  'preventiva',  'eliptica',   'Mantención preventiva elíptica',          48000, 1.5, 'servicio'),
+                ('PM-BIKE',  'preventiva',  'bicicleta',  'Mantención preventiva bicicleta',         42000, 1.2, 'servicio'),
+                ('PM-FUER',  'preventiva',  'fuerza',     'Mantención preventiva equipo de fuerza',  35000, 1.0, 'servicio'),
+                ('CORR-TR',  'correctiva',  'trotadora',  'Correctiva trotadora (diagnóstico + reparación)', 65000, 2.5, 'servicio'),
+                ('INSP-GEN', 'inspeccion',  '',           'Inspección técnica general',              25000, 1.0, 'servicio'),
+                ('LEV-INI',  'levantamiento','',          'Levantamiento inicial de equipos (in situ)', 80000, 3.0, 'visita'),
+                ('INST-EQ',  'instalacion', '',           'Instalación y puesta en marcha de equipo', 60000, 2.0, 'equipo'),
+                ('VIAJE-RM', 'otro',        '',           'Visita a terreno (Reg. Metropolitana)',   25000, 0.5, 'viaje'),
+                ('VIAJE-RG', 'otro',        '',           'Visita a terreno (Regiones — kilometraje)', 45000, 0.5, 'viaje'),
+            ]:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO mant_tarifas_servicio "
+                        "(codigo,tipo_servicio,categoria_equipo,nombre,precio_base,horas_estimadas,unidad) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (codigo, tipo, cat, nombre, precio, horas, unidad)
+                    )
+                except Exception: pass
+
             # ── Roles dinámicos (matriz módulo × acción) ───────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS roles_dinamicos (
@@ -13292,6 +13448,25 @@ def _next_ot_number():
     if last and last.get("numero_ot"):
         try:
             seq = last["numero_ot"].split("-")[-1]
+            next_n = int(seq) + 1
+        except Exception:
+            next_n = 1
+    return f"{prefix}{next_n:05d}"
+
+
+def _next_cotizacion_number():
+    """Genera el próximo N° cotización. Formato: COT-YYYY-NNNNN."""
+    year = datetime.now().year
+    prefix = f"COT-{year}-"
+    last = mysql_fetchone(
+        "SELECT numero FROM mant_cotizaciones "
+        "WHERE numero LIKE %s ORDER BY id DESC LIMIT 1",
+        (f"{prefix}%",)
+    )
+    next_n = 1
+    if last and last.get("numero"):
+        try:
+            seq = last["numero"].split("-")[-1]
             next_n = int(seq) + 1
         except Exception:
             next_n = 1
