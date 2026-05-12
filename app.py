@@ -17085,7 +17085,8 @@ def mant_contrato_re_subir(ctid):
         }), 403
 
     ct = mysql_fetchone(
-        "SELECT id, cliente_id, archivo_path, archivo_nombre, nombre "
+        "SELECT id, cliente_id, archivo_path, archivo_nombre, nombre, "
+        "       cloudinary_public_id "
         "  FROM mant_contratos WHERE id=%s", (ctid,)
     )
     if not ct:
@@ -17098,7 +17099,7 @@ def mant_contrato_re_subir(ctid):
     if ext not in ALLOWED_CONTRATO:
         return jsonify({"ok": False, "error": f"Tipo '{ext}' no permitido. Usa: {', '.join(sorted(ALLOWED_CONTRATO))}"}), 400
 
-    # Borrar el archivo viejo si existe (cleanup)
+    # Borrar el archivo viejo si existe (cleanup local)
     if ct.get("archivo_path"):
         try:
             old_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
@@ -17106,27 +17107,67 @@ def mant_contrato_re_subir(ctid):
                 os.remove(old_path)
         except Exception:
             pass
+    # Borrar el archivo viejo de Cloudinary si tenía
+    if ct.get("cloudinary_public_id"):
+        try:
+            _cloud_delete_raw(ct["cloudinary_public_id"])
+        except Exception as e_del:
+            print(f"[re-subir] no se pudo borrar cloud viejo: {e_del}", flush=True)
 
-    # Guardar el nuevo
     fname = secure_filename(f"{ct['cliente_id']}_{int(time.time())}_{f.filename}")
+
+    # ── 1. Cloudinary primero (PERSISTENTE — sobrevive deploys) ──
+    cloud_url = None
+    cloud_pid = None
+    cloud_uploaded_at = None
+    if _CLD_READY:
+        try:
+            f.stream.seek(0)
+            public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}"
+            cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+            cloud_url = cloud_result["url"]
+            cloud_pid = cloud_result["public_id"]
+            cloud_uploaded_at = datetime.utcnow()
+            print(f"[re-subir] Cloudinary OK ctid={ctid} url={cloud_url}", flush=True)
+        except Exception as e_cld:
+            print(f"[re-subir] Cloudinary FAIL ctid={ctid}: {e_cld} — fallback filesystem", flush=True)
+            cloud_url = None
+
+    # ── 2. Filesystem fallback (también guarda copia local) ──
+    try:
+        f.stream.seek(0)
+    except Exception:
+        pass
     fpath = os.path.join(MANT_UPLOADS, fname)
-    f.save(fpath)
+    saved_local = False
+    try:
+        f.save(fpath)
+        saved_local = True
+    except Exception as e_save:
+        if not cloud_url:
+            return jsonify({"ok": False, "error": f"No se pudo guardar el archivo: {e_save}"}), 500
+        print(f"[re-subir] filesystem save fail (Cloudinary OK): {e_save}", flush=True)
 
     tipo_archivo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
     try:
         mysql_execute(
-            "UPDATE mant_contratos SET archivo_path=%s, archivo_nombre=%s, archivo_tipo=%s "
-            "WHERE id=%s",
-            (fname, f.filename, tipo_archivo, ctid)
+            "UPDATE mant_contratos SET archivo_path=%s, archivo_nombre=%s, archivo_tipo=%s, "
+            "       cloudinary_url=%s, cloudinary_public_id=%s, cloudinary_uploaded_at=%s "
+            " WHERE id=%s",
+            (fname if saved_local else None, f.filename, tipo_archivo,
+             cloud_url, cloud_pid, cloud_uploaded_at, ctid)
         )
         try:
             _mant_log("contrato", ctid, "archivo_resubido",
-                      f"Re-subido por {current_username()}: {f.filename}")
+                      f"Re-subido por {current_username()}: {f.filename} "
+                      f"({'Cloudinary' if cloud_url else 'filesystem'})")
         except Exception: pass
         return jsonify({
             "ok": True,
             "mensaje": "Archivo re-subido correctamente.",
             "archivo_nombre": f.filename,
+            "persistente": bool(cloud_url),
+            "storage": "cloudinary" if cloud_url else "filesystem",
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500

@@ -138,22 +138,66 @@ async function procesar(){
   const fd = new FormData();
   fd.append('archivo', SELECTED_FILE);
   fd.append('fmt', document.getElementById('fmt').value);
+  let resetBtn = () => {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';
+  };
   try {
     const r = await fetch('/etiquetas/masivo/procesar', {method:'POST', body: fd});
-    const d = await r.json();
+    // Caso 1: el server devolvió HTML/texto (no JSON) — ej: 500 con traceback
+    let d = null;
+    let raw = '';
+    try { d = await r.json(); }
+    catch(_je) {
+      try { raw = await r.text(); } catch(_te) { raw = ''; }
+    }
+    if (!d) {
+      // No pudo parsear JSON — mostrar error útil con status HTTP
+      const detalle = raw ? raw.slice(0, 300) : `HTTP ${r.status} ${r.statusText}`;
+      if (typeof ilusAlert === 'function') {
+        ilusAlert({
+          title: 'Error procesando archivo',
+          message: `El servidor respondió pero no en formato JSON.`,
+          sub: detalle,
+          type: 'error',
+        });
+      } else {
+        alert(`Error del servidor (HTTP ${r.status}): ${detalle}`);
+      }
+      resetBtn();
+      return;
+    }
     if (!d.ok){
-      alert('Error: ' + (d.error || 'desconocido'));
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';
+      const msg = d.error || (d.detalle ? `${d.detalle}` : 'El servidor devolvió un error sin mensaje');
+      if (typeof ilusAlert === 'function') {
+        ilusAlert({
+          title: 'No se pudo procesar el archivo',
+          message: msg,
+          sub: d.hint || 'Verifica que el Excel use el formato correcto. Descarga la plantilla si tienes dudas.',
+          type: 'error',
+        });
+      } else {
+        alert('Error: ' + msg);
+      }
+      resetBtn();
       return;
     }
     mostrarResultados(d);
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar de nuevo';
   } catch(e){
-    alert('Error de red: ' + e.message);
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';
+    console.error('[etiquetas/masivo/procesar]', e);
+    if (typeof ilusAlert === 'function') {
+      ilusAlert({
+        title: 'Error de red',
+        message: e.message || String(e),
+        sub: 'Revisa tu conexión y vuelve a intentar. Si persiste, contacta soporte.',
+        type: 'error',
+      });
+    } else {
+      alert('Error de red: ' + e.message);
+    }
+    resetBtn();
   }
 }
 

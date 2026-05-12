@@ -3848,6 +3848,71 @@ async function cargarFinanzas() {
   </div>
 </div>
 
+{# ══════════════════════════════════════════════════════════════════
+   MODAL: previsualizador universal de documentos
+   PDF → iframe nativo
+   Imagen → <img> centrada
+   Excel/Word/PPT → Microsoft Office Online Viewer (requiere URL pública HTTPS)
+   Texto/CSV/JSON → fetch + <pre>
+   Otros → fallback con icono + botón descargar
+══════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalDocPreview" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-fullscreen-md-down doc-preview-dialog">
+    <div class="modal-content doc-preview-content">
+      <div class="modal-header doc-preview-header">
+        <div class="d-flex align-items-center gap-2 text-truncate" style="min-width:0">
+          <i class="bi bi-file-earmark-text" id="docPrevIcon"></i>
+          <h6 class="modal-title text-truncate mb-0" id="docPrevTitle">Documento</h6>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-shrink-0">
+          <a id="docPrevDownload" href="#" download class="btn btn-sm btn-outline-light">
+            <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">Descargar</span>
+          </a>
+          <a id="docPrevExternal" href="#" target="_blank" class="btn btn-sm btn-outline-light" title="Abrir en pestaña nueva">
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+      </div>
+      <div class="modal-body doc-preview-body" id="docPrevBody">
+        <div class="doc-prev-loader">
+          <div class="spinner-border text-light"></div>
+          <div class="mt-2 small">Cargando previsualización…</div>
+        </div>
+      </div>
+      <div class="modal-footer doc-preview-footer">
+        <div class="small text-muted me-auto text-truncate" id="docPrevMeta">—</div>
+        <span class="badge bg-secondary" id="docPrevBadgeTipo">—</span>
+        <span class="badge" id="docPrevBadgePersist">—</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.doc-preview-dialog{max-width:1200px;}
+.doc-preview-content{background:#0f172a;color:#e5e7eb;border:none;border-radius:12px;overflow:hidden;}
+.doc-preview-header{background:#0b1220;color:#fff;border-bottom:1px solid #1e293b;padding:.6rem .9rem;}
+.doc-preview-header .modal-title{font-size:.95rem;font-weight:600;max-width:55vw;}
+.doc-preview-header #docPrevIcon{font-size:1.2rem;color:#60a5fa;flex-shrink:0;}
+.doc-preview-body{background:#111827;padding:0;height:78vh;overflow:auto;position:relative;}
+.doc-preview-body iframe,.doc-preview-body embed,.doc-preview-body object{width:100%;height:100%;border:0;background:#fff;display:block;}
+.doc-preview-body img.doc-prev-img{max-width:100%;max-height:100%;margin:auto;display:block;object-fit:contain;}
+.doc-preview-body pre.doc-prev-text{margin:0;padding:18px 22px;background:#0b1220;color:#e2e8f0;font-size:.78rem;
+  white-space:pre-wrap;word-break:break-word;height:100%;overflow:auto;font-family:Consolas,monospace;}
+.doc-preview-footer{background:#0b1220;border-top:1px solid #1e293b;padding:.45rem .9rem;font-size:.75rem;}
+.doc-prev-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#94a3b8;}
+.doc-prev-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;
+  color:#94a3b8;text-align:center;padding:30px;}
+.doc-prev-empty i{font-size:5rem;opacity:.45;margin-bottom:14px;color:#60a5fa;}
+.doc-prev-empty .fname{color:#e5e7eb;font-weight:600;font-size:1rem;margin-bottom:4px;word-break:break-all;}
+.doc-prev-empty .fmeta{font-size:.78rem;margin-bottom:18px;}
+@media(max-width:768px){
+  .doc-preview-body{height:calc(100vh - 112px);}
+  .doc-preview-header .modal-title{max-width:50vw;}
+}
+</style>
+
 <script>
 let _docCache = [];
 async function cargarDocumentos() {
@@ -3893,9 +3958,15 @@ function docRender(arr) {
         </div>
       </div>
       <div class="d-flex gap-1">
-        <a href="${d.url}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i></a>
-        <a href="${d.url}" download class="btn btn-xs btn-outline-secondary"><i class="bi bi-download"></i></a>
-        ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')"><i class="bi bi-trash"></i></button>` : ''}
+        <button type="button" class="btn btn-xs btn-outline-primary"
+                onclick='docPreview(${JSON.stringify(d).replace(/'/g,"&#39;")})'
+                title="Previsualizar dentro del sistema">
+          <i class="bi bi-eye"></i>
+        </button>
+        <a href="${d.url}" download class="btn btn-xs btn-outline-secondary" title="Descargar">
+          <i class="bi bi-download"></i>
+        </a>
+        ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>` : ''}
       </div>
     </div>`).join('');
 }
@@ -3963,6 +4034,118 @@ async function docEliminar(kind, id) {
   if (!ok) return;
   await fetch(`/mantenciones/api/documentos/${kind}/${id}`, {method:'DELETE'});
   cargarDocumentos();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  PREVIEW UNIVERSAL DE DOCUMENTOS
+//  Detecta el tipo por extensión/mime y renderiza el visor adecuado:
+//    PDF      → iframe nativo (todos los navegadores soportan)
+//    Imagen   → <img> centrada
+//    Office   → Microsoft Office Online Viewer (gratis, oficial)
+//    Texto    → fetch + <pre>
+//    Otros    → fallback con botón descargar
+// ════════════════════════════════════════════════════════════════════
+function docTipoArchivo(url, mime){
+  const u = (url || '').toLowerCase().split('?')[0];
+  const m = (mime || '').toLowerCase();
+  const ext = u.substring(u.lastIndexOf('.') + 1);
+  if (m === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (m.startsWith('image/') || ['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return 'imagen';
+  if (['xls','xlsx','xlsm','doc','docx','ppt','pptx'].includes(ext)
+      || m.includes('officedocument') || m.includes('msword') || m.includes('ms-excel')) return 'office';
+  if (['txt','csv','log','md','json','xml','html'].includes(ext) || m.startsWith('text/')) return 'texto';
+  return 'otro';
+}
+
+function _docPrevEsc(s){
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function _docPrevFallback(item, msg){
+  return `<div class="doc-prev-empty">
+    <i class="bi bi-file-earmark-arrow-down"></i>
+    <div class="fname">${_docPrevEsc(item.nombre||'Documento')}</div>
+    <div class="fmeta">${_docPrevEsc(msg||'')}${item.size_kb?` · ${item.size_kb} KB`:''}</div>
+    <a href="${_docPrevEsc(item.url)}" download class="btn btn-primary btn-sm">
+      <i class="bi bi-download me-1"></i>Descargar archivo
+    </a>
+  </div>`;
+}
+
+async function docPreview(item){
+  if (!item || !item.url){
+    if (typeof ilusToast === 'function') ilusToast('Documento sin URL', { type:'warning' });
+    return;
+  }
+  const tipo = docTipoArchivo(item.url, item.mime_type || item.mime);
+  const nombre = item.nombre || 'Documento';
+  const body = document.getElementById('docPrevBody');
+
+  // Header
+  document.getElementById('docPrevTitle').textContent = nombre;
+  document.getElementById('docPrevTitle').title = nombre;
+  document.getElementById('docPrevDownload').href = item.url;
+  document.getElementById('docPrevDownload').setAttribute('download', nombre);
+  document.getElementById('docPrevExternal').href = item.url;
+
+  // Badges
+  document.getElementById('docPrevBadgeTipo').textContent = tipo.toUpperCase();
+  const persist = document.getElementById('docPrevBadgePersist');
+  if (item.persistente){ persist.textContent = '☁️ persistente'; persist.className='badge bg-success'; }
+  else { persist.textContent = '⚠ volátil'; persist.className='badge bg-warning text-dark'; }
+
+  // Meta
+  document.getElementById('docPrevMeta').textContent = [
+    item.fuente || item.tipo,
+    item.created_at || '',
+    item.size_kb ? `${item.size_kb} KB` : '',
+    item.created_by ? `por ${item.created_by}` : ''
+  ].filter(Boolean).join(' · ') || '—';
+
+  // Icono por tipo
+  const icoMap = {pdf:'bi-file-earmark-pdf', imagen:'bi-file-earmark-image',
+                  office:'bi-file-earmark-spreadsheet', texto:'bi-file-earmark-text', otro:'bi-file-earmark'};
+  document.getElementById('docPrevIcon').className = 'bi ' + (icoMap[tipo] || 'bi-file-earmark');
+
+  // Mostrar loader y abrir modal
+  body.innerHTML = `<div class="doc-prev-loader"><div class="spinner-border text-light"></div><div class="mt-2 small">Cargando…</div></div>`;
+  new bootstrap.Modal(document.getElementById('modalDocPreview')).show();
+
+  // Render según tipo
+  try {
+    if (tipo === 'pdf'){
+      body.innerHTML = `<iframe src="${_docPrevEsc(item.url)}#toolbar=1&view=FitH" title="${_docPrevEsc(nombre)}"></iframe>`;
+    }
+    else if (tipo === 'imagen'){
+      body.innerHTML = `<div style="display:flex;height:100%;align-items:center;justify-content:center;background:#000">
+        <img class="doc-prev-img" src="${_docPrevEsc(item.url)}" alt="${_docPrevEsc(nombre)}"
+             onerror="document.getElementById('docPrevBody').innerHTML='<div class=&quot;doc-prev-empty&quot;><i class=&quot;bi bi-exclamation-triangle&quot;></i><div class=&quot;fname&quot;>No se pudo cargar la imagen</div></div>'">
+      </div>`;
+    }
+    else if (tipo === 'office'){
+      // Office Online Viewer requiere URL pública HTTPS (Cloudinary cumple)
+      const isHttps = /^https:\/\//i.test(item.url);
+      if (!isHttps){
+        body.innerHTML = _docPrevFallback(item, 'Office Viewer requiere URL pública HTTPS (Cloudinary). Este archivo está en filesystem local.');
+        return;
+      }
+      const viewer = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(item.url)}`;
+      body.innerHTML = `<iframe src="${viewer}" title="${_docPrevEsc(nombre)}" allowfullscreen></iframe>`;
+    }
+    else if (tipo === 'texto'){
+      const r = await fetch(item.url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const txt = await r.text();
+      const truncado = txt.length > 200000;
+      body.innerHTML = `<pre class="doc-prev-text">${_docPrevEsc(txt.slice(0, 200000))}${truncado?'\n\n… (truncado a 200 KB)':''}</pre>`;
+    }
+    else {
+      body.innerHTML = _docPrevFallback(item, 'Formato no previsualizable en línea.');
+    }
+  } catch(e){
+    body.innerHTML = _docPrevFallback(item, 'Error al cargar: ' + e.message);
+  }
 }
 </script>
 </div>
