@@ -3153,29 +3153,34 @@ async function subirContrato(){
   alert('Error al subir contrato');return false;
 }
 async function subirMaquinas(){
-  const eqs=leerEquipos();
+  const eqs = leerEquipos();
   const errores = [];
   let exitosos = 0;
-  for(const eq of eqs){
+  const TIMEOUT_MS = 60000;  // 60s por equipo (antes era infinito → 'Failed to fetch')
+  const CONCURRENCIA = 4;    // 4 requests simultáneos máx (no saturar el ERP / worker)
+
+  async function subirUno(eq){
     const codInt = (eq.codigo_interno || '').trim();
     const codigoFinal = (codInt.startsWith('(auto') || !codInt) ? '' : codInt;
     const qtyOriginal = parseInt(eq.cantidad_original || 0) || 0;
     const splitFlag   = String(eq.split_to_rows||'') === '1';
     const tieneDoc    = !!(eq.doc_origen && eq.sku);
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), TIMEOUT_MS) : null;
     try {
       const r = await fetch(`/mantenciones/api/clientes/${WZ.cid}/maquinas`,{
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        signal: ctrl ? ctrl.signal : undefined,
         body:JSON.stringify({
           nombre:             eq.nombre,
           sku:                eq.sku,
           codigo_interno:     codigoFinal,
           serie:              eq.serie,
           cantidad:           parseInt(eq.cantidad)||1,
-          // ── Saldo / split ──
           cantidad_original:  qtyOriginal,
           split_to_rows:      splitFlag,
           validar_saldo:      tieneDoc && qtyOriginal > 0,
-          // ── Datos estándar ──
           ubicacion_cliente:  eq.ubicacion,
           estado_op:          eq.estado_op,
           fecha_instalacion:  eq.fecha_instalacion||null,
@@ -3194,10 +3199,22 @@ async function subirMaquinas(){
         errores.push(`✗ ${eq.sku || eq.nombre}: ${d.error || 'error desconocido'}`);
       }
     } catch(e) {
-      errores.push(`✗ ${eq.sku || eq.nombre}: error de red`);
+      if (e && e.name === 'AbortError') {
+        errores.push(`✗ ${eq.sku || eq.nombre}: timeout (60s)`);
+      } else {
+        errores.push(`✗ ${eq.sku || eq.nombre}: error de red`);
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
-  // Devolvemos resultado para que finalizar() decida si seguir o abortar
+
+  // Procesar en lotes de CONCURRENCIA (4 simultáneos): mucho más rápido que
+  // serial, pero sin saturar gunicorn (2 workers).
+  for (let i = 0; i < eqs.length; i += CONCURRENCIA) {
+    const lote = eqs.slice(i, i + CONCURRENCIA);
+    await Promise.all(lote.map(subirUno));
+  }
   return { total: eqs.length, exitosos, errores };
 }
 
@@ -3241,7 +3258,33 @@ async function finalizar(){
     // Cliente guardado correctamente → limpiar el draft local
     wzBorrarDraft();
     window.location.href=`/mantenciones/clientes/${WZ.cid}`;
-  }catch(e){btn.disabled=false;btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';alert('Error: '+e.message);}
+  }catch(e){
+    btn.disabled=false;
+    btn.innerHTML='<i class="bi bi-floppy me-1"></i>Guardar y finalizar';
+    // "Failed to fetch" en JS suele significar: el server tardó demasiado,
+    // se reinició el worker, o cayó la conexión. El cliente puede haber
+    // quedado parcialmente guardado.
+    const isNetworkErr = (e && (e.message === 'Failed to fetch' || e.name === 'TypeError'));
+    const msg = isNetworkErr
+      ? '⏱️ La operación tardó demasiado y se cortó la conexión.\n\n'
+        + 'IMPORTANTE: el cliente probablemente SÍ se guardó parcialmente.\n'
+        + 'Antes de reintentar:\n'
+        + '  1) Ve a "Clientes" y busca a este cliente — si aparece, abre su ficha.\n'
+        + '  2) Si tiene equipos, ya quedó listo (no reintentar).\n'
+        + '  3) Si NO tiene equipos o falta el contrato, completa desde la ficha.\n\n'
+        + 'Para evitar esto: importa equipos en lotes de 30 o menos, o desmarca '
+        + '"Generar visitas automáticamente" antes de finalizar.'
+      : 'Error: ' + (e && e.message ? e.message : e);
+    if (typeof ilusAlert === 'function') {
+      ilusAlert({
+        title: isNetworkErr ? 'Timeout al guardar' : 'Error al guardar',
+        message: msg,
+        type: isNetworkErr ? 'warning' : 'error',
+      });
+    } else {
+      alert(msg);
+    }
+  }
 }
 </script>
 {% endblock %}

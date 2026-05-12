@@ -119,6 +119,11 @@ def _pw_browser_get():
         return _pw_browser
 
 
+class PDFEngineUnavailable(Exception):
+    """Playwright/Chromium no disponible — el caller debe convertir a HTTP 503."""
+    pass
+
+
 def _pw_pdf(html: str, *, width: str = None, height: str = None,
             page_format: str = None, margin: dict = None,
             wait_fn: str = None, wait_timeout: int = 5000) -> bytes:
@@ -128,8 +133,25 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
     - page_format  → 'A4', 'Letter', etc.
     - wait_fn      → JS expression string para page.wait_for_function()
     - margin       → dict top/right/bottom/left en mm ('0mm')
+
+    Si Playwright/Chromium no está instalado (problema de deploy), lanza
+    PDFEngineUnavailable con mensaje útil — el endpoint que llama debe
+    convertir esto a una respuesta 503 amigable, NO al traceback crudo.
     """
-    browser = _pw_browser_get()
+    try:
+        browser = _pw_browser_get()
+    except Exception as e:
+        # Casos típicos: Chromium no instalado, versiones desincronizadas,
+        # sandbox bloqueado por SELinux, etc.
+        err_msg = str(e)
+        if "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
+            raise PDFEngineUnavailable(
+                "El motor PDF (Chromium) no está instalado en el servidor. "
+                "Pide al administrador que verifique el deploy de Playwright. "
+                f"Detalle técnico: {type(e).__name__}"
+            ) from e
+        # Otro error desconocido — re-raise para no enmascarar bugs
+        raise
     page    = browser.new_page()
     try:
         page.set_content(html, wait_until="domcontentloaded")
@@ -7989,7 +8011,15 @@ def cubicador_export_pdf():
         return redirect(url_for("cubicador"))
 
     # ── Logo ILUS ────────────────────────────────────────────────────
-    return _cubicador_pdf_response_ilus(headers, lineas, docs)
+    try:
+        return _cubicador_pdf_response_ilus(headers, lineas, docs)
+    except PDFEngineUnavailable as e_pdf:
+        flash(
+            f"⚠️ El motor PDF está temporalmente no disponible: {e_pdf}. "
+            "Mientras tanto puedes exportar a Excel con el mismo resultado.",
+            "danger"
+        )
+        return redirect(url_for("cubicador"))
 
     import os as _os
     _logo_path = _os.path.join(_os.path.dirname(__file__), "static", "logo_pdf.txt")
