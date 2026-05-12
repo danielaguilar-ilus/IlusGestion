@@ -17441,6 +17441,408 @@ def mant_calendario_dia_drill(fecha):
         return jsonify({"ok": False, "error": f"Error al consultar: {e}"}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════
+# CRONÓMETRO POR TAREA — start / pause / resume / complete
+#
+# Cada acción del usuario inserta una fila en mant_tarea_tiempo y
+# actualiza el estado de la tarea (mant_visita_tareas.estado_trabajo).
+# Cuando se completa la PRIMERA tarea o la ÚLTIMA, también se ajustan
+# hora_real_inicio / hora_real_fin de la visita.
+#
+# Endpoints:
+#   POST /mantenciones/api/tareas/<tid>/cronometro
+#        body: {accion: iniciar|pausar|reanudar|completar, nota?, geo?}
+#   GET  /mantenciones/api/tareas/<tid>/cronometro
+#        → estado actual + eventos recientes
+#   GET  /mantenciones/api/visitas/<vid>/cronometro-resumen
+#        → tiempo agregado de toda la visita
+# ══════════════════════════════════════════════════════════════════════
+
+def _crono_seg_desde_ultimo(tarea_id):
+    """Devuelve los segundos transcurridos desde el último 'iniciar' o
+    'reanudar' (sin pausar/completar posterior). 0 si no hay segmento abierto.
+    """
+    row = mysql_fetchone(
+        "SELECT `timestamp` FROM mant_tarea_tiempo "
+        " WHERE tarea_id=%s AND accion IN ('iniciar','reanudar') "
+        " ORDER BY id DESC LIMIT 1",
+        (tarea_id,)
+    )
+    if not row or not row.get("timestamp"):
+        return 0
+    try:
+        from datetime import datetime as _dt
+        ts = row["timestamp"]
+        if isinstance(ts, str):
+            ts = _dt.fromisoformat(ts)
+        return max(0, int((_dt.now() - ts).total_seconds()))
+    except Exception:
+        return 0
+
+
+def _crono_total_seg(tarea_id):
+    """Suma todos los segmentos cerrados (pausar/completar) de la tarea."""
+    row = mysql_fetchone(
+        "SELECT COALESCE(SUM(duracion_segmento_seg),0) AS total "
+        "  FROM mant_tarea_tiempo "
+        " WHERE tarea_id=%s AND duracion_segmento_seg IS NOT NULL",
+        (tarea_id,)
+    )
+    return int((row or {}).get("total") or 0)
+
+
+@app.route("/mantenciones/api/tareas/<int:tid>/cronometro", methods=["POST"])
+@_mant_required
+def mant_tarea_cronometro(tid):
+    """Iniciar / pausar / reanudar / completar tarea.
+
+    Body JSON: {accion: 'iniciar'|'pausar'|'reanudar'|'completar', nota?, geo?}
+    """
+    d = request.get_json(silent=True) or {}
+    accion = (d.get("accion") or "").strip().lower()
+    if accion not in ("iniciar", "pausar", "reanudar", "completar"):
+        return jsonify({"ok": False, "error": "Acción inválida"}), 400
+
+    nota = (d.get("nota") or "").strip()[:300] or None
+    geo  = (d.get("geo")  or "").strip()[:50]  or None
+    user = current_username()
+
+    # Tarea actual
+    tarea = mysql_fetchone(
+        "SELECT t.id, t.visita_id, t.titulo, t.completada, t.estado_trabajo, "
+        "       t.pausada_acumulado_seg, t.iniciado_at "
+        "  FROM mant_visita_tareas t WHERE t.id=%s",
+        (tid,)
+    )
+    if not tarea:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    tarea = dict(tarea)
+    vid   = tarea["visita_id"]
+    estado_actual = tarea.get("estado_trabajo") or "pendiente"
+
+    # Validaciones de transición
+    if accion == "iniciar" and estado_actual not in ("pendiente", "pausada"):
+        return jsonify({"ok": False, "error": f"No se puede iniciar (estado actual: {estado_actual})"}), 409
+    if accion == "pausar" and estado_actual != "en_curso":
+        return jsonify({"ok": False, "error": "Solo se puede pausar una tarea en curso"}), 409
+    if accion == "reanudar" and estado_actual != "pausada":
+        return jsonify({"ok": False, "error": "Solo se puede reanudar una tarea pausada"}), 409
+    if accion == "completar" and estado_actual == "completada":
+        return jsonify({"ok": False, "error": "La tarea ya está completada"}), 409
+
+    # Tecnico (intentar deducir desde visita)
+    tecnico_id = None
+    try:
+        trow = mysql_fetchone(
+            "SELECT tecnico_id FROM mant_visita_tecnicos WHERE visita_id=%s LIMIT 1",
+            (vid,)
+        )
+        if trow and trow.get("tecnico_id"):
+            tecnico_id = int(trow["tecnico_id"])
+        else:
+            vrow = mysql_fetchone("SELECT tecnico_id FROM mant_visitas WHERE id=%s", (vid,))
+            if vrow and vrow.get("tecnico_id"):
+                tecnico_id = int(vrow["tecnico_id"])
+    except Exception:
+        pass
+
+    # Calcular segundos del segmento actual cuando se cierra
+    seg_segmento = None
+    if accion in ("pausar", "completar"):
+        seg_segmento = _crono_seg_desde_ultimo(tid)
+
+    # Insertar evento
+    mysql_execute(
+        "INSERT INTO mant_tarea_tiempo (tarea_id, visita_id, tecnico_id, accion, "
+        "                               duracion_segmento_seg, nota, geo, creado_por) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+        (tid, vid, tecnico_id, accion, seg_segmento, nota, geo, user)
+    )
+
+    # Actualizar tarea según acción
+    if accion == "iniciar":
+        # Marcar iniciado_at sólo la primera vez
+        if not tarea.get("iniciado_at"):
+            mysql_execute(
+                "UPDATE mant_visita_tareas SET estado_trabajo='en_curso', "
+                "       iniciado_at=NOW() WHERE id=%s",
+                (tid,)
+            )
+        else:
+            mysql_execute(
+                "UPDATE mant_visita_tareas SET estado_trabajo='en_curso' WHERE id=%s",
+                (tid,)
+            )
+        # ¿Primera tarea de la visita en iniciarse?  → marcar hora_real_inicio
+        try:
+            otras_iniciadas = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+                " WHERE visita_id=%s AND iniciado_at IS NOT NULL AND id<>%s",
+                (vid, tid)
+            )
+            visita_row = mysql_fetchone(
+                "SELECT hora_real_inicio FROM mant_visitas WHERE id=%s", (vid,)
+            )
+            if (otras_iniciadas or {}).get("n", 0) == 0 and not (visita_row or {}).get("hora_real_inicio"):
+                mysql_execute(
+                    "UPDATE mant_visitas SET hora_real_inicio=NOW(), "
+                    "       estado=CASE WHEN estado='programada' THEN 'en_curso' ELSE estado END "
+                    " WHERE id=%s",
+                    (vid,)
+                )
+        except Exception:
+            pass
+
+    elif accion == "pausar":
+        mysql_execute(
+            "UPDATE mant_visita_tareas "
+            "   SET estado_trabajo='pausada', "
+            "       pausada_acumulado_seg = COALESCE(pausada_acumulado_seg,0) + %s "
+            " WHERE id=%s",
+            (seg_segmento or 0, tid)
+        )
+
+    elif accion == "reanudar":
+        mysql_execute(
+            "UPDATE mant_visita_tareas SET estado_trabajo='en_curso' WHERE id=%s",
+            (tid,)
+        )
+
+    elif accion == "completar":
+        # Sumar duración total acumulada (segmentos cerrados) en minutos
+        total_seg = _crono_total_seg(tid)
+        # Sumar el segmento que recién cerramos (si la tarea estaba en_curso)
+        if estado_actual == "en_curso" and seg_segmento:
+            total_seg += seg_segmento
+        duracion_min = max(1, round(total_seg / 60.0)) if total_seg else None
+        mysql_execute(
+            "UPDATE mant_visita_tareas "
+            "   SET estado_trabajo='completada', "
+            "       completada=1, "
+            "       completada_at=NOW(), "
+            "       completada_por=%s, "
+            "       duracion_min=COALESCE(%s, duracion_min) "
+            " WHERE id=%s",
+            (user, duracion_min, tid)
+        )
+
+        # ¿Todas las tareas de la visita completadas? → cerrar visita
+        try:
+            stats = mysql_fetchone(
+                "SELECT COUNT(*) AS total, "
+                "       SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS completas "
+                "  FROM mant_visita_tareas WHERE visita_id=%s",
+                (vid,)
+            ) or {}
+            if stats.get("total") and stats.get("total") == stats.get("completas"):
+                # Calcular duracion_real_min desde hora_real_inicio
+                vis = mysql_fetchone(
+                    "SELECT hora_real_inicio FROM mant_visitas WHERE id=%s", (vid,)
+                )
+                dur_real = None
+                if vis and vis.get("hora_real_inicio"):
+                    try:
+                        from datetime import datetime as _dt
+                        hi = vis["hora_real_inicio"]
+                        if isinstance(hi, str):
+                            hi = _dt.fromisoformat(hi)
+                        dur_real = max(1, int((_dt.now() - hi).total_seconds() / 60))
+                    except Exception:
+                        pass
+                mysql_execute(
+                    "UPDATE mant_visitas "
+                    "   SET hora_real_fin=NOW(), "
+                    "       duracion_real_min=COALESCE(%s, duracion_real_min) "
+                    " WHERE id=%s",
+                    (dur_real, vid)
+                )
+        except Exception:
+            pass
+
+    # Log
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('tarea', %s, %s, %s, %s)",
+            (tid, f"cronometro_{accion}", tarea.get("titulo") or f"tid={tid}", user)
+        )
+    except Exception:
+        pass
+
+    # Estado actualizado para devolver al frontend
+    tarea_upd = mysql_fetchone(
+        "SELECT id, estado_trabajo, iniciado_at, completada, completada_at, "
+        "       duracion_min, duracion_estimada_min, pausada_acumulado_seg "
+        "  FROM mant_visita_tareas WHERE id=%s",
+        (tid,)
+    ) or {}
+    return jsonify({
+        "ok": True,
+        "accion": accion,
+        "tarea": {
+            "id": tid,
+            "estado_trabajo": (tarea_upd or {}).get("estado_trabajo"),
+            "iniciado_at": str((tarea_upd or {}).get("iniciado_at") or "") or None,
+            "completada": bool((tarea_upd or {}).get("completada")),
+            "completada_at": str((tarea_upd or {}).get("completada_at") or "") or None,
+            "duracion_min": (tarea_upd or {}).get("duracion_min"),
+            "duracion_estimada_min": (tarea_upd or {}).get("duracion_estimada_min"),
+            "pausada_acumulado_seg": (tarea_upd or {}).get("pausada_acumulado_seg"),
+        },
+        "duracion_segmento_seg": seg_segmento,
+        "duracion_total_seg": _crono_total_seg(tid),
+    })
+
+
+@app.route("/mantenciones/api/tareas/<int:tid>/cronometro", methods=["GET"])
+@_mant_required
+def mant_tarea_cronometro_get(tid):
+    """Devuelve estado actual del cronómetro + últimos 20 eventos."""
+    tarea = mysql_fetchone(
+        "SELECT id, visita_id, titulo, completada, estado_trabajo, "
+        "       iniciado_at, completada_at, duracion_min, duracion_estimada_min, "
+        "       pausada_acumulado_seg "
+        "  FROM mant_visita_tareas WHERE id=%s",
+        (tid,)
+    )
+    if not tarea:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    eventos = mysql_fetchall(
+        "SELECT id, accion, `timestamp`, duracion_segmento_seg, nota, creado_por "
+        "  FROM mant_tarea_tiempo WHERE tarea_id=%s ORDER BY id DESC LIMIT 20",
+        (tid,)
+    ) or []
+    seg_abierto = 0
+    if (dict(tarea).get("estado_trabajo")) == "en_curso":
+        seg_abierto = _crono_seg_desde_ultimo(tid)
+    return jsonify({
+        "ok": True,
+        "tarea": {
+            **dict(tarea),
+            "iniciado_at": str(dict(tarea).get("iniciado_at") or "") or None,
+            "completada_at": str(dict(tarea).get("completada_at") or "") or None,
+        },
+        "eventos": [
+            {
+                "id": e["id"], "accion": e["accion"],
+                "timestamp": str(e.get("timestamp") or ""),
+                "duracion_segmento_seg": e.get("duracion_segmento_seg"),
+                "nota": e.get("nota"),
+                "creado_por": e.get("creado_por"),
+            } for e in eventos
+        ],
+        "duracion_total_seg": _crono_total_seg(tid),
+        "segmento_abierto_seg": seg_abierto,
+    })
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/cronometro-resumen", methods=["GET"])
+@_mant_required
+def mant_visita_cronometro_resumen(vid):
+    """Resumen de tiempo de toda la visita (todas las tareas)."""
+    visita = mysql_fetchone(
+        "SELECT id, numero_ot, hora_real_inicio, hora_real_fin, "
+        "       duracion_real_min, duracion_planificada_min, pausada_total_min "
+        "  FROM mant_visitas WHERE id=%s",
+        (vid,)
+    )
+    if not visita:
+        return jsonify({"ok": False, "error": "Visita no encontrada"}), 404
+    tareas = mysql_fetchall(
+        "SELECT id, titulo, estado_trabajo, iniciado_at, completada_at, "
+        "       duracion_min, duracion_estimada_min, pausada_acumulado_seg, "
+        "       completada "
+        "  FROM mant_visita_tareas WHERE visita_id=%s ORDER BY orden, id",
+        (vid,)
+    ) or []
+    tareas = [dict(t) for t in tareas]
+    # Sumar todas las duraciones reales
+    real_total_min = 0
+    estimado_total_min = 0
+    for t in tareas:
+        if t.get("duracion_min"):
+            real_total_min += int(t["duracion_min"])
+        elif t.get("estado_trabajo") == "en_curso":
+            # Tiempo vivo: sumar todos los segmentos cerrados + segmento abierto
+            real_total_min += round((_crono_total_seg(t["id"]) + _crono_seg_desde_ultimo(t["id"])) / 60.0)
+        if t.get("duracion_estimada_min"):
+            estimado_total_min += int(t["duracion_estimada_min"])
+
+    return jsonify({
+        "ok": True,
+        "visita": {
+            "id": visita["id"],
+            "numero_ot": visita.get("numero_ot"),
+            "hora_real_inicio": str(visita.get("hora_real_inicio") or "") or None,
+            "hora_real_fin": str(visita.get("hora_real_fin") or "") or None,
+            "duracion_real_min": visita.get("duracion_real_min"),
+            "duracion_planificada_min": visita.get("duracion_planificada_min"),
+        },
+        "tareas_resumen": {
+            "n_total": len(tareas),
+            "n_completadas": sum(1 for t in tareas if t.get("completada")),
+            "n_en_curso":    sum(1 for t in tareas if t.get("estado_trabajo") == "en_curso"),
+            "n_pausadas":    sum(1 for t in tareas if t.get("estado_trabajo") == "pausada"),
+            "real_min_total": real_total_min,
+            "estimado_min_total": estimado_total_min,
+        },
+        "tareas": [
+            {
+                "id": t["id"], "titulo": t.get("titulo"),
+                "estado_trabajo": t.get("estado_trabajo"),
+                "duracion_min": t.get("duracion_min"),
+                "duracion_estimada_min": t.get("duracion_estimada_min"),
+                "completada": bool(t.get("completada")),
+            } for t in tareas
+        ],
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CIERRE DE OT — captura causa raíz, satisfacción y comentario
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/cerrar", methods=["POST"])
+@_mant_required
+def mant_visita_cerrar(vid):
+    """Cierra la visita con causa raíz, estrellas y comentario."""
+    d = request.get_json(silent=True) or {}
+    causa = (d.get("causa_raiz") or "").strip().lower() or None
+    if causa and causa not in ("desgaste","mal_uso","falta_mantencion","defecto_fabrica","accidente","otro"):
+        causa = "otro"
+    estrellas = d.get("satisfaccion_estrellas")
+    try:
+        estrellas = int(estrellas) if estrellas not in (None, "") else None
+        if estrellas is not None and (estrellas < 1 or estrellas > 5):
+            estrellas = max(1, min(5, estrellas))
+    except (TypeError, ValueError):
+        estrellas = None
+    comentario = (d.get("comentario") or "").strip()[:1000] or None
+    user = current_username()
+    mysql_execute(
+        "UPDATE mant_visitas "
+        "   SET estado='completada', "
+        "       cerrada_at=NOW(), "
+        "       causa_raiz=COALESCE(%s, causa_raiz), "
+        "       satisfaccion_estrellas=COALESCE(%s, satisfaccion_estrellas), "
+        "       satisfaccion_comentario=COALESCE(%s, satisfaccion_comentario), "
+        "       hora_real_fin=COALESCE(hora_real_fin, NOW()) "
+        " WHERE id=%s",
+        (causa, estrellas, comentario, vid)
+    )
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, 'cerrada', %s, %s)",
+            (vid,
+             f"OT cerrada — causa: {causa or '—'} · estrellas: {estrellas or '—'}",
+             user)
+        )
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 # ── VISITAS / AGENDA ──────────────────────────────────────────────────
 
 @app.route("/mantenciones/api/visitas", methods=["GET"])
