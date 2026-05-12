@@ -283,18 +283,28 @@ async function toggleActivo(){
 }
 
 async function eliminarTecnico(){
-  if (!confirm('¿Eliminar este técnico?\n\nSi tiene visitas históricas, solo se desactivará.')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar técnico',
+    message: '¿Eliminar este técnico?',
+    sub: 'Si tiene visitas históricas, solo se desactivará.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/tecnicos/${TID}`, { method:'DELETE' });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) { alert('Error: ' + (d.error || '')); return; }
+    if (!r.ok || !d.ok) { ilusToast('Error: ' + (d.error || ''), { type:'error' }); return; }
     if (d.soft) {
-      alert('El técnico tiene visitas históricas y fue desactivado en lugar de eliminado.');
+      await ilusAlert({
+        title: 'Técnico desactivado',
+        message: 'Tiene visitas históricas y fue desactivado en lugar de eliminado.',
+        type: 'info',
+      });
       location.reload();
     } else {
       location.href = '{{ url_for("mant_tecnicos_index") }}';
     }
-  } catch(e){ alert('Error de red: ' + e.message); }
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type:'error' }); }
 }
 </script>
 

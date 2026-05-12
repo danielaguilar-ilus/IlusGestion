@@ -1023,16 +1023,23 @@ function escHtml(s){
 // y que ajuste los nombres de campos en _cubicador_fetch.
 function copiarDiagnostico(){
   const d = window._lastRawSample;
-  if (!d){ alert('No hay diagnóstico disponible'); return; }
+  if (!d){ ilusToast('No hay diagnóstico disponible', { type:'warning' }); return; }
   const txt = `DIAGNÓSTICO ERP — Documento ${d.tido} ${d.nudo}\n\n` +
               `HEADER (${d.all_fields.length} campos disponibles):\n` +
               Object.entries(d.raw || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n') +
               '\n\nPRIMERA LÍNEA (campos no vacíos):\n' +
               Object.entries(d.raw_linea || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n');
   navigator.clipboard.writeText(txt).then(() => {
-    alert('Diagnóstico copiado al portapapeles. Pégalo en un mensaje al admin.');
+    ilusToast('Diagnóstico copiado al portapapeles', { type:'success' });
   }).catch(() => {
-    prompt('Copia este texto y pégalo al admin:', txt);
+    ilusPrompt({
+      title: 'Copia este texto al admin',
+      message: '',
+      multiline: true,
+      defaultValue: txt,
+      required: false,
+      okLabel: 'Listo',
+    });
   });
 }
 

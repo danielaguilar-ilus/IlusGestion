@@ -3497,10 +3497,15 @@ async function guardarRepuesto() {
 }
 
 async function eliminarRepuesto(rid) {
-  if (!confirm('¿Eliminar este repuesto?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar repuesto',
+    message: '¿Eliminar este repuesto?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/mantenciones/api/repuestos/${rid}`, {method:'DELETE'});
   if (r.ok) cargarRepuestos();
-  else alert('Error al eliminar');
+  else ilusToast('Error al eliminar', { type:'error' });
 }
 
 // ── Importar repuestos desde ERP ────────────────────────────
@@ -3842,7 +3847,11 @@ async function docSubir(files) {
   cargarDocumentos();
 }
 async function docEliminar(kind, id) {
-  if (!confirm('¿Eliminar este documento?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar documento', message: '¿Eliminar este documento?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   await fetch(`/mantenciones/api/documentos/${kind}/${id}`, {method:'DELETE'});
   cargarDocumentos();
 }
@@ -6340,21 +6349,33 @@ async function guardarSucursal() {
 }
 
 async function eliminarSucursal(sid, nombre) {
-  if (!confirm(`¿Eliminar la sucursal "${nombre}"?\n\nEsta acción se puede revertir desde la BD si es necesario.`)) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar sucursal',
+    message: `¿Eliminar la sucursal "${nombre}"?`,
+    sub: 'Esta acción se puede revertir desde la BD si es necesario.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/sucursales/${sid}`, {method:'DELETE'});
     if (r.ok) location.reload();
-    else alert('Error al eliminar');
-  } catch(e) { alert('Error de red'); }
+    else ilusToast('Error al eliminar', { type:'error' });
+  } catch(e) { ilusToast('Error de red', { type:'error' }); }
 }
 
 async function marcarSucursalPrincipal(sid, nombre) {
-  if (!confirm(`¿Marcar "${nombre}" como dirección principal?\n\nEsta sucursal predominará sobre la dirección base del cliente. Cualquier otra principal se desmarcará.`)) return;
+  const ok = await ilusConfirm({
+    title: 'Cambiar dirección principal',
+    message: `¿Marcar "${nombre}" como dirección principal?`,
+    sub: 'Esta sucursal predominará sobre la dirección base del cliente. Cualquier otra principal se desmarcará.',
+    okLabel: 'Sí, marcar principal',
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/sucursales/${sid}/marcar-principal`, {method:'POST'});
     if (r.ok) location.reload();
-    else alert('Error al marcar como principal');
-  } catch(e) { alert('Error de red'); }
+    else ilusToast('Error al marcar como principal', { type:'error' });
+  } catch(e) { ilusToast('Error de red', { type:'error' }); }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -7122,7 +7143,11 @@ async function guardarMaquinaManual() {
 }
 
 async function eliminarMaquina(mid, btn) {
-  if (!confirm('¿Eliminar este equipo?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar equipo', message: '¿Eliminar este equipo?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   btn.disabled = true;
   const r = await fetch(`/mantenciones/api/maquinas/${mid}`, { method: 'DELETE' });
   if (r.ok) {
@@ -8298,7 +8323,11 @@ async function repSubirFoto(file) {
 }
 
 async function repDelFoto(fid, btn) {
-  if (!confirm('¿Eliminar foto?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto', message: '¿Eliminar foto?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/mantenciones/api/adjuntos/${fid}`,{method:'DELETE'});
   if (r.ok) btn.closest('.rep-foto-item').remove();
 }
@@ -8342,7 +8371,11 @@ async function repGuardar(silencioso=false) {
 }
 
 async function eliminarReporte(rid) {
-  if (!confirm('¿Eliminar este informe?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar informe', message: '¿Eliminar este informe?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/mantenciones/api/reportes/${rid}`,{method:'DELETE'});
   if (r.ok) cargarReportes();
 }
@@ -8579,7 +8612,11 @@ function mostrarSubirAdjunto() {
 }
 
 async function eliminarAdjunto(aid, btn) {
-  if (!confirm('¿Eliminar adjunto?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar adjunto', message: '¿Eliminar adjunto?',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const r = await fetch(`/mantenciones/api/adjuntos/${aid}`,{method:'DELETE'});
   if (r.ok) btn.closest('.adj-row').remove();
 }

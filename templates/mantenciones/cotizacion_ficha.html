@@ -376,7 +376,17 @@ async function cancelar() {
 }
 
 async function convertirOT() {
-  const fecha = prompt('Fecha de la OT (YYYY-MM-DD), dejar vacío para hoy+3 días:');
+  const hoy3 = new Date(Date.now() + 3*86400000).toISOString().slice(0,10);
+  const fecha = await ilusPrompt({
+    title: 'Convertir cotización en OT',
+    message: 'Fecha de la OT:',
+    sub: 'Formato YYYY-MM-DD. Deja vacío para usar hoy + 3 días.',
+    inputType: 'date',
+    defaultValue: '',
+    placeholder: hoy3,
+    required: false,
+    okLabel: 'Crear OT',
+  });
   if (fecha === null) return;
   try {
     const r = await fetch(`/mantenciones/api/cotizaciones/${COT_ID}/convertir-ot`, {
@@ -386,12 +396,16 @@ async function convertirOT() {
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
-    if (confirm(`OT ${d.numero_ot} creada con ${d.tareas_creadas} tarea(s). ¿Ir a la OT ahora?`)) {
-      window.location = '/mantenciones/ot/' + d.visita_id;
-    } else {
-      cargar();
-    }
-  } catch(e) { alert('Error: ' + e.message); }
+    const ir = await ilusConfirm({
+      title: 'OT creada',
+      message: `OT ${d.numero_ot} creada con ${d.tareas_creadas} tarea(s).`,
+      sub: '¿Ir a la OT ahora?',
+      okLabel: 'Ir a la OT',
+      cancelLabel: 'Quedarme aquí',
+    });
+    if (ir) window.location = '/mantenciones/ot/' + d.visita_id;
+    else cargar();
+  } catch(e) { ilusToast('Error: ' + e.message, { type:'error' }); }
 }
 
 cargar();

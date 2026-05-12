@@ -1039,7 +1039,13 @@ async function toggleTarea(tid){
 }
 
 async function eliminarTarea(tid){
-  if (!confirm('¿Eliminar esta tarea?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar tarea',
+    message: '¿Eliminar esta tarea?',
+    okLabel: 'Eliminar',
+    danger: true,
+  });
+  if (!ok) return;
   await fetch(API_BASE + '/tareas/' + tid, {method:'DELETE'});
   cargarTareas();
 }
@@ -1104,7 +1110,13 @@ async function subirFotos(files){
 }
 
 async function eliminarFoto(fid){
-  if (!confirm('¿Eliminar esta foto?')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto',
+    message: '¿Eliminar esta foto?',
+    okLabel: 'Eliminar',
+    danger: true,
+  });
+  if (!ok) return;
   await fetch(API_BASE + '/fotos/' + fid, {method:'DELETE'});
   cargarFotos();
 }
@@ -1145,12 +1157,15 @@ const PROTO_LABELS = {
 async function aplicarProtocolo(protocolo, maquinas_ids){
   const label = PROTO_LABELS[protocolo] || protocolo;
   const tieneTareas = document.querySelectorAll('#taskList .task-item').length > 0;
-
-  let confirmMsg = `¿Aplicar protocolo "${label}"?\n\nSe generarán las tareas estándar de este protocolo.`;
-  if (tieneTareas){
-    confirmMsg += `\n\n⚠ Ya hay tareas en esta OT. Las NUEVAS se agregarán abajo (no se borran las existentes).`;
-  }
-  if (!confirm(confirmMsg)) return;
+  const ok = await ilusConfirm({
+    title: `Aplicar protocolo "${label}"`,
+    message: 'Se generarán las tareas estándar de este protocolo.',
+    sub: tieneTareas
+      ? '⚠️ Ya hay tareas en esta OT. Las nuevas se agregarán abajo (no se borran las existentes).'
+      : '',
+    okLabel: 'Aplicar protocolo',
+  });
+  if (!ok) return;
 
   try {
     const body = { reset: false };
@@ -1163,14 +1178,17 @@ async function aplicarProtocolo(protocolo, maquinas_ids){
     });
     const d = await r.json();
     if (!d.ok){
-      alert('❌ ' + (d.error || 'No se pudo aplicar el protocolo'));
+      ilusToast(d.error || 'No se pudo aplicar el protocolo', { type:'error' });
       return;
     }
-    alert(`✅ Protocolo "${label}" aplicado\n\n• ${d.tareas_creadas} tarea(s) creada(s)` +
-          (d.maquinas_afectadas ? `\n• ${d.maquinas_afectadas} máquina(s) afectada(s)` : ''));
+    ilusToast(
+      `Protocolo "${label}" aplicado: ${d.tareas_creadas} tarea(s)` +
+        (d.maquinas_afectadas ? ` · ${d.maquinas_afectadas} máquina(s)` : ''),
+      { type:'success' }
+    );
     cargarTareas();
   } catch(e){
-    alert('❌ Error de red: ' + e);
+    ilusToast('Error de red: ' + e, { type:'error' });
   }
 }
 
@@ -1277,9 +1295,14 @@ function stopCronoTickerSiVacio(){
 }
 
 async function tareaCronometro(tid, accion){
-  // Confirmaciones suaves
   if (accion === 'completar'){
-    if (!confirm('¿Marcar esta tarea como completada? Se detiene el cronómetro.')) return;
+    const ok = await ilusConfirm({
+      title: 'Completar tarea',
+      message: '¿Marcar esta tarea como completada?',
+      sub: 'Se detiene el cronómetro automáticamente.',
+      okLabel: 'Sí, completar',
+    });
+    if (!ok) return;
   }
   try {
     const r = await fetch(`/mantenciones/api/tareas/${tid}/cronometro`, {
@@ -1289,13 +1312,11 @@ async function tareaCronometro(tid, accion){
     });
     const d = await r.json();
     if (!d.ok){
-      alert('❌ ' + (d.error || 'No se pudo procesar la acción'));
+      ilusToast(d.error || 'No se pudo procesar la acción', { type:'error' });
       return;
     }
-    // Si fue completar → modal de nota opcional
     if (accion === 'completar'){
       _ultimaTareaCompletadaId = tid;
-      // Cargar título de la tarea
       const item = document.querySelector(`.task-item[data-tid="${tid}"]`);
       const titulo = item ? (item.querySelector('.task-title')?.textContent || '') : '';
       document.getElementById('tareaNotaTitulo').textContent = titulo;
@@ -1305,7 +1326,7 @@ async function tareaCronometro(tid, accion){
     }
     await cargarTareas();
   } catch(e){
-    alert('❌ Error de red: ' + e);
+    ilusToast('Error de red: ' + e, { type:'error' });
   }
 }
 
@@ -1361,13 +1382,12 @@ async function confirmarCierreOT(){
       body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (!d.ok){ alert('❌ ' + (d.error || 'Error al cerrar')); return; }
+    if (!d.ok){ ilusToast(d.error || 'Error al cerrar', { type:'error' }); return; }
     bootstrap.Modal.getInstance(document.getElementById('modalCerrarOT')).hide();
-    alert('✅ OT cerrada exitosamente');
-    // Refrescar página para actualizar estado
+    ilusToast('OT cerrada exitosamente', { type:'success' });
     setTimeout(() => location.reload(), 700);
   } catch(e){
-    alert('❌ Error de red: ' + e);
+    ilusToast('Error de red: ' + e, { type:'error' });
   }
 }
 
@@ -1381,11 +1401,16 @@ async function verificarCierreOT(){
     // Si todas completadas y la OT aún no está cerrada → preguntar
     const cerradaYa = document.querySelector('.ot-estado-completada');
     if (tr.n_total > 0 && tr.n_total === tr.n_completadas && !cerradaYa){
-      // Esperar un tick para que cierre el modal nota
-      setTimeout(() => {
-        if (confirm(`✅ Todas las ${tr.n_total} tareas están completadas.\n\n¿Cerrar la OT completa ahora?`)){
-          abrirModalCierreOT();
-        }
+      setTimeout(async () => {
+        const ok = await ilusConfirm({
+          title: 'Cerrar OT',
+          message: `Todas las ${tr.n_total} tareas están completadas.`,
+          sub: '¿Cerrar la OT completa ahora?',
+          okLabel: 'Sí, cerrar OT',
+          cancelLabel: 'Aún no',
+          type: 'success',
+        });
+        if (ok) abrirModalCierreOT();
       }, 400);
     }
   } catch(e){ console.error(e); }

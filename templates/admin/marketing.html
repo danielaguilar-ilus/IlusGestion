@@ -319,6 +319,10 @@
         </div>
       </div>
 
+      <div class="mt-2 small" id="bkCounter" style="color:#9ca3af;font-weight:500">
+        Ninguna franja seleccionada
+      </div>
+
       {# Inputs ocultos con las franjas seleccionadas #}
       <div id="bkHiddenInputs"></div>
     </form>
@@ -520,10 +524,35 @@ function bkSyncHidden(){
     inp.type = 'hidden'; inp.name = 'slots[]'; inp.value = el.dataset.key;
     hid.appendChild(inp);
   });
-  // Si no hay ninguna seleccionada PERO hay fecha, deshabilitar botón
   var fecha = (document.getElementById('bkFecha')||{}).value;
   btn.disabled = !fecha || sel.length === 0;
+  var counter = document.getElementById('bkCounter');
+  if (counter){
+    counter.textContent = sel.length ? (sel.length + ' franja(s) seleccionada(s)') : 'Ninguna franja seleccionada';
+    counter.style.color = sel.length ? '#16a34a' : '#9ca3af';
+  }
 }
+
+document.addEventListener('DOMContentLoaded', function(){
+  var form = document.getElementById('formBkNew');
+  if (!form) return;
+  form.addEventListener('submit', function(e){
+    var fecha = (document.getElementById('bkFecha')||{}).value;
+    var sel = document.querySelectorAll('#bkSlotGrid .bk-slot.selected');
+    if (!fecha){
+      e.preventDefault();
+      window.ilusToast ? window.ilusToast('Selecciona una fecha primero.', 'warning')
+                       : alert('Selecciona una fecha primero.');
+      return false;
+    }
+    if (sel.length === 0){
+      e.preventDefault();
+      window.ilusToast ? window.ilusToast('Marca al menos una franja a bloquear.', 'warning')
+                       : alert('Marca al menos una franja a bloquear.');
+      return false;
+    }
+  });
+});
 
 function mkTab(tab, btn) {
   document.querySelectorAll('.mk-tab').forEach(t => t.classList.remove('active'));

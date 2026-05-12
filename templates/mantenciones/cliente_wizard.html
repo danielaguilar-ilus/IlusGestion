@@ -1899,22 +1899,24 @@ function agregarFilaEquipo(datos={}) {
   tbody.appendChild(tr);
 }
 
-// Si el usuario cambia la fecha de instalación, exige justificación
-function eqValidarFechaInst(inp) {
+async function eqValidarFechaInst(inp) {
   const orig = inp.dataset.original || '';
   const nueva = inp.value || '';
   if (!orig || nueva === orig) return;
-  const motivo = prompt(
-    `Estás cambiando la fecha de instalación.\n\n` +
-    `Default (fecha documento): ${orig}\nNueva: ${nueva}\n\n` +
-    `Esta fecha cubre garantía. Justifica por qué la cambias (mín. 8 caracteres):`
-  );
+  const motivo = await ilusPrompt({
+    title: 'Cambio de fecha de instalación',
+    message: `Default (fecha documento): ${orig}\nNueva: ${nueva}`,
+    sub: 'Esta fecha cubre garantía. Justifica por qué la cambias (mín. 8 caracteres).',
+    placeholder: 'Motivo del cambio…',
+    multiline: true,
+    type: 'warning',
+    okLabel: 'Guardar justificación',
+  });
   if (!motivo || motivo.trim().length < 8) {
     inp.value = orig;
-    alert('Cambio cancelado: justificación requerida.');
+    ilusToast('Cambio cancelado: justificación requerida (mín. 8 caracteres)', { type:'warning' });
     return;
   }
-  // Guardar la justificación en el hidden
   const tr = inp.closest('tr');
   const j = tr.querySelector('[data-field="justif_fecha_inst"]');
   if (j) j.value = motivo.trim();
@@ -2275,10 +2277,10 @@ function _serieTmpAuto(sku) {
   return `${baseStr}${max + 1}`;
 }
 
-function importarEq() {
+async function importarEq() {
   const lineas = Object.entries(erpEqSel);  // [key, line]
   if (!lineas.length) {
-    alert('Selecciona al menos un producto antes de importar.');
+    ilusToast('Selecciona al menos un producto antes de importar.', { type:'warning' });
     return;
   }
 
@@ -2288,13 +2290,17 @@ function importarEq() {
   for (const [, l] of lineas) {
     const rutDoc = (l.rut || '').replace(/[.\-\s]/g,'');
     if (rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc) {
-      const motivo = prompt(
-        `⚠️ El documento ${l.doc_origen||''} pertenece a un RUT distinto.\n\n` +
-        `RUT del documento: ${rutDoc}\nRUT del cliente: ${rutWiz}\n\n` +
-        `¿Por qué importas equipos de otro RUT? (mínimo 8 caracteres):`
-      );
+      const motivo = await ilusPrompt({
+        title: '⚠️ RUT distinto en documento',
+        message: `Doc ${l.doc_origen||''} · RUT documento: ${rutDoc} · RUT cliente: ${rutWiz}`,
+        sub: '¿Por qué importas equipos de otro RUT? Mínimo 8 caracteres.',
+        placeholder: 'Justificación del cruce…',
+        multiline: true,
+        type: 'warning',
+        okLabel: 'Justificar e importar',
+      });
       if (!motivo || motivo.trim().length < 8) {
-        alert('Importación cancelada: justificación requerida.');
+        ilusToast('Importación cancelada: justificación requerida (mín. 8 caracteres)', { type:'warning' });
         return;
       }
       justifMismatch = motivo.trim();

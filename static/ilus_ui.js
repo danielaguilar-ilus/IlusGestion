@@ -242,8 +242,88 @@
     return { close: remove };
   }
 
+  // ── ilusPrompt ──────────────────────────────────────────────────────
+  // Reemplazo de window.prompt() — input con label y validación.
+  // Retorna Promise<string|null>. Null = cancelado.
+  function ilusPrompt(opts = {}){
+    const {
+      title='Ingresar valor', message='', sub='',
+      placeholder='', defaultValue='', okLabel='Aceptar', cancelLabel='Cancelar',
+      type='question', inputType='text', required=true, multiline=false,
+    } = (typeof opts === 'string' ? {message: opts} : opts);
+
+    return new Promise(resolve => {
+      ensureStyles();
+      const cfg = TYPE_CFG[type] || TYPE_CFG.question;
+      const overlay = document.createElement('div');
+      overlay.className = 'ilus-overlay';
+      const inputHtml = multiline
+        ? `<textarea class="ilus-prompt-input" rows="4" placeholder="${escapeHtml(placeholder)}">${escapeHtml(defaultValue)}</textarea>`
+        : `<input type="${escapeHtml(inputType)}" class="ilus-prompt-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}">`;
+      overlay.innerHTML = `
+        <div class="ilus-modal" role="dialog" aria-modal="true">
+          <div class="ilus-modal-head">
+            <div class="ilus-icon" style="background:${cfg.bg};color:${cfg.color}">
+              <i class="bi ${cfg.icon}"></i>
+            </div>
+            <h6>${escapeHtml(title)}</h6>
+          </div>
+          <div class="ilus-modal-body">
+            ${message ? `<div style="margin-bottom:10px">${escapeHtml(message)}</div>` : ''}
+            ${inputHtml}
+            ${sub ? `<div class="ilus-msg-sub">${escapeHtml(sub)}</div>` : ''}
+          </div>
+          <div class="ilus-modal-foot">
+            <button class="ilus-btn ilus-btn-secondary" data-idx="0">${escapeHtml(cancelLabel)}</button>
+            <button class="ilus-btn ilus-btn-primary" data-idx="1">${escapeHtml(okLabel)}</button>
+          </div>
+        </div>`;
+      // Estilo del input — inyectado una vez
+      if (!document.getElementById('__ilus_prompt_input_css')){
+        const s = document.createElement('style');
+        s.id = '__ilus_prompt_input_css';
+        s.textContent = `
+          .ilus-prompt-input{
+            width:100%;padding:9px 12px;border:1.5px solid #d1d5db;
+            border-radius:8px;font-size:.92rem;background:#fff;color:#111827;
+            outline:none;transition:border-color .12s, box-shadow .12s;
+            font-family:inherit;
+          }
+          .ilus-prompt-input:focus{
+            border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.15);
+          }
+        `;
+        document.head.appendChild(s);
+      }
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      const inputEl = overlay.querySelector('.ilus-prompt-input');
+      setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
+
+      function done(ok){
+        const val = ok ? inputEl.value : null;
+        if (ok && required && (!val || !val.trim())){
+          inputEl.style.borderColor = '#dc2626';
+          inputEl.focus();
+          return;
+        }
+        overlay.classList.remove('show');
+        setTimeout(() => { overlay.remove(); resolve(ok ? val : null); }, 160);
+      }
+
+      overlay.querySelector('[data-idx="0"]').addEventListener('click', () => done(false));
+      overlay.querySelector('[data-idx="1"]').addEventListener('click', () => done(true));
+      overlay.addEventListener('click', e => { if (e.target === overlay) done(false); });
+      inputEl.addEventListener('keydown', e => {
+        if (e.key === 'Escape') done(false);
+        if (e.key === 'Enter' && !multiline){ e.preventDefault(); done(true); }
+      });
+    });
+  }
+
   // Export global
   global.ilusConfirm = ilusConfirm;
   global.ilusAlert   = ilusAlert;
   global.ilusToast   = ilusToast;
+  global.ilusPrompt  = ilusPrompt;
 })(window);

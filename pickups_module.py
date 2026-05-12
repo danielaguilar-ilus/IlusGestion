@@ -1441,12 +1441,19 @@ def register_pickup_routes(app, ctx):
         motivo = (request.form.get("motivo") or "").strip()[:200]
         if not fecha:
             flash("La fecha es obligatoria.", "danger")
-            return redirect(url_for("marketing_settings"))
-        # Día completo
+            return redirect(url_for("marketing_settings") + "#bloqueos")
         full_day = request.form.get("full_day")
         slots = request.form.getlist("slots[]") or request.form.getlist("slots")
         creado_por = g.user["nombre"] if getattr(g, "user", None) else None
+
+        if not full_day and not slots:
+            print(f"[marketing/bloqueos] POST vacío: fecha={fecha} full_day={full_day!r} slots={slots} form_keys={list(request.form.keys())}")
+            flash("⚠️ No se seleccionó ninguna franja ni 'día completo'. Marca al menos una franja antes de aplicar.", "warning")
+            return redirect(url_for("marketing_settings") + "#bloqueos")
+
         inserted = 0
+        skipped = 0
+        errors = []
         try:
             if full_day:
                 mysql_execute(
@@ -1455,14 +1462,16 @@ def register_pickup_routes(app, ctx):
                     (fecha, motivo or "Día completo bloqueado", creado_por)
                 )
                 inserted = 1
-            elif slots:
+            else:
                 for s in slots:
                     if "-" not in s:
+                        skipped += 1
                         continue
                     hi, hf = s.split("-", 1)
                     hi = hi.strip()
                     hf = hf.strip()
                     if not hi or not hf:
+                        skipped += 1
                         continue
                     try:
                         mysql_execute(
@@ -1471,13 +1480,21 @@ def register_pickup_routes(app, ctx):
                             (fecha, hi, hf, motivo, creado_por)
                         )
                         inserted += 1
-                    except Exception:
-                        continue
+                    except Exception as e_ins:
+                        errors.append(f"{hi}-{hf}: {e_ins}")
+                        print(f"[marketing/bloqueos] INSERT falló slot={hi}-{hf} fecha={fecha}: {e_ins}")
+
+            if inserted == 0:
+                msg = "❌ No se guardó ningún bloqueo."
+                if errors:
+                    msg += f" Errores: {'; '.join(errors[:3])}"
+                elif skipped:
+                    msg += f" Se descartaron {skipped} franja(s) con formato inválido."
+                flash(msg, "danger")
             else:
-                flash("Selecciona al menos una franja o marca 'día completo'.", "warning")
-                return redirect(url_for("marketing_settings"))
-            flash(f"✅ {inserted} franja(s) bloqueadas para {fecha}.", "success")
+                flash(f"✅ {inserted} franja(s) bloqueadas para {fecha}.", "success")
         except Exception as exc:
+            print(f"[marketing/bloqueos] excepción general fecha={fecha}: {exc}")
             flash(f"Error al crear bloqueos: {exc}", "danger")
         return redirect(url_for("marketing_settings") + "#bloqueos")
 

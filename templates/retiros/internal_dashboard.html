@@ -214,38 +214,45 @@
     // Botón recordatorios 24h (solo admins)
     var btnRem = document.getElementById('btn-recordatorios-24h');
     if (btnRem){
-      btnRem.addEventListener('click', function(){
-        if (!confirm('¿Enviar recordatorios a todos los clientes con retiro confirmado para MAÑANA?')) return;
+      btnRem.addEventListener('click', async function(){
+        var ok = await ilusConfirm({
+          title: 'Enviar recordatorios 24h',
+          message: '¿Enviar recordatorios a todos los clientes con retiro confirmado para MAÑANA?',
+          sub: 'Se envía un email a cada cliente recordándole el horario y bodega.',
+          okLabel: 'Sí, enviar a todos',
+        });
+        if (!ok) return;
         btnRem.disabled = true;
         var orig = btnRem.innerHTML;
         btnRem.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando...';
-        fetch('{{ url_for("pickup_enviar_recordatorios_24h") }}', {
-          method:'POST',
-          credentials:'same-origin',
-          headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'}
-        })
-        .then(function(r){ return r.json(); })
-        .then(function(data){
-          var msg = 'Recordatorios 24h:\n' +
-                    '• Enviados: ' + (data.enviados || 0) + '\n' +
-                    '• Omitidos: ' + (data.omitidos || 0) + '\n' +
-                    '• Total candidatos: ' + (data.total_candidatos || 0);
+        try {
+          var r = await fetch('{{ url_for("pickup_enviar_recordatorios_24h") }}', {
+            method:'POST',
+            credentials:'same-origin',
+            headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'}
+          });
+          var data = await r.json();
+          var errsTxt = '';
           if (data.errores && data.errores.length){
-            msg += '\n\nErrores (' + data.errores.length + '):';
-            data.errores.slice(0, 5).forEach(function(e){
-              msg += '\n  - ' + (e.code || '?') + ': ' + (e.error || '');
-            });
+            errsTxt = '\nErrores: ' + data.errores.slice(0,5).map(function(e){
+              return (e.code || '?') + ': ' + (e.error || '');
+            }).join('; ');
           }
-          alert(msg);
-        })
-        .catch(function(err){
-          alert('Error al enviar recordatorios. Revisa la consola.');
+          await ilusAlert({
+            title: 'Recordatorios 24h',
+            message: 'Enviados: ' + (data.enviados || 0) +
+                     ' · Omitidos: ' + (data.omitidos || 0) +
+                     ' · Candidatos: ' + (data.total_candidatos || 0),
+            sub: errsTxt || undefined,
+            type: (data.errores && data.errores.length) ? 'warning' : 'success',
+          });
+        } catch(err) {
+          ilusToast('Error al enviar recordatorios. Revisa la consola.', { type:'error' });
           console.error('[recordatorios-24h]', err);
-        })
-        .finally(function(){
+        } finally {
           btnRem.disabled = false;
           btnRem.innerHTML = orig;
-        });
+        }
       });
     }
   });

@@ -249,7 +249,15 @@ async function agregarComentario() {
 }
 
 async function convertirEnOT() {
-  const fecha = prompt('Fecha programada para la OT (YYYY-MM-DD)\nDeja vacío para usar fecha límite o hoy + 2 días:', '');
+  const fecha = await ilusPrompt({
+    title: 'Convertir ticket en OT',
+    message: 'Fecha programada para la OT:',
+    sub: 'Deja vacío para usar la fecha límite del ticket o hoy + 2 días.',
+    inputType: 'date',
+    required: false,
+    okLabel: 'Crear OT',
+  });
+  if (fecha === null) return;
   try {
     const r = await fetch(`/mantenciones/api/tickets/${TID}/convertir-en-ot`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -257,20 +265,33 @@ async function convertirEnOT() {
     });
     const d = await r.json();
     if (d.ok) {
-      alert(`✅ OT ${d.numero_ot} creada con ${d.tareas_creadas} tarea(s).\n\nFecha: ${d.fecha_programada}`);
+      await ilusAlert({
+        title: 'OT creada',
+        message: `OT ${d.numero_ot} creada con ${d.tareas_creadas} tarea(s).`,
+        sub: 'Fecha: ' + d.fecha_programada,
+        type: 'success',
+      });
       window.location = `/mantenciones/ot/${d.visita_id}`;
-    } else { alert('Error: ' + d.error); }
-  } catch(e) { alert('Error: '+e.message); }
+    } else { ilusToast('Error: ' + d.error, { type:'error' }); }
+  } catch(e) { ilusToast('Error: '+e.message, { type:'error' }); }
 }
 
 async function eliminarTicket() {
-  if (!confirm('¿Eliminar permanentemente este ticket?\n\nLa OT vinculada (si existe) NO se elimina.')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar ticket',
+    message: '¿Eliminar permanentemente este ticket?',
+    sub: 'La OT vinculada (si existe) NO se elimina.',
+    okLabel: 'Sí, eliminar',
+    cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/tickets/${TID}`, {method: 'DELETE'});
     const d = await r.json();
     if (d.ok) window.location = '/mantenciones/tickets';
-    else alert(d.error);
-  } catch(e) { alert('Error: '+e.message); }
+    else ilusToast(d.error, { type:'error' });
+  } catch(e) { ilusToast('Error: '+e.message, { type:'error' }); }
 }
 
 cargarTicket();

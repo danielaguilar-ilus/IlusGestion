@@ -284,7 +284,7 @@
     async function buscarERP(rid){
       const tido = document.getElementById('val_tido').value;
       const nudo = document.getElementById('val_nudo').value.trim();
-      if (!nudo){ alert('Ingresa el N° del documento'); return; }
+      if (!nudo){ ilusToast('Ingresa el N° del documento', { type:'warning' }); return; }
       const resDiv = document.getElementById('erpResult');
       resDiv.innerHTML = '<div class="text-muted py-2"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP Random...</div>';
       try {
@@ -426,7 +426,7 @@
     }
 
     function solicitarCubicaje(sku, productId, descripcionErp){
-      if (!sku){ alert('Sin SKU disponible'); return; }
+      if (!sku){ ilusToast('Sin SKU disponible', { type:'warning' }); return; }
       if (productId){
         // Si tenemos product_id, ir directo a editar el producto para llenar medidas
         window.open(`/products/${productId}/edit`, '_blank');
@@ -440,12 +440,13 @@
     // ─── Importar masivo: SKUs sin ficha → crear en BD local con datos del ERP ──
     async function importarSkusErp(skus){
       if (!skus || skus.length === 0) return;
-      if (!confirm(
-        `Vas a CREAR ${skus.length} producto(s) en el catálogo local de etiquetas\n` +
-        `usando los datos del ERP (SKU + descripción).\n\n` +
-        `Después podrás agregarles medidas (largo/ancho/alto) para que tengan cubicaje.\n\n` +
-        `¿Continuar?`
-      )) return;
+      const ok = await ilusConfirm({
+        title: 'Importar productos desde ERP',
+        message: `Se crearán ${skus.length} producto(s) en el catálogo local usando los datos del ERP (SKU + descripción).`,
+        sub: 'Después podrás agregarles medidas (largo/ancho/alto) para que tengan cubicaje.',
+        okLabel: 'Sí, importar',
+      });
+      if (!ok) return;
 
       try {
         const r = await fetch('/etiquetas/api/importar-desde-erp', {
@@ -455,26 +456,22 @@
         });
         const d = await r.json();
         if (!d.ok){
-          alert('Error: ' + (d.error || 'desconocido'));
+          ilusToast('Error: ' + (d.error || 'desconocido'), { type:'error' });
           return;
         }
-        alert(
-          `✅ Productos importados:\n\n` +
-          `• Creados: ${d.creados || 0}\n` +
-          `• Ya existían: ${d.existentes || 0}\n` +
-          `• Con errores: ${d.errores || 0}\n\n` +
-          `Ahora ve a Etiquetas → Productos y agrega medidas para que tengan cubicaje.\n` +
-          `Recarga este monitor para ver los cambios.`
-        );
-        // Re-buscar el documento para refrescar el estado
+        await ilusAlert({
+          title: 'Productos importados',
+          message: `Creados: ${d.creados || 0} · Ya existían: ${d.existentes || 0} · Errores: ${d.errores || 0}`,
+          sub: 'Ahora ve a Etiquetas → Productos y agrega medidas para que tengan cubicaje.',
+          type: (d.errores ? 'warning' : 'success'),
+        });
         const tido = document.getElementById('val_tido').value;
         const nudo = document.getElementById('val_nudo').value.trim();
         if (tido && nudo){
-          // Pequeña pausa para que la BD se actualice
           setTimeout(() => buscarERP({{ req.id }}), 800);
         }
       } catch(e){
-        alert('Error de red: ' + e.message);
+        ilusToast('Error de red: ' + e.message, { type:'error' });
       }
     }
     </script>

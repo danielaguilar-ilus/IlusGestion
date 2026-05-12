@@ -1206,6 +1206,18 @@ def init_pickup_tables():
                     INDEX idx_fecha (fecha)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── ÍNDICES SECUNDARIOS (idempotentes, agregados después de auditoría) ──
+            # Migran tablas ya creadas sin estos índices. Si ya existen, MySQL falla
+            # con duplicate key — capturamos y seguimos.
+            for _idx_mig in [
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_rut (customer_rut)",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_created (created_at)",
+                "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_rut (cliente_rut)",
+                "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_agenda (fecha_agenda)",
+                f"ALTER TABLE `{PICKUP_LOGS_TABLE}` ADD INDEX idx_plog_req (request_id, created_at)",
+            ]:
+                try: cur.execute(_idx_mig)
+                except Exception: pass
             # Migración: capacidad por franja (peso/volumen/cupos) + colación + step
             for _mig in [
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN slot_minutes INT DEFAULT 60 COMMENT 'Duración de cada franja en minutos'",
@@ -3823,16 +3835,21 @@ def etiquetas_importar_desde_erp():
             except Exception: pass
             return (sku_q, "")
         try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = {pool.submit(_lookup_erp, s): s for s in skus_sin_desc[:50]}
-                for fut in as_completed(futures, timeout=20):
-                    try:
-                        sku_r, nombre_r = fut.result()
-                        if nombre_r and not desc_map.get(sku_r):
-                            desc_map[sku_r] = nombre_r
-                    except Exception: pass
-        except Exception: pass
+            from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FutTimeout
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {pool.submit(_lookup_erp, s): s for s in skus_sin_desc[:30]}
+                try:
+                    for fut in as_completed(futures, timeout=12):
+                        try:
+                            sku_r, nombre_r = fut.result(timeout=2)
+                            if nombre_r and not desc_map.get(sku_r):
+                                desc_map[sku_r] = nombre_r
+                        except Exception: pass
+                except _FutTimeout:
+                    pending = sum(1 for f in futures if not f.done())
+                    print(f"[importar-erp] timeout 12s con {pending} SKUs pendientes; se usará 'Producto {{sku}}' como fallback")
+        except Exception as _e:
+            print(f"[importar-erp] enriquecer descripciones falló: {_e}")
 
     user = current_username() or "sistema"
     creados, existentes, errores = 0, 0, 0
@@ -7239,17 +7256,24 @@ def _cubicador_fetch(tido, nudo):
                 return (sku_q, "")
 
         try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            # Limitar a 30 SKUs por seguridad — si hay más, los demás quedan sin descripción
-            sku_list_lookup = list(skus_sin_desc)[:30]
-            with ThreadPoolExecutor(max_workers=8) as pool:
+            from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FutTimeout
+            # Limitar a 20 SKUs por request (era 30). Más SKUs = más riesgo de timeout.
+            sku_list_lookup = list(skus_sin_desc)[:20]
+            # max_workers=4 (era 8): reducir presión sobre el ERP /productos
+            with ThreadPoolExecutor(max_workers=4) as pool:
                 futures = {pool.submit(_erp_lookup_sku, s): s for s in sku_list_lookup}
-                for fut in as_completed(futures, timeout=15):
-                    try:
-                        sku_r, nombre_r = fut.result()
-                        if nombre_r:
-                            desc_erp_map[sku_r] = nombre_r
-                    except Exception: pass
+                # timeout=8s total (era 15). Si el ERP está lento, no bloquear más tiempo;
+                # los SKUs sin descripción usarán fallback nombre_app o quedarán sin nombre.
+                try:
+                    for fut in as_completed(futures, timeout=8):
+                        try:
+                            sku_r, nombre_r = fut.result(timeout=2)
+                            if nombre_r:
+                                desc_erp_map[sku_r] = nombre_r
+                        except Exception: pass
+                except _FutTimeout:
+                    pending = sum(1 for f in futures if not f.done())
+                    print(f"[cubicador] enriquecer descripciones: timeout 8s con {pending} SKUs pendientes (fallback a BD local)")
         except Exception as _enr_err:
             print(f"[cubicador] enriquecer descripciones falló: {_enr_err}")
 

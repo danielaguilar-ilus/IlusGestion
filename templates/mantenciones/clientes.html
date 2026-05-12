@@ -229,7 +229,14 @@
 </div>
 <script>
 async function limpiarHuerfanos(){
-  if (!confirm('¿Borrar todos los registros huérfanos?\n\nEsto borrará permanentemente contratos, máquinas, visitas y sucursales que no tengan cliente padre. Los clientes existentes NO se tocan.')) return;
+  const ok = await ilusConfirm({
+    title: 'Limpiar registros huérfanos',
+    message: '¿Borrar todos los registros huérfanos?',
+    sub: 'Borra permanentemente contratos, máquinas, visitas y sucursales sin cliente padre. Los clientes existentes NO se tocan.',
+    okLabel: 'Sí, limpiar',
+    danger: true,
+  });
+  if (!ok) return;
   const btn = document.getElementById('btnCleanOrphans');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando...';
@@ -241,17 +248,21 @@ async function limpiarHuerfanos(){
     if (d.ok){
       const items = Object.entries(d.borrado || {})
         .filter(([k,v]) => typeof v === 'number' && v > 0)
-        .map(([k,v]) => `${k}: ${v}`).join(', ');
-      alert('✅ Limpieza completada\n\n' + (items || 'Nada que limpiar.') +
-            '\n\nLa página se va a recargar para mostrar los KPIs actualizados.');
+        .map(([k,v]) => `${k}: ${v}`).join(' · ');
+      await ilusAlert({
+        title: 'Limpieza completada',
+        message: items || 'Nada que limpiar.',
+        sub: 'La página se va a recargar para mostrar los KPIs actualizados.',
+        type: 'success',
+      });
       window.location.reload();
     } else {
-      alert('❌ ' + (d.error || 'Error al limpiar'));
+      ilusToast(d.error || 'Error al limpiar', { type:'error' });
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Limpiar huérfanos';
     }
   } catch(e){
-    alert('❌ Error de red: ' + e);
+    ilusToast('Error de red: ' + e, { type:'error' });
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Limpiar huérfanos';
   }

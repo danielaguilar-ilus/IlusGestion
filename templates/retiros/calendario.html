@@ -550,24 +550,38 @@ function renderDrawer(d) {
 }
 
 async function confirmarRetiro(rid) {
-  if (!confirm('¿Confirmar este retiro? Se notificará al cliente por email.')) return;
+  const ok = await ilusConfirm({
+    title: 'Confirmar retiro',
+    message: '¿Confirmar este retiro?',
+    sub: 'Se notificará al cliente por email.',
+    okLabel: 'Sí, confirmar',
+  });
+  if (!ok) return;
   const r = await fetch(`/retiros/${rid}/status`, {
     method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:`status=agenda_confirmada&notes=Confirmado desde calendario operativo`
   });
-  if (r.ok) { cerrarDrawer(); cargarCalendario(); }
-  else alert('Error confirmando.');
+  if (r.ok) { cerrarDrawer(); cargarCalendario(); ilusToast('Retiro confirmado', { type:'success' }); }
+  else ilusToast('Error confirmando', { type:'error' });
 }
 
 async function rechazarRetiro(rid) {
-  const motivo = prompt('Motivo del rechazo (se incluirá en notificación al cliente):');
+  const motivo = await ilusPrompt({
+    title: 'Rechazar retiro',
+    message: 'Motivo del rechazo:',
+    sub: 'Se incluirá en la notificación al cliente.',
+    placeholder: 'Ej: no podemos atender ese horario',
+    okLabel: 'Rechazar',
+    multiline: true,
+    type: 'danger',
+  });
   if (!motivo) return;
   const r = await fetch(`/retiros/${rid}/status`, {
     method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:`status=rechazada&notes=${encodeURIComponent(motivo)}`
   });
-  if (r.ok) { cerrarDrawer(); cargarCalendario(); }
-  else alert('Error rechazando.');
+  if (r.ok) { cerrarDrawer(); cargarCalendario(); ilusToast('Retiro rechazado', { type:'warning' }); }
+  else ilusToast('Error rechazando', { type:'error' });
 }
 
 function abrirProponer(rid, defaultDate) {
@@ -585,7 +599,7 @@ async function enviarPropuesta() {
   const tf   = document.getElementById('prop_tf').value;
   const tt   = document.getElementById('prop_tt').value;
   const msg  = document.getElementById('prop_msg').value;
-  if (!date || !tf || !tt) { alert('Completa fecha y horario'); return; }
+  if (!date || !tf || !tt) { ilusToast('Completa fecha y horario', { type:'warning' }); return; }
   const r = await fetch(`/retiros/${rid}/proposal`, {
     method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body: `date=${date}&time_from=${tf}&time_to=${tt}&message=${encodeURIComponent(msg)}`
@@ -594,7 +608,8 @@ async function enviarPropuesta() {
     bootstrap.Modal.getInstance(document.getElementById('modalProponer')).hide();
     cerrarDrawer();
     cargarCalendario();
-  } else alert('Error enviando propuesta.');
+    ilusToast('Propuesta enviada al cliente', { type:'success' });
+  } else ilusToast('Error enviando propuesta', { type:'error' });
 }
 
 // Iniciar

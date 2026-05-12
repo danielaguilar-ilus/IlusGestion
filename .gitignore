@@ -24,6 +24,7 @@ instance/
 # Variables de entorno (nunca subir contraseñas)
 .env
 .env.*
+!.env.example
 
 # Archivos subidos por usuarios (fotos de colaboradores, etc.)
 static/uploads/
