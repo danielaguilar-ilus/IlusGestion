@@ -19667,6 +19667,204 @@ def mant_calendario():
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# DASHBOARD ANALYTICS — KPIs operacionales del módulo
+#
+#  Métricas que muestra:
+#   · TMR (Tiempo Medio de Reparación) últimos 30 días
+#   · SLA cumplido (% visitas hechas en/antes de fecha programada+1)
+#   · Overrun promedio (real - plan) / plan * 100
+#   · Tasa de garantías últimos 30 días
+#   · Top 10 máquinas con más fallas (90 días)
+#   · Top técnicos por eficiencia (plan/real)
+#   · Heatmap semanal (cantidad de OTs por día de semana)
+#   · Proyección próxima semana (ocupación)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/analytics")
+@_mant_required
+def mant_analytics_page():
+    """Renderiza la página HTML del dashboard. Los datos se cargan vía AJAX."""
+    return render_template("mantenciones/analytics.html")
+
+
+@app.route("/mantenciones/api/analytics/data", methods=["GET"])
+@_mant_required
+def mant_analytics_data():
+    """Devuelve todos los KPIs y series para el dashboard analytics."""
+    try:
+        # ── 1. KPIs grandes (30 días)
+        row = mysql_fetchone(
+            "SELECT AVG(duracion_real_min) AS tmr "
+            "  FROM mant_visitas "
+            " WHERE estado='completada' "
+            "   AND duracion_real_min IS NOT NULL "
+            "   AND COALESCE(fecha_realizada, fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
+            ()
+        ) or {}
+        tmr_min = float(row.get("tmr") or 0)
+
+        sla_row = mysql_fetchone(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  SUM(CASE WHEN fecha_realizada IS NOT NULL "
+            "           AND fecha_realizada <= DATE_ADD(fecha_programada, INTERVAL 1 DAY) "
+            "           THEN 1 ELSE 0 END) AS dentro_sla "
+            "  FROM mant_visitas "
+            " WHERE estado='completada' "
+            "   AND fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
+            ()
+        ) or {}
+        sla_total = int(sla_row.get("total") or 0)
+        sla_ok    = int(sla_row.get("dentro_sla") or 0)
+        sla_pct   = round(sla_ok * 100.0 / sla_total, 1) if sla_total > 0 else None
+
+        over_row = mysql_fetchone(
+            "SELECT AVG( (duracion_real_min - duracion_planificada_min) * 100.0 "
+            "           / NULLIF(duracion_planificada_min,0) ) AS overrun "
+            "  FROM mant_visitas "
+            " WHERE estado='completada' "
+            "   AND duracion_real_min IS NOT NULL "
+            "   AND duracion_planificada_min IS NOT NULL "
+            "   AND COALESCE(fecha_realizada, fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
+            ()
+        ) or {}
+        overrun_pct = round(float(over_row.get("overrun") or 0), 1)
+
+        gar_row = mysql_fetchone(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  SUM(CASE WHEN tipo='garantia' THEN 1 ELSE 0 END) AS garantias "
+            "  FROM mant_visitas "
+            " WHERE fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
+            ()
+        ) or {}
+        gar_total = int(gar_row.get("total") or 0)
+        gar_n     = int(gar_row.get("garantias") or 0)
+        gar_pct   = round(gar_n * 100.0 / gar_total, 1) if gar_total > 0 else None
+
+        # ── 2. Top 10 máquinas con más fallas (90 días)
+        top_maquinas = mysql_fetchall(
+            "SELECT m.id, m.nombre, m.serie, m.sku, "
+            "       c.razon_social AS cliente_nombre, "
+            "       COUNT(t.id) AS n_tareas "
+            "  FROM mant_visita_tareas t "
+            "  JOIN mant_maquinas m ON m.id = t.maquina_id "
+            "  LEFT JOIN mant_clientes c ON c.id = m.cliente_id "
+            " WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+            "   AND t.maquina_id IS NOT NULL "
+            " GROUP BY m.id "
+            " ORDER BY n_tareas DESC, m.nombre "
+            " LIMIT 10",
+            ()
+        ) or []
+        top_maquinas = [dict(r) for r in top_maquinas]
+
+        # ── 3. Top técnicos por eficiencia (más alto = mejor; plan/real)
+        tec_rows = mysql_fetchall(
+            "SELECT t.id, t.nombre, t.especialidad, t.nivel, t.es_externo, "
+            "       COUNT(v.id) AS n_visitas, "
+            "       AVG( v.duracion_planificada_min * 1.0 "
+            "            / NULLIF(v.duracion_real_min, 0) ) AS eficiencia, "
+            "       SUM(v.duracion_real_min) AS min_total_real "
+            "  FROM mant_visitas v "
+            "  JOIN mant_tecnicos t ON t.id = v.tecnico_id "
+            " WHERE v.estado = 'completada' "
+            "   AND v.duracion_real_min IS NOT NULL AND v.duracion_real_min > 0 "
+            "   AND v.duracion_planificada_min IS NOT NULL "
+            "   AND COALESCE(v.fecha_realizada, v.fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) "
+            " GROUP BY t.id "
+            "HAVING n_visitas >= 1 "
+            " ORDER BY eficiencia DESC "
+            " LIMIT 5",
+            ()
+        ) or []
+        top_tecnicos = []
+        for r in tec_rows:
+            d = dict(r)
+            ef = float(d.get("eficiencia") or 0)
+            d["eficiencia_pct"] = round(ef * 100.0, 1)
+            top_tecnicos.append(d)
+
+        # ── 4. Heatmap semanal (cantidad OTs por día de semana, últimos 30 días)
+        # MySQL DAYOFWEEK: 1=Domingo, 2=Lunes ... 7=Sábado
+        heat = mysql_fetchall(
+            "SELECT DAYOFWEEK(fecha_programada) AS dow, COUNT(*) AS n "
+            "  FROM mant_visitas "
+            " WHERE fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) "
+            " GROUP BY dow",
+            ()
+        ) or []
+        # Reordenamos a LU MA MI JU VI SA DO (1..7)
+        dow_map = {int(r["dow"]): int(r["n"]) for r in heat}
+        # Convertir MySQL DOW (1=Dom) → nuestro orden (1=Lun ... 7=Dom)
+        heatmap = []
+        for nombre_dia, mysql_dow in [
+            ("Lu", 2), ("Ma", 3), ("Mi", 4),
+            ("Ju", 5), ("Vi", 6), ("Sa", 7), ("Do", 1),
+        ]:
+            heatmap.append({"dia": nombre_dia, "n": dow_map.get(mysql_dow, 0)})
+
+        # ── 5. Proyección próxima semana
+        # Capacidad: 8 horas/día × 5 días × N técnicos activos
+        n_tec_row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_tecnicos WHERE activo=1", ()
+        ) or {}
+        n_tec_activos = int(n_tec_row.get("n") or 0)
+        capacidad_horas = n_tec_activos * 8 * 5  # 5 días hábiles
+
+        prox_row = mysql_fetchone(
+            "SELECT COUNT(*) AS n, "
+            "       COALESCE(SUM(duracion_planificada_min),0) AS min_total "
+            "  FROM mant_visitas "
+            " WHERE fecha_programada BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) "
+            "   AND estado IN ('programada','en_curso','reagendada')",
+            ()
+        ) or {}
+        prox_visitas = int(prox_row.get("n") or 0)
+        prox_horas   = round(float(prox_row.get("min_total") or 0) / 60.0, 1)
+        ocup_pct = round((prox_horas * 100.0 / capacidad_horas), 1) if capacidad_horas else None
+
+        # ── 6. Totales globales para contexto
+        glob_row = mysql_fetchone(
+            "SELECT COUNT(*) AS total, "
+            "       SUM(CASE WHEN estado='completada' THEN 1 ELSE 0 END) AS completadas, "
+            "       SUM(CASE WHEN estado='cancelada'  THEN 1 ELSE 0 END) AS canceladas "
+            "  FROM mant_visitas "
+            " WHERE fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
+            ()
+        ) or {}
+
+        return jsonify({
+            "ok": True,
+            "kpis": {
+                "tmr_min":      round(tmr_min, 1) if tmr_min else None,
+                "tmr_label":    f"{int(tmr_min//60)}h {int(tmr_min%60)}min" if tmr_min >= 60 else (f"{int(tmr_min)} min" if tmr_min else "—"),
+                "sla_pct":      sla_pct,
+                "sla_total":    sla_total,
+                "sla_ok":       sla_ok,
+                "overrun_pct":  overrun_pct,
+                "garantias_pct": gar_pct,
+                "garantias_n":   gar_n,
+                "total_30d":     int(glob_row.get("total") or 0),
+                "completadas_30d": int(glob_row.get("completadas") or 0),
+                "canceladas_30d":  int(glob_row.get("canceladas") or 0),
+            },
+            "top_maquinas":  top_maquinas,
+            "top_tecnicos":  top_tecnicos,
+            "heatmap":       heatmap,
+            "proyeccion": {
+                "n_tecnicos_activos": n_tec_activos,
+                "capacidad_horas":    capacidad_horas,
+                "prox_visitas":       prox_visitas,
+                "prox_horas":         prox_horas,
+                "ocupacion_pct":      ocup_pct,
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error: {e}"}), 500
+
+
 # ── ANÁLISIS ECONÓMICO ────────────────────────────────────────────────
 
 @app.route("/mantenciones/analisis")

@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+{% block title %}Analytics Mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+/* ════════════════════════════════════════════════════════════
+   DASHBOARD ANALYTICS — Mantenciones
+════════════════════════════════════════════════════════════ */
+.mod-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+  position:relative;overflow:hidden;
+}
+.mod-hero::before{
+  content:'';position:absolute;right:-50px;top:-50px;
+  width:280px;height:280px;border-radius:50%;
+  background:radial-gradient(circle,rgba(220,38,38,.18),transparent 70%);
+  pointer-events:none;
+}
+.mod-hero h4{margin:0;font-weight:800;font-size:1.5rem;position:relative;z-index:1;letter-spacing:-.01em;}
+.mod-hero h4 i{color:var(--ilus-red);margin-right:8px;}
+.mod-hero .mod-sub{color:#cbd5e1;font-size:.86rem;margin-top:3px;position:relative;z-index:1;}
+.mod-hero .pill{
+  background:rgba(220,38,38,.18);color:#fca5a5;
+  padding:6px 14px;border-radius:50px;
+  font-size:.75rem;font-weight:800;letter-spacing:.05em;
+  border:1px solid rgba(220,38,38,.35);position:relative;z-index:1;
+}
+
+/* KPIs grandes */
+.kpi-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;margin-bottom:20px;
+}
+.kpi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:18px 20px;position:relative;overflow:hidden;
+  transition:transform .15s,box-shadow .15s;
+}
+.kpi-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.08);}
+.kpi-card::before{
+  content:'';position:absolute;right:-20px;top:-20px;
+  width:80px;height:80px;border-radius:50%;
+  opacity:.08;pointer-events:none;
+}
+.kpi-card.tmr     ::before{background:#2563eb;}
+.kpi-card.sla     ::before{background:#16a34a;}
+.kpi-card.overrun ::before{background:#dc2626;}
+.kpi-card.garantia::before{background:#f59e0b;}
+.kpi-icon{
+  width:42px;height:42px;border-radius:10px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:1.3rem;margin-bottom:8px;
+}
+.kpi-card.tmr     .kpi-icon{background:#dbeafe;color:#1e40af;}
+.kpi-card.sla     .kpi-icon{background:#dcfce7;color:#166534;}
+.kpi-card.overrun .kpi-icon{background:#fee2e2;color:#991b1b;}
+.kpi-card.garantia.kpi-icon, .kpi-card.garantia .kpi-icon{background:#fef3c7;color:#92400e;}
+
+.kpi-label{
+  font-size:.72rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.06em;color:#6b7280;margin-bottom:4px;
+}
+.kpi-value{
+  font-size:2.2rem;font-weight:900;color:#0f172a;line-height:1;
+  letter-spacing:-.02em;
+}
+.kpi-value small{
+  font-size:1rem;font-weight:700;color:#6b7280;margin-left:4px;
+}
+.kpi-sub{
+  font-size:.78rem;color:#6b7280;margin-top:6px;
+}
+.kpi-sub.up   {color:#dc2626;}
+.kpi-sub.down {color:#16a34a;}
+.kpi-sub i{margin-right:3px;}
+
+/* Cards genéricas */
+.analytics-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:18px 20px;margin-bottom:16px;
+}
+.analytics-card h6{
+  font-size:.86rem;font-weight:800;color:#0f172a;
+  margin:0 0 14px 0;display:flex;align-items:center;gap:8px;
+  letter-spacing:-.01em;
+}
+.analytics-card h6 i{color:var(--ilus-red);}
+.analytics-card h6 small{
+  font-size:.7rem;font-weight:600;color:#9ca3af;
+  letter-spacing:0;text-transform:none;margin-left:auto;
+}
+
+/* Tabla simple */
+.a-table{width:100%;border-collapse:collapse;font-size:.86rem;}
+.a-table thead th{
+  background:#fafafa;font-size:.65rem;font-weight:800;
+  text-transform:uppercase;color:#6b7280;letter-spacing:.05em;
+  padding:8px 10px;border-bottom:2px solid #e5e7eb;text-align:left;
+}
+.a-table tbody td{
+  padding:9px 10px;border-bottom:1px solid #f3f4f6;
+}
+.a-table tbody tr:hover{background:#fafafa;}
+.a-table tbody tr:last-child td{border-bottom:none;}
+.a-rank{
+  background:#0f172a;color:#fff;border-radius:50px;
+  width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:.7rem;font-weight:800;
+}
+.a-rank.top1{background:linear-gradient(135deg,#f59e0b,#fbbf24);}
+.a-rank.top2{background:linear-gradient(135deg,#94a3b8,#cbd5e1);color:#0f172a;}
+.a-rank.top3{background:linear-gradient(135deg,#b45309,#d97706);}
+
+.eficiencia-bar{
+  background:#f3f4f6;height:8px;border-radius:4px;overflow:hidden;
+  position:relative;min-width:80px;
+}
+.eficiencia-bar-fill{
+  height:100%;border-radius:4px;
+  background:linear-gradient(90deg,#16a34a,#22c55e);
+}
+.eficiencia-bar-fill.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24);}
+.eficiencia-bar-fill.bad {background:linear-gradient(90deg,#dc2626,#ef4444);}
+.badge-ef{
+  display:inline-block;padding:3px 10px;border-radius:50px;
+  font-size:.72rem;font-weight:800;
+}
+.badge-ef.excel{background:#dcfce7;color:#166534;}
+.badge-ef.bueno{background:#dbeafe;color:#1e40af;}
+.badge-ef.warn {background:#fef3c7;color:#92400e;}
+.badge-ef.bad  {background:#fee2e2;color:#991b1b;}
+
+/* Heatmap semanal */
+.heat-grid{
+  display:grid;grid-template-columns:repeat(7,1fr);gap:8px;
+}
+.heat-cell{
+  background:#fafafa;border-radius:10px;padding:12px 8px;text-align:center;
+  border:1px solid #f3f4f6;
+}
+.heat-cell .heat-dia{
+  font-size:.7rem;font-weight:800;color:#6b7280;text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:8px;
+}
+.heat-cell .heat-num{
+  font-size:1.6rem;font-weight:900;color:#0f172a;line-height:1;
+}
+.heat-cell .heat-bar{
+  height:6px;background:#e5e7eb;border-radius:3px;margin-top:8px;overflow:hidden;
+}
+.heat-cell .heat-bar-fill{
+  height:100%;background:linear-gradient(90deg,var(--ilus-red),#ef4444);
+  border-radius:3px;
+}
+.heat-cell.zero .heat-num{color:#cbd5e1;}
+
+/* Progress bar grande (proyección) */
+.proy-progress{
+  background:#f3f4f6;height:24px;border-radius:50px;overflow:hidden;
+  position:relative;margin:14px 0;
+}
+.proy-progress-fill{
+  height:100%;background:linear-gradient(90deg,#16a34a 0%,#22c55e 50%,#f59e0b 80%,#dc2626 100%);
+  border-radius:50px;transition:width .6s;display:flex;align-items:center;
+  justify-content:flex-end;padding:0 12px;color:#fff;font-weight:800;font-size:.78rem;
+  min-width:60px;
+}
+.proy-meta{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;
+}
+.proy-meta-item{
+  background:#fafafa;border:1px solid #f3f4f6;border-radius:10px;padding:10px 12px;
+}
+.proy-meta-item .pm-lbl{
+  font-size:.62rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.06em;color:#6b7280;
+}
+.proy-meta-item .pm-val{
+  font-size:1.1rem;font-weight:800;color:#0f172a;
+}
+
+.empty-mini{
+  text-align:center;padding:24px 16px;color:#9ca3af;font-size:.86rem;
+}
+.empty-mini i{font-size:2rem;opacity:.4;display:block;margin-bottom:6px;}
+
+@media (max-width: 575px){
+  .heat-grid{grid-template-columns:repeat(7,1fr);gap:4px;}
+  .heat-cell{padding:8px 4px;}
+  .heat-cell .heat-num{font-size:1.2rem;}
+}
+</style>
+
+{# ─────────── HEADER NEGRO ─────────── #}
+<div class="mod-hero">
+  <div>
+    <h4><i class="bi bi-bar-chart-fill"></i>Analytics Mantenciones</h4>
+    <div class="mod-sub">Indicadores operacionales · TMR, SLA, overrun, eficiencia, proyección</div>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <span class="pill"><i class="bi bi-clock-history me-1"></i>Últimos 30 días</span>
+    <a href="{{ url_for('mant_calendario') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-calendar3 me-1"></i>Volver al calendario
+    </a>
+    <button class="btn btn-ilus fw-bold" onclick="cargarAnalytics()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+    </button>
+  </div>
+</div>
+
+{# ─────────── KPIs GRANDES ─────────── #}
+<div class="kpi-grid">
+  <div class="kpi-card tmr">
+    <div class="kpi-icon"><i class="bi bi-stopwatch"></i></div>
+    <div class="kpi-label">TMR — Tiempo Medio Reparación</div>
+    <div class="kpi-value" id="kpiTmr">—</div>
+    <div class="kpi-sub" id="kpiTmrSub">Cargando…</div>
+  </div>
+  <div class="kpi-card sla">
+    <div class="kpi-icon"><i class="bi bi-shield-check"></i></div>
+    <div class="kpi-label">SLA cumplido</div>
+    <div class="kpi-value" id="kpiSla">—<small>%</small></div>
+    <div class="kpi-sub" id="kpiSlaSub">Cargando…</div>
+  </div>
+  <div class="kpi-card overrun">
+    <div class="kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
+    <div class="kpi-label">Overrun promedio</div>
+    <div class="kpi-value" id="kpiOverrun">—<small>%</small></div>
+    <div class="kpi-sub" id="kpiOverrunSub">Cargando…</div>
+  </div>
+  <div class="kpi-card garantia">
+    <div class="kpi-icon"><i class="bi bi-tools"></i></div>
+    <div class="kpi-label">Tasa de garantías</div>
+    <div class="kpi-value" id="kpiGarantia">—<small>%</small></div>
+    <div class="kpi-sub" id="kpiGarantiaSub">Cargando…</div>
+  </div>
+</div>
+
+{# ─────────── ROW: TOP MÁQUINAS + TOP TÉCNICOS ─────────── #}
+<div class="row g-3 mb-2">
+  <div class="col-12 col-lg-6">
+    <div class="analytics-card">
+      <h6>
+        <i class="bi bi-exclamation-triangle"></i>Top 10 máquinas con más fallas
+        <small>Últimos 90 días</small>
+      </h6>
+      <div id="topMaquinas">
+        <div class="empty-mini">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+          <div class="mt-2">Cargando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="analytics-card">
+      <h6>
+        <i class="bi bi-trophy"></i>Top técnicos por eficiencia
+        <small>Últimos 60 días</small>
+      </h6>
+      <div id="topTecnicos">
+        <div class="empty-mini">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+          <div class="mt-2">Cargando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ─────────── HEATMAP SEMANAL ─────────── #}
+<div class="analytics-card">
+  <h6>
+    <i class="bi bi-calendar-week"></i>Distribución semanal de visitas
+    <small>Últimos 30 días</small>
+  </h6>
+  <div class="heat-grid" id="heatGrid">
+    <div class="empty-mini" style="grid-column:1/-1">
+      <div class="spinner-border spinner-border-sm" role="status"></div>
+      <div class="mt-2">Cargando…</div>
+    </div>
+  </div>
+  <div class="small text-muted mt-3 text-center" id="heatTotal">—</div>
+</div>
+
+{# ─────────── PROYECCIÓN PRÓXIMA SEMANA ─────────── #}
+<div class="analytics-card">
+  <h6>
+    <i class="bi bi-calendar-event"></i>Proyección próxima semana
+    <small>Visitas programadas vs capacidad de equipo</small>
+  </h6>
+  <div class="proy-progress">
+    <div class="proy-progress-fill" id="proyBar" style="width:0%">
+      <span id="proyBarText">—</span>
+    </div>
+  </div>
+  <div class="proy-meta" id="proyMeta">
+    <div class="proy-meta-item">
+      <div class="pm-lbl">Técnicos activos</div>
+      <div class="pm-val" id="proyTec">—</div>
+    </div>
+    <div class="proy-meta-item">
+      <div class="pm-lbl">Capacidad total</div>
+      <div class="pm-val" id="proyCap">— h</div>
+    </div>
+    <div class="proy-meta-item">
+      <div class="pm-lbl">Horas programadas</div>
+      <div class="pm-val" id="proyProg">— h</div>
+    </div>
+    <div class="proy-meta-item">
+      <div class="pm-lbl">N° visitas planificadas</div>
+      <div class="pm-val" id="proyN">—</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtMin(min){
+  if (min == null) return '—';
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  if (h && m) return `${h}h ${m}min`;
+  if (h)      return `${h}h`;
+  return `${m}min`;
+}
+
+async function cargarAnalytics(){
+  try {
+    const r = await fetch('/mantenciones/api/analytics/data');
+    const d = await r.json();
+    if (!d.ok){
+      alert('Error: ' + (d.error || 'no se pudo cargar'));
+      return;
+    }
+    renderKpis(d.kpis);
+    renderTopMaquinas(d.top_maquinas || []);
+    renderTopTecnicos(d.top_tecnicos || []);
+    renderHeatmap(d.heatmap || []);
+    renderProyeccion(d.proyeccion || {});
+  } catch(e){
+    alert('Error de red: ' + e);
+  }
+}
+
+function renderKpis(k){
+  // TMR
+  document.getElementById('kpiTmr').innerHTML = k.tmr_label || '—';
+  document.getElementById('kpiTmrSub').textContent =
+    k.tmr_min ? `Promedio sobre ${k.completadas_30d} OTs completadas` : 'Sin datos suficientes';
+
+  // SLA
+  if (k.sla_pct != null){
+    document.getElementById('kpiSla').innerHTML = k.sla_pct + '<small>%</small>';
+    const cls = k.sla_pct >= 90 ? 'down' : (k.sla_pct >= 75 ? '' : 'up');
+    const el = document.getElementById('kpiSlaSub');
+    el.textContent = `${k.sla_ok}/${k.sla_total} OTs dentro de SLA (+1 día)`;
+    el.className = 'kpi-sub ' + cls;
+  } else {
+    document.getElementById('kpiSla').textContent = '—';
+    document.getElementById('kpiSlaSub').textContent = 'Sin datos';
+  }
+
+  // Overrun
+  const ov = k.overrun_pct;
+  if (ov != null && !isNaN(ov)){
+    const sign = ov >= 0 ? '+' : '';
+    document.getElementById('kpiOverrun').innerHTML = sign + ov + '<small>%</small>';
+    const cls = ov > 20 ? 'up' : (ov > 0 ? '' : 'down');
+    const el = document.getElementById('kpiOverrunSub');
+    el.textContent = ov > 0
+      ? 'En promedio las OTs duran más de lo planificado'
+      : 'Excelente — las OTs terminan antes de lo planificado';
+    el.className = 'kpi-sub ' + cls;
+  } else {
+    document.getElementById('kpiOverrun').textContent = '—';
+    document.getElementById('kpiOverrunSub').textContent = 'Sin OTs cronometradas';
+  }
+
+  // Garantías
+  if (k.garantias_pct != null){
+    document.getElementById('kpiGarantia').innerHTML = k.garantias_pct + '<small>%</small>';
+    document.getElementById('kpiGarantiaSub').textContent =
+      `${k.garantias_n}/${k.total_30d} visitas son de garantía`;
+  } else {
+    document.getElementById('kpiGarantia').textContent = '—';
+    document.getElementById('kpiGarantiaSub').textContent = 'Sin visitas en 30 días';
+  }
+}
+
+function renderTopMaquinas(rows){
+  const wrap = document.getElementById('topMaquinas');
+  if (!rows.length){
+    wrap.innerHTML = `<div class="empty-mini"><i class="bi bi-check-circle"></i>Sin máquinas con fallas registradas</div>`;
+    return;
+  }
+  let html = `<table class="a-table"><thead><tr>
+    <th>#</th>
+    <th>Máquina</th>
+    <th>Cliente</th>
+    <th class="text-end">Tareas</th>
+  </tr></thead><tbody>`;
+  rows.forEach((m, i) => {
+    const rankCls = i === 0 ? 'top1' : (i === 1 ? 'top2' : (i === 2 ? 'top3' : ''));
+    const nombre = escHtml(m.nombre || '—');
+    const serie  = m.serie ? `<br><small class="text-muted">${escHtml(m.serie)}</small>` : '';
+    html += `<tr>
+      <td><span class="a-rank ${rankCls}">${i+1}</span></td>
+      <td><strong>${nombre}</strong>${serie}</td>
+      <td>${escHtml(m.cliente_nombre || '—')}</td>
+      <td class="text-end"><strong>${m.n_tareas}</strong></td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  wrap.innerHTML = html;
+}
+
+function renderTopTecnicos(rows){
+  const wrap = document.getElementById('topTecnicos');
+  if (!rows.length){
+    wrap.innerHTML = `<div class="empty-mini"><i class="bi bi-info-circle"></i>Sin datos suficientes para calcular eficiencia<br><small>Se requieren OTs completadas con duración real</small></div>`;
+    return;
+  }
+  let html = `<table class="a-table"><thead><tr>
+    <th>#</th>
+    <th>Técnico</th>
+    <th class="text-end">OTs</th>
+    <th>Eficiencia</th>
+  </tr></thead><tbody>`;
+  rows.forEach((t, i) => {
+    const rankCls = i === 0 ? 'top1' : (i === 1 ? 'top2' : (i === 2 ? 'top3' : ''));
+    const ef = t.eficiencia_pct || 0;
+    // ef > 100 = mejor que estimado, ef = 100 perfecto, ef < 80 lento
+    let barCls = '', badgeCls = '', badgeText = '';
+    if (ef >= 100){ barCls = ''; badgeCls = 'excel'; badgeText = 'Excelente'; }
+    else if (ef >= 90){ barCls = ''; badgeCls = 'bueno'; badgeText = 'Bueno'; }
+    else if (ef >= 75){ barCls = 'warn'; badgeCls = 'warn';  badgeText = 'Aceptable'; }
+    else { barCls = 'bad'; badgeCls = 'bad'; badgeText = 'Lento'; }
+    const pct = Math.min(100, Math.max(5, ef));
+    const externoBadge = t.es_externo ? '<span class="badge bg-warning text-dark ms-1" style="font-size:.55rem">EXT</span>' : '';
+    html += `<tr>
+      <td><span class="a-rank ${rankCls}">${i+1}</span></td>
+      <td>
+        <strong>${escHtml(t.nombre)}</strong>${externoBadge}
+        <br><small class="text-muted">${escHtml(t.especialidad || t.nivel || '')}</small>
+      </td>
+      <td class="text-end">${t.n_visitas}</td>
+      <td>
+        <div class="d-flex align-items-center gap-2">
+          <div class="eficiencia-bar" style="flex:1">
+            <div class="eficiencia-bar-fill ${barCls}" style="width:${pct}%"></div>
+          </div>
+          <span class="badge-ef ${badgeCls}">${ef}%</span>
+        </div>
+        <small class="text-muted">${badgeText}</small>
+      </td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  wrap.innerHTML = html;
+}
+
+function renderHeatmap(rows){
+  const wrap = document.getElementById('heatGrid');
+  if (!rows.length){
+    wrap.innerHTML = `<div class="empty-mini" style="grid-column:1/-1"><i class="bi bi-bar-chart"></i>Sin visitas en los últimos 30 días</div>`;
+    document.getElementById('heatTotal').textContent = '';
+    return;
+  }
+  const max = Math.max(...rows.map(r => r.n), 1);
+  let html = '';
+  let total = 0;
+  for (const r of rows){
+    total += r.n;
+    const pct = Math.round((r.n * 100) / max);
+    const zero = r.n === 0 ? 'zero' : '';
+    html += `<div class="heat-cell ${zero}">
+      <div class="heat-dia">${r.dia}</div>
+      <div class="heat-num">${r.n}</div>
+      <div class="heat-bar"><div class="heat-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }
+  wrap.innerHTML = html;
+  document.getElementById('heatTotal').textContent =
+    `Total: ${total} visita(s) · Promedio: ${(total/7).toFixed(1)}/día · Pico: ${max}`;
+}
+
+function renderProyeccion(p){
+  const ocup = p.ocupacion_pct;
+  document.getElementById('proyTec').textContent = p.n_tecnicos_activos || 0;
+  document.getElementById('proyCap').textContent = (p.capacidad_horas || 0) + ' h';
+  document.getElementById('proyProg').textContent = (p.prox_horas || 0) + ' h';
+  document.getElementById('proyN').textContent = (p.prox_visitas || 0);
+  if (ocup != null){
+    const pct = Math.min(100, ocup);
+    document.getElementById('proyBar').style.width = pct + '%';
+    document.getElementById('proyBarText').textContent = ocup + '%';
+  } else {
+    document.getElementById('proyBar').style.width = '0%';
+    document.getElementById('proyBarText').textContent = 'Sin capacidad definida';
+  }
+}
+
+// Init
+cargarAnalytics();
+</script>
+
+{% endblock %}
