@@ -157,7 +157,11 @@ async function procesar(){
   }
 }
 
+// Guardar el último resultado para poder reprocesar después de crear productos
+let _ULTIMO_RESULTADO = null;
+
 function mostrarResultados(d){
+  _ULTIMO_RESULTADO = d;
   document.getElementById('resultBox').style.display = '';
   document.getElementById('kpi_total').textContent = d.total;
   document.getElementById('kpi_ok').textContent = d.ok;
@@ -173,25 +177,225 @@ function mostrarResultados(d){
   }
 
   const esc = s => String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let html = `<div class="em-row" style="font-weight:800;color:#374151;border-bottom:2px solid #e5e7eb">
-    <div>Fila</div><div>SKU / Descripción</div><div>Estado</div><div class="text-end">Detalle</div>
+
+  // Contar SKUs no encontrados (potencialmente creables)
+  const skusNoEncontrados = d.resultados.filter(r => r.estado === 'NO_ENCONTRADO');
+  let bannerAccion = '';
+  if (skusNoEncontrados.length > 0) {
+    bannerAccion = `<div class="alert alert-warning d-flex justify-content-between align-items-center mb-3 py-2" style="border-left:4px solid #f59e0b;font-size:.88rem">
+      <div>
+        <strong><i class="bi bi-exclamation-triangle me-1"></i>${skusNoEncontrados.length} SKU(s) no están en tu catálogo</strong>
+        <div class="small text-muted">Puedes crearlos ahora con un solo click y reintentar la impresión</div>
+      </div>
+      <button class="btn btn-warning fw-bold" onclick="crearTodosLosFaltantes()">
+        <i class="bi bi-plus-circle me-1"></i>Crear ${skusNoEncontrados.length} producto(s) ahora
+      </button>
+    </div>`;
+  }
+
+  let html = bannerAccion;
+  html += `<div class="em-row" style="font-weight:800;color:#374151;border-bottom:2px solid #e5e7eb">
+    <div>Fila</div><div>SKU / Descripción</div><div>Estado</div><div class="text-end">Acción / Detalle</div>
   </div>`;
   for (const it of d.resultados){
+    let accionHtml = `<span class="small ${it.estado==='OK' ? 'text-success' : 'text-muted'}">${esc(it.mensaje || '')}</span>`;
+
+    // Acciones por estado
+    if (it.estado === 'NO_ENCONTRADO') {
+      accionHtml = `<button class="btn btn-sm btn-warning fw-semibold" onclick="crearProductoInline('${esc(it.sku)}', '${esc(it.descripcion || '')}', ${it.cantidad || 1})" title="Crear este SKU con sus datos y reintentar">
+        <i class="bi bi-plus-circle me-1"></i>Crear ahora
+      </button>`;
+    } else if (it.estado === 'SIN_BULTO') {
+      accionHtml = `<a href="/products/edit-by-sku/${encodeURIComponent(it.sku)}" target="_blank" class="btn btn-sm btn-outline-warning fw-semibold" title="Abrir producto para agregar medidas">
+        <i class="bi bi-rulers me-1"></i>Agregar medidas
+      </a>`;
+    } else if (it.estado === 'ERROR') {
+      accionHtml = `<span class="small text-danger" title="${esc(it.mensaje)}">${esc((it.mensaje||'').slice(0,60))}</span>`;
+    }
+
     html += `<div class="em-row">
       <div class="text-muted font-monospace">#${it.row}</div>
       <div>
         <span class="font-monospace fw-bold">${esc(it.sku)}</span>
         ${it.nombre_producto ? `<div class="small text-muted">${esc(it.nombre_producto)}</div>` :
           (it.descripcion ? `<div class="small text-muted">${esc(it.descripcion)}</div>` : '')}
+        ${it.cantidad > 1 ? `<div class="small text-muted">Cantidad solicitada: ${it.cantidad}</div>` : ''}
       </div>
       <div><span class="em-badge bs-${it.estado}">${esc(it.estado)}</span></div>
-      <div class="text-end small ${it.estado==='OK' ? 'text-success' : 'text-muted'}">
-        ${esc(it.mensaje || '')}
-      </div>
+      <div class="text-end">${accionHtml}</div>
     </div>`;
   }
   document.getElementById('lista_resultados').innerHTML = html;
   document.getElementById('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ─── Crear UN producto inline (modal sin recargar la página) ────────
+async function crearProductoInline(sku, descripcion, cantidad) {
+  if (!sku) return;
+  // Modal mini con form
+  const modalHtml = `
+    <div class="modal fade" id="modalCrearInline" tabindex="-1">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff">
+            <h5 class="modal-title fw-bold"><i class="bi bi-plus-circle me-2"></i>Crear producto rápido</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info py-2 small mb-3">
+              <i class="bi bi-info-circle me-1"></i>
+              Se creará el producto en el catálogo con SKU + descripción.
+              <strong>NO tendrá medidas todavía</strong> — para imprimir etiquetas necesitas ir a editarlo
+              y agregar largo/ancho/alto/peso por cada bulto.
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold mb-1">SKU</label>
+              <input type="text" id="inlSku" class="form-control font-monospace" value="${sku}" readonly>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold mb-1">Nombre del producto <span class="text-danger">*</span></label>
+              <input type="text" id="inlNombre" class="form-control" value="${descripcion || ''}"
+                     placeholder="Nombre descriptivo del producto" required maxlength="300">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold mb-1">Estado inicial</label>
+              <select id="inlEstado" class="form-select form-select-sm">
+                <option value="Pendiente" selected>Pendiente (sin medidas)</option>
+                <option value="Confirmado">Confirmado</option>
+              </select>
+              <div class="small text-muted mt-1">El estado "Pendiente" te recuerda que necesita agregar medidas.</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" id="btnCrearInline" class="btn btn-warning fw-bold" onclick="confirmarCrearInline('${sku}', ${cantidad})">
+              <i class="bi bi-check-lg me-1"></i>Crear producto
+            </button>
+            <a id="btnCrearYEditar" href="#" target="_blank" class="btn btn-success fw-bold" style="display:none">
+              <i class="bi bi-pencil me-1"></i>Crear y abrir editor
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  // Quitar modal anterior si existe
+  const old = document.getElementById('modalCrearInline');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  new bootstrap.Modal(document.getElementById('modalCrearInline')).show();
+}
+
+async function confirmarCrearInline(sku, cantidad) {
+  const nombre = document.getElementById('inlNombre').value.trim();
+  if (!nombre) { alert('El nombre es obligatorio'); return; }
+  const estado = document.getElementById('inlEstado').value;
+  const btn = document.getElementById('btnCrearInline');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando...';
+
+  try {
+    const r = await fetch('/etiquetas/api/importar-desde-erp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        skus: [sku],
+        lineas_erp: [{sku: sku, descripcion_erp: nombre, cantidad: cantidad}]
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      alert('Error: ' + (d.error || 'desconocido'));
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear producto';
+      return;
+    }
+    const det = (d.detalles && d.detalles[0]) || {};
+    if (det.estado === 'CREADO') {
+      // Mostrar botón "Crear y abrir editor" para que pueda agregar medidas
+      const url = `/products/${det.id}/edit`;
+      // Cerrar modal
+      bootstrap.Modal.getInstance(document.getElementById('modalCrearInline')).hide();
+      // Mostrar toast de éxito + opción de ir al editor
+      const goEdit = confirm(
+        `✅ Producto ${sku} creado correctamente.\n\n` +
+        `Para que aparezca con cubicaje, necesitas agregar las medidas (largo/ancho/alto/peso).\n\n` +
+        `¿Abrir el editor del producto ahora?\n\n` +
+        `• Aceptar = abrir editor en pestaña nueva\n` +
+        `• Cancelar = volver a la lista (puedes editar después)`
+      );
+      if (goEdit) window.open(url, '_blank');
+      // Marcar visualmente que ese SKU ya está creado en la lista
+      marcarSkuComoCreado(sku, det.id);
+    } else if (det.estado === 'YA_EXISTE') {
+      alert(`El producto ${sku} ya existía. ID: ${det.id}`);
+      marcarSkuComoCreado(sku, det.id);
+      bootstrap.Modal.getInstance(document.getElementById('modalCrearInline')).hide();
+    } else {
+      alert('Error: ' + (det.msg || 'no se pudo crear'));
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear producto';
+    }
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear producto';
+  }
+}
+
+// ─── Crear TODOS los faltantes de un golpe ───────────────────────
+async function crearTodosLosFaltantes() {
+  if (!_ULTIMO_RESULTADO) return;
+  const noEncontrados = _ULTIMO_RESULTADO.resultados.filter(r => r.estado === 'NO_ENCONTRADO');
+  if (noEncontrados.length === 0) return;
+
+  if (!confirm(
+    `Vas a crear ${noEncontrados.length} producto(s) en el catálogo con los SKUs + descripciones del Excel.\n\n` +
+    `Después podrás:\n` +
+    `1. Agregar medidas a cada uno (largo/ancho/alto/peso)\n` +
+    `2. Reprocesar el Excel para imprimir las etiquetas\n\n` +
+    `¿Continuar?`
+  )) return;
+
+  const skus = noEncontrados.map(r => r.sku);
+  const lineas_erp = noEncontrados.map(r => ({
+    sku: r.sku, descripcion_erp: r.descripcion || r.sku, cantidad: r.cantidad || 1
+  }));
+
+  try {
+    const r = await fetch('/etiquetas/api/importar-desde-erp', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({skus, lineas_erp})
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error || 'desconocido')); return; }
+    alert(
+      `✅ Resultado:\n\n` +
+      `• Creados: ${d.creados || 0}\n` +
+      `• Ya existían: ${d.existentes || 0}\n` +
+      `• Errores: ${d.errores || 0}\n\n` +
+      `Ahora ve a Etiquetas → Productos y agrega medidas a cada uno.\n` +
+      `Después vuelve aquí y reprocesa el mismo Excel.`
+    );
+    // Re-procesar para actualizar la lista (mostrará SIN_BULTO en vez de NO_ENCONTRADO)
+    if (confirm('¿Reprocesar el mismo Excel ahora para ver el nuevo estado?')) {
+      procesar();
+    }
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+
+function marcarSkuComoCreado(sku, pid) {
+  // Encuentra la fila del SKU y reemplaza la acción por un link al editor
+  document.querySelectorAll('.em-row').forEach(row => {
+    const txt = row.textContent || '';
+    if (txt.includes(sku)) {
+      const td = row.lastElementChild;
+      if (td) td.innerHTML = `<a href="/products/${pid}/edit" target="_blank" class="btn btn-sm btn-outline-success fw-semibold">
+        <i class="bi bi-rulers me-1"></i>Agregar medidas (recién creado)
+      </a>`;
+    }
+  });
 }
 </script>
 {% endblock %}

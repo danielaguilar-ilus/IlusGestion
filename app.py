@@ -3756,6 +3756,22 @@ def new_product():
                            max_b=MAX_BULTOS, auto_codigo=auto_codigo)
 
 
+@app.route("/products/edit-by-sku/<path:sku>")
+@require_permission("edit")
+def edit_product_by_sku(sku):
+    """Redirige a /products/<id>/edit dado un SKU.
+    Útil para enlaces inline desde la carga masiva o desde otros módulos."""
+    sku_clean = (sku or "").strip().upper()
+    row = mysql_fetchone(
+        f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(TRIM(sku))=%s LIMIT 1",
+        (sku_clean,)
+    )
+    if not row:
+        flash(f"No existe ningún producto con SKU '{sku}'. Créalo primero.", "warning")
+        return redirect(url_for("new_product") + f"?sku={sku_clean}")
+    return redirect(url_for("edit_product", pid=row["id"]))
+
+
 @app.route("/etiquetas/api/importar-desde-erp", methods=["POST"])
 @require_permission("create")
 def etiquetas_importar_desde_erp():
