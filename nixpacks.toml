@@ -1,61 +1,24 @@
 # ════════════════════════════════════════════════════════════════════
-#  Nixpacks config — Railway deploy
+#  ⚠️  NIXPACKS.TOML — CONFIGURACIÓN DE BUILD DE RAILWAY
 # ════════════════════════════════════════════════════════════════════
-#  HISTORIA:
-#  - El error "BrowserType.launch: Executable doesn't exist at
-#    /root/.cache/ms-playwright/chromium_headless_shell-1217" significaba
-#    que la versión de playwright en pip avanzó pero el binario de Chromium
-#    en la cache de Railway era anterior, así que no coincidían.
-#  - FIX: pinear playwright en requirements.txt + descargar el binario en
-#    /app/.pw-browsers (parte de la imagen final, no de /root/.cache que
-#    Nixpacks puede invalidar) + setear PLAYWRIGHT_BROWSERS_PATH para que
-#    al ejecutar en runtime busque en el mismo path.
+#
+#  🔴 NO CREAR railway.toml NI railpack.toml EN ESTE PROYECTO.
+#     Cuando existía railway.toml con RAILPACK, los deploys fallaban con
+#     "pip: command not found" (ver commit 43f91f5). El stack correcto
+#     en este proyecto es nixpacks (es el default si no hay railway.toml).
+#
+#  🔴 NO TOCAR --with-deps. Si Chromium falla en runtime, hay un
+#     auto-install fallback en app.py (_pw_install_chromium_runtime).
+#     Esa función intenta `python -m playwright install chromium` desde
+#     el código si falta el binario al servir el primer PDF.
+#
+#  🔴 NO PINEAR a Python específico (deja el default de Railway).
+#     Hubo intentos previos con `nixPkgs = ["python311"]` y romper Python
+#     3.13 que ya funciona con todo lo demás.
 # ════════════════════════════════════════════════════════════════════
-
-[phases.setup]
-# Dependencias de sistema requeridas por Chromium headless. Reemplaza al
-# antiguo "--with-deps" que en Railway/nixpacks no encuentra apt como root.
-aptPkgs = [
-  "libnss3",
-  "libnspr4",
-  "libatk1.0-0",
-  "libatk-bridge2.0-0",
-  "libcups2",
-  "libdrm2",
-  "libxkbcommon0",
-  "libxcomposite1",
-  "libxdamage1",
-  "libxfixes3",
-  "libxrandr2",
-  "libgbm1",
-  "libpango-1.0-0",
-  "libcairo2",
-  "libasound2",
-  "libatspi2.0-0",
-  "fonts-liberation",
-]
 
 [phases.install]
 cmds = [
   "pip install -r requirements.txt",
+  "playwright install chromium --with-deps"
 ]
-
-[phases.build]
-dependsOn = ["install"]
-cmds = [
-  # Descarga Chromium dentro del workdir (sobrevive al deploy).
-  # Si falla el build, no abortamos: el código tiene fallback que
-  # auto-instala Chromium al primer PDF en runtime (lazy install).
-  # Esto hace el deploy más robusto a problemas de red en build phase.
-  "mkdir -p /app/.pw-browsers",
-  "PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers python -m playwright install chromium || echo '[playwright] Build install failed — runtime fallback will retry'",
-  "ls -la /app/.pw-browsers/ || true",
-]
-
-[start]
-cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 300 app:app"
-
-[variables]
-# CRÍTICO: tanto build como runtime usan este path para que el binario
-# que se descarga en build sea el mismo que playwright busca en runtime.
-PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"

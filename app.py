@@ -4378,7 +4378,27 @@ def _etq_batch_cleanup():
 @app.route("/etiquetas/masivo")
 @require_permission("print")
 def etiquetas_masivo_index():
-    """Página principal del módulo de carga masiva."""
+    """Página principal del módulo de carga masiva.
+
+    🔒 BLINDADO — NO TOCAR EL MÓDULO DE ETIQUETAS
+    ════════════════════════════════════════════════════════════════════
+    TODO el flujo de etiquetas funciona OK en producción y es la base
+    operativa del negocio. Si vas a modificar algo de etiquetas:
+
+      - /etiquetas/masivo/*  (carga masiva Excel + ZIP)
+      - /products/*          (CRUD productos = catálogo etiquetas)
+      - /print/*             (impresión individual + bulk)
+      - /labels/*            (templates HTML de etiquetas 150x70mm)
+      - Diseño activo: Cara A | Cara B con CODE128 + logo B&W
+        (ver MEMORY → label_design_ilus.md)
+
+    NO toques labels.html ni etiquetas_masivo.html sin probar:
+      1. Generar PDF de etiquetas individual y bulk
+      2. Verificar que CODE128 imprime escaneable
+      3. Verificar logo blanco/negro en cabecera
+      4. Tamaño exacto 150×70mm (no escalar márgenes)
+    ════════════════════════════════════════════════════════════════════
+    """
     return render_template("etiquetas_masivo.html")
 
 
@@ -7215,20 +7235,37 @@ def _cubicador_fetch(tido, nudo):
     """
     SHIM de compatibilidad sobre erp_engine.ERPClient.
 
-    Delegamos toda la lógica ERP al motor unificado (erp_engine.py) y aquí
-    solo hacemos:
-      1. Llamar al motor → obtener documento + líneas crudas
-      2. Cruzar SKUs con nuestra BD local en UNA query batch (peso/volumen/bultos)
-      3. Devolver (header_dict, lineas_list) en el formato legacy que esperan
-         los templates y los demás callers.
+    🔒 BLINDADO — NO TOCAR salvo bug confirmado por el usuario
+    ════════════════════════════════════════════════════════════════════
+    Esta función ES el corazón del cubicador, transporte, retiros y
+    mantenciones (saldos). TODO el sistema consulta documentos del ERP
+    Random a través de aquí o a través de erp_engine.get_client().
 
-    El motor maneja: variantes NUDO, variantes RUT en paralelo, fallback a
-    /entidades por nombre cuando RUT no resuelve, caché, retry, logger,
-    resolución de comuna desde código, normalización de teléfono, etc.
+    Si vas a modificar algo:
+      1. NO toques la estructura del dict 'header' que devuelve — los
+         templates y exports leen claves específicas (tido, nudo,
+         nudo_display, fecha, valor_neto, valor_iva, valor_bruto,
+         cliente_nombre, cliente_rut, email, telefono, direccion, comuna,
+         observaciones, tipo_operacion, tipo_codigo, all_fields, etc.)
+      2. NO toques la estructura del dict 'lineas' — los exports y la
+         pantalla del cubicador leen sku, descripcion_erp, nombre_app,
+         cantidad, total_bultos, peso_kg_u, peso_vol_u, vol_u, pred_u,
+         pred_tot, peso_kg_tot, peso_vol_tot, vol_tot, tiene_ficha,
+         tiene_bultos, es_zz, vaneli, saldo, etc.
+      3. NO toques erp_engine.py sin probar PRIMERO con varios TIDOs
+         (FCV, BLV, NVV, GDP) — cada uno tiene comportamiento distinto
+      4. La caché _ERP_PROD_CACHE existe a propósito (evita N requests
+         al ERP). NO la elimines.
+
+    Delegamos al motor unificado (erp_engine.py) y aquí solo hacemos:
+      1. Llamar al motor → obtener documento + líneas crudas
+      2. Cruzar SKUs con nuestra BD local en UNA query batch (peso/vol)
+      3. Devolver (header_dict, lineas_list) en formato legacy
 
     Cualquier módulo nuevo (retiros, mantenciones, etc.) debe llamar
     directamente a `erp_engine.get_client().fetch_document(tido, nudo)` y
     no a esta función — esto es solo para mantener la API legacy.
+    ════════════════════════════════════════════════════════════════════
     """
     # 1. Llamar al motor unificado
     try:
@@ -7636,7 +7673,23 @@ def cubicador():
 @app.route("/cubicador/export/excel", methods=["POST"])
 @login_required
 def cubicador_export_excel():
-    """Descarga el resultado del cubicador como Excel (.xlsx) — soporta múltiples documentos."""
+    """Descarga el resultado del cubicador como Excel (.xlsx) — soporta múltiples documentos.
+
+    🔒 BLINDADO — NO TOCAR salvo bug confirmado por el usuario
+    ════════════════════════════════════════════════════════════════════
+    Este endpoint genera el Excel del cubicador que el usuario USA HOY
+    para operaciones reales. Funciona con la columna 'Doc.' agregada en
+    commit c77705b. Los índices de totales (4, 6, 7, 8, 10) y los anchos
+    de columna están calibrados a esa estructura.
+
+    Si VAS A MODIFICAR algo:
+      1. Probá ANTES con FCV 10683 (1 doc) y BLV 19893+19892+21225 (3 docs)
+      2. Verificá que la columna 'Doc.' siga apareciendo en posición 3
+      3. Verificá que merge_cells A1:K1 y A{tr}:C{tr} sigan alineados
+      4. NO cambies las llaves del dict 'totales' sin recalcular índices
+      5. NO toques _fetch_multi_docs (que provee doc_ref) sin avisar
+    ════════════════════════════════════════════════════════════════════
+    """
     if not g.permissions.get("cubicador"):
         flash("No tienes acceso al módulo Cubicador.", "danger")
         return redirect(url_for("index"))
@@ -7822,7 +7875,32 @@ def cubicador_export_excel():
 
 
 def _cubicador_pdf_response_ilus(headers, lineas, docs):
-    """PDF comercial ILUS para el cubicador."""
+    """PDF comercial ILUS para el cubicador.
+
+    🔒🔒🔒 BLINDADO — NO TOCAR EL DISEÑO sin pedirlo el usuario 🔒🔒🔒
+    ════════════════════════════════════════════════════════════════════
+    Este es el PDF FORMAL que el usuario usa para clientes. Pasó por
+    múltiples iteraciones de diseño y AHORA está exacto como el usuario
+    quiere. Estructura visual:
+      - Hero negro+rojo con logo ILUS + "SISTEMA ILUS ERP"
+      - 3 cards: CLIENTE, RESUMEN GENERAL, PERIODO DEL REPORTE
+      - Tabla "DOCUMENTOS INCLUIDOS EN EL REPORTE"
+      - Tabla "DETALLE DE CUBICAJE GENERAL" con columna Doc.
+      - Resumen de cubicaje con métricas + Peso predominante total
+      - Observaciones + Footer con logo/QR
+
+    Si necesitás CAMBIAR algo:
+      1. NO toques el CSS (paleta de colores, paddings, tipografías)
+      2. NO toques la estructura de las 3 cards superiores
+      3. NO toques las dos tablas centrales
+      4. NO toques el HTML del hero ni del footer
+      5. Si agregás campo nuevo, hacelo SOLO si el usuario lo pidió
+
+    Si el PDF NO se genera (Chromium ausente), el problema es de deploy
+    NO de esta función. Mirar app.py:_pw_install_chromium_runtime y
+    nixpacks.toml. NO modifiques este HTML pensando que arregla deploy.
+    ════════════════════════════════════════════════════════════════════
+    """
     import html as _html
     import os as _os
     from io import BytesIO as _BytesIO
@@ -9416,6 +9494,21 @@ def tr_importar_excel():
 @app.route("/transporte/")
 @_tr_required
 def transporte_index():
+    """Pantalla principal de Transporte.
+
+    🔒 BLINDADO — NO TOCAR salvo bug confirmado por el usuario
+    ════════════════════════════════════════════════════════════════════
+    Todo el módulo /transporte/* funciona OK en producción y el usuario
+    lo usa a diario. Si modificás un endpoint de aquí, probá CADA vista:
+      - /transporte/ (dashboard)
+      - /transporte/manifiestos
+      - /transporte/couriers + /transporte/couriers/<id>
+      - /transporte/api/* (los AJAX del dashboard)
+
+    El cubicador (que es parte de Transporte en la UI) tiene su propio
+    blindaje en cubicador_export_excel y _cubicador_fetch.
+    ════════════════════════════════════════════════════════════════════
+    """
     from datetime import date as _date, timedelta as _td
 
     periodo = request.args.get("periodo", "")

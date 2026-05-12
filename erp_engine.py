@@ -1,6 +1,27 @@
 """
 ERP Engine — Motor unificado para integración con Random ERP.
 
+🔒🔒🔒 ARCHIVO BLINDADO — NO TOCAR SIN AUTORIZACIÓN EXPRESA DEL USUARIO 🔒🔒🔒
+════════════════════════════════════════════════════════════════════════════
+Este motor está FUNCIONANDO PERFECTAMENTE en producción y es la única vía
+por la que el sistema obtiene datos del ERP Random. Cualquier cambio aquí
+ROMPE simultáneamente: cubicador, transporte, retiros, mantenciones, stock.
+
+Si una IA o desarrollador encuentra este archivo y está pensando en modificarlo:
+  1. PARA. Revisa primero si el problema NO se puede arreglar en el caller
+  2. Si es absolutamente necesario tocar aquí, abre un ticket primero
+  3. NUNCA cambies las firmas de funciones públicas:
+       - get_client()
+       - fetch_document(tido, nudo)
+       - fetch_entity(rut), fetch_entity_by_name(nombre)
+       - normalize_phone_cl, format_rut, rut_variants, nudo_variants
+       - resolve_comuna, cmen_to_comuna, fix_yen_to_n
+  4. NUNCA cambies la estructura del dict que devuelve fetch_document
+     — los consumidores leen claves específicas (ver _cubicador_fetch
+     en app.py para la lista completa)
+  5. Las variantes de NUDO y RUT son producto de mucho debug — NO las simplifiques
+════════════════════════════════════════════════════════════════════════════
+
 Diseñado para ser reusable desde TODOS los módulos del sistema:
   - Cubicador (transporte)
   - Asignar y Cotizar (cotizaciones de courier)
