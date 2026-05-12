@@ -5272,10 +5272,11 @@ def _login_images_active():
 @app.route("/admin/login-imagenes", methods=["GET"])
 @require_permission("admin")
 def admin_login_imagenes():
-    rows = mysql_fetchall(
-        "SELECT * FROM login_images ORDER BY orden ASC, id ASC"
+    # Usa el helper unificado que ya resuelve cloudinary_url > archivo_path
+    return render_template(
+        "admin/login_imagenes.html",
+        imagenes=_login_images_active()
     )
-    return render_template("admin/login_imagenes.html", imagenes=[dict(r) for r in rows])
 
 
 @app.route("/admin/login-imagenes", methods=["POST"])
@@ -5310,6 +5311,7 @@ def admin_login_imagenes_subir():
     activas = (activas_row or {}).get("n", 0)
 
     saved = 0
+    cloud_saved = 0
     errors: list[str] = []
     for i, f in enumerate(files):
         if not f or not f.filename:
@@ -5319,12 +5321,40 @@ def admin_login_imagenes_subir():
             errors.append(err)
             continue
         fname = f"login_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+
+        # ── Cloudinary primero (PERSISTENTE — sobrevive deploys Railway) ─
+        cloud_url = None
+        cloud_pid = None
+        if _CLD_READY:
+            try:
+                f.stream.seek(0)
+                public_id = f"login_{int(time.time())}_{i}"
+                cloud_url = _cloud_upload(f.stream, public_id, folder="ilus/login_carousel")
+                # Extraer public_id de la URL para poder borrar después
+                import re as _re_cld
+                m = _re_cld.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", cloud_url)
+                cloud_pid = m.group(1) if m else f"ilus/login_carousel/{public_id}"
+                print(f"[login_imagenes] Cloudinary OK {fname} → {cloud_url}", flush=True)
+            except Exception as e_cld:
+                print(f"[login_imagenes] Cloudinary FAIL {fname}: {e_cld}", flush=True)
+                cloud_url = None
+
+        # ── Filesystem fallback (también guarda copia local si se puede) ──
+        try:
+            f.stream.seek(0)
+        except Exception:
+            pass
         fpath = os.path.join(LOGIN_IMAGES_DIR, fname)
+        saved_local = False
         try:
             f.save(fpath)
+            saved_local = True
         except Exception as e:
-            errors.append(f"Error guardando {f.filename}: {e}")
-            continue
+            if not cloud_url:
+                errors.append(f"Error guardando {f.filename}: {e}")
+                continue
+            print(f"[login_imagenes] filesystem fail pero Cloudinary OK: {e}", flush=True)
+
         # Si excede 5 activas, marcar como inactiva
         activa = want_active
         if activa and activas >= 5:
@@ -5333,10 +5363,13 @@ def admin_login_imagenes_subir():
             activas += activa
         try:
             mysql_execute(
-                "INSERT INTO login_images (archivo_path,titulo,subtitulo,orden,activa,created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO login_images "
+                "(archivo_path,cloudinary_url,cloudinary_public_id,titulo,subtitulo,orden,activa,created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    f"uploads/login/{fname}",
+                    f"uploads/login/{fname}" if saved_local else None,
+                    cloud_url,
+                    cloud_pid,
                     titulo_base or None,
                     subtitulo_base or None,
                     nx + saved,
@@ -5345,10 +5378,15 @@ def admin_login_imagenes_subir():
                 )
             )
             saved += 1
+            if cloud_url:
+                cloud_saved += 1
         except Exception as e:
             errors.append(f"Error BD {f.filename}: {e}")
     if saved:
-        flash(f"✅ {saved} imagen(es) agregadas al carrusel.", "success")
+        msg = f"✅ {saved} imagen(es) agregadas al carrusel."
+        if cloud_saved:
+            msg += f" {cloud_saved} persistente(s) en Cloudinary."
+        flash(msg, "success")
     for err in errors[:3]:
         flash(err, "warning")
     return redirect(url_for("admin_login_imagenes"))
@@ -5360,12 +5398,23 @@ def admin_login_imagen_update(iid):
     """Actualiza atributos (titulo, subtitulo, orden, activa) de una imagen."""
     action = request.form.get("action") or ""
     if action == "delete":
-        row = mysql_fetchone("SELECT archivo_path FROM login_images WHERE id=%s", (iid,))
+        row = mysql_fetchone(
+            "SELECT archivo_path, cloudinary_public_id FROM login_images WHERE id=%s", (iid,)
+        )
         if row:
-            try:
-                fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", row["archivo_path"])
-                if os.path.exists(fp): os.remove(fp)
-            except Exception: pass
+            # Borrar de Cloudinary si está ahí
+            if row.get("cloudinary_public_id"):
+                try:
+                    if _cloudinary_uploader:
+                        _cloudinary_uploader.destroy(row["cloudinary_public_id"], resource_type="image")
+                except Exception as e:
+                    print(f"[login_imagen_del] Cloudinary delete fail: {e}", flush=True)
+            # Borrar archivo local si existe
+            if row.get("archivo_path"):
+                try:
+                    fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", row["archivo_path"])
+                    if os.path.exists(fp): os.remove(fp)
+                except Exception: pass
         mysql_execute("DELETE FROM login_images WHERE id=%s", (iid,))
         flash("Imagen eliminada.", "success")
     else:
@@ -5399,13 +5448,44 @@ os.makedirs(RETIROS_IMAGES_DIR, exist_ok=True)
 
 
 def _retiros_carousel_active():
-    """Devuelve lista de imágenes activas ordenadas para el carrusel público."""
+    """Devuelve lista de imágenes activas ordenadas para el carrusel público.
+
+    Cada item incluye 'src' que es la URL final a usar: Cloudinary si existe
+    (persistente entre deploys), filesystem como fallback (puede estar perdido).
+    """
     try:
         rows = mysql_fetchall(
-            "SELECT id, archivo_path, titulo, subtitulo FROM retiros_carousel "
+            "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo FROM retiros_carousel "
             "WHERE activa=1 ORDER BY orden ASC, id ASC"
         )
-        return [dict(r) for r in (rows or [])]
+        out = []
+        for r in (rows or []):
+            d = dict(r)
+            d["src"] = d.get("cloudinary_url") or (
+                f"/static/{d['archivo_path']}" if d.get("archivo_path") else ""
+            )
+            out.append(d)
+        return out
+    except Exception:
+        return []
+
+
+def _login_images_active():
+    """Misma utilidad para el carrusel de login (admin)."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo, orden, activa, created_by, created_at "
+            "FROM login_images ORDER BY orden ASC, id ASC"
+        )
+        out = []
+        for r in (rows or []):
+            d = dict(r)
+            d["src"] = d.get("cloudinary_url") or (
+                f"/static/{d['archivo_path']}" if d.get("archivo_path") else ""
+            )
+            d["persistente"] = bool(d.get("cloudinary_url"))
+            out.append(d)
+        return out
     except Exception:
         return []
 
@@ -5468,6 +5548,7 @@ def admin_retiros_carousel_subir():
     activa = 1 if request.form.get("activa") else 0
 
     saved = 0
+    cloud_saved = 0
     errors = []
     for f in files:
         if not f or not f.filename:
@@ -5477,19 +5558,48 @@ def admin_retiros_carousel_subir():
             errors.append(err)
             continue
         fname = f"retiros_{int(time.time())}_{saved}_{secure_filename(f.filename)}"
+
+        # ── Cloudinary primero ──────────────────────────────────────────
+        cloud_url = None
+        cloud_pid = None
+        if _CLD_READY:
+            try:
+                f.stream.seek(0)
+                public_id = f"retiros_{int(time.time())}_{saved}"
+                cloud_url = _cloud_upload(f.stream, public_id, folder="ilus/retiros_carousel")
+                import re as _re_cld
+                m = _re_cld.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", cloud_url)
+                cloud_pid = m.group(1) if m else f"ilus/retiros_carousel/{public_id}"
+                print(f"[retiros_carousel] Cloudinary OK {fname} → {cloud_url}", flush=True)
+            except Exception as e_cld:
+                print(f"[retiros_carousel] Cloudinary FAIL {fname}: {e_cld}", flush=True)
+                cloud_url = None
+
+        # ── Filesystem fallback ─────────────────────────────────────────
+        try:
+            f.stream.seek(0)
+        except Exception:
+            pass
         fpath = os.path.join(RETIROS_IMAGES_DIR, fname)
+        saved_local = False
         try:
             f.save(fpath)
+            saved_local = True
         except Exception as e:
-            errors.append(f"Error guardando {f.filename}: {e}")
-            continue
+            if not cloud_url:
+                errors.append(f"Error guardando {f.filename}: {e}")
+                continue
+            print(f"[retiros_carousel] filesystem fail pero Cloudinary OK: {e}", flush=True)
+
         try:
             mysql_execute(
                 "INSERT INTO retiros_carousel "
-                "(archivo_path,titulo,subtitulo,orden,activa,created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
+                "(archivo_path,cloudinary_url,cloudinary_public_id,titulo,subtitulo,orden,activa,created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    f"uploads/retiros/{fname}",
+                    f"uploads/retiros/{fname}" if saved_local else None,
+                    cloud_url,
+                    cloud_pid,
                     titulo_base or None,
                     subtitulo_base or None,
                     nx + saved,
@@ -5498,10 +5608,15 @@ def admin_retiros_carousel_subir():
                 )
             )
             saved += 1
+            if cloud_url:
+                cloud_saved += 1
         except Exception as e:
             errors.append(f"Error BD {f.filename}: {e}")
     if saved:
-        flash(f"✅ {saved} imagen(es) agregadas al carrusel de retiros.", "success")
+        msg = f"✅ {saved} imagen(es) agregadas al carrusel de retiros."
+        if cloud_saved:
+            msg += f" {cloud_saved} persistente(s) en Cloudinary."
+        flash(msg, "success")
     for err in errors[:3]:
         flash(err, "warning")
     return redirect(url_for("admin_retiros_carousel"))
@@ -5601,17 +5716,29 @@ def admin_retiros_carousel_update(iid):
     """Actualiza o elimina una imagen del carrusel."""
     action = request.form.get("action") or ""
     if action == "delete":
-        row = mysql_fetchone("SELECT archivo_path FROM retiros_carousel WHERE id=%s", (iid,))
+        row = mysql_fetchone(
+            "SELECT archivo_path, cloudinary_public_id FROM retiros_carousel WHERE id=%s",
+            (iid,)
+        )
         if row:
-            try:
-                fp = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "static", row["archivo_path"]
-                )
-                if os.path.exists(fp):
-                    os.remove(fp)
-            except Exception:
-                pass
+            # Borrar Cloudinary
+            if row.get("cloudinary_public_id"):
+                try:
+                    if _cloudinary_uploader:
+                        _cloudinary_uploader.destroy(row["cloudinary_public_id"], resource_type="image")
+                except Exception as e:
+                    print(f"[retiros_carousel_del] Cloudinary delete fail: {e}", flush=True)
+            # Borrar archivo local
+            if row.get("archivo_path"):
+                try:
+                    fp = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "static", row["archivo_path"]
+                    )
+                    if os.path.exists(fp):
+                        os.remove(fp)
+                except Exception:
+                    pass
         mysql_execute("DELETE FROM retiros_carousel WHERE id=%s", (iid,))
         flash("Imagen eliminada del carrusel.", "success")
     else:
@@ -13596,10 +13723,14 @@ def init_mantenciones_tables():
             """)
 
             # ── Imágenes carrusel del login ────────────────────────────
+            #    archivo_path  → ruta local (filesystem efímero, deprecado)
+            #    cloudinary_url → URL Cloudinary persistente (NUEVO, preferido)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS login_images (
                     id           INT AUTO_INCREMENT PRIMARY KEY,
                     archivo_path VARCHAR(500) NOT NULL,
+                    cloudinary_url        VARCHAR(600) DEFAULT NULL,
+                    cloudinary_public_id  VARCHAR(400) DEFAULT NULL,
                     titulo       VARCHAR(200),
                     subtitulo    VARCHAR(300),
                     orden        INT DEFAULT 0,
@@ -13616,6 +13747,8 @@ def init_mantenciones_tables():
                 CREATE TABLE IF NOT EXISTS retiros_carousel (
                     id           INT AUTO_INCREMENT PRIMARY KEY,
                     archivo_path VARCHAR(500) NOT NULL,
+                    cloudinary_url        VARCHAR(600) DEFAULT NULL,
+                    cloudinary_public_id  VARCHAR(400) DEFAULT NULL,
                     titulo       VARCHAR(200),
                     subtitulo    VARCHAR(300),
                     orden        INT DEFAULT 0,
@@ -13626,6 +13759,17 @@ def init_mantenciones_tables():
                     INDEX idx_activa (activa)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Migración idempotente para tablas ya creadas sin estas columnas:
+            for _mig in [
+                "ALTER TABLE login_images ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
+                "ALTER TABLE login_images ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
+                "ALTER TABLE login_images MODIFY archivo_path VARCHAR(500) NULL",
+                "ALTER TABLE retiros_carousel ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
+                "ALTER TABLE retiros_carousel ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
+                "ALTER TABLE retiros_carousel MODIFY archivo_path VARCHAR(500) NULL",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
 
             # ── Banner / Avisos en la página pública de retiros ────────
             # Muestra banner amarillo/rojo/azul/verde encima del hero

@@ -365,24 +365,31 @@
           {# ★ Carrusel desde BD: tabla retiros_carousel (multi-imagen)
              Si no hay imágenes activas, usa las 3 default históricas. #}
           {% if carousel_images %}
+            {# Cada item de carousel_images viene del helper _retiros_carousel_active()
+               con .src ya resuelto (Cloudinary > filesystem). Si una imagen no tiene
+               src válido, se omite. #}
             {% set _slides = [] %}
             {% for img in carousel_images %}
-              {% set _ = _slides.append((
-                img.archivo_path,
-                img.titulo or 'ILUS',
-                img.subtitulo or 'Calidad que se siente'
-              )) %}
+              {% if img.src %}
+                {% set _ = _slides.append((
+                  img.src,
+                  img.titulo or 'ILUS',
+                  img.subtitulo or 'Calidad que se siente',
+                  True
+                )) %}
+              {% endif %}
             {% endfor %}
-          {% else %}
+          {% endif %}
+          {% if not _slides %}
             {% set _slides = [
-              ('uploads/p2530_1777290755.jpg', 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más'),
-              ('uploads/p1257_1777170890.jpeg', 'Calidad ILUS', 'Productos que duran toda la vida'),
-              ('uploads/p1271_1777153752.jpeg', 'Bodega central', 'Despacho organizado y profesional'),
+              (url_for('static', filename='uploads/p2530_1777290755.jpg'), 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más', False),
+              (url_for('static', filename='uploads/p1257_1777170890.jpeg'), 'Calidad ILUS', 'Productos que duran toda la vida', False),
+              (url_for('static', filename='uploads/p1271_1777153752.jpeg'), 'Bodega central', 'Despacho organizado y profesional', False),
             ] %}
           {% endif %}
-          {% for img, title, sub in _slides %}
+          {% for img_url, title, sub, _is_cloud in _slides %}
           <div class="hero-slide {% if loop.first %}active{% endif %}"
-               style="background-image:url('{{ url_for('static', filename=img) }}')">
+               style="background-image:url('{{ img_url }}')">
             <div class="hero-slide-tag">
               <span class="stag-label">{{ sub }}</span>
               <h4>{{ title }}</h4>

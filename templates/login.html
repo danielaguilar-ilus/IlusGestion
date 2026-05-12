@@ -91,8 +91,9 @@
     {% if login_images %}
     <div class="login-carousel" id="loginCarousel">
       {% for img in login_images %}
+      {% set _src = img.src or img.cloudinary_url or (url_for('static', filename=img.archivo_path) if img.archivo_path else '') %}
       <div class="login-carousel-slide{% if loop.first %} active{% endif %}"
-           style="background-image:url('{{ url_for('static', filename=img.archivo_path) }}')"
+           style="background-image:url('{{ _src }}')"
            data-idx="{{ loop.index0 }}"></div>
       {% endfor %}
       <div class="login-carousel-overlay"></div>

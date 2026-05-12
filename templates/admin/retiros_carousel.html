@@ -125,7 +125,12 @@
   {% for img in imagenes %}
   <div class="col-12 col-md-6 col-xl-4">
     <div class="rc-card">
-      <img src="{{ url_for('static', filename=img.archivo_path) }}" class="rc-thumb" alt="{{ img.titulo or 'Carrusel #' + img.id|string }}">
+      <img src="{{ img.cloudinary_url or (url_for('static', filename=img.archivo_path) if img.archivo_path else '') }}" class="rc-thumb" alt="{{ img.titulo or 'Carrusel #' + img.id|string }}">
+      {% if img.cloudinary_url %}
+      <span class="badge bg-success" style="position:absolute;top:8px;right:8px;font-size:.65rem">
+        <i class="bi bi-cloud-check"></i> Persistente
+      </span>
+      {% endif %}
       <form method="post" action="{{ url_for('admin_retiros_carousel_update', iid=img.id) }}" id="form-img-{{ img.id }}">
         <div class="rc-form-row">
           <div class="d-flex align-items-center justify-content-between">

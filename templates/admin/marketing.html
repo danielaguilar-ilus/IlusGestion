@@ -139,7 +139,16 @@
     {% for img in login_imagenes %}
     <div class="col-12 col-md-6 col-xl-4">
       <div class="li-card">
-        <img src="{{ url_for('static', filename=img.archivo_path) }}" class="li-thumb" alt="">
+        <img src="{{ img.src or img.cloudinary_url or (url_for('static', filename=img.archivo_path) if img.archivo_path else '') }}" class="li-thumb" alt="">
+        {% if img.cloudinary_url %}
+        <span class="badge bg-success" style="position:absolute;top:8px;right:8px;font-size:.62rem">
+          <i class="bi bi-cloud-check"></i> Persistente
+        </span>
+        {% elif img.archivo_path %}
+        <span class="badge bg-warning text-dark" style="position:absolute;top:8px;right:8px;font-size:.62rem" title="Solo en disco — puede perderse en deploys">
+          <i class="bi bi-exclamation-triangle"></i> Volátil
+        </span>
+        {% endif %}
         <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}" id="form-login-img-{{ img.id }}">
           <div class="li-form-row">
             <div class="d-flex align-items-center justify-content-between">

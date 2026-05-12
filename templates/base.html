@@ -171,10 +171,25 @@
          class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha'] %} active{% endif %}">
         <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
       </a>
-      <a href="{{ url_for('mant_tickets_list') }}"
+      {# ── OCULTOS DEL MENÚ POR PEDIDO DEL USUARIO (2026-05-12) ──
+           Las rutas Flask siguen existiendo (no romper enlaces antiguos),
+           solo se removieron del sidebar:
+
+           - Tickets: pendiente para fase posterior. NO eliminar código,
+             se va a retomar más adelante. Endpoint: mant_tickets_list,
+             mant_ticket_nuevo, mant_ticket_ficha
+           - Análisis: absorbido por el Dashboard (tab "Análisis económico").
+             Endpoint /mantenciones/analisis sigue accesible si alguien
+             tiene URL guardada.
+           - Analytics: absorbido por el Dashboard (tab "Analytics
+             operacional"). Endpoint /mantenciones/analytics sigue accesible.
+
+         Si quieres re-mostrar alguno, descomenta el bloque correspondiente.
+         #}
+      {# <a href="{{ url_for('mant_tickets_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tickets_list','mant_ticket_nuevo','mant_ticket_ficha'] %} active{% endif %}">
         <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
-      </a>
+      </a> #}
       <a href="{{ url_for('mant_cotizaciones_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
@@ -183,14 +198,14 @@
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnico_ficha'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Técnicos</span>
       </a>
-      <a href="{{ url_for('mant_analisis') }}"
+      {# <a href="{{ url_for('mant_analisis') }}"
          class="sidebar-link{% if request.endpoint == 'mant_analisis' %} active{% endif %}">
         <i class="bi bi-graph-up-arrow"></i><span>Análisis</span>
       </a>
       <a href="{{ url_for('mant_analytics_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_analytics_page' %} active{% endif %}">
         <i class="bi bi-bar-chart-fill"></i><span>Analytics</span>
-      </a>
+      </a> #}
     </div>
     {% endif %}
 
