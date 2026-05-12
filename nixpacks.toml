@@ -44,8 +44,12 @@ cmds = [
 dependsOn = ["install"]
 cmds = [
   # Descarga Chromium dentro del workdir (sobrevive al deploy).
-  # Si esto falla, el build falla visiblemente — no queda fantasma.
-  "PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers python -m playwright install chromium",
+  # Si falla el build, no abortamos: el código tiene fallback que
+  # auto-instala Chromium al primer PDF en runtime (lazy install).
+  # Esto hace el deploy más robusto a problemas de red en build phase.
+  "mkdir -p /app/.pw-browsers",
+  "PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers python -m playwright install chromium || echo '[playwright] Build install failed — runtime fallback will retry'",
+  "ls -la /app/.pw-browsers/ || true",
 ]
 
 [start]

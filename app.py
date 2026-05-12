@@ -89,10 +89,51 @@ def _jinja_hm(value):
 _pw_lock     = threading.Lock()
 _pw_ctx      = None   # sync_playwright() context manager
 _pw_browser  = None   # Browser instance reutilizado
+_pw_install_attempted = False  # Solo intentamos auto-install una vez por proceso
+
+
+def _pw_install_chromium_runtime():
+    """Intenta descargar Chromium en runtime cuando el build de Railway
+    no lo hizo. SOLO se ejecuta una vez por proceso (flag _pw_install_attempted).
+    Tarda ~30-60s la primera vez, después queda cacheado.
+    """
+    global _pw_install_attempted
+    if _pw_install_attempted:
+        return False
+    _pw_install_attempted = True
+    import subprocess as _sp, sys as _sys, os as _os
+    pw_path = _os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/app/.pw-browsers")
+    print(f"[playwright] Chromium no encontrado. Intentando auto-install en {pw_path}...", flush=True)
+    try:
+        # Asegurar que el directorio existe y es escribible
+        _os.makedirs(pw_path, exist_ok=True)
+        env = {**_os.environ, "PLAYWRIGHT_BROWSERS_PATH": pw_path}
+        result = _sp.run(
+            [_sys.executable, "-m", "playwright", "install", "chromium"],
+            env=env, capture_output=True, text=True, timeout=180
+        )
+        if result.returncode == 0:
+            print(f"[playwright] ✓ Chromium instalado correctamente en {pw_path}", flush=True)
+            return True
+        else:
+            print(f"[playwright] ✗ Install falló (exit {result.returncode}):", flush=True)
+            print(f"[playwright]   stdout: {result.stdout[:500]}", flush=True)
+            print(f"[playwright]   stderr: {result.stderr[:500]}", flush=True)
+            return False
+    except _sp.TimeoutExpired:
+        print(f"[playwright] ✗ Install timeout (>180s)", flush=True)
+        return False
+    except Exception as e:
+        print(f"[playwright] ✗ Install excepción: {type(e).__name__}: {e}", flush=True)
+        return False
 
 
 def _pw_browser_get():
-    """Devuelve el browser compartido; lo lanza si aún no existe o murió."""
+    """Devuelve el browser compartido; lo lanza si aún no existe o murió.
+
+    Si Chromium no está instalado (build de Railway falló), intenta
+    auto-instalarlo en runtime UNA SOLA VEZ por proceso.
+    """
     global _pw_ctx, _pw_browser
     with _pw_lock:
         # Verificar si el browser sigue vivo
@@ -108,15 +149,44 @@ def _pw_browser_get():
                     pass
                 _pw_ctx = _pw_browser = None
 
-        # Lanzar nuevo browser
+        # Lanzar nuevo browser — con auto-install fallback
         from playwright.sync_api import sync_playwright
-        _pw_ctx     = sync_playwright()
-        pw          = _pw_ctx.__enter__()
-        _pw_browser = pw.chromium.launch(
-            args=["--no-sandbox", "--disable-dev-shm-usage",
-                  "--disable-gpu", "--disable-extensions"]
-        )
-        return _pw_browser
+        def _try_launch():
+            global _pw_ctx, _pw_browser
+            _pw_ctx     = sync_playwright()
+            pw          = _pw_ctx.__enter__()
+            _pw_browser = pw.chromium.launch(
+                args=["--no-sandbox", "--disable-dev-shm-usage",
+                      "--disable-gpu", "--disable-extensions"]
+            )
+            return _pw_browser
+
+        try:
+            return _try_launch()
+        except Exception as e_first:
+            err_str = str(e_first)
+            # Si el problema es Chromium ausente, intentar auto-install
+            if "Executable doesn't exist" in err_str or "playwright install" in err_str:
+                # Limpiar ctx parcial
+                try:
+                    if _pw_ctx is not None:
+                        _pw_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+                _pw_ctx = _pw_browser = None
+                # Auto-install
+                if _pw_install_chromium_runtime():
+                    # Reintentar launch
+                    try:
+                        return _try_launch()
+                    except Exception as e_retry:
+                        print(f"[playwright] Launch falló tras install: {e_retry}", flush=True)
+                        raise
+                else:
+                    # Auto-install falló — propagar el error original
+                    raise
+            else:
+                raise
 
 
 class PDFEngineUnavailable(Exception):
@@ -144,11 +214,16 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
         # Casos típicos: Chromium no instalado, versiones desincronizadas,
         # sandbox bloqueado por SELinux, etc.
         err_msg = str(e)
+        print(f"[_pw_pdf] Error al obtener browser: {type(e).__name__}: {err_msg[:500]}", flush=True)
         if "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
+            # Extraer ruta que faltó para diagnóstico
+            import re as _re
+            match = _re.search(r"at ([^\s]+headless_shell[^\s]*)", err_msg)
+            ruta = match.group(1) if match else "(ruta desconocida)"
             raise PDFEngineUnavailable(
-                "El motor PDF (Chromium) no está instalado en el servidor. "
-                "Pide al administrador que verifique el deploy de Playwright. "
-                f"Detalle técnico: {type(e).__name__}"
+                f"Chromium no se instaló en el deploy. Falta: {ruta}. "
+                "El servidor intentó auto-instalarlo pero falló — revisa los logs "
+                "de Railway (busca '[playwright]'). Por ahora exporta a Excel."
             ) from e
         # Otro error desconocido — re-raise para no enmascarar bugs
         raise
