@@ -651,6 +651,33 @@ def register_pickup_routes(app, ctx):
         resp.headers["Expires"] = "0"
         return resp
 
+    @app.route("/retiros/buscar")
+    def pickup_buscar_publico():
+        """Lookup público por código de retiro (RET-XXXXXX).
+        El form público de seguimiento referencia esta ruta.
+        Si encuentra el retiro, redirige a /retiros/seguimiento/<token>.
+        """
+        code = (request.args.get("code") or "").strip().upper()
+        if not code:
+            return redirect(url_for("pickup_public_request"))
+        # Buscar por código exacto o LIKE (con/sin prefijo RET-)
+        row = mysql_fetchone(
+            f"SELECT public_token FROM `{REQ}` WHERE UPPER(code)=%s LIMIT 1",
+            (code,)
+        )
+        if not row:
+            # Probar quitando "RET-" si lo trae
+            code_alt = code.replace("RET-", "").lstrip("0") or code
+            row = mysql_fetchone(
+                f"SELECT public_token FROM `{REQ}` WHERE code LIKE %s OR code LIKE %s LIMIT 1",
+                (f"%{code_alt}%", f"%{code}%")
+            )
+        if not row or not row.get("public_token"):
+            flash(f"No encontramos un retiro con el código '{code}'. Verifica e intenta nuevamente.", "warning")
+            return redirect(url_for("pickup_public_request"))
+        return redirect(url_for("pickup_public_tracking", token=row["public_token"]))
+
+
     @app.route("/retiros/seguimiento/<token>", methods=["GET", "POST"])
     def pickup_public_tracking(token):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s", (token,))
@@ -742,8 +769,33 @@ def register_pickup_routes(app, ctx):
         if new_status not in PICKUP_STATUS:
             flash("Estado no valido.", "danger")
             return redirect(url_for("pickup_detail", rid=rid))
+        old_status = req.get("status") or ""
         mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
-        log_event(rid, "estado_actualizado", req["status"], new_status, notes, "interno")
+        log_event(rid, "estado_actualizado", old_status, new_status, notes, "interno")
+
+        # ─── Notificar al cliente cuando ILUS cambia estado desde el calendario ─
+        # Antes este endpoint NO mandaba email/WA, dejando al cliente sin saber
+        # que su retiro fue confirmado/rechazado/preparado.
+        kind_map = {
+            "agenda_confirmada":   "confirmed",
+            "rechazada":           "rejected",
+            "en_preparacion":      "preparing",
+            "retirada":            "done",
+            "fallida":             "failed",
+            "reagendada":          "rescheduled",
+            "cerrada":             "closed",
+            "informacion_incompleta": "info_incompleta",
+        }
+        kind = kind_map.get(new_status)
+        if kind and old_status != new_status:
+            try:
+                # Re-leer la solicitud actualizada
+                req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+                notify(req_after, kind)
+            except Exception as _e:
+                # Si falla notificación, no rompemos el cambio de estado
+                print(f"[pickups][notify] error notificando {kind} a retiro #{rid}: {_e}")
+
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
@@ -1481,33 +1533,57 @@ def register_pickup_routes(app, ctx):
         # Intentar enriquecer con ERP (best-effort, sin romper si falla)
         d["erp"] = None
         try:
+            # Mapping document_type → TIDO ERP (normalizado, sin duplicados)
             tido_map = {
-                "factura":"FCV","boleta":"BLV","guia":"GDV",
-                "nota_venta":"VD","pedido":"VD","cotizacion":"COV",
+                "factura":     "FCV",
+                "boleta":      "BLV",
+                "guia":        "GDV",
+                "guia_despacho":"GDV",
+                "nota_venta":  "VD",
+                "venta_directa":"VD",
+                "pedido":      "WEB",
+                "cotizacion":  "COV",
             }
-            tido = tido_map.get((d.get("document_type") or "").lower())
+            doc_type = (d.get("document_type") or "").lower().replace(" ", "_")
+            tido = tido_map.get(doc_type)
             nudo = (d.get("document_number") or "").strip()
-            if tido and nudo and "_cubicador_fetch" in dir(__import__("app")):
-                from app import _cubicador_fetch
+            if tido and nudo:
+                # Import directo en lugar del check frágil "in dir(__import__(...))"
                 try:
-                    hdr, lineas = _cubicador_fetch(tido, nudo)
-                    if hdr:
-                        d["erp"] = {
-                            "razon_social": (hdr.get("NRAZON") or "").strip(),
-                            "rut":          (hdr.get("NRUC") or "").strip(),
-                            "direccion":    (hdr.get("DIEN") or "").strip(),
-                            "telefono":     (hdr.get("FOEN") or "").strip(),
-                            "email":        (hdr.get("EMAIL") or "").strip(),
-                            "lineas":       [{
-                                "sku":      (ln.get("CODIGO") or "").strip(),
-                                "nombre":   (ln.get("DESCRIPCION") or "").strip(),
-                                "cantidad": float(ln.get("CANTIDAD") or 0),
-                                "unidad":   (ln.get("UNIDAD") or "").strip(),
-                                "subtotal": float(ln.get("SUBTOTAL") or 0),
-                            } for ln in (lineas or [])]
-                        }
-                except Exception as exc:
-                    d["erp"] = {"error": str(exc)[:200]}
+                    from app import _cubicador_fetch
+                except ImportError:
+                    _cubicador_fetch = None
+                    d["erp"] = {"error": "Motor ERP no disponible (import falló)"}
+
+                if _cubicador_fetch:
+                    try:
+                        hdr, lineas = _cubicador_fetch(tido, nudo)
+                        if hdr:
+                            # hdr ya viene normalizado por _cubicador_fetch
+                            # (cliente_nombre, cliente_rut, direccion, observaciones, etc.)
+                            d["erp"] = {
+                                "razon_social": (hdr.get("cliente_nombre") or hdr.get("NRAZON") or "").strip(),
+                                "rut":          (hdr.get("cliente_rut") or hdr.get("NRUC") or "").strip(),
+                                "direccion":    (hdr.get("direccion") or "").strip(),
+                                "comuna":       (hdr.get("comuna") or "").strip(),
+                                "telefono":     (hdr.get("telefono") or "").strip(),
+                                "email":        (hdr.get("email") or "").strip(),
+                                "observaciones": (hdr.get("observaciones") or "").strip(),
+                                "tido":         tido,
+                                "nudo":         nudo,
+                                "lineas":       [{
+                                    "sku":      (ln.get("sku") or "").strip(),
+                                    "nombre":   (ln.get("descripcion_erp") or ln.get("nombre_app") or "").strip(),
+                                    "cantidad": float(ln.get("cantidad") or 0),
+                                    "es_zz":    bool(ln.get("es_zz")),
+                                    "tiene_cubicaje": bool(ln.get("tiene_ficha") and ln.get("tiene_bultos")),
+                                    "peso_kg_tot": float(ln.get("peso_kg_tot") or 0),
+                                } for ln in (lineas or [])]
+                            }
+                        else:
+                            d["erp"] = {"error": f"Documento {tido} {nudo} no encontrado en ERP"}
+                    except Exception as exc:
+                        d["erp"] = {"error": str(exc)[:200]}
         except Exception as exc:
             d["erp"] = {"error": str(exc)[:200]}
 

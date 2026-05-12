@@ -12801,6 +12801,94 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
 
+            # ═══════════════════════════════════════════════════════════════
+            # MIGRACIÓN: TRACKING DE TIEMPO REAL + MÉTRICAS OPERACIONALES
+            # (Plan del agente de calendarios — MVP)
+            # Todas las columnas NULLABLE = compatible con datos existentes.
+            # ═══════════════════════════════════════════════════════════════
+            for _mig in [
+                # mant_visitas: tiempo real vs planificado
+                "ALTER TABLE mant_visitas ADD COLUMN hora_real_inicio DATETIME NULL COMMENT 'Timestamp del primer Iniciar tarea'",
+                "ALTER TABLE mant_visitas ADD COLUMN hora_real_fin DATETIME NULL COMMENT 'Timestamp del Cerrar OT'",
+                "ALTER TABLE mant_visitas ADD COLUMN duracion_planificada_min INT NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN duracion_real_min INT NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN pausada_total_min INT DEFAULT 0",
+                # Datos extra de la visita (geo + costo + causa raíz + satisfacción)
+                "ALTER TABLE mant_visitas ADD COLUMN km_inicio DECIMAL(8,1) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN km_fin DECIMAL(8,1) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN distancia_km DECIMAL(8,1) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN geo_inicio VARCHAR(50) NULL COMMENT 'lat,lng al iniciar'",
+                "ALTER TABLE mant_visitas ADD COLUMN geo_fin VARCHAR(50) NULL COMMENT 'lat,lng al cerrar'",
+                "ALTER TABLE mant_visitas ADD COLUMN costo_presupuestado DECIMAL(12,2) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN costo_real DECIMAL(12,2) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN causa_raiz ENUM('desgaste','mal_uso','falta_mantencion','defecto_fabrica','accidente','otro') NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN satisfaccion_estrellas TINYINT NULL COMMENT '1-5'",
+                "ALTER TABLE mant_visitas ADD COLUMN satisfaccion_comentario TEXT NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN cerrada_at DATETIME NULL COMMENT 'Cuando cliente firma/aprueba'",
+                # Índices para consultas analíticas
+                "CREATE INDEX idx_v_real_fin ON mant_visitas (hora_real_fin)",
+                "CREATE INDEX idx_v_dur_real ON mant_visitas (duracion_real_min)",
+                "CREATE INDEX idx_v_causa ON mant_visitas (causa_raiz)",
+                # mant_visita_tareas: tracking por tarea
+                "ALTER TABLE mant_visita_tareas ADD COLUMN iniciado_at DATETIME NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN duracion_min INT NULL COMMENT 'Auto desde mant_tarea_tiempo'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN duracion_estimada_min INT NULL COMMENT 'Sugerencia histórica'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN pausada_acumulado_seg INT DEFAULT 0",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN estado_trabajo ENUM('pendiente','en_curso','pausada','completada','bloqueada') DEFAULT 'pendiente'",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
+            # ═══════════════════════════════════════════════════════════════
+            # TABLA: mant_tarea_tiempo (cronómetro por tarea)
+            # Cada acción del usuario (iniciar/pausar/reanudar/completar)
+            # inserta una fila. Permite reconstruir el cronómetro exacto.
+            # ═══════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tarea_tiempo (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    tarea_id        INT NOT NULL,
+                    visita_id       INT NOT NULL,
+                    tecnico_id      INT NULL,
+                    accion          ENUM('iniciar','pausar','reanudar','completar') NOT NULL,
+                    `timestamp`     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    duracion_segmento_seg INT NULL COMMENT 'Solo en pausar/completar',
+                    nota            VARCHAR(300) NULL,
+                    geo             VARCHAR(50) NULL,
+                    creado_por      VARCHAR(190),
+                    FOREIGN KEY (tarea_id)  REFERENCES mant_visita_tareas(id) ON DELETE CASCADE,
+                    FOREIGN KEY (visita_id) REFERENCES mant_visitas(id)       ON DELETE CASCADE,
+                    INDEX idx_tarea (tarea_id),
+                    INDEX idx_visita_ts (visita_id, `timestamp`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ═══════════════════════════════════════════════════════════════
+            # TABLA: mant_maquina_metricas (memoria histórica → aprendizaje)
+            # Se popula al completar tareas. Permite SUGERIR estimados al
+            # crear OTs futuras: "esta trotadora suele tardar X min en PM".
+            # ═══════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_maquina_metricas (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    maquina_id      INT NOT NULL,
+                    visita_id       INT NOT NULL,
+                    tarea_id        INT NULL,
+                    tipo_tarea      VARCHAR(40)  COMMENT 'pm|correctiva|cambio_correa|...',
+                    duracion_min    INT NOT NULL,
+                    tecnico_id      INT NULL,
+                    fecha           DATE NOT NULL,
+                    fallo_detectado VARCHAR(200) NULL,
+                    repuestos_usados_json TEXT NULL COMMENT 'JSON array',
+                    costo_real      DECIMAL(12,2),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                    INDEX idx_maq_tipo (maquina_id, tipo_tarea),
+                    INDEX idx_tecnico (tecnico_id),
+                    INDEX idx_fecha   (fecha)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Tabla de repuestos asociados a una visita (manual o desde ERP)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_visita_repuestos (
@@ -17055,6 +17143,127 @@ def mant_contrato_clausulas_get(ctid):
             "nivel_riesgo": ct.get("nivel_riesgo","medio"),
         }
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DRILL-DOWN POR DÍA — Calendario con métricas
+#
+# Modal "click en un día" del calendario para ver el detalle completo:
+#  - Lista de visitas del día
+#  - Duración planificada vs real
+#  - Heatmap por técnico
+#  - Resumen: total, completadas, overrun promedio
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/calendario/dia/<string:fecha>", methods=["GET"])
+@_mant_required
+def mant_calendario_dia_drill(fecha):
+    """Devuelve el detalle de un día específico (todas las visitas + métricas).
+
+    Path param: fecha en formato YYYY-MM-DD
+    """
+    import re as _re
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", fecha):
+        return jsonify({"ok": False, "error": "Formato fecha inválido (use YYYY-MM-DD)"}), 400
+
+    try:
+        # Visitas del día con sus técnicos
+        visitas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.tipo, v.estado, "
+            "       v.fecha_programada, v.hora_inicio, v.hora_fin, "
+            "       v.hora_real_inicio, v.hora_real_fin, "
+            "       v.duracion_planificada_min, v.duracion_real_min, "
+            "       v.pausada_total_min, v.costo, v.costo_real, "
+            "       v.satisfaccion_estrellas, "
+            "       c.razon_social AS cliente_nombre, c.comuna, "
+            "       t.id AS tecnico_id, t.nombre AS tecnico_nombre, "
+            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
+            "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas "
+            "  FROM mant_visitas v "
+            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+            " WHERE v.fecha_programada=%s "
+            " ORDER BY v.hora_inicio, v.id",
+            (fecha,)
+        ) or []
+        visitas = [dict(v) for v in visitas]
+
+        # Calcular delta y overrun por visita
+        for v in visitas:
+            plan = v.get("duracion_planificada_min")
+            real = v.get("duracion_real_min")
+            if plan is None and v.get("hora_inicio") and v.get("hora_fin"):
+                # Calcular plan desde hora_inicio/hora_fin si no está
+                try:
+                    from datetime import timedelta as _td
+                    hi = v["hora_inicio"]
+                    hf = v["hora_fin"]
+                    # MySQL puede devolver como timedelta
+                    if isinstance(hi, _td) and isinstance(hf, _td):
+                        plan = int((hf - hi).total_seconds() // 60)
+                        v["duracion_planificada_min"] = plan
+                except Exception: pass
+            if plan and real:
+                v["delta_min"] = real - plan
+                v["overrun_pct"] = round((real - plan) * 100.0 / plan, 1)
+            else:
+                v["delta_min"] = None
+                v["overrun_pct"] = None
+
+        # KPIs del día
+        n_total = len(visitas)
+        n_completadas = sum(1 for v in visitas if v.get("estado") == "completada")
+        n_canceladas = sum(1 for v in visitas if v.get("estado") == "cancelada")
+        n_en_curso = sum(1 for v in visitas if v.get("estado") in ("en_curso","programada") and v.get("hora_real_inicio"))
+        n_pendientes = n_total - n_completadas - n_canceladas - n_en_curso
+
+        # Duración total planificada vs real
+        dur_plan_total = sum(v.get("duracion_planificada_min") or 0 for v in visitas)
+        dur_real_total = sum(v.get("duracion_real_min") or 0 for v in visitas if v.get("duracion_real_min"))
+        overrun_global = None
+        if dur_plan_total > 0 and dur_real_total > 0:
+            overrun_global = round((dur_real_total - dur_plan_total) * 100.0 / dur_plan_total, 1)
+
+        # Agrupar por técnico (para heatmap)
+        tecnicos_dia = {}
+        for v in visitas:
+            tid = v.get("tecnico_id")
+            tname = v.get("tecnico_nombre") or "Sin asignar"
+            if tid not in tecnicos_dia:
+                tecnicos_dia[tid] = {
+                    "id": tid, "nombre": tname,
+                    "visitas": [], "n_visitas": 0,
+                    "dur_plan_min": 0, "dur_real_min": 0,
+                }
+            tecnicos_dia[tid]["visitas"].append({
+                "id": v["id"], "numero_ot": v.get("numero_ot"),
+                "hora_inicio": str(v.get("hora_inicio") or ""),
+                "hora_fin": str(v.get("hora_fin") or ""),
+                "estado": v.get("estado"),
+                "overrun_pct": v.get("overrun_pct"),
+            })
+            tecnicos_dia[tid]["n_visitas"] += 1
+            tecnicos_dia[tid]["dur_plan_min"] += v.get("duracion_planificada_min") or 0
+            tecnicos_dia[tid]["dur_real_min"] += v.get("duracion_real_min") or 0
+
+        return jsonify({
+            "ok": True,
+            "fecha": fecha,
+            "visitas": visitas,
+            "kpis": {
+                "total": n_total,
+                "completadas": n_completadas,
+                "canceladas": n_canceladas,
+                "en_curso": n_en_curso,
+                "pendientes": n_pendientes,
+                "dur_plan_min_total": dur_plan_total,
+                "dur_real_min_total": dur_real_total,
+                "overrun_pct_global": overrun_global,
+            },
+            "tecnicos": list(tecnicos_dia.values()),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al consultar: {e}"}), 500
 
 
 # ── VISITAS / AGENDA ──────────────────────────────────────────────────
