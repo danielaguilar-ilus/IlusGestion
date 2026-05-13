@@ -20485,11 +20485,13 @@ def mant_ots_list():
 @_mant_required
 def mant_ot_ficha(vid):
     """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora)."""
+    # NOTA: la columna real en mant_clientes es contacto_tel (no contacto_telefono).
+    # Se mantiene el alias cli_contacto_tel para que el template no cambie.
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna, c.email_empresa AS cli_email, "
         "       c.tel_empresa AS cli_tel, c.contacto_nombre AS cli_contacto, "
-        "       c.contacto_telefono AS cli_contacto_tel, "
+        "       c.contacto_tel AS cli_contacto_tel, "
         "       ct.nombre AS contrato_nombre, "
         "       t.nombre AS tecnico_principal, t.telefono AS tecnico_tel, "
         "       t.email AS tecnico_email, t.foto_url AS tecnico_foto "
