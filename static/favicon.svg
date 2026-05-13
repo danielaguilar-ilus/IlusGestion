@@ -1,5 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect x="1" y="1" width="30" height="30" rx="4" fill="#1a1a1a" stroke="#CC0000" stroke-width="1.5"/>
-  <text x="16" y="21" font-family="Arial,sans-serif" font-weight="900" font-size="14" fill="#CC0000" text-anchor="middle">IL</text>
-  <text x="16" y="29" font-family="Arial,sans-serif" font-weight="700" font-size="7" fill="#ffffff" text-anchor="middle" letter-spacing="1">US</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ILUS — favicon casco espartano
+  Optimizado para legibilidad a 16x16 px (pestaña navegador)
+  Paleta: negro #0a0a0a (fondo) + rojo ILUS #CC0000 (casco) + blanco (highlights)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <!-- Fondo negro redondeado -->
+  <rect x="0" y="0" width="64" height="64" rx="10" fill="#0a0a0a"/>
+
+  <!-- Casco espartano estilizado -->
+  <g fill="#CC0000">
+    <!-- Cresta superior (penacho horizontal) -->
+    <path d="M 12 14
+             C 14 11, 18 9, 22 9
+             L 42 9
+             C 46 9, 50 11, 52 14
+             L 50 17
+             L 14 17 Z"/>
+    <!-- Pluma izquierda de la cresta -->
+    <path d="M 10 13 L 16 11 L 14 17 Z"/>
+    <!-- Pluma derecha de la cresta -->
+    <path d="M 54 13 L 48 11 L 50 17 Z"/>
+
+    <!-- Cuerpo del casco (forma redondeada) -->
+    <path d="M 14 18
+             L 50 18
+             C 52 22, 53 28, 52 36
+             C 51 42, 48 47, 44 50
+             L 42 50
+             L 42 38
+             L 36 38
+             L 36 50
+             L 28 50
+             L 28 38
+             L 22 38
+             L 22 50
+             L 20 50
+             C 16 47, 13 42, 12 36
+             C 11 28, 12 22, 14 18 Z"/>
+
+    <!-- Nariguera (extensión inferior central) -->
+    <rect x="30" y="38" width="4" height="14" rx="1"/>
+  </g>
+
+  <!-- Abertura ocular izquierda (negro respira el fondo) -->
+  <path d="M 18 28
+           Q 22 26, 26 28
+           Q 24 32, 20 32 Z"
+        fill="#0a0a0a"/>
+  <!-- Abertura ocular derecha -->
+  <path d="M 38 28
+           Q 42 26, 46 28
+           Q 44 32, 40 32 Z"
+        fill="#0a0a0a"/>
+
+  <!-- Detalle blanco en cresta (brillo) -->
+  <rect x="20" y="11" width="24" height="1.5" fill="#ffffff" opacity="0.5"/>
 </svg>
