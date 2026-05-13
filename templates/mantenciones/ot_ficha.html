@@ -373,6 +373,30 @@
     </span>
     {% endif %}
   </div>
+
+  {% if visita.levantamiento_id and visita.estado != 'completada' %}
+  {# ═══════════════════════════════════════════════════════════════
+     BANNER GIGANTE: OT de tipo levantamiento — botón principal para
+     que el técnico abra el modal de sesión y empiece a capturar fotos.
+     Aparece SOLO si la OT está vinculada a un levantamiento y aún no
+     está completada.
+  ═══════════════════════════════════════════════════════════════ #}
+  <div class="lev-cta-banner" style="background:linear-gradient(135deg,#dc2626,#7f1d1d);
+       border-radius:14px;padding:18px 20px;margin:14px 0;
+       box-shadow:0 6px 24px rgba(220,38,38,.35);text-align:center">
+    <div style="color:#fee2e2;font-size:.8rem;font-weight:600;letter-spacing:.5px;margin-bottom:6px">
+      <i class="bi bi-camera-fill me-1"></i>LEVANTAMIENTO FOTOGRÁFICO
+    </div>
+    <button class="btn btn-light fw-bold w-100"
+            style="font-size:1.05rem;padding:14px 18px"
+            onclick="ejecutarLevantamientoDesdeOT({{ visita.levantamiento_id }}, {{ visita.id }})">
+      <i class="bi bi-play-circle-fill me-2"></i>Ejecutar levantamiento — Capturar fotos
+    </button>
+    <div style="color:#fecaca;font-size:.78rem;margin-top:8px">
+      Toca el botón para abrir la cámara y documentar los equipos
+    </div>
+  </div>
+  {% endif %}
   <h2 class="ot-title">{{ visita.titulo or 'Orden de Trabajo' }}</h2>
   <div class="ot-subtitle">
     <i class="bi bi-building me-1"></i>{{ visita.razon_social }}
@@ -1437,5 +1461,18 @@ guardarNotaTareaCompletada = async function(){
 
 // ── Init
 cargarTareas();
+
+// ════════════════════════════════════════════════════════════
+//  EJECUTAR LEVANTAMIENTO desde la OT
+//  Redirige a la ficha del cliente con parámetro `?lev=<id>` que la
+//  ficha detecta al cargar y abre automáticamente el Modal Sesión del
+//  levantamiento ya en curso. Así reusamos el modal sin duplicarlo.
+// ════════════════════════════════════════════════════════════
+function ejecutarLevantamientoDesdeOT(levId, otId){
+  if (!levId) return;
+  const cliId = {{ visita.cliente_id|tojson }};
+  // Llevar al técnico a la ficha del cliente con el modal pre-abierto
+  window.location.href = `/mantenciones/clientes/${cliId}?lev=${levId}&from_ot=${otId}#equipos`;
+}
 </script>
 {% endblock %}

@@ -1582,9 +1582,17 @@ def _legacy_permission_set(role):
                 "ajustes": True,
                 "etiquetas": True, "retiros": True, "comunicaciones": True}
     if role == "ejecutivo":
-        # Histórico: sólo mantenciones (alguna versión vieja)
-        return {**base, "mantenciones": True, "view": True,
-                "edit": True, "create": True, "print": True}
+        # Ejecutivo de mantenciones — accede SOLO al módulo de mantenciones.
+        # Sin view/etiquetas/print legacy (esos abrían el catálogo de productos).
+        # Puede crear/editar dentro de mantenciones (clientes, contratos, OTs).
+        return {**base, "mantenciones": True, "create": True, "edit": True}
+    if role == "tecnico":
+        # Técnico de campo — SOLO ve OTs. No clientes, no productos, no admin.
+        # Ejecuta los levantamientos fotográficos asignados a él.
+        # Permiso "mantenciones" requerido para pasar @_mant_required en
+        # endpoints de OTs/tareas/levantamiento; las restricciones específicas
+        # se aplican server-side filtrando por tecnico_id == user.tecnico.
+        return {**base, "mantenciones": True}
     if role == "editor":
         return {**base, "view": True, "edit": True, "print": True,
                 "create": True, "hrm": True, "cubicador": True, "transporte": True,
@@ -3877,8 +3885,27 @@ def index():
     Esto evita que un usuario sin permiso etiquetas vea el catálogo entero.
     """
     perms = g.permissions or {}
-    if not (perms.get("superadmin") or perms.get("etiquetas") or perms.get("view") or perms.get("print")):
-        # No tiene acceso al módulo etiquetas — redirigir al primer módulo disponible
+    user = getattr(g, "user", None)
+    role = (user.get("role") if user else "") or ""
+
+    # ── Técnicos: SIEMPRE van directo a "Mis OTs" ────────────────────
+    # No deben perder tiempo navegando por catálogos. Su único lugar
+    # de trabajo es la lista filtrada de OTs asignadas.
+    if role == "tecnico":
+        return redirect(url_for("mant_ots_list") + "?solo_mias=1")
+
+    # ── Roles "mantenciones-first" (ejecutivo, mantenciones) ─────────
+    # Aunque tengan permiso "view" o "etiquetas", su trabajo principal es
+    # mantenciones — los redirigimos ahí. Si quieren etiquetas/catálogo,
+    # navegan vía sidebar (si tienen permiso) o vía URL directa.
+    if role in ("ejecutivo", "mantenciones") and perms.get("mantenciones"):
+        return redirect(url_for("mant_index"))
+
+    # ── Lógica general: si NO tiene permiso etiquetas/print/superadmin,
+    # buscar el primer módulo accesible ──
+    # NOTA: removimos el check de "view" porque es un flag legacy ambiguo
+    # que muchos roles tienen sin necesitar el catálogo de etiquetas.
+    if not (perms.get("superadmin") or perms.get("etiquetas") or perms.get("print")):
         if perms.get("mantenciones"):
             return redirect(url_for("mant_index"))
         if perms.get("retiros"):
@@ -3889,7 +3916,6 @@ def index():
             return redirect(url_for("cubicador"))
         if perms.get("comunicaciones"):
             return redirect(url_for("comm_index"))
-        # Sin permisos válidos — mostrar mensaje claro y enviar a "Mi cuenta"
         flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
         return redirect(url_for("mi_cuenta"))
 
@@ -13948,6 +13974,23 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_maquina_fotos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
                 "ALTER TABLE mant_maquina_fotos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
                 "ALTER TABLE mant_maquina_fotos ADD COLUMN levantamiento_id INT DEFAULT NULL",
+                # Vínculo bidireccional Levantamiento <-> OT (visita)
+                "ALTER TABLE mant_levantamientos ADD COLUMN visita_id INT NULL",
+                "ALTER TABLE mant_levantamientos ADD COLUMN tecnico_id INT NULL",
+                "ALTER TABLE mant_levantamientos ADD INDEX idx_visita (visita_id)",
+                "ALTER TABLE mant_visitas ADD COLUMN levantamiento_id INT NULL",
+                "ALTER TABLE mant_visitas ADD INDEX idx_lev (levantamiento_id)",
+                # Tipo 'levantamiento' en el ENUM tipo de visitas (agrega si no estaba)
+                "ALTER TABLE mant_visitas MODIFY COLUMN tipo ENUM('preventiva','correctiva','garantia','inspeccion','levantamiento','instalacion') DEFAULT 'preventiva'",
+                # Campos de calidad de información para máquinas fitness
+                # (reemplazan/complementan a horas_uso que casi nunca es relevante)
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN fecha_documento DATE NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN marca VARCHAR(120) NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN modelo VARCHAR(120) NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN anio_fabricacion SMALLINT NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN voltaje VARCHAR(20) NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN ultima_intervencion DATE NULL",
+                "ALTER TABLE mant_levantamiento_items ADD COLUMN componentes_json TEXT NULL",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -20219,15 +20262,47 @@ def mant_cliente_maquinas_list(cid):
 @app.route("/mantenciones/ots")
 @_mant_required
 def mant_ots_list():
-    """Listado global de todas las Órdenes de Trabajo (visitas) con filtros."""
+    """Listado global de Órdenes de Trabajo (visitas) con filtros.
+
+    Soporta filtro `?solo_mias=1` para que un técnico solo vea SUS OTs
+    asignadas. El técnico se identifica buscando su email en mant_tecnicos.
+    Si el usuario tiene rol "tecnico" se aplica solo_mias automáticamente.
+    """
     estado     = (request.args.get("estado") or "").strip().lower()
     tipo       = (request.args.get("tipo") or "").strip().lower()
     tecnico_id = request.args.get("tecnico_id")
     cliente_id = request.args.get("cliente_id")
     q          = (request.args.get("q") or "").strip()
+    solo_mias  = request.args.get("solo_mias") == "1"
+
+    # Si el rol es "tecnico" PURO (no admin), forzar solo_mias para evitar
+    # que vea OTs de otros técnicos manipulando la URL.
+    user = getattr(g, "user", None)
+    if user and user.get("role") == "tecnico":
+        solo_mias = True
 
     where = ["1=1"]
     params = []
+
+    # Filtro "mis OTs": busca el técnico cuyo email matchea con el user logueado
+    if solo_mias and user:
+        try:
+            me_tec = mysql_fetchone(
+                "SELECT id FROM mant_tecnicos WHERE LOWER(TRIM(email))=LOWER(TRIM(%s)) "
+                "AND COALESCE(activo,1)=1 LIMIT 1",
+                (user.get("correo") or user.get("email") or "",)
+            )
+            if me_tec:
+                where.append("v.tecnico_id=%s")
+                params.append(int(me_tec["id"]))
+                # Por defecto, técnico solo ve OTs activas (no cerradas históricas)
+                if not estado:
+                    where.append("v.estado IN ('programada','en_curso','reagendada')")
+            else:
+                # User no tiene técnico vinculado → no muestra nada
+                where.append("1=0")
+        except Exception as e_tec:
+            print(f"[mant_ots_list solo_mias] error: {e_tec}", flush=True)
 
     if estado in ("programada", "completada", "cancelada", "reagendada", "en_curso"):
         where.append("v.estado=%s")
@@ -23857,23 +23932,31 @@ def mant_lev_crear_o_listar(cid):
     notas = (data.get("notas") or "").strip()
     equipo_ids = data.get("equipo_ids") or []  # lista opcional de máquinas a incluir
 
+    # tecnico_id opcional (técnico de la tabla mant_tecnicos asignado a la OT)
+    tecnico_id = data.get("tecnico_id")
+    try:
+        tecnico_id = int(tecnico_id) if tecnico_id else None
+    except Exception:
+        tecnico_id = None
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO mant_levantamientos "
-                "(cliente_id, tecnico, titulo, notas, estado, created_by) "
-                "VALUES (%s,%s,%s,%s,'en_curso',%s)",
-                (cid, tecnico, titulo, notas, current_username() or 'sistema')
+                "(cliente_id, tecnico, tecnico_id, titulo, notas, estado, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,'en_curso',%s)",
+                (cid, tecnico, tecnico_id, titulo, notas, current_username() or 'sistema')
             )
             lev_id = cur.lastrowid
 
             # Si vienen máquinas pre-seleccionadas, crear items
             n_items = 0
+            maquinas = []
             if equipo_ids:
                 ph = ",".join(["%s"] * len(equipo_ids))
                 cur.execute(
-                    f"SELECT id, nombre, sku, serie FROM mant_maquinas "
+                    f"SELECT id, nombre, sku, serie, doc_fecha FROM mant_maquinas "
                     f"WHERE id IN ({ph}) AND cliente_id=%s",
                     tuple(list(equipo_ids) + [cid])
                 )
@@ -23881,20 +23964,73 @@ def mant_lev_crear_o_listar(cid):
                 for m in maquinas:
                     cur.execute(
                         "INSERT INTO mant_levantamiento_items "
-                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap) "
-                        "VALUES (%s,%s,%s,%s,%s)",
-                        (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"))
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                        " fecha_documento) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"),
+                         m.get("doc_fecha"))  # pre-llena con la fecha del doc de origen
                     )
                     n_items += 1
                 cur.execute(
                     "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
                     (n_items, lev_id)
                 )
+
+            # ══════════════════════════════════════════════════════════
+            # CREAR OT (mant_visitas) ESPEJO + tareas (1 por equipo)
+            # Esto hace que el levantamiento aparezca en la lista de OTs
+            # del técnico asignado. Cuando el técnico la abra, verá un
+            # botón "Ejecutar levantamiento" que abre el modal de sesión.
+            # ══════════════════════════════════════════════════════════
+            try:
+                numero_ot = _next_ot_number()
+            except Exception:
+                # _next_ot_number puede no existir en algunos despliegues —
+                # generamos uno con timestamp como fallback
+                numero_ot = f"LEV-{int(time.time())}"
+
+            try:
+                cur.execute(
+                    "INSERT INTO mant_visitas "
+                    "(numero_ot, cliente_id, titulo, fecha_programada, tipo, estado, "
+                    " descripcion, tecnico_id, levantamiento_id, created_by) "
+                    "VALUES (%s,%s,%s,CURDATE(),'levantamiento','programada',%s,%s,%s,%s)",
+                    (numero_ot, cid, f"[LEV] {titulo}"[:200],
+                     f"OT auto-generada desde levantamiento #{lev_id}. "
+                     f"{n_items} equipo(s) a documentar fotográficamente.",
+                     tecnico_id, lev_id, current_username())
+                )
+                visita_id = cur.lastrowid
+                cur.execute(
+                    "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
+                    (visita_id, lev_id)
+                )
+                # 1 tarea por equipo
+                for idx, m in enumerate(maquinas, 1):
+                    cur.execute(
+                        "INSERT INTO mant_visita_tareas "
+                        "(visita_id, orden, titulo, descripcion, maquina_id, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (visita_id, idx,
+                         f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
+                         "Capturar fotos + datos técnicos (marca/modelo/voltaje/serie)",
+                         m["id"], current_username() or 'sistema')
+                    )
+            except Exception as e_ot:
+                print(f"[lev_crear] no se pudo crear OT espejo: {e_ot}", flush=True)
+                visita_id = None
+
         conn.commit()
         try: _mant_log("levantamiento", lev_id, "creado",
-                       f"{n_items} equipo(s) iniciales · {titulo}")
+                       f"{n_items} equipo(s) · OT #{visita_id or '—'} · {titulo}")
         except Exception: pass
-        return jsonify({"ok": True, "id": lev_id, "n_items": n_items})
+        return jsonify({
+            "ok": True,
+            "id": lev_id,
+            "n_items": n_items,
+            "visita_id": visita_id,
+            "numero_ot": numero_ot if visita_id else None,
+        })
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
@@ -24047,14 +24183,24 @@ def mant_lev_item_update(iid):
     d = request.get_json(silent=True) or {}
     sets, vals = [], []
     estados_validos = ('operativo','advertencia','fuera_servicio','en_reparacion','dado_baja','no_encontrado')
-    for k in ("estado_capturado", "ubicacion", "horas_uso", "anomalias", "observaciones", "completado"):
+    # Campos editables del item (incluye los nuevos campos de calidad fitness)
+    for k in (
+        "estado_capturado", "ubicacion", "horas_uso", "anomalias", "observaciones",
+        "completado",
+        # Nuevos campos relevantes para máquinas fitness:
+        "fecha_documento", "marca", "modelo", "anio_fabricacion",
+        "voltaje", "ultima_intervencion", "componentes_json",
+    ):
         if k in d:
             v = d[k]
             if k == "estado_capturado" and v not in estados_validos:
                 continue
-            if k == "horas_uso":
+            if k in ("horas_uso", "anio_fabricacion"):
                 try: v = int(v) if v not in (None, "") else None
                 except Exception: continue
+            if k in ("fecha_documento", "ultima_intervencion"):
+                # Espera string YYYY-MM-DD o None. Si viene "", lo guardamos como NULL.
+                if v in ("", None): v = None
             if k == "completado":
                 v = 1 if v else 0
             sets.append(f"{k}=%s")
@@ -24226,10 +24372,31 @@ def mant_lev_cerrar(lid):
             {"estado": it.get("estado_capturado"), "n_fotos": it.get("n_fotos", 0)}
         )
 
+    # Si tiene OT espejo, cerrarla también
+    if lev.get("visita_id"):
+        try:
+            mysql_execute(
+                "UPDATE mant_visitas SET estado='completada', fecha_realizada=NOW() "
+                "WHERE id=%s AND estado IN ('programada','en_curso')",
+                (lev["visita_id"],)
+            )
+            # Marcar todas las tareas como completadas
+            mysql_execute(
+                "UPDATE mant_visita_tareas SET completada=1, fecha_completada=NOW() "
+                "WHERE visita_id=%s AND completada=0",
+                (lev["visita_id"],)
+            )
+        except Exception as e_ot:
+            print(f"[lev_cerrar] no se cerró la OT espejo: {e_ot}", flush=True)
+
     try: _mant_log("levantamiento", lid, "cerrado",
                    f"{len(items)} equipo(s) · {lev.get('total_fotos',0)} foto(s)")
     except Exception: pass
-    return jsonify({"ok": True, "items_procesados": len(items)})
+    return jsonify({
+        "ok": True,
+        "items_procesados": len(items),
+        "visita_cerrada": bool(lev.get("visita_id")),
+    })
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/timeline")

@@ -6263,6 +6263,29 @@ function abrirContratoModal() {
 // ════════════════════════════════════════════════════════════════════
 let _LEV = { id: null, item_actual: null, items: [] };
 
+// ════════════════════════════════════════════════════════════
+//  Auto-abrir levantamiento si la URL trae ?lev=<id>
+//  Usado cuando el técnico viene desde la ficha de OT con el botón
+//  "Ejecutar levantamiento" — abre el Modal Sesión sin pasos extra.
+// ════════════════════════════════════════════════════════════
+(function _autoOpenLevSiQS(){
+  try {
+    const usp = new URLSearchParams(location.search);
+    const lev = usp.get('lev');
+    if (lev && !isNaN(parseInt(lev))) {
+      // Esperar a que el DOM y bootstrap estén listos
+      document.addEventListener('DOMContentLoaded', function(){
+        setTimeout(function(){
+          _LEV.id = parseInt(lev);
+          if (typeof abrirLevantamientoSesion === 'function') {
+            abrirLevantamientoSesion();
+          }
+        }, 350);
+      });
+    }
+  } catch(e) { console.warn('auto-open lev:', e); }
+})();
+
 async function abrirLevantamientoFotografico(){
   // Verificar si hay uno abierto
   try {
@@ -6433,23 +6456,66 @@ function renderLevItemActual(){
     </div>
     <div class="row mt-3 g-2">
       <div class="col-md-6">
-        <label class="form-label small fw-semibold">Ubicación</label>
+        <label class="form-label small fw-semibold">📍 Ubicación en sala</label>
         <input type="text" id="levItemUbicacion" class="form-control form-control-sm"
-               value="${escAttr(it.ubicacion||'')}" placeholder="Sala A, Fila 2"
+               value="${escAttr(it.ubicacion||'')}" placeholder="Sala A · Fila 2 · Cardio"
                onblur="levGuardarCampo('ubicacion', this.value)">
       </div>
       <div class="col-md-6">
-        <label class="form-label small fw-semibold">Horas de uso (display)</label>
-        <input type="number" id="levItemHoras" class="form-control form-control-sm"
-               value="${it.horas_uso||''}" placeholder="Ej: 12500"
-               onblur="levGuardarCampo('horas_uso', this.value)">
+        <label class="form-label small fw-semibold">📅 Fecha del documento</label>
+        <input type="date" id="levItemFechaDoc" class="form-control form-control-sm"
+               value="${(it.fecha_documento||'').toString().substring(0,10)}"
+               onblur="levGuardarCampo('fecha_documento', this.value)">
       </div>
-      <div class="col-12">
-        <label class="form-label small fw-semibold">Observaciones</label>
-        <textarea id="levItemObs" class="form-control form-control-sm" rows="2"
-                  placeholder="Anomalías observadas, condición general…"
-                  onblur="levGuardarCampo('observaciones', this.value)">${escHtml(it.observaciones||'')}</textarea>
+    </div>
+    {# ── Datos técnicos del equipo (calidad de información) ── #}
+    <div class="mt-2 p-2 border rounded" style="background:#f8fafc">
+      <div class="small fw-bold mb-2" style="color:#475569">
+        <i class="bi bi-info-square me-1"></i>Datos técnicos del equipo
       </div>
+      <div class="row g-2">
+        <div class="col-6 col-md-4">
+          <label class="form-label small mb-1">Marca</label>
+          <input type="text" id="levItemMarca" class="form-control form-control-sm"
+                 value="${escAttr(it.marca||'')}" placeholder="Life Fitness"
+                 onblur="levGuardarCampo('marca', this.value)">
+        </div>
+        <div class="col-6 col-md-4">
+          <label class="form-label small mb-1">Modelo</label>
+          <input type="text" id="levItemModelo" class="form-control form-control-sm"
+                 value="${escAttr(it.modelo||'')}" placeholder="T5-XR"
+                 onblur="levGuardarCampo('modelo', this.value)">
+        </div>
+        <div class="col-6 col-md-4">
+          <label class="form-label small mb-1">Año fabricación</label>
+          <input type="number" id="levItemAnio" class="form-control form-control-sm"
+                 value="${it.anio_fabricacion||''}" placeholder="2022" min="1990" max="2030"
+                 onblur="levGuardarCampo('anio_fabricacion', this.value)">
+        </div>
+        <div class="col-6 col-md-4">
+          <label class="form-label small mb-1">⚡ Voltaje</label>
+          <select id="levItemVoltaje" class="form-select form-select-sm"
+                  onchange="levGuardarCampo('voltaje', this.value)">
+            <option value="">— Seleccionar —</option>
+            <option value="110" ${it.voltaje==='110'?'selected':''}>110V mono</option>
+            <option value="220" ${it.voltaje==='220'?'selected':''}>220V mono</option>
+            <option value="220-trifasico" ${it.voltaje==='220-trifasico'?'selected':''}>220V trifásico</option>
+            <option value="no_aplica" ${it.voltaje==='no_aplica'?'selected':''}>No aplica (peso libre)</option>
+          </select>
+        </div>
+        <div class="col-12 col-md-8">
+          <label class="form-label small mb-1">🔧 Última intervención conocida</label>
+          <input type="date" id="levItemUltimaInt" class="form-control form-control-sm"
+                 value="${(it.ultima_intervencion||'').toString().substring(0,10)}"
+                 onblur="levGuardarCampo('ultima_intervencion', this.value)">
+        </div>
+      </div>
+    </div>
+    <div class="mt-2">
+      <label class="form-label small fw-semibold">📝 Observaciones generales</label>
+      <textarea id="levItemObs" class="form-control form-control-sm" rows="2"
+                placeholder="Anomalías observadas, ruidos, vibraciones, condición de pantalla, daños visibles…"
+                onblur="levGuardarCampo('observaciones', this.value)">${escHtml(it.observaciones||'')}</textarea>
     </div>
     <div class="mt-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
