@@ -79,6 +79,35 @@ def _get_ai_key():
     """Resuelve la API key de Anthropic: env var > config.py"""
     return os.environ.get("ANTHROPIC_API_KEY") or _ANTHROPIC_KEY_CFG or ""
 
+
+# ════════════════════════════════════════════════════════════════════
+#  HORA CHILE — helper centralizado
+#  Railway corre en UTC. Sin esto, etiquetas/reportes/logs muestran
+#  hora UTC y desconcierta al usuario chileno.
+#  Acepta DST automáticamente vía zoneinfo (preferido) o fallback UTC-3.
+# ════════════════════════════════════════════════════════════════════
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _TZ_CL = _ZoneInfo("America/Santiago")
+except Exception:
+    # Fallback si zoneinfo no está (Python <3.9 o tzdata faltante en Alpine)
+    from datetime import timezone as _tzc
+    _TZ_CL = _tzc(timedelta(hours=-3))
+
+
+def _now_chile():
+    """Devuelve un datetime aware en zona America/Santiago.
+
+    Úsalo SIEMPRE para mostrar fechas al usuario (etiquetas, reportes,
+    timestamps visibles). Para guardar en BD seguí usando UTC.
+    """
+    return datetime.now(_TZ_CL)
+
+
+def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
+    """Atajo: devuelve hora Chile formateada como string."""
+    return _now_chile().strftime(fmt)
+
 app = Flask(__name__)
 app.secret_key = "ilus-etiquetas-2026"
 
@@ -2213,7 +2242,8 @@ def build_labels_pdf(product, label_bultos, total_bultos, fmt="150x100"):
     el mismo template label_standalone.html y el mismo @media print CSS.
     Si Playwright no está instalado, lanza ImportError con instrucción de instalación.
     """
-    fecha        = datetime.now().strftime("%d-%m-%Y %H:%M")
+    # Hora Chile para que la etiqueta muestre la fecha correcta al usuario
+    fecha        = _now_chile_str("%d-%m-%Y %H:%M")
     label_format = _label_format(fmt)
     enriched     = [_label_bulto_data(b) for b in label_bultos]
 
@@ -2275,7 +2305,7 @@ def _build_label_pdf_legacy(product, bulto, total_bultos):
 
     buf   = io.BytesIO()
     c     = canvas.Canvas(buf, pagesize=(W, H))
-    fecha = datetime.now().strftime("%d-%m-%Y %H:%M")
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")  # Hora Chile
 
     # ── Intenta cargar logo (convertido a blanco via Pillow si está disponible) ──
     logo_img_path = None
@@ -4329,7 +4359,7 @@ def _render_labels_view(pid, template_name):
         qty = request.args.get(f"qty_{b['bulto_num']}", 1, type=int)
         qty_per_bulto[int(b["bulto_num"])] = max(1, min(qty, 10))
 
-    fecha = datetime.now().strftime("%d-%m-%Y %H:%M")
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")  # Hora Chile
     response = make_response(render_template(template_name, product=product, bultos=valid,
                                              total_bultos=len(bultos), fecha=fecha,
                                              qty_per_bulto=qty_per_bulto,
@@ -12737,7 +12767,7 @@ def _comm_resend_test_inner():
             "Los correos se enviarán vía HTTPS y no dependen de puertos SMTP.",
         ],
         info_lineas = [("", "Enviado por", current_username() or "ILUS"),
-                       ("", "Fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))],
+                       ("", "Fecha", _now_chile_str("%d/%m/%Y %H:%M"))],
     )
     ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
     err = getattr(g, "_last_resend_error", None) or {}
@@ -13740,6 +13770,124 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_uploaded_at DATETIME DEFAULT NULL",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
+            # ══════════════════════════════════════════════════════════
+            # LEVANTAMIENTOS FOTOGRÁFICOS DE EQUIPOS
+            # ══════════════════════════════════════════════════════════
+            # Sesión donde un técnico documenta visualmente los equipos del
+            # cliente. NO es una OT/visita — es PRE-VENTA / inventario inicial.
+            # Cada levantamiento tiene N items (un item = un equipo del cliente)
+            # y cada item tiene M fotos en Cloudinary.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_levantamientos (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    cliente_id    INT NOT NULL,
+                    tecnico       VARCHAR(190),
+                    fecha_inicio  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    fecha_cierre  DATETIME NULL,
+                    estado        ENUM('borrador','en_curso','cerrado','cancelado') DEFAULT 'borrador',
+                    titulo        VARCHAR(200),
+                    notas         TEXT,
+                    total_equipos    INT DEFAULT 0,
+                    total_fotos      INT DEFAULT 0,
+                    created_by    VARCHAR(190),
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    closed_by     VARCHAR(190) NULL,
+                    INDEX idx_cliente_estado (cliente_id, estado),
+                    INDEX idx_fecha (fecha_inicio)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Items del levantamiento: un equipo capturado en una sesión.
+            # Conserva un snapshot del nombre/sku/serie por si después se
+            # elimina la máquina (foreign key SET NULL preserva el histórico).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_levantamiento_items (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    levantamiento_id INT NOT NULL,
+                    maquina_id      INT NULL,
+                    nombre_snap     VARCHAR(300),
+                    sku_snap        VARCHAR(120),
+                    serie_snap      VARCHAR(120),
+                    estado_capturado ENUM(
+                      'operativo','advertencia','fuera_servicio',
+                      'en_reparacion','dado_baja','no_encontrado'
+                    ) DEFAULT 'operativo',
+                    ubicacion       VARCHAR(200),
+                    horas_uso       INT NULL,
+                    anomalias       TEXT,
+                    observaciones   TEXT,
+                    n_fotos         INT DEFAULT 0,
+                    completado      TINYINT(1) DEFAULT 0,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (levantamiento_id) REFERENCES mant_levantamientos(id) ON DELETE CASCADE,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE SET NULL,
+                    INDEX idx_lev (levantamiento_id),
+                    INDEX idx_maquina (maquina_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Fotos del levantamiento — siempre Cloudinary (persistente)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_levantamiento_fotos (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    item_id         INT NOT NULL,
+                    levantamiento_id INT NOT NULL,
+                    maquina_id      INT NULL,
+                    cloudinary_url  VARCHAR(600) NOT NULL,
+                    cloudinary_public_id VARCHAR(400),
+                    tipo_foto       VARCHAR(60) DEFAULT 'general'
+                                    COMMENT 'general|serie|display|daño|conexion|detalle|otro',
+                    descripcion     VARCHAR(300),
+                    bytes           INT DEFAULT 0,
+                    tomada_por      VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (item_id) REFERENCES mant_levantamiento_items(id) ON DELETE CASCADE,
+                    FOREIGN KEY (levantamiento_id) REFERENCES mant_levantamientos(id) ON DELETE CASCADE,
+                    INDEX idx_item (item_id),
+                    INDEX idx_maquina (maquina_id),
+                    INDEX idx_lev (levantamiento_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Timeline / línea de vida del equipo — eventos significativos.
+            # Alimentado automáticamente por levantamientos, visitas, reportes.
+            # Permite construir una "ficha potente" del equipo con su historia.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_maquina_eventos (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    maquina_id    INT NOT NULL,
+                    cliente_id    INT,
+                    tipo          ENUM(
+                      'instalacion','levantamiento','visita','reparacion',
+                      'cambio_repuesto','cambio_estado','garantia',
+                      'reubicacion','dado_baja','foto_agregada','otro'
+                    ) DEFAULT 'otro',
+                    descripcion   VARCHAR(400),
+                    fecha_evento  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    referencia_tabla VARCHAR(60)
+                                    COMMENT 'mant_levantamientos|mant_visitas|mant_repuestos|...',
+                    referencia_id INT NULL,
+                    metadata_json TEXT,
+                    created_by    VARCHAR(190),
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                    INDEX idx_maquina_fecha (maquina_id, fecha_evento DESC),
+                    INDEX idx_tipo (tipo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Migración: agregar cloudinary a mant_maquina_fotos para coexistir
+            # con el flujo legacy (filesystem). Las nuevas fotos van a Cloudinary.
+            for _mig in [
+                "ALTER TABLE mant_maquina_fotos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
+                "ALTER TABLE mant_maquina_fotos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
+                "ALTER TABLE mant_maquina_fotos ADD COLUMN levantamiento_id INT DEFAULT NULL",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -22581,7 +22729,7 @@ def _build_reporte_docx(rep, cliente):
     doc.add_paragraph()
     foot = doc.add_paragraph()
     foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fr = foot.add_run(f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} — ILUS Sport & Health")
+    fr = foot.add_run(f"Generado el {_now_chile_str('%d/%m/%Y %H:%M')} — ILUS Sport & Health")
     fr.font.size = Pt(8)
     fr.font.color.rgb = RGBColor(0x9C, 0xA3, 0xAF)
 
@@ -22637,7 +22785,7 @@ def _reporte_to_html(rep, cliente):
   {f'<h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Equipos atendidos</h3>{maq_html}' if maq else ''}
   {ai_block}
   <div style="text-align:center;color:#9ca3af;font-size:.7rem;margin-top:32px;padding-top:16px;border-top:1px solid #eaecf0">
-    Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} · ILUS Sport &amp; Health
+    Generado el {_now_chile_str('%d/%m/%Y %H:%M')} · ILUS Sport &amp; Health
   </div>
 </body></html>"""
 
@@ -23535,6 +23683,524 @@ def mant_notificaciones_centro():
     return render_template("mantenciones/notificaciones.html",
                            notifs=[dict(n) for n in notifs],
                            pendientes=pendientes)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  LEVANTAMIENTOS FOTOGRÁFICOS DE EQUIPOS
+#  ─────────────────────────────────────────────────────────────────
+#  Sesión donde un técnico documenta visualmente los equipos del cliente.
+#  NO es una OT/visita — es PRE-VENTA / inventario inicial.
+#  Storage de fotos: Cloudinary siempre (persistente, mobile-friendly).
+# ════════════════════════════════════════════════════════════════════
+
+def _lev_estado_label(estado):
+    return {
+        'operativo':       '🟢 Operativo',
+        'advertencia':     '🟡 Advertencia',
+        'fuera_servicio':  '🔴 Fuera de servicio',
+        'en_reparacion':   '🔵 En reparación',
+        'dado_baja':       '⚪ Dado de baja',
+        'no_encontrado':   '⚫ No encontrado',
+    }.get(estado, estado)
+
+
+def _lev_registrar_evento(maquina_id, cliente_id, tipo, descripcion,
+                          ref_tabla=None, ref_id=None, metadata=None):
+    """Helper: registra un evento en la timeline del equipo."""
+    if not maquina_id:
+        return
+    try:
+        meta_json = json.dumps(metadata) if metadata else None
+        mysql_execute(
+            "INSERT INTO mant_maquina_eventos "
+            "(maquina_id, cliente_id, tipo, descripcion, referencia_tabla, "
+            " referencia_id, metadata_json, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (maquina_id, cliente_id, tipo, descripcion[:400],
+             ref_tabla, ref_id, meta_json, current_username() or 'sistema')
+        )
+    except Exception as e:
+        print(f"[lev_evento] no se pudo registrar: {e}", flush=True)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/levantamiento-abierto")
+@_mant_required
+def mant_lev_abierto(cid):
+    """¿Hay un levantamiento abierto (borrador/en_curso) para este cliente?"""
+    row = mysql_fetchone(
+        "SELECT id, estado, fecha_inicio, titulo, total_equipos, total_fotos, tecnico "
+        "  FROM mant_levantamientos "
+        " WHERE cliente_id=%s AND estado IN ('borrador','en_curso') "
+        " ORDER BY fecha_inicio DESC LIMIT 1",
+        (cid,)
+    )
+    return jsonify({"ok": True, "levantamiento": dict(row) if row else None})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/levantamientos", methods=["GET", "POST"])
+@_mant_required
+def mant_lev_crear_o_listar(cid):
+    """GET: listar levantamientos del cliente.
+       POST: crear uno nuevo (si no hay abierto)."""
+    if request.method == "GET":
+        rows = mysql_fetchall(
+            "SELECT id, fecha_inicio, fecha_cierre, estado, titulo, "
+            "       total_equipos, total_fotos, tecnico, created_by "
+            "  FROM mant_levantamientos WHERE cliente_id=%s "
+            " ORDER BY fecha_inicio DESC",
+            (cid,)
+        ) or []
+        for r in rows:
+            for k in ('fecha_inicio', 'fecha_cierre'):
+                if r.get(k):
+                    r[k] = str(r[k])[:16]
+        return jsonify({"ok": True, "levantamientos": rows})
+
+    # POST: crear nuevo
+    data = request.get_json(silent=True) or {}
+    # Verificar que no haya abierto
+    abierto = mysql_fetchone(
+        "SELECT id FROM mant_levantamientos "
+        "WHERE cliente_id=%s AND estado IN ('borrador','en_curso') LIMIT 1",
+        (cid,)
+    )
+    if abierto:
+        return jsonify({
+            "ok": False,
+            "error_codigo": "YA_HAY_ABIERTO",
+            "error": "Este cliente ya tiene un levantamiento abierto. Continuar ese antes de crear otro.",
+            "levantamiento_id": abierto["id"],
+        }), 409
+
+    titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
+    tecnico = (data.get("tecnico") or current_username() or "").strip()[:190]
+    notas = (data.get("notas") or "").strip()
+    equipo_ids = data.get("equipo_ids") or []  # lista opcional de máquinas a incluir
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_levantamientos "
+                "(cliente_id, tecnico, titulo, notas, estado, created_by) "
+                "VALUES (%s,%s,%s,%s,'en_curso',%s)",
+                (cid, tecnico, titulo, notas, current_username() or 'sistema')
+            )
+            lev_id = cur.lastrowid
+
+            # Si vienen máquinas pre-seleccionadas, crear items
+            n_items = 0
+            if equipo_ids:
+                ph = ",".join(["%s"] * len(equipo_ids))
+                cur.execute(
+                    f"SELECT id, nombre, sku, serie FROM mant_maquinas "
+                    f"WHERE id IN ({ph}) AND cliente_id=%s",
+                    tuple(list(equipo_ids) + [cid])
+                )
+                maquinas = cur.fetchall() or []
+                for m in maquinas:
+                    cur.execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"))
+                    )
+                    n_items += 1
+                cur.execute(
+                    "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
+                    (n_items, lev_id)
+                )
+        conn.commit()
+        try: _mant_log("levantamiento", lev_id, "creado",
+                       f"{n_items} equipo(s) iniciales · {titulo}")
+        except Exception: pass
+        return jsonify({"ok": True, "id": lev_id, "n_items": n_items})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.route("/mantenciones/api/levantamientos/<int:lid>", methods=["GET", "PATCH", "DELETE"])
+@_mant_required
+def mant_lev_detalle(lid):
+    """GET: detalle + items + fotos.  PATCH: actualizar metadata.  DELETE: cancelar."""
+    lev = mysql_fetchone("SELECT * FROM mant_levantamientos WHERE id=%s", (lid,))
+    if not lev:
+        return jsonify({"ok": False, "error": "Levantamiento no encontrado"}), 404
+
+    if request.method == "DELETE":
+        if lev["estado"] == "cerrado":
+            return jsonify({"ok": False, "error": "No se puede eliminar un levantamiento cerrado"}), 400
+        mysql_execute("UPDATE mant_levantamientos SET estado='cancelado' WHERE id=%s", (lid,))
+        try: _mant_log("levantamiento", lid, "cancelado", "")
+        except Exception: pass
+        return jsonify({"ok": True})
+
+    if request.method == "PATCH":
+        d = request.get_json(silent=True) or {}
+        sets, vals = [], []
+        for k in ("titulo", "tecnico", "notas"):
+            if k in d:
+                sets.append(f"{k}=%s")
+                vals.append((d[k] or "")[:500])
+        if sets:
+            vals.append(lid)
+            mysql_execute(f"UPDATE mant_levantamientos SET {', '.join(sets)} WHERE id=%s", tuple(vals))
+        return jsonify({"ok": True})
+
+    # GET: items + fotos
+    items = mysql_fetchall(
+        "SELECT * FROM mant_levantamiento_items WHERE levantamiento_id=%s ORDER BY id",
+        (lid,)
+    ) or []
+    # Fotos por item (1 query batch)
+    fotos = mysql_fetchall(
+        "SELECT id, item_id, cloudinary_url, tipo_foto, descripcion, created_at "
+        "  FROM mant_levantamiento_fotos WHERE levantamiento_id=%s ORDER BY id",
+        (lid,)
+    ) or []
+    fotos_por_item = {}
+    for f in fotos:
+        fotos_por_item.setdefault(f["item_id"], []).append({
+            "id": f["id"],
+            "url": f["cloudinary_url"],
+            "tipo": f["tipo_foto"],
+            "descripcion": f.get("descripcion") or "",
+            "created_at": str(f["created_at"])[:16] if f.get("created_at") else "",
+        })
+    for it in items:
+        it["fotos"] = fotos_por_item.get(it["id"], [])
+        it["estado_label"] = _lev_estado_label(it.get("estado_capturado", "operativo"))
+        for k in ('created_at', 'updated_at'):
+            if it.get(k): it[k] = str(it[k])[:16]
+
+    lev = dict(lev)
+    for k in ('fecha_inicio', 'fecha_cierre', 'created_at', 'updated_at'):
+        if lev.get(k): lev[k] = str(lev[k])[:16]
+    return jsonify({"ok": True, "levantamiento": lev, "items": items})
+
+
+@app.route("/mantenciones/api/levantamientos/<int:lid>/items", methods=["POST"])
+@_mant_required
+def mant_lev_item_crear(lid):
+    """Agregar un equipo al levantamiento (puede ser una máquina existente o crear ad-hoc)."""
+    lev = mysql_fetchone("SELECT id, cliente_id, estado FROM mant_levantamientos WHERE id=%s", (lid,))
+    if not lev:
+        return jsonify({"ok": False, "error": "Levantamiento no encontrado"}), 404
+    if lev["estado"] == "cerrado":
+        return jsonify({"ok": False, "error": "Levantamiento cerrado — no acepta más equipos"}), 400
+
+    d = request.get_json(silent=True) or {}
+    maquina_id = d.get("maquina_id")
+    nombre = (d.get("nombre") or "").strip()[:300]
+
+    if not maquina_id and not nombre:
+        return jsonify({"ok": False, "error": "Indica una máquina existente o un nombre nuevo"}), 400
+
+    snap = {"nombre": nombre, "sku": "", "serie": ""}
+    if maquina_id:
+        m = mysql_fetchone(
+            "SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s AND cliente_id=%s",
+            (maquina_id, lev["cliente_id"])
+        )
+        if not m:
+            return jsonify({"ok": False, "error": "Máquina no pertenece al cliente"}), 400
+        snap = {"nombre": m.get("nombre") or nombre,
+                "sku": m.get("sku") or "",
+                "serie": m.get("serie") or ""}
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_levantamiento_items "
+                "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                " estado_capturado, ubicacion) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
+                 d.get("estado_capturado") or "operativo",
+                 (d.get("ubicacion") or "")[:200])
+            )
+            iid = cur.lastrowid
+            cur.execute(
+                "UPDATE mant_levantamientos SET total_equipos = "
+                "(SELECT COUNT(*) FROM mant_levantamiento_items WHERE levantamiento_id=%s) "
+                "WHERE id=%s",
+                (lid, lid)
+            )
+        conn.commit()
+        return jsonify({"ok": True, "id": iid})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.route("/mantenciones/api/levantamiento-items/<int:iid>", methods=["PATCH", "DELETE"])
+@_mant_required
+def mant_lev_item_update(iid):
+    """Actualizar estado/observaciones/ubicación de un item."""
+    item = mysql_fetchone(
+        "SELECT id, levantamiento_id, maquina_id FROM mant_levantamiento_items WHERE id=%s",
+        (iid,)
+    )
+    if not item:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+
+    if request.method == "DELETE":
+        mysql_execute("DELETE FROM mant_levantamiento_items WHERE id=%s", (iid,))
+        mysql_execute(
+            "UPDATE mant_levantamientos SET total_equipos = "
+            "(SELECT COUNT(*) FROM mant_levantamiento_items WHERE levantamiento_id=%s) "
+            "WHERE id=%s",
+            (item["levantamiento_id"], item["levantamiento_id"])
+        )
+        return jsonify({"ok": True})
+
+    d = request.get_json(silent=True) or {}
+    sets, vals = [], []
+    estados_validos = ('operativo','advertencia','fuera_servicio','en_reparacion','dado_baja','no_encontrado')
+    for k in ("estado_capturado", "ubicacion", "horas_uso", "anomalias", "observaciones", "completado"):
+        if k in d:
+            v = d[k]
+            if k == "estado_capturado" and v not in estados_validos:
+                continue
+            if k == "horas_uso":
+                try: v = int(v) if v not in (None, "") else None
+                except Exception: continue
+            if k == "completado":
+                v = 1 if v else 0
+            sets.append(f"{k}=%s")
+            vals.append(v)
+    if not sets:
+        return jsonify({"ok": True, "noop": True})
+    vals.append(iid)
+    mysql_execute(f"UPDATE mant_levantamiento_items SET {', '.join(sets)} WHERE id=%s", tuple(vals))
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/levantamiento-items/<int:iid>/fotos", methods=["POST"])
+@_mant_required
+def mant_lev_item_subir_foto(iid):
+    """Sube una foto del item a Cloudinary y la asocia a la máquina si aplica."""
+    item = mysql_fetchone(
+        "SELECT li.*, l.cliente_id FROM mant_levantamiento_items li "
+        "JOIN mant_levantamientos l ON l.id = li.levantamiento_id "
+        "WHERE li.id=%s",
+        (iid,)
+    )
+    if not item:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+
+    f = request.files.get("foto") or request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Sin archivo"}), 400
+
+    tipo_foto = (request.form.get("tipo_foto") or "general").strip().lower()[:60]
+    descripcion = (request.form.get("descripcion") or "").strip()[:300]
+
+    if not _CLD_READY:
+        return jsonify({"ok": False, "error": "Cloudinary no configurado — contacta al administrador"}), 503
+
+    try:
+        f.stream.seek(0)
+        public_id = f"lev_{item['levantamiento_id']}_item_{iid}_{int(time.time())}"
+        folder = f"ilus/mant/levantamientos/{item['levantamiento_id']}"
+        res = _cloud_upload_image_full(f.stream, public_id, folder=folder)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error subiendo a Cloudinary: {e}"}), 500
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_levantamiento_fotos "
+                "(item_id, levantamiento_id, maquina_id, cloudinary_url, "
+                " cloudinary_public_id, tipo_foto, descripcion, bytes, tomada_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (iid, item["levantamiento_id"], item.get("maquina_id"),
+                 res["url"], res["public_id"], tipo_foto, descripcion,
+                 res.get("size", 0), current_username() or 'tecnico')
+            )
+            fid = cur.lastrowid
+            # Actualizar contadores
+            cur.execute(
+                "UPDATE mant_levantamiento_items SET n_fotos = "
+                "(SELECT COUNT(*) FROM mant_levantamiento_fotos WHERE item_id=%s) "
+                "WHERE id=%s", (iid, iid)
+            )
+            cur.execute(
+                "UPDATE mant_levantamientos SET total_fotos = "
+                "(SELECT COUNT(*) FROM mant_levantamiento_fotos WHERE levantamiento_id=%s) "
+                "WHERE id=%s", (item["levantamiento_id"], item["levantamiento_id"])
+            )
+            # Si tiene máquina asociada, también copiar a mant_maquina_fotos
+            # para que aparezca en la ficha del equipo (timeline)
+            if item.get("maquina_id"):
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_maquina_fotos "
+                        "(maquina_id, archivo_path, cloudinary_url, cloudinary_public_id, "
+                        " levantamiento_id, descripcion, tomada_por, created_at) "
+                        "VALUES (%s, NULL, %s, %s, %s, %s, %s, NOW())",
+                        (item["maquina_id"], res["url"], res["public_id"],
+                         item["levantamiento_id"],
+                         f"[{tipo_foto}] {descripcion}".strip(),
+                         current_username() or 'tecnico')
+                    )
+                except Exception as e_mf:
+                    print(f"[lev_foto] no se copió a mant_maquina_fotos: {e_mf}", flush=True)
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error guardando en BD: {e}"}), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    # Registrar evento en timeline del equipo
+    if item.get("maquina_id"):
+        _lev_registrar_evento(
+            item["maquina_id"], item["cliente_id"],
+            "foto_agregada", f"Nueva foto ({tipo_foto}) durante levantamiento #{item['levantamiento_id']}",
+            "mant_levantamientos", item["levantamiento_id"],
+            {"item_id": iid, "tipo_foto": tipo_foto}
+        )
+
+    return jsonify({
+        "ok": True,
+        "id": fid,
+        "url": res["url"],
+        "tipo_foto": tipo_foto,
+    })
+
+
+@app.route("/mantenciones/api/levantamiento-fotos/<int:fid>", methods=["DELETE"])
+@_mant_required
+def mant_lev_foto_del(fid):
+    """Elimina una foto del levantamiento (también de Cloudinary)."""
+    foto = mysql_fetchone(
+        "SELECT cloudinary_public_id, item_id, levantamiento_id "
+        "  FROM mant_levantamiento_fotos WHERE id=%s",
+        (fid,)
+    )
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+
+    if foto.get("cloudinary_public_id") and _CLD_READY:
+        try:
+            _cloudinary_uploader.destroy(foto["cloudinary_public_id"], resource_type="image")
+        except Exception as e:
+            print(f"[lev_foto_del] Cloudinary delete fail: {e}", flush=True)
+
+    mysql_execute("DELETE FROM mant_levantamiento_fotos WHERE id=%s", (fid,))
+    # Recontar
+    mysql_execute(
+        "UPDATE mant_levantamiento_items SET n_fotos = "
+        "(SELECT COUNT(*) FROM mant_levantamiento_fotos WHERE item_id=%s) "
+        "WHERE id=%s", (foto["item_id"], foto["item_id"])
+    )
+    mysql_execute(
+        "UPDATE mant_levantamientos SET total_fotos = "
+        "(SELECT COUNT(*) FROM mant_levantamiento_fotos WHERE levantamiento_id=%s) "
+        "WHERE id=%s", (foto["levantamiento_id"], foto["levantamiento_id"])
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/levantamientos/<int:lid>/cerrar", methods=["POST"])
+@_mant_required
+def mant_lev_cerrar(lid):
+    """Cierra el levantamiento — queda inmutable. Genera eventos timeline."""
+    lev = mysql_fetchone("SELECT * FROM mant_levantamientos WHERE id=%s", (lid,))
+    if not lev:
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    if lev["estado"] == "cerrado":
+        return jsonify({"ok": False, "error": "Ya estaba cerrado"}), 400
+
+    mysql_execute(
+        "UPDATE mant_levantamientos SET estado='cerrado', fecha_cierre=NOW(), closed_by=%s "
+        "WHERE id=%s",
+        (current_username() or 'sistema', lid)
+    )
+    # Registrar evento por cada equipo levantado
+    items = mysql_fetchall(
+        "SELECT id, maquina_id, n_fotos, estado_capturado FROM mant_levantamiento_items "
+        "WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
+        (lid,)
+    ) or []
+    for it in items:
+        _lev_registrar_evento(
+            it["maquina_id"], lev["cliente_id"],
+            "levantamiento",
+            f"Levantamiento #{lid} cerrado · estado: {_lev_estado_label(it.get('estado_capturado'))} · {it.get('n_fotos',0)} foto(s)",
+            "mant_levantamientos", lid,
+            {"estado": it.get("estado_capturado"), "n_fotos": it.get("n_fotos", 0)}
+        )
+
+    try: _mant_log("levantamiento", lid, "cerrado",
+                   f"{len(items)} equipo(s) · {lev.get('total_fotos',0)} foto(s)")
+    except Exception: pass
+    return jsonify({"ok": True, "items_procesados": len(items)})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/timeline")
+@_mant_required
+def mant_maquina_timeline(mid):
+    """Timeline de la 'ficha potente' del equipo: eventos + fotos + visitas."""
+    eventos = mysql_fetchall(
+        "SELECT id, tipo, descripcion, fecha_evento, referencia_tabla, referencia_id, "
+        "       metadata_json, created_by "
+        "  FROM mant_maquina_eventos WHERE maquina_id=%s "
+        " ORDER BY fecha_evento DESC LIMIT 100",
+        (mid,)
+    ) or []
+    for e in eventos:
+        if e.get("fecha_evento"):
+            e["fecha_evento"] = str(e["fecha_evento"])[:16]
+        if e.get("metadata_json"):
+            try: e["metadata"] = json.loads(e["metadata_json"])
+            except Exception: e["metadata"] = None
+        e.pop("metadata_json", None)
+    return jsonify({"ok": True, "eventos": eventos})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/fotos")
+@_mant_required
+def mant_maquina_fotos_list(mid):
+    """Galería de fotos del equipo (todas: viejas filesystem + nuevas Cloudinary)."""
+    rows = mysql_fetchall(
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+        "       created_at, levantamiento_id "
+        "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+        " ORDER BY created_at DESC LIMIT 200",
+        (mid,)
+    ) or []
+    out = []
+    for r in rows:
+        url = r.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        out.append({
+            "id": r["id"],
+            "url": url,
+            "descripcion": r.get("descripcion") or "",
+            "tomada_por": r.get("tomada_por") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "levantamiento_id": r.get("levantamiento_id"),
+            "persistente": bool(r.get("cloudinary_url")),
+        })
+    return jsonify({"ok": True, "fotos": out})
 
 
 # ─────────────────────────────────────────────

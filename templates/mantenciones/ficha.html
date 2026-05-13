@@ -1650,9 +1650,11 @@
           {% for m in maquinas %}
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
           <tr id="maq-{{ m.id }}"
+              data-maquina-id="{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
               data-doc-origen="{{ m.doc_origen or '' }}"
               data-sku="{{ m.sku or '' }}"
+              data-serie="{{ m.serie or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
             <td style="text-align:center;vertical-align:middle">
@@ -6246,34 +6248,336 @@ function abrirMaquinaManual() {
 function abrirContratoModal() {
   new bootstrap.Modal(document.getElementById('modalContrato')).show();
 }
-// ════════════════════════════════════════════════════════════
-//  LEVANTAMIENTO FOTOGRÁFICO (placeholder hasta tener flujo completo)
-//  El flujo completo está diseñado (5 tablas SQL + endpoints + UI mobile)
-//  pero pendiente de implementar. Mientras tanto este modal explica al
-//  usuario qué viene y le da accesos rápidos a la captura individual.
-// ════════════════════════════════════════════════════════════
-function abrirLevantamientoFotografico(){
-  if (typeof ilusAlert === 'function') {
+// ════════════════════════════════════════════════════════════════════
+//  LEVANTAMIENTO FOTOGRÁFICO DE EQUIPOS
+//  Flujo completo: técnico abre modal → selecciona equipos → captura
+//  fotos con la cámara → cierra el levantamiento → queda en timeline.
+//  Storage: Cloudinary persistente. Estados visuales por equipo.
+// ════════════════════════════════════════════════════════════════════
+let _LEV = { id: null, item_actual: null, items: [] };
+
+async function abrirLevantamientoFotografico(){
+  // Verificar si hay uno abierto
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/levantamiento-abierto`);
+    const d = await r.json();
+    if (d.ok && d.levantamiento){
+      const ok = await ilusConfirm({
+        title: 'Levantamiento ya en curso',
+        message: `Hay un levantamiento en curso desde ${d.levantamiento.fecha_inicio}.`,
+        sub: `${d.levantamiento.total_equipos} equipo(s) · ${d.levantamiento.total_fotos} foto(s). ¿Continuarlo?`,
+        okLabel: 'Sí, continuar',
+        cancelLabel: 'Crear uno nuevo',
+      });
+      if (ok) { _LEV.id = d.levantamiento.id; abrirLevantamientoSesion(); return; }
+    }
+  } catch(e) { console.warn('check abierto:', e); }
+  // Abrir modal de selección de equipos
+  abrirLevantamientoSelector();
+}
+
+function abrirLevantamientoSelector(){
+  const tbody = document.getElementById('levSelectTbody');
+  if (!tbody) { ilusToast('Modal no inicializado', { type:'error' }); return; }
+  // Cargar equipos desde la página actual (los que ya están renderizados en tab Equipos)
+  const filas = Array.from(document.querySelectorAll('[data-maquina-id]'));
+  if (!filas.length){
     ilusAlert({
-      title: '📸 Levantamiento fotográfico de equipos',
-      message: 'Este flujo está en construcción — próxima iteración.',
-      sub: '✅ Mientras tanto puedes:\n' +
-           '  • Hacer click en cada equipo → "Subir foto" individualmente\n' +
-           '  • Importar equipos desde un documento del ERP\n' +
-           '  • Agregar equipos manualmente uno por uno\n\n' +
-           'Cuando esté listo, este botón abrirá un modal mobile con:\n' +
-           '  • Checkbox para seleccionar TODOS los equipos\n' +
-           '  • Cámara nativa para capturar fotos rápido\n' +
-           '  • Auto-save + reanudar si se corta la conexión\n' +
-           '  • Estados (Operativo / Advertencia / F. servicio / etc.)\n' +
-           '  • Línea de tiempo de cada equipo a lo largo de los años',
-      type: 'info',
-      okLabel: 'Entendido',
+      title: 'Sin equipos',
+      message: 'Este cliente no tiene equipos registrados todavía.',
+      sub: 'Agregá equipos primero desde la pestaña Equipos (manual o Importar ERP).',
+      type: 'warning',
     });
-  } else {
-    alert('Levantamiento fotográfico — flujo en construcción.\n\n' +
-          'Por ahora, sube fotos por equipo individualmente desde la lista.');
+    return;
   }
+  tbody.innerHTML = filas.map(tr => {
+    const mid = tr.dataset.maquinaId;
+    const nombre = (tr.querySelector('.eq-name-main')?.textContent || '').trim() || `Equipo #${mid}`;
+    const sku    = tr.dataset.sku || '';
+    const serie  = tr.dataset.serie || '';
+    return `<tr>
+      <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" checked></td>
+      <td><strong>${escHtml(nombre)}</strong>${sku?`<div class="small text-muted">${escHtml(sku)}</div>`:''}</td>
+      <td class="small text-muted">${escHtml(serie) || '—'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('levSelectTitulo').value = 'Levantamiento ' + new Date().toLocaleDateString('es-CL');
+  document.getElementById('levSelectNotas').value = '';
+  new bootstrap.Modal(document.getElementById('modalLevSelector')).show();
+}
+
+function levToggleTodos(state){
+  document.querySelectorAll('.lev-eq-chk').forEach(c => c.checked = state);
+}
+
+async function levIniciar(){
+  const ids = Array.from(document.querySelectorAll('.lev-eq-chk:checked')).map(c => parseInt(c.dataset.id));
+  if (!ids.length){
+    ilusToast('Seleccioná al menos un equipo', { type:'warning' });
+    return;
+  }
+  const btn = document.getElementById('btnLevIniciar');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/levantamientos`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        titulo: document.getElementById('levSelectTitulo').value.trim(),
+        notas:  document.getElementById('levSelectNotas').value.trim(),
+        equipo_ids: ids,
+      })
+    });
+    const d = await r.json();
+    if (!d.ok){
+      if (d.error_codigo === 'YA_HAY_ABIERTO'){
+        _LEV.id = d.levantamiento_id;
+        bootstrap.Modal.getInstance(document.getElementById('modalLevSelector'))?.hide();
+        abrirLevantamientoSesion();
+        return;
+      }
+      ilusToast(d.error || 'Error', { type:'error' });
+      return;
+    }
+    _LEV.id = d.id;
+    bootstrap.Modal.getInstance(document.getElementById('modalLevSelector'))?.hide();
+    ilusToast(`Levantamiento iniciado con ${d.n_items} equipo(s)`, { type:'success' });
+    abrirLevantamientoSesion();
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-camera-fill me-1"></i>Iniciar levantamiento';
+  }
+}
+
+async function abrirLevantamientoSesion(){
+  if (!_LEV.id) return;
+  try {
+    const r = await fetch(`/mantenciones/api/levantamientos/${_LEV.id}`);
+    const d = await r.json();
+    if (!d.ok){ ilusToast('Error cargando', { type:'error' }); return; }
+    _LEV.items = d.items;
+    _LEV.item_actual = d.items.find(i => !i.completado) || d.items[0];
+    renderLevSesion(d.levantamiento, d.items);
+    new bootstrap.Modal(document.getElementById('modalLevSesion')).show();
+  } catch(e){
+    ilusToast('Error: ' + e.message, { type:'error' });
+  }
+}
+
+function renderLevSesion(lev, items){
+  const completados = items.filter(i => i.completado).length;
+  const total = items.length;
+  document.getElementById('levSesProgreso').textContent = `${completados}/${total}`;
+  document.getElementById('levSesProgressBar').style.width = total ? `${(completados/total)*100}%` : '0%';
+  document.getElementById('levSesTotalFotos').textContent = lev.total_fotos || 0;
+
+  // Lista lateral
+  const lista = document.getElementById('levSesLista');
+  lista.innerHTML = items.map(it => `
+    <div class="lev-item-row ${_LEV.item_actual && _LEV.item_actual.id === it.id ? 'active' : ''} ${it.completado ? 'done' : ''}"
+         onclick="levVerItem(${it.id})">
+      <div class="lev-item-icon">${it.completado ? '✅' : (it.n_fotos > 0 ? '📷' : '⬜')}</div>
+      <div class="lev-item-info">
+        <div class="lev-item-name">${escHtml(it.nombre_snap || 'Equipo')}</div>
+        <div class="lev-item-meta">${it.n_fotos || 0} foto(s) · ${escHtml(it.estado_label || '')}</div>
+      </div>
+    </div>
+  `).join('');
+
+  if (_LEV.item_actual) renderLevItemActual();
+}
+
+function levVerItem(iid){
+  _LEV.item_actual = _LEV.items.find(i => i.id === iid);
+  renderLevItemActual();
+  document.querySelectorAll('.lev-item-row').forEach(el => el.classList.remove('active'));
+  event?.target?.closest('.lev-item-row')?.classList.add('active');
+}
+
+function renderLevItemActual(){
+  const it = _LEV.item_actual;
+  if (!it){
+    document.getElementById('levSesItemBox').innerHTML =
+      '<div class="text-center py-5 text-muted"><i class="bi bi-camera" style="font-size:3rem;opacity:.3"></i><div class="mt-2">Selecciona un equipo de la lista</div></div>';
+    return;
+  }
+  const fotosHtml = (it.fotos || []).map(f => `
+    <div class="lev-foto-thumb" style="background-image:url('${f.url}')" onclick="window.open('${f.url}','_blank')">
+      <span class="lev-foto-tipo">${escHtml(f.tipo)}</span>
+      <button class="lev-foto-del" onclick="event.stopPropagation(); levBorrarFoto(${f.id})">×</button>
+    </div>
+  `).join('');
+  document.getElementById('levSesItemBox').innerHTML = `
+    <div class="lev-item-header">
+      <h5 class="mb-1">${escHtml(it.nombre_snap)}</h5>
+      <div class="small text-muted">
+        ${it.sku_snap ? `SKU: <code>${escHtml(it.sku_snap)}</code> · ` : ''}
+        ${it.serie_snap ? `Serie: <code>${escHtml(it.serie_snap)}</code>` : 'Sin serie'}
+      </div>
+    </div>
+    <div class="lev-estado-buttons mt-3">
+      <button class="lev-est-btn ${it.estado_capturado==='operativo'?'active':''}" data-estado="operativo" onclick="levSetEstado(this)">🟢 Operativo</button>
+      <button class="lev-est-btn ${it.estado_capturado==='advertencia'?'active':''}" data-estado="advertencia" onclick="levSetEstado(this)">🟡 Advertencia</button>
+      <button class="lev-est-btn ${it.estado_capturado==='fuera_servicio'?'active':''}" data-estado="fuera_servicio" onclick="levSetEstado(this)">🔴 F. servicio</button>
+      <button class="lev-est-btn ${it.estado_capturado==='en_reparacion'?'active':''}" data-estado="en_reparacion" onclick="levSetEstado(this)">🔵 En reparación</button>
+      <button class="lev-est-btn ${it.estado_capturado==='dado_baja'?'active':''}" data-estado="dado_baja" onclick="levSetEstado(this)">⚪ Dado de baja</button>
+      <button class="lev-est-btn ${it.estado_capturado==='no_encontrado'?'active':''}" data-estado="no_encontrado" onclick="levSetEstado(this)">⚫ No encontrado</button>
+    </div>
+    <div class="row mt-3 g-2">
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Ubicación</label>
+        <input type="text" id="levItemUbicacion" class="form-control form-control-sm"
+               value="${escAttr(it.ubicacion||'')}" placeholder="Sala A, Fila 2"
+               onblur="levGuardarCampo('ubicacion', this.value)">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Horas de uso (display)</label>
+        <input type="number" id="levItemHoras" class="form-control form-control-sm"
+               value="${it.horas_uso||''}" placeholder="Ej: 12500"
+               onblur="levGuardarCampo('horas_uso', this.value)">
+      </div>
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Observaciones</label>
+        <textarea id="levItemObs" class="form-control form-control-sm" rows="2"
+                  placeholder="Anomalías observadas, condición general…"
+                  onblur="levGuardarCampo('observaciones', this.value)">${escHtml(it.observaciones||'')}</textarea>
+      </div>
+    </div>
+    <div class="mt-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <strong class="small">📷 Fotos (${(it.fotos||[]).length})</strong>
+        <div>
+          <select id="levTipoFoto" class="form-select form-select-sm d-inline-block" style="width:auto;font-size:.78rem">
+            <option value="general">General</option>
+            <option value="serie">Placa serie</option>
+            <option value="display">Display / horas</option>
+            <option value="daño">Daño</option>
+            <option value="conexion">Conexión</option>
+            <option value="detalle">Detalle</option>
+          </select>
+          <label class="btn btn-sm btn-ilus mb-0">
+            <i class="bi bi-camera-fill me-1"></i>Tomar foto
+            <input type="file" accept="image/*" capture="environment" style="display:none" onchange="levSubirFoto(this)">
+          </label>
+        </div>
+      </div>
+      <div class="lev-fotos-grid">${fotosHtml || '<div class="small text-muted py-3 text-center">Aún sin fotos — toca "Tomar foto" arriba</div>'}</div>
+    </div>
+    <div class="mt-4 d-flex justify-content-between">
+      <button class="btn btn-outline-secondary btn-sm" onclick="levNavegar(-1)">⏮ Anterior</button>
+      <button class="btn btn-ilus btn-sm" onclick="levCompletar()">
+        ${it.completado ? '✓ Marcado como completado' : '✓ Completar y siguiente'}
+      </button>
+    </div>
+  `;
+}
+
+async function levSetEstado(btn){
+  const estado = btn.dataset.estado;
+  document.querySelectorAll('.lev-est-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _LEV.item_actual.estado_capturado = estado;
+  await levGuardarCampo('estado_capturado', estado);
+}
+
+async function levGuardarCampo(campo, valor){
+  if (!_LEV.item_actual) return;
+  try {
+    await fetch(`/mantenciones/api/levantamiento-items/${_LEV.item_actual.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({[campo]: valor})
+    });
+    _LEV.item_actual[campo] = valor;
+  } catch(e) { console.error('save campo:', e); }
+}
+
+async function levSubirFoto(input){
+  if (!input.files || !input.files[0] || !_LEV.item_actual) return;
+  const f = input.files[0];
+  const tipo = document.getElementById('levTipoFoto').value || 'general';
+  const fd = new FormData();
+  fd.append('foto', f);
+  fd.append('tipo_foto', tipo);
+  try {
+    ilusToast('Subiendo foto…', { type:'info', duration: 1500 });
+    const r = await fetch(`/mantenciones/api/levantamiento-items/${_LEV.item_actual.id}/fotos`, {
+      method:'POST', body: fd
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'Error subiendo', { type:'error' }); return; }
+    ilusToast('✓ Foto subida', { type:'success' });
+    input.value = '';
+    // Recargar sesión
+    await abrirLevantamientoSesion_refresh();
+  } catch(e){
+    ilusToast('Error: ' + e.message, { type:'error' });
+  }
+}
+
+async function abrirLevantamientoSesion_refresh(){
+  if (!_LEV.id) return;
+  const r = await fetch(`/mantenciones/api/levantamientos/${_LEV.id}`);
+  const d = await r.json();
+  if (d.ok){
+    _LEV.items = d.items;
+    if (_LEV.item_actual) _LEV.item_actual = d.items.find(i => i.id === _LEV.item_actual.id) || d.items[0];
+    renderLevSesion(d.levantamiento, d.items);
+  }
+}
+
+async function levBorrarFoto(fid){
+  const ok = await ilusConfirm({ title:'Eliminar foto', message:'¿Eliminar esta foto?', okLabel:'Eliminar', danger:true });
+  if (!ok) return;
+  await fetch(`/mantenciones/api/levantamiento-fotos/${fid}`, { method:'DELETE' });
+  await abrirLevantamientoSesion_refresh();
+}
+
+async function levCompletar(){
+  if (!_LEV.item_actual) return;
+  await fetch(`/mantenciones/api/levantamiento-items/${_LEV.item_actual.id}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({completado: true})
+  });
+  _LEV.item_actual.completado = 1;
+  levNavegar(1);
+  await abrirLevantamientoSesion_refresh();
+}
+
+function levNavegar(dir){
+  if (!_LEV.items.length) return;
+  const idx = _LEV.items.findIndex(i => i.id === _LEV.item_actual?.id);
+  const next = Math.max(0, Math.min(_LEV.items.length - 1, idx + dir));
+  _LEV.item_actual = _LEV.items[next];
+  renderLevItemActual();
+}
+
+async function levCerrar(){
+  const ok = await ilusConfirm({
+    title: 'Cerrar levantamiento',
+    message: '¿Cerrar el levantamiento? Quedará inmutable.',
+    sub: 'Las fotos quedan asociadas a cada equipo en su timeline. No se podrá editar después.',
+    okLabel: 'Sí, cerrar',
+  });
+  if (!ok) return;
+  const r = await fetch(`/mantenciones/api/levantamientos/${_LEV.id}/cerrar`, { method:'POST' });
+  const d = await r.json();
+  if (d.ok){
+    ilusToast(`Levantamiento cerrado · ${d.items_procesados} equipo(s) actualizados en timeline`, { type:'success' });
+    bootstrap.Modal.getInstance(document.getElementById('modalLevSesion'))?.hide();
+    _LEV = { id: null, item_actual: null, items: [] };
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    ilusToast(d.error || 'Error', { type:'error' });
+  }
+}
+
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escAttr(s){
+  return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function abrirNuevaVisita(tipoPreset) {
@@ -9027,4 +9331,134 @@ function _planTabActualizarStatus(ctAnalizado) {
   }
 }
 </script>
+
+{# ══════════════════════════════════════════════════════════════════
+   MODALES: Levantamiento Fotográfico
+══════════════════════════════════════════════════════════════════ #}
+<style>
+/* Selector inicial */
+.lev-selector-row{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #f1f5f9}
+.lev-selector-row:hover{background:#f8fafc}
+
+/* Sesión en curso */
+.lev-sesion-grid{display:grid;grid-template-columns:280px 1fr;gap:18px;min-height:65vh}
+@media (max-width: 768px){.lev-sesion-grid{grid-template-columns:1fr;gap:10px}}
+.lev-sesion-lista{background:#0f172a;color:#fff;border-radius:10px;padding:10px;overflow-y:auto;max-height:65vh}
+.lev-sesion-lista h6{color:#cbd5e1;font-size:.75rem;letter-spacing:.5px;text-transform:uppercase;margin:6px 4px 10px}
+.lev-item-row{display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .12s;margin-bottom:4px}
+.lev-item-row:hover{background:rgba(255,255,255,.06)}
+.lev-item-row.active{background:linear-gradient(90deg,#dc2626,#991b1b);color:#fff}
+.lev-item-row.done .lev-item-name{opacity:.65;text-decoration:line-through}
+.lev-item-icon{font-size:1.2rem;width:28px;text-align:center}
+.lev-item-name{font-weight:600;font-size:.85rem;line-height:1.2}
+.lev-item-meta{font-size:.7rem;opacity:.7;margin-top:2px}
+
+.lev-item-header{padding-bottom:12px;border-bottom:1px solid #e5e7eb}
+.lev-estado-buttons{display:flex;flex-wrap:wrap;gap:6px}
+.lev-est-btn{flex:1;min-width:115px;padding:9px 12px;border:1.5px solid #e5e7eb;background:#fff;
+             border-radius:8px;font-weight:600;font-size:.78rem;cursor:pointer;transition:all .12s}
+.lev-est-btn:hover{background:#f8fafc;border-color:#cbd5e1}
+.lev-est-btn.active{background:#0f172a;color:#fff;border-color:#0f172a}
+.lev-fotos-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(110px, 1fr));gap:8px}
+.lev-foto-thumb{position:relative;aspect-ratio:1;background-size:cover;background-position:center;
+                background-color:#1e293b;border-radius:8px;cursor:pointer;border:1px solid #e2e8f0}
+.lev-foto-tipo{position:absolute;bottom:4px;left:4px;background:rgba(15,23,42,.85);color:#fff;
+               font-size:.6rem;padding:2px 6px;border-radius:50px;font-weight:600;text-transform:uppercase}
+.lev-foto-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;
+              background:rgba(220,38,38,.95);color:#fff;border:none;font-size:.85rem;cursor:pointer;line-height:1}
+.lev-foto-del:hover{background:#991b1b}
+.lev-progress-bar{height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin-top:6px}
+.lev-progress-fill{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);transition:width .3s}
+</style>
+
+{# Modal 1: Selector inicial de equipos para iniciar levantamiento #}
+<div class="modal fade" id="modalLevSelector" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-camera-fill me-2"></i>Iniciar Levantamiento Fotográfico</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-light border" style="font-size:.84rem">
+          <strong>📸 ¿Qué es esto?</strong> Documenta visualmente el estado de los equipos del cliente.
+          Las fotos quedan asociadas a cada equipo en su timeline (historial de vida).
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-md-7">
+            <label class="form-label small fw-semibold">Título del levantamiento</label>
+            <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
+                   placeholder="Ej: Levantamiento inicial sala A">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label small fw-semibold">Notas (opcional)</label>
+            <input type="text" id="levSelectNotas" class="form-control form-control-sm"
+                   placeholder="Ej: Pre-contrato anual 2026">
+          </div>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <strong class="small">Equipos a levantar</strong>
+          <div>
+            <button class="btn btn-sm btn-outline-secondary" onclick="levToggleTodos(true)">Marcar todos</button>
+            <button class="btn btn-sm btn-outline-secondary ms-1" onclick="levToggleTodos(false)">Desmarcar</button>
+          </div>
+        </div>
+        <div class="table-responsive" style="max-height:42vh">
+          <table class="table table-sm mb-0">
+            <thead style="background:#f8fafc;position:sticky;top:0;z-index:1">
+              <tr><th style="width:50px">✓</th><th>Equipo / SKU</th><th>Serie</th></tr>
+            </thead>
+            <tbody id="levSelectTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn fw-bold text-white" id="btnLevIniciar"
+                style="background:linear-gradient(135deg,#7c2d12,#dc2626)"
+                onclick="levIniciar()">
+          <i class="bi bi-camera-fill me-1"></i>Iniciar levantamiento
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Modal 2: Sesión en curso — captura por equipo #}
+<div class="modal fade" id="modalLevSesion" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-fullscreen-md-down modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0f172a;color:#fff">
+        <div class="d-flex align-items-center gap-3 flex-grow-1">
+          <i class="bi bi-camera-fill" style="font-size:1.3rem;color:#dc2626"></i>
+          <div>
+            <h6 class="mb-0 fw-bold">Levantamiento en curso</h6>
+            <div class="small" style="opacity:.7">
+              <span id="levSesProgreso">0/0</span> equipos completados ·
+              <span id="levSesTotalFotos">0</span> fotos
+            </div>
+          </div>
+          <div class="lev-progress-bar flex-grow-1 mx-3" style="max-width:200px">
+            <div class="lev-progress-fill" id="levSesProgressBar" style="width:0%"></div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-success me-2" onclick="levCerrar()">
+          <i class="bi bi-check-lg me-1"></i>Cerrar levantamiento
+        </button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <div class="lev-sesion-grid">
+          {# Lista lateral de equipos #}
+          <div class="lev-sesion-lista">
+            <h6><i class="bi bi-list-check me-1"></i>Equipos</h6>
+            <div id="levSesLista"></div>
+          </div>
+          {# Vista del equipo actual #}
+          <div id="levSesItemBox" class="p-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
