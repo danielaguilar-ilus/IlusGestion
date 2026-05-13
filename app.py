@@ -2583,6 +2583,7 @@ def _build_label_pdf_legacy(product, bulto, total_bultos):
 
 @app.context_processor
 def inject_globals():
+    _role = (g.user["role"] if g.user else "") or ""
     return {
         "has_logo":    os.path.exists(os.path.join(app.static_folder, "Logo.png")),
         "current_user": g.user,
@@ -2594,7 +2595,11 @@ def inject_globals():
                             "editor":     "Editor",
                             "lector":     "Lector",
                             "vendedor":   "Vendedor",
-                        }.get(g.user["role"] if g.user else "", "Usuario"),
+                            "tecnico":    "Técnico",
+                        }.get(_role, "Usuario"),
+        # Flag global para todos los templates: True si el usuario es 'tecnico' (solo lectura).
+        # Permite ocultar botones de edición/creación/borrado sin tocar cada template.
+        "is_tecnico":   (_role == "tecnico"),
         "photo_src":    _photo_src,
     }
 
@@ -3395,21 +3400,28 @@ def _send_password_access_email(
     actor_name: str = "ILUS",
     mode: str = "reset",
     minutes: int = 60,
+    skip_diagnose: bool = False,
 ) -> bool:
-    """Envia correo ILUS para crear o cambiar clave mediante token seguro."""
-    # Validación SMTP previa antes de enviar
-    try:
-        diag = _smtp_connection_diagnose(_get_smtp_cfg())
-        if not diag.get("ok"):
-            detail = diag.get("message") or "No se pudo validar la conexion SMTP."
-            suggestions = diag.get("suggestions") or []
-            if suggestions:
-                detail += " " + " ".join(suggestions[:3])
-            g._last_email_error = detail
+    """Envia correo ILUS para crear o cambiar clave mediante token seguro.
+
+    skip_diagnose=True omite la validación SMTP previa (10s de timeout). Útil
+    cuando se envía desde un thread en background — el diagnóstico se hace
+    cuando el admin va a /admin/comunicaciones, no en cada email.
+    """
+    # Validación SMTP previa antes de enviar (omitir si se pidió)
+    if not skip_diagnose:
+        try:
+            diag = _smtp_connection_diagnose(_get_smtp_cfg())
+            if not diag.get("ok"):
+                detail = diag.get("message") or "No se pudo validar la conexion SMTP."
+                suggestions = diag.get("suggestions") or []
+                if suggestions:
+                    detail += " " + " ".join(suggestions[:3])
+                g._last_email_error = detail
+                return False
+        except Exception as exc:
+            g._last_email_error = f"No se pudo validar SMTP antes de enviar: {exc}"
             return False
-    except Exception as exc:
-        g._last_email_error = f"No se pudo validar SMTP antes de enviar: {exc}"
-        return False
 
     is_setup = mode == "setup"
     titulo = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
@@ -5227,23 +5239,38 @@ def new_user():
         conn.commit()
 
         # Generar token de invitación (usa la misma tabla de resets, válido 24h)
+        # OPTIMIZACIÓN: el envío de email se hace en BACKGROUND para que el admin
+        # no tenga que esperar 10-15s del diagnóstico SMTP + envío. La respuesta
+        # es inmediata; si el email falla, queda log en stdout.
         if send_invite and not manual_password:
             try:
                 new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
                 token, _expires = _issue_password_token(new_uid, minutes=1440)
                 set_url   = url_for("reset_password", token=token, _external=True)
-                result = _notify_user_access(username, nombre, wa_number or phone, mode="token", action_url=set_url)
-                msg, level = _access_notification_flash(result, token_mode=True)
-                flash(f"Usuario creado. {msg}", level)
+                # Enviar email + WhatsApp en background (no bloquea el HTTP response)
+                actor_name_snap = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
+                def _send_bg(_un=username, _nom=nombre, _ph=wa_number or phone, _url=set_url, _actor=actor_name_snap):
+                    try:
+                        _send_invitation_email(_un, _nom, _url, _actor)
+                    except Exception as _se:
+                        print(f"[new_user/bg-email] fail: {_se}", flush=True)
+                threading.Thread(target=_send_bg, daemon=True).start()
+                flash(f"✅ Usuario creado. Invitación enviada a {username} en segundo plano.", "success")
             except Exception as _ie:
                 flash(f"Usuario creado, pero fallo el envio de invitacion: {_ie}", "warning")
         else:
             if manual_password:
-                result = _notify_user_access(username, nombre, wa_number or phone, mode="manual")
-                msg, level = _access_notification_flash(result, token_mode=False)
-                flash(f"Usuario creado con clave manual. {msg}", level)
+                # Notificación de clave manual también en background
+                snap_user = username; snap_nombre = nombre; snap_phone = wa_number or phone
+                def _notify_bg():
+                    try:
+                        _notify_user_access(snap_user, snap_nombre, snap_phone, mode="manual")
+                    except Exception as _ne:
+                        print(f"[new_user/bg-notify] fail: {_ne}", flush=True)
+                threading.Thread(target=_notify_bg, daemon=True).start()
+                flash("✅ Usuario creado con clave manual. Notificación enviada en segundo plano.", "success")
             else:
-                flash("Usuario creado. Recuerda establecer la contrasena o enviar la invitacion despues.", "success")
+                flash("✅ Usuario creado. Recuerda establecer la contrasena o enviar la invitacion despues.", "success")
 
         if manual_password:
             flash("Clave manual asignada por superadmin.", "info")
@@ -5373,8 +5400,16 @@ def invite_user(user_id):
 PERMISSIONS_MATRIX = {
     "etiquetas":      {"label":"Etiquetas",      "icon":"bi-tags",
                        "acciones":["ver","crear","editar","eliminar","imprimir","masivo"]},
+    # Mantenciones: limpieza 2026-05-13
+    #   - Removidos "tickets" (módulo deshabilitado, código intacto pero no expuesto)
+    #   - Removido "kanban" (es solo una vista del Calendario, no un permiso)
+    #   - Agregado "cotizaciones" (sub-módulo real con UI propia)
+    #   - Agregado "calendario" (vista del módulo)
+    #   - Agregado "tecnicos" (gestión de técnicos de campo — solo admin)
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
-                       "acciones":["ver","crear","editar","eliminar","contratos","ai","reportes","repuestos","tickets","kanban"]},
+                       "acciones":["ver","crear","editar","eliminar",
+                                   "contratos","ai","reportes","repuestos",
+                                   "calendario","cotizaciones","tecnicos","levantamiento"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -5555,7 +5590,33 @@ def admin_rol_crear():
             "INSERT INTO roles_dinamicos (slug,nombre,descripcion,color,is_system) VALUES (%s,%s,%s,%s,0)",
             (slug, nombre, descripcion, color)
         )
-        flash(f"Rol \"{nombre}\" creado. Configura sus permisos.", "success")
+        # AUTO-INICIALIZAR la matriz de permisos: insertar 1 fila por (módulo,acción)
+        # con permitido=0. Así el admin ve TODA la matriz en la UI al editar el rol,
+        # en vez de una matriz vacía sin acciones disponibles para marcar.
+        try:
+            filas = []
+            for modulo, info in PERMISSIONS_MATRIX.items():
+                for accion in info.get("acciones", []):
+                    filas.append((slug, modulo, accion, 0))
+            if filas:
+                conn_init = get_mysql()
+                try:
+                    with conn_init.cursor() as cur:
+                        cur.executemany(
+                            "INSERT IGNORE INTO rol_permisos "
+                            "(rol_slug, modulo, accion, permitido) VALUES (%s,%s,%s,%s)",
+                            filas
+                        )
+                    conn_init.commit()
+                except Exception as e_seed:
+                    print(f"[admin_rol_crear] seed permisos falló: {e_seed}", flush=True)
+                finally:
+                    try: conn_init.close()
+                    except Exception: pass
+        except Exception as e_init:
+            print(f"[admin_rol_crear] init permisos error: {e_init}", flush=True)
+
+        flash(f"✅ Rol \"{nombre}\" creado con {sum(len(m['acciones']) for m in PERMISSIONS_MATRIX.values())} permisos inicializados (todos en 'no'). Marca los que quieras autorizar.", "success")
     except Exception as exc:
         flash(f"Error al crear rol: {exc}", "danger")
     return redirect(url_for("admin_roles_matrix"))

@@ -585,8 +585,9 @@
       {% endif %}
     </div>
 
-    {# Botones de acción #}
+    {# Botones de acción — Técnico solo lectura: no ve editar/nueva visita/ticket #}
     <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
+      {% if not is_tecnico %}
       <button class="btn btn-sm btn-outline-secondary" style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)" onclick="abrirEditarCliente()">
         <i class="bi bi-pencil me-1"></i>Editar cliente
       </button>
@@ -599,6 +600,7 @@
          title="Crear ticket de solicitud (paralelo a OT)">
         <i class="bi bi-ticket-perforated me-1"></i>Ticket
       </a>
+      {% endif %}
 
       {# ── Dropdown de acciones IA ─────────────────────────────────── #}
       <div class="dropdown">
@@ -926,9 +928,11 @@
       <div class="f-card mb-3">
         <div class="f-card-header">
           <span class="f-card-title"><i class="bi bi-info-circle me-1"></i>Información principal</span>
+          {% if not is_tecnico %}
           <button class="btn btn-xs btn-outline-secondary" onclick="abrirEditarCliente()">
             <i class="bi bi-pencil me-1"></i>Editar
           </button>
+          {% endif %}
         </div>
         <div class="f-card-body">
 
@@ -1056,9 +1060,11 @@
             <span class="badge bg-secondary-subtle text-secondary border ms-2" style="font-size:.6rem">OPCIONAL</span>
             {% if sucursales|length > 0 %}<span class="badge bg-primary ms-1" style="font-size:.6rem">{{ sucursales|length }}</span>{% endif %}
           </span>
+          {% if not is_tecnico %}
           <button class="btn btn-xs btn-outline-primary" onclick="abrirSucursal(null)">
             <i class="bi bi-plus-circle me-1"></i>Agregar sucursal
           </button>
+          {% endif %}
         </div>
         <div class="f-card-body">
           <div class="text-muted small mb-2" style="font-size:.78rem">
@@ -1096,6 +1102,7 @@
                     </div>
                     {% endif %}
                   </div>
+                  {% if not is_tecnico %}
                   <div class="dropdown">
                     <button class="btn btn-xs btn-link text-muted" data-bs-toggle="dropdown">
                       <i class="bi bi-three-dots-vertical"></i>
@@ -1109,6 +1116,7 @@
                       <li><a class="dropdown-item text-danger" href="#" onclick="eliminarSucursal({{ s.id }}, '{{ s.nombre|e }}')"><i class="bi bi-trash me-2"></i>Eliminar</a></li>
                     </ul>
                   </div>
+                  {% endif %}
                 </div>
                 {% if s.encargado_nombre %}
                 <hr class="my-2" style="border-color:#e5e7eb">
@@ -1400,7 +1408,8 @@
     </div>{# /col-xl-4 #}
   </div>{# /row #}
 
-  {# ── ACCIONES RÁPIDAS — barra inferior ── #}
+  {# ── ACCIONES RÁPIDAS — barra inferior — oculta para técnico (solo lectura) #}
+  {% if not is_tecnico %}
   <div class="acciones-rapidas-bar mt-3">
     <div class="ar-titulo">
       <i class="bi bi-lightning-charge-fill me-1"></i>Acciones rápidas
@@ -1427,6 +1436,7 @@
       </button>
     </div>
   </div>
+  {% endif %}
 
 </div>
 
@@ -1580,6 +1590,7 @@
                oninput="eqBuscar(this.value)">
       </div>
       <div class="ms-auto d-flex gap-2 flex-wrap">
+        {% if not is_tecnico %}
         <button class="btn btn-sm fw-bold" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
                 onclick="abrirLevantamientoFotografico()"
                 title="Iniciar un levantamiento fotográfico de los equipos del cliente">
@@ -1591,6 +1602,7 @@
         <button class="btn btn-sm btn-ilus" onclick="abrirMaquinaManual()">
           <i class="bi bi-plus-lg me-1"></i>Agregar equipo
         </button>
+        {% endif %}
       </div>
     </div>
 
@@ -1688,11 +1700,12 @@
               {% endif %}
             </td>
             <td>
-              {# N° serie editable con tracking auditable #}
+              {# N° serie editable con tracking auditable — Técnico sin acceso a edición #}
               <div class="d-flex align-items-center gap-1">
                 <span style="font-family:monospace;font-size:.78rem;color:#374151" id="serie-{{ m.id }}">
                   {% if m.serie %}{{ m.serie }}{% else %}<span class="text-muted">—</span>{% endif %}
                 </span>
+                {% if not is_tecnico %}
                 <button class="btn btn-xs btn-link p-0 text-muted"
                         onclick='editarSerie({{ {"id":m.id,"serie":m.serie or "","nombre":m.nombre,"sku":m.sku or ""}|tojson }})'
                         title="Editar N° serie con justificación"
@@ -1705,6 +1718,7 @@
                         style="line-height:1">
                   <i class="bi bi-clock-history" style="font-size:.78rem"></i>
                 </button>
+                {% endif %}
               </div>
             </td>
             <td>
@@ -1777,6 +1791,7 @@
         <div style="font-size:.8rem;margin-bottom:14px">
           Importa desde una boleta/factura del ERP, o agrega uno manualmente por SKU
         </div>
+        {% if not is_tecnico %}
         <div class="d-flex gap-2 justify-content-center flex-wrap">
           <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()">
             <i class="bi bi-cloud-download me-1"></i>Importar desde ERP
@@ -1785,6 +1800,7 @@
             <i class="bi bi-plus-lg me-1"></i>Agregar equipo
           </button>
         </div>
+        {% endif %}
       </div>
       {% endif %}
     </div>
@@ -1847,7 +1863,8 @@
       </div>
     </div>
 
-    {# Acciones rápidas #}
+    {# Acciones rápidas — ocultas para técnico (solo lectura) #}
+    {% if not is_tecnico %}
     <div class="f-card">
       <div class="f-card-header">
         <span class="f-card-title"><i class="bi bi-lightning-charge me-1"></i>Acciones rápidas</span>
@@ -1887,15 +1904,18 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
     {# Notas del cliente #}
     {% if cliente.notas %}
     <div class="f-card">
       <div class="f-card-header" style="background:#fffbeb;border-bottom-color:#fde68a">
         <span class="f-card-title" style="color:#92400e"><i class="bi bi-sticky-fill me-1"></i>Notas del cliente</span>
+        {% if not is_tecnico %}
         <button class="btn btn-xs btn-link" style="font-size:.7rem;color:#92400e" onclick="abrirEditarCliente()">
           <i class="bi bi-pencil me-1"></i>Editar
         </button>
+        {% endif %}
       </div>
       <div class="f-card-body" style="background:#fffbeb;padding:12px 16px">
         <p style="font-size:.8rem;color:#78350f;margin:0;line-height:1.55">{{ cliente.notas }}</p>
@@ -2459,12 +2479,14 @@ async function confirmarVisitaMulti() {
         La IA analiza cada uno por separado. Si necesitas más, usa la pestaña <em>Documentos</em> como anexos.
       </p>
     </div>
+    {% if not is_tecnico %}
     <button class="btn btn-sm btn-ilus"
             onclick="abrirContratoModal()"
             {{ 'disabled' if _llegada else '' }}
             title="{{ 'Llegaste al máximo de ' + _max_ct|string + ' contratos. Elimina uno antes de subir el siguiente.' if _llegada else 'Subir un nuevo contrato' }}">
       <i class="bi bi-upload me-1"></i>Subir nuevo contrato
     </button>
+    {% endif %}
   </div>
   {% if _llegada %}
   <div class="alert alert-warning py-2 px-3 mb-3" style="font-size:.82rem">
@@ -2980,9 +3002,11 @@ async function confirmarVisitaMulti() {
       <button class="btn btn-sm btn-outline-secondary" onclick="cargarReportes()">
         <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
       </button>
+      {% if not is_tecnico %}
       <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirNuevoReporte()">
         <i class="bi bi-plus-circle me-1"></i>Nuevo informe
       </button>
+      {% endif %}
     </div>
   </div>
 
@@ -4419,6 +4443,7 @@ function abrirEmailManual() {
       <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-calendar-week me-2" style="color:var(--ilus-red)"></i>Mantenciones y Visitas</span>
       <span class="ms-2 badge bg-secondary" style="font-size:.65rem">{{ visitas|length }}</span>
     </div>
+    {% if not is_tecnico %}
     <div class="d-flex gap-2 flex-wrap">
       <button class="btn btn-sm btn-outline-secondary" onclick="abrirVisitaHistorica()"
               title="El cliente migra al sistema con historial — registra una mantención que ya ocurrió y el sistema sugiere la próxima">
@@ -4431,6 +4456,7 @@ function abrirEmailManual() {
         <i class="bi bi-calendar-plus me-1"></i>Nueva visita
       </button>
     </div>
+    {% endif %}
   </div>
 
   {% if visitas %}
@@ -4504,12 +4530,14 @@ function abrirEmailManual() {
                class="btn btn-xs btn-ilus" title="Abrir OT — Tareas, Fotos, Técnicos">
               <i class="bi bi-clipboard2-pulse"></i> Abrir OT
             </a>
+            {% if not is_tecnico %}
             <button class="btn btn-xs btn-outline-secondary ms-1" onclick='editarVisita({{ v|tojson }})' title="Editar">
               <i class="bi bi-pencil"></i>
             </button>
             <button class="btn btn-xs btn-outline-danger ms-1" onclick="eliminarVisitaFromTabla({{ v.id }}, '{{ (v.titulo or v.tipo or 'visita')|replace("'", "\\'") }}')" title="Eliminar">
               <i class="bi bi-trash"></i>
             </button>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -4523,9 +4551,11 @@ function abrirEmailManual() {
       <i class="bi bi-calendar-x"></i>
       <div class="fw-semibold" style="font-size:.9rem;color:#374151">Sin visitas registradas</div>
       <div style="font-size:.8rem;margin-bottom:12px">Agenda la primera mantención para este cliente</div>
+      {% if not is_tecnico %}
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
         <i class="bi bi-calendar-plus me-1"></i>Agendar visita
       </button>
+      {% endif %}
     </div>
   </div>
   {% endif %}

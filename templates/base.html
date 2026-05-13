@@ -222,6 +222,8 @@
          class="sidebar-link{% if request.endpoint in ['mant_tickets_list','mant_ticket_nuevo','mant_ticket_ficha'] %} active{% endif %}">
         <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
       </a> #}
+      {# Cotizaciones y Técnicos: ocultas para rol 'tecnico' (solo OT/Calendario/Clientes-lectura) #}
+      {% if current_user and current_user.role != 'tecnico' %}
       <a href="{{ url_for('mant_cotizaciones_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
@@ -230,6 +232,7 @@
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnico_ficha'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Técnicos</span>
       </a>
+      {% endif %}
       {# <a href="{{ url_for('mant_analisis') }}"
          class="sidebar-link{% if request.endpoint == 'mant_analisis' %} active{% endif %}">
         <i class="bi bi-graph-up-arrow"></i><span>Análisis</span>
