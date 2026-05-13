@@ -610,7 +610,7 @@
               <div class="text-center text-muted py-4">
                 <i class="bi bi-building" style="font-size:2rem;opacity:.3"></i>
                 <div class="small mt-2">Este cliente no tiene máquinas registradas.</div>
-                <a href="{{ url_for('mant_cliente_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-2">
+                <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-2">
                   <i class="bi bi-plus-lg me-1"></i>Agregar máquinas
                 </a>
               </div>
@@ -812,7 +812,7 @@
           {% if visita.cli_direccion %}<div><i class="bi bi-geo-alt me-1"></i>{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>{% endif %}
           {% if visita.cli_email %}<div class="mt-1"><i class="bi bi-envelope me-1"></i>{{ visita.cli_email }}</div>{% endif %}
           {% if visita.cli_tel %}<div class="mt-1"><i class="bi bi-telephone me-1"></i>{{ visita.cli_tel }}</div>{% endif %}
-          <a href="{{ url_for('mant_cliente_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-3">
+          <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-3">
             <i class="bi bi-arrow-right me-1"></i>Ver ficha completa del cliente
           </a>
         </div>
