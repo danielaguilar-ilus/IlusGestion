@@ -60,17 +60,139 @@
     <div class="col-md-4">
       <label class="form-label small fw-semibold mb-1">Formato de etiqueta</label>
       <select id="fmt" class="form-select form-select-sm">
-        <option value="150x100" selected>150 × 100 mm (estándar)</option>
+        <option value="150x70" selected>150 × 70 mm (estándar ILUS)</option>
+        <option value="150x100">150 × 100 mm</option>
         <option value="100x70">100 × 70 mm</option>
-        <option value="150x70">150 × 70 mm</option>
+        <option value="100x50">100 × 50 mm</option>
       </select>
     </div>
     <div class="col-md-8 text-end">
+      <button id="btnPreview" class="btn btn-outline-dark fw-bold px-3 me-2" onclick="analizarPreview()" disabled>
+        <i class="bi bi-search me-1"></i>Analizar Excel
+      </button>
       <button id="btnProcesar" class="btn btn-ilus fw-bold px-4" onclick="procesar()" disabled>
-        <i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas
+        <i class="bi bi-play-fill me-1"></i>Generar etiquetas
       </button>
     </div>
   </div>
+  <div class="form-text mt-2 small">
+    <i class="bi bi-info-circle me-1"></i>
+    <strong>Recomendado:</strong> primero <em>Analizar Excel</em> para ver qué SKUs faltan registrar.
+    Después <em>Generar etiquetas</em> para imprimir todo en masa.
+  </div>
+</div>
+
+{# ──────────────────────────────────────────────────────────────
+   PREVIEW TABLE — clasifica imprimibles vs faltantes
+   Aparece después de "Analizar Excel". Permite acciones rápidas
+   sobre SKUs sin registrar antes de imprimir.
+═══════════════════════════════════════════════════════════════ #}
+<div id="previewBox" style="display:none">
+
+  {# KPIs rápidos #}
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="em-card text-center py-2 px-2" style="background:#f0fdf4;border-color:#86efac">
+        <div class="small text-muted fw-semibold" style="font-size:.68rem">LISTAS</div>
+        <div class="fw-black" style="font-size:1.6rem;color:#15803d" id="kpiOk">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="em-card text-center py-2 px-2" style="background:#fef3c7;border-color:#fcd34d">
+        <div class="small text-muted fw-semibold" style="font-size:.68rem">SIN MEDIDAS</div>
+        <div class="fw-black" style="font-size:1.6rem;color:#a16207" id="kpiSinMed">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="em-card text-center py-2 px-2" style="background:#fee2e2;border-color:#fca5a5">
+        <div class="small text-muted fw-semibold" style="font-size:.68rem">NO REGISTRADOS</div>
+        <div class="fw-black" style="font-size:1.6rem;color:#b91c1c" id="kpiSinProd">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="em-card text-center py-2 px-2" style="background:#0f172a;color:#fff;border-color:#334155">
+        <div class="small fw-semibold" style="font-size:.68rem;opacity:.7">ETIQUETAS TOTAL</div>
+        <div class="fw-black" style="font-size:1.6rem" id="kpiTotalEtq">0</div>
+      </div>
+    </div>
+  </div>
+
+  {# Tabla 1: listas para imprimir #}
+  <div class="em-card mb-3" id="boxImprimibles" style="display:none">
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <h6 class="mb-0 fw-bold"><i class="bi bi-check-circle-fill me-2" style="color:#16a34a"></i>Listas para imprimir</h6>
+      <div>
+        <button class="btn btn-sm btn-outline-secondary me-1" onclick="prevToggleAll(true)">Seleccionar todas</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="prevToggleAll(false)">Deseleccionar</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        <thead class="table-light">
+          <tr>
+            <th style="width:32px"><input type="checkbox" id="chkAllImpr" onchange="prevToggleAll(this.checked)" checked></th>
+            <th>SKU</th>
+            <th>Nombre</th>
+            <th class="text-center">Cant.</th>
+            <th class="text-center">Bultos</th>
+            <th class="text-center">Etiquetas</th>
+          </tr>
+        </thead>
+        <tbody id="tblImpr"></tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Tabla 2: faltan medidas (producto existe pero sin bultos válidos) #}
+  <div class="em-card mb-3" id="boxFaltaMed" style="display:none">
+    <h6 class="mb-2 fw-bold"><i class="bi bi-rulers me-2" style="color:#a16207"></i>Faltan medidas (producto existe pero sin largo/ancho/alto)</h6>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Nombre</th>
+            <th class="text-center">Bultos sin medidas</th>
+            <th class="text-end">Acción</th>
+          </tr>
+        </thead>
+        <tbody id="tblMed"></tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Tabla 3: SKUs sin producto en catálogo #}
+  <div class="em-card mb-3" id="boxFaltaProd" style="display:none">
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <h6 class="mb-0 fw-bold"><i class="bi bi-database-x me-2" style="color:#b91c1c"></i>SKUs NO registrados (no existen en el catálogo)</h6>
+      <div>
+        <button class="btn btn-sm btn-outline-danger" onclick="importarTodosErp()">
+          <i class="bi bi-cloud-download me-1"></i>Importar TODOS desde ERP
+        </button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Descripción Excel</th>
+            <th class="text-center">Cant.</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tblProd"></tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Acción final #}
+  <div class="text-end">
+    <button class="btn btn-ilus fw-bold px-4" onclick="procesar()">
+      <i class="bi bi-printer-fill me-1"></i>Imprimir las marcadas como listas
+    </button>
+  </div>
+
 </div>
 
 <div id="resultBox" style="display:none">
@@ -128,6 +250,211 @@ function archivoSeleccionado(f){
   document.getElementById('fileInfo').innerHTML =
     `<i class="bi bi-check-circle-fill me-1"></i>${f.name} (${(f.size/1024).toFixed(1)} KB)`;
   document.getElementById('btnProcesar').disabled = false;
+  const bp = document.getElementById('btnPreview');
+  if (bp) bp.disabled = false;
+  // Ocultar resultados anteriores al cambiar archivo
+  document.getElementById('previewBox').style.display = 'none';
+  const rb = document.getElementById('resultBox');
+  if (rb) rb.style.display = 'none';
+}
+
+// ════════════════════════════════════════════════════════════
+//  PREVIEW: analiza el Excel SIN generar PDFs y muestra tabla doble
+// ════════════════════════════════════════════════════════════
+let _previewData = null;
+let _skusSeleccionados = new Set();  // SKUs marcados para imprimir
+
+async function analizarPreview(){
+  if (!SELECTED_FILE) return;
+  const btn = document.getElementById('btnPreview');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando…';
+  const fd = new FormData();
+  fd.append('archivo', SELECTED_FILE);
+  try {
+    const r = await fetch('/etiquetas/masivo/preview', {method:'POST', body: fd});
+    let d = null, raw = '';
+    try { d = await r.json(); } catch(_) { try { raw = await r.text(); } catch(_) {} }
+    if (!d || !d.ok){
+      const msg = (d && d.error) || raw.slice(0,300) || `HTTP ${r.status}`;
+      if (typeof ilusAlert === 'function') {
+        ilusAlert({ title:'No se pudo analizar', message: msg, type:'error' });
+      } else { alert('Error: ' + msg); }
+      return;
+    }
+    _previewData = d;
+    renderPreview(d);
+  } catch(e){
+    if (typeof ilusAlert === 'function') {
+      ilusAlert({ title:'Error de red', message: e.message, type:'error' });
+    } else alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search me-1"></i>Analizar Excel';
+  }
+}
+
+function renderPreview(d){
+  // KPIs
+  document.getElementById('kpiOk').textContent      = d.resumen.ok;
+  document.getElementById('kpiSinMed').textContent  = d.resumen.sin_medidas;
+  document.getElementById('kpiSinProd').textContent = d.resumen.sin_producto;
+  document.getElementById('kpiTotalEtq').textContent= d.resumen.etiquetas_total;
+
+  // Tabla 1: imprimibles (todas seleccionadas por default)
+  _skusSeleccionados = new Set(d.imprimibles.map(x => x.sku));
+  const tblImpr = document.getElementById('tblImpr');
+  if (d.imprimibles.length){
+    document.getElementById('boxImprimibles').style.display = '';
+    tblImpr.innerHTML = d.imprimibles.map(x => `
+      <tr>
+        <td><input type="checkbox" class="chk-impr" data-sku="${escAttr(x.sku)}" checked
+                    onchange="prevToggleSku('${escAttr(x.sku)}', this.checked)"></td>
+        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
+        <td>${escHtml(x.nombre_db || x.descripcion || '—')}</td>
+        <td class="text-center">${x.cantidad}</td>
+        <td class="text-center">${x.n_bultos_validos}</td>
+        <td class="text-center fw-bold" style="color:#15803d">${x.n_etiquetas_estimadas}</td>
+      </tr>
+    `).join('');
+  } else {
+    document.getElementById('boxImprimibles').style.display = 'none';
+  }
+
+  // Tabla 2: faltan medidas
+  const tblMed = document.getElementById('tblMed');
+  if (d.faltan_medidas.length){
+    document.getElementById('boxFaltaMed').style.display = '';
+    tblMed.innerHTML = d.faltan_medidas.map(x => `
+      <tr>
+        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
+        <td>${escHtml(x.nombre_db || x.descripcion || '—')}</td>
+        <td class="text-center">${x.n_bultos || 0}</td>
+        <td class="text-end">
+          <a href="/products/${x.product_id}/edit" target="_blank"
+             class="btn btn-sm btn-outline-warning fw-semibold">
+            <i class="bi bi-rulers me-1"></i>Agregar medidas
+          </a>
+        </td>
+      </tr>
+    `).join('');
+  } else {
+    document.getElementById('boxFaltaMed').style.display = 'none';
+  }
+
+  // Tabla 3: SKUs sin producto
+  const tblProd = document.getElementById('tblProd');
+  if (d.faltan_productos.length){
+    document.getElementById('boxFaltaProd').style.display = '';
+    tblProd.innerHTML = d.faltan_productos.map(x => `
+      <tr id="rowProd-${escAttr(x.sku)}">
+        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
+        <td>${escHtml(x.descripcion || '—')}</td>
+        <td class="text-center">${x.cantidad}</td>
+        <td class="text-end">
+          <button class="btn btn-sm btn-outline-primary me-1" onclick="importarUnoErp('${escAttr(x.sku)}', '${escAttr(x.descripcion||'')}')">
+            <i class="bi bi-cloud-download me-1"></i>Importar ERP
+          </button>
+          <a href="/products/new?sku=${encodeURIComponent(x.sku)}&nombre=${encodeURIComponent(x.descripcion||'')}"
+             target="_blank" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-plus-square me-1"></i>Crear manual
+          </a>
+        </td>
+      </tr>
+    `).join('');
+  } else {
+    document.getElementById('boxFaltaProd').style.display = 'none';
+  }
+
+  // Mostrar todo el bloque
+  document.getElementById('previewBox').style.display = '';
+}
+
+function prevToggleSku(sku, checked){
+  if (checked) _skusSeleccionados.add(sku);
+  else _skusSeleccionados.delete(sku);
+}
+
+function prevToggleAll(state){
+  document.querySelectorAll('.chk-impr').forEach(c => {
+    c.checked = state;
+    prevToggleSku(c.dataset.sku, state);
+  });
+  const all = document.getElementById('chkAllImpr');
+  if (all) all.checked = state;
+}
+
+async function importarUnoErp(sku, desc){
+  try {
+    const r = await fetch('/etiquetas/api/importar-desde-erp', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        skus: [sku],
+        lineas_erp: [{sku: sku, descripcion_erp: desc}]
+      })
+    });
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      else alert('Error: ' + (d.error||'desconocido'));
+      return;
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(d.creados ? `✓ ${sku} importado. Agregale medidas para imprimir.`
+                          : `${sku} ya existía. Verifica medidas.`,
+                {type: d.creados ? 'success' : 'warning'});
+    }
+    // Re-analizar para que el SKU pase a "faltan medidas" o "imprimibles"
+    setTimeout(() => analizarPreview(), 800);
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: ' + e.message, {type:'error'});
+  }
+}
+
+async function importarTodosErp(){
+  if (!_previewData || !_previewData.faltan_productos.length) return;
+  const skus = _previewData.faltan_productos.map(x => x.sku);
+  const lineas = _previewData.faltan_productos.map(x => ({sku: x.sku, descripcion_erp: x.descripcion||''}));
+  const ok = (typeof ilusConfirm === 'function')
+    ? await ilusConfirm({
+        title: 'Importar SKUs desde ERP',
+        message: `Se intentará crear ${skus.length} producto(s) tomando descripción del ERP.`,
+        sub: 'Después tendrás que agregar medidas para que puedan imprimirse.',
+        okLabel: 'Sí, importar todos',
+      })
+    : confirm(`Importar ${skus.length} SKUs desde ERP?`);
+  if (!ok) return;
+  try {
+    const r = await fetch('/etiquetas/api/importar-desde-erp', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({skus, lineas_erp: lineas})
+    });
+    const d = await r.json();
+    if (!d.ok){
+      alert('Error: ' + (d.error||'desconocido'));
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Importación completada',
+        message: `Creados: ${d.creados||0} · Ya existían: ${d.existentes||0} · Errores: ${d.errores||0}`,
+        sub: 'Re-analizando Excel…',
+        type: d.errores ? 'warning' : 'success',
+      });
+    }
+    setTimeout(() => analizarPreview(), 600);
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error: ' + e.message, {type:'error'});
+  }
+}
+
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escAttr(s){
+  return String(s||'').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
 async function procesar(){
@@ -138,6 +465,10 @@ async function procesar(){
   const fd = new FormData();
   fd.append('archivo', SELECTED_FILE);
   fd.append('fmt', document.getElementById('fmt').value);
+  // Si hay preview hecho, pasar solo SKUs seleccionados (filtra el Excel)
+  if (_previewData && _skusSeleccionados.size){
+    fd.append('skus_filtro', JSON.stringify(Array.from(_skusSeleccionados)));
+  }
   let resetBtn = () => {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Procesar y generar etiquetas';

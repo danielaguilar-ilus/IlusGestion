@@ -1412,6 +1412,10 @@
       <button class="ar-btn" onclick="abrirNuevaVisita('preventiva')">
         <i class="bi bi-tools"></i> Programar mantención
       </button>
+      <button class="ar-btn" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;font-weight:700"
+              onclick="abrirLevantamientoFotografico()">
+        <i class="bi bi-camera-fill"></i> Levantamiento fotográfico
+      </button>
       <button class="ar-btn" onclick="switchTab('contrato'); setTimeout(()=>abrirContratoModal(), 200)">
         <i class="bi bi-file-earmark-arrow-up"></i> Subir documento
       </button>
@@ -1575,7 +1579,12 @@
         <input type="text" class="eq-search" id="eqBuscar" placeholder="Buscar equipo, código, serie…"
                oninput="eqBuscar(this.value)">
       </div>
-      <div class="ms-auto d-flex gap-2">
+      <div class="ms-auto d-flex gap-2 flex-wrap">
+        <button class="btn btn-sm fw-bold" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
+                onclick="abrirLevantamientoFotografico()"
+                title="Iniciar un levantamiento fotográfico de los equipos del cliente">
+          <i class="bi bi-camera-fill me-1"></i>Levantamiento fotográfico
+        </button>
         <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()" title="Buscar por boleta o factura en el ERP">
           <i class="bi bi-cloud-download me-1"></i>Importar ERP
         </button>
@@ -6210,6 +6219,36 @@ function abrirMaquinaManual() {
 function abrirContratoModal() {
   new bootstrap.Modal(document.getElementById('modalContrato')).show();
 }
+// ════════════════════════════════════════════════════════════
+//  LEVANTAMIENTO FOTOGRÁFICO (placeholder hasta tener flujo completo)
+//  El flujo completo está diseñado (5 tablas SQL + endpoints + UI mobile)
+//  pero pendiente de implementar. Mientras tanto este modal explica al
+//  usuario qué viene y le da accesos rápidos a la captura individual.
+// ════════════════════════════════════════════════════════════
+function abrirLevantamientoFotografico(){
+  if (typeof ilusAlert === 'function') {
+    ilusAlert({
+      title: '📸 Levantamiento fotográfico de equipos',
+      message: 'Este flujo está en construcción — próxima iteración.',
+      sub: '✅ Mientras tanto puedes:\n' +
+           '  • Hacer click en cada equipo → "Subir foto" individualmente\n' +
+           '  • Importar equipos desde un documento del ERP\n' +
+           '  • Agregar equipos manualmente uno por uno\n\n' +
+           'Cuando esté listo, este botón abrirá un modal mobile con:\n' +
+           '  • Checkbox para seleccionar TODOS los equipos\n' +
+           '  • Cámara nativa para capturar fotos rápido\n' +
+           '  • Auto-save + reanudar si se corta la conexión\n' +
+           '  • Estados (Operativo / Advertencia / F. servicio / etc.)\n' +
+           '  • Línea de tiempo de cada equipo a lo largo de los años',
+      type: 'info',
+      okLabel: 'Entendido',
+    });
+  } else {
+    alert('Levantamiento fotográfico — flujo en construcción.\n\n' +
+          'Por ahora, sube fotos por equipo individualmente desde la lista.');
+  }
+}
+
 function abrirNuevaVisita(tipoPreset) {
   // tipoPreset opcional: 'preventiva' | 'correctiva' | 'garantia' | 'inspeccion'
   document.getElementById('vi_id').value = '';

@@ -59,15 +59,63 @@
 
         <div class="col-md-6">
           <label class="form-label fw-semibold small">
-            Telefono WhatsApp <span class="text-muted">(opcional)</span>
+            <i class="bi bi-whatsapp me-1 text-success"></i>Teléfono WhatsApp <span class="text-muted">(opcional)</span>
           </label>
-          <input type="text" name="phone" class="form-control"
-                 value="{{ (fd.phone or user.phone or '') if user else fd.get('phone','') }}"
-                 placeholder="+56912345678"
-                 autocomplete="tel"
-                 pattern="^\+?[0-9\s\-]{7,20}$">
-          <div class="form-text">Se usa para avisos de acceso, creacion y cambio de clave.</div>
+          <div class="input-group">
+            <span class="input-group-text" style="background:#f8fafc;font-weight:700;color:#0f172a">+56</span>
+            <input type="tel" name="phone" id="userPhoneInput" class="form-control"
+                   value="{{ (fd.phone or user.phone or '') if user else fd.get('phone','') }}"
+                   placeholder="9 1234 5678"
+                   autocomplete="tel-national"
+                   maxlength="20"
+                   inputmode="numeric"
+                   oninput="normalizarTelefonoChileno(this)"
+                   onblur="formatearTelefonoChileno(this)">
+          </div>
+          <div class="form-text">
+            Solo el número chileno: <strong>9 + 8 dígitos</strong> (móvil) o
+            <strong>2 + 8 dígitos</strong> (fijo). El sistema agrega +56 automáticamente.
+          </div>
         </div>
+        <script>
+        /* Normalización en tiempo real:
+           - Acepta solo dígitos y espacios
+           - Elimina prefijos +56 / 56 si el usuario los pega
+           - Limpia y formatea: 9 1234 5678
+        */
+        function normalizarTelefonoChileno(inp){
+          let v = inp.value || '';
+          // Quitar todo lo que no sea dígito
+          v = v.replace(/\D/g, '');
+          // Si pega "56XXXXXXXXX" (11 dígitos), quitar el 56 inicial
+          if (v.length === 11 && v.startsWith('56')) v = v.slice(2);
+          // Si pega "569XXXXXXXX" (12 dígitos con 569), quitar 56
+          if (v.length === 11 && v.startsWith('569')) v = v.slice(2);
+          // Limitar a 9 dígitos (formato CL: móvil 9XXXXXXXX o fijo 2XXXXXXXX)
+          v = v.slice(0, 9);
+          inp.value = v;
+        }
+        function formatearTelefonoChileno(inp){
+          let v = (inp.value || '').replace(/\D/g, '').slice(0, 9);
+          if (v.length === 9) {
+            // 9 1234 5678 (móvil) o 2 1234 5678 (fijo)
+            inp.value = v[0] + ' ' + v.slice(1, 5) + ' ' + v.slice(5);
+          } else {
+            inp.value = v;
+          }
+        }
+        // Aplicar al cargar (por si viene un valor pre-existente)
+        document.addEventListener('DOMContentLoaded', function(){
+          const inp = document.getElementById('userPhoneInput');
+          if (inp && inp.value) {
+            // Si viene con +56 o 56 al inicio, normalizarlo
+            let v = inp.value.replace(/\D/g, '');
+            if (v.startsWith('56') && v.length >= 10) v = v.slice(2);
+            inp.value = v;
+            formatearTelefonoChileno(inp);
+          }
+        });
+        </script>
 
         {% if user %}
         <div class="col-12">

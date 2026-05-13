@@ -2160,11 +2160,22 @@ def _logo_data_url():
 
 
 def _label_format(fmt):
+    """Formatos físicos de etiqueta soportados por el generador PDF.
+
+    NOTA: si agregás un formato aquí, asegurate de actualizar el dropdown
+    en templates/etiquetas_masivo.html (líneas ~61-66) — los dos lugares
+    deben coincidir, sino el usuario selecciona algo y silenciosamente cae
+    al default 150x70 (formato canónico ILUS).
+    """
     formats = {
+        # 150x70 es el formato CANÓNICO ILUS — etiqueta doblada en 2 caras
+        # de 75x70 cada una (ver templates/labels.html y MEMORY label_design_ilus)
+        "150x70":  {"key": "150x70",  "w": "150mm", "h": "70mm",  "label": "150 x 70 mm (estándar ILUS)"},
         "150x100": {"key": "150x100", "w": "150mm", "h": "100mm", "label": "150 x 100 mm"},
-        "100x50": {"key": "100x50", "w": "100mm", "h": "50mm", "label": "100 x 50 mm"},
+        "100x70":  {"key": "100x70",  "w": "100mm", "h": "70mm",  "label": "100 x 70 mm"},
+        "100x50":  {"key": "100x50",  "w": "100mm", "h": "50mm",  "label": "100 x 50 mm"},
     }
-    return formats.get(fmt, formats["150x100"])
+    return formats.get(fmt, formats["150x70"])
 
 
 def _label_bulto_data(bulto):
@@ -4576,10 +4587,163 @@ def etiquetas_masivo_plantilla():
     )
 
 
+@app.route("/etiquetas/masivo/preview", methods=["POST"])
+@require_permission("print")
+def etiquetas_masivo_preview():
+    """Analiza un Excel SIN generar PDFs y clasifica los SKUs en 3 grupos:
+
+      imprimibles:        SKUs con producto + bultos válidos → listas para imprimir
+      faltan_medidas:     SKUs con producto en BD pero sin medidas en bultos
+      faltan_productos:   SKUs que NO existen en el catálogo local
+
+    El frontend usa esto para mostrar 2 tablas:
+      - "Listas para imprimir" (con checkbox + botón "Imprimir seleccionadas")
+      - "Faltan datos" (con acciones: Importar ERP / Agregar medidas / Registrar)
+
+    Es MÁS RÁPIDO que /procesar porque NO invoca Playwright. Devuelve en <1s
+    aún con 50 SKUs. Después el usuario completa los faltantes y dispara
+    /procesar con la lista final.
+    """
+    try:
+        f = request.files.get("archivo")
+        if not f or not f.filename:
+            return jsonify({"ok": False, "error": "No se envió archivo"}), 400
+        ext = f.filename.rsplit(".", 1)[-1].lower()
+        if ext not in ("xlsx", "xls"):
+            return jsonify({"ok": False, "error": "Formato no permitido. Usa .xlsx"}), 400
+
+        from openpyxl import load_workbook
+        try:
+            wb = load_workbook(f, data_only=True)
+            ws = wb.active
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"No se pudo leer el Excel: {e}"}), 400
+
+        # Parsear filas
+        items = []
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or all(c is None for c in row[:3]):
+                continue
+            sku = (str(row[0]).strip() if row[0] is not None else "").upper()
+            if not sku:
+                continue
+            desc = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+            try:
+                qty = int(row[2]) if len(row) > 2 and row[2] else 1
+                if qty < 1: qty = 1
+                if qty > 50: qty = 50
+            except Exception:
+                qty = 1
+            items.append({"row": row_idx, "sku": sku, "descripcion": desc, "cantidad": qty})
+
+        if not items:
+            return jsonify({"ok": False, "error": "El Excel está vacío o no tiene SKUs válidos en la columna A"}), 400
+
+        # Clasificar en 3 grupos sin generar PDFs (rápido)
+        imprimibles = []
+        faltan_medidas = []
+        faltan_productos = []
+
+        skus_unicos = list({it["sku"] for it in items})
+        # Batch lookup en una sola query
+        if skus_unicos:
+            ph = ",".join(["%s"] * len(skus_unicos))
+            rows_db = mysql_fetchall(
+                f"SELECT id, sku, nombre FROM `{PRODUCTS_TABLE}` "
+                f"WHERE UPPER(TRIM(sku)) IN ({ph})",
+                tuple(skus_unicos)
+            ) or []
+            db_by_sku = {(r["sku"] or "").upper().strip(): r for r in rows_db}
+        else:
+            db_by_sku = {}
+
+        for it in items:
+            sku = it["sku"]
+            prod = db_by_sku.get(sku)
+            if not prod:
+                faltan_productos.append({**it, "motivo": "NO_EN_CATALOGO"})
+                continue
+            # Verificar bultos con medidas
+            try:
+                _p, bultos, _ = get_full(prod["id"])
+                valid = [b for b in (bultos or [])
+                         if float(b.get("largo") or 0) > 0
+                         and float(b.get("ancho") or 0) > 0
+                         and float(b.get("alto")  or 0) > 0]
+                if not valid:
+                    faltan_medidas.append({
+                        **it,
+                        "product_id": prod["id"],
+                        "nombre_db": prod.get("nombre") or "",
+                        "n_bultos": len(bultos or []),
+                        "motivo": "SIN_MEDIDAS",
+                    })
+                else:
+                    imprimibles.append({
+                        **it,
+                        "product_id": prod["id"],
+                        "nombre_db": prod.get("nombre") or "",
+                        "n_bultos_validos": len(valid),
+                        "n_etiquetas_estimadas": len(valid) * it["cantidad"],
+                    })
+            except Exception as e_p:
+                faltan_medidas.append({
+                    **it,
+                    "product_id": prod["id"],
+                    "nombre_db": prod.get("nombre") or "",
+                    "motivo": f"ERROR_LECTURA: {type(e_p).__name__}",
+                })
+
+        return jsonify({
+            "ok": True,
+            "total":            len(items),
+            "imprimibles":      imprimibles,
+            "faltan_medidas":   faltan_medidas,
+            "faltan_productos": faltan_productos,
+            "resumen": {
+                "ok":               len(imprimibles),
+                "sin_medidas":      len(faltan_medidas),
+                "sin_producto":     len(faltan_productos),
+                "etiquetas_total":  sum(i["n_etiquetas_estimadas"] for i in imprimibles),
+            },
+        })
+    except Exception as e_global:
+        import traceback as _tb
+        tb_short = _tb.format_exc()[:600]
+        print(f"[etiquetas_masivo_preview] ERROR: {e_global}\n{tb_short}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"Error analizando Excel: {type(e_global).__name__}: {str(e_global)[:200]}",
+            "detalle": tb_short,
+        }), 500
+
+
 @app.route("/etiquetas/masivo/procesar", methods=["POST"])
 @require_permission("print")
 def etiquetas_masivo_procesar():
-    """Procesa el Excel subido y devuelve informe + batch_id para descargar ZIP."""
+    """Procesa el Excel subido y devuelve informe + batch_id para descargar ZIP.
+
+    WRAP GLOBAL try/except — antes el endpoint podía caer en 500 con HTML
+    cuando había timeout de Playwright o pool MySQL caduco. El frontend
+    hacía r.json() que fallaba y mostraba "error sin mensaje". Ahora SIEMPRE
+    devuelve JSON con detalle del error.
+    """
+    try:
+        return _etiquetas_masivo_procesar_impl()
+    except Exception as e_global:
+        import traceback as _tb
+        tb_short = _tb.format_exc()[:600]
+        print(f"[etiquetas_masivo] ERROR GLOBAL: {e_global}\n{tb_short}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"Error procesando el Excel: {type(e_global).__name__}: {str(e_global)[:200]}",
+            "detalle": tb_short,
+            "sugerencia": "Verifica que el Excel tenga columnas SKU/Descripción/Cantidad. Si el problema persiste, revisa el log Railway."
+        }), 500
+
+
+def _etiquetas_masivo_procesar_impl():
+    """Implementación real; envuelta en try/except global por el endpoint."""
     _etq_batch_cleanup()
 
     f = request.files.get("archivo")
@@ -4616,8 +4780,19 @@ def etiquetas_masivo_procesar():
     if not items:
         return jsonify({"ok": False, "error": "El Excel está vacío o no tiene SKUs válidos en la columna A"}), 400
 
-    # Procesar cada SKU
-    fmt = request.form.get("fmt", "150x100")
+    # Filtro opcional: si el frontend pasa skus_filtro (después de preview),
+    # solo procesamos esos SKUs y descartamos el resto del Excel.
+    skus_filtro_raw = (request.form.get("skus_filtro") or "").strip()
+    if skus_filtro_raw:
+        try:
+            skus_permitidos = set(s.strip().upper() for s in json.loads(skus_filtro_raw) if s)
+            if skus_permitidos:
+                items = [it for it in items if it["sku"] in skus_permitidos]
+        except Exception as e_fil:
+            print(f"[etiquetas_masivo] skus_filtro inválido: {e_fil}", flush=True)
+
+    # Procesar cada SKU (default 150x70 — estándar ILUS)
+    fmt = request.form.get("fmt", "150x70")
     user = current_username() or "anon"
     batch_id = f"etq_{int(time.time())}_{user[:8]}"
     resultados = []
@@ -4882,13 +5057,46 @@ def users_index():
     return render_template("users.html", users=users)
 
 
+def _normalizar_telefono_cl(raw):
+    """Normaliza un teléfono chileno a formato canónico +56XXXXXXXXX.
+
+    Acepta entradas como:
+      "9 1234 5678"     → "+56912345678"
+      "+56 9 1234 5678" → "+56912345678"
+      "56 9 1234 5678"  → "+56912345678"
+      "912345678"       → "+56912345678"
+      "21234567"        → "+5621234567" (fijo)
+      "" o inválido     → "" (sin error, simplemente vacío)
+
+    Reglas:
+    - Solo dígitos (descarta +, espacios, guiones).
+    - Si empieza con 56 y tiene ≥10 dígitos, quita el 56.
+    - Lo que queda debe tener 8 ó 9 dígitos. Si no, devuelve cadena original
+      stripped (para no perder info de algo que el usuario quizá quería).
+    """
+    if not raw:
+        return ""
+    digits = "".join(c for c in str(raw) if c.isdigit())
+    if not digits:
+        return ""
+    # Quitar prefijo 56 si está
+    if digits.startswith("56") and len(digits) >= 10:
+        digits = digits[2:]
+    # 8 dígitos = fijo sin código área incluido (poco común, los aceptamos)
+    # 9 dígitos = formato CL típico (móvil 9XXXXXXXX o fijo 2XXXXXXXX)
+    if len(digits) in (8, 9):
+        return f"+56{digits}"
+    # Caso raro: devolver original stripped sin formatear
+    return str(raw).strip()
+
+
 @app.route("/admin/users/new", methods=["GET", "POST"])
 @require_permission("admin")
 def new_user():
     if request.method == "POST":
         username    = request.form.get("username", "").strip().lower()
         nombre      = request.form.get("nombre",   "").strip()
-        phone       = request.form.get("phone",    "").strip()
+        phone       = _normalizar_telefono_cl(request.form.get("phone", ""))
         role        = request.form.get("role",      "editor")
         active      = 1 if request.form.get("active") == "1" else 0
         send_invite = request.form.get("send_invite") == "1"
@@ -4968,7 +5176,7 @@ def edit_user(user_id):
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         nombre   = request.form.get("nombre",   "").strip()
-        phone    = request.form.get("phone",    "").strip()
+        phone    = _normalizar_telefono_cl(request.form.get("phone", ""))
         manual_password = request.form.get("manual_password", "")
         is_superadmin = bool(g.permissions.get("superadmin")) if getattr(g, "permissions", None) else False
         role     = request.form.get("role",     "editor")
