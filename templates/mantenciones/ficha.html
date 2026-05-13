@@ -2528,7 +2528,7 @@ async function confirmarVisitaMulti() {
           <div class="d-flex gap-1 flex-shrink-0 align-items-center">
             {% if ct.archivo_path %}
             <button class="btn btn-sm btn-outline-primary"
-                    onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}')"
+                    onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}', {{ 'true' if ct.cloudinary_url else 'false' }})"
                     title="Ver el contrato en el navegador">
               <i class="bi bi-eye me-1"></i>Ver PDF
             </button>
@@ -4979,6 +4979,10 @@ function abrirEmailManual() {
           <i class="bi bi-file-earmark-text me-2"></i>Contrato
         </h6>
         <div class="d-flex align-items-center gap-2 ms-auto">
+          <a id="btnAbrirContratoNueva" class="btn btn-sm btn-outline-light"
+             href="#" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a>
           <a id="btnDescargarContrato" class="btn btn-sm btn-outline-light" style="display:none"
              href="#" target="_blank" download>
             <i class="bi bi-download me-1"></i>Descargar
@@ -4986,15 +4990,18 @@ function abrirEmailManual() {
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
       </div>
-      <div class="modal-body p-0" style="flex:1;overflow:hidden">
-        <iframe id="contratoFrame" src="" style="width:100%;height:100%;border:none"
+      <div class="modal-body p-0" style="flex:1;overflow:hidden;background:#1a1a2e">
+        <iframe id="contratoFrame" src="" style="width:100%;height:100%;border:none;background:#fff"
                 title="Visor de contrato"></iframe>
-        <div id="contratoNoViewer" style="display:none" class="d-flex flex-column align-items-center justify-content-center h-100 text-muted gap-3">
-          <i class="bi bi-file-earmark-word" style="font-size:3rem;color:#2563eb"></i>
-          <div class="fw-semibold">Archivo Word — no puede visualizarse en el navegador</div>
-          <div style="font-size:.82rem">Descarga el archivo para verlo en Microsoft Word</div>
-          <a id="btnDescWord" href="#" class="btn btn-ilus" download>
+        <div id="contratoNoViewer" style="display:none" class="d-flex flex-column align-items-center justify-content-center h-100 text-light gap-3 p-4 text-center">
+          <i id="contratoNoViewerIcon" class="bi bi-file-earmark-word" style="font-size:3rem;color:#3b82f6"></i>
+          <div class="fw-semibold" id="contratoNoViewerTitulo">Archivo no previsualizable</div>
+          <div style="font-size:.85rem;max-width:480px;opacity:.85" id="contratoNoViewerMsg">—</div>
+          <a id="btnDescWord" href="#" class="btn btn-light fw-bold" download style="display:none">
             <i class="bi bi-download me-1"></i>Descargar contrato
+          </a>
+          <a id="btnAbrirNuevaFallback" href="#" target="_blank" rel="noopener" class="btn btn-outline-light">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Abrir en pestaña nueva
           </a>
         </div>
       </div>
@@ -8425,60 +8432,79 @@ function renderPlan(p, clienteNombre) {
   document.getElementById('planResultado').innerHTML = html;
 }
 
-// ─── Ver contrato (PDF/Word viewer) ──────────────────────────
-// Todos los usuarios con acceso a mantenciones pueden VER.
-// Solo superadmin puede DESCARGAR (botón visible condicionalmente).
-function verContrato(ctid, nombre, tipo) {
-  const url = `/mantenciones/api/contratos/${ctid}/archivo`;
-  const titulo = document.getElementById('modalVerContratoTitulo');
-  const frame  = document.getElementById('contratoFrame');
-  const noView = document.getElementById('contratoNoViewer');
-  const btnDl  = document.getElementById('btnDescargarContrato');
-  const btnWord= document.getElementById('btnDescWord');
+// ─── Ver contrato (visor robusto multi-formato) ──────────────────────────
+// Estrategia:
+//   PDF                → iframe nativo del navegador
+//   Imagen (jpg/png)   → iframe (browser muestra imagen)
+//   DOC/DOCX/XLS/PPT   → Office Online Viewer (requiere Cloudinary HTTPS)
+//                        si no hay Cloudinary, fallback con mensaje + botón
+// Descarga: SOLO superadmin (validación server-side adicional en /archivo?download=1)
+function verContrato(ctid, nombre, tipo, hasCloud) {
+  const baseUrl = `/mantenciones/api/contratos/${ctid}/archivo`;
+  const titulo  = document.getElementById('modalVerContratoTitulo');
+  const frame   = document.getElementById('contratoFrame');
+  const noView  = document.getElementById('contratoNoViewer');
+  const btnDl   = document.getElementById('btnDescargarContrato');
+  const btnWord = document.getElementById('btnDescWord');
+  const btnOpen = document.getElementById('btnAbrirContratoNueva');
+  const btnFallbackOpen = document.getElementById('btnAbrirNuevaFallback');
+  const nvIcon  = document.getElementById('contratoNoViewerIcon');
+  const nvTit   = document.getElementById('contratoNoViewerTitulo');
+  const nvMsg   = document.getElementById('contratoNoViewerMsg');
+
+  const esSuperadmin = {{ 'true' if permissions and permissions.superadmin else 'false' }};
+  const t = (tipo || '').toLowerCase();
+  const isPdf   = (t === 'pdf');
+  const isImg   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
+  const isOffice= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
+
   titulo.innerHTML = `<i class="bi bi-file-earmark-text me-2"></i>${nombre || 'Contrato'}`;
 
-  // Detección robusta: superadmin via permissions object (más confiable que role string)
-  const esSuperadmin = {{ 'true' if permissions and permissions.superadmin else 'false' }};
-
-  const isPdf = (tipo === 'pdf');
-  frame.style.display  = isPdf ? '' : 'none';
-  noView.style.display = isPdf ? 'none' : '';
-
-  if (isPdf) {
-    // Limpiar src primero para forzar recarga (si el usuario ve otro contrato sin cerrar)
-    frame.src = 'about:blank';
-    setTimeout(() => {
-      frame.src = url;
-      // Listener: si el iframe da error (PDF bloqueado/no soportado), mostrar fallback
-      frame.onerror = () => {
-        frame.style.display = 'none';
-        noView.style.display = '';
-        noView.querySelector('.fw-semibold').textContent =
-          'No se pudo cargar el visor de PDF en este navegador';
-      };
-    }, 50);
-    // Solo superadmin: muestra y enlaza el botón descargar
-    if (esSuperadmin) {
-      btnDl.style.display = '';
-      btnDl.href = url + '?download=1';
-      btnDl.title = 'Descargar (solo superadmin)';
-    } else {
-      btnDl.style.display = 'none';
-    }
+  // Botones de header
+  btnOpen.href = baseUrl;
+  btnFallbackOpen.href = baseUrl;
+  if (esSuperadmin) {
+    btnDl.style.display = '';
+    btnDl.href = baseUrl + '?download=1';
+    btnDl.title = 'Descargar (solo superadmin)';
+    btnWord.style.display = '';
+    btnWord.href = baseUrl + '?download=1';
   } else {
-    // Word u otros formatos no se visualizan en navegador
-    if (esSuperadmin) {
-      btnWord.style.display = '';
-      btnWord.href = url + '?download=1';
-    } else {
-      // Usuario normal: ocultar descarga, mostrar mensaje
-      btnWord.style.display = 'none';
-      noView.querySelector('.fw-semibold').textContent =
-        'Archivo Word — solo el superadministrador puede descargarlo';
-      const subtxt = noView.querySelector('div[style*="0.82rem"]');
-      if (subtxt) subtxt.textContent =
-        'Pide al superadministrador que te envíe una copia o que lo convierta a PDF';
-    }
+    btnDl.style.display = 'none';
+    btnWord.style.display = 'none';
+  }
+
+  // Reset frame
+  frame.src = 'about:blank';
+
+  if (isPdf || isImg) {
+    // PDF e imágenes: el browser las renderiza nativamente vía iframe
+    frame.style.display = '';
+    noView.style.display = 'none';
+    setTimeout(() => { frame.src = baseUrl; }, 50);
+  } else if (isOffice && hasCloud) {
+    // Office Online Viewer — endpoint hace 302 al viewer.officeapps.live.com
+    frame.style.display = '';
+    noView.style.display = 'none';
+    setTimeout(() => { frame.src = baseUrl + '?viewer=office'; }, 50);
+  } else if (isOffice && !hasCloud) {
+    // Word/Excel/PPT pero NO está en Cloudinary — no podemos usar Office Viewer
+    frame.style.display = 'none';
+    noView.style.display = '';
+    nvIcon.className = 'bi bi-file-earmark-word';
+    nvIcon.style.color = '#3b82f6';
+    nvTit.textContent = 'Documento Office no previsualizable';
+    nvMsg.innerHTML = esSuperadmin
+      ? '<strong>Solución:</strong> re-súbelo. El sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
+      : '<strong>Pide al superadministrador</strong> que re-suba este contrato. Cuando se guarde en Cloudinary, podrás verlo en línea sin descargarlo.';
+  } else {
+    // Tipo desconocido — ofrecer apertura externa
+    frame.style.display = 'none';
+    noView.style.display = '';
+    nvIcon.className = 'bi bi-file-earmark';
+    nvIcon.style.color = '#94a3b8';
+    nvTit.textContent = `Formato no previsualizable (${t || 'desconocido'})`;
+    nvMsg.textContent = 'Intenta abrir el archivo en una pestaña nueva — el navegador puede manejarlo según el tipo.';
   }
   new bootstrap.Modal(document.getElementById('modalVerContrato')).show();
 }

@@ -8,17 +8,65 @@
     <div class="sub">Monitor de compromisos pendientes de despacho</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addDocModal">
+    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addDocModal"
+            title="Buscar y agregar un documento puntual del ERP (TIDO + NUDO)">
       <i class="bi bi-plus-circle me-1"></i>Agregar uno
     </button>
-    <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#syncModal">
-      <i class="bi bi-arrow-repeat me-1"></i>Sincronizar ERP
+    <button class="btn btn-sm fw-bold text-white" id="btnSyncHoy"
+            style="background:linear-gradient(135deg,#15803d,#16a34a)"
+            onclick="sincronizarHoy()"
+            title="Importa todos los documentos del ERP emitidos HOY">
+      <i class="bi bi-calendar-check me-1"></i>Sincronizar HOY
+    </button>
+    <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#syncModal"
+            title="Sincronización por rango de fechas (más amplio)">
+      <i class="bi bi-arrow-repeat me-1"></i>Rango fechas
     </button>
     <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-ilus">
       <i class="bi bi-clipboard-check me-1"></i>Manifiestos
     </a>
   </div>
 </div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  SINCRONIZAR HOY — import rápido de docs emitidos en el día
+// ════════════════════════════════════════════════════════════
+async function sincronizarHoy(){
+  const btn = document.getElementById('btnSyncHoy');
+  const txt = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando…';
+  try {
+    const r = await fetch('/transporte/api/sync-hoy', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      else alert('Error: ' + (d.error||'desconocido'));
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Sincronización HOY',
+        message: d.mensaje,
+        sub: d.importados ? 'La lista se va a recargar para mostrar los nuevos documentos.' : '',
+        type: d.importados ? 'success' : 'info',
+      });
+    } else {
+      alert(d.mensaje);
+    }
+    if (d.importados > 0) {
+      setTimeout(() => location.reload(), 600);
+    }
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+    else alert('Error de red: '+e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = txt;
+  }
+}
+</script>
 
 {# ── Filtros ── #}
 <form method="get" class="ilus-card mb-3 p-3">

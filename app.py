@@ -2668,7 +2668,7 @@ def sku_lookup():
 
 
 @app.route("/api/product-search")
-@login_required
+@require_permission("view")
 def product_search():
     """
     Typeahead unificado para el formulario de nuevo producto.
@@ -3869,6 +3869,30 @@ def mi_cuenta_password():
 @app.route("/")
 @login_required
 def index():
+    """Listado de productos (etiquetas).
+
+    Control de acceso: si el usuario NO tiene permiso de etiquetas/view/print
+    ni superadmin, se le redirige al módulo que SÍ tenga acceso (mantenciones,
+    retiros, transporte, etc.) o a una página de error si no tiene ninguno.
+    Esto evita que un usuario sin permiso etiquetas vea el catálogo entero.
+    """
+    perms = g.permissions or {}
+    if not (perms.get("superadmin") or perms.get("etiquetas") or perms.get("view") or perms.get("print")):
+        # No tiene acceso al módulo etiquetas — redirigir al primer módulo disponible
+        if perms.get("mantenciones"):
+            return redirect(url_for("mant_index"))
+        if perms.get("retiros"):
+            return redirect(url_for("pickup_dashboard"))
+        if perms.get("transporte"):
+            return redirect(url_for("transporte_index"))
+        if perms.get("cubicador"):
+            return redirect(url_for("cubicador"))
+        if perms.get("comunicaciones"):
+            return redirect(url_for("comm_index"))
+        # Sin permisos válidos — mostrar mensaje claro y enviar a "Mi cuenta"
+        flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
+        return redirect(url_for("mi_cuenta"))
+
     q     = request.args.get("q", "").strip()
     exact = request.args.get("exact") == "1"
 
@@ -3912,7 +3936,7 @@ def refresh_listing_cache():
 # ─────────────────────────────────────────────
 
 @app.route("/products/<int:pid>/quick")
-@login_required
+@require_permission("view")
 def product_quick(pid):
     product, bultos, photos = get_full(pid)
     if not product:
@@ -4205,7 +4229,7 @@ def edit_product(pid):
 
 
 @app.route("/products/<int:pid>")
-@login_required
+@require_permission("view")
 def product_detail(pid):
     product, bultos, photos = get_full(pid)
     if not product:
@@ -9741,6 +9765,42 @@ def _tr_required(fn):
             return redirect(url_for("index"))
         return fn(*a, **kw)
     return wrapper
+
+
+@app.route("/transporte/api/sync-hoy", methods=["POST"])
+@_tr_required
+def tr_sync_hoy():
+    """Sincronización rápida: importa TODOS los documentos emitidos HOY al monitor.
+
+    Reutiliza _tr_bulk_sync_erp_mysql con fecha_desde=fecha_hasta=hoy.
+    Pensado para usuario hace click 1 vez al día (ej: al llegar a la oficina)
+    y deja el monitor al día con cualquier factura/boleta emitida.
+
+    Performance: típicamente 5-15 docs/día × ~300ms cada uno = 2-5 seg.
+    """
+    from datetime import date as _date
+    hoy = _date.today()
+    hoy_str = hoy.strftime("%Y-%m-%d")
+    try:
+        count, errs = _tr_bulk_sync_erp_mysql(hoy_str, hoy_str)
+    except Exception as e:
+        print(f"[tr_sync_hoy] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"Error consultando ERP: {e}"}), 500
+    try:
+        _tr_log("commitment", 0, "sync_hoy",
+                f"ERP MySQL HOY ({hoy_str}): {count} importados, {len(errs or [])} errores")
+    except Exception: pass
+    return jsonify({
+        "ok": True,
+        "fecha": hoy.strftime("%d/%m/%Y"),
+        "importados": count,
+        "errores": (errs or [])[:10],
+        "mensaje": (
+            f"✓ {count} documento(s) importados del día {hoy.strftime('%d/%m/%Y')}"
+            if count else
+            f"No hay documentos nuevos emitidos hoy ({hoy.strftime('%d/%m/%Y')})"
+        ),
+    })
 
 
 @app.route("/transporte/api/sync", methods=["POST"])
@@ -17829,11 +17889,31 @@ def mant_contrato_archivo(ctid):
         return "Archivo no encontrado", 404
 
     as_dl = request.args.get("download") == "1"
-    # Descargar: solo superadmin
+    use_office_viewer = request.args.get("viewer") == "office"
+    # Descargar: SOLO superadmin (bloqueo server-side, no solo UI)
     if as_dl and not g.permissions.get("superadmin"):
         return ("Acceso restringido — solo el Superadministrador puede "
                 "descargar archivos de contratos. Puedes visualizarlo en "
                 "el navegador."), 403
+
+    # Detectar extensión real (de cloudinary o filesystem)
+    nombre = ct.get("archivo_nombre") or f"contrato_{ctid}.pdf"
+    ext = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else (
+        (ct.get("archivo_path") or "").rsplit(".", 1)[-1].lower()
+    )
+    es_office = ext in ("doc", "docx", "xls", "xlsx", "ppt", "pptx")
+
+    # ── PRIORIDAD 1a: Office Online Viewer (sólo DOCX/XLSX/PPT en Cloudinary)
+    # El navegador NO renderiza DOCX nativamente. Office Online Viewer es un
+    # servicio GRATIS de Microsoft que sí lo hace — requiere URL pública HTTPS
+    # (Cloudinary cumple). Convierte al vuelo, sin que tengamos LibreOffice.
+    if use_office_viewer and ct.get("cloudinary_url") and es_office:
+        from urllib.parse import quote as _q
+        viewer_url = (
+            "https://view.officeapps.live.com/op/embed.aspx?src="
+            + _q(ct["cloudinary_url"], safe="")
+        )
+        return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
     # Si el contrato tiene cloudinary_url, redirigir ahí directamente.
