@@ -349,16 +349,35 @@
   line-height: 1.2;
 }
 
+/* ══════════════════════════════════════════════════════
+   FOOTER FRANJAS — ROLLBACK CONTROL
+   ══════════════════════════════════════════════════════
+   Variable CSS para encender/apagar las franjas inferiores
+   diagonales B&W. Por pedido del usuario (2026-05-13) se
+   APAGARON para que el contenido (SKU + barcode + medidas)
+   gane ~5mm de espacio vertical.
+
+   ROLLBACK rápido: cambiar a 1 si se quiere volver a verlas.
+   ══════════════════════════════════════════════════════ */
+:root {
+  --label-footer-stripes: 0;  /* 0 = ocultas (default actual) | 1 = visibles (legacy) */
+}
+
 /* ── Footer franjas ── */
 .lfoot {
-  height: 20px;
+  /* Cuando --label-footer-stripes=0, el footer colapsa a 0px y el .body
+     (que es flex:1) se expande automáticamente recuperando ese espacio. */
+  height: calc(20px * var(--label-footer-stripes));
   flex-shrink: 0;
-  border-top: 1.5px solid #000;
+  border-top: calc(1.5px * var(--label-footer-stripes)) solid #000;
   background: repeating-linear-gradient(
     -45deg,
     #000 0px, #000 6px,
     #fff 6px, #fff 12px
   );
+  opacity: var(--label-footer-stripes);
+  /* visibility:hidden cuando opacity=0 evita que el screen reader lo lea */
+  overflow: hidden;
 }
 
 /* ══════════════════════════════════════════════════════
@@ -513,12 +532,15 @@
            text-align: right !important; color: #555 !important;
            margin-left: 0 !important; letter-spacing: 0 !important; }
 
-  /* ─ Footer ─ */
+  /* ─ Footer (respeta var --label-footer-stripes para rollback)
+     Cuando la var=0 colapsa a 0mm y el .body recupera el espacio. ─ */
   .lfoot {
-    height: 4.5mm !important;
+    height: calc(4.5mm * var(--label-footer-stripes)) !important;
+    border-top: calc(1.5px * var(--label-footer-stripes)) solid #000 !important;
     background: repeating-linear-gradient(
       -45deg, #000 0px, #000 4pt, #fff 4pt, #fff 8pt
     ) !important;
+    opacity: var(--label-footer-stripes) !important;
   }
 }
 

@@ -309,9 +309,25 @@ body {
   white-space: nowrap;
 }
 
+/* ══════════════════════════════════════════════════════
+   FRANJAS INFERIORES — ROLLBACK CONTROL
+   Por pedido del usuario (2026-05-13), las franjas se ocultan
+   para ganar ~8mm de espacio que se redistribuye al body.
+
+   ROLLBACK rápido: cambiar --label-footer-stripes a 1 abajo
+   en :root para volver a verlas.
+   ══════════════════════════════════════════════════════ */
+:root {
+  --label-footer-stripes: 0;  /* 0 = ocultas (default) | 1 = visibles (legacy) */
+}
+
 .hazard-stripe {
+  display: var(--hazard-display, none);
   background: repeating-linear-gradient(135deg, #000 0 3.2mm, #fff 3.2mm 5.8mm);
-  border-top: .32mm solid #000;
+  border-top: calc(.32mm * var(--label-footer-stripes)) solid #000;
+}
+:root {
+  --hazard-display: none;  /* se sobreescribe cuando label-footer-stripes=1 */
 }
 
 .label-150x100 {
@@ -319,7 +335,11 @@ body {
   --hdr-h: 24mm;
   --meta-h: 12mm;
   --prod-h: 18mm;
-  --stripe-h: 8mm;
+  /* --stripe-h se multiplica por la variable global de rollback:
+     - cuando label-footer-stripes=0 → --stripe-h efectivo = 0mm
+     - cuando label-footer-stripes=1 → --stripe-h efectivo = 8mm (legacy)
+     Los 8mm liberados se redistribuyen al body proporcionalmente. */
+  --stripe-h: calc(8mm * var(--label-footer-stripes));
   --pad-x: 4mm;
   --product-pad-x: 1.8mm;
   --cell-pad: 1.5mm;
@@ -358,7 +378,7 @@ body {
   --hdr-h: 11.5mm;
   --meta-h: 6.5mm;
   --prod-h: 8mm;
-  --stripe-h: 4mm;
+  --stripe-h: calc(4mm * var(--label-footer-stripes));
   --pad-x: 1.8mm;
   --cell-pad: .7mm;
   --gap-sm: .42mm;

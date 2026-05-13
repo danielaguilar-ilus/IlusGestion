@@ -17379,6 +17379,13 @@ def mant_contrato_delete(ctid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
+MANT_CONTRATOS_MAX_POR_CLIENTE = 5
+"""Tope de contratos simultáneos por cliente. Permite tener distintos
+contratos (mantención principal + anexos + adendas) sin saturar la ficha.
+Si necesitas más para un cliente puntual, cambiá este número o eliminá
+contratos viejos del cliente desde la UI."""
+
+
 def mant_contrato_subir(cid):
     """Sube un contrato PDF/DOC al cliente.
 
@@ -17389,6 +17396,9 @@ def mant_contrato_subir(cid):
          útil para desarrollo o casos de emergencia).
       3. EN AMBOS CASOS guarda también archivo_path/archivo_nombre para
          compat con código viejo y para mostrar info al usuario.
+
+    Límite: máximo MANT_CONTRATOS_MAX_POR_CLIENTE contratos por cliente
+    (default 5). Si se intenta subir el 6º, devuelve 400 con mensaje claro.
     """
     f = request.files.get("archivo")
     d = request.form
@@ -17397,6 +17407,27 @@ def mant_contrato_subir(cid):
     ext = f.filename.rsplit(".", 1)[-1].lower()
     if ext not in ALLOWED_CONTRATO:
         return jsonify({"error": "Tipo no permitido"}), 400
+
+    # Validar tope de 5 contratos por cliente
+    try:
+        cnt_row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_contratos WHERE cliente_id=%s",
+            (cid,)
+        )
+        n_actual = int((cnt_row or {}).get("n", 0))
+        if n_actual >= MANT_CONTRATOS_MAX_POR_CLIENTE:
+            return jsonify({
+                "error": (
+                    f"Este cliente ya tiene {n_actual} contratos cargados — el máximo "
+                    f"es {MANT_CONTRATOS_MAX_POR_CLIENTE}. Elimina uno antes de subir el siguiente, "
+                    f"o usa la pestaña 'Documentos' para subir como 'Anexo' o 'Documento externo'."
+                ),
+                "error_codigo": "LIMITE_CONTRATOS",
+                "limite": MANT_CONTRATOS_MAX_POR_CLIENTE,
+                "actual": n_actual,
+            }), 400
+    except Exception as e_cnt:
+        print(f"[mant_contrato_subir] no se pudo verificar tope ({e_cnt}) — sigo igual", flush=True)
 
     fname  = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
 

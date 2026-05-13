@@ -2439,15 +2439,42 @@ async function confirmarVisitaMulti() {
    TAB: CONTRATO — Rediseño profesional con visualizaciones ricas
 ══════════════════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-contrato">
+  {# Contador y tope visible — máx 5 contratos por cliente (anexos van a Documentos) #}
+  {% set _n_ct = contratos|length if contratos else 0 %}
+  {% set _max_ct = 5 %}
+  {% set _llegada = _n_ct >= _max_ct %}
   <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
     <div>
-      <h5 class="mb-1 fw-bold" style="font-size:1rem">Contratos de mantención</h5>
-      <p class="text-muted mb-0" style="font-size:.78rem">Sube el PDF y la IA extrae toda la información clave automáticamente</p>
+      <h5 class="mb-1 fw-bold" style="font-size:1rem">
+        Contratos de mantención
+        <span class="badge ms-2"
+              style="background:{{ '#dc2626' if _llegada else '#0f172a' }};color:#fff;font-size:.65rem;font-weight:600">
+          {{ _n_ct }} / {{ _max_ct }}
+        </span>
+      </h5>
+      <p class="text-muted mb-0" style="font-size:.78rem">
+        Sube hasta {{ _max_ct }} contratos independientes (mantención + anexos + adendas).
+        La IA analiza cada uno por separado. Si necesitas más, usa la pestaña <em>Documentos</em> como anexos.
+      </p>
     </div>
-    <button class="btn btn-sm btn-ilus" onclick="abrirContratoModal()">
+    <button class="btn btn-sm btn-ilus"
+            onclick="abrirContratoModal()"
+            {{ 'disabled' if _llegada else '' }}
+            title="{{ 'Llegaste al máximo de ' + _max_ct|string + ' contratos. Elimina uno antes de subir el siguiente.' if _llegada else 'Subir un nuevo contrato' }}">
       <i class="bi bi-upload me-1"></i>Subir nuevo contrato
     </button>
   </div>
+  {% if _llegada %}
+  <div class="alert alert-warning py-2 px-3 mb-3" style="font-size:.82rem">
+    <i class="bi bi-info-circle me-1"></i>
+    <strong>Llegaste al tope de {{ _max_ct }} contratos</strong> para este cliente.
+    Si querés agregar más documentos, podés:
+    <ul class="mb-0 mt-1 small">
+      <li>Eliminar un contrato antiguo en esta misma pestaña</li>
+      <li>Subir como <strong>Anexo</strong> o <strong>Documento externo</strong> en la pestaña Documentos</li>
+    </ul>
+  </div>
+  {% endif %}
 
   <div id="ctListado">
   {% if contratos %}
@@ -7553,10 +7580,38 @@ async function subirContrato() {
   fd.append('frecuencia_meses', document.getElementById('ct_frecuencia').value || '0');
   fd.append('notas', document.getElementById('ct_notas').value.trim());
   const r = await fetch(`/mantenciones/api/clientes/${CID}/contratos`, { method:'POST', body:fd });
-  if (r.ok) {
+  let data = null;
+  try { data = await r.json(); } catch(_) {}
+  if (r.ok && data && data.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
-    location.reload();
-  } else { alert('Error al subir contrato'); }
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        data.persistente ? '✓ Contrato subido (persistente en Cloudinary)'
+                         : '✓ Contrato subido (filesystem — re-súbelo si hay deploy)',
+        { type: data.persistente ? 'success' : 'warning' }
+      );
+    }
+    setTimeout(() => location.reload(), 900);
+    return;
+  }
+  // Caso límite de contratos: mensaje específico y amigable
+  if (data && data.error_codigo === 'LIMITE_CONTRATOS') {
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Llegaste al máximo de contratos',
+        message: data.error,
+        sub: 'Cierre/elimina un contrato viejo o usa Documentos para adjuntar anexos.',
+        type: 'warning',
+      });
+    } else {
+      alert(data.error);
+    }
+    return;
+  }
+  // Otros errores
+  const msg = (data && data.error) ? data.error : `Error al subir contrato (HTTP ${r.status})`;
+  if (typeof ilusToast === 'function') ilusToast(msg, { type:'error' });
+  else alert(msg);
 }
 
 // ─── Panel IA contrato ────────────────────────────────────
