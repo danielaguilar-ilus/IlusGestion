@@ -436,6 +436,34 @@
     </div>
     {% endif %}
   </div>
+
+  {# ═══════════════════════════════════════════════════════════════
+     BOTÓN INICIAR TRABAJO — visible solo si la OT está en 'programada'.
+     Solo el técnico asignado (current_user.id == visita.tecnico_user_id)
+     o un admin/supervisor lo verá habilitado. Para el resto queda oculto.
+  ═══════════════════════════════════════════════════════════════ #}
+  {% set _es_tec_asignado = current_user and visita.tecnico_user_id and current_user.id == visita.tecnico_user_id %}
+  {% set _puede_iniciar = _es_tec_asignado or (permissions.admin or permissions.superadmin) %}
+  {% if visita.estado == 'programada' and _puede_iniciar %}
+  <div style="margin-top:14px;text-align:center">
+    <button class="btn btn-warning fw-bold"
+            style="background:linear-gradient(135deg,#f59e0b,#d97706);border:0;color:#fff;
+                   padding:12px 24px;font-size:1rem;box-shadow:0 4px 14px rgba(245,158,11,.4)"
+            onclick="iniciarTrabajoOT()">
+      <i class="bi bi-play-circle-fill me-2"></i>Iniciar trabajo — Marcar en curso
+    </button>
+    <div style="color:#fde68a;font-size:.78rem;margin-top:6px">
+      Cambia el estado a <strong>EN CURSO</strong> y registra la hora real de inicio
+    </div>
+  </div>
+  {% elif visita.estado == 'en_curso' %}
+  <div style="margin-top:14px;text-align:center;background:rgba(34,197,94,.1);
+              border-radius:10px;padding:10px;color:#86efac;font-size:.85rem">
+    <i class="bi bi-broadcast-pin me-1"></i>
+    <strong>TRABAJO EN CURSO</strong>
+    {% if visita.hora_real_inicio %} · Iniciado {{ visita.hora_real_inicio.strftime('%d/%m/%Y %H:%M') }}{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 {# ════════ PROGRESO ════════ #}
@@ -820,6 +848,172 @@
     </div>
   </div>
 </div>
+
+{# ═══════════════════════════════════════════════════════════════
+   PANEL DE FIRMAS — visible cuando la OT está en_curso o completada.
+   3 firmas obligatorias para poder cerrar la OT:
+   1) Firma cliente   → cualquiera puede capturarla en pad táctil
+   2) Firma técnico   → solo el técnico asignado (current_user.id == tecnico_user_id)
+   3) Firma supervisor→ solo el que asignó (created_by) o admin/superadmin
+   ═══════════════════════════════════════════════════════════════ #}
+{% if visita.estado in ('en_curso','completada','programada') %}
+{% set _firma_cli = visita.firma_cliente_url %}
+{% set _firma_tec = visita.firma_tecnico_url %}
+{% set _firma_sup = visita.firma_supervisor_url %}
+{% set _es_creador = current_user and visita.created_by and visita.created_by == current_user.username %}
+{% set _puede_firmar_sup = _es_creador or (permissions.admin or permissions.superadmin) %}
+
+<div class="ot-firmas-panel" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+     padding:18px 22px;margin:18px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <i class="bi bi-pen-fill" style="font-size:1.2rem;color:#dc2626"></i>
+    <div>
+      <h5 class="mb-0 fw-bold" style="font-size:1rem">Firmas para cerrar la OT</h5>
+      <div class="small text-muted" style="font-size:.78rem">Las 3 firmas son obligatorias antes del cierre</div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    {# Firma cliente #}
+    <div class="col-12 col-md-4">
+      <div class="firma-card" data-tipo="cliente"
+           style="border:2px {{ 'solid #16a34a' if _firma_cli else 'dashed #cbd5e1' }};
+                  border-radius:10px;padding:12px;background:{{ '#f0fdf4' if _firma_cli else '#fafafa' }};
+                  min-height:140px;display:flex;flex-direction:column">
+        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                    color:{{ '#166534' if _firma_cli else '#64748b' }};margin-bottom:6px">
+          <i class="bi {{ 'bi-check-circle-fill' if _firma_cli else 'bi-person' }} me-1"></i>Firma cliente
+        </div>
+        {% if _firma_cli %}
+          <img src="{{ _firma_cli }}" style="max-width:100%;max-height:60px;background:#fff;border-radius:4px;align-self:center" alt="Firma cliente">
+          {% if visita.firma_cliente_nombre %}
+          <div class="small text-muted text-center mt-1" style="font-size:.72rem">{{ visita.firma_cliente_nombre }}</div>
+          {% endif %}
+          {% if visita.firma_cliente_at %}
+          <div class="small text-muted text-center" style="font-size:.68rem">{{ visita.firma_cliente_at.strftime('%d/%m/%Y %H:%M') }}</div>
+          {% endif %}
+        {% else %}
+          <div class="text-muted small flex-grow-1 d-flex align-items-center justify-content-center text-center">
+            Pendiente — el cliente firma al finalizar el servicio
+          </div>
+          {% if visita.estado != 'completada' %}
+          <button class="btn btn-sm btn-outline-secondary mt-2" onclick="abrirFirmaPad('cliente')">
+            <i class="bi bi-pencil-square me-1"></i>Capturar firma
+          </button>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    {# Firma técnico #}
+    <div class="col-12 col-md-4">
+      <div class="firma-card" data-tipo="tecnico"
+           style="border:2px {{ 'solid #16a34a' if _firma_tec else 'dashed #cbd5e1' }};
+                  border-radius:10px;padding:12px;background:{{ '#f0fdf4' if _firma_tec else '#fafafa' }};
+                  min-height:140px;display:flex;flex-direction:column">
+        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                    color:{{ '#166534' if _firma_tec else '#64748b' }};margin-bottom:6px">
+          <i class="bi {{ 'bi-check-circle-fill' if _firma_tec else 'bi-tools' }} me-1"></i>Firma técnico
+        </div>
+        {% if _firma_tec %}
+          <img src="{{ _firma_tec }}" style="max-width:100%;max-height:60px;background:#fff;border-radius:4px;align-self:center" alt="Firma técnico">
+          {% if visita.tecnico_principal %}
+          <div class="small text-muted text-center mt-1" style="font-size:.72rem">{{ visita.tecnico_principal }}</div>
+          {% endif %}
+          {% if visita.firma_tecnico_at %}
+          <div class="small text-muted text-center" style="font-size:.68rem">{{ visita.firma_tecnico_at.strftime('%d/%m/%Y %H:%M') }}</div>
+          {% endif %}
+        {% else %}
+          <div class="text-muted small flex-grow-1 d-flex align-items-center justify-content-center text-center">
+            {% if _es_tec_asignado %}
+              Tú eres el técnico asignado — firma aquí
+            {% elif visita.tecnico_principal %}
+              Solo {{ visita.tecnico_principal }} puede firmar
+            {% else %}
+              Sin técnico asignado todavía
+            {% endif %}
+          </div>
+          {% if _es_tec_asignado and visita.estado != 'completada' %}
+          <button class="btn btn-sm btn-outline-secondary mt-2" onclick="abrirFirmaPad('tecnico')">
+            <i class="bi bi-pencil-square me-1"></i>Firmar como técnico
+          </button>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    {# Firma supervisor #}
+    <div class="col-12 col-md-4">
+      <div class="firma-card" data-tipo="supervisor"
+           style="border:2px {{ 'solid #16a34a' if _firma_sup else 'dashed #cbd5e1' }};
+                  border-radius:10px;padding:12px;background:{{ '#f0fdf4' if _firma_sup else '#fafafa' }};
+                  min-height:140px;display:flex;flex-direction:column">
+        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                    color:{{ '#166534' if _firma_sup else '#64748b' }};margin-bottom:6px">
+          <i class="bi {{ 'bi-check-circle-fill' if _firma_sup else 'bi-shield-check' }} me-1"></i>Firma supervisor
+        </div>
+        {% if _firma_sup %}
+          <img src="{{ _firma_sup }}" style="max-width:100%;max-height:60px;background:#fff;border-radius:4px;align-self:center" alt="Firma supervisor">
+          {% if visita.created_by %}
+          <div class="small text-muted text-center mt-1" style="font-size:.72rem">{{ visita.created_by }}</div>
+          {% endif %}
+          {% if visita.firma_supervisor_at %}
+          <div class="small text-muted text-center" style="font-size:.68rem">{{ visita.firma_supervisor_at.strftime('%d/%m/%Y %H:%M') }}</div>
+          {% endif %}
+        {% else %}
+          <div class="text-muted small flex-grow-1 d-flex align-items-center justify-content-center text-center">
+            {% if _puede_firmar_sup %}
+              {% if _es_creador %}Asignaste esta OT — firma aquí{% else %}Admin: puedes firmar como supervisor{% endif %}
+            {% elif visita.created_by %}
+              Solo {{ visita.created_by }} (quien asignó la OT) puede firmar
+            {% else %}
+              Solo admin puede firmar como supervisor
+            {% endif %}
+          </div>
+          {% if _puede_firmar_sup and visita.estado != 'completada' %}
+          <button class="btn btn-sm btn-outline-secondary mt-2" onclick="abrirFirmaPad('supervisor')">
+            <i class="bi bi-pencil-square me-1"></i>Firmar como supervisor
+          </button>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Modal: pad para capturar firma (canvas táctil) #}
+<div class="modal fade" id="modalFirmaPad" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-pen-fill me-2"></i>Firmar — <span id="firmaTipoLabel">—</span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-2">
+          <i class="bi bi-info-circle me-1"></i>Firma con el dedo (móvil/tablet) o el mouse dentro del recuadro
+        </div>
+        <div id="firmaNombreWrap" style="display:none" class="mb-2">
+          <label class="form-label small fw-semibold">Nombre del firmante (cliente)</label>
+          <input type="text" id="firmaNombre" class="form-control form-control-sm" placeholder="Ej: Juan Pérez">
+        </div>
+        <div style="border:2px dashed #cbd5e1;border-radius:8px;background:#fafafa">
+          <canvas id="firmaCanvas" width="700" height="280" style="width:100%;display:block;touch-action:none;cursor:crosshair"></canvas>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" onclick="limpiarFirmaPad()">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Limpiar
+        </button>
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-ilus fw-bold" onclick="guardarFirmaPad()">
+          <i class="bi bi-check-circle-fill me-1"></i>Confirmar firma
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {# Modal: cerrar la OT completa #}
 <div class="modal fade" id="modalCerrarOT" tabindex="-1">
@@ -1384,6 +1578,22 @@ function setCierreStars(n){
 }
 
 function abrirModalCierreOT(){
+  // Verificar localmente que las 3 firmas estén presentes antes de mostrar el modal
+  // (el backend valida también, esto es un feedback más rápido al usuario)
+  const faltantes = [];
+  {% if visita.estado != 'completada' %}
+  {% if not visita.firma_cliente_url %}faltantes.push('cliente');{% endif %}
+  {% if not visita.firma_tecnico_url %}faltantes.push('técnico');{% endif %}
+  {% if not visita.firma_supervisor_url %}faltantes.push('supervisor');{% endif %}
+  {% endif %}
+  if (faltantes.length){
+    alert('⚠ No se puede cerrar la OT.\n\nFalta firma de: ' + faltantes.join(', ') +
+          '\n\nDirígete al panel de firmas más arriba y captura las firmas pendientes antes de cerrar.');
+    // Scroll al panel de firmas
+    const panel = document.querySelector('.ot-firmas-panel');
+    if (panel) panel.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
   document.getElementById('cierreCausa').value = '';
   document.getElementById('cierreEstrellas').value = '';
   document.getElementById('cierreComentario').value = '';
@@ -1406,7 +1616,15 @@ async function confirmarCierreOT(){
       body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (!d.ok){ ilusToast(d.error || 'Error al cerrar', { type:'error' }); return; }
+    if (!d.ok){
+      // Mostrar especialmente claro si el backend devuelve faltantes (firmas)
+      if (d.faltantes && d.faltantes.length){
+        ilusToast('Falta firma de: ' + d.faltantes.join(', '), { type:'error' });
+      } else {
+        ilusToast(d.error || 'Error al cerrar', { type:'error' });
+      }
+      return;
+    }
     bootstrap.Modal.getInstance(document.getElementById('modalCerrarOT')).hide();
     ilusToast('OT cerrada exitosamente', { type:'success' });
     setTimeout(() => location.reload(), 700);
@@ -1473,6 +1691,132 @@ function ejecutarLevantamientoDesdeOT(levId, otId){
   const cliId = {{ visita.cliente_id|tojson }};
   // Llevar al técnico a la ficha del cliente con el modal pre-abierto
   window.location.href = `/mantenciones/clientes/${cliId}?lev=${levId}&from_ot=${otId}#equipos`;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FLUJO OT: INICIAR TRABAJO + CAPTURA DE FIRMAS
+// ════════════════════════════════════════════════════════════════
+
+async function iniciarTrabajoOT(){
+  // El backend valida que sea el técnico asignado o admin
+  const ok = confirm('¿Confirmas que vas a iniciar el trabajo ahora?\n\nLa OT pasará a estado EN CURSO y se registrará la hora real.');
+  if (!ok) return;
+  try {
+    const r = await fetch(API_BASE + '/iniciar', { method:'POST', headers:{'Content-Type':'application/json'} });
+    const d = await r.json();
+    if (!r.ok || !d.ok){
+      alert('No se pudo iniciar: ' + (d.error || 'error desconocido'));
+      return;
+    }
+    location.reload();
+  } catch (e){
+    alert('Error de red: ' + e.message);
+  }
+}
+
+// ── Firma pad (canvas táctil) ─────────────────────────────
+let _firmaCanvas = null;
+let _firmaCtx = null;
+let _firmaDrawing = false;
+let _firmaTipo = null;
+let _firmaModal = null;
+let _firmaTrazos = false; // true si el usuario dibujó algo
+
+function abrirFirmaPad(tipo){
+  _firmaTipo = tipo;
+  _firmaTrazos = false;
+  const label = { cliente:'Cliente', tecnico:'Técnico', supervisor:'Supervisor' }[tipo] || tipo;
+  document.getElementById('firmaTipoLabel').textContent = label;
+  document.getElementById('firmaNombreWrap').style.display = (tipo === 'cliente') ? '' : 'none';
+  if (tipo === 'cliente'){
+    const inp = document.getElementById('firmaNombre');
+    if (inp) inp.value = '';
+  }
+  // Init canvas
+  setTimeout(() => {
+    _firmaCanvas = document.getElementById('firmaCanvas');
+    _firmaCtx = _firmaCanvas.getContext('2d');
+    // Ajustar tamaño real al display real (HiDPI safe)
+    const rect = _firmaCanvas.getBoundingClientRect();
+    _firmaCanvas.width = rect.width;
+    _firmaCanvas.height = rect.height;
+    _firmaCtx.fillStyle = '#fff';
+    _firmaCtx.fillRect(0, 0, _firmaCanvas.width, _firmaCanvas.height);
+    _firmaCtx.strokeStyle = '#0a0a0a';
+    _firmaCtx.lineWidth = 2.5;
+    _firmaCtx.lineCap = 'round';
+    _firmaCtx.lineJoin = 'round';
+    bindFirmaEvents();
+  }, 200);
+  if (!_firmaModal) _firmaModal = new bootstrap.Modal(document.getElementById('modalFirmaPad'));
+  _firmaModal.show();
+}
+
+function bindFirmaEvents(){
+  if (!_firmaCanvas || _firmaCanvas._bound) return;
+  _firmaCanvas._bound = true;
+  const pos = (e) => {
+    const r = _firmaCanvas.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+    return { x, y };
+  };
+  const start = (e) => {
+    e.preventDefault();
+    _firmaDrawing = true;
+    const p = pos(e);
+    _firmaCtx.beginPath();
+    _firmaCtx.moveTo(p.x, p.y);
+  };
+  const move = (e) => {
+    if (!_firmaDrawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    _firmaCtx.lineTo(p.x, p.y);
+    _firmaCtx.stroke();
+    _firmaTrazos = true;
+  };
+  const end = (e) => { _firmaDrawing = false; };
+  _firmaCanvas.addEventListener('mousedown', start);
+  _firmaCanvas.addEventListener('mousemove', move);
+  _firmaCanvas.addEventListener('mouseup', end);
+  _firmaCanvas.addEventListener('mouseleave', end);
+  _firmaCanvas.addEventListener('touchstart', start, { passive: false });
+  _firmaCanvas.addEventListener('touchmove', move, { passive: false });
+  _firmaCanvas.addEventListener('touchend', end);
+}
+
+function limpiarFirmaPad(){
+  if (!_firmaCtx || !_firmaCanvas) return;
+  _firmaCtx.fillStyle = '#fff';
+  _firmaCtx.fillRect(0, 0, _firmaCanvas.width, _firmaCanvas.height);
+  _firmaTrazos = false;
+}
+
+async function guardarFirmaPad(){
+  if (!_firmaCanvas){ alert('Canvas no inicializado'); return; }
+  if (!_firmaTrazos){ alert('Por favor dibuja la firma antes de confirmar.'); return; }
+  const dataUrl = _firmaCanvas.toDataURL('image/png');
+  const body = { tipo: _firmaTipo, firma: dataUrl };
+  if (_firmaTipo === 'cliente'){
+    body.nombre = (document.getElementById('firmaNombre').value || '').trim();
+  }
+  try {
+    const r = await fetch(API_BASE + '/firmar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok){
+      alert('No se pudo guardar la firma: ' + (d.error || 'error desconocido'));
+      return;
+    }
+    if (_firmaModal) _firmaModal.hide();
+    location.reload();
+  } catch (e){
+    alert('Error de red: ' + e.message);
+  }
 }
 </script>
 {% endblock %}

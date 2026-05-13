@@ -14160,6 +14160,27 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN satisfaccion_estrellas TINYINT NULL COMMENT '1-5'",
                 "ALTER TABLE mant_visitas ADD COLUMN satisfaccion_comentario TEXT NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN cerrada_at DATETIME NULL COMMENT 'Cuando cliente firma/aprueba'",
+                # FLUJO DE FIRMAS: 3 firmas necesarias para cerrar (cliente / técnico / supervisor)
+                # Cada firma guarda la imagen (data URL base64 o URL Cloudinary), timestamp y user_id que firmó.
+                "ALTER TABLE mant_visitas ADD COLUMN firma_cliente_url TEXT NULL COMMENT 'Firma del cliente (data URL o Cloudinary)'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_cliente_nombre VARCHAR(200) NULL COMMENT 'Nombre del firmante cliente'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_cliente_at DATETIME NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_tecnico_url TEXT NULL COMMENT 'Firma del técnico asignado'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_tecnico_user_id INT NULL COMMENT 'app_users.id del técnico que firmó'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_tecnico_at DATETIME NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_supervisor_url TEXT NULL COMMENT 'Firma del supervisor que asignó la OT'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_supervisor_user_id INT NULL COMMENT 'app_users.id del supervisor'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_supervisor_at DATETIME NULL",
+                # Vincular OT al usuario interno asignado (rol=tecnico). El campo legacy
+                # 'tecnico_id' apuntaba a mant_tecnicos (tabla a deprecar). Este nuevo campo
+                # apunta a app_users.id — es la fuente de verdad para "quién ejecuta la OT".
+                "ALTER TABLE mant_visitas ADD COLUMN tecnico_user_id INT NULL COMMENT 'app_users.id del técnico asignado (reemplaza mant_tecnicos)'",
+                "CREATE INDEX idx_v_tecnico_user ON mant_visitas (tecnico_user_id)",
+                # Ampliamos el ENUM estado para soportar el flujo nuevo:
+                #   programada (=pendiente, estado inicial) → en_curso (técnico empezó)
+                #   → completada (las 3 firmas validadas).
+                #   cancelada / reagendada se conservan.
+                "ALTER TABLE mant_visitas MODIFY estado ENUM('programada','en_curso','completada','cancelada','reagendada') DEFAULT 'programada'",
                 # Índices para consultas analíticas
                 "CREATE INDEX idx_v_real_fin ON mant_visitas (hora_real_fin)",
                 "CREATE INDEX idx_v_dur_real ON mant_visitas (duracion_real_min)",
@@ -17152,11 +17173,29 @@ def mant_tecnicos_index():
 @app.route("/mantenciones/api/tecnicos", methods=["GET"])
 @_mant_required
 def mant_tecnicos_list_api():
-    """JSON ligero para dropdowns. Solo activos por defecto."""
+    """JSON ligero para dropdowns de 'asignar técnico'.
+
+    NUEVA FUENTE DE VERDAD (2026-05-13): se leen los técnicos desde app_users
+    con role='tecnico'. La tabla legacy mant_tecnicos se mantiene en DB pero
+    ya no se usa para asignar OTs nuevas.
+
+    El formato del JSON mantiene los mismos nombres de campo que la versión
+    anterior (id, nombre, telefono, email, activo, etc.) para no romper los
+    dropdowns existentes. El campo `id` ahora apunta a app_users.id — al
+    crear/editar visitas se envía como `tecnico_user_id`.
+    """
     incluir_inactivos = request.args.get("all") == "1"
-    sql = "SELECT id,nombre,especialidad,nivel,telefono,email,tarifa_visita,activo,es_externo FROM mant_tecnicos"
+    sql = ("SELECT id, COALESCE(nombre, username) AS nombre, "
+           "       cargo AS especialidad, "
+           "       'tecnico' AS nivel, "
+           "       phone AS telefono, "
+           "       username AS email, "
+           "       NULL AS tarifa_visita, "
+           "       active AS activo, "
+           "       0 AS es_externo "
+           "  FROM app_users WHERE role='tecnico'")
     if not incluir_inactivos:
-        sql += " WHERE activo=1"
+        sql += " AND active=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ()) or []
     return jsonify([dict(r) for r in rows])
@@ -19334,13 +19373,166 @@ def mant_visita_cronometro_resumen(vid):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# FLUJO DE OT: programada → en_curso → completada (con 3 firmas)
+#
+# Reglas:
+#   - INICIAR (programada → en_curso): solo el técnico asignado
+#     (visita.tecnico_user_id) o un admin/supervisor.
+#   - FIRMAR: 3 firmas obligatorias para cerrar.
+#       firma_cliente   → cualquier usuario puede capturar (el cliente firma
+#                         en el dispositivo del técnico).
+#       firma_tecnico   → solo el usuario cuyo id == visita.tecnico_user_id.
+#       firma_supervisor→ solo el usuario cuyo id == visita.created_by_id
+#                         (quien asignó la OT) o un admin/superadmin.
+#   - CERRAR: requiere las 3 firmas presentes. Si falta alguna → 400.
+# ══════════════════════════════════════════════════════════════════════
+
+def _ot_es_admin_o_super():
+    """True si el usuario actual puede actuar como supervisor de cualquier OT."""
+    if not g.permissions:
+        return False
+    return bool(g.permissions.get("superadmin") or g.permissions.get("admin"))
+
+
+def _ot_visita_basic(vid):
+    """Lee la OT con campos necesarios para validar permisos de acción."""
+    return mysql_fetchone(
+        "SELECT id, estado, tecnico_user_id, created_by, "
+        "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
+        "  FROM mant_visitas WHERE id=%s",
+        (vid,)
+    )
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/iniciar", methods=["POST"])
+@_mant_required
+def mant_visita_iniciar(vid):
+    """Cambia el estado de 'programada' a 'en_curso'. Solo el técnico asignado
+    (o un admin/supervisor) puede iniciar el trabajo. Setea hora_real_inicio
+    si todavía no estaba."""
+    v = _ot_visita_basic(vid)
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if v["estado"] not in ("programada",):
+        return jsonify({"ok": False, "error": f"La OT ya está en estado '{v['estado']}'. Solo se puede iniciar desde 'programada'."}), 400
+    uid = (g.user or {}).get("id")
+    if not uid:
+        return jsonify({"ok": False, "error": "Sesión inválida"}), 401
+    asignado = v.get("tecnico_user_id")
+    if not _ot_es_admin_o_super() and asignado and int(asignado) != int(uid):
+        return jsonify({"ok": False, "error": "Solo el técnico asignado puede iniciar esta OT."}), 403
+    mysql_execute(
+        "UPDATE mant_visitas "
+        "   SET estado='en_curso', "
+        "       hora_real_inicio=COALESCE(hora_real_inicio, NOW()) "
+        " WHERE id=%s",
+        (vid,)
+    )
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, 'iniciada', %s, %s)",
+            (vid, "OT pasada a en_curso", current_username())
+        )
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": "en_curso"})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/firmar", methods=["POST"])
+@_mant_required
+def mant_visita_firmar(vid):
+    """Guarda una de las 3 firmas (cliente / tecnico / supervisor).
+    Body: {"tipo": "cliente"|"tecnico"|"supervisor",
+           "firma": "data:image/png;base64,...",
+           "nombre": "Juan Pérez"  // solo para cliente }
+    """
+    v = _ot_visita_basic(vid)
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "").strip().lower()
+    firma = (d.get("firma") or "").strip()
+    if tipo not in ("cliente", "tecnico", "supervisor"):
+        return jsonify({"ok": False, "error": "tipo debe ser cliente|tecnico|supervisor"}), 400
+    if not firma or not firma.startswith("data:image/"):
+        return jsonify({"ok": False, "error": "firma vacía o formato inválido (debe ser data URL de imagen)"}), 400
+    uid = (g.user or {}).get("id")
+    if not uid:
+        return jsonify({"ok": False, "error": "Sesión inválida"}), 401
+
+    # Validaciones de identidad por tipo de firma
+    if tipo == "tecnico":
+        asignado = v.get("tecnico_user_id")
+        if not asignado:
+            return jsonify({"ok": False, "error": "Esta OT no tiene técnico asignado todavía."}), 400
+        if not _ot_es_admin_o_super() and int(asignado) != int(uid):
+            return jsonify({"ok": False, "error": "Solo el técnico asignado puede firmar como técnico."}), 403
+    elif tipo == "supervisor":
+        # El supervisor es quien asignó la OT (created_by) o un admin/superadmin.
+        creador = v.get("created_by")
+        es_admin = _ot_es_admin_o_super()
+        es_creador = bool(creador) and creador == (g.user or {}).get("username")
+        if not (es_admin or es_creador):
+            return jsonify({"ok": False, "error": "Solo el supervisor que asignó esta OT (o un admin) puede firmar."}), 403
+    # 'cliente' no requiere validar identidad (el cliente firma en el dispositivo del técnico).
+
+    nombre = (d.get("nombre") or "").strip()[:200] or None
+
+    if tipo == "cliente":
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_cliente_url=%s, firma_cliente_nombre=%s, "
+            "       firma_cliente_at=NOW() WHERE id=%s",
+            (firma, nombre, vid)
+        )
+    elif tipo == "tecnico":
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
+            "       firma_tecnico_at=NOW() WHERE id=%s",
+            (firma, uid, vid)
+        )
+    else:  # supervisor
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_supervisor_url=%s, firma_supervisor_user_id=%s, "
+            "       firma_supervisor_at=NOW() WHERE id=%s",
+            (firma, uid, vid)
+        )
+
+    try:
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, 'firma', %s, %s)",
+            (vid, f"Firma capturada — tipo={tipo}", current_username())
+        )
+    except Exception:
+        pass
+    return jsonify({"ok": True, "tipo": tipo})
+
+
+# ══════════════════════════════════════════════════════════════════════
 # CIERRE DE OT — captura causa raíz, satisfacción y comentario
+# Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cerrar", methods=["POST"])
 @_mant_required
 def mant_visita_cerrar(vid):
-    """Cierra la visita con causa raíz, estrellas y comentario."""
+    """Cierra la visita con causa raíz, estrellas y comentario.
+    BLOQUEA el cierre si falta alguna de las 3 firmas."""
+    v = _ot_visita_basic(vid)
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    faltantes = []
+    if not v.get("firma_cliente_url"):     faltantes.append("cliente")
+    if not v.get("firma_tecnico_url"):     faltantes.append("técnico")
+    if not v.get("firma_supervisor_url"):  faltantes.append("supervisor")
+    if faltantes:
+        return jsonify({
+            "ok": False,
+            "error": "Falta firma de: " + ", ".join(faltantes),
+            "faltantes": faltantes
+        }), 400
+
     d = request.get_json(silent=True) or {}
     causa = (d.get("causa_raiz") or "").strip().lower() or None
     if causa and causa not in ("desgaste","mal_uso","falta_mantencion","defecto_fabrica","accidente","otro"):
@@ -19768,21 +19960,53 @@ def mant_visita_historica(cid):
 @app.route("/mantenciones/api/visitas", methods=["POST"])
 @_mant_required
 def mant_visita_crear():
+    """Crea una OT. Acepta tecnico_user_id (FK a app_users con role='tecnico')
+    como alternativa al campo de texto legacy 'tecnico'."""
     d = request.get_json(silent=True) or {}
     if not d.get("cliente_id") or not d.get("fecha_programada"):
         return jsonify({"error": "cliente_id y fecha_programada requeridos"}), 400
+
+    # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
+    # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
+    # Si el frontend manda `tecnico_id` (legacy), lo interpretamos como user_id
+    # cuando no llegue `tecnico_user_id` explícito y haya match en app_users.
+    tecnico_user_id = d.get("tecnico_user_id")
+    if not tecnico_user_id and d.get("tecnico_id"):
+        # Migración silenciosa: el dropdown manda el id de app_users
+        tecnico_user_id = d.get("tecnico_id")
+        d["tecnico_id"] = None
+    tecnico_txt = d.get("tecnico", "") or ""
+    if tecnico_user_id:
+        try:
+            tecnico_user_id = int(tecnico_user_id)
+            # Si no viene texto, lo rellenamos desde app_users.nombre
+            if not tecnico_txt:
+                u = mysql_fetchone(
+                    "SELECT COALESCE(nombre, username) AS nm FROM app_users "
+                    "WHERE id=%s AND role='tecnico' AND active=1",
+                    (tecnico_user_id,)
+                )
+                if u:
+                    tecnico_txt = u["nm"]
+                else:
+                    # No es un técnico válido — descartar
+                    tecnico_user_id = None
+        except (TypeError, ValueError):
+            tecnico_user_id = None
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_visitas
                    (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                    tecnico,tipo,estado,descripcion,costo,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    tecnico,tecnico_user_id,tipo,estado,descripcion,costo,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (d["cliente_id"], d.get("contrato_id") or None,
                  d.get("titulo","Mantención"), d["fecha_programada"],
                  d.get("hora_inicio") or None, d.get("hora_fin") or None,
-                 d.get("tecnico",""), d.get("tipo","preventiva"),
+                 tecnico_txt, tecnico_user_id,
+                 d.get("tipo","preventiva"),
                  d.get("estado","programada"), d.get("descripcion",""),
                  float(d.get("costo",0) or 0), current_username())
             )
@@ -19798,8 +20022,28 @@ def mant_visita_crear():
 @_mant_required
 def mant_visita_update(vid):
     d = request.get_json(silent=True) or {}
+    # COMPAT: el dropdown legacy puede mandar `tecnico_id` esperando que sea
+    # mant_tecnicos. Tras la migración, /api/tecnicos devuelve app_users.id.
+    # Migramos silenciosamente para no romper el frontend.
+    if "tecnico_id" in d and d["tecnico_id"] and "tecnico_user_id" not in d:
+        d["tecnico_user_id"] = d["tecnico_id"]
+        d["tecnico_id"] = None
     allowed = ["titulo","fecha_programada","fecha_realizada","hora_inicio","hora_fin",
-               "tecnico","tipo","estado","descripcion","observaciones","costo","contrato_id"]
+               "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones","costo","contrato_id"]
+    # tecnico_user_id: si llega, validar que sea un app_users con role='tecnico'
+    if "tecnico_user_id" in d and d["tecnico_user_id"]:
+        try:
+            tuid = int(d["tecnico_user_id"])
+            u = mysql_fetchone(
+                "SELECT 1 FROM app_users WHERE id=%s AND role='tecnico' AND active=1",
+                (tuid,)
+            )
+            if not u:
+                d["tecnico_user_id"] = None
+            else:
+                d["tecnico_user_id"] = tuid
+        except (TypeError, ValueError):
+            d["tecnico_user_id"] = None
     sets = [f"{f}=%s" for f in allowed if f in d]
     vals = [d[f] for f in allowed if f in d]
     if not sets:
@@ -20345,23 +20589,33 @@ def mant_ots_list():
     where = ["1=1"]
     params = []
 
-    # Filtro "mis OTs": busca el técnico cuyo email matchea con el user logueado
+    # Filtro "mis OTs": basado primero en v.tecnico_user_id == user.id (post-migración).
+    # Fallback legacy: si el usuario tiene email coincidente en mant_tecnicos,
+    # también incluye OTs apuntadas a ese técnico legacy.
     if solo_mias and user:
         try:
+            uid = user.get("id")
             me_tec = mysql_fetchone(
                 "SELECT id FROM mant_tecnicos WHERE LOWER(TRIM(email))=LOWER(TRIM(%s)) "
                 "AND COALESCE(activo,1)=1 LIMIT 1",
                 (user.get("correo") or user.get("email") or "",)
-            )
-            if me_tec:
+            ) if (user.get("correo") or user.get("email")) else None
+
+            if uid and me_tec:
+                where.append("(v.tecnico_user_id=%s OR v.tecnico_id=%s)")
+                params.extend([int(uid), int(me_tec["id"])])
+            elif uid:
+                where.append("v.tecnico_user_id=%s")
+                params.append(int(uid))
+            elif me_tec:
                 where.append("v.tecnico_id=%s")
                 params.append(int(me_tec["id"]))
-                # Por defecto, técnico solo ve OTs activas (no cerradas históricas)
-                if not estado:
-                    where.append("v.estado IN ('programada','en_curso','reagendada')")
             else:
-                # User no tiene técnico vinculado → no muestra nada
+                # No tiene id de usuario ni técnico legacy → no muestra nada
                 where.append("1=0")
+            # Por defecto, técnico solo ve OTs activas (no cerradas históricas)
+            if (uid or me_tec) and not estado:
+                where.append("v.estado IN ('programada','en_curso','reagendada')")
         except Exception as e_tec:
             print(f"[mant_ots_list solo_mias] error: {e_tec}", flush=True)
 
@@ -20487,18 +20741,23 @@ def mant_ot_ficha(vid):
     """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora)."""
     # NOTA: la columna real en mant_clientes es contacto_tel (no contacto_telefono).
     # Se mantiene el alias cli_contacto_tel para que el template no cambie.
+    # tecnico_principal viene preferentemente de app_users (v.tecnico_user_id, nuevo)
+    # y como fallback de mant_tecnicos (v.tecnico_id, legacy).
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna, c.email_empresa AS cli_email, "
         "       c.tel_empresa AS cli_tel, c.contacto_nombre AS cli_contacto, "
         "       c.contacto_tel AS cli_contacto_tel, "
         "       ct.nombre AS contrato_nombre, "
-        "       t.nombre AS tecnico_principal, t.telefono AS tecnico_tel, "
-        "       t.email AS tecnico_email, t.foto_url AS tecnico_foto "
+        "       COALESCE(u.nombre, u.username, t.nombre) AS tecnico_principal, "
+        "       COALESCE(u.phone, t.telefono) AS tecnico_tel, "
+        "       COALESCE(u.username, t.email) AS tecnico_email, "
+        "       COALESCE(u.foto_url, t.foto_url) AS tecnico_foto "
         "  FROM mant_visitas v "
         "  JOIN mant_clientes c ON c.id=v.cliente_id "
         "  LEFT JOIN mant_contratos ct ON ct.id=v.contrato_id "
         "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+        "  LEFT JOIN app_users   u ON u.id=v.tecnico_user_id "
         " WHERE v.id=%s",
         (vid,)
     )
