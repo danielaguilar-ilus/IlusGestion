@@ -1764,12 +1764,20 @@
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
+                {# Historial de OTs ejecutadas sobre este equipo (todos los roles pueden verlo) #}
+                <button class="btn btn-xs btn-outline-secondary"
+                        onclick="verHistorialOTEquipo({{ m.id }}, '{{ (m.nombre or '')|e }}')"
+                        title="Ver historial de OTs sobre este equipo">
+                  <i class="bi bi-clock-history"></i>
+                </button>
                 {# Las acciones de visita ahora son MÚLTIPLES — selecciona equipos con
                    los checkboxes y usa la barra flotante. El rayito individual se eliminó
                    por ser ineficiente para casos reales (ej: 4 trotadoras a cambiar). #}
+                {% if not is_tecnico %}
                 <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>
+                {% endif %}
               </div>
             </td>
           </tr>
@@ -4001,16 +4009,37 @@ function docRender(arr) {
     externo:'bi-globe', imagen:'bi-image',
     reporte:'bi-file-earmark-richtext', otro:'bi-file-earmark'
   };
-  cont.innerHTML = arr.map(d => `
+  cont.innerHTML = arr.map(d => {
+    // Si es contrato sin archivo, mostramos badge especial y enlace al tab Contratos
+    const sinArchivo = !!d.sin_archivo;
+    const badgeEstado = sinArchivo
+      ? '<span class="badge bg-warning text-dark" style="font-size:.62rem;font-weight:600" title="Contrato registrado pero sin archivo subido">📋 metadata</span>'
+      : (d.persistente
+          ? '<span class="doc-badge-persist" title="Persistente en Cloudinary">☁️ persistente</span>'
+          : '<span class="doc-badge-volatil" title="Solo en disco — se pierde con deploy">⚠ volátil</span>');
+    const acciones = sinArchivo
+      ? `<button type="button" class="btn btn-xs btn-outline-warning"
+                 onclick="switchTab('contrato')"
+                 title="Este contrato no tiene archivo. Ir al tab Contratos para subirlo.">
+           <i class="bi bi-arrow-up-right-square"></i> Subir archivo
+         </button>`
+      : `<button type="button" class="btn btn-xs btn-outline-primary"
+                 onclick='docPreview(${JSON.stringify(d).replace(/'/g,"&#39;")})'
+                 title="Previsualizar dentro del sistema">
+           <i class="bi bi-eye"></i>
+         </button>
+         <a href="${d.url}" download class="btn btn-xs btn-outline-secondary" title="Descargar">
+           <i class="bi bi-download"></i>
+         </a>
+         ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>` : ''}`;
+    return `
     <div class="doc-card">
       <div class="doc-icon doc-tipo-${d.tipo||'otro'}">
         <i class="bi ${ico[d.tipo]||'bi-file-earmark'}"></i>
       </div>
       <div style="flex:1;min-width:0">
         <div class="doc-name text-truncate">${d.nombre || 'Sin nombre'}
-          ${d.persistente
-            ? '<span class="doc-badge-persist" title="Persistente en Cloudinary">☁️ persistente</span>'
-            : '<span class="doc-badge-volatil" title="Solo en disco — se pierde con deploy">⚠ volátil</span>'}
+          ${badgeEstado}
         </div>
         <div class="doc-meta">
           <span class="me-2">${d.fuente || d.tipo}</span>
@@ -4020,17 +4049,10 @@ function docRender(arr) {
         </div>
       </div>
       <div class="d-flex gap-1">
-        <button type="button" class="btn btn-xs btn-outline-primary"
-                onclick='docPreview(${JSON.stringify(d).replace(/'/g,"&#39;")})'
-                title="Previsualizar dentro del sistema">
-          <i class="bi bi-eye"></i>
-        </button>
-        <a href="${d.url}" download class="btn btn-xs btn-outline-secondary" title="Descargar">
-          <i class="bi bi-download"></i>
-        </a>
-        ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>` : ''}
+        ${acciones}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 function docFiltrar(tipo, btn) {
   document.querySelectorAll('.doc-filter-btn').forEach(b => b.classList.remove('active'));
@@ -7190,6 +7212,95 @@ async function confirmarCambioSerie() {
     }, 200);
   } catch(e) {
     alert('Error de red: ' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// HISTORIAL DE OTs SOBRE UN EQUIPO
+// Muestra todas las OTs donde se trabajó este equipo (vía mant_visita_tareas.maquina_id),
+// con fecha, hora, técnico, estado y usuario que cerró cada OT. Read-only.
+// ════════════════════════════════════════════════════════════════════
+let _modalHistorialOT = null;
+async function verHistorialOTEquipo(mid, nombre) {
+  // Lazy-init: crear modal si no existe
+  let m = document.getElementById('modalHistorialOTEquipo');
+  if (!m) {
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="modal fade" id="modalHistorialOTEquipo" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#0a0a0a;color:#fff">
+              <h5 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Historial de OTs — <span id="histot_eq_nombre">—</span></h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="histot_content">
+              <div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-2"></span>Cargando…</div>
+            </div>
+          </div>
+        </div>
+      </div>`);
+    m = document.getElementById('modalHistorialOTEquipo');
+  }
+  document.getElementById('histot_eq_nombre').textContent = nombre || `Equipo #${mid}`;
+  if (!_modalHistorialOT) _modalHistorialOT = new bootstrap.Modal(m);
+  _modalHistorialOT.show();
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/historial-ots`);
+    const d = await r.json();
+    if (!d.ok || !d.ots || !d.ots.length) {
+      document.getElementById('histot_content').innerHTML = `
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-clipboard2-x" style="font-size:2.5rem;opacity:.25"></i>
+          <div class="fw-semibold mt-2">Sin historial</div>
+          <div class="small mt-1">Este equipo aún no aparece en ninguna OT con tarea asociada.</div>
+        </div>`;
+      return;
+    }
+    const estadoBadge = {
+      'programada':  '<span class="badge" style="background:#dbeafe;color:#1e40af">Pendiente</span>',
+      'en_curso':    '<span class="badge" style="background:#fef3c7;color:#92400e">En curso</span>',
+      'completada':  '<span class="badge" style="background:#dcfce7;color:#166534">Completada</span>',
+      'cancelada':   '<span class="badge" style="background:#fee2e2;color:#991b1b">Cancelada</span>',
+      'reagendada':  '<span class="badge bg-secondary">Reagendada</span>',
+    };
+    let html = `
+      <div class="alert alert-info py-2 small mb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        Se muestran <strong>${d.ots.length}</strong> OT(s) donde este equipo aparece como objetivo de una tarea.
+        Cada fila enlaza a la ficha completa de la OT.
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" style="font-size:.85rem">
+          <thead style="background:#f9fafb">
+            <tr>
+              <th>OT</th><th>Fecha</th><th>Tipo</th><th>Estado</th>
+              <th>Técnico</th><th>Creado por</th><th>Cerrada</th><th></th>
+            </tr>
+          </thead>
+          <tbody>`;
+    d.ots.forEach(ot => {
+      const tipo_lbl = ot.tipo ? ot.tipo.charAt(0).toUpperCase() + ot.tipo.slice(1) : '—';
+      html += `
+        <tr>
+          <td class="font-monospace small fw-bold" style="color:#0f172a">${escHtml(ot.numero_ot)}</td>
+          <td class="small text-muted" style="white-space:nowrap">${escHtml(ot.fecha)}
+            ${ot.hora_inicio ? `<br><span style="font-size:.72rem">${escHtml(ot.hora_inicio)}${ot.hora_fin ? '–'+escHtml(ot.hora_fin) : ''}</span>` : ''}
+          </td>
+          <td class="small">${escHtml(tipo_lbl)}</td>
+          <td>${estadoBadge[ot.estado] || `<span class="badge bg-light text-dark">${escHtml(ot.estado || '—')}</span>`}</td>
+          <td class="small">${escHtml(ot.tecnico || '—')}</td>
+          <td class="small text-muted">${escHtml(ot.creado_por || '—')}</td>
+          <td class="small text-muted">${escHtml(ot.cerrada_at || '—')}</td>
+          <td><a href="${ot.url}" target="_blank" class="btn btn-xs btn-outline-primary" title="Abrir OT">
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a></td>
+        </tr>`;
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('histot_content').innerHTML = html;
+  } catch (e) {
+    document.getElementById('histot_content').innerHTML =
+      `<div class="alert alert-danger small">Error cargando historial: ${escHtml(e.message)}</div>`;
   }
 }
 

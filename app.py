@@ -5400,16 +5400,18 @@ def invite_user(user_id):
 PERMISSIONS_MATRIX = {
     "etiquetas":      {"label":"Etiquetas",      "icon":"bi-tags",
                        "acciones":["ver","crear","editar","eliminar","imprimir","masivo"]},
-    # Mantenciones: limpieza 2026-05-13
-    #   - Removidos "tickets" (módulo deshabilitado, código intacto pero no expuesto)
-    #   - Removido "kanban" (es solo una vista del Calendario, no un permiso)
-    #   - Agregado "cotizaciones" (sub-módulo real con UI propia)
-    #   - Agregado "calendario" (vista del módulo)
-    #   - Agregado "tecnicos" (gestión de técnicos de campo — solo admin)
+    # Mantenciones: limpieza 2026-05-13 (v2)
+    #   Las acciones reflejan los SUB-MÓDULOS del sidebar:
+    #     ver / crear / editar / eliminar = CRUD sobre clientes y OTs
+    #     calendario  = acceso al calendario de visitas
+    #     ots         = acceso al módulo de Órdenes de Trabajo
+    #     cotizaciones= acceso al módulo de Cotizaciones
+    #   Removidos: contratos, ai, reportes, repuestos, tecnicos, levantamiento.
+    #   Eran chips que no bloqueaban nada — solo ruido en la matriz.
+    #   Si se necesita granular en el futuro, agregar aquí + validar en endpoints.
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
                        "acciones":["ver","crear","editar","eliminar",
-                                   "contratos","ai","reportes","repuestos",
-                                   "calendario","cotizaciones","tecnicos","levantamiento"]},
+                                   "calendario","ots","cotizaciones"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -14762,6 +14764,19 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ── Limpieza de filas legacy en rol_permisos ───────────────
+            # Acciones obsoletas del módulo "mantenciones" eliminadas en 2026-05-13.
+            # No tenían validación real, eran chips en la matriz que confundían al admin.
+            try:
+                cur.execute("""
+                    DELETE FROM rol_permisos
+                     WHERE modulo='mantenciones'
+                       AND accion IN ('contratos','ai','reportes','repuestos',
+                                      'tecnicos','levantamiento','kanban','tickets')
+                """)
+            except Exception:
+                pass
+
             # Seed: roles del sistema (solo si no existen)
             for slug, nombre, color, is_sys in [
                 ('superadmin', 'Super Administrador', '#dc2626', 1),
@@ -23835,28 +23850,43 @@ def mant_cliente_documentos(cid):
             "deletable": False,
         })
 
-    # 3. Contrato — archivo principal
+    # 3. Contratos — archivo principal de cada contrato del cliente.
+    #    FIX 2026-05-13: antes solo se listaban contratos que tenían archivo
+    #    (archivo_path o cloudinary_url). Ahora listamos TODOS para que el tab
+    #    "Documentos" sea espejo completo del tab "Contratos". Si un contrato
+    #    no tiene archivo, lo mostramos igualmente con un flag `sin_archivo`
+    #    para que el frontend pueda renderizar un placeholder informativo
+    #    en vez de un link roto.
     ct_rows = mysql_fetchall(
         "SELECT id,nombre,archivo_nombre,archivo_path,archivo_tipo,"
-        "       cloudinary_url,cloudinary_public_id,created_by,created_at "
+        "       cloudinary_url,cloudinary_public_id,estado,vencimiento,created_by,created_at "
         "  FROM mant_contratos WHERE cliente_id=%s "
-        "    AND (archivo_path IS NOT NULL OR cloudinary_url IS NOT NULL)", (cid,)
+        " ORDER BY created_at DESC", (cid,)
     )
     for r in ct_rows:
+        tiene_archivo = bool(r.get("archivo_path") or r.get("cloudinary_url"))
+        # Nombre: priorizar el dado por el usuario, luego archivo, luego ID
+        nm = r.get("nombre") or r.get("archivo_nombre") or f"Contrato #{r['id']}"
+        # Estado opcional como sufijo
+        if r.get("estado"):
+            estado_lbl = r["estado"].replace("_", " ").title()
+            if estado_lbl not in nm:
+                nm = f"{nm} ({estado_lbl})"
         items.append({
             "kind":   "contrato_principal",
             "id":     r["id"],
             "tipo":   "contrato",
-            "nombre": r.get("nombre") or r.get("archivo_nombre") or f"Contrato #{r['id']}",
-            # Siempre vamos vía el endpoint /contratos/<id>/archivo que ya
-            # sabe redirigir a Cloudinary si está disponible
-            "url":    f"/mantenciones/api/contratos/{r['id']}/archivo",
+            "nombre": nm,
+            # Si tiene archivo: usar endpoint /contratos/<id>/archivo (redirige a Cloudinary).
+            # Si NO tiene: url null + flag sin_archivo para que el frontend muestre placeholder.
+            "url":    (f"/mantenciones/api/contratos/{r['id']}/archivo" if tiene_archivo else None),
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": "Contrato principal",
             "persistente": bool(r.get("cloudinary_url")),
             "deletable": False,
+            "sin_archivo": (not tiene_archivo),
         })
 
     # Ordenar por created_at desc
@@ -24740,6 +24770,53 @@ def mant_maquina_timeline(mid):
             except Exception: e["metadata"] = None
         e.pop("metadata_json", None)
     return jsonify({"ok": True, "eventos": eventos})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/historial-ots")
+@_mant_required
+def mant_maquina_historial_ots(mid):
+    """Historial de OTs ejecutadas sobre este equipo.
+    Une con mant_visita_tareas (donde la tarea tiene maquina_id=mid) y devuelve
+    cada OT distinta con fecha, hora, tipo, estado, técnico responsable y
+    usuario que la cerró.
+    """
+    rows = mysql_fetchall(
+        """SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.fecha_programada,
+                  v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.hora_real_fin,
+                  v.tipo, v.estado, v.descripcion, v.tecnico,
+                  v.cerrada_at, v.created_by,
+                  COALESCE(u.nombre, u.username) AS tecnico_nombre,
+                  u.username AS tecnico_username
+             FROM mant_visitas v
+             JOIN mant_visita_tareas t ON t.visita_id=v.id
+             LEFT JOIN app_users u ON u.id=v.tecnico_user_id
+            WHERE t.maquina_id=%s
+            ORDER BY v.fecha_programada DESC, v.id DESC
+            LIMIT 100""",
+        (mid,)
+    ) or []
+    out = []
+    for r in rows:
+        out.append({
+            "id":              r["id"],
+            "numero_ot":       r.get("numero_ot") or f"VS-{r['id']:05d}",
+            "titulo":          r.get("titulo") or "",
+            "fecha":           str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
+            "hora_inicio":     str(r["hora_inicio"])[:5] if r.get("hora_inicio") else "",
+            "hora_fin":        str(r["hora_fin"])[:5] if r.get("hora_fin") else "",
+            "hora_real_ini":   str(r["hora_real_inicio"])[:16] if r.get("hora_real_inicio") else "",
+            "hora_real_fin":   str(r["hora_real_fin"])[:16] if r.get("hora_real_fin") else "",
+            "tipo":            r.get("tipo") or "",
+            "estado":          r.get("estado") or "",
+            "descripcion":     r.get("descripcion") or "",
+            "tecnico":         r.get("tecnico_nombre") or r.get("tecnico") or "",
+            "tecnico_username": r.get("tecnico_username") or "",
+            "creado_por":      r.get("created_by") or "",
+            "cerrada_at":      str(r["cerrada_at"])[:16] if r.get("cerrada_at") else "",
+            # Link directo a la ficha OT
+            "url":             f"/mantenciones/ot/{r['id']}",
+        })
+    return jsonify({"ok": True, "ots": out, "total": len(out)})
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos")
