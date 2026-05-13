@@ -62,7 +62,7 @@
 
   {# Formulario de cantidades #}
   <form id="printSetupForm" method="get" action="{{ url_for('print_labels_alt', pid=product.id) }}">
-    <input type="hidden" name="fmt" value="150x100">
+    <input type="hidden" name="fmt" value="100x150">
     {% if only_bulto %}
     <input type="hidden" name="bulto" value="{{ only_bulto }}">
     {% endif %}
@@ -172,7 +172,7 @@ document.getElementById('btnDownloadZip').addEventListener('click', function() {
   {% if only_bulto %}
   params.set('bulto', '{{ only_bulto }}');
   {% endif %}
-  params.set('fmt', '150x100');
+  params.set('fmt', '100x150');
   document.querySelectorAll('.qty-input').forEach(function(inp) {
     params.set(inp.name, inp.value);
   });

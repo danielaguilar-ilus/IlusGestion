@@ -24,7 +24,8 @@
 .fold-bar span.fold-arr { font-size:8px; color:#bbb; }
 
 /* ══════════════════════════════════════════════════════
-   LABEL  567 × 264 px  →  150 × 70 mm en impresión
+   LABEL  (preview pantalla; el PDF físico real lo arma
+   label_standalone.html con formato 100×150 ó 100×50 mm)
 ══════════════════════════════════════════════════════ */
 .label {
   width: 567px;
@@ -398,10 +399,11 @@
 .step-ico   { width:52px; flex-shrink:0; }
 
 /* ══════════════════════════════════════════════════════
-   PRINT  150mm × 70mm  —  1 etiqueta por página
+   PRINT  100mm × 150mm  —  1 etiqueta por página
+   (estándar único ILUS; el formato chico es 100×50)
 ══════════════════════════════════════════════════════ */
 @page {
-  size: 150mm 70mm;
+  size: 150mm 100mm;
   margin: 0;
 }
 

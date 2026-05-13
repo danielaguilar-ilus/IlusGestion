@@ -2160,22 +2160,30 @@ def _logo_data_url():
 
 
 def _label_format(fmt):
-    """Formatos físicos de etiqueta soportados por el generador PDF.
+    """Formatos FÍSICOS de etiqueta soportados.
 
-    NOTA: si agregás un formato aquí, asegurate de actualizar el dropdown
-    en templates/etiquetas_masivo.html (líneas ~61-66) — los dos lugares
-    deben coincidir, sino el usuario selecciona algo y silenciosamente cae
-    al default 150x70 (formato canónico ILUS).
+    Por pedido del usuario (2026-05-13): SOLO existen 2 tamaños reales
+    en producción — los formatos 150x70 y 100x70 NO EXISTEN físicamente
+    y fueron eliminados de toda la base.
+
+    Tamaños válidos:
+      • "100x150" → estándar (etiqueta grande, doblada en 2 caras)
+      • "100x50"  → etiqueta chica
+
+    NOTA TÉCNICA: la "key" interna ("150x100" y "100x50") es lo que el
+    template label_standalone.html usa para aplicar CSS (.label-150x100,
+    .label-100x50). El usuario ve "100 × 150 mm" porque es como ILUS
+    nombra el papel termico (lado corto × lado largo). Internamente
+    Playwright genera el PDF a 150mm × 100mm landscape que es como están
+    calibradas las impresoras.
     """
     formats = {
-        # 150x70 es el formato CANÓNICO ILUS — etiqueta doblada en 2 caras
-        # de 75x70 cada una (ver templates/labels.html y MEMORY label_design_ilus)
-        "150x70":  {"key": "150x70",  "w": "150mm", "h": "70mm",  "label": "150 x 70 mm (estándar ILUS)"},
-        "150x100": {"key": "150x100", "w": "150mm", "h": "100mm", "label": "150 x 100 mm"},
-        "100x70":  {"key": "100x70",  "w": "100mm", "h": "70mm",  "label": "100 x 70 mm"},
-        "100x50":  {"key": "100x50",  "w": "100mm", "h": "50mm",  "label": "100 x 50 mm"},
+        "100x150": {"key": "150x100", "w": "150mm", "h": "100mm", "label": "100 × 150 mm (estándar)"},
+        "100x50":  {"key": "100x50",  "w": "100mm", "h": "50mm",  "label": "100 × 50 mm"},
+        # Aliases para compat con código viejo que aún use las keys antiguas:
+        "150x100": {"key": "150x100", "w": "150mm", "h": "100mm", "label": "100 × 150 mm (estándar)"},
     }
-    return formats.get(fmt, formats["150x70"])
+    return formats.get(fmt, formats["100x150"])
 
 
 def _label_bulto_data(bulto):
@@ -4495,7 +4503,7 @@ def etiquetas_masivo_index():
       - /etiquetas/masivo/*  (carga masiva Excel + ZIP)
       - /products/*          (CRUD productos = catálogo etiquetas)
       - /print/*             (impresión individual + bulk)
-      - /labels/*            (templates HTML de etiquetas 150x70mm)
+      - /labels/*            (templates HTML de etiquetas 100x150mm)
       - Diseño activo: Cara A | Cara B con CODE128 + logo B&W
         (ver MEMORY → label_design_ilus.md)
 
@@ -4791,8 +4799,8 @@ def _etiquetas_masivo_procesar_impl():
         except Exception as e_fil:
             print(f"[etiquetas_masivo] skus_filtro inválido: {e_fil}", flush=True)
 
-    # Procesar cada SKU (default 150x70 — estándar ILUS)
-    fmt = request.form.get("fmt", "150x70")
+    # Procesar cada SKU (default 100x150 — único tamaño físico estándar ILUS)
+    fmt = request.form.get("fmt", "100x150")
     user = current_username() or "anon"
     batch_id = f"etq_{int(time.time())}_{user[:8]}"
     resultados = []
@@ -17377,15 +17385,15 @@ def mant_contrato_delete(ctid):
         conn.close()
 
 
+# Tope de contratos simultáneos por cliente. Permite tener distintos
+# contratos (mantención principal + anexos + adendas) sin saturar la ficha.
+# Si necesitas más para un cliente puntual, cambiá este número o eliminá
+# contratos viejos del cliente desde la UI.
+MANT_CONTRATOS_MAX_POR_CLIENTE = 5
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
-MANT_CONTRATOS_MAX_POR_CLIENTE = 5
-"""Tope de contratos simultáneos por cliente. Permite tener distintos
-contratos (mantención principal + anexos + adendas) sin saturar la ficha.
-Si necesitas más para un cliente puntual, cambiá este número o eliminá
-contratos viejos del cliente desde la UI."""
-
-
 def mant_contrato_subir(cid):
     """Sube un contrato PDF/DOC al cliente.
 

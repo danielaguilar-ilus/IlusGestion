@@ -970,15 +970,15 @@
       {% set _preserve_args = {} %}
       {% if request.args.get('bulto') %}{% set _ = _preserve_args.update({'bulto': request.args.get('bulto')}) %}{% endif %}
       {% for b in bultos %}{% set _ = _preserve_args.update({'qty_' ~ b.bulto_num: qty_per_bulto[b.bulto_num]}) %}{% endfor %}
-      <a class="radio-link {% if format_key == '150x100' %}is-active{% endif %}"
-         href="{{ url_for('print_labels_alt', pid=product.id, fmt='150x100', **_preserve_args) }}">
+      <a class="radio-link {% if format_key in ('100x150', '150x100') %}is-active{% endif %}"
+         href="{{ url_for('print_labels_alt', pid=product.id, fmt='100x150', **_preserve_args) }}">
         <span class="radio-dot"></span>
-        <span><strong>150 x 100 mm</strong><br><small>Etiqueta grande</small></span>
+        <span><strong>100 × 150 mm</strong><br><small>Etiqueta grande</small></span>
       </a>
       <a class="radio-link {% if format_key == '100x50' %}is-active{% endif %}"
          href="{{ url_for('print_labels_alt', pid=product.id, fmt='100x50', **_preserve_args) }}">
         <span class="radio-dot"></span>
-        <span><strong>100 x 50 mm</strong><br><small>Etiqueta pequena</small></span>
+        <span><strong>100 × 50 mm</strong><br><small>Etiqueta pequena</small></span>
       </a>
       {% if request.args.get('bulto') %}
       <div style="margin-top:10px;padding:8px 12px;background:#fff6f6;border:1px solid #f4c2c2;border-radius:6px;font-size:.74rem;color:#7f1d1d;display:flex;align-items:center;justify-content:space-between;gap:8px">
