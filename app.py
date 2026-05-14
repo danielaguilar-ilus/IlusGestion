@@ -14825,6 +14825,244 @@ def init_mantenciones_tables():
                 print(f"[plantillas-seed] no se aplicó seed: {_e_seed}", flush=True)
 
             # ════════════════════════════════════════════════════════════
+            # FASE 2 — SEEDS DEL JSON REAL del usuario (ILUS Fitness)
+            # Plantillas profesionales construidas con las subtareas reales
+            # que el usuario operativiza en terreno. Cada una mapea cada
+            # subtarea al tipo de respuesta más apropiado del modelo Fracttal.
+            #
+            # IDEMPOTENTE: cada plantilla se chequea por nombre antes de
+            # crearse. Esto permite agregar plantillas nuevas en el futuro
+            # sin recrear las existentes ni perder ediciones del usuario.
+            #
+            # Estructura tupla item:
+            #   (orden, titulo, descripcion, tipo_respuesta, obligatoria,
+            #    requiere_foto, unidad, rango_min, rango_max, opciones_json)
+            # ════════════════════════════════════════════════════════════
+            try:
+                _seeds_fase2 = [
+                    # ─── 1) Mantención preventiva COMPLETA ──────────────────────
+                    # familia_checklist='preventiva', familia_activo='todas'
+                    # Modelo del JSON real del usuario: 24 items consolidados
+                    # (eliminados duplicados Marca/Marca del equipo, etc.)
+                    {
+                        "nombre": "Mantención preventiva — Checklist completo ILUS",
+                        "tipo_visita": "preventiva",
+                        "familia_checklist": "preventiva",
+                        "familia_activo": "todas",
+                        "descripcion": "Checklist completo de mantención preventiva con datos del equipo, "
+                                       "revisión técnica, lubricación, mediciones y diagnóstico final. "
+                                       "Aplica a todas las familias de equipo fitness.",
+                        "tiempo_estimado_min": 60,
+                        "items": [
+                            (1,  "Descripción del equipo",                    "Tipo/nombre del equipo intervenido", "texto",       1, 0, None, None, None, None),
+                            (2,  "Marca del equipo",                          "",                                   "texto",       1, 0, None, None, None, None),
+                            (3,  "Modelo del equipo",                         "",                                   "texto",       1, 0, None, None, None, None),
+                            (4,  "Número de serie",                           "",                                   "texto",       1, 0, None, None, None, None),
+                            (5,  "Foto general del equipo",                   "",                                   "foto",        1, 1, None, None, None, None),
+                            (6,  "Limpieza general",                          "",                                   "check",       1, 0, None, None, None, None),
+                            (7,  "Chequeo y apriete de pernos",               "",                                   "check",       1, 0, None, None, None, None),
+                            (8,  "Chequeo de piolas/cables",                  "Tensión, desgaste, integridad",      "verificacion",1, 0, None, None, None, None),
+                            (9,  "Chequeo de componentes eléctricos",         "",                                   "verificacion",1, 0, None, None, None, None),
+                            (10, "Mediciones eléctricas",                     "Amperaje / Voltaje / Tensión",       "texto",       0, 1, None, None, None, None),
+                            (11, "Chequeo general de correas",                "",                                   "check",       1, 0, None, None, None, None),
+                            (12, "Chequeo de cinta de correr (ajustar tensión)","Si aplica (trotadoras)",           "check",       0, 0, None, None, None, None),
+                            (13, "Chequeo general de rodamientos",            "",                                   "check",       1, 0, None, None, None, None),
+                            (14, "Chequeo general de poleas",                 "",                                   "check",       1, 0, None, None, None, None),
+                            (15, "Chequeo general de rodillos",               "",                                   "check",       0, 0, None, None, None, None),
+                            (16, "Estado de pintura y tapiz",                 "",                                   "verificacion",1, 0, None, None, None, None),
+                            (17, "Lubricación y engrase",                     "",                                   "check",       1, 1, None, None, None, None),
+                            (18, "Prueba de funcionamiento",                  "",                                   "verificacion",1, 0, None, None, None, None),
+                            (19, "Registrar ubicación de ejecución",          "Coordenadas GPS del sitio",          "gps",         0, 0, None, None, None, None),
+                            (20, "Observaciones generales",                   "",                                   "texto",       0, 0, None, None, None, None),
+                            (21, "Descripción de la falla (si aplica)",       "Solo si se encontró falla",          "texto",       0, 0, None, None, None, None),
+                            (22, "Motivo / causa de la falla",                "",                                   "texto",       0, 0, None, None, None, None),
+                            (23, "¿Qué se hizo para solucionar?",             "",                                   "texto",       0, 0, None, None, None, None),
+                            (24, "¿Equipo quedó operativo?",                  "",                                   "sino",        1, 0, None, None, None, None),
+                            (25, "Foto del equipo finalizado",                "",                                   "foto",        1, 1, None, None, None, None),
+                        ],
+                    },
+                    # ─── 2) Desinstalación y embalaje ──────────────────────
+                    {
+                        "nombre": "Desinstalación y embalaje",
+                        "tipo_visita": "otro",
+                        "familia_checklist": "desinstalacion",
+                        "familia_activo": "todas",
+                        "descripcion": "Checklist para desinstalar y embalar correctamente un equipo antes de su traslado o retiro.",
+                        "tiempo_estimado_min": 45,
+                        "items": [
+                            (1, "Revisión completa del equipo",                 "Prueba de funcionamiento antes de desinstalar", "verificacion", 1, 0, None, None, None, None),
+                            (2, "¿El equipo se encuentra en buenas condiciones?", "",                                            "sino",         1, 0, None, None, None, None),
+                            (3, "Foto del equipo antes del desarme",            "",                                              "foto",         1, 1, None, None, None, None),
+                            (4, "¿Se hizo el correcto desarme del equipo?",     "",                                              "sino",         1, 0, None, None, None, None),
+                            (5, "Foto del equipo desarmado",                    "",                                              "foto",         1, 1, None, None, None, None),
+                            (6, "¿Trae todas sus protecciones de embalaje?",    "",                                              "sino",         1, 0, None, None, None, None),
+                            (7, "¿Se embaló el equipo correctamente?",          "",                                              "sino",         1, 0, None, None, None, None),
+                            (8, "Foto del equipo embalado",                     "",                                              "foto",         1, 1, None, None, None, None),
+                            (9, "Observaciones",                                "",                                              "texto",        0, 0, None, None, None, None),
+                        ],
+                    },
+                    # ─── 3) Servicio técnico / Correctivo ─────────────────
+                    {
+                        "nombre": "Servicio técnico / Correctivo — Checklist completo",
+                        "tipo_visita": "correctiva",
+                        "familia_checklist": "correctivo",
+                        "familia_activo": "todas",
+                        "descripcion": "Checklist de diagnóstico y reparación correctiva. Documenta causa raíz, "
+                                       "intervención y estado final del equipo.",
+                        "tiempo_estimado_min": 90,
+                        "items": [
+                            (1,  "Descripción del equipo",              "Tipo/nombre",                                   "texto",        1, 0, None, None, None, None),
+                            (2,  "Marca",                               "",                                              "texto",        1, 0, None, None, None, None),
+                            (3,  "Modelo",                              "",                                              "texto",        1, 0, None, None, None, None),
+                            (4,  "Número de serie",                     "",                                              "texto",        1, 0, None, None, None, None),
+                            (5,  "Foto general del equipo (4 lados)",   "",                                              "foto",         1, 1, None, None, None, None),
+                            (6,  "Descripción de la falla declarada",   "Lo que dice el cliente",                        "texto",        1, 0, None, None, None, None),
+                            (7,  "Causa raíz de la falla",              "Diagnóstico técnico",                           "texto",        1, 0, None, None, None, None),
+                            (8,  "¿Tiene reparación?",                  "",                                              "sino",         1, 0, None, None, None, None),
+                            (9,  "Si NO tiene reparación, ¿por qué?",   "",                                              "texto",        0, 0, None, None, None, None),
+                            (10, "¿Qué se requiere para reparar?",      "Repuestos, mano de obra, herramientas",         "texto",        0, 0, None, None, None, None),
+                            (11, "¿Qué se hizo para solucionar?",       "Detalle de la intervención",                    "texto",        1, 0, None, None, None, None),
+                            (12, "Tipo de cierre del caso",             "Estado del equipo tras la intervención",        "lista",        1, 0, None, None, None,
+                                 '["Operativo", "Operativo con observaciones", "No operativo", "Requiere repuesto", "Liquidación / desecho"]'),
+                            (13, "¿Equipo quedó operativo?",            "",                                              "sino",         1, 0, None, None, None, None),
+                            (14, "Foto del trabajo finalizado",         "",                                              "foto",         1, 1, None, None, None, None),
+                            (15, "Hora de término del trabajo",         "",                                              "fecha_hora",   0, 0, None, None, None, None),
+                            (16, "Observaciones generales",             "",                                              "texto",        0, 0, None, None, None, None),
+                        ],
+                    },
+                    # ─── 4) Registro de productos ─────────────────────────
+                    {
+                        "nombre": "Registro de productos entregados",
+                        "tipo_visita": "otro",
+                        "familia_checklist": "registro_productos",
+                        "familia_activo": "todas",
+                        "descripcion": "Lista de productos entregados o intervenidos en la visita. "
+                                       "Hasta 10 productos con descripción libre.",
+                        "tiempo_estimado_min": 15,
+                        "items": [
+                            (1,  "Producto 1",  "SKU, descripción y cantidad",       "texto", 1, 0, None, None, None, None),
+                            (2,  "Producto 2",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (3,  "Producto 3",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (4,  "Producto 4",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (5,  "Producto 5",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (6,  "Producto 6",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (7,  "Producto 7",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (8,  "Producto 8",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (9,  "Producto 9",  "",                                  "texto", 0, 0, None, None, None, None),
+                            (10, "Producto 10", "",                                  "texto", 0, 0, None, None, None, None),
+                            (11, "Foto de la guía de entrega firmada",  "",          "foto",  1, 1, None, None, None, None),
+                            (12, "Nombre de quien recibe",              "",          "texto", 1, 0, None, None, None, None),
+                            (13, "Teléfono de quien recibe",            "",          "texto", 1, 0, None, None, None, None),
+                            (14, "Email del cliente",                   "Para enviar informe", "texto", 0, 0, None, None, None, None),
+                        ],
+                    },
+                    # ─── 5) Rendiciones y gastos ──────────────────────────
+                    {
+                        "nombre": "Rendición de gastos",
+                        "tipo_visita": "otro",
+                        "familia_checklist": "rendiciones",
+                        "familia_activo": "todas",
+                        "descripcion": "Registro de gastos asociados a la visita "
+                                       "(peajes, estacionamiento, materiales, otros).",
+                        "tiempo_estimado_min": 10,
+                        "items": [
+                            (1, "Tipo de documento",    "", "lista",   1, 0, None, None, None,
+                                '["Boleta", "Factura", "Vale", "Recibo", "Otro"]'),
+                            (2, "Número de documento",  "", "texto",   1, 0, None, None, None, None),
+                            (3, "Monto gastado",        "Pesos chilenos", "numero", 1, 0, "CLP", "0", None, None),
+                            (4, "Motivo del gasto",     "", "texto",   1, 0, None, None, None, None),
+                            (5, "Foto del documento",   "Comprobante legible", "foto", 1, 1, None, None, None, None),
+                        ],
+                    },
+                    # ─── 6) Instalación de equipos — completa ────────────
+                    # Versión completa del JSON. Sustituye conceptualmente a
+                    # "Instalación nueva" (que sigue existiendo como plantilla
+                    # simple, no se borra). Esta nueva tiene 30+ items para
+                    # casos profesionales que cubren todas las familias.
+                    {
+                        "nombre": "Instalación de equipos — Checklist completo ILUS",
+                        "tipo_visita": "instalacion",
+                        "familia_checklist": "instalacion",
+                        "familia_activo": "todas",
+                        "descripcion": "Checklist completo de instalación que cubre nivelación, apriete, "
+                                       "lubricación, mediciones eléctricas, pruebas y documentación de entrega. "
+                                       "Aplica a Cardio, Selectorizado, Trotadoras, Bicicletas y Racks.",
+                        "tiempo_estimado_min": 120,
+                        "items": [
+                            (1,  "Registrar ubicación de ejecución (GPS)",     "",                                          "gps",         0, 0, None, None, None, None),
+                            (2,  "Foto del lugar antes de la instalación",    "",                                          "foto",        1, 1, None, None, None, None),
+                            (3,  "Carga segura del equipo descargado",        "",                                          "sino",        1, 0, None, None, None, None),
+                            (4,  "Verificar nivelación del lugar",            "",                                          "verificacion",1, 0, None, None, None, None),
+                            (5,  "Correcto encaje de uniones (si aplica)",    "Racks, módulos, plataformas",              "check",       0, 0, None, None, None, None),
+                            (6,  "Cantidad de pisos a instalar",              "Solo si aplica",                            "numero",      0, 0, "u",   "1", "10", None),
+                            (7,  "Chequeo y apriete de pernos",               "",                                          "check",       1, 0, None, None, None, None),
+                            (8,  "Apriete de terminales eléctricos",          "Si aplica",                                 "check",       0, 0, None, None, None, None),
+                            (9,  "Lubricación de partes móviles",             "",                                          "check",       1, 1, None, None, None, None),
+                            (10, "Nivelación del equipo",                     "",                                          "verificacion",1, 0, None, None, None, None),
+                            (11, "Estado de pintura y tapices",               "",                                          "verificacion",1, 0, None, None, None, None),
+                            (12, "Verificación de manilla de tensión",        "Solo si aplica (selectorizado)",            "check",       0, 0, None, None, None, None),
+                            (13, "Verificación de monitor",                   "Solo cardio: encendido, lectura correcta",  "check",       0, 0, None, None, None, None),
+                            (14, "Verificación de perillas",                  "Solo bicicletas / spinning",                "check",       0, 0, None, None, None, None),
+                            (15, "Calibración del equipo",                    "Si aplica",                                 "check",       0, 0, None, None, None, None),
+                            (16, "Chequeo y centralización de correa motor",  "Solo trotadoras",                           "check",       0, 0, None, None, None, None),
+                            (17, "Tensión correcta de cinta de correr",       "Solo trotadoras",                           "check",       0, 0, None, None, None, None),
+                            (18, "Lubricación de cinta de correr",            "Solo trotadoras",                           "check",       0, 1, None, None, None, None),
+                            (19, "Medición voltaje (V)",                      "Multímetro / pinza amperimétrica",         "numero",      0, 1, "V",   "200", "250", None),
+                            (20, "Medición amperaje (A)",                     "Con equipo en marcha",                      "numero",      0, 1, "A",   "0",   "30",  None),
+                            (21, "Verificación de botoneras analógicas/touch","",                                          "check",       0, 0, None, None, None, None),
+                            (22, "Prueba motor de inclinación (máx/mín)",     "Solo si el equipo tiene inclinación",       "check",       0, 0, None, None, None, None),
+                            (23, "¿Cómo es la sensación al traccionar?",      "Selectorizado / poleas",                    "lista",       0, 0, None, None, None,
+                                 '["Suave", "Normal", "Áspera", "Bloquea"]'),
+                            (24, "Ruta correcta del cable por poleas",        "Solo selectorizado / carga libre",          "sino",        0, 0, None, None, None, None),
+                            (25, "Pruebas finales de funcionamiento",         "",                                          "verificacion",1, 0, None, None, None, None),
+                            (26, "Capacitación al cliente",                   "Uso correcto + mantención básica",          "check",       1, 0, None, None, None, None),
+                            (27, "Fotos del equipo desde 4 lados",            "",                                          "foto",        1, 1, None, None, None, None),
+                            (28, "Foto del sticker / placa de serie",         "",                                          "foto",        1, 1, None, None, None, None),
+                            (29, "Nombre de quien recibe el trabajo",         "",                                          "texto",       1, 0, None, None, None, None),
+                            (30, "Teléfono de quien recibe",                  "",                                          "texto",       1, 0, None, None, None, None),
+                            (31, "Email del cliente",                         "Para enviar informe",                       "texto",       0, 0, None, None, None, None),
+                            (32, "Foto de guía firmada",                      "",                                          "foto",        1, 1, None, None, None, None),
+                            (33, "Hora de término",                           "",                                          "fecha_hora",  0, 0, None, None, None, None),
+                            (34, "Observaciones generales",                   "",                                          "texto",       0, 0, None, None, None, None),
+                        ],
+                    },
+                ]
+
+                for seed in _seeds_fase2:
+                    # Idempotencia: chequear por nombre antes de crear
+                    cur.execute(
+                        "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1",
+                        (seed["nombre"],)
+                    )
+                    if cur.fetchone():
+                        continue  # Ya existe → no recrear (preserva ediciones del usuario)
+
+                    cur.execute(
+                        "INSERT INTO mant_tarea_plantillas "
+                        "(nombre, descripcion, tipo_visita, tiempo_estimado_min, "
+                        " familia_checklist, familia_activo, activa, es_sistema, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,1,1,'seed-fase2')",
+                        (seed["nombre"], seed["descripcion"], seed["tipo_visita"],
+                         seed.get("tiempo_estimado_min"),
+                         seed.get("familia_checklist", "otro"),
+                         seed.get("familia_activo", "todas"))
+                    )
+                    plant_id = cur.lastrowid
+                    for it in seed["items"]:
+                        (orden, titulo, desc_it, tipo_r, oblig, req_foto,
+                         unidad, rmin, rmax, opciones_json) = it
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantilla_items "
+                            "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                            " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (plant_id, orden, titulo, desc_it, tipo_r,
+                             oblig, req_foto, unidad, rmin, rmax, opciones_json)
+                        )
+            except Exception as _e_seed2:
+                print(f"[plantillas-seed-fase2] no se aplicó: {_e_seed2}", flush=True)
+
+            # ════════════════════════════════════════════════════════════
             # FOTOS DE LA VISITA / OT
             # Galería con clasificación: antes / durante / después / serie /
             # falla / reparación / general. Cada foto puede asociarse a una
