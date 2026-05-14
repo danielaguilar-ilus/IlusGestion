@@ -25620,14 +25620,22 @@ def mant_lev_crear_o_listar(cid):
                 numero_ot = f"LEV-{int(time.time())}"
 
             try:
+                # FASE 4 — OT espejo del levantamiento, con regla Fracttal:
+                # - tipo='levantamiento' (siempre)
+                # - modalidad_cobro='sin_costo' (regla: levantamiento NO genera cobro)
+                # - prioridad='media' por default
+                # El campo levantamiento_id permite navegar OT ↔ levantamiento.
                 cur.execute(
                     "INSERT INTO mant_visitas "
                     "(numero_ot, cliente_id, titulo, fecha_programada, tipo, estado, "
+                    " modalidad_cobro, prioridad, "
                     " descripcion, tecnico_id, levantamiento_id, created_by) "
-                    "VALUES (%s,%s,%s,CURDATE(),'levantamiento','programada',%s,%s,%s,%s)",
+                    "VALUES (%s,%s,%s,CURDATE(),'levantamiento','programada',"
+                    " 'sin_costo','media',%s,%s,%s,%s)",
                     (numero_ot, cid, f"[LEV] {titulo}"[:200],
                      f"OT auto-generada desde levantamiento #{lev_id}. "
-                     f"{n_items} equipo(s) a documentar fotográficamente.",
+                     f"{n_items} equipo(s) a documentar fotográficamente. "
+                     f"Sin costo (registro inicial del activo).",
                      tecnico_id, lev_id, current_username())
                 )
                 visita_id = cur.lastrowid
@@ -25635,15 +25643,18 @@ def mant_lev_crear_o_listar(cid):
                     "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
                     (visita_id, lev_id)
                 )
-                # 1 tarea por equipo
+                # 1 tarea TIPO FOTO por equipo, obligatoria y requiere foto
+                # (modelo Fracttal: cada item del checklist tiene tipo de respuesta).
                 for idx, m in enumerate(maquinas, 1):
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
-                        "(visita_id, orden, titulo, descripcion, maquina_id, created_by) "
-                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        "(visita_id, orden, titulo, descripcion, maquina_id, "
+                        " tipo, tipo_respuesta, obligatoria, requiere_foto, "
+                        " estado_trabajo, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,'pendiente',%s)",
                         (visita_id, idx,
                          f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
-                         "Capturar fotos + datos técnicos (marca/modelo/voltaje/serie)",
+                         "Capturar fotos generales del equipo + N° serie + placa + datos técnicos.",
                          m["id"], current_username() or 'sistema')
                     )
             except Exception as e_ot:
@@ -25733,8 +25744,15 @@ def mant_lev_detalle(lid):
 @app.route("/mantenciones/api/levantamientos/<int:lid>/items", methods=["POST"])
 @_mant_required
 def mant_lev_item_crear(lid):
-    """Agregar un equipo al levantamiento (puede ser una máquina existente o crear ad-hoc)."""
-    lev = mysql_fetchone("SELECT id, cliente_id, estado FROM mant_levantamientos WHERE id=%s", (lid,))
+    """Agregar un equipo al levantamiento (puede ser una máquina existente o crear ad-hoc).
+    FASE 4: si el levantamiento tiene OT espejo (visita_id), también se crea
+    automáticamente una tarea tipo='foto' en la OT para ese equipo, así el
+    técnico ve el nuevo equipo en su checklist sin pasos adicionales.
+    """
+    lev = mysql_fetchone(
+        "SELECT id, cliente_id, estado, visita_id FROM mant_levantamientos WHERE id=%s",
+        (lid,)
+    )
     if not lev:
         return jsonify({"ok": False, "error": "Levantamiento no encontrado"}), 404
     if lev["estado"] == "cerrado":
@@ -25778,6 +25796,38 @@ def mant_lev_item_crear(lid):
                 "WHERE id=%s",
                 (lid, lid)
             )
+            # FASE 4: sincronizar con la OT espejo (si existe).
+            # Crear una tarea tipo='foto' por el nuevo equipo si:
+            #   - hay OT espejo (visita_id)
+            #   - hay maquina_id (no ad-hoc sin equipo identificado)
+            #   - no existe ya una tarea para esa máquina en la OT
+            if lev.get("visita_id") and maquina_id:
+                cur.execute(
+                    "SELECT id FROM mant_visita_tareas "
+                    "WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+                    (lev["visita_id"], maquina_id)
+                )
+                ya_existe = cur.fetchone()
+                if not ya_existe:
+                    # Calcular siguiente `orden`
+                    cur.execute(
+                        "SELECT COALESCE(MAX(orden),0)+1 AS o FROM mant_visita_tareas "
+                        "WHERE visita_id=%s",
+                        (lev["visita_id"],)
+                    )
+                    next_orden = (cur.fetchone() or {}).get("o", 1)
+                    cur.execute(
+                        "INSERT INTO mant_visita_tareas "
+                        "(visita_id, orden, titulo, descripcion, maquina_id, "
+                        " tipo, tipo_respuesta, obligatoria, requiere_foto, "
+                        " estado_trabajo, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,"
+                        " 'pendiente',%s)",
+                        (lev["visita_id"], next_orden,
+                         f"📷 Documentar: {snap['nombre'][:240]}",
+                         "Capturar fotos generales + N° serie + placa + datos técnicos.",
+                         maquina_id, current_username() or 'sistema')
+                    )
         conn.commit()
         return jsonify({"ok": True, "id": iid})
     except Exception as e:
@@ -25975,21 +26025,39 @@ def mant_lev_foto_del(fid):
 @app.route("/mantenciones/api/levantamientos/<int:lid>/cerrar", methods=["POST"])
 @_mant_required
 def mant_lev_cerrar(lid):
-    """Cierra el levantamiento — queda inmutable. Genera eventos timeline."""
+    """Cierra el levantamiento + la OT espejo de forma auditable (Fase 4).
+
+    Acciones al cerrar:
+    1. Levantamiento → estado='cerrado', fecha_cierre, closed_by.
+    2. Por cada item con máquina → evento en timeline del equipo.
+    3. OT espejo (si existe):
+       a. Vincula las fotos del levantamiento (mant_maquina_fotos donde
+          levantamiento_id = lid) como evidencia de la OT (mant_visita_fotos
+          con tipo='levantamiento'), marcando la tarea correspondiente.
+       b. Marca cada tarea de la OT como completada (estado_trabajo='completada')
+          y guarda observaciones desde el item del levantamiento.
+       c. OT pasa a estado='cerrada' (no solo 'completada' — es el estado
+          auditable final del modelo Fracttal).
+       d. diagnostico auto-generado con resumen del levantamiento.
+       e. cerrada_por = usuario actual, cerrada_at = NOW().
+    """
     lev = mysql_fetchone("SELECT * FROM mant_levantamientos WHERE id=%s", (lid,))
     if not lev:
         return jsonify({"ok": False, "error": "No encontrado"}), 404
     if lev["estado"] == "cerrado":
         return jsonify({"ok": False, "error": "Ya estaba cerrado"}), 400
 
+    user = current_username() or 'sistema'
     mysql_execute(
         "UPDATE mant_levantamientos SET estado='cerrado', fecha_cierre=NOW(), closed_by=%s "
         "WHERE id=%s",
-        (current_username() or 'sistema', lid)
+        (user, lid)
     )
     # Registrar evento por cada equipo levantado
     items = mysql_fetchall(
-        "SELECT id, maquina_id, n_fotos, estado_capturado FROM mant_levantamiento_items "
+        "SELECT id, maquina_id, n_fotos, estado_capturado, nombre_snap, "
+        "       ubicacion, observaciones "
+        "FROM mant_levantamiento_items "
         "WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
         (lid,)
     ) or []
@@ -26002,30 +26070,125 @@ def mant_lev_cerrar(lid):
             {"estado": it.get("estado_capturado"), "n_fotos": it.get("n_fotos", 0)}
         )
 
-    # Si tiene OT espejo, cerrarla también
+    fotos_vinculadas = 0
+    tareas_cerradas = 0
+    # Si tiene OT espejo: cierre auditable completo
     if lev.get("visita_id"):
+        vid = lev["visita_id"]
         try:
-            mysql_execute(
-                "UPDATE mant_visitas SET estado='completada', fecha_realizada=NOW() "
-                "WHERE id=%s AND estado IN ('programada','en_curso')",
-                (lev["visita_id"],)
-            )
-            # Marcar todas las tareas como completadas
-            mysql_execute(
-                "UPDATE mant_visita_tareas SET completada=1, fecha_completada=NOW() "
-                "WHERE visita_id=%s AND completada=0",
-                (lev["visita_id"],)
-            )
+            # 3.a — Vincular fotos del levantamiento como evidencia de la OT.
+            # Fuente: mant_levantamiento_fotos (tabla específica del levantamiento,
+            # tiene item_id que mapea directo a la máquina vía mant_levantamiento_items).
+            # Se replican como filas en mant_visita_fotos apuntando a la tarea
+            # correspondiente y manteniendo el cloudinary_url (sin re-uploadear).
+            fotos_lev = mysql_fetchall(
+                "SELECT lf.id, lf.maquina_id, lf.cloudinary_url, lf.descripcion, "
+                "       lf.tomada_por, lf.tipo_foto "
+                "FROM mant_levantamiento_fotos lf "
+                "WHERE lf.levantamiento_id=%s",
+                (lid,)
+            ) or []
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    # Mapeo maquina_id → tarea_id de la OT espejo
+                    cur.execute(
+                        "SELECT id, maquina_id FROM mant_visita_tareas "
+                        "WHERE visita_id=%s AND maquina_id IS NOT NULL",
+                        (vid,)
+                    )
+                    tareas_oot = cur.fetchall() or []
+                    map_mq_tarea = {t["maquina_id"]: t["id"] for t in tareas_oot}
+
+                    for f in fotos_lev:
+                        # Saltar si ya existe la vinculación (evita duplicados al
+                        # cerrar idempotente).
+                        cloudinary_url = f.get("cloudinary_url") or ""
+                        if not cloudinary_url:
+                            continue
+                        cur.execute(
+                            "SELECT id FROM mant_visita_fotos "
+                            "WHERE visita_id=%s "
+                            "  AND COALESCE(cloudinary_url,'')=%s "
+                            "LIMIT 1",
+                            (vid, cloudinary_url)
+                        )
+                        if cur.fetchone():
+                            continue
+                        tid_mq = map_mq_tarea.get(f.get("maquina_id"))
+                        # mant_visita_fotos.archivo_path es NOT NULL, así que
+                        # le pasamos el cloudinary_url como path también (ambas
+                        # apuntan al mismo recurso persistente).
+                        cur.execute(
+                            "INSERT INTO mant_visita_fotos "
+                            "(visita_id, tarea_id, maquina_id, archivo_path, "
+                            " cloudinary_url, tipo_foto, descripcion, tomada_por) "
+                            "VALUES (%s,%s,%s,%s,%s,'levantamiento',%s,%s)",
+                            (vid, tid_mq, f.get("maquina_id"),
+                             cloudinary_url,  # archivo_path = url para compat
+                             cloudinary_url,
+                             (f.get("descripcion") or '')[:500],
+                             (f.get("tomada_por") or user)[:190])
+                        )
+                        fotos_vinculadas += 1
+
+                    # 3.b — Marcar tareas como completadas con observación del item
+                    for it in items:
+                        tid_mq = map_mq_tarea.get(it["maquina_id"])
+                        if not tid_mq:
+                            continue
+                        obs = (it.get("observaciones") or "").strip()
+                        ubic = (it.get("ubicacion") or "").strip()
+                        est = _lev_estado_label(it.get("estado_capturado"))
+                        observ_final = f"Estado capturado: {est}"
+                        if ubic: observ_final += f" · Ubicación: {ubic}"
+                        if obs: observ_final += f" · {obs[:300]}"
+                        cur.execute(
+                            "UPDATE mant_visita_tareas SET "
+                            "  completada=1, completada_at=NOW(), completada_por=%s, "
+                            "  estado_trabajo='completada', "
+                            "  observaciones=%s "
+                            "WHERE id=%s",
+                            (user, observ_final[:1000], tid_mq)
+                        )
+                        tareas_cerradas += 1
+
+                    # 3.c, 3.d, 3.e — Cerrar OT auditable
+                    diagnostico_auto = (
+                        f"Levantamiento fotográfico #{lid} cerrado el "
+                        f"{_now_chile_str('%d/%m/%Y %H:%M')}. "
+                        f"{len(items)} equipo(s) documentado(s) · "
+                        f"{lev.get('total_fotos',0)} foto(s) capturadas · "
+                        f"{fotos_vinculadas} foto(s) vinculadas a esta OT."
+                    )
+                    cur.execute(
+                        "UPDATE mant_visitas SET "
+                        "  estado='cerrada', "
+                        "  fecha_realizada=COALESCE(fecha_realizada, CURDATE()), "
+                        "  hora_real_fin=COALESCE(hora_real_fin, NOW()), "
+                        "  cerrada_at=COALESCE(cerrada_at, NOW()), "
+                        "  cerrada_por=%s, "
+                        "  diagnostico=COALESCE(NULLIF(diagnostico,''), %s) "
+                        "WHERE id=%s",
+                        (user, diagnostico_auto, vid)
+                    )
+                conn.commit()
+            finally:
+                conn.close()
         except Exception as e_ot:
-            print(f"[lev_cerrar] no se cerró la OT espejo: {e_ot}", flush=True)
+            print(f"[lev_cerrar] error procesando OT espejo: {e_ot}", flush=True)
 
     try: _mant_log("levantamiento", lid, "cerrado",
-                   f"{len(items)} equipo(s) · {lev.get('total_fotos',0)} foto(s)")
+                   f"{len(items)} equipo(s) · {lev.get('total_fotos',0)} foto(s) · "
+                   f"{fotos_vinculadas} vinculadas a OT · {tareas_cerradas} tareas cerradas")
     except Exception: pass
     return jsonify({
         "ok": True,
         "items_procesados": len(items),
         "visita_cerrada": bool(lev.get("visita_id")),
+        "visita_id": lev.get("visita_id"),
+        "fotos_vinculadas_a_ot": fotos_vinculadas,
+        "tareas_cerradas": tareas_cerradas,
     })
 
 
