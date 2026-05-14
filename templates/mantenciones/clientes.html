@@ -194,12 +194,208 @@
     <h4><i class="bi bi-building-check me-2"></i>Clientes de Mantención</h4>
     <div class="mod-sub">Gestión inteligente de contratos, equipos y visitas programadas</div>
   </div>
-  <div class="d-flex gap-2 align-items-center">
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    {# Recuperación: muestra fichas que están como inactivo/suspendido/prospecto
+       y permite restaurarlas al estado activo. Útil si alguien marcó por error
+       un cliente y desapareció del listado. #}
+    <button type="button" class="btn btn-outline-light fw-semibold px-3"
+            style="border-color:rgba(255,255,255,.3);color:#fff"
+            onclick="abrirFichasOcultas()"
+            title="Ver clientes que están inactivos / suspendidos / prospecto y restaurarlos">
+      <i class="bi bi-archive me-1"></i>Fichas ocultas
+    </button>
     <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
       <i class="bi bi-building-add me-1"></i>Nuevo cliente
     </a>
   </div>
 </div>
+
+{# ══════════════════════════════════════════════════════════════════
+   MODAL: FICHAS OCULTAS — buscador y restaurador de clientes
+   ══════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalFichasOcultas" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-archive me-2"></i>Fichas ocultas — clientes no visibles en el listado
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-3">
+          <i class="bi bi-info-circle me-1"></i>
+          Aquí aparecen los clientes con estado <strong>inactivo</strong>, <strong>suspendido</strong>
+          o <strong>prospecto</strong> — están en la base de datos pero ocultos del listado principal
+          (que solo muestra "activo"). Usa el botón <strong>Restaurar</strong> para volverlos al listado.
+        </div>
+        <div class="d-flex gap-2 mb-3 align-items-end flex-wrap">
+          <div style="flex:1;min-width:240px">
+            <label class="form-label small fw-semibold mb-1">Buscar por nombre, RUT, email, giro o comuna</label>
+            <input type="text" id="fichasOcultasQuery" class="form-control form-control-sm"
+                   placeholder="Ej: sport francés, lycée, club, 76.123.456-7…"
+                   oninput="buscarFichasOcultasDebounced()">
+          </div>
+          <div class="form-check mb-1">
+            <input type="checkbox" class="form-check-input" id="incluirActivos"
+                   onchange="buscarFichasOcultas()">
+            <label class="form-check-label small" for="incluirActivos">
+              Incluir activos en la búsqueda
+            </label>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" onclick="buscarFichasOcultas()" title="Refrescar">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+        <div id="fichasOcultasResultado">
+          <div class="text-center text-muted py-5">
+            <i class="bi bi-search" style="font-size:2.5rem;opacity:.25"></i>
+            <div class="fw-semibold mt-2">Escribe para buscar</div>
+            <div class="small mt-1">O dale a refrescar para ver TODOS los inactivos/suspendidos</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+// FICHAS OCULTAS — buscador + restaurador de clientes no-activos
+// ════════════════════════════════════════════════════════════════
+let _modalFichasOcultas = null;
+let _fichasOcultasTimer = null;
+
+function abrirFichasOcultas(){
+  if (!_modalFichasOcultas) _modalFichasOcultas = new bootstrap.Modal(document.getElementById('modalFichasOcultas'));
+  _modalFichasOcultas.show();
+  // Auto-cargar todos los inactivos al abrir
+  document.getElementById('fichasOcultasQuery').value = '';
+  buscarFichasOcultas();
+}
+
+function buscarFichasOcultasDebounced(){
+  clearTimeout(_fichasOcultasTimer);
+  _fichasOcultasTimer = setTimeout(buscarFichasOcultas, 250);
+}
+
+async function buscarFichasOcultas(){
+  const q = (document.getElementById('fichasOcultasQuery').value || '').trim();
+  const incluirActivos = document.getElementById('incluirActivos').checked ? '1' : '0';
+  const cont = document.getElementById('fichasOcultasResultado');
+  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
+  try {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (incluirActivos === '1') params.set('incluir_activos', '1');
+    const r = await fetch('/mantenciones/api/clientes/buscar-todos?' + params.toString());
+    const d = await r.json();
+    if (!d.ok || !d.clientes || !d.clientes.length){
+      cont.innerHTML = `
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-emoji-frown" style="font-size:2.5rem;opacity:.25"></i>
+          <div class="fw-semibold mt-2">Sin resultados</div>
+          <div class="small mt-1">Prueba con otro término o activa "Incluir activos"</div>
+        </div>`;
+      return;
+    }
+    const estadoBadge = {
+      'activo':     '<span class="badge bg-success">Activo</span>',
+      'inactivo':   '<span class="badge bg-secondary">Inactivo</span>',
+      'suspendido': '<span class="badge bg-warning text-dark">Suspendido</span>',
+      'prospecto':  '<span class="badge bg-info text-dark">Prospecto</span>',
+    };
+    let html = `
+      <div class="alert alert-warning py-2 small mb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        Encontradas <strong>${d.clientes.length}</strong> ficha(s) que coinciden.
+        Verifica si es la que buscas (revisa máquinas/contratos/visitas) y pulsa <strong>Restaurar</strong>.
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle" style="font-size:.85rem">
+          <thead style="background:#f9fafb">
+            <tr>
+              <th>Razón social</th><th>RUT</th><th>Estado</th>
+              <th title="Cantidad de equipos asociados">Eq.</th>
+              <th title="Cantidad de contratos">Ctr.</th>
+              <th title="Cantidad de visitas/OT">Vis.</th>
+              <th>Último cambio</th>
+              <th class="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>`;
+    d.clientes.forEach(c => {
+      const esActivo = c.estado === 'activo';
+      const lastChange = c.updated_at || c.created_at || '—';
+      const lastBy     = c.updated_by || c.created_by || '';
+      html += `
+        <tr>
+          <td>
+            <div class="fw-bold">${escapeHtml(c.razon_social)}</div>
+            ${c.giro ? '<div class="small text-muted">'+escapeHtml(c.giro)+'</div>' : ''}
+            ${c.comuna ? '<div class="small text-muted"><i class="bi bi-geo-alt me-1"></i>'+escapeHtml(c.comuna)+'</div>' : ''}
+          </td>
+          <td class="font-monospace small">${escapeHtml(c.rut)}</td>
+          <td>${estadoBadge[c.estado] || '<span class="badge bg-light text-dark">'+escapeHtml(c.estado)+'</span>'}</td>
+          <td class="text-center"><span class="badge bg-light text-dark">${c.maquinas_count}</span></td>
+          <td class="text-center"><span class="badge bg-light text-dark">${c.contratos_count}</span></td>
+          <td class="text-center"><span class="badge bg-light text-dark">${c.visitas_count}</span></td>
+          <td class="small text-muted" style="white-space:nowrap">
+            ${escapeHtml(lastChange)}
+            ${lastBy ? '<br><span style="font-size:.7rem">por '+escapeHtml(lastBy)+'</span>' : ''}
+          </td>
+          <td class="text-end" style="white-space:nowrap">
+            <a href="${c.url_ficha}" target="_blank" class="btn btn-xs btn-outline-primary" title="Abrir ficha">
+              <i class="bi bi-eye"></i>
+            </a>
+            ${esActivo
+              ? '<span class="ms-1 small text-muted">ya activo</span>'
+              : `<button class="btn btn-xs btn-success fw-bold ms-1" onclick="restaurarCliente(${c.id}, this)">
+                   <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar
+                 </button>`}
+          </td>
+        </tr>`;
+    });
+    html += '</tbody></table></div>';
+    cont.innerHTML = html;
+  } catch (e) {
+    cont.innerHTML = `<div class="alert alert-danger small">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function escapeHtml(s){
+  return String(s || '').replace(/[&<>"']/g, function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+
+async function restaurarCliente(cid, btn){
+  if (!confirm('¿Restaurar este cliente al estado ACTIVO?\n\nVolverá a aparecer en el listado principal.')) return;
+  btn.disabled = true;
+  const txt = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Restaurando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${cid}/restaurar`, {method:'POST'});
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      else alert('Error: ' + (d.error||'desconocido'));
+      btn.disabled = false;
+      btn.innerHTML = txt;
+      return;
+    }
+    if (typeof ilusToast === 'function') ilusToast(d.mensaje || 'Cliente restaurado', {type:'success'});
+    else alert(d.mensaje || 'Cliente restaurado');
+    // Refrescar la búsqueda y la página principal
+    buscarFichasOcultas();
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = txt;
+    alert('Error de red: ' + e.message);
+  }
+}
+</script>
 
 {# ── BANNER DE HUÉRFANOS — solo si superadmin y hay datos sin cliente padre ── #}
 {% if orphans_detected and orphans_detected.total > 0 %}

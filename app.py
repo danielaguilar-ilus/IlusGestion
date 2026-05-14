@@ -15422,11 +15422,18 @@ def mant_clientes():
     vista        = request.args.get("vista", "grid")
 
     where, params = ["1=1"], []
-    if estado:
+    # 'all' = NO filtrar por estado (incluye inactivos/suspendidos/prospectos).
+    # Caso de uso: vista "Clientes ocultos" para recuperar fichas perdidas.
+    if estado and estado != "all":
         where.append("c.estado=%s"); params.append(estado)
     if q:
-        where.append("(c.razon_social LIKE %s OR c.rut LIKE %s OR c.contacto_email LIKE %s)")
-        qp = f"%{q}%"; params += [qp, qp, qp]
+        # Búsqueda fuzzy: razón social, RUT, email + giro + comuna para casos como
+        # "sport francés" → busca por palabra clave en cualquiera de esos campos.
+        where.append(
+            "(c.razon_social LIKE %s OR c.rut LIKE %s OR c.contacto_email LIKE %s "
+            " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
+        )
+        qp = f"%{q}%"; params += [qp, qp, qp, qp, qp, qp]
     wstr = " AND ".join(where)
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
@@ -16611,10 +16618,159 @@ def mant_cliente_update(cid):
             cur.execute(f"UPDATE mant_clientes SET {','.join(sets)} WHERE id=%s",
                         vals + [cid])
         conn.commit()
+        # Log especial si se cambió el estado: deja rastro claro de quién y a qué.
+        # Esto evita "fichas perdidas" en el futuro porque se puede auditar.
+        if "estado" in d:
+            try:
+                _mant_log("cliente", cid, f"estado_a_{d['estado']}",
+                          f"Estado del cliente cambiado a '{d['estado']}' por {current_username()}")
+            except Exception:
+                pass
         _mant_log("cliente", cid, "editado")
         return jsonify({"ok": True})
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# RECUPERACIÓN DE FICHAS — buscar y restaurar clientes "perdidos"
+#
+# Caso de uso: un usuario marca un cliente como inactivo/suspendido por
+# error y la ficha "desaparece" del listado (que filtra por estado='activo').
+# Estos endpoints permiten encontrarlos y restaurarlos sin perder data.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/buscar-todos", methods=["GET"])
+@_mant_required
+def mant_clientes_buscar_todos():
+    """Búsqueda global en mant_clientes SIN filtro de estado.
+    Devuelve TODOS los clientes que matchean por nombre/RUT/email/giro/comuna,
+    incluyendo los soft-archivados (estado != 'activo').
+
+    Usado por el modal "Clientes ocultos" para recuperar fichas perdidas.
+    """
+    q = (request.args.get("q") or "").strip()
+    incluir_activos = request.args.get("incluir_activos") == "1"
+
+    where, params = [], []
+    if not incluir_activos:
+        # Por defecto solo mostramos los NO activos (la papelera real)
+        where.append("c.estado <> 'activo'")
+    if q:
+        where.append(
+            "(c.razon_social LIKE %s OR c.rut LIKE %s OR c.contacto_email LIKE %s "
+            " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
+        )
+        qp = f"%{q}%"; params += [qp]*6
+    wstr = " WHERE " + " AND ".join(where) if where else ""
+
+    rows = mysql_fetchall(
+        f"""SELECT c.id, c.razon_social, c.rut, c.estado, c.giro, c.comuna,
+                   c.contacto_nombre, c.contacto_email, c.contacto_tel,
+                   c.created_at, c.updated_at, c.created_by, c.updated_by,
+                   COALESCE(m_cnt.cnt, 0) AS maquinas_count,
+                   COALESCE(ct_cnt.cnt, 0) AS contratos_count,
+                   COALESCE(v_cnt.cnt, 0) AS visitas_count
+              FROM mant_clientes c
+              LEFT JOIN (SELECT cliente_id, COUNT(*) AS cnt FROM mant_maquinas GROUP BY cliente_id) m_cnt
+                     ON m_cnt.cliente_id = c.id
+              LEFT JOIN (SELECT cliente_id, COUNT(*) AS cnt FROM mant_contratos GROUP BY cliente_id) ct_cnt
+                     ON ct_cnt.cliente_id = c.id
+              LEFT JOIN (SELECT cliente_id, COUNT(*) AS cnt FROM mant_visitas GROUP BY cliente_id) v_cnt
+                     ON v_cnt.cliente_id = c.id
+              {wstr}
+              ORDER BY c.razon_social
+              LIMIT 200""",
+        tuple(params)
+    )
+
+    result = []
+    for r in rows:
+        result.append({
+            "id": r["id"],
+            "razon_social": r.get("razon_social") or "",
+            "rut": r.get("rut") or "",
+            "estado": r.get("estado") or "",
+            "giro": r.get("giro") or "",
+            "comuna": r.get("comuna") or "",
+            "contacto_nombre": r.get("contacto_nombre") or "",
+            "contacto_email": r.get("contacto_email") or "",
+            "contacto_tel": r.get("contacto_tel") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "updated_at": str(r["updated_at"])[:16] if r.get("updated_at") else "",
+            "created_by": r.get("created_by") or "",
+            "updated_by": r.get("updated_by") or "",
+            "maquinas_count": int(r.get("maquinas_count") or 0),
+            "contratos_count": int(r.get("contratos_count") or 0),
+            "visitas_count": int(r.get("visitas_count") or 0),
+            "url_ficha": url_for("mant_ficha", cid=r["id"]),
+        })
+    return jsonify({"ok": True, "clientes": result, "total": len(result)})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/restaurar", methods=["POST"])
+@_mant_required
+def mant_cliente_restaurar(cid):
+    """Restaura un cliente al estado 'activo' (lo saca de la papelera).
+    Audita la acción en mant_logs.
+    """
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social, estado FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    if cliente["estado"] == "activo":
+        return jsonify({"ok": True, "ya_activo": True,
+                        "mensaje": f"{cliente['razon_social']} ya está activo"})
+
+    estado_previo = cliente["estado"]
+    mysql_execute(
+        "UPDATE mant_clientes SET estado='activo', updated_by=%s WHERE id=%s",
+        (current_username(), cid)
+    )
+    try:
+        _mant_log("cliente", cid, "restaurado",
+                  f"Restaurado de '{estado_previo}' a 'activo' por {current_username()}")
+    except Exception:
+        pass
+    return jsonify({
+        "ok": True,
+        "cliente_id": cid,
+        "razon_social": cliente["razon_social"],
+        "estado_previo": estado_previo,
+        "mensaje": f"✓ {cliente['razon_social']} restaurado correctamente",
+    })
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/cambiar-estado", methods=["POST"])
+@_mant_required
+def mant_cliente_cambiar_estado(cid):
+    """Cambia el estado del cliente de forma explícita con auditoría completa.
+    Body: { "estado": "activo|inactivo|suspendido|prospecto", "motivo": "..." }
+    """
+    d = request.get_json(silent=True) or {}
+    estado_nuevo = (d.get("estado") or "").strip().lower()
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if estado_nuevo not in ("activo", "inactivo", "suspendido", "prospecto"):
+        return jsonify({"ok": False, "error": "Estado inválido"}), 400
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social, estado FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    if cliente["estado"] == estado_nuevo:
+        return jsonify({"ok": True, "ya_en_estado": True})
+    mysql_execute(
+        "UPDATE mant_clientes SET estado=%s, updated_by=%s WHERE id=%s",
+        (estado_nuevo, current_username(), cid)
+    )
+    try:
+        _mant_log("cliente", cid, f"estado_a_{estado_nuevo}",
+                  f"Cambiado de '{cliente['estado']}' a '{estado_nuevo}' por {current_username()}"
+                  + (f" · Motivo: {motivo}" if motivo else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": estado_nuevo})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>", methods=["DELETE"])
