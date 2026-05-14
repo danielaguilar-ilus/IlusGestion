@@ -602,8 +602,17 @@ def get_erp_conn():
 
 
 def get_mysql():
-    """Abre una conexión directa (usada solo por init_db y utilidades internas)."""
+    """Abre una conexión directa (usada solo por init_db y utilidades internas).
+    Lanza RuntimeError claro si faltan env vars (no intenta conectar a localhost).
+    """
     import pymysql, pymysql.cursors
+    # Falla limpia si faltan env vars — el assert es mucho más útil que
+    # "Connection refused: localhost" cuando MYSQL_HOST está vacío.
+    try:
+        from config import assert_mysql_configured
+        assert_mysql_configured()
+    except ImportError:
+        pass  # config.py viejo sin la función — seguir con el comportamiento previo
     return pymysql.connect(
         host=MYSQL_CONFIG["host"],
         port=MYSQL_CONFIG["port"],
@@ -627,6 +636,12 @@ def _get_pool():
     global _db_pool
     if _db_pool is not None:
         return _db_pool
+    # Falla limpia con mensaje claro si faltan env vars
+    try:
+        from config import assert_mysql_configured
+        assert_mysql_configured()
+    except ImportError:
+        pass
     with _db_pool_lock:
         if _db_pool is not None:          # doble chequeo post-lock
             return _db_pool
@@ -961,6 +976,10 @@ def init_mysql_schema():
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN comuna     VARCHAR(100) DEFAULT NULL",
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN ciudad     VARCHAR(100) DEFAULT NULL",
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN fecha_nac  DATE         DEFAULT NULL",
+                # 2026-05-14: tracking de actividad para gestión de usuarios
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN last_login_at   DATETIME    DEFAULT NULL COMMENT 'Última vez que el usuario inició sesión'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN last_login_ip   VARCHAR(64) DEFAULT NULL",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN login_count     INT         DEFAULT 0    COMMENT 'Total de logins exitosos del usuario'",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -2864,6 +2883,18 @@ def login():
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
         session.clear()
         session["user_id"] = user["id"]
+        # Tracking de actividad: actualizar last_login_at + login_count + ip
+        # Best-effort — si falla no rompe el login. Si las columnas legacy no
+        # existen, el primer arranque post-migración las crea.
+        try:
+            ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64]
+            mysql_execute(
+                f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
+                f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                (ip, user["id"])
+            )
+        except Exception as _e_login_track:
+            print(f"[login-track] no se pudo actualizar last_login_at: {_e_login_track}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # Anti-cache para forzar al navegador a recargar diseño actualizado
@@ -5190,8 +5221,47 @@ def export_excel():
 @app.route("/admin/users")
 @require_permission("admin")
 def users_index():
-    users = mysql_fetchall(f"SELECT * FROM `{AUTH_TABLE}` ORDER BY nombre, username")
-    return render_template("users.html", users=users)
+    # Filtros: estado (todos/activos/inactivos), búsqueda, rol
+    estado_f = (request.args.get("estado") or "").strip().lower()
+    rol_f    = (request.args.get("rol") or "").strip()
+    q_f      = (request.args.get("q") or "").strip()
+
+    where, params = ["1=1"], []
+    if estado_f == "activos":
+        where.append("active=1")
+    elif estado_f == "inactivos":
+        where.append("active=0")
+    if rol_f:
+        where.append("role=%s"); params.append(rol_f)
+    if q_f:
+        where.append("(username LIKE %s OR nombre LIKE %s OR phone LIKE %s OR rut LIKE %s)")
+        like = f"%{q_f}%"
+        params += [like, like, like, like]
+
+    users = mysql_fetchall(
+        f"SELECT * FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
+        "ORDER BY active DESC, last_login_at DESC, nombre, username",
+        tuple(params)
+    ) or []
+
+    # Conteos para badges en la cabecera de filtros
+    counts = mysql_fetchone(
+        f"SELECT "
+        f" SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS activos, "
+        f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
+        f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+        f"          THEN 1 ELSE 0 END) AS conectados_7d, "
+        f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
+        f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
+        f" COUNT(*) AS total "
+        f"FROM `{AUTH_TABLE}`"
+    ) or {}
+
+    return render_template("users.html",
+        users=users,
+        filtros={"estado": estado_f, "rol": rol_f, "q": q_f},
+        counts=counts,
+    )
 
 
 def _normalizar_telefono_cl(raw):

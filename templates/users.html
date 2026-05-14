@@ -31,10 +31,86 @@
 </div>
 
 <div class="px-2 px-md-0">
+
+  {# ── KPIs rápidos + filtros ────────────────────────── #}
+  <style>
+    .uk-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
+    .uk-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;
+             display:flex;align-items:center;gap:12px;cursor:pointer;transition:all .15s}
+    .uk-card:hover{border-color:#cbd5e1;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+    .uk-card.active{border-color:var(--ilus-red);background:#fef2f2}
+    .uk-ico{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .uk-n{font-size:1.4rem;font-weight:900;line-height:1;color:#0f172a}
+    .uk-l{font-size:.62rem;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;font-weight:700;margin-top:2px}
+    .conx-cell{font-size:.78rem}
+    .conx-warm{color:#16a34a;font-weight:700}
+    .conx-cool{color:#f59e0b;font-weight:600}
+    .conx-cold{color:#9ca3af;font-style:italic}
+    .conx-never{color:#6b7280}
+    .badge-active{background:#dcfce7;color:#166534;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
+    .badge-inactive{background:#fee2e2;color:#991b1b;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
+  </style>
+
+  <div class="uk-row">
+    <a href="{{ url_for('users_index') }}"
+       class="uk-card {% if not filtros.estado %}active{% endif %}" style="text-decoration:none">
+      <div class="uk-ico" style="background:#f3f4f6;color:#374151"><i class="bi bi-people-fill"></i></div>
+      <div>
+        <div class="uk-n">{{ counts.total or 0 }}</div>
+        <div class="uk-l">Total usuarios</div>
+      </div>
+    </a>
+    <a href="{{ url_for('users_index') }}?estado=activos"
+       class="uk-card {% if filtros.estado=='activos' %}active{% endif %}" style="text-decoration:none">
+      <div class="uk-ico" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
+      <div>
+        <div class="uk-n">{{ counts.activos or 0 }}</div>
+        <div class="uk-l">Activos</div>
+      </div>
+    </a>
+    <a href="{{ url_for('users_index') }}?estado=inactivos"
+       class="uk-card {% if filtros.estado=='inactivos' %}active{% endif %}" style="text-decoration:none">
+      <div class="uk-ico" style="background:#fee2e2;color:#991b1b"><i class="bi bi-x-circle-fill"></i></div>
+      <div>
+        <div class="uk-n">{{ counts.inactivos or 0 }}</div>
+        <div class="uk-l">Desactivados</div>
+      </div>
+    </a>
+    <div class="uk-card" style="cursor:default" title="Activos que se conectaron en los últimos 7 días">
+      <div class="uk-ico" style="background:#dbeafe;color:#1e40af"><i class="bi bi-broadcast-pin"></i></div>
+      <div>
+        <div class="uk-n">{{ counts.conectados_7d or 0 }}</div>
+        <div class="uk-l">Conectados 7d</div>
+      </div>
+    </div>
+  </div>
+
+  <form method="get" class="mb-3 d-flex gap-2 flex-wrap align-items-center">
+    {% if filtros.estado %}<input type="hidden" name="estado" value="{{ filtros.estado }}">{% endif %}
+    <input type="text" name="q" value="{{ filtros.q or '' }}"
+           class="form-control form-control-sm" style="max-width:280px"
+           placeholder="🔍 Buscar usuario, nombre, RUT, teléfono…">
+    <select name="rol" class="form-select form-select-sm" style="max-width:200px"
+            onchange="this.form.submit()">
+      <option value="">Todos los roles</option>
+      <option value="superadmin" {% if filtros.rol=='superadmin' %}selected{% endif %}>Super Admin</option>
+      <option value="admin"      {% if filtros.rol=='admin'      %}selected{% endif %}>Administrador</option>
+      <option value="editor"     {% if filtros.rol=='editor'     %}selected{% endif %}>Editor</option>
+      <option value="ejecutivo"  {% if filtros.rol=='ejecutivo'  %}selected{% endif %}>Ejecutivo</option>
+      <option value="tecnico"    {% if filtros.rol=='tecnico'    %}selected{% endif %}>Técnico</option>
+      <option value="vendedor"   {% if filtros.rol=='vendedor'   %}selected{% endif %}>Vendedor</option>
+      <option value="lector"     {% if filtros.rol=='lector'     %}selected{% endif %}>Lector</option>
+    </select>
+    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-search"></i></button>
+    {% if filtros.q or filtros.rol or filtros.estado %}
+    <a href="{{ url_for('users_index') }}" class="btn btn-sm btn-link text-danger">Limpiar</a>
+    {% endif %}
+  </form>
+
   <div class="ilus-card">
     <div class="ilus-card-header">
       <span><i class="bi bi-shield-lock me-2"></i>Gestion de acceso</span>
-      <span class="text-muted small fw-normal">{{ users|length }} usuario(s)</span>
+      <span class="text-muted small fw-normal">{{ users|length }} usuario(s) listado(s)</span>
     </div>
     <div class="table-responsive">
       <table class="table ilus-table mb-0">
@@ -45,13 +121,14 @@
             <th>WhatsApp</th>
             <th>Rol</th>
             <th>Estado</th>
-            <th>Actualizado</th>
+            <th title="Última vez que el usuario inició sesión en la plataforma">Última conexión</th>
+            <th class="text-center" title="Cantidad total de inicios de sesión">Logins</th>
             <th class="text-center">Acciones</th>
           </tr>
         </thead>
         <tbody>
           {% for user in users %}
-          <tr>
+          <tr {% if not user.active %}style="opacity:.55"{% endif %}>
             <td class="font-monospace">{{ user.username }}</td>
             <td>{{ user.nombre }}</td>
             <td class="small text-muted">{{ user.phone or '-' }}</td>
@@ -64,14 +141,57 @@
                 <span class="ilus-badge badge-confirmado">Administrador</span>
               {% elif user.role == 'editor' %}
                 <span class="ilus-badge badge-pendiente">Editor</span>
+              {% elif user.role == 'tecnico' %}
+                <span class="ilus-badge" style="background:#7c3aed;color:#fff;font-size:.68rem;padding:2px 9px;border-radius:50px">
+                  <i class="bi bi-tools me-1"></i>Técnico
+                </span>
+              {% elif user.role == 'ejecutivo' %}
+                <span class="ilus-badge" style="background:#0ea5e9;color:#fff;font-size:.68rem;padding:2px 9px;border-radius:50px">Ejecutivo</span>
+              {% elif user.role == 'vendedor' %}
+                <span class="ilus-badge" style="background:#7c2d12;color:#fff;font-size:.68rem;padding:2px 9px;border-radius:50px">Vendedor</span>
               {% elif user.role == 'lector' %}
                 <span class="ilus-badge" style="background:#6c757d;color:#fff;font-size:.7rem;padding:2px 8px;border-radius:50px">Lector</span>
               {% else %}
                 <span class="ilus-badge" style="background:#aaa;color:#fff;font-size:.7rem;padding:2px 8px;border-radius:50px">{{ user.role }}</span>
               {% endif %}
             </td>
-            <td>{% if user.active %}<span class="text-success fw-bold">Activo</span>{% else %}<span class="text-muted">Inactivo</span>{% endif %}</td>
-            <td class="small text-muted">{{ user.updated_at }}</td>
+            <td>
+              {% if user.active %}
+                <span class="badge-active"><i class="bi bi-check-circle me-1"></i>Activo</span>
+              {% else %}
+                <span class="badge-inactive"><i class="bi bi-x-circle me-1"></i>Inactivo</span>
+              {% endif %}
+            </td>
+            <td class="conx-cell">
+              {% if user.last_login_at %}
+                {% set _dt = user.last_login_at %}
+                {% if _dt.__class__.__name__ in ('datetime','date') %}
+                  {% set _delta_days = ((now if now is defined else _dt) - _dt).days if (now is defined) else 0 %}
+                {% else %}
+                  {% set _delta_days = 0 %}
+                {% endif %}
+                <div class="conx-warm">
+                  <i class="bi bi-broadcast me-1"></i>
+                  {% if _dt.__class__.__name__ == 'datetime' %}
+                    {{ _dt.strftime('%d/%m/%Y %H:%M') }}
+                  {% else %}{{ _dt }}{% endif %}
+                </div>
+                {% if user.last_login_ip %}
+                <div class="text-muted" style="font-size:.68rem;font-family:monospace">IP: {{ user.last_login_ip }}</div>
+                {% endif %}
+              {% else %}
+                <span class="conx-never">
+                  <i class="bi bi-dash-circle me-1"></i>Nunca se conectó
+                </span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              {% if user.login_count and user.login_count > 0 %}
+                <span class="badge bg-light text-dark" style="font-size:.7rem">{{ user.login_count }}</span>
+              {% else %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
             <td class="text-center">
               <div class="d-flex justify-content-center gap-1">
                 <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"
@@ -91,6 +211,13 @@
             </td>
           </tr>
           {% endfor %}
+          {% if not users %}
+          <tr>
+            <td colspan="8" class="text-center py-4 text-muted">
+              <i class="bi bi-search me-2"></i>Sin usuarios para este filtro
+            </td>
+          </tr>
+          {% endif %}
         </tbody>
       </table>
     </div>
