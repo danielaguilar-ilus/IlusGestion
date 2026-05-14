@@ -18578,7 +18578,16 @@ def mant_sucursal_del(sid):
 MANT_UPLOADS = os.path.join(UPLOADS_BASE, "mantenciones")
 os.makedirs(MANT_UPLOADS, exist_ok=True)
 
-ALLOWED_CONTRATO = {"pdf", "doc", "docx"}
+# DECISIÓN 2026-05-14: estandarizamos a PDF para que el viewer sea
+# universal (Chrome/Firefox/Edge renderan PDF inline sin viewers de
+# terceros como Office Online). Los DOCX se rechazaban con mensaje claro
+# y se le pedía al usuario que los exportara a PDF antes de subir.
+# Esto evita el flujo "viewer no encuentra archivo" porque Cloudinary
+# devuelve URL directa al PDF que el navegador renderiza inline.
+ALLOWED_CONTRATO = {"pdf"}
+ALLOWED_CONTRATO_LEGACY = {"pdf", "doc", "docx"}  # solo lectura — uploads existentes
+# Tamaño máximo del archivo (Cloudinary free permite 100MB, mantenemos 25MB).
+MAX_CONTRATO_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["DELETE"])
@@ -18678,28 +18687,101 @@ MANT_CONTRATOS_MAX_POR_CLIENTE = 5
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
 def mant_contrato_subir(cid):
-    """Sube un contrato PDF/DOC al cliente.
+    """Sube un contrato PDF al cliente.
 
-    Estrategia de persistencia:
-      1. PRIMERO intenta subir a Cloudinary (resource_type='raw') — persiste
-         entre deploys de Railway. Si funciona, guarda URL en BD.
-      2. SI Cloudinary falla, fallback a filesystem local (efímero pero
-         útil para desarrollo o casos de emergencia).
-      3. EN AMBOS CASOS guarda también archivo_path/archivo_nombre para
-         compat con código viejo y para mostrar info al usuario.
+    DECISIÓN 2026-05-14 — estandarización a PDF:
+      * Solo se aceptan archivos .pdf. DOCX/DOC se rechazan con instrucción
+        de exportar a PDF (Word > Archivo > Guardar como > PDF).
+      * Razón: el viewer del navegador renderiza PDF inline sin depender
+        de Office Online Viewer (que falla si Cloudinary requiere auth
+        o si el archivo no es público). Estandarización + UX consistente.
 
-    Límite: máximo MANT_CONTRATOS_MAX_POR_CLIENTE contratos por cliente
-    (default 5). Si se intenta subir el 6º, devuelve 400 con mensaje claro.
+    Persistencia:
+      * Cloudinary OBLIGATORIO (resource_type='raw', folder ilus/contratos).
+      * Si Cloudinary no está disponible, se rechaza el upload (no se
+        guarda nada efímero). Antes había fallback a filesystem pero ese
+        archivo desaparece en cada deploy de Railway → causa "Archivo
+        no encontrado" al previsualizar. Mejor fallar limpio.
+
+    Antiduplicados (anti triple-click):
+      * Verifica si en los últimos 30s ya se subió un archivo con el
+        mismo nombre original para este cliente. Si sí, retorna 409 sin
+        crear el segundo.
+
+    Límite: máximo MANT_CONTRATOS_MAX_POR_CLIENTE contratos (default 5).
     """
     f = request.files.get("archivo")
     d = request.form
     if not f or not f.filename:
         return jsonify({"error": "Sin archivo"}), 400
-    ext = f.filename.rsplit(".", 1)[-1].lower()
-    if ext not in ALLOWED_CONTRATO:
-        return jsonify({"error": "Tipo no permitido"}), 400
 
-    # Validar tope de 5 contratos por cliente
+    # Validación PDF-only
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext != "pdf":
+        if ext in ("doc", "docx"):
+            return jsonify({
+                "error": (
+                    "Solo se aceptan archivos PDF. "
+                    "Abre el documento en Word → Archivo → Guardar como → PDF, "
+                    "y vuelve a subirlo. Esto permite que se visualice correctamente "
+                    "en cualquier navegador sin viewers externos."
+                ),
+                "error_codigo": "FORMATO_NO_PERMITIDO",
+                "formato_detectado": ext,
+            }), 400
+        return jsonify({
+            "error": "Tipo no permitido. Solo PDF.",
+            "error_codigo": "FORMATO_NO_PERMITIDO",
+            "formato_detectado": ext or "desconocido",
+        }), 400
+
+    # Validar tamaño máximo
+    try:
+        f.stream.seek(0, 2)  # ir al final
+        size_bytes = f.stream.tell()
+        f.stream.seek(0)
+        if size_bytes > MAX_CONTRATO_BYTES:
+            return jsonify({
+                "error": f"Archivo demasiado grande ({size_bytes/1024/1024:.1f}MB). "
+                         f"Máximo permitido: {MAX_CONTRATO_BYTES/1024/1024:.0f}MB.",
+                "error_codigo": "ARCHIVO_GRANDE",
+            }), 400
+    except Exception:
+        size_bytes = 0  # no crítico, sigue
+
+    # Validar Cloudinary disponible (estandarización: sin Cloudinary, no se sube)
+    if not _CLD_READY:
+        return jsonify({
+            "error": (
+                "El almacenamiento de archivos no está disponible en este momento. "
+                "Por favor contacta al administrador (Cloudinary no configurado)."
+            ),
+            "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE",
+        }), 503
+
+    # Anti-duplicados: triple click rápido no genera 3 contratos.
+    # Ventana de 30 segundos por nombre original + cliente_id.
+    try:
+        dup_check = mysql_fetchone(
+            "SELECT id FROM mant_contratos "
+            "WHERE cliente_id=%s AND archivo_nombre=%s "
+            "  AND created_at >= DATE_SUB(NOW(), INTERVAL 30 SECOND) "
+            "LIMIT 1",
+            (cid, f.filename)
+        )
+        if dup_check:
+            return jsonify({
+                "error": (
+                    "Este mismo archivo ya se subió hace menos de 30 segundos. "
+                    "Si es un error del navegador, recarga la página."
+                ),
+                "error_codigo": "DUPLICADO_RAPIDO",
+                "contrato_existente_id": dup_check["id"],
+            }), 409
+    except Exception as e_dup:
+        print(f"[mant_contrato_subir] check duplicado falló: {e_dup}", flush=True)
+
+    # Validar tope de N contratos por cliente
     try:
         cnt_row = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_contratos WHERE cliente_id=%s",
@@ -18718,42 +18800,42 @@ def mant_contrato_subir(cid):
                 "actual": n_actual,
             }), 400
     except Exception as e_cnt:
-        print(f"[mant_contrato_subir] no se pudo verificar tope ({e_cnt}) — sigo igual", flush=True)
+        print(f"[mant_contrato_subir] no se pudo verificar tope ({e_cnt})", flush=True)
 
-    fname  = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
+    fname = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
 
-    # ── 1. Intentar Cloudinary primero (persistente) ─────────────────
+    # ── Subir a Cloudinary (única vía de persistencia) ─────────────────
     cloud_url = None
     cloud_pid = None
     cloud_uploaded_at = None
-    if _CLD_READY:
-        try:
-            f.stream.seek(0)
-            public_id = f"contrato_{cid}_{int(time.time())}"
-            cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
-            cloud_url = cloud_result["url"]
-            cloud_pid = cloud_result["public_id"]
-            cloud_uploaded_at = datetime.utcnow()
-            print(f"[mant_contrato] Cloudinary OK cid={cid} url={cloud_url}", flush=True)
-        except Exception as e_cld:
-            print(f"[mant_contrato] Cloudinary FAIL cid={cid}: {e_cld} — fallback a filesystem", flush=True)
-            cloud_url = None  # asegurar que el fallback ocurra abajo
-
-    # ── 2. Filesystem fallback (siempre se guarda copia local si se puede)
     try:
         f.stream.seek(0)
-    except Exception:
-        pass
-    fpath  = os.path.join(MANT_UPLOADS, fname)
+        public_id = f"contrato_{cid}_{int(time.time())}"
+        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_url = cloud_result["url"]
+        cloud_pid = cloud_result["public_id"]
+        cloud_uploaded_at = datetime.utcnow()
+        print(f"[mant_contrato] Cloudinary OK cid={cid} url={cloud_url}", flush=True)
+    except Exception as e_cld:
+        print(f"[mant_contrato] Cloudinary FAIL cid={cid}: {e_cld}", flush=True)
+        return jsonify({
+            "error": (
+                "No se pudo subir el archivo al almacenamiento persistente. "
+                "Inténtalo de nuevo en unos segundos. Si el problema persiste, "
+                "contacta al administrador."
+            ),
+            "error_codigo": "CLOUDINARY_FAIL",
+            "detalle": str(e_cld)[:200],
+        }), 502
+
+    # Backup local opcional (no bloqueante)
     try:
+        f.stream.seek(0)
+        fpath = os.path.join(MANT_UPLOADS, fname)
         f.save(fpath)
     except Exception as e_save:
-        # Si NI Cloudinary NI filesystem funcionaron, retornar error
-        if not cloud_url:
-            return jsonify({"error": f"No se pudo guardar el archivo: {e_save}"}), 500
-        print(f"[mant_contrato] filesystem save falló pero Cloudinary OK: {e_save}", flush=True)
+        print(f"[mant_contrato] backup filesystem falló (no crítico): {e_save}", flush=True)
 
-    tipo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -18764,7 +18846,7 @@ def mant_contrato_subir(cid):
                     fecha_inicio,fecha_vencimiento,es_indefinido,
                     monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (cid, d.get("nombre","Contrato"), f.filename, fname, tipo,
+                (cid, d.get("nombre","Contrato"), f.filename, fname, "pdf",
                  cloud_url, cloud_pid, cloud_uploaded_at,
                  d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
                  1 if d.get("es_indefinido") else 0,
@@ -18776,11 +18858,13 @@ def mant_contrato_subir(cid):
             ctid = cur.lastrowid
         conn.commit()
         _mant_log("contrato", ctid, "subido",
-                  f"{f.filename} ({'Cloudinary' if cloud_url else 'filesystem'})")
+                  f"{f.filename} (Cloudinary · {size_bytes/1024:.0f}KB)")
         return jsonify({
             "ok": True, "id": ctid,
-            "persistente": bool(cloud_url),
-            "storage": "cloudinary" if cloud_url else "filesystem"
+            "persistente": True,
+            "storage": "cloudinary",
+            "url": cloud_url,
+            "size_kb": int(size_bytes / 1024) if size_bytes else 0,
         })
     finally:
         conn.close()
@@ -18833,9 +18917,21 @@ def mant_contrato_re_subir(ctid):
     f = request.files.get("archivo")
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "Sin archivo adjunto"}), 400
-    ext = f.filename.rsplit(".", 1)[-1].lower()
-    if ext not in ALLOWED_CONTRATO:
-        return jsonify({"ok": False, "error": f"Tipo '{ext}' no permitido. Usa: {', '.join(sorted(ALLOWED_CONTRATO))}"}), 400
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    # Estandarización 2026-05-14: solo PDF. DOCX se rechaza con instrucción clara.
+    if ext != "pdf":
+        if ext in ("doc", "docx"):
+            return jsonify({
+                "ok": False,
+                "error": ("Solo se aceptan archivos PDF. "
+                          "Exporta el documento desde Word a PDF antes de subirlo."),
+                "error_codigo": "FORMATO_NO_PERMITIDO",
+            }), 400
+        return jsonify({
+            "ok": False,
+            "error": f"Tipo '{ext or 'desconocido'}' no permitido. Solo PDF.",
+            "error_codigo": "FORMATO_NO_PERMITIDO",
+        }), 400
 
     # Borrar el archivo viejo si existe (cleanup local)
     if ct.get("archivo_path"):
@@ -25373,9 +25469,12 @@ def mant_cliente_documentos(cid):
     #    no tiene archivo, lo mostramos igualmente con un flag `sin_archivo`
     #    para que el frontend pueda renderizar un placeholder informativo
     #    en vez de un link roto.
+    # FIX 2026-05-14: la columna es fecha_vencimiento (no vencimiento).
+    # El typo previo causaba HTTP 500 al cargar el tab Documentos.
     ct_rows = mysql_fetchall(
         "SELECT id,nombre,archivo_nombre,archivo_path,archivo_tipo,"
-        "       cloudinary_url,cloudinary_public_id,estado,vencimiento,created_by,created_at "
+        "       cloudinary_url,cloudinary_public_id,estado,fecha_vencimiento,"
+        "       created_by,created_at "
         "  FROM mant_contratos WHERE cliente_id=%s "
         " ORDER BY created_at DESC", (cid,)
     )

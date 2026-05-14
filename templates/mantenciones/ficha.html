@@ -5951,8 +5951,14 @@ function abrirEmailManual() {
             <input type="text" id="ct_nombre" class="form-control" placeholder="Ej: Contrato mantención 2025">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Archivo (PDF o Word) <span class="text-danger">*</span></label>
-            <input type="file" id="ct_archivo" class="form-control" accept=".pdf,.doc,.docx">
+            <label class="form-label fw-semibold">Archivo PDF <span class="text-danger">*</span></label>
+            <input type="file" id="ct_archivo" class="form-control" accept="application/pdf,.pdf">
+            <div class="form-text small">
+              <i class="bi bi-info-circle me-1"></i>
+              Solo se aceptan archivos PDF. Si tu contrato está en Word,
+              ábrelo y elige <strong>Archivo → Guardar como → PDF</strong>.
+              Tamaño máximo: 25 MB.
+            </div>
           </div>
           <div class="col-6">
             <label class="form-label fw-semibold">Fecha inicio</label>
@@ -5985,7 +5991,7 @@ function abrirEmailManual() {
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus fw-bold" onclick="subirContrato()">
+        <button type="button" id="btnSubirContrato" class="btn btn-ilus fw-bold" onclick="subirContrato()">
           <i class="bi bi-upload me-1"></i>Subir
         </button>
       </div>
@@ -8085,51 +8091,140 @@ async function confirmarEliminarCliente() {
 }
 
 // ─── Subir contrato ───────────────────────────────────────
+// Flag global anti-doble-submit. Aunque el botón se deshabilite,
+// esto previene también casos extremos (keypress repetido, etc.).
+let _subirContratoEnCurso = false;
+
 async function subirContrato() {
-  const archivo = document.getElementById('ct_archivo').files[0];
-  if (!archivo) { alert('Selecciona un archivo'); return; }
-  const fd = new FormData();
-  fd.append('archivo', archivo);
-  fd.append('nombre', document.getElementById('ct_nombre').value.trim() || archivo.name);
-  fd.append('fecha_inicio', document.getElementById('ct_inicio').value);
-  fd.append('fecha_vencimiento', document.getElementById('ct_vencimiento').value);
-  fd.append('es_indefinido', document.getElementById('ct_indefinido').checked ? '1' : '');
-  fd.append('monto_mensual', document.getElementById('ct_monto_mensual').value || '0');
-  fd.append('frecuencia_meses', document.getElementById('ct_frecuencia').value || '0');
-  fd.append('notas', document.getElementById('ct_notas').value.trim());
-  const r = await fetch(`/mantenciones/api/clientes/${CID}/contratos`, { method:'POST', body:fd });
-  let data = null;
-  try { data = await r.json(); } catch(_) {}
-  if (r.ok && data && data.ok) {
-    bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
+  // Guard anti doble-submit: ignorar clicks adicionales si ya hay
+  // un upload en curso. Previene el bug del triple upload reportado.
+  if (_subirContratoEnCurso) {
     if (typeof ilusToast === 'function') {
-      ilusToast(
-        data.persistente ? '✓ Contrato subido (persistente en Cloudinary)'
-                         : '✓ Contrato subido (filesystem — re-súbelo si hay deploy)',
-        { type: data.persistente ? 'success' : 'warning' }
-      );
+      ilusToast('Subida en curso, por favor espera…', { type: 'info' });
     }
-    setTimeout(() => location.reload(), 900);
     return;
   }
-  // Caso límite de contratos: mensaje específico y amigable
-  if (data && data.error_codigo === 'LIMITE_CONTRATOS') {
+  const btn = document.getElementById('btnSubirContrato');
+  const btnHtmlOrig = btn ? btn.innerHTML : '';
+
+  const archivo = document.getElementById('ct_archivo').files[0];
+  if (!archivo) { alert('Selecciona un archivo'); return; }
+
+  // Validación frontend: solo PDF (espejo del backend para feedback rápido)
+  const ext = (archivo.name.split('.').pop() || '').toLowerCase();
+  if (ext !== 'pdf') {
     if (typeof ilusAlert === 'function') {
       await ilusAlert({
-        title: 'Llegaste al máximo de contratos',
-        message: data.error,
-        sub: 'Cierre/elimina un contrato viejo o usa Documentos para adjuntar anexos.',
+        title: 'Formato no permitido',
+        message: 'Solo se aceptan archivos PDF.',
+        sub: ['doc','docx'].includes(ext)
+             ? 'Abre el documento en Word → Archivo → Guardar como → PDF, y vuelve a subirlo.'
+             : 'Convierte el archivo a PDF antes de subirlo.',
         type: 'warning',
       });
     } else {
-      alert(data.error);
+      alert('Solo se aceptan archivos PDF. Convierte el archivo y vuelve a intentarlo.');
     }
     return;
   }
-  // Otros errores
-  const msg = (data && data.error) ? data.error : `Error al subir contrato (HTTP ${r.status})`;
-  if (typeof ilusToast === 'function') ilusToast(msg, { type:'error' });
-  else alert(msg);
+
+  // Validación tamaño máximo (25 MB)
+  const MAX_MB = 25;
+  if (archivo.size > MAX_MB * 1024 * 1024) {
+    const mb = (archivo.size / 1024 / 1024).toFixed(1);
+    alert(`El archivo pesa ${mb} MB. Máximo permitido: ${MAX_MB} MB.\n\nReduce el peso con un compresor de PDF antes de subir.`);
+    return;
+  }
+
+  // Activar guard + UI feedback
+  _subirContratoEnCurso = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Subiendo a Cloudinary…';
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append('archivo', archivo);
+    fd.append('nombre', document.getElementById('ct_nombre').value.trim() || archivo.name);
+    fd.append('fecha_inicio', document.getElementById('ct_inicio').value);
+    fd.append('fecha_vencimiento', document.getElementById('ct_vencimiento').value);
+    fd.append('es_indefinido', document.getElementById('ct_indefinido').checked ? '1' : '');
+    fd.append('monto_mensual', document.getElementById('ct_monto_mensual').value || '0');
+    fd.append('frecuencia_meses', document.getElementById('ct_frecuencia').value || '0');
+    fd.append('notas', document.getElementById('ct_notas').value.trim());
+
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/contratos`, { method:'POST', body:fd });
+    let data = null;
+    try { data = await r.json(); } catch(_) {}
+
+    if (r.ok && data && data.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
+      if (typeof ilusToast === 'function') {
+        ilusToast('✓ Contrato subido correctamente (persistente)', { type: 'success' });
+      }
+      setTimeout(() => location.reload(), 900);
+      return;
+    }
+
+    // Errores codificados — mensaje específico
+    if (data && data.error_codigo === 'LIMITE_CONTRATOS') {
+      if (typeof ilusAlert === 'function') {
+        await ilusAlert({
+          title: 'Llegaste al máximo de contratos',
+          message: data.error,
+          sub: 'Cierra/elimina un contrato viejo o usa Documentos para anexos.',
+          type: 'warning',
+        });
+      } else {
+        alert(data.error);
+      }
+      return;
+    }
+    if (data && data.error_codigo === 'DUPLICADO_RAPIDO') {
+      if (typeof ilusToast === 'function') {
+        ilusToast('Ese archivo ya se subió hace segundos — no se duplicó.',
+                  { type: 'warning' });
+      }
+      bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
+      setTimeout(() => location.reload(), 900);
+      return;
+    }
+    if (data && data.error_codigo === 'FORMATO_NO_PERMITIDO') {
+      alert(data.error);
+      return;
+    }
+    if (data && data.error_codigo === 'ARCHIVO_GRANDE') {
+      alert(data.error);
+      return;
+    }
+    if (data && data.error_codigo === 'CLOUDINARY_FAIL') {
+      alert('Cloudinary no respondió. Por favor reinténtalo en unos segundos.');
+      return;
+    }
+    if (data && data.error_codigo === 'ALMACENAMIENTO_NO_DISPONIBLE') {
+      alert('El almacenamiento de archivos no está disponible. Contacta al administrador.');
+      return;
+    }
+
+    // Error genérico
+    const msg = (data && data.error) ? data.error : `Error al subir contrato (HTTP ${r.status})`;
+    if (typeof ilusToast === 'function') ilusToast(msg, { type:'error' });
+    else alert(msg);
+  } catch (e) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error de red: ' + e.message, { type:'error' });
+    } else {
+      alert('Error de red: ' + e.message);
+    }
+  } finally {
+    // Liberar guard y restaurar UI
+    _subirContratoEnCurso = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = btnHtmlOrig || '<i class="bi bi-upload me-1"></i>Subir';
+    }
+  }
 }
 
 // ─── Panel IA contrato ────────────────────────────────────
