@@ -13824,6 +13824,21 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_maquinas ADD COLUMN tag_2 VARCHAR(120) NULL COMMENT 'Etiqueta libre 2'",
                 # Asegurar largo del serie para soportar series largas del fabricante
                 "ALTER TABLE mant_maquinas MODIFY COLUMN serie VARCHAR(120)",
+                # ════════════════════════════════════════════════════════════
+                # FASE 1 — Modelo Fracttal: familia de activo
+                # Permite agrupar máquinas por categoría operativa para
+                # vincular automáticamente plantillas de checklist específicas.
+                # Coincide con las 9 familias del modelo ILUS Fitness.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquinas ADD COLUMN familia_equipo "
+                "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
+                "     'bancos','accesorios','bicicletas','trotadoras','otros') "
+                "DEFAULT 'otros' "
+                "COMMENT 'Familia operativa del activo (modelo Fracttal). Define qué plantillas de checklist aplican.'",
+                "ALTER TABLE mant_maquinas ADD COLUMN fecha_fin_garantia DATE NULL "
+                "COMMENT 'Fecha en que termina la garantía del fabricante / cobertura comercial'",
+                "ALTER TABLE mant_maquinas ADD INDEX idx_familia (familia_equipo)",
+                "ALTER TABLE mant_maquinas ADD INDEX idx_fin_garantia (fecha_fin_garantia)",
                 # Tabla de sucursales (información adicional opcional)
                 """CREATE TABLE IF NOT EXISTS mant_sucursales (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -14442,6 +14457,50 @@ def init_mantenciones_tables():
                 #   → completada (las 3 firmas validadas).
                 #   cancelada / reagendada se conservan.
                 "ALTER TABLE mant_visitas MODIFY estado ENUM('programada','en_curso','completada','cancelada','reagendada') DEFAULT 'programada'",
+                # ════════════════════════════════════════════════════════════
+                # FASE 1 — Modelo Fracttal: estados + tipos + modalidad cobro
+                # Estados ampliados al modelo de 10 valores del flujo ILUS:
+                #   creada → programada → asignada → en_ejecucion →
+                #   pendiente_(info|repuesto|aprobacion) → completada →
+                #   cerrada (auditada) / anulada.
+                # Mantiene compat con estados legacy (en_curso = en_ejecucion,
+                # cancelada → ahora también permitido).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas MODIFY estado ENUM("
+                "  'creada','programada','asignada','en_curso','en_ejecucion',"
+                "  'pendiente_info','pendiente_repuesto','pendiente_aprobacion',"
+                "  'completada','cerrada','cancelada','anulada','reagendada'"
+                ") DEFAULT 'programada'",
+                # Tipos de OT — modelo Fracttal 11 valores.
+                # Mantiene los previos (preventiva, correctiva, garantia, inspeccion,
+                # levantamiento, instalacion) y agrega los faltantes.
+                # 'garantia' como TIPO se conserva por compat — pero la garantía
+                # real ahora se gestiona en modalidad_cobro (más granular).
+                "ALTER TABLE mant_visitas MODIFY tipo ENUM("
+                "  'levantamiento','instalacion','preventiva','correctiva',"
+                "  'visita_tecnica','visita_correctiva','cambio_equipo',"
+                "  'desinstalacion','capacitacion','repuesto','revision_interna',"
+                "  'inspeccion','garantia'"
+                ") DEFAULT 'preventiva'",
+                # Modalidad de cobro — NUEVO. Define la condición comercial de la OT:
+                #   pagado     → cliente paga la visita+repuestos
+                #   garantia   → cobertura comercial / fabricante (sin cargo al cliente)
+                #   sin_costo  → cortesía, demo, prospecto, fidelización
+                #   interno    → operación interna ILUS (mant. propia, capacitación staff)
+                # Regla de negocio (validada en app): tipo='levantamiento' NUNCA es garantia.
+                "ALTER TABLE mant_visitas ADD COLUMN modalidad_cobro "
+                "ENUM('pagado','garantia','sin_costo','interno') DEFAULT 'pagado' "
+                "COMMENT 'Condición comercial. NO confundir con tipo. Levantamiento != garantia.'",
+                # Prioridad operativa para que el técnico ordene su día
+                "ALTER TABLE mant_visitas ADD COLUMN prioridad "
+                "ENUM('baja','media','alta','urgente') DEFAULT 'media'",
+                # Diagnóstico — campo obligatorio al cerrar (Fase 5)
+                "ALTER TABLE mant_visitas ADD COLUMN diagnostico TEXT NULL "
+                "COMMENT 'Diagnóstico técnico. Obligatorio al cerrar OT (Fase 5).'",
+                "ALTER TABLE mant_visitas ADD COLUMN cerrada_por VARCHAR(190) NULL "
+                "COMMENT 'Usuario que ejecutó el cierre auditable'",
+                "ALTER TABLE mant_visitas ADD INDEX idx_modalidad (modalidad_cobro)",
+                "ALTER TABLE mant_visitas ADD INDEX idx_prioridad (prioridad)",
                 # Índices para consultas analíticas
                 "CREATE INDEX idx_v_real_fin ON mant_visitas (hora_real_fin)",
                 "CREATE INDEX idx_v_dur_real ON mant_visitas (duracion_real_min)",
@@ -14526,6 +14585,26 @@ def init_mantenciones_tables():
                     INDEX idx_sku     (sku)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # FASE 1 — Migración: trazabilidad comercial del repuesto.
+            # modalidad_repuesto puede diferir de modalidad_cobro de la OT:
+            # ej. OT pagada pero un repuesto específico fue cubierto por garantía
+            # del fabricante (común en correctivos mixtos).
+            # foto_antes/despues_id apuntan a mant_visita_fotos para evidencia.
+            for _mig_rep in [
+                "ALTER TABLE mant_visita_repuestos ADD COLUMN modalidad_repuesto "
+                "ENUM('pagado','garantia','sin_costo') DEFAULT 'pagado' "
+                "COMMENT 'Condición comercial del repuesto. Independiente de la OT.'",
+                "ALTER TABLE mant_visita_repuestos ADD COLUMN foto_antes_id INT NULL "
+                "COMMENT 'FK a mant_visita_fotos — foto del estado previo al cambio'",
+                "ALTER TABLE mant_visita_repuestos ADD COLUMN foto_despues_id INT NULL "
+                "COMMENT 'FK a mant_visita_fotos — foto del estado posterior'",
+                "ALTER TABLE mant_visita_repuestos ADD COLUMN maquina_id INT NULL "
+                "COMMENT 'FK opcional a mant_maquinas — equipo específico donde se instaló el repuesto'",
+                "ALTER TABLE mant_visita_repuestos ADD INDEX idx_modalidad (modalidad_repuesto)",
+                "ALTER TABLE mant_visita_repuestos ADD INDEX idx_maquina_rep (maquina_id)",
+            ]:
+                try: cur.execute(_mig_rep)
+                except Exception: pass
 
             # ════════════════════════════════════════════════════════════
             # CHECKLIST DE TAREAS DENTRO DE UNA OT/VISITA
@@ -14620,6 +14699,29 @@ def init_mantenciones_tables():
                     INDEX idx_tipo   (tipo_visita)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # FASE 1 — Plantillas por familia de activo (modelo Fracttal):
+            # una plantilla puede ser específica para una familia (ej: "Mant
+            # preventiva CARDIO") o aplicar a todas (NULL).
+            # familia_checklist: una de las 8 familias del modelo ILUS
+            # (Instalación, Preventiva, Correctivo, Desinstalación,
+            # Capacitación, Registro productos, Operacional interno,
+            # Rendiciones). Distinto de familia_activo (cardio/selectorizado/etc).
+            for _mig_plant in [
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_activo "
+                "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
+                "     'bancos','accesorios','bicicletas','trotadoras','otros','todas') "
+                "DEFAULT 'todas' "
+                "COMMENT 'Familia del activo a la que aplica. todas = sirve para cualquier equipo.'",
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_checklist "
+                "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
+                "     'capacitacion','registro_productos','operacional_interno',"
+                "     'rendiciones','otro') DEFAULT 'otro' "
+                "COMMENT 'Familia del modelo Fracttal (las 8 del flujo ILUS).'",
+                "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_act (familia_activo)",
+                "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_chk (familia_checklist)",
+            ]:
+                try: cur.execute(_mig_plant)
+                except Exception: pass
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_tarea_plantilla_items (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -20549,6 +20651,43 @@ def mant_visita_historica(cid):
     })
 
 
+# ─────────────────────────────────────────────────────────────────
+# REGLAS DE NEGOCIO — modelo Fracttal Fase 1
+# ─────────────────────────────────────────────────────────────────
+
+# Modalidades de cobro válidas (deben coincidir con el ENUM de mant_visitas.modalidad_cobro)
+_OT_MODALIDADES = ("pagado", "garantia", "sin_costo", "interno")
+
+# Prioridades válidas
+_OT_PRIORIDADES = ("baja", "media", "alta", "urgente")
+
+# Tipos de OT que NO pueden ser cobrados por garantía (regla ILUS).
+# El levantamiento fotográfico es un registro inicial del activo: no genera
+# costo ni garantía. Si llega garantia → se fuerza a sin_costo.
+_OT_TIPOS_SIN_GARANTIA = ("levantamiento",)
+
+
+def _normalizar_modalidad_cobro(tipo, modalidad_raw):
+    """Aplica reglas de negocio a la modalidad de cobro de una OT.
+
+    Args:
+        tipo: tipo de OT (levantamiento, preventiva, correctiva, etc.)
+        modalidad_raw: valor crudo desde el request (puede ser None o inválido)
+
+    Returns:
+        Tupla (modalidad_normalizada, warning_msg_or_None)
+    """
+    m = (modalidad_raw or "").strip().lower()
+    if m not in _OT_MODALIDADES:
+        m = "pagado"  # default seguro
+    # Regla ILUS: levantamiento NUNCA puede ser garantía
+    if tipo in _OT_TIPOS_SIN_GARANTIA and m == "garantia":
+        return ("sin_costo",
+                "Levantamiento fotográfico no admite modalidad 'garantía'. "
+                "Convertido a 'sin_costo'.")
+    return (m, None)
+
+
 @app.route("/mantenciones/api/visitas", methods=["POST"])
 @_mant_required
 def mant_visita_crear():
@@ -20586,26 +20725,40 @@ def mant_visita_crear():
         except (TypeError, ValueError):
             tecnico_user_id = None
 
+    # FASE 1 — modalidad de cobro + prioridad (con validación de regla)
+    tipo_ot = (d.get("tipo") or "preventiva").lower()
+    modalidad, warn_mod = _normalizar_modalidad_cobro(tipo_ot, d.get("modalidad_cobro"))
+    prioridad = (d.get("prioridad") or "media").lower()
+    if prioridad not in _OT_PRIORIDADES:
+        prioridad = "media"
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_visitas
                    (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                    tecnico,tecnico_user_id,tipo,estado,descripcion,costo,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
+                    modalidad_cobro,prioridad,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (d["cliente_id"], d.get("contrato_id") or None,
                  d.get("titulo","Mantención"), d["fecha_programada"],
                  d.get("hora_inicio") or None, d.get("hora_fin") or None,
                  tecnico_txt, tecnico_user_id,
-                 d.get("tipo","preventiva"),
+                 tipo_ot,
                  d.get("estado","programada"), d.get("descripcion",""),
-                 float(d.get("costo",0) or 0), current_username())
+                 float(d.get("costo",0) or 0),
+                 modalidad, prioridad, current_username())
             )
             vid = cur.lastrowid
         conn.commit()
-        _mant_log("visita", vid, "creada", d.get("titulo",""))
-        return jsonify({"ok": True, "id": vid})
+        _mant_log("visita", vid, "creada",
+                  f"{d.get('titulo','')} · tipo={tipo_ot} · modalidad={modalidad}"
+                  + (f" · ⚠ {warn_mod}" if warn_mod else ""))
+        resp = {"ok": True, "id": vid, "modalidad_cobro": modalidad}
+        if warn_mod:
+            resp["warning"] = warn_mod
+        return jsonify(resp)
     finally:
         conn.close()
 
@@ -20620,8 +20773,29 @@ def mant_visita_update(vid):
     if "tecnico_id" in d and d["tecnico_id"] and "tecnico_user_id" not in d:
         d["tecnico_user_id"] = d["tecnico_id"]
         d["tecnico_id"] = None
+
+    # FASE 1 — validar modalidad_cobro contra la regla "levantamiento != garantia".
+    # Se evalúa con el tipo nuevo (si llega en el body) o el tipo actual de la BD.
+    warn_mod_upd = None
+    if "modalidad_cobro" in d or "tipo" in d:
+        tipo_actual = None
+        if "tipo" not in d:
+            row = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,))
+            tipo_actual = (row or {}).get("tipo")
+        tipo_final = (d.get("tipo") or tipo_actual or "").lower()
+        if "modalidad_cobro" in d:
+            mod_norm, warn_mod_upd = _normalizar_modalidad_cobro(tipo_final, d.get("modalidad_cobro"))
+            d["modalidad_cobro"] = mod_norm
+    # Validar prioridad si llega
+    if "prioridad" in d:
+        p = (d.get("prioridad") or "").lower()
+        d["prioridad"] = p if p in _OT_PRIORIDADES else "media"
+
     allowed = ["titulo","fecha_programada","fecha_realizada","hora_inicio","hora_fin",
-               "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones","costo","contrato_id"]
+               "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
+               "costo","contrato_id",
+               # FASE 1 — modelo Fracttal
+               "modalidad_cobro","prioridad","diagnostico"]
     # tecnico_user_id: si llega, validar que sea un app_users con role='tecnico'
     if "tecnico_user_id" in d and d["tecnico_user_id"]:
         try:
@@ -20646,8 +20820,12 @@ def mant_visita_update(vid):
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
         conn.commit()
-        _mant_log("visita", vid, "actualizada")
-        return jsonify({"ok": True})
+        _mant_log("visita", vid, "actualizada",
+                  f"⚠ {warn_mod_upd}" if warn_mod_upd else "")
+        resp = {"ok": True}
+        if warn_mod_upd:
+            resp["warning"] = warn_mod_upd
+        return jsonify(resp)
     finally:
         conn.close()
 
