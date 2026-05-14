@@ -109,7 +109,31 @@ def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
     return _now_chile().strftime(fmt)
 
 app = Flask(__name__)
-app.secret_key = "ilus-etiquetas-2026"
+
+# ── SECRET_KEY ────────────────────────────────────────────────────────
+# Prioridad:
+#   1. Variable de entorno FLASK_SECRET_KEY (Railway/prod)
+#   2. Si no existe, genera una random en cada arranque (dev-only)
+# IMPORTANTE: el random invalida sesiones al reiniciar. En prod siempre setear
+# la env var en Railway → Variables → FLASK_SECRET_KEY = <string aleatorio largo>.
+_sk = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY")
+if not _sk:
+    import secrets as _secrets
+    _sk = _secrets.token_urlsafe(48)
+    print("[SECURITY] FLASK_SECRET_KEY no definida — usando aleatoria de sesión "
+          "(las sesiones de usuarios se invalidan al reiniciar). "
+          "Configura FLASK_SECRET_KEY en Railway para producción.", flush=True)
+app.secret_key = _sk
+
+# Cookie de sesión segura: HttpOnly + SameSite Lax + Secure (en producción HTTPS).
+# Railway pasa siempre HTTPS por el reverse proxy, así que activamos Secure ahí.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT") or
+                               os.environ.get("FLASK_ENV") == "production"),
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # 30 días
+)
 
 
 @app.template_filter("hm")
@@ -771,7 +795,10 @@ def _random_sql_query(sql: str, params=None, max_rows: int = 500):
     except PermissionError:
         raise
     except Exception as e:
-        print(f"[RANDOM SQL][QUERY ERROR] {e}  ::  SQL={sql[:120]}  ::  params={params}")
+        # Sanitización: no loguear los params completos (pueden contener RUTs,
+        # tokens o datos personales). Solo n parámetros + tipos.
+        _p_summary = f"<{len(params) if params else 0} params>" if params else "()"
+        print(f"[RANDOM SQL][QUERY ERROR] {e}  ::  SQL={sql[:120]}  ::  params={_p_summary}")
         return None
     finally:
         if conn is not None:
@@ -14464,6 +14491,168 @@ def init_mantenciones_tables():
             """)
 
             # ════════════════════════════════════════════════════════════
+            # CHECKLIST DINÁMICO — tipos de respuesta (modelo Fracttal)
+            # Migración 2026-05-14: extiende mant_visita_tareas para
+            # soportar checklists con 8 tipos de respuesta. Las tareas
+            # legacy (sin tipo_respuesta) siguen funcionando como antes.
+            # ════════════════════════════════════════════════════════════
+            for _mig in [
+                # Tipo de respuesta esperada (campo del checklist)
+                "ALTER TABLE mant_visita_tareas ADD COLUMN tipo_respuesta ENUM("
+                " 'check','texto','sino','numero','verificacion','gps','lista','fecha_hora','foto')"
+                " DEFAULT 'check'"
+                " COMMENT 'Tipo de campo: check=tarea simple completable; los demás son campos de respuesta'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN obligatoria TINYINT(1) DEFAULT 0",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN requiere_foto TINYINT(1) DEFAULT 0"
+                " COMMENT 'Si la tarea requiere adjuntar al menos una foto'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN unidad VARCHAR(30) NULL"
+                " COMMENT 'Para tipo numero: bar, °C, rpm, km/h, etc.'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN rango_min DECIMAL(14,4) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN rango_max DECIMAL(14,4) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN opciones_lista_json TEXT NULL"
+                " COMMENT 'JSON array de opciones para tipo lista'",
+                # Valores polimórficos — un slot por tipo (NULL si no aplica)
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_texto TEXT NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_numero DECIMAL(20,6) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_sino ENUM('si','no','na') NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_verificacion ENUM('aprobado','alerta','falla') NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_lista VARCHAR(300) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_fecha_hora DATETIME NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_gps_lat DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_gps_lng DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_gps_accuracy DECIMAL(8,2) NULL"
+                " COMMENT 'Accuracy en metros del fix GPS'",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
+            # ════════════════════════════════════════════════════════════
+            # PLANTILLAS DE CHECKLIST — reutilizables entre OTs
+            # Modelo Fracttal: Plantilla → Items (8 tipos). Aplicar
+            # plantilla a una OT clona los items como mant_visita_tareas.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tarea_plantillas (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre        VARCHAR(200) NOT NULL,
+                    descripcion   TEXT,
+                    tipo_visita   ENUM('preventiva','correctiva','garantia','levantamiento',
+                                       'inspeccion','instalacion','otro') DEFAULT 'preventiva'
+                                  COMMENT 'A qué tipo de OT aplica por defecto',
+                    tiempo_estimado_min INT NULL,
+                    activa        TINYINT(1) DEFAULT 1,
+                    es_sistema    TINYINT(1) DEFAULT 0
+                                  COMMENT '1 = seed predefinido, no se puede borrar',
+                    created_by    VARCHAR(190),
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_activa (activa),
+                    INDEX idx_tipo   (tipo_visita)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tarea_plantilla_items (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    plantilla_id  INT NOT NULL,
+                    orden         INT DEFAULT 0,
+                    titulo        VARCHAR(300) NOT NULL,
+                    descripcion   TEXT,
+                    tipo_respuesta ENUM('check','texto','sino','numero','verificacion',
+                                        'gps','lista','fecha_hora','foto') DEFAULT 'check',
+                    obligatoria   TINYINT(1) DEFAULT 0,
+                    requiere_foto TINYINT(1) DEFAULT 0,
+                    unidad        VARCHAR(30) NULL,
+                    rango_min     DECIMAL(14,4) NULL,
+                    rango_max     DECIMAL(14,4) NULL,
+                    opciones_lista_json TEXT NULL
+                                  COMMENT 'JSON array: ["Aceite 5W40", "Aceite 10W40", ...]',
+                    FOREIGN KEY (plantilla_id) REFERENCES mant_tarea_plantillas(id) ON DELETE CASCADE,
+                    INDEX idx_plant (plantilla_id),
+                    INDEX idx_orden (plantilla_id, orden)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ── SEEDS: plantillas predefinidas útiles (solo si DB está vacía)
+            try:
+                cur.execute("SELECT COUNT(*) AS n FROM mant_tarea_plantillas")
+                _n_plant = (cur.fetchone() or {}).get("n", 0)
+                if _n_plant == 0:
+                    _seeds = [
+                        # (nombre, tipo_visita, descripcion, [items])
+                        ("Levantamiento fotográfico estándar", "levantamiento",
+                         "Captura visual del equipo con datos técnicos. Genera 1 tarea por equipo del cliente.",
+                         [
+                             (1, "Foto general del equipo", "Plano completo mostrando el equipo en su ubicación", "foto", 1, 1, None, None, None, None),
+                             (2, "Foto del N° de serie", "Acercamiento legible del serial", "foto", 1, 1, None, None, None, None),
+                             (3, "Foto de placa de marca/modelo", "Placa identificadora", "foto", 1, 1, None, None, None, None),
+                             (4, "Estado general del equipo", "Calificación visual", "verificacion", 1, 0, None, None, None, None),
+                             (5, "¿Tiene daños visibles?", "", "sino", 1, 0, None, None, None, None),
+                             (6, "Observaciones del técnico", "Comentarios libres", "texto", 0, 0, None, None, None, None),
+                             (7, "Ubicación GPS del equipo", "Validar coordenadas reales del cliente", "gps", 0, 0, None, None, None, None),
+                         ]),
+                        ("Mantención preventiva trotadora", "preventiva",
+                         "Checklist estándar para mantención preventiva de trotadoras (cinta de correr).",
+                         [
+                             (1, "Limpieza general del equipo", "Aspirado, paños húmedos, etc.", "check", 1, 0, None, None, None, None),
+                             (2, "Tensión de la cinta", "Verificar que no patine", "verificacion", 1, 0, None, None, None, None),
+                             (3, "Alineación de la cinta", "Centrada al rodillo", "verificacion", 1, 0, None, None, None, None),
+                             (4, "Lubricación de cinta (siliconado)", "", "check", 1, 1, None, None, None, None),
+                             (5, "Voltaje de alimentación", "Lectura con multímetro", "numero", 0, 0, "V", "200", "250", None),
+                             (6, "Velocidad de prueba", "", "numero", 0, 0, "km/h", "0", "20", None),
+                             (7, "Foto antes de la mantención", "", "foto", 1, 1, None, None, None, None),
+                             (8, "Foto después de la mantención", "", "foto", 1, 1, None, None, None, None),
+                             (9, "Repuesto cambiado (si aplica)", "Banda, motor, electrónica…", "lista", 0, 0, None, None, None,
+                              '["Ninguno", "Banda", "Motor", "Electronica", "Rodillo delantero", "Rodillo trasero", "Otro"]'),
+                             (10, "Observaciones técnicas", "", "texto", 0, 0, None, None, None, None),
+                         ]),
+                        ("Garantía — diagnóstico inicial", "garantia",
+                         "Levantamiento de información para evaluar cobertura de garantía.",
+                         [
+                             (1, "Foto del N° de serie", "", "foto", 1, 1, None, None, None, None),
+                             (2, "Fecha de compra estimada", "", "fecha_hora", 1, 0, None, None, None, None),
+                             (3, "¿Tiene factura disponible?", "", "sino", 1, 0, None, None, None, None),
+                             (4, "Falla declarada por el cliente", "Lo que dice el cliente", "texto", 1, 0, None, None, None, None),
+                             (5, "Falla constatada por técnico", "Lo que observa el técnico", "texto", 1, 0, None, None, None, None),
+                             (6, "Foto del problema", "", "foto", 1, 1, None, None, None, None),
+                             (7, "Diagnóstico", "", "verificacion", 1, 0, None, None, None, None),
+                             (8, "GPS de la visita", "", "gps", 0, 0, None, None, None, None),
+                         ]),
+                        ("Instalación nueva", "instalacion",
+                         "Checklist de instalación de equipo nuevo.",
+                         [
+                             (1, "Foto del lugar antes de la instalación", "", "foto", 1, 1, None, None, None, None),
+                             (2, "Equipo desempacado en buen estado", "", "sino", 1, 0, None, None, None, None),
+                             (3, "Voltaje en el toma corriente", "", "numero", 1, 0, "V", "200", "250", None),
+                             (4, "Nivel/plomada del equipo", "", "verificacion", 1, 0, None, None, None, None),
+                             (5, "Prueba de encendido", "", "verificacion", 1, 0, None, None, None, None),
+                             (6, "Capacitación al cliente", "Explicación de uso y mantención básica", "check", 1, 0, None, None, None, None),
+                             (7, "Foto de la instalación terminada", "", "foto", 1, 1, None, None, None, None),
+                             (8, "Hora de finalización", "", "fecha_hora", 0, 0, None, None, None, None),
+                         ]),
+                    ]
+                    for nombre, tipo_v, desc, items in _seeds:
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantillas "
+                            "(nombre, descripcion, tipo_visita, activa, es_sistema, created_by) "
+                            "VALUES (%s,%s,%s,1,1,'seed')",
+                            (nombre, desc, tipo_v)
+                        )
+                        plant_id = cur.lastrowid
+                        for it in items:
+                            (orden, titulo, descripcion_it, tipo_r, oblig, req_foto,
+                             unidad, rmin, rmax, opciones_json) = it
+                            cur.execute(
+                                "INSERT INTO mant_tarea_plantilla_items "
+                                "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                                " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                                (plant_id, orden, titulo, descripcion_it, tipo_r,
+                                 oblig, req_foto, unidad, rmin, rmax, opciones_json)
+                            )
+            except Exception as _e_seed:
+                print(f"[plantillas-seed] no se aplicó seed: {_e_seed}", flush=True)
+
+            # ════════════════════════════════════════════════════════════
             # FOTOS DE LA VISITA / OT
             # Galería con clasificación: antes / durante / después / serie /
             # falla / reparación / general. Cada foto puede asociarse a una
@@ -21062,6 +21251,529 @@ def mant_ots_list():
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
         },
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLANTILLAS DE CHECKLIST — UI
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/plantillas")
+@_mant_required
+def mant_plantillas_page():
+    """Página de gestión de plantillas de checklist."""
+    return render_template("mantenciones/plantillas.html")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLANTILLAS DE CHECKLIST (modelo Fracttal)
+#
+# Una plantilla es un conjunto reusable de items (preguntas/campos).
+# Cada item tiene un tipo de respuesta entre 9 posibles:
+#   check         → casilla simple (tarea tradicional, valor implícito completada)
+#   texto         → texto libre
+#   sino          → enum: si / no / na
+#   numero        → numérico con unidad y rango opcional
+#   verificacion  → tricolor aprobado/alerta/falla (modelo Fracttal)
+#   gps           → captura coordenadas del dispositivo
+#   lista         → dropdown con opciones predefinidas (JSON)
+#   fecha_hora    → datetime picker
+#   foto          → tarea que requiere subir foto al completar
+#
+# Al aplicar una plantilla a una OT, sus items se CLONAN como
+# mant_visita_tareas. La plantilla puede editarse después sin afectar
+# OTs ya creadas (snapshot lógico).
+# ═════════════════════════════════════════════════════════════════════
+
+# Tipos de respuesta permitidos (cualquier valor fuera de esta lista se rechaza)
+_TAREA_TIPOS_RESPUESTA = (
+    "check", "texto", "sino", "numero", "verificacion",
+    "gps", "lista", "fecha_hora", "foto",
+)
+_PLANT_TIPO_VISITA = (
+    "preventiva", "correctiva", "garantia", "levantamiento",
+    "inspeccion", "instalacion", "otro",
+)
+
+
+def _validar_item_plantilla(d):
+    """Normaliza y valida un item de plantilla. Devuelve dict listo para INSERT
+    o (None, error_str)."""
+    titulo = (d.get("titulo") or "").strip()[:300]
+    if not titulo:
+        return None, "Título requerido"
+    tipo = (d.get("tipo_respuesta") or "check").strip().lower()
+    if tipo not in _TAREA_TIPOS_RESPUESTA:
+        return None, f"tipo_respuesta inválido: {tipo}"
+    opciones = None
+    if tipo == "lista":
+        ops_raw = d.get("opciones_lista") or d.get("opciones_lista_json") or []
+        if isinstance(ops_raw, str):
+            try:
+                ops_raw = json.loads(ops_raw)
+            except Exception:
+                ops_raw = [s.strip() for s in ops_raw.split("\n") if s.strip()]
+        if not isinstance(ops_raw, list) or not ops_raw:
+            return None, "Tipo 'lista' requiere al menos una opción"
+        opciones = json.dumps([str(x).strip()[:200] for x in ops_raw if str(x).strip()],
+                              ensure_ascii=False)
+    rmin = d.get("rango_min")
+    rmax = d.get("rango_max")
+    try: rmin = float(rmin) if rmin not in (None, "") else None
+    except Exception: rmin = None
+    try: rmax = float(rmax) if rmax not in (None, "") else None
+    except Exception: rmax = None
+    return {
+        "orden":        int(d.get("orden") or 0),
+        "titulo":       titulo,
+        "descripcion":  (d.get("descripcion") or "").strip()[:2000] or None,
+        "tipo_respuesta": tipo,
+        "obligatoria":  1 if d.get("obligatoria") else 0,
+        "requiere_foto":1 if d.get("requiere_foto") else 0,
+        "unidad":       (d.get("unidad") or "").strip()[:30] or None,
+        "rango_min":    rmin,
+        "rango_max":    rmax,
+        "opciones_lista_json": opciones,
+    }, None
+
+
+@app.route("/mantenciones/api/plantillas", methods=["GET"])
+@_mant_required
+def mant_plantillas_listar():
+    """Lista plantillas. Filtros: ?activa=1, ?tipo_visita=preventiva, ?q=..."""
+    where, params = [], []
+    if request.args.get("activa") == "1":
+        where.append("activa=1")
+    tv = (request.args.get("tipo_visita") or "").strip().lower()
+    if tv in _PLANT_TIPO_VISITA:
+        where.append("tipo_visita=%s"); params.append(tv)
+    q = (request.args.get("q") or "").strip()
+    if q:
+        where.append("(nombre LIKE %s OR descripcion LIKE %s)")
+        params += [f"%{q}%", f"%{q}%"]
+    wstr = (" WHERE " + " AND ".join(where)) if where else ""
+    rows = mysql_fetchall(
+        f"""SELECT p.*, COALESCE(it.cnt, 0) AS items_count
+              FROM mant_tarea_plantillas p
+              LEFT JOIN (SELECT plantilla_id, COUNT(*) AS cnt
+                           FROM mant_tarea_plantilla_items
+                          GROUP BY plantilla_id) it ON it.plantilla_id = p.id
+              {wstr}
+             ORDER BY p.activa DESC, p.es_sistema DESC, p.nombre""",
+        tuple(params)
+    ) or []
+    return jsonify({
+        "ok": True,
+        "plantillas": [{
+            "id": r["id"], "nombre": r["nombre"],
+            "descripcion": r.get("descripcion") or "",
+            "tipo_visita": r.get("tipo_visita") or "otro",
+            "tiempo_estimado_min": r.get("tiempo_estimado_min"),
+            "activa": bool(r.get("activa")),
+            "es_sistema": bool(r.get("es_sistema")),
+            "items_count": int(r.get("items_count") or 0),
+            "created_by": r.get("created_by") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+        } for r in rows],
+        "total": len(rows),
+    })
+
+
+@app.route("/mantenciones/api/plantillas/<int:pid>", methods=["GET"])
+@_mant_required
+def mant_plantilla_detalle(pid):
+    """Devuelve plantilla + sus items."""
+    plant = mysql_fetchone("SELECT * FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+    if not plant:
+        return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
+    items = mysql_fetchall(
+        "SELECT * FROM mant_tarea_plantilla_items "
+        " WHERE plantilla_id=%s ORDER BY orden, id",
+        (pid,)
+    ) or []
+    out_items = []
+    for it in items:
+        opciones = []
+        if it.get("opciones_lista_json"):
+            try: opciones = json.loads(it["opciones_lista_json"])
+            except Exception: opciones = []
+        out_items.append({
+            "id": it["id"], "orden": it.get("orden") or 0,
+            "titulo": it["titulo"], "descripcion": it.get("descripcion") or "",
+            "tipo_respuesta": it.get("tipo_respuesta") or "check",
+            "obligatoria": bool(it.get("obligatoria")),
+            "requiere_foto": bool(it.get("requiere_foto")),
+            "unidad": it.get("unidad") or "",
+            "rango_min": float(it["rango_min"]) if it.get("rango_min") is not None else None,
+            "rango_max": float(it["rango_max"]) if it.get("rango_max") is not None else None,
+            "opciones_lista": opciones,
+        })
+    return jsonify({
+        "ok": True,
+        "plantilla": {
+            "id": plant["id"], "nombre": plant["nombre"],
+            "descripcion": plant.get("descripcion") or "",
+            "tipo_visita": plant.get("tipo_visita") or "otro",
+            "tiempo_estimado_min": plant.get("tiempo_estimado_min"),
+            "activa": bool(plant.get("activa")),
+            "es_sistema": bool(plant.get("es_sistema")),
+            "created_by": plant.get("created_by") or "",
+            "created_at": str(plant["created_at"])[:16] if plant.get("created_at") else "",
+        },
+        "items": out_items,
+    })
+
+
+@app.route("/mantenciones/api/plantillas", methods=["POST"])
+@_mant_required
+def mant_plantilla_crear():
+    """Crea una plantilla con sus items en un solo POST.
+    Body: { nombre, descripcion, tipo_visita, tiempo_estimado_min, items: [...] }
+    """
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:200]
+    if not nombre:
+        return jsonify({"ok": False, "error": "Nombre requerido"}), 400
+    tv = (d.get("tipo_visita") or "preventiva").lower()
+    if tv not in _PLANT_TIPO_VISITA:
+        tv = "otro"
+    desc = (d.get("descripcion") or "").strip()[:2000]
+    tiempo = d.get("tiempo_estimado_min")
+    try: tiempo = int(tiempo) if tiempo not in (None, "") else None
+    except Exception: tiempo = None
+
+    items_in = d.get("items") or []
+    items_norm = []
+    for idx, raw in enumerate(items_in):
+        norm, err = _validar_item_plantilla(raw)
+        if err:
+            return jsonify({"ok": False, "error": f"Item #{idx+1}: {err}"}), 400
+        if norm.get("orden") in (0, None):
+            norm["orden"] = idx + 1
+        items_norm.append(norm)
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_tarea_plantillas "
+                "(nombre, descripcion, tipo_visita, tiempo_estimado_min, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,%s,1,0,%s)",
+                (nombre, desc, tv, tiempo, current_username())
+            )
+            pid = cur.lastrowid
+            for it in items_norm:
+                cur.execute(
+                    "INSERT INTO mant_tarea_plantilla_items "
+                    "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
+                     it["obligatoria"], it["requiere_foto"], it["unidad"],
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"])
+                )
+        conn.commit()
+        try:
+            _mant_log("plantilla", pid, "creada", f"{nombre} ({len(items_norm)} items)")
+        except Exception: pass
+        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm)})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/plantillas/<int:pid>", methods=["PUT"])
+@_mant_required
+def mant_plantilla_actualizar(pid):
+    """Actualiza la plantilla (header) y REEMPLAZA todos los items.
+    Las OTs ya creadas con esta plantilla NO se ven afectadas (snapshot lógico).
+    """
+    plant = mysql_fetchone("SELECT id, es_sistema FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+    if not plant:
+        return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:200]
+    if not nombre:
+        return jsonify({"ok": False, "error": "Nombre requerido"}), 400
+    tv = (d.get("tipo_visita") or "preventiva").lower()
+    if tv not in _PLANT_TIPO_VISITA:
+        tv = "otro"
+    desc = (d.get("descripcion") or "").strip()[:2000]
+    tiempo = d.get("tiempo_estimado_min")
+    try: tiempo = int(tiempo) if tiempo not in (None, "") else None
+    except Exception: tiempo = None
+    activa = 1 if d.get("activa", True) else 0
+
+    items_in = d.get("items") or []
+    items_norm = []
+    for idx, raw in enumerate(items_in):
+        norm, err = _validar_item_plantilla(raw)
+        if err:
+            return jsonify({"ok": False, "error": f"Item #{idx+1}: {err}"}), 400
+        if norm.get("orden") in (0, None):
+            norm["orden"] = idx + 1
+        items_norm.append(norm)
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_tarea_plantillas SET "
+                " nombre=%s, descripcion=%s, tipo_visita=%s, "
+                " tiempo_estimado_min=%s, activa=%s "
+                "WHERE id=%s",
+                (nombre, desc, tv, tiempo, activa, pid)
+            )
+            cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
+            for it in items_norm:
+                cur.execute(
+                    "INSERT INTO mant_tarea_plantilla_items "
+                    "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
+                     it["obligatoria"], it["requiere_foto"], it["unidad"],
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"])
+                )
+        conn.commit()
+        try:
+            _mant_log("plantilla", pid, "actualizada", f"{nombre} ({len(items_norm)} items)")
+        except Exception: pass
+        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm)})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/plantillas/<int:pid>", methods=["DELETE"])
+@_mant_required
+def mant_plantilla_eliminar(pid):
+    """Borra (soft) una plantilla. Las del sistema no se pueden borrar; solo
+    desactivarse (activa=0)."""
+    plant = mysql_fetchone("SELECT id, es_sistema, nombre FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+    if not plant:
+        return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
+    if plant.get("es_sistema"):
+        # Desactivar en vez de borrar
+        mysql_execute("UPDATE mant_tarea_plantillas SET activa=0 WHERE id=%s", (pid,))
+        try: _mant_log("plantilla", pid, "desactivada", plant["nombre"])
+        except Exception: pass
+        return jsonify({"ok": True, "desactivada": True})
+    mysql_execute("DELETE FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+    try: _mant_log("plantilla", pid, "eliminada", plant["nombre"])
+    except Exception: pass
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/aplicar-plantilla", methods=["POST"])
+@_mant_required
+def mant_visita_aplicar_plantilla(vid):
+    """Aplica una plantilla a una OT: clona sus items como mant_visita_tareas.
+    Body: { plantilla_id, maquina_ids?: [int,...]  // opcional: si viene,
+            crea una copia de las tareas por cada máquina (útil para
+            levantamiento fotográfico de N equipos) }
+    """
+    v = mysql_fetchone("SELECT id, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    pid = d.get("plantilla_id")
+    try: pid = int(pid)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "plantilla_id inválido"}), 400
+    plant = mysql_fetchone(
+        "SELECT id, nombre, activa FROM mant_tarea_plantillas WHERE id=%s", (pid,)
+    )
+    if not plant or not plant.get("activa"):
+        return jsonify({"ok": False, "error": "Plantilla no encontrada o inactiva"}), 404
+
+    items = mysql_fetchall(
+        "SELECT * FROM mant_tarea_plantilla_items "
+        " WHERE plantilla_id=%s ORDER BY orden, id",
+        (pid,)
+    ) or []
+    if not items:
+        return jsonify({"ok": False, "error": "Plantilla sin items"}), 400
+
+    # Determinar máquinas objetivo (opcional)
+    maquina_ids = d.get("maquina_ids") or []
+    if maquina_ids:
+        try: maquina_ids = [int(m) for m in maquina_ids]
+        except Exception:
+            return jsonify({"ok": False, "error": "maquina_ids inválido"}), 400
+
+    # Calcular orden inicial (siguiente al último existente)
+    last_row = mysql_fetchone(
+        "SELECT COALESCE(MAX(orden), 0) AS mx FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    )
+    next_orden = int((last_row or {}).get("mx") or 0)
+
+    conn = get_mysql()
+    n_creadas = 0
+    try:
+        with conn.cursor() as cur:
+            targets = maquina_ids if maquina_ids else [None]
+            for mid in targets:
+                for it in items:
+                    next_orden += 1
+                    # Si tenemos máquina específica y la tarea es foto/levantamiento,
+                    # prefijar el título con el nombre del equipo para que el técnico
+                    # sepa de qué equipo se trata.
+                    titulo = it["titulo"]
+                    if mid:
+                        m_row = mysql_fetchone(
+                            "SELECT nombre, serie FROM mant_maquinas WHERE id=%s", (mid,)
+                        )
+                        if m_row:
+                            sufijo = m_row["nombre"]
+                            if m_row.get("serie"):
+                                sufijo += f" (S/N: {m_row['serie']})"
+                            titulo = f"{titulo} — {sufijo}"
+                    cur.execute(
+                        "INSERT INTO mant_visita_tareas "
+                        "(visita_id, orden, titulo, descripcion, tipo, maquina_id, "
+                        " tipo_respuesta, obligatoria, requiere_foto, unidad, "
+                        " rango_min, rango_max, opciones_lista_json, "
+                        " estado_trabajo, created_by) "
+                        "VALUES (%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
+                        (vid, next_orden, titulo[:300], it.get("descripcion"),
+                         mid, it["tipo_respuesta"],
+                         it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                         it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+                         it.get("opciones_lista_json"), current_username())
+                    )
+                    n_creadas += 1
+        conn.commit()
+        try:
+            _mant_log("visita", vid, "plantilla_aplicada",
+                      f"Plantilla '{plant['nombre']}' → {n_creadas} tarea(s)")
+        except Exception: pass
+        return jsonify({"ok": True, "creadas": n_creadas, "plantilla": plant["nombre"]})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/responder", methods=["POST"])
+@_mant_required
+def mant_tarea_responder(vid, tid):
+    """Guarda la respuesta a una tarea de checklist según su tipo_respuesta.
+    Body acepta cualquiera de:
+      { valor_texto, valor_numero, valor_sino, valor_verificacion,
+        valor_lista, valor_fecha_hora, valor_gps_lat, valor_gps_lng,
+        valor_gps_accuracy, observaciones }
+    El backend valida solo el campo correspondiente al tipo_respuesta de la tarea.
+    Si la tarea es obligatoria y el valor está vacío, devuelve error.
+    """
+    tarea = mysql_fetchone(
+        "SELECT id, visita_id, tipo_respuesta, obligatoria, requiere_foto, "
+        "       rango_min, rango_max, opciones_lista_json "
+        "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+        (tid, vid)
+    )
+    if not tarea:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    tipo = (tarea.get("tipo_respuesta") or "check").lower()
+
+    sets, vals = [], []
+
+    if tipo == "check":
+        # Tarea simple: solo marcar completada
+        pass
+    elif tipo == "texto":
+        v = (d.get("valor_texto") or "").strip()
+        if not v and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Respuesta obligatoria"}), 400
+        sets.append("valor_texto=%s"); vals.append(v or None)
+    elif tipo == "numero":
+        raw = d.get("valor_numero")
+        if raw in (None, ""):
+            if tarea.get("obligatoria"):
+                return jsonify({"ok": False, "error": "Respuesta numérica obligatoria"}), 400
+            v = None
+        else:
+            try: v = float(raw)
+            except Exception:
+                return jsonify({"ok": False, "error": "Valor numérico inválido"}), 400
+            # Validar rango si existe
+            rmin = tarea.get("rango_min")
+            rmax = tarea.get("rango_max")
+            if rmin is not None and v < float(rmin):
+                return jsonify({"ok": False, "error": f"Valor menor al rango mínimo ({rmin})"}), 400
+            if rmax is not None and v > float(rmax):
+                return jsonify({"ok": False, "error": f"Valor mayor al rango máximo ({rmax})"}), 400
+        sets.append("valor_numero=%s"); vals.append(v)
+    elif tipo == "sino":
+        v = (d.get("valor_sino") or "").strip().lower()
+        if v not in ("si", "no", "na", ""):
+            return jsonify({"ok": False, "error": "valor_sino debe ser si|no|na"}), 400
+        if not v and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Respuesta obligatoria"}), 400
+        sets.append("valor_sino=%s"); vals.append(v or None)
+    elif tipo == "verificacion":
+        v = (d.get("valor_verificacion") or "").strip().lower()
+        if v not in ("aprobado", "alerta", "falla", ""):
+            return jsonify({"ok": False, "error": "valor_verificacion debe ser aprobado|alerta|falla"}), 400
+        if not v and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Respuesta obligatoria"}), 400
+        sets.append("valor_verificacion=%s"); vals.append(v or None)
+    elif tipo == "lista":
+        v = (d.get("valor_lista") or "").strip()
+        opciones = []
+        if tarea.get("opciones_lista_json"):
+            try: opciones = json.loads(tarea["opciones_lista_json"])
+            except Exception: opciones = []
+        if v and opciones and v not in opciones:
+            return jsonify({"ok": False, "error": "Opción no válida"}), 400
+        if not v and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Respuesta obligatoria"}), 400
+        sets.append("valor_lista=%s"); vals.append(v or None)
+    elif tipo == "fecha_hora":
+        v = (d.get("valor_fecha_hora") or "").strip()
+        if not v and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Respuesta obligatoria"}), 400
+        if v:
+            # Normalizar formato esperado: YYYY-MM-DD HH:MM o YYYY-MM-DDTHH:MM
+            v = v.replace("T", " ")[:19]
+        sets.append("valor_fecha_hora=%s"); vals.append(v or None)
+    elif tipo == "gps":
+        lat = d.get("valor_gps_lat")
+        lng = d.get("valor_gps_lng")
+        acc = d.get("valor_gps_accuracy")
+        try: lat = float(lat) if lat not in (None, "") else None
+        except Exception: lat = None
+        try: lng = float(lng) if lng not in (None, "") else None
+        except Exception: lng = None
+        try: acc = float(acc) if acc not in (None, "") else None
+        except Exception: acc = None
+        if (lat is None or lng is None) and tarea.get("obligatoria"):
+            return jsonify({"ok": False, "error": "Coordenadas GPS obligatorias"}), 400
+        sets.append("valor_gps_lat=%s"); vals.append(lat)
+        sets.append("valor_gps_lng=%s"); vals.append(lng)
+        sets.append("valor_gps_accuracy=%s"); vals.append(acc)
+    elif tipo == "foto":
+        # La foto se sube por el endpoint /fotos. Aquí solo marcamos
+        # completada; el frontend valida que haya al menos 1 foto si requiere_foto.
+        pass
+
+    # Observaciones libres (opcional para cualquier tipo)
+    if "observaciones" in d:
+        sets.append("observaciones=%s")
+        vals.append((d.get("observaciones") or "").strip()[:2000] or None)
+
+    # Marcar completada
+    sets.append("completada=1")
+    sets.append("completada_at=NOW()")
+    sets.append("completada_por=%s")
+    vals.append(current_username())
+    sets.append("estado_trabajo='completada'")
+
+    if sets:
+        sql = f"UPDATE mant_visita_tareas SET {', '.join(sets)} WHERE id=%s"
+        mysql_execute(sql, tuple(vals) + (tid,))
+    try:
+        _mant_log("visita_tarea", tid, "respondida",
+                  f"Tipo {tipo} respondido por {current_username()}")
+    except Exception: pass
+    return jsonify({"ok": True, "tarea_id": tid, "tipo": tipo})
 
 
 # ═════════════════════════════════════════════════════════════════════

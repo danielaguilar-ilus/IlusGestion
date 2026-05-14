@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+{% block title %}Plantillas de Checklist — ILUS{% endblock %}
+
+{% block content %}
+<style>
+  .pl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:14px}
+  .pl-card{background:#fff;border:1px solid var(--border,#e5e7eb);border-radius:12px;padding:16px;
+           transition:box-shadow .15s, transform .12s;cursor:pointer;position:relative}
+  .pl-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.08);transform:translateY(-2px)}
+  .pl-card .pl-name{font-weight:700;font-size:1rem;color:#0f172a;margin-bottom:4px;padding-right:60px}
+  .pl-card .pl-desc{font-size:.78rem;color:#6b7280;line-height:1.4;margin-bottom:10px;
+                    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .pl-card .pl-meta{display:flex;gap:6px;flex-wrap:wrap;font-size:.7rem}
+  .pl-card .badge-tipo{background:#f3f4f6;color:#374151;padding:3px 8px;border-radius:50px;font-weight:600}
+  .pl-card .badge-items{background:#dbeafe;color:#1e40af;padding:3px 8px;border-radius:50px;font-weight:700}
+  .pl-card .badge-sys{position:absolute;top:8px;right:8px;background:#fef3c7;color:#92400e;
+                       padding:2px 7px;border-radius:50px;font-size:.62rem;font-weight:700;letter-spacing:.5px}
+  .pl-card.inactive{opacity:.55}
+  .it-card{background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:8px;
+           transition:background .15s}
+  .it-card:hover{background:#f5f5f5}
+  .it-card .it-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .it-card .it-num{background:#0a0a0a;color:#fff;width:22px;height:22px;border-radius:50%;
+                   display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
+  .it-card .form-control-sm{font-size:.85rem}
+  .tipo-badge{font-size:.65rem;padding:3px 8px;border-radius:5px;font-weight:700;letter-spacing:.3px}
+  .tipo-check       {background:#f3f4f6;color:#374151}
+  .tipo-texto       {background:#e0e7ff;color:#3730a3}
+  .tipo-sino        {background:#dbeafe;color:#1e40af}
+  .tipo-numero      {background:#fef3c7;color:#92400e}
+  .tipo-verificacion{background:#fce7f3;color:#9f1239}
+  .tipo-gps         {background:#dcfce7;color:#166534}
+  .tipo-lista       {background:#ede9fe;color:#5b21b6}
+  .tipo-fecha_hora  {background:#fef9c3;color:#854d0e}
+  .tipo-foto        {background:#fee2e2;color:#991b1b}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-list-check me-2" style="color:var(--ilus-red)"></i>Plantillas de Checklist</h4>
+    <div class="sub">Define un conjunto reusable de tareas con 9 tipos de respuesta. Aplícalo a OTs con 1 click.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Volver a OTs
+    </a>
+    <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
+      <i class="bi bi-plus-circle me-1"></i>Nueva plantilla
+    </button>
+  </div>
+</div>
+
+<div class="ilus-card p-3 mb-3">
+  <div class="d-flex gap-2 flex-wrap align-items-center">
+    <input id="searchQ" class="form-control form-control-sm" style="max-width:280px"
+           placeholder="🔍 Buscar plantilla por nombre…" oninput="cargarPlantillasDebounced()">
+    <select id="filterTipo" class="form-select form-select-sm" style="max-width:200px"
+            onchange="cargarPlantillas()">
+      <option value="">Todos los tipos</option>
+      <option value="preventiva">Preventiva</option>
+      <option value="correctiva">Correctiva</option>
+      <option value="garantia">Garantía</option>
+      <option value="levantamiento">Levantamiento</option>
+      <option value="inspeccion">Inspección</option>
+      <option value="instalacion">Instalación</option>
+      <option value="otro">Otro</option>
+    </select>
+    <div class="form-check ms-2">
+      <input class="form-check-input" type="checkbox" id="soloActivas" checked
+             onchange="cargarPlantillas()">
+      <label class="form-check-label small" for="soloActivas">Solo activas</label>
+    </div>
+  </div>
+</div>
+
+<div id="plantillasList" class="pl-grid">
+  <div class="text-muted text-center w-100 py-5">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+  </div>
+</div>
+
+{# ═══════════════════════════════════════════════════════
+   MODAL: EDITOR DE PLANTILLA (form-builder)
+   ═══════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalEditorPlantilla" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-list-check me-2"></i><span id="editorTitulo">Nueva plantilla</span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3">
+          <div class="col-12 col-md-6">
+            <label class="form-label small fw-semibold">Nombre <span class="text-danger">*</span></label>
+            <input type="text" id="ePNombre" class="form-control form-control-sm"
+                   placeholder="Ej: Mantención preventiva trotadora">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small fw-semibold">Tipo de visita</label>
+            <select id="ePTipo" class="form-select form-select-sm">
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="garantia">Garantía</option>
+              <option value="levantamiento">Levantamiento</option>
+              <option value="inspeccion">Inspección</option>
+              <option value="instalacion">Instalación</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small fw-semibold">Tiempo estimado (min)</label>
+            <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Descripción</label>
+            <textarea id="ePDesc" rows="2" class="form-control form-control-sm"
+                      placeholder="Para qué sirve esta plantilla, cuándo usarla…"></textarea>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-card-list me-1"></i>Items del checklist</span>
+            <span class="badge bg-secondary ms-1" id="itCount">0</span>
+          </div>
+          <button class="btn btn-sm btn-outline-primary" onclick="agregarItem()">
+            <i class="bi bi-plus-circle me-1"></i>Agregar item
+          </button>
+        </div>
+
+        <div id="itemsContainer">
+          <div class="text-muted text-center py-4 small">
+            Aún no hay items. Agrega el primero arriba.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between">
+        <div>
+          <button class="btn btn-outline-danger btn-sm" id="btnEliminarPl" onclick="eliminarPlantilla()" style="display:none">
+            <i class="bi bi-trash me-1"></i>Eliminar
+          </button>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-ilus fw-bold" onclick="guardarPlantilla()">
+            <i class="bi bi-check-circle-fill me-1"></i>Guardar plantilla
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TIPOS_RESPUESTA = [
+  {v:'check',        l:'☑ Casilla simple',              hint:'Tarea que solo se marca como completada'},
+  {v:'texto',        l:'📝 Texto libre',                 hint:'Respuesta abierta del técnico'},
+  {v:'sino',         l:'✔/✗ Sí / No / N/A',              hint:'Respuesta cerrada de 3 valores'},
+  {v:'numero',       l:'🔢 Número (con unidad y rango)', hint:'Lecturas: voltaje, presión, temperatura'},
+  {v:'verificacion', l:'🚦 Verificación (3 colores)',     hint:'Aprobado / Alerta / Falla — inspecciones técnicas'},
+  {v:'gps',          l:'📍 Ubicación GPS',                hint:'Captura coordenadas del dispositivo'},
+  {v:'lista',        l:'📋 Lista de opciones',            hint:'Dropdown con opciones que tú defines'},
+  {v:'fecha_hora',   l:'📅 Fecha y hora',                 hint:'Selector datetime'},
+  {v:'foto',         l:'📸 Foto obligatoria',             hint:'Tarea requiere subir al menos una foto'},
+];
+const TIPOS_VISITA_LABEL = {
+  preventiva:'Preventiva', correctiva:'Correctiva', garantia:'Garantía',
+  levantamiento:'Levantamiento', inspeccion:'Inspección',
+  instalacion:'Instalación', otro:'Otro'
+};
+
+let _plantillas = [];
+let _editId = null;
+let _items = [];
+let _searchTimer = null;
+let _modal = null;
+
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]
+  );
+}
+
+function cargarPlantillasDebounced(){
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(cargarPlantillas, 250);
+}
+
+async function cargarPlantillas(){
+  const q = document.getElementById('searchQ').value.trim();
+  const tipo = document.getElementById('filterTipo').value;
+  const soloAct = document.getElementById('soloActivas').checked;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (tipo) params.set('tipo_visita', tipo);
+  if (soloAct) params.set('activa', '1');
+  const cont = document.getElementById('plantillasList');
+  cont.innerHTML = '<div class="text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/plantillas?' + params.toString());
+    const d = await r.json();
+    if (!d.ok){ cont.innerHTML = '<div class="alert alert-danger">Error cargando plantillas</div>'; return; }
+    _plantillas = d.plantillas || [];
+    if (!_plantillas.length){
+      cont.innerHTML = `
+        <div class="text-center w-100 py-5">
+          <i class="bi bi-folder-x" style="font-size:2.5rem;color:#cbd5e1"></i>
+          <div class="fw-semibold mt-2 text-muted">No hay plantillas</div>
+          <div class="small text-muted">Crea la primera con "Nueva plantilla"</div>
+        </div>`;
+      return;
+    }
+    cont.innerHTML = _plantillas.map(p => `
+      <div class="pl-card ${p.activa ? '' : 'inactive'}" onclick="abrirEditor(${p.id})">
+        ${p.es_sistema ? '<span class="badge-sys">SISTEMA</span>' : ''}
+        <div class="pl-name">${escHtml(p.nombre)}</div>
+        ${p.descripcion ? '<div class="pl-desc">'+escHtml(p.descripcion)+'</div>' : ''}
+        <div class="pl-meta">
+          <span class="badge-tipo">${escHtml(TIPOS_VISITA_LABEL[p.tipo_visita] || p.tipo_visita)}</span>
+          <span class="badge-items"><i class="bi bi-check2-circle me-1"></i>${p.items_count} item${p.items_count!==1?'s':''}</span>
+          ${p.tiempo_estimado_min ? '<span class="badge-tipo">⏱ '+p.tiempo_estimado_min+' min</span>' : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch(e){
+    cont.innerHTML = `<div class="alert alert-danger">Error de red: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function abrirEditor(pid){
+  _editId = pid || null;
+  _items = [];
+  document.getElementById('editorTitulo').textContent = pid ? 'Editar plantilla' : 'Nueva plantilla';
+  document.getElementById('btnEliminarPl').style.display = pid ? '' : 'none';
+  document.getElementById('ePNombre').value = '';
+  document.getElementById('ePDesc').value = '';
+  document.getElementById('ePTipo').value = 'preventiva';
+  document.getElementById('ePTiempo').value = '';
+  renderItems();
+  if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
+  _modal.show();
+  if (pid){
+    cargarDetalle(pid);
+  }
+}
+
+async function cargarDetalle(pid){
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/' + pid);
+    const d = await r.json();
+    if (!d.ok){ alert('No se pudo cargar la plantilla'); return; }
+    const p = d.plantilla;
+    document.getElementById('ePNombre').value = p.nombre || '';
+    document.getElementById('ePDesc').value = p.descripcion || '';
+    document.getElementById('ePTipo').value = p.tipo_visita || 'preventiva';
+    document.getElementById('ePTiempo').value = p.tiempo_estimado_min || '';
+    _items = (d.items || []).map(it => ({...it}));
+    renderItems();
+  } catch(e){ alert('Error: '+e.message); }
+}
+
+function agregarItem(){
+  _items.push({
+    titulo:'', descripcion:'', tipo_respuesta:'check',
+    obligatoria:false, requiere_foto:false, unidad:'',
+    rango_min:null, rango_max:null, opciones_lista:[]
+  });
+  renderItems();
+  // Scroll al nuevo y enfocar
+  setTimeout(()=>{
+    const idx = _items.length - 1;
+    const el = document.querySelector(`#item-${idx} input[data-field="titulo"]`);
+    if (el){ el.focus(); el.scrollIntoView({behavior:'smooth', block:'center'}); }
+  }, 50);
+}
+
+function eliminarItem(idx){
+  if (!confirm('¿Eliminar este item?')) return;
+  _items.splice(idx, 1);
+  renderItems();
+}
+
+function moverItem(idx, dir){
+  const nuevo = idx + dir;
+  if (nuevo < 0 || nuevo >= _items.length) return;
+  const tmp = _items[idx];
+  _items[idx] = _items[nuevo];
+  _items[nuevo] = tmp;
+  renderItems();
+}
+
+function actualizarItem(idx, campo, valor){
+  if (!_items[idx]) return;
+  _items[idx][campo] = valor;
+  // Si cambia el tipo, ocultar/mostrar campos
+  if (campo === 'tipo_respuesta'){
+    renderItems();
+  }
+}
+
+function actualizarOpcionesLista(idx, raw){
+  if (!_items[idx]) return;
+  _items[idx].opciones_lista = raw.split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+function renderItems(){
+  const cont = document.getElementById('itemsContainer');
+  document.getElementById('itCount').textContent = _items.length;
+  if (!_items.length){
+    cont.innerHTML = '<div class="text-muted text-center py-4 small">Aún no hay items. Agrega el primero con el botón "Agregar item".</div>';
+    return;
+  }
+  cont.innerHTML = _items.map((it, idx) => {
+    const tipoOpciones = TIPOS_RESPUESTA.map(t =>
+      `<option value="${t.v}" ${it.tipo_respuesta===t.v?'selected':''}>${t.l}</option>`
+    ).join('');
+    const showUnidadRango = (it.tipo_respuesta === 'numero');
+    const showLista = (it.tipo_respuesta === 'lista');
+    const tipoHint = (TIPOS_RESPUESTA.find(t => t.v===it.tipo_respuesta) || {}).hint || '';
+    return `
+      <div class="it-card" id="item-${idx}">
+        <div class="it-head">
+          <div class="it-num">${idx+1}</div>
+          <select class="form-select form-select-sm" style="max-width:240px"
+                  data-field="tipo_respuesta"
+                  onchange="actualizarItem(${idx}, 'tipo_respuesta', this.value)">
+            ${tipoOpciones}
+          </select>
+          <span class="tipo-badge tipo-${it.tipo_respuesta}">${escHtml(it.tipo_respuesta)}</span>
+          <div class="ms-auto d-flex gap-1">
+            <button class="btn btn-xs btn-link p-0" onclick="moverItem(${idx},-1)" title="Subir">
+              <i class="bi bi-arrow-up"></i>
+            </button>
+            <button class="btn btn-xs btn-link p-0" onclick="moverItem(${idx},1)" title="Bajar">
+              <i class="bi bi-arrow-down"></i>
+            </button>
+            <button class="btn btn-xs btn-link text-danger p-0" onclick="eliminarItem(${idx})" title="Eliminar">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+        <div class="text-muted small mb-2" style="font-size:.7rem;font-style:italic">${escHtml(tipoHint)}</div>
+        <input type="text" class="form-control form-control-sm mb-1" placeholder="Título / pregunta ej: Cambio de aceite"
+               data-field="titulo" value="${escHtml(it.titulo)}"
+               oninput="actualizarItem(${idx}, 'titulo', this.value)">
+        <textarea class="form-control form-control-sm mb-1" rows="1"
+                  placeholder="Descripción / ayuda al técnico (opcional)"
+                  oninput="actualizarItem(${idx}, 'descripcion', this.value)">${escHtml(it.descripcion||'')}</textarea>
+        ${showUnidadRango ? `
+          <div class="row g-1 mb-1">
+            <div class="col-4"><input type="text" class="form-control form-control-sm" placeholder="Unidad (V, bar…)"
+                  value="${escHtml(it.unidad||'')}"
+                  oninput="actualizarItem(${idx}, 'unidad', this.value)"></div>
+            <div class="col-4"><input type="number" class="form-control form-control-sm" placeholder="Rango mín"
+                  value="${it.rango_min!=null?it.rango_min:''}"
+                  oninput="actualizarItem(${idx}, 'rango_min', this.value===''?null:parseFloat(this.value))"></div>
+            <div class="col-4"><input type="number" class="form-control form-control-sm" placeholder="Rango máx"
+                  value="${it.rango_max!=null?it.rango_max:''}"
+                  oninput="actualizarItem(${idx}, 'rango_max', this.value===''?null:parseFloat(this.value))"></div>
+          </div>
+        ` : ''}
+        ${showLista ? `
+          <textarea class="form-control form-control-sm mb-1" rows="3"
+                    placeholder="Una opción por línea (Ej: Aceite 5W40 / Aceite 10W40 / Filtro)"
+                    oninput="actualizarOpcionesLista(${idx}, this.value)">${escHtml((it.opciones_lista||[]).join('\n'))}</textarea>
+        ` : ''}
+        <div class="d-flex gap-3 mt-2">
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" id="oblig-${idx}"
+                   ${it.obligatoria?'checked':''}
+                   onchange="actualizarItem(${idx}, 'obligatoria', this.checked)">
+            <label class="form-check-label small" for="oblig-${idx}">Obligatoria</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" id="foto-${idx}"
+                   ${it.requiere_foto?'checked':''}
+                   onchange="actualizarItem(${idx}, 'requiere_foto', this.checked)">
+            <label class="form-check-label small" for="foto-${idx}">Requiere foto adjunta</label>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function guardarPlantilla(){
+  const nombre = document.getElementById('ePNombre').value.trim();
+  if (!nombre){ alert('Debes ingresar un nombre'); return; }
+  if (!_items.length){
+    if (!confirm('No has agregado ningún item. ¿Guardar plantilla vacía?')) return;
+  }
+  // Validar items
+  for (let i=0; i<_items.length; i++){
+    if (!_items[i].titulo.trim()){
+      alert(`El item #${i+1} no tiene título`); return;
+    }
+    if (_items[i].tipo_respuesta === 'lista' &&
+        (!_items[i].opciones_lista || !_items[i].opciones_lista.length)){
+      alert(`El item #${i+1} es tipo Lista pero no tiene opciones`); return;
+    }
+  }
+  const body = {
+    nombre,
+    descripcion: document.getElementById('ePDesc').value.trim(),
+    tipo_visita: document.getElementById('ePTipo').value,
+    tiempo_estimado_min: parseInt(document.getElementById('ePTiempo').value) || null,
+    activa: true,
+    items: _items.map((it, idx) => ({
+      orden: idx + 1,
+      titulo: it.titulo.trim(),
+      descripcion: it.descripcion || '',
+      tipo_respuesta: it.tipo_respuesta,
+      obligatoria: !!it.obligatoria,
+      requiere_foto: !!it.requiere_foto,
+      unidad: it.unidad || null,
+      rango_min: it.rango_min,
+      rango_max: it.rango_max,
+      opciones_lista: it.opciones_lista || [],
+    }))
+  };
+  const url = _editId ? `/mantenciones/api/plantillas/${_editId}` : '/mantenciones/api/plantillas';
+  const method = _editId ? 'PUT' : 'POST';
+  try {
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
+    if (_modal) _modal.hide();
+    if (typeof ilusToast === 'function') ilusToast('✓ Plantilla guardada con '+(d.items_count||0)+' item(s)', {type:'success'});
+    cargarPlantillas();
+  } catch(e){ alert('Error de red: '+e.message); }
+}
+
+async function eliminarPlantilla(){
+  if (!_editId) return;
+  if (!confirm('¿Eliminar esta plantilla?\n\nLas OTs ya creadas con sus tareas NO se ven afectadas.')) return;
+  try {
+    const r = await fetch(`/mantenciones/api/plantillas/${_editId}`, {method:'DELETE'});
+    const d = await r.json();
+    if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
+    if (_modal) _modal.hide();
+    if (d.desactivada){
+      if (typeof ilusToast === 'function') ilusToast('Plantilla del sistema desactivada', {type:'warning'});
+    } else {
+      if (typeof ilusToast === 'function') ilusToast('Plantilla eliminada', {type:'success'});
+    }
+    cargarPlantillas();
+  } catch(e){ alert('Error: '+e.message); }
+}
+
+document.addEventListener('DOMContentLoaded', cargarPlantillas);
+</script>
+{% endblock %}

@@ -627,6 +627,81 @@
     </div>
   </div>
 
+  {# ════════════════════════════════════════════════════════
+     APLICAR PLANTILLA DE CHECKLIST
+     Permite escoger una plantilla predefinida y clonarla en
+     la OT. Opcionalmente para varias máquinas a la vez.
+     ════════════════════════════════════════════════════════ #}
+  <div class="d-flex gap-2 mb-2 flex-wrap align-items-center"
+       style="background:linear-gradient(135deg,#0a0a0a,#1a1a1a);padding:10px 14px;border-radius:10px;color:#fff">
+    <div style="flex:1;min-width:200px">
+      <div class="fw-bold" style="font-size:.92rem"><i class="bi bi-list-check me-1"></i>Aplicar plantilla de checklist</div>
+      <div class="small" style="font-size:.72rem;opacity:.7">Clona tareas predefinidas tipo Fracttal con campos de respuesta (texto, número, GPS, foto…)</div>
+    </div>
+    <button class="btn btn-sm btn-light fw-bold" onclick="abrirAplicarPlantilla()">
+      <i class="bi bi-magic me-1"></i>Elegir plantilla
+    </button>
+  </div>
+
+  {# Modal: aplicar plantilla #}
+  <div class="modal fade" id="modalAplicarPlantilla" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header" style="background:#0a0a0a;color:#fff">
+          <h5 class="modal-title fw-bold"><i class="bi bi-magic me-2"></i>Aplicar plantilla a esta OT</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info py-2 small mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Selecciona la plantilla. Si marcas varias máquinas, las tareas se clonan <strong>una vez por cada máquina</strong>
+            (ideal para levantamiento fotográfico de N equipos).
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Plantilla</label>
+            <select id="apPlantillaId" class="form-select form-select-sm" onchange="apMostrarPreview()">
+              <option value="">— Selecciona una plantilla —</option>
+            </select>
+            <div id="apPlantillaPreview" class="mt-2"></div>
+          </div>
+
+          {% if maquinas %}
+          <div class="mb-2">
+            <label class="form-label small fw-semibold d-flex justify-content-between align-items-center">
+              <span>Máquinas objetivo (opcional)</span>
+              <div>
+                <button class="btn btn-xs btn-link p-0" onclick="apToggleAllMaquinas(true)">Todas</button>
+                <span class="text-muted">·</span>
+                <button class="btn btn-xs btn-link p-0" onclick="apToggleAllMaquinas(false)">Ninguna</button>
+              </div>
+            </label>
+            <div style="max-height:220px;overflow:auto;border:1px solid #e5e7eb;border-radius:6px;padding:8px">
+              {% for m in maquinas %}
+              <div class="form-check">
+                <input class="form-check-input ap-maq-chk" type="checkbox"
+                       id="apMaq-{{ m.id }}" value="{{ m.id }}">
+                <label class="form-check-label small" for="apMaq-{{ m.id }}">
+                  {{ m.nombre or 'Máquina #' ~ m.id }}
+                  {% if m.serie %}<span class="text-muted">· S/N: {{ m.serie }}</span>{% endif %}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+            <div class="form-text small">Si no marcas ninguna, las tareas se crean sin máquina específica.</div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-ilus fw-bold" onclick="aplicarPlantillaAOT()">
+            <i class="bi bi-check-circle-fill me-1"></i>Aplicar plantilla
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="task-add-form">
     <div class="row g-2 align-items-end">
       <div class="col-md-5">
@@ -1817,6 +1892,94 @@ async function guardarFirmaPad(){
   } catch (e){
     alert('Error de red: ' + e.message);
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  APLICAR PLANTILLA DE CHECKLIST A LA OT
+//  Carga plantillas activas, deja elegir una y opcionalmente máquinas,
+//  y clona los items de la plantilla como tareas de la OT.
+// ════════════════════════════════════════════════════════════════
+let _apPlantillas = [];
+let _apModal = null;
+
+async function abrirAplicarPlantilla(){
+  if (!_apModal) _apModal = new bootstrap.Modal(document.getElementById('modalAplicarPlantilla'));
+  _apModal.show();
+  // Cargar lista de plantillas activas
+  const sel = document.getElementById('apPlantillaId');
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  try {
+    const r = await fetch('/mantenciones/api/plantillas?activa=1');
+    const d = await r.json();
+    if (!d.ok || !d.plantillas.length){
+      sel.innerHTML = '<option value="">Sin plantillas disponibles — crea una primero</option>';
+      return;
+    }
+    _apPlantillas = d.plantillas;
+    sel.innerHTML = '<option value="">— Selecciona una plantilla —</option>' +
+      _apPlantillas.map(p =>
+        `<option value="${p.id}">${escapeHtmlOT(p.nombre)} (${p.items_count} items, ${p.tipo_visita})</option>`
+      ).join('');
+  } catch (e){
+    sel.innerHTML = '<option value="">Error: '+e.message+'</option>';
+  }
+}
+
+function escapeHtmlOT(s){
+  return String(s||'').replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]
+  );
+}
+
+async function apMostrarPreview(){
+  const pid = document.getElementById('apPlantillaId').value;
+  const cont = document.getElementById('apPlantillaPreview');
+  if (!pid){ cont.innerHTML = ''; return; }
+  cont.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Cargando preview…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/' + pid);
+    const d = await r.json();
+    if (!d.ok){ cont.innerHTML = '<div class="text-danger small">Error cargando plantilla</div>'; return; }
+    const tipoIco = {
+      check:'☑', texto:'📝', sino:'✔/✗', numero:'🔢', verificacion:'🚦',
+      gps:'📍', lista:'📋', fecha_hora:'📅', foto:'📸'
+    };
+    cont.innerHTML = `
+      <div class="border rounded p-2 small" style="max-height:200px;overflow:auto;background:#fafafa">
+        <div class="fw-bold mb-1" style="font-size:.82rem">${escapeHtmlOT(d.plantilla.nombre)} <span class="text-muted">— ${d.items.length} item(s)</span></div>
+        ${d.items.map((it,i) => `
+          <div style="font-size:.75rem;margin-bottom:3px">
+            <strong>${i+1}.</strong> ${tipoIco[it.tipo_respuesta]||''} ${escapeHtmlOT(it.titulo)}
+            ${it.obligatoria ? '<span class="badge bg-danger ms-1" style="font-size:.55rem">OBL</span>' : ''}
+            ${it.requiere_foto ? '<span class="badge bg-warning text-dark ms-1" style="font-size:.55rem">+FOTO</span>' : ''}
+          </div>`).join('')}
+      </div>`;
+  } catch(e){ cont.innerHTML = '<div class="text-danger small">'+e.message+'</div>'; }
+}
+
+function apToggleAllMaquinas(check){
+  document.querySelectorAll('.ap-maq-chk').forEach(c => c.checked = !!check);
+}
+
+async function aplicarPlantillaAOT(){
+  const pid = document.getElementById('apPlantillaId').value;
+  if (!pid){ alert('Selecciona una plantilla'); return; }
+  const maq = Array.from(document.querySelectorAll('.ap-maq-chk:checked')).map(c => parseInt(c.value));
+  const body = { plantilla_id: parseInt(pid) };
+  if (maq.length) body.maquina_ids = maq;
+  try {
+    const r = await fetch(`${API_BASE}/aplicar-plantilla`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
+    if (_apModal) _apModal.hide();
+    if (typeof ilusToast === 'function')
+      ilusToast(`✓ ${d.creadas} tarea(s) creadas desde "${d.plantilla}"`, {type:'success'});
+    setTimeout(() => location.reload(), 700);
+  } catch(e){ alert('Error de red: '+e.message); }
 }
 </script>
 {% endblock %}

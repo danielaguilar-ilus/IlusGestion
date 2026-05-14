@@ -222,15 +222,15 @@
          class="sidebar-link{% if request.endpoint in ['mant_tickets_list','mant_ticket_nuevo','mant_ticket_ficha'] %} active{% endif %}">
         <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
       </a> #}
-      {# Cotizaciones: oculta para rol 'tecnico'. #}
-      {# Técnicos: ELIMINADO del menú (2026-05-13) — los técnicos se gestionan #}
-      {# desde Ajustes › Usuarios con role='tecnico'. La ruta mant_tecnicos_* #}
-      {# sigue existiendo en backend para no romper links antiguos, pero ya no #}
-      {# es la fuente de verdad de quién ejecuta OTs. #}
+      {# Cotizaciones y Plantillas: ocultas para rol 'tecnico'. #}
       {% if current_user and current_user.role != 'tecnico' %}
       <a href="{{ url_for('mant_cotizaciones_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
+      </a>
+      <a href="{{ url_for('mant_plantillas_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
+        <i class="bi bi-list-check"></i><span>Plantillas</span>
       </a>
       {% endif %}
       {# <a href="{{ url_for('mant_analisis') }}"
