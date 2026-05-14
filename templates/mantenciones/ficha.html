@@ -7903,7 +7903,17 @@ async function epImportarSeleccionados() {
   if (_epSeleccion.size === 0) return;
   // Bloqueo si mismatch sin confirmar
   if (window._erpMismatch && !window._erpMismatch.confirmado) {
-    alert('Confirma primero el motivo del RUT distinto.');
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: '⚠ RUT distinto sin confirmar',
+        message: 'El documento ERP tiene un RUT diferente al del cliente actual.',
+        sub: 'Antes de importar, registra el motivo en el campo de justificación que aparece arriba.',
+        type: 'warning',
+        okLabel: 'Entendido',
+      });
+    } else {
+      alert('Confirma primero el motivo del RUT distinto.');
+    }
     return;
   }
   const btn = document.getElementById('ep_btnImportar');

@@ -326,4 +326,65 @@
   global.ilusAlert   = ilusAlert;
   global.ilusToast   = ilusToast;
   global.ilusPrompt  = ilusPrompt;
+
+  // ════════════════════════════════════════════════════════════════
+  //  SHIM GLOBAL — window.alert() → ilusToast/ilusAlert
+  //
+  //  Objetivo: eliminar TODOS los popups grises feos del navegador
+  //  ("web-production-XXXX dice...") sin tener que tocar 199+
+  //  llamadas dispersas por los templates.
+  //
+  //  Estrategia:
+  //    - Mensajes cortos (≤ 80 chars) → ilusToast tipo warning (no
+  //      bloqueante, se va solo en 3.5s)
+  //    - Mensajes largos → ilusAlert (modal explícito que el usuario
+  //      acepta — caso típico: límites, advertencias importantes)
+  //    - Si por algo falla la UI ilus, cae al alert nativo (último
+  //      recurso para no perder mensajes críticos).
+  //
+  //  Para window.confirm: NO se intercepta porque es síncrono y
+  //  el ilusConfirm es asíncrono — un reemplazo silencioso rompería
+  //  el flujo de decisión de los callers. Se migran manualmente.
+  // ════════════════════════════════════════════════════════════════
+  const _nativeAlert = global.alert.bind(global);
+  global.alert = function(msg) {
+    try {
+      const text = (msg == null) ? '' : String(msg);
+      const isLong = text.length > 80 || text.indexOf('\n') >= 0;
+      // Heurísticas para mejor tipo de toast/alert
+      const lower = text.toLowerCase();
+      let type = 'warning';
+      if (lower.indexOf('error') >= 0 || lower.indexOf('falló') >= 0 ||
+          lower.indexOf('no se pudo') >= 0) {
+        type = 'error';
+      } else if (lower.indexOf('éxito') >= 0 || lower.indexOf('exitoso') >= 0 ||
+                 lower.indexOf('✓') >= 0 || lower.indexOf('correctamente') >= 0) {
+        type = 'success';
+      } else if (lower.indexOf('listo') >= 0 || lower.indexOf('info') >= 0) {
+        type = 'info';
+      }
+      if (isLong) {
+        // Mensaje largo: usar modal (bloqueante con OK)
+        // Si tiene salto de línea, primera línea como título.
+        const lines = text.split('\n');
+        const title = (lines.length > 1 && lines[0].length < 80) ? lines[0] : 'Atención';
+        const body = (lines.length > 1) ? lines.slice(1).join('\n') : text;
+        ilusAlert({
+          title,
+          message: body,
+          type: type === 'warning' ? 'warning' : type,
+        });
+      } else {
+        // Mensaje corto: toast
+        ilusToast(text, { type, duration: 4500 });
+      }
+    } catch (e) {
+      // Si la UI ilus falla, no perder el mensaje
+      console.warn('[ilus_ui] alert shim falló, caigo al nativo:', e);
+      _nativeAlert(msg);
+    }
+  };
+
+  // Helper expuesto por si algún template lo necesita explícito
+  global.alertNativo = _nativeAlert;
 })(window);

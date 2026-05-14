@@ -2203,7 +2203,17 @@ function wzpConfirmarMismatch() {
 function wzpImportar() {
   if (_wzSeleccion.size === 0) return;
   if (window._wzMismatch && !window._wzMismatch.confirmado) {
-    alert('Confirma primero el motivo del RUT distinto.');
+    if (typeof ilusAlert === 'function') {
+      ilusAlert({
+        title: '⚠ RUT distinto sin confirmar',
+        message: 'El documento tiene un RUT diferente al del cliente que estás creando.',
+        sub: 'Antes de importar, registra el motivo en el campo de justificación arriba.',
+        type: 'warning',
+        okLabel: 'Entendido',
+      });
+    } else {
+      alert('Confirma primero el motivo del RUT distinto.');
+    }
     return;
   }
   const expandir = document.getElementById('wzpChkExpandir').checked;
