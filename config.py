@@ -46,6 +46,19 @@ def _env(name, default=""):
     return v if (v is not None and v != "") else default
 
 
+def _env_first(*names, default=""):
+    """Lee la primera env var no vacía de la lista de nombres dada.
+    Útil para soportar nombres alternativos sin obligar a renombrar
+    variables existentes en producción.
+    Ej: _env_first("ERP_MYSQL_HOST", "RANDOM_SQL_HOST")
+    """
+    for n in names:
+        v = os.environ.get(n)
+        if v is not None and v != "":
+            return v
+    return default
+
+
 # ─────────────────────────────────────────────
 #  Base de datos principal (Clever Cloud — MySQL)
 #  Si falta MYSQL_HOST: el sistema imprime warning al boot y el primer
@@ -67,13 +80,17 @@ MYSQL_CONFIG = {
 
 # ─────────────────────────────────────────────
 #  ERP externo (cloud.random.cl) — SOLO LECTURA
+#  Acepta DOS esquemas de naming (compat con deploys existentes):
+#    Nuevo:  ERP_MYSQL_HOST/USER/PASSWORD/DATABASE/PORT
+#    Viejo:  RANDOM_SQL_HOST/USER/PASS/DB/PORT (Railway producción)
+#  El primero que esté definido gana.
 # ─────────────────────────────────────────────
 ERP_CONFIG = {
-    'host':            _env('ERP_MYSQL_HOST'),
-    'port':            int(_env('ERP_MYSQL_PORT', '8058')),
-    'user':            _env('ERP_MYSQL_USER'),
-    'password':        _env('ERP_MYSQL_PASSWORD'),
-    'database':        _env('ERP_MYSQL_DATABASE'),
+    'host':            _env_first('ERP_MYSQL_HOST',     'RANDOM_SQL_HOST'),
+    'port':            int(_env_first('ERP_MYSQL_PORT', 'RANDOM_SQL_PORT', default='8058')),
+    'user':            _env_first('ERP_MYSQL_USER',     'RANDOM_SQL_USER'),
+    'password':        _env_first('ERP_MYSQL_PASSWORD', 'RANDOM_SQL_PASS', 'RANDOM_SQL_PASSWORD'),
+    'database':        _env_first('ERP_MYSQL_DATABASE', 'RANDOM_SQL_DB',   'RANDOM_SQL_DATABASE'),
     'table_products':  'MAEPR',
     'connect_timeout': 8,
     'api_url':         _env('ERP_API_URL'),
@@ -110,18 +127,20 @@ EMAIL_CONFIG = {
 
 
 def _diagnose_env_status():
-    """Reporta qué env vars críticas faltan al boot."""
+    """Reporta qué env vars críticas faltan al boot.
+    Para ERP_MYSQL_* acepta los aliases RANDOM_SQL_* (compat producción).
+    """
     required = [
-        ("FLASK_SECRET_KEY",  os.environ.get("FLASK_SECRET_KEY")),
-        ("MYSQL_HOST",        MYSQL_CONFIG['host']),
-        ("MYSQL_USER",        MYSQL_CONFIG['user']),
-        ("MYSQL_PASSWORD",    MYSQL_CONFIG['password']),
-        ("MYSQL_DATABASE",    MYSQL_CONFIG['database']),
-        ("ERP_MYSQL_HOST",    ERP_CONFIG['host']),
-        ("ERP_MYSQL_USER",    ERP_CONFIG['user']),
-        ("ERP_MYSQL_PASSWORD",ERP_CONFIG['password']),
-        ("ERP_API_URL",       ERP_CONFIG['api_url']),
-        ("ERP_API_TOKEN",     ERP_CONFIG['api_token']),
+        ("FLASK_SECRET_KEY",            os.environ.get("FLASK_SECRET_KEY")),
+        ("MYSQL_HOST",                  MYSQL_CONFIG['host']),
+        ("MYSQL_USER",                  MYSQL_CONFIG['user']),
+        ("MYSQL_PASSWORD",              MYSQL_CONFIG['password']),
+        ("MYSQL_DATABASE",              MYSQL_CONFIG['database']),
+        ("ERP_MYSQL_HOST/RANDOM_SQL_HOST",         ERP_CONFIG['host']),
+        ("ERP_MYSQL_USER/RANDOM_SQL_USER",         ERP_CONFIG['user']),
+        ("ERP_MYSQL_PASSWORD/RANDOM_SQL_PASS",     ERP_CONFIG['password']),
+        ("ERP_API_URL",                            ERP_CONFIG['api_url']),
+        ("ERP_API_TOKEN",                          ERP_CONFIG['api_token']),
     ]
     optional = [
         ("ANTHROPIC_API_KEY",      ANTHROPIC_API_KEY),
