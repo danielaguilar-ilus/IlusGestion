@@ -1066,6 +1066,16 @@ def init_transporte_tables():
                     DEFAULT 'despacho'""")
             except Exception:
                 pass
+            # MIGRACIÓN 2026-05-14: agregar cobertura_pct (% de cantidad ZZ
+            # despachada vs total). El sync lo recalcula. Permite mostrar
+            # en UI "80% despachado" sin re-consultar el ERP.
+            for _mig in [
+                "ALTER TABLE transport_commitments ADD COLUMN cobertura_pct DECIMAL(5,1) DEFAULT 0 COMMENT '% del ZZ ya despachado (CAPRAD1/CAPRCO1)'",
+                "ALTER TABLE transport_commitments ADD COLUMN cant_total_zz DECIMAL(12,3) DEFAULT 0 COMMENT 'Total CAPRCO1 de líneas ZZ'",
+                "ALTER TABLE transport_commitments ADD COLUMN cant_despachada_zz DECIMAL(12,3) DEFAULT 0 COMMENT 'Total CAPRAD1 de líneas ZZ'",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_commitment_lines (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -9351,7 +9361,11 @@ def api_asignar_tarifa_fedex():
 ZZ_SKUS = {'ZZenvio', 'ZZINGREPUESTO', 'ZZSERVTEC', 'ZZRetiro', 'ZZINSTALACION', 'ZZINGARREQUIP'}
 
 ESTADOS_COMPROMISO = [
-    'Pendiente', 'En proceso', 'Despachado', 'Problema',
+    # Estados auto-gestionados por el sync con Random (no tocar manualmente,
+    # los recalcula _tr_bulk_sync_erp_mysql según cobertura y NUDGIA):
+    'Pendiente', 'Despachado parcial', 'Entregado',
+    # Estados legacy/operativos (se respetan en el sync):
+    'En proceso', 'Despachado', 'Problema',
     'Pedido de vuelta', 'Preventa', 'Indemnización', 'Garantía',
     'Logística inversa', 'Prioridad', 'Indemnización revisada',
     'Indemnización rechazada', 'Regalo', 'Reentrega',
@@ -9579,7 +9593,18 @@ def _tr_fetch_from_erp(tido, nudo):
 def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
     """
     Sincronización masiva desde el ERP vía MySQL directo.
-    Trae todos los documentos con líneas ZZ y saldo pendiente en el rango.
+
+    NUEVA LÓGICA (2026-05-14):
+    Trae TODOS los documentos con líneas ZZ del rango, INCLUIDOS los que
+    ya fueron despachados completamente. Cada documento se clasifica en uno
+    de 3 estados según su cobertura (cantidad despachada vs cantidad total):
+        - 'Pendiente'           → saldo > 0 y SIN guía (NUDGIA NULL)
+        - 'Despachado parcial'  → saldo > 0 y CON guía (NUDGIA con valor)
+        - 'Entregado'           → saldo == 0 (todo el ZZ ya despachado)
+
+    Eso permite ver el flujo completo del día: lo que falta, lo que se
+    está moviendo, y lo que ya salió. El frontend filtra por tab.
+
     Retorna (count_ok, list_errors).
     """
     conn_erp = get_erp_conn()
@@ -9604,6 +9629,8 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                     COALESCE(h.NOKOZO, h.CMEN, h.NOKOCOMU, h.NOKOCOMUNADE,
                              h.NOKOMUENDE, h.NOKOMUNEN, h.NOKCOMENDESP, '') AS COMUNA,
                     COALESCE(h.NUDGIA, '')           AS NUDGIA,
+                    SUM(d.CAPRCO1)                                       AS cant_total_zz,
+                    SUM(COALESCE(d.CAPRAD1, 0))                          AS cant_despachada_zz,
                     SUM(GREATEST(d.CAPRCO1 - COALESCE(d.CAPRAD1, 0), 0)) AS saldo_zz,
                     SUM(COALESCE(d.PPPRNE, 0))       AS costo_zz_sum,
                     GROUP_CONCAT(DISTINCT UPPER(d.KOPRCT) ORDER BY d.KOPRCT) AS zz_skus
@@ -9612,11 +9639,10 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                 WHERE d.KOPRCT IN ({zz_in})
                   AND h.TIDO IN ({tido_in})
                   AND h.FEEMDO BETWEEN %s AND %s
-                  AND (d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)) > 0
                 GROUP BY h.TIDO, h.NUDO
-                HAVING saldo_zz > 0
+                HAVING cant_total_zz > 0
                 ORDER BY h.FEEMDO DESC
-                LIMIT 500
+                LIMIT 1000
             """, zz_list + list(TIDOS_VALIDOS) + [fecha_desde, fecha_hasta])
             rows = cur.fetchall()
     except Exception as exc:
@@ -9643,9 +9669,32 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                 vbruto = float(row.get("VABRDO") or 0)
                 costo_zz = float(row.get("costo_zz_sum") or 0)
                 guia  = (row.get("NUDGIA") or "").strip() or None
+                cant_total      = float(row.get("cant_total_zz") or 0)
+                cant_despachada = float(row.get("cant_despachada_zz") or 0)
+                saldo_zz        = float(row.get("saldo_zz") or 0)
                 zz_present = (row.get("zz_skus") or "").upper()
                 _zz_list_bulk = [s.strip() for s in zz_present.split(",") if s.strip()]
                 clasif = _clasif_from_skus(_zz_list_bulk) if _zz_list_bulk else "despacho"
+
+                # ── Clasificación automática del estado según cobertura ──
+                # Reglas (de más urgente a menos):
+                #   saldo > 0  y SIN guía  → 'Pendiente'  (todavía hay que despachar)
+                #   saldo > 0  y CON guía  → 'Despachado parcial' (salió algo, falta resto)
+                #   saldo == 0             → 'Entregado'  (salió todo, doc cerrado)
+                if saldo_zz <= 0:
+                    estado_auto = "Entregado"
+                    tiene_saldo_flag = 0
+                elif guia:
+                    estado_auto = "Despachado parcial"
+                    tiene_saldo_flag = 1
+                else:
+                    estado_auto = "Pendiente"
+                    tiene_saldo_flag = 1
+
+                # % cobertura para mostrar en UI (ej: 80% despachado)
+                cobertura_pct = 0
+                if cant_total > 0:
+                    cobertura_pct = round((cant_despachada / cant_total) * 100, 1)
 
                 def _pd(val):
                     if not val: return None
@@ -9660,15 +9709,22 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                 fecha_ent = _pd(row.get("FEER"))
 
                 with local_conn.cursor() as cur:
+                    # IMPORTANTE: el estado solo se sobreescribe automáticamente si
+                    # actualmente está en uno de los estados "auto-gestionados"
+                    # (Pendiente, Despachado parcial, Entregado). Si el operador
+                    # marcó otro estado manualmente (Problema, Garantía, Prioridad,
+                    # etc.) se respeta — la sincronización no debe pisar decisiones
+                    # del usuario.
                     cur.execute("""
                         INSERT INTO transport_commitments
                           (tido,nudo,endo,fecha_emision,fecha_entrega,
                            cliente_nombre,cliente_rut,
                            comuna,direccion,telefono,email,
                            valor_neto,valor_bruto,costo_zz,
-                           tiene_saldo,guia_numero,clasificacion,
+                           tiene_saldo,guia_numero,clasificacion,estado,
+                           cobertura_pct,cant_total_zz,cant_despachada_zz,
                            erp_synced_at,created_by,updated_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,NOW(),'sync','sync')
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),'sync','sync')
                         ON DUPLICATE KEY UPDATE
                           fecha_emision =VALUES(fecha_emision),
                           fecha_entrega =VALUES(fecha_entrega),
@@ -9681,13 +9737,23 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                           valor_neto    =VALUES(valor_neto),
                           valor_bruto   =VALUES(valor_bruto),
                           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
-                          tiene_saldo   =1,
+                          tiene_saldo   =VALUES(tiene_saldo),
                           guia_numero   =VALUES(guia_numero),
                           clasificacion =VALUES(clasificacion),
+                          estado        =CASE
+                                           WHEN estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
+                                             THEN VALUES(estado)
+                                           ELSE estado
+                                         END,
+                          cobertura_pct =VALUES(cobertura_pct),
+                          cant_total_zz =VALUES(cant_total_zz),
+                          cant_despachada_zz=VALUES(cant_despachada_zz),
                           erp_synced_at =NOW()
                     """, (tido, nudo, endo, fecha_em, fecha_ent,
                           nombre, endo, comuna, dir_, tel, mail,
-                          vneto, vbruto, costo_zz, guia, clasif))
+                          vneto, vbruto, costo_zz,
+                          tiene_saldo_flag, guia, clasif, estado_auto,
+                          cobertura_pct, cant_total, cant_despachada))
                 local_conn.commit()
                 count += 1
             except Exception as e2:
@@ -9924,7 +9990,19 @@ def tr_sync():
 @app.route("/transporte/api/compromisos")
 @_tr_required
 def tr_compromisos_json():
-    """Versión JSON del monitor para carga AJAX."""
+    """Versión JSON del monitor para carga AJAX.
+
+    NUEVO 2026-05-14: parámetro `vista` permite filtrar por la categoría
+    del flujo de transporte (en vez de mezclar todo en una sola lista):
+
+      vista=pendientes  → docs aún por despachar (tiene_saldo=1, sin guía)
+      vista=parciales   → docs con guía pero saldo > 0 (despacho parcial)
+      vista=entregados  → docs completamente despachados (tiene_saldo=0)
+      vista=todos       → todo (default)
+
+    También devuelve `cobertura_pct`, `guia_numero` y los conteos de cada
+    categoría para que el frontend pinte los badges del tab.
+    """
     from datetime import date as _date, timedelta as _td
     periodo = request.args.get("periodo", "")
     hoy = _date.today()
@@ -9941,13 +10019,27 @@ def tr_compromisos_json():
     estado = request.args.get("estado","")
     clasif = request.args.get("clasificacion","")
     q      = request.args.get("q","").strip()
+    vista  = (request.args.get("vista","") or "").strip().lower()
 
-    where, params = ["tiene_saldo=1"], []
+    where, params = [], []
+    # Filtro por vista (categoría del flujo)
+    if vista == "pendientes":
+        where.append("tiene_saldo=1 AND (guia_numero IS NULL OR guia_numero='')")
+    elif vista == "parciales":
+        where.append("tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>''")
+    elif vista == "entregados":
+        where.append("tiene_saldo=0")
+    elif vista == "todos":
+        pass  # sin filtro adicional
+    else:
+        # default histórico: solo con saldo (compat con clientes que no mandan vista)
+        where.append("tiene_saldo=1")
+
     if estado: where.append("estado=%s"); params.append(estado)
     if clasif: where.append("clasificacion=%s"); params.append(clasif)
     if q:
-        where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s)")
-        qp = f"%{q}%"; params += [qp,qp,qp,qp]
+        where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; params += [qp,qp,qp,qp,qp]
     if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
     if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
@@ -9969,8 +10061,78 @@ def tr_compromisos_json():
             "estado":       r["estado"] or "Pendiente",
             "costo_zz":     float(r["costo_zz"] or 0),
             "clasificacion":r["clasificacion"] or "despacho",
+            "guia_numero":  r.get("guia_numero") or "",
+            "cobertura_pct":float(r.get("cobertura_pct") or 0),
+            "tiene_saldo":  int(r.get("tiene_saldo") or 0),
         })
-    return jsonify({"ok": True, "compromisos": result, "total": len(result)})
+
+    # Conteos por categoría — independientes del filtro `vista` aplicado.
+    # Permite al frontend mostrar badge "Pendientes: 12" sin segunda llamada.
+    base_where, base_params = [], []
+    if clasif: base_where.append("clasificacion=%s"); base_params.append(clasif)
+    if q:
+        base_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; base_params += [qp,qp,qp,qp,qp]
+    if fecha_desde: base_where.append("fecha_emision >= %s"); base_params.append(fecha_desde)
+    if fecha_hasta: base_where.append("fecha_emision <= %s"); base_params.append(fecha_hasta)
+    base_w = (" WHERE " + " AND ".join(base_where)) if base_where else ""
+
+    conteos_row = mysql_fetchone(
+        "SELECT "
+        " SUM(CASE WHEN tiene_saldo=1 AND (guia_numero IS NULL OR guia_numero='') THEN 1 ELSE 0 END) AS pendientes,"
+        " SUM(CASE WHEN tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>'' THEN 1 ELSE 0 END) AS parciales,"
+        " SUM(CASE WHEN tiene_saldo=0 THEN 1 ELSE 0 END) AS entregados,"
+        " COUNT(*) AS total"
+        " FROM transport_commitments" + base_w,
+        tuple(base_params)
+    ) or {}
+
+    return jsonify({
+        "ok": True,
+        "compromisos": result,
+        "total": len(result),
+        "conteos": {
+            "pendientes": int(conteos_row.get("pendientes") or 0),
+            "parciales":  int(conteos_row.get("parciales") or 0),
+            "entregados": int(conteos_row.get("entregados") or 0),
+            "total":      int(conteos_row.get("total") or 0),
+        },
+        "vista": vista or "default",
+    })
+
+
+@app.route("/transporte/api/limpiar-monitor", methods=["POST"])
+@_tr_required
+def tr_limpiar_monitor():
+    """Borra TODOS los registros del monitor (transport_commitments).
+    Requiere superadmin o admin para evitar borrados accidentales.
+    El próximo sync vuelve a poblar con los datos al día desde el ERP.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin puede limpiar el monitor."}), 403
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Contar antes para el log
+            cur.execute("SELECT COUNT(*) AS n FROM transport_commitments")
+            n_antes = (cur.fetchone() or {}).get("n", 0)
+            # Borrar líneas primero (FK), después items de manifiestos vinculados, después el header.
+            # Las líneas y manifest_items tienen ON DELETE CASCADE, así que con un solo DELETE basta.
+            cur.execute("DELETE FROM transport_commitments")
+        conn.commit()
+        try:
+            _tr_log("commitment", 0, "limpieza_total",
+                    f"Monitor limpiado por {current_username()}: {n_antes} registros eliminados")
+        except Exception:
+            pass
+        return jsonify({
+            "ok": True,
+            "eliminados": int(n_antes or 0),
+            "mensaje": f"Monitor limpio. Se eliminaron {n_antes} registros. Sincroniza HOY para repoblar.",
+        })
+    finally:
+        conn.close()
 
 
 @app.route("/transporte/api/inline-bulto", methods=["POST"])

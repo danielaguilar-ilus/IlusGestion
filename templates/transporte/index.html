@@ -25,6 +25,15 @@
     <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-ilus">
       <i class="bi bi-clipboard-check me-1"></i>Manifiestos
     </a>
+    {# Limpiar monitor — solo admin/superadmin. Útil para reiniciar el flujo
+       y validar que el sync diario funciona. Pide doble confirmación. #}
+    {% if permissions.superadmin or permissions.admin %}
+    <button class="btn btn-sm btn-outline-danger" id="btnLimpiarMon"
+            onclick="limpiarMonitor()"
+            title="Borra TODOS los registros del monitor (admin)">
+      <i class="bi bi-trash3 me-1"></i>Limpiar monitor
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -64,6 +73,44 @@ async function sincronizarHoy(){
   } finally {
     btn.disabled = false;
     btn.innerHTML = txt;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  LIMPIAR MONITOR — admin only. Borra TODOS los registros.
+//  Útil para validar que el sync diario empieza limpio.
+// ════════════════════════════════════════════════════════════
+async function limpiarMonitor(){
+  const ok = (typeof ilusConfirm === 'function')
+    ? await ilusConfirm({
+        title: 'Limpiar TODO el monitor',
+        message: '¿Eliminar TODOS los registros del monitor de transporte?',
+        sub: 'No se borra nada del ERP. El próximo "Sincronizar HOY" repuebla automáticamente con los documentos del día.',
+        okLabel: 'Sí, limpiar todo',
+        cancelLabel: 'Cancelar',
+        type: 'danger',
+      })
+    : confirm('¿Borrar TODOS los registros del monitor? (no afecta al ERP)');
+  if (!ok) return;
+  const btn = document.getElementById('btnLimpiarMon');
+  const txt = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando…'; }
+  try {
+    const r = await fetch('/transporte/api/limpiar-monitor', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      else alert('Error: ' + (d.error||'desconocido'));
+      return;
+    }
+    if (typeof ilusToast === 'function') ilusToast(d.mensaje || 'Monitor limpio', {type:'success'});
+    else alert(d.mensaje || 'Monitor limpio');
+    setTimeout(() => location.reload(), 600);
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+    else alert('Error de red: '+e.message);
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = txt; }
   }
 }
 </script>
@@ -113,6 +160,50 @@ async function sincronizarHoy(){
        style="font-size:.75rem">Todo</a>
   </div>
 </form>
+
+{# ─────────────────────────────────────────────────────────────
+   Pestañas de VISTA (flujo del documento)
+   Pendientes → todavía no salieron del bodega (sin guía)
+   Parciales  → salió algo, queda saldo (con guía)
+   Entregados → salió completo (sin saldo)
+   Todos      → muestra todo (incluso lo entregado)
+   ───────────────────────────────────────────────────────────── #}
+<div class="d-flex gap-1 flex-wrap mb-2 align-items-center">
+  <span class="text-muted small me-1" style="font-weight:600">Vista:</span>
+  <button type="button" class="btn btn-sm btn-vista active" data-vista="pendientes"
+          onclick="setVistaMonitor(this,'pendientes')"
+          style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-weight:600">
+    <i class="bi bi-hourglass-split me-1"></i>Pendientes
+    <span class="badge ms-1" id="vbPendientes" style="background:#dc2626;color:#fff;font-size:.62rem">0</span>
+  </button>
+  <button type="button" class="btn btn-sm btn-vista" data-vista="parciales"
+          onclick="setVistaMonitor(this,'parciales')"
+          style="background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;font-weight:600">
+    <i class="bi bi-truck-flatbed me-1"></i>En camino (parcial)
+    <span class="badge ms-1" id="vbParciales" style="background:#1d4ed8;color:#fff;font-size:.62rem">0</span>
+  </button>
+  <button type="button" class="btn btn-sm btn-vista" data-vista="entregados"
+          onclick="setVistaMonitor(this,'entregados')"
+          style="background:#dcfce7;color:#166534;border:1px solid #86efac;font-weight:600">
+    <i class="bi bi-check2-all me-1"></i>Entregados
+    <span class="badge ms-1" id="vbEntregados" style="background:#16a34a;color:#fff;font-size:.62rem">0</span>
+  </button>
+  <button type="button" class="btn btn-sm btn-vista" data-vista="todos"
+          onclick="setVistaMonitor(this,'todos')"
+          style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;font-weight:600">
+    <i class="bi bi-list-ul me-1"></i>Todos
+    <span class="badge ms-1" id="vbTodos" style="background:#6b7280;color:#fff;font-size:.62rem">0</span>
+  </button>
+</div>
+
+<style>
+  .btn-vista{opacity:.55;transition:opacity .18s ease,transform .12s ease}
+  .btn-vista.active{opacity:1;transform:scale(1.02);box-shadow:0 2px 6px rgba(0,0,0,.12)}
+  .btn-vista:hover{opacity:.85}
+  .cobertura-cell{font-family:monospace;font-size:.72rem;font-weight:700}
+  .cobertura-bar{height:4px;background:#f3f4f6;border-radius:2px;overflow:hidden;margin-top:2px}
+  .cobertura-fill{height:100%;background:linear-gradient(90deg,#fbbf24,#16a34a)}
+</style>
 
 {# ── Pestañas de clasificación ── #}
 <ul class="nav nav-tabs mb-0" id="monitorTabs" style="border-bottom:none">
@@ -175,13 +266,15 @@ async function sincronizarHoy(){
           <th>Cliente</th>
           <th>Comuna</th>
           <th>Estado</th>
+          <th class="text-center" title="Número de guía de despacho asociada en el ERP">Guía</th>
+          <th class="text-center" title="% del ZZ ya despachado (cantidades por línea)">Cobertura</th>
           <th class="text-end">Costo ZZ</th>
           <th class="text-center">Tipo</th>
           <th class="text-center">Acciones</th>
         </tr>
       </thead>
       <tbody id="monitorTbody">
-        <tr><td colspan="9" class="text-center py-4">
+        <tr><td colspan="11" class="text-center py-4">
           <div class="spinner-border spinner-border-sm text-danger me-2"></div>Cargando…
         </td></tr>
       </tbody>
@@ -1299,16 +1392,42 @@ var manifiestos = {{ manifiestos | tojson }};
 var ESTADOS = {{ estados | tojson }};
 var COURIERS = {{ couriers | tojson }};
 var ESTADO_COLORS = {
-  'Pendiente':'warning','En proceso':'primary','Despachado':'success',
+  'Pendiente':'warning',
+  'Despachado parcial':'primary',
+  'Entregado':'success',
+  'En proceso':'primary','Despachado':'success',
   'Problema':'danger','Pedido de vuelta':'danger','Prioridad':'danger',
   'Preventa':'secondary','Indemnización':'danger','Garantía':'info',
   'Logística inversa':'secondary','Indemnización revisada':'warning',
   'Indemnización rechazada':'danger','Regalo':'info','Reentrega':'warning'
 };
 
+// Vista actual del flujo (pendientes/parciales/entregados/todos)
+// Por defecto: pendientes (es lo que el operador ve al llegar)
+var _vistaActual = (function(){
+  try { return localStorage.getItem('tr_vista_actual') || 'pendientes'; }
+  catch(e){ return 'pendientes'; }
+})();
+
+function setVistaMonitor(btn, vista){
+  _vistaActual = vista || 'pendientes';
+  try { localStorage.setItem('tr_vista_actual', _vistaActual); } catch(e){}
+  document.querySelectorAll('.btn-vista').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  cargarMonitor();
+}
+
+// Sincronizar estado UI inicial al cargar (porque la vista viene de localStorage)
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('.btn-vista').forEach(function(b){
+    b.classList.toggle('active', b.dataset.vista === _vistaActual);
+  });
+});
+
 function cargarMonitor() {
-  // Leer parámetros del formulario de filtros
+  // Leer parámetros del formulario de filtros + agregar la vista actual
   var params = new URLSearchParams(window.location.search);
+  params.set('vista', _vistaActual);
   var url = '/transporte/api/compromisos?' + params.toString();
 
   fetch(url)
@@ -1320,11 +1439,29 @@ function cargarMonitor() {
       var countEl = document.getElementById('monitorCount');
       if (countEl) countEl.textContent = d.total;
 
+      // Actualizar badges de cada tab de vista con los conteos del backend
+      if (d.conteos) {
+        var setBadge = function(id, n){
+          var el = document.getElementById(id);
+          if (el) el.textContent = n;
+        };
+        setBadge('vbPendientes', d.conteos.pendientes || 0);
+        setBadge('vbParciales',  d.conteos.parciales  || 0);
+        setBadge('vbEntregados', d.conteos.entregados || 0);
+        setBadge('vbTodos',      d.conteos.total      || 0);
+      }
+
       // Renderizar tabla desktop
       var tbody = document.getElementById('monitorTbody');
       if (tbody) {
         if (!_monitorData.length) {
-          tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Sin compromisos pendientes</td></tr>';
+          var msgVacio = {
+            pendientes: 'No hay documentos pendientes de despacho. ¡Bien!',
+            parciales:  'Sin despachos parciales en curso.',
+            entregados: 'Aún no hay documentos completamente entregados.',
+            todos:      'Sin documentos en el rango seleccionado. Usa "Sincronizar HOY" para traer los del día.',
+          }[_vistaActual] || 'Sin compromisos pendientes';
+          tbody.innerHTML = '<tr><td colspan="11" class="text-center py-4 text-muted">'+ msgVacio +'</td></tr>';
         } else {
           tbody.innerHTML = _monitorData.map(function(c) {
             var color = ESTADO_COLORS[c.estado] || 'secondary';
@@ -1378,6 +1515,23 @@ function cargarMonitor() {
 
               /* ── Estado ── */
               '<td><span class="badge rounded-pill bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span></td>' +
+
+              /* ── Guía de despacho (NUDGIA del ERP) ── */
+              '<td class="text-center" style="font-family:monospace;font-size:.78rem">' +
+                (c.guia_numero
+                  ? '<span class="badge bg-success-subtle text-success border border-success-subtle" title="Guía de despacho asociada en el ERP">' + c.guia_numero + '</span>'
+                  : '<span class="text-muted">—</span>') +
+              '</td>' +
+
+              /* ── Cobertura (% despachado) ── */
+              '<td class="text-center">' +
+                (c.cobertura_pct > 0
+                  ? '<div class="cobertura-cell" style="color:' +
+                      (c.cobertura_pct >= 100 ? '#166534' : (c.cobertura_pct >= 50 ? '#92400e' : '#991b1b')) +
+                      '">' + c.cobertura_pct.toFixed(0) + '%</div>' +
+                    '<div class="cobertura-bar"><div class="cobertura-fill" style="width:' + Math.min(c.cobertura_pct,100) + '%"></div></div>'
+                  : '<span class="text-muted small">0%</span>') +
+              '</td>' +
 
               /* ── Costo ── */
               '<td class="text-end">' + costoHtml + '</td>' +
