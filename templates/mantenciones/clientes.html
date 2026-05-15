@@ -204,6 +204,13 @@
             title="Ver clientes que están inactivos / suspendidos / prospecto y restaurarlos">
       <i class="bi bi-archive me-1"></i>Fichas ocultas
     </button>
+    {% if permissions.admin or permissions.superadmin %}
+    <button type="button" class="btn btn-outline-warning fw-semibold px-3"
+            onclick="abrirDuplicados()"
+            title="Detectar y fusionar clientes duplicados (por RUT o por nombre)">
+      <i class="bi bi-exclamation-triangle me-1"></i>Duplicados
+    </button>
+    {% endif %}
     <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
       <i class="bi bi-building-add me-1"></i>Nuevo cliente
     </a>
@@ -393,6 +400,139 @@ async function restaurarCliente(cid, btn){
     btn.disabled = false;
     btn.innerHTML = txt;
     alert('Error de red: ' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DUPLICADOS DE CLIENTES — detección + fusión
+// ════════════════════════════════════════════════════════════════
+let _modalDup = null;
+
+async function abrirDuplicados(){
+  let m = document.getElementById('modalDuplicados');
+  if (!m){
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="modal fade" id="modalDuplicados" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#0a0a0a;color:#fff">
+              <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle me-2"></i>Clientes duplicados</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="alert alert-info py-2 small mb-3">
+                <i class="bi bi-info-circle me-1"></i>
+                Se detectan clientes con <strong>mismo RUT</strong> (cuando hay RUT) o
+                <strong>mismo nombre normalizado</strong> (cuando no tienen RUT).
+                Elige cuál conservar y cuál fusionar — los datos del fusionado se reasignan al conservado.
+              </div>
+              <div id="duplicadosBody">
+                <div class="text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2"></div>Buscando duplicados…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`);
+    m = document.getElementById('modalDuplicados');
+  }
+  if (!_modalDup) _modalDup = new bootstrap.Modal(m);
+  _modalDup.show();
+  await cargarDuplicados();
+}
+
+async function cargarDuplicados(){
+  const cont = document.getElementById('duplicadosBody');
+  cont.innerHTML = '<div class="text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2"></div>Buscando duplicados…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/clientes/duplicados');
+    const d = await r.json();
+    if (!d.ok){
+      cont.innerHTML = '<div class="alert alert-danger">Error: ' + (d.error||'desconocido') + '</div>';
+      return;
+    }
+    const grupos = [...(d.duplicados_por_rut||[]), ...(d.duplicados_por_nombre||[])];
+    if (!grupos.length){
+      cont.innerHTML = `
+        <div class="text-center py-5 text-muted">
+          <i class="bi bi-check-circle-fill" style="font-size:3rem;color:#16a34a"></i>
+          <div class="fw-bold mt-2" style="color:#0f172a">✓ Sin duplicados detectados</div>
+          <div class="small mt-1">Todos los clientes tienen RUTs únicos o nombres distintos.</div>
+        </div>`;
+      return;
+    }
+    let html = `<div class="alert alert-warning py-2 small mb-3">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      Se detectaron <strong>${grupos.length}</strong> grupo(s) de clientes duplicados.
+    </div>`;
+    grupos.forEach((g, gi) => {
+      html += `<div class="border rounded-3 p-3 mb-3" style="background:#fafafa">
+        <div class="fw-bold mb-2" style="font-size:.92rem">
+          <i class="bi bi-link-45deg me-1"></i>
+          Grupo ${gi+1} — Criterio: <span class="badge bg-secondary">${escapeHtml(g.criterio)}</span>
+          · Valor: <span class="font-monospace">${escapeHtml(g.valor)}</span>
+          · ${g.cantidad} clientes
+        </div>
+        <table class="table table-sm mb-0" style="font-size:.82rem">
+          <thead style="background:#f3f4f6">
+            <tr><th>ID</th><th>Razón social</th><th>RUT</th><th>Estado</th>
+                <th>Eq.</th><th>Ctr.</th><th>OT</th>
+                <th>Creado</th><th class="text-end">Acción</th></tr>
+          </thead><tbody>`;
+      g.detalles.forEach((d, di) => {
+        const otros = g.detalles.filter((_, idx) => idx !== di).map(o => o.id);
+        html += `<tr>
+          <td class="font-monospace small">#${d.id}</td>
+          <td><a href="/mantenciones/clientes/${d.id}" target="_blank" class="fw-bold text-decoration-none">${escapeHtml(d.razon_social)}</a></td>
+          <td class="font-monospace small">${escapeHtml(d.rut||'—')}</td>
+          <td><span class="badge bg-${d.estado==='activo'?'success':'secondary'}">${escapeHtml(d.estado||'?')}</span></td>
+          <td class="text-center">${d.n_maquinas}</td>
+          <td class="text-center">${d.n_contratos}</td>
+          <td class="text-center">${d.n_ots}</td>
+          <td class="small text-muted">${escapeHtml(d.created_at)}<br><span style="font-size:.7rem">${escapeHtml(d.created_by||'')}</span></td>
+          <td class="text-end">
+            ${otros.map(oid => `
+              <button class="btn btn-xs btn-outline-danger mb-1"
+                      onclick="fusionarClientes(${d.id}, ${oid}, this)"
+                      title="Conservar #${d.id} y absorber datos de #${oid}">
+                <i class="bi bi-arrow-right me-1"></i>Conservar este, fusionar #${oid}
+              </button>`).join('<br>')}
+          </td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    });
+    cont.innerHTML = html;
+  } catch(e){
+    cont.innerHTML = '<div class="alert alert-danger">Error de red: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function fusionarClientes(idKeep, idDrop, btn){
+  const ok = confirm(
+    `¿Fusionar cliente?\n\n` +
+    `CONSERVAR: cliente #${idKeep}\n` +
+    `ABSORBER:   cliente #${idDrop} (quedará INACTIVO)\n\n` +
+    `Se transfieren máquinas, contratos, OTs, fotos, documentos.\n` +
+    `Esta acción es REVERSIBLE (el inactivo se puede restaurar).\n\n` +
+    `¿Confirmar?`
+  );
+  if (!ok) return;
+  btn.disabled = true;
+  const txt = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Fusionando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${idKeep}/fusionar/${idDrop}`, {method:'POST'});
+    const d = await r.json();
+    if (!d.ok){
+      alert('Error: ' + (d.error || 'desconocido'));
+      btn.disabled = false; btn.innerHTML = txt;
+      return;
+    }
+    alert(d.mensaje + '\n\nReasignaciones: ' + JSON.stringify(d.reasignaciones));
+    cargarDuplicados();
+  } catch(e){
+    alert('Error de red: ' + e.message);
+    btn.disabled = false; btn.innerHTML = txt;
   }
 }
 </script>

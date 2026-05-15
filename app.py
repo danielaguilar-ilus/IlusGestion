@@ -16983,7 +16983,15 @@ def mant_ficha(cid):
             r['hora_fin'] = _h(r.get('hora_fin'))
         return r
 
-    maquinas_raw  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)) or []
+    # 2026-05-15: filtrar máquinas dadas de baja del listado principal de la ficha.
+    # Las máquinas con estado='baja' siguen en BD pero NO se muestran aquí.
+    # Para verlas/restaurarlas: GET /mantenciones/api/clientes/<cid>/maquinas-baja
+    maquinas_raw  = mysql_fetchall(
+        "SELECT * FROM mant_maquinas "
+        " WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
+        " ORDER BY created_at DESC",
+        (cid,)
+    ) or []
     # SELECT * para máxima compatibilidad con el template (revertido del SELECT
     # explícito que causó error al perder alguna columna como monto_anual,
     # clausulas_custom, variables_extra, ai_editable, etc.)
@@ -17412,6 +17420,185 @@ def mant_cliente_cambiar_estado(cid):
     return jsonify({"ok": True, "estado": estado_nuevo})
 
 
+# ══════════════════════════════════════════════════════════════════
+# DEDUPLICACIÓN DE CLIENTES (modelo Fracttal — datos limpios)
+#
+# Caso real: "MBJ SUAREZ CONUS SpA" apareció duplicado en producción
+# porque mant_clientes.rut admite NULLs y el UNIQUE en rut no bloquea
+# (NULL ≠ NULL en SQL). Estos endpoints permiten detectar y fusionar.
+# ══════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/duplicados", methods=["GET"])
+@_mant_required
+def mant_clientes_duplicados():
+    """Detecta clientes duplicados.
+    Reglas de detección:
+      - Por RUT (cuando RUT no es NULL ni vacío): mismo RUT = duplicado
+      - Por nombre normalizado (cuando RUT está vacío): mismo nombre
+        sin acentos ni espacios = duplicado probable.
+    """
+    # Duplicados por RUT
+    rows_rut = mysql_fetchall(
+        "SELECT rut, GROUP_CONCAT(id ORDER BY id) AS ids, "
+        "       COUNT(*) AS cant, GROUP_CONCAT(razon_social SEPARATOR ' || ') AS razones "
+        "  FROM mant_clientes "
+        " WHERE rut IS NOT NULL AND rut <> '' "
+        " GROUP BY rut "
+        "HAVING COUNT(*) > 1 "
+        " ORDER BY cant DESC"
+    ) or []
+    # Duplicados por nombre (sin RUT)
+    rows_nombre = mysql_fetchall(
+        "SELECT LOWER(REPLACE(REPLACE(razon_social,' ',''),'.','')) AS norm, "
+        "       GROUP_CONCAT(id ORDER BY id) AS ids, "
+        "       COUNT(*) AS cant, GROUP_CONCAT(razon_social SEPARATOR ' || ') AS razones "
+        "  FROM mant_clientes "
+        " WHERE (rut IS NULL OR rut = '') AND razon_social IS NOT NULL "
+        " GROUP BY norm "
+        "HAVING COUNT(*) > 1 "
+        " ORDER BY cant DESC"
+    ) or []
+
+    def _expand(rows, criterio):
+        out = []
+        for r in rows:
+            ids = [int(x) for x in (r.get("ids") or "").split(",") if x.strip().isdigit()]
+            if len(ids) < 2: continue
+            # Para cada id, traer info enriquecida (counts de máquinas, contratos, OTs)
+            detalles = []
+            for cid_ in ids:
+                info = mysql_fetchone(
+                    "SELECT c.id, c.razon_social, c.rut, c.estado, c.created_at, c.created_by, "
+                    "       (SELECT COUNT(*) FROM mant_maquinas WHERE cliente_id=c.id AND COALESCE(estado,'activo')<>'baja') AS n_maq, "
+                    "       (SELECT COUNT(*) FROM mant_contratos WHERE cliente_id=c.id) AS n_ct, "
+                    "       (SELECT COUNT(*) FROM mant_visitas WHERE cliente_id=c.id) AS n_ot "
+                    "  FROM mant_clientes c WHERE c.id=%s",
+                    (cid_,)
+                )
+                if info:
+                    detalles.append({
+                        "id": info["id"],
+                        "razon_social": info.get("razon_social"),
+                        "rut": info.get("rut") or "",
+                        "estado": info.get("estado"),
+                        "created_at": str(info["created_at"])[:16] if info.get("created_at") else "",
+                        "created_by": info.get("created_by") or "",
+                        "n_maquinas": int(info.get("n_maq") or 0),
+                        "n_contratos": int(info.get("n_ct") or 0),
+                        "n_ots": int(info.get("n_ot") or 0),
+                    })
+            out.append({
+                "criterio": criterio,
+                "valor": r.get("rut") or r.get("norm"),
+                "ids": ids,
+                "cantidad": len(ids),
+                "detalles": detalles,
+            })
+        return out
+
+    grupos_rut = _expand(rows_rut, "rut")
+    grupos_nombre = _expand(rows_nombre, "nombre")
+    return jsonify({
+        "ok": True,
+        "duplicados_por_rut": grupos_rut,
+        "duplicados_por_nombre": grupos_nombre,
+        "total_grupos": len(grupos_rut) + len(grupos_nombre),
+    })
+
+
+@app.route("/mantenciones/api/clientes/<int:cid_keep>/fusionar/<int:cid_drop>", methods=["POST"])
+@_mant_required
+def mant_clientes_fusionar(cid_keep, cid_drop):
+    """Fusiona dos clientes duplicados.
+
+    cid_keep: el que se conserva (el "bueno", con datos limpios)
+    cid_drop: el duplicado a eliminar. Sus máquinas, contratos, OTs,
+              fotos, etc., se reasignan a cid_keep antes de soft-delete.
+
+    Solo admin/superadmin. Audita la operación completa en mant_logs.
+    """
+    if not ((g.permissions or {}).get("admin") or (g.permissions or {}).get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin puede fusionar."}), 403
+
+    if cid_keep == cid_drop:
+        return jsonify({"ok": False, "error": "No puedes fusionar un cliente consigo mismo."}), 400
+
+    c_keep = mysql_fetchone("SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (cid_keep,))
+    c_drop = mysql_fetchone("SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (cid_drop,))
+    if not c_keep:
+        return jsonify({"ok": False, "error": f"Cliente {cid_keep} no encontrado"}), 404
+    if not c_drop:
+        return jsonify({"ok": False, "error": f"Cliente {cid_drop} no encontrado"}), 404
+
+    user = current_username()
+    stats = {"maquinas": 0, "contratos": 0, "visitas": 0,
+             "sucursales": 0, "contactos": 0, "documentos": 0, "fotos": 0,
+             "levantamientos": 0, "logs": 0}
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Reasignar TODAS las relaciones del duplicado al cliente bueno
+            tablas_a_reasignar = [
+                ("mant_maquinas",            "cliente_id", "maquinas"),
+                ("mant_contratos",           "cliente_id", "contratos"),
+                ("mant_visitas",             "cliente_id", "visitas"),
+                ("mant_sucursales",          "cliente_id", "sucursales"),
+                ("mant_contrato_adjuntos",   "cliente_id", "documentos"),
+                ("mant_maquina_eventos",     "cliente_id", "logs"),
+                ("mant_levantamientos",      "cliente_id", "levantamientos"),
+                ("mant_reportes",            "cliente_id", "documentos"),
+                ("mant_logs",                "entidad_id", None),  # logs con entidad='cliente'
+            ]
+            for tabla, col, key_stat in tablas_a_reasignar:
+                try:
+                    if tabla == "mant_logs":
+                        cur.execute(
+                            "UPDATE mant_logs SET entidad_id=%s "
+                            "WHERE entidad='cliente' AND entidad_id=%s",
+                            (cid_keep, cid_drop)
+                        )
+                    else:
+                        cur.execute(
+                            f"UPDATE {tabla} SET {col}=%s WHERE {col}=%s",
+                            (cid_keep, cid_drop)
+                        )
+                    if key_stat:
+                        stats[key_stat] = stats.get(key_stat, 0) + cur.rowcount
+                except Exception as e_t:
+                    print(f"[fusionar] tabla {tabla} falló: {e_t}", flush=True)
+
+            # Soft-delete del duplicado en vez de hard-delete: deja rastro
+            cur.execute(
+                "UPDATE mant_clientes SET estado='inactivo', updated_by=%s, "
+                "       notas=CONCAT(COALESCE(notas,''), %s) "
+                " WHERE id=%s",
+                (user, f"\n\n[FUSIONADO con cliente #{cid_keep} ({c_keep['razon_social']}) por {user} el "
+                       f"{_now_chile_str('%Y-%m-%d %H:%M')}]", cid_drop)
+            )
+        conn.commit()
+
+        _mant_log("cliente", cid_keep, "fusion_recibida",
+                  f"Recibió datos de #{cid_drop} ({c_drop['razon_social']}) — "
+                  f"{stats['maquinas']} eq · {stats['contratos']} ct · {stats['visitas']} ot")
+        _mant_log("cliente", cid_drop, "fusionado_a",
+                  f"Fusionado a #{cid_keep} ({c_keep['razon_social']}) por {user}")
+
+        return jsonify({
+            "ok": True,
+            "cliente_conservado": {"id": cid_keep, "razon_social": c_keep['razon_social']},
+            "cliente_fusionado": {"id": cid_drop, "razon_social": c_drop['razon_social']},
+            "reasignaciones": stats,
+            "mensaje": (
+                f"Fusión exitosa. Todos los datos de '{c_drop['razon_social']}' (#{cid_drop}) "
+                f"se reasignaron a '{c_keep['razon_social']}' (#{cid_keep}). "
+                f"El duplicado quedó como inactivo (puede restaurarse desde Fichas Ocultas si fue un error)."
+            ),
+        })
+    finally:
+        conn.close()
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>", methods=["DELETE"])
 @_mant_required
 def mant_cliente_delete(cid):
@@ -17759,21 +17946,145 @@ def mant_maquina_add(cid):
 @app.route("/mantenciones/api/maquinas/<int:mid>", methods=["DELETE"])
 @_mant_required
 def mant_maquina_del(mid):
+    """SOFT-DELETE de máquina (cambio 2026-05-15).
+
+    ANTES: hacía DELETE permanente → causó pérdida irreversible de datos
+    en producción ("se borraron las máquinas y no se pueden recuperar").
+
+    AHORA: marca estado='baja' (soft-delete). La máquina sale del listado
+    activo pero sus datos, fotos, contratos asociados y registros de OT
+    quedan intactos en la BD. Se puede restaurar con:
+      POST /mantenciones/api/maquinas/<id>/restaurar
+
+    Para HARD DELETE (destrucción real) solo superadmin vía endpoint
+    dedicado /api/maquinas/<id>/destruir (requiere confirm_text).
+    """
     m_info = mysql_fetchone(
-        "SELECT cliente_id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (mid,)
+        "SELECT cliente_id, nombre, sku, serie, estado FROM mant_maquinas WHERE id=%s", (mid,)
     )
+    if not m_info:
+        return jsonify({"ok": False, "error": "Máquina no encontrada"}), 404
+
+    # Si ya está dada de baja, no hay nada que hacer (idempotente)
+    if (m_info.get("estado") or "").lower() == "baja":
+        return jsonify({"ok": True, "ya_de_baja": True})
+
+    user = current_username()
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
+            # Soft-delete: cambiar estado a 'baja' + auditar
+            cur.execute(
+                "UPDATE mant_maquinas SET estado='baja', updated_by=%s WHERE id=%s",
+                (user, mid)
+            )
         conn.commit()
-        if m_info:
-            detalle = f"{m_info.get('nombre') or ''} (SKU {m_info.get('sku') or '—'} · Serie {m_info.get('serie') or '—'})"
-            _mant_log("maquina", mid, "eliminada", detalle)
-            _mant_log("cliente", m_info.get("cliente_id"), "equipo_eliminado", detalle)
-        return jsonify({"ok": True})
+        detalle = (
+            f"{m_info.get('nombre') or ''} "
+            f"(SKU {m_info.get('sku') or '—'} · Serie {m_info.get('serie') or '—'}) "
+            f"· estado: {m_info.get('estado')} → baja · por {user}"
+        )
+        _mant_log("maquina", mid, "dada_de_baja", detalle)
+        _mant_log("cliente", m_info.get("cliente_id"), "equipo_dado_de_baja", detalle)
+        return jsonify({
+            "ok": True,
+            "soft_delete": True,
+            "mensaje": "Equipo dado de baja. Sus datos se conservan y puede restaurarse desde Equipos dados de baja.",
+        })
     finally:
         conn.close()
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/restaurar", methods=["POST"])
+@_mant_required
+def mant_maquina_restaurar(mid):
+    """Restaura una máquina dada de baja (estado='baja' → 'activo')."""
+    m_info = mysql_fetchone(
+        "SELECT cliente_id, nombre, estado FROM mant_maquinas WHERE id=%s", (mid,)
+    )
+    if not m_info:
+        return jsonify({"ok": False, "error": "Máquina no encontrada"}), 404
+    if (m_info.get("estado") or "").lower() != "baja":
+        return jsonify({"ok": True, "ya_activa": True})
+
+    user = current_username()
+    mysql_execute(
+        "UPDATE mant_maquinas SET estado='activo', updated_by=%s WHERE id=%s",
+        (user, mid)
+    )
+    _mant_log("maquina", mid, "restaurada", f"Restaurada por {user}")
+    _mant_log("cliente", m_info.get("cliente_id"), "equipo_restaurado",
+              f"{m_info.get('nombre') or ''} restaurado por {user}")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/maquinas-baja", methods=["GET"])
+@_mant_required
+def mant_maquinas_baja_listar(cid):
+    """Lista las máquinas dadas de baja de un cliente (papelera de equipos)."""
+    rows = mysql_fetchall(
+        "SELECT id, nombre, sku, serie, doc_origen, doc_fecha, notas, "
+        "       estado, updated_by, created_at "
+        "  FROM mant_maquinas "
+        " WHERE cliente_id=%s AND estado='baja' "
+        " ORDER BY id DESC LIMIT 200",
+        (cid,)
+    ) or []
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["id"],
+            "nombre": r.get("nombre") or "",
+            "sku": r.get("sku") or "",
+            "serie": r.get("serie") or "",
+            "doc_origen": r.get("doc_origen") or "",
+            "doc_fecha": str(r["doc_fecha"]) if r.get("doc_fecha") else "",
+            "notas": r.get("notas") or "",
+            "dada_baja_por": r.get("updated_by") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+        })
+    return jsonify({"ok": True, "maquinas_baja": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])
+@_mant_required
+def mant_maquina_destruir(mid):
+    """HARD DELETE real de la máquina. Solo superadmin + confirm_text.
+    Borra la máquina y sus fotos/eventos en cascada. Acción irreversible.
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": "Solo superadmin puede destruir una máquina permanentemente.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+
+    m_info = mysql_fetchone(
+        "SELECT cliente_id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (mid,)
+    )
+    if not m_info:
+        return jsonify({"ok": False, "error": "Máquina no encontrada"}), 404
+
+    body = request.get_json(silent=True) or {}
+    confirm_text = (body.get("confirm_text") or "").strip()
+    nombre_esperado = (m_info.get("nombre") or "").strip()
+    if confirm_text != nombre_esperado:
+        return jsonify({
+            "ok": False,
+            "error": f"Para confirmar, escribe exactamente el nombre del equipo: '{nombre_esperado}'.",
+            "error_codigo": "CONFIRM_TEXT_INVALIDO",
+        }), 400
+
+    user = current_username()
+    detalle = (
+        f"DESTRUIDA: {nombre_esperado} (SKU {m_info.get('sku') or '—'} · "
+        f"Serie {m_info.get('serie') or '—'}) · por {user}"
+    )
+    # Log ANTES de borrar (sino se pierde la referencia)
+    _mant_log("maquina", mid, "destruida_permanente", detalle)
+    _mant_log("cliente", m_info.get("cliente_id"), "equipo_destruido", detalle)
+    mysql_execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
+    return jsonify({"ok": True, "destruida": True})
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/serie", methods=["PUT"])
@@ -18882,23 +19193,29 @@ def mant_contrato_subir(cid):
 
     fname = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
 
-    # ── Subir a Cloudinary como 'image' para que se vea inline ─────────
-    # IMPORTANTE: PDFs deben ir como resource_type='image' (no 'raw').
-    # Solo así Cloudinary los sirve con headers que permiten render
-    # inline en el iframe del navegador. Si fuera 'raw', se descarga.
+    # ── Subir a Cloudinary como 'raw' (PDFs/ZIPs/DOCs) ─────────────────
+    # ANTES: probamos resource_type='image' pensando que serviría PDFs
+    # inline directamente. Cloudinary BLOQUEA por defecto la entrega de
+    # PDFs en image/upload por seguridad (política post-enero 2021):
+    # devolvía HTTP 401 al cargar la URL en el iframe.
+    #
+    # AHORA: subimos como 'raw' (/raw/upload/), que NO tiene esa
+    # restricción. El endpoint /api/contratos/<id>/archivo hace PROXY
+    # del PDF y le agrega Content-Type: application/pdf + inline para
+    # que el navegador lo renderice en el iframe. Funciona en TODOS los
+    # casos: contratos viejos, nuevos y los que quedaron rotos en
+    # /image/upload/ entre commits.
     cloud_url = None
     cloud_pid = None
     cloud_uploaded_at = None
-    cloud_pages = None
     try:
         f.stream.seek(0)
         public_id = f"contrato_{cid}_{int(time.time())}"
-        cloud_result = _cloud_upload_pdf(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
-        cloud_pages = cloud_result.get("pages")
         cloud_uploaded_at = datetime.utcnow()
-        print(f"[mant_contrato] Cloudinary OK (image/pdf) cid={cid} pages={cloud_pages} url={cloud_url}", flush=True)
+        print(f"[mant_contrato] Cloudinary OK (raw/pdf) cid={cid} url={cloud_url}", flush=True)
     except Exception as e_cld:
         print(f"[mant_contrato] Cloudinary FAIL cid={cid}: {e_cld}", flush=True)
         return jsonify({
@@ -18965,14 +19282,13 @@ def mant_contrato_subir(cid):
             ctid = cur.lastrowid
         conn.commit()
         _mant_log("contrato", ctid, "subido",
-                  f"{f.filename} (Cloudinary image · {size_bytes/1024:.0f}KB · {cloud_pages or 1}p)")
+                  f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB)")
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,
             "storage": "cloudinary",
             "url": cloud_url,
             "size_kb": int(size_bytes / 1024) if size_bytes else 0,
-            "pages": cloud_pages,
         })
     finally:
         conn.close()
@@ -19195,44 +19511,75 @@ def mant_contrato_archivo(ctid):
         return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
-    # IMPORTANTE: contratos subidos como resource_type='raw' (legacy) se
-    # sirven con Content-Disposition: attachment → navegador NO los
-    # renderiza inline. Los nuevos (resource_type='image') sí.
-    # Para soportar AMBOS sin romper los viejos: si la URL es /raw/upload/
-    # y NO es descarga, hacemos PROXY del PDF y forzamos headers correctos.
+    # ESTRATEGIA: SIEMPRE PROXY para PDFs cualquiera sea la URL de
+    # Cloudinary (raw/upload o image/upload). Razones:
+    #
+    # 1) /raw/upload/ → Cloudinary devuelve Content-Disposition: attachment
+    #    forzando descarga. Sin proxy, el iframe del browser muestra
+    #    "Formato no previsualizable".
+    # 2) /image/upload/ → Cloudinary BLOQUEA por seguridad la entrega
+    #    de PDFs como image-resources (política post-enero 2021).
+    #    Devuelve HTTP 401 al iframe.
+    #
+    # El proxy resuelve AMBOS casos:
+    #   - Para /raw/upload/: descarga (200 OK anónimo) y sirve con
+    #     Content-Type: application/pdf + inline.
+    #   - Para /image/upload/: si el GET anónimo da 401, intenta con
+    #     URL FIRMADA generada por el SDK de Cloudinary (autenticada
+    #     con API_KEY+SECRET) que bypassea la restricción de delivery.
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
-        es_raw_legacy = "/raw/upload/" in cld_url
 
         if as_dl:
             # Descarga explícita: fl_attachment + nombre original
             sep = "&" if "?" in cld_url else "?"
-            cld_url = f"{cld_url}{sep}fl_attachment=true"
-            return _redir(cld_url, code=302)
+            cld_url_dl = f"{cld_url}{sep}fl_attachment=true"
+            return _redir(cld_url_dl, code=302)
 
-        # Inline + URL nueva (image/upload) → redirect directo, súper rápido
-        if not es_raw_legacy:
-            return _redir(cld_url, code=302)
-
-        # Inline + URL legacy (raw/upload) → proxy con headers correctos
-        # para que el navegador renderice inline.
+        # Inline → proxy con headers correctos
         try:
             import requests as _requests
             r_cld = _requests.get(cld_url, stream=True, timeout=30)
+
+            # Si el GET anónimo falla (401 típico de image/upload PDF
+            # bloqueado), generar URL firmada con el SDK autenticado.
+            if r_cld.status_code != 200 and ct.get("cloudinary_public_id"):
+                try:
+                    import cloudinary.utils as _cu
+                    es_image = "/image/upload/" in cld_url
+                    signed_url, _ = _cu.cloudinary_url(
+                        ct["cloudinary_public_id"],
+                        resource_type=("image" if es_image else "raw"),
+                        type="upload",
+                        sign_url=True,
+                        secure=True,
+                    )
+                    print(f"[mant_contrato_archivo] {r_cld.status_code} anonymous → retry signed url", flush=True)
+                    r_cld = _requests.get(signed_url, stream=True, timeout=30)
+                except Exception as e_sign:
+                    print(f"[mant_contrato_archivo] firma falló: {e_sign}", flush=True)
+
             if r_cld.status_code != 200:
-                # Cloudinary devolvió error — caemos a redirect (mejor que 500)
-                return _redir(cld_url, code=302)
-            # Servir el PDF con headers correctos
+                # Última opción: redirect con fl_attachment para forzar
+                # descarga (no es ideal pero al menos no muestra 401).
+                print(f"[mant_contrato_archivo] Cloudinary final status={r_cld.status_code}, fallback descarga", flush=True)
+                sep = "&" if "?" in cld_url else "?"
+                return _redir(f"{cld_url}{sep}fl_attachment=true", code=302)
+
+            # Servir el PDF con headers correctos para iframe inline
             from flask import Response
             def _gen():
-                for chunk in r_cld.iter_content(chunk_size=64*1024):
-                    if chunk:
-                        yield chunk
+                try:
+                    for chunk in r_cld.iter_content(chunk_size=64*1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    try: r_cld.close()
+                    except Exception: pass
             resp = Response(_gen(), content_type="application/pdf")
             resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
             resp.headers["X-Frame-Options"] = "SAMEORIGIN"
             resp.headers["Cache-Control"] = "private, max-age=300"
-            # Pasar tamaño si Cloudinary lo dio
             cl = r_cld.headers.get("Content-Length")
             if cl: resp.headers["Content-Length"] = cl
             return resp
