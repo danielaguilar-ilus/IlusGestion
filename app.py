@@ -14564,6 +14564,15 @@ def init_mantenciones_tables():
                 "CREATE INDEX idx_v_real_fin ON mant_visitas (hora_real_fin)",
                 "CREATE INDEX idx_v_dur_real ON mant_visitas (duracion_real_min)",
                 "CREATE INDEX idx_v_causa ON mant_visitas (causa_raiz)",
+                # 2026-05-15 — Optimización de performance (auditoría):
+                # Índices composite para queries más lentas en producción.
+                "CREATE INDEX idx_v_cliente_estado ON mant_visitas (cliente_id, estado)",
+                "CREATE INDEX idx_v_tecuser_estado ON mant_visitas (tecnico_user_id, estado)",
+                "CREATE INDEX idx_v_fecha_estado ON mant_visitas (fecha_programada, estado)",
+                "CREATE INDEX idx_vt_visita_estado ON mant_visita_tareas (visita_id, estado_trabajo)",
+                "CREATE INDEX idx_vt_visita_completa ON mant_visita_tareas (visita_id, completada)",
+                "CREATE INDEX idx_mm_cliente_estado ON mant_maquinas (cliente_id, estado)",
+                "CREATE INDEX idx_logs_ent_id_fecha ON mant_logs (entidad, entidad_id, created_at)",
                 # mant_visita_tareas: tracking por tarea
                 "ALTER TABLE mant_visita_tareas ADD COLUMN iniciado_at DATETIME NULL",
                 "ALTER TABLE mant_visita_tareas ADD COLUMN duracion_min INT NULL COMMENT 'Auto desde mant_tarea_tiempo'",
@@ -21051,26 +21060,135 @@ def mant_visita_firmar(vid):
 # Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
+def _ot_validar_cierre(vid):
+    """FASE 5 — Validación de cierre auditable de OT con 4 reglas que el
+    usuario aprobó. Devuelve dict con resultado:
+      {"puede_cerrar": bool, "razones": [list de razones bloqueantes]}
+
+    Reglas (todas obligatorias salvo que la OT sea de tipo levantamiento
+    que tiene sus propias reglas más laxas):
+      R1. Checklist 100% completado (todas las tareas con estado_trabajo='completada')
+      R2. Diagnóstico obligatorio (mant_visitas.diagnostico no vacío, mín 20 chars)
+      R3. Foto obligatoria por cada tarea con requiere_foto=1 (debe tener ≥1 foto)
+      R4. Las 3 firmas presentes (cliente, técnico, supervisor)
+
+    Las OT tipo 'levantamiento' eximen R2 (diagnóstico autogenerado al cerrar).
+    """
+    v = mysql_fetchone(
+        "SELECT id, tipo, estado, diagnostico, "
+        "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
+        "  FROM mant_visitas WHERE id=%s",
+        (vid,)
+    )
+    if not v:
+        return {"puede_cerrar": False, "razones": ["OT no encontrada"]}
+
+    razones = []
+    es_levantamiento = (v.get("tipo") or "").lower() == "levantamiento"
+
+    # R1 — Checklist 100% completado
+    chk_row = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+        "FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    ) or {}
+    total = int(chk_row.get("total") or 0)
+    done = int(chk_row.get("done") or 0)
+    if total == 0:
+        razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
+    elif done < total:
+        razones.append(
+            f"Checklist incompleto: {done}/{total} tareas completadas. "
+            f"Faltan {total - done} por marcar."
+        )
+
+    # R2 — Diagnóstico obligatorio (excepto levantamiento)
+    if not es_levantamiento:
+        diag = (v.get("diagnostico") or "").strip()
+        if len(diag) < 20:
+            razones.append(
+                "Diagnóstico obligatorio: debe explicar qué se hizo (mínimo 20 caracteres)."
+            )
+
+    # R3 — Foto obligatoria por tarea con requiere_foto=1
+    tareas_sin_foto = mysql_fetchall(
+        "SELECT t.id, t.titulo "
+        "FROM mant_visita_tareas t "
+        "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+        "WHERE t.visita_id=%s AND t.requiere_foto=1 "
+        "GROUP BY t.id, t.titulo "
+        "HAVING COUNT(f.id) = 0",
+        (vid,)
+    ) or []
+    if tareas_sin_foto:
+        nombres = [t.get("titulo") or f"#{t['id']}" for t in tareas_sin_foto[:5]]
+        suf = "" if len(tareas_sin_foto) <= 5 else f" y {len(tareas_sin_foto)-5} más"
+        razones.append(
+            f"Falta foto en {len(tareas_sin_foto)} tarea(s): {', '.join(nombres)}{suf}"
+        )
+
+    # R4 — Las 3 firmas
+    if not v.get("firma_cliente_url"):    razones.append("Falta firma del cliente.")
+    if not v.get("firma_tecnico_url"):    razones.append("Falta firma del técnico.")
+    if not v.get("firma_supervisor_url"): razones.append("Falta firma del supervisor.")
+
+    return {
+        "puede_cerrar": len(razones) == 0,
+        "razones": razones,
+        "total_tareas": total,
+        "tareas_completadas": done,
+        "tareas_sin_foto": len(tareas_sin_foto),
+        "tiene_diagnostico": bool((v.get("diagnostico") or "").strip()),
+        "firmas_ok": all([v.get("firma_cliente_url"), v.get("firma_tecnico_url"), v.get("firma_supervisor_url")]),
+    }
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/validacion-cierre", methods=["GET"])
+@_mant_required
+def mant_visita_validacion_cierre(vid):
+    """Endpoint que devuelve si la OT cumple las 4 reglas de cierre.
+    El frontend lo llama para mostrar el estado del cierre antes de
+    intentar cerrar — feedback inmediato al técnico."""
+    return jsonify({"ok": True, **_ot_validar_cierre(vid)})
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/cerrar", methods=["POST"])
 @_mant_required
 def mant_visita_cerrar(vid):
-    """Cierra la visita con causa raíz, estrellas y comentario.
-    BLOQUEA el cierre si falta alguna de las 3 firmas."""
+    """Cierra la visita aplicando las 4 reglas de cierre auditable (FASE 5).
+    Bloquea cierre si falta alguna:
+      R1. Checklist 100% completado
+      R2. Diagnóstico (mín 20 chars, excepto levantamientos)
+      R3. Foto en tareas requiere_foto=1
+      R4. Las 3 firmas (cliente, técnico, supervisor)
+    """
     v = _ot_visita_basic(vid)
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
-    faltantes = []
-    if not v.get("firma_cliente_url"):     faltantes.append("cliente")
-    if not v.get("firma_tecnico_url"):     faltantes.append("técnico")
-    if not v.get("firma_supervisor_url"):  faltantes.append("supervisor")
-    if faltantes:
-        return jsonify({
-            "ok": False,
-            "error": "Falta firma de: " + ", ".join(faltantes),
-            "faltantes": faltantes
-        }), 400
 
     d = request.get_json(silent=True) or {}
+
+    # Si llega un diagnóstico en este request, guardarlo ANTES de validar
+    # (para que el técnico pueda cerrar en un solo paso con el modal)
+    diag_nuevo = (d.get("diagnostico") or "").strip()
+    if diag_nuevo:
+        mysql_execute(
+            "UPDATE mant_visitas SET diagnostico=%s WHERE id=%s",
+            (diag_nuevo[:5000], vid)
+        )
+
+    # Aplicar las 4 reglas de cierre auditable
+    validacion = _ot_validar_cierre(vid)
+    if not validacion["puede_cerrar"]:
+        return jsonify({
+            "ok": False,
+            "error": "No se puede cerrar la OT — faltan requisitos:",
+            "error_codigo": "CIERRE_BLOQUEADO",
+            "razones": validacion["razones"],
+            "validacion": validacion,
+        }), 400
+
     causa = (d.get("causa_raiz") or "").strip().lower() or None
     if causa and causa not in ("desgaste","mal_uso","falta_mantencion","defecto_fabrica","accidente","otro"):
         causa = "otro"
@@ -21085,26 +21203,35 @@ def mant_visita_cerrar(vid):
     user = current_username()
     mysql_execute(
         "UPDATE mant_visitas "
-        "   SET estado='completada', "
+        "   SET estado='cerrada', "
         "       cerrada_at=NOW(), "
+        "       cerrada_por=%s, "
         "       causa_raiz=COALESCE(%s, causa_raiz), "
         "       satisfaccion_estrellas=COALESCE(%s, satisfaccion_estrellas), "
         "       satisfaccion_comentario=COALESCE(%s, satisfaccion_comentario), "
         "       hora_real_fin=COALESCE(hora_real_fin, NOW()) "
         " WHERE id=%s",
-        (causa, estrellas, comentario, vid)
+        (user, causa, estrellas, comentario, vid)
     )
     try:
         mysql_execute(
             "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
             "VALUES ('visita', %s, 'cerrada', %s, %s)",
             (vid,
-             f"OT cerrada — causa: {causa or '—'} · estrellas: {estrellas or '—'}",
+             f"OT cerrada (auditable) — causa: {causa or '—'} · "
+             f"estrellas: {estrellas or '—'} · "
+             f"{validacion['tareas_completadas']}/{validacion['total_tareas']} tareas · "
+             f"firmas: {'OK' if validacion['firmas_ok'] else 'INCOMPLETO'}",
              user)
         )
     except Exception:
         pass
-    return jsonify({"ok": True})
+    return jsonify({
+        "ok": True,
+        "estado": "cerrada",
+        "validacion": validacion,
+        "mensaje": "OT cerrada exitosamente con auditoría completa.",
+    })
 
 
 # ── VISITAS / AGENDA ──────────────────────────────────────────────────
@@ -22430,13 +22557,33 @@ def _validar_item_plantilla(d):
 @app.route("/mantenciones/api/plantillas", methods=["GET"])
 @_mant_required
 def mant_plantillas_listar():
-    """Lista plantillas. Filtros: ?activa=1, ?tipo_visita=preventiva, ?q=..."""
+    """Lista plantillas con filtros (FASE 3 — selector inteligente):
+        ?activa=1
+        ?tipo_visita=preventiva|correctiva|garantia|...
+        ?familia_checklist=instalacion|preventiva|correctivo|...
+        ?familia_activo=cardio|trotadoras|todas|...
+        ?q=texto
+    """
     where, params = [], []
     if request.args.get("activa") == "1":
         where.append("activa=1")
     tv = (request.args.get("tipo_visita") or "").strip().lower()
     if tv in _PLANT_TIPO_VISITA:
         where.append("tipo_visita=%s"); params.append(tv)
+    # FASE 3: filtros nuevos
+    fchk = (request.args.get("familia_checklist") or "").strip().lower()
+    _FAM_CHK_OK = ("instalacion","preventiva","correctivo","desinstalacion",
+                   "capacitacion","registro_productos","operacional_interno",
+                   "rendiciones","otro")
+    if fchk in _FAM_CHK_OK:
+        where.append("familia_checklist=%s"); params.append(fchk)
+    fact = (request.args.get("familia_activo") or "").strip().lower()
+    _FAM_ACT_OK = ("cardio","selectorizado","carga_libre","racks_estructuras",
+                   "bancos","accesorios","bicicletas","trotadoras","otros","todas")
+    if fact in _FAM_ACT_OK:
+        # Buscar plantillas para esa familia O las que aplican a 'todas'
+        where.append("(familia_activo=%s OR familia_activo='todas')")
+        params.append(fact)
     q = (request.args.get("q") or "").strip()
     if q:
         where.append("(nombre LIKE %s OR descripcion LIKE %s)")
@@ -22458,6 +22605,8 @@ def mant_plantillas_listar():
             "id": r["id"], "nombre": r["nombre"],
             "descripcion": r.get("descripcion") or "",
             "tipo_visita": r.get("tipo_visita") or "otro",
+            "familia_checklist": r.get("familia_checklist") or "otro",
+            "familia_activo": r.get("familia_activo") or "todas",
             "tiempo_estimado_min": r.get("tiempo_estimado_min"),
             "activa": bool(r.get("activa")),
             "es_sistema": bool(r.get("es_sistema")),
@@ -26029,6 +26178,132 @@ def mant_cliente_documentos(cid):
     # Ordenar por created_at desc
     items.sort(key=lambda x: x.get("created_at",""), reverse=True)
     return jsonify(items)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/evidencias", methods=["GET"])
+@_mant_required
+def mant_cliente_evidencias(cid):
+    """FASE 6 — Tab "Evidencias" de la ficha del cliente.
+    Devuelve todas las fotos del cliente unificadas en timeline:
+    - mant_visita_fotos (evidencia de OTs ejecutadas)
+    - mant_maquina_fotos (galería permanente de equipos)
+    - mant_levantamiento_fotos (levantamientos fotográficos)
+
+    Cada foto incluye: url Cloudinary, tipo, descripción, fecha, usuario,
+    equipo al que pertenece (si aplica), origen (OT/levantamiento/galería).
+
+    Filtros opcionales:
+      ?origen=ot|levantamiento|galeria
+      ?maquina_id=N (solo fotos de ese equipo)
+    """
+    origen = (request.args.get("origen") or "").strip().lower()
+    maquina_id = request.args.get("maquina_id")
+    try: maquina_id = int(maquina_id) if maquina_id else None
+    except Exception: maquina_id = None
+
+    fotos = []
+
+    # 1. Fotos de visitas/OT
+    if not origen or origen == "ot":
+        rows_vf = mysql_fetchall(
+            "SELECT vf.id, vf.archivo_path, vf.cloudinary_url, vf.tipo_foto, "
+            "       vf.descripcion, vf.tomada_por, vf.tomada_at, "
+            "       vf.visita_id, vf.maquina_id, "
+            "       v.numero_ot, v.titulo AS visita_titulo, v.tipo AS visita_tipo, "
+            "       v.estado AS visita_estado, "
+            "       m.nombre AS maquina_nombre, m.serie AS maquina_serie "
+            "  FROM mant_visita_fotos vf "
+            "  JOIN mant_visitas v ON v.id = vf.visita_id "
+            "  LEFT JOIN mant_maquinas m ON m.id = vf.maquina_id "
+            " WHERE v.cliente_id=%s "
+            + (" AND vf.maquina_id=%s" if maquina_id else "")
+            + " ORDER BY vf.tomada_at DESC LIMIT 500",
+            ((cid, maquina_id) if maquina_id else (cid,))
+        ) or []
+        for r in rows_vf:
+            url = r.get("cloudinary_url") or (f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else "")
+            if not url: continue
+            fotos.append({
+                "id": r["id"],
+                "url": url,
+                "tipo_foto": r.get("tipo_foto") or "general",
+                "descripcion": r.get("descripcion") or "",
+                "tomada_por": r.get("tomada_por") or "",
+                "fecha": str(r["tomada_at"])[:16] if r.get("tomada_at") else "",
+                "origen": "ot",
+                "origen_label": f"OT {r.get('numero_ot') or '#'+str(r['visita_id'])}",
+                "origen_url": f"/mantenciones/ot/{r['visita_id']}",
+                "visita_titulo": r.get("visita_titulo") or "",
+                "visita_tipo": r.get("visita_tipo") or "",
+                "visita_estado": r.get("visita_estado") or "",
+                "maquina_id": r.get("maquina_id"),
+                "maquina_nombre": r.get("maquina_nombre") or "",
+                "maquina_serie": r.get("maquina_serie") or "",
+                "persistente": bool(r.get("cloudinary_url")),
+            })
+
+    # 2. Fotos de máquinas (galería permanente)
+    if not origen or origen == "galeria":
+        sql_mf = (
+            "SELECT mf.id, mf.archivo_path, mf.cloudinary_url, mf.tipo_foto, "
+            "       mf.descripcion, mf.tomada_por, mf.created_at, "
+            "       mf.maquina_id, mf.levantamiento_id, "
+            "       m.nombre AS maquina_nombre, m.serie AS maquina_serie "
+            "  FROM mant_maquina_fotos mf "
+            "  JOIN mant_maquinas m ON m.id = mf.maquina_id "
+            " WHERE m.cliente_id=%s "
+        )
+        params_mf = [cid]
+        if maquina_id:
+            sql_mf += " AND mf.maquina_id=%s "
+            params_mf.append(maquina_id)
+        sql_mf += " ORDER BY mf.created_at DESC LIMIT 500"
+        rows_mf = mysql_fetchall(sql_mf, tuple(params_mf)) or []
+        for r in rows_mf:
+            url = r.get("cloudinary_url") or (f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else "")
+            if not url: continue
+            fotos.append({
+                "id": r["id"],
+                "url": url,
+                "tipo_foto": r.get("tipo_foto") or "general",
+                "descripcion": r.get("descripcion") or "",
+                "tomada_por": r.get("tomada_por") or "",
+                "fecha": str(r["created_at"])[:16] if r.get("created_at") else "",
+                "origen": "galeria" if not r.get("levantamiento_id") else "levantamiento",
+                "origen_label": (
+                    f"Levantamiento #{r['levantamiento_id']}" if r.get("levantamiento_id")
+                    else "Galería del equipo"
+                ),
+                "origen_url": (
+                    f"/mantenciones/clientes/{cid}?lev={r['levantamiento_id']}"
+                    if r.get("levantamiento_id") else f"/mantenciones/clientes/{cid}"
+                ),
+                "maquina_id": r.get("maquina_id"),
+                "maquina_nombre": r.get("maquina_nombre") or "",
+                "maquina_serie": r.get("maquina_serie") or "",
+                "persistente": bool(r.get("cloudinary_url")),
+            })
+
+    # Ordenar timeline cronológico desc
+    fotos.sort(key=lambda x: x.get("fecha", ""), reverse=True)
+
+    # Estadísticas para badges en UI
+    total = len(fotos)
+    por_origen = {}
+    por_maquina = {}
+    for f_ in fotos:
+        por_origen[f_["origen"]] = por_origen.get(f_["origen"], 0) + 1
+        if f_.get("maquina_id"):
+            mid = f_["maquina_id"]
+            por_maquina[mid] = por_maquina.get(mid, 0) + 1
+
+    return jsonify({
+        "ok": True,
+        "fotos": fotos[:500],  # límite duro
+        "total": total,
+        "por_origen": por_origen,
+        "por_maquina": por_maquina,
+    })
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos", methods=["POST"])

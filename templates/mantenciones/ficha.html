@@ -776,6 +776,9 @@
     <button class="ftab-btn" data-tab="documentos" onclick="switchTab('documentos');cargarDocumentos()">
       <i class="bi bi-folder-fill"></i>Documentos
     </button>
+    <button class="ftab-btn" data-tab="evidencias" onclick="switchTab('evidencias');cargarEvidencias()">
+      <i class="bi bi-camera-fill"></i>Evidencias
+    </button>
     <button class="ftab-btn" data-tab="comunicaciones" onclick="switchTab('comunicaciones');cargarComunicaciones()">
       <i class="bi bi-chat-dots"></i>Comunicaciones
     </button>
@@ -4248,6 +4251,177 @@ async function docPreview(item){
 </script>
 </div>
 {# /tab-documentos #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   FASE 6 — TAB: EVIDENCIAS — galería unificada de fotos del cliente
+   Agrupa: fotos de OT + fotos de levantamientos + galería permanente
+   de cada equipo. Timeline cronológico, filtros por origen/equipo.
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-evidencias">
+<style>
+.ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:12px}
+.ev-card{background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;
+         transition:transform .15s,box-shadow .15s;cursor:pointer}
+.ev-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.1)}
+.ev-img{width:100%;height:160px;object-fit:cover;background:#000;display:block}
+.ev-meta{padding:10px 12px}
+.ev-meta .tt{font-size:.78rem;font-weight:700;color:#0f172a;margin-bottom:3px;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev-meta .ss{font-size:.7rem;color:#6b7280;margin-bottom:5px}
+.ev-meta .badge-orig{font-size:.62rem;padding:2px 8px;border-radius:50px;font-weight:700}
+.ev-orig-ot{background:#dbeafe;color:#1e40af}
+.ev-orig-levantamiento{background:#fee2e2;color:#991b1b}
+.ev-orig-galeria{background:#f3f4f6;color:#374151}
+.ev-filter-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.ev-chip{padding:4px 12px;border-radius:50px;background:#f3f4f6;color:#374151;
+         font-size:.72rem;font-weight:600;cursor:pointer;border:1px solid #e5e7eb;
+         transition:all .15s}
+.ev-chip:hover{background:#e5e7eb}
+.ev-chip.active{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red)}
+.ev-empty{text-align:center;padding:60px 20px;color:#9ca3af}
+.ev-empty i{font-size:3rem;color:#cbd5e1;display:block;margin-bottom:8px}
+</style>
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem">
+      <i class="bi bi-camera-fill me-2" style="color:var(--ilus-red)"></i>Evidencias fotográficas
+    </span>
+    <span class="ms-2 badge bg-secondary" id="evTotalBadge" style="font-size:.65rem">0</span>
+  </div>
+  <div class="text-muted small">
+    <i class="bi bi-info-circle me-1"></i>
+    Fotos de OTs, levantamientos y galería de equipos en timeline.
+  </div>
+</div>
+
+<div class="ev-filter-bar">
+  <span class="text-muted small me-1">Filtrar:</span>
+  <span class="ev-chip active" data-evfilter="" onclick="filtrarEvidencias(this,'')">
+    <i class="bi bi-grid me-1"></i>Todas <span id="evCntTodos">0</span>
+  </span>
+  <span class="ev-chip" data-evfilter="ot" onclick="filtrarEvidencias(this,'ot')">
+    <i class="bi bi-clipboard2-pulse me-1"></i>De OT <span id="evCntOt">0</span>
+  </span>
+  <span class="ev-chip" data-evfilter="levantamiento" onclick="filtrarEvidencias(this,'levantamiento')">
+    <i class="bi bi-camera-fill me-1"></i>Levantamientos <span id="evCntLev">0</span>
+  </span>
+  <span class="ev-chip" data-evfilter="galeria" onclick="filtrarEvidencias(this,'galeria')">
+    <i class="bi bi-images me-1"></i>Galería equipos <span id="evCntGal">0</span>
+  </span>
+</div>
+
+<div id="evGrid" class="ev-grid">
+  <div class="text-muted text-center w-100 py-5">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando evidencias…
+  </div>
+</div>
+
+{# Lightbox para ver foto grande #}
+<div class="lightbox" id="evLightbox" onclick="cerrarEvLightbox()" style="display:none">
+  <button class="lightbox-close" onclick="cerrarEvLightbox()"><i class="bi bi-x-lg"></i></button>
+  <img id="evLightboxImg" src="" alt="" style="max-width:95vw;max-height:90vh;object-fit:contain">
+  <div id="evLightboxMeta" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);
+       background:rgba(0,0,0,.8);color:#fff;padding:10px 20px;border-radius:8px;
+       font-size:.85rem;max-width:80vw;text-align:center"></div>
+</div>
+
+<script>
+let _evFotos = [];
+let _evFiltroActual = '';
+
+async function cargarEvidencias() {
+  const cont = document.getElementById('evGrid');
+  cont.innerHTML = '<div class="text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando evidencias…</div>';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/evidencias`);
+    const d = await r.json();
+    if (!d.ok) {
+      cont.innerHTML = `<div class="alert alert-danger">Error: ${d.error || 'desconocido'}</div>`;
+      return;
+    }
+    _evFotos = d.fotos || [];
+    // Actualizar contadores
+    document.getElementById('evTotalBadge').textContent = d.total;
+    document.getElementById('evCntTodos').textContent = `(${d.total})`;
+    document.getElementById('evCntOt').textContent = `(${d.por_origen.ot || 0})`;
+    document.getElementById('evCntLev').textContent = `(${d.por_origen.levantamiento || 0})`;
+    document.getElementById('evCntGal').textContent = `(${d.por_origen.galeria || 0})`;
+    renderEvidencias();
+  } catch (e) {
+    cont.innerHTML = `<div class="alert alert-danger">Error de red: ${e.message}</div>`;
+  }
+}
+
+function filtrarEvidencias(chip, origen) {
+  _evFiltroActual = origen;
+  document.querySelectorAll('.ev-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  renderEvidencias();
+}
+
+function renderEvidencias() {
+  const cont = document.getElementById('evGrid');
+  const fotos = _evFiltroActual
+    ? _evFotos.filter(f => f.origen === _evFiltroActual)
+    : _evFotos;
+  if (!fotos.length) {
+    const msg = _evFiltroActual
+      ? `No hay fotos del tipo "${_evFiltroActual}"`
+      : 'Aún no hay evidencias fotográficas para este cliente';
+    cont.innerHTML = `
+      <div class="ev-empty">
+        <i class="bi bi-camera"></i>
+        <div class="fw-semibold mt-1">${msg}</div>
+        <div class="small mt-1">Las fotos de OTs, levantamientos y galería de equipos aparecerán aquí.</div>
+      </div>`;
+    return;
+  }
+  const ico = { ot:'bi-clipboard2-pulse', levantamiento:'bi-camera-fill', galeria:'bi-images' };
+  cont.innerHTML = fotos.map((f, idx) => `
+    <div class="ev-card" onclick="abrirEvLightbox(${idx})">
+      <img class="ev-img" src="${_evEsc(f.url)}" alt="${_evEsc(f.descripcion||'')}"
+           loading="lazy" onerror="this.style.display='none'">
+      <div class="ev-meta">
+        <div class="tt" title="${_evEsc(f.maquina_nombre||f.descripcion||'')}">
+          ${_evEsc(f.maquina_nombre || f.descripcion || 'Sin descripción')}
+        </div>
+        <div class="ss">
+          ${_evEsc(f.fecha)} · ${_evEsc(f.tomada_por || '—')}
+        </div>
+        <span class="badge-orig ev-orig-${f.origen}">
+          <i class="bi ${ico[f.origen]||'bi-image'} me-1"></i>${_evEsc(f.origen_label)}
+        </span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function _evEsc(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function abrirEvLightbox(idx) {
+  const fotos = _evFiltroActual ? _evFotos.filter(f => f.origen === _evFiltroActual) : _evFotos;
+  const f = fotos[idx];
+  if (!f) return;
+  document.getElementById('evLightboxImg').src = f.url;
+  document.getElementById('evLightboxMeta').innerHTML =
+    `<div class="fw-bold">${_evEsc(f.maquina_nombre || 'Sin equipo asociado')}</div>
+     <div class="small mt-1">${_evEsc(f.descripcion || '')}</div>
+     <div class="small mt-1" style="opacity:.7">${_evEsc(f.origen_label)} · ${_evEsc(f.fecha)} · por ${_evEsc(f.tomada_por||'—')}</div>`;
+  document.getElementById('evLightbox').style.display = 'flex';
+}
+
+function cerrarEvLightbox() {
+  document.getElementById('evLightbox').style.display = 'none';
+}
+</script>
+
+</div>
+{# /tab-evidencias #}
 
 
 {# ══════════════════════════════════════════════════════════════════

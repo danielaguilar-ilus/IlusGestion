@@ -52,9 +52,9 @@
 
 <div class="ilus-card p-3 mb-3">
   <div class="d-flex gap-2 flex-wrap align-items-center">
-    <input id="searchQ" class="form-control form-control-sm" style="max-width:280px"
-           placeholder="🔍 Buscar plantilla por nombre…" oninput="cargarPlantillasDebounced()">
-    <select id="filterTipo" class="form-select form-select-sm" style="max-width:200px"
+    <input id="searchQ" class="form-control form-control-sm" style="max-width:240px"
+           placeholder="🔍 Buscar plantilla…" oninput="cargarPlantillasDebounced()">
+    <select id="filterTipo" class="form-select form-select-sm" style="max-width:180px"
             onchange="cargarPlantillas()">
       <option value="">Todos los tipos</option>
       <option value="preventiva">Preventiva</option>
@@ -64,6 +64,32 @@
       <option value="inspeccion">Inspección</option>
       <option value="instalacion">Instalación</option>
       <option value="otro">Otro</option>
+    </select>
+    <select id="filterFamiliaChecklist" class="form-select form-select-sm" style="max-width:200px"
+            onchange="cargarPlantillas()" title="Familia de checklist Fracttal">
+      <option value="">Todas las familias</option>
+      <option value="instalacion">📦 Instalación</option>
+      <option value="preventiva">🔧 Mant. preventiva</option>
+      <option value="correctivo">🔨 Correctivo</option>
+      <option value="desinstalacion">📤 Desinstalación</option>
+      <option value="capacitacion">🎓 Capacitación</option>
+      <option value="registro_productos">📋 Registro productos</option>
+      <option value="operacional_interno">⚙ Operacional interno</option>
+      <option value="rendiciones">💰 Rendiciones</option>
+    </select>
+    <select id="filterFamiliaActivo" class="form-select form-select-sm" style="max-width:180px"
+            onchange="cargarPlantillas()" title="Tipo de activo al que aplica">
+      <option value="">Todas las máquinas</option>
+      <option value="todas">Aplica a todas</option>
+      <option value="cardio">Cardio</option>
+      <option value="selectorizado">Selectorizado</option>
+      <option value="carga_libre">Carga libre</option>
+      <option value="racks_estructuras">Racks y estructuras</option>
+      <option value="bancos">Bancos</option>
+      <option value="accesorios">Accesorios</option>
+      <option value="bicicletas">Bicicletas</option>
+      <option value="trotadoras">Trotadoras</option>
+      <option value="otros">Otros</option>
     </select>
     <div class="form-check ms-2">
       <input class="form-check-input" type="checkbox" id="soloActivas" checked
@@ -190,10 +216,14 @@ function cargarPlantillasDebounced(){
 async function cargarPlantillas(){
   const q = document.getElementById('searchQ').value.trim();
   const tipo = document.getElementById('filterTipo').value;
+  const famChk = document.getElementById('filterFamiliaChecklist').value;
+  const famAct = document.getElementById('filterFamiliaActivo').value;
   const soloAct = document.getElementById('soloActivas').checked;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (tipo) params.set('tipo_visita', tipo);
+  if (famChk) params.set('familia_checklist', famChk);
+  if (famAct) params.set('familia_activo', famAct);
   if (soloAct) params.set('activa', '1');
   const cont = document.getElementById('plantillasList');
   cont.innerHTML = '<div class="text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';

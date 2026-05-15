@@ -1101,9 +1101,24 @@
       <div class="modal-body">
         <div class="alert alert-success py-2 small mb-3">
           <i class="bi bi-check-circle me-1"></i>
-          <strong>¡Excelente!</strong> Todas las tareas están completadas.
-          Antes de cerrar, ayúdanos a capturar 3 datos para mejorar el sistema.
+          <strong>¡Excelente!</strong> Todos los requisitos auditables se cumplieron.
+          Captura los datos finales del cierre.
         </div>
+
+        {# FASE 5 — Diagnóstico OBLIGATORIO (excepto levantamientos) #}
+        {% if visita.tipo != 'levantamiento' %}
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">
+            Diagnóstico técnico <span class="text-danger">*</span>
+            <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">obligatorio · min 20 char</span>
+          </label>
+          <textarea id="cierreDiagnostico" class="form-control form-control-sm" rows="3"
+                    placeholder="Explica qué se hizo: estado encontrado del equipo, intervención realizada, resultado final…"></textarea>
+          <div class="form-text small">
+            Este texto queda en el historial auditable del cliente y del equipo.
+          </div>
+        </div>
+        {% endif %}
 
         <div class="mb-3">
           <label class="form-label small fw-semibold">Causa raíz</label>
@@ -1652,29 +1667,50 @@ function setCierreStars(n){
   document.getElementById('cierreEstrellasLabel').textContent = `${n}/5 — ${labels[n]}`;
 }
 
-function abrirModalCierreOT(){
-  // Verificar localmente que las 3 firmas estén presentes antes de mostrar el modal
-  // (el backend valida también, esto es un feedback más rápido al usuario)
-  const faltantes = [];
-  {% if visita.estado != 'completada' %}
-  {% if not visita.firma_cliente_url %}faltantes.push('cliente');{% endif %}
-  {% if not visita.firma_tecnico_url %}faltantes.push('técnico');{% endif %}
-  {% if not visita.firma_supervisor_url %}faltantes.push('supervisor');{% endif %}
-  {% endif %}
-  if (faltantes.length){
-    alert('⚠ No se puede cerrar la OT.\n\nFalta firma de: ' + faltantes.join(', ') +
-          '\n\nDirígete al panel de firmas más arriba y captura las firmas pendientes antes de cerrar.');
-    // Scroll al panel de firmas
-    const panel = document.querySelector('.ot-firmas-panel');
-    if (panel) panel.scrollIntoView({ behavior:'smooth', block:'center' });
+// FASE 5 — Cierre auditable con 4 reglas:
+//   R1. Checklist 100%   R2. Diagnóstico  R3. Foto por tarea  R4. 3 firmas
+async function abrirModalCierreOT(){
+  // Llama al endpoint del backend que ya conoce las 4 reglas y devuelve
+  // las razones bloqueantes. Es feedback rápido sin duplicar lógica en JS.
+  let validacion = null;
+  try {
+    const r = await fetch(`${API_BASE}/validacion-cierre`);
+    validacion = await r.json();
+  } catch(_) {}
+
+  if (validacion && !validacion.puede_cerrar) {
+    const razones = (validacion.razones || []).map(r => `• ${r}`).join('\n');
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'No se puede cerrar la OT — faltan requisitos',
+        message: 'La OT debe cumplir estos puntos antes de cerrarse:',
+        sub: razones,
+        type: 'warning',
+        okLabel: 'Entendido',
+      });
+    } else {
+      alert('⚠ No se puede cerrar:\n\n' + razones);
+    }
+    // Hacer scroll a la primera sección relevante para que el usuario complete
+    if (razones.toLowerCase().indexOf('firma') >= 0) {
+      document.querySelector('.ot-firmas-panel')?.scrollIntoView({behavior:'smooth', block:'center'});
+    } else if (razones.toLowerCase().indexOf('tarea') >= 0 ||
+               razones.toLowerCase().indexOf('checklist') >= 0) {
+      document.getElementById('taskList')?.scrollIntoView({behavior:'smooth', block:'center'});
+    }
     return;
   }
+
+  // Todo OK — mostrar modal con campos de cierre
   document.getElementById('cierreCausa').value = '';
   document.getElementById('cierreEstrellas').value = '';
   document.getElementById('cierreComentario').value = '';
   document.getElementById('cierreEstrellasLabel').textContent = '— Sin calificar —';
   document.querySelectorAll('#cierreStars .cierre-star').forEach(s => s.classList.remove('on'));
   _cierreEstrellas = null;
+  // Si hay campo diagnóstico, prellenarlo con el valor actual
+  const diagInput = document.getElementById('cierreDiagnostico');
+  if (diagInput) diagInput.value = '{{ (visita.diagnostico or "")|replace("\n", "\\n")|replace("\"", "\\\"") }}';
   new bootstrap.Modal(document.getElementById('modalCerrarOT')).show();
 }
 
@@ -1683,6 +1719,7 @@ async function confirmarCierreOT(){
     causa_raiz: document.getElementById('cierreCausa').value || null,
     satisfaccion_estrellas: _cierreEstrellas,
     comentario: document.getElementById('cierreComentario').value.trim() || null,
+    diagnostico: (document.getElementById('cierreDiagnostico')?.value || '').trim() || null,
   };
   try {
     const r = await fetch(`${API_BASE}/cerrar`, {
@@ -1692,8 +1729,20 @@ async function confirmarCierreOT(){
     });
     const d = await r.json();
     if (!d.ok){
-      // Mostrar especialmente claro si el backend devuelve faltantes (firmas)
-      if (d.faltantes && d.faltantes.length){
+      // Mostrar las razones específicas si el backend devuelve la lista
+      if (d.razones && d.razones.length){
+        const razones = d.razones.map(r => `• ${r}`).join('\n');
+        if (typeof ilusAlert === 'function') {
+          await ilusAlert({
+            title: 'No se puede cerrar — faltan requisitos',
+            message: d.error || '',
+            sub: razones,
+            type: 'warning',
+          });
+        } else {
+          alert((d.error||'') + '\n\n' + razones);
+        }
+      } else if (d.faltantes && d.faltantes.length){
         ilusToast('Falta firma de: ' + d.faltantes.join(', '), { type:'error' });
       } else {
         ilusToast(d.error || 'Error al cerrar', { type:'error' });
@@ -1701,7 +1750,7 @@ async function confirmarCierreOT(){
       return;
     }
     bootstrap.Modal.getInstance(document.getElementById('modalCerrarOT')).hide();
-    ilusToast('OT cerrada exitosamente', { type:'success' });
+    ilusToast('OT cerrada con auditoría completa', { type:'success' });
     setTimeout(() => location.reload(), 700);
   } catch(e){
     ilusToast('Error de red: ' + e, { type:'error' });
