@@ -344,26 +344,45 @@ def from_json_filter(value):
 
 @app.template_filter('to_chile')
 def to_chile_filter(value):
-    """
-    Convierte un datetime UTC (o naive asumido UTC) a hora local Chile.
-    Útil para mostrar timestamps de la BD (que están en UTC) en hora local.
-    Chile: UTC-4 invierno, UTC-3 verano (DST). Para simplicidad usamos UTC-3
-    (que es el offset estándar continental los meses no-DST y la mayor parte
-     del año tras la unificación horaria).
+    """Convierte un datetime UTC (o naive asumido UTC) a hora local Chile.
+
+    Usa zoneinfo('America/Santiago') que maneja correctamente el horario
+    de verano (DST) — Chile cambia entre UTC-4 (verano) y UTC-3 (invierno)
+    en algunas regiones. Si zoneinfo no está disponible (Python <3.9),
+    cae a offset fijo UTC-4 (estándar Santiago continental).
     """
     if not value:
         return value
     try:
         from datetime import timezone, timedelta
-        # Si es naive, asumimos que está en UTC (que es como MySQL guarda por
-        # default en servidores cloud como Railway).
+        # Si es naive, asumimos UTC (que es como MySQL guarda con NOW() en
+        # servidores cloud Clever Cloud / Railway por default).
         if hasattr(value, 'tzinfo'):
             if value.tzinfo is None:
                 value = value.replace(tzinfo=timezone.utc)
-            return value.astimezone(timezone(timedelta(hours=-3)))
+            try:
+                from zoneinfo import ZoneInfo
+                return value.astimezone(ZoneInfo("America/Santiago"))
+            except Exception:
+                # Fallback sin zoneinfo: UTC-4 estándar Santiago
+                return value.astimezone(timezone(timedelta(hours=-4)))
     except Exception:
         pass
     return value
+
+
+@app.template_filter('chile_fmt')
+def chile_fmt_filter(value, fmt="%d/%m/%Y %H:%M"):
+    """Atajo: convierte a Chile y formatea de una. Más cómodo en plantillas
+    que encadenar dos filtros. Ej: {{ user.last_login_at|chile_fmt }}
+    """
+    converted = to_chile_filter(value)
+    if not converted:
+        return ""
+    try:
+        return converted.strftime(fmt)
+    except Exception:
+        return str(converted)
 
 @app.template_filter('fkg')
 def fkg_filter(value, decimals=1):

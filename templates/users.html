@@ -164,17 +164,11 @@
             </td>
             <td class="conx-cell">
               {% if user.last_login_at %}
-                {% set _dt = user.last_login_at %}
-                {% if _dt.__class__.__name__ in ('datetime','date') %}
-                  {% set _delta_days = ((now if now is defined else _dt) - _dt).days if (now is defined) else 0 %}
-                {% else %}
-                  {% set _delta_days = 0 %}
-                {% endif %}
                 <div class="conx-warm">
                   <i class="bi bi-broadcast me-1"></i>
-                  {% if _dt.__class__.__name__ == 'datetime' %}
-                    {{ _dt.strftime('%d/%m/%Y %H:%M') }}
-                  {% else %}{{ _dt }}{% endif %}
+                  {# Filtro chile_fmt convierte UTC (BD) → America/Santiago con DST automático #}
+                  {{ user.last_login_at|chile_fmt }}
+                  <span class="text-muted" style="font-size:.62rem">(Chile)</span>
                 </div>
                 {% if user.last_login_ip %}
                 <div class="text-muted" style="font-size:.68rem;font-family:monospace">IP: {{ user.last_login_ip }}</div>
