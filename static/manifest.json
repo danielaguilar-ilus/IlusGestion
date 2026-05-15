@@ -1,0 +1,46 @@
+{
+  "name": "ILUS Sport & Health",
+  "short_name": "ILUS",
+  "description": "Sistema integral de gestión ILUS Fitness: mantenciones, OTs, transporte y etiquetas.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "lang": "es-CL",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/static/Logo.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mis órdenes de trabajo",
+      "short_name": "OTs",
+      "url": "/mantenciones/ots?solo_mias=1",
+      "icons": [{ "src": "/static/Logo.png", "sizes": "180x180" }]
+    },
+    {
+      "name": "Calendario",
+      "short_name": "Calendario",
+      "url": "/mantenciones/calendario",
+      "icons": [{ "src": "/static/Logo.png", "sizes": "180x180" }]
+    },
+    {
+      "name": "Clientes",
+      "short_name": "Clientes",
+      "url": "/mantenciones/clientes",
+      "icons": [{ "src": "/static/Logo.png", "sizes": "180x180" }]
+    }
+  ]
+}

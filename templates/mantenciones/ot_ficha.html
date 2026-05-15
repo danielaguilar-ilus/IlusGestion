@@ -1070,10 +1070,20 @@
         </div>
         <div id="firmaNombreWrap" style="display:none" class="mb-2">
           <label class="form-label small fw-semibold">Nombre del firmante (cliente)</label>
-          <input type="text" id="firmaNombre" class="form-control form-control-sm" placeholder="Ej: Juan Pérez">
+          {# font-size 16px obligatorio para evitar auto-zoom en iOS Safari #}
+          <input type="text" id="firmaNombre" class="form-control" style="font-size:16px"
+                 placeholder="Ej: Juan Pérez" autocomplete="name">
         </div>
-        <div style="border:2px dashed #cbd5e1;border-radius:8px;background:#fafafa">
-          <canvas id="firmaCanvas" width="700" height="280" style="width:100%;display:block;touch-action:none;cursor:crosshair"></canvas>
+        {# Canvas responsive: aspect-ratio 2.5:1, width 100%. El JS recalcula
+           el tamaño real (HiDPI safe) cada vez que abre el modal. #}
+        <div style="border:2px dashed #cbd5e1;border-radius:8px;background:#fafafa;
+                    aspect-ratio:2.5/1;max-height:50vh;position:relative">
+          <canvas id="firmaCanvas"
+                  style="width:100%;height:100%;display:block;touch-action:none;cursor:crosshair"></canvas>
+          <div style="position:absolute;top:8px;left:10px;color:#cbd5e1;font-size:.7rem;
+                      pointer-events:none;font-weight:600;letter-spacing:.5px">
+            ✎ FIRMA AQUÍ
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -1856,16 +1866,18 @@ function abrirFirmaPad(tipo){
     const inp = document.getElementById('firmaNombre');
     if (inp) inp.value = '';
   }
-  // Init canvas
+  // Init canvas — responsive con DPR awareness (retina) y aspect-ratio CSS
   setTimeout(() => {
     _firmaCanvas = document.getElementById('firmaCanvas');
     _firmaCtx = _firmaCanvas.getContext('2d');
-    // Ajustar tamaño real al display real (HiDPI safe)
+    // HiDPI: usar device pixel ratio para canvas nítido en retina
     const rect = _firmaCanvas.getBoundingClientRect();
-    _firmaCanvas.width = rect.width;
-    _firmaCanvas.height = rect.height;
+    const dpr = window.devicePixelRatio || 1;
+    _firmaCanvas.width = Math.round(rect.width * dpr);
+    _firmaCanvas.height = Math.round(rect.height * dpr);
+    _firmaCtx.scale(dpr, dpr);
     _firmaCtx.fillStyle = '#fff';
-    _firmaCtx.fillRect(0, 0, _firmaCanvas.width, _firmaCanvas.height);
+    _firmaCtx.fillRect(0, 0, rect.width, rect.height);
     _firmaCtx.strokeStyle = '#0a0a0a';
     _firmaCtx.lineWidth = 2.5;
     _firmaCtx.lineCap = 'round';
@@ -1912,8 +1924,10 @@ function bindFirmaEvents(){
 
 function limpiarFirmaPad(){
   if (!_firmaCtx || !_firmaCanvas) return;
+  // Usar dimensiones CSS (no las internas que están escaladas por DPR)
+  const rect = _firmaCanvas.getBoundingClientRect();
   _firmaCtx.fillStyle = '#fff';
-  _firmaCtx.fillRect(0, 0, _firmaCanvas.width, _firmaCanvas.height);
+  _firmaCtx.fillRect(0, 0, rect.width, rect.height);
   _firmaTrazos = false;
 }
 

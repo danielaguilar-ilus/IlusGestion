@@ -1,0 +1,379 @@
+/* ════════════════════════════════════════════════════════════════════
+   ILUS — MOBILE FIRST RESPONSIVE
+   Cargado en base.html DESPUÉS de style.css para tener mayor especificidad.
+   Auditoría 2026-05-15: arregla TOP 15 problemas de UX mobile detectados.
+
+   Estrategia:
+   1. NO sobreescribir lógica de desktop — solo activar mejoras en mobile.
+   2. Touch targets mínimo 44x44px (Apple HIG) en TODA interacción.
+   3. Inputs font-size 16px+ para evitar auto-zoom iOS.
+   4. Tabs/tablas con scroll horizontal seguro.
+   5. Modales que ocupen pantalla completa en mobile.
+   6. Safe-area-insets para iPhones con notch/Dynamic Island.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Reglas globales útiles en TODA pantalla (no solo mobile) ────────── */
+
+/* Imágenes nunca se desbordan */
+img, video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Touch action manipulación = sin delay de 300ms en click + zoom controlado */
+button, a, [role="button"], .btn,
+input[type="submit"], input[type="button"], input[type="checkbox"], input[type="radio"] {
+  touch-action: manipulation;
+}
+
+/* Smooth scroll para anclas y modales */
+html { scroll-behavior: smooth; }
+
+/* Safe area insets para iPhone con notch */
+body {
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BREAKPOINT MOBILE — todo lo que aplica en ≤ 768px
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── FIX #1: Inputs de formulario font-size ≥ 16px (anti auto-zoom iOS) */
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="tel"], input[type="number"], input[type="search"],
+  input[type="url"], input[type="date"], input[type="datetime-local"],
+  input[type="time"], input[type="month"], input[type="week"],
+  select, textarea,
+  .form-control, .form-select,
+  .form-control-sm, .form-select-sm {
+    font-size: 16px !important;
+  }
+
+  /* ── FIX #2: Touch targets mínimo 44x44px en TODOS los botones */
+  .btn, .btn-sm, .btn-xs,
+  a.btn, button.btn,
+  .ftab-btn, .ur-tab, .view-tab,
+  .ilus-btn, .ev-chip, .cal-chip {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  /* Excepciones para botones realmente pequeños (icono solo en tablas) */
+  .btn-xs.btn-icon-only,
+  .btn-sm.btn-icon-only {
+    min-height: 38px;
+    min-width: 38px;
+  }
+
+  /* Checkboxes y radios — área de click ampliada */
+  .form-check {
+    min-height: 44px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .form-check-input {
+    width: 22px !important;
+    height: 22px !important;
+    margin-top: 8px;
+  }
+  .form-check-label {
+    padding-left: 4px;
+    padding-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* ── FIX #3: Tabs con scroll horizontal seguro */
+  .nav-tabs, .nav-pills,
+  .ftab-bar, .ur-tabs, .view-tabs,
+  [role="tablist"] {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .nav-tabs::-webkit-scrollbar,
+  .ftab-bar::-webkit-scrollbar,
+  .ur-tabs::-webkit-scrollbar {
+    height: 4px;
+  }
+  .nav-tabs::-webkit-scrollbar-thumb,
+  .ftab-bar::-webkit-scrollbar-thumb,
+  .ur-tabs::-webkit-scrollbar-thumb {
+    background: rgba(220, 38, 38, .4);
+    border-radius: 2px;
+  }
+
+  /* ── FIX #4: Tablas con scroll horizontal — wrapper automático */
+  .table-responsive {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Tables sueltas (sin wrapper) se hacen scrolleables también */
+  .table:not(.table-responsive *) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+  /* Pero el contenido de las celdas vuelve a permitir wrap */
+  .table:not(.table-responsive *) td,
+  .table:not(.table-responsive *) th {
+    white-space: normal;
+  }
+
+  /* ── FIX #5: Modales — full screen en mobile, sin márgenes */
+  .modal-dialog {
+    margin: 0;
+    max-width: 100%;
+    height: 100%;
+    height: 100dvh; /* dynamic viewport height para safari iOS */
+  }
+  .modal-content {
+    height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .modal-dialog-centered {
+    min-height: 100dvh;
+    align-items: stretch;
+  }
+  .modal-dialog-scrollable .modal-content {
+    max-height: 100dvh;
+  }
+  /* Modal body con scroll suave + padding adecuado */
+  .modal-body {
+    -webkit-overflow-scrolling: touch;
+    padding: 1rem;
+  }
+  /* Botones del footer apilados en mobile */
+  .modal-footer {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  .modal-footer > .btn {
+    width: 100%;
+    margin: 0 !important;
+  }
+  /* Modales tamaño XL/LG en mobile: ya están fullscreen */
+  .modal-xl, .modal-lg {
+    max-width: 100%;
+  }
+
+  /* ── FIX #6: Cards más compactas */
+  .ilus-card, .mod-card, .f-card {
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  /* ── FIX #7: Headers / hero corregidos */
+  .mod-hero, .page-header {
+    padding: 12px 14px !important;
+    border-radius: 10px;
+  }
+  .mod-hero h4, .page-header h4 {
+    font-size: 1.1rem;
+  }
+  .mod-hero .mod-sub, .page-header .sub {
+    font-size: .78rem;
+  }
+  /* Acciones del header en stack vertical si no caben */
+  .mod-hero .d-flex,
+  .page-header .d-flex {
+    flex-wrap: wrap;
+  }
+
+  /* ── FIX #8: Sidebar mobile — drawer full height + close on tap */
+  .sidebar {
+    width: min(280px, 85vw) !important;
+    z-index: 1050;
+    box-shadow: 4px 0 20px rgba(0,0,0,.3);
+  }
+  .sidebar-overlay {
+    z-index: 1040;
+    backdrop-filter: blur(2px);
+  }
+
+  /* ── FIX #9: KPI cards no muy chicas */
+  .kpi-grid,
+  .uk-row,
+  .an2-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  .kpi-card, .uk-card, .an2-card {
+    padding: 12px 14px !important;
+  }
+
+  /* ── FIX #10: Calendario grid mobile — vista lista en lugar de grid */
+  .cal-week-grid,
+  .cal-day-grid {
+    grid-template-columns: 1fr !important;
+  }
+  /* Ocultar header de horas del grid en mobile */
+  .cal-week-header .day-header:first-child,
+  .cal-week-hours-col {
+    display: none !important;
+  }
+  /* Eventos en vista mobile: full width */
+  .week-event, .day-event {
+    width: 100% !important;
+    left: 0 !important;
+  }
+
+  /* ── FIX #11: Pipeline de ficha cliente — scroll horizontal */
+  .cli-pipeline {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+  }
+  .cli-pipeline .pipe-step {
+    flex-shrink: 0;
+    min-width: 110px;
+  }
+
+  /* ── FIX #12: Topbar más compacto */
+  .topbar {
+    height: 56px !important;
+    padding: 0 14px;
+  }
+  /* Logo más chico en mobile */
+  .topbar img, .topbar .brand {
+    max-height: 32px;
+  }
+
+  /* ── FIX #13: Toolbar/filtros — apilados verticalmente */
+  .filter-bar, .toolbar-filtros,
+  .d-flex.gap-2.flex-wrap.align-items-center {
+    flex-wrap: wrap !important;
+  }
+  .filter-bar > *, .toolbar-filtros > * {
+    width: 100%;
+    max-width: 100% !important;
+  }
+  /* Chips y selects: que ocupen ancho completo */
+  .form-select.form-select-sm,
+  .form-control.form-control-sm {
+    max-width: 100% !important;
+  }
+
+  /* ── FIX #14: Botones flotantes (FAB) — safe area insets */
+  .fab, .fab-print, .floating-btn {
+    bottom: max(20px, env(safe-area-inset-bottom, 20px)) !important;
+    right: 16px !important;
+  }
+
+  /* ── FIX #15: Texto que se desborda */
+  h1, h2, h3, h4, h5, h6,
+  .pl-name, .ot-title, .task-title, .doc-name {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  /* Tipografía base un poco más grande en mobile (más legible) */
+  body {
+    font-size: 15px;
+  }
+
+  /* Reducir paddings excesivos */
+  .container, .container-fluid {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* Hide elementos solo desktop (helpers Bootstrap-like) */
+  .desktop-only {
+    display: none !important;
+  }
+
+  /* Show elementos solo mobile */
+  .mobile-only {
+    display: block !important;
+  }
+
+  /* Tablas grid responsive — convertir a cards en mobile */
+  .table-mobile-cards thead {
+    display: none;
+  }
+  .table-mobile-cards tbody tr {
+    display: block;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 8px;
+  }
+  .table-mobile-cards tbody td {
+    display: block;
+    border: none;
+    padding: 4px 0;
+  }
+  .table-mobile-cards tbody td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: 700;
+    color: #6b7280;
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BREAKPOINT EXTRA SMALL — para iPhone SE 320px y similares
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 360px) {
+  body { font-size: 14px; }
+  .modal-body { padding: .75rem; }
+  .btn { font-size: .85rem; padding: 8px 12px; }
+  .mod-hero h4, .page-header h4 { font-size: 1rem; }
+
+  /* Sidebar aún más chico */
+  .sidebar { width: 92vw !important; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ANTI-HOVER en touch devices — para que técnicos no se queden con
+   tooltips colgados sin poder cerrarlos
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── sidebar-user-link: hover sólo en dispositivos con puntero fino ── */
+.sidebar-user-link.active {
+  background: rgba(204, 0, 0, .15);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-user-link:hover {
+    background: rgba(255, 255, 255, .08);
+  }
+  .sidebar-user-link.active:hover {
+    background: rgba(204, 0, 0, .22);
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* En dispositivos touch, no aplicar :hover */
+  a:hover, button:hover, .btn:hover, .card:hover {
+    /* Quitar transforms y shadows agresivos del hover */
+    transform: none !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DARK MODE FRIENDLY — preparar para modo oscuro automático
+   (no activar todavía, pero dejar listo)
+   ════════════════════════════════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  /* TODO: implementar dark mode opt-in */
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PRINT — limpio sin elementos UI cuando se imprime
+   ════════════════════════════════════════════════════════════════════ */
+@media print {
+  .sidebar, .topbar, .modal, .fab, .toast-wrap,
+  .btn, .nav-tabs, .ftab-bar {
+    display: none !important;
+  }
+  body { background: #fff !important; color: #000 !important; }
+}
