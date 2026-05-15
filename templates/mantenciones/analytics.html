@@ -319,6 +319,88 @@
   </div>
 </div>
 
+{# ═══════════════════════════════════════════════════════════════
+   FASE 9 — Analytics extendido modelo Fracttal (5 secciones)
+═══════════════════════════════════════════════════════════════ #}
+<style>
+  .an2-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-top:14px}
+  .an2-card{background:#fff;border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:16px 18px}
+  .an2-card h6{font-weight:700;color:#0f172a;margin:0 0 10px;font-size:.88rem;display:flex;align-items:center;gap:7px}
+  .an2-card h6 small{font-weight:400;color:#6b7280;font-size:.7rem;margin-left:auto}
+  .an2-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:10px}
+  .an2-kpi{background:#f9fafb;border-radius:8px;padding:10px 12px;text-align:center}
+  .an2-kpi .v{font-size:1.15rem;font-weight:800;color:#0f172a;line-height:1}
+  .an2-kpi .l{font-size:.62rem;color:#9ca3af;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-top:3px}
+  .an2-bar{height:8px;background:#f3f4f6;border-radius:4px;overflow:hidden;margin-top:3px}
+  .an2-bar-fill{height:100%;border-radius:4px;transition:width .3s}
+  .an2-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed #f3f4f6;font-size:.82rem}
+  .an2-row:last-child{border-bottom:0}
+  .an2-row .label{font-weight:600;color:#0f172a;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .an2-row .val{font-weight:700;color:#374151;font-variant-numeric:tabular-nums;font-size:.85rem}
+  .an2-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:50px;
+             font-size:.65rem;font-weight:700}
+</style>
+
+<div class="an2-grid">
+
+  {# ─── Repuestos ─── #}
+  <div class="an2-card">
+    <h6><i class="bi bi-gear-wide-connected" style="color:#0d9488"></i>Repuestos (90 días)
+        <small id="repFooter">—</small></h6>
+    <div class="an2-kpi-row">
+      <div class="an2-kpi"><div class="v" id="repTotal">—</div><div class="l">Repuestos usados</div></div>
+      <div class="an2-kpi"><div class="v" id="repCosto">—</div><div class="l">Costo total</div></div>
+    </div>
+    <div class="an2-kpi-row">
+      <div class="an2-kpi" style="background:#dcfce7"><div class="v" id="repPagado" style="color:#166534">—</div><div class="l">Pagado</div></div>
+      <div class="an2-kpi" style="background:#fee2e2"><div class="v" id="repGar" style="color:#991b1b">—</div><div class="l">Garantía</div></div>
+      <div class="an2-kpi" style="background:#f3f4f6"><div class="v" id="repSin" style="color:#6b7280">—</div><div class="l">Sin costo</div></div>
+    </div>
+    <div style="font-size:.7rem;font-weight:700;color:#9ca3af;letter-spacing:.3px;margin:8px 0 4px">TOP CLIENTES POR COSTO</div>
+    <div id="repTopClientes"></div>
+  </div>
+
+  {# ─── Familias ─── #}
+  <div class="an2-card">
+    <h6><i class="bi bi-bicycle" style="color:#7c3aed"></i>Incidencias por familia (180d)
+        <small>OTs ejecutadas por tipo de equipo</small></h6>
+    <div id="famList"></div>
+  </div>
+
+  {# ─── Modalidad de cobro ─── #}
+  <div class="an2-card">
+    <h6><i class="bi bi-cash-coin" style="color:#16a34a"></i>Modalidad de cobro (180d)
+        <small id="modFooter">—</small></h6>
+    <div id="modBars"></div>
+  </div>
+
+  {# ─── Pendientes ─── #}
+  <div class="an2-card">
+    <h6><i class="bi bi-hourglass-split" style="color:#f59e0b"></i>OTs pendientes
+        <small id="pendFooter">—</small></h6>
+    <div id="pendList"></div>
+    <div style="font-size:.7rem;font-weight:700;color:#9ca3af;letter-spacing:.3px;margin:10px 0 4px">URGENTES SIN ATENDER</div>
+    <div id="pendUrgentes"></div>
+  </div>
+
+  {# ─── Activos / Parque ─── #}
+  <div class="an2-card" style="grid-column:1 / -1">
+    <h6><i class="bi bi-collection-fill" style="color:#0891b2"></i>Parque de activos
+        <small id="actFooter">—</small></h6>
+    <div class="an2-kpi-row">
+      <div class="an2-kpi"><div class="v" id="actTotal">—</div><div class="l">Total equipos</div></div>
+      <div class="an2-kpi" style="background:#dcfce7"><div class="v" id="actActivos" style="color:#166534">—</div><div class="l">Activos</div></div>
+      <div class="an2-kpi" style="background:#fee2e2"><div class="v" id="actBaja" style="color:#991b1b">—</div><div class="l">Baja</div></div>
+      <div class="an2-kpi" style="background:#dbeafe"><div class="v" id="actGarVigente" style="color:#1e40af">—</div><div class="l">En garantía</div></div>
+      <div class="an2-kpi" style="background:#fef3c7"><div class="v" id="actGarVenc" style="color:#92400e">—</div><div class="l">Garantía vencida</div></div>
+      <div class="an2-kpi" style="background:#f3f4f6"><div class="v" id="actHuerf" style="color:#374151">—</div><div class="l">Sin OT (6m)</div></div>
+    </div>
+    <div style="font-size:.7rem;font-weight:700;color:#9ca3af;letter-spacing:.3px;margin:8px 0 4px">DISTRIBUCIÓN POR FAMILIA</div>
+    <div id="actPorFamilia" class="d-flex flex-wrap gap-2"></div>
+  </div>
+
+</div>
+
 <script>
 function escHtml(s){
   return String(s||'').replace(/[&<>"']/g, c =>
@@ -512,8 +594,117 @@ function renderProyeccion(p){
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// FASE 9 — Carga de las 5 secciones nuevas en paralelo
+// ═══════════════════════════════════════════════════════
+function fmtCLP(n){ return '$' + Math.round(n||0).toLocaleString('es-CL'); }
+
+async function cargarAnalyticsExtendido(){
+  try {
+    const [rRep, rFam, rMod, rPend, rAct] = await Promise.all([
+      fetch('/mantenciones/api/analytics/repuestos').then(r => r.json()),
+      fetch('/mantenciones/api/analytics/familias').then(r => r.json()),
+      fetch('/mantenciones/api/analytics/modalidad').then(r => r.json()),
+      fetch('/mantenciones/api/analytics/pendientes').then(r => r.json()),
+      fetch('/mantenciones/api/analytics/activos-registro').then(r => r.json()),
+    ]);
+
+    // ── Repuestos ──
+    if (rRep.ok) {
+      const t = rRep.totales || {};
+      document.getElementById('repTotal').textContent = (t.n_repuestos||0).toLocaleString('es-CL');
+      document.getElementById('repCosto').textContent = fmtCLP(t.costo_total);
+      document.getElementById('repPagado').textContent = fmtCLP(t.costo_pagado);
+      document.getElementById('repGar').textContent = fmtCLP(t.costo_garantia);
+      document.getElementById('repSin').textContent = fmtCLP(t.costo_sin_costo);
+      document.getElementById('repFooter').textContent = `${rRep.serie_mensual?.length||0} meses con datos`;
+      const max = (rRep.top_clientes||[]).reduce((m, c) => Math.max(m, c.total||0), 1);
+      document.getElementById('repTopClientes').innerHTML = (rRep.top_clientes||[]).slice(0,6).map(c => `
+        <div class="an2-row">
+          <div class="label">${escHtml(c.razon_social)}</div>
+          <div class="val">${fmtCLP(c.total)}</div>
+        </div>
+        <div class="an2-bar"><div class="an2-bar-fill" style="background:#0d9488;width:${Math.min(100,(c.total/max)*100)}%"></div></div>
+      `).join('') || '<div class="text-muted small">Sin repuestos en los últimos 90 días.</div>';
+    }
+
+    // ── Familias ──
+    if (rFam.ok) {
+      const familias = rFam.familias || [];
+      const max = familias.reduce((m, f) => Math.max(m, f.n_ot||0), 1);
+      document.getElementById('famList').innerHTML = familias.length ? familias.map(f => `
+        <div class="an2-row">
+          <div class="label">${escHtml(f.familia_label)}</div>
+          <div class="val">${f.n_ot} OT · ${f.horas}h${f.costo_repuestos ? ' · ' + fmtCLP(f.costo_repuestos) : ''}</div>
+        </div>
+        <div class="an2-bar"><div class="an2-bar-fill" style="background:#7c3aed;width:${(f.n_ot/max)*100}%"></div></div>
+      `).join('') : '<div class="text-muted small">Sin OTs con equipos asignados en 180 días.</div>';
+    }
+
+    // ── Modalidad ──
+    if (rMod.ok) {
+      const mods = rMod.modalidades || [];
+      document.getElementById('modFooter').textContent = `Total: ${rMod.total_ot||0} OTs`;
+      document.getElementById('modBars').innerHTML = mods.length ? mods.map(m => `
+        <div class="an2-row">
+          <span class="an2-chip" style="background:${m.color}22;color:${m.color}">${escHtml(m.label)}</span>
+          <div class="label" style="text-align:right">${m.n} OT · ${m.pct}%</div>
+          <div class="val">${fmtCLP(m.costo_visitas)}</div>
+        </div>
+        <div class="an2-bar"><div class="an2-bar-fill" style="background:${m.color};width:${m.pct}%"></div></div>
+      `).join('') : '<div class="text-muted small">Sin OTs en los últimos 180 días.</div>';
+    }
+
+    // ── Pendientes ──
+    if (rPend.ok) {
+      const estados = rPend.por_estado || [];
+      const urgentes = rPend.urgentes || [];
+      document.getElementById('pendFooter').textContent = `${rPend.total_pendientes||0} total`;
+      const max = estados.reduce((m, e) => Math.max(m, e.n||0), 1);
+      document.getElementById('pendList').innerHTML = estados.length ? estados.map(e => `
+        <div class="an2-row">
+          <div class="label">${escHtml(e.estado.replace('_',' '))}</div>
+          <div class="val">${e.n} · ${e.dias_promedio}d prom</div>
+        </div>
+        <div class="an2-bar"><div class="an2-bar-fill" style="background:#f59e0b;width:${(e.n/max)*100}%"></div></div>
+      `).join('') : '<div class="text-muted small">No hay OTs pendientes 🎉</div>';
+      document.getElementById('pendUrgentes').innerHTML = urgentes.length ? urgentes.slice(0,8).map(u => `
+        <div class="an2-row">
+          <span class="an2-chip" style="background:${u.prioridad==='urgente'?'#dc2626':'#f59e0b'};color:#fff">${escHtml(u.prioridad)}</span>
+          <a href="/mantenciones/ot/${u.id}" class="label" style="text-decoration:none;color:#0f172a" target="_blank">
+            ${escHtml(u.numero_ot || '#'+u.id)} · ${escHtml(u.cliente)}
+          </a>
+          <div class="val">${u.dias_atras!=null ? (u.dias_atras<0 ? Math.abs(u.dias_atras)+'d futuro' : u.dias_atras+'d atrás') : '—'}</div>
+        </div>
+      `).join('') : '<div class="text-muted small">Sin urgentes pendientes ✓</div>';
+    }
+
+    // ── Activos ──
+    if (rAct.ok) {
+      const t = rAct.totales || {};
+      document.getElementById('actTotal').textContent = (t.total||0).toLocaleString('es-CL');
+      document.getElementById('actActivos').textContent = (t.activos||0).toLocaleString('es-CL');
+      document.getElementById('actBaja').textContent = (t.baja||0).toLocaleString('es-CL');
+      document.getElementById('actGarVigente').textContent = (t.en_garantia||0).toLocaleString('es-CL');
+      document.getElementById('actGarVenc').textContent = (t.garantia_vencida||0).toLocaleString('es-CL');
+      document.getElementById('actHuerf').textContent = (rAct.huerfanos_count||0).toLocaleString('es-CL');
+      document.getElementById('actFooter').textContent =
+        `${rAct.huerfanos_count||0} sin OT en 6 meses`;
+      document.getElementById('actPorFamilia').innerHTML =
+        (rAct.por_familia || []).map(f =>
+          `<span class="an2-chip" style="background:#f3f4f6;color:#0f172a">
+             ${escHtml(f.familia)} · <strong>${f.n}</strong>
+           </span>`
+        ).join('') || '<div class="text-muted small">Sin máquinas registradas.</div>';
+    }
+  } catch (e) {
+    console.error('Analytics extendido falló:', e);
+  }
+}
+
 // Init
 cargarAnalytics();
+cargarAnalyticsExtendido();
 </script>
 
 {% endblock %}

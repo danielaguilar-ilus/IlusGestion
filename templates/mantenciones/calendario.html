@@ -374,6 +374,67 @@
   </div>
 </div>
 
+{# ─────────── FASE 8: Filtros de modalidad + prioridad + tipo + estado ─────────── #}
+<style>
+  .cal-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:50px;
+            font-size:.7rem;font-weight:600;cursor:pointer;border:1.5px solid transparent;
+            background:#f3f4f6;color:#374151;transition:all .15s;user-select:none}
+  .cal-chip:hover{background:#e5e7eb}
+  .cal-chip .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .cal-chip.active{background:#0a0a0a;color:#fff;border-color:#dc2626}
+  .cal-chip.active .dot{box-shadow:0 0 0 2px #fff inset}
+  .cal-chip-label{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                  color:#6b7280;margin-right:6px}
+</style>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 px-1" style="font-size:.85rem">
+  <span class="cal-chip-label">💰 Modalidad:</span>
+  <span class="cal-chip cal-chip-mod" data-val="pagado"    onclick="setModFiltro('pagado')"   ><span class="dot" style="background:#16a34a"></span>Pagado</span>
+  <span class="cal-chip cal-chip-mod" data-val="garantia"  onclick="setModFiltro('garantia')" ><span class="dot" style="background:#dc2626"></span>Garantía</span>
+  <span class="cal-chip cal-chip-mod" data-val="sin_costo" onclick="setModFiltro('sin_costo')"><span class="dot" style="background:#9ca3af"></span>Sin costo</span>
+  <span class="cal-chip cal-chip-mod" data-val="interno"   onclick="setModFiltro('interno')"  ><span class="dot" style="background:#7c3aed"></span>Interno</span>
+  <span class="text-muted mx-1">│</span>
+  <span class="cal-chip-label">⚡ Prioridad:</span>
+  <span class="cal-chip cal-chip-pri" data-val="baja"    onclick="setPriFiltro('baja')"   ><span class="dot" style="background:#10b981"></span>Baja</span>
+  <span class="cal-chip cal-chip-pri" data-val="media"   onclick="setPriFiltro('media')"  ><span class="dot" style="background:#3b82f6"></span>Media</span>
+  <span class="cal-chip cal-chip-pri" data-val="alta"    onclick="setPriFiltro('alta')"   ><span class="dot" style="background:#f59e0b"></span>Alta</span>
+  <span class="cal-chip cal-chip-pri" data-val="urgente" onclick="setPriFiltro('urgente')"><span class="dot" style="background:#dc2626"></span>Urgente</span>
+  <span class="text-muted mx-1">│</span>
+  <select id="calFiltroTipo" class="form-select form-select-sm" style="max-width:160px;font-size:.75rem"
+          onchange="setTipoFiltro(this.value)">
+    <option value="">Todos los tipos</option>
+    <option value="preventiva">Preventiva</option>
+    <option value="correctiva">Correctiva</option>
+    <option value="levantamiento">Levantamiento</option>
+    <option value="instalacion">Instalación</option>
+    <option value="garantia">Garantía (tipo)</option>
+    <option value="inspeccion">Inspección</option>
+    <option value="visita_tecnica">Visita técnica</option>
+    <option value="cambio_equipo">Cambio equipo</option>
+    <option value="desinstalacion">Desinstalación</option>
+    <option value="capacitacion">Capacitación</option>
+    <option value="repuesto">Repuesto</option>
+    <option value="revision_interna">Revisión interna</option>
+  </select>
+  <select id="calFiltroEstado" class="form-select form-select-sm" style="max-width:160px;font-size:.75rem"
+          onchange="setEstadoFiltro(this.value)">
+    <option value="">Todos los estados</option>
+    <option value="programada">Programada</option>
+    <option value="asignada">Asignada</option>
+    <option value="en_curso">En curso</option>
+    <option value="pendiente_info">Pendiente info</option>
+    <option value="pendiente_repuesto">Pendiente repuesto</option>
+    <option value="pendiente_aprobacion">Pendiente aprobación</option>
+    <option value="completada">Completada</option>
+    <option value="cerrada">Cerrada</option>
+    <option value="cancelada">Cancelada</option>
+    <option value="anulada">Anulada</option>
+    <option value="reagendada">Reagendada</option>
+  </select>
+  <button class="btn btn-xs btn-outline-secondary" onclick="limpiarFiltrosCal()" style="font-size:.7rem">
+    <i class="bi bi-x-circle"></i> Limpiar
+  </button>
+</div>
+
 {# ─────────── LAYOUT PRINCIPAL ─────────── #}
 <div class="row g-3">
   <div class="col-12 col-lg-9">
@@ -672,6 +733,12 @@ document.getElementById('popTecSearch').addEventListener('input', e => {
   });
 });
 
+// FASE 8: filtros extendidos por modalidad de cobro, prioridad, tipo y estado
+let calModFiltro = '';     // pagado|garantia|sin_costo|interno
+let calPriFiltro = '';     // baja|media|alta|urgente
+let calTipoFiltro = '';    // tipo OT
+let calEstadoFiltro = '';  // estado OT
+
 function eventosFiltrados(){
   return calEventos.filter(ev => {
     if (calCliFiltro && String(ev.cliente.id) !== calCliFiltro) return false;
@@ -679,8 +746,41 @@ function eventosFiltrados(){
       const ids = ev.tecnicos.map(t => t.id).filter(x => x != null);
       if (!ids.some(id => calTecFiltro.has(id))) return false;
     }
+    if (calModFiltro && ev.modalidad_cobro !== calModFiltro) return false;
+    if (calPriFiltro && ev.prioridad !== calPriFiltro) return false;
+    if (calTipoFiltro && ev.tipo !== calTipoFiltro) return false;
+    if (calEstadoFiltro && ev.estado !== calEstadoFiltro) return false;
     return true;
   });
+}
+
+// Setters de filtros (toggle: click mismo chip lo deselecciona)
+function setModFiltro(val){
+  calModFiltro = (calModFiltro === val) ? '' : val;
+  document.querySelectorAll('.cal-chip-mod').forEach(c =>
+    c.classList.toggle('active', c.dataset.val === calModFiltro));
+  renderVista();
+}
+function setPriFiltro(val){
+  calPriFiltro = (calPriFiltro === val) ? '' : val;
+  document.querySelectorAll('.cal-chip-pri').forEach(c =>
+    c.classList.toggle('active', c.dataset.val === calPriFiltro));
+  renderVista();
+}
+function setTipoFiltro(val){
+  calTipoFiltro = val || '';
+  renderVista();
+}
+function setEstadoFiltro(val){
+  calEstadoFiltro = val || '';
+  renderVista();
+}
+function limpiarFiltrosCal(){
+  calModFiltro = ''; calPriFiltro = ''; calTipoFiltro = ''; calEstadoFiltro = '';
+  document.querySelectorAll('.cal-chip-mod,.cal-chip-pri').forEach(c => c.classList.remove('active'));
+  const ts = document.getElementById('calFiltroTipo');   if (ts) ts.value = '';
+  const es = document.getElementById('calFiltroEstado'); if (es) es.value = '';
+  renderVista();
 }
 
 // ── Carga de eventos ─────────────────────────────────────────────────

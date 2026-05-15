@@ -531,8 +531,16 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
     Devuelve dict con url, public_id y size para guardar en BD.
     Persiste entre deploys de Railway (filesystem efímero).
 
-    USO: archivos NO renderizables inline (DOCX, XLS, ZIP, etc.).
-    Para PDF preferir _cloud_upload_pdf() que sirve inline.
+    USO: TODOS los archivos persistentes (PDF, DOCX, XLS, ZIP, etc.).
+
+    NOTA HISTÓRICA (resuelta en commit 8d8061f):
+    Probamos crear _cloud_upload_pdf con resource_type='image' pensando
+    que serviría PDFs inline. Cloudinary BLOQUEA por seguridad la entrega
+    de PDFs como image-resource (HTTP 401). La solución correcta es:
+       - Subir como 'raw' con esta función (URL /raw/upload/)
+       - El endpoint /api/contratos/<id>/archivo hace PROXY del PDF y
+         agrega headers Content-Type: application/pdf + inline para que
+         el iframe del navegador lo renderice.
     """
     if not _CLD_READY or not _cloudinary_uploader:
         raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
@@ -551,37 +559,12 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
     }
 
 
-def _cloud_upload_pdf(file_obj, public_id: str, folder: str = "ilus/contratos") -> dict:
-    """Sube PDF a Cloudinary con resource_type='image'.
-
-    Cloudinary soporta PDFs como recursos 'image' (no como 'raw'), y solo
-    en ese modo los sirve con Content-Disposition: inline que permite
-    renderizarlos directamente en el iframe del navegador.
-
-    Si se sube como 'raw', Cloudinary fuerza descarga (attachment) y el
-    navegador muestra "Formato no previsualizable en línea". Por eso PDFs
-    SIEMPRE deben subirse con esta función.
-
-    Referencia: https://cloudinary.com/documentation/pdf_management
-    """
-    if not _CLD_READY or not _cloudinary_uploader:
-        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
-    result = _cloudinary_uploader.upload(
-        file_obj,
-        public_id     = public_id,
-        folder        = folder,
-        overwrite     = True,
-        resource_type = "image",  # ← PDFs son "image" para Cloudinary (no raw)
-        type          = "upload",
-        format        = "pdf",    # explícito: extensión y MIME garantizados
-    )
-    return {
-        "url":       result["secure_url"],
-        "public_id": result["public_id"],
-        "size":      result.get("bytes", 0),
-        "format":    result.get("format", "pdf"),
-        "pages":     result.get("pages", 1),  # útil: número de páginas
-    }
+# FASE 10 — LIMPIEZA 2026-05-15:
+# Función `_cloud_upload_pdf()` ELIMINADA (commit FASE 10).
+# Razón: nunca llegó a producción funcional porque Cloudinary bloquea
+# PDFs en resource_type='image' (HTTP 401 anónimo, política post-2021).
+# La función correcta sigue siendo _cloud_upload_raw() de arriba.
+# Histórico: ver commits a2a6f6d (creada) → 8d8061f (deprecada).
 
 
 def _cloud_delete(url_or_filename: str) -> None:
@@ -21241,13 +21224,24 @@ def mant_visita_cerrar(vid):
 def mant_visitas_api():
     """
     Devuelve visitas enriquecidas para el calendario inteligente.
-    Cada evento incluye: cliente, dirección, técnicos N:N, horario, costo.
-    Filtros opcionales:  start, end, cliente_id, tecnico_id
+    Cada evento incluye: cliente, dirección, técnicos N:N, horario, costo,
+    modalidad_cobro y prioridad (FASE 8).
+
+    Filtros opcionales:
+      start, end, cliente_id, tecnico_id  (existentes)
+      modalidad_cobro  (FASE 8: pagado|garantia|sin_costo|interno)
+      prioridad        (FASE 8: baja|media|alta|urgente)
+      tipo             (FASE 8: tipo OT específico)
+      estado           (FASE 8: filtrar por estado)
     """
     desde = request.args.get("start", "")
     hasta = request.args.get("end", "")
     cid   = request.args.get("cliente_id")
     tid   = request.args.get("tecnico_id")
+    mod   = (request.args.get("modalidad_cobro") or "").strip().lower()
+    pri   = (request.args.get("prioridad") or "").strip().lower()
+    tipo_f = (request.args.get("tipo") or "").strip().lower()
+    estado_f = (request.args.get("estado") or "").strip().lower()
     where, params = [], []
     if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
     if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
@@ -21255,6 +21249,15 @@ def mant_visitas_api():
     if tid:   where.append(
         "v.id IN (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_id=%s)"
     ); params.append(int(tid))
+    # FASE 8: filtros nuevos (validados contra ENUMs)
+    if mod in ("pagado", "garantia", "sin_costo", "interno"):
+        where.append("v.modalidad_cobro=%s"); params.append(mod)
+    if pri in ("baja", "media", "alta", "urgente"):
+        where.append("v.prioridad=%s"); params.append(pri)
+    if tipo_f:
+        where.append("v.tipo=%s"); params.append(tipo_f)
+    if estado_f:
+        where.append("v.estado=%s"); params.append(estado_f)
 
     sql = ("""SELECT v.*, c.razon_social, c.direccion, c.comuna, c.region
                 FROM mant_visitas v
@@ -21289,18 +21292,50 @@ def mant_visitas_api():
                 "foto_url":     tr.get("foto_url"),
             })
 
-    # Colores por TIPO (mantención preventiva, correctiva, etc.)
+    # Colores por TIPO (mantención preventiva, correctiva, etc.) — FASE 8 expandido
     TIPO_COLOR = {
-        "preventiva": "#16a34a",
-        "correctiva": "#dc2626",
-        "garantia":   "#2563eb",
-        "inspeccion": "#f59e0b",
+        "preventiva":     "#16a34a",  # verde
+        "correctiva":     "#dc2626",  # rojo
+        "garantia":       "#2563eb",  # azul (tipo legacy)
+        "inspeccion":     "#f59e0b",  # ámbar
+        "levantamiento":  "#7c2d12",  # marrón rojizo
+        "instalacion":    "#0891b2",  # cyan
+        "visita_tecnica": "#6366f1",  # índigo
+        "visita_correctiva": "#be123c",  # rojo oscuro
+        "cambio_equipo":  "#9333ea",  # violeta
+        "desinstalacion": "#737373",  # gris
+        "capacitacion":   "#ca8a04",  # mostaza
+        "repuesto":       "#0d9488",  # teal
+        "revision_interna": "#475569",  # slate
     }
     EST_BORDER = {
-        "programada":  "#0f172a",
-        "completada":  "#166534",
-        "cancelada":   "#9ca3af",
-        "reagendada":  "#7c3aed",
+        "creada":              "#94a3b8",
+        "programada":          "#0f172a",
+        "asignada":            "#3b82f6",
+        "en_curso":            "#f59e0b",
+        "en_ejecucion":        "#f59e0b",
+        "pendiente_info":      "#a855f7",
+        "pendiente_repuesto":  "#ec4899",
+        "pendiente_aprobacion":"#fb7185",
+        "completada":          "#166534",
+        "cerrada":             "#15803d",
+        "cancelada":           "#9ca3af",
+        "anulada":             "#6b7280",
+        "reagendada":          "#7c3aed",
+    }
+    # FASE 8: colores por MODALIDAD DE COBRO (banda lateral del evento)
+    MODALIDAD_COLOR = {
+        "pagado":    "#16a34a",  # verde — ingreso confirmado
+        "garantia":  "#dc2626",  # rojo — atención costo cubierto
+        "sin_costo": "#9ca3af",  # gris — operación gratuita
+        "interno":   "#7c3aed",  # violeta — operación ILUS
+    }
+    # FASE 8: prioridad — borde grueso colorido
+    PRIORIDAD_COLOR = {
+        "baja":    "#10b981",
+        "media":   "#3b82f6",
+        "alta":    "#f59e0b",
+        "urgente": "#dc2626",
     }
 
     events = []
@@ -21347,8 +21382,15 @@ def mant_visitas_api():
             },
             "tecnicos":    tecs,
             "n_tecnicos":  len(tecs),
-            "color_tipo":   TIPO_COLOR.get(r.get("tipo"), "#6b7280"),
-            "color_borde":  EST_BORDER.get(r.get("estado"), "#0f172a"),
+            # FASE 8: campos nuevos en payload
+            "modalidad_cobro": r.get("modalidad_cobro") or "pagado",
+            "prioridad":       r.get("prioridad") or "media",
+            "numero_ot":       r.get("numero_ot") or "",
+            "levantamiento_id":r.get("levantamiento_id"),
+            "color_tipo":      TIPO_COLOR.get(r.get("tipo"), "#6b7280"),
+            "color_borde":     EST_BORDER.get(r.get("estado"), "#0f172a"),
+            "color_modalidad": MODALIDAD_COLOR.get(r.get("modalidad_cobro") or "pagado", "#9ca3af"),
+            "color_prioridad": PRIORIDAD_COLOR.get(r.get("prioridad") or "media", "#3b82f6"),
         })
     return jsonify(events)
 
@@ -23799,6 +23841,272 @@ def mant_calendario():
 def mant_analytics_page():
     """Renderiza la página HTML del dashboard. Los datos se cargan vía AJAX."""
     return render_template("mantenciones/analytics.html")
+
+
+# ══════════════════════════════════════════════════════════════════
+# FASE 9 — Analytics extendido (modelo Fracttal)
+# 5 endpoints nuevos que complementan /api/analytics/data existente:
+#   1. /repuestos     → costo + cantidad por modalidad / cliente / mes
+#   2. /familias      → incidencias por familia de equipo
+#   3. /modalidad     → desglose visitas pagadas vs garantía + costos
+#   4. /pendientes    → OT pendientes por estado + días en backlog
+#   5. /activos       → equipos en garantía vs vencida por cliente
+# Todos retornan JSON con formato { ok: bool, ...datos }
+# ══════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/analytics/repuestos", methods=["GET"])
+@_mant_required
+def mant_analytics_repuestos():
+    """KPIs de repuestos: costo total, top clientes, desglose por modalidad,
+    series por mes (últimos 12 meses).
+    """
+    try:
+        # Totales globales últimos 90 días
+        totales = mysql_fetchone(
+            "SELECT COUNT(*) AS n_repuestos, "
+            "       COALESCE(SUM(r.costo_total),0) AS costo_total, "
+            "       COALESCE(SUM(CASE WHEN r.modalidad_repuesto='pagado' THEN r.costo_total ELSE 0 END),0) AS costo_pagado, "
+            "       COALESCE(SUM(CASE WHEN r.modalidad_repuesto='garantia' THEN r.costo_total ELSE 0 END),0) AS costo_garantia, "
+            "       COALESCE(SUM(CASE WHEN r.modalidad_repuesto='sin_costo' THEN r.costo_total ELSE 0 END),0) AS costo_sin_costo "
+            "  FROM mant_visita_repuestos r "
+            "  JOIN mant_visitas v ON v.id=r.visita_id "
+            " WHERE v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)"
+        ) or {}
+        # Top 10 clientes por costo de repuestos (últimos 90 días)
+        top_clientes = mysql_fetchall(
+            "SELECT c.id, c.razon_social, COUNT(r.id) AS n_repuestos, "
+            "       COALESCE(SUM(r.costo_total),0) AS total "
+            "  FROM mant_visita_repuestos r "
+            "  JOIN mant_visitas v ON v.id=r.visita_id "
+            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) "
+            " GROUP BY c.id "
+            " ORDER BY total DESC LIMIT 10"
+        ) or []
+        # Serie mensual últimos 12 meses
+        serie = mysql_fetchall(
+            "SELECT DATE_FORMAT(v.fecha_programada, '%%Y-%%m') AS mes, "
+            "       COUNT(r.id) AS n, COALESCE(SUM(r.costo_total),0) AS total "
+            "  FROM mant_visita_repuestos r "
+            "  JOIN mant_visitas v ON v.id=r.visita_id "
+            " WHERE v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) "
+            " GROUP BY mes ORDER BY mes"
+        ) or []
+        return jsonify({
+            "ok": True,
+            "totales": {k: float(v) if k.startswith("costo") else int(v or 0)
+                        for k, v in (totales or {}).items()},
+            "top_clientes": [{
+                "id": r["id"], "razon_social": r["razon_social"],
+                "n_repuestos": int(r["n_repuestos"] or 0),
+                "total": float(r["total"] or 0),
+            } for r in top_clientes],
+            "serie_mensual": [{
+                "mes": r["mes"], "n": int(r["n"] or 0),
+                "total": float(r["total"] or 0),
+            } for r in serie],
+        })
+    except Exception as e:
+        print(f"[analytics/repuestos] {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/analytics/familias", methods=["GET"])
+@_mant_required
+def mant_analytics_familias():
+    """Incidencias por familia de equipo: cuáles familias tienen más
+    intervenciones, más tiempo invertido, más costo de repuestos.
+    """
+    try:
+        # OT por familia (últimos 180 días)
+        rows = mysql_fetchall(
+            "SELECT COALESCE(m.familia_equipo,'otros') AS familia, "
+            "       COUNT(DISTINCT v.id) AS n_ot, "
+            "       COALESCE(SUM(v.duracion_real_min),0) AS minutos, "
+            "       COALESCE(SUM(r.costo_total),0) AS costo_rep "
+            "  FROM mant_visitas v "
+            "  JOIN mant_visita_tareas t ON t.visita_id=v.id "
+            "  JOIN mant_maquinas m ON m.id=t.maquina_id "
+            "  LEFT JOIN mant_visita_repuestos r ON r.visita_id=v.id AND r.maquina_id=m.id "
+            " WHERE v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 180 DAY) "
+            " GROUP BY familia "
+            " ORDER BY n_ot DESC"
+        ) or []
+        FAM_LBL = {
+            "cardio":"Cardio","selectorizado":"Selectorizado","carga_libre":"Carga libre",
+            "racks_estructuras":"Racks/Estructuras","bancos":"Bancos","accesorios":"Accesorios",
+            "bicicletas":"Bicicletas","trotadoras":"Trotadoras","otros":"Otros",
+        }
+        return jsonify({
+            "ok": True,
+            "familias": [{
+                "familia": r["familia"],
+                "familia_label": FAM_LBL.get(r["familia"], r["familia"]),
+                "n_ot": int(r["n_ot"] or 0),
+                "horas": round((r["minutos"] or 0) / 60, 1),
+                "costo_repuestos": float(r["costo_rep"] or 0),
+            } for r in rows],
+        })
+    except Exception as e:
+        print(f"[analytics/familias] {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/analytics/modalidad", methods=["GET"])
+@_mant_required
+def mant_analytics_modalidad():
+    """Desglose de OTs por modalidad de cobro: cuántas, costos, % del total."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT COALESCE(modalidad_cobro,'pagado') AS modalidad, "
+            "       COUNT(*) AS n, "
+            "       COALESCE(SUM(costo),0) AS costo_visitas, "
+            "       COALESCE(AVG(duracion_real_min),0) AS dur_prom "
+            "  FROM mant_visitas "
+            " WHERE fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 180 DAY) "
+            " GROUP BY modalidad "
+            " ORDER BY n DESC"
+        ) or []
+        total_n = sum(r["n"] or 0 for r in rows) or 1
+        MOD_LBL = {
+            "pagado":"Pagado","garantia":"Garantía",
+            "sin_costo":"Sin costo","interno":"Interno",
+        }
+        MOD_COLOR = {
+            "pagado":"#16a34a","garantia":"#dc2626",
+            "sin_costo":"#9ca3af","interno":"#7c3aed",
+        }
+        return jsonify({
+            "ok": True,
+            "modalidades": [{
+                "modalidad": r["modalidad"],
+                "label": MOD_LBL.get(r["modalidad"], r["modalidad"]),
+                "color": MOD_COLOR.get(r["modalidad"], "#6b7280"),
+                "n": int(r["n"] or 0),
+                "pct": round((int(r["n"] or 0) * 100.0) / total_n, 1),
+                "costo_visitas": float(r["costo_visitas"] or 0),
+                "duracion_promedio_min": round(float(r["dur_prom"] or 0), 1),
+            } for r in rows],
+            "total_ot": total_n,
+        })
+    except Exception as e:
+        print(f"[analytics/modalidad] {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/analytics/pendientes", methods=["GET"])
+@_mant_required
+def mant_analytics_pendientes():
+    """OTs pendientes desglosadas por estado, con días en backlog (oldest first)."""
+    from datetime import date as _date
+    try:
+        estados_pendientes = (
+            "creada","programada","asignada","en_curso","en_ejecucion",
+            "pendiente_info","pendiente_repuesto","pendiente_aprobacion"
+        )
+        ph = ",".join(["%s"]*len(estados_pendientes))
+        rows = mysql_fetchall(
+            f"SELECT estado, COUNT(*) AS n, "
+            f"       MIN(fecha_programada) AS oldest, MAX(fecha_programada) AS newest, "
+            f"       COALESCE(AVG(DATEDIFF(CURDATE(), fecha_programada)),0) AS dias_prom "
+            f"  FROM mant_visitas "
+            f" WHERE estado IN ({ph}) "
+            f" GROUP BY estado "
+            f" ORDER BY n DESC",
+            estados_pendientes
+        ) or []
+        # OTs urgentes (prioridad alta/urgente + estados pendientes)
+        urgentes = mysql_fetchall(
+            f"SELECT v.id, v.numero_ot, v.titulo, v.fecha_programada, "
+            f"       v.prioridad, v.estado, c.razon_social "
+            f"  FROM mant_visitas v "
+            f"  JOIN mant_clientes c ON c.id=v.cliente_id "
+            f" WHERE v.estado IN ({ph}) "
+            f"   AND v.prioridad IN ('alta','urgente') "
+            f" ORDER BY (v.prioridad='urgente') DESC, v.fecha_programada ASC "
+            f" LIMIT 20",
+            estados_pendientes
+        ) or []
+        return jsonify({
+            "ok": True,
+            "por_estado": [{
+                "estado": r["estado"],
+                "n": int(r["n"] or 0),
+                "dias_promedio": round(float(r["dias_prom"] or 0), 1),
+                "oldest": str(r["oldest"])[:10] if r.get("oldest") else "",
+                "newest": str(r["newest"])[:10] if r.get("newest") else "",
+            } for r in rows],
+            "urgentes": [{
+                "id": r["id"], "numero_ot": r.get("numero_ot") or "",
+                "titulo": r.get("titulo") or "",
+                "cliente": r.get("razon_social") or "",
+                "fecha": str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
+                "prioridad": r.get("prioridad"),
+                "estado": r.get("estado"),
+                "dias_atras": (_date.today() - r["fecha_programada"]).days if r.get("fecha_programada") else None,
+            } for r in urgentes],
+            "total_pendientes": sum(r["n"] or 0 for r in rows),
+        })
+    except Exception as e:
+        print(f"[analytics/pendientes] {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/analytics/activos-registro", methods=["GET"])
+@_mant_required
+def mant_analytics_activos():
+    """Análisis del parque de activos: por familia, garantía vigente vs vencida,
+    activos sin OT en últimos 6 meses."""
+    try:
+        # Conteos generales
+        gen = mysql_fetchone(
+            "SELECT COUNT(*) AS total, "
+            "       SUM(CASE WHEN COALESCE(estado,'activo')='activo' THEN 1 ELSE 0 END) AS activos, "
+            "       SUM(CASE WHEN estado='baja' THEN 1 ELSE 0 END) AS baja, "
+            "       SUM(CASE WHEN fecha_fin_garantia IS NOT NULL "
+            "                AND fecha_fin_garantia >= CURDATE() THEN 1 ELSE 0 END) AS en_garantia, "
+            "       SUM(CASE WHEN fecha_fin_garantia IS NOT NULL "
+            "                AND fecha_fin_garantia < CURDATE() THEN 1 ELSE 0 END) AS garantia_vencida "
+            "FROM mant_maquinas"
+        ) or {}
+        # Por familia
+        por_familia = mysql_fetchall(
+            "SELECT COALESCE(familia_equipo,'otros') AS familia, COUNT(*) AS n "
+            "  FROM mant_maquinas "
+            " WHERE COALESCE(estado,'activo') <> 'baja' "
+            " GROUP BY familia ORDER BY n DESC"
+        ) or []
+        # Activos sin OT en últimos 6 meses (huérfanos)
+        huerfanos = mysql_fetchall(
+            "SELECT m.id, m.nombre, m.serie, c.razon_social "
+            "  FROM mant_maquinas m "
+            "  JOIN mant_clientes c ON c.id=m.cliente_id "
+            " WHERE COALESCE(m.estado,'activo') <> 'baja' "
+            "   AND NOT EXISTS ( "
+            "     SELECT 1 FROM mant_visita_tareas t "
+            "      JOIN mant_visitas v ON v.id=t.visita_id "
+            "     WHERE t.maquina_id=m.id "
+            "       AND v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) "
+            "   ) "
+            " ORDER BY c.razon_social, m.nombre "
+            " LIMIT 50"
+        ) or []
+        return jsonify({
+            "ok": True,
+            "totales": {k: int(v or 0) for k, v in (gen or {}).items()},
+            "por_familia": [{
+                "familia": r["familia"], "n": int(r["n"] or 0),
+            } for r in por_familia],
+            "huerfanos_6m": [{
+                "id": r["id"], "nombre": r.get("nombre") or "",
+                "serie": r.get("serie") or "",
+                "cliente": r.get("razon_social") or "",
+            } for r in huerfanos],
+            "huerfanos_count": len(huerfanos),
+        })
+    except Exception as e:
+        print(f"[analytics/activos] {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/mantenciones/api/analytics/data", methods=["GET"])
