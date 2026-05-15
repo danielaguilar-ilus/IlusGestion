@@ -4129,7 +4129,20 @@ async function docEliminar(kind, id) {
 //    Texto    → fetch + <pre>
 //    Otros    → fallback con botón descargar
 // ════════════════════════════════════════════════════════════════════
-function docTipoArchivo(url, mime){
+// Determina el tipo de archivo (pdf/imagen/office/texto/otro) priorizando:
+//   1) archivo_tipo hint del backend (es la fuente de verdad de mant_contratos.archivo_tipo)
+//   2) mime_type explícito si llega
+//   3) extensión de la URL como fallback
+// Esto evita el bug donde URLs tipo /api/contratos/X/archivo (sin extensión visible)
+// hacían que el viewer cayera siempre en "otro" → "Formato no previsualizable".
+function docTipoArchivo(url, mime, archivoTipoHint){
+  // Hint del backend (más confiable que parsear URL del proxy)
+  const hint = (archivoTipoHint || '').toLowerCase();
+  if (hint === 'pdf') return 'pdf';
+  if (['word','doc','docx','xls','xlsx','xlsm','ppt','pptx','office'].includes(hint)) return 'office';
+  if (['imagen','jpg','jpeg','png','gif','webp','bmp','svg'].includes(hint)) return 'imagen';
+  if (['texto','txt','csv','md'].includes(hint)) return 'texto';
+
   const u = (url || '').toLowerCase().split('?')[0];
   const m = (mime || '').toLowerCase();
   const ext = u.substring(u.lastIndexOf('.') + 1);
@@ -4162,7 +4175,8 @@ async function docPreview(item){
     if (typeof ilusToast === 'function') ilusToast('Documento sin URL', { type:'warning' });
     return;
   }
-  const tipo = docTipoArchivo(item.url, item.mime_type || item.mime);
+  // Tipo de archivo: priorizar hint del backend (archivo_tipo) sobre URL
+  const tipo = docTipoArchivo(item.url, item.mime_type || item.mime, item.archivo_tipo);
   const nombre = item.nombre || 'Documento';
   const body = document.getElementById('docPrevBody');
 

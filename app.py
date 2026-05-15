@@ -512,7 +512,8 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
     Devuelve dict con url, public_id y size para guardar en BD.
     Persiste entre deploys de Railway (filesystem efímero).
 
-    Usado para contratos de mantenciones, adjuntos y documentos externos.
+    USO: archivos NO renderizables inline (DOCX, XLS, ZIP, etc.).
+    Para PDF preferir _cloud_upload_pdf() que sirve inline.
     """
     if not _CLD_READY or not _cloudinary_uploader:
         raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
@@ -528,6 +529,39 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
         "url":       result["secure_url"],
         "public_id": result["public_id"],
         "size":      result.get("bytes", 0),
+    }
+
+
+def _cloud_upload_pdf(file_obj, public_id: str, folder: str = "ilus/contratos") -> dict:
+    """Sube PDF a Cloudinary con resource_type='image'.
+
+    Cloudinary soporta PDFs como recursos 'image' (no como 'raw'), y solo
+    en ese modo los sirve con Content-Disposition: inline que permite
+    renderizarlos directamente en el iframe del navegador.
+
+    Si se sube como 'raw', Cloudinary fuerza descarga (attachment) y el
+    navegador muestra "Formato no previsualizable en línea". Por eso PDFs
+    SIEMPRE deben subirse con esta función.
+
+    Referencia: https://cloudinary.com/documentation/pdf_management
+    """
+    if not _CLD_READY or not _cloudinary_uploader:
+        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
+    result = _cloudinary_uploader.upload(
+        file_obj,
+        public_id     = public_id,
+        folder        = folder,
+        overwrite     = True,
+        resource_type = "image",  # ← PDFs son "image" para Cloudinary (no raw)
+        type          = "upload",
+        format        = "pdf",    # explícito: extensión y MIME garantizados
+    )
+    return {
+        "url":       result["secure_url"],
+        "public_id": result["public_id"],
+        "size":      result.get("bytes", 0),
+        "format":    result.get("format", "pdf"),
+        "pages":     result.get("pages", 1),  # útil: número de páginas
     }
 
 
@@ -14193,6 +14227,12 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_url VARCHAR(600) DEFAULT NULL",
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_public_id VARCHAR(400) DEFAULT NULL",
                 "ALTER TABLE mant_contratos ADD COLUMN cloudinary_uploaded_at DATETIME DEFAULT NULL",
+                # 2026-05-15: hash MD5 del contenido para detectar duplicados robustos
+                # (el navegador puede hacer retry HTTP por timeout y duplicar el upload
+                # con mismo contenido pero filename distinto). Hash garantiza dedupe.
+                "ALTER TABLE mant_contratos ADD COLUMN archivo_hash CHAR(32) DEFAULT NULL "
+                "COMMENT 'MD5 del contenido del archivo — anti-duplicado robusto'",
+                "ALTER TABLE mant_contratos ADD INDEX idx_archivo_hash (cliente_id, archivo_hash)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -18759,27 +18799,65 @@ def mant_contrato_subir(cid):
             "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE",
         }), 503
 
-    # Anti-duplicados: triple click rápido no genera 3 contratos.
-    # Ventana de 30 segundos por nombre original + cliente_id.
+    # Anti-duplicados v2: hash MD5 del contenido. Más robusto que nombre,
+    # porque detecta también re-envíos del browser por timeout/retry HTTP.
+    # Ventana ampliada a 5 min: si el mismo contenido se sube otra vez en
+    # ese rango, asumimos error y reusamos el existente.
+    import hashlib
     try:
-        dup_check = mysql_fetchone(
+        f.stream.seek(0)
+        _content = f.stream.read()
+        archivo_hash = hashlib.md5(_content).hexdigest()
+        f.stream.seek(0)
+    except Exception as e_hash:
+        archivo_hash = None
+        print(f"[mant_contrato_subir] no se pudo calcular hash: {e_hash}", flush=True)
+
+    if archivo_hash:
+        try:
+            dup_check = mysql_fetchone(
+                "SELECT id FROM mant_contratos "
+                "WHERE cliente_id=%s AND archivo_hash=%s "
+                "  AND created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
+                "LIMIT 1",
+                (cid, archivo_hash)
+            )
+            if dup_check:
+                return jsonify({
+                    "error": (
+                        "Este mismo archivo (mismo contenido) ya se subió en los "
+                        "últimos 5 minutos. Si quieres subir uno nuevo, asegúrate "
+                        "de que sea un archivo distinto. Recarga la página para ver "
+                        "el contrato existente."
+                    ),
+                    "error_codigo": "DUPLICADO_RAPIDO",
+                    "contrato_existente_id": dup_check["id"],
+                }), 409
+        except Exception as e_dup:
+            # Si la columna archivo_hash no existe aún (DB sin migrar),
+            # cae al check por nombre como fallback.
+            print(f"[mant_contrato_subir] check duplicado hash falló: {e_dup}", flush=True)
+
+    # Fallback: anti-duplicado por nombre (compat con DBs sin archivo_hash)
+    try:
+        dup_check_name = mysql_fetchone(
             "SELECT id FROM mant_contratos "
             "WHERE cliente_id=%s AND archivo_nombre=%s "
             "  AND created_at >= DATE_SUB(NOW(), INTERVAL 30 SECOND) "
             "LIMIT 1",
             (cid, f.filename)
         )
-        if dup_check:
+        if dup_check_name:
             return jsonify({
                 "error": (
                     "Este mismo archivo ya se subió hace menos de 30 segundos. "
                     "Si es un error del navegador, recarga la página."
                 ),
                 "error_codigo": "DUPLICADO_RAPIDO",
-                "contrato_existente_id": dup_check["id"],
+                "contrato_existente_id": dup_check_name["id"],
             }), 409
-    except Exception as e_dup:
-        print(f"[mant_contrato_subir] check duplicado falló: {e_dup}", flush=True)
+    except Exception as e_dup2:
+        print(f"[mant_contrato_subir] check duplicado nombre falló: {e_dup2}", flush=True)
 
     # Validar tope de N contratos por cliente
     try:
@@ -18804,18 +18882,23 @@ def mant_contrato_subir(cid):
 
     fname = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
 
-    # ── Subir a Cloudinary (única vía de persistencia) ─────────────────
+    # ── Subir a Cloudinary como 'image' para que se vea inline ─────────
+    # IMPORTANTE: PDFs deben ir como resource_type='image' (no 'raw').
+    # Solo así Cloudinary los sirve con headers que permiten render
+    # inline en el iframe del navegador. Si fuera 'raw', se descarga.
     cloud_url = None
     cloud_pid = None
     cloud_uploaded_at = None
+    cloud_pages = None
     try:
         f.stream.seek(0)
         public_id = f"contrato_{cid}_{int(time.time())}"
-        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_pdf(f.stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
+        cloud_pages = cloud_result.get("pages")
         cloud_uploaded_at = datetime.utcnow()
-        print(f"[mant_contrato] Cloudinary OK cid={cid} url={cloud_url}", flush=True)
+        print(f"[mant_contrato] Cloudinary OK (image/pdf) cid={cid} pages={cloud_pages} url={cloud_url}", flush=True)
     except Exception as e_cld:
         print(f"[mant_contrato] Cloudinary FAIL cid={cid}: {e_cld}", flush=True)
         return jsonify({
@@ -18839,32 +18922,57 @@ def mant_contrato_subir(cid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO mant_contratos
-                   (cliente_id,nombre,archivo_nombre,archivo_path,archivo_tipo,
-                    cloudinary_url,cloudinary_public_id,cloudinary_uploaded_at,
-                    fecha_inicio,fecha_vencimiento,es_indefinido,
-                    monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (cid, d.get("nombre","Contrato"), f.filename, fname, "pdf",
-                 cloud_url, cloud_pid, cloud_uploaded_at,
-                 d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
-                 1 if d.get("es_indefinido") else 0,
-                 float(d.get("monto_mensual",0) or 0),
-                 float(d.get("monto_anual",0) or 0),
-                 int(d.get("frecuencia_meses",0) or 0),
-                 d.get("notas",""), current_username())
-            )
+            # Intentar INSERT con archivo_hash (columna nueva post-migración)
+            try:
+                cur.execute(
+                    """INSERT INTO mant_contratos
+                       (cliente_id,nombre,archivo_nombre,archivo_path,archivo_tipo,
+                        archivo_hash,
+                        cloudinary_url,cloudinary_public_id,cloudinary_uploaded_at,
+                        fecha_inicio,fecha_vencimiento,es_indefinido,
+                        monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (cid, d.get("nombre","Contrato"), f.filename, fname, "pdf",
+                     archivo_hash,
+                     cloud_url, cloud_pid, cloud_uploaded_at,
+                     d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
+                     1 if d.get("es_indefinido") else 0,
+                     float(d.get("monto_mensual",0) or 0),
+                     float(d.get("monto_anual",0) or 0),
+                     int(d.get("frecuencia_meses",0) or 0),
+                     d.get("notas",""), current_username())
+                )
+            except Exception as e_insert_hash:
+                # Fallback: si la columna archivo_hash no existe en esta DB
+                # (instalación antigua sin migrar), insertar sin ella.
+                print(f"[mant_contrato_subir] INSERT con hash falló ({e_insert_hash}), fallback sin hash", flush=True)
+                cur.execute(
+                    """INSERT INTO mant_contratos
+                       (cliente_id,nombre,archivo_nombre,archivo_path,archivo_tipo,
+                        cloudinary_url,cloudinary_public_id,cloudinary_uploaded_at,
+                        fecha_inicio,fecha_vencimiento,es_indefinido,
+                        monto_mensual,monto_anual,frecuencia_meses,notas,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (cid, d.get("nombre","Contrato"), f.filename, fname, "pdf",
+                     cloud_url, cloud_pid, cloud_uploaded_at,
+                     d.get("fecha_inicio") or None, d.get("fecha_vencimiento") or None,
+                     1 if d.get("es_indefinido") else 0,
+                     float(d.get("monto_mensual",0) or 0),
+                     float(d.get("monto_anual",0) or 0),
+                     int(d.get("frecuencia_meses",0) or 0),
+                     d.get("notas",""), current_username())
+                )
             ctid = cur.lastrowid
         conn.commit()
         _mant_log("contrato", ctid, "subido",
-                  f"{f.filename} (Cloudinary · {size_bytes/1024:.0f}KB)")
+                  f"{f.filename} (Cloudinary image · {size_bytes/1024:.0f}KB · {cloud_pages or 1}p)")
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,
             "storage": "cloudinary",
             "url": cloud_url,
             "size_kb": int(size_bytes / 1024) if size_bytes else 0,
+            "pages": cloud_pages,
         })
     finally:
         conn.close()
@@ -19087,15 +19195,50 @@ def mant_contrato_archivo(ctid):
         return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
-    # Si el contrato tiene cloudinary_url, redirigir ahí directamente.
-    # Cloudinary sirve PDFs con Content-Disposition: inline por default.
+    # IMPORTANTE: contratos subidos como resource_type='raw' (legacy) se
+    # sirven con Content-Disposition: attachment → navegador NO los
+    # renderiza inline. Los nuevos (resource_type='image') sí.
+    # Para soportar AMBOS sin romper los viejos: si la URL es /raw/upload/
+    # y NO es descarga, hacemos PROXY del PDF y forzamos headers correctos.
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
-        # Cloudinary acepta ?fl_attachment para forzar descarga
+        es_raw_legacy = "/raw/upload/" in cld_url
+
         if as_dl:
+            # Descarga explícita: fl_attachment + nombre original
             sep = "&" if "?" in cld_url else "?"
             cld_url = f"{cld_url}{sep}fl_attachment=true"
-        return _redir(cld_url, code=302)
+            return _redir(cld_url, code=302)
+
+        # Inline + URL nueva (image/upload) → redirect directo, súper rápido
+        if not es_raw_legacy:
+            return _redir(cld_url, code=302)
+
+        # Inline + URL legacy (raw/upload) → proxy con headers correctos
+        # para que el navegador renderice inline.
+        try:
+            import requests as _requests
+            r_cld = _requests.get(cld_url, stream=True, timeout=30)
+            if r_cld.status_code != 200:
+                # Cloudinary devolvió error — caemos a redirect (mejor que 500)
+                return _redir(cld_url, code=302)
+            # Servir el PDF con headers correctos
+            from flask import Response
+            def _gen():
+                for chunk in r_cld.iter_content(chunk_size=64*1024):
+                    if chunk:
+                        yield chunk
+            resp = Response(_gen(), content_type="application/pdf")
+            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            resp.headers["Cache-Control"] = "private, max-age=300"
+            # Pasar tamaño si Cloudinary lo dio
+            cl = r_cld.headers.get("Content-Length")
+            if cl: resp.headers["Content-Length"] = cl
+            return resp
+        except Exception as e_proxy:
+            print(f"[mant_contrato_archivo] proxy falló, fallback redirect: {e_proxy}", flush=True)
+            return _redir(cld_url, code=302)
 
     # ── PRIORIDAD 2: Filesystem local (fallback para archivos viejos) ──
     # Verificar que el archivo existe en disco
@@ -25487,6 +25630,17 @@ def mant_cliente_documentos(cid):
             estado_lbl = r["estado"].replace("_", " ").title()
             if estado_lbl not in nm:
                 nm = f"{nm} ({estado_lbl})"
+        # Hint MIME para el viewer del frontend.
+        # Como la URL es /api/contratos/X/archivo (sin extensión visible),
+        # el frontend no puede detectar tipo desde la URL. Por eso le
+        # pasamos `mime_type` explícito basado en archivo_tipo de la BD.
+        _tipo_archivo_bd = (r.get("archivo_tipo") or "").lower()
+        if _tipo_archivo_bd == "pdf":
+            _mime = "application/pdf"
+        elif _tipo_archivo_bd in ("word", "doc", "docx"):
+            _mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            _mime = ""
         items.append({
             "kind":   "contrato_principal",
             "id":     r["id"],
@@ -25495,6 +25649,8 @@ def mant_cliente_documentos(cid):
             # Si tiene archivo: usar endpoint /contratos/<id>/archivo (redirige a Cloudinary).
             # Si NO tiene: url null + flag sin_archivo para que el frontend muestre placeholder.
             "url":    (f"/mantenciones/api/contratos/{r['id']}/archivo" if tiene_archivo else None),
+            "mime_type": _mime,
+            "archivo_tipo": _tipo_archivo_bd,  # hint para docTipoArchivo del frontend
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
