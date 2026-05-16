@@ -6621,7 +6621,23 @@ function levRenderTecnicos(){
   if (!box) return;
   const techs = _LEV_MODAL.tecnicos_disponibles || [];
   if (!techs.length){
-    box.innerHTML = '<span class="text-muted small">No hay técnicos activos. <a href="/mantenciones/tecnicos" target="_blank">Crear uno →</a></span>';
+    // Si el usuario tiene permisos admin, le mostramos un link directo a Usuarios
+    // (donde se crean app_users con rol=tecnico). Si no, le pedimos coordinar
+    // con un superadmin/admin. El módulo legacy mant_tecnicos ya NO se usa.
+    {% if permissions.admin or permissions.superadmin %}
+    box.innerHTML = '<div class="alert alert-warning py-2 mb-0 small w-100">' +
+                    '<i class="bi bi-exclamation-triangle me-1"></i>' +
+                    'No hay técnicos activos. ' +
+                    '<a href="/admin/users?rol=tecnico" target="_blank" class="fw-bold">Crear uno en Usuarios →</a> ' +
+                    '(asigná rol "Técnico" al crear)' +
+                    '</div>';
+    {% else %}
+    box.innerHTML = '<div class="alert alert-warning py-2 mb-0 small w-100">' +
+                    '<i class="bi bi-exclamation-triangle me-1"></i>' +
+                    'No hay técnicos activos. ' +
+                    'Pedile a un administrador que cree un usuario con rol "Técnico".' +
+                    '</div>';
+    {% endif %}
     document.getElementById('levTecCount').textContent = '0';
     return;
   }
@@ -6690,8 +6706,23 @@ async function levIniciar(){
     }
   }
 
-  // Multi-técnico (opcional pero recomendado)
+  // Multi-técnico: AHORA OBLIGATORIO — la OT debe tener al menos 1 técnico asignado
+  // porque el flujo es: admin crea OT → técnico la gestiona en su lista.
   const tecnicoIds = Array.from(_LEV_MODAL.tecnicos_seleccionados);
+  if (!tecnicoIds.length){
+    const hayTecnicos = (_LEV_MODAL.tecnicos_disponibles || []).length > 0;
+    if (!hayTecnicos){
+      await ilusAlert({
+        title: 'Sin técnicos disponibles',
+        message: 'No podés crear la OT de levantamiento porque no hay técnicos activos en el sistema.',
+        sub: 'Necesitás crear al menos un usuario con rol "Técnico" antes de continuar.',
+        type: 'warning',
+      });
+    } else {
+      ilusToast('Asigná al menos un técnico que ejecute la OT', { type:'warning' });
+    }
+    return;
+  }
 
   const btn = document.getElementById('btnLevIniciar');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
@@ -6724,20 +6755,25 @@ async function levIniciar(){
     _LEV.id = d.id;
     bootstrap.Modal.getInstance(document.getElementById('modalLevSelector'))?.hide();
 
-    // Mensaje rico de éxito con link a la OT generada
+    // ──────────────────────────────────────────────────────────────
+    // FLUJO NUEVO (2026-05-16): el admin SOLO genera la OT.
+    // No abre el modal de captura de fotos — esa gestión la hace
+    // el técnico desde su lista de OTs ("Órdenes de Trabajo").
+    // Aquí solo informamos qué se creó y damos link opcional a la OT.
+    // ──────────────────────────────────────────────────────────────
     const otHtml = d.ot_url
       ? `<a href="${d.ot_url}" class="fw-bold text-decoration-underline" style="color:#dc2626">${d.numero_ot}</a>`
       : '';
-    ilusAlert({
-      title: '✅ Levantamiento creado',
-      message: `Se generó la OT ${otHtml} con ${d.n_items} equipo(s).`,
-      sub: `Plantilla "Levantamiento fotográfico estándar" aplicada: ${d.items_plantilla_aplicados||0} tareas. ` +
-           `Técnicos asignados: ${d.tecnicos_asignados||0}.`,
+    await ilusAlert({
+      title: '✅ OT de levantamiento creada',
+      message: `Se generó la OT ${otHtml} con ${d.n_items} equipo(s) y ${d.tecnicos_asignados||0} técnico(s) asignado(s).`,
+      sub: `La OT está disponible para que el/los técnico(s) la gestionen desde su listado de Órdenes de Trabajo. ` +
+           `Plantilla "Levantamiento fotográfico estándar" aplicada (${d.items_plantilla_aplicados||0} tareas).`,
       messageHtml: true,
       type: 'success',
-      okLabel: 'Continuar con el levantamiento',
+      okLabel: 'Entendido',
     });
-    abrirLevantamientoSesion();
+    // El admin permanece en la ficha del cliente — no abre el modal de captura.
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });
   } finally {

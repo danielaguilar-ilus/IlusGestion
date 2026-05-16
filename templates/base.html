@@ -102,8 +102,11 @@
   {# — Navegacion con acordeón — #}
   <div class="sidebar-nav" id="sidebarNav">
 
+    {# Helper: el técnico solo ve Mantenciones (Dashboard, Calendario, OTs).
+       Se filtra módulo por módulo abajo. is_tecnico viene del context_processor. #}
+
     {# ── ETIQUETAS ── #}
-    {% if permissions.etiquetas or permissions.superadmin %}
+    {% if (permissions.etiquetas or permissions.superadmin) and not is_tecnico %}
     <button class="sg-toggle" data-sg="etiquetas">
       <i class="bi bi-tags"></i>Etiquetas
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -129,7 +132,7 @@
     {% endif %}
 
     {# ── RETIROS (módulo independiente) ── #}
-    {% if permissions.retiros or permissions.superadmin %}
+    {% if (permissions.retiros or permissions.superadmin) and not is_tecnico %}
     <button class="sg-toggle" data-sg="retiros">
       <i class="bi bi-box-arrow-up-right"></i>Retiros
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -151,7 +154,7 @@
     {% endif %}
 
     {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
-    {% if permissions.cubicador or permissions.transporte %}
+    {% if (permissions.cubicador or permissions.transporte) and not is_tecnico %}
     <button class="sg-toggle" data-sg="transporte">
       <i class="bi bi-truck"></i>Transporte
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -195,10 +198,13 @@
          class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
         <i class="bi bi-speedometer2"></i><span>Dashboard</span>
       </a>
+      {# Clientes: oculto para rol técnico — solo gestiona OTs asignadas #}
+      {% if not is_tecnico %}
       <a href="{{ url_for('mant_clientes') }}"
          class="sidebar-link{% if request.endpoint in ['mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
         <i class="bi bi-building-check"></i><span>Clientes</span>
       </a>
+      {% endif %}
       <a href="{{ url_for('mant_calendario') }}"
          class="sidebar-link{% if request.endpoint == 'mant_calendario' %} active{% endif %}">
         <i class="bi bi-calendar3"></i><span>Calendario</span>
@@ -251,7 +257,7 @@
   </div>
 
   {# ── AJUSTES — visible solo para roles con permiso 'ajustes' (default: superadmin) ── #}
-  {% if permissions.ajustes or permissions.superadmin %}
+  {% if (permissions.ajustes or permissions.superadmin) and not is_tecnico %}
   <div class="sidebar-ajustes-bottom" style="border-top:1px solid rgba(255,255,255,.08);padding-top:6px;margin-top:4px">
     <button class="sg-toggle sg-ajustes" data-sg="ajustes">
       <i class="bi bi-gear-wide-connected"></i>Ajustes

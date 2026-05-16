@@ -13776,6 +13776,44 @@ def _mant_required(view):
     return login_required(wrapped)
 
 
+def _no_tecnico(view):
+    """Decorador: bloquea el acceso a usuarios con role='tecnico'.
+
+    Usado en endpoints de mantenciones que NO son para técnicos
+    (ficha de cliente, listado de clientes, etc.). Los técnicos
+    solo gestionan OTs asignadas a ellos.
+
+    En AJAX devuelve 403 JSON. En GET normal redirige a su listado
+    de OTs con un flash explicativo. Se debe aplicar DESPUÉS de
+    @_mant_required (por convención del proyecto).
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        try:
+            u = getattr(g, "user", None)
+            role = (u["role"] if u else "") or ""
+        except Exception:
+            role = ""
+        if role == "tecnico":
+            is_ajax = (
+                request.headers.get("X-Wizard") == "1"
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+                or request.is_json
+                or request.path.startswith("/mantenciones/api/")
+            )
+            if is_ajax:
+                return jsonify({
+                    "ok": False,
+                    "error": "Acceso restringido para técnicos. Gestioná tus OTs desde 'Órdenes de Trabajo'.",
+                    "error_codigo": "TECNICO_SIN_ACCESO",
+                }), 403
+            flash("Como técnico, solo podés ver las Órdenes de Trabajo asignadas a ti.", "warning")
+            return redirect(url_for("mant_ots_list"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def init_mantenciones_tables():
     conn = get_mysql()
     try:
@@ -16158,6 +16196,7 @@ def mant_index():
 
 @app.route("/mantenciones/clientes")
 @_mant_required
+@_no_tecnico
 def mant_clientes():
     q            = request.args.get("q", "").strip()
     estado       = request.args.get("estado", "activo")
@@ -16854,6 +16893,7 @@ def mant_contrato_ai_editar(ctid):
 
 @app.route("/mantenciones/clientes/nuevo", methods=["GET", "POST"])
 @_mant_required
+@_no_tecnico
 def mant_cliente_nuevo():
     if request.method == "POST":
         d = request.form
@@ -17052,6 +17092,7 @@ def mant_ultimo_cliente():
 
 @app.route("/mantenciones/clientes/<int:cid>")
 @_mant_required
+@_no_tecnico
 def mant_ficha(cid):
     cliente   = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
@@ -18563,31 +18604,17 @@ def mant_visita_multi(cid):
 @app.route("/mantenciones/tecnicos")
 @_mant_required
 def mant_tecnicos_index():
-    """Listado de técnicos."""
-    q       = (request.args.get("q") or "").strip()
-    estado  = request.args.get("estado", "activo")  # activo | inactivo | todos
-    where, params = ["1=1"], []
-    if estado == "activo":
-        where.append("activo=1")
-    elif estado == "inactivo":
-        where.append("activo=0")
-    if q:
-        where.append("(nombre LIKE %s OR rut LIKE %s OR especialidad LIKE %s OR email LIKE %s)")
-        like = f"%{q}%"
-        params.extend([like, like, like, like])
-    sql = f"""SELECT t.*,
-                (SELECT COUNT(*) FROM mant_visitas WHERE tecnico_id=t.id) AS visitas_total,
-                (SELECT COUNT(*) FROM mant_visitas
-                  WHERE tecnico_id=t.id AND estado='programada'
-                    AND fecha_programada >= CURDATE())                    AS visitas_pendientes
-              FROM mant_tecnicos t
-              WHERE {' AND '.join(where)}
-              ORDER BY t.activo DESC, t.nombre"""
-    tecnicos = mysql_fetchall(sql, tuple(params)) or []
-    return render_template("mantenciones/tecnicos.html",
-        tecnicos = [dict(r) for r in tecnicos],
-        filtros  = {"q": q, "estado": estado},
-    )
+    """DEPRECATED 2026-05-16: la fuente de técnicos ahora es app_users con
+    role='tecnico'. La tabla legacy mant_tecnicos sigue en DB pero ya no se
+    expone en UI. Este endpoint redirige al módulo Usuarios filtrado por
+    rol=tecnico para que el superadmin gestione los técnicos desde ahí.
+
+    Si el usuario NO tiene permiso para gestionar usuarios, se le
+    redirige al listado de OTs con un flash explicativo."""
+    if g.permissions.get("admin") or g.permissions.get("superadmin"):
+        return redirect(url_for("users_index") + "?rol=tecnico")
+    flash("Los técnicos se gestionan desde Usuarios (necesitas permiso de administrador).", "warning")
+    return redirect(url_for("mant_ots_list"))
 
 
 @app.route("/mantenciones/api/tecnicos", methods=["GET"])
@@ -18707,34 +18734,8 @@ def mant_tecnico_crear():
 @app.route("/mantenciones/tecnicos/<int:tid>")
 @_mant_required
 def mant_tecnico_ficha(tid):
-    tecnico = mysql_fetchone("SELECT * FROM mant_tecnicos WHERE id=%s", (tid,))
-    if not tecnico:
-        flash("Técnico no encontrado", "danger")
-        return redirect(url_for("mant_tecnicos_index"))
-    visitas = mysql_fetchall(
-        """SELECT v.*, c.razon_social
-             FROM mant_visitas v
-             JOIN mant_clientes c ON c.id=v.cliente_id
-            WHERE v.tecnico_id=%s
-            ORDER BY v.fecha_programada DESC LIMIT 50""",
-        (tid,)
-    ) or []
-    # Stats
-    stats = mysql_fetchone(
-        """SELECT
-              COUNT(*)                                                    AS total,
-              SUM(estado='programada')                                    AS programadas,
-              SUM(estado='completada')                                    AS completadas,
-              SUM(estado='cancelada')                                     AS canceladas,
-              COALESCE(SUM(costo),0)                                      AS costo_total
-            FROM mant_visitas WHERE tecnico_id=%s""",
-        (tid,)
-    ) or {}
-    return render_template("mantenciones/tecnico_ficha.html",
-        tecnico = dict(tecnico),
-        visitas = [dict(r) for r in visitas],
-        stats   = dict(stats),
-    )
+    """DEPRECATED 2026-05-16: redirige al listado de usuarios."""
+    return redirect(url_for("mant_tecnicos_index"))
 
 
 @app.route("/mantenciones/api/tecnicos/<int:tid>", methods=["PUT"])
