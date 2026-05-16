@@ -124,10 +124,9 @@ def _formato_rut_chile(rut_str):
     return f"{cuerpo_fmt}-{dv}" if dv else cuerpo_fmt
 
 
-@app.template_filter('rut_fmt')
-def rut_fmt_filter(value):
-    """Filtro Jinja: {{ cliente.rut | rut_fmt }} → '25.547.065-2'."""
-    return _formato_rut_chile(value)
+# NOTA: el filtro Jinja "rut_fmt" se registra más abajo, después de que
+# `app = Flask(__name__)` esté definido (alrededor de la línea 171).
+# Buscar: @app.template_filter('rut_fmt')
 
 
 def _erp_tidos_filter_sql():
@@ -443,6 +442,15 @@ def chile_fmt_filter(value, fmt="%d/%m/%Y %H:%M"):
         return converted.strftime(fmt)
     except Exception:
         return str(converted)
+
+
+@app.template_filter('rut_fmt')
+def rut_fmt_filter(value):
+    """Filtro Jinja: {{ cliente.rut | rut_fmt }} → '25.547.065-2'.
+    Llama a _formato_rut_chile() que está definido más arriba (helper).
+    """
+    return _formato_rut_chile(value)
+
 
 @app.template_filter('fkg')
 def fkg_filter(value, decimals=1):
