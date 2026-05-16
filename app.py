@@ -21984,13 +21984,26 @@ def mant_visita_update(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
 @_mant_required
 def mant_visita_del(vid):
-    # Capturar info ANTES de borrar para el log
+    # Capturar info ANTES de borrar para el log y para encontrar levantamiento asociado
     v_info = mysql_fetchone(
-        "SELECT cliente_id, numero_ot, titulo, fecha_programada FROM mant_visitas WHERE id=%s", (vid,)
+        "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
+        "  FROM mant_visitas WHERE id=%s", (vid,)
     )
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            # Sincronizar: si la OT tiene un levantamiento asociado, marcarlo cancelado
+            # (antes quedaba huérfano y bloqueaba la creación de nuevos levantamientos).
+            if v_info and v_info.get("levantamiento_id"):
+                try:
+                    cur.execute(
+                        "UPDATE mant_levantamientos "
+                        "   SET estado='cancelado', fecha_cierre=NOW() "
+                        " WHERE id=%s AND estado IN ('borrador','en_curso')",
+                        (v_info["levantamiento_id"],)
+                    )
+                except Exception as _e_sync:
+                    print(f"[visita_del] sync levantamiento falló: {_e_sync}", flush=True)
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
         if v_info:
@@ -27145,19 +27158,36 @@ def mant_lev_crear_o_listar(cid):
 
     # POST: crear nuevo
     data = request.get_json(silent=True) or {}
-    # Verificar que no haya abierto
-    abierto = mysql_fetchone(
-        "SELECT id FROM mant_levantamientos "
-        "WHERE cliente_id=%s AND estado IN ('borrador','en_curso') LIMIT 1",
-        (cid,)
-    )
-    if abierto:
-        return jsonify({
-            "ok": False,
-            "error_codigo": "YA_HAY_ABIERTO",
-            "error": "Este cliente ya tiene un levantamiento abierto. Continuar ese antes de crear otro.",
-            "levantamiento_id": abierto["id"],
-        }), 409
+
+    # ─── Auto-cancelar levantamientos huérfanos del mismo cliente ──
+    # 2026-05-16: ya NO bloqueamos cuando hay un levantamiento abierto.
+    # Cada acción crea una OT nueva (el admin gestiona desde Órdenes de
+    # Trabajo, no continúa levantamientos antiguos).
+    # Si quedaron levantamientos abiertos huérfanos (porque su OT
+    # asociada fue eliminada o cancelada), los marcamos como cancelados
+    # para mantener la BD consistente.
+    try:
+        huerfanos = mysql_fetchall(
+            "SELECT l.id "
+            "  FROM mant_levantamientos l "
+            "  LEFT JOIN mant_visitas v ON v.id = l.visita_id "
+            " WHERE l.cliente_id=%s "
+            "   AND l.estado IN ('borrador','en_curso') "
+            "   AND (v.id IS NULL OR v.estado IN ('cancelada','anulada'))",
+            (cid,)
+        ) or []
+        if huerfanos:
+            ids = [int(r["id"]) for r in huerfanos]
+            ph = ",".join(["%s"] * len(ids))
+            mysql_execute(
+                f"UPDATE mant_levantamientos SET estado='cancelado', "
+                f"        fecha_cierre=NOW() "
+                f" WHERE id IN ({ph})",
+                tuple(ids)
+            )
+            print(f"[lev_crear] {len(ids)} levantamiento(s) huérfano(s) auto-cancelados: {ids}", flush=True)
+    except Exception as e_huer:
+        print(f"[lev_crear] limpieza huérfanos falló: {e_huer}", flush=True)
 
     # ─── Datos básicos ────────────────────────────────────────────
     titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
