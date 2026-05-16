@@ -1064,10 +1064,13 @@ function aplicarKpiFiltro(tipo) {
         <div class="cc2-kpi">
           <div class="cc2-kpi-lbl">TIPO DE CONTRATO</div>
           <div class="cc2-kpi-val">
-            {% if c.contrato_tipo %}
-              <strong>{{ c.contrato_tipo|capitalize }}</strong>
-            {% elif c.contrato_estado == 'indefinido' %}
+            {% if c.contrato_indef or c.contrato_estado == 'indefinido' %}
               <strong>Indefinido</strong>
+            {% elif c.contrato_freq and c.contrato_freq > 0 %}
+              <strong>Preventivo</strong>
+              <span style="font-weight:500;color:#6b7280;font-size:.7rem">cada {{ c.contrato_freq }}m</span>
+            {% elif c.contratos_count and c.contratos_count > 0 %}
+              <strong>Preventivo</strong>
             {% else %}
               <span style="color:#9ca3af">—</span>
             {% endif %}

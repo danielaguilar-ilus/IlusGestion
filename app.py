@@ -16204,15 +16204,19 @@ def mant_clientes():
     # Resultado: pasa de ~1500 queries lógicas con 300 clientes a ~5 queries totales.
     # FASE 2026-05-16: c_latest ampliado con tipo, fecha_inicio y monto_mensual
     # para mostrar más detalle en las cards del listado (estilo Fracttal).
+    # NOTA: mant_contratos NO tiene columna `tipo`. Se usa `frecuencia_meses`
+    # y el estado del contrato para componer un "tipo de contrato" mostrable
+    # en la UI (ej: "Preventivo · cada 3 meses").
     rows = mysql_fetchall(f"""
         SELECT c.*,
                COALESCE(m_agg.cnt, 0)       AS maquinas_count,
                COALESCE(c_agg.cnt, 0)       AS contratos_count,
                c_latest.estado              AS contrato_estado,
-               c_latest.tipo                AS contrato_tipo,
+               c_latest.frecuencia_meses    AS contrato_freq,
                c_latest.fecha_inicio        AS contrato_inicio,
                c_latest.fecha_vencimiento   AS contrato_vencimiento,
                c_latest.monto_mensual       AS contrato_monto,
+               c_latest.es_indefinido       AS contrato_indef,
                v_next.fecha_programada      AS prox_visita
         FROM mant_clientes c
         LEFT JOIN (
@@ -16224,8 +16228,9 @@ def mant_clientes():
             FROM mant_contratos GROUP BY cliente_id
         ) c_agg ON c_agg.cliente_id = c.id
         LEFT JOIN (
-            SELECT ct.cliente_id, ct.estado, ct.tipo, ct.fecha_inicio,
-                   ct.fecha_vencimiento, ct.monto_mensual
+            SELECT ct.cliente_id, ct.estado, ct.frecuencia_meses,
+                   ct.fecha_inicio, ct.fecha_vencimiento,
+                   ct.monto_mensual, ct.es_indefinido
             FROM mant_contratos ct
             INNER JOIN (
                 SELECT cliente_id, MAX(id) AS max_id
