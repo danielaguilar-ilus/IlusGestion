@@ -14705,6 +14705,32 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tecnicos MODIFY tecnico_id INT NULL",
                 "CREATE INDEX idx_vt_user ON mant_visita_tecnicos (tecnico_user_id)",
                 "CREATE INDEX idx_vt_visita_user ON mant_visita_tecnicos (visita_id, tecnico_user_id)",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-16 — Modo Técnico (vista simplificada de ejecución):
+                # - mant_maquinas: campos para "ficha del equipo" alimentada
+                #   por el técnico en cada OT (foto principal, datos técnicos,
+                #   ubicación actual, última intervención).
+                # - mant_visitas: campos para registrar la ubicación GPS del
+                #   técnico cuando ejecuta la OT (auditabilidad) + firma cliente.
+                # - mant_visita_tareas: campo "ubicación GPS al completar la
+                #   tarea" para trazabilidad granular.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquinas ADD COLUMN foto_url TEXT NULL COMMENT 'URL Cloudinary de la foto principal del equipo'",
+                "ALTER TABLE mant_maquinas ADD COLUMN marca VARCHAR(120) NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN modelo VARCHAR(120) NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN anio_fabricacion INT NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN voltaje VARCHAR(40) NULL COMMENT '110|220|220-trifasico|no_aplica'",
+                "ALTER TABLE mant_maquinas ADD COLUMN ultima_intervencion DATE NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN ubicacion_sala VARCHAR(200) NULL COMMENT 'Sala A · Fila 2 · Cardio'",
+                "ALTER TABLE mant_maquinas ADD COLUMN estado_capturado VARCHAR(40) NULL COMMENT 'operativo|advertencia|fuera_servicio|en_reparacion|dado_baja|no_encontrado'",
+                "ALTER TABLE mant_maquinas ADD COLUMN tiene_dano TINYINT(1) DEFAULT 0",
+                "ALTER TABLE mant_maquinas ADD COLUMN observaciones TEXT NULL",
+                "ALTER TABLE mant_maquinas ADD COLUMN last_visita_id INT NULL COMMENT 'Última OT que actualizó esta ficha'",
+                "ALTER TABLE mant_maquinas ADD COLUMN visitas_count INT DEFAULT 0 COMMENT 'Veces que se gestionó este equipo'",
+                "ALTER TABLE mant_visitas ADD COLUMN exec_gps_lat DECIMAL(10,7) NULL COMMENT 'Lat GPS al inicio de ejecución'",
+                "ALTER TABLE mant_visitas ADD COLUMN exec_gps_lng DECIMAL(10,7) NULL COMMENT 'Lng GPS al inicio de ejecución'",
+                "ALTER TABLE mant_visitas ADD COLUMN exec_gps_at DATETIME NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN exec_gps_direccion VARCHAR(400) NULL COMMENT 'Dirección legible inversa (reverse geocoding)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -23238,7 +23264,18 @@ def mant_tarea_responder(vid, tid):
 @app.route("/mantenciones/ot/<int:vid>")
 @_mant_required
 def mant_ot_ficha(vid):
-    """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora)."""
+    """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora).
+
+    Si el usuario tiene rol 'tecnico', redirige automáticamente al modo
+    EJECUCIÓN simplificado (ot_ejecutar.html) — vista mobile-first donde
+    solo puede gestionar los equipos asignados (no asignar otros técnicos,
+    no editar metadata de la OT, etc.)."""
+    try:
+        u = getattr(g, "user", None) or {}
+        if (u.get("role") or "") == "tecnico":
+            return redirect(url_for("mant_ot_ejecutar", vid=vid))
+    except Exception:
+        pass
     # NOTA: la columna real en mant_clientes es contacto_tel (no contacto_telefono).
     # Se mantiene el alias cli_contacto_tel para que el template no cambie.
     # tecnico_principal viene preferentemente de app_users (v.tecnico_user_id, nuevo)
@@ -23310,6 +23347,265 @@ def mant_ot_ficha(vid):
             "fotos":           fotos_count.get("n", 0),
         },
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# OT — MODO TÉCNICO (vista simplificada mobile-first)
+# El técnico solo ve los equipos asignados, sus tareas (plantilla)
+# y los gestiona uno a uno. No puede asignar más técnicos ni cambiar
+# metadata de la OT. Al terminar firma y la OT pasa a "pendiente
+# revisión" para que el supervisor la apruebe/cierre.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ot/<int:vid>/ejecutar")
+@_mant_required
+def mant_ot_ejecutar(vid):
+    """Vista simplificada de ejecución de OT (modo técnico)."""
+    visita = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.direccion AS cli_direccion, "
+        "       c.comuna AS cli_comuna, c.contacto_nombre AS cli_contacto, "
+        "       c.contacto_tel AS cli_contacto_tel, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_principal "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
+        " WHERE v.id=%s",
+        (vid,)
+    )
+    if not visita:
+        flash("OT no encontrada.", "danger")
+        return redirect(url_for("mant_ots_list"))
+    visita = dict(visita)
+
+    # Si el usuario es técnico, validar que tenga la OT asignada
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") == "tecnico":
+        uid = u.get("id")
+        es_mio = (visita.get("tecnico_user_id") == uid)
+        if not es_mio:
+            # ¿es colaborador en mant_visita_tecnicos?
+            colab = mysql_fetchone(
+                "SELECT 1 FROM mant_visita_tecnicos "
+                " WHERE visita_id=%s AND tecnico_user_id=%s LIMIT 1",
+                (vid, uid)
+            )
+            es_mio = bool(colab)
+        if not es_mio:
+            flash("Esta OT no está asignada a ti.", "warning")
+            return redirect(url_for("mant_ots_list"))
+
+    # Equipos involucrados en la OT — vienen de mant_visita_tareas distintas máquinas
+    equipos = mysql_fetchall(
+        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+        "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
+        "       m.observaciones, m.ultima_intervencion, m.visitas_count "
+        "  FROM mant_visita_tareas vt "
+        "  JOIN mant_maquinas m ON m.id=vt.maquina_id "
+        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+        " ORDER BY m.nombre",
+        (vid,)
+    ) or []
+    equipos = [dict(e) for e in equipos]
+
+    # Tareas agrupadas por máquina
+    tareas = mysql_fetchall(
+        "SELECT id, maquina_id, orden, titulo, descripcion, tipo, tipo_respuesta, "
+        "       obligatoria, requiere_foto, unidad, rango_min, rango_max, "
+        "       opciones_lista_json, completada, completada_at, observaciones "
+        "  FROM mant_visita_tareas WHERE visita_id=%s ORDER BY maquina_id, orden, id",
+        (vid,)
+    ) or []
+    tareas = [dict(t) for t in tareas]
+    # Agrupar por máquina
+    tareas_por_eq = {}
+    for t in tareas:
+        mid = t.get("maquina_id") or 0
+        tareas_por_eq.setdefault(mid, []).append(t)
+
+    # Fotos por máquina
+    fotos = mysql_fetchall(
+        "SELECT id, tarea_id, cloudinary_url, archivo_path, tipo_foto, created_at "
+        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY created_at",
+        (vid,)
+    ) or []
+    fotos = [dict(f) for f in fotos]
+
+    return render_template(
+        "mantenciones/ot_ejecutar.html",
+        visita=visita,
+        equipos=equipos,
+        tareas_por_eq=tareas_por_eq,
+        fotos=fotos,
+    )
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/datos", methods=["PATCH"])
+@_mant_required
+def mant_ot_equipo_datos(vid, mid):
+    """Actualiza los datos del equipo (mant_maquinas) en el contexto de la OT.
+    Aplica cuando el técnico edita serie, marca, modelo, año, voltaje,
+    estado, observaciones, etc."""
+    d = request.get_json(silent=True) or {}
+    permitidos = {
+        "serie": (str, 100), "marca": (str, 120), "modelo": (str, 120),
+        "voltaje": (str, 40), "ubicacion_sala": (str, 200),
+        "estado_capturado": (str, 40), "observaciones": (str, 5000),
+    }
+    sets, vals = [], []
+    for k, (typ, maxlen) in permitidos.items():
+        if k in d:
+            v = (str(d.get(k) or "").strip())[:maxlen] or None
+            sets.append(f"{k}=%s"); vals.append(v)
+    # Numéricos / booleanos
+    if "anio_fabricacion" in d:
+        try: v = int(d["anio_fabricacion"]) if d["anio_fabricacion"] not in (None, "") else None
+        except Exception: v = None
+        sets.append("anio_fabricacion=%s"); vals.append(v)
+    if "tiene_dano" in d:
+        sets.append("tiene_dano=%s"); vals.append(1 if d["tiene_dano"] else 0)
+    if "ultima_intervencion" in d:
+        sets.append("ultima_intervencion=%s"); vals.append(d["ultima_intervencion"] or None)
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin campos"}), 400
+    # Siempre actualizamos last_visita_id para trazabilidad
+    sets.append("last_visita_id=%s"); vals.append(vid)
+    vals.append(mid)
+    try:
+        mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/foto", methods=["POST"])
+@_mant_required
+def mant_ot_equipo_foto(vid, mid):
+    """Sube la FOTO PRINCIPAL del equipo (campo mant_maquinas.foto_url).
+    Esta foto es la que aparecerá en la ficha del equipo del cliente."""
+    f = request.files.get("foto") or request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "Sin archivo"}), 400
+    # Tamaño máx 8MB
+    f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
+    if size > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 8MB)"}), 400
+    try:
+        import cloudinary, cloudinary.uploader
+        result = cloudinary.uploader.upload(
+            f,
+            folder="ilus/maquinas",
+            public_id=f"maquina_{mid}",
+            overwrite=True,
+            resource_type="image",
+            transformation=[
+                {"width": 1200, "height": 1200, "crop": "limit"},
+                {"quality": "auto", "fetch_format": "auto"},
+            ],
+        )
+        url = result.get("secure_url")
+        if not url:
+            return jsonify({"ok": False, "error": "Cloudinary no devolvió URL"}), 500
+        mysql_execute(
+            "UPDATE mant_maquinas SET foto_url=%s, last_visita_id=%s WHERE id=%s",
+            (url, vid, mid)
+        )
+        return jsonify({"ok": True, "url": url})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/exec-gps", methods=["POST"])
+@_mant_required
+def mant_ot_exec_gps(vid):
+    """Registra la geolocalización del técnico al INICIAR la ejecución.
+    Sirve para auditar que ejecutó la OT desde la dirección del cliente."""
+    d = request.get_json(silent=True) or {}
+    try:
+        lat = float(d.get("lat")) if d.get("lat") is not None else None
+        lng = float(d.get("lng")) if d.get("lng") is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "lat/lng inválido"}), 400
+    if lat is None or lng is None:
+        return jsonify({"ok": False, "error": "Faltan coordenadas"}), 400
+    direccion = (d.get("direccion") or "").strip()[:400] or None
+    try:
+        # Solo guardamos la PRIMERA vez (no sobreescribir si ya tiene)
+        v = mysql_fetchone("SELECT exec_gps_lat FROM mant_visitas WHERE id=%s", (vid,))
+        if v and v.get("exec_gps_lat") is None:
+            mysql_execute(
+                "UPDATE mant_visitas "
+                "   SET exec_gps_lat=%s, exec_gps_lng=%s, "
+                "       exec_gps_at=NOW(), exec_gps_direccion=%s "
+                " WHERE id=%s",
+                (lat, lng, direccion, vid)
+            )
+        return jsonify({"ok": True, "lat": lat, "lng": lng, "direccion": direccion})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
+@_mant_required
+def mant_ot_firmar_revision(vid):
+    """El técnico firma la OT y la pasa a estado 'pendiente_revision'.
+    El supervisor luego deberá aprobarla y cerrarla.
+
+    Acepta:
+      - firma_tecnico (data URL base64 o URL Cloudinary)
+      - firma_tecnico_nombre (string)
+      - firma_cliente (data URL)
+      - firma_cliente_nombre
+    """
+    d = request.get_json(silent=True) or {}
+    firma_tec = (d.get("firma_tecnico") or "").strip()
+    nombre_tec = (d.get("firma_tecnico_nombre") or "").strip()[:200] or None
+    firma_cli = (d.get("firma_cliente") or "").strip()
+    nombre_cli = (d.get("firma_cliente_nombre") or "").strip()[:200] or None
+
+    if not firma_tec:
+        return jsonify({"ok": False, "error": "Falta la firma del técnico"}), 400
+
+    try:
+        # Verificar que todas las tareas obligatorias estén completas
+        pendientes = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND obligatoria=1 AND COALESCE(completada,0)=0",
+            (vid,)
+        )
+        if pendientes and (pendientes.get("n") or 0) > 0:
+            return jsonify({
+                "ok": False,
+                "error": f"Quedan {pendientes['n']} tarea(s) obligatoria(s) sin completar.",
+                "error_codigo": "TAREAS_PENDIENTES",
+            }), 400
+
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+
+        mysql_execute(
+            "UPDATE mant_visitas SET "
+            "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, firma_tecnico_at=NOW(), "
+            "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
+            "  estado='pendiente_aprobacion' "
+            " WHERE id=%s",
+            (firma_tec, uid, firma_cli or None, nombre_cli, vid)
+        )
+        # Marcar levantamiento como cerrado si la OT tenía uno
+        v_info = mysql_fetchone(
+            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
+        )
+        if v_info and v_info.get("levantamiento_id"):
+            mysql_execute(
+                "UPDATE mant_levantamientos SET estado='cerrado', fecha_cierre=NOW() "
+                " WHERE id=%s AND estado IN ('borrador','en_curso')",
+                (v_info["levantamiento_id"],)
+            )
+        _mant_log("visita", vid, "firmada_tecnico",
+                  f"{nombre_tec or ''} → pendiente_aprobacion")
+        return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -23452,6 +23748,16 @@ def mant_visita_tarea_update(vid, tid):
                 vals.append(int(d.get(f)) if d.get(f) else None)
             except (TypeError, ValueError):
                 continue
+    # Soporte para `completada` directo (modo técnico — vista ejecutar):
+    # se setea junto con completada_at y completada_por.
+    if "completada" in d:
+        try:
+            new_c = 1 if (int(d.get("completada") or 0)) else 0
+        except Exception:
+            new_c = 1 if d.get("completada") else 0
+        fields.append("completada=%s"); vals.append(new_c)
+        fields.append("completada_at=%s"); vals.append(datetime.now() if new_c else None)
+        fields.append("completada_por=%s"); vals.append(user if new_c else None)
     if not fields:
         return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
     vals.extend([tid, vid])
