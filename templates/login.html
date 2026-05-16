@@ -17,11 +17,13 @@
 }
 .login-hero-content{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;width:100%;padding:0;}
 
-/* ── Logo arriba ── */
+/* ── Logo arriba (3× más grande que el original de 165px = 495px) ── */
+/* Responsive: clamp evita que se desborde en mobile pequeño */
 .login-brand-top{margin-bottom:auto;}
 .login-brand-top img{
-  width:165px;height:auto;display:block;
-  filter:drop-shadow(0 3px 12px rgba(0,0,0,.6));
+  width:clamp(260px, 36vw, 495px);
+  height:auto;display:block;
+  filter:drop-shadow(0 4px 18px rgba(0,0,0,.7));
 }
 
 /* ── Mensaje JUNTOS SOMOS MÁS FUERTES ── */

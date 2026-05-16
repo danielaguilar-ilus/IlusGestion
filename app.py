@@ -3990,50 +3990,75 @@ def mi_cuenta_password():
 #  Productos — listado
 # ─────────────────────────────────────────────
 
+def _redirect_to_first_accessible(perms):
+    """Helper: redirige al primer módulo accesible según permisos.
+    Usado cuando el rol no encaja en el mapeo explícito por rol.
+    Orden lógico: mantenciones → retiros → transporte → cubicador → comm.
+    """
+    if perms.get("mantenciones"): return redirect(url_for("mant_index"))
+    if perms.get("retiros"):      return redirect(url_for("pickup_dashboard"))
+    if perms.get("transporte"):   return redirect(url_for("transporte_index"))
+    if perms.get("cubicador"):    return redirect(url_for("cubicador"))
+    if perms.get("comunicaciones"): return redirect(url_for("comm_index"))
+    flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
+    return redirect(url_for("mi_cuenta"))
+
+
 @app.route("/")
 @login_required
 def index():
-    """Listado de productos (etiquetas).
+    """Home — listado de productos (etiquetas) por default.
 
-    Control de acceso: si el usuario NO tiene permiso de etiquetas/view/print
-    ni superadmin, se le redirige al módulo que SÍ tenga acceso (mantenciones,
-    retiros, transporte, etc.) o a una página de error si no tiene ninguno.
-    Esto evita que un usuario sin permiso etiquetas vea el catálogo entero.
+    REDIRECT POR ROL (refactor 2026-05-16, según solicitud usuario):
+    Cada rol tiene su "home natural" según el trabajo que hace. Antes la
+    lógica iba por permisos individuales y a veces enviaba a un usuario
+    de transporte al cubicador en vez de su dashboard. Ahora va por ROL.
+
+    Tabla de redirects:
+      tecnico              → mant_ots_list?solo_mias=1   (sus OTs)
+      mantenciones, ejecutivo → mant_index               (dashboard mant)
+      transporte, distribucion → transporte_index         (dashboard transporte)
+      vendedor              → catálogo etiquetas          (default)
+      editor, lector        → catálogo etiquetas          (default)
+      admin, superadmin     → catálogo etiquetas          (ve todo)
+      OTROS (rol custom)    → primer módulo permitido en orden lógico
     """
     perms = g.permissions or {}
     user = getattr(g, "user", None)
     role = (user.get("role") if user else "") or ""
 
-    # ── Técnicos: SIEMPRE van directo a "Mis OTs" ────────────────────
-    # No deben perder tiempo navegando por catálogos. Su único lugar
-    # de trabajo es la lista filtrada de OTs asignadas.
-    if role == "tecnico":
-        return redirect(url_for("mant_ots_list") + "?solo_mias=1")
+    # ── 1. Mapeo explícito por rol (más predecible que por permisos) ──
+    ROLE_HOME = {
+        "tecnico":     ("mant_ots_list",   {"solo_mias": "1"}),
+        "mantenciones":("mant_index",      {}),
+        "ejecutivo":   ("mant_index",      {}),
+        "transporte":  ("transporte_index",{}),
+        "distribucion":("transporte_index",{}),
+    }
+    if role in ROLE_HOME:
+        endpoint, args = ROLE_HOME[role]
+        # Verificar que tenga el permiso correspondiente (sino caer abajo)
+        perm_match = {
+            "mant_ots_list":    perms.get("mantenciones"),
+            "mant_index":       perms.get("mantenciones"),
+            "transporte_index": perms.get("transporte"),
+        }.get(endpoint, True)
+        if perm_match:
+            return redirect(url_for(endpoint, **args))
 
-    # ── Roles "mantenciones-first" (ejecutivo, mantenciones) ─────────
-    # Aunque tengan permiso "view" o "etiquetas", su trabajo principal es
-    # mantenciones — los redirigimos ahí. Si quieren etiquetas/catálogo,
-    # navegan vía sidebar (si tienen permiso) o vía URL directa.
-    if role in ("ejecutivo", "mantenciones") and perms.get("mantenciones"):
-        return redirect(url_for("mant_index"))
-
-    # ── Lógica general: si NO tiene permiso etiquetas/print/superadmin,
-    # buscar el primer módulo accesible ──
-    # NOTA: removimos el check de "view" porque es un flag legacy ambiguo
-    # que muchos roles tienen sin necesitar el catálogo de etiquetas.
-    if not (perms.get("superadmin") or perms.get("etiquetas") or perms.get("print")):
-        if perms.get("mantenciones"):
-            return redirect(url_for("mant_index"))
-        if perms.get("retiros"):
-            return redirect(url_for("pickup_dashboard"))
-        if perms.get("transporte"):
-            return redirect(url_for("transporte_index"))
-        if perms.get("cubicador"):
-            return redirect(url_for("cubicador"))
-        if perms.get("comunicaciones"):
-            return redirect(url_for("comm_index"))
-        flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
-        return redirect(url_for("mi_cuenta"))
+    # ── 2. Roles "etiquetas-first": ven el catálogo de productos ──
+    # editor, vendedor, lector, admin, superadmin → siguen al render del catálogo abajo
+    if role in ("editor", "vendedor", "lector", "admin", "superadmin"):
+        # Si tienen permiso etiquetas o son super, continúan al catálogo
+        if perms.get("superadmin") or perms.get("etiquetas") or perms.get("print"):
+            pass  # fall through to render
+        else:
+            # Edge case: rol del sistema sin permiso etiquetas — buscar fallback
+            return _redirect_to_first_accessible(perms)
+    else:
+        # ── 3. Rol CUSTOM creado por admin — buscar primer módulo accesible ──
+        if not (perms.get("superadmin") or perms.get("etiquetas") or perms.get("print")):
+            return _redirect_to_first_accessible(perms)
 
     q     = request.args.get("q", "").strip()
     exact = request.args.get("exact") == "1"

@@ -805,13 +805,40 @@ def register_pickup_routes(app, ctx):
         # Anti-cache para forzar al navegador a recargar diseño actualizado
         from flask import make_response
         # Cargar imágenes activas del carrusel desde BD (retiros_carousel)
+        # FIX 2026-05-16: el template espera img.src (no archivo_path).
+        # Cargamos cloudinary_url y archivo_path, y construimos .src priorizando
+        # Cloudinary (URL persistente). Si solo hay archivo_path, asumimos
+        # filesystem en /static/uploads/retiros/ donde lo guarda el admin.
         try:
             carousel_rows = mysql_fetchall(
-                "SELECT archivo_path, titulo, subtitulo FROM retiros_carousel "
+                "SELECT id, archivo_path, cloudinary_url, titulo, subtitulo "
+                "FROM retiros_carousel "
                 "WHERE activa=1 ORDER BY orden ASC, id ASC"
             )
-            carousel_images = [dict(r) for r in (carousel_rows or [])]
-        except Exception:
+            carousel_images = []
+            for r in (carousel_rows or []):
+                d = dict(r)
+                # Construir URL final: Cloudinary primero (persistente)
+                cld = (d.get("cloudinary_url") or "").strip()
+                path = (d.get("archivo_path") or "").strip()
+                if cld:
+                    d["src"] = cld
+                elif path:
+                    # archivo_path puede venir como "retiros/abc.jpg" o "abc.jpg"
+                    if path.startswith("http"):
+                        d["src"] = path
+                    elif path.startswith("/static/"):
+                        d["src"] = path
+                    elif path.startswith("static/"):
+                        d["src"] = "/" + path
+                    else:
+                        d["src"] = "/static/uploads/retiros/" + path.lstrip("/")
+                else:
+                    d["src"] = ""
+                if d["src"]:
+                    carousel_images.append(d)
+        except Exception as e_car:
+            print(f"[pickup_public_request] carrusel error: {e_car}", flush=True)
             carousel_images = []
         # Cargar avisos vigentes (retiros_announcements)
         try:

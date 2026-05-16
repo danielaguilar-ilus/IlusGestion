@@ -822,7 +822,8 @@ body {
   border: 1px solid rgba(255,255,255,.11);
   border-radius: 9px;
   color: #fff;
-  padding: 13px 44px 13px 42px;
+  /* Padding-right amplio (52px) para dejar espacio al ícono Chrome y al .lf-eye */
+  padding: 13px 56px 13px 42px;
   font-size: .97rem;
   font-family: inherit;
   outline: none;
@@ -834,19 +835,43 @@ body {
   background: rgba(255,255,255,.09);
   box-shadow: 0 0 0 3px rgba(204,0,0,.18);
 }
+/* Anular auto-fill blanco/amarillo de Chrome que tapaba el botón ojo */
+.lf-input:-webkit-autofill,
+.lf-input:-webkit-autofill:hover,
+.lf-input:-webkit-autofill:focus,
+.lf-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px rgba(20,20,20,.95) inset !important;
+  -webkit-text-fill-color: #fff !important;
+  caret-color: #fff;
+  transition: background-color 9999s ease-in-out 0s;
+}
 .lf-eye {
   position: absolute;
   right: 12px;
-  background: transparent;
+  top: 50%;
+  transform: translateY(-50%);
+  /* z-index alto para quedar SOBRE el ícono interno del browser (Chrome/Edge) */
+  z-index: 5;
+  background: rgba(20, 20, 20, .85);
   border: none;
-  color: rgba(255,255,255,.28);
-  font-size: 1rem;
+  color: rgba(255,255,255,.55);
+  font-size: 1.05rem;
   cursor: pointer;
-  padding: 4px;
+  /* Área de touch generosa (≥36×36 → cómodo en mobile) */
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  transition: color .15s;
+  transition: color .15s, background .15s;
 }
-.lf-eye:hover { color: rgba(255,255,255,.7); }
+.lf-eye:hover, .lf-eye:focus {
+  color: #fff;
+  background: rgba(40, 40, 40, .95);
+  outline: none;
+}
 
 /* Botón login */
 .btn-login {
