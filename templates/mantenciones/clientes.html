@@ -186,6 +186,176 @@
   .cli-list-row{grid-template-columns:50px 1fr 80px 30px}
   .cli-list-row > *:nth-child(n+5):not(:last-child){display:none}
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   FASE 2026-05-16 — Cards de cliente v2 (estilo hero por referencia)
+   3 cols × 2 filas en pantalla wide. Footer sticky bottom.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Wrapper: dejar espacio al footer fixed */
+#clientGrid{ margin-bottom: 80px; }
+
+/* Card principal */
+.client-card-v2{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  cursor:pointer;overflow:hidden;height:100%;
+  display:flex;flex-direction:column;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1),
+             box-shadow .18s, border-color .18s;
+  position:relative;
+}
+.client-card-v2:hover{
+  transform:translateY(-3px);
+  box-shadow:0 14px 32px rgba(0,0,0,.10), 0 4px 10px rgba(0,0,0,.04);
+  border-color:transparent;
+}
+
+/* Línea de color superior (acento personalizado por cliente) */
+.cc2-top-bar{
+  height:5px;
+  background:linear-gradient(90deg, var(--hdr-c) 0%, var(--hdr-c) 70%, var(--hdr-c)cc 100%);
+}
+
+/* Header: icono + nombre + banner */
+.cc2-header{
+  display:flex;align-items:stretch;gap:14px;padding:14px 18px 12px;
+}
+.cc2-header-left{ flex:1;min-width:0;display:flex;align-items:flex-start;gap:12px; }
+.cc2-icon-box{
+  width:42px;height:42px;border-radius:9px;flex-shrink:0;
+  background:rgba(243,244,246,1);
+  color:var(--hdr-c);
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.15rem;
+}
+.cc2-title-wrap{flex:1;min-width:0;padding-top:1px}
+.cc2-name{
+  font-weight:800;color:#0f172a;font-size:1.05rem;line-height:1.22;
+  letter-spacing:-.01em;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+}
+.cc2-badge{
+  display:inline-flex;align-items:center;font-weight:700;font-size:.6rem;
+  padding:3px 9px;border-radius:50px;letter-spacing:.5px;
+  text-transform:uppercase;flex-shrink:0;
+}
+
+/* Banner imagen al lado derecho del header */
+.cc2-banner{
+  width:90px;height:60px;border-radius:8px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+
+/* Info contacto (ubicación, tel, email) */
+.cc2-contact-info{
+  padding:0 18px 12px;display:flex;flex-direction:column;gap:5px;
+  font-size:.78rem;color:#475569;
+}
+.cc2-ci-row{display:flex;align-items:center;gap:7px;min-width:0}
+.cc2-ci-row i{color:#94a3b8;flex-shrink:0;font-size:.85rem}
+.cc2-ci-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* KPIs (filas de 4) */
+.cc2-kpi-row{
+  display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;
+  padding:10px 18px;border-top:1px solid #f3f4f6;
+}
+.cc2-kpi-row-2{border-top:1px solid #f3f4f6}
+.cc2-kpi{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cc2-kpi-lbl{
+  font-size:.6rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.4px;color:#9ca3af;line-height:1.1;
+}
+.cc2-kpi-val{
+  font-size:.82rem;color:#0f172a;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cc2-kpi-val strong{font-weight:700}
+.cc2-pct-bar{
+  height:3px;background:#f3f4f6;border-radius:2px;overflow:hidden;margin-top:3px;
+}
+.cc2-pct-fill{height:100%;border-radius:2px;transition:width .3s}
+
+/* Pill texto para estado contrato */
+.cpill-text{font-weight:700}
+.cpill-text-vigente{color:#16a34a}
+.cpill-text-por_vencer{color:#d97706}
+.cpill-text-vencido{color:#dc2626}
+.cpill-text-indefinido{color:#3b82f6}
+.cpill-text-sin_contrato{color:#9ca3af}
+
+/* Alert sin contrato */
+.cc2-alert{
+  display:flex;gap:10px;align-items:flex-start;
+  background:#fff8e1;border-left:3px solid #f59e0b;
+  padding:10px 14px;margin:0 18px 10px;border-radius:6px;
+  font-size:.78rem;color:#78350f;
+}
+.cc2-alert i{font-size:1rem;color:#f59e0b;flex-shrink:0;margin-top:1px}
+
+/* Footer card: contacto principal + flecha */
+.cc2-footer{
+  margin-top:auto;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 18px 14px;border-top:1px solid #f3f4f6;
+}
+.cc2-contact-main{
+  display:flex;align-items:center;gap:10px;flex:1;min-width:0;
+}
+.cc2-contact-main > i{
+  font-size:1.25rem;color:#94a3b8;flex-shrink:0;
+}
+.cc2-contact-lbl{
+  font-size:.58rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.5px;color:#9ca3af;line-height:1;
+}
+.cc2-contact-name{
+  font-size:.85rem;font-weight:700;color:#0f172a;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  margin-top:1px;
+}
+.cc2-arrow-btn{
+  width:42px;height:42px;border-radius:10px;
+  background:transparent;display:flex;align-items:center;justify-content:center;
+  font-size:1.1rem;flex-shrink:0;cursor:pointer;
+  transition:all .15s;
+}
+.cc2-arrow-btn:hover{transform:translateX(3px);filter:brightness(1.1)}
+
+/* ═══════════════════════════════════════════════════════════════
+   FOOTER FIJO — paginación siempre visible abajo
+   ═══════════════════════════════════════════════════════════════ */
+.cli-footer{
+  position:fixed;
+  bottom:0;left:0;right:0;
+  /* Respetar el sidebar (250px) y safe-area-inset-bottom para iPhones */
+  margin-left:var(--sidebar-w, 250px);
+  background:#fff;border-top:1px solid #e5e7eb;border-radius:0;
+  padding:10px 22px;margin-top:0;
+  box-shadow:0 -2px 10px rgba(0,0,0,.06);
+  z-index:1000;
+}
+@media (max-width: 991px){
+  .cli-footer{margin-left:0}
+}
+
+/* En mobile, el footer puede apilarse vertical */
+@media (max-width: 575px){
+  .cli-footer{flex-direction:column;gap:8px;padding:10px 14px}
+}
+
+/* Responsive grid: solo 1 columna en sm, 2 en md, 3 en lg+ */
+@media (max-width: 991px){
+  .cc2-kpi-row{grid-template-columns:repeat(2,1fr);row-gap:10px}
+}
+@media (max-width: 575px){
+  .cc2-header{padding:12px 14px 10px}
+  .cc2-banner{width:60px;height:50px}
+  .cc2-name{font-size:.95rem}
+  .cc2-kpi-row{padding:8px 14px}
+  .cc2-footer{padding:10px 14px 12px}
+}
 </style>
 
 {# ── HEADER NEGRO ESTANDARIZADO ───────────────────────────────────── #}
@@ -796,79 +966,169 @@ function aplicarKpiFiltro(tipo) {
   {%- elif c.completaje >= 50 -%}{%- set pcol='#d97706' -%}
   {%- else -%}{%- set pcol='#dc2626' -%}{%- endif -%}
 
-  <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2 card-wrapper"
+  {# Paleta de colores para el header de la card. Rotativa por c.id % 8.
+     Orden: rosa, rojo, ámbar, violeta, azul, cyan, esmeralda, naranja. #}
+  {% set _hdr_colors = ['#ec4899', '#dc2626', '#f59e0b', '#8b5cf6',
+                        '#3b82f6', '#06b6d4', '#10b981', '#f97316'] %}
+  {% set _hdr_color = _hdr_colors[c.id % 8] %}
+
+  <div class="col-12 col-md-6 col-lg-4 card-wrapper"
        data-estado="{{ c.estado }}"
        data-contrato="{{ c.contrato_estado }}"
        data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"
        data-search="{{ (c.razon_social ~ ' ' ~ (c.rut or '') ~ ' ' ~ (c.contacto_email or '') ~ ' ' ~ (c.comuna or '') ~ ' ' ~ (c.ciudad or ''))|lower }}">
 
-    <div class="client-card d-flex flex-column"
+    <div class="client-card-v2"
+         style="--hdr-c: {{ _hdr_color }}"
          onclick="window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
 
-      {# ── Avatar + nombre GRANDE + badge ──────────────────── #}
-      <div class="d-flex align-items-start gap-2 mb-2">
-        <div class="cc-avatar av-{{ c.id % 6 }}">
-          <i class="bi bi-building"></i>
+      {# ── Top: línea de color + Header con icono cuadrado + nombre + banner ── #}
+      <div class="cc2-top-bar"></div>
+
+      <div class="cc2-header">
+        <div class="cc2-header-left">
+          <div class="cc2-icon-box">
+            <i class="bi bi-building"></i>
+          </div>
+          <div class="cc2-title-wrap">
+            <div class="cc2-name" title="{{ c.razon_social }}">
+              {{ c.razon_social }}
+              <span class="cc2-badge {{ bcls }}">
+                {% if c.badge == 'advertencia' %}<i class="bi bi-exclamation-triangle-fill me-1"></i>{% endif %}
+                {{ btxt }}
+              </span>
+            </div>
+          </div>
         </div>
-        <div style="flex:1;min-width:0">
-          <div class="cc-name" title="{{ c.razon_social }}">{{ c.razon_social }}</div>
-          <div class="cc-rut">{{ c.rut or '—' }}</div>
-          {% if c.comuna %}
-          <div class="cc-loc"><i class="bi bi-geo-alt me-1"></i>{{ c.comuna }}{% if c.ciudad and c.ciudad != c.comuna %}, {{ c.ciudad }}{% endif %}</div>
-          {% endif %}
+        {# Banner image: si hay foto del cliente, mostrarla. Sino, placeholder con gradient. #}
+        <div class="cc2-banner" style="background: linear-gradient(135deg, {{ _hdr_color }}, {{ _hdr_color }}aa)">
+          <i class="bi bi-building" style="font-size:2rem;color:rgba(255,255,255,.5)"></i>
         </div>
-        <span class="bx {{ bcls }}">
-          {% if c.badge == 'advertencia' %}<i class="bi bi-exclamation-triangle-fill"></i>{% endif %}
-          {{ btxt }}
-        </span>
       </div>
 
-      {# ── Stats grid (4 mini en bloque compacto) ─────────────── #}
-      <div class="cc-stats">
-        <div class="cc-stat">
-          <span class="cc-slbl"><i class="bi bi-file-earmark-text me-1"></i>Contrato</span>
-          <span class="cpill cpill-{{ c.contrato_estado }} mt-1">{{ ctxt }}</span>
+      {# ── Info de contacto: ubicación + teléfono + email ── #}
+      <div class="cc2-contact-info">
+        {% if c.comuna %}
+        <div class="cc2-ci-row">
+          <i class="bi bi-geo-alt"></i>
+          <span>{{ c.comuna }}{% if c.ciudad and c.ciudad != c.comuna %}, {{ c.ciudad }}{% endif %}</span>
         </div>
-        <div class="cc-stat">
-          <span class="cc-slbl"><i class="bi bi-tools me-1"></i>Equipos</span>
-          {% if (c.maquinas_count or 0) > 0 %}
-            <span class="cc-sval">{{ c.maquinas_count }} <span class="cc-ssub" style="font-weight:500">activos</span></span>
-          {% else %}
-            <span class="cc-sval" style="color:#9ca3af">—</span>
-          {% endif %}
+        {% endif %}
+        {% if c.contacto_tel %}
+        <div class="cc2-ci-row">
+          <i class="bi bi-telephone"></i>
+          <span>{{ c.contacto_tel }}</span>
         </div>
-        <div class="cc-stat">
-          <span class="cc-slbl"><i class="bi bi-calendar-event me-1"></i>Próx. visita</span>
-          {% if c.prox_visita %}
-            <span class="cc-sval">{{ c.prox_visita.strftime('%d/%m') }} <span class="cc-ssub" style="font-weight:500">+{{ c.prox_visita_dias }}d</span></span>
-          {% else %}
-            <span class="cc-sval" style="color:#9ca3af">—</span>
-          {% endif %}
+        {% endif %}
+        {% if c.contacto_email %}
+        <div class="cc2-ci-row">
+          <i class="bi bi-envelope"></i>
+          <span class="text-truncate">{{ c.contacto_email }}</span>
         </div>
-        <div class="cc-stat">
-          <span class="cc-slbl"><i class="bi bi-speedometer2 me-1"></i>Completaje</span>
-          <span class="cc-sval" style="color:{{ pcol }}">{{ c.completaje }}%</span>
-          <div class="pct-bar">
-            <div class="pct-fill" style="width:{{ c.completaje }}%;background:{{ pcol }}"></div>
+        {% endif %}
+      </div>
+
+      {# ── Fila 1 de KPIs: Contrato · Equipos · Próx visita · Completaje ── #}
+      <div class="cc2-kpi-row">
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">CONTRATO</div>
+          <div class="cc2-kpi-val cpill-text cpill-text-{{ c.contrato_estado }}">{{ ctxt }}</div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">EQUIPOS</div>
+          <div class="cc2-kpi-val">
+            {% if (c.maquinas_count or 0) > 0 %}
+              <strong>{{ c.maquinas_count }}</strong> <span style="font-weight:500;color:#6b7280;font-size:.7rem">activos</span>
+            {% else %}<span style="color:#9ca3af">—</span>{% endif %}
+          </div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">PRÓX. VISITA</div>
+          <div class="cc2-kpi-val">
+            {% if c.prox_visita %}
+              <strong>{{ c.prox_visita.strftime('%d/%m/%Y') }}</strong>
+            {% else %}
+              <span style="color:#9ca3af">Sin visitas</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">COMPLETAJE</div>
+          <div class="cc2-kpi-val" style="color:{{ pcol }}"><strong>{{ c.completaje }}%</strong></div>
+          <div class="cc2-pct-bar"><div class="cc2-pct-fill" style="width:{{ c.completaje }}%;background:{{ pcol }}"></div></div>
+        </div>
+      </div>
+
+      {# ── Fila 2 de KPIs: Tipo contrato · Inicio · Término · Valor mensual ── #}
+      <div class="cc2-kpi-row cc2-kpi-row-2">
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">TIPO DE CONTRATO</div>
+          <div class="cc2-kpi-val">
+            {% if c.contrato_tipo %}
+              <strong>{{ c.contrato_tipo|capitalize }}</strong>
+            {% elif c.contrato_estado == 'indefinido' %}
+              <strong>Indefinido</strong>
+            {% else %}
+              <span style="color:#9ca3af">—</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">INICIO</div>
+          <div class="cc2-kpi-val">
+            {% if c.contrato_inicio %}
+              <strong>{{ c.contrato_inicio.strftime('%d/%m/%Y') }}</strong>
+            {% else %}<span style="color:#9ca3af">—</span>{% endif %}
+          </div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">TÉRMINO</div>
+          <div class="cc2-kpi-val">
+            {% if c.contrato_vencimiento %}
+              <strong>{{ c.contrato_vencimiento.strftime('%d/%m/%Y') }}</strong>
+            {% else %}<span style="color:#9ca3af">—</span>{% endif %}
+          </div>
+        </div>
+        <div class="cc2-kpi">
+          <div class="cc2-kpi-lbl">VALOR MENSUAL</div>
+          <div class="cc2-kpi-val" style="color:#16a34a">
+            {% if c.contrato_monto and c.contrato_monto > 0 %}
+              <strong>${{ "{:,.0f}".format(c.contrato_monto).replace(",", ".") }}</strong>
+            {% else %}<span style="color:#9ca3af">—</span>{% endif %}
           </div>
         </div>
       </div>
 
-      {# ── Contacto compacto al pie ────── #}
-      <div class="cc-contact">
-        {% if c.contacto_nombre %}
-          <i class="bi bi-person"></i>
-          <span class="text-truncate">{{ c.contacto_nombre }}{% if c.contacto_tel %} · {{ c.contacto_tel }}{% endif %}</span>
-        {% elif c.contacto_email %}
-          <i class="bi bi-envelope"></i>
-          <span class="text-truncate">{{ c.contacto_email }}</span>
-        {% else %}
-          <i class="bi bi-info-circle"></i>
-          <span class="text-muted fst-italic">Sin contacto</span>
-        {% endif %}
+      {# ── Banner alerta si sin contrato ── #}
+      {% if c.contrato_estado == 'sin_contrato' %}
+      <div class="cc2-alert">
+        <i class="bi bi-info-circle"></i>
+        <div>
+          <strong>No cuenta con contrato activo</strong><br>
+          <span class="small">Este cliente aún no tiene un contrato vigente.</span>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ── Footer: contacto principal + flecha ── #}
+      <div class="cc2-footer">
+        <div class="cc2-contact-main">
+          <i class="bi bi-person-circle"></i>
+          <div>
+            <div class="cc2-contact-lbl">CONTACTO PRINCIPAL</div>
+            <div class="cc2-contact-name">
+              {{ c.contacto_nombre or 'Sin contacto' }}
+            </div>
+          </div>
+        </div>
+        <button class="cc2-arrow-btn" type="button"
+                style="background:{{ _hdr_color }}11;color:{{ _hdr_color }};border:1.5px solid {{ _hdr_color }}33"
+                onclick="event.stopPropagation();window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
+          <i class="bi bi-arrow-right"></i>
+        </button>
       </div>
 
-    </div><!-- /client-card -->
+    </div><!-- /client-card-v2 -->
   </div><!-- /card-wrapper -->
   {% endfor %}
 </div><!-- /clientGrid -->

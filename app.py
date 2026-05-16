@@ -16202,12 +16202,17 @@ def mant_clientes():
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
     # Resultado: pasa de ~1500 queries lógicas con 300 clientes a ~5 queries totales.
+    # FASE 2026-05-16: c_latest ampliado con tipo, fecha_inicio y monto_mensual
+    # para mostrar más detalle en las cards del listado (estilo Fracttal).
     rows = mysql_fetchall(f"""
         SELECT c.*,
                COALESCE(m_agg.cnt, 0)       AS maquinas_count,
                COALESCE(c_agg.cnt, 0)       AS contratos_count,
                c_latest.estado              AS contrato_estado,
+               c_latest.tipo                AS contrato_tipo,
+               c_latest.fecha_inicio        AS contrato_inicio,
                c_latest.fecha_vencimiento   AS contrato_vencimiento,
+               c_latest.monto_mensual       AS contrato_monto,
                v_next.fecha_programada      AS prox_visita
         FROM mant_clientes c
         LEFT JOIN (
@@ -16219,7 +16224,8 @@ def mant_clientes():
             FROM mant_contratos GROUP BY cliente_id
         ) c_agg ON c_agg.cliente_id = c.id
         LEFT JOIN (
-            SELECT ct.cliente_id, ct.estado, ct.fecha_vencimiento
+            SELECT ct.cliente_id, ct.estado, ct.tipo, ct.fecha_inicio,
+                   ct.fecha_vencimiento, ct.monto_mensual
             FROM mant_contratos ct
             INNER JOIN (
                 SELECT cliente_id, MAX(id) AS max_id
@@ -16249,7 +16255,7 @@ def mant_clientes():
     today_d = datetime.today().date()
     for c in clientes:
         # Normalizar fechas
-        for fld in ('contrato_vencimiento', 'prox_visita'):
+        for fld in ('contrato_inicio', 'contrato_vencimiento', 'prox_visita'):
             if c.get(fld) and isinstance(c[fld], datetime):
                 c[fld] = c[fld].date()
         c['prox_visita_dias'] = (c['prox_visita'] - today_d).days if c.get('prox_visita') else None
