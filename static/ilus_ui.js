@@ -116,11 +116,13 @@
     question:{ icon:'bi-question-circle-fill', color:'#dc2626', bg:'rgba(220,38,38,.18)' },
   };
 
-  function buildModal({title, message, sub, type, buttons}){
+  function buildModal({title, message, sub, type, buttons, subHtml, messageHtml}){
     ensureStyles();
     const cfg = TYPE_CFG[type] || TYPE_CFG.info;
     const overlay = document.createElement('div');
     overlay.className = 'ilus-overlay';
+    // sub/message admiten HTML opcional con las flags subHtml/messageHtml = true.
+    // ⚠ Solo pasar HTML literal seguro, NUNCA input del usuario sin sanitizar.
     overlay.innerHTML = `
       <div class="ilus-modal" role="dialog" aria-modal="true">
         <div class="ilus-modal-head">
@@ -130,8 +132,8 @@
           <h6>${escapeHtml(title || '')}</h6>
         </div>
         <div class="ilus-modal-body">
-          <div>${escapeHtml(message || '')}</div>
-          ${sub ? `<div class="ilus-msg-sub">${escapeHtml(sub)}</div>` : ''}
+          <div>${messageHtml ? (message || '') : escapeHtml(message || '')}</div>
+          ${sub ? `<div class="ilus-msg-sub">${subHtml ? sub : escapeHtml(sub)}</div>` : ''}
         </div>
         <div class="ilus-modal-foot">
           ${buttons.map((b,i) =>
@@ -160,11 +162,13 @@
       title='Confirmar acción', message='¿Estás seguro?', sub='',
       okLabel='Aceptar', cancelLabel='Cancelar',
       danger=false, type=null,
+      subHtml=false, messageHtml=false,
     } = opts;
     return new Promise(resolve => {
       const finalType = type || (danger ? 'danger' : 'question');
       const overlay = buildModal({
         title, message, sub, type: finalType,
+        subHtml, messageHtml,
         buttons: [
           { label: cancelLabel, style:'secondary' },
           { label: okLabel, style: danger ? 'danger' : 'primary' },
@@ -198,10 +202,12 @@
     const {
       title='Atención', message='', sub='',
       okLabel='Aceptar', type='info',
+      subHtml=false, messageHtml=false,
     } = (typeof opts === 'string' ? {message: opts} : opts);
     return new Promise(resolve => {
       const overlay = buildModal({
         title, message, sub, type,
+        subHtml, messageHtml,
         buttons: [{ label: okLabel, style: 'primary' }]
       });
       const close_ = () => close(overlay, true, resolve);
@@ -260,6 +266,9 @@
       const inputHtml = multiline
         ? `<textarea class="ilus-prompt-input" rows="4" placeholder="${escapeHtml(placeholder)}">${escapeHtml(defaultValue)}</textarea>`
         : `<input type="${escapeHtml(inputType)}" class="ilus-prompt-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}">`;
+      // sub permite HTML opcional con la flag `subHtml: true` (cuidado: NO
+      // pasar input del usuario sin sanitizar — solo strings literales seguros).
+      const subHtml = opts.subHtml === true;
       overlay.innerHTML = `
         <div class="ilus-modal" role="dialog" aria-modal="true">
           <div class="ilus-modal-head">
@@ -271,7 +280,7 @@
           <div class="ilus-modal-body">
             ${message ? `<div style="margin-bottom:10px">${escapeHtml(message)}</div>` : ''}
             ${inputHtml}
-            ${sub ? `<div class="ilus-msg-sub">${escapeHtml(sub)}</div>` : ''}
+            ${sub ? `<div class="ilus-msg-sub">${subHtml ? sub : escapeHtml(sub)}</div>` : ''}
           </div>
           <div class="ilus-modal-foot">
             <button class="ilus-btn ilus-btn-secondary" data-idx="0">${escapeHtml(cancelLabel)}</button>

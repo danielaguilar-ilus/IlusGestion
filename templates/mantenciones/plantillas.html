@@ -305,8 +305,14 @@ function agregarItem(){
   }, 50);
 }
 
-function eliminarItem(idx){
-  if (!confirm('¿Eliminar este item?')) return;
+async function eliminarItem(idx){
+  const ok = await ilusConfirm({
+    title: 'Eliminar item',
+    message: '¿Quitar este item de la plantilla?',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
   _items.splice(idx, 1);
   renderItems();
 }
@@ -415,9 +421,19 @@ function renderItems(){
 
 async function guardarPlantilla(){
   const nombre = document.getElementById('ePNombre').value.trim();
-  if (!nombre){ alert('Debes ingresar un nombre'); return; }
+  if (!nombre){
+    await ilusAlert({ title:'Falta nombre', message:'Debes ingresar un nombre para la plantilla.', type:'warning' });
+    return;
+  }
   if (!_items.length){
-    if (!confirm('No has agregado ningún item. ¿Guardar plantilla vacía?')) return;
+    const ok = await ilusConfirm({
+      title: 'Plantilla sin items',
+      message: 'No has agregado ningún item al checklist.',
+      sub: '¿Guardar plantilla vacía igual?',
+      okLabel: 'Guardar vacía', cancelLabel: 'Volver a editar',
+      type: 'warning',
+    });
+    if (!ok) return;
   }
   // Validar items
   for (let i=0; i<_items.length; i++){
@@ -462,11 +478,21 @@ async function guardarPlantilla(){
 
 async function eliminarPlantilla(){
   if (!_editId) return;
-  if (!confirm('¿Eliminar esta plantilla?\n\nLas OTs ya creadas con sus tareas NO se ven afectadas.')) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar plantilla',
+    message: '¿Quitar esta plantilla del sistema?',
+    sub: 'Las OTs ya creadas con sus tareas NO se ven afectadas. Solo se deshabilita para nuevos usos.',
+    okLabel: 'Eliminar plantilla', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`/mantenciones/api/plantillas/${_editId}`, {method:'DELETE'});
     const d = await r.json();
-    if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
+    if (!d.ok){
+      await ilusAlert({ title:'Error', message: d.error || 'No se pudo eliminar', type:'error' });
+      return;
+    }
     if (_modal) _modal.hide();
     if (d.desactivada){
       if (typeof ilusToast === 'function') ilusToast('Plantilla del sistema desactivada', {type:'warning'});

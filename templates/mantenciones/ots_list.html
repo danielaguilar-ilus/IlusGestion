@@ -421,47 +421,59 @@ async function guardarEdicionOT() {
     });
     const d = await r.json();
     if (!r.ok || !d.ok) {
-      alert('Error al guardar: ' + (d.error || 'desconocido'));
+      ilusToast('Error al guardar: ' + (d.error || 'desconocido'), { type: 'error' });
       return;
     }
     if (_modalEditOT) _modalEditOT.hide();
-    if (typeof ilusToast === 'function') {
-      ilusToast('✓ OT actualizada' + (d.warning ? '. ' + d.warning : ''),
-                { type: d.warning ? 'warning' : 'success' });
-    }
+    ilusToast('✓ OT actualizada' + (d.warning ? '. ' + d.warning : ''),
+              { type: d.warning ? 'warning' : 'success' });
     setTimeout(() => location.reload(), 800);
   } catch (e) {
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, { type: 'error' });
   }
 }
 
 async function eliminarOTRapido(otId, numeroOt) {
-  const ok = confirm(
-    `¿Eliminar la OT ${numeroOt}?\n\n` +
-    `Esta acción es IRREVERSIBLE — la OT y todas sus tareas, fotos, ` +
-    `repuestos y firmas se borrarán.\n\n` +
-    `Solo continúa si estás absolutamente seguro.`
-  );
+  // Confirmación inicial con modal ILUS (no confirm() nativo)
+  const ok = await ilusConfirm({
+    title: `¿Eliminar la OT ${numeroOt}?`,
+    message: 'Esta acción es IRREVERSIBLE.',
+    sub: 'La OT y todas sus tareas, fotos, repuestos y firmas se borrarán. Solo continúa si estás absolutamente seguro.',
+    okLabel: 'Sí, continuar',
+    cancelLabel: 'Cancelar',
+    danger: true,
+  });
   if (!ok) return;
-  // Doble confirmación con typing
-  const confirm2 = prompt(`Para confirmar, escribe el número de OT exactamente: ${numeroOt}`);
+
+  // Doble confirmación: que escriba el N° OT exacto (anti-error)
+  const confirm2 = await ilusPrompt({
+    title: 'Confirmar eliminación',
+    message: `Para confirmar, escribe el número de OT exactamente:`,
+    sub: `<strong style="color:#dc2626;font-family:monospace;font-size:.95rem">${numeroOt}</strong>`,
+    subHtml: true,
+    placeholder: numeroOt,
+    okLabel: 'Eliminar definitivamente',
+    cancelLabel: 'Cancelar',
+    type: 'danger',
+  });
   if (confirm2 !== numeroOt) {
-    alert('Texto no coincide. Cancelado.');
+    if (confirm2 !== null) {
+      ilusToast('El número no coincide. Eliminación cancelada.', { type: 'warning' });
+    }
     return;
   }
+
   try {
     const r = await fetch(`/mantenciones/api/visitas/${otId}`, { method: 'DELETE' });
     const d = await r.json();
     if (!r.ok || !d.ok) {
-      alert('Error al eliminar: ' + (d.error || 'desconocido'));
+      ilusToast('Error al eliminar: ' + (d.error || 'desconocido'), { type: 'error' });
       return;
     }
-    if (typeof ilusToast === 'function') {
-      ilusToast(`✓ OT ${numeroOt} eliminada`, { type: 'success' });
-    }
+    ilusToast(`✓ OT ${numeroOt} eliminada`, { type: 'success' });
     setTimeout(() => location.reload(), 800);
   } catch (e) {
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, { type: 'error' });
   }
 }
 </script>
