@@ -27125,94 +27125,155 @@ def mant_lev_crear_o_listar(cid):
             "levantamiento_id": abierto["id"],
         }), 409
 
+    # ─── Datos básicos ────────────────────────────────────────────
     titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
-    tecnico = (data.get("tecnico") or current_username() or "").strip()[:190]
     notas = (data.get("notas") or "").strip()
-    equipo_ids = data.get("equipo_ids") or []  # lista opcional de máquinas a incluir
+    equipo_ids = data.get("equipo_ids") or []
+    if not equipo_ids:
+        return jsonify({
+            "ok": False,
+            "error": "Debes seleccionar al menos 1 equipo para el levantamiento.",
+            "error_codigo": "SIN_EQUIPOS",
+        }), 400
 
-    # tecnico_id opcional (técnico de la tabla mant_tecnicos asignado a la OT)
-    tecnico_id = data.get("tecnico_id")
-    try:
-        tecnico_id = int(tecnico_id) if tecnico_id else None
-    except Exception:
-        tecnico_id = None
+    # ─── Fecha y hora programadas (FASE 2026-05-16) ───────────────
+    # fecha_programada: YYYY-MM-DD (default: hoy)
+    # hora_inicio:      HH:MM (opcional)
+    # hora_fin:         HH:MM (opcional)
+    # fecha_fin:        YYYY-MM-DD (opcional, si dura varios días)
+    fecha_prog = (data.get("fecha_programada") or "").strip()[:10]
+    if not fecha_prog:
+        fecha_prog = _now_chile_str('%Y-%m-%d')
+    hora_ini = (data.get("hora_inicio") or "").strip()[:5] or None
+    hora_fin = (data.get("hora_fin") or "").strip()[:5] or None
+    fecha_fin = (data.get("fecha_fin") or "").strip()[:10] or None
+
+    # ─── Multi-técnico ────────────────────────────────────────────
+    # tecnico_ids: lista de IDs de app_users con rol=tecnico (preferido)
+    # Compat: tecnico_id (singular) → se convierte a lista [tecnico_id]
+    tecnico_ids = data.get("tecnico_ids") or []
+    if not tecnico_ids and data.get("tecnico_id"):
+        tecnico_ids = [data.get("tecnico_id")]
+    # Sanear: solo enteros válidos
+    tecnico_ids_clean = []
+    for tid in tecnico_ids:
+        try: tecnico_ids_clean.append(int(tid))
+        except Exception: pass
+    tecnico_ids = tecnico_ids_clean
+    # Técnico principal (primero de la lista) — para la columna legacy mant_visitas.tecnico_user_id
+    tecnico_principal = tecnico_ids[0] if tecnico_ids else None
+    # Resolver nombre del técnico principal (para mant_levantamientos.tecnico VARCHAR)
+    tecnico_nombre = ""
+    if tecnico_principal:
+        u = mysql_fetchone(
+            "SELECT COALESCE(nombre, username) AS nm FROM app_users WHERE id=%s",
+            (tecnico_principal,)
+        )
+        if u: tecnico_nombre = u["nm"]
+    if not tecnico_nombre:
+        tecnico_nombre = current_username() or ""
 
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO mant_levantamientos "
-                "(cliente_id, tecnico, tecnico_id, titulo, notas, estado, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,'en_curso',%s)",
-                (cid, tecnico, tecnico_id, titulo, notas, current_username() or 'sistema')
+                "(cliente_id, tecnico, titulo, notas, estado, created_by) "
+                "VALUES (%s,%s,%s,%s,'en_curso',%s)",
+                (cid, tecnico_nombre[:190], titulo, notas,
+                 current_username() or 'sistema')
             )
             lev_id = cur.lastrowid
 
-            # Si vienen máquinas pre-seleccionadas, crear items
+            # ─── Items del levantamiento (1 por equipo) ────────────
+            ph = ",".join(["%s"] * len(equipo_ids))
+            cur.execute(
+                f"SELECT id, nombre, sku, serie, doc_fecha FROM mant_maquinas "
+                f"WHERE id IN ({ph}) AND cliente_id=%s",
+                tuple(list(equipo_ids) + [cid])
+            )
+            maquinas = cur.fetchall() or []
             n_items = 0
-            maquinas = []
-            if equipo_ids:
-                ph = ",".join(["%s"] * len(equipo_ids))
+            for m in maquinas:
                 cur.execute(
-                    f"SELECT id, nombre, sku, serie, doc_fecha FROM mant_maquinas "
-                    f"WHERE id IN ({ph}) AND cliente_id=%s",
-                    tuple(list(equipo_ids) + [cid])
+                    "INSERT INTO mant_levantamiento_items "
+                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                    " fecha_documento) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"),
+                     m.get("doc_fecha"))
                 )
-                maquinas = cur.fetchall() or []
-                for m in maquinas:
-                    cur.execute(
-                        "INSERT INTO mant_levantamiento_items "
-                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                        " fecha_documento) "
-                        "VALUES (%s,%s,%s,%s,%s,%s)",
-                        (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"),
-                         m.get("doc_fecha"))  # pre-llena con la fecha del doc de origen
-                    )
-                    n_items += 1
-                cur.execute(
-                    "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
-                    (n_items, lev_id)
-                )
+                n_items += 1
+            cur.execute(
+                "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
+                (n_items, lev_id)
+            )
 
             # ══════════════════════════════════════════════════════════
-            # CREAR OT (mant_visitas) ESPEJO + tareas (1 por equipo)
-            # Esto hace que el levantamiento aparezca en la lista de OTs
-            # del técnico asignado. Cuando el técnico la abra, verá un
-            # botón "Ejecutar levantamiento" que abre el modal de sesión.
+            # CREAR OT (mant_visitas) ESPEJO con fecha/hora/multi-técnico
             # ══════════════════════════════════════════════════════════
             try:
                 numero_ot = _next_ot_number()
             except Exception:
-                # _next_ot_number puede no existir en algunos despliegues —
-                # generamos uno con timestamp como fallback
                 numero_ot = f"LEV-{int(time.time())}"
-
+            visita_id = None
             try:
-                # FASE 4 — OT espejo del levantamiento, con regla Fracttal:
-                # - tipo='levantamiento' (siempre)
-                # - modalidad_cobro='sin_costo' (regla: levantamiento NO genera cobro)
-                # - prioridad='media' por default
-                # El campo levantamiento_id permite navegar OT ↔ levantamiento.
                 cur.execute(
                     "INSERT INTO mant_visitas "
-                    "(numero_ot, cliente_id, titulo, fecha_programada, tipo, estado, "
-                    " modalidad_cobro, prioridad, "
-                    " descripcion, tecnico_id, levantamiento_id, created_by) "
-                    "VALUES (%s,%s,%s,CURDATE(),'levantamiento','programada',"
-                    " 'sin_costo','media',%s,%s,%s,%s)",
+                    "(numero_ot, cliente_id, titulo, fecha_programada, "
+                    " fecha_realizada, hora_inicio, hora_fin, "
+                    " tipo, estado, modalidad_cobro, prioridad, "
+                    " descripcion, tecnico_user_id, levantamiento_id, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,"
+                    " 'levantamiento','programada','sin_costo','media',"
+                    " %s,%s,%s,%s)",
                     (numero_ot, cid, f"[LEV] {titulo}"[:200],
-                     f"OT auto-generada desde levantamiento #{lev_id}. "
-                     f"{n_items} equipo(s) a documentar fotográficamente. "
-                     f"Sin costo (registro inicial del activo).",
-                     tecnico_id, lev_id, current_username())
+                     fecha_prog, fecha_fin, hora_ini, hora_fin,
+                     f"Levantamiento fotográfico de {n_items} equipo(s). "
+                     f"Sin costo (registro inicial). "
+                     f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
+                     tecnico_principal, lev_id, current_username())
                 )
                 visita_id = cur.lastrowid
                 cur.execute(
                     "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
                     (visita_id, lev_id)
                 )
-                # 1 tarea TIPO FOTO por equipo, obligatoria y requiere foto
-                # (modelo Fracttal: cada item del checklist tiene tipo de respuesta).
+
+                # ─── Multi-técnico: registrar TODOS en mant_visita_tecnicos ─
+                # Esto permite que cada técnico vea la OT en "Mis OTs" y
+                # que cualquiera de ellos pueda tomar equipos disponibles
+                # de forma colaborativa.
+                # NOTA: mant_visita_tecnicos.tecnico_id apunta a mant_tecnicos
+                # (legacy) NO a app_users. Por ahora insertamos best-effort
+                # buscando un mant_tecnicos.email que matchee el username de
+                # app_users. Si no hay match, se omite (el filtro por
+                # tecnico_user_id en mant_ots_list usa app_users directo).
+                if len(tecnico_ids) > 0:
+                    for tuid in tecnico_ids:
+                        u = mysql_fetchone(
+                            "SELECT username, COALESCE(nombre, username) AS nm "
+                            "FROM app_users WHERE id=%s AND role='tecnico'",
+                            (tuid,)
+                        )
+                        if not u: continue
+                        # Buscar match en mant_tecnicos por email
+                        t_legacy = mysql_fetchone(
+                            "SELECT id FROM mant_tecnicos "
+                            "WHERE LOWER(TRIM(email))=LOWER(TRIM(%s)) LIMIT 1",
+                            (u["username"],)
+                        )
+                        if t_legacy:
+                            try:
+                                cur.execute(
+                                    "INSERT IGNORE INTO mant_visita_tecnicos "
+                                    "(visita_id, tecnico_id, rol) VALUES (%s,%s,%s)",
+                                    (visita_id, t_legacy["id"],
+                                     'lider' if tuid == tecnico_principal else 'tecnico')
+                                )
+                            except Exception as _e_n: pass
+
+                # ─── 1 tarea TIPO FOTO por equipo (legacy fallback) ─
                 for idx, m in enumerate(maquinas, 1):
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
@@ -27230,15 +27291,95 @@ def mant_lev_crear_o_listar(cid):
                 visita_id = None
 
         conn.commit()
+
+        # ─── Aplicar plantilla "Levantamiento fotográfico estándar" ─
+        # POST-commit para no bloquear si falla. Busca por nombre exacto
+        # y aplica sus items a TODAS las máquinas del levantamiento.
+        items_plantilla = 0
+        if visita_id and equipo_ids:
+            try:
+                plant = mysql_fetchone(
+                    "SELECT id FROM mant_tarea_plantillas "
+                    "WHERE nombre='Levantamiento fotográfico estándar' "
+                    "  AND COALESCE(activa,1)=1 LIMIT 1"
+                )
+                if plant:
+                    # Reusar el endpoint interno mediante import de la lógica
+                    # (call directo a la BD para evitar el HTTP overhead)
+                    items_plant = mysql_fetchall(
+                        "SELECT * FROM mant_tarea_plantilla_items "
+                        "WHERE plantilla_id=%s ORDER BY orden, id",
+                        (plant["id"],)
+                    ) or []
+                    conn2 = get_mysql()
+                    try:
+                        with conn2.cursor() as cur2:
+                            cur2.execute(
+                                "SELECT COALESCE(MAX(orden),0) AS mx "
+                                "FROM mant_visita_tareas WHERE visita_id=%s",
+                                (visita_id,)
+                            )
+                            next_orden = int((cur2.fetchone() or {}).get("mx") or 0)
+                            for mq_id in equipo_ids:
+                                m_row = mysql_fetchone(
+                                    "SELECT nombre, serie FROM mant_maquinas WHERE id=%s",
+                                    (mq_id,)
+                                )
+                                m_nombre = m_row.get("nombre") if m_row else f"#{mq_id}"
+                                for it in items_plant:
+                                    next_orden += 1
+                                    titulo_t = it["titulo"]
+                                    sufijo = m_nombre
+                                    if m_row and m_row.get("serie"):
+                                        sufijo += f" (S/N: {m_row['serie']})"
+                                    titulo_full = f"{titulo_t} — {sufijo}"[:300]
+                                    cur2.execute(
+                                        "INSERT INTO mant_visita_tareas "
+                                        "(visita_id, orden, titulo, descripcion, tipo, "
+                                        " maquina_id, tipo_respuesta, obligatoria, "
+                                        " requiere_foto, unidad, rango_min, rango_max, "
+                                        " opciones_lista_json, estado_trabajo, created_by) "
+                                        "VALUES (%s,%s,%s,%s,'levantamiento',%s,%s,%s,%s,"
+                                        "        %s,%s,%s,%s,'pendiente',%s)",
+                                        (visita_id, next_orden, titulo_full,
+                                         it.get("descripcion"), mq_id,
+                                         it["tipo_respuesta"],
+                                         it.get("obligatoria") or 0,
+                                         it.get("requiere_foto") or 0,
+                                         it.get("unidad"), it.get("rango_min"),
+                                         it.get("rango_max"),
+                                         it.get("opciones_lista_json"),
+                                         current_username())
+                                    )
+                                    items_plantilla += 1
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+            except Exception as e_pl:
+                print(f"[lev_crear] aplicar plantilla falló: {e_pl}", flush=True)
+
         try: _mant_log("levantamiento", lev_id, "creado",
-                       f"{n_items} equipo(s) · OT #{visita_id or '—'} · {titulo}")
+                       f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
+                       f"{len(tecnico_ids)} técnico(s) · "
+                       f"{items_plantilla} items plantilla")
         except Exception: pass
+
         return jsonify({
             "ok": True,
             "id": lev_id,
             "n_items": n_items,
             "visita_id": visita_id,
             "numero_ot": numero_ot if visita_id else None,
+            "ot_url": f"/mantenciones/ot/{visita_id}" if visita_id else None,
+            "tecnicos_asignados": len(tecnico_ids),
+            "items_plantilla_aplicados": items_plantilla,
+            "mensaje": (
+                f"Levantamiento creado con {n_items} equipo(s) e items de plantilla "
+                f"aplicados ({items_plantilla} tareas). "
+                f"La OT quedó programada para {fecha_prog}"
+                + (f" {hora_ini}" if hora_ini else "")
+                + f" — número {numero_ot}."
+            ),
         })
     except Exception as e:
         try: conn.rollback()

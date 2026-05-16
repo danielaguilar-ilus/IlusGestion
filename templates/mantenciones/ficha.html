@@ -6552,7 +6552,10 @@ async function abrirLevantamientoFotografico(){
   abrirLevantamientoSelector();
 }
 
-function abrirLevantamientoSelector(){
+// Estado del modal de levantamiento (técnicos disponibles + seleccionados)
+const _LEV_MODAL = { tecnicos_disponibles: [], tecnicos_seleccionados: new Set() };
+
+async function abrirLevantamientoSelector(){
   const tbody = document.getElementById('levSelectTbody');
   if (!tbody) { ilusToast('Modal no inicializado', { type:'error' }); return; }
   // Cargar equipos desde la página actual (los que ya están renderizados en tab Equipos)
@@ -6572,18 +6575,86 @@ function abrirLevantamientoSelector(){
     const sku    = tr.dataset.sku || '';
     const serie  = tr.dataset.serie || '';
     return `<tr>
-      <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" checked></td>
+      <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" checked onchange="levRecalcEqCount()"></td>
       <td><strong>${escHtml(nombre)}</strong>${sku?`<div class="small text-muted">${escHtml(sku)}</div>`:''}</td>
       <td class="small text-muted">${escHtml(serie) || '—'}</td>
     </tr>`;
   }).join('');
   document.getElementById('levSelectTitulo').value = 'Levantamiento ' + new Date().toLocaleDateString('es-CL');
   document.getElementById('levSelectNotas').value = '';
+
+  // Default: fecha hoy
+  const hoy = new Date();
+  const yyyy = hoy.getFullYear();
+  const mm = String(hoy.getMonth()+1).padStart(2,'0');
+  const dd = String(hoy.getDate()).padStart(2,'0');
+  document.getElementById('levFechaProg').value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('levFechaFin').value = '';
+  document.getElementById('levRangoDias').checked = false;
+  document.getElementById('levFechaFinWrap').style.display = 'none';
+  document.getElementById('levHoraIni').value = '09:00';
+  document.getElementById('levHoraFin').value = '13:00';
+
+  // Reset técnicos seleccionados
+  _LEV_MODAL.tecnicos_seleccionados.clear();
+
+  // Recalcular contadores
+  levRecalcEqCount();
+  levRenderTecnicos();
+
   new bootstrap.Modal(document.getElementById('modalLevSelector')).show();
+
+  // Cargar técnicos asíncronamente
+  try {
+    const r = await fetch('/mantenciones/api/tecnicos');
+    const d = await r.json();
+    _LEV_MODAL.tecnicos_disponibles = Array.isArray(d) ? d : (d.tecnicos || []);
+    levRenderTecnicos();
+  } catch(e){
+    document.getElementById('levTecnicosBox').innerHTML =
+      '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
+  }
+}
+
+function levRenderTecnicos(){
+  const box = document.getElementById('levTecnicosBox');
+  if (!box) return;
+  const techs = _LEV_MODAL.tecnicos_disponibles || [];
+  if (!techs.length){
+    box.innerHTML = '<span class="text-muted small">No hay técnicos activos. <a href="/mantenciones/tecnicos" target="_blank">Crear uno →</a></span>';
+    document.getElementById('levTecCount').textContent = '0';
+    return;
+  }
+  box.innerHTML = techs.map(t => {
+    const isSelected = _LEV_MODAL.tecnicos_seleccionados.has(t.id);
+    const bg = isSelected ? 'background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border-color:#1e40af' : 'background:#fff;color:#0f172a;border-color:#cbd5e1';
+    const icon = isSelected ? 'bi-check-circle-fill' : 'bi-person';
+    return `<span class="badge rounded-pill border" style="cursor:pointer;padding:.45rem .8rem;font-size:.78rem;font-weight:500;${bg}"
+                  onclick="levToggleTecnico(${t.id})">
+              <i class="bi ${icon} me-1"></i>${escHtml(t.nombre || t.email || ('Téc #'+t.id))}
+            </span>`;
+  }).join('');
+  document.getElementById('levTecCount').textContent = String(_LEV_MODAL.tecnicos_seleccionados.size);
+}
+
+function levToggleTecnico(tid){
+  if (_LEV_MODAL.tecnicos_seleccionados.has(tid)){
+    _LEV_MODAL.tecnicos_seleccionados.delete(tid);
+  } else {
+    _LEV_MODAL.tecnicos_seleccionados.add(tid);
+  }
+  levRenderTecnicos();
+}
+
+function levRecalcEqCount(){
+  const n = document.querySelectorAll('.lev-eq-chk:checked').length;
+  const el = document.getElementById('levEqCount');
+  if (el) el.textContent = String(n);
 }
 
 function levToggleTodos(state){
   document.querySelectorAll('.lev-eq-chk').forEach(c => c.checked = state);
+  levRecalcEqCount();
 }
 
 async function levIniciar(){
@@ -6592,8 +6663,38 @@ async function levIniciar(){
     ilusToast('Seleccioná al menos un equipo', { type:'warning' });
     return;
   }
+
+  // Validaciones programación
+  const fechaProg = document.getElementById('levFechaProg').value;
+  if (!fechaProg){
+    ilusToast('Indicá la fecha programada', { type:'warning' });
+    return;
+  }
+  const horaIni = document.getElementById('levHoraIni').value || '';
+  const horaFin = document.getElementById('levHoraFin').value || '';
+  if (horaIni && horaFin && horaIni >= horaFin){
+    ilusToast('La hora de término debe ser posterior a la de inicio', { type:'warning' });
+    return;
+  }
+  const usaRango = document.getElementById('levRangoDias').checked;
+  let fechaFin = '';
+  if (usaRango){
+    fechaFin = document.getElementById('levFechaFin').value;
+    if (!fechaFin){
+      ilusToast('Indicá la fecha de término', { type:'warning' });
+      return;
+    }
+    if (fechaFin < fechaProg){
+      ilusToast('La fecha de término no puede ser anterior a la de inicio', { type:'warning' });
+      return;
+    }
+  }
+
+  // Multi-técnico (opcional pero recomendado)
+  const tecnicoIds = Array.from(_LEV_MODAL.tecnicos_seleccionados);
+
   const btn = document.getElementById('btnLevIniciar');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando…';
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
   try {
     const r = await fetch(`/mantenciones/api/clientes/${CID}/levantamientos`, {
       method: 'POST',
@@ -6602,6 +6703,11 @@ async function levIniciar(){
         titulo: document.getElementById('levSelectTitulo').value.trim(),
         notas:  document.getElementById('levSelectNotas').value.trim(),
         equipo_ids: ids,
+        fecha_programada: fechaProg,
+        hora_inicio: horaIni || null,
+        hora_fin: horaFin || null,
+        fecha_fin: usaRango ? fechaFin : null,
+        tecnico_ids: tecnicoIds,
       })
     });
     const d = await r.json();
@@ -6617,7 +6723,20 @@ async function levIniciar(){
     }
     _LEV.id = d.id;
     bootstrap.Modal.getInstance(document.getElementById('modalLevSelector'))?.hide();
-    ilusToast(`Levantamiento iniciado con ${d.n_items} equipo(s)`, { type:'success' });
+
+    // Mensaje rico de éxito con link a la OT generada
+    const otHtml = d.ot_url
+      ? `<a href="${d.ot_url}" class="fw-bold text-decoration-underline" style="color:#dc2626">${d.numero_ot}</a>`
+      : '';
+    ilusAlert({
+      title: '✅ Levantamiento creado',
+      message: `Se generó la OT ${otHtml} con ${d.n_items} equipo(s).`,
+      sub: `Plantilla "Levantamiento fotográfico estándar" aplicada: ${d.items_plantilla_aplicados||0} tareas. ` +
+           `Técnicos asignados: ${d.tecnicos_asignados||0}.`,
+      messageHtml: true,
+      type: 'success',
+      okLabel: 'Continuar con el levantamiento',
+    });
     abrirLevantamientoSesion();
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });
@@ -9907,9 +10026,12 @@ function _planTabActualizarStatus(ctAnalizado) {
       </div>
       <div class="modal-body">
         <div class="alert alert-light border" style="font-size:.84rem">
-          <strong>📸 ¿Qué es esto?</strong> Documenta visualmente el estado de los equipos del cliente.
-          Las fotos quedan asociadas a cada equipo en su timeline (historial de vida).
+          <strong>📸 ¿Qué es esto?</strong> Crea una <strong>Orden de Trabajo</strong> de levantamiento fotográfico
+          y aplica automáticamente la plantilla <em>"Levantamiento fotográfico estándar"</em>
+          a todos los equipos seleccionados. Las fotos quedan asociadas al equipo en su timeline.
         </div>
+
+        {# ─── Sección 1: Datos generales ─── #}
         <div class="row g-2 mb-3">
           <div class="col-md-7">
             <label class="form-label small fw-semibold">Título del levantamiento</label>
@@ -9922,14 +10044,72 @@ function _planTabActualizarStatus(ctAnalizado) {
                    placeholder="Ej: Pre-contrato anual 2026">
           </div>
         </div>
+
+        {# ─── Sección 2: Programación (fecha + horas) ─── #}
+        <div class="card border-warning-subtle bg-light mb-3">
+          <div class="card-body p-2">
+            <div class="small fw-bold text-dark mb-2">
+              <i class="bi bi-calendar-event me-1 text-danger"></i>Programación
+            </div>
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Fecha programada *</label>
+                <input type="date" id="levFechaProg" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Hora inicio</label>
+                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Hora término</label>
+                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00">
+              </div>
+            </div>
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="levRangoDias"
+                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none';">
+              <label class="form-check-label small" for="levRangoDias">
+                ¿Se extenderá más de un día?
+              </label>
+            </div>
+            <div id="levFechaFinWrap" class="mt-2" style="display:none">
+              <label class="form-label small mb-1">Fecha de término (último día)</label>
+              <input type="date" id="levFechaFin" class="form-control form-control-sm">
+            </div>
+          </div>
+        </div>
+
+        {# ─── Sección 3: Multi-técnico ─── #}
+        <div class="card border-primary-subtle bg-light mb-3">
+          <div class="card-body p-2">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div class="small fw-bold text-dark">
+                <i class="bi bi-people-fill me-1 text-primary"></i>Técnicos asignados
+                <span class="badge bg-primary ms-1" id="levTecCount">0</span>
+              </div>
+              <small class="text-muted">Trabajo colaborativo</small>
+            </div>
+            <div id="levTecnicosBox" class="d-flex flex-wrap gap-1" style="min-height:36px">
+              <span class="text-muted small">Cargando técnicos…</span>
+            </div>
+            <small class="text-muted d-block mt-1" style="font-size:.72rem">
+              Tip: podés asignar varios técnicos para que se repartan los equipos durante la visita.
+            </small>
+          </div>
+        </div>
+
+        {# ─── Sección 4: Equipos a levantar ─── #}
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <strong class="small">Equipos a levantar</strong>
+          <strong class="small">
+            <i class="bi bi-boxes me-1 text-success"></i>Equipos a levantar
+            <span class="badge bg-success ms-1" id="levEqCount">0</span>
+          </strong>
           <div>
             <button class="btn btn-sm btn-outline-secondary" onclick="levToggleTodos(true)">Marcar todos</button>
             <button class="btn btn-sm btn-outline-secondary ms-1" onclick="levToggleTodos(false)">Desmarcar</button>
           </div>
         </div>
-        <div class="table-responsive" style="max-height:42vh">
+        <div class="table-responsive" style="max-height:32vh">
           <table class="table table-sm mb-0">
             <thead style="background:#f8fafc;position:sticky;top:0;z-index:1">
               <tr><th style="width:50px">✓</th><th>Equipo / SKU</th><th>Serie</th></tr>
