@@ -1425,8 +1425,8 @@
         <i class="bi bi-tools"></i> Programar mantención
       </button>
       <button class="ar-btn" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;font-weight:700"
-              onclick="abrirLevantamientoFotografico()">
-        <i class="bi bi-camera-fill"></i> Levantamiento fotográfico
+              onclick="abrirGenerarOT()">
+        <i class="bi bi-clipboard2-plus"></i> Generar OT
       </button>
       <button class="ar-btn" onclick="switchTab('contrato'); setTimeout(()=>abrirContratoModal(), 200)">
         <i class="bi bi-file-earmark-arrow-up"></i> Subir documento
@@ -1595,9 +1595,9 @@
       <div class="ms-auto d-flex gap-2 flex-wrap">
         {% if not is_tecnico %}
         <button class="btn btn-sm fw-bold" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
-                onclick="abrirLevantamientoFotografico()"
-                title="Iniciar un levantamiento fotográfico de los equipos del cliente">
-          <i class="bi bi-camera-fill me-1"></i>Levantamiento fotográfico
+                onclick="abrirGenerarOT()"
+                title="Generar una nueva Orden de Trabajo (levantamiento, instalación, mantención, visita técnica, etc.)">
+          <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
         </button>
         <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()" title="Buscar por boleta o factura en el ERP">
           <i class="bi bi-cloud-download me-1"></i>Importar ERP
@@ -6507,20 +6507,41 @@ function abrirContratoModal() {
 //  fotos con la cámara → cierra el levantamiento → queda en timeline.
 //  Storage: Cloudinary persistente. Estados visuales por equipo.
 // ════════════════════════════════════════════════════════════════════
-// _LEV ya no almacena sesión de captura — solo el id del último levantamiento creado.
+// _LEV ya no almacena sesión de captura — solo el id de la última OT creada.
 // La captura se hace desde la OT (módulo "Órdenes de Trabajo"), no desde la ficha.
 let _LEV = { id: null };
 
-async function abrirLevantamientoFotografico(){
-  // Antes este flow chequeaba si había levantamiento "en curso" para
-  // continuarlo. Ahora cada acción crea una OT nueva — la gestión la hace
-  // el técnico en /mantenciones/ot/<id>. Acá solo abrimos el modal de
-  // creación.
+// ════════════════════════════════════════════════════════════
+// ENTRY POINT: abre el modal de "Generar OT" (modal generalizado)
+// Soporta varios tipos: levantamiento, instalacion, preventiva,
+// correctiva, visita_tecnica, etc. Por compat, "Levantamiento de
+// ficha" === "levantamiento fotográfico" (mismo tipo).
+// ════════════════════════════════════════════════════════════
+async function abrirGenerarOT(){
   abrirLevantamientoSelector();
 }
+// Alias por compat con llamadas viejas
+const abrirLevantamientoFotografico = abrirGenerarOT;
 
 // Estado del modal de levantamiento (técnicos disponibles + seleccionados)
 const _LEV_MODAL = { tecnicos_disponibles: [], tecnicos_seleccionados: new Set() };
+
+// Plantillas disponibles (cache global del modal)
+const _LEV_PLANTILLAS = { all: [], cargadas: false };
+
+// Mapa de plantillas extra seleccionadas por equipo { maquinaId: Set<plantillaId> }
+const _LEV_EQ_PLANTILLAS = {};
+
+async function _cargarPlantillas(){
+  if (_LEV_PLANTILLAS.cargadas) return _LEV_PLANTILLAS.all;
+  try {
+    const r = await fetch('/mantenciones/api/plantillas?activa=1');
+    const d = await r.json();
+    _LEV_PLANTILLAS.all = Array.isArray(d) ? d : (d.plantillas || []);
+    _LEV_PLANTILLAS.cargadas = true;
+  } catch(e){ console.warn('cargar plantillas:', e); }
+  return _LEV_PLANTILLAS.all;
+}
 
 async function abrirLevantamientoSelector(){
   const tbody = document.getElementById('levSelectTbody');
@@ -6536,6 +6557,13 @@ async function abrirLevantamientoSelector(){
     });
     return;
   }
+
+  // Cargar plantillas para el selector multi-plantilla
+  await _cargarPlantillas();
+
+  // Reset multi-plantilla por equipo
+  Object.keys(_LEV_EQ_PLANTILLAS).forEach(k => delete _LEV_EQ_PLANTILLAS[k]);
+
   // Equipos DESELECCIONADOS por defecto — el usuario decide qué levantar.
   tbody.innerHTML = filas.map(tr => {
     const mid = tr.dataset.maquinaId;
@@ -6544,11 +6572,24 @@ async function abrirLevantamientoSelector(){
     const serie  = tr.dataset.serie || '';
     return `<tr style="cursor:pointer" onclick="const c=this.querySelector('.lev-eq-chk');c.checked=!c.checked;levRecalcEqCount();event.stopPropagation();">
       <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" onchange="levRecalcEqCount()" onclick="event.stopPropagation()"></td>
-      <td><strong>${escHtml(nombre)}</strong>${sku?`<div class="small text-muted">${escHtml(sku)}</div>`:''}</td>
-      <td class="small text-muted">${escHtml(serie) || '—'}</td>
+      <td>
+        <strong>${escHtml(nombre)}</strong>
+        ${sku?`<div class="small text-muted">${escHtml(sku)}</div>`:''}
+        ${serie?`<div class="small text-muted">S/N: ${escHtml(serie)}</div>`:''}
+      </td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn btn-xs btn-outline-primary w-100" style="font-size:.72rem;padding:.25rem .4rem"
+                onclick="abrirMultiPlantilla(${mid}, '${escAttr(nombre)}')">
+          <i class="bi bi-list-check me-1"></i><span id="lev-pl-count-${mid}">0 plantillas</span>
+        </button>
+      </td>
     </tr>`;
   }).join('');
-  document.getElementById('levSelectTitulo').value = 'Levantamiento ' + new Date().toLocaleDateString('es-CL');
+  // Reset tipo de OT al default
+  const tipoSel = document.getElementById('otTipo');
+  if (tipoSel) tipoSel.value = 'levantamiento';
+  onTipoOtChange(); // actualiza descripción + título sugerido
+
   document.getElementById('levSelectNotas').value = '';
 
   // Default: fecha hoy
@@ -6659,6 +6700,129 @@ function levToggleTodos(){
   levRecalcEqCount();
 }
 
+// ════════════════════════════════════════════════════════════
+// SELECTOR DE TIPO DE OT — actualiza descripción según el tipo
+// ════════════════════════════════════════════════════════════
+const _OT_TIPO_DESCRIPCIONES = {
+  'levantamiento':  'Levantamiento de ficha: documentación visual de cada equipo. Se aplica automáticamente la plantilla estándar a todos los equipos seleccionados.',
+  'instalacion':    'Instalación: registro de equipos nuevos puestos en sitio. Incluye verificación de embalaje, conexión, encendido y capacitación.',
+  'preventiva':     'Mantención preventiva: visita planificada con checklist estándar (limpieza, lubricación, ajustes, test de carga).',
+  'visita_tecnica': 'Visita técnica: atención puntual al cliente para diagnóstico, ajustes o consultas técnicas.',
+  'correctiva':    'Mantención correctiva: reparación de falla específica reportada por el cliente.',
+  'inspeccion':     'Inspección: revisión visual + funcional sin intervención, para diagnóstico o auditoría.',
+  'garantia':       'Atención por garantía: cambio o reparación cubierto por el fabricante.',
+};
+function onTipoOtChange(){
+  const tipo = document.getElementById('otTipo')?.value;
+  const desc = document.getElementById('otTipoDescripcion');
+  if (desc && tipo){
+    desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_OT_TIPO_DESCRIPCIONES[tipo] || '');
+  }
+  // Sugerir título según tipo si está vacío o tiene "Levantamiento"
+  const tit = document.getElementById('levSelectTitulo');
+  if (tit && (!tit.value || tit.value.startsWith('Levantamiento ') || tit.value.startsWith('Instalación ') || tit.value.startsWith('Mantención ') || tit.value.startsWith('Visita ') || tit.value.startsWith('Inspección ') || tit.value.startsWith('Garantía '))){
+    const fecha = new Date().toLocaleDateString('es-CL');
+    const labels = {
+      levantamiento: 'Levantamiento',
+      instalacion: 'Instalación',
+      preventiva: 'Mantención preventiva',
+      visita_tecnica: 'Visita técnica',
+      correctiva: 'Mantención correctiva',
+      inspeccion: 'Inspección',
+      garantia: 'Garantía',
+    };
+    tit.value = `${labels[tipo] || 'OT'} ${fecha}`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// MULTI-PLANTILLA POR EQUIPO — popover modal para seleccionar
+// varias plantillas extra para un equipo dado.
+// ════════════════════════════════════════════════════════════
+function abrirMultiPlantilla(eqId, eqNombre){
+  const plantillas = _LEV_PLANTILLAS.all || [];
+  if (!plantillas.length){
+    ilusAlert({
+      title: 'Sin plantillas',
+      message: 'No hay plantillas activas en el sistema.',
+      sub: 'Pide a un administrador que cree plantillas en /mantenciones/plantillas.',
+      type: 'warning',
+    });
+    return;
+  }
+
+  // Crear modal dinámicamente
+  let modal = document.getElementById('modalMultiPlantilla');
+  if (modal) modal.remove();
+  modal = document.createElement('div');
+  modal.id = 'modalMultiPlantilla';
+  modal.className = 'modal fade';
+  modal.tabIndex = -1;
+  const seleccionadas = _LEV_EQ_PLANTILLAS[eqId] || new Set();
+  const tipoActual = document.getElementById('otTipo')?.value || '';
+
+  modal.innerHTML = `
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content" style="border-radius:12px">
+        <div class="modal-header" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff">
+          <div>
+            <h6 class="modal-title fw-bold mb-0"><i class="bi bi-list-check me-2"></i>Plantillas extra</h6>
+            <small style="opacity:.85">${escHtml(eqNombre)}</small>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info py-2 small mb-2">
+            <i class="bi bi-info-circle me-1"></i>
+            La plantilla del tipo de OT (${tipoActual || '—'}) ya se aplica automáticamente.
+            Aquí puedes agregar plantillas <strong>adicionales</strong> para este equipo.
+          </div>
+          <div id="multiPlantillaList">
+            ${plantillas.map(p => `
+              <label class="d-flex align-items-start gap-2 p-2 mb-1 border rounded" style="cursor:pointer;background:${seleccionadas.has(p.id)?'#eff6ff':'#fff'}">
+                <input type="checkbox" class="mp-chk" data-pid="${p.id}" ${seleccionadas.has(p.id)?'checked':''} style="margin-top:3px">
+                <div class="flex-grow-1">
+                  <div class="fw-bold small">${escHtml(p.nombre)}</div>
+                  <div class="text-muted" style="font-size:.7rem">
+                    ${p.tipo_visita ? `<span class="badge bg-secondary me-1">${escHtml(p.tipo_visita)}</span>` : ''}
+                    ${p.items_count || 0} tarea(s)
+                    ${p.descripcion ? ' · ' + escHtml(p.descripcion.substring(0, 80)) : ''}
+                  </div>
+                </div>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-primary" onclick="guardarMultiPlantilla(${eqId})">
+            <i class="bi bi-check-lg me-1"></i>Guardar selección
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  new bootstrap.Modal(modal).show();
+}
+
+function guardarMultiPlantilla(eqId){
+  const modal = document.getElementById('modalMultiPlantilla');
+  if (!modal) return;
+  const ids = Array.from(modal.querySelectorAll('.mp-chk:checked')).map(c => parseInt(c.dataset.pid));
+  if (ids.length){
+    _LEV_EQ_PLANTILLAS[eqId] = new Set(ids);
+  } else {
+    delete _LEV_EQ_PLANTILLAS[eqId];
+  }
+  // Actualizar el badge del botón
+  const counter = document.getElementById('lev-pl-count-' + eqId);
+  if (counter){
+    counter.textContent = ids.length ? `${ids.length} plantilla${ids.length>1?'s':''} extra` : '0 plantillas';
+  }
+  bootstrap.Modal.getInstance(modal)?.hide();
+  ilusToast(`✓ ${ids.length} plantilla(s) asignada(s) al equipo`, { type: 'success', duration: 2000 });
+}
+
 async function levIniciar(){
   // Aunque la función se llama levIniciar (legacy), su acción ahora es
   // CREAR la OT de levantamiento. No abre captura en este modal.
@@ -6717,6 +6881,14 @@ async function levIniciar(){
   const btnHTMLOrig = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
   try {
+    // Construir mapa de plantillas extra por equipo (solo equipos seleccionados)
+    const plantillasPorEq = {};
+    ids.forEach(mid => {
+      if (_LEV_EQ_PLANTILLAS[mid] && _LEV_EQ_PLANTILLAS[mid].size > 0){
+        plantillasPorEq[mid] = Array.from(_LEV_EQ_PLANTILLAS[mid]);
+      }
+    });
+
     const r = await fetch(`/mantenciones/api/clientes/${CID}/levantamientos`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -6729,6 +6901,8 @@ async function levIniciar(){
         hora_fin: horaFin || null,
         fecha_fin: usaRango ? fechaFin : null,
         tecnico_ids: tecnicoIds,
+        tipo_ot: document.getElementById('otTipo')?.value || 'levantamiento',
+        plantillas_por_equipo: plantillasPorEq,
       })
     });
     const d = await r.json();
@@ -6750,10 +6924,10 @@ async function levIniciar(){
       ? `<a href="${d.ot_url}" class="fw-bold text-decoration-underline" style="color:#dc2626">${d.numero_ot}</a>`
       : '';
     await ilusAlert({
-      title: '✅ OT de levantamiento creada',
+      title: '✅ Orden de Trabajo creada',
       message: `Se generó la OT ${otHtml} con ${d.n_items} equipo(s) y ${d.tecnicos_asignados||0} técnico(s) asignado(s).`,
       sub: `La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. ` +
-           `Plantilla "Levantamiento fotográfico estándar" aplicada (${d.items_plantilla_aplicados||0} tareas).`,
+           `${d.items_plantilla_aplicados||0} tarea(s) generadas por las plantillas aplicadas.`,
       messageHtml: true,
       type: 'success',
       okLabel: 'Entendido',
@@ -9794,27 +9968,63 @@ function _planTabActualizarStatus(ctAnalizado) {
       <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border:0">
         <div>
           <h5 class="modal-title fw-bold mb-0">
-            <i class="bi bi-camera-fill me-2"></i>Nueva OT — Levantamiento Fotográfico
+            <i class="bi bi-clipboard2-plus me-2"></i>Generar Orden de Trabajo
           </h5>
           <small class="d-block mt-1" style="opacity:.85">
-            Crea una Orden de Trabajo. Los técnicos la gestionarán desde su módulo.
+            Crea una OT. El técnico la gestionará desde el módulo "Órdenes de Trabajo".
           </small>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" style="background:#fafafa">
 
-        {# ─── Paso 1: Información básica ─── #}
+        {# ─── Paso 1: Tipo de OT ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">1</div>
+            <div class="lev-step-title">Tipo de orden de trabajo</div>
+            <div class="lev-step-sub">Selecciona qué se va a realizar</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="d-flex gap-2 align-items-end">
+              <div class="flex-grow-1">
+                <label class="form-label small fw-semibold">Tipo *</label>
+                <select id="otTipo" class="form-select form-select-sm" onchange="onTipoOtChange()">
+                  <option value="levantamiento">📸 Levantamiento de ficha (fotográfico)</option>
+                  <option value="instalacion">📦 Instalación</option>
+                  <option value="preventiva">🔧 Mantención preventiva</option>
+                  <option value="visita_tecnica">🛠️ Visita técnica</option>
+                  <option value="correctiva">⚠️ Mantención correctiva</option>
+                  <option value="inspeccion">🔍 Inspección</option>
+                  <option value="garantia">🛡️ Garantía</option>
+                </select>
+              </div>
+              {% if permissions.superadmin %}
+              <button type="button" class="btn btn-sm btn-outline-secondary" disabled
+                      title="Próximamente — agregar tipos personalizados de OT">
+                <i class="bi bi-plus-lg me-1"></i>Nuevo tipo
+              </button>
+              {% endif %}
+            </div>
+            <div id="otTipoDescripcion" class="small text-muted mt-2" style="font-size:.78rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Levantamiento de ficha: documentación visual de cada equipo. Se aplica
+              automáticamente la plantilla estándar a todos los equipos seleccionados.
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 2: Información básica ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">2</div>
             <div class="lev-step-title">Información básica</div>
             <div class="lev-step-sub">Título y notas</div>
           </div>
           <div class="lev-step-body">
             <div class="row g-2">
               <div class="col-md-7">
-                <label class="form-label small fw-semibold">Título del levantamiento *</label>
+                <label class="form-label small fw-semibold">Título de la OT *</label>
                 <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
                        placeholder="Ej: Levantamiento inicial sala A">
               </div>
@@ -9827,10 +10037,10 @@ function _planTabActualizarStatus(ctAnalizado) {
           </div>
         </div>
 
-        {# ─── Paso 2: Programación ─── #}
+        {# ─── Paso 3: Programación ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">2</div>
+            <div class="lev-step-num">3</div>
             <div class="lev-step-title">Programación</div>
             <div class="lev-step-sub">Fecha y horario</div>
           </div>
@@ -9863,10 +10073,10 @@ function _planTabActualizarStatus(ctAnalizado) {
           </div>
         </div>
 
-        {# ─── Paso 3: Técnicos asignados ─── #}
+        {# ─── Paso 4: Técnicos asignados ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">3</div>
+            <div class="lev-step-num">4</div>
             <div class="lev-step-title">Técnicos asignados *</div>
             <div class="lev-step-sub">
               <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
@@ -9883,32 +10093,41 @@ function _planTabActualizarStatus(ctAnalizado) {
           </div>
         </div>
 
-        {# ─── Paso 4: Equipos a levantar ─── #}
+        {# ─── Paso 5: Equipos + multi-plantilla por equipo ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">4</div>
-            <div class="lev-step-title">Equipos a levantar *</div>
+            <div class="lev-step-num">5</div>
+            <div class="lev-step-title">Equipos y plantillas *</div>
             <div class="lev-step-sub">
               <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
             </div>
           </div>
           <div class="lev-step-body" style="padding:0">
-            <div style="padding:8px 14px;display:flex;justify-content:flex-end;border-bottom:1px solid #f1f5f9">
-              <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos" onclick="levToggleTodos()">
+            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px">
+              <small class="text-muted" style="font-size:.74rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Cada equipo puede tener varias plantillas (ej: ficha + instalación + capacitación).
+              </small>
+              <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="btnLevToggleTodos" onclick="levToggleTodos()">
                 <i class="bi bi-check2-square me-1"></i>Marcar todos
               </button>
             </div>
-            <div class="table-responsive" style="max-height:30vh">
+            <div class="table-responsive" style="max-height:38vh">
               <table class="table table-sm mb-0 lev-table-eq">
                 <thead style="background:#f8fafc;position:sticky;top:0;z-index:1">
                   <tr>
-                    <th style="width:50px"></th>
+                    <th style="width:40px"></th>
                     <th>Equipo / SKU</th>
-                    <th>Serie</th>
+                    <th style="width:200px">Plantillas extra</th>
                   </tr>
                 </thead>
                 <tbody id="levSelectTbody"></tbody>
               </table>
+            </div>
+            <div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:.72rem;color:#6b7280">
+              <i class="bi bi-lightbulb me-1 text-warning"></i>
+              <strong>Auto:</strong> el tipo seleccionado en el Paso 1 aplica su plantilla estándar.
+              Las plantillas extra agregan tareas adicionales.
             </div>
           </div>
         </div>

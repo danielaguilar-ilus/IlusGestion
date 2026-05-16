@@ -27532,6 +27532,32 @@ def mant_lev_crear_o_listar(cid):
     tecnico_ids = tecnico_ids_clean
     # Técnico principal (primero de la lista) — para la columna legacy mant_visitas.tecnico_user_id
     tecnico_principal = tecnico_ids[0] if tecnico_ids else None
+
+    # ─── Tipo de OT (FASE 2 — modal generalizado 2026-05-16) ──────
+    # Valores permitidos: deben coincidir con el ENUM mant_visitas.tipo
+    tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
+                "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
+                "desinstalacion", "capacitacion", "repuesto", "revision_interna",
+                "visita_correctiva")
+    tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
+    if tipo_ot not in tipos_ok:
+        tipo_ot = "levantamiento"
+
+    # ─── Multi-plantilla por equipo (plantillas_por_equipo) ───────
+    # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
+    # Si llega, además de la plantilla estándar del tipo, aplica estas
+    # plantillas extra SOLO al equipo indicado.
+    plantillas_por_equipo_raw = data.get("plantillas_por_equipo") or {}
+    plantillas_por_equipo = {}
+    if isinstance(plantillas_por_equipo_raw, dict):
+        for mid_str, plist in plantillas_por_equipo_raw.items():
+            try:
+                mid_int = int(mid_str)
+                ids_int = [int(p) for p in (plist or []) if p]
+                if ids_int:
+                    plantillas_por_equipo[mid_int] = ids_int
+            except (TypeError, ValueError):
+                continue
     # Resolver nombre del técnico principal (para mant_levantamientos.tecnico VARCHAR)
     tecnico_nombre = ""
     if tecnico_principal:
@@ -27588,6 +27614,18 @@ def mant_lev_crear_o_listar(cid):
                 numero_ot = f"LEV-{int(time.time())}"
             visita_id = None
             try:
+                # Prefijo del título según tipo (para identificar visualmente)
+                tipo_prefix = {
+                    'levantamiento':  '[LEV]',
+                    'instalacion':    '[INST]',
+                    'preventiva':     '[PM]',
+                    'correctiva':     '[CM]',
+                    'visita_tecnica': '[VT]',
+                    'inspeccion':     '[INSP]',
+                    'garantia':       '[GAR]',
+                }.get(tipo_ot, '[OT]')
+                # Modalidad: levantamiento sin costo; otros tipos pagado por default
+                modalidad = 'sin_costo' if tipo_ot == 'levantamiento' else 'pagado'
                 cur.execute(
                     "INSERT INTO mant_visitas "
                     "(numero_ot, cliente_id, titulo, fecha_programada, "
@@ -27595,12 +27633,12 @@ def mant_lev_crear_o_listar(cid):
                     " tipo, estado, modalidad_cobro, prioridad, "
                     " descripcion, tecnico_user_id, levantamiento_id, created_by) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,"
-                    " 'levantamiento','programada','sin_costo','media',"
+                    " %s,'programada',%s,'media',"
                     " %s,%s,%s,%s)",
-                    (numero_ot, cid, f"[LEV] {titulo}"[:200],
+                    (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
                      fecha_prog, fecha_fin, hora_ini, hora_fin,
-                     f"Levantamiento fotográfico de {n_items} equipo(s). "
-                     f"Sin costo (registro inicial). "
+                     tipo_ot, modalidad,
+                     f"OT tipo {tipo_ot} con {n_items} equipo(s). "
                      f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
                      tecnico_principal, lev_id, current_username())
                 )
@@ -27649,71 +27687,124 @@ def mant_lev_crear_o_listar(cid):
 
         conn.commit()
 
-        # ─── Aplicar plantilla "Levantamiento fotográfico estándar" ─
-        # POST-commit para no bloquear si falla. Busca por nombre exacto
-        # y aplica sus items a TODAS las máquinas del levantamiento.
+        # ══════════════════════════════════════════════════════════════
+        # APLICAR PLANTILLAS (POST-commit, defensivo)
+        #
+        # 1) Plantilla estándar del tipo de OT (busca por nombre o tipo_visita)
+        # 2) Plantillas EXTRA por equipo (data.plantillas_por_equipo)
+        # ══════════════════════════════════════════════════════════════
         items_plantilla = 0
+
+        def _aplicar_plantilla_a_equipos(plantilla_id, mq_ids):
+            """Clona los items de la plantilla y los inserta como tareas
+            de la OT para CADA máquina del listado. Retorna n items creados."""
+            nonlocal items_plantilla
+            if not plantilla_id or not mq_ids:
+                return 0
+            items_plant = mysql_fetchall(
+                "SELECT * FROM mant_tarea_plantilla_items "
+                "WHERE plantilla_id=%s ORDER BY orden, id",
+                (plantilla_id,)
+            ) or []
+            if not items_plant:
+                return 0
+            conn2 = get_mysql()
+            n_added = 0
+            try:
+                with conn2.cursor() as cur2:
+                    cur2.execute(
+                        "SELECT COALESCE(MAX(orden),0) AS mx "
+                        "FROM mant_visita_tareas WHERE visita_id=%s",
+                        (visita_id,)
+                    )
+                    next_orden = int((cur2.fetchone() or {}).get("mx") or 0)
+                    for mq_id in mq_ids:
+                        m_row = mysql_fetchone(
+                            "SELECT nombre, serie FROM mant_maquinas WHERE id=%s",
+                            (mq_id,)
+                        )
+                        m_nombre = m_row.get("nombre") if m_row else f"#{mq_id}"
+                        for it in items_plant:
+                            next_orden += 1
+                            titulo_t = it["titulo"]
+                            sufijo = m_nombre
+                            if m_row and m_row.get("serie"):
+                                sufijo += f" (S/N: {m_row['serie']})"
+                            titulo_full = f"{titulo_t} — {sufijo}"[:300]
+                            cur2.execute(
+                                "INSERT INTO mant_visita_tareas "
+                                "(visita_id, orden, titulo, descripcion, tipo, "
+                                " maquina_id, tipo_respuesta, obligatoria, "
+                                " requiere_foto, unidad, rango_min, rango_max, "
+                                " opciones_lista_json, estado_trabajo, created_by) "
+                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                                "        %s,%s,%s,%s,'pendiente',%s)",
+                                (visita_id, next_orden, titulo_full,
+                                 it.get("descripcion"), tipo_ot, mq_id,
+                                 it["tipo_respuesta"],
+                                 it.get("obligatoria") or 0,
+                                 it.get("requiere_foto") or 0,
+                                 it.get("unidad"), it.get("rango_min"),
+                                 it.get("rango_max"),
+                                 it.get("opciones_lista_json"),
+                                 current_username())
+                            )
+                            n_added += 1
+                conn2.commit()
+            finally:
+                conn2.close()
+            items_plantilla += n_added
+            return n_added
+
+        # 1) Plantilla estándar del tipo
         if visita_id and equipo_ids:
             try:
-                plant = mysql_fetchone(
-                    "SELECT id FROM mant_tarea_plantillas "
-                    "WHERE nombre='Levantamiento fotográfico estándar' "
-                    "  AND COALESCE(activa,1)=1 LIMIT 1"
-                )
-                if plant:
-                    # Reusar el endpoint interno mediante import de la lógica
-                    # (call directo a la BD para evitar el HTTP overhead)
-                    items_plant = mysql_fetchall(
-                        "SELECT * FROM mant_tarea_plantilla_items "
-                        "WHERE plantilla_id=%s ORDER BY orden, id",
-                        (plant["id"],)
-                    ) or []
-                    conn2 = get_mysql()
-                    try:
-                        with conn2.cursor() as cur2:
-                            cur2.execute(
-                                "SELECT COALESCE(MAX(orden),0) AS mx "
-                                "FROM mant_visita_tareas WHERE visita_id=%s",
-                                (visita_id,)
-                            )
-                            next_orden = int((cur2.fetchone() or {}).get("mx") or 0)
-                            for mq_id in equipo_ids:
-                                m_row = mysql_fetchone(
-                                    "SELECT nombre, serie FROM mant_maquinas WHERE id=%s",
-                                    (mq_id,)
-                                )
-                                m_nombre = m_row.get("nombre") if m_row else f"#{mq_id}"
-                                for it in items_plant:
-                                    next_orden += 1
-                                    titulo_t = it["titulo"]
-                                    sufijo = m_nombre
-                                    if m_row and m_row.get("serie"):
-                                        sufijo += f" (S/N: {m_row['serie']})"
-                                    titulo_full = f"{titulo_t} — {sufijo}"[:300]
-                                    cur2.execute(
-                                        "INSERT INTO mant_visita_tareas "
-                                        "(visita_id, orden, titulo, descripcion, tipo, "
-                                        " maquina_id, tipo_respuesta, obligatoria, "
-                                        " requiere_foto, unidad, rango_min, rango_max, "
-                                        " opciones_lista_json, estado_trabajo, created_by) "
-                                        "VALUES (%s,%s,%s,%s,'levantamiento',%s,%s,%s,%s,"
-                                        "        %s,%s,%s,%s,'pendiente',%s)",
-                                        (visita_id, next_orden, titulo_full,
-                                         it.get("descripcion"), mq_id,
-                                         it["tipo_respuesta"],
-                                         it.get("obligatoria") or 0,
-                                         it.get("requiere_foto") or 0,
-                                         it.get("unidad"), it.get("rango_min"),
-                                         it.get("rango_max"),
-                                         it.get("opciones_lista_json"),
-                                         current_username())
-                                    )
-                                    items_plantilla += 1
-                        conn2.commit()
-                    finally:
-                        conn2.close()
+                # Mapeo tipo_ot → nombre de plantilla estándar (convención del proyecto)
+                plantilla_estandar_por_tipo = {
+                    'levantamiento':  'Levantamiento fotográfico estándar',
+                    'instalacion':    'Instalación estándar',
+                    'preventiva':     'Mantención preventiva estándar',
+                    'correctiva':     'Mantención correctiva estándar',
+                    'visita_tecnica': 'Visita técnica estándar',
+                    'inspeccion':     'Inspección estándar',
+                    'garantia':       'Garantía estándar',
+                }
+                nombre_plant = plantilla_estandar_por_tipo.get(tipo_ot)
+                plant_id = None
+                if nombre_plant:
+                    plant = mysql_fetchone(
+                        "SELECT id FROM mant_tarea_plantillas "
+                        "WHERE nombre=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                        (nombre_plant,)
+                    )
+                    if plant: plant_id = plant["id"]
+                # Fallback: buscar por tipo_visita
+                if not plant_id:
+                    plant = mysql_fetchone(
+                        "SELECT id FROM mant_tarea_plantillas "
+                        "WHERE tipo_visita=%s AND COALESCE(activa,1)=1 "
+                        "ORDER BY id LIMIT 1",
+                        (tipo_ot,)
+                    )
+                    if plant: plant_id = plant["id"]
+                if plant_id:
+                    _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
             except Exception as e_pl:
-                print(f"[lev_crear] aplicar plantilla falló: {e_pl}", flush=True)
+                print(f"[lev_crear] aplicar plantilla estándar falló: {e_pl}", flush=True)
+
+        # 2) Plantillas EXTRA por equipo
+        if visita_id and plantillas_por_equipo:
+            try:
+                for mid, pids in plantillas_por_equipo.items():
+                    if mid not in equipo_ids:
+                        continue  # equipo no incluido en la OT
+                    for pid in pids:
+                        try:
+                            _aplicar_plantilla_a_equipos(pid, [mid])
+                        except Exception as _ep:
+                            print(f"[lev_crear] plantilla extra {pid} para mid {mid} falló: {_ep}", flush=True)
+            except Exception as e_pl2:
+                print(f"[lev_crear] plantillas extra fallaron: {e_pl2}", flush=True)
 
         try: _mant_log("levantamiento", lev_id, "creado",
                        f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
