@@ -34,7 +34,7 @@
 
 /* ── KPI BAR — todo en una sola fila compacta ─────────── */
 .kpi-strip{
-  display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;margin-bottom:12px;
+  display:grid;grid-template-columns:repeat(8, 1fr);gap:8px;margin-bottom:12px;
 }
 .kpi-card{
   background:#fff;border:1px solid #e5e7eb;border-radius:10px;
@@ -66,8 +66,8 @@
    CLIENT CARD — tipografía grande del cliente, dinámico
    ══════════════════════════════════════════════════════ */
 .client-card{
-  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
-  padding:14px 16px;height:100%;cursor:pointer;
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:12px 13px;height:100%;cursor:pointer;
   transition:transform .18s cubic-bezier(.2,.8,.2,1.05),
              box-shadow .18s,
              border-color .18s,
@@ -606,45 +606,79 @@ async function limpiarHuerfanos(){
 </script>
 {% endif %}
 
-{# ── KPI STRIP (compacto: 6 mini-cards en una sola fila) ────────────── #}
+{# ── KPI STRIP INTERACTIVO (cards clickeables como filtro) ───────────────
+   Cada card aplica un filtro al hacer click. El número refleja el conteo
+   GLOBAL (no filtrado), pero la card se ilumina cuando ese filtro
+   está activo. Tooltips explican exactamente qué representa cada métrica
+   para evitar confusiones (ej: "Con equipos" = clientes que tienen 1+,
+   NO la cantidad total de equipos en el sistema).
+   #}
 {%- set tot   = global_stats.total or 0 %}
 <div class="kpi-strip">
-  <div class="kpi-card">
+  <div class="kpi-card kpi-clickable {% if not filtros.estado and not filtros.contrato and not filtros.equipos %}active{% endif %}"
+       onclick="aplicarKpiFiltro('all')"
+       title="Mostrar todos los clientes sin filtro">
     <div class="kpi-icon" style="background:#e8eaf6;color:#3949ab"><i class="bi bi-people-fill"></i></div>
     <div>
-      <div class="kpi-lbl">Total</div>
+      <div class="kpi-lbl">Total clientes</div>
       <div class="kpi-num">{{ tot }}</div>
     </div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card kpi-clickable {% if filtros.estado == 'activo' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('activo')"
+       title="Clientes con estado activo">
     <div class="kpi-icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-check-circle-fill"></i></div>
     <div>
       <div class="kpi-lbl">Activos</div>
       <div class="kpi-num">{{ global_stats.activos or 0 }}</div>
     </div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card kpi-clickable {% if filtros.contrato == 'con' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('contrato_con')"
+       title="Clientes con contrato vigente">
     <div class="kpi-icon" style="background:#e3f2fd;color:#1565c0"><i class="bi bi-file-earmark-check-fill"></i></div>
     <div>
-      <div class="kpi-lbl">Contrato</div>
+      <div class="kpi-lbl">Con contrato</div>
       <div class="kpi-num">{{ global_stats.con_contrato or 0 }}</div>
     </div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card kpi-clickable {% if filtros.contrato == 'sin' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('contrato_sin')"
+       title="Clientes sin contrato (oportunidad comercial)">
+    <div class="kpi-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-file-earmark-x"></i></div>
+    <div>
+      <div class="kpi-lbl">Sin contrato</div>
+      <div class="kpi-num">{{ (tot - (global_stats.con_contrato or 0)) }}</div>
+    </div>
+  </div>
+  <div class="kpi-card kpi-clickable {% if filtros.equipos == 'con' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('equipos_con')"
+       title="Clientes que tienen al menos 1 equipo registrado (NO es total de equipos)">
     <div class="kpi-icon" style="background:#fff8e1;color:#f57f17"><i class="bi bi-tools"></i></div>
     <div>
-      <div class="kpi-lbl">Equipos</div>
+      <div class="kpi-lbl">Con equipos</div>
       <div class="kpi-num">{{ global_stats.con_equipos or 0 }}</div>
     </div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card kpi-clickable {% if filtros.equipos == 'sin' %}active{% endif %}"
+       onclick="aplicarKpiFiltro('equipos_sin')"
+       title="Clientes sin equipos registrados (falta levantamiento)">
+    <div class="kpi-icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-tools" style="opacity:.4"></i></div>
+    <div>
+      <div class="kpi-lbl">Sin equipos</div>
+      <div class="kpi-num">{{ (tot - (global_stats.con_equipos or 0)) }}</div>
+    </div>
+  </div>
+  <div class="kpi-card"
+       title="Clientes con visita en los últimos 30 días">
     <div class="kpi-icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-calendar-check-fill"></i></div>
     <div>
       <div class="kpi-lbl">Visitas 30d</div>
       <div class="kpi-num">{{ global_stats.visitas_30d or 0 }}</div>
     </div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card"
+       title="Promedio de completaje de fichas (todos los datos del cliente)">
     <div class="kpi-icon" style="background:#e8f5e9;color:#1b5e20"><i class="bi bi-speedometer2"></i></div>
     <div>
       <div class="kpi-lbl">Completaje</div>
@@ -652,6 +686,35 @@ async function limpiarHuerfanos(){
     </div>
   </div>
 </div>
+
+<style>
+  .kpi-clickable{cursor:pointer;position:relative;transition:all .18s}
+  .kpi-clickable:hover{background:#fafafa;border-color:#dc2626 !important}
+  .kpi-clickable.active{
+    background:#fef2f2;border-color:#dc2626 !important;
+    box-shadow:0 0 0 2px rgba(220,38,38,.15);
+  }
+  .kpi-clickable.active .kpi-num{color:#dc2626}
+</style>
+
+<script>
+function aplicarKpiFiltro(tipo) {
+  const url = new URL(window.location.href);
+  // Limpiar filtros relacionados
+  url.searchParams.delete('estado');
+  url.searchParams.delete('contrato');
+  url.searchParams.delete('equipos');
+  switch(tipo) {
+    case 'all':           break;  // sin filtros
+    case 'activo':        url.searchParams.set('estado', 'activo'); break;
+    case 'contrato_con':  url.searchParams.set('contrato', 'con'); break;
+    case 'contrato_sin':  url.searchParams.set('contrato', 'sin'); break;
+    case 'equipos_con':   url.searchParams.set('equipos', 'con'); break;
+    case 'equipos_sin':   url.searchParams.set('equipos', 'sin'); break;
+  }
+  window.location.href = url.toString();
+}
+</script>
 
 {# ── FILTER BAR ──────────────────────────────────────────────────── #}
 <div class="filter-bar mb-3">
@@ -733,7 +796,7 @@ async function limpiarHuerfanos(){
   {%- elif c.completaje >= 50 -%}{%- set pcol='#d97706' -%}
   {%- else -%}{%- set pcol='#dc2626' -%}{%- endif -%}
 
-  <div class="col-12 col-md-6 col-lg-4 card-wrapper"
+  <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2 card-wrapper"
        data-estado="{{ c.estado }}"
        data-contrato="{{ c.contrato_estado }}"
        data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"

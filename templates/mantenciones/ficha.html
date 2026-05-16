@@ -1938,7 +1938,7 @@
     {% if cliente.rut %}
     <div class="f-card" id="erpRutCard">
       <div class="f-card-header" style="cursor:pointer" onclick="toggleErpRutPanel()">
-        <span class="f-card-title"><i class="bi bi-receipt me-1"></i>Docs ERP — RUT {{ cliente.rut }}</span>
+        <span class="f-card-title"><i class="bi bi-receipt me-1"></i>Docs ERP — RUT {{ cliente.rut | rut_fmt }}</span>
         <div class="d-flex align-items-center gap-2">
           <span id="erpRutBadge" class="badge bg-secondary" style="font-size:.6rem">—</span>
           <i class="bi bi-chevron-down" id="erpRutChevron" style="font-size:.7rem;transition:transform .2s"></i>

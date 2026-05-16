@@ -64,10 +64,70 @@ _ERP = erp_engine.init_engine(
 #   COV  Cotización Venta (no consume saldo, pero útil para ver propuestas)
 # ══════════════════════════════════════════════════════════════════════
 
+# Tipos de documentos del ERP Random a buscar por RUT del cliente.
+# Actualizado 2026-05-16 (solicitud usuario): agregar todas las guías
+# de despacho que representan EXPEDICIÓN de productos (no servicios).
+#
+# Ventas / boletas:
+#   FCV = Factura venta · BLV = Boleta venta
+#   NVI = Nota venta instalación · NVV = Nota venta · VD = Venta directa
+#   WEB = Venta web · FCO = Factura compra · NCV = Nota crédito
+#   COV = Cotización
+#
+# Guías de despacho / movimiento de productos:
+#   GDV = Guía despacho venta
+#   GDP = Guía despacho provisional / preparación
+#   GDI = Guía despacho interna (entre bodegas)
+#   GTI = Guía traslado interna
+#   GR  = Guía retiro (cliente retira producto)
+#   GRP = Guía recepción / preparación (NUEVA — solicitud usuario)
+#   RI  = Recepción interna (NUEVA — solicitud usuario)
+#   GDB = Guía devolución / baja (NUEVA — solicitud usuario)
 ERP_TIDOS_DOCUMENTOS_CLIENTE = (
     "FCV", "BLV", "GDV", "GDP", "NVI", "NVV", "VD", "WEB", "FCO",
     "NCV", "GR", "COV", "GDI", "GTI",
+    # 2026-05-16: nuevos tipos de guías de expedición de productos
+    "GRP", "RI", "GDB",
 )
+
+
+def _formato_rut_chile(rut_str):
+    """Normaliza un RUT chileno y lo formatea como 'XX.XXX.XXX-Y'.
+    Si el RUT no tiene DV, lo devuelve sin guión.
+    Si está vacío o inválido, devuelve string vacío.
+
+    Ejemplos:
+        '255470652'   → '25.547.065-2'
+        '25547065-2'  → '25.547.065-2'
+        '25.547.065'  → '25.547.065'   (sin DV, asumimos cuerpo)
+        '25547065'    → '25.547.065'   (sin DV)
+    """
+    if not rut_str:
+        return ""
+    # Extraer solo dígitos y K (DV puede ser K para algunos RUTs)
+    clean = re.sub(r"[^0-9kK]", "", str(rut_str)).upper()
+    if not clean:
+        return ""
+    if len(clean) < 2:
+        return clean
+    # Heurística: si tiene 7-9 dígitos, último es DV. Si tiene < 7, asumir cuerpo sin DV.
+    if len(clean) >= 7:
+        cuerpo, dv = clean[:-1], clean[-1]
+    else:
+        cuerpo, dv = clean, ""
+    # Formatear cuerpo con puntos cada 3 dígitos desde la derecha
+    cuerpo_fmt = ""
+    for i, c in enumerate(reversed(cuerpo)):
+        if i > 0 and i % 3 == 0:
+            cuerpo_fmt = "." + cuerpo_fmt
+        cuerpo_fmt = c + cuerpo_fmt
+    return f"{cuerpo_fmt}-{dv}" if dv else cuerpo_fmt
+
+
+@app.template_filter('rut_fmt')
+def rut_fmt_filter(value):
+    """Filtro Jinja: {{ cliente.rut | rut_fmt }} → '25.547.065-2'."""
+    return _formato_rut_chile(value)
 
 
 def _erp_tidos_filter_sql():
@@ -16094,6 +16154,7 @@ def mant_clientes():
     q            = request.args.get("q", "").strip()
     estado       = request.args.get("estado", "activo")
     contrato_fil = request.args.get("contrato", "")
+    equipos_fil  = request.args.get("equipos", "")  # FASE 2026-05-16: con|sin
     vista        = request.args.get("vista", "grid")
 
     where, params = ["1=1"], []
@@ -16109,6 +16170,26 @@ def mant_clientes():
             " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
         )
         qp = f"%{q}%"; params += [qp, qp, qp, qp, qp, qp]
+    # Filtro contrato: con (al menos 1 contrato) / sin (ninguno)
+    if contrato_fil == "con":
+        where.append(
+            "EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
+        )
+    elif contrato_fil == "sin":
+        where.append(
+            "NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
+        )
+    # Filtro equipos: con (al menos 1 equipo activo) / sin (ninguno)
+    if equipos_fil == "con":
+        where.append(
+            "EXISTS (SELECT 1 FROM mant_maquinas m "
+            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
+        )
+    elif equipos_fil == "sin":
+        where.append(
+            "NOT EXISTS (SELECT 1 FROM mant_maquinas m "
+            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
+        )
     wstr = " AND ".join(where)
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
@@ -16246,7 +16327,8 @@ def mant_clientes():
 
     return render_template("mantenciones/clientes.html",
         clientes         = clientes,
-        filtros          = {"q": q, "estado": estado, "contrato": contrato_fil, "vista": vista},
+        filtros          = {"q": q, "estado": estado, "contrato": contrato_fil,
+                            "equipos": equipos_fil, "vista": vista},
         global_stats     = global_stats,
         orphans_detected = orphans_detected,
     )

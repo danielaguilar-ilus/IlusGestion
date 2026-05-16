@@ -256,11 +256,25 @@
       <span class="badge-estado bs-{{ o.estado or 'programada' }} mt-1 d-inline-block">{{ (o.estado or 'programada').replace('_',' ').title() }}</span>
     </div>
 
-    {# Acción principal: Abrir OT #}
-    <div>
+    {# Acciones: Abrir OT + (solo superadmin) Editar + Eliminar #}
+    <div class="d-flex gap-1 flex-shrink-0">
       <a href="{{ url_for('mant_ot_ficha', vid=o.id) }}" class="btn btn-ilus btn-sm fw-bold">
         <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
       </a>
+      {% if permissions.superadmin %}
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm"
+              title="Editar OT (solo superadmin)"
+              onclick="editarOTRapido({{ o.id }}, '{{ (o.titulo or '')|replace("'", "\\'") }}', '{{ o.estado or '' }}', '{{ o.tipo or '' }}', '{{ o.modalidad_cobro or 'pagado' }}', '{{ o.prioridad or 'media' }}')">
+        <i class="bi bi-pencil"></i>
+      </button>
+      <button type="button"
+              class="btn btn-outline-danger btn-sm"
+              title="Eliminar OT (solo superadmin, irreversible)"
+              onclick="eliminarOTRapido({{ o.id }}, '{{ (o.numero_ot or 'VS-' ~ o.id)|replace("'", "\\'") }}')">
+        <i class="bi bi-trash"></i>
+      </button>
+      {% endif %}
     </div>
   </div>
   {% endfor %}
@@ -291,6 +305,166 @@
     </a>
     {% endif %}
   </div>
+{% endif %}
+
+{% if permissions.superadmin %}
+{# ─── Modal: edición rápida de OT (solo superadmin) ─── #}
+<div class="modal fade" id="modalEditarOT" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square me-2"></i>Editar OT — <span id="otEditTitulo">—</span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="otEditId">
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Título de la OT</label>
+            <input type="text" id="otEditTitulo2" class="form-control form-control-sm">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Estado</label>
+            <select id="otEditEstado" class="form-select form-select-sm">
+              <option value="creada">Creada</option>
+              <option value="programada">Programada</option>
+              <option value="asignada">Asignada</option>
+              <option value="en_curso">En curso</option>
+              <option value="pendiente_info">Pendiente info</option>
+              <option value="pendiente_repuesto">Pendiente repuesto</option>
+              <option value="pendiente_aprobacion">Pendiente aprobación</option>
+              <option value="completada">Completada</option>
+              <option value="cerrada">Cerrada</option>
+              <option value="cancelada">Cancelada</option>
+              <option value="anulada">Anulada</option>
+              <option value="reagendada">Reagendada</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Tipo</label>
+            <select id="otEditTipo" class="form-select form-select-sm">
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="garantia">Garantía</option>
+              <option value="inspeccion">Inspección</option>
+              <option value="levantamiento">Levantamiento</option>
+              <option value="instalacion">Instalación</option>
+              <option value="visita_tecnica">Visita técnica</option>
+              <option value="visita_correctiva">Visita correctiva</option>
+              <option value="cambio_equipo">Cambio equipo</option>
+              <option value="desinstalacion">Desinstalación</option>
+              <option value="capacitacion">Capacitación</option>
+              <option value="repuesto">Repuesto</option>
+              <option value="revision_interna">Revisión interna</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Modalidad de cobro</label>
+            <select id="otEditModalidad" class="form-select form-select-sm">
+              <option value="pagado">Pagado</option>
+              <option value="garantia">Garantía</option>
+              <option value="sin_costo">Sin costo</option>
+              <option value="interno">Interno</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Prioridad</label>
+            <select id="otEditPrioridad" class="form-select form-select-sm">
+              <option value="baja">Baja</option>
+              <option value="media">Media</option>
+              <option value="alta">Alta</option>
+              <option value="urgente">Urgente</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-ilus fw-bold" onclick="guardarEdicionOT()">
+          <i class="bi bi-check-circle-fill me-1"></i>Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _modalEditOT = null;
+
+function editarOTRapido(otId, titulo, estado, tipo, modalidad, prioridad) {
+  document.getElementById('otEditId').value = otId;
+  document.getElementById('otEditTitulo').textContent = titulo || `#${otId}`;
+  document.getElementById('otEditTitulo2').value = titulo || '';
+  document.getElementById('otEditEstado').value = estado || 'programada';
+  document.getElementById('otEditTipo').value = tipo || 'preventiva';
+  document.getElementById('otEditModalidad').value = modalidad || 'pagado';
+  document.getElementById('otEditPrioridad').value = prioridad || 'media';
+  if (!_modalEditOT) _modalEditOT = new bootstrap.Modal(document.getElementById('modalEditarOT'));
+  _modalEditOT.show();
+}
+
+async function guardarEdicionOT() {
+  const id = document.getElementById('otEditId').value;
+  if (!id) return;
+  const body = {
+    titulo:          document.getElementById('otEditTitulo2').value.trim(),
+    estado:          document.getElementById('otEditEstado').value,
+    tipo:            document.getElementById('otEditTipo').value,
+    modalidad_cobro: document.getElementById('otEditModalidad').value,
+    prioridad:       document.getElementById('otEditPrioridad').value,
+  };
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      alert('Error al guardar: ' + (d.error || 'desconocido'));
+      return;
+    }
+    if (_modalEditOT) _modalEditOT.hide();
+    if (typeof ilusToast === 'function') {
+      ilusToast('✓ OT actualizada' + (d.warning ? '. ' + d.warning : ''),
+                { type: d.warning ? 'warning' : 'success' });
+    }
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+
+async function eliminarOTRapido(otId, numeroOt) {
+  const ok = confirm(
+    `¿Eliminar la OT ${numeroOt}?\n\n` +
+    `Esta acción es IRREVERSIBLE — la OT y todas sus tareas, fotos, ` +
+    `repuestos y firmas se borrarán.\n\n` +
+    `Solo continúa si estás absolutamente seguro.`
+  );
+  if (!ok) return;
+  // Doble confirmación con typing
+  const confirm2 = prompt(`Para confirmar, escribe el número de OT exactamente: ${numeroOt}`);
+  if (confirm2 !== numeroOt) {
+    alert('Texto no coincide. Cancelado.');
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${otId}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      alert('Error al eliminar: ' + (d.error || 'desconocido'));
+      return;
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(`✓ OT ${numeroOt} eliminada`, { type: 'success' });
+    }
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+</script>
 {% endif %}
 
 {% endblock %}
