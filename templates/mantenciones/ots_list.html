@@ -106,12 +106,12 @@
     <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
       <i class="bi bi-arrow-left me-1"></i>Dashboard
     </a>
-    <a href="{{ url_for('mant_calendario') }}" class="btn btn-sm btn-outline-light">
-      <i class="bi bi-calendar3 me-1"></i>Calendario
-    </a>
+    {# Calendario integrado abajo como vista — ya no link externo #}
+    {% if not is_tecnico %}
     <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-light fw-bold">
-      <i class="bi bi-building-add me-1"></i>Nueva visita
+      <i class="bi bi-building-add me-1"></i>Generar OT desde cliente
     </a>
+    {% endif %}
   </div>
 </div>
 

@@ -205,12 +205,10 @@
         <i class="bi bi-building-check"></i><span>Clientes</span>
       </a>
       {% endif %}
-      <a href="{{ url_for('mant_calendario') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_calendario' %} active{% endif %}">
-        <i class="bi bi-calendar3"></i><span>Calendario</span>
-      </a>
+      {# Calendario integrado dentro de Órdenes de Trabajo como vista — ya no link separado.
+         La ruta /mantenciones/calendario sigue existiendo (compat) pero no aparece en menú. #}
       <a href="{{ url_for('mant_ots_list') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha'] %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
         <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
       </a>
       {# ── OCULTOS DEL MENÚ POR PEDIDO DEL USUARIO (2026-05-12) ──

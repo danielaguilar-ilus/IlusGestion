@@ -583,16 +583,73 @@ async function toggleDanoEq(chk){
 // ════════════════════════════════════════════════════════
 //  Foto principal del equipo
 // ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
+// COMPRESIÓN cliente-side: reduce una foto de 5-10MB del celular
+// a ~400KB sin pérdida visible. Acelera 10-20x el upload.
+// ════════════════════════════════════════════════════════════
+async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
+  // Si ya es pequeña no comprime (evita degradar imágenes ya optimizadas)
+  if (file.size < 600 * 1024) return file;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      img.onerror = () => reject(new Error('No se pudo decodificar la imagen'));
+      img.onload = () => {
+        // Resize proporcional a maxDim por el lado mayor
+        let w = img.width, h = img.height;
+        const ratio = Math.min(maxDim / Math.max(w, h), 1);
+        const nw = Math.round(w * ratio), nh = Math.round(h * ratio);
+        const canvas = document.createElement('canvas');
+        canvas.width = nw; canvas.height = nh;
+        const ctx = canvas.getContext('2d');
+        // Mejor calidad de resize
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, nw, nh);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('toBlob falló'));
+          // Si la compresión NO ayudó (raro), devolver original
+          if (blob.size >= file.size) { resolve(file); return; }
+          // Convertir blob a File para mantener nombre
+          const nuevo = new File([blob], file.name.replace(/\.(jpg|jpeg|png|webp)$/i, '.jpg'), {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          });
+          resolve(nuevo);
+        }, 'image/jpeg', quality);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function subirFotoPrincipal(eqId, input){
   if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
-  if (file.size > 8 * 1024 * 1024){
-    ilusToast('Foto demasiado grande (máx 8MB)', { type: 'warning' });
+  let file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){
+    ilusToast('Foto demasiado grande (máx 20MB sin compresión)', { type: 'warning' });
     return;
   }
   const uploader = document.getElementById(`foto-uploader-${eqId}`);
   uploader.classList.add('uploading');
-  ilusToast('Subiendo foto…', { type: 'info', duration: 2000 });
+  const sizeOrig = (file.size / 1024).toFixed(0);
+
+  // Comprimir cliente-side antes de subir
+  try {
+    ilusToast('Optimizando imagen…', { type: 'info', duration: 1500 });
+    file = await _comprimirImagen(file);
+    const sizeNew = (file.size / 1024).toFixed(0);
+    if (sizeNew < sizeOrig){
+      console.log(`📸 Compresión: ${sizeOrig}KB → ${sizeNew}KB (${Math.round((1 - sizeNew/sizeOrig)*100)}% menos)`);
+    }
+  } catch(e){
+    console.warn('Compresión falló, subiendo original:', e);
+  }
+
+  ilusToast('Subiendo foto…', { type: 'info', duration: 1500 });
   const fd = new FormData();
   fd.append('foto', file);
   try {

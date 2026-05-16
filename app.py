@@ -23395,6 +23395,7 @@ def mant_ot_ejecutar(vid):
             return redirect(url_for("mant_ots_list"))
 
     # Equipos involucrados en la OT — vienen de mant_visita_tareas distintas máquinas
+    # FIX 2026-05-16: filtrar equipos dados de baja (soft-delete).
     equipos = mysql_fetchall(
         "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
         "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
@@ -23403,6 +23404,7 @@ def mant_ot_ejecutar(vid):
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id=vt.maquina_id "
         " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+        "   AND COALESCE(m.estado,'activo') != 'baja' "
         " ORDER BY m.nombre",
         (vid,)
     ) or []
@@ -23423,9 +23425,10 @@ def mant_ot_ejecutar(vid):
         mid = t.get("maquina_id") or 0
         tareas_por_eq.setdefault(mid, []).append(t)
 
-    # Fotos por máquina
+    # Fotos por máquina (FIX 2026-05-16: cloudinary_url no existe en
+    # mant_visita_fotos — solo en mant_visita_fotos hay archivo_path)
     fotos = mysql_fetchall(
-        "SELECT id, tarea_id, cloudinary_url, archivo_path, tipo_foto, created_at "
+        "SELECT id, tarea_id, archivo_path, tipo_foto, created_at "
         "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY created_at",
         (vid,)
     ) or []
@@ -27543,6 +27546,11 @@ def mant_lev_crear_o_listar(cid):
     if tipo_ot not in tipos_ok:
         tipo_ot = "levantamiento"
 
+    # ─── Flag opcional: ¿aplica garantía? ──────────────────────────
+    # Garantía no es un tipo (cubre múltiples tipos), es una modalidad
+    # de cobro. NO aplica a levantamiento (siempre sin_costo).
+    aplica_garantia = bool(data.get("aplica_garantia")) and tipo_ot != 'levantamiento'
+
     # ─── Multi-plantilla por equipo (plantillas_por_equipo) ───────
     # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
     # Si llega, además de la plantilla estándar del tipo, aplica estas
@@ -27624,8 +27632,16 @@ def mant_lev_crear_o_listar(cid):
                     'inspeccion':     '[INSP]',
                     'garantia':       '[GAR]',
                 }.get(tipo_ot, '[OT]')
-                # Modalidad: levantamiento sin costo; otros tipos pagado por default
-                modalidad = 'sin_costo' if tipo_ot == 'levantamiento' else 'pagado'
+                # Sufijo si aplica garantía (visible en el título)
+                if aplica_garantia:
+                    tipo_prefix = tipo_prefix + ' 🛡️'
+                # Modalidad: levantamiento sin costo; garantia si flag activo; otros pagado
+                if tipo_ot == 'levantamiento':
+                    modalidad = 'sin_costo'
+                elif aplica_garantia:
+                    modalidad = 'garantia'
+                else:
+                    modalidad = 'pagado'
                 cur.execute(
                     "INSERT INTO mant_visitas "
                     "(numero_ot, cliente_id, titulo, fecha_programada, "

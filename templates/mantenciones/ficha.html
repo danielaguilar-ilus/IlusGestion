@@ -6565,6 +6565,8 @@ async function abrirLevantamientoSelector(){
   Object.keys(_LEV_EQ_PLANTILLAS).forEach(k => delete _LEV_EQ_PLANTILLAS[k]);
 
   // Equipos DESELECCIONADOS por defecto — el usuario decide qué levantar.
+  // Botón de plantillas extra solo HABILITADO si el equipo está marcado
+  // (evita confusión: agregar plantillas a equipos no seleccionados).
   tbody.innerHTML = filas.map(tr => {
     const mid = tr.dataset.maquinaId;
     const nombre = (tr.querySelector('.eq-name-main')?.textContent || '').trim() || `Equipo #${mid}`;
@@ -6578,9 +6580,11 @@ async function abrirLevantamientoSelector(){
         ${serie?`<div class="small text-muted">S/N: ${escHtml(serie)}</div>`:''}
       </td>
       <td onclick="event.stopPropagation()">
-        <button class="btn btn-xs btn-outline-primary w-100" style="font-size:.72rem;padding:.25rem .4rem"
-                onclick="abrirMultiPlantilla(${mid}, '${escAttr(nombre)}')">
-          <i class="bi bi-list-check me-1"></i><span id="lev-pl-count-${mid}">0 plantillas</span>
+        <button id="lev-pl-btn-${mid}" class="btn btn-xs btn-outline-primary w-100"
+                style="font-size:.72rem;padding:.25rem .4rem;opacity:.4;pointer-events:none"
+                onclick="abrirMultiPlantilla(${mid}, '${escAttr(nombre)}')"
+                title="Selecciona el equipo primero">
+          <i class="bi bi-lock me-1"></i><span id="lev-pl-count-${mid}">marca el equipo</span>
         </button>
       </td>
     </tr>`;
@@ -6676,8 +6680,9 @@ function levToggleTecnico(tid){
 }
 
 function levRecalcEqCount(){
+  const checks = document.querySelectorAll('.lev-eq-chk');
   const n = document.querySelectorAll('.lev-eq-chk:checked').length;
-  const tot = document.querySelectorAll('.lev-eq-chk').length;
+  const tot = checks.length;
   const el = document.getElementById('levEqCount');
   if (el) el.textContent = String(n);
   // Actualizar el texto del botón toggle según el estado
@@ -6689,6 +6694,40 @@ function levRecalcEqCount(){
       tBtn.innerHTML = '<i class="bi bi-check2-square me-1"></i>Marcar todos';
     }
   }
+  // Habilitar/deshabilitar botones de plantillas extra según selección del equipo
+  checks.forEach(c => {
+    const mid = c.dataset.id;
+    const plBtn = document.getElementById('lev-pl-btn-' + mid);
+    if (!plBtn) return;
+    const seleccionado = c.checked;
+    const tienePlantillas = _LEV_EQ_PLANTILLAS[mid] && _LEV_EQ_PLANTILLAS[mid].size > 0;
+    if (seleccionado){
+      plBtn.style.opacity = '1';
+      plBtn.style.pointerEvents = 'auto';
+      plBtn.title = 'Agregar plantillas extra a este equipo';
+      // Actualizar texto según si ya tiene plantillas
+      const countSpan = document.getElementById('lev-pl-count-' + mid);
+      if (countSpan){
+        if (tienePlantillas){
+          const n = _LEV_EQ_PLANTILLAS[mid].size;
+          countSpan.textContent = `${n} plantilla${n>1?'s':''} extra`;
+          plBtn.querySelector('i').className = 'bi bi-list-check me-1';
+        } else {
+          countSpan.textContent = '+ agregar plantillas';
+          plBtn.querySelector('i').className = 'bi bi-plus-circle me-1';
+        }
+      }
+    } else {
+      plBtn.style.opacity = '.4';
+      plBtn.style.pointerEvents = 'none';
+      plBtn.title = 'Selecciona el equipo primero';
+      const countSpan = document.getElementById('lev-pl-count-' + mid);
+      if (countSpan) countSpan.textContent = 'marca el equipo';
+      plBtn.querySelector('i').className = 'bi bi-lock me-1';
+      // Limpiar selección de plantillas si se desmarca el equipo
+      if (_LEV_EQ_PLANTILLAS[mid]) delete _LEV_EQ_PLANTILLAS[mid];
+    }
+  });
 }
 
 // Toggle único: si todo está marcado, desmarca todo. Si no, marca todo.
@@ -6710,7 +6749,6 @@ const _OT_TIPO_DESCRIPCIONES = {
   'visita_tecnica': 'Visita técnica: atención puntual al cliente para diagnóstico, ajustes o consultas técnicas.',
   'correctiva':    'Mantención correctiva: reparación de falla específica reportada por el cliente.',
   'inspeccion':     'Inspección: revisión visual + funcional sin intervención, para diagnóstico o auditoría.',
-  'garantia':       'Atención por garantía: cambio o reparación cubierto por el fabricante.',
 };
 function onTipoOtChange(){
   const tipo = document.getElementById('otTipo')?.value;
@@ -6718,9 +6756,20 @@ function onTipoOtChange(){
   if (desc && tipo){
     desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_OT_TIPO_DESCRIPCIONES[tipo] || '');
   }
-  // Sugerir título según tipo si está vacío o tiene "Levantamiento"
+  // Garantía aplica a TODOS los tipos excepto levantamiento (es flag opcional)
+  const garWrap = document.getElementById('otGarantiaWrap');
+  if (garWrap){
+    if (tipo === 'levantamiento'){
+      garWrap.style.display = 'none';
+      const gChk = document.getElementById('otAplicaGarantia');
+      if (gChk) gChk.checked = false;
+    } else {
+      garWrap.style.display = '';
+    }
+  }
+  // Sugerir título según tipo si está vacío o tiene un prefijo conocido
   const tit = document.getElementById('levSelectTitulo');
-  if (tit && (!tit.value || tit.value.startsWith('Levantamiento ') || tit.value.startsWith('Instalación ') || tit.value.startsWith('Mantención ') || tit.value.startsWith('Visita ') || tit.value.startsWith('Inspección ') || tit.value.startsWith('Garantía '))){
+  if (tit && (!tit.value || tit.value.startsWith('Levantamiento ') || tit.value.startsWith('Instalación ') || tit.value.startsWith('Mantención ') || tit.value.startsWith('Visita ') || tit.value.startsWith('Inspección '))){
     const fecha = new Date().toLocaleDateString('es-CL');
     const labels = {
       levantamiento: 'Levantamiento',
@@ -6729,10 +6778,24 @@ function onTipoOtChange(){
       visita_tecnica: 'Visita técnica',
       correctiva: 'Mantención correctiva',
       inspeccion: 'Inspección',
-      garantia: 'Garantía',
     };
     tit.value = `${labels[tipo] || 'OT'} ${fecha}`;
   }
+}
+
+// ════════════════════════════════════════════════════════════
+// Boton "Nuevo tipo" — solo superadmin. Por ahora muestra modal
+// informativo explicando cómo agregar (requiere ALTER del ENUM).
+// ════════════════════════════════════════════════════════════
+async function abrirCrearTipoOT(){
+  await ilusAlert({
+    title: 'Crear nuevo tipo de OT',
+    message: 'Esta función está en desarrollo (próxima fase).',
+    sub: 'Por ahora, los tipos están definidos en el ENUM de la tabla mant_visitas. ' +
+         'Para agregar un tipo nuevo se requiere migración manual. ' +
+         'Si necesitas un tipo urgente, contáctame directamente.',
+    type: 'info',
+  });
 }
 
 // ════════════════════════════════════════════════════════════
@@ -6902,6 +6965,7 @@ async function levIniciar(){
         fecha_fin: usaRango ? fechaFin : null,
         tecnico_ids: tecnicoIds,
         tipo_ot: document.getElementById('otTipo')?.value || 'levantamiento',
+        aplica_garantia: document.getElementById('otAplicaGarantia')?.checked || false,
         plantillas_por_equipo: plantillasPorEq,
       })
     });
@@ -9978,7 +10042,7 @@ function _planTabActualizarStatus(ctAnalizado) {
       </div>
       <div class="modal-body" style="background:#fafafa">
 
-        {# ─── Paso 1: Tipo de OT ─── #}
+        {# ─── Paso 1: Tipo de OT (+ flag opcional "aplica garantía") ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">1</div>
@@ -9996,12 +10060,12 @@ function _planTabActualizarStatus(ctAnalizado) {
                   <option value="visita_tecnica">🛠️ Visita técnica</option>
                   <option value="correctiva">⚠️ Mantención correctiva</option>
                   <option value="inspeccion">🔍 Inspección</option>
-                  <option value="garantia">🛡️ Garantía</option>
                 </select>
               </div>
               {% if permissions.superadmin %}
-              <button type="button" class="btn btn-sm btn-outline-secondary" disabled
-                      title="Próximamente — agregar tipos personalizados de OT">
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      onclick="abrirCrearTipoOT()"
+                      title="Crear un tipo personalizado de OT">
                 <i class="bi bi-plus-lg me-1"></i>Nuevo tipo
               </button>
               {% endif %}
@@ -10010,6 +10074,21 @@ function _planTabActualizarStatus(ctAnalizado) {
               <i class="bi bi-info-circle me-1"></i>
               Levantamiento de ficha: documentación visual de cada equipo. Se aplica
               automáticamente la plantilla estándar a todos los equipos seleccionados.
+            </div>
+
+            {# ── Flag opcional: garantía aplica a CUALQUIER tipo (excepto levantamiento) ── #}
+            <div class="mt-2 p-2 rounded border" id="otGarantiaWrap" style="background:#f8fafc;display:none">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="otAplicaGarantia" role="switch">
+                <label class="form-check-label small fw-semibold" for="otAplicaGarantia">
+                  <i class="bi bi-shield-check me-1 text-success"></i>
+                  ¿Aplica garantía? <span class="text-muted">(sin cargo al cliente)</span>
+                </label>
+              </div>
+              <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                Si activas garantía, la OT queda con modalidad de cobro <em>garantía</em>
+                (cubierta por el fabricante/proveedor — el cliente no paga).
+              </small>
             </div>
           </div>
         </div>
@@ -10140,7 +10219,7 @@ function _planTabActualizarStatus(ctAnalizado) {
         <button type="button" class="btn fw-bold text-white" id="btnLevIniciar"
                 style="background:linear-gradient(135deg,#7c2d12,#dc2626);padding:.55rem 1.4rem"
                 onclick="levIniciar()">
-          <i class="bi bi-plus-circle me-1"></i>Crear levantamiento
+          <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
         </button>
       </div>
     </div>
