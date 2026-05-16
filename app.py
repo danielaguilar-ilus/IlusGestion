@@ -14693,6 +14693,18 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tareas ADD COLUMN duracion_estimada_min INT NULL COMMENT 'Sugerencia histórica'",
                 "ALTER TABLE mant_visita_tareas ADD COLUMN pausada_acumulado_seg INT DEFAULT 0",
                 "ALTER TABLE mant_visita_tareas ADD COLUMN estado_trabajo ENUM('pendiente','en_curso','pausada','completada','bloqueada') DEFAULT 'pendiente'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-16 — Multi-técnico migrado a app_users.
+                # La tabla legacy mant_visita_tecnicos.tecnico_id apuntaba a
+                # mant_tecnicos (deprecado). Agregamos tecnico_user_id (FK
+                # a app_users.id) y hacemos nullable el campo legacy. Así el
+                # filtro "mis OTs" del técnico funciona también cuando el
+                # usuario es colaborador (no solo principal).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_tecnicos ADD COLUMN tecnico_user_id INT NULL COMMENT 'app_users.id (reemplaza tecnico_id legacy)'",
+                "ALTER TABLE mant_visita_tecnicos MODIFY tecnico_id INT NULL",
+                "CREATE INDEX idx_vt_user ON mant_visita_tecnicos (tecnico_user_id)",
+                "CREATE INDEX idx_vt_visita_user ON mant_visita_tecnicos (visita_id, tecnico_user_id)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -22498,24 +22510,38 @@ def mant_ots_list():
     where = ["1=1"]
     params = []
 
-    # Filtro "mis OTs": basado primero en v.tecnico_user_id == user.id (post-migración).
-    # Fallback legacy: si el usuario tiene email coincidente en mant_tecnicos,
-    # también incluye OTs apuntadas a ese técnico legacy.
+    # Filtro "mis OTs": muestra TODAS las OTs donde el usuario aparece como
+    # técnico, sea como principal (v.tecnico_user_id) o como colaborador en
+    # mant_visita_tecnicos.tecnico_user_id (multi-técnico Fracttal).
+    # Fallback legacy: si el usuario tiene email match en mant_tecnicos,
+    # también ve OTs apuntadas a ese técnico legacy (compat con OTs viejas).
     if solo_mias and user:
         try:
             uid = user.get("id")
             me_tec = mysql_fetchone(
                 "SELECT id FROM mant_tecnicos WHERE LOWER(TRIM(email))=LOWER(TRIM(%s)) "
                 "AND COALESCE(activo,1)=1 LIMIT 1",
-                (user.get("correo") or user.get("email") or "",)
-            ) if (user.get("correo") or user.get("email")) else None
+                (user.get("username") or user.get("correo") or user.get("email") or "",)
+            ) if (user.get("username") or user.get("correo") or user.get("email")) else None
 
-            if uid and me_tec:
-                where.append("(v.tecnico_user_id=%s OR v.tecnico_id=%s)")
-                params.extend([int(uid), int(me_tec["id"])])
-            elif uid:
-                where.append("v.tecnico_user_id=%s")
-                params.append(int(uid))
+            if uid:
+                # Match principal (v.tecnico_user_id) OR multi-técnico
+                # (mant_visita_tecnicos.tecnico_user_id) OR legacy (mant_tecnicos)
+                if me_tec:
+                    where.append(
+                        "(v.tecnico_user_id=%s "
+                        " OR v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                        "             WHERE tecnico_user_id=%s) "
+                        " OR v.tecnico_id=%s)"
+                    )
+                    params.extend([int(uid), int(uid), int(me_tec["id"])])
+                else:
+                    where.append(
+                        "(v.tecnico_user_id=%s "
+                        " OR v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                        "             WHERE tecnico_user_id=%s))"
+                    )
+                    params.extend([int(uid), int(uid)])
             elif me_tec:
                 where.append("v.tecnico_id=%s")
                 params.append(int(me_tec["id"]))
@@ -22607,17 +22633,24 @@ def mant_ots_list():
             fatal_error = f"{e} / fallback: {e2}"
             ots = []
 
+    # KPIs respetan el MISMO filtro que la tabla — para que el técnico vea
+    # SUS contadores (no los globales del sistema). Antes había un BUG donde
+    # mostraba "1 TOTAL" pero la lista filtrada decía 0 (KPI no filtrado).
     try:
-        kpis = mysql_fetchone(
+        # Reutilizamos el `where` ya construido (incluye solo_mias para tec).
+        kpis_sql = (
             "SELECT "
             " COUNT(*) AS total, "
-            " SUM(CASE WHEN estado='programada' THEN 1 ELSE 0 END) AS programadas, "
-            " SUM(CASE WHEN estado='completada' THEN 1 ELSE 0 END) AS completadas, "
-            " SUM(CASE WHEN estado='programada' AND fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
-            "FROM mant_visitas"
-        ) or kpis
-    except Exception:
-        pass
+            " SUM(CASE WHEN v.estado='programada' THEN 1 ELSE 0 END) AS programadas, "
+            " SUM(CASE WHEN v.estado='completada' THEN 1 ELSE 0 END) AS completadas, "
+            " SUM(CASE WHEN v.estado='programada' AND v.fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id=v.cliente_id "
+            f"WHERE {' AND '.join(where)}"
+        )
+        kpis = mysql_fetchone(kpis_sql, tuple(params)) or kpis
+    except Exception as e_kpi:
+        print(f"[mant_ots_list kpis] error: {e_kpi}", flush=True)
 
     try:
         tecnicos = mysql_fetchall(
@@ -27245,34 +27278,21 @@ def mant_lev_crear_o_listar(cid):
                 # Esto permite que cada técnico vea la OT en "Mis OTs" y
                 # que cualquiera de ellos pueda tomar equipos disponibles
                 # de forma colaborativa.
-                # NOTA: mant_visita_tecnicos.tecnico_id apunta a mant_tecnicos
-                # (legacy) NO a app_users. Por ahora insertamos best-effort
-                # buscando un mant_tecnicos.email que matchee el username de
-                # app_users. Si no hay match, se omite (el filtro por
-                # tecnico_user_id en mant_ots_list usa app_users directo).
+                # 2026-05-16: ahora usamos tecnico_user_id (FK a app_users.id)
+                # como fuente de verdad. La columna legacy tecnico_id queda
+                # NULL (la tabla mant_tecnicos legacy ya no es fuente).
                 if len(tecnico_ids) > 0:
                     for tuid in tecnico_ids:
-                        u = mysql_fetchone(
-                            "SELECT username, COALESCE(nombre, username) AS nm "
-                            "FROM app_users WHERE id=%s AND role='tecnico'",
-                            (tuid,)
-                        )
-                        if not u: continue
-                        # Buscar match en mant_tecnicos por email
-                        t_legacy = mysql_fetchone(
-                            "SELECT id FROM mant_tecnicos "
-                            "WHERE LOWER(TRIM(email))=LOWER(TRIM(%s)) LIMIT 1",
-                            (u["username"],)
-                        )
-                        if t_legacy:
-                            try:
-                                cur.execute(
-                                    "INSERT IGNORE INTO mant_visita_tecnicos "
-                                    "(visita_id, tecnico_id, rol) VALUES (%s,%s,%s)",
-                                    (visita_id, t_legacy["id"],
-                                     'lider' if tuid == tecnico_principal else 'tecnico')
-                                )
-                            except Exception as _e_n: pass
+                        try:
+                            cur.execute(
+                                "INSERT IGNORE INTO mant_visita_tecnicos "
+                                "(visita_id, tecnico_id, tecnico_user_id, rol) "
+                                "VALUES (%s, NULL, %s, %s)",
+                                (visita_id, tuid,
+                                 'lider' if tuid == tecnico_principal else 'tecnico')
+                            )
+                        except Exception as _e_n:
+                            print(f"[lev_crear] mant_visita_tecnicos insert falló para uid={tuid}: {_e_n}", flush=True)
 
                 # ─── 1 tarea TIPO FOTO por equipo (legacy fallback) ─
                 for idx, m in enumerate(maquinas, 1):
