@@ -87,6 +87,97 @@
 .tx-gps.gps-ok{background:#dcfce7;border-color:#16a34a}
 .tx-gps.gps-err{background:#fee2e2;border-color:#dc2626}
 
+/* ── TABS PRINCIPALES de la OT ── */
+.tx-tabs{
+  display:flex;gap:4px;margin-bottom:14px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;padding:5px;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
+}
+.tx-tab-btn{
+  flex:1;padding:11px 16px;border:0;border-radius:8px;background:transparent;
+  color:#475569;font-weight:700;font-size:.88rem;cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px;
+  min-height:44px;
+}
+.tx-tab-btn:hover{background:#f8fafc;color:#0f172a}
+.tx-tab-btn.active{
+  background:linear-gradient(135deg,#7c1d1d,#dc2626);color:#fff;
+  box-shadow:0 3px 8px rgba(220,38,38,.25);
+}
+.tx-tab-btn .badge-count{
+  background:rgba(255,255,255,.25);padding:1px 8px;border-radius:9999px;
+  font-size:.7rem;font-weight:700;
+}
+.tx-tab-btn:not(.active) .badge-count{background:#fef2f2;color:#dc2626;}
+
+.tx-tab-panel{display:none}
+.tx-tab-panel.active{display:block}
+
+/* ── Panel Información ── */
+.info-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:16px;margin-bottom:12px;
+}
+.info-card h5{
+  font-size:.84rem;font-weight:800;color:#0f172a;text-transform:uppercase;
+  letter-spacing:.5px;margin:0 0 12px;display:flex;align-items:center;gap:8px;
+}
+.info-card h5 i{color:#dc2626}
+.info-kv{display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:.88rem;}
+.info-kv .k{color:#6b7280;font-weight:600;font-size:.78rem}
+.info-kv .v{color:#0f172a;font-weight:500;word-break:break-word}
+
+/* ── Adjuntos ── */
+.adj-uploader{
+  border:2px dashed #cbd5e1;border-radius:11px;padding:18px;text-align:center;
+  background:#fafafa;transition:all .15s;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.adj-uploader:hover{border-color:#dc2626;background:#fef2f2}
+.adj-uploader.dragover{border-color:#16a34a;background:#f0fdf4}
+.adj-uploader i{font-size:2rem;color:#94a3b8}
+.adj-uploader-text{font-weight:600;color:#475569;font-size:.88rem}
+.adj-uploader-hint{font-size:.72rem;color:#94a3b8}
+
+.adj-tipo-pills{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.adj-pill{
+  padding:6px 12px;border:1.5px solid #cbd5e1;background:#fff;
+  border-radius:9999px;font-size:.78rem;font-weight:600;color:#475569;
+  cursor:pointer;transition:all .12s;display:inline-flex;align-items:center;gap:5px;
+  min-height:36px;
+}
+.adj-pill:hover{background:#f8fafc}
+.adj-pill i{font-size:.95rem}
+
+.adj-list{display:flex;flex-direction:column;gap:8px}
+.adj-item{
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:11px 13px;display:flex;align-items:center;gap:12px;
+}
+.adj-item-icon{
+  width:42px;height:42px;border-radius:8px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.3rem;
+}
+.adj-pdf .adj-item-icon{background:#fee2e2;color:#dc2626}
+.adj-video .adj-item-icon{background:#dbeafe;color:#1d4ed8}
+.adj-foto .adj-item-icon{background:#dcfce7;color:#16a34a}
+.adj-documento .adj-item-icon{background:#fef3c7;color:#a16207}
+.adj-audio .adj-item-icon{background:#f3e8ff;color:#7c3aed}
+.adj-otro .adj-item-icon{background:#f3f4f6;color:#6b7280}
+.adj-item-info{flex:1;min-width:0}
+.adj-item-name{font-weight:700;font-size:.88rem;color:#0f172a;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.adj-item-meta{font-size:.7rem;color:#94a3b8;margin-top:2px}
+.adj-actions{display:flex;gap:5px;flex-shrink:0}
+.adj-btn{
+  width:34px;height:34px;border-radius:8px;border:1px solid #e5e7eb;
+  background:#fff;color:#475569;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:all .12s;
+}
+.adj-btn:hover{background:#f8fafc;color:#0f172a}
+.adj-btn.danger:hover{background:#fee2e2;color:#dc2626;border-color:#fca5a5}
+
 /* ── Breadcrumb ── */
 .tx-crumbs{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#6b7280;
   margin-bottom:10px;padding:8px 0;flex-wrap:wrap}
@@ -177,8 +268,19 @@
 /* ════════════════════════════════════════════════════════
    VISTA 3: TAREAS DE UNA PLANTILLA
    ════════════════════════════════════════════════════════ */
-.tx-pl-hero{background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;
-  border-radius:12px;padding:14px;margin-bottom:14px}
+.tx-pl-hero{
+  background:linear-gradient(135deg,#1a0606 0%,#7c1d1d 50%,#dc2626 100%);
+  color:#fff;
+  border-radius:12px;padding:16px 18px;margin-bottom:14px;
+  box-shadow:0 4px 14px rgba(220,38,38,.18);
+  position:relative;overflow:hidden;
+}
+.tx-pl-hero::before{
+  content:'';position:absolute;top:-20px;right:-20px;width:120px;height:120px;
+  background:url('/static/favicon_192.png?v=20260517a') center/contain no-repeat;
+  opacity:.08;transform:rotate(-12deg);pointer-events:none;
+}
+.tx-pl-hero h4,.tx-pl-hero .sub,.tx-pl-hero .prog-wrap{position:relative;z-index:1;}
 .tx-pl-hero h4{font-size:1rem;margin:0;font-weight:800}
 .tx-pl-hero .sub{font-size:.76rem;opacity:.9;margin-top:4px}
 .tx-pl-hero .prog-wrap{margin-top:10px;height:6px;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden}
@@ -401,6 +503,231 @@
     </div>
   </div>
 
+  {# ─── TABS PRINCIPALES: Información · Gestión de tareas ─── #}
+  <div class="tx-tabs" role="tablist">
+    <button type="button" class="tx-tab-btn" id="tabBtn-info" onclick="cambiarTabOT('info')"
+            role="tab" aria-controls="tabPanel-info">
+      <i class="bi bi-info-circle-fill"></i>
+      <span>Información</span>
+      <span class="badge-count" id="adjCountBadge">0</span>
+    </button>
+    <button type="button" class="tx-tab-btn active" id="tabBtn-tareas" onclick="cambiarTabOT('tareas')"
+            role="tab" aria-controls="tabPanel-tareas">
+      <i class="bi bi-list-check"></i>
+      <span>Gestión de tareas</span>
+    </button>
+  </div>
+
+  {# ════════════════════════════════════════════════════════
+     TAB 1: INFORMACIÓN (OT details + documentos/adjuntos)
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-tab-panel" id="tabPanel-info" role="tabpanel" aria-labelledby="tabBtn-info">
+
+    {# ─── Card: Datos de la OT ─── #}
+    <div class="info-card">
+      <h5><i class="bi bi-clipboard2-data-fill"></i>Datos de la OT</h5>
+      <div class="info-kv">
+        <div class="k">N° OT</div>
+        <div class="v"><strong>{{ visita.numero_ot }}</strong></div>
+        <div class="k">Estado</div>
+        <div class="v">
+          <span class="badge" style="background:#fef3c7;color:#92400e;font-weight:700;padding:4px 10px;border-radius:9999px">
+            {{ (visita.estado or '—')|upper }}
+          </span>
+        </div>
+        <div class="k">Cliente</div>
+        <div class="v">{{ visita.razon_social }}</div>
+        {% if visita.cli_rut %}
+        <div class="k">RUT</div>
+        <div class="v font-monospace">{{ visita.cli_rut | rut_fmt }}</div>
+        {% endif %}
+        {% set dir_v = visita.direccion_visita or visita.cli_direccion %}
+        {% if dir_v %}
+        <div class="k">Dirección</div>
+        <div class="v">
+          {{ dir_v }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}
+          {% if visita.direccion_lat and visita.direccion_lng %}
+          <a href="https://www.google.com/maps/search/?api=1&query={{ visita.direccion_lat }},{{ visita.direccion_lng }}"
+             target="_blank" class="ms-1" style="color:#dc2626;font-size:.78rem">
+            <i class="bi bi-geo-alt-fill"></i> Abrir mapa
+          </a>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if visita.fecha_programada %}
+        <div class="k">Fecha</div>
+        <div class="v">
+          {{ visita.fecha_programada }}
+          {% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}
+          {% if visita.hora_fin %}–{{ visita.hora_fin }}{% endif %}
+        </div>
+        {% endif %}
+        {% if visita.fecha_fin and visita.fecha_fin != visita.fecha_programada %}
+        <div class="k">Fecha término</div>
+        <div class="v" style="color:#a16207">
+          <i class="bi bi-calendar-range"></i> {{ visita.fecha_fin }}
+          {% if visita.hora_inicio_fin %} · {{ visita.hora_inicio_fin }}{% endif %}
+          {% if visita.hora_fin_fin %}–{{ visita.hora_fin_fin }}{% endif %}
+        </div>
+        {% endif %}
+        {% if visita.tecnico_principal %}
+        <div class="k">Técnico</div>
+        <div class="v">{{ visita.tecnico_principal }}</div>
+        {% endif %}
+        {% if visita.observaciones %}
+        <div class="k">Observaciones</div>
+        <div class="v" style="white-space:pre-wrap">{{ visita.observaciones }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ─── Card: Contraparte / contacto en sitio (con acciones interactivas) ─── #}
+    {% if visita.contacto_nombre %}
+    <div class="info-card">
+      <h5><i class="bi bi-person-vcard-fill"></i>Contraparte en sitio</h5>
+      <div class="info-kv">
+        <div class="k">Nombre</div>
+        <div class="v"><strong>{{ visita.contacto_nombre }}</strong></div>
+        {% if visita.contacto_cargo %}
+        <div class="k">Cargo</div>
+        <div class="v">{{ visita.contacto_cargo }}</div>
+        {% endif %}
+        {% if visita.contacto_tel %}
+        <div class="k">Teléfono</div>
+        <div class="v font-monospace">{{ visita.contacto_tel }}</div>
+        {% endif %}
+        {% if visita.contacto_email %}
+        <div class="k">Email</div>
+        <div class="v"><a href="mailto:{{ visita.contacto_email }}" style="color:#dc2626">{{ visita.contacto_email }}</a></div>
+        {% endif %}
+      </div>
+      {% if visita.contacto_tel or visita.contacto_email %}
+      <div class="d-flex gap-2 mt-3 flex-wrap">
+        {% if visita.contacto_tel %}
+        <a href="tel:{{ visita.contacto_tel }}" class="tx-btn-foto" style="background:#dcfce7;border-color:#16a34a;color:#15803d">
+          <i class="bi bi-telephone-fill"></i> Llamar
+        </a>
+        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}"
+           target="_blank" class="tx-btn-foto" style="background:#25d366;border-color:#25d366;color:#fff">
+          <i class="bi bi-whatsapp"></i> WhatsApp
+        </a>
+        {% endif %}
+        {% if visita.contacto_email %}
+        <a href="mailto:{{ visita.contacto_email }}" class="tx-btn-foto" style="background:#dbeafe;border-color:#3b82f6;color:#1e40af">
+          <i class="bi bi-envelope-fill"></i> Email
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ─── Card: Documentos y archivos adjuntos ─── #}
+    <div class="info-card">
+      <h5>
+        <i class="bi bi-paperclip"></i>Documentos y archivos
+        <small class="ms-auto text-muted" style="font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0">
+          PDFs · Fotos · Videos · Audios
+        </small>
+      </h5>
+
+      {# Uploader: zona drag-drop con pills por tipo #}
+      <label class="adj-uploader" id="adjUploader" for="adjFileInput" style="margin-bottom:10px">
+        <i class="bi bi-cloud-arrow-up-fill"></i>
+        <div class="adj-uploader-text">Toca o arrastra para subir</div>
+        <div class="adj-uploader-hint">PDFs, fotos, videos, audios o cualquier archivo (máx 100 MB)</div>
+        <input type="file" id="adjFileInput" style="display:none"
+               accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.csv,.txt"
+               onchange="subirAdjuntoDesdeInput(this)">
+      </label>
+
+      <div class="adj-tipo-pills" style="margin-bottom:10px">
+        <label class="adj-pill" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
+          <i class="bi bi-file-earmark-pdf-fill"></i> PDF
+          <input type="file" accept="application/pdf" style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'pdf')">
+        </label>
+        <label class="adj-pill" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+          <i class="bi bi-camera-fill"></i> Foto (cámara)
+          <input type="file" accept="image/*" capture="environment" style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'foto')">
+        </label>
+        <label class="adj-pill" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+          <i class="bi bi-images"></i> Galería
+          <input type="file" accept="image/*" style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'foto')">
+        </label>
+        <label class="adj-pill" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
+          <i class="bi bi-camera-video-fill"></i> Video
+          <input type="file" accept="video/*" capture="environment" style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'video')">
+        </label>
+        <label class="adj-pill" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
+          <i class="bi bi-mic-fill"></i> Audio
+          <input type="file" accept="audio/*" capture style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'audio')">
+        </label>
+        <label class="adj-pill" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
+          <i class="bi bi-file-earmark-text-fill"></i> Documento
+          <input type="file" accept=".doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none"
+                 onchange="subirAdjuntoDesdeInput(this, 'documento')">
+        </label>
+      </div>
+
+      {# Progreso de upload (oculto por defecto) #}
+      <div id="adjProgressWrap" style="display:none;margin-bottom:10px">
+        <div style="background:#e5e7eb;border-radius:6px;overflow:hidden;height:8px">
+          <div id="adjProgressBar" style="height:100%;background:linear-gradient(90deg,#dc2626,#f87171);width:0%;transition:width .25s"></div>
+        </div>
+        <div id="adjProgressText" class="small text-muted mt-1">Subiendo…</div>
+      </div>
+
+      {# Lista de adjuntos #}
+      <div class="adj-list" id="adjList">
+        <div class="text-center text-muted small py-2">
+          <i class="bi bi-hourglass-split"></i> Cargando adjuntos…
+        </div>
+      </div>
+    </div>
+
+    {# ─── Card: Mini-resumen progreso (pipeline) ─── #}
+    <div class="info-card">
+      <h5><i class="bi bi-bar-chart-line-fill"></i>Pipeline de la OT</h5>
+      <div id="pipelineList" style="display:flex;flex-direction:column;gap:6px;font-size:.84rem">
+        {% set est = (visita.estado or '').lower() %}
+        {% set pasos = [
+          ('asignada', 'Asignada al técnico', 'bi-person-check-fill'),
+          ('iniciada', 'En ruta al cliente', 'bi-signpost-split-fill'),
+          ('en_ejecucion', 'Ejecutando tareas', 'bi-tools'),
+          ('pendiente_aprobacion', 'Firmada — pendiente aprobación', 'bi-pen-fill'),
+          ('cerrada', 'OT cerrada', 'bi-check-circle-fill'),
+        ] %}
+        {% set orden = ['asignada','iniciada','en_ejecucion','pendiente_aprobacion','cerrada'] %}
+        {% set idx_actual = orden.index(est) if est in orden else 0 %}
+        {% for k, label, icono in pasos %}
+        {% set i = loop.index0 %}
+        {% set estado_paso = 'done' if i < idx_actual else ('current' if i == idx_actual else 'pending') %}
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;
+          {% if estado_paso == 'done' %}background:#dcfce7;color:#15803d
+          {% elif estado_paso == 'current' %}background:#fef3c7;color:#92400e;border:1.5px solid #fcd34d;font-weight:700
+          {% else %}background:#f3f4f6;color:#6b7280{% endif %}">
+          <i class="bi {{ 'bi-check-circle-fill' if estado_paso == 'done' else icono }}"
+             style="font-size:1rem"></i>
+          <span>{{ label }}</span>
+          {% if estado_paso == 'current' %}
+          <span class="ms-auto" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800">Actual</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {# ════════════════════════════════════════════════════════
+     TAB 2: GESTIÓN DE TAREAS (breadcrumb + 3 views drill-down)
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-tab-panel active" id="tabPanel-tareas" role="tabpanel" aria-labelledby="tabBtn-tareas">
+
   {# ─── BREADCRUMB ─── #}
   <div class="tx-crumbs" id="crumbs">
     <button onclick="goToMaquinas()"><i class="bi bi-grid-3x3-gap-fill"></i> Máquinas</button>
@@ -493,6 +820,8 @@
       {# Llenado dinámico #}
     </div>
   </div>
+
+  </div> {# /tabPanel-tareas #}
 
 </div>
 
@@ -845,12 +1174,20 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       break;
     case 'foto':
       ctrlHtml = `<div class="ctrl">
-        <label class="tx-btn-foto" style="cursor:pointer">
-          <i class="bi bi-camera-fill"></i> Tomar / subir foto
-          <input type="file" accept="image/*" capture="environment" style="display:none"
-            ${bloqueada ? 'disabled' : ''}
-            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-        </label>
+        <div class="d-flex gap-2 flex-wrap">
+          <label class="tx-btn-foto" style="cursor:pointer">
+            <i class="bi bi-camera-fill"></i> Tomar foto
+            <input type="file" accept="image/*" capture="environment" style="display:none"
+              ${bloqueada ? 'disabled' : ''}
+              onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+          </label>
+          <label class="tx-btn-foto" style="cursor:pointer;background:#fff;border-color:#3b82f6;color:#3b82f6">
+            <i class="bi bi-images"></i> Desde galería
+            <input type="file" accept="image/*" style="display:none"
+              ${bloqueada ? 'disabled' : ''}
+              onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+          </label>
+        </div>
         <div id="t-fotos-${t.id}" class="foto-result"></div>
       </div>`;
       break;
@@ -1068,7 +1405,205 @@ document.addEventListener('DOMContentLoaded', () => {
     pls.forEach(p => { totG += p.total; compG += p.completas; });
   });
   actualizarLockFirmar(totG, compG);
+  // Cargar lista de adjuntos en la pestaña Información
+  cargarAdjuntos();
+  // Drag&drop sobre el uploader
+  initAdjuntosDragDrop();
 });
+
+// ════════════════════════════════════════════════════════
+//  TABS PRINCIPALES — Información / Gestión de tareas
+// ════════════════════════════════════════════════════════
+function cambiarTabOT(tab){
+  document.querySelectorAll('.tx-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tx-tab-panel').forEach(p => p.classList.remove('active'));
+  const btn = document.getElementById('tabBtn-' + tab);
+  const panel = document.getElementById('tabPanel-' + tab);
+  if (btn) btn.classList.add('active');
+  if (panel) panel.classList.add('active');
+  // Si vuelve a la pestaña info, refrescar lista (por si subió algo en otro tab)
+  if (tab === 'info') cargarAdjuntos();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ════════════════════════════════════════════════════════
+//  ADJUNTOS — listar, subir, eliminar (mant_visita_adjuntos)
+// ════════════════════════════════════════════════════════
+async function cargarAdjuntos(){
+  const cont = document.getElementById('adjList');
+  if (!cont) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/adjuntos`);
+    const d = await r.json();
+    if (!d.ok){
+      cont.innerHTML = `<div class="text-muted small text-center py-2">Error: ${_escapeHtml(d.error || '?')}</div>`;
+      return;
+    }
+    const items = d.adjuntos || [];
+    document.getElementById('adjCountBadge').textContent = items.length;
+    if (!items.length){
+      cont.innerHTML = `<div class="text-muted small text-center py-3" style="font-style:italic">
+        <i class="bi bi-folder-x" style="font-size:1.5rem;display:block;margin-bottom:4px;opacity:.4"></i>
+        Sin archivos adjuntos aún
+      </div>`;
+      return;
+    }
+    cont.innerHTML = items.map(renderAdjuntoItem).join('');
+  } catch(e){
+    cont.innerHTML = `<div class="text-muted small text-center py-2">Error de red al cargar adjuntos</div>`;
+  }
+}
+
+function renderAdjuntoItem(a){
+  const tipo = (a.tipo || 'otro').toLowerCase();
+  const iconos = {
+    pdf:'bi-file-earmark-pdf-fill', video:'bi-camera-video-fill',
+    foto:'bi-image-fill', documento:'bi-file-earmark-text-fill',
+    audio:'bi-mic-fill', otro:'bi-paperclip',
+  };
+  const url = a.url || a.cloudinary_url || (a.archivo_path ? '/' + a.archivo_path : '');
+  const sizeMB = a.file_size_kb ? (a.file_size_kb / 1024).toFixed(1) + ' MB' : '—';
+  const fecha = a.created_at ? a.created_at.split('.')[0] : '';
+  const nombre = a.archivo_nombre || ('Archivo #' + a.id);
+  // Preview thumbnail para foto
+  const isImg = (tipo === 'foto' && url);
+  const isVid = (tipo === 'video' && url);
+  return `<div class="adj-item adj-${tipo}" data-id="${a.id}">
+    ${isImg ? `<img class="adj-item-icon" src="${_escapeAttr(url)}" style="object-fit:cover" alt="">`
+            : `<div class="adj-item-icon"><i class="bi ${iconos[tipo] || iconos.otro}"></i></div>`}
+    <div class="adj-item-info">
+      <div class="adj-item-name" title="${_escapeAttr(nombre)}">${_escapeHtml(nombre)}</div>
+      <div class="adj-item-meta">
+        <span class="text-uppercase fw-bold" style="color:#dc2626">${_escapeHtml(tipo)}</span>
+        · ${sizeMB} ${fecha ? '· ' + _escapeHtml(fecha) : ''}
+      </div>
+    </div>
+    <div class="adj-actions">
+      ${url ? `<a class="adj-btn" href="${_escapeAttr(url)}" target="_blank" title="Ver / descargar">
+        <i class="bi bi-eye-fill"></i>
+      </a>` : ''}
+      ${VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'pendiente_aprobacion' ?
+        `<button class="adj-btn danger" onclick="eliminarAdjunto(${a.id})" title="Eliminar">
+          <i class="bi bi-trash3-fill"></i>
+        </button>` : ''}
+    </div>
+  </div>`;
+}
+
+function initAdjuntosDragDrop(){
+  const z = document.getElementById('adjUploader');
+  if (!z) return;
+  ['dragenter','dragover'].forEach(ev => {
+    z.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      z.classList.add('dragover');
+    });
+  });
+  ['dragleave','drop'].forEach(ev => {
+    z.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      z.classList.remove('dragover');
+    });
+  });
+  z.addEventListener('drop', (e) => {
+    const files = e.dataTransfer?.files;
+    if (!files || !files.length) return;
+    [...files].forEach(f => subirAdjuntoFile(f, null));
+  });
+}
+
+function subirAdjuntoDesdeInput(input, tipoHint){
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  subirAdjuntoFile(file, tipoHint || null);
+  // reset para que se pueda volver a subir el mismo archivo
+  input.value = '';
+}
+
+async function subirAdjuntoFile(file, tipoHint){
+  if (!file) return;
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion'){
+    ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
+    return;
+  }
+  // Validar tamaño general (100 MB hard limit cliente, server vuelve a validar)
+  const MAX_TOTAL = 100 * 1024 * 1024;
+  if (file.size > MAX_TOTAL){
+    ilusToast('Archivo demasiado grande (máx 100 MB)', { type:'error' });
+    return;
+  }
+  const wrap = document.getElementById('adjProgressWrap');
+  const bar = document.getElementById('adjProgressBar');
+  const txt = document.getElementById('adjProgressText');
+  wrap.style.display = 'block';
+  bar.style.width = '5%';
+  txt.textContent = `Subiendo ${file.name} (${(file.size / (1024*1024)).toFixed(1)} MB)…`;
+  // Comprimir imagen si aplica
+  let toSend = file;
+  if ((tipoHint === 'foto') || (!tipoHint && /^image\//.test(file.type))){
+    try { toSend = await _comprimirImagen(file); } catch(e) { /* fallback original */ }
+  }
+  const fd = new FormData();
+  fd.append('archivo', toSend);
+  if (tipoHint) fd.append('tipo', tipoHint);
+  // Usar XHR para progreso real
+  try {
+    const d = await _uploadConProgreso(`/mantenciones/api/visitas/${VID}/adjuntos`, fd, (pct) => {
+      bar.style.width = Math.max(5, pct) + '%';
+      txt.textContent = `Subiendo… ${Math.round(pct)}%`;
+    });
+    if (d.ok){
+      bar.style.width = '100%';
+      txt.textContent = '✓ Subido';
+      ilusToast('✓ ' + (d.nombre || d.archivo_nombre || 'Archivo') + ' subido', { type:'success' });
+      setTimeout(() => { wrap.style.display = 'none'; bar.style.width = '0%'; }, 800);
+      cargarAdjuntos();
+    } else {
+      wrap.style.display = 'none';
+      ilusToast('Error: ' + (d.error || 'desconocido'), { type:'error' });
+    }
+  } catch(e){
+    wrap.style.display = 'none';
+    ilusToast('Error de red: ' + (e.message || ''), { type:'error' });
+  }
+}
+
+function _uploadConProgreso(url, fd, onProgress){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100);
+    });
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText)); }
+      catch(e){ reject(new Error('Respuesta inválida')); }
+    };
+    xhr.onerror = () => reject(new Error('XHR error'));
+    xhr.send(fd);
+  });
+}
+
+async function eliminarAdjunto(aid){
+  const ok = await ilusConfirm({
+    title: 'Eliminar adjunto',
+    message: '¿Quitar este archivo de la OT?',
+    sub: 'No se puede deshacer. Se borrará también de Cloudinary.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/adjuntos/${aid}`, { method:'DELETE' });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Archivo eliminado', { type:'success' });
+      cargarAdjuntos();
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
 
 // ════════════════════════════════════════════════════════
 //  HELPERS

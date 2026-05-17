@@ -15147,6 +15147,13 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_sucursales ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_sucursales ADD COLUMN direccion_place_id VARCHAR(200) NULL",
                 # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Horario del último día (visitas multi-día).
+                # Cuando "se extenderá más de un día" se activa, técnico tiene
+                # un horario inicial Y un horario para el último día.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN hora_inicio_fin TIME NULL COMMENT 'Hora inicio último día visita extendida'",
+                "ALTER TABLE mant_visitas ADD COLUMN hora_fin_fin TIME NULL COMMENT 'Hora término último día visita extendida'",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Ruta del técnico (F7):
                 # Registra cuándo el técnico inicia la ruta hacia el cliente
                 # (Google Maps / Waze) + ubicación de origen (su bodega o
@@ -15784,6 +15791,34 @@ def init_mantenciones_tables():
                     FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id)      ON DELETE SET NULL,
                     INDEX idx_visita  (visita_id),
                     INDEX idx_maquina (maquina_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ════════════════════════════════════════════════════════════
+            # mant_visita_adjuntos — Documentos/videos asociados a una OT
+            # (distinto de fotos: PDFs, videos, contratos, planos, etc.).
+            # Daniel pidió: subir PDFs, fotos y VIDEOS a la pestaña Info
+            # de la OT. Los videos quedan en digital pero NO se incluyen
+            # en el PDF generado.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_visita_adjuntos (
+                    id                   INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id            INT NOT NULL,
+                    tipo                 ENUM('foto','pdf','video','documento','audio','otro')
+                                         DEFAULT 'otro',
+                    archivo_path         VARCHAR(500) NULL,
+                    cloudinary_url       VARCHAR(600) NULL,
+                    cloudinary_public_id VARCHAR(400) NULL,
+                    archivo_nombre       VARCHAR(300),
+                    file_size_kb         INT,
+                    mime_type            VARCHAR(100),
+                    descripcion          TEXT,
+                    subido_por           VARCHAR(190),
+                    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (visita_id) REFERENCES mant_visitas(id) ON DELETE CASCADE,
+                    INDEX idx_visita_tipo (visita_id, tipo),
+                    INDEX idx_created (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
@@ -23935,7 +23970,8 @@ def mant_ot_ficha(vid):
 def mant_ot_ejecutar(vid):
     """Vista simplificada de ejecución de OT (modo técnico)."""
     visita = mysql_fetchone(
-        "SELECT v.*, c.razon_social, c.direccion AS cli_direccion, "
+        "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
+        "       c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna, c.contacto_nombre AS cli_contacto, "
         "       c.contacto_tel AS cli_contacto_tel, "
         "       COALESCE(u.nombre, u.username) AS tecnico_principal "
@@ -23989,7 +24025,7 @@ def mant_ot_ejecutar(vid):
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
         "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
-        "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre, "
+        "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre, "
         "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
@@ -24686,7 +24722,7 @@ def mant_visita_pdf(vid):
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.completada, t.completada_at, t.observaciones, "
         "       t.valor_json, "
-        "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre "
+        "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
         " WHERE t.visita_id=%s "
@@ -25293,6 +25329,185 @@ def mant_visita_fotos_subir(vid):
         "errors": errors[:3],
         "persistente": bool(first_url and first_url.startswith("https://")),
     })
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["GET"])
+@_mant_required
+def mant_visita_adjuntos_list(vid):
+    """Lista de adjuntos (PDFs, videos, documentos) de una OT.
+    Distintos de fotos (que tienen su propia tabla mant_visita_fotos)."""
+    rows = mysql_fetchall(
+        "SELECT id, tipo, archivo_path, cloudinary_url, archivo_nombre, "
+        "       file_size_kb, mime_type, descripcion, subido_por, created_at "
+        "  FROM mant_visita_adjuntos WHERE visita_id=%s "
+        " ORDER BY created_at DESC",
+        (vid,)
+    ) or []
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["url"] = d.get("cloudinary_url") or (
+            f"/static/{d['archivo_path']}" if d.get("archivo_path") else ""
+        )
+        if d.get("created_at"):
+            d["created_at"] = str(d["created_at"])[:16]
+        out.append(d)
+    return jsonify({"ok": True, "adjuntos": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["POST"])
+@_mant_required
+def mant_visita_adjuntos_upload(vid):
+    """Sube un adjunto a la OT — PDF, video, documento. Persistente
+    en Cloudinary (resource_type según el tipo). Fallback filesystem
+    si Cloudinary falla."""
+    f = request.files.get("archivo") or request.files.get("file") or request.files.get("foto")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No se envió archivo (campo 'archivo')"}), 400
+
+    descripcion = (request.form.get("descripcion") or "").strip()[:1000] or None
+    tipo_hint   = (request.form.get("tipo") or "").strip().lower()
+
+    # Detectar tipo desde mime_type / extensión
+    mime = (f.mimetype or "").lower()
+    ext = ""
+    if "." in f.filename:
+        ext = f.filename.rsplit(".", 1)[1].lower()
+    if tipo_hint in ("foto","pdf","video","documento","audio","otro"):
+        tipo = tipo_hint
+    elif mime.startswith("image/"):
+        tipo = "foto"
+    elif mime.startswith("video/") or ext in ("mp4","mov","avi","webm","mkv"):
+        tipo = "video"
+    elif mime == "application/pdf" or ext == "pdf":
+        tipo = "pdf"
+    elif mime.startswith("audio/"):
+        tipo = "audio"
+    elif ext in ("doc","docx","xls","xlsx","ppt","pptx","txt","csv"):
+        tipo = "documento"
+    else:
+        tipo = "otro"
+
+    # Tamaño máximo según tipo
+    f.stream.seek(0, 2); size_bytes = f.stream.tell(); f.stream.seek(0)
+    MAX = {
+        "foto": 15 * 1024 * 1024,        # 15 MB
+        "pdf": 30 * 1024 * 1024,         # 30 MB
+        "video": 100 * 1024 * 1024,      # 100 MB
+        "documento": 25 * 1024 * 1024,   # 25 MB
+        "audio": 30 * 1024 * 1024,
+        "otro": 25 * 1024 * 1024,
+    }.get(tipo, 25 * 1024 * 1024)
+    if size_bytes > MAX:
+        return jsonify({
+            "ok": False,
+            "error": f"Archivo demasiado grande ({size_bytes // (1024*1024)} MB). "
+                     f"Máximo para {tipo}: {MAX // (1024*1024)} MB."
+        }), 413
+
+    user = current_username()
+    cloud_url = None
+    cloud_public_id = None
+    archivo_path = None
+
+    # Subir a Cloudinary según tipo
+    try:
+        import cloudinary, cloudinary.uploader  # noqa
+        cloud_ok = bool(CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"))
+    except ImportError:
+        cloud_ok = False
+
+    if cloud_ok:
+        try:
+            import cloudinary.uploader
+            f.stream.seek(0)
+            # resource_type según el tipo
+            if tipo == "video":
+                rt = "video"
+            elif tipo == "foto":
+                rt = "image"
+            else:
+                rt = "raw"  # PDF, docs, etc.
+            result = cloudinary.uploader.upload(
+                f,
+                folder=f"ilus/visitas/v{vid}/adjuntos",
+                public_id=f"v{vid}_{tipo}_{int(time.time())}",
+                resource_type=rt,
+                # Transformaciones solo para imagen
+                **({"transformation": [
+                    {"width": 1600, "height": 1600, "crop": "limit"},
+                    {"quality": "auto:good", "fetch_format": "auto"},
+                ]} if rt == "image" else {})
+            )
+            cloud_url = result.get("secure_url")
+            cloud_public_id = result.get("public_id")
+        except Exception as e_cld:
+            print(f"[adjuntos_upload] Cloudinary falló: {e_cld}", flush=True)
+
+    # Fallback filesystem si Cloudinary no funcionó
+    if not cloud_url:
+        try:
+            f.stream.seek(0)
+            adj_dir = os.path.join(MANT_FOTOS_DIR, f"v{vid}", "adjuntos")
+            os.makedirs(adj_dir, exist_ok=True)
+            fname = f"adj_v{vid}_{int(time.time())}_{secure_filename(f.filename)}"
+            fpath = os.path.join(adj_dir, fname)
+            f.save(fpath)
+            archivo_path = f"uploads/mantenciones/v{vid}/adjuntos/{fname}"
+        except Exception as e_fs:
+            return jsonify({"ok": False, "error": f"Error guardando: {e_fs}"}), 500
+
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_adjuntos "
+            "(visita_id, tipo, archivo_path, cloudinary_url, cloudinary_public_id, "
+            " archivo_nombre, file_size_kb, mime_type, descripcion, subido_por) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (vid, tipo, archivo_path, cloud_url, cloud_public_id,
+             f.filename[:300], size_bytes // 1024, mime[:100],
+             descripcion, user)
+        )
+        _mant_log("visita", vid, "adjunto_subido", f"{tipo}: {f.filename}")
+        return jsonify({
+            "ok": True,
+            "tipo": tipo,
+            "url": cloud_url or (f"/static/{archivo_path}" if archivo_path else None),
+            "nombre": f.filename,
+            "size_kb": size_bytes // 1024,
+            "persistente": bool(cloud_url),
+        })
+    except Exception as e:
+        print(f"[adjuntos_upload] DB error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error guardando en BD"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/adjuntos/<int:aid>", methods=["DELETE"])
+@_mant_required
+def mant_visita_adjunto_delete(vid, aid):
+    """Elimina un adjunto de la OT (Cloudinary + BD)."""
+    row = mysql_fetchone(
+        "SELECT cloudinary_public_id, archivo_path FROM mant_visita_adjuntos "
+        " WHERE id=%s AND visita_id=%s",
+        (aid, vid)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Adjunto no encontrado"}), 404
+    # Borrar de Cloudinary si tiene public_id
+    if row.get("cloudinary_public_id"):
+        try:
+            import cloudinary, cloudinary.uploader
+            cloudinary.uploader.destroy(row["cloudinary_public_id"], invalidate=True)
+        except Exception as e:
+            print(f"[adjunto_del] cloudinary destroy falló: {e}", flush=True)
+    # Borrar filesystem si está
+    if row.get("archivo_path"):
+        try:
+            fpath = os.path.join(app.static_folder, row["archivo_path"].replace("/static/", ""))
+            if os.path.exists(fpath): os.remove(fpath)
+        except Exception: pass
+    mysql_execute("DELETE FROM mant_visita_adjuntos WHERE id=%s AND visita_id=%s", (aid, vid))
+    _mant_log("visita", vid, "adjunto_eliminado", f"adj #{aid}")
+    return jsonify({"ok": True})
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>", methods=["DELETE"])
