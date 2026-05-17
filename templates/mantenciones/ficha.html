@@ -1687,7 +1687,15 @@
               </div>
             </td>
             <td>
-              <div class="eq-name-main">{{ m.nombre }}</div>
+              {# Nombre clickeable → ficha del equipo con historial completo #}
+              <a href="{{ url_for('mant_maquina_ficha', mid=m.id) }}"
+                 class="text-decoration-none text-dark"
+                 title="Ver ficha del equipo (historial de OTs, fotos, eventos)">
+                <div class="eq-name-main" style="cursor:pointer">
+                  {{ m.nombre }}
+                  <i class="bi bi-arrow-up-right-square ms-1 text-muted" style="font-size:.75rem;opacity:.5"></i>
+                </div>
+              </a>
               {% if m.notas %}
               <div class="eq-name-sub text-truncate" style="max-width:220px" title="{{ m.notas }}">{{ m.notas }}</div>
               {% endif %}

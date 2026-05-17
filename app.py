@@ -28407,6 +28407,148 @@ def mant_lev_cerrar(lid):
     })
 
 
+@app.route("/mantenciones/maquinas/<int:mid>")
+@_mant_required
+def mant_maquina_ficha(mid):
+    """Ficha completa del equipo del cliente con:
+    - Datos del equipo (foto, marca, modelo, año, voltaje, ubicación)
+    - Historial completo de OTs gestionadas (cronológico)
+    - Galería de fotos cronológica
+    - Stats: cuántas OTs, cuántas fotos, primera/última visita, técnicos
+    - Audit log: cambios en serie + eventos
+
+    Permisos: si role=tecnico, solo puede ver equipos que pertenecen a
+    una OT que tiene asignada (como principal o colaborador).
+    """
+    eq = mysql_fetchone(
+        "SELECT m.*, c.razon_social, c.id AS cliente_id, c.direccion AS cli_direccion, "
+        "       c.comuna AS cli_comuna, c.email_empresa AS cli_email, "
+        "       c.tel_empresa AS cli_tel "
+        "  FROM mant_maquinas m "
+        "  JOIN mant_clientes c ON c.id = m.cliente_id "
+        " WHERE m.id=%s",
+        (mid,)
+    )
+    if not eq:
+        flash("Equipo no encontrado.", "danger")
+        return redirect(url_for("mant_clientes"))
+    eq = dict(eq)
+
+    # Permisos: técnico solo ve equipos que están en OTs asignadas a él
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") == "tecnico":
+        uid = u.get("id")
+        autorizado = mysql_fetchone(
+            "SELECT 1 FROM mant_visita_tareas vt "
+            "  JOIN mant_visitas v ON v.id = vt.visita_id "
+            " WHERE vt.maquina_id=%s "
+            "   AND (v.tecnico_user_id=%s "
+            "        OR v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+            "                    WHERE tecnico_user_id=%s)) "
+            " LIMIT 1",
+            (mid, uid, uid)
+        )
+        if not autorizado:
+            flash("Este equipo no está en ninguna OT asignada a ti.", "warning")
+            return redirect(url_for("mant_ots_list"))
+
+    # Historial OTs (cronológico DESC) — reusa la lógica del API existente
+    ots_rows = mysql_fetchall(
+        "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.fecha_programada, "
+        "       v.hora_inicio, v.hora_fin, v.tipo, v.estado, v.descripcion, "
+        "       v.modalidad_cobro, v.cerrada_at, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  JOIN mant_visita_tareas t ON t.visita_id = v.id "
+        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+        " WHERE t.maquina_id=%s "
+        " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 100",
+        (mid,)
+    ) or []
+    ots = []
+    for r in ots_rows:
+        d = dict(r)
+        if d.get("fecha_programada"):
+            d["fecha_programada"] = str(d["fecha_programada"])[:10]
+        if d.get("hora_inicio"):
+            d["hora_inicio"] = str(d["hora_inicio"])[:5]
+        if d.get("hora_fin"):
+            d["hora_fin"] = str(d["hora_fin"])[:5]
+        if d.get("cerrada_at"):
+            d["cerrada_at"] = str(d["cerrada_at"])[:16]
+        # Foto destacada: primera foto subida en esta OT para este equipo
+        try:
+            foto = mysql_fetchone(
+                "SELECT archivo_path FROM mant_visita_fotos f "
+                "  JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+                " WHERE f.visita_id=%s AND t.maquina_id=%s "
+                " ORDER BY f.created_at ASC LIMIT 1",
+                (d["id"], mid)
+            )
+            d["foto_destacada"] = (foto.get("archivo_path") if foto else None)
+        except Exception:
+            d["foto_destacada"] = None
+        ots.append(d)
+
+    # Fotos cronológicas del equipo (de mant_maquina_fotos — capturadas
+    # por el técnico en el modo ejecución como foto principal del equipo)
+    fotos_rows = mysql_fetchall(
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+        "       created_at, levantamiento_id "
+        "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+        " ORDER BY created_at DESC LIMIT 200",
+        (mid,)
+    ) or []
+    fotos = []
+    for r in fotos_rows:
+        url = r.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{r['archivo_path']}"
+            if r.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        fotos.append({
+            "id": r["id"],
+            "url": url,
+            "descripcion": r.get("descripcion") or "",
+            "tomada_por": r.get("tomada_por") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+        })
+
+    # Audit log: eventos del equipo
+    eventos_rows = mysql_fetchall(
+        "SELECT id, tipo, descripcion, fecha_evento, created_by "
+        "  FROM mant_maquina_eventos WHERE maquina_id=%s "
+        " ORDER BY fecha_evento DESC LIMIT 50",
+        (mid,)
+    ) or []
+    eventos = []
+    for e in eventos_rows:
+        d = dict(e)
+        if d.get("fecha_evento"):
+            d["fecha_evento"] = str(d["fecha_evento"])[:16]
+        eventos.append(d)
+
+    # Stats compactas
+    stats = {
+        "total_ots": len(ots),
+        "total_fotos": len(fotos),
+        "ots_cerradas": sum(1 for o in ots if o.get("estado") == "cerrada"),
+        "primera_visita": ots[-1]["fecha_programada"] if ots else None,
+        "ultima_visita": ots[0]["fecha_programada"] if ots else None,
+        "tecnicos": list({o.get("tecnico_nombre") for o in ots if o.get("tecnico_nombre")}),
+    }
+
+    return render_template(
+        "mantenciones/maquina_ficha.html",
+        equipo=eq,
+        ots=ots,
+        fotos=fotos,
+        eventos=eventos,
+        stats=stats,
+    )
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/timeline")
 @_mant_required
 def mant_maquina_timeline(mid):
