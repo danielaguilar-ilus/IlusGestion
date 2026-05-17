@@ -23871,12 +23871,12 @@ def mant_ot_ejecutar(vid):
     ) or []
     equipos = [dict(e) for e in equipos]
 
-    # Tareas con info de plantilla origen (JOIN a mant_tarea_plantillas)
+    # Tareas con info de plantilla origen + valor_json para tipos avanzados
     tareas = mysql_fetchall(
         "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
-        "       t.completada, t.completada_at, t.observaciones, "
+        "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
         "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre, "
         "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
         "  FROM mant_visita_tareas t "
@@ -23920,6 +23920,32 @@ def mant_ot_ejecutar(vid):
         mid = t.get("maquina_id") or 0
         tareas_por_eq.setdefault(mid, []).append(t)
 
+    # ════════════════════════════════════════════════════════════════
+    # ESTRUCTURA DRILL-DOWN (vista nueva 2026-05-17):
+    # plantillas_por_maquina[mid] = [
+    #   {plantilla_id, plantilla_nombre, plantilla_tipo, total, completas, progreso, bloqueado, tareas: [...]}
+    # ]
+    # Estructura jerárquica para que el técnico navegue:
+    #   máquina → plantilla → tarea
+    # ════════════════════════════════════════════════════════════════
+    plantillas_por_maquina = {}
+    for g in grupos:
+        mid = g["maquina_id"]
+        plantillas_por_maquina.setdefault(mid, []).append(g)
+
+    # Stats por máquina (suma de todas sus plantillas)
+    stats_por_maquina = {}
+    for mid, pls in plantillas_por_maquina.items():
+        total = sum(p["total"] for p in pls)
+        comp = sum(p["completas"] for p in pls)
+        stats_por_maquina[mid] = {
+            "total": total,
+            "completas": comp,
+            "progreso": round((comp / total) * 100) if total else 0,
+            "bloqueada": (comp == total and total > 0),
+            "n_plantillas": len(pls),
+        }
+
     # Fotos por máquina (FIX 2026-05-17: la columna timestamp se llama
     # `tomada_at` no `created_at`. Tampoco hay `cloudinary_url` en el
     # CREATE TABLE original — se agregó vía migración idempotente).
@@ -23947,6 +23973,8 @@ def mant_ot_ejecutar(vid):
         equipos_idx=equipos_idx,
         tareas_por_eq=tareas_por_eq,
         grupos=grupos,
+        plantillas_por_maquina=plantillas_por_maquina,
+        stats_por_maquina=stats_por_maquina,
         fotos=fotos,
     )
 

@@ -3,581 +3,388 @@
 
 {% block content %}
 <style>
-/* ── Layout móvil-first compacto ─────────────────────────────── */
-.exec-wrap { max-width: 820px; margin: 0 auto; padding: 10px 12px 100px; }
-.exec-header {
-  background: linear-gradient(135deg, #7c2d12, #dc2626);
-  color: #fff; border-radius: 14px; padding: 16px;
-  margin-bottom: 14px;
-  box-shadow: 0 4px 14px rgba(220,38,38,.25);
-}
-.exec-header h2 { font-size: 1.15rem; font-weight: 800; margin: 0; }
-.exec-header .small-meta { font-size: .78rem; opacity: .92; margin-top: 6px; line-height: 1.5; }
-.exec-header .badge-estado {
-  display:inline-block; padding:4px 12px; border-radius:9999px;
-  background:rgba(255,255,255,.2); font-size:.72rem; font-weight:700;
-  text-transform:uppercase; letter-spacing:.5px;
-  border:1px solid rgba(255,255,255,.3);
-}
-.exec-header .btn-ruta {
-  display:inline-flex; align-items:center; gap:6px;
-  background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
-  padding:6px 14px; border-radius:9999px; font-size:.78rem; font-weight:700;
-  text-decoration:none; transition:all .15s; margin-top:8px;
-}
-.exec-header .btn-ruta:hover { background:rgba(255,255,255,.25); color:#fff; }
-.exec-header .btn-ruta.iniciada { background:#dcfce7; color:#15803d; border-color:#16a34a; }
+/* ════════════════════════════════════════════════════════
+   ILUS técnico v2 (2026-05-17) — drill-down máquina → plantilla → tarea
+   Mobile-first, sin tabs, navegación SPA-like con vistas conmutables.
+   ════════════════════════════════════════════════════════ */
 
-.exec-gps-bar {
-  background: #fef3c7; border-left: 4px solid #f59e0b;
-  padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
-  font-size: .82rem; display: flex; align-items: center; gap: 10px;
-}
-.exec-gps-bar.gps-ok { background: #dcfce7; border-color: #16a34a; }
-.exec-gps-bar.gps-err { background: #fee2e2; border-color: #dc2626; }
-.exec-gps-bar i { font-size: 1.15rem; }
+.tx-wrap{max-width:820px;margin:0 auto;padding:10px 12px 110px}
 
-.exec-stats {
-  display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 8px; margin-bottom: 14px;
+/* ── HEADER STICKY ── */
+.tx-hdr{
+  background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;
+  border-radius:14px;padding:14px 16px;margin-bottom:12px;
+  box-shadow:0 4px 14px rgba(220,38,38,.25);
+  position:sticky;top:8px;z-index:50;
 }
-.exec-stat {
-  background: #fff; border-radius: 10px; padding: 10px 8px;
-  text-align: center; border: 1px solid #e5e7eb;
+.tx-hdr h2{font-size:1.05rem;font-weight:800;margin:0;display:flex;align-items:center;gap:8px}
+.tx-hdr .meta{font-size:.76rem;opacity:.95;margin-top:5px;line-height:1.5}
+.tx-hdr .badge-est{display:inline-block;padding:3px 11px;border-radius:9999px;
+  background:rgba(255,255,255,.22);font-size:.66rem;font-weight:800;text-transform:uppercase;
+  border:1px solid rgba(255,255,255,.3);letter-spacing:.5px}
+.tx-hdr .btn-ruta{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);
+  padding:7px 14px;border-radius:9999px;font-size:.76rem;font-weight:700;
+  text-decoration:none;transition:all .15s;margin-top:8px;cursor:pointer
 }
-.exec-stat .num { font-size: 1.4rem; font-weight: 800; color: #0f172a; }
-.exec-stat .lbl { font-size: .68rem; color: #6b7280; text-transform: uppercase; letter-spacing: .3px; }
-.exec-stat.success .num { color: #16a34a; }
-.exec-stat.warning .num { color: #f59e0b; }
+.tx-hdr .btn-ruta:hover{background:rgba(255,255,255,.28);color:#fff}
+.tx-hdr .btn-ruta.iniciada{background:#dcfce7;color:#15803d;border-color:#16a34a}
 
-/* ─── CARDS por (equipo × plantilla) ─── */
-.grupo-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
-  margin-bottom: 12px; overflow: hidden;
-  transition: border-color .2s, box-shadow .2s;
+/* ── GPS bar ── */
+.tx-gps{
+  background:#fef3c7;border-left:4px solid #f59e0b;padding:9px 13px;border-radius:8px;
+  margin-bottom:12px;font-size:.78rem;display:flex;align-items:center;gap:9px
 }
-.grupo-card.open { border-color: #dc2626; box-shadow: 0 4px 14px rgba(220,38,38,.12); }
-.grupo-card.done { border-color: #16a34a; background: #f0fdf4; }
-.grupo-card.bloqueado { opacity:.85; }
-.grupo-card.bloqueado .grupo-card-body { pointer-events: none; }
+.tx-gps.gps-ok{background:#dcfce7;border-color:#16a34a}
+.tx-gps.gps-err{background:#fee2e2;border-color:#dc2626}
 
-.grupo-card-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 14px; cursor: pointer; user-select: none;
-}
-.grupo-card-header .gc-foto {
-  width: 56px; height: 56px; border-radius: 10px;
-  background: #f3f4f6 center/cover no-repeat;
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-  color: #94a3b8; font-size: 1.6rem; border: 1px solid #e5e7eb;
-}
-.grupo-card-header .gc-info { flex: 1; min-width: 0; }
-.grupo-card-header .gc-eq {
-  font-weight: 700; font-size: .96rem; color: #0f172a;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.grupo-card-header .gc-plant {
-  font-size: .74rem; color: #6b7280; margin-top: 2px;
-  display: flex; align-items: center; gap: 4px;
-}
-.grupo-card-header .gc-plant .gc-plant-badge {
-  display:inline-block; padding:1px 8px; border-radius:9999px;
-  background:#dbeafe; color:#1e40af; font-weight:700; font-size:.66rem;
-}
-.grupo-card-header .gc-counter {
-  font-size: .72rem; padding: 3px 9px; border-radius: 9999px;
-  background: #f3f4f6; color: #475569; font-weight: 700; white-space: nowrap;
-}
-.grupo-card-header .gc-counter.done { background: #dcfce7; color: #15803d; }
-.grupo-card-header .gc-progress {
-  width: 80px; height: 4px; background: #e5e7eb; border-radius: 2px;
-  overflow: hidden; flex-shrink: 0;
-}
-.grupo-card-header .gc-progress > div {
-  height: 100%; background: linear-gradient(90deg, #16a34a, #22c55e);
-  transition: width .3s;
-}
+/* ── Breadcrumb ── */
+.tx-crumbs{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#6b7280;
+  margin-bottom:10px;padding:8px 0;flex-wrap:wrap}
+.tx-crumbs button{background:none;border:0;color:#dc2626;font-weight:700;cursor:pointer;
+  padding:4px 8px;border-radius:6px;transition:background .15s;min-height:32px;
+  display:inline-flex;align-items:center;gap:4px}
+.tx-crumbs button:hover{background:#fef2f2}
+.tx-crumbs .sep{color:#cbd5e1;font-weight:400}
+.tx-crumbs .curr{color:#0f172a;font-weight:700}
 
-.grupo-card-body { padding: 0 14px 14px; display: none; }
-.grupo-card.open .grupo-card-body { display: block; }
+/* ════════════════════════════════════════════════════════
+   VISTA 1: LISTA DE MÁQUINAS (cards grandes con foto)
+   ════════════════════════════════════════════════════════ */
+.tx-stats-glob{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.tx-stat-cell{background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:11px 8px;text-align:center}
+.tx-stat-cell .n{font-size:1.45rem;font-weight:900;line-height:1;color:#0f172a}
+.tx-stat-cell .l{font-size:.65rem;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-top:3px}
+.tx-stat-cell.ok .n{color:#16a34a}
+.tx-stat-cell.warn .n{color:#f59e0b}
 
-.grupo-section { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px dashed #e5e7eb; }
-.grupo-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
-.grupo-section-title {
-  font-size: .78rem; font-weight: 700; color: #0f172a;
-  text-transform: uppercase; letter-spacing: .5px;
-  margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
-}
-.grupo-section-title i { color: #dc2626; }
+.tx-section-title{font-size:.84rem;font-weight:800;color:#0f172a;
+  text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px;
+  display:flex;align-items:center;gap:6px}
+.tx-section-title i{color:#dc2626}
 
-.eq-foto-uploader {
-  width: 100%; height: 180px; border: 2px dashed #cbd5e1;
-  border-radius: 10px; background: #f8fafc;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  cursor: pointer; transition: border-color .15s, background .15s;
-  position: relative; overflow: hidden;
+.tx-eq-card{
+  background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;
+  margin-bottom:10px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px;
+  min-height:90px;
 }
-.eq-foto-uploader:hover { border-color: #dc2626; background: #fef2f2; }
-.eq-foto-uploader.has-foto { border-style: solid; border-color: #16a34a; background-size: cover; background-position: center; }
-.eq-foto-uploader.has-foto::after {
-  content:""; position:absolute; inset:0;
-  background: linear-gradient(180deg, transparent 60%, rgba(0,0,0,.55) 100%);
+.tx-eq-card:hover{border-color:#dc2626;box-shadow:0 4px 14px rgba(220,38,38,.12);
+  transform:translateY(-1px)}
+.tx-eq-card:active{transform:scale(.98)}
+.tx-eq-card.done{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-color:#16a34a}
+.tx-eq-card .eq-foto{
+  width:64px;height:64px;border-radius:10px;
+  background:#f3f4f6 center/cover no-repeat;flex-shrink:0;border:1px solid #e5e7eb;
+  display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.8rem
 }
-.eq-foto-uploader.has-foto > .uploader-content {
-  position:absolute; bottom:8px; left:8px; right:8px; color:#fff;
-  font-size:.74rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
-}
-.eq-foto-uploader > input { display: none; }
-.eq-foto-uploader .ph-icon { font-size: 2.4rem; color: #94a3b8; }
-.eq-foto-uploader .ph-text { font-size: .82rem; color: #6b7280; margin-top: 6px; font-weight: 500; }
+.tx-eq-card .eq-info{flex:1;min-width:0}
+.tx-eq-card .eq-name{font-weight:800;font-size:1rem;color:#0f172a;line-height:1.2;
+  display:flex;align-items:center;gap:6px}
+.tx-eq-card .eq-sub{font-size:.74rem;color:#6b7280;margin-top:3px}
+.tx-eq-card .eq-prog-wrap{margin-top:8px;height:5px;background:#e5e7eb;border-radius:3px;overflow:hidden}
+.tx-eq-card .eq-prog-bar{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);transition:width .3s}
+.tx-eq-card .eq-arrow{font-size:1.3rem;color:#cbd5e1;flex-shrink:0}
+.tx-eq-card.done .eq-arrow{color:#16a34a}
 
-.eq-estado-btns {
-  display: grid; grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-}
-.eq-est-btn {
-  padding: 10px 8px; border: 1.5px solid #e5e7eb;
-  background: #fff; border-radius: 8px;
-  font-weight: 600; font-size: .78rem; cursor: pointer;
-  transition: all .12s; text-align: center;
-  min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 4px;
-}
-.eq-est-btn:hover { background: #f8fafc; }
-.eq-est-btn.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+.tx-eq-meta-row{display:flex;gap:10px;font-size:.7rem;color:#6b7280;margin-top:5px;flex-wrap:wrap}
+.tx-eq-meta-item{display:inline-flex;align-items:center;gap:3px}
+.tx-eq-badge-plant{display:inline-block;padding:1px 8px;border-radius:9999px;
+  background:#dbeafe;color:#1e40af;font-weight:700;font-size:.66rem}
 
-.eq-tarea-row {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px; border: 1px solid #f1f5f9; border-radius: 8px;
-  margin-bottom: 6px; background: #fff;
+/* ════════════════════════════════════════════════════════
+   VISTA 2: PLANTILLAS DE UNA MÁQUINA
+   ════════════════════════════════════════════════════════ */
+.tx-eq-hero{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;
+  margin-bottom:14px;display:flex;align-items:center;gap:14px
 }
-.eq-tarea-row.completada { background: #f0fdf4; border-color: #bbf7d0; }
-.eq-tarea-row .tarea-chk {
-  width: 24px; height: 24px; flex-shrink: 0; cursor: pointer;
-  accent-color: #16a34a;
-}
-.eq-tarea-row .tarea-info { flex: 1; min-width: 0; }
-.eq-tarea-row .tarea-titulo {
-  font-size: .87rem; font-weight: 600; color: #0f172a; line-height: 1.3;
-}
-.eq-tarea-row.completada .tarea-titulo { text-decoration: line-through; opacity: .65; }
-.eq-tarea-row .tarea-desc { font-size: .74rem; color: #6b7280; margin-top: 2px; }
-.eq-tarea-row .tarea-badge {
-  display: inline-block; padding: 2px 7px; border-radius: 9999px;
-  background: #fef3c7; color: #92400e; font-size: .65rem; font-weight: 700;
-  text-transform: uppercase; margin-left: 4px;
-}
+.tx-eq-hero .h-foto{width:80px;height:80px;border-radius:12px;background:#f3f4f6 center/cover;
+  flex-shrink:0;border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;
+  color:#94a3b8;font-size:2.2rem}
+.tx-eq-hero .h-info{flex:1;min-width:0}
+.tx-eq-hero .h-name{font-weight:800;font-size:1.1rem;color:#0f172a}
+.tx-eq-hero .h-meta{font-size:.78rem;color:#6b7280;margin-top:4px;line-height:1.5}
 
-.bottom-bar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  background: #fff; border-top: 1px solid #e5e7eb;
-  padding: 12px 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+.tx-pl-card{
+  background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;
+  margin-bottom:10px;cursor:pointer;transition:all .15s;
+  display:flex;align-items:center;gap:12px;min-height:74px
 }
-@media (min-width: 992px) {
-  .bottom-bar { left: 250px; }
-}
+.tx-pl-card:hover{border-color:#dc2626;box-shadow:0 4px 12px rgba(220,38,38,.1)}
+.tx-pl-card:active{transform:scale(.98)}
+.tx-pl-card.done{background:#f0fdf4;border-color:#16a34a}
+.tx-pl-card .pl-icon{width:42px;height:42px;border-radius:50%;background:#fef2f2;
+  display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:1.2rem;flex-shrink:0}
+.tx-pl-card.done .pl-icon{background:#dcfce7;color:#16a34a}
+.tx-pl-card .pl-info{flex:1;min-width:0}
+.tx-pl-card .pl-name{font-weight:700;font-size:.95rem;color:#0f172a;line-height:1.2}
+.tx-pl-card .pl-meta{font-size:.74rem;color:#6b7280;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+.tx-pl-card .pl-meta .badge{display:inline-block;padding:1px 7px;border-radius:9999px;
+  background:#dbeafe;color:#1e40af;font-size:.66rem;font-weight:700}
+.tx-pl-card .pl-prog{margin-top:6px;height:4px;background:#e5e7eb;border-radius:2px;overflow:hidden}
+.tx-pl-card .pl-prog>div{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e)}
 
-.btn-firmar {
-  width: 100%; padding: 14px; border: 0; border-radius: 10px;
-  background: linear-gradient(135deg, #15803d, #16a34a);
-  color: #fff; font-weight: 700; font-size: 1rem;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 50px;
-}
-.btn-firmar:disabled { background: #cbd5e1; cursor: not-allowed; }
-.btn-firmar:active:not(:disabled) { transform: scale(.98); }
+/* ════════════════════════════════════════════════════════
+   VISTA 3: TAREAS DE UNA PLANTILLA
+   ════════════════════════════════════════════════════════ */
+.tx-pl-hero{background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;
+  border-radius:12px;padding:14px;margin-bottom:14px}
+.tx-pl-hero h4{font-size:1rem;margin:0;font-weight:800}
+.tx-pl-hero .sub{font-size:.76rem;opacity:.9;margin-top:4px}
+.tx-pl-hero .prog-wrap{margin-top:10px;height:6px;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden}
+.tx-pl-hero .prog-bar{height:100%;background:linear-gradient(90deg,#16a34a,#86efac);transition:width .3s}
 
-/* Modal de firmas */
-.firma-canvas-wrap { background:#fafafa; border:2px dashed #cbd5e1; border-radius:10px; overflow:hidden; touch-action:none }
-.firma-canvas-wrap canvas { display:block; width:100%; height:160px; cursor:crosshair }
+.tx-tarea{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;padding:14px;margin-bottom:9px;
+  transition:all .15s
+}
+.tx-tarea.done{background:#f0fdf4;border-color:#bbf7d0}
+.tx-tarea.bloqueada{opacity:.7;pointer-events:none}
+.tx-tarea .ttl{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
+.tx-tarea .ttl-chk{
+  width:28px;height:28px;border:2.5px solid #cbd5e1;border-radius:8px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;background:#fff;
+  transition:all .15s
+}
+.tx-tarea.done .ttl-chk{background:#16a34a;border-color:#16a34a;color:#fff}
+.tx-tarea .ttl-info{flex:1;min-width:0}
+.tx-tarea .ttl-text{font-weight:600;font-size:.92rem;color:#0f172a;line-height:1.3}
+.tx-tarea.done .ttl-text{text-decoration:line-through;opacity:.75}
+.tx-tarea .ttl-sub{font-size:.74rem;color:#6b7280;margin-top:3px}
+.tx-tarea .ttl-badges{display:inline-flex;gap:5px;margin-left:6px;flex-wrap:wrap;vertical-align:middle}
+.tx-badge-obl{background:#fef3c7;color:#92400e}
+.tx-badge-foto{background:#dbeafe;color:#1e3a8a}
+.tx-badge-tipo{background:#f3f4f6;color:#475569}
+.tx-tarea .ttl-badges span{display:inline-block;padding:2px 7px;border-radius:9999px;
+  font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+
+/* Controles dinámicos por tipo */
+.tx-tarea .ctrl{margin-top:10px}
+.tx-tarea input[type="text"], .tx-tarea input[type="number"],
+.tx-tarea input[type="datetime-local"], .tx-tarea select, .tx-tarea textarea{
+  width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:.95rem;
+  min-height:44px;
+}
+.tx-tarea input:focus, .tx-tarea select:focus, .tx-tarea textarea:focus{
+  border-color:#dc2626;outline:none;box-shadow:0 0 0 3px rgba(220,38,38,.1)}
+.tx-btn-group{display:flex;gap:6px;flex-wrap:wrap}
+.tx-btn-pill{
+  padding:9px 16px;border:1.5px solid #cbd5e1;background:#fff;border-radius:9999px;
+  font-weight:600;font-size:.85rem;cursor:pointer;transition:all .15s;min-height:44px
+}
+.tx-btn-pill:hover{background:#f8fafc}
+.tx-btn-pill.active{background:#0f172a;color:#fff;border-color:#0f172a}
+.tx-btn-pill.success.active{background:#16a34a;border-color:#16a34a}
+.tx-btn-pill.warn.active{background:#f59e0b;border-color:#f59e0b}
+.tx-btn-pill.danger.active{background:#dc2626;border-color:#dc2626}
+
+.tx-btn-foto, .tx-btn-gps{
+  display:inline-flex;align-items:center;gap:8px;padding:11px 18px;
+  border:1.5px solid #dc2626;background:#fff;color:#dc2626;border-radius:9px;
+  font-weight:700;font-size:.88rem;cursor:pointer;transition:all .15s;min-height:44px
+}
+.tx-btn-foto:hover, .tx-btn-gps:hover{background:#dc2626;color:#fff}
+.tx-tarea .gps-result{margin-top:8px;padding:8px 10px;background:#dcfce7;border-radius:7px;
+  font-size:.78rem;color:#15803d;font-weight:600}
+.tx-tarea .foto-result{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.tx-tarea .foto-result img{width:60px;height:60px;border-radius:6px;object-fit:cover;border:1px solid #e5e7eb}
+
+/* Vista actual */
+.tx-view{display:none}
+.tx-view.active{display:block}
+
+/* Empty / sin tareas */
+.tx-empty{background:#fff;border:1px dashed #e5e7eb;border-radius:11px;
+  padding:40px 16px;text-align:center;color:#6b7280}
+.tx-empty i{font-size:2.4rem;opacity:.3;display:block;margin-bottom:8px}
+
+/* Bottom bar firmar */
+.tx-bottom{position:fixed;bottom:0;left:0;right:0;z-index:90;background:#fff;
+  border-top:1px solid #e5e7eb;padding:12px 16px;
+  padding-bottom:calc(12px + env(safe-area-inset-bottom));
+  box-shadow:0 -4px 12px rgba(0,0,0,.06)}
+@media (min-width:992px){.tx-bottom{left:250px}}
+.tx-btn-firmar{width:100%;padding:15px;border:0;border-radius:11px;
+  background:linear-gradient(135deg,#15803d,#16a34a);color:#fff;font-weight:800;
+  font-size:1.02rem;display:flex;align-items:center;justify-content:center;gap:8px;
+  min-height:52px;cursor:pointer}
+.tx-btn-firmar:disabled{background:#cbd5e1;cursor:not-allowed}
+.tx-btn-firmar:active:not(:disabled){transform:scale(.98)}
 
 /* Modal iniciar ruta */
-.ruta-btn-app {
-  display:flex; align-items:center; gap:14px; width:100%;
-  padding:14px 16px; border:2px solid #e5e7eb; background:#fff;
-  border-radius:12px; cursor:pointer; transition:all .15s; margin-bottom:8px;
-  text-align:left;
-}
-.ruta-btn-app:hover { border-color:#dc2626; transform:translateY(-1px); box-shadow:0 4px 10px rgba(220,38,38,.1); }
-.ruta-btn-app .ra-logo { width:42px; height:42px; border-radius:10px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:1.4rem; font-weight:900 }
-.ruta-btn-app.google .ra-logo { background: linear-gradient(135deg,#4285f4,#34a853); }
-.ruta-btn-app.waze .ra-logo { background: linear-gradient(135deg,#33ccff,#0099cc); }
-.ruta-btn-app.skip .ra-logo { background: linear-gradient(135deg,#94a3b8,#475569); }
-.ruta-btn-app .ra-info { flex:1; min-width:0 }
-.ruta-btn-app .ra-titulo { font-weight:800; font-size:1rem; color:#0f172a }
-.ruta-btn-app .ra-desc { font-size:.74rem; color:#6b7280; margin-top:2px }
+.ra-app{display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;
+  border:2px solid #e5e7eb;background:#fff;border-radius:12px;cursor:pointer;
+  transition:all .15s;margin-bottom:8px;text-align:left}
+.ra-app:hover{border-color:#dc2626;transform:translateY(-1px)}
+.ra-app .ra-logo{width:42px;height:42px;border-radius:10px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.4rem;font-weight:900}
+.ra-app.google .ra-logo{background:linear-gradient(135deg,#4285f4,#34a853)}
+.ra-app.waze .ra-logo{background:linear-gradient(135deg,#33ccff,#0099cc)}
+.ra-app.skip .ra-logo{background:linear-gradient(135deg,#94a3b8,#475569)}
+.ra-app .ra-info{flex:1;min-width:0}
+.ra-app .ra-titulo{font-weight:800;font-size:1rem;color:#0f172a}
+.ra-app .ra-desc{font-size:.74rem;color:#6b7280;margin-top:2px}
 
-@media (max-width: 600px) {
-  .exec-stats { grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .exec-stat .num { font-size: 1.2rem; }
-  .eq-estado-btns { grid-template-columns: 1fr 1fr; }
-}
+/* Modal firma */
+.firma-canvas-wrap{background:#fafafa;border:2px dashed #cbd5e1;border-radius:10px;overflow:hidden;touch-action:none}
+.firma-canvas-wrap canvas{display:block;width:100%;height:160px;cursor:crosshair}
 </style>
 
-<div class="exec-wrap">
+<div class="tx-wrap">
 
-  {# ─── Header de la OT ─── #}
-  <div class="exec-header">
-    <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-      <h2><i class="bi bi-clipboard2-pulse me-2"></i>{{ visita.numero_ot }}</h2>
-      <span class="badge-estado">{{ visita.estado|upper }}</span>
+  {# ─── HEADER STICKY ─── #}
+  <div class="tx-hdr">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot }}</h2>
+      <span class="badge-est">{{ visita.estado|upper }}</span>
     </div>
-    <div class="small-meta">
+    <div class="meta">
       <div><i class="bi bi-building me-1"></i><strong>{{ visita.razon_social }}</strong></div>
       {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
       {% if dir_visita %}
       <div><i class="bi bi-geo-alt me-1"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</div>
       {% endif %}
       {% if visita.fecha_programada %}
-      <div><i class="bi bi-calendar3 me-1"></i>{{ visita.fecha_programada | string }}{% if visita.hora_inicio %} · {{ visita.hora_inicio | string }}{% endif %}{% if visita.hora_fin %} – {{ visita.hora_fin | string }}{% endif %}</div>
-      {% endif %}
-      {% if visita.tecnico_principal %}
-      <div><i class="bi bi-person me-1"></i>{{ visita.tecnico_principal }}</div>
+      <div><i class="bi bi-calendar3 me-1"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</div>
       {% endif %}
     </div>
-    {# Botón iniciar ruta — visible si OT no está cerrada y aún no se inició #}
     {% if visita.estado not in ['cerrada','cancelada','anulada','pendiente_aprobacion'] %}
-    <a href="#" class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}"
-       id="btnRuta" onclick="abrirModalRuta(); return false;">
+    <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
       {% if visita.ruta_iniciada_at %}
-      <i class="bi bi-check-circle-fill"></i> Ruta iniciada · {{ visita.ruta_app|upper if visita.ruta_app else '' }}
+      <i class="bi bi-check-circle-fill"></i> Ruta iniciada · {{ (visita.ruta_app or '')|upper }}
       {% else %}
       <i class="bi bi-signpost-split-fill"></i> Iniciar ruta al cliente
       {% endif %}
-    </a>
+    </button>
     {% endif %}
   </div>
 
-  {# ─── GPS auto-detectado (no editable) ─── #}
-  <div class="exec-gps-bar" id="execGpsBar">
+  {# ─── GPS BAR ─── #}
+  <div class="tx-gps" id="execGpsBar">
     <i class="bi bi-geo-alt-fill"></i>
     <div class="flex-grow-1">
       <strong id="execGpsTitle">Detectando ubicación…</strong>
-      <div id="execGpsSub" style="font-size:.74rem;opacity:.8">
-        Se registra automáticamente para auditar que ejecutas la OT en el lugar correcto.
+      <div id="execGpsSub" style="font-size:.72rem;opacity:.8">
+        Se registra para auditar que ejecutas la OT en el lugar correcto.
       </div>
     </div>
   </div>
 
-  {# ─── Stats compactos ─── #}
-  {% set total_tar = grupos | map(attribute='total') | sum %}
-  {% set total_comp = grupos | map(attribute='completas') | sum %}
-  <div class="exec-stats">
-    <div class="exec-stat">
-      <div class="num">{{ grupos|length }}</div>
-      <div class="lbl">A gestionar</div>
-    </div>
-    <div class="exec-stat success">
-      <div class="num" id="statTareasComp">{{ total_comp }}</div>
-      <div class="lbl">Tareas OK</div>
-    </div>
-    <div class="exec-stat warning">
-      <div class="num" id="statTareasTotal">{{ total_tar }}</div>
-      <div class="lbl">Total</div>
-    </div>
+  {# ─── BREADCRUMB ─── #}
+  <div class="tx-crumbs" id="crumbs">
+    <button onclick="goToMaquinas()"><i class="bi bi-grid-3x3-gap-fill"></i> Máquinas</button>
   </div>
 
-  {# ─── Lista de grupos (UN equipo × UNA plantilla = UNA card) ─── #}
-  {% if not grupos %}
-  <div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle me-1"></i>
-    Esta OT no tiene tareas asignadas. Pide a un administrador que revise el levantamiento.
-  </div>
-  {% endif %}
-  {% for g in grupos %}
-  {% set eq = equipos_idx.get(g.maquina_id) %}
-  {% if eq %}
-  <div class="grupo-card{% if g.bloqueado %} done bloqueado{% endif %}"
-       id="grupo-{{ g.maquina_id }}-{{ g.plantilla_id }}"
-       data-mid="{{ g.maquina_id }}" data-pid="{{ g.plantilla_id }}">
-    <div class="grupo-card-header" onclick="toggleGrupo({{ g.maquina_id }}, {{ g.plantilla_id }})">
-      <div class="gc-foto" style="{% if eq.foto_url %}background-image:url('{{ eq.foto_url }}');{% endif %}">
+  {# ════════════════════════════════════════════════════════
+     VISTA 1: LISTA DE MÁQUINAS
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-view active" id="view-maquinas">
+    {# Stats globales #}
+    {% set total_tar = (plantillas_por_maquina.values() | map('sum', attribute='total') | list) %}
+    {% set total_global = 0 %}
+    {% set comp_global = 0 %}
+    {% for mid, pls in plantillas_por_maquina.items() %}
+      {% for p in pls %}
+        {% set total_global = total_global + p.total %}
+        {% set comp_global = comp_global + p.completas %}
+      {% endfor %}
+    {% endfor %}
+    <div class="tx-stats-glob">
+      <div class="tx-stat-cell"><div class="num n">{{ equipos|length }}</div><div class="l">Máquinas</div></div>
+      <div class="tx-stat-cell ok"><div class="num n" id="statComp">{{ comp_global }}</div><div class="l">Tareas OK</div></div>
+      <div class="tx-stat-cell warn"><div class="num n" id="statTot">{{ total_global }}</div><div class="l">Total</div></div>
+    </div>
+
+    <div class="tx-section-title"><i class="bi bi-boxes"></i>Selecciona una máquina</div>
+
+    {% if not equipos %}
+    <div class="tx-empty">
+      <i class="bi bi-exclamation-triangle"></i>
+      <div class="fw-bold" style="color:#0f172a">Sin máquinas en esta OT</div>
+      <div class="small mt-1">Pide al administrador que revise el levantamiento.</div>
+    </div>
+    {% endif %}
+
+    {% for eq in equipos %}
+    {% set stats = stats_por_maquina.get(eq.id, {}) %}
+    <div class="tx-eq-card{% if stats.bloqueada %} done{% endif %}"
+         onclick="goToPlantillas({{ eq.id }})">
+      <div class="eq-foto" {% if eq.foto_url %}style="background-image:url('{{ eq.foto_url }}')"{% endif %}>
         {% if not eq.foto_url %}<i class="bi bi-image"></i>{% endif %}
       </div>
-      <div class="gc-info">
-        <div class="gc-eq">
-          {% if g.bloqueado %}<i class="bi bi-lock-fill text-success me-1"></i>{% endif %}
+      <div class="eq-info">
+        <div class="eq-name">
+          {% if stats.bloqueada %}<i class="bi bi-check-circle-fill text-success"></i>{% endif %}
           {{ eq.nombre or ('Equipo #' ~ eq.id) }}
         </div>
-        <div class="gc-plant">
-          <span class="gc-plant-badge">{{ g.plantilla_tipo|upper }}</span>
-          <span>{{ g.plantilla_nombre }}</span>
+        {% if eq.sku or eq.serie %}
+        <div class="eq-sub">
+          {% if eq.sku %}<i class="bi bi-tag"></i> {{ eq.sku }}{% endif %}
+          {% if eq.serie %} · S/N: {{ eq.serie }}{% endif %}
         </div>
+        {% endif %}
+        <div class="tx-eq-meta-row">
+          <span class="tx-eq-badge-plant">{{ stats.n_plantillas or 0 }} plantilla{% if (stats.n_plantillas or 0) != 1 %}s{% endif %}</span>
+          <span class="tx-eq-meta-item"><i class="bi bi-list-check"></i>{{ stats.completas or 0 }}/{{ stats.total or 0 }}</span>
+        </div>
+        <div class="eq-prog-wrap"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
       </div>
-      <div class="gc-progress">
-        <div style="width:{{ g.progreso }}%"></div>
-      </div>
-      <span class="gc-counter{% if g.bloqueado %} done{% endif %}">{{ g.completas }}/{{ g.total }}</span>
+      <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
-    <div class="grupo-card-body">
+    {% endfor %}
+  </div>
 
-      {# Foto principal del equipo (solo en la primera plantilla del equipo) #}
-      {% if loop.first or grupos[loop.index0-1].maquina_id != g.maquina_id %}
-      <div class="grupo-section">
-        <div class="grupo-section-title"><i class="bi bi-camera-fill"></i>Foto principal del equipo</div>
-        <label class="eq-foto-uploader{% if eq.foto_url %} has-foto{% endif %}"
-               id="foto-uploader-{{ eq.id }}"
-               style="{% if eq.foto_url %}background-image:url('{{ eq.foto_url }}');{% endif %}">
-          <input type="file" accept="image/*" capture="environment"
-                 onchange="subirFotoPrincipal({{ eq.id }}, this)">
-          <div class="uploader-content">
-            {% if eq.foto_url %}
-              <strong><i class="bi bi-check-circle-fill"></i> Foto cargada</strong> · Toca para reemplazar
-            {% else %}
-              <i class="bi bi-camera-fill ph-icon"></i>
-              <div class="ph-text">Toca para tomar foto del equipo</div>
-            {% endif %}
-          </div>
-        </label>
-      </div>
+  {# ════════════════════════════════════════════════════════
+     VISTA 2: PLANTILLAS DE UNA MÁQUINA
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-view" id="view-plantillas">
+    <div class="tx-eq-hero" id="plHero">
+      {# Llenado dinámico por JS #}
+    </div>
 
-      {# Datos técnicos — solo en primera card del equipo #}
-      <div class="grupo-section">
-        <div class="grupo-section-title"><i class="bi bi-info-circle"></i>Información técnica</div>
-        <div class="row g-2">
-          <div class="col-12 col-md-6">
-            <label class="form-label small mb-1">N° de serie</label>
-            <input type="text" class="form-control form-control-sm"
-                   data-campo="serie" data-eq-id="{{ eq.id }}"
-                   value="{{ eq.serie or '' }}"
-                   onblur="guardarCampoEq(this)" placeholder="Número de serie">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small mb-1">Marca</label>
-            <input type="text" class="form-control form-control-sm"
-                   data-campo="marca" data-eq-id="{{ eq.id }}"
-                   value="{{ eq.marca or '' }}"
-                   onblur="guardarCampoEq(this)" placeholder="Life Fitness">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small mb-1">Modelo</label>
-            <input type="text" class="form-control form-control-sm"
-                   data-campo="modelo" data-eq-id="{{ eq.id }}"
-                   value="{{ eq.modelo or '' }}"
-                   onblur="guardarCampoEq(this)" placeholder="T5-XR">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small mb-1">Año fab.</label>
-            <input type="number" class="form-control form-control-sm"
-                   data-campo="anio_fabricacion" data-eq-id="{{ eq.id }}"
-                   value="{{ eq.anio_fabricacion or '' }}"
-                   onblur="guardarCampoEq(this)" min="1990" max="2030">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small mb-1">Voltaje</label>
-            <select class="form-select form-select-sm"
-                    data-campo="voltaje" data-eq-id="{{ eq.id }}"
-                    onchange="guardarCampoEq(this)">
-              <option value="">—</option>
-              <option value="110" {% if eq.voltaje == '110' %}selected{% endif %}>110V mono</option>
-              <option value="220" {% if eq.voltaje == '220' %}selected{% endif %}>220V mono</option>
-              <option value="220-trifasico" {% if eq.voltaje == '220-trifasico' %}selected{% endif %}>220V trifásico</option>
-              <option value="no_aplica" {% if eq.voltaje == 'no_aplica' %}selected{% endif %}>No aplica</option>
-            </select>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label small mb-1">Ubicación en sala</label>
-            <input type="text" class="form-control form-control-sm"
-                   data-campo="ubicacion_sala" data-eq-id="{{ eq.id }}"
-                   value="{{ eq.ubicacion_sala or '' }}"
-                   onblur="guardarCampoEq(this)" placeholder="Sala A · Fila 2 · Cardio">
-          </div>
-        </div>
-      </div>
+    <div class="tx-section-title"><i class="bi bi-list-check"></i>Selecciona una plantilla</div>
 
-      <div class="grupo-section">
-        <div class="grupo-section-title"><i class="bi bi-activity"></i>Estado general del equipo</div>
-        <div class="eq-estado-btns" id="estados-{{ eq.id }}">
-          {% for est, lbl, ico in [
-            ('operativo','Operativo','🟢'),
-            ('advertencia','Advertencia','🟡'),
-            ('fuera_servicio','F. servicio','🔴'),
-            ('en_reparacion','En reparación','🔵'),
-            ('dado_baja','Dado de baja','⚪'),
-            ('no_encontrado','No encontrado','⚫'),
-          ] %}
-          <button type="button" class="eq-est-btn{% if eq.estado_capturado == est %} active{% endif %}"
-                  data-estado="{{ est }}"
-                  onclick="setEstadoEq({{ eq.id }}, '{{ est }}', this)">
-            <span>{{ ico }}</span><span>{{ lbl }}</span>
-          </button>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="grupo-section">
-        <div class="form-check form-switch mb-2">
-          <input class="form-check-input" type="checkbox" role="switch"
-                 id="dano-{{ eq.id }}" data-eq-id="{{ eq.id }}"
-                 {% if eq.tiene_dano %}checked{% endif %}
-                 onchange="toggleDanoEq(this)">
-          <label class="form-check-label small fw-semibold" for="dano-{{ eq.id }}">
-            <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
-            ¿Tiene daños visibles?
-          </label>
-        </div>
-        <label class="form-label small fw-semibold mb-1">Observaciones generales del equipo</label>
-        <textarea class="form-control form-control-sm" rows="2"
-                  data-campo="observaciones" data-eq-id="{{ eq.id }}"
-                  onblur="guardarCampoEq(this)"
-                  placeholder="Anomalías, ruidos, vibraciones, daños visibles…">{{ eq.observaciones or '' }}</textarea>
-      </div>
-      {% endif %}
-
-      {# Tareas de la plantilla — render según tipo_respuesta #}
-      <div class="grupo-section">
-        <div class="grupo-section-title">
-          <i class="bi bi-list-check"></i>
-          Tareas — {{ g.plantilla_nombre }} ({{ g.completas }}/{{ g.total }})
-        </div>
-        {% for tar in g.tareas %}
-        {% set tipo_r = tar.tipo_respuesta or 'check' %}
-        <div class="eq-tarea-row tipo-{{ tipo_r }}{% if tar.completada %} completada{% endif %}"
-             id="tar-{{ tar.id }}" data-tipo="{{ tipo_r }}">
-          {# CHECK simple — checkbox #}
-          {% if tipo_r == 'check' %}
-          <input type="checkbox" class="tarea-chk"
-                 {% if tar.completada %}checked{% endif %}
-                 {% if g.bloqueado %}disabled{% endif %}
-                 onchange="toggleTarea({{ tar.id }}, this, {{ g.maquina_id }}, {{ g.plantilla_id }})">
-          {% else %}
-          {# Otros tipos: muestra un icono que indica estado #}
-          <div style="width:24px;flex-shrink:0;text-align:center;font-size:1.1rem">
-            {% if tar.completada %}<span style="color:#16a34a">✓</span>
-            {% else %}<span style="color:#cbd5e1">○</span>{% endif %}
-          </div>
-          {% endif %}
-
-          <div class="tarea-info">
-            <div class="tarea-titulo">
-              {{ tar.titulo }}
-              {% if tar.obligatoria %}<span class="tarea-badge">obligatoria</span>{% endif %}
-              {% if tar.requiere_foto %}<span class="tarea-badge" style="background:#dbeafe;color:#1e3a8a">📷 foto</span>{% endif %}
-              <span class="tarea-badge" style="background:#f3f4f6;color:#6b7280">{{ tipo_r }}</span>
-            </div>
-            {% if tar.descripcion %}
-            <div class="tarea-desc">{{ tar.descripcion }}</div>
-            {% endif %}
-
-            {# ─── Render del CONTROL según tipo_respuesta ─── #}
-            {% set valor_actual = tar.valor_json | tojson if tar.valor_json else 'null' %}
-            {% if tipo_r == 'texto' %}
-            <input type="text" class="form-control form-control-sm mt-2"
-                   id="t-input-{{ tar.id }}"
-                   value="{{ (tar.valor_json|fromjson_safe).get('texto', '') if tar.valor_json else '' }}"
-                   placeholder="Escribe la respuesta…"
-                   onblur="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                   {% if g.bloqueado %}disabled{% endif %}>
-            {% elif tipo_r == 'numero' %}
-            <div class="input-group input-group-sm mt-2" style="max-width:240px">
-              <input type="number" class="form-control" id="t-input-{{ tar.id }}"
-                     value="{{ (tar.valor_json|fromjson_safe).get('numero', '') if tar.valor_json else '' }}"
-                     placeholder="0"
-                     {% if tar.rango_min is not none %}min="{{ tar.rango_min }}"{% endif %}
-                     {% if tar.rango_max is not none %}max="{{ tar.rango_max }}"{% endif %}
-                     onblur="guardarRespuestaTarea({{ tar.id }}, parseFloat(this.value), {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                     {% if g.bloqueado %}disabled{% endif %}>
-              {% if tar.unidad %}<span class="input-group-text">{{ tar.unidad }}</span>{% endif %}
-            </div>
-            {% if tar.rango_min is not none or tar.rango_max is not none %}
-            <small class="text-muted">Rango: {{ tar.rango_min or '—' }} a {{ tar.rango_max or '—' }} {{ tar.unidad or '' }}</small>
-            {% endif %}
-            {% elif tipo_r == 'sino' %}
-            <div class="btn-group btn-group-sm mt-2" role="group" id="t-input-{{ tar.id }}">
-              {% set v_sino = (tar.valor_json|fromjson_safe).get('valor', '') if tar.valor_json else '' %}
-              <button type="button" class="btn btn-outline-success {% if v_sino == 'si' %}active{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'si', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>Sí</button>
-              <button type="button" class="btn btn-outline-danger {% if v_sino == 'no' %}active{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'no', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>No</button>
-              <button type="button" class="btn btn-outline-secondary {% if v_sino == 'na' %}active{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'na', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>N/A</button>
-            </div>
-            {% elif tipo_r == 'verificacion' %}
-            <div class="btn-group btn-group-sm mt-2" role="group">
-              {% set v_ver = (tar.valor_json|fromjson_safe).get('valor', '') if tar.valor_json else '' %}
-              <button type="button" class="btn {% if v_ver == 'aprobado' %}btn-success{% else %}btn-outline-success{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'aprobado', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>🟢 Aprobado</button>
-              <button type="button" class="btn {% if v_ver == 'alerta' %}btn-warning{% else %}btn-outline-warning{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'alerta', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>🟡 Alerta</button>
-              <button type="button" class="btn {% if v_ver == 'falla' %}btn-danger{% else %}btn-outline-danger{% endif %}"
-                      onclick="guardarRespuestaTarea({{ tar.id }}, 'falla', {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                      {% if g.bloqueado %}disabled{% endif %}>🔴 Falla</button>
-            </div>
-            {% elif tipo_r == 'lista' %}
-            <select class="form-select form-select-sm mt-2" style="max-width:280px"
-                    onchange="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                    {% if g.bloqueado %}disabled{% endif %}>
-              <option value="">— Seleccionar —</option>
-              {% set v_lista = (tar.valor_json|fromjson_safe).get('opcion', '') if tar.valor_json else '' %}
-              {% set opciones = tar.opciones_lista_json|fromjson_safe if tar.opciones_lista_json else [] %}
-              {% for op in (opciones if opciones is iterable else []) %}
-              <option value="{{ op }}" {% if v_lista == op %}selected{% endif %}>{{ op }}</option>
-              {% endfor %}
-            </select>
-            {% elif tipo_r == 'fecha_hora' %}
-            <input type="datetime-local" class="form-control form-control-sm mt-2" style="max-width:240px"
-                   value="{{ (tar.valor_json|fromjson_safe).get('fecha', '') if tar.valor_json else '' }}"
-                   onblur="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                   {% if g.bloqueado %}disabled{% endif %}>
-            {% elif tipo_r == 'gps' %}
-            <button type="button" class="btn btn-sm btn-outline-primary mt-2"
-                    onclick="capturarGPSTarea({{ tar.id }}, {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                    {% if g.bloqueado %}disabled{% endif %}>
-              <i class="bi bi-geo-alt-fill"></i> Capturar ubicación
-            </button>
-            {% if tar.valor_json %}
-            {% set v_gps = tar.valor_json|fromjson_safe %}
-            <small class="d-block mt-1 text-success">
-              📍 {{ "%.5f"|format(v_gps.get('lat', 0)) }}, {{ "%.5f"|format(v_gps.get('lng', 0)) }}
-            </small>
-            {% endif %}
-            {% elif tipo_r == 'foto' %}
-            <div class="mt-2">
-              <label class="btn btn-sm btn-outline-primary mb-0">
-                <i class="bi bi-camera-fill"></i> Subir foto
-                <input type="file" accept="image/*" capture="environment" style="display:none"
-                       onchange="subirFotoTarea({{ tar.id }}, this, {{ g.maquina_id }}, {{ g.plantilla_id }})"
-                       {% if g.bloqueado %}disabled{% endif %}>
-              </label>
-              <div id="t-fotos-{{ tar.id }}" class="mt-1"></div>
-            </div>
-            {% endif %}
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-
+    <div id="plList">
+      {# Llenado dinámico #}
     </div>
   </div>
-  {% endif %}
-  {% endfor %}
+
+  {# ════════════════════════════════════════════════════════
+     VISTA 3: TAREAS DE UNA PLANTILLA
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-view" id="view-tareas">
+    <div class="tx-pl-hero" id="tareasHero">
+      {# Llenado dinámico #}
+    </div>
+
+    <div id="tareasList">
+      {# Llenado dinámico #}
+    </div>
+  </div>
 
 </div>
 
-{# ─── Bottom bar fijo ─── #}
-<div class="bottom-bar">
+{# ─── BOTTOM BAR FIJO (firmar) ─── #}
+<div class="tx-bottom">
   {% if visita.estado in ['pendiente_aprobacion','completada','cerrada'] %}
-  <button class="btn-firmar" disabled>
+  <button class="tx-btn-firmar" disabled>
     <i class="bi bi-check-circle-fill"></i> OT firmada — esperando aprobación
   </button>
   {% else %}
-  <button class="btn-firmar" id="btnFirmar" onclick="abrirModalFirma()">
-    <i class="bi bi-pen-fill"></i> Completar y firmar para enviar a revisión
+  <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()">
+    <i class="bi bi-pen-fill"></i> Completar y firmar OT
   </button>
   {% endif %}
 </div>
 
-{# ═══════════ MODAL: Iniciar Ruta (Google Maps / Waze) ═══════════ #}
+{# ═════════ MODAL: Iniciar Ruta ═════════ #}
 <div class="modal fade" id="modalRuta" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="border-radius:14px">
       <div class="modal-header" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;border:0">
-        <h5 class="modal-title fw-bold"><i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta al cliente</h5>
+        <h5 class="modal-title fw-bold"><i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -585,28 +392,19 @@
           <small class="text-muted">Destino:</small>
           <div class="fw-bold" id="rutaDestino">{{ visita.direccion_visita or visita.cli_direccion or '—' }}</div>
         </div>
-        <button class="ruta-btn-app google" onclick="iniciarRuta('google')">
+        <button class="ra-app google" onclick="iniciarRuta('google')">
           <div class="ra-logo">G</div>
-          <div class="ra-info">
-            <div class="ra-titulo">Abrir en Google Maps</div>
-            <div class="ra-desc">Navegación turn-by-turn desde tu ubicación</div>
-          </div>
+          <div class="ra-info"><div class="ra-titulo">Google Maps</div><div class="ra-desc">Navegación turn-by-turn</div></div>
           <i class="bi bi-chevron-right text-muted"></i>
         </button>
-        <button class="ruta-btn-app waze" onclick="iniciarRuta('waze')">
+        <button class="ra-app waze" onclick="iniciarRuta('waze')">
           <div class="ra-logo">W</div>
-          <div class="ra-info">
-            <div class="ra-titulo">Abrir en Waze</div>
-            <div class="ra-desc">Alertas de tráfico en tiempo real</div>
-          </div>
+          <div class="ra-info"><div class="ra-titulo">Waze</div><div class="ra-desc">Alertas de tráfico</div></div>
           <i class="bi bi-chevron-right text-muted"></i>
         </button>
-        <button class="ruta-btn-app skip" onclick="iniciarRuta('saltado')">
+        <button class="ra-app skip" onclick="iniciarRuta('saltado')">
           <div class="ra-logo"><i class="bi bi-skip-forward"></i></div>
-          <div class="ra-info">
-            <div class="ra-titulo">Saltar y trabajar directo</div>
-            <div class="ra-desc">Ya estoy en el lugar / no necesito navegación</div>
-          </div>
+          <div class="ra-info"><div class="ra-titulo">Saltar</div><div class="ra-desc">Ya estoy en el lugar</div></div>
           <i class="bi bi-chevron-right text-muted"></i>
         </button>
       </div>
@@ -614,7 +412,7 @@
   </div>
 </div>
 
-{# ═══════════ MODAL: firmas (técnico + cliente) ═══════════ #}
+{# ═════════ MODAL: Firmas ═════════ #}
 <div class="modal fade" id="modalFirma" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
     <div class="modal-content" style="border-radius:14px">
@@ -625,34 +423,22 @@
       <div class="modal-body">
         <div class="alert alert-info py-2 small mb-3">
           <i class="bi bi-info-circle me-1"></i>
-          Al firmar, la OT pasa a <strong>"Pendiente de aprobación"</strong>.
-          El supervisor revisará y cerrará la OT.
+          Al firmar, la OT pasa a <strong>"Pendiente de aprobación"</strong>. El supervisor revisará y cerrará.
         </div>
-
         <div class="mb-3">
-          <label class="form-label small fw-semibold mb-1">
-            <i class="bi bi-person-check me-1"></i>Firma del técnico (tu firma)
-          </label>
+          <label class="form-label small fw-semibold mb-1"><i class="bi bi-person-check me-1"></i>Tu firma (técnico)</label>
           <input type="text" id="firmaTecNombre" class="form-control form-control-sm mb-2"
-                 placeholder="Tu nombre completo"
-                 value="{{ visita.tecnico_principal or '' }}">
-          <div class="firma-canvas-wrap">
-            <canvas id="canvasTec" width="500" height="160"></canvas>
-          </div>
+                 placeholder="Tu nombre completo" value="{{ visita.tecnico_principal or '' }}">
+          <div class="firma-canvas-wrap"><canvas id="canvasTec" width="500" height="160"></canvas></div>
           <button class="btn btn-sm btn-outline-secondary mt-1" type="button" onclick="limpiarFirma('canvasTec')">
             <i class="bi bi-eraser me-1"></i>Borrar
           </button>
         </div>
-
         <div class="mb-2">
-          <label class="form-label small fw-semibold mb-1">
-            <i class="bi bi-person-badge me-1"></i>Firma del cliente
-          </label>
+          <label class="form-label small fw-semibold mb-1"><i class="bi bi-person-badge me-1"></i>Firma del cliente</label>
           <input type="text" id="firmaCliNombre" class="form-control form-control-sm mb-2"
                  placeholder="Nombre del cliente que recibe">
-          <div class="firma-canvas-wrap">
-            <canvas id="canvasCli" width="500" height="160"></canvas>
-          </div>
+          <div class="firma-canvas-wrap"><canvas id="canvasCli" width="500" height="160"></canvas></div>
           <button class="btn btn-sm btn-outline-secondary mt-1" type="button" onclick="limpiarFirma('canvasCli')">
             <i class="bi bi-eraser me-1"></i>Borrar
           </button>
@@ -661,7 +447,7 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-success fw-bold" id="btnFirmarConfirm" onclick="enviarFirma()">
-          <i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión
+          <i class="bi bi-check-lg me-1"></i>Firmar y enviar
         </button>
       </div>
     </div>
@@ -669,192 +455,404 @@
 </div>
 
 <script>
+// ════════════════════════════════════════════════════════
+//  DATOS DEL SERVIDOR
+// ════════════════════════════════════════════════════════
 const VID = {{ visita.id }};
+const VISITA_ESTADO = "{{ visita.estado }}";
 const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
 const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
 const RUTA_YA_INICIADA = {{ 'true' if visita.ruta_iniciada_at else 'false' }};
 
-// ════════════════════════════════════════════════════════
-//  Geolocalización automática al cargar
-// ════════════════════════════════════════════════════════
-function pedirGPS(){
-  const bar = document.getElementById('execGpsBar');
-  const ttl = document.getElementById('execGpsTitle');
-  const sub = document.getElementById('execGpsSub');
-  if (!navigator.geolocation){
-    bar.classList.add('gps-err');
-    ttl.textContent = 'Geolocalización no soportada';
-    sub.textContent = 'Tu navegador no permite obtener tu ubicación.';
-    return;
-  }
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const lat = pos.coords.latitude;
-    const lng = pos.coords.longitude;
-    window.__execOrigenLat = lat;
-    window.__execOrigenLng = lng;
-    let direccion = '';
-    try {
-      const rev = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`,
-        { headers: { 'Accept-Language': 'es' } }
-      );
-      const dj = await rev.json();
-      direccion = dj.display_name || '';
-    } catch(e) { }
-    bar.classList.add('gps-ok');
-    ttl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ubicación registrada';
-    sub.innerHTML = direccion ? `<small>${direccion}</small>` : `<small>Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}</small>`;
-    try {
-      await fetch(`/mantenciones/api/visitas/${VID}/exec-gps`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ lat, lng, direccion })
-      });
-    } catch(e) { }
-  }, (err) => {
-    bar.classList.add('gps-err');
-    ttl.textContent = 'No se pudo obtener tu ubicación';
-    sub.textContent = err.message || 'Permite acceso a la ubicación para auditar la OT.';
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 });
-}
-document.addEventListener('DOMContentLoaded', () => {
-  pedirGPS();
-  // Si la ruta NO se inició y el destino tiene dirección, ofrecer iniciar
-  if (!RUTA_YA_INICIADA && DESTINO_DIR){
-    setTimeout(() => {
-      if (window.innerWidth < 992) abrirModalRuta();
-    }, 1200);
-  }
-  // Ping ruta periódico (30s) si la ruta está iniciada y la OT no está cerrada
-  if (RUTA_YA_INICIADA && '{{ visita.estado }}' !== 'cerrada' && '{{ visita.estado }}' !== 'pendiente_aprobacion'){
-    iniciarPingPeriodico();
-  }
-});
+const EQUIPOS = {{ equipos | tojson }};
+const EQUIPOS_IDX = {{ equipos_idx | tojson }};
+const PLANTILLAS_POR_MAQUINA = {{ plantillas_por_maquina | tojson }};
+const STATS_POR_MAQUINA = {{ stats_por_maquina | tojson }};
+
+// Estado de navegación
+let _state = { mid: null, pid: null, view: 'maquinas' };
 
 // ════════════════════════════════════════════════════════
-//  PING RUTA PERIÓDICO — cada 30s envía lat/lng al backend
+//  NAVEGACIÓN DRILL-DOWN
 // ════════════════════════════════════════════════════════
-let _pingInterval = null;
-function iniciarPingPeriodico(){
-  if (_pingInterval || !navigator.geolocation) return;
-  function ping(){
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        await fetch(`/mantenciones/api/visitas/${VID}/ping-ruta`, {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            lat: pos.coords.latitude, lng: pos.coords.longitude,
-            speed: pos.coords.speed, accuracy: pos.coords.accuracy,
-          })
-        });
-      } catch(e) { /* silencioso */ }
-    }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 25000 });
-  }
-  ping(); // primer ping inmediato
-  _pingInterval = setInterval(ping, 30000);
-}
-window.addEventListener('beforeunload', () => {
-  if (_pingInterval) clearInterval(_pingInterval);
-});
-
-// ════════════════════════════════════════════════════════
-//  RUTA — Google Maps / Waze
-// ════════════════════════════════════════════════════════
-function abrirModalRuta(){
-  if (!DESTINO_DIR){
-    ilusToast('Esta OT no tiene dirección registrada', { type:'warning' });
-    return;
-  }
-  new bootstrap.Modal(document.getElementById('modalRuta')).show();
+function setView(v){
+  document.querySelectorAll('.tx-view').forEach(el => el.classList.remove('active'));
+  document.getElementById('view-' + v).classList.add('active');
+  _state.view = v;
+  // Scroll arriba al cambiar vista
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-async function iniciarRuta(app){
-  bootstrap.Modal.getInstance(document.getElementById('modalRuta'))?.hide();
-  const lat = window.__execOrigenLat || null;
-  const lng = window.__execOrigenLng || null;
-  // Registrar en backend
-  try {
-    await fetch(`/mantenciones/api/visitas/${VID}/iniciar-ruta`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ app, lat, lng })
-    });
-  } catch(e) { console.warn('iniciar-ruta:', e); }
-  // Actualizar botón
-  const btn = document.getElementById('btnRuta');
-  if (btn){
-    btn.classList.add('iniciada');
-    btn.innerHTML = `<i class="bi bi-check-circle-fill"></i> Ruta iniciada · ${app.toUpperCase()}`;
-  }
-  if (app === 'saltado'){
-    ilusToast('OK, registrado. Comenzá a trabajar.', { type:'success' });
-    return;
-  }
-  // Abrir app externa
-  const destinoEncoded = encodeURIComponent(DESTINO_DIR);
-  let url = '';
-  if (app === 'google'){
-    // Si tenemos lat/lng exactos del destino, los usamos (más preciso)
-    const dest = (DESTINO_LAT && DESTINO_LNG) ? `${DESTINO_LAT},${DESTINO_LNG}` : destinoEncoded;
-    url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
-  } else if (app === 'waze'){
-    if (DESTINO_LAT && DESTINO_LNG){
-      url = `https://www.waze.com/ul?ll=${DESTINO_LAT}%2C${DESTINO_LNG}&navigate=yes`;
+function goToMaquinas(){
+  _state = { mid: null, pid: null, view: 'maquinas' };
+  setView('maquinas');
+  renderCrumbs();
+}
+
+function goToPlantillas(mid){
+  _state.mid = mid;
+  _state.pid = null;
+  setView('plantillas');
+  renderPlantillas(mid);
+  renderCrumbs();
+}
+
+function goToTareas(mid, pid){
+  _state.mid = mid;
+  _state.pid = pid;
+  setView('tareas');
+  renderTareas(mid, pid);
+  renderCrumbs();
+}
+
+function renderCrumbs(){
+  const cont = document.getElementById('crumbs');
+  let html = `<button onclick="goToMaquinas()"><i class="bi bi-grid-3x3-gap-fill"></i> Máquinas</button>`;
+  if (_state.mid){
+    const eq = EQUIPOS_IDX[_state.mid];
+    const nom = eq ? (eq.nombre || ('Equipo #' + _state.mid)) : 'Máquina';
+    if (_state.view === 'plantillas'){
+      html += `<span class="sep">›</span><span class="curr">${_escapeHtml(nom)}</span>`;
     } else {
-      url = `https://www.waze.com/ul?q=${destinoEncoded}&navigate=yes`;
+      html += `<span class="sep">›</span><button onclick="goToPlantillas(${_state.mid})">${_escapeHtml(nom)}</button>`;
+      if (_state.pid !== null){
+        const grupo = (PLANTILLAS_POR_MAQUINA[_state.mid] || []).find(p => p.plantilla_id === _state.pid);
+        const nomPl = grupo ? grupo.plantilla_nombre : 'Plantilla';
+        html += `<span class="sep">›</span><span class="curr">${_escapeHtml(nomPl)}</span>`;
+      }
     }
   }
-  if (url) window.open(url, '_blank');
+  cont.innerHTML = html;
 }
 
 // ════════════════════════════════════════════════════════
-//  Expandir/colapsar grupo
+//  VISTA 2: render PLANTILLAS de una máquina
 // ════════════════════════════════════════════════════════
-function toggleGrupo(mid, pid){
-  const card = document.getElementById(`grupo-${mid}-${pid}`);
-  if (!card) return;
-  card.classList.toggle('open');
+function renderPlantillas(mid){
+  const eq = EQUIPOS_IDX[mid];
+  const pls = PLANTILLAS_POR_MAQUINA[mid] || [];
+  if (!eq) return;
+  // Hero
+  document.getElementById('plHero').innerHTML = `
+    <div class="h-foto" ${eq.foto_url ? `style="background-image:url('${_escapeAttr(eq.foto_url)}')"` : ''}>
+      ${!eq.foto_url ? '<i class="bi bi-image"></i>' : ''}
+    </div>
+    <div class="h-info">
+      <div class="h-name">${_escapeHtml(eq.nombre || ('Equipo #' + eq.id))}</div>
+      <div class="h-meta">
+        ${eq.sku ? `<i class="bi bi-tag"></i> ${_escapeHtml(eq.sku)} · ` : ''}
+        ${eq.serie ? `S/N: ${_escapeHtml(eq.serie)}` : ''}
+        ${eq.marca || eq.modelo ? `<br><i class="bi bi-tools"></i> ${_escapeHtml(eq.marca || '')} ${_escapeHtml(eq.modelo || '')}` : ''}
+        ${eq.ubicacion_sala ? `<br><i class="bi bi-geo-alt"></i> ${_escapeHtml(eq.ubicacion_sala)}` : ''}
+      </div>
+    </div>`;
+
+  // Lista de plantillas
+  const cont = document.getElementById('plList');
+  if (!pls.length){
+    cont.innerHTML = '<div class="tx-empty"><i class="bi bi-list-check"></i><div class="fw-bold">Sin plantillas</div></div>';
+    return;
+  }
+  cont.innerHTML = pls.map(p => {
+    const done = p.completas === p.total && p.total > 0;
+    return `<div class="tx-pl-card${done ? ' done' : ''}" onclick="goToTareas(${mid}, ${p.plantilla_id})">
+      <div class="pl-icon"><i class="bi bi-${done ? 'check-circle-fill' : 'list-check'}"></i></div>
+      <div class="pl-info">
+        <div class="pl-name">${_escapeHtml(p.plantilla_nombre)}</div>
+        <div class="pl-meta">
+          <span class="badge">${_escapeHtml(p.plantilla_tipo)}</span>
+          <span>${p.completas}/${p.total} tareas</span>
+          ${done ? '<span style="color:#16a34a;font-weight:700">✓ COMPLETA</span>' : ''}
+        </div>
+        <div class="pl-prog"><div style="width:${p.progreso}%"></div></div>
+      </div>
+      <i class="bi bi-chevron-right text-muted"></i>
+    </div>`;
+  }).join('');
 }
 
-async function guardarCampoEq(el){
-  const eqId = el.dataset.eqId;
-  const campo = el.dataset.campo;
-  const valor = el.value;
+// ════════════════════════════════════════════════════════
+//  VISTA 3: render TAREAS de una plantilla
+// ════════════════════════════════════════════════════════
+function renderTareas(mid, pid){
+  const eq = EQUIPOS_IDX[mid];
+  const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => p.plantilla_id === pid);
+  if (!grupo) return;
+
+  document.getElementById('tareasHero').innerHTML = `
+    <h4><i class="bi bi-list-check me-2"></i>${_escapeHtml(grupo.plantilla_nombre)}</h4>
+    <div class="sub">${_escapeHtml(eq.nombre || ('Equipo #' + mid))} · <span id="tProg">${grupo.completas}</span>/${grupo.total} tareas</div>
+    <div class="prog-wrap"><div class="prog-bar" id="tProgBar" style="width:${grupo.progreso}%"></div></div>`;
+
+  const cont = document.getElementById('tareasList');
+  const bloqueada = (grupo.bloqueado || VISITA_ESTADO === 'pendiente_aprobacion' || VISITA_ESTADO === 'cerrada');
+  cont.innerHTML = grupo.tareas.map(t => renderTareaHtml(t, bloqueada, mid, pid)).join('');
+}
+
+function renderTareaHtml(t, bloqueada, mid, pid){
+  const done = !!t.completada;
+  const tipo = t.tipo_respuesta || 'check';
+  let valor = {};
+  try { valor = t.valor_json ? (typeof t.valor_json === 'string' ? JSON.parse(t.valor_json) : t.valor_json) : {}; } catch(e){ valor = {}; }
+
+  let ctrlHtml = '';
+  switch(tipo){
+    case 'check':
+      ctrlHtml = ''; // El check ya está arriba; toggle al click
+      break;
+    case 'texto':
+      ctrlHtml = `<div class="ctrl"><input type="text" placeholder="Respuesta…"
+        value="${_escapeAttr(valor.texto || '')}"
+        ${bloqueada ? 'disabled' : ''}
+        onblur="guardarResp(${t.id}, this.value, ${mid}, ${pid})"></div>`;
+      break;
+    case 'numero':
+      ctrlHtml = `<div class="ctrl d-flex gap-2 align-items-center">
+        <input type="number" style="flex:1" placeholder="0"
+          value="${valor.numero !== undefined && valor.numero !== null ? valor.numero : ''}"
+          ${t.rango_min != null ? 'min="' + t.rango_min + '"' : ''}
+          ${t.rango_max != null ? 'max="' + t.rango_max + '"' : ''}
+          ${bloqueada ? 'disabled' : ''}
+          onblur="guardarResp(${t.id}, parseFloat(this.value), ${mid}, ${pid})">
+        ${t.unidad ? `<span class="text-muted small fw-bold">${_escapeHtml(t.unidad)}</span>` : ''}
+      </div>
+      ${t.rango_min != null || t.rango_max != null ? `<small class="text-muted">Rango: ${t.rango_min ?? '—'} a ${t.rango_max ?? '—'} ${t.unidad || ''}</small>` : ''}`;
+      break;
+    case 'sino':
+      ctrlHtml = `<div class="ctrl tx-btn-group">
+        <button type="button" class="tx-btn-pill success ${valor.valor === 'si' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'si', ${mid}, ${pid}); refreshPills(this, 'sino')">Sí</button>
+        <button type="button" class="tx-btn-pill danger ${valor.valor === 'no' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'no', ${mid}, ${pid}); refreshPills(this, 'sino')">No</button>
+        <button type="button" class="tx-btn-pill ${valor.valor === 'na' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'na', ${mid}, ${pid}); refreshPills(this, 'sino')">N/A</button>
+      </div>`;
+      break;
+    case 'verificacion':
+      ctrlHtml = `<div class="ctrl tx-btn-group">
+        <button type="button" class="tx-btn-pill success ${valor.valor === 'aprobado' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'aprobado', ${mid}, ${pid}); refreshPills(this, 'verif')">🟢 Aprobado</button>
+        <button type="button" class="tx-btn-pill warn ${valor.valor === 'alerta' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'alerta', ${mid}, ${pid}); refreshPills(this, 'verif')">🟡 Alerta</button>
+        <button type="button" class="tx-btn-pill danger ${valor.valor === 'falla' ? 'active' : ''}"
+          ${bloqueada ? 'disabled' : ''} onclick="guardarResp(${t.id}, 'falla', ${mid}, ${pid}); refreshPills(this, 'verif')">🔴 Falla</button>
+      </div>`;
+      break;
+    case 'lista':
+      let opts = [];
+      try { opts = t.opciones_lista_json ? JSON.parse(t.opciones_lista_json) : []; } catch(e){ opts = []; }
+      ctrlHtml = `<div class="ctrl"><select ${bloqueada ? 'disabled' : ''}
+        onchange="guardarResp(${t.id}, this.value, ${mid}, ${pid})">
+        <option value="">— Seleccionar —</option>
+        ${opts.map(o => `<option value="${_escapeAttr(o)}" ${valor.opcion === o ? 'selected' : ''}>${_escapeHtml(o)}</option>`).join('')}
+      </select></div>`;
+      break;
+    case 'fecha_hora':
+      ctrlHtml = `<div class="ctrl"><input type="datetime-local"
+        value="${_escapeAttr(valor.fecha || '')}"
+        ${bloqueada ? 'disabled' : ''}
+        onblur="guardarResp(${t.id}, this.value, ${mid}, ${pid})"></div>`;
+      break;
+    case 'gps':
+      ctrlHtml = `<div class="ctrl">
+        <button class="tx-btn-gps" ${bloqueada ? 'disabled' : ''}
+          onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
+          <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación
+        </button>
+        ${valor.lat ? `<div class="gps-result"><i class="bi bi-check-circle"></i> 📍 ${valor.lat.toFixed(5)}, ${valor.lng.toFixed(5)}</div>` : ''}
+      </div>`;
+      break;
+    case 'foto':
+      ctrlHtml = `<div class="ctrl">
+        <label class="tx-btn-foto" style="cursor:pointer">
+          <i class="bi bi-camera-fill"></i> Tomar / subir foto
+          <input type="file" accept="image/*" capture="environment" style="display:none"
+            ${bloqueada ? 'disabled' : ''}
+            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+        </label>
+        <div id="t-fotos-${t.id}" class="foto-result"></div>
+      </div>`;
+      break;
+  }
+
+  const isCheckType = (tipo === 'check');
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}" id="tar-${t.id}">
+    <div class="ttl">
+      <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
+        style="${isCheckType && !bloqueada ? 'cursor:pointer' : 'cursor:default'}">
+        ${done ? '<i class="bi bi-check-lg"></i>' : ''}
+      </div>
+      <div class="ttl-info">
+        <div class="ttl-text">${_escapeHtml(t.titulo)}
+          <span class="ttl-badges">
+            ${t.obligatoria ? '<span class="tx-badge-obl">Obligatoria</span>' : ''}
+            ${t.requiere_foto ? '<span class="tx-badge-foto">📷 Foto</span>' : ''}
+            <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
+          </span>
+        </div>
+        ${t.descripcion ? `<div class="ttl-sub">${_escapeHtml(t.descripcion)}</div>` : ''}
+      </div>
+    </div>
+    ${ctrlHtml}
+  </div>`;
+}
+
+function refreshPills(btn, group){
+  const cont = btn.closest('.tx-btn-group');
+  cont.querySelectorAll('.tx-btn-pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ════════════════════════════════════════════════════════
+//  ACCIONES DE TAREAS (guardado + actualización in-memory)
+// ════════════════════════════════════════════════════════
+async function toggleCheck(tid, mid, pid){
+  // Encontrar tarea en data
+  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+  const tar = grupo.tareas.find(t => t.id === tid);
+  const newVal = !tar.completada;
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipo/${eqId}/datos`, {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
       method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ [campo]: valor })
+      body: JSON.stringify({ completada: newVal ? 1 : 0 })
     });
     const d = await r.json();
-    if (d.ok) ilusToast('✓ Guardado', { type: 'success', duration: 1500 });
-    else ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
-  } catch(e){ ilusToast('Error de red', { type: 'error' }); }
+    if (d.ok){
+      tar.completada = newVal;
+      _updateProgress(mid, pid);
+      ilusToast(newVal ? '✓ Marcado' : '○ Desmarcado', { type:'success', duration: 1200 });
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
 
-async function setEstadoEq(eqId, estado, btn){
-  document.querySelectorAll(`#estados-${eqId} .eq-est-btn`).forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+async function guardarResp(tid, valor, mid, pid){
   try {
-    await fetch(`/mantenciones/api/visitas/${VID}/equipo/${eqId}/datos`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ estado_capturado: estado })
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}/respuesta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ valor })
     });
-    ilusToast('✓ Estado actualizado', { type: 'success', duration: 1500 });
-  } catch(e) { ilusToast('Error', { type: 'error' }); }
+    const d = await r.json();
+    if (d.ok){
+      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+      const tar = grupo.tareas.find(t => t.id === tid);
+      tar.completada = d.completada;
+      tar.valor_json = d.valor_norm;
+      _updateProgress(mid, pid);
+      if (d.warning){
+        ilusToast(d.warning, { type:'warning' });
+      } else if (d.completada){
+        ilusToast('✓ Guardado', { type:'success', duration: 1200 });
+      }
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
 
-async function toggleDanoEq(chk){
-  const eqId = chk.dataset.eqId;
+function capturarGPS(tid, mid, pid){
+  if (!navigator.geolocation){
+    ilusToast('GPS no disponible en este dispositivo', { type:'error' }); return;
+  }
+  ilusToast('Pidiendo permiso GPS…', { type:'info', duration: 1500 });
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      guardarResp(tid, { lat: pos.coords.latitude, lng: pos.coords.longitude }, mid, pid);
+      // Re-render solo esa tarea
+      setTimeout(() => renderTareas(mid, pid), 600);
+    },
+    (err) => { ilusToast('GPS error: ' + err.message, { type:'error' }); },
+    { enableHighAccuracy: true, timeout: 12000 }
+  );
+}
+
+async function subirFotoTarea(tid, input, mid, pid){
+  if (!input.files || !input.files[0]) return;
+  let file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){ ilusToast('Foto >20MB', { type:'warning' }); return; }
+  try { file = await _comprimirImagen(file); } catch(e){}
+  const fd = new FormData();
+  fd.append('foto', file);
+  fd.append('tarea_id', tid);
+  ilusToast('Subiendo…', { type:'info', duration: 1500 });
   try {
-    await fetch(`/mantenciones/api/visitas/${VID}/equipo/${eqId}/datos`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ tiene_dano: chk.checked })
-    });
-  } catch(e) { console.warn(e); }
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos`, { method:'POST', body: fd });
+    const d = await r.json();
+    if (d.ok || d.id){
+      ilusToast('✓ Foto subida', { type:'success' });
+      await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ completada: 1 })
+      });
+      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+      const tar = grupo.tareas.find(t => t.id === tid);
+      tar.completada = 1;
+      _updateProgress(mid, pid);
+      const url = d.url || d.cloudinary_url || '';
+      if (url){
+        const cont = document.getElementById('t-fotos-' + tid);
+        if (cont) cont.innerHTML += `<img src="${url}" alt="">`;
+      }
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+function _updateProgress(mid, pid){
+  // Recalcular grupo
+  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+  grupo.completas = grupo.tareas.filter(t => t.completada).length;
+  grupo.progreso = grupo.total ? Math.round((grupo.completas / grupo.total) * 100) : 0;
+  grupo.bloqueado = (grupo.completas === grupo.total && grupo.total > 0);
+
+  // Update vista 3 si está activa
+  const tProg = document.getElementById('tProg');
+  const tProgBar = document.getElementById('tProgBar');
+  if (tProg) tProg.textContent = grupo.completas;
+  if (tProgBar) tProgBar.style.width = grupo.progreso + '%';
+
+  // Marcar tarea como done visualmente
+  document.querySelectorAll('.tx-tarea').forEach(el => {
+    const tid = parseInt(el.id.replace('tar-', ''));
+    const t = grupo.tareas.find(x => x.id === tid);
+    if (t){
+      el.classList.toggle('done', !!t.completada);
+      const chk = el.querySelector('.ttl-chk');
+      if (chk) chk.innerHTML = t.completada ? '<i class="bi bi-check-lg"></i>' : '';
+    }
+  });
+
+  // Recalcular stats máquina
+  const pls = PLANTILLAS_POR_MAQUINA[mid];
+  let totM = 0, compM = 0;
+  pls.forEach(p => { totM += p.total; compM += p.completas; });
+  STATS_POR_MAQUINA[mid] = {
+    total: totM, completas: compM,
+    progreso: totM ? Math.round((compM / totM) * 100) : 0,
+    bloqueada: (compM === totM && totM > 0),
+    n_plantillas: pls.length,
+  };
+
+  // Update stats globales
+  let totG = 0, compG = 0;
+  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
+    pls.forEach(p => { totG += p.total; compG += p.completas; });
+  });
+  document.getElementById('statTot').textContent = totG;
+  document.getElementById('statComp').textContent = compG;
 }
 
 // ════════════════════════════════════════════════════════
-//  COMPRESIÓN cliente-side
+//  HELPERS
 // ════════════════════════════════════════════════════════
+function _escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function _escapeAttr(s){ return String(s||'').replace(/"/g, '&quot;'); }
+
 async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
   if (file.size < 600 * 1024) return file;
   return new Promise((resolve, reject) => {
@@ -887,192 +885,112 @@ async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
   });
 }
 
-async function subirFotoPrincipal(eqId, input){
-  if (!input.files || !input.files[0]) return;
-  let file = input.files[0];
-  if (file.size > 20 * 1024 * 1024){
-    ilusToast('Foto demasiado grande (máx 20MB)', { type: 'warning' });
+// ════════════════════════════════════════════════════════
+//  GPS automático + ruta + ping periódico
+// ════════════════════════════════════════════════════════
+function pedirGPS(){
+  const bar = document.getElementById('execGpsBar');
+  const ttl = document.getElementById('execGpsTitle');
+  const sub = document.getElementById('execGpsSub');
+  if (!navigator.geolocation){
+    bar.classList.add('gps-err');
+    ttl.textContent = 'Geolocalización no soportada';
     return;
   }
-  const uploader = document.getElementById(`foto-uploader-${eqId}`);
-  uploader.classList.add('uploading');
-  try {
-    ilusToast('Optimizando imagen…', { type: 'info', duration: 1500 });
-    file = await _comprimirImagen(file);
-  } catch(e){ console.warn('Compresión falló:', e); }
-  ilusToast('Subiendo foto…', { type: 'info', duration: 1500 });
-  const fd = new FormData();
-  fd.append('foto', file);
-  try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipo/${eqId}/foto`, {
-      method: 'POST', body: fd
-    });
-    const d = await r.json();
-    if (d.ok){
-      uploader.classList.add('has-foto');
-      uploader.style.backgroundImage = `url('${d.url}')`;
-      uploader.querySelector('.uploader-content').innerHTML =
-        '<strong><i class="bi bi-check-circle-fill"></i> Foto cargada</strong> · Toca para reemplazar';
-      // Actualizar mini foto en todas las cards de este equipo
-      document.querySelectorAll(`[data-mid="${eqId}"] .gc-foto`).forEach(el => {
-        el.style.backgroundImage = `url('${d.url}')`;
-        el.innerHTML = '';
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const lat = pos.coords.latitude; const lng = pos.coords.longitude;
+    window.__execOrigenLat = lat; window.__execOrigenLng = lng;
+    let dir = '';
+    try {
+      const rev = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`,
+        { headers: { 'Accept-Language': 'es' } });
+      const dj = await rev.json();
+      dir = dj.display_name || '';
+    } catch(e) {}
+    bar.classList.add('gps-ok');
+    ttl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ubicación registrada';
+    sub.innerHTML = dir ? `<small>${dir}</small>` : `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>`;
+    try {
+      await fetch(`/mantenciones/api/visitas/${VID}/exec-gps`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ lat, lng, direccion: dir })
       });
-      ilusToast('✓ Foto guardada', { type: 'success' });
-    } else ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
-  } catch(e){ ilusToast('Error de red', { type: 'error' });
-  } finally { uploader.classList.remove('uploading'); }
-}
-
-// ════════════════════════════════════════════════════════
-//  TAREAS AVANZADAS — tipo_respuesta != check
-// ════════════════════════════════════════════════════════
-async function guardarRespuestaTarea(tid, valor, mid, pid){
-  try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}/respuesta`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ valor })
-    });
-    const d = await r.json();
-    if (d.ok){
-      const row = document.getElementById('tar-' + tid);
-      if (row && d.completada){
-        row.classList.add('completada');
-        // El icono de check ya lo dibuja el server al recargar; aquí lo marcamos visual.
-        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
-        if (icon) icon.innerHTML = '<span style="color:#16a34a">✓</span>';
-      } else if (row && !d.completada){
-        row.classList.remove('completada');
-        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
-        if (icon) icon.innerHTML = '<span style="color:#cbd5e1">○</span>';
-      }
-      recalcStats();
-      // Actualizar progreso del grupo
-      const card = document.getElementById(`grupo-${mid}-${pid}`);
-      if (card){
-        const filas = card.querySelectorAll('.eq-tarea-row');
-        const completas = card.querySelectorAll('.eq-tarea-row.completada').length;
-        const counter = card.querySelector('.gc-counter');
-        const bar = card.querySelector('.gc-progress > div');
-        if (counter) counter.textContent = `${completas}/${filas.length}`;
-        if (bar) bar.style.width = `${(completas / filas.length) * 100}%`;
-        if (completas === filas.length && filas.length > 0){
-          card.classList.add('done'); counter.classList.add('done');
-        } else {
-          card.classList.remove('done', 'bloqueado'); counter.classList.remove('done');
-        }
-      }
-      if (d.warning){
-        ilusToast(d.warning, { type: 'warning' });
-      } else if (d.completada) {
-        ilusToast('✓ Guardado', { type: 'success', duration: 1200 });
-      }
-    } else {
-      ilusToast('Error: ' + (d.error || '?'), { type: 'error' });
-    }
-  } catch(e){
-    ilusToast('Error de red', { type: 'error' });
-  }
-}
-
-function capturarGPSTarea(tid, mid, pid){
-  if (!navigator.geolocation){
-    ilusToast('GPS no disponible', { type: 'error' }); return;
-  }
-  ilusToast('Capturando ubicación…', { type: 'info', duration: 1500 });
-  navigator.geolocation.getCurrentPosition((pos) => {
-    guardarRespuestaTarea(tid, { lat: pos.coords.latitude, lng: pos.coords.longitude }, mid, pid);
+    } catch(e) {}
   }, (err) => {
-    ilusToast('Error GPS: ' + err.message, { type: 'error' });
-  }, { enableHighAccuracy: true, timeout: 10000 });
+    bar.classList.add('gps-err');
+    ttl.textContent = 'No se pudo obtener tu ubicación';
+    sub.textContent = err.message || 'Permite acceso a ubicación.';
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 });
 }
 
-async function subirFotoTarea(tid, input, mid, pid){
-  if (!input.files || !input.files[0]) return;
-  let file = input.files[0];
-  if (file.size > 20 * 1024 * 1024){ ilusToast('Foto muy grande (max 20MB)', { type:'warning' }); return; }
-  try { file = await _comprimirImagen(file); } catch(e){}
-  const fd = new FormData();
-  fd.append('foto', file);
-  fd.append('tarea_id', tid);
-  ilusToast('Subiendo…', { type:'info', duration: 1500 });
-  try {
-    // Usar endpoint existente de fotos de visita (sube y vincula a tarea)
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos`, {
-      method: 'POST', body: fd
-    });
-    const d = await r.json();
-    if (d.ok || d.id){
-      ilusToast('✓ Foto subida', { type:'success' });
-      // Marcar la tarea como completada (tipo foto)
-      await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
-        method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ completada: 1 })
-      });
-      const cont = document.getElementById('t-fotos-' + tid);
-      if (cont){
-        const url = d.url || d.cloudinary_url || '';
-        if (url) cont.innerHTML += `<img src="${url}" style="max-width:90px;border-radius:6px;margin:2px">`;
-      }
-      // Marcar row visualmente
-      const row = document.getElementById('tar-' + tid);
-      if (row){
-        row.classList.add('completada');
-        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
-        if (icon) icon.innerHTML = '<span style="color:#16a34a">✓</span>';
-      }
-      recalcStats();
-    } else {
-      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
-    }
-  } catch(e){
-    ilusToast('Error de red', { type:'error' });
+document.addEventListener('DOMContentLoaded', () => {
+  pedirGPS();
+  if (!RUTA_YA_INICIADA && DESTINO_DIR && window.innerWidth < 992){
+    setTimeout(() => abrirModalRuta(), 1200);
   }
+  if (RUTA_YA_INICIADA && VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'pendiente_aprobacion'){
+    iniciarPingPeriodico();
+  }
+});
+
+function abrirModalRuta(){
+  if (!DESTINO_DIR){ ilusToast('Sin dirección registrada', { type:'warning' }); return; }
+  new bootstrap.Modal(document.getElementById('modalRuta')).show();
 }
 
-async function toggleTarea(tid, chk, mid, pid){
-  const row = document.getElementById('tar-' + tid);
+async function iniciarRuta(app){
+  bootstrap.Modal.getInstance(document.getElementById('modalRuta'))?.hide();
+  const lat = window.__execOrigenLat || null;
+  const lng = window.__execOrigenLng || null;
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ completada: chk.checked ? 1 : 0 })
+    await fetch(`/mantenciones/api/visitas/${VID}/iniciar-ruta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ app, lat, lng })
     });
-    const d = await r.json();
-    if (d.ok){
-      row.classList.toggle('completada', chk.checked);
-      recalcStats();
-      // Actualizar progreso del grupo
-      const card = document.getElementById(`grupo-${mid}-${pid}`);
-      if (card){
-        const checks = card.querySelectorAll('.tarea-chk');
-        const checkedN = Array.from(checks).filter(c => c.checked).length;
-        const counter = card.querySelector('.gc-counter');
-        const bar = card.querySelector('.gc-progress > div');
-        if (counter) counter.textContent = `${checkedN}/${checks.length}`;
-        if (bar) bar.style.width = `${(checkedN / checks.length) * 100}%`;
-        if (checkedN === checks.length && checks.length > 0){
-          card.classList.add('done');
-          counter.classList.add('done');
-        } else {
-          card.classList.remove('done', 'bloqueado');
-          counter.classList.remove('done');
-        }
-      }
-    } else { chk.checked = !chk.checked; ilusToast('Error', { type: 'error' }); }
-  } catch(e){ chk.checked = !chk.checked; ilusToast('Error de red', { type: 'error' }); }
+  } catch(e) {}
+  const btn = document.getElementById('btnRuta');
+  if (btn){
+    btn.classList.add('iniciada');
+    btn.innerHTML = `<i class="bi bi-check-circle-fill"></i> Ruta iniciada · ${app.toUpperCase()}`;
+  }
+  if (app === 'saltado'){ ilusToast('OK, comienza a trabajar', { type:'success' }); return; }
+  const dest = (DESTINO_LAT && DESTINO_LNG) ? `${DESTINO_LAT},${DESTINO_LNG}` : encodeURIComponent(DESTINO_DIR);
+  let url = '';
+  if (app === 'google'){
+    url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+  } else if (app === 'waze'){
+    url = (DESTINO_LAT && DESTINO_LNG)
+      ? `https://www.waze.com/ul?ll=${DESTINO_LAT}%2C${DESTINO_LNG}&navigate=yes`
+      : `https://www.waze.com/ul?q=${encodeURIComponent(DESTINO_DIR)}&navigate=yes`;
+  }
+  if (url) window.open(url, '_blank');
 }
 
-function recalcStats(){
-  const total = document.querySelectorAll('.tarea-chk').length;
-  const comp = document.querySelectorAll('.tarea-chk:checked').length;
-  document.getElementById('statTareasTotal').textContent = total;
-  document.getElementById('statTareasComp').textContent = comp;
+let _pingInterval = null;
+function iniciarPingPeriodico(){
+  if (_pingInterval || !navigator.geolocation) return;
+  function ping(){
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        await fetch(`/mantenciones/api/visitas/${VID}/ping-ruta`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            lat: pos.coords.latitude, lng: pos.coords.longitude,
+            speed: pos.coords.speed, accuracy: pos.coords.accuracy,
+          })
+        });
+      } catch(e) {}
+    }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 25000 });
+  }
+  ping();
+  _pingInterval = setInterval(ping, 30000);
 }
+window.addEventListener('beforeunload', () => { if (_pingInterval) clearInterval(_pingInterval); });
 
 // ════════════════════════════════════════════════════════
-//  FIRMAS canvas
+//  FIRMAS
 // ════════════════════════════════════════════════════════
-const _sigState = {};
+const _sig = {};
 function initCanvas(id){
   const cv = document.getElementById(id);
   if (!cv) return;
@@ -1081,36 +999,33 @@ function initCanvas(id){
   cv.width = rect.width * dpr; cv.height = rect.height * dpr;
   const ctx = cv.getContext('2d');
   ctx.scale(dpr, dpr);
-  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#0f172a';
-  _sigState[id] = { ctx, drawing: false, last: null, has: false };
-  function start(x,y){ _sigState[id].drawing=true; _sigState[id].last={x,y}; }
-  function move(x,y){
-    if (!_sigState[id].drawing) return;
-    ctx.beginPath(); ctx.moveTo(_sigState[id].last.x, _sigState[id].last.y);
-    ctx.lineTo(x,y); ctx.stroke();
-    _sigState[id].last={x,y}; _sigState[id].has=true;
-  }
-  function end(){ _sigState[id].drawing=false; _sigState[id].last=null; }
-  function getXY(ev){
+  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
+  _sig[id] = { ctx, drawing: false, last: null, has: false };
+  const start = (x,y) => { _sig[id].drawing = true; _sig[id].last = {x,y}; };
+  const move = (x,y) => {
+    if (!_sig[id].drawing) return;
+    ctx.beginPath(); ctx.moveTo(_sig[id].last.x, _sig[id].last.y); ctx.lineTo(x,y); ctx.stroke();
+    _sig[id].last = {x,y}; _sig[id].has = true;
+  };
+  const end = () => { _sig[id].drawing = false; _sig[id].last = null; };
+  const getXY = (ev) => {
     const r = cv.getBoundingClientRect();
-    if (ev.touches){ const t=ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
+    if (ev.touches){ const t = ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
     return {x:ev.clientX-r.left, y:ev.clientY-r.top};
-  }
-  cv.addEventListener('mousedown', e => { const p=getXY(e); start(p.x,p.y); });
-  cv.addEventListener('mousemove', e => { const p=getXY(e); move(p.x,p.y); });
+  };
+  cv.addEventListener('mousedown', e => { const p = getXY(e); start(p.x, p.y); });
+  cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
   cv.addEventListener('mouseup', end);
   cv.addEventListener('mouseleave', end);
-  cv.addEventListener('touchstart', e => { e.preventDefault(); const p=getXY(e); start(p.x,p.y); });
-  cv.addEventListener('touchmove', e => { e.preventDefault(); const p=getXY(e); move(p.x,p.y); });
+  cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); });
+  cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); });
   cv.addEventListener('touchend', end);
 }
 function limpiarFirma(id){
   const cv = document.getElementById(id);
   if (!cv) return;
-  const ctx = cv.getContext('2d');
-  ctx.clearRect(0,0,cv.width,cv.height);
-  if (_sigState[id]) _sigState[id].has = false;
+  cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  if (_sig[id]) _sig[id].has = false;
 }
 function abrirModalFirma(){
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
@@ -1118,22 +1033,21 @@ function abrirModalFirma(){
 }
 async function enviarFirma(){
   const cvTec = document.getElementById('canvasTec');
-  const cvCli = document.getElementById('canvasCli');
-  if (!_sigState.canvasTec || !_sigState.canvasTec.has){
-    ilusToast('Falta tu firma (técnico)', { type: 'warning' }); return;
+  if (!_sig.canvasTec || !_sig.canvasTec.has){
+    ilusToast('Falta tu firma', { type:'warning' }); return;
   }
   const firmaTec = cvTec.toDataURL('image/png');
-  const firmaCli = (_sigState.canvasCli && _sigState.canvasCli.has) ? cvCli.toDataURL('image/png') : '';
-  const nombreTec = document.getElementById('firmaTecNombre').value.trim();
-  const nombreCli = document.getElementById('firmaCliNombre').value.trim();
+  const firmaCli = (_sig.canvasCli && _sig.canvasCli.has) ? document.getElementById('canvasCli').toDataURL('image/png') : '';
   const btn = document.getElementById('btnFirmarConfirm');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-revision`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
-        firma_tecnico: firmaTec, firma_tecnico_nombre: nombreTec,
-        firma_cliente: firmaCli, firma_cliente_nombre: nombreCli,
+        firma_tecnico: firmaTec,
+        firma_tecnico_nombre: document.getElementById('firmaTecNombre').value.trim(),
+        firma_cliente: firmaCli,
+        firma_cliente_nombre: document.getElementById('firmaCliNombre').value.trim(),
       })
     });
     const d = await r.json();
@@ -1141,18 +1055,17 @@ async function enviarFirma(){
       bootstrap.Modal.getInstance(document.getElementById('modalFirma'))?.hide();
       await ilusAlert({
         title: '✅ OT firmada',
-        message: 'Se envió a revisión del supervisor.',
-        sub: 'El supervisor revisará y cerrará la OT.',
+        message: 'Enviado a revisión del supervisor.',
         type: 'success',
       });
       setTimeout(() => location.reload(), 600);
     } else {
-      ilusToast(d.error || 'Error', { type: 'error' });
-      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
+      ilusToast(d.error || 'Error', { type:'error' });
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
     }
   } catch(e){
-    ilusToast('Error de red', { type: 'error' });
-    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
+    ilusToast('Error de red', { type:'error' });
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
   }
 }
 </script>
