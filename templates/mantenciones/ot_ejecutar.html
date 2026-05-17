@@ -19,6 +19,14 @@
   text-transform:uppercase; letter-spacing:.5px;
   border:1px solid rgba(255,255,255,.3);
 }
+.exec-header .btn-ruta {
+  display:inline-flex; align-items:center; gap:6px;
+  background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
+  padding:6px 14px; border-radius:9999px; font-size:.78rem; font-weight:700;
+  text-decoration:none; transition:all .15s; margin-top:8px;
+}
+.exec-header .btn-ruta:hover { background:rgba(255,255,255,.25); color:#fff; }
+.exec-header .btn-ruta.iniciada { background:#dcfce7; color:#15803d; border-color:#16a34a; }
 
 .exec-gps-bar {
   background: #fef3c7; border-left: 4px solid #f59e0b;
@@ -42,47 +50,65 @@
 .exec-stat.success .num { color: #16a34a; }
 .exec-stat.warning .num { color: #f59e0b; }
 
-.eq-card {
+/* ─── CARDS por (equipo × plantilla) ─── */
+.grupo-card {
   background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
   margin-bottom: 12px; overflow: hidden;
   transition: border-color .2s, box-shadow .2s;
 }
-.eq-card.open { border-color: #dc2626; box-shadow: 0 4px 14px rgba(220,38,38,.12); }
-.eq-card.done { border-color: #16a34a; background: #f0fdf4; }
+.grupo-card.open { border-color: #dc2626; box-shadow: 0 4px 14px rgba(220,38,38,.12); }
+.grupo-card.done { border-color: #16a34a; background: #f0fdf4; }
+.grupo-card.bloqueado { opacity:.85; }
+.grupo-card.bloqueado .grupo-card-body { pointer-events: none; }
 
-.eq-card-header {
+.grupo-card-header {
   display: flex; align-items: center; gap: 12px;
   padding: 14px; cursor: pointer; user-select: none;
 }
-.eq-card-header .eq-foto {
+.grupo-card-header .gc-foto {
   width: 56px; height: 56px; border-radius: 10px;
   background: #f3f4f6 center/cover no-repeat;
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   color: #94a3b8; font-size: 1.6rem; border: 1px solid #e5e7eb;
 }
-.eq-card-header .eq-info { flex: 1; min-width: 0; }
-.eq-card-header .eq-name {
+.grupo-card-header .gc-info { flex: 1; min-width: 0; }
+.grupo-card-header .gc-eq {
   font-weight: 700; font-size: .96rem; color: #0f172a;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.eq-card-header .eq-meta { font-size: .74rem; color: #6b7280; margin-top: 2px; }
-.eq-card-header .eq-counter {
+.grupo-card-header .gc-plant {
+  font-size: .74rem; color: #6b7280; margin-top: 2px;
+  display: flex; align-items: center; gap: 4px;
+}
+.grupo-card-header .gc-plant .gc-plant-badge {
+  display:inline-block; padding:1px 8px; border-radius:9999px;
+  background:#dbeafe; color:#1e40af; font-weight:700; font-size:.66rem;
+}
+.grupo-card-header .gc-counter {
   font-size: .72rem; padding: 3px 9px; border-radius: 9999px;
   background: #f3f4f6; color: #475569; font-weight: 700; white-space: nowrap;
 }
-.eq-card-header .eq-counter.done { background: #dcfce7; color: #15803d; }
+.grupo-card-header .gc-counter.done { background: #dcfce7; color: #15803d; }
+.grupo-card-header .gc-progress {
+  width: 80px; height: 4px; background: #e5e7eb; border-radius: 2px;
+  overflow: hidden; flex-shrink: 0;
+}
+.grupo-card-header .gc-progress > div {
+  height: 100%; background: linear-gradient(90deg, #16a34a, #22c55e);
+  transition: width .3s;
+}
 
-.eq-card-body { padding: 0 14px 14px; display: none; }
-.eq-card.open .eq-card-body { display: block; }
+.grupo-card-body { padding: 0 14px 14px; display: none; }
+.grupo-card.open .grupo-card-body { display: block; }
 
-.eq-section { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px dashed #e5e7eb; }
-.eq-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
-.eq-section-title {
+.grupo-section { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px dashed #e5e7eb; }
+.grupo-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+.grupo-section-title {
   font-size: .78rem; font-weight: 700; color: #0f172a;
   text-transform: uppercase; letter-spacing: .5px;
   margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
 }
-.eq-section-title i { color: #dc2626; }
+.grupo-section-title i { color: #dc2626; }
 
 .eq-foto-uploader {
   width: 100%; height: 180px; border: 2px dashed #cbd5e1;
@@ -165,7 +191,22 @@
 .firma-canvas-wrap { background:#fafafa; border:2px dashed #cbd5e1; border-radius:10px; overflow:hidden; touch-action:none }
 .firma-canvas-wrap canvas { display:block; width:100%; height:160px; cursor:crosshair }
 
-/* Ocultar elementos no necesarios en mobile */
+/* Modal iniciar ruta */
+.ruta-btn-app {
+  display:flex; align-items:center; gap:14px; width:100%;
+  padding:14px 16px; border:2px solid #e5e7eb; background:#fff;
+  border-radius:12px; cursor:pointer; transition:all .15s; margin-bottom:8px;
+  text-align:left;
+}
+.ruta-btn-app:hover { border-color:#dc2626; transform:translateY(-1px); box-shadow:0 4px 10px rgba(220,38,38,.1); }
+.ruta-btn-app .ra-logo { width:42px; height:42px; border-radius:10px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:1.4rem; font-weight:900 }
+.ruta-btn-app.google .ra-logo { background: linear-gradient(135deg,#4285f4,#34a853); }
+.ruta-btn-app.waze .ra-logo { background: linear-gradient(135deg,#33ccff,#0099cc); }
+.ruta-btn-app.skip .ra-logo { background: linear-gradient(135deg,#94a3b8,#475569); }
+.ruta-btn-app .ra-info { flex:1; min-width:0 }
+.ruta-btn-app .ra-titulo { font-weight:800; font-size:1rem; color:#0f172a }
+.ruta-btn-app .ra-desc { font-size:.74rem; color:#6b7280; margin-top:2px }
+
 @media (max-width: 600px) {
   .exec-stats { grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .exec-stat .num { font-size: 1.2rem; }
@@ -183,8 +224,9 @@
     </div>
     <div class="small-meta">
       <div><i class="bi bi-building me-1"></i><strong>{{ visita.razon_social }}</strong></div>
-      {% if visita.cli_direccion %}
-      <div><i class="bi bi-geo-alt me-1"></i>{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>
+      {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
+      {% if dir_visita %}
+      <div><i class="bi bi-geo-alt me-1"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</div>
       {% endif %}
       {% if visita.fecha_programada %}
       <div><i class="bi bi-calendar3 me-1"></i>{{ visita.fecha_programada | string }}{% if visita.hora_inicio %} · {{ visita.hora_inicio | string }}{% endif %}{% if visita.hora_fin %} – {{ visita.hora_fin | string }}{% endif %}</div>
@@ -193,6 +235,17 @@
       <div><i class="bi bi-person me-1"></i>{{ visita.tecnico_principal }}</div>
       {% endif %}
     </div>
+    {# Botón iniciar ruta — visible si OT no está cerrada y aún no se inició #}
+    {% if visita.estado not in ['cerrada','cancelada','anulada','pendiente_aprobacion'] %}
+    <a href="#" class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}"
+       id="btnRuta" onclick="abrirModalRuta(); return false;">
+      {% if visita.ruta_iniciada_at %}
+      <i class="bi bi-check-circle-fill"></i> Ruta iniciada · {{ visita.ruta_app|upper if visita.ruta_app else '' }}
+      {% else %}
+      <i class="bi bi-signpost-split-fill"></i> Iniciar ruta al cliente
+      {% endif %}
+    </a>
+    {% endif %}
   </div>
 
   {# ─── GPS auto-detectado (no editable) ─── #}
@@ -207,18 +260,15 @@
   </div>
 
   {# ─── Stats compactos ─── #}
-  {% set total_tar = tareas_por_eq.values() | map('length') | sum %}
-  {% set completas = 0 %}
-  {% for eq_id, tareas in tareas_por_eq.items() %}
-    {% for t in tareas %}{% if t.completada %}{% set _ = completas %}{% endif %}{% endfor %}
-  {% endfor %}
+  {% set total_tar = grupos | map(attribute='total') | sum %}
+  {% set total_comp = grupos | map(attribute='completas') | sum %}
   <div class="exec-stats">
     <div class="exec-stat">
-      <div class="num">{{ equipos|length }}</div>
-      <div class="lbl">Equipos</div>
+      <div class="num">{{ grupos|length }}</div>
+      <div class="lbl">A gestionar</div>
     </div>
     <div class="exec-stat success">
-      <div class="num" id="statTareasComp">0</div>
+      <div class="num" id="statTareasComp">{{ total_comp }}</div>
       <div class="lbl">Tareas OK</div>
     </div>
     <div class="exec-stat warning">
@@ -227,37 +277,44 @@
     </div>
   </div>
 
-  {# ─── Lista de equipos ─── #}
-  {% if not equipos %}
+  {# ─── Lista de grupos (UN equipo × UNA plantilla = UNA card) ─── #}
+  {% if not grupos %}
   <div class="alert alert-warning">
     <i class="bi bi-exclamation-triangle me-1"></i>
-    Esta OT no tiene equipos asociados. Pide a un administrador que revise el levantamiento.
+    Esta OT no tiene tareas asignadas. Pide a un administrador que revise el levantamiento.
   </div>
   {% endif %}
-  {% for eq in equipos %}
-  {% set tareas_eq = tareas_por_eq.get(eq.id, []) %}
-  {% set tareas_ok = tareas_eq | selectattr('completada') | list | length %}
-  {% set tareas_tot = tareas_eq | length %}
-  {% set is_done = (tareas_tot > 0 and tareas_ok == tareas_tot) %}
-  <div class="eq-card{% if is_done %} done{% endif %}" id="eq-{{ eq.id }}" data-eq-id="{{ eq.id }}">
-    <div class="eq-card-header" onclick="toggleEq({{ eq.id }})">
-      <div class="eq-foto" style="{% if eq.foto_url %}background-image:url('{{ eq.foto_url }}');{% endif %}">
+  {% for g in grupos %}
+  {% set eq = equipos_idx.get(g.maquina_id) %}
+  {% if eq %}
+  <div class="grupo-card{% if g.bloqueado %} done bloqueado{% endif %}"
+       id="grupo-{{ g.maquina_id }}-{{ g.plantilla_id }}"
+       data-mid="{{ g.maquina_id }}" data-pid="{{ g.plantilla_id }}">
+    <div class="grupo-card-header" onclick="toggleGrupo({{ g.maquina_id }}, {{ g.plantilla_id }})">
+      <div class="gc-foto" style="{% if eq.foto_url %}background-image:url('{{ eq.foto_url }}');{% endif %}">
         {% if not eq.foto_url %}<i class="bi bi-image"></i>{% endif %}
       </div>
-      <div class="eq-info">
-        <div class="eq-name">{{ eq.nombre or ('Equipo #' ~ eq.id) }}</div>
-        <div class="eq-meta">
-          {% if eq.sku %}SKU: {{ eq.sku }}{% endif %}
-          {% if eq.serie %} · S/N: {{ eq.serie }}{% endif %}
+      <div class="gc-info">
+        <div class="gc-eq">
+          {% if g.bloqueado %}<i class="bi bi-lock-fill text-success me-1"></i>{% endif %}
+          {{ eq.nombre or ('Equipo #' ~ eq.id) }}
+        </div>
+        <div class="gc-plant">
+          <span class="gc-plant-badge">{{ g.plantilla_tipo|upper }}</span>
+          <span>{{ g.plantilla_nombre }}</span>
         </div>
       </div>
-      <span class="eq-counter{% if is_done %} done{% endif %}">{{ tareas_ok }}/{{ tareas_tot }}</span>
+      <div class="gc-progress">
+        <div style="width:{{ g.progreso }}%"></div>
+      </div>
+      <span class="gc-counter{% if g.bloqueado %} done{% endif %}">{{ g.completas }}/{{ g.total }}</span>
     </div>
-    <div class="eq-card-body">
+    <div class="grupo-card-body">
 
-      {# Foto principal del equipo #}
-      <div class="eq-section">
-        <div class="eq-section-title"><i class="bi bi-camera-fill"></i>Foto principal del equipo</div>
+      {# Foto principal del equipo (solo en la primera plantilla del equipo) #}
+      {% if loop.first or grupos[loop.index0-1].maquina_id != g.maquina_id %}
+      <div class="grupo-section">
+        <div class="grupo-section-title"><i class="bi bi-camera-fill"></i>Foto principal del equipo</div>
         <label class="eq-foto-uploader{% if eq.foto_url %} has-foto{% endif %}"
                id="foto-uploader-{{ eq.id }}"
                style="{% if eq.foto_url %}background-image:url('{{ eq.foto_url }}');{% endif %}">
@@ -274,9 +331,9 @@
         </label>
       </div>
 
-      {# Datos técnicos #}
-      <div class="eq-section">
-        <div class="eq-section-title"><i class="bi bi-info-circle"></i>Información técnica</div>
+      {# Datos técnicos — solo en primera card del equipo #}
+      <div class="grupo-section">
+        <div class="grupo-section-title"><i class="bi bi-info-circle"></i>Información técnica</div>
         <div class="row g-2">
           <div class="col-12 col-md-6">
             <label class="form-label small mb-1">N° de serie</label>
@@ -328,9 +385,8 @@
         </div>
       </div>
 
-      {# Estado general #}
-      <div class="eq-section">
-        <div class="eq-section-title"><i class="bi bi-activity"></i>Estado general del equipo</div>
+      <div class="grupo-section">
+        <div class="grupo-section-title"><i class="bi bi-activity"></i>Estado general del equipo</div>
         <div class="eq-estado-btns" id="estados-{{ eq.id }}">
           {% for est, lbl, ico in [
             ('operativo','Operativo','🟢'),
@@ -349,8 +405,7 @@
         </div>
       </div>
 
-      {# Daños visibles + observaciones #}
-      <div class="eq-section">
+      <div class="grupo-section">
         <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" role="switch"
                  id="dano-{{ eq.id }}" data-eq-id="{{ eq.id }}"
@@ -361,22 +416,26 @@
             ¿Tiene daños visibles?
           </label>
         </div>
-        <label class="form-label small fw-semibold mb-1">Observaciones</label>
+        <label class="form-label small fw-semibold mb-1">Observaciones generales del equipo</label>
         <textarea class="form-control form-control-sm" rows="2"
                   data-campo="observaciones" data-eq-id="{{ eq.id }}"
                   onblur="guardarCampoEq(this)"
-                  placeholder="Anomalías, ruidos, vibraciones, condición de pantalla, daños visibles…">{{ eq.observaciones or '' }}</textarea>
+                  placeholder="Anomalías, ruidos, vibraciones, daños visibles…">{{ eq.observaciones or '' }}</textarea>
       </div>
+      {% endif %}
 
-      {# Tareas de la plantilla #}
-      {% if tareas_eq %}
-      <div class="eq-section">
-        <div class="eq-section-title"><i class="bi bi-list-check"></i>Tareas a completar ({{ tareas_ok }}/{{ tareas_tot }})</div>
-        {% for tar in tareas_eq %}
+      {# Tareas de la plantilla — siempre visible (es lo específico de cada grupo) #}
+      <div class="grupo-section">
+        <div class="grupo-section-title">
+          <i class="bi bi-list-check"></i>
+          Tareas — {{ g.plantilla_nombre }} ({{ g.completas }}/{{ g.total }})
+        </div>
+        {% for tar in g.tareas %}
         <div class="eq-tarea-row{% if tar.completada %} completada{% endif %}" id="tar-{{ tar.id }}">
           <input type="checkbox" class="tarea-chk"
                  {% if tar.completada %}checked{% endif %}
-                 onchange="toggleTarea({{ tar.id }}, this, {{ eq.id }})">
+                 {% if g.bloqueado %}disabled{% endif %}
+                 onchange="toggleTarea({{ tar.id }}, this, {{ g.maquina_id }}, {{ g.plantilla_id }})">
           <div class="tarea-info">
             <div class="tarea-titulo">
               {{ tar.titulo }}
@@ -390,15 +449,15 @@
         </div>
         {% endfor %}
       </div>
-      {% endif %}
 
     </div>
   </div>
+  {% endif %}
   {% endfor %}
 
 </div>
 
-{# ─── Bottom bar fijo: botón firmar ─── #}
+{# ─── Bottom bar fijo ─── #}
 <div class="bottom-bar">
   {% if visita.estado in ['pendiente_aprobacion','completada','cerrada'] %}
   <button class="btn-firmar" disabled>
@@ -411,7 +470,49 @@
   {% endif %}
 </div>
 
-{# ─── Modal: firmas (técnico + cliente) ─── #}
+{# ═══════════ MODAL: Iniciar Ruta (Google Maps / Waze) ═══════════ #}
+<div class="modal fade" id="modalRuta" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff;border:0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-signpost-split-fill me-2"></i>Iniciar ruta al cliente</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <small class="text-muted">Destino:</small>
+          <div class="fw-bold" id="rutaDestino">{{ visita.direccion_visita or visita.cli_direccion or '—' }}</div>
+        </div>
+        <button class="ruta-btn-app google" onclick="iniciarRuta('google')">
+          <div class="ra-logo">G</div>
+          <div class="ra-info">
+            <div class="ra-titulo">Abrir en Google Maps</div>
+            <div class="ra-desc">Navegación turn-by-turn desde tu ubicación</div>
+          </div>
+          <i class="bi bi-chevron-right text-muted"></i>
+        </button>
+        <button class="ruta-btn-app waze" onclick="iniciarRuta('waze')">
+          <div class="ra-logo">W</div>
+          <div class="ra-info">
+            <div class="ra-titulo">Abrir en Waze</div>
+            <div class="ra-desc">Alertas de tráfico en tiempo real</div>
+          </div>
+          <i class="bi bi-chevron-right text-muted"></i>
+        </button>
+        <button class="ruta-btn-app skip" onclick="iniciarRuta('saltado')">
+          <div class="ra-logo"><i class="bi bi-skip-forward"></i></div>
+          <div class="ra-info">
+            <div class="ra-titulo">Saltar y trabajar directo</div>
+            <div class="ra-desc">Ya estoy en el lugar / no necesito navegación</div>
+          </div>
+          <i class="bi bi-chevron-right text-muted"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══════════ MODAL: firmas (técnico + cliente) ═══════════ #}
 <div class="modal fade" id="modalFirma" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
     <div class="modal-content" style="border-radius:14px">
@@ -426,7 +527,6 @@
           El supervisor revisará y cerrará la OT.
         </div>
 
-        {# Firma técnico #}
         <div class="mb-3">
           <label class="form-label small fw-semibold mb-1">
             <i class="bi bi-person-check me-1"></i>Firma del técnico (tu firma)
@@ -442,7 +542,6 @@
           </button>
         </div>
 
-        {# Firma cliente #}
         <div class="mb-2">
           <label class="form-label small fw-semibold mb-1">
             <i class="bi bi-person-badge me-1"></i>Firma del cliente
@@ -469,7 +568,10 @@
 
 <script>
 const VID = {{ visita.id }};
-const CLI_DIR = "{{ (visita.cli_direccion or '') | replace('\"','\\\\\"') }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}";
+const DESTINO_LAT = {{ visita.direccion_lat | default('null', true) | tojson }};
+const DESTINO_LNG = {{ visita.direccion_lng | default('null', true) | tojson }};
+const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
+const RUTA_YA_INICIADA = {{ 'true' if visita.ruta_iniciada_at else 'false' }};
 
 // ════════════════════════════════════════════════════════
 //  Geolocalización automática al cargar
@@ -487,7 +589,8 @@ function pedirGPS(){
   navigator.geolocation.getCurrentPosition(async (pos) => {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
-    // Reverse geocoding (Nominatim — gratuito, sin API key)
+    window.__execOrigenLat = lat;
+    window.__execOrigenLng = lng;
     let direccion = '';
     try {
       const rev = await fetch(
@@ -496,21 +599,16 @@ function pedirGPS(){
       );
       const dj = await rev.json();
       direccion = dj.display_name || '';
-    } catch(e) { /* opcional */ }
-
+    } catch(e) { }
     bar.classList.add('gps-ok');
     ttl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ubicación registrada';
-    sub.innerHTML = direccion ? `<small>${direccion}</small>` :
-                                `<small>Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}</small>`;
-
-    // Enviar al backend (solo la primera vez)
+    sub.innerHTML = direccion ? `<small>${direccion}</small>` : `<small>Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}</small>`;
     try {
       await fetch(`/mantenciones/api/visitas/${VID}/exec-gps`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ lat, lng, direccion })
       });
-    } catch(e) { console.warn('exec-gps:', e); }
+    } catch(e) { }
   }, (err) => {
     bar.classList.add('gps-err');
     ttl.textContent = 'No se pudo obtener tu ubicación';
@@ -519,45 +617,88 @@ function pedirGPS(){
 }
 document.addEventListener('DOMContentLoaded', () => {
   pedirGPS();
-  recalcStats();
+  // Si la ruta NO se inició y el destino tiene dirección, ofrecer iniciar
+  if (!RUTA_YA_INICIADA && DESTINO_DIR){
+    setTimeout(() => {
+      // Solo mostrar automáticamente si el usuario está en mobile (probablemente técnico en campo)
+      if (window.innerWidth < 992) abrirModalRuta();
+    }, 1200);
+  }
 });
 
 // ════════════════════════════════════════════════════════
-//  Expandir/colapsar equipo
+//  RUTA — Google Maps / Waze
 // ════════════════════════════════════════════════════════
-function toggleEq(eqId){
-  const card = document.getElementById('eq-' + eqId);
+function abrirModalRuta(){
+  if (!DESTINO_DIR){
+    ilusToast('Esta OT no tiene dirección registrada', { type:'warning' });
+    return;
+  }
+  new bootstrap.Modal(document.getElementById('modalRuta')).show();
+}
+
+async function iniciarRuta(app){
+  bootstrap.Modal.getInstance(document.getElementById('modalRuta'))?.hide();
+  const lat = window.__execOrigenLat || null;
+  const lng = window.__execOrigenLng || null;
+  // Registrar en backend
+  try {
+    await fetch(`/mantenciones/api/visitas/${VID}/iniciar-ruta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ app, lat, lng })
+    });
+  } catch(e) { console.warn('iniciar-ruta:', e); }
+  // Actualizar botón
+  const btn = document.getElementById('btnRuta');
+  if (btn){
+    btn.classList.add('iniciada');
+    btn.innerHTML = `<i class="bi bi-check-circle-fill"></i> Ruta iniciada · ${app.toUpperCase()}`;
+  }
+  if (app === 'saltado'){
+    ilusToast('OK, registrado. Comenzá a trabajar.', { type:'success' });
+    return;
+  }
+  // Abrir app externa
+  const destinoEncoded = encodeURIComponent(DESTINO_DIR);
+  let url = '';
+  if (app === 'google'){
+    // Si tenemos lat/lng exactos del destino, los usamos (más preciso)
+    const dest = (DESTINO_LAT && DESTINO_LNG) ? `${DESTINO_LAT},${DESTINO_LNG}` : destinoEncoded;
+    url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+  } else if (app === 'waze'){
+    if (DESTINO_LAT && DESTINO_LNG){
+      url = `https://www.waze.com/ul?ll=${DESTINO_LAT}%2C${DESTINO_LNG}&navigate=yes`;
+    } else {
+      url = `https://www.waze.com/ul?q=${destinoEncoded}&navigate=yes`;
+    }
+  }
+  if (url) window.open(url, '_blank');
+}
+
+// ════════════════════════════════════════════════════════
+//  Expandir/colapsar grupo
+// ════════════════════════════════════════════════════════
+function toggleGrupo(mid, pid){
+  const card = document.getElementById(`grupo-${mid}-${pid}`);
   if (!card) return;
   card.classList.toggle('open');
 }
 
-// ════════════════════════════════════════════════════════
-//  Guardar campo (input text, select, textarea)
-// ════════════════════════════════════════════════════════
 async function guardarCampoEq(el){
   const eqId = el.dataset.eqId;
   const campo = el.dataset.campo;
   const valor = el.value;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/equipo/${eqId}/datos`, {
-      method: 'PATCH',
-      headers: {'Content-Type':'application/json'},
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ [campo]: valor })
     });
     const d = await r.json();
-    if (d.ok){
-      ilusToast('✓ Guardado', { type: 'success', duration: 1500 });
-    } else {
-      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
-    }
-  } catch(e){
-    ilusToast('Error de red', { type: 'error' });
-  }
+    if (d.ok) ilusToast('✓ Guardado', { type: 'success', duration: 1500 });
+    else ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
+  } catch(e){ ilusToast('Error de red', { type: 'error' }); }
 }
 
-// ════════════════════════════════════════════════════════
-//  Estado del equipo
-// ════════════════════════════════════════════════════════
 async function setEstadoEq(eqId, estado, btn){
   document.querySelectorAll(`#estados-${eqId} .eq-est-btn`).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -581,43 +722,32 @@ async function toggleDanoEq(chk){
 }
 
 // ════════════════════════════════════════════════════════
-//  Foto principal del equipo
+//  COMPRESIÓN cliente-side
 // ════════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════════════
-// COMPRESIÓN cliente-side: reduce una foto de 5-10MB del celular
-// a ~400KB sin pérdida visible. Acelera 10-20x el upload.
-// ════════════════════════════════════════════════════════════
 async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
-  // Si ya es pequeña no comprime (evita degradar imágenes ya optimizadas)
   if (file.size < 600 * 1024) return file;
   return new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error);
     reader.onload = () => {
-      img.onerror = () => reject(new Error('No se pudo decodificar la imagen'));
+      img.onerror = () => reject(new Error('Decode error'));
       img.onload = () => {
-        // Resize proporcional a maxDim por el lado mayor
         let w = img.width, h = img.height;
         const ratio = Math.min(maxDim / Math.max(w, h), 1);
         const nw = Math.round(w * ratio), nh = Math.round(h * ratio);
         const canvas = document.createElement('canvas');
         canvas.width = nw; canvas.height = nh;
         const ctx = canvas.getContext('2d');
-        // Mejor calidad de resize
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, nw, nh);
         canvas.toBlob((blob) => {
           if (!blob) return reject(new Error('toBlob falló'));
-          // Si la compresión NO ayudó (raro), devolver original
           if (blob.size >= file.size) { resolve(file); return; }
-          // Convertir blob a File para mantener nombre
-          const nuevo = new File([blob], file.name.replace(/\.(jpg|jpeg|png|webp)$/i, '.jpg'), {
-            type: 'image/jpeg',
-            lastModified: Date.now(),
-          });
-          resolve(nuevo);
+          resolve(new File([blob], file.name.replace(/\.(jpg|jpeg|png|webp)$/i, '.jpg'), {
+            type: 'image/jpeg', lastModified: Date.now(),
+          }));
         }, 'image/jpeg', quality);
       };
       img.src = reader.result;
@@ -630,25 +760,15 @@ async function subirFotoPrincipal(eqId, input){
   if (!input.files || !input.files[0]) return;
   let file = input.files[0];
   if (file.size > 20 * 1024 * 1024){
-    ilusToast('Foto demasiado grande (máx 20MB sin compresión)', { type: 'warning' });
+    ilusToast('Foto demasiado grande (máx 20MB)', { type: 'warning' });
     return;
   }
   const uploader = document.getElementById(`foto-uploader-${eqId}`);
   uploader.classList.add('uploading');
-  const sizeOrig = (file.size / 1024).toFixed(0);
-
-  // Comprimir cliente-side antes de subir
   try {
     ilusToast('Optimizando imagen…', { type: 'info', duration: 1500 });
     file = await _comprimirImagen(file);
-    const sizeNew = (file.size / 1024).toFixed(0);
-    if (sizeNew < sizeOrig){
-      console.log(`📸 Compresión: ${sizeOrig}KB → ${sizeNew}KB (${Math.round((1 - sizeNew/sizeOrig)*100)}% menos)`);
-    }
-  } catch(e){
-    console.warn('Compresión falló, subiendo original:', e);
-  }
-
+  } catch(e){ console.warn('Compresión falló:', e); }
   ilusToast('Subiendo foto…', { type: 'info', duration: 1500 });
   const fd = new FormData();
   fd.append('foto', file);
@@ -662,27 +782,18 @@ async function subirFotoPrincipal(eqId, input){
       uploader.style.backgroundImage = `url('${d.url}')`;
       uploader.querySelector('.uploader-content').innerHTML =
         '<strong><i class="bi bi-check-circle-fill"></i> Foto cargada</strong> · Toca para reemplazar';
-      // También actualizar el header del card
-      const headerFoto = document.querySelector(`#eq-${eqId} .eq-card-header .eq-foto`);
-      if (headerFoto){
-        headerFoto.style.backgroundImage = `url('${d.url}')`;
-        headerFoto.innerHTML = '';
-      }
+      // Actualizar mini foto en todas las cards de este equipo
+      document.querySelectorAll(`[data-mid="${eqId}"] .gc-foto`).forEach(el => {
+        el.style.backgroundImage = `url('${d.url}')`;
+        el.innerHTML = '';
+      });
       ilusToast('✓ Foto guardada', { type: 'success' });
-    } else {
-      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
-    }
-  } catch(e){
-    ilusToast('Error de red', { type: 'error' });
-  } finally {
-    uploader.classList.remove('uploading');
-  }
+    } else ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
+  } catch(e){ ilusToast('Error de red', { type: 'error' });
+  } finally { uploader.classList.remove('uploading'); }
 }
 
-// ════════════════════════════════════════════════════════
-//  Toggle tarea (check/uncheck)
-// ════════════════════════════════════════════════════════
-async function toggleTarea(tid, chk, eqId){
+async function toggleTarea(tid, chk, mid, pid){
   const row = document.getElementById('tar-' + tid);
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
@@ -690,29 +801,28 @@ async function toggleTarea(tid, chk, eqId){
       body: JSON.stringify({ completada: chk.checked ? 1 : 0 })
     });
     const d = await r.json();
-    if (d.ok || d.success){
+    if (d.ok){
       row.classList.toggle('completada', chk.checked);
       recalcStats();
-      // Actualizar counter del equipo
-      const card = document.getElementById('eq-' + eqId);
+      // Actualizar progreso del grupo
+      const card = document.getElementById(`grupo-${mid}-${pid}`);
       if (card){
-        const counter = card.querySelector('.eq-counter');
         const checks = card.querySelectorAll('.tarea-chk');
         const checkedN = Array.from(checks).filter(c => c.checked).length;
-        if (counter){
-          counter.textContent = `${checkedN}/${checks.length}`;
-          counter.classList.toggle('done', checkedN === checks.length && checks.length > 0);
+        const counter = card.querySelector('.gc-counter');
+        const bar = card.querySelector('.gc-progress > div');
+        if (counter) counter.textContent = `${checkedN}/${checks.length}`;
+        if (bar) bar.style.width = `${(checkedN / checks.length) * 100}%`;
+        if (checkedN === checks.length && checks.length > 0){
+          card.classList.add('done');
+          counter.classList.add('done');
+        } else {
+          card.classList.remove('done', 'bloqueado');
+          counter.classList.remove('done');
         }
-        card.classList.toggle('done', checkedN === checks.length && checks.length > 0);
       }
-    } else {
-      chk.checked = !chk.checked; // revertir
-      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
-    }
-  } catch(e){
-    chk.checked = !chk.checked;
-    ilusToast('Error de red', { type: 'error' });
-  }
+    } else { chk.checked = !chk.checked; ilusToast('Error', { type: 'error' }); }
+  } catch(e){ chk.checked = !chk.checked; ilusToast('Error de red', { type: 'error' }); }
 }
 
 function recalcStats(){
@@ -723,7 +833,7 @@ function recalcStats(){
 }
 
 // ════════════════════════════════════════════════════════
-//  FIRMAS — canvas signature simple
+//  FIRMAS canvas
 // ════════════════════════════════════════════════════════
 const _sigState = {};
 function initCanvas(id){
@@ -731,88 +841,62 @@ function initCanvas(id){
   if (!cv) return;
   const dpr = window.devicePixelRatio || 1;
   const rect = cv.getBoundingClientRect();
-  cv.width = rect.width * dpr;
-  cv.height = rect.height * dpr;
+  cv.width = rect.width * dpr; cv.height = rect.height * dpr;
   const ctx = cv.getContext('2d');
   ctx.scale(dpr, dpr);
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.strokeStyle = '#0f172a';
   _sigState[id] = { ctx, drawing: false, last: null, has: false };
-
-  function start(x, y){ _sigState[id].drawing = true; _sigState[id].last = {x, y}; }
-  function move(x, y){
+  function start(x,y){ _sigState[id].drawing=true; _sigState[id].last={x,y}; }
+  function move(x,y){
     if (!_sigState[id].drawing) return;
-    ctx.beginPath();
-    ctx.moveTo(_sigState[id].last.x, _sigState[id].last.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    _sigState[id].last = {x, y};
-    _sigState[id].has = true;
+    ctx.beginPath(); ctx.moveTo(_sigState[id].last.x, _sigState[id].last.y);
+    ctx.lineTo(x,y); ctx.stroke();
+    _sigState[id].last={x,y}; _sigState[id].has=true;
   }
-  function end(){ _sigState[id].drawing = false; _sigState[id].last = null; }
-
+  function end(){ _sigState[id].drawing=false; _sigState[id].last=null; }
   function getXY(ev){
     const r = cv.getBoundingClientRect();
-    if (ev.touches){
-      const t = ev.touches[0];
-      return { x: t.clientX - r.left, y: t.clientY - r.top };
-    }
-    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    if (ev.touches){ const t=ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
+    return {x:ev.clientX-r.left, y:ev.clientY-r.top};
   }
-
-  cv.addEventListener('mousedown', e => { const p = getXY(e); start(p.x, p.y); });
-  cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
+  cv.addEventListener('mousedown', e => { const p=getXY(e); start(p.x,p.y); });
+  cv.addEventListener('mousemove', e => { const p=getXY(e); move(p.x,p.y); });
   cv.addEventListener('mouseup', end);
   cv.addEventListener('mouseleave', end);
-  cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); });
-  cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); });
+  cv.addEventListener('touchstart', e => { e.preventDefault(); const p=getXY(e); start(p.x,p.y); });
+  cv.addEventListener('touchmove', e => { e.preventDefault(); const p=getXY(e); move(p.x,p.y); });
   cv.addEventListener('touchend', end);
 }
-
 function limpiarFirma(id){
   const cv = document.getElementById(id);
   if (!cv) return;
   const ctx = cv.getContext('2d');
-  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.clearRect(0,0,cv.width,cv.height);
   if (_sigState[id]) _sigState[id].has = false;
 }
-
 function abrirModalFirma(){
-  // Validar tareas obligatorias antes de abrir
-  const obligPendientes = document.querySelectorAll('.eq-tarea-row .tarea-chk').length; // simplificado
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
-  setTimeout(() => {
-    initCanvas('canvasTec');
-    initCanvas('canvasCli');
-  }, 250);
+  setTimeout(() => { initCanvas('canvasTec'); initCanvas('canvasCli'); }, 250);
 }
-
 async function enviarFirma(){
   const cvTec = document.getElementById('canvasTec');
   const cvCli = document.getElementById('canvasCli');
   if (!_sigState.canvasTec || !_sigState.canvasTec.has){
-    ilusToast('Falta tu firma (técnico)', { type: 'warning' });
-    return;
+    ilusToast('Falta tu firma (técnico)', { type: 'warning' }); return;
   }
   const firmaTec = cvTec.toDataURL('image/png');
   const firmaCli = (_sigState.canvasCli && _sigState.canvasCli.has) ? cvCli.toDataURL('image/png') : '';
   const nombreTec = document.getElementById('firmaTecNombre').value.trim();
   const nombreCli = document.getElementById('firmaCliNombre').value.trim();
-
   const btn = document.getElementById('btnFirmarConfirm');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
-
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-revision`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
-        firma_tecnico: firmaTec,
-        firma_tecnico_nombre: nombreTec,
-        firma_cliente: firmaCli,
-        firma_cliente_nombre: nombreCli,
+        firma_tecnico: firmaTec, firma_tecnico_nombre: nombreTec,
+        firma_cliente: firmaCli, firma_cliente_nombre: nombreCli,
       })
     });
     const d = await r.json();
@@ -827,13 +911,11 @@ async function enviarFirma(){
       setTimeout(() => location.reload(), 600);
     } else {
       ilusToast(d.error || 'Error', { type: 'error' });
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
     }
   } catch(e){
     ilusToast('Error de red', { type: 'error' });
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión';
   }
 }
 </script>

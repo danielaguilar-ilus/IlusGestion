@@ -84,6 +84,20 @@
 .bs-cancelada{background:#fee2e2;color:#991b1b;}
 .bs-reagendada{background:#dbeafe;color:#1e40af;}
 .bs-en_curso{background:#e0f2fe;color:#075985;}
+.bs-pendiente_aprobacion{background:#fef3c7;color:#92400e;}
+.bs-cerrada{background:#dcfce7;color:#15803d;}
+
+/* Botón aprobar — pulsa con anillo */
+.btn-aprobar {
+  background: linear-gradient(135deg, #15803d, #16a34a); color: #fff;
+  border: 0; font-weight: 700;
+  animation: pulse-aprobar 2s infinite;
+}
+@keyframes pulse-aprobar {
+  0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5); }
+  70% { box-shadow: 0 0 0 8px rgba(22,163,74,0); }
+  100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+}
 
 .empty-state{
   background:#fff;border:1px solid #eaecf0;border-radius:14px;
@@ -350,8 +364,15 @@
       <span class="badge-estado bs-{{ o.estado or 'programada' }} mt-1 d-inline-block">{{ (o.estado or 'programada').replace('_',' ').title() }}</span>
     </div>
 
-    {# Acciones: Abrir OT + (solo superadmin) Editar + Eliminar #}
+    {# Acciones: Abrir OT + (si es supervisor y OT pendiente) Revisar + (solo superadmin) Editar + Eliminar #}
     <div class="d-flex gap-1 flex-shrink-0">
+      {% if o.estado == 'pendiente_aprobacion' and (permissions.admin or permissions.superadmin) %}
+      <button type="button" class="btn btn-aprobar btn-sm"
+              onclick="abrirRevisarOT({{ o.id }}, '{{ (o.numero_ot or 'VS-' ~ o.id) }}', '{{ (o.titulo or '')|replace("'", "\\'") }}')"
+              title="Revisar y aprobar/rechazar OT firmada por el técnico">
+        <i class="bi bi-patch-check-fill me-1"></i>Revisar
+      </button>
+      {% endif %}
       <a href="{{ url_for('mant_ot_ficha', vid=o.id) }}" class="btn btn-ilus btn-sm fw-bold">
         <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
       </a>
@@ -595,6 +616,118 @@ document.addEventListener('DOMContentLoaded', () => {
   if (vista !== 'lista') cambiarVista(vista);
 });
 </script>
+
+{# ═══════════════════════════════════════════════════════════════
+   F6 — Modal Revisar OT (supervisor aprueba o rechaza la OT firmada)
+   Visible para admin/superadmin/ejecutivo
+   ═══════════════════════════════════════════════════════════════ #}
+{% if permissions.admin or permissions.superadmin %}
+<div class="modal fade" id="modalRevisarOT" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header" style="background:linear-gradient(135deg,#15803d,#16a34a);color:#fff;border:0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-patch-check-fill me-2"></i>Revisar OT — <span id="rvOTNum">—</span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <small class="text-muted">Título</small>
+          <div class="fw-bold" id="rvOTTit">—</div>
+        </div>
+        <div class="alert alert-info py-2 small mb-3">
+          <i class="bi bi-info-circle me-1"></i>
+          El técnico ya firmó. Como supervisor podés <strong>aprobar</strong> (la OT pasa a <em>cerrada</em>)
+          o <strong>rechazar</strong> (vuelve a programada y el técnico debe corregir).
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Comentario / motivo (opcional para aprobar, obligatorio para rechazar)</label>
+          <textarea id="rvComentario" class="form-control form-control-sm" rows="3"
+                    placeholder="Ej: Revisado OK · Falta foto del display · etc."></textarea>
+        </div>
+        <input type="hidden" id="rvOTId">
+      </div>
+      <div class="modal-footer d-flex justify-content-between">
+        <button class="btn btn-outline-danger" onclick="rechazarOT()">
+          <i class="bi bi-x-circle me-1"></i>Rechazar
+        </button>
+        <button class="btn btn-success fw-bold" onclick="aprobarOT()">
+          <i class="bi bi-check-lg me-1"></i>Aprobar y cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let _modalRevisarOT = null;
+function abrirRevisarOT(otId, num, titulo){
+  document.getElementById('rvOTId').value = otId;
+  document.getElementById('rvOTNum').textContent = num;
+  document.getElementById('rvOTTit').textContent = titulo || '—';
+  document.getElementById('rvComentario').value = '';
+  if (!_modalRevisarOT) _modalRevisarOT = new bootstrap.Modal(document.getElementById('modalRevisarOT'));
+  _modalRevisarOT.show();
+}
+
+async function aprobarOT(){
+  const id = document.getElementById('rvOTId').value;
+  const comentario = document.getElementById('rvComentario').value.trim();
+  const ok = await ilusConfirm({
+    title: 'Aprobar y cerrar OT',
+    message: '¿Confirmás que la OT está correcta y querés cerrarla?',
+    sub: 'Esta acción es definitiva. La OT pasará a estado "cerrada".',
+    okLabel: 'Sí, aprobar y cerrar',
+    cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${id}/aprobar-cierre`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ comentario })
+    });
+    const d = await r.json();
+    if (d.ok){
+      _modalRevisarOT?.hide();
+      ilusToast('✓ OT aprobada y cerrada', { type: 'success' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
+    }
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+
+async function rechazarOT(){
+  const motivo = document.getElementById('rvComentario').value.trim();
+  if (!motivo){
+    ilusToast('Indicá el motivo del rechazo en el comentario', { type: 'warning' });
+    return;
+  }
+  const id = document.getElementById('rvOTId').value;
+  const ok = await ilusConfirm({
+    title: 'Rechazar OT',
+    message: '¿Rechazás la OT y la devolvés al técnico?',
+    sub: 'La OT volverá a estado "programada" y el técnico deberá corregir y firmar de nuevo.',
+    okLabel: 'Sí, rechazar',
+    cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${id}/rechazar-cierre`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ motivo })
+    });
+    const d = await r.json();
+    if (d.ok){
+      _modalRevisarOT?.hide();
+      ilusToast('✓ OT rechazada — devuelta al técnico', { type: 'warning' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
+    }
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+</script>
+{% endif %}
 
 {% if permissions.superadmin %}
 {# ─── Modal: edición rápida de OT (solo superadmin) ─── #}

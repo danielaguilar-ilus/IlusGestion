@@ -14744,6 +14744,26 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id de la dirección'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Ruta del técnico (F7):
+                # Registra cuándo el técnico inicia la ruta hacia el cliente
+                # (Google Maps / Waze) + ubicación de origen (su bodega o
+                # donde esté). Sirve para auditoría y seguimiento del admin.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN ruta_iniciada_at DATETIME NULL COMMENT 'Cuando el técnico inició navegación a la dirección'",
+                "ALTER TABLE mant_visitas ADD COLUMN ruta_origen_lat DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN ruta_origen_lng DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN ruta_app VARCHAR(20) NULL COMMENT 'google|waze|saltado'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Plantilla origen de cada tarea (F refactor UX):
+                # Permite agrupar tareas por (maquina_id, plantilla_id) — el
+                # técnico ve UNA card por equipo+plantilla. Si una máquina
+                # tiene 3 plantillas, aparece 3 veces (cada vez con sus
+                # tareas de esa plantilla).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_tareas ADD COLUMN plantilla_id INT NULL COMMENT 'FK a mant_tarea_plantillas: plantilla origen (NULL si tarea manual)'",
+                "ALTER TABLE mant_visita_tareas ADD INDEX idx_plantilla (plantilla_id)",
+                "ALTER TABLE mant_visita_tareas ADD INDEX idx_maquina_plantilla (maquina_id, plantilla_id)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -23432,16 +23452,50 @@ def mant_ot_ejecutar(vid):
     ) or []
     equipos = [dict(e) for e in equipos]
 
-    # Tareas agrupadas por máquina
+    # Tareas con info de plantilla origen (JOIN a mant_tarea_plantillas)
     tareas = mysql_fetchall(
-        "SELECT id, maquina_id, orden, titulo, descripcion, tipo, tipo_respuesta, "
-        "       obligatoria, requiere_foto, unidad, rango_min, rango_max, "
-        "       opciones_lista_json, completada, completada_at, observaciones "
-        "  FROM mant_visita_tareas WHERE visita_id=%s ORDER BY maquina_id, orden, id",
+        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
+        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
+        "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
+        "       t.completada, t.completada_at, t.observaciones, "
+        "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre, "
+        "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
+        " WHERE t.visita_id=%s "
+        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
         (vid,)
     ) or []
     tareas = [dict(t) for t in tareas]
-    # Agrupar por máquina
+
+    # ════════════════════════════════════════════════════════════════
+    # Agrupar por (maquina_id, plantilla_id) — UNA card por equipo×plantilla.
+    # Si una máquina tiene 3 plantillas, aparece 3 veces en grupos.
+    # ════════════════════════════════════════════════════════════════
+    grupos = []  # lista de {maquina_id, plantilla_id, plantilla_nombre, tareas[], stats{}}
+    grupo_idx = {}  # (mid, pid) → index en grupos
+    for t in tareas:
+        mid = t.get("maquina_id") or 0
+        pid = t.get("plantilla_id") or 0  # 0 = sin plantilla (manual/legacy)
+        key = (mid, pid)
+        if key not in grupo_idx:
+            grupo_idx[key] = len(grupos)
+            grupos.append({
+                "maquina_id":       mid,
+                "plantilla_id":     pid,
+                "plantilla_nombre": t.get("plantilla_nombre") or "Tareas manuales",
+                "plantilla_tipo":   t.get("plantilla_tipo") or "otro",
+                "tareas":           [],
+            })
+        grupos[grupo_idx[key]]["tareas"].append(t)
+    # Calcular stats por grupo
+    for g in grupos:
+        g["total"] = len(g["tareas"])
+        g["completas"] = sum(1 for t in g["tareas"] if t.get("completada"))
+        g["progreso"] = round((g["completas"] / g["total"]) * 100) if g["total"] else 0
+        g["bloqueado"] = (g["completas"] == g["total"] and g["total"] > 0)
+
+    # Compat: el viejo tareas_por_eq sigue existiendo (legacy templates)
     tareas_por_eq = {}
     for t in tareas:
         mid = t.get("maquina_id") or 0
@@ -23456,11 +23510,17 @@ def mant_ot_ejecutar(vid):
     ) or []
     fotos = [dict(f) for f in fotos]
 
+    # Index de equipos por id (para que el template encuentre la máquina
+    # de cada grupo sin loop interno).
+    equipos_idx = {e["id"]: e for e in equipos}
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
         equipos=equipos,
+        equipos_idx=equipos_idx,
         tareas_por_eq=tareas_por_eq,
+        grupos=grupos,
         fotos=fotos,
     )
 
@@ -23629,6 +23689,138 @@ def mant_ot_firmar_revision(vid):
         _mant_log("visita", vid, "firmada_tecnico",
                   f"{nombre_tec or ''} → pendiente_aprobacion")
         return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# F7 — INICIAR RUTA (Google Maps / Waze)
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/iniciar-ruta", methods=["POST"])
+@_mant_required
+def mant_ot_iniciar_ruta(vid):
+    """Registra que el técnico inició la navegación hacia la dirección
+    del cliente. Guarda timestamp + ubicación de origen + app elegida
+    (google|waze|saltado).
+
+    Si elige 'saltado', solo se registra que decidió no usar nav.
+    """
+    d = request.get_json(silent=True) or {}
+    app_sel = (d.get("app") or "").strip().lower()
+    if app_sel not in ("google", "waze", "saltado"):
+        return jsonify({"ok": False, "error": "app inválida (google|waze|saltado)"}), 400
+    try:
+        lat = float(d.get("lat")) if d.get("lat") is not None else None
+        lng = float(d.get("lng")) if d.get("lng") is not None else None
+    except (TypeError, ValueError):
+        lat, lng = None, None
+    try:
+        # Solo registrar la PRIMERA vez (no sobreescribir)
+        v = mysql_fetchone("SELECT ruta_iniciada_at FROM mant_visitas WHERE id=%s", (vid,))
+        if v and v.get("ruta_iniciada_at") is None:
+            mysql_execute(
+                "UPDATE mant_visitas SET "
+                "  ruta_iniciada_at=NOW(), "
+                "  ruta_origen_lat=%s, ruta_origen_lng=%s, ruta_app=%s "
+                " WHERE id=%s",
+                (lat, lng, app_sel, vid)
+            )
+            try: _mant_log("visita", vid, "ruta_iniciada", f"app={app_sel} origen=({lat},{lng})")
+            except Exception: pass
+        return jsonify({"ok": True, "app": app_sel})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# F6 — SUPERVISOR APRUEBA / RECHAZA OT FIRMADA
+# Estado: pendiente_aprobacion → cerrada (aprobada) o programada (rechazada)
+# ═════════════════════════════════════════════════════════════════════
+
+def _is_supervisor_user():
+    """True si el usuario actual puede aprobar OTs (admin/superadmin/ejecutivo)."""
+    try:
+        perms = g.get("permissions") or {}
+        if perms.get("superadmin") or perms.get("admin"):
+            return True
+        # Ejecutivo de mantenciones también puede aprobar
+        u = getattr(g, "user", None) or {}
+        if (u.get("role") or "") == "ejecutivo":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/aprobar-cierre", methods=["POST"])
+@_mant_required
+def mant_ot_aprobar_cierre(vid):
+    """Supervisor aprueba la OT firmada por el técnico → estado 'cerrada'.
+    Guarda firma_supervisor + comentario + timestamp + user_id."""
+    if not _is_supervisor_user():
+        return jsonify({"ok": False, "error": "Solo supervisor/admin puede aprobar OTs"}), 403
+    d = request.get_json(silent=True) or {}
+    firma_sup = (d.get("firma_supervisor") or "").strip()
+    comentario = (d.get("comentario") or "").strip()[:1000] or None
+    # Validar estado actual
+    v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if v.get("estado") not in ("pendiente_aprobacion", "completada"):
+        return jsonify({
+            "ok": False,
+            "error": f"La OT no está en estado pendiente_aprobacion (actual: {v.get('estado')})",
+        }), 400
+    try:
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+        mysql_execute(
+            "UPDATE mant_visitas SET "
+            "  estado='cerrada', cerrada_at=NOW(), cerrada_por=%s, "
+            "  firma_supervisor_url=%s, firma_supervisor_user_id=%s, firma_supervisor_at=NOW() "
+            " WHERE id=%s",
+            (current_username() or 'supervisor', firma_sup or None, uid, vid)
+        )
+        try: _mant_log("visita", vid, "aprobada_supervisor",
+                       f"{current_username()}{' · ' + comentario if comentario else ''}")
+        except Exception: pass
+        return jsonify({"ok": True, "estado": "cerrada"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/rechazar-cierre", methods=["POST"])
+@_mant_required
+def mant_ot_rechazar_cierre(vid):
+    """Supervisor rechaza la OT → vuelve a 'programada' para que técnico
+    corrija. Limpia firma_tecnico (debe firmar de nuevo)."""
+    if not _is_supervisor_user():
+        return jsonify({"ok": False, "error": "Solo supervisor/admin puede rechazar OTs"}), 403
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:1000]
+    if not motivo:
+        return jsonify({"ok": False, "error": "Indicá el motivo del rechazo"}), 400
+    v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if v.get("estado") != "pendiente_aprobacion":
+        return jsonify({
+            "ok": False,
+            "error": f"Solo se pueden rechazar OTs pendientes (actual: {v.get('estado')})",
+        }), 400
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET "
+            "  estado='programada', "
+            "  firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, firma_tecnico_at=NULL "
+            " WHERE id=%s",
+            (vid,)
+        )
+        try: _mant_log("visita", vid, "rechazada_supervisor",
+                       f"{current_username()} · motivo: {motivo}")
+        except Exception: pass
+        return jsonify({"ok": True, "estado": "programada", "motivo": motivo})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -27792,13 +27984,14 @@ def mant_lev_crear_o_listar(cid):
                             cur2.execute(
                                 "INSERT INTO mant_visita_tareas "
                                 "(visita_id, orden, titulo, descripcion, tipo, "
-                                " maquina_id, tipo_respuesta, obligatoria, "
+                                " maquina_id, plantilla_id, tipo_respuesta, obligatoria, "
                                 " requiere_foto, unidad, rango_min, rango_max, "
                                 " opciones_lista_json, estado_trabajo, created_by) "
-                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
                                 "        %s,%s,%s,%s,'pendiente',%s)",
                                 (visita_id, next_orden, titulo_full,
                                  it.get("descripcion"), tipo_ot, mq_id,
+                                 plantilla_id,  # FK origen
                                  it["tipo_respuesta"],
                                  it.get("obligatoria") or 0,
                                  it.get("requiere_foto") or 0,
