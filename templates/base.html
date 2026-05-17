@@ -48,10 +48,20 @@
 </head>
 <body>
 
+{# Modo EMBED: oculta sidebar/topbar (usado en iframes desde otras vistas).
+   Activado con variable `embed_mode = True` desde el endpoint. #}
+{% if embed_mode %}
+<style>
+  .sidebar, .mobile-topbar, .sidebar-overlay, .flash-container { display: none !important; }
+  .main-wrapper { margin-left: 0 !important; padding-top: 0 !important; }
+  body { background: #fff !important; }
+</style>
+{% endif %}
+
 {# ══════════════════════════════════════════════
    MOBILE TOP BAR  (oculto en desktop)
 ══════════════════════════════════════════════ #}
-{% if current_user %}
+{% if current_user and not embed_mode %}
 <div class="mobile-topbar no-print">
   <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">
     <i class="bi bi-list"></i>
@@ -73,7 +83,7 @@
 {# ══════════════════════════════════════════════
    SIDEBAR LATERAL
 ══════════════════════════════════════════════ #}
-{% if current_user %}
+{% if current_user and not embed_mode %}
 <nav class="sidebar no-print" id="sidebar">
 
   {# — Logo — #}

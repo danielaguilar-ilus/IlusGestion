@@ -2761,6 +2761,9 @@ def inject_globals():
         # Permite ocultar botones de edición/creación/borrado sin tocar cada template.
         "is_tecnico":   (_role == "tecnico"),
         "photo_src":    _photo_src,
+        # Modo embebido (iframe): default False; los endpoints que aceptan
+        # ?embed=1 pueden sobreescribir pasando embed_mode=True en su render.
+        "embed_mode":   False,
     }
 
 
@@ -22652,6 +22655,15 @@ def mant_ots_list():
         )
         ots = mysql_fetchall(sql, tuple(params)) or []
         ots = [dict(o) for o in ots]
+        # Normalizar campos no-JSON-safe (date/time/Decimal) para el JSON
+        # de la vista (Kanban/Cards lo consumen client-side).
+        for o in ots:
+            for k in ('fecha_programada','hora_inicio','hora_fin'):
+                if o.get(k) is not None:
+                    o[k] = str(o[k])
+            if o.get('costo') is not None:
+                try: o['costo'] = float(o['costo'])
+                except Exception: o['costo'] = None
     except Exception as e:
         # Fallback simple si subqueries fallan (ej. tablas no migradas aún)
         try:
@@ -24298,9 +24310,13 @@ def mant_calendario():
         "FROM mant_tecnicos WHERE activo=1 ORDER BY nombre",
         ()
     ) or []
+    # ?embed=1 → modo embebido (iframe en /mantenciones/ots): oculta sidebar
+    # vía variable `embed_mode` que base.html debe respetar.
+    embed = request.args.get("embed") == "1"
     return render_template("mantenciones/calendario.html",
         clientes = [dict(r) for r in clientes],
         tecnicos = [dict(r) for r in tecnicos],
+        embed_mode = embed,
     )
 
 

@@ -95,6 +95,82 @@
   .ot-row{grid-template-columns:1fr;gap:8px;}
   .ot-fecha{text-align:left;}
 }
+
+/* ═══════════════ TABS DE VISTAS ═══════════════ */
+.vistas-bar{
+  background:#fff;border:1px solid #eaecf0;border-radius:11px;
+  padding:6px;margin-bottom:14px;display:flex;gap:4px;flex-wrap:wrap;
+}
+.vista-tab{
+  border:none;background:transparent;color:#6b7280;
+  padding:8px 16px;border-radius:8px;font-weight:600;font-size:.86rem;
+  cursor:pointer;transition:all .12s;display:flex;align-items:center;gap:6px;
+}
+.vista-tab:hover{background:#f3f4f6;color:#0f172a;}
+.vista-tab.active{background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.25);}
+
+/* ═══════════════ KANBAN ═══════════════ */
+.kanban-grid{
+  display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:12px;align-items:flex-start;
+}
+@media (max-width:992px){.kanban-grid{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:600px){.kanban-grid{grid-template-columns:1fr;}}
+.kanban-col{
+  background:#f8fafc;border:1px solid #eaecf0;border-radius:11px;
+  padding:10px;min-height:300px;
+}
+.kanban-col-header{
+  display:flex;align-items:center;justify-content:space-between;
+  font-weight:800;font-size:.82rem;text-transform:uppercase;letter-spacing:.5px;
+  padding:6px 4px 10px;border-bottom:2px solid #e5e7eb;margin-bottom:10px;
+}
+.kanban-col-header .kban-count{
+  background:#fff;border:1px solid #e5e7eb;border-radius:50px;
+  padding:2px 10px;font-size:.7rem;font-weight:700;
+}
+.kban-pendiente .kanban-col-header{color:#92400e;border-bottom-color:#f59e0b;}
+.kban-proceso .kanban-col-header{color:#075985;border-bottom-color:#0ea5e9;}
+.kban-verif .kanban-col-header{color:#7c3aed;border-bottom-color:#a855f7;}
+.kban-final .kanban-col-header{color:#166534;border-bottom-color:#16a34a;}
+.kban-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:9px;
+  padding:10px;margin-bottom:8px;cursor:pointer;transition:all .12s;
+}
+.kban-card:hover{box-shadow:0 3px 10px rgba(0,0,0,.08);border-color:#dc2626;transform:translateY(-1px);}
+.kban-card .kc-num{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#991b1b;background:#fee2e2;padding:2px 7px;border-radius:5px;display:inline-block;}
+.kban-card .kc-cli{font-weight:700;font-size:.86rem;color:#0f172a;margin-top:6px;line-height:1.2;}
+.kban-card .kc-meta{font-size:.7rem;color:#6b7280;margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;}
+.kban-card .kc-progress{margin-top:8px;height:4px;background:#e5e7eb;border-radius:2px;overflow:hidden;}
+.kban-card .kc-progress > div{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);}
+
+/* ═══════════════ CARDS ═══════════════ */
+.cards-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+  gap:12px;
+}
+.ot-card{
+  background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  padding:14px;transition:all .15s;border-top:4px solid #e5e7eb;
+}
+.ot-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08);}
+.ot-card.estado-programada{border-top-color:#f59e0b;}
+.ot-card.estado-en_curso{border-top-color:#0ea5e9;}
+.ot-card.estado-pendiente_aprobacion{border-top-color:#a855f7;}
+.ot-card.estado-completada,.ot-card.estado-cerrada{border-top-color:#16a34a;}
+.ot-card.estado-cancelada{border-top-color:#9ca3af;}
+.ot-card .oc-num{font-family:'JetBrains Mono',monospace;font-size:.74rem;font-weight:800;color:#991b1b;background:#fee2e2;padding:3px 9px;border-radius:6px;display:inline-block;}
+.ot-card .oc-cli{font-weight:800;font-size:1rem;color:#0f172a;margin-top:8px;line-height:1.2;}
+.ot-card .oc-tit{font-size:.78rem;color:#6b7280;margin-top:4px;}
+.ot-card .oc-stats{display:flex;gap:10px;margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:.72rem;}
+.ot-card .oc-stat{text-align:center;flex:1;}
+.ot-card .oc-stat .n{font-weight:800;font-size:.95rem;color:#0f172a;}
+.ot-card .oc-stat .l{font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.3px;}
+.ot-card .oc-footer{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:6px;}
+
+/* ═══════════════ CALENDARIO embed ═══════════════ */
+.cal-embed{background:#fff;border:1px solid #eaecf0;border-radius:11px;overflow:hidden;height:75vh;}
+.cal-embed iframe{width:100%;height:100%;border:none;}
 </style>
 
 <div class="ots-hero">
@@ -187,7 +263,24 @@
   </div>
 </form>
 
-{# ── Lista de OTs ── #}
+{# ── Tabs de vistas (Lista / Kanban / Cards / Calendario) ── #}
+<div class="vistas-bar">
+  <button class="vista-tab active" data-vista="lista" onclick="cambiarVista('lista')">
+    <i class="bi bi-list-ul"></i> Lista
+  </button>
+  <button class="vista-tab" data-vista="kanban" onclick="cambiarVista('kanban')">
+    <i class="bi bi-kanban"></i> Kanban
+  </button>
+  <button class="vista-tab" data-vista="cards" onclick="cambiarVista('cards')">
+    <i class="bi bi-grid-3x3-gap"></i> Mosaico
+  </button>
+  <button class="vista-tab" data-vista="calendario" onclick="cambiarVista('calendario')">
+    <i class="bi bi-calendar3"></i> Calendario
+  </button>
+</div>
+
+{# ── Vista LISTA (la actual) ── #}
+<div id="vista-lista">
 {% if ots %}
   {% for o in ots %}
   <div class="ot-row estado-{{ o.estado }}">
@@ -240,14 +333,15 @@
       </div>
     </div>
 
-    {# Fecha + Estado #}
+    {# Fecha + Estado — fecha_programada ahora siempre es string YYYY-MM-DD #}
     <div class="ot-fecha">
       {% if o.fecha_programada %}
-        {% if o.fecha_programada.__class__.__name__ in ('date','datetime') %}
-          <div class="dia">{{ o.fecha_programada.strftime('%d/%m') }}</div>
-          <div>{{ o.fecha_programada.strftime('%Y') }}</div>
+        {% set fp = o.fecha_programada | string %}
+        {% if fp | length >= 10 %}
+          <div class="dia">{{ fp[8:10] }}/{{ fp[5:7] }}</div>
+          <div>{{ fp[0:4] }}</div>
         {% else %}
-          <div class="dia">{{ o.fecha_programada }}</div>
+          <div class="dia">{{ fp }}</div>
         {% endif %}
         {% if o.hora_inicio %}<div class="hora">{{ o.hora_inicio|hm }}</div>{% endif %}
       {% else %}
@@ -306,6 +400,201 @@
     {% endif %}
   </div>
 {% endif %}
+</div> {# /vista-lista #}
+
+{# ════════════════════════════════════════════════════════════
+   Vista KANBAN — 4 columnas por estado del flujo
+   Mapeo: pendiente | proceso | verificacion | finalizada
+   ════════════════════════════════════════════════════════════ #}
+<div id="vista-kanban" style="display:none">
+  <div class="kanban-grid">
+    <div class="kanban-col kban-pendiente" data-col="pendiente">
+      <div class="kanban-col-header">
+        <span><i class="bi bi-clock me-1"></i>Pendientes</span>
+        <span class="kban-count" id="kban-c-pendiente">0</span>
+      </div>
+      <div id="kban-list-pendiente"></div>
+    </div>
+    <div class="kanban-col kban-proceso" data-col="proceso">
+      <div class="kanban-col-header">
+        <span><i class="bi bi-play-circle me-1"></i>En proceso</span>
+        <span class="kban-count" id="kban-c-proceso">0</span>
+      </div>
+      <div id="kban-list-proceso"></div>
+    </div>
+    <div class="kanban-col kban-verif" data-col="verificacion">
+      <div class="kanban-col-header">
+        <span><i class="bi bi-patch-check me-1"></i>En verificación</span>
+        <span class="kban-count" id="kban-c-verificacion">0</span>
+      </div>
+      <div id="kban-list-verificacion"></div>
+    </div>
+    <div class="kanban-col kban-final" data-col="finalizada">
+      <div class="kanban-col-header">
+        <span><i class="bi bi-check-circle-fill me-1"></i>Finalizadas</span>
+        <span class="kban-count" id="kban-c-finalizada">0</span>
+      </div>
+      <div id="kban-list-finalizada"></div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════
+   Vista CARDS — Mosaico responsivo
+   ════════════════════════════════════════════════════════════ #}
+<div id="vista-cards" style="display:none">
+  <div class="cards-grid" id="cards-grid">
+    {# se rellena por JS #}
+  </div>
+  <div id="cards-empty" style="display:none">
+    <div class="empty-state">
+      <i class="bi bi-grid-3x3-gap"></i>
+      <div class="fw-bold" style="font-size:1.05rem;color:#374151">No hay OTs para mostrar</div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════
+   Vista CALENDARIO — embed del calendario existente
+   ════════════════════════════════════════════════════════════ #}
+<div id="vista-calendario" style="display:none">
+  <div class="cal-embed">
+    <iframe id="cal-iframe" src="about:blank" loading="lazy"
+            title="Calendario de mantenciones"></iframe>
+  </div>
+</div>
+
+{# ═════════ Data global de OTs para los renders JS ═════════ #}
+<script id="otsData" type="application/json">
+{{ {
+  'ots': ots,
+} | tojson | safe }}
+</script>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  Toggle entre vistas (persistido en localStorage)
+// ════════════════════════════════════════════════════════════
+const _OTS_DATA = JSON.parse(document.getElementById('otsData').textContent);
+
+function cambiarVista(v){
+  document.querySelectorAll('.vista-tab').forEach(b => b.classList.toggle('active', b.dataset.vista === v));
+  ['lista','kanban','cards','calendario'].forEach(name => {
+    const el = document.getElementById('vista-' + name);
+    if (el) el.style.display = (name === v) ? '' : 'none';
+  });
+  try { localStorage.setItem('ots_vista', v); } catch(e){}
+  // Lazy render según vista
+  if (v === 'kanban') renderKanban();
+  else if (v === 'cards') renderCards();
+  else if (v === 'calendario') {
+    const ifr = document.getElementById('cal-iframe');
+    if (ifr && ifr.src === 'about:blank') ifr.src = '{{ url_for("mant_calendario") }}?embed=1';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  Mapeo de estados al flujo Kanban
+// ════════════════════════════════════════════════════════════
+function _grupoKanban(estado){
+  estado = (estado || '').toLowerCase();
+  if (['programada','creada','asignada','reagendada'].includes(estado)) return 'pendiente';
+  if (['en_curso','en_ejecucion','pendiente_info','pendiente_repuesto'].includes(estado)) return 'proceso';
+  if (['pendiente_aprobacion','completada'].includes(estado)) return 'verificacion';
+  if (['cerrada','cancelada','anulada'].includes(estado)) return 'finalizada';
+  return 'pendiente';
+}
+
+function _escHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function _fmtFecha(f){
+  if (!f) return '—';
+  const s = String(f);
+  if (s.length >= 10) return s.substring(8, 10) + '/' + s.substring(5, 7);
+  return s;
+}
+
+// ════════════════════════════════════════════════════════════
+//  KANBAN — render
+// ════════════════════════════════════════════════════════════
+function renderKanban(){
+  const cols = { pendiente: [], proceso: [], verificacion: [], finalizada: [] };
+  (_OTS_DATA.ots || []).forEach(o => {
+    const g = _grupoKanban(o.estado);
+    cols[g].push(o);
+  });
+  Object.keys(cols).forEach(g => {
+    const list = document.getElementById('kban-list-' + g);
+    const cnt = document.getElementById('kban-c-' + g);
+    cnt.textContent = cols[g].length;
+    if (!cols[g].length){
+      list.innerHTML = '<div class="text-muted small text-center py-3" style="opacity:.5">Sin OTs</div>';
+      return;
+    }
+    list.innerHTML = cols[g].map(o => {
+      const prog = o.n_tareas > 0 ? Math.round((o.n_completas / o.n_tareas) * 100) : 0;
+      return `<a href="/mantenciones/ot/${o.id}" class="kban-card text-decoration-none text-dark d-block">
+        <div class="kc-num">${_escHtml(o.numero_ot || ('VS-' + o.id))}</div>
+        <div class="kc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
+        <div class="kc-meta">
+          ${o.tipo ? `<span><i class="bi bi-tag"></i> ${_escHtml(o.tipo)}</span>` : ''}
+          ${o.fecha_programada ? `<span><i class="bi bi-calendar3"></i> ${_fmtFecha(o.fecha_programada)}</span>` : ''}
+          ${o.tecnico_nombre ? `<span><i class="bi bi-person"></i> ${_escHtml(o.tecnico_nombre)}</span>` : ''}
+        </div>
+        ${o.n_tareas > 0 ? `<div class="kc-progress"><div style="width:${prog}%"></div></div>` : ''}
+      </a>`;
+    }).join('');
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  CARDS — render
+// ════════════════════════════════════════════════════════════
+function renderCards(){
+  const grid = document.getElementById('cards-grid');
+  const empty = document.getElementById('cards-empty');
+  const data = _OTS_DATA.ots || [];
+  if (!data.length){
+    grid.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = data.map(o => {
+    const prog = o.n_tareas > 0 ? Math.round((o.n_completas / o.n_tareas) * 100) : 0;
+    const editBtn = {{ 'true' if permissions.superadmin else 'false' }} ?
+      `<button class="btn btn-sm btn-outline-secondary" onclick="event.preventDefault();editarOTRapido(${o.id},'${(o.titulo||'').replace(/'/g,"\\'")}','${o.estado||''}','${o.tipo||''}','${o.modalidad_cobro||'pagado'}','${o.prioridad||'media'}')" title="Editar"><i class="bi bi-pencil"></i></button>` : '';
+    return `<div class="ot-card estado-${o.estado || 'programada'}">
+      <span class="oc-num">${_escHtml(o.numero_ot || ('VS-' + o.id))}</span>
+      <div class="oc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
+      <div class="oc-tit">${_escHtml(o.titulo || (o.tipo || 'visita') + ' programada')}</div>
+      <div class="oc-stats">
+        <div class="oc-stat"><div class="n">${o.n_tareas || 0}</div><div class="l">Tareas</div></div>
+        <div class="oc-stat"><div class="n">${o.n_completas || 0}</div><div class="l">OK</div></div>
+        <div class="oc-stat"><div class="n">${o.n_fotos || 0}</div><div class="l">Fotos</div></div>
+      </div>
+      <div class="oc-footer">
+        <span class="badge-estado bs-${o.estado || 'programada'}">${(o.estado||'programada').replace('_',' ')}</span>
+        <div class="d-flex gap-1">
+          ${editBtn}
+          <a href="/mantenciones/ot/${o.id}" class="btn btn-sm btn-ilus fw-bold"><i class="bi bi-arrow-right"></i></a>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+//  Init: cargar vista guardada
+// ════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  let vista = 'lista';
+  try { vista = localStorage.getItem('ots_vista') || 'lista'; } catch(e){}
+  if (vista !== 'lista') cambiarVista(vista);
+});
+</script>
 
 {% if permissions.superadmin %}
 {# ─── Modal: edición rápida de OT (solo superadmin) ─── #}
