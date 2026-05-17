@@ -15734,6 +15734,13 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN hora_inicio_fin TIME NULL COMMENT 'Hora inicio último día visita extendida'",
                 "ALTER TABLE mant_visitas ADD COLUMN hora_fin_fin TIME NULL COMMENT 'Hora término último día visita extendida'",
                 # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Fix bug: archivo_path NOT NULL fallaba cuando
+                # Cloudinary subía la foto OK (no se usaba fallback fs).
+                # Schema legacy obligaba archivo_path; ahora con Cloudinary
+                # primario, debe ser NULL si cloudinary_url está presente.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_fotos MODIFY COLUMN archivo_path VARCHAR(500) NULL",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Fix retroactivo bug GPS heredado de plantillas:
                 # Las plantillas legacy podían tener tipo_respuesta=NULL para
                 # tareas que claramente eran GPS (por título). Al aplicarse en
@@ -27084,6 +27091,11 @@ def mant_visita_fotos_subir(vid):
                 continue
 
         try:
+            # FIX 2026-05-17: si Cloudinary funcionó (cld_url) pero NO hay
+            # filesystem path, archivo_path queda NULL. La columna era NOT NULL
+            # → error 1048. Migración ALTER ya está aplicada, pero por
+            # defensiva pasamos string vacío si no hay path real.
+            ap = archivo_path or ""
             mysql_execute(
                 "INSERT INTO mant_visita_fotos "
                 "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
@@ -27091,7 +27103,7 @@ def mant_visita_fotos_subir(vid):
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     vid, tarea_id, maquina_id,
-                    archivo_path, cld_url,
+                    ap, cld_url,
                     f.filename[:300],
                     tipo_foto, descripcion or None, user, size_kb
                 )
