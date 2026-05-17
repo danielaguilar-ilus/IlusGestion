@@ -15135,6 +15135,18 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN contacto_email VARCHAR(200) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN contacto_origen VARCHAR(40) NULL COMMENT 'principal|secundario|sucursal:<id>|manual'",
                 # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Geolocalización de dirección del cliente.
+                # Permite validar dirección con Google Places en el wizard de
+                # cliente, sucursales, y reutilizar lat/lng para guiar al
+                # técnico via Google Maps sin geocoding adicional.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_clientes ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_clientes ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_clientes ADD COLUMN direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id (verificado)'",
+                "ALTER TABLE mant_sucursales ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_sucursales ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_sucursales ADD COLUMN direccion_place_id VARCHAR(200) NULL",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Ruta del técnico (F7):
                 # Registra cuándo el técnico inicia la ruta hacia el cliente
                 # (Google Maps / Waze) + ubicación de origen (su bodega o
@@ -17487,19 +17499,28 @@ def mant_cliente_nuevo():
         try:
             with conn.cursor() as cur:
                 try:
+                    # Parsear lat/lng del Google Places autocomplete (hidden inputs)
+                    try: _lat = float(d.get("direccion_lat")) if d.get("direccion_lat") else None
+                    except (TypeError, ValueError): _lat = None
+                    try: _lng = float(d.get("direccion_lng")) if d.get("direccion_lng") else None
+                    except (TypeError, ValueError): _lng = None
+                    _placeid = (d.get("direccion_place_id") or "").strip()[:200] or None
+
                     cur.execute(
                         """INSERT INTO mant_clientes
                            (razon_social, rut,
                             email_empresa, tel_empresa,
                             contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
                             contacto2_nombre, contacto2_cargo, contacto2_tel, contacto2_email,
-                            direccion, comuna, ciudad, region, giro,
+                            direccion, direccion_lat, direccion_lng, direccion_place_id,
+                            comuna, ciudad, region, giro,
                             notas, notas_confidenciales,
                             estado, created_by, updated_by)
                            VALUES (%s,%s, %s,%s,
                                    %s,%s,%s,%s,
                                    %s,%s,%s,%s,
-                                   %s,%s,%s,%s,%s,
+                                   %s,%s,%s,%s,
+                                   %s,%s,%s,%s,
                                    %s,%s,
                                    %s,%s,%s)""",
                         (razon, rut_norm,
@@ -17511,6 +17532,7 @@ def mant_cliente_nuevo():
                          (d.get("contacto2_cargo")  or "").strip()[:120],
                          tel_contacto2, emails_norm["contacto2_email"],
                          (d.get("direccion") or "").strip(),
+                         _lat, _lng, _placeid,
                          (d.get("comuna")    or "").strip()[:100],
                          (d.get("ciudad")    or "").strip()[:100],
                          (d.get("region")    or "").strip()[:100],

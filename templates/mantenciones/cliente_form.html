@@ -50,10 +50,69 @@
           </div>
           <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">Ubicación</div></div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Dirección</label>
-            <input type="text" name="direccion" class="form-control"
-                   value="{{ cliente.direccion if cliente else '' }}">
+            <label class="form-label fw-semibold d-flex align-items-center justify-content-between">
+              <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección</span>
+              <small class="text-muted" style="font-weight:400;font-size:.72rem">
+                Validada con Google Maps
+              </small>
+            </label>
+            <input type="text" name="direccion" id="cli_direccion_input" class="form-control"
+                   value="{{ cliente.direccion if cliente else '' }}"
+                   placeholder="Empieza a escribir y elige una sugerencia…"
+                   autocomplete="off">
+            {# Hidden fields para lat/lng/place_id (se envían al server) #}
+            <input type="hidden" name="direccion_lat" id="cli_direccion_lat"
+                   value="{{ cliente.direccion_lat if cliente and cliente.direccion_lat else '' }}">
+            <input type="hidden" name="direccion_lng" id="cli_direccion_lng"
+                   value="{{ cliente.direccion_lng if cliente and cliente.direccion_lng else '' }}">
+            <input type="hidden" name="direccion_place_id" id="cli_direccion_place_id"
+                   value="{{ cliente.direccion_place_id if cliente and cliente.direccion_place_id else '' }}">
+            <small id="cli_direccion_hint" class="text-muted d-block mt-1" style="font-size:.74rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Selecciona una sugerencia del dropdown para validar la dirección.
+            </small>
           </div>
+          <script>
+            // ── Helper de direcciones ILUS — Google Places ──
+            // (definido globalmente en ilus_ui.js como ilusPlacesAutocomplete)
+            document.addEventListener('DOMContentLoaded', function() {
+              function initDir() {
+                if (typeof ilusPlacesAutocomplete !== 'function') {
+                  // SDK Google Maps aún no cargado: encolar
+                  if (window.__ilusGmapsPending) {
+                    window.__ilusGmapsPending.push(initDir);
+                  }
+                  return;
+                }
+                ilusPlacesAutocomplete('cli_direccion_input', {
+                  country: 'cl',
+                  types: ['address'],
+                  onPlaceSelected: function(place) {
+                    document.getElementById('cli_direccion_lat').value = place.lat;
+                    document.getElementById('cli_direccion_lng').value = place.lng;
+                    document.getElementById('cli_direccion_place_id').value = place.place_id || '';
+                    var hint = document.getElementById('cli_direccion_hint');
+                    if (hint) {
+                      hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>' +
+                        'Dirección verificada · ' +
+                        '<small>' + place.lat.toFixed(4) + ', ' + place.lng.toFixed(4) + '</small>';
+                    }
+                    // Auto-llenar comuna si Google la trae en address_components
+                    if (place.componentes) {
+                      var comuna = place.componentes.find(function(c) {
+                        return c.types.indexOf('locality') >= 0 || c.types.indexOf('administrative_area_level_3') >= 0;
+                      });
+                      if (comuna) {
+                        var cInput = document.querySelector('input[name="comuna"]');
+                        if (cInput && !cInput.value) cInput.value = comuna.long_name;
+                      }
+                    }
+                  }
+                });
+              }
+              initDir();
+            });
+          </script>
           <div class="col-6">
             <label class="form-label fw-semibold">Comuna</label>
             <input type="text" name="comuna" class="form-control"
