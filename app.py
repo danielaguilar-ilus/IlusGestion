@@ -795,24 +795,72 @@ def _get_pool():
             from dbutils.pooled_db import PooledDB
             _db_pool = PooledDB(
                 creator        = pymysql,
-                mincached      = 1,           # conexiones siempre listas
-                maxcached      = 5,           # máximo en pool inactivo
-                maxconnections = 10,          # total permitido
-                blocking       = False,       # falla rápido si no hay conexión libre
-                ping           = 1,           # verifica conexión antes de entregar (reconecta si está muerta)
+                # ── FIX 2026-05-17 ──────────────────────────────────────
+                # mincached=0  → NO mantener conexiones reposando en pool.
+                #                Clever Cloud / Railway egress cierran sockets
+                #                idle silenciosamente tras 5-15 min sin tráfico,
+                #                dejando "conexiones zombi" que bloqueaban 20s
+                #                en .ping() al volver de idle (síntoma: "cuesta
+                #                botarme y reconectarme").
+                # maxusage=200 → recicla conexiones periódicamente (anti-leak)
+                # ping=7       → verifica antes de cursor + execute + fetch
+                #                (más agresivo que ping=1)
+                # read_timeout=5 → si por algo queda conn muerta, falla en 5s
+                #                  en vez de 20s. Write se queda en 20s para
+                #                  queries grandes (inserts batch, etc).
+                # ─────────────────────────────────────────────────────────
+                mincached      = 0,
+                maxcached      = 5,
+                maxconnections = 10,
+                maxusage       = 200,
+                blocking       = False,
+                ping           = 7,
                 host           = MYSQL_CONFIG["host"],
                 port           = MYSQL_CONFIG["port"],
                 user           = MYSQL_CONFIG["user"],
                 password       = MYSQL_CONFIG["password"],
                 database       = MYSQL_CONFIG["database"],
-                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 15),
-                read_timeout   = 20,
+                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 10),
+                read_timeout   = 5,
                 write_timeout  = 20,
                 charset        = "utf8mb4",
                 cursorclass    = pymysql.cursors.DictCursor,
                 autocommit     = False,
+                # Mantener wait_timeout de la sesión MySQL alto para que
+                # NUESTRO read_timeout sea siempre el que dispare primero
+                # (no MySQL cerrando la conexión por su lado).
+                init_command   = "SET SESSION wait_timeout=600",
             )
-            print("[ILUS] Pool de conexiones MySQL activo (DBUtils).")
+            print("[ILUS] Pool de conexiones MySQL activo (DBUtils + anti-idle).")
+
+            # ── Heartbeat MySQL en hilo daemon ──────────────────────────
+            # Cada 60s ejecuta SELECT 1 para evitar que Clever Cloud / Railway
+            # cierren el socket TCP por inactividad. Sin esto, los usuarios
+            # que vuelven a la pestaña después de horas pagan 5-15s en el
+            # primer request mientras el pool reconecta. Con heartbeat la
+            # conexión queda caliente permanentemente.
+            try:
+                import threading as _threading_kp
+                def _db_keepalive():
+                    import time as _time_kp
+                    while True:
+                        _time_kp.sleep(60)
+                        try:
+                            conn = _db_pool.connection()
+                            cur = conn.cursor()
+                            try: cur.execute("SELECT 1")
+                            finally:
+                                try: cur.close()
+                                except Exception: pass
+                                try: conn.close()      # devuelve al pool
+                                except Exception: pass
+                        except Exception as _e_kp:
+                            print(f"[db-keepalive] {_e_kp}", flush=True)
+                _kp_thread = _threading_kp.Thread(target=_db_keepalive, daemon=True, name="db-keepalive")
+                _kp_thread.start()
+                print("[ILUS] DB keepalive thread iniciado (60s).")
+            except Exception as _e_kp_init:
+                print(f"[ILUS][WARN] keepalive init falló: {_e_kp_init}", flush=True)
         except ImportError:
             # Si DBUtils no está instalado, degrada a conexión directa
             print("[ILUS][WARN] DBUtils no disponible — sin pool de conexiones.")
@@ -3339,21 +3387,35 @@ def login():
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
         session.clear()
         session["user_id"] = user["id"]
-        # Tracking de actividad: actualizar last_login_at + login_count + ip
-        # Best-effort — si falla no rompe el login. Si las columnas legacy no
-        # existen, el primer arranque post-migración las crea.
+        # ── FIX 2026-05-17 ──────────────────────────────────────────
+        # Tracking de actividad (last_login_at + login_count + ip) en
+        # HILO DAEMON — NO bloquea el login. Si la BD está lenta tras
+        # idle largo, el usuario ya recibe su cookie + redirect sin esperar
+        # el UPDATE (que tomaba 5-20s con conexión zombi).
+        # ─────────────────────────────────────────────────────────────
         try:
             ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64]
-            mysql_execute(
-                f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                (ip, user["id"])
-            )
+            _uid_track = user["id"]
+            def _track_login_async(_uid, _ip):
+                try:
+                    mysql_execute(
+                        f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
+                        f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                        (_ip, _uid)
+                    )
+                except Exception as _e_tl:
+                    print(f"[login-track-async] {_e_tl}", flush=True)
+            import threading as _thr_lg
+            _thr_lg.Thread(target=_track_login_async, args=(_uid_track, ip),
+                           daemon=True, name=f"login-track-{_uid_track}").start()
         except Exception as _e_login_track:
-            print(f"[login-track] no se pudo actualizar last_login_at: {_e_login_track}", flush=True)
-        _audit("login_ok",
-               target_type="user", target_id=user["id"],
-               user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
+            print(f"[login-track] {_e_login_track}", flush=True)
+        try:
+            _audit("login_ok",
+                   target_type="user", target_id=user["id"],
+                   user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
+        except Exception as _e_au:
+            print(f"[login_ok audit] {_e_au}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # Anti-cache para forzar al navegador a recargar diseño actualizado
@@ -3367,8 +3429,21 @@ def login():
 @app.route("/logout", methods=["POST"])
 @login_required
 def logout():
-    _audit("logout", target_type="user", target_id=g.user.get("id"))
+    # ── FIX 2026-05-17 ──────────────────────────────────────────
+    # ORDEN crítico: limpiar sesión PRIMERO, audit DESPUÉS.
+    # Si la conexión MySQL está zombi (idle largo), _audit() bloquea
+    # 5-20s → el usuario percibe "no me bota". Con esta ordenación,
+    # la cookie se invalida instantáneamente y el audit es best-effort.
+    # ─────────────────────────────────────────────────────────────
+    uid = g.user.get("id") if getattr(g, "user", None) else None
+    uname = g.user.get("username") if getattr(g, "user", None) else None
+    urole = g.user.get("role") if getattr(g, "user", None) else None
     session.clear()
+    try:
+        _audit("logout", target_type="user", target_id=uid,
+               user_override={"id": uid, "username": uname, "role": urole} if uid else None)
+    except Exception as _e_log:
+        print(f"[logout] audit best-effort falló: {_e_log}", flush=True)
     flash("Sesion cerrada.", "success")
     return redirect(url_for("login"))
 

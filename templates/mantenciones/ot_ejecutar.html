@@ -1815,6 +1815,8 @@ let _pingInterval = null;
 function iniciarPingPeriodico(){
   if (_pingInterval || !navigator.geolocation) return;
   function ping(){
+    // No pingear si la pestaña está oculta (ahorra batería + servidor)
+    if (document.hidden) return;
     navigator.geolocation.getCurrentPosition(async (pos) => {
       try {
         await fetch(`/mantenciones/api/visitas/${VID}/ping-ruta`, {
@@ -1830,7 +1832,21 @@ function iniciarPingPeriodico(){
   ping();
   _pingInterval = setInterval(ping, 30000);
 }
-window.addEventListener('beforeunload', () => { if (_pingInterval) clearInterval(_pingInterval); });
+function _stopPing(){ if (_pingInterval){ clearInterval(_pingInterval); _pingInterval = null; } }
+window.addEventListener('beforeunload', _stopPing);
+// FIX 2026-05-17: pausar el ping cuando la pestaña entra a background.
+// Sin esto, el setInterval seguía spammeando requests aunque el navegador
+// los encole; al volver del idle, varios pings disparaban a la vez contra
+// una BD con conexión zombi, saturando workers.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){
+    _stopPing();
+  } else if (RUTA_YA_INICIADA &&
+             VISITA_ESTADO !== 'cerrada' &&
+             VISITA_ESTADO !== 'pendiente_aprobacion'){
+    iniciarPingPeriodico();
+  }
+});
 
 // ════════════════════════════════════════════════════════
 //  FIRMAS — canvas interactivo con undo, color picker, has-state

@@ -6938,7 +6938,13 @@ function abrirMultiPlantilla(eqId, eqNombre){
 
   // Crear modal dinámicamente
   let modal = document.getElementById('modalMultiPlantilla');
-  if (modal) modal.remove();
+  if (modal){
+    // FIX 2026-05-17: dispose() de Bootstrap ANTES de remover el nodo.
+    // Sin esto, Bootstrap retiene su _backdrop interno apuntando a un
+    // nodo desconectado → siguiente .hide() deja backdrop huérfano.
+    try { bootstrap.Modal.getInstance(modal)?.dispose(); } catch(e){}
+    modal.remove();
+  }
   modal = document.createElement('div');
   modal.id = 'modalMultiPlantilla';
   modal.className = 'modal fade';
@@ -7125,7 +7131,26 @@ async function levIniciar(){
       return;
     }
     _LEV.id = d.id;
-    bootstrap.Modal.getInstance(document.getElementById('modalLevSelector'))?.hide();
+    // ── FIX 2026-05-17: backdrop huérfano ────────────────────────
+    // Esperar a que Bootstrap termine SU cleanup del backdrop
+    // ANTES de abrir el ilusAlert. Si abrimos el overlay encima
+    // inmediatamente, roba el foco y Bootstrap aborta su transición,
+    // dejando un .modal-backdrop colgado y body.modal-open activo.
+    // ─────────────────────────────────────────────────────────────
+    const _mLevEl = document.getElementById('modalLevSelector');
+    const _mLevInst = bootstrap.Modal.getInstance(_mLevEl);
+    if (_mLevInst){
+      await new Promise(resolve => {
+        let resolved = false;
+        const done = () => { if (!resolved){ resolved = true; resolve(); } };
+        _mLevEl.addEventListener('hidden.bs.modal', done, { once: true });
+        _mLevInst.hide();
+        // Failsafe por si el listener no dispara (caso edge)
+        setTimeout(done, 600);
+      });
+    }
+    // Cleanup defensivo extra (definido en ilus_ui.js)
+    if (typeof ilusCleanModalBackdrops === 'function') ilusCleanModalBackdrops();
 
     // ──────────────────────────────────────────────────────────────
     // FLUJO (2026-05-16): el admin SOLO genera la OT.

@@ -122,10 +122,21 @@ function initMapaSeg(){
     ],
   });
   cargarActivos();
-  // Auto-refresh cada 30s
+  // Auto-refresh cada 30s — solo si pestaña visible
   if (_intervalRef) clearInterval(_intervalRef);
-  _intervalRef = setInterval(cargarActivos, 30000);
+  _intervalRef = setInterval(() => {
+    if (!document.hidden) cargarActivos();
+  }, 30000);
 }
+// FIX 2026-05-17: cleanup explícito al cerrar la pestaña + pausa cuando
+// está oculta (evita saturar workers con polling acumulado al volver).
+window.addEventListener('beforeunload', () => {
+  if (_intervalRef){ clearInterval(_intervalRef); _intervalRef = null; }
+});
+document.addEventListener('visibilitychange', () => {
+  // Cuando vuelve a foco, refresca inmediatamente para ver el estado actual.
+  if (!document.hidden && _intervalRef) cargarActivos();
+});
 
 async function cargarActivos(){
   try {

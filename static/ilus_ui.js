@@ -474,4 +474,71 @@
 
   // Helper expuesto por si algún template lo necesita explícito
   global.alertNativo = _nativeAlert;
+
+  // ════════════════════════════════════════════════════════════════
+  // MODAL BACKDROP CLEANUP — fix global para backdrops huérfanos
+  // (Bug 2026-05-17: al cerrar modal "Generar OT" la página queda
+  // oscurecida hasta refrescar)
+  //
+  // Causa raíz: Bootstrap .hide() es async (~300ms). Si se abre un
+  // ilus-overlay encima inmediatamente, roba foco y Bootstrap aborta
+  // el cleanup → .modal-backdrop queda huérfano + body.modal-open.
+  //
+  // Solución: listener global a hidden.bs.modal + shown.bs.modal que
+  // sincroniza backdrops con modales realmente abiertos. Defensivo —
+  // no interfiere con flujos normales.
+  // ════════════════════════════════════════════════════════════════
+  function ilusCleanModalBackdrops(){
+    try {
+      const abiertos = document.querySelectorAll('.modal.show').length;
+      const backdrops = document.querySelectorAll('.modal-backdrop');
+      if (abiertos === 0){
+        backdrops.forEach(b => b.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      } else if (backdrops.length > abiertos){
+        // Hay más backdrops que modales abiertos → matar los sobrantes
+        for (let i = backdrops.length - 1; i >= abiertos; i--){
+          backdrops[i].remove();
+        }
+      }
+    } catch (e) {
+      console.warn('[ilus_ui] cleanModalBackdrops:', e);
+    }
+  }
+  global.ilusCleanModalBackdrops = ilusCleanModalBackdrops;
+
+  // Auto-cleanup cuando CUALQUIER modal Bootstrap se cierra.
+  // setTimeout(0) garantiza que corremos DESPUÉS del propio cleanup
+  // de Bootstrap (evita race contra su transitionend listener).
+  document.addEventListener('hidden.bs.modal', function(){
+    setTimeout(ilusCleanModalBackdrops, 0);
+    // Segundo intento por si quedó algo colgado en transitionend
+    setTimeout(ilusCleanModalBackdrops, 400);
+  });
+  document.addEventListener('shown.bs.modal', ilusCleanModalBackdrops);
+
+  // ESC sale de cualquier overlay huérfano (último recurso)
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){
+      // Si no hay modal Bootstrap visible pero queda backdrop → matar
+      const abiertos = document.querySelectorAll('.modal.show').length;
+      const backdrops = document.querySelectorAll('.modal-backdrop');
+      if (abiertos === 0 && backdrops.length > 0){
+        ilusCleanModalBackdrops();
+      }
+    }
+  });
+
+  // Cleanup periódico defensivo (cada 5s) — DETECTA backdrops huérfanos
+  // que dejaron pasar los listeners de Bootstrap. Costo: ~0.1ms cada 5s.
+  setInterval(function(){
+    const abiertos = document.querySelectorAll('.modal.show').length;
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    if (abiertos === 0 && backdrops.length > 0){
+      console.warn('[ilus_ui] backdrop huérfano detectado, limpiando');
+      ilusCleanModalBackdrops();
+    }
+  }, 5000);
 })(window);
