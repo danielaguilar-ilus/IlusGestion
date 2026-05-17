@@ -24904,6 +24904,276 @@ def mant_visita_pdf(vid):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# PDF DINÁMICO — Reporte HTML imprimible de OT cerrada
+# ─────────────────────────────────────────────────────────────────────
+# Endpoint dependency-free: renderiza un HTML+CSS @media print que el
+# usuario imprime con "Guardar como PDF" desde el navegador. No requiere
+# Playwright / wkhtmltopdf / WeasyPrint — cero dependencias nativas.
+#
+# REGLAS de negocio (pedido Daniel 2026-05-17):
+#   - Solo se genera si la OT está estado='cerrada'.
+#   - Las 3 firmas deben existir:
+#       * firma_cliente_url       (cliente que recibe la conformidad)
+#       * firma_tecnico_url       (técnico ejecutor)
+#       * firma_supervisor_url    (responsable/supervisor que aprobó)
+#   - El "Validado Por" (firma supervisor) es DINÁMICO: se busca por
+#     firma_supervisor_user_id en app_users y se muestra el nombre real
+#     de quien aprobó la OT (no hardcodeado a Aarón ni nadie).
+#   - Si alguna firma falta → redirige a la OT con flash error y mensaje
+#     claro de qué le falta.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ot/<int:vid>/pdf")
+@_mant_required
+def mant_ot_pdf_render(vid):
+    """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
+
+    Query params:
+      - ?print=1 → dispara window.print() automáticamente al cargar.
+    """
+    visita = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
+        "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
+        "       c.contacto_nombre AS cli_contacto, "
+        "       c.contacto_tel AS cli_contacto_tel, "
+        "       c.contacto_email AS cli_email, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_principal, "
+        "       u.username AS tecnico_email, "
+        "       COALESCE(us.nombre, us.username) AS responsable_nombre, "
+        "       us.username AS responsable_email "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users u  ON u.id  = v.tecnico_user_id "
+        "  LEFT JOIN app_users us ON us.id = v.firma_supervisor_user_id "
+        " WHERE v.id=%s",
+        (vid,)
+    )
+    if not visita:
+        flash("OT no encontrada.", "danger")
+        return redirect(url_for("mant_index"))
+    visita = dict(visita)
+
+    # ── Validación: OT cerrada con las 3 firmas ──────────────────────
+    razones = []
+    estado = (visita.get("estado") or "").lower()
+    if estado != "cerrada":
+        razones.append(f"La OT debe estar en estado 'cerrada' (actual: {estado or '—'}).")
+    if not visita.get("firma_cliente_url"):
+        razones.append("Falta firma del cliente.")
+    if not visita.get("firma_tecnico_url"):
+        razones.append("Falta firma del técnico.")
+    if not visita.get("firma_supervisor_url"):
+        razones.append("Falta firma del responsable/supervisor.")
+
+    if razones:
+        flash(
+            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+            + " ".join(razones),
+            "warning"
+        )
+        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+
+    # ── Equipos (distinct via tareas) ────────────────────────────────
+    equipos = mysql_fetchall(
+        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+        "       m.ubicacion_sala, m.estado_capturado, m.observaciones "
+        "  FROM mant_visita_tareas vt "
+        "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+        "   AND COALESCE(m.estado,'activo') != 'baja' "
+        " ORDER BY m.nombre",
+        (vid,)
+    ) or []
+    equipos = [dict(e) for e in equipos]
+
+    # ── Técnicos extras (legacy mant_visita_tecnicos) ────────────────
+    tecnicos_extra_rows = mysql_fetchall(
+        "SELECT COALESCE(u.nombre, u.username, t.nombre) AS nombre "
+        "  FROM mant_visita_tecnicos vt "
+        "  LEFT JOIN mant_tecnicos t ON t.id = vt.tecnico_id "
+        "  LEFT JOIN app_users u    ON u.id = vt.tecnico_user_id "
+        " WHERE vt.visita_id=%s "
+        "   AND (u.id IS NULL OR u.id != %s)",
+        (vid, visita.get("tecnico_user_id") or 0)
+    ) or []
+    tecnicos_extra = [dict(t) for t in tecnicos_extra_rows if t.get("nombre")]
+
+    # ── Tareas (checklist técnico detallado) ─────────────────────────
+    tareas = mysql_fetchall(
+        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, "
+        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
+        "       t.unidad, t.rango_min, t.rango_max, "
+        "       t.completada, t.completada_at, t.observaciones, "
+        "       t.valor_texto, t.valor_numero, t.valor_sino, "
+        "       t.valor_verificacion, t.valor_lista, t.valor_fecha_hora, "
+        "       t.valor_gps_lat, t.valor_gps_lng, "
+        "       m.nombre AS maquina_nombre, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos f WHERE f.tarea_id = t.id) AS n_fotos "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+        " WHERE t.visita_id=%s "
+        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
+        (vid,)
+    ) or []
+    tareas = [dict(t) for t in tareas]
+
+    # ── Fotos (con URL resuelta) ─────────────────────────────────────
+    fotos_raw = mysql_fetchall(
+        "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+        "       tipo_foto, tomada_at "
+        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
+        (vid,)
+    ) or []
+    fotos = []
+    for f in fotos_raw:
+        d = dict(f)
+        url = d.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{d['archivo_path']}"
+            if d.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        d["url"] = url
+        fotos.append(d)
+
+    # ── Index fotos por equipo (primeras 3 por máquina) ──────────────
+    eq_fotos_idx = {}
+    for f in fotos:
+        mid = f.get("maquina_id")
+        if not mid:
+            continue
+        eq_fotos_idx.setdefault(mid, []).append(f)
+
+    # ── Fotos generales (sin máquina asociada o tipo=general) ────────
+    fotos_generales = [
+        f for f in fotos
+        if not f.get("maquina_id") or (f.get("tipo_foto") or "") == "general"
+    ]
+    if not fotos_generales:
+        fotos_generales = fotos  # fallback
+
+    # ── Checklist resumen por equipo (primeras 5 tareas) ─────────────
+    eq_check_resumen = {}
+    for t in tareas:
+        mid = t.get("maquina_id")
+        if not mid:
+            continue
+        eq_check_resumen.setdefault(mid, []).append({
+            "titulo": t.get("titulo") or "",
+            "ok": bool(t.get("completada")),
+        })
+
+    # ── Tareas formateadas para tabla detallada ──────────────────────
+    def _fmt_resultado(t):
+        """Devuelve (texto, clase) para la pill de resultado."""
+        tr = (t.get("tipo_respuesta") or "check").lower()
+        if tr == "verificacion":
+            v = (t.get("valor_verificacion") or "").lower()
+            if v == "aprobado": return ("OK", "ok")
+            if v == "alerta":   return ("ALERTA", "warn")
+            if v == "falla":    return ("FALLA", "err")
+            return ("—", "ok")
+        if tr == "sino":
+            v = (t.get("valor_sino") or "").lower()
+            if v == "si":  return ("SÍ", "ok")
+            if v == "no":  return ("NO", "err")
+            if v == "na":  return ("N/A", "txt")
+            return ("—", "txt")
+        if tr == "numero":
+            num = t.get("valor_numero")
+            if num is None: return ("—", "txt")
+            try:
+                num_f = float(num)
+                txt = f"{num_f:g}"
+            except Exception:
+                txt = str(num)
+            unidad = t.get("unidad") or ""
+            return (f"{txt} {unidad}".strip(), "ok")
+        if tr == "lista":
+            return ((t.get("valor_lista") or "—"), "txt")
+        if tr == "fecha_hora":
+            v = t.get("valor_fecha_hora")
+            return ((v.strftime('%d/%m %H:%M') if v else "—"), "txt")
+        if tr == "gps":
+            la = t.get("valor_gps_lat"); ln = t.get("valor_gps_lng")
+            if la is None or ln is None: return ("—", "txt")
+            try:
+                return (f"{float(la):.4f}, {float(ln):.4f}", "ok")
+            except Exception:
+                return ("GPS OK", "ok")
+        if tr == "texto":
+            v = (t.get("valor_texto") or "").strip()
+            return ((v[:18] + "…" if len(v) > 18 else v) or "—", "txt")
+        # check / foto / default
+        return (("OK" if t.get("completada") else "—"), ("ok" if t.get("completada") else "txt"))
+
+    # Cliente comuna para "Ubicación"
+    cli_ubic_short = (visita.get("cli_comuna") or "—").strip()
+
+    tareas_chk = []
+    for t in tareas:
+        res_txt, res_cls = _fmt_resultado(t)
+        ca = t.get("completada_at")
+        try:
+            ca_str = ca.strftime('%Y-%m-%d %H:%M') if ca else ""
+        except Exception:
+            ca_str = str(ca) if ca else ""
+        tareas_chk.append({
+            "id":               t.get("id"),
+            "titulo":           t.get("titulo") or "",
+            "tipo_respuesta":   t.get("tipo_respuesta") or "check",
+            "resultado_str":    res_txt,
+            "resultado_clase":  res_cls,
+            "tiene_foto":       (t.get("n_fotos") or 0) > 0,
+            "completada_at_str": ca_str,
+            "ubicacion_str":    cli_ubic_short,
+            "maquina_nombre":   t.get("maquina_nombre") or "",
+        })
+
+    # ── Paginar equipos: 2 por página (cards grandes) ────────────────
+    # Página 1: 2 equipos (los primeros). Páginas siguientes: 3 c/u.
+    paginas_equipos = []
+    if equipos:
+        if len(equipos) <= 2:
+            paginas_equipos = [equipos]
+        else:
+            paginas_equipos.append(equipos[:2])
+            resto = equipos[2:]
+            while resto:
+                paginas_equipos.append(resto[:3])
+                resto = resto[3:]
+    else:
+        paginas_equipos = [[]]
+
+    # ── Logo ILUS (base64 pre-encoded si existe) ─────────────────────
+    logo_b64 = ""
+    try:
+        logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
+        if os.path.exists(logo_path):
+            with open(logo_path, "r", encoding="utf-8") as f:
+                logo_b64 = f.read().strip()
+    except Exception:
+        pass
+
+    return render_template(
+        "mantenciones/ot_pdf.html",
+        visita=visita,
+        equipos=equipos,
+        tecnicos_extra=tecnicos_extra,
+        tareas=tareas,
+        tareas_chk=tareas_chk,
+        fotos=fotos,
+        fotos_generales=fotos_generales,
+        eq_fotos_idx=eq_fotos_idx,
+        eq_check_resumen=eq_check_resumen,
+        paginas_equipos=paginas_equipos,
+        logo_b64=logo_b64,
+        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════
 # OT — TAREAS DENTRO DE UNA VISITA
 # Checklist que el técnico ejecuta paso a paso. Cada tarea puede estar
 # asociada a una máquina específica (mant_maquinas) para trazabilidad.

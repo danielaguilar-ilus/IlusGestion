@@ -542,6 +542,29 @@
       <div id="execGpsSub" style="font-size:.72rem;opacity:.8">
         Se registra para auditar que ejecutas la OT en el lugar correcto.
       </div>
+      <div id="execGpsActions" style="display:none;flex-wrap:wrap;gap:6px;margin-top:7px">
+        <button type="button" class="tx-gps-btn-retry"
+                onclick="pedirGPS(true)"
+                style="background:#dc2626;color:#fff;border:none;border-radius:6px;
+                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:34px;
+                       display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+          <i class="bi bi-arrow-clockwise"></i> Reintentar GPS
+        </button>
+        <button type="button" class="tx-gps-btn-help"
+                onclick="mostrarAyudaGPS()"
+                style="background:#fff;color:#dc2626;border:1.5px solid #dc2626;
+                       border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;
+                       min-height:34px;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+          <i class="bi bi-question-circle"></i> ¿Cómo activar GPS?
+        </button>
+        <button type="button" class="tx-gps-btn-manual"
+                onclick="abrirManualGPS()"
+                style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;
+                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:34px;
+                       display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+          <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
+        </button>
+      </div>
     </div>
   </div>
 
@@ -1354,6 +1377,219 @@ async function _validarRadio(lat, lng){
   return { ok:true, dist, fuera:true };
 }
 
+// ════════════════════════════════════════════════════════════════
+//  GPS — MOTOR DE 5 ESTRATEGIAS EN CASCADA (iOS Safari bulletproof)
+//  ─────────────────────────────────────────────────────────────
+//  Estrategias en orden:
+//    A) Pre-check con navigator.permissions (corta si denied)
+//    B) getCurrentPosition con highAccuracy:true (timeout 8s)
+//    C) getCurrentPosition con highAccuracy:false (timeout 5s) — workaround iOS
+//    D) watchPosition + manual timeout (workaround iOS idle bug)
+//    E) IP geolocation (~5km accuracy, fallback de emergencia)
+//    F) Manual: técnico escribe la dirección (Google Places autocomplete)
+//
+//  Bugs conocidos iOS Safari 17/18 que esto resuelve:
+//    1. Una vez denegado, NO se vuelve a preguntar (revisamos antes)
+//    2. permissions.query puede retornar 'prompt' aunque esté denegado
+//    3. enableHighAccuracy:true falla con "User denied" en iPhones nuevos
+//       cuando con highAccuracy:false sí funciona → degradamos
+//    4. getCurrentPosition se cuelga si la página estuvo idle → timeout corto
+//    5. watchPosition a veces resuelve cuando getCurrentPosition se quedó colgado
+//
+//  Telemetría: window.__gpsDiag almacena qué estrategias se probaron y
+//  cuál funcionó (visible en consola para debug)
+// ════════════════════════════════════════════════════════════════
+
+// Resultado central de GPS (usado por capturarGPS y pedirGPS)
+// { lat, lng, accuracy, method: 'gps_high'|'gps_low'|'watch'|'ip'|'manual' }
+window.__ilusGPS = window.__ilusGPS || null;
+window.__gpsDiag = { attempts: [], ua: navigator.userAgent, https: location.protocol === 'https:' };
+
+function _gpsLog(stage, info){
+  try {
+    window.__gpsDiag.attempts.push({ t: Date.now(), stage, info });
+    console.log('[GPS]', stage, info || '');
+  } catch(e) {}
+}
+
+// Wraps getCurrentPosition con timeout EXTERNO (iOS a veces no respeta el timeout interno)
+function _gpsGetPosition(highAccuracy, timeoutMs){
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    const externalTimer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      reject({ code: 3, message: 'External timeout (iOS hang protection)' });
+    }, timeoutMs + 1500); // +1.5s buffer sobre el interno
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(externalTimer);
+        resolve(pos);
+      },
+      (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(externalTimer);
+        reject(err);
+      },
+      { enableHighAccuracy: !!highAccuracy, timeout: timeoutMs, maximumAge: 30000 }
+    );
+  });
+}
+
+// watchPosition con timeout manual — fallback cuando getCurrentPosition se cuelga
+function _gpsWatch(timeoutMs){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation.watchPosition){
+      return reject({ code: 2, message: 'watchPosition no soportado' });
+    }
+    let resolved = false;
+    let wid = null;
+    const t = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      if (wid !== null) try { navigator.geolocation.clearWatch(wid); } catch(e) {}
+      reject({ code: 3, message: 'watchPosition timeout' });
+    }, timeoutMs);
+    try {
+      wid = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(t);
+          try { navigator.geolocation.clearWatch(wid); } catch(e) {}
+          resolve(pos);
+        },
+        (err) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(t);
+          try { navigator.geolocation.clearWatch(wid); } catch(e) {}
+          reject(err);
+        },
+        { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 60000 }
+      );
+    } catch(e){
+      clearTimeout(t);
+      reject({ code: 2, message: e.message || 'watch threw' });
+    }
+  });
+}
+
+// IP geolocation — último recurso de baja precisión (~5km)
+async function _gpsByIP(){
+  // Lista de servicios — iteramos por si alguno está caído
+  const services = [
+    {
+      url: 'https://ipapi.co/json/',
+      parse: (j) => (j && j.latitude && j.longitude)
+        ? { lat: +j.latitude, lng: +j.longitude, dir: (j.city || '') + ', ' + (j.region || '') + ', ' + (j.country_name || '') }
+        : null
+    },
+    {
+      url: 'https://ipwho.is/',
+      parse: (j) => (j && j.success !== false && j.latitude && j.longitude)
+        ? { lat: +j.latitude, lng: +j.longitude, dir: (j.city || '') + ', ' + (j.region || '') + ', ' + (j.country || '') }
+        : null
+    },
+  ];
+  for (const svc of services){
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(svc.url, { signal: ctrl.signal });
+      clearTimeout(tid);
+      const j = await r.json();
+      const out = svc.parse(j);
+      if (out && isFinite(out.lat) && isFinite(out.lng)){
+        return { ...out, accuracy: 5000, method: 'ip' };
+      }
+    } catch(e){
+      _gpsLog('ip_service_fail', { url: svc.url, error: e.message });
+    }
+  }
+  throw new Error('Todos los servicios de IP geolocation fallaron');
+}
+
+// Cascade A→B→C→D — devuelve { lat, lng, accuracy, method } o lanza error
+async function _gpsCascade(){
+  if (!navigator.geolocation){
+    throw new Error('Geolocalización no soportada');
+  }
+  // ── A) Pre-check de permisos ──
+  let permState = 'unknown';
+  if (navigator.permissions && navigator.permissions.query){
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      permState = status.state;
+      _gpsLog('permission_state', permState);
+      if (permState === 'denied'){
+        const err = new Error('PERMISSION_DENIED');
+        err.code = 1;
+        throw err;
+      }
+    } catch(e){
+      if (e && e.code === 1) throw e; // re-lanzar denied
+      _gpsLog('permission_query_failed', e.message);
+    }
+  }
+
+  // ── B) High accuracy (8s) ──
+  try {
+    _gpsLog('try_high_accuracy');
+    const pos = await _gpsGetPosition(true, 8000);
+    _gpsLog('high_accuracy_ok', { acc: pos.coords.accuracy });
+    return {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || null,
+      method: 'gps_high'
+    };
+  } catch(e){
+    _gpsLog('high_accuracy_fail', { code: e.code, msg: e.message });
+    if (e.code === 1) throw e; // permission denied → no insistir
+  }
+
+  // ── C) Low accuracy (5s) — workaround iOS ──
+  try {
+    _gpsLog('try_low_accuracy');
+    const pos = await _gpsGetPosition(false, 5000);
+    _gpsLog('low_accuracy_ok', { acc: pos.coords.accuracy });
+    return {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || null,
+      method: 'gps_low'
+    };
+  } catch(e){
+    _gpsLog('low_accuracy_fail', { code: e.code, msg: e.message });
+    if (e.code === 1) throw e;
+  }
+
+  // ── D) watchPosition (6s) — fallback iOS idle bug ──
+  try {
+    _gpsLog('try_watch');
+    const pos = await _gpsWatch(6000);
+    _gpsLog('watch_ok', { acc: pos.coords.accuracy });
+    return {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || null,
+      method: 'watch'
+    };
+  } catch(e){
+    _gpsLog('watch_fail', { code: e.code, msg: e.message });
+    if (e.code === 1) throw e;
+  }
+
+  // Si llegamos acá, las 3 estrategias nativas fallaron sin "denied"
+  const err = new Error('Todas las estrategias GPS nativas fallaron');
+  err.code = 99;
+  throw err;
+}
+
 async function capturarGPS(tid, mid, pid){
   if (!navigator.geolocation){
     await ilusAlert({
@@ -1363,55 +1599,65 @@ async function capturarGPS(tid, mid, pid){
     });
     return;
   }
-  // ── FIX 2026-05-17 iPhone: chequear estado de permiso ANTES ────
-  // En iOS Safari, si el usuario denegó una vez, getCurrentPosition
-  // falla SILENCIOSO con "User denied Geolocation" y no hay forma
-  // programática de re-pedir permiso. Hay que enviar al usuario a
-  // Ajustes → Safari → Ubicación. Ese es el caso de la imagen 3.
-  // ─────────────────────────────────────────────────────────────
-  if (navigator.permissions && navigator.permissions.query) {
-    try {
-      const status = await navigator.permissions.query({ name: 'geolocation' });
-      if (status.state === 'denied'){
-        // Permiso ya denegado — mostrar modal de ayuda directamente
-        mostrarAyudaGPS();
-        return;
-      }
-    } catch(e) { /* permissions API no disponible, seguimos al getCurrentPosition */ }
-  }
   ilusToast('Pidiendo permiso GPS…', { type:'info', duration: 1500 });
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      // Validar radio (advertencia o bloqueo según flag)
-      const v = await _validarRadio(pos.coords.latitude, pos.coords.longitude);
-      if (!v.ok) return;
-      guardarResp(tid, { lat: pos.coords.latitude, lng: pos.coords.longitude }, mid, pid);
-      setTimeout(() => renderTareas(mid, pid), 600);
-    },
-    (err) => {
-      // err.code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
-      if (err.code === 1){
-        // Denegado → mostrar modal con instrucciones iPhone/Android
-        mostrarAyudaGPS();
-      } else if (err.code === 2){
-        ilusAlert({
-          title: 'GPS no disponible',
-          message: 'No se pudo obtener tu ubicación. Verifica que el GPS del dispositivo esté encendido.',
-          sub: 'En iPhone: Ajustes → Privacidad → Servicios de Ubicación → ENCENDIDO',
-          type: 'warning',
-        });
-      } else if (err.code === 3){
-        ilusAlert({
-          title: 'GPS timeout',
-          message: 'Tomó demasiado tiempo. Intenta nuevamente en un lugar con vista al cielo.',
-          type: 'warning',
-        });
+  try {
+    const r = await _gpsCascade();
+    // Validar radio (advertencia o bloqueo según flag)
+    const v = await _validarRadio(r.lat, r.lng);
+    if (!v.ok) return;
+    const label = _gpsMethodLabel(r.method);
+    ilusToast(`📍 ${label}`, { type: r.method === 'ip' ? 'warning' : 'success' });
+    guardarResp(tid, { lat: r.lat, lng: r.lng }, mid, pid);
+    setTimeout(() => renderTareas(mid, pid), 600);
+  } catch(err){
+    if (err.code === 1){
+      // Denegado → modal de ayuda iOS
+      mostrarAyudaGPS();
+    } else {
+      // Fallaron las estrategias nativas — ofrecer IP o manual
+      const eleccion = await ilusConfirm({
+        title: 'No pudimos obtener tu GPS',
+        message: 'Las estrategias automáticas fallaron. ¿Cómo querés continuar?',
+        sub: 'Podés usar tu ubicación aproximada (por IP, ~5km de precisión) o ingresar tu dirección manualmente.',
+        type: 'warning',
+        okLabel: 'Usar IP aproximada',
+        cancelLabel: 'Ingresar dirección',
+      });
+      if (eleccion){
+        // Usar IP
+        try {
+          const ip = await _gpsByIP();
+          const v = await _validarRadio(ip.lat, ip.lng);
+          if (!v.ok) return;
+          ilusToast('📍 Ubicación aproximada por IP (~5km)', { type: 'warning' });
+          guardarResp(tid, { lat: ip.lat, lng: ip.lng }, mid, pid);
+          setTimeout(() => renderTareas(mid, pid), 600);
+        } catch(e){
+          ilusToast('No se pudo obtener IP geolocation', { type: 'error' });
+        }
       } else {
-        ilusToast('GPS error: ' + (err.message || 'desconocido'), { type:'error' });
+        // Manual
+        const m = await _gpsManualPrompt();
+        if (!m) return;
+        const v = await _validarRadio(m.lat, m.lng);
+        if (!v.ok) return;
+        ilusToast('📍 Ubicación capturada manualmente', { type: 'success' });
+        guardarResp(tid, { lat: m.lat, lng: m.lng }, mid, pid);
+        setTimeout(() => renderTareas(mid, pid), 600);
       }
-    },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
-  );
+    }
+  }
+}
+
+function _gpsMethodLabel(method){
+  switch(method){
+    case 'gps_high': return 'GPS exacto';
+    case 'gps_low':  return 'GPS estándar';
+    case 'watch':    return 'GPS (modo continuo)';
+    case 'ip':       return 'Aproximada por IP (~5km)';
+    case 'manual':   return 'Ingresada manualmente';
+    default:         return 'Capturada';
+  }
 }
 
 async function subirFotoTarea(tid, input, mid, pid){
@@ -1832,86 +2078,131 @@ async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
   });
 }
 
-// ════════════════════════════════════════════════════════
-//  GPS — Permission API moderna (Android + iOS + Desktop)
-//
-//  Estrategia:
-//  1. Si navigator.permissions disponible → consultar 'geolocation' state
-//     antes de pedir GPS (evita prompt si ya fue denegado/granted)
-//  2. Si denied → mostrar botón explícito "Permitir ubicación" con
-//     instrucciones para activar en settings del navegador
-//  3. Si granted/prompt → solicitar getCurrentPosition
-//  4. iOS Safari requiere HTTPS y user gesture; manejo con fallback
-// ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+//  GPS BAR (auditoría de inicio de ejecución)
+//  Usa el motor _gpsCascade + opciones de fallback (IP / manual)
+//  Listener visibilitychange: cuando el usuario vuelve de Ajustes
+//  iOS, reintenta automáticamente.
+// ════════════════════════════════════════════════════════════════
 async function pedirGPS(forzar = false){
   const bar = document.getElementById('execGpsBar');
   const ttl = document.getElementById('execGpsTitle');
   const sub = document.getElementById('execGpsSub');
+  const actions = document.getElementById('execGpsActions');
+  if (!bar || !ttl || !sub) return;
   if (!navigator.geolocation){
+    bar.classList.remove('gps-ok');
     bar.classList.add('gps-err');
     ttl.textContent = 'Geolocalización no soportada por este dispositivo';
     sub.innerHTML = '<small>Usa un navegador moderno (Chrome, Safari, Firefox).</small>';
+    if (actions) actions.style.display = 'flex';
     return;
   }
-  // Consultar estado del permiso si está disponible
-  let state = 'prompt';
-  if (navigator.permissions && navigator.permissions.query) {
+  // Suscribirse a cambios de permiso una sola vez (sin esto, no detectamos
+  // cuando el usuario vuelve de Ajustes con el permiso activado).
+  if (!window.__gpsPermSubscribed && navigator.permissions && navigator.permissions.query){
     try {
       const status = await navigator.permissions.query({ name: 'geolocation' });
-      state = status.state;
-      // Reaccionar a cambios en el permiso (usuario abrió settings)
       status.onchange = () => {
-        if (status.state === 'granted' && !window.__execOrigenLat) pedirGPS(true);
+        _gpsLog('permission_changed', status.state);
+        if (status.state === 'granted' && !window.__ilusGPS) pedirGPS(true);
       };
-    } catch(e){ console.warn('permissions.query:', e); }
+      window.__gpsPermSubscribed = true;
+    } catch(e){ _gpsLog('subscribe_perm_failed', e.message); }
   }
 
-  if (state === 'denied' && !forzar) {
-    bar.classList.add('gps-err');
-    ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
-    sub.innerHTML = `<small>Para auditar tu posición, habilita la ubicación: ` +
-      `<a href="#" onclick="mostrarAyudaGPS();return false" style="color:#1d4ed8;font-weight:600">¿Cómo activarlo?</a></small>`;
-    return;
+  // Estado intermedio en el banner
+  ttl.innerHTML = '<i class="bi bi-arrow-repeat"></i> Detectando ubicación…';
+  sub.innerHTML = '<small>Buscando GPS (puede tomar unos segundos)…</small>';
+  bar.classList.remove('gps-ok', 'gps-err');
+  if (actions) actions.style.display = 'none';
+
+  let result = null;
+  try {
+    result = await _gpsCascade();
+  } catch(err){
+    _gpsLog('cascade_failed_main', { code: err.code, msg: err.message });
+    if (err.code === 1){
+      // Denegado → mostrar bar de error + acciones
+      bar.classList.add('gps-err');
+      ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
+      sub.innerHTML = '<small>Para registrar tu posición tenés que activar el GPS o ingresar la dirección a mano.</small>';
+      if (actions) actions.style.display = 'flex';
+      return;
+    }
+    // Fallaron todas las estrategias nativas — intentar IP como auto-fallback
+    try {
+      _gpsLog('try_ip_fallback');
+      const ip = await _gpsByIP();
+      result = ip;
+      ilusToast('Usando ubicación aproximada por IP', { type: 'warning', duration: 3000 });
+    } catch(e){
+      _gpsLog('ip_fallback_failed', e.message);
+      bar.classList.add('gps-err');
+      ttl.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> No pudimos detectar tu ubicación';
+      sub.innerHTML = '<small>Tocá <strong>Reintentar</strong> o <strong>Ingresá la dirección a mano</strong> para continuar.</small>';
+      if (actions) actions.style.display = 'flex';
+      return;
+    }
   }
 
-  // Solicitar posición (esto dispara prompt si state='prompt')
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const lat = pos.coords.latitude; const lng = pos.coords.longitude;
-    window.__execOrigenLat = lat; window.__execOrigenLng = lng;
-    let dir = '';
+  // Éxito (GPS o IP) — registrar y mostrar
+  await _gpsRegistrarResultado(result);
+}
+
+// Aplica el resultado al banner + lo persiste en el backend
+async function _gpsRegistrarResultado(result){
+  const bar = document.getElementById('execGpsBar');
+  const ttl = document.getElementById('execGpsTitle');
+  const sub = document.getElementById('execGpsSub');
+  const actions = document.getElementById('execGpsActions');
+  if (!bar || !ttl || !sub) return;
+
+  const { lat, lng, method } = result;
+  window.__ilusGPS = result;
+  window.__execOrigenLat = lat;
+  window.__execOrigenLng = lng;
+
+  // Si vino con `dir` (IP) ya tenemos dirección legible. Si no, reverse geocoding.
+  let dir = result.dir || '';
+  if (!dir && method !== 'ip'){
     try {
       const rev = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`,
         { headers: { 'Accept-Language': 'es' } });
       const dj = await rev.json();
       dir = dj.display_name || '';
-    } catch(e) {}
-    bar.classList.remove('gps-err');
-    bar.classList.add('gps-ok');
-    ttl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ubicación registrada';
-    sub.innerHTML = dir ? `<small>${dir}</small>` : `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>`;
-    try {
-      await fetch(`/mantenciones/api/visitas/${VID}/exec-gps`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ lat, lng, direccion: dir })
-      });
-    } catch(e) {}
-  }, (err) => {
-    bar.classList.add('gps-err');
-    if (err.code === 1){
-      ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
-      sub.innerHTML = `<small>Sin permiso de GPS no podés ejecutar la OT. ` +
-        `<a href="#" onclick="mostrarAyudaGPS();return false" style="color:#1d4ed8;font-weight:600">¿Cómo activarlo?</a></small>`;
-    } else if (err.code === 2){
-      ttl.textContent = 'Ubicación no disponible';
-      sub.innerHTML = '<small>Verifica que el GPS del dispositivo esté encendido.</small>';
-    } else if (err.code === 3){
-      ttl.textContent = 'Timeout al obtener GPS';
-      sub.innerHTML = '<small>Intenta nuevamente en un lugar con mejor señal.</small>';
-    } else {
-      ttl.textContent = 'No se pudo obtener tu ubicación';
-      sub.textContent = err.message || 'Error desconocido.';
-    }
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    } catch(e) { /* sin dirección, OK */ }
+  }
+
+  const methodLabel = _gpsMethodLabel(method);
+  const isApprox = (method === 'ip');
+  bar.classList.remove('gps-err');
+  bar.classList.add(isApprox ? 'gps-err' : 'gps-ok');
+  // Si IP, dejamos el banner amarillo/rojo para destacar que NO es preciso
+  if (isApprox){
+    bar.style.background = '#fff8e1';
+    bar.style.borderColor = '#f59e0b';
+  } else {
+    bar.style.background = ''; bar.style.borderColor = '';
+  }
+  ttl.innerHTML = `<i class="bi bi-${isApprox ? 'geo' : 'check-circle-fill'}"></i> ${methodLabel}` +
+                  (isApprox ? '' : ' registrada');
+  sub.innerHTML = dir
+    ? `<small>${_escapeHtml(dir)}</small>`
+    : `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}${result.accuracy ? ` (±${Math.round(result.accuracy)}m)` : ''}</small>`;
+  // Si fue IP/manual, mantenemos acciones visibles para que pueda reintentar GPS
+  if (actions) actions.style.display = (method === 'gps_high' || method === 'gps_low') ? 'none' : 'flex';
+
+  // Persistir en backend (best-effort)
+  try {
+    const dirPersist = isApprox || method === 'manual'
+      ? `[${methodLabel}] ${dir || ''}`.trim()
+      : dir;
+    await fetch(`/mantenciones/api/visitas/${VID}/exec-gps`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ lat, lng, direccion: dirPersist })
+    });
+  } catch(e) { _gpsLog('exec_gps_persist_failed', e.message); }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1919,71 +2210,362 @@ async function pedirGPS(forzar = false){
 // ════════════════════════════════════════════════════════
 async function mostrarAyudaGPS(){
   const ua = navigator.userAgent;
-  let instr = '';
-  let titulo = '';
-  if (/iphone|ipad|ipod/i.test(ua)){
-    titulo = 'Activá la ubicación en tu iPhone';
-    instr = `<div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:10px">
+  const isIOS = /iphone|ipad|ipod/i.test(ua);
+  const isAndroid = /android/i.test(ua);
+
+  // Construimos un modal con 3 tabs (Activar | Verificar | Otras opciones)
+  // usando ilusConfirm con messageHtml. Los tabs son botones que muestran/ocultan secciones.
+  let tabActivar = '', tabVerificar = '', tabOtras = '';
+
+  if (isIOS){
+    tabActivar = `
+      <div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:12px">
         <strong style="color:#dc2626">⚠️ El GPS está bloqueado en Safari</strong><br>
-        <small style="color:#7f1d1d">Sin GPS no podés validar tu posición ni cerrar la OT.</small>
+        <small style="color:#7f1d1d">Una vez que iOS marca "denegado" no podemos volver a pedirlo desde acá. Hay que ir a Ajustes.</small>
       </div>
-      <strong style="display:block;margin-bottom:6px">📱 Paso 1 — Activar GPS general:</strong>
-      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
-        <li>Andá a <strong>Ajustes</strong> (la app gris con engranajes)</li>
-        <li>Bajá a <strong>Privacidad y Seguridad</strong></li>
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">📱 Paso 1 — Servicios de Ubicación globales:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>Abrí la app <strong>Ajustes</strong> (la gris con engranajes)</li>
+        <li>Tocá <strong>Privacidad y Seguridad</strong></li>
         <li>Tocá <strong>Servicios de ubicación</strong></li>
-        <li>Activá el switch verde de arriba ("Servicios de ubicación")</li>
+        <li>Activá el <strong>switch verde de arriba</strong> ("Servicios de ubicación")</li>
       </ol>
-      <strong style="display:block;margin-bottom:6px">🌐 Paso 2 — Permitir a Safari:</strong>
-      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
-        <li>En la misma pantalla, bajá hasta encontrar <strong>"Safari"</strong></li>
-        <li>Tocá Safari → elegí <strong>"Mientras uso la app"</strong> o <strong>"Preguntar la próxima vez"</strong></li>
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Paso 2 — Permitir a Safari:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>En la misma pantalla, scrolleá hasta encontrar <strong>"Safari"</strong> en la lista</li>
+        <li>Tocá <strong>Safari → Sitios web → Ubicación</strong></li>
+        <li>O elegí directamente <strong>"Preguntar la próxima vez"</strong> o <strong>"Mientras uso la app"</strong></li>
       </ol>
-      <strong style="display:block;margin-bottom:6px">🔄 Paso 3 — Volver acá:</strong>
-      <ol style="margin:0 0 8px;padding-left:22px;font-size:.88rem;line-height:1.7">
-        <li>Volvé a Safari (esta pestaña)</li>
-        <li>Tocá el botón <strong>"Reintentar GPS"</strong> abajo, o refrescá la página</li>
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🔄 Paso 3 — Volver acá y reintentar:</strong>
+      <ol style="margin:0 0 8px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>Volvé a Safari (deslizá desde abajo o tocá Safari)</li>
+        <li>Esta página detectará el cambio automáticamente</li>
+        <li>O tocá el botón <strong>🔄 Reintentar GPS</strong> abajo</li>
+      </ol>`;
+    tabVerificar = `
+      <strong style="display:block;margin-bottom:8px;color:#0a0a0a">¿Activado pero sigue sin funcionar?</strong>
+      <div style="background:#fff8e1;border-left:4px solid #f59e0b;padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem;color:#92400e">
+        En iPhone 15 Pro Max con iOS 17/18, Safari a veces guarda "denegado" para este sitio aunque los permisos globales estén OK.
+      </div>
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🔍 Verificar permiso específico de Safari:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>Ajustes → <strong>Apps</strong> → buscar <strong>Safari</strong></li>
+        <li>Tocá Safari → <strong>Ubicación</strong></li>
+        <li>Debe estar en <strong>"Preguntar"</strong> o <strong>"Permitir"</strong></li>
       </ol>
-      <div style="background:#fef3c7;border:1px dashed #f59e0b;border-radius:6px;padding:8px 10px;font-size:.78rem;color:#92400e;margin-top:10px">
-        <i class="bi bi-info-circle"></i> Si seguís viendo el error, cerrá Safari completamente (deslizá hacia arriba) y volvé a abrir el link.
-      </div>`;
-  } else if (/android/i.test(ua)){
-    titulo = 'Activá la ubicación en tu Android';
-    instr = `<div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:10px">
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Limpiar caché del sitio:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>Ajustes → Safari → <strong>Avanzado</strong> → Datos de sitios web</li>
+        <li>Buscar el dominio de la app y eliminarlo</li>
+        <li>Cerrar Safari completamente (swipe up desde abajo, deslizar arriba la card de Safari)</li>
+        <li>Volver a abrir el link de la OT</li>
+      </ol>
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">📶 Otras causas:</strong>
+      <ul style="margin:0;padding-left:22px;font-size:.85rem;line-height:1.6;color:#1f2937">
+        <li>Modo avión o sin señal celular → activar datos</li>
+        <li>Modo de bajo consumo → desactivar</li>
+        <li>VPN activa → desactivar temporalmente</li>
+      </ul>`;
+    tabOtras = `
+      <strong style="display:block;margin-bottom:8px;color:#0a0a0a">Si no podés activar el GPS:</strong>
+      <div style="background:#dbeafe;border-left:4px solid #3b82f6;padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem;color:#1e40af">
+        Estas opciones permiten <strong>avanzar la OT</strong> aunque el GPS no funcione. La precisión es menor pero queda registrada.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <button type="button" onclick="_gpsDismissHelpAnd('manual')"
+                style="background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;justify-content:center">
+          <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
+        </button>
+        <button type="button" onclick="_gpsDismissHelpAnd('ip')"
+                style="background:#fff;color:#0a0a0a;border:2px solid #0a0a0a;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;justify-content:center">
+          <i class="bi bi-globe2"></i> Usar ubicación aproximada (por IP)
+        </button>
+      </div>
+      <small style="color:#6b7280;font-size:.78rem;display:block">
+        Si todo falla y nada funciona, contactá a soporte: <strong>daniel.aguilar@sphs.cl</strong>
+      </small>`;
+  } else if (isAndroid){
+    tabActivar = `
+      <div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:10px">
         <strong style="color:#dc2626">⚠️ El GPS está bloqueado en Chrome</strong>
       </div>
-      <strong style="display:block;margin-bottom:6px">🌐 Activar en Chrome:</strong>
-      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Activar en Chrome:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Tocá el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
         <li>Tocá <strong>Permisos</strong> (o <strong>Configuración del sitio</strong>)</li>
         <li>En "Ubicación" elegí <strong>"Permitir"</strong></li>
-        <li>Volvé acá y tocá <strong>"Reintentar GPS"</strong></li>
-      </ol>
-      <div style="background:#fef3c7;border:1px dashed #f59e0b;border-radius:6px;padding:8px 10px;font-size:.78rem;color:#92400e">
-        Si no aparece el candado: Ajustes Android → Apps → Chrome → Permisos → Ubicación
+        <li>Volvé acá y tocá <strong>Reintentar GPS</strong></li>
+      </ol>`;
+    tabVerificar = `
+      <strong style="display:block;margin-bottom:6px;color:#0a0a0a">Si el candado no aparece:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
+        <li>Ajustes Android → <strong>Apps</strong> → Chrome → <strong>Permisos</strong> → Ubicación</li>
+        <li>Cambiar a <strong>"Permitir solo mientras se usa la app"</strong></li>
+        <li>Verificar también que el <strong>GPS general</strong> esté ON (Ajustes → Ubicación)</li>
+      </ol>`;
+    tabOtras = `
+      <strong style="display:block;margin-bottom:8px;color:#0a0a0a">Alternativas:</strong>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <button type="button" onclick="_gpsDismissHelpAnd('manual')"
+                style="background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer;min-height:44px">
+          <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
+        </button>
+        <button type="button" onclick="_gpsDismissHelpAnd('ip')"
+                style="background:#fff;color:#0a0a0a;border:2px solid #0a0a0a;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer;min-height:44px">
+          <i class="bi bi-globe2"></i> Usar ubicación aproximada por IP
+        </button>
       </div>`;
   } else {
-    titulo = 'Activá la ubicación en el navegador';
-    instr = `<strong>Chrome / Edge / Firefox desktop:</strong>
-      <ol style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.7">
+    tabActivar = `
+      <strong>Chrome / Edge / Firefox desktop:</strong>
+      <ol style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Click el <strong>candado 🔒</strong> a la izquierda de la URL</li>
         <li>En "Ubicación" cambiá a <strong>"Permitir"</strong></li>
-        <li>Refrescá la página (Ctrl+R / F5) y tocá "Reintentar"</li>
+        <li>Refrescá la página (Ctrl+R / F5) y tocá Reintentar</li>
       </ol>`;
+    tabVerificar = `
+      <strong>Si seguís sin GPS:</strong>
+      <ul style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.6;color:#1f2937">
+        <li>Asegurate de tener <strong>HTTPS</strong> (la URL debe empezar con https://)</li>
+        <li>Probá en modo incógnito (Ctrl+Shift+N) para descartar extensiones</li>
+        <li>Revisá Ajustes del SO: en Windows 11 → Configuración → Privacidad → Ubicación</li>
+      </ul>`;
+    tabOtras = `
+      <p style="font-size:.88rem;color:#1f2937">En desktop podés ingresar la dirección manualmente:</p>
+      <button type="button" onclick="_gpsDismissHelpAnd('manual')"
+              style="background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer">
+        <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
+      </button>`;
   }
-  // Modal con botón "Reintentar GPS" custom
+
+  // Tab UI dentro del messageHtml
+  const tabsCss = `
+    <style>
+      .gps-help-tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:2px solid #e5e7eb}
+      .gps-help-tabs button{
+        background:none;border:none;padding:9px 12px;font-size:.82rem;font-weight:600;
+        color:#6b7280;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;
+        min-height:40px;flex:1;display:flex;align-items:center;justify-content:center;gap:5px
+      }
+      .gps-help-tabs button.active{color:#dc2626;border-bottom-color:#dc2626}
+      .gps-help-panel{display:none;font-size:.85rem;color:#0a0a0a}
+      .gps-help-panel.active{display:block}
+    </style>`;
+  const tabsHtml = `
+    ${tabsCss}
+    <div class="gps-help-tabs" role="tablist">
+      <button type="button" class="active" data-tab="activar"
+              onclick="this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.querySelectorAll('.gps-help-panel').forEach(p=>p.classList.remove('active'));document.getElementById('gpsHelpPanel-activar').classList.add('active');return false;">
+        <i class="bi bi-toggle-on"></i> Activar
+      </button>
+      <button type="button" data-tab="verificar"
+              onclick="this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.querySelectorAll('.gps-help-panel').forEach(p=>p.classList.remove('active'));document.getElementById('gpsHelpPanel-verificar').classList.add('active');return false;">
+        <i class="bi bi-search"></i> Verificar
+      </button>
+      <button type="button" data-tab="otras"
+              onclick="this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.querySelectorAll('.gps-help-panel').forEach(p=>p.classList.remove('active'));document.getElementById('gpsHelpPanel-otras').classList.add('active');return false;">
+        <i class="bi bi-three-dots"></i> Alternativas
+      </button>
+    </div>
+    <div class="gps-help-panel active" id="gpsHelpPanel-activar">${tabActivar}</div>
+    <div class="gps-help-panel" id="gpsHelpPanel-verificar">${tabVerificar}</div>
+    <div class="gps-help-panel" id="gpsHelpPanel-otras">${tabOtras}</div>`;
+
+  const titulo = isIOS ? 'Activá la ubicación en tu iPhone'
+    : isAndroid ? 'Activá la ubicación en tu Android'
+    : 'Activá la ubicación en el navegador';
+
   const reintentar = await ilusConfirm({
     title: titulo,
-    message: instr,
+    message: tabsHtml,
     messageHtml: true,
     type: 'warning',
     okLabel: '🔄 Reintentar GPS',
-    cancelLabel: 'Más tarde',
+    cancelLabel: 'Cerrar',
   });
   if (reintentar){
-    // Forzar nueva solicitud — si el usuario ya cambió permisos, debería funcionar
     setTimeout(() => pedirGPS(true), 200);
   }
+}
+
+// Helper: cierra el modal de ayuda GPS y ejecuta una acción al terminar.
+// Usado por los botones "manual"/"ip" dentro del tab Alternativas.
+function _gpsDismissHelpAnd(action){
+  // ilusConfirm crea el modal con clase ilus-overlay y los botones data-idx="0/1"
+  // El idx 0 = cancel (lo usamos para cerrar)
+  try {
+    const cancelBtn = document.querySelector('.ilus-overlay .ilus-btn[data-idx="0"]');
+    if (cancelBtn) cancelBtn.click();
+  } catch(e) { _gpsLog('dismiss_help_click_failed', e.message); }
+  // Esperar a que termine la animación de cierre antes de abrir lo siguiente
+  setTimeout(() => {
+    if (action === 'manual') abrirManualGPS();
+    else if (action === 'ip') _gpsForzarIP();
+  }, 350);
+}
+
+// Atajo desde el tab "Alternativas" → fuerza IP geolocation directamente
+async function _gpsForzarIP(){
+  ilusToast('Obteniendo ubicación por IP…', { type:'info', duration: 1500 });
+  try {
+    const ip = await _gpsByIP();
+    await _gpsRegistrarResultado(ip);
+    ilusToast('📍 Ubicación aproximada por IP cargada', { type:'success' });
+  } catch(e){
+    ilusToast('No pudimos obtener IP geolocation: ' + (e.message || 'error'), { type:'error' });
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FALLBACK MANUAL: técnico escribe la dirección donde está
+//  Usa Google Places (ilusPlacesAutocomplete) si está disponible.
+// ════════════════════════════════════════════════════════════════
+async function abrirManualGPS(){
+  // Modal a pelo (no ilusPrompt porque queremos Places autocomplete dentro)
+  // Construimos overlay manual + input + cancel/save buttons.
+  let overlay = document.getElementById('manualGpsOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'manualGpsOverlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;background:rgba(10,10,10,.72);z-index:99990;
+    display:flex;align-items:center;justify-content:center;padding:16px;
+    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)`;
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:20px;max-width:480px;width:100%;
+                box-shadow:0 20px 60px rgba(0,0,0,.4);max-height:92dvh;overflow-y:auto">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="width:44px;height:44px;border-radius:12px;background:#0a0a0a;color:#fff;
+                    display:flex;align-items:center;justify-content:center;font-size:1.2rem">
+          <i class="bi bi-pencil-square"></i>
+        </div>
+        <div>
+          <h5 style="margin:0;font-weight:700;color:#0a0a0a">Ingresar dirección manualmente</h5>
+          <small style="color:#6b7280">Tipea la dirección donde estás. Te sugerimos opciones reales.</small>
+        </div>
+      </div>
+      <label style="display:block;font-size:.82rem;font-weight:600;color:#0a0a0a;margin-bottom:6px">
+        Dirección actual <span style="color:#dc2626">*</span>
+      </label>
+      <input type="text" id="gpsManualDireccion"
+             placeholder="Ej: Av. Apoquindo 4501, Las Condes, Santiago"
+             autocomplete="off" autocorrect="off" spellcheck="false"
+             style="width:100%;padding:12px 14px;border:2px solid #e5e7eb;border-radius:10px;
+                    font-size:16px;outline:none;min-height:48px;color:#0a0a0a;background:#fff">
+      <div id="gpsManualHint" style="margin-top:8px;font-size:.78rem;color:#6b7280">
+        <i class="bi bi-info-circle"></i> Empezá a tipear y elegí una sugerencia de Google para mejor precisión.
+      </div>
+      <div id="gpsManualError" style="display:none;margin-top:8px;padding:8px 10px;background:#fee2e2;
+                                       border-radius:6px;color:#dc2626;font-size:.82rem"></div>
+      <div style="display:flex;gap:8px;margin-top:18px;flex-direction:column">
+        <button type="button" id="gpsManualSave"
+                style="background:#dc2626;color:#fff;border:none;border-radius:10px;padding:12px;
+                       font-weight:700;cursor:pointer;min-height:48px;font-size:.92rem">
+          <i class="bi bi-check-lg"></i> Guardar y continuar
+        </button>
+        <button type="button" id="gpsManualCancel"
+                style="background:#fff;color:#0a0a0a;border:2px solid #e5e7eb;border-radius:10px;
+                       padding:10px;font-weight:600;cursor:pointer;min-height:44px">
+          Cancelar
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Datos seleccionados por Google Places
+  let _picked = null;
+
+  const input = overlay.querySelector('#gpsManualDireccion');
+  const hint = overlay.querySelector('#gpsManualHint');
+  const errBox = overlay.querySelector('#gpsManualError');
+
+  // Inicializar autocomplete si Google Places está disponible
+  if (typeof ilusPlacesAutocomplete === 'function'){
+    ilusPlacesAutocomplete(input, {
+      country: 'cl',
+      types: ['address'],
+      onPlaceSelected: (place) => {
+        _picked = place;
+        hint.innerHTML = `<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> ` +
+                        `<span style="color:#16a34a">Dirección verificada en Google</span>`;
+        errBox.style.display = 'none';
+      },
+      onNoSelection: () => {
+        _picked = null;
+        hint.innerHTML = `<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> ` +
+                        `<span style="color:#92400e">Elegí una sugerencia para verificar la dirección</span>`;
+      }
+    });
+  } else {
+    hint.innerHTML = `<i class="bi bi-info-circle"></i> Escribí la dirección lo más completa posible.`;
+  }
+
+  setTimeout(() => input.focus(), 100);
+
+  return new Promise((resolve) => {
+    const close_ = (result) => {
+      overlay.remove();
+      // Si guardó algo, persistir al backend
+      if (result){
+        _gpsRegistrarResultado(result);
+        ilusToast('📍 Dirección guardada manualmente', { type: 'success' });
+      }
+      resolve(result);
+    };
+    overlay.querySelector('#gpsManualCancel').addEventListener('click', () => close_(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close_(null); });
+    overlay.querySelector('#gpsManualSave').addEventListener('click', async () => {
+      const txt = (input.value || '').trim();
+      if (!txt){
+        errBox.style.display = 'block';
+        errBox.textContent = 'Escribí una dirección para continuar.';
+        input.focus();
+        return;
+      }
+      // Caso A: Google ya geocodificó
+      if (_picked && isFinite(_picked.lat) && isFinite(_picked.lng)){
+        return close_({
+          lat: _picked.lat, lng: _picked.lng,
+          accuracy: 50, method: 'manual',
+          dir: _picked.direccion || txt
+        });
+      }
+      // Caso B: usuario escribió pero no seleccionó sugerencia.
+      // Intentar geocodificar con Nominatim (gratuito) como respaldo.
+      errBox.style.display = 'none';
+      hint.innerHTML = '<i class="bi bi-arrow-repeat"></i> Buscando dirección…';
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(txt)}&countrycodes=cl&limit=1`,
+          { headers: { 'Accept-Language': 'es' } });
+        const j = await r.json();
+        if (j && j[0]){
+          return close_({
+            lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon),
+            accuracy: 200, method: 'manual',
+            dir: j[0].display_name || txt
+          });
+        }
+        errBox.style.display = 'block';
+        errBox.textContent = 'No encontramos esa dirección. Probá con más detalle (calle, número, comuna, ciudad).';
+        hint.innerHTML = `<i class="bi bi-info-circle"></i> Empezá a tipear y elegí una sugerencia.`;
+      } catch(e){
+        errBox.style.display = 'block';
+        errBox.textContent = 'No pudimos verificar la dirección. Revisá tu conexión a internet.';
+      }
+    });
+    // Cerrar con ESC
+    document.addEventListener('keydown', function esc(e){
+      if (e.key === 'Escape'){ close_(null); document.removeEventListener('keydown', esc); }
+    });
+  });
+}
+
+// Wrapper para tarea GPS — devuelve { lat, lng, dir } o null
+async function _gpsManualPrompt(){
+  return new Promise(async (resolve) => {
+    const r = await abrirManualGPS();
+    resolve(r);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1993,6 +2575,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (RUTA_YA_INICIADA && VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'pendiente_aprobacion'){
     iniciarPingPeriodico();
+  }
+});
+
+// ─── Auto-retry cuando el usuario vuelve a la pestaña tras cambiar permisos ──
+// En iOS, al volver de Ajustes el visibilitychange se dispara → si aún no
+// tenemos GPS y el permiso ya está OK, reintentamos solo.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !window.__ilusGPS){
+    // Pequeño delay para que el navegador termine de re-renderizar
+    setTimeout(() => {
+      // Solo si seguimos sin GPS
+      if (!window.__ilusGPS){
+        _gpsLog('visibility_retry');
+        pedirGPS(true);
+      }
+    }, 600);
   }
 });
 

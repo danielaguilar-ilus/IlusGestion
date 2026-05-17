@@ -2,348 +2,1301 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>OT {{ visita.numero_ot or visita.id }} — ILUS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OT {{ visita.numero_ot or visita.id }} — Reporte técnico ILUS</title>
 <style>
-  @page { size: A4; margin: 12mm; }
+  /* ════════════════════════════════════════════════════════════
+     PDF ILUS — Orden de Trabajo (impresión + preview pantalla)
+     Pensado para "Guardar como PDF" del navegador (Cmd/Ctrl + P).
+     Cero dependencias nativas. A4 vertical, 2+ páginas.
+     ════════════════════════════════════════════════════════════ */
+  :root {
+    --ilus-red:   #dc2626;
+    --ilus-red-d: #991b1b;
+    --ilus-red-l: #fee2e2;
+    --ilus-black: #0a0a0a;
+    --ilus-ink:   #0f172a;
+    --ilus-mute:  #6b7280;
+    --ilus-line:  #e5e7eb;
+    --ilus-bg:    #f9fafb;
+    --ilus-ok:    #16a34a;
+    --ilus-ok-bg: #dcfce7;
+  }
+
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
   body {
     font-family: 'Helvetica Neue', Arial, sans-serif;
-    color: #0f172a; font-size: 10pt; line-height: 1.45;
-    margin: 0; padding: 0;
-  }
-  h1, h2, h3 { margin: 0; padding: 0; }
-
-  /* HERO */
-  .hero {
-    background: linear-gradient(135deg, #0a0a0a, #1a1a1a 60%, #2a0d0d);
-    color: #fff; padding: 18px 22px; border-radius: 8px; margin-bottom: 12px;
-    display: flex; align-items: center; gap: 18px;
-  }
-  .hero .logo-wrap { width: 80px; flex-shrink: 0; }
-  .hero .logo-wrap img { max-width: 100%; height: auto; }
-  .hero .info { flex: 1; }
-  .hero h1 { font-size: 16pt; font-weight: 900; letter-spacing: -.5px; }
-  .hero .ot-num {
-    font-family: 'Courier New', monospace; font-size: 13pt;
-    color: #fca5a5; font-weight: 800; margin-top: 2px;
-  }
-  .hero .meta {
-    font-size: 9pt; color: #cbd5e1; margin-top: 8px; line-height: 1.6;
-  }
-  .badge-estado {
-    background: #fee2e2; color: #991b1b;
-    font-weight: 800; font-size: 8pt; text-transform: uppercase;
-    padding: 4px 10px; border-radius: 50px; letter-spacing: .5px;
-  }
-  .badge-estado.cerrada { background: #dcfce7; color: #15803d; }
-  .badge-estado.pendiente_aprobacion { background: #fef3c7; color: #92400e; }
-
-  /* Sección 2 columnas */
-  .row-2 {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
-  }
-  .card {
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-    padding: 12px 14px; page-break-inside: avoid;
-  }
-  .card h3 {
-    font-size: 9pt; text-transform: uppercase; letter-spacing: .5px;
-    color: #dc2626; font-weight: 800; margin-bottom: 6px;
-    border-bottom: 1px solid #fee2e2; padding-bottom: 4px;
-  }
-  .card .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 9pt; }
-  .card .kv .k { color: #6b7280; font-weight: 600; }
-  .card .kv .v { color: #0f172a; font-weight: 500; word-break: break-word; }
-
-  /* Tabla equipos */
-  .section-title {
-    font-size: 11pt; font-weight: 800; color: #0f172a;
-    margin: 14px 0 8px; border-left: 4px solid #dc2626; padding-left: 10px;
-  }
-  table.equipos {
-    width: 100%; border-collapse: collapse; font-size: 9pt;
-    margin-bottom: 12px;
-  }
-  table.equipos th {
-    background: #0f172a; color: #fff; padding: 6px 8px;
-    text-align: left; font-weight: 700; font-size: 8pt; text-transform: uppercase;
-  }
-  table.equipos td {
-    border-bottom: 1px solid #e5e7eb; padding: 6px 8px; vertical-align: top;
-  }
-  table.equipos .eq-mini {
-    width: 36px; height: 36px; background: #f3f4f6 center/cover no-repeat;
-    border-radius: 4px; border: 1px solid #e5e7eb; display: inline-block;
+    color: var(--ilus-ink);
+    font-size: 10pt;
+    line-height: 1.5;
+    background: #e7eaf0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
-  /* Grupos (equipo × plantilla) */
-  .grupo {
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-    padding: 12px; margin-bottom: 10px; page-break-inside: avoid;
+  /* ───── Barra superior (visible solo en pantalla) ───── */
+  .toolbar {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--ilus-black); color: #fff;
+    padding: 12px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25);
   }
-  .grupo-head {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
-    border-bottom: 1px dashed #e5e7eb; padding-bottom: 6px;
+  .toolbar .tb-left { display: flex; align-items: center; gap: 12px; }
+  .toolbar .tb-title {
+    font-size: 13pt; font-weight: 800; letter-spacing: -.01em;
   }
-  .grupo-head .gh-eq { font-weight: 800; font-size: 10pt; color: #0f172a; flex: 1; }
-  .grupo-head .gh-plant {
-    background: #dbeafe; color: #1e40af;
-    padding: 2px 8px; border-radius: 50px; font-size: 7.5pt; font-weight: 700;
+  .toolbar .tb-sub { font-size: 9pt; color: #9ca3af; }
+  .toolbar .tb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tb-btn {
+    background: #fff; color: var(--ilus-black);
+    border: 0; padding: 9px 16px; border-radius: 8px;
+    font-weight: 800; font-size: 9.5pt; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: transform .12s, box-shadow .12s;
   }
-  .grupo-head .gh-stats { font-size: 8pt; color: #6b7280; font-weight: 600; }
-  .tarea-line {
-    font-size: 9pt; padding: 4px 6px; border-radius: 4px;
-    display: flex; align-items: flex-start; gap: 6px; margin-bottom: 2px;
+  .tb-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255,255,255,.18); }
+  .tb-btn.primary {
+    background: var(--ilus-red); color: #fff;
   }
-  .tarea-line.ok { background: #f0fdf4; }
-  .tarea-line .check {
-    width: 14px; height: 14px; border: 1.5px solid #16a34a;
-    border-radius: 3px; display: inline-block; flex-shrink: 0; margin-top: 2px;
-    background: #fff; text-align: center; line-height: 12px; font-weight: 800;
-    color: #15803d; font-size: 9pt;
-  }
-  .tarea-line.ok .check { background: #16a34a; color: #fff; }
-  .tarea-line .ttext { flex: 1; }
-  .tarea-line .tval {
-    font-family: 'Courier New', monospace; font-size: 8pt;
-    background: #fef3c7; padding: 1px 6px; border-radius: 3px; color: #92400e;
-  }
-
-  /* Fotos */
-  .fotos-grid {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-    margin-bottom: 14px;
-  }
-  .fotos-grid img {
-    width: 100%; aspect-ratio: 1; object-fit: cover;
-    border-radius: 4px; border: 1px solid #e5e7eb;
+  .tb-btn.primary:hover { background: var(--ilus-red-d); box-shadow: 0 4px 12px rgba(220,38,38,.45); }
+  .tb-btn .tb-ico {
+    width: 16px; height: 16px; display: inline-block;
+    background-size: contain; background-repeat: no-repeat; background-position: center;
   }
 
-  /* Firmas — 3 columnas */
-  .firmas {
-    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;
-    margin-top: 18px; page-break-inside: avoid;
+  /* ───── Hoja A4 ───── */
+  .sheet {
+    width: 210mm;
+    min-height: 297mm;
+    background: #fff;
+    margin: 14px auto;
+    padding: 12mm 14mm 14mm;
+    position: relative;
+    box-shadow: 0 6px 22px rgba(0,0,0,.10);
+    page-break-after: always;
   }
-  .firma-box {
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-    padding: 10px; text-align: center;
+  .sheet:last-child { page-break-after: auto; }
+
+  /* ───── Header banda ───── */
+  .head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding-bottom: 8px;
   }
-  .firma-box .fb-tipo {
-    font-size: 8pt; color: #6b7280; text-transform: uppercase;
-    font-weight: 700; letter-spacing: .5px; margin-bottom: 6px;
-  }
-  .firma-box .fb-img {
-    width: 100%; height: 70px; background: #fafafa;
-    border: 1px dashed #cbd5e1; border-radius: 4px;
+  .head .logo {
+    width: 88px; height: 64px;
     display: flex; align-items: center; justify-content: center;
-    color: #94a3b8; font-size: 8pt; margin-bottom: 6px; overflow: hidden;
   }
-  .firma-box .fb-img img { max-width: 100%; max-height: 100%; }
-  .firma-box .fb-nombre {
-    font-size: 9pt; font-weight: 700; color: #0f172a;
-    border-top: 1px solid #e5e7eb; padding-top: 4px; margin-top: 4px;
+  .head .logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .head .logo .logo-fallback {
+    font-weight: 900; color: var(--ilus-red);
+    font-size: 14pt; letter-spacing: .04em;
   }
-  .firma-box .fb-meta { font-size: 7.5pt; color: #9ca3af; }
+  .head .center { text-align: center; }
+  .head .center h1 {
+    margin: 0; font-size: 17pt; font-weight: 900;
+    color: var(--ilus-black); letter-spacing: -.01em;
+  }
+  .head .center .sub {
+    color: var(--ilus-mute); font-size: 9pt;
+    margin-top: 1px; letter-spacing: .02em;
+  }
+  .head .right { text-align: right; }
+  .head .right .otn {
+    font-size: 13pt; font-weight: 900; color: var(--ilus-black);
+    letter-spacing: -.01em;
+  }
+  .head .right .otn b { color: var(--ilus-red); }
+  .badge-estado {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--ilus-ok-bg); color: #15803d;
+    font-weight: 800; font-size: 8pt;
+    padding: 4px 10px; border-radius: 50px;
+    margin-top: 4px;
+    letter-spacing: .03em;
+  }
+  .badge-estado::before {
+    content: '✓'; font-size: 9pt; font-weight: 900;
+  }
+  .head-sep {
+    height: 3px;
+    background: linear-gradient(90deg, var(--ilus-red) 0%, var(--ilus-red) 60%, #fca5a5 100%);
+    border-radius: 2px;
+    margin: 4px 0 12px;
+  }
 
-  /* Footer */
-  .footer {
-    margin-top: 20px; padding-top: 8px; border-top: 1px solid #e5e7eb;
-    text-align: center; font-size: 7.5pt; color: #9ca3af;
+  /* ───── Sección título "subrayado" ───── */
+  .sec-title {
+    font-size: 9.5pt; font-weight: 900;
+    color: var(--ilus-black); text-transform: uppercase;
+    letter-spacing: .05em;
+    margin: 12px 0 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .sec-title::before {
+    content: ''; width: 3px; height: 14px;
+    background: var(--ilus-red); border-radius: 2px;
+    display: inline-block;
+  }
+
+  /* ───── Datos generales: 3 columnas ───── */
+  .info-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .info-card {
+    background: var(--ilus-bg);
+    border: 1px solid var(--ilus-line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    page-break-inside: avoid;
+  }
+  .info-card .ic-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px; }
+  .info-card .ic-row:last-child { margin-bottom: 0; }
+  .info-card .ic-ico {
+    width: 22px; height: 22px;
+    background: var(--ilus-red-l);
+    border-radius: 6px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ilus-red); font-weight: 900;
+    font-size: 11pt; line-height: 1;
+  }
+  .info-card .ic-text { flex: 1; min-width: 0; font-size: 8.5pt; line-height: 1.4; }
+  .info-card .ic-text .lbl {
+    color: var(--ilus-mute); font-weight: 700;
+    text-transform: uppercase; font-size: 7pt;
+    letter-spacing: .04em; display: block;
+  }
+  .info-card .ic-text .val {
+    color: var(--ilus-ink); font-weight: 700;
+    word-break: break-word;
+  }
+
+  /* ───── Bloque ubicación ───── */
+  .ubic-box {
+    background: var(--ilus-red-l);
+    border: 1px solid #fca5a5;
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .ubic-box .u-ico {
+    width: 26px; height: 26px;
+    background: #fff; color: var(--ilus-red);
+    border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13pt; font-weight: 900;
+  }
+  .ubic-box .u-text { font-size: 9pt; line-height: 1.4; flex: 1; }
+  .ubic-box .u-text b { color: var(--ilus-red); }
+
+  /* ───── Técnicos card ───── */
+  .tec-card {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--ilus-bg);
+    border: 1px solid var(--ilus-line);
+    border-radius: 8px;
+    padding: 9px 12px;
+    margin-bottom: 8px;
+  }
+  .tec-card .ta-avatar {
+    width: 38px; height: 38px;
+    border-radius: 50%; background: #cbd5e1;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 900; font-size: 12pt;
+  }
+  .tec-card .ta-text .ta-lbl {
+    font-size: 7.5pt; color: var(--ilus-mute);
+    font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .tec-card .ta-text .ta-nom {
+    font-size: 10pt; font-weight: 800; color: var(--ilus-ink);
+  }
+
+  /* ───── Logística (4 cards horizontales) ───── */
+  .logist-4 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .log-card {
+    background: #fff;
+    border: 1px solid var(--ilus-line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+  .log-card .lc-ico {
+    width: 30px; height: 30px; margin: 0 auto 4px;
+    background: var(--ilus-bg);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ilus-red); font-weight: 900; font-size: 13pt;
+  }
+  .log-card .lc-lbl {
+    font-size: 7.5pt; color: var(--ilus-mute);
+    text-transform: uppercase; font-weight: 700;
+    letter-spacing: .03em;
+  }
+  .log-card .lc-val {
+    font-size: 10pt; font-weight: 900;
+    color: var(--ilus-ink); margin-top: 2px;
+  }
+  .log-card .lc-val.si { color: var(--ilus-ok); }
+  .log-card .lc-val.no { color: var(--ilus-mute); }
+
+  /* ───── Observación cliente ───── */
+  .obs-box {
+    background: var(--ilus-bg);
+    border-left: 4px solid var(--ilus-red);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .obs-box .o-ico {
+    width: 22px; height: 22px;
+    background: var(--ilus-red);
+    color: #fff; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 11pt;
+    flex-shrink: 0;
+  }
+  .obs-box .o-text { font-size: 9pt; line-height: 1.45; }
+  .obs-box .o-text b { color: var(--ilus-red); }
+
+  /* ───── Equipos cards grandes ───── */
+  .eq-card {
+    background: #fff;
+    border: 1px solid var(--ilus-line);
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 10px;
+    page-break-inside: avoid;
+    display: grid;
+    grid-template-columns: 110px 1fr 150px;
+    gap: 12px;
+    position: relative;
+  }
+  .eq-card .eq-idx {
+    position: absolute;
+    top: -8px; left: -8px;
+    width: 26px; height: 26px;
+    background: var(--ilus-red); color: #fff;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 11pt;
+    box-shadow: 0 2px 6px rgba(220,38,38,.35);
+  }
+  .eq-card .eq-foto {
+    width: 110px; height: 110px;
+    border-radius: 8px;
+    background: var(--ilus-bg) center/cover no-repeat;
+    border: 1px solid var(--ilus-line);
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ilus-mute); font-size: 22pt; font-weight: 200;
+  }
+  .eq-card .eq-foto img { width: 100%; height: 100%; object-fit: cover; }
+  .eq-card .eq-body { min-width: 0; }
+  .eq-card .eq-nom {
+    font-size: 11pt; font-weight: 900;
+    color: var(--ilus-red); letter-spacing: -.01em;
+    margin-bottom: 2px;
+  }
+  .eq-card .eq-meta {
+    font-size: 8.5pt; color: var(--ilus-mute);
+    margin-bottom: 6px; line-height: 1.5;
+  }
+  .eq-card .eq-meta b { color: var(--ilus-ink); }
+  .eq-card .eq-obs {
+    background: var(--ilus-bg);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 8.5pt; line-height: 1.4;
+    color: var(--ilus-ink);
+    border-left: 3px solid var(--ilus-red);
+    margin-bottom: 6px;
+  }
+  .eq-card .eq-obs .lbl {
+    font-weight: 800; color: var(--ilus-red);
+    font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .04em; display: block;
+    margin-bottom: 1px;
+  }
+  .eq-card .eq-thumbs {
+    display: flex; gap: 4px; flex-wrap: wrap;
+  }
+  .eq-card .eq-thumbs .th-lbl {
+    font-size: 7.5pt; color: var(--ilus-mute);
+    font-weight: 700; text-transform: uppercase;
+    letter-spacing: .03em; width: 100%;
+    margin-bottom: 2px;
+  }
+  .eq-card .eq-thumbs img,
+  .eq-card .eq-thumbs .ph {
+    width: 38px; height: 38px;
+    border-radius: 4px; object-fit: cover;
+    border: 1px solid var(--ilus-line);
+    background: var(--ilus-bg);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ilus-mute); font-size: 9pt;
+  }
+  .eq-card .eq-checks {
+    background: var(--ilus-bg);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 8pt;
+  }
+  .eq-card .eq-checks .ec-lbl {
+    font-weight: 800; color: var(--ilus-black);
+    font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .04em; display: block;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--ilus-line);
+    padding-bottom: 3px;
+  }
+  .eq-card .eq-checks .ec-item {
+    display: flex; align-items: center; gap: 5px;
+    margin-bottom: 3px; line-height: 1.3;
+  }
+  .eq-card .eq-checks .ec-item:last-child { margin-bottom: 0; }
+  .eq-card .eq-checks .ec-ck {
+    width: 12px; height: 12px;
+    background: var(--ilus-ok); color: #fff;
+    border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 8pt; font-weight: 900;
+  }
+  .eq-card .eq-checks .ec-ck.no {
+    background: var(--ilus-line); color: var(--ilus-mute);
+  }
+  .eq-card .eq-checks .ec-txt {
+    color: var(--ilus-ink); flex: 1;
+    word-break: break-word;
+  }
+
+  .eq-counter {
+    text-align: right;
+    color: var(--ilus-red);
+    font-weight: 800;
+    font-size: 9pt;
+    margin: 4px 0 8px;
+  }
+
+  /* ───── Tabla checklist técnico ───── */
+  table.chk {
+    width: 100%; border-collapse: collapse;
+    font-size: 8pt;
+    margin-bottom: 10px;
+    page-break-inside: auto;
+  }
+  table.chk thead { background: var(--ilus-black); }
+  table.chk thead th {
+    color: #fff; padding: 6px 6px;
+    text-align: left;
+    font-size: 7.5pt; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  table.chk thead th:first-child { border-top-left-radius: 6px; }
+  table.chk thead th:last-child { border-top-right-radius: 6px; }
+  table.chk tbody tr { page-break-inside: avoid; }
+  table.chk tbody tr:nth-child(even) { background: var(--ilus-bg); }
+  table.chk tbody td {
+    padding: 5px 6px; vertical-align: top;
+    border-bottom: 1px solid var(--ilus-line);
+    line-height: 1.35;
+  }
+  table.chk .num {
+    width: 22px; text-align: center; font-weight: 800;
+    color: var(--ilus-red);
+  }
+  table.chk .pill-tipo {
+    display: inline-block; padding: 1px 6px;
+    border-radius: 50px; font-size: 7pt; font-weight: 800;
+    background: #dbeafe; color: #1e40af;
+    text-transform: uppercase; letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  table.chk .pill-tipo.numero { background: #fef3c7; color: #92400e; }
+  table.chk .pill-tipo.sino { background: #f3e8ff; color: #6b21a8; }
+  table.chk .pill-tipo.gps { background: #ccfbf1; color: #115e59; }
+  table.chk .pill-tipo.fecha_hora { background: #e0e7ff; color: #3730a3; }
+  table.chk .pill-tipo.lista { background: #fce7f3; color: #9d174d; }
+  table.chk .pill-tipo.texto { background: #f3f4f6; color: #374151; }
+  table.chk .pill-tipo.foto { background: #fed7aa; color: #9a3412; }
+  table.chk .pill-tipo.verificacion { background: #dcfce7; color: #166534; }
+  table.chk .pill-res {
+    display: inline-block; padding: 1px 8px;
+    border-radius: 50px; font-size: 7.5pt; font-weight: 800;
+    background: var(--ilus-ok-bg); color: var(--ilus-ok);
+    text-transform: uppercase; letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  table.chk .pill-res.warn { background: #fef3c7; color: #92400e; }
+  table.chk .pill-res.err  { background: #fee2e2; color: #991b1b; }
+  table.chk .pill-res.txt  { background: #f3f4f6; color: #374151; }
+  table.chk .ico {
+    color: var(--ilus-red); font-size: 10pt;
+    text-align: center;
+  }
+  table.chk td.fecha, table.chk td.ubi {
+    color: var(--ilus-mute); font-size: 7.5pt; white-space: nowrap;
+  }
+
+  /* ───── 4 mini-resumen cards ───── */
+  .resumen-4 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .res-mini {
+    background: var(--ilus-bg);
+    border: 1px solid var(--ilus-line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex; align-items: center; gap: 10px;
+    page-break-inside: avoid;
+  }
+  .res-mini .rm-ico {
+    width: 28px; height: 28px;
+    background: var(--ilus-red);
+    color: #fff;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 13pt;
+    flex-shrink: 0;
+  }
+  .res-mini .rm-text { line-height: 1.3; }
+  .res-mini .rm-val {
+    font-size: 10.5pt; font-weight: 900;
+    color: var(--ilus-ink);
+  }
+  .res-mini .rm-lbl {
+    font-size: 7.5pt; color: var(--ilus-mute);
+    text-transform: uppercase; font-weight: 700;
+    letter-spacing: .03em;
+  }
+
+  /* ───── 2 columnas (técnicos + resumen / obs + fotos) ───── */
+  .col-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .obs-gen {
+    background: var(--ilus-bg);
+    border: 1px solid var(--ilus-line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 9pt; line-height: 1.5;
+  }
+  .obs-gen .lbl {
+    font-size: 7.5pt; color: var(--ilus-red);
+    font-weight: 800; text-transform: uppercase;
+    letter-spacing: .04em; display: block;
+    margin-bottom: 4px;
+  }
+
+  /* ───── Evidencia grid 4 thumbnails ───── */
+  .ev-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+  }
+  .ev-grid img {
+    width: 100%; aspect-ratio: 1; object-fit: cover;
+    border-radius: 4px; border: 1px solid var(--ilus-line);
+  }
+  .ev-grid .ph {
+    background: var(--ilus-bg);
+    border: 1px dashed var(--ilus-line);
+    border-radius: 4px;
+    aspect-ratio: 1;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ilus-mute); font-size: 14pt;
+  }
+
+  /* ───── FIRMAS ───── */
+  .firmas {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+    page-break-inside: avoid;
+  }
+  .fir {
+    background: #fff;
+    border: 1px solid var(--ilus-line);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .fir .fir-img {
+    width: 100%; height: 70px;
+    background: #fafafa;
+    border-bottom: 1px solid var(--ilus-line);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+  .fir .fir-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .fir .fir-img.empty { color: var(--ilus-mute); font-size: 14pt; font-weight: 200; }
+  .fir .fir-nom {
+    font-size: 9pt; font-weight: 800;
+    color: var(--ilus-ink);
+    word-break: break-word;
+    min-height: 22px;
+  }
+  .fir .fir-lbl {
+    font-size: 7.5pt; color: var(--ilus-mute);
+    text-transform: uppercase; font-weight: 700;
+    letter-spacing: .04em;
+    margin-top: 3px;
+  }
+  .fir .fir-meta {
+    font-size: 7pt; color: #9ca3af;
+    margin-top: 2px;
+  }
+
+  /* ───── Footer ───── */
+  .foot {
+    position: absolute;
+    left: 14mm; right: 14mm;
+    bottom: 8mm;
+    border-top: 1px solid var(--ilus-line);
+    padding-top: 6px;
+  }
+  .foot-cta {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .foot-cta .fc {
+    background: var(--ilus-bg);
+    border: 1px solid var(--ilus-line);
+    border-radius: 50px;
+    padding: 4px 10px;
+    font-size: 7.5pt;
+    text-align: center;
+    color: var(--ilus-ink);
+    font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    gap: 4px;
+  }
+  .foot-cta .fc .ico {
+    width: 14px; height: 14px;
+    background: var(--ilus-red); color: #fff;
+    border-radius: 50%;
+    font-weight: 900; font-size: 8pt;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .foot-info {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 7pt;
+    color: var(--ilus-mute);
+  }
+  .foot-info .pg {
+    font-weight: 800; color: var(--ilus-black);
+  }
+  .foot-continua {
+    text-align: center;
+    font-size: 8pt;
+    color: var(--ilus-mute);
+    font-style: italic;
+    margin-bottom: 6px;
+  }
+  .foot-continua::before {
+    content: '⋯'; display: block;
+    font-size: 16pt; color: var(--ilus-red);
+    letter-spacing: 4px;
+    line-height: 1;
+  }
+
+  /* ═════ @media print ═════ */
+  @media print {
+    body { background: #fff; }
+    .no-print, .toolbar { display: none !important; }
+    .sheet {
+      width: auto;
+      min-height: auto;
+      margin: 0;
+      box-shadow: none;
+      padding: 12mm 14mm 14mm;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .sheet { width: auto; padding: 8mm 6mm 12mm; min-height: auto; }
+    .info-3col, .logist-4, .firmas, .col-2, .resumen-4 { grid-template-columns: 1fr; }
+    .eq-card { grid-template-columns: 1fr; }
+    .eq-card .eq-foto { width: 100%; height: 180px; }
+    table.chk { font-size: 9pt; }
+    table.chk thead th { font-size: 8pt; }
+    .toolbar .tb-title { font-size: 11pt; }
   }
 </style>
 </head>
 <body>
 
-  {# ──── HERO ──── #}
-  <div class="hero">
-    <div class="logo-wrap">
-      {% if logo_b64 %}
+{# ════════════ TOOLBAR (solo pantalla) ════════════ #}
+<div class="toolbar no-print">
+  <div class="tb-left">
+    <div>
+      <div class="tb-title">OT {{ visita.numero_ot or ('VS-' ~ visita.id) }} — {{ visita.razon_social }}</div>
+      <div class="tb-sub">Reporte técnico digital · {{ equipos|length }} equipo(s) · {{ tareas|length }} tarea(s) · Generado {{ generated_at }}</div>
+    </div>
+  </div>
+  <div class="tb-actions">
+    <button class="tb-btn primary" onclick="window.print()">
+      <span style="font-size:13pt;line-height:1">🖨</span> Imprimir / Guardar PDF
+    </button>
+    <a class="tb-btn" href="{{ url_for('mant_ot_ejecutar', vid=visita.id) }}">← Volver a la OT</a>
+  </div>
+</div>
+
+{# ════════════ Macro: header de página ════════════ #}
+{% macro header_block(pg, total_pg) %}
+<div class="head">
+  <div class="logo">
+    {% if logo_b64 %}
       <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
-      {% else %}
-      <div style="font-weight:900;font-size:16pt;color:#dc2626">ILUS.</div>
+    {% else %}
+      <div class="logo-fallback">ILUS<span style="color:#0a0a0a">.</span></div>
+    {% endif %}
+  </div>
+  <div class="center">
+    <h1>Orden de Trabajo</h1>
+    <div class="sub">Reporte técnico digital</div>
+  </div>
+  <div class="right">
+    <div class="otn">N° <b>{{ visita.numero_ot or visita.id }}</b></div>
+    <span class="badge-estado">Cerrada</span>
+  </div>
+</div>
+<div class="head-sep"></div>
+{% endmacro %}
+
+{# ════════════ Macro: footer de página ════════════ #}
+{% macro footer_block(pg, total_pg, continua=false) %}
+<div class="foot">
+  {% if continua %}
+  <div class="foot-continua">Continúa en la siguiente página</div>
+  {% endif %}
+  <div class="foot-cta">
+    <div class="fc"><span class="ico">w</span>www.ilusfitness.com</div>
+    <div class="fc"><span class="ico">☎</span>+56 2 3276 4600</div>
+    <div class="fc"><span class="ico">✉</span>servicio.tecnico@ilusfitness.com</div>
+  </div>
+  <div class="foot-info">
+    <span>ILUS Sport &amp; Health · Documento generado el {{ generated_at }}</span>
+    <span class="pg">Página {{ pg }} de {{ total_pg }}</span>
+  </div>
+</div>
+{% endmacro %}
+
+{# Variables auxiliares calculadas en backend:
+   - paginas_equipos: lista de listas — cada sublista son los equipos de esa página
+   - tareas_chk: tareas formateadas con maquina_nombre, ubicacion_str, resultado
+   - eq_fotos_idx: dict equipo_id → primeras 3 fotos
+   - eq_check_resumen: dict equipo_id → 5 checks (titulo, ok)
+#}
+
+{# total_pg:
+   - 1 página de equipos  → +1 hoja con checklist/firmas = 2 hojas
+   - N páginas (N >= 2)    → la última ya incluye checklist+firmas = N hojas
+#}
+{% set total_pg = 2 if paginas_equipos|length == 1 else paginas_equipos|length %}
+
+{# ═══════════════════════════════════════════════════════════════════
+   PÁGINA 1 — Datos generales + Logística + Equipos (primera tanda)
+   ═══════════════════════════════════════════════════════════════════ #}
+<section class="sheet">
+  {{ header_block(1, total_pg) }}
+
+  {# ── Datos generales: 3 columnas ── #}
+  <div class="sec-title">Datos generales</div>
+  <div class="info-3col">
+    {# Col 1 – Técnico/Ticket #}
+    <div class="info-card">
+      <div class="ic-row">
+        <div class="ic-ico">👤</div>
+        <div class="ic-text">
+          <span class="lbl">Técnico principal</span>
+          <span class="val">{{ visita.tecnico_principal or '—' }}</span>
+        </div>
+      </div>
+      <div class="ic-row">
+        <div class="ic-ico" style="background:#dbeafe;color:#1e40af">T</div>
+        <div class="ic-text">
+          <span class="lbl">Ticket / Tipo</span>
+          <span class="val">{{ (visita.tipo or 'instalacion')|replace('_',' ')|title }}</span>
+        </div>
+      </div>
+    </div>
+
+    {# Col 2 – Fecha/Repuestos #}
+    <div class="info-card">
+      <div class="ic-row">
+        <div class="ic-ico">📅</div>
+        <div class="ic-text">
+          <span class="lbl">Fecha programada</span>
+          <span class="val">
+            {{ visita.fecha_programada or '—' }}{% if visita.hora_inicio %} {{ visita.hora_inicio }}{% endif %}
+          </span>
+        </div>
+      </div>
+      <div class="ic-row">
+        <div class="ic-ico" style="background:#fef3c7;color:#92400e">R</div>
+        <div class="ic-text">
+          <span class="lbl">Repuestos</span>
+          <span class="val">{{ 'Sí' if visita.usa_repuestos else 'No' }}</span>
+        </div>
+      </div>
+    </div>
+
+    {# Col 3 – Cliente #}
+    <div class="info-card">
+      <div class="ic-row">
+        <div class="ic-ico">🏠</div>
+        <div class="ic-text">
+          <span class="lbl">Cliente</span>
+          <span class="val">{{ visita.razon_social }}</span>
+        </div>
+      </div>
+      {% if visita.cli_contacto_tel %}
+      <div class="ic-row">
+        <div class="ic-ico" style="background:#dcfce7;color:#166534">☏</div>
+        <div class="ic-text">
+          <span class="lbl">Contacto</span>
+          <span class="val">{{ visita.cli_contacto_tel }}</span>
+        </div>
+      </div>
+      {% endif %}
+      {% if visita.cli_email or visita.contacto_email %}
+      <div class="ic-row">
+        <div class="ic-ico" style="background:#e0e7ff;color:#3730a3">@</div>
+        <div class="ic-text">
+          <span class="lbl">Correo</span>
+          <span class="val" style="font-size:8pt">{{ visita.contacto_email or visita.cli_email }}</span>
+        </div>
+      </div>
       {% endif %}
     </div>
-    <div class="info">
-      <h1>Orden de Trabajo</h1>
-      <div class="ot-num">{{ visita.numero_ot or 'VS-' ~ visita.id }}</div>
-      <div class="meta">
-        {{ visita.titulo or '' }}<br>
-        <strong style="color:#fff">{{ visita.razon_social }}</strong>
-        {% if visita.cli_rut %} — RUT {{ visita.cli_rut }}{% endif %}
-      </div>
+  </div>
+
+  {# ── Bloque ubicación ── #}
+  {% if visita.direccion_visita or visita.cli_direccion %}
+  <div class="ubic-box">
+    <div class="u-ico">📍</div>
+    <div class="u-text">
+      <b>Ubicación:</b>
+      {{ visita.direccion_visita or visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}
     </div>
-    <div>
-      <span class="badge-estado {{ visita.estado }}">{{ (visita.estado or 'programada')|replace('_',' ') }}</span>
+  </div>
+  {% endif %}
+
+  {# ── Técnicos involucrados ── #}
+  <div class="sec-title">Técnicos involucrados</div>
+  <div class="tec-card">
+    <div class="ta-avatar">{{ (visita.tecnico_principal or 'T')[0]|upper }}</div>
+    <div class="ta-text">
+      <div class="ta-lbl">{{ (1 + (tecnicos_extra|length if tecnicos_extra else 0)) }} técnico{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }} involucrado{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }}</div>
+      <div class="ta-nom">{{ visita.tecnico_principal or '—' }}{% if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre }}{% endfor %}{% endif %}</div>
     </div>
   </div>
 
-  {# ──── Datos generales: 2 columnas ──── #}
-  <div class="row-2">
-    <div class="card">
-      <h3>Cliente</h3>
-      <div class="kv">
-        <div class="k">Razón social</div><div class="v">{{ visita.razon_social }}</div>
-        {% if visita.cli_direccion %}
-        <div class="k">Dirección</div><div class="v">{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>
-        {% endif %}
-        {% if visita.cli_contacto %}
-        <div class="k">Contacto</div><div class="v">{{ visita.cli_contacto }}{% if visita.cli_contacto_tel %} — {{ visita.cli_contacto_tel }}{% endif %}</div>
-        {% endif %}
-      </div>
+  {# ── Logística (4 cards) ── #}
+  <div class="sec-title">Logística de acceso</div>
+  <div class="logist-4">
+    <div class="log-card">
+      <div class="lc-ico">P</div>
+      <div class="lc-lbl">Estacionamiento</div>
+      <div class="lc-val {{ 'si' if visita.acceso_estacionamiento else 'no' }}">{{ 'Sí' if visita.acceso_estacionamiento else 'No' }}</div>
     </div>
-    <div class="card">
-      <h3>Programación</h3>
-      <div class="kv">
-        <div class="k">Tipo</div><div class="v">{{ (visita.tipo or '')|title }}</div>
-        <div class="k">Fecha</div><div class="v">{{ visita.fecha_programada or '—' }}</div>
-        {% if visita.hora_inicio %}
-        <div class="k">Horario</div><div class="v">{{ visita.hora_inicio }}{% if visita.hora_fin %} – {{ visita.hora_fin }}{% endif %}</div>
-        {% endif %}
-        {% if visita.tecnico_principal %}
-        <div class="k">Técnico</div><div class="v">{{ visita.tecnico_principal }}</div>
-        {% endif %}
-        {% if visita.modalidad_cobro %}
-        <div class="k">Modalidad</div><div class="v">{{ visita.modalidad_cobro|replace('_',' ')|title }}</div>
-        {% endif %}
-        {% if visita.direccion_visita %}
-        <div class="k">Dir. visita</div><div class="v">{{ visita.direccion_visita }}</div>
-        {% endif %}
-      </div>
+    <div class="log-card">
+      <div class="lc-ico">⬆</div>
+      <div class="lc-lbl">Ascensor</div>
+      <div class="lc-val {{ 'si' if visita.acceso_ascensor else 'no' }}">{{ 'Sí' if visita.acceso_ascensor else 'No' }}</div>
+    </div>
+    <div class="log-card">
+      <div class="lc-ico">⚙</div>
+      <div class="lc-lbl">Montacarga</div>
+      <div class="lc-val {{ 'si' if visita.acceso_montacarga else 'no' }}">{{ 'Sí' if visita.acceso_montacarga else 'No' }}</div>
+    </div>
+    <div class="log-card">
+      <div class="lc-ico">▸</div>
+      <div class="lc-lbl">Carga / Descarga</div>
+      <div class="lc-val {{ 'si' if visita.acceso_carga else 'no' }}">{{ 'Sí' if visita.acceso_carga else 'No' }}</div>
     </div>
   </div>
 
-  {# ──── Equipos ──── #}
-  {% if equipos %}
-  <div class="section-title">Equipos gestionados ({{ equipos|length }})</div>
-  <table class="equipos">
+  {# ── Observación general ── #}
+  {% if visita.observaciones or visita.descripcion %}
+  <div class="obs-box">
+    <div class="o-ico">💬</div>
+    <div class="o-text">
+      <b>Observación:</b> {{ visita.observaciones or visita.descripcion }}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Equipos informados (primera tanda) ── #}
+  {% if paginas_equipos and paginas_equipos[0] %}
+  <div class="sec-title">Equipos informados</div>
+  {% for e in paginas_equipos[0] %}
+    {% set idx = loop.index %}
+    {% set _fotos = eq_fotos_idx.get(e.id, []) %}
+    {% set _checks = eq_check_resumen.get(e.id, []) %}
+    <div class="eq-card">
+      <div class="eq-idx">{{ idx }}</div>
+      <div class="eq-foto">
+        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
+      </div>
+      <div class="eq-body">
+        <div class="eq-nom">{{ e.nombre }}</div>
+        <div class="eq-meta">
+          {% if e.sku %}<b>SKU:</b> {{ e.sku }}{% endif %}
+          {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
+          {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
+        </div>
+        {% if e.observaciones %}
+        <div class="eq-obs">
+          <span class="lbl">Observación:</span>
+          {{ e.observaciones }}
+        </div>
+        {% endif %}
+        {% if _fotos %}
+        <div class="eq-thumbs">
+          <span class="th-lbl">Evidencia fotográfica (alta resolución)</span>
+          {% for f in _fotos[:3] %}
+          <img src="{{ f.url }}" alt="">
+          {% endfor %}
+          {% for _ in range(3 - _fotos|length) %}
+          <span class="ph">📷</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="eq-checks">
+        <span class="ec-lbl">Checklist resumen</span>
+        {% if _checks %}
+          {% for c in _checks[:5] %}
+          <div class="ec-item">
+            <span class="ec-ck {{ '' if c.ok else 'no' }}">✓</span>
+            <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="ec-item">
+            <span class="ec-ck no">·</span>
+            <span class="ec-txt" style="color:var(--ilus-mute);font-style:italic">Sin checklist asignado</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+  <div class="eq-counter">
+    {{ paginas_equipos[0]|length }} de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }}
+  </div>
+  {% endif %}
+
+  {{ footer_block(1, total_pg, continua=true) }}
+</section>
+
+{# ═══════════════════════════════════════════════════════════════════
+   PÁGINAS 2..N — Resto equipos + checklist técnico + firmas
+   ═══════════════════════════════════════════════════════════════════ #}
+{% for pg_eq in paginas_equipos[1:] %}
+<section class="sheet">
+  {{ header_block(loop.index + 1, total_pg) }}
+
+  <div class="sec-title">Equipos informados</div>
+  {# offset = cantidad de equipos en TODAS las páginas previas a esta
+     (es decir, paginas_equipos[0..loop.index0], porque pg_eq itera
+     sobre paginas_equipos[1:] y loop.index0 vale 0 para pg2). #}
+  {% set _outer_loop = loop %}
+  {% set _ns = namespace(start=0) %}
+  {% for _p in paginas_equipos %}
+    {% if loop.index0 < _outer_loop.index0 + 1 %}
+      {% set _ns.start = _ns.start + (_p|length) %}
+    {% endif %}
+  {% endfor %}
+  {% set _start = _ns.start %}
+  {% for e in pg_eq %}
+    {% set idx = _start + loop.index %}
+    {% set _fotos = eq_fotos_idx.get(e.id, []) %}
+    {% set _checks = eq_check_resumen.get(e.id, []) %}
+    <div class="eq-card">
+      <div class="eq-idx">{{ idx }}</div>
+      <div class="eq-foto">
+        {% if e.foto_url %}<img src="{{ e.foto_url }}" alt="{{ e.nombre }}">{% else %}📷{% endif %}
+      </div>
+      <div class="eq-body">
+        <div class="eq-nom">{{ e.nombre }}</div>
+        <div class="eq-meta">
+          {% if e.sku %}<b>SKU:</b> {{ e.sku }}{% endif %}
+          {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
+          {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
+        </div>
+        {% if e.observaciones %}
+        <div class="eq-obs">
+          <span class="lbl">Observación:</span>
+          {{ e.observaciones }}
+        </div>
+        {% endif %}
+        {% if _fotos %}
+        <div class="eq-thumbs">
+          <span class="th-lbl">Evidencia fotográfica (alta resolución)</span>
+          {% for f in _fotos[:3] %}
+          <img src="{{ f.url }}" alt="">
+          {% endfor %}
+          {% for _ in range(3 - _fotos|length) %}
+          <span class="ph">📷</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="eq-checks">
+        <span class="ec-lbl">Checklist resumen</span>
+        {% if _checks %}
+          {% for c in _checks[:5] %}
+          <div class="ec-item">
+            <span class="ec-ck {{ '' if c.ok else 'no' }}">✓</span>
+            <span class="ec-txt">{{ c.titulo|truncate(40,true) }}</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="ec-item">
+            <span class="ec-ck no">·</span>
+            <span class="ec-txt" style="color:var(--ilus-mute);font-style:italic">Sin checklist asignado</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+  <div class="eq-counter">
+    {{ _start + pg_eq|length }} de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }}
+  </div>
+
+  {# ── Checklist técnico detallado (TABLA, solo en última pág) ── #}
+  {% if loop.last and tareas_chk %}
+  <div class="sec-title">Checklist técnico detallado</div>
+  <table class="chk">
     <thead>
       <tr>
-        <th style="width:42px"></th>
-        <th>Equipo</th>
-        <th style="width:90px">SKU</th>
-        <th style="width:100px">Serie</th>
-        <th style="width:110px">Marca/Modelo</th>
-        <th style="width:80px">Estado</th>
+        <th class="num">#</th>
+        <th>Tarea</th>
+        <th style="width:80px">Tipo</th>
+        <th style="width:80px">Resultado</th>
+        <th style="width:30px">📷</th>
+        <th style="width:80px">Fecha/Hora</th>
+        <th style="width:80px">Ubicación</th>
       </tr>
     </thead>
     <tbody>
-      {% for e in equipos %}
+      {% for t in tareas_chk %}
       <tr>
+        <td class="num">{{ loop.index }}</td>
         <td>
-          <div class="eq-mini" {% if e.foto_url %}style="background-image:url('{{ e.foto_url }}')"{% endif %}></div>
+          {{ t.titulo|truncate(56,true) }}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre|truncate(36,true) }}</div>{% endif %}
         </td>
+        <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
-          <strong>{{ e.nombre }}</strong>
-          {% if e.ubicacion_sala %}<div style="color:#6b7280;font-size:8pt">{{ e.ubicacion_sala }}</div>{% endif %}
+          {% set res = t.resultado_str or '' %}
+          {% set rescls = t.resultado_clase or 'ok' %}
+          {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
         </td>
-        <td style="font-family:monospace">{{ e.sku or '—' }}</td>
-        <td style="font-family:monospace">{{ e.serie or '—' }}</td>
-        <td>
-          {{ e.marca or '' }} {{ e.modelo or '' }}
-          {% if e.anio_fabricacion %}<div style="color:#6b7280;font-size:8pt">{{ e.anio_fabricacion }}</div>{% endif %}
-        </td>
-        <td>
-          {% if e.estado_capturado %}
-          <span class="badge-estado">{{ e.estado_capturado|replace('_',' ') }}</span>
-          {% else %}—{% endif %}
-        </td>
+        <td class="ico">{% if t.tiene_foto %}📷{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
+        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
+        <td class="ubi">📍 {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% endif %}
 
-  {# ──── Grupos: tareas por (equipo × plantilla) ──── #}
-  {% if grupos %}
-  <div class="section-title">Checklist ejecutado</div>
-  {% for g in grupos %}
-  {% set eq = eq_idx.get(g.maquina_id) %}
-  {% if eq %}
-  <div class="grupo">
-    <div class="grupo-head">
-      <div class="gh-eq">{{ eq.nombre or ('Equipo #' ~ eq.id) }}</div>
-      <span class="gh-plant">{{ g.plantilla_nombre }}</span>
-      {% set ok = g.tareas | selectattr('completada') | list | length %}
-      {% set tot = g.tareas | length %}
-      <span class="gh-stats">{{ ok }}/{{ tot }}</span>
+  {# ── 2 columnas: Técnicos + Resumen (solo en última pág) ── #}
+  {% if loop.last %}
+  <div class="col-2">
+    <div>
+      <div class="sec-title">Técnicos involucrados</div>
+      <div class="tec-card">
+        <div class="ta-avatar">{{ (visita.tecnico_principal or 'T')[0]|upper }}</div>
+        <div class="ta-text">
+          <div class="ta-lbl">{{ (1 + (tecnicos_extra|length if tecnicos_extra else 0)) }} técnico{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }} involucrado{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }}</div>
+          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}</div>
+        </div>
+      </div>
     </div>
-    {% for t in g.tareas %}
-    <div class="tarea-line{% if t.completada %} ok{% endif %}">
-      <span class="check">{% if t.completada %}✓{% endif %}</span>
-      <span class="ttext">{{ t.titulo }}</span>
-      {% if t.valor %}
-      <span class="tval">
-        {% if t.valor.texto %}{{ t.valor.texto }}
-        {% elif t.valor.numero is not none %}{{ t.valor.numero }}{% if t.unidad %} {{ t.unidad }}{% endif %}
-        {% elif t.valor.valor %}{{ t.valor.valor|upper }}
-        {% elif t.valor.opcion %}{{ t.valor.opcion }}
-        {% elif t.valor.fecha %}{{ t.valor.fecha }}
-        {% elif t.valor.lat %}{{ "%.5f"|format(t.valor.lat) }}, {{ "%.5f"|format(t.valor.lng) }}
-        {% endif %}
-      </span>
-      {% endif %}
+    <div>
+      <div class="sec-title">Resumen de la orden</div>
+      <div class="resumen-4">
+        <div class="res-mini">
+          <div class="rm-ico">✓</div>
+          <div class="rm-text">
+            <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
+            <div class="rm-lbl">Equipos revisados</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">☑</div>
+          <div class="rm-text">
+            <div class="rm-val">Completo</div>
+            <div class="rm-lbl">Checklist</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">📷</div>
+          <div class="rm-text">
+            <div class="rm-val">{{ fotos|length }} fotos</div>
+            <div class="rm-lbl">Evidencia registrada</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">📍</div>
+          <div class="rm-text">
+            <div class="rm-val">Validada</div>
+            <div class="rm-lbl">Ubicación</div>
+          </div>
+        </div>
+      </div>
     </div>
-    {% endfor %}
   </div>
-  {% endif %}
-  {% endfor %}
-  {% endif %}
 
-  {# ──── Fotos del levantamiento ──── #}
-  {% if fotos %}
-  <div class="section-title">Evidencia fotográfica ({{ fotos|length }})</div>
-  <div class="fotos-grid">
-    {% for f in fotos[:24] %}
-    <img src="{{ f.url }}" alt="Foto OT">
-    {% endfor %}
+  {# ── 2 columnas: Observaciones + Evidencia general ── #}
+  <div class="col-2">
+    <div>
+      <div class="sec-title">Observaciones generales</div>
+      <div class="obs-gen">
+        <span class="lbl">Comentarios</span>
+        {{ visita.observaciones or visita.diagnostico or 'Trabajo completado exitosamente. Sin observaciones adicionales.' }}
+      </div>
+    </div>
+    <div>
+      <div class="sec-title">Evidencia general</div>
+      <div class="ev-grid">
+        {% set _fotos_gen = (fotos_generales or fotos)[:4] %}
+        {% for f in _fotos_gen %}<img src="{{ f.url }}" alt="">{% endfor %}
+        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">📷</div>{% endfor %}
+      </div>
+    </div>
   </div>
-  {% if fotos|length > 24 %}
-  <div style="font-size:8pt;color:#6b7280;text-align:center;margin-top:-8px;margin-bottom:14px">
-    + {{ fotos|length - 24 }} foto(s) más en el sistema
-  </div>
-  {% endif %}
-  {% endif %}
 
-  {# ──── Firmas ──── #}
-  <div class="section-title">Firmas y validación</div>
+  {# ── FIRMAS ── #}
+  <div class="sec-title">Firmas y validación</div>
   <div class="firmas">
-    <div class="firma-box">
-      <div class="fb-tipo">Técnico ejecutor</div>
-      <div class="fb-img">
-        {% if visita.firma_tecnico_url %}
-        <img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico">
-        {% else %}Sin firmar{% endif %}
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_cliente_url else '' }}">
+        {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
       </div>
-      <div class="fb-nombre">{{ visita.tecnico_principal or 'Técnico no asignado' }}</div>
-      <div class="fb-meta">{% if visita.firma_tecnico_at %}{{ visita.firma_tecnico_at }}{% endif %}</div>
+      <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+      <div class="fir-lbl">Aceptado Por</div>
+      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at }}</div>{% endif %}
     </div>
-    <div class="firma-box">
-      <div class="fb-tipo">Cliente / Recibe</div>
-      <div class="fb-img">
-        {% if visita.firma_cliente_url %}
-        <img src="{{ visita.firma_cliente_url }}" alt="Firma cliente">
-        {% else %}Sin firmar{% endif %}
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_supervisor_url else '' }}">
+        {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
       </div>
-      <div class="fb-nombre">{{ visita.firma_cliente_nombre or '—' }}</div>
-      <div class="fb-meta">{% if visita.firma_cliente_at %}{{ visita.firma_cliente_at }}{% endif %}</div>
+      <div class="fir-nom">{{ visita.responsable_nombre or visita.cerrada_por or '—' }}</div>
+      <div class="fir-lbl">Validado Por</div>
+      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at }}</div>{% endif %}
     </div>
-    <div class="firma-box">
-      <div class="fb-tipo">Supervisor</div>
-      <div class="fb-img">
-        {% if visita.firma_supervisor_url %}
-        <img src="{{ visita.firma_supervisor_url }}" alt="Firma supervisor">
-        {% else %}Sin aprobar{% endif %}
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_tecnico_url else '' }}">
+        {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
       </div>
-      <div class="fb-nombre">{{ visita.cerrada_por or '—' }}</div>
-      <div class="fb-meta">{% if visita.firma_supervisor_at %}{{ visita.firma_supervisor_at }}{% endif %}</div>
+      <div class="fir-nom">{{ visita.tecnico_principal or '—' }}</div>
+      <div class="fir-lbl">Realizado Por</div>
+      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at }}</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {{ footer_block(loop.index + 1, total_pg, continua=(not loop.last)) }}
+</section>
+{% endfor %}
+
+{# ═══════════════════════════════════════════════════════════════════
+   Caso especial: si solo hay 1 página de equipos (≤3), insertar página
+   2 con checklist+resumen+firmas — porque el for-loop de arriba no
+   itera (paginas_equipos[1:] está vacío).
+   ═══════════════════════════════════════════════════════════════════ #}
+{% if paginas_equipos|length == 1 %}
+<section class="sheet">
+  {{ header_block(2, total_pg) }}
+
+  {% if tareas_chk %}
+  <div class="sec-title">Checklist técnico detallado</div>
+  <table class="chk">
+    <thead>
+      <tr>
+        <th class="num">#</th>
+        <th>Tarea</th>
+        <th style="width:80px">Tipo</th>
+        <th style="width:80px">Resultado</th>
+        <th style="width:30px">📷</th>
+        <th style="width:80px">Fecha/Hora</th>
+        <th style="width:80px">Ubicación</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tareas_chk %}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td>
+          {{ t.titulo|truncate(56,true) }}
+          {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {{ t.maquina_nombre|truncate(36,true) }}</div>{% endif %}
+        </td>
+        <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
+        <td>
+          {% set res = t.resultado_str or '' %}
+          {% set rescls = t.resultado_clase or 'ok' %}
+          {% if res %}<span class="pill-res {{ rescls }}">{{ res|truncate(20,true) }}</span>{% else %}—{% endif %}
+        </td>
+        <td class="ico">{% if t.tiene_foto %}📷{% else %}<span style="color:#cbd5e1">—</span>{% endif %}</td>
+        <td class="fecha">{% if t.completada_at_str %}{{ t.completada_at_str }}{% else %}—{% endif %}</td>
+        <td class="ubi">📍 {% if t.ubicacion_str %}{{ t.ubicacion_str|truncate(18,true) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <div class="col-2">
+    <div>
+      <div class="sec-title">Técnicos involucrados</div>
+      <div class="tec-card">
+        <div class="ta-avatar">{{ (visita.tecnico_principal or 'T')[0]|upper }}</div>
+        <div class="ta-text">
+          <div class="ta-lbl">{{ (1 + (tecnicos_extra|length if tecnicos_extra else 0)) }} técnico{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }} involucrado{{ 's' if (tecnicos_extra and tecnicos_extra|length) else '' }}</div>
+          <div class="ta-nom">{{ visita.tecnico_principal or '—' }}</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="sec-title">Resumen de la orden</div>
+      <div class="resumen-4">
+        <div class="res-mini">
+          <div class="rm-ico">✓</div>
+          <div class="rm-text">
+            <div class="rm-val">{{ equipos|length }} de {{ equipos|length }}</div>
+            <div class="rm-lbl">Equipos revisados</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">☑</div>
+          <div class="rm-text">
+            <div class="rm-val">Completo</div>
+            <div class="rm-lbl">Checklist</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">📷</div>
+          <div class="rm-text">
+            <div class="rm-val">{{ fotos|length }} fotos</div>
+            <div class="rm-lbl">Evidencia registrada</div>
+          </div>
+        </div>
+        <div class="res-mini">
+          <div class="rm-ico">📍</div>
+          <div class="rm-text">
+            <div class="rm-val">Validada</div>
+            <div class="rm-lbl">Ubicación</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  {# ──── Footer ──── #}
-  <div class="footer">
-    Documento generado por ILUS Sport &amp; Health · {{ generated_at }}<br>
-    OT {{ visita.numero_ot or 'VS-' ~ visita.id }} · {{ equipos|length }} equipo(s) · {{ grupos|length }} grupo(s) · {{ fotos|length }} foto(s)
+  <div class="col-2">
+    <div>
+      <div class="sec-title">Observaciones generales</div>
+      <div class="obs-gen">
+        <span class="lbl">Comentarios</span>
+        {{ visita.observaciones or visita.diagnostico or 'Trabajo completado exitosamente. Sin observaciones adicionales.' }}
+      </div>
+    </div>
+    <div>
+      <div class="sec-title">Evidencia general</div>
+      <div class="ev-grid">
+        {% set _fotos_gen = (fotos_generales or fotos)[:4] %}
+        {% for f in _fotos_gen %}<img src="{{ f.url }}" alt="">{% endfor %}
+        {% for _ in range(4 - (_fotos_gen|length)) %}<div class="ph">📷</div>{% endfor %}
+      </div>
+    </div>
   </div>
+
+  <div class="sec-title">Firmas y validación</div>
+  <div class="firmas">
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_cliente_url else '' }}">
+        {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
+      </div>
+      <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+      <div class="fir-lbl">Aceptado Por</div>
+      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at }}</div>{% endif %}
+    </div>
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_supervisor_url else '' }}">
+        {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
+      </div>
+      <div class="fir-nom">{{ visita.responsable_nombre or visita.cerrada_por or '—' }}</div>
+      <div class="fir-lbl">Validado Por</div>
+      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at }}</div>{% endif %}
+    </div>
+    <div class="fir">
+      <div class="fir-img {{ 'empty' if not visita.firma_tecnico_url else '' }}">
+        {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
+      </div>
+      <div class="fir-nom">{{ visita.tecnico_principal or '—' }}</div>
+      <div class="fir-lbl">Realizado Por</div>
+      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at }}</div>{% endif %}
+    </div>
+  </div>
+
+  {{ footer_block(2, total_pg, continua=false) }}
+</section>
+{% endif %}
+
+<script>
+  // Si el usuario llegó vía ?print=1 (link "print directo"), disparar print()
+  // automáticamente al cargar todas las imágenes.
+  (function() {
+    if (new URLSearchParams(location.search).get('print') !== '1') return;
+    const imgs = Array.from(document.images);
+    const ready = imgs.every(i => i.complete);
+    if (ready) { setTimeout(() => window.print(), 400); return; }
+    let pend = imgs.filter(i => !i.complete).length;
+    imgs.forEach(i => {
+      if (i.complete) return;
+      const done = () => { if (--pend <= 0) setTimeout(() => window.print(), 400); };
+      i.addEventListener('load', done);
+      i.addEventListener('error', done);
+    });
+  })();
+</script>
 
 </body>
 </html>

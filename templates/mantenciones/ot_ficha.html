@@ -372,6 +372,19 @@
       {{ visita.tipo|title }}
     </span>
     {% endif %}
+    {# ─── Botón PDF: solo OT cerrada + 3 firmas presentes ─── #}
+    {% if visita.estado == 'cerrada'
+          and visita.firma_cliente_url
+          and visita.firma_tecnico_url
+          and visita.firma_supervisor_url %}
+    <a href="{{ url_for('mant_ot_pdf_render', vid=visita.id) }}"
+       target="_blank"
+       class="ot-estado-badge"
+       style="background:#dcfce7;color:#15803d;border:1px solid #86efac;text-decoration:none;font-weight:800;letter-spacing:.02em;display:inline-flex;align-items:center;gap:6px"
+       title="Descargar reporte PDF de la OT cerrada">
+      <i class="bi bi-filetype-pdf"></i>Descargar PDF
+    </a>
+    {% endif %}
   </div>
 
   {% if visita.levantamiento_id and visita.estado != 'completada' %}

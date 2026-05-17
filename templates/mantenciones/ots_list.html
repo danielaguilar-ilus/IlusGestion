@@ -381,10 +381,14 @@
       <a href="{{ url_for('mant_ot_ficha', vid=o.id) }}" class="btn btn-ilus btn-sm fw-bold">
         <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
       </a>
-      <a href="{{ url_for('mant_visita_pdf', vid=o.id) }}" target="_blank"
-         class="btn btn-outline-dark btn-sm" title="Descargar reporte PDF">
+      {% if o.estado == 'cerrada' %}
+      {# Reporte PDF (Guardar como PDF desde el navegador) — solo OT cerradas y con
+         las 3 firmas; el endpoint valida y redirige con flash si falta alguna. #}
+      <a href="{{ url_for('mant_ot_pdf_render', vid=o.id) }}" target="_blank"
+         class="btn btn-outline-dark btn-sm" title="Reporte PDF imprimible (OT cerrada)">
         <i class="bi bi-filetype-pdf"></i>
       </a>
+      {% endif %}
       {% if permissions.superadmin %}
       <button type="button"
               class="btn btn-outline-secondary btn-sm"
