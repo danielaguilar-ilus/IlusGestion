@@ -17465,6 +17465,24 @@ def mant_cliente_nuevo():
                 flash(err, "warning")
                 return redirect(url_for("mant_ficha", cid=existing.get("id")))
 
+        # Contacto PRINCIPAL obligatorio (Daniel pidió 2026-05-17): el técnico
+        # necesita saber con quién hablar al llegar al sitio. Nombre + teléfono
+        # son obligatorios. Email queda opcional. Si viene del wizard / ERP que
+        # no tiene contacto, el frontend ya pone los inputs como required pero
+        # validamos también en backend por si llega un POST manipulado.
+        contacto_nombre_v = (d.get("contacto_nombre") or "").strip()
+        contacto_tel_v    = (d.get("contacto_tel") or "").strip()
+        if not contacto_nombre_v:
+            err = "El nombre del contacto es obligatorio."
+            if is_wizard: return jsonify({"ok": False, "error": err, "field": "contacto_nombre"}), 400
+            flash(err, "danger")
+            return render_template("mantenciones/cliente_form.html", cliente=None)
+        if not contacto_tel_v:
+            err = "El teléfono del contacto es obligatorio."
+            if is_wizard: return jsonify({"ok": False, "error": err, "field": "contacto_tel"}), 400
+            flash(err, "danger")
+            return render_template("mantenciones/cliente_form.html", cliente=None)
+
         # Emails (institucional + 2 contactos)
         # Modo tolerante: si el ERP devolvió basura (string sin @, espacios, etc.)
         # auto-limpiamos en vez de bloquear. Solo bloqueamos si el usuario tipeó
