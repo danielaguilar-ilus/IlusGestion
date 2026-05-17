@@ -250,6 +250,35 @@
       <div><i class="bi bi-calendar3 me-1"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</div>
       {% endif %}
     </div>
+
+    {# ─── Contacto en sitio (contraparte) — botones llamar/email rápidos ─── #}
+    {% if visita.contacto_nombre %}
+    <div style="background:rgba(255,255,255,.13);border-radius:9px;padding:9px 12px;margin-top:9px;border:1px solid rgba(255,255,255,.18)">
+      <div style="font-size:.7rem;opacity:.85;text-transform:uppercase;letter-spacing:.5px;font-weight:700">
+        <i class="bi bi-person-vcard me-1"></i>Recibe en sitio
+      </div>
+      <div style="font-weight:700;font-size:.92rem;margin-top:2px">
+        {{ visita.contacto_nombre }}{% if visita.contacto_cargo %} <small style="opacity:.85;font-weight:500">— {{ visita.contacto_cargo }}</small>{% endif %}
+      </div>
+      {% if visita.contacto_tel or visita.contacto_email %}
+      <div class="d-flex gap-2 mt-2 flex-wrap">
+        {% if visita.contacto_tel %}
+        <a href="tel:{{ visita.contacto_tel }}" class="btn-ruta" style="background:#dcfce7;color:#15803d;border-color:#16a34a">
+          <i class="bi bi-telephone-fill"></i> Llamar {{ visita.contacto_tel }}
+        </a>
+        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}" target="_blank" class="btn-ruta" style="background:#25d366;color:#fff;border-color:#25d366">
+          <i class="bi bi-whatsapp"></i> WhatsApp
+        </a>
+        {% endif %}
+        {% if visita.contacto_email %}
+        <a href="mailto:{{ visita.contacto_email }}" class="btn-ruta" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">
+          <i class="bi bi-envelope-fill"></i> Email
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if visita.estado not in ['cerrada','cancelada','anulada','pendiente_aprobacion'] %}
     <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
       {% if visita.ruta_iniciada_at %}
@@ -783,7 +812,8 @@ async function subirFotoTarea(tid, input, mid, pid){
   fd.append('tarea_id', tid);
   ilusToast('Subiendo…', { type:'info', duration: 1500 });
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos`, { method:'POST', body: fd });
+    // Endpoint POST es `/fotos/subir` (no `/fotos` que es GET y daba 405)
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/subir`, { method:'POST', body: fd });
     const d = await r.json();
     if (d.ok || d.id){
       ilusToast('✓ Foto subida', { type:'success' });

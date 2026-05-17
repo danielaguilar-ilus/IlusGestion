@@ -6537,6 +6537,77 @@ const _LEV_MODAL = { tecnicos_disponibles: [], tecnicos_seleccionados: new Set()
 // Plantillas disponibles (cache global del modal)
 const _LEV_PLANTILLAS = { all: [], cargadas: false };
 
+// Contactos del cliente (cache por cliente)
+const _LEV_CONTACTOS = { lista: [], cargados: false, manual: false };
+
+// ════════════════════════════════════════════════════════════
+// Carga contactos del cliente para el selector del modal
+// ════════════════════════════════════════════════════════════
+async function _cargarContactos(){
+  if (_LEV_CONTACTOS.cargados) return _LEV_CONTACTOS.lista;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/contactos`);
+    const d = await r.json();
+    _LEV_CONTACTOS.lista = (d.ok && d.contactos) ? d.contactos : [];
+    _LEV_CONTACTOS.cargados = true;
+  } catch(e) {
+    console.warn('Contactos load:', e);
+    _LEV_CONTACTOS.lista = [];
+  }
+  return _LEV_CONTACTOS.lista;
+}
+
+function _renderContactosSelector(){
+  const sel = document.getElementById('levContactoSel');
+  if (!sel) return;
+  const lista = _LEV_CONTACTOS.lista || [];
+  let html = '<option value="">— Selecciona un contacto —</option>';
+  lista.forEach((c, i) => {
+    const meta = [c.cargo, c.tel].filter(Boolean).join(' · ');
+    html += `<option value="${i}">${c.label || c.nombre} — ${c.nombre}${meta ? ' (' + meta + ')' : ''}</option>`;
+  });
+  html += '<option value="__manual">+ Ingresar manualmente</option>';
+  sel.innerHTML = html;
+}
+
+function onContactoChange(){
+  const sel = document.getElementById('levContactoSel');
+  const box = document.getElementById('levContactoBox');
+  const v = sel.value;
+  if (v === '__manual'){
+    _LEV_CONTACTOS.manual = true;
+    box.style.display = '';
+    document.getElementById('levContactoNombre').value = '';
+    document.getElementById('levContactoCargo').value = '';
+    document.getElementById('levContactoTel').value = '';
+    document.getElementById('levContactoEmail').value = '';
+    sel.dataset.origen = 'manual';
+  } else if (v === ''){
+    _LEV_CONTACTOS.manual = false;
+    box.style.display = 'none';
+    sel.dataset.origen = '';
+  } else {
+    _LEV_CONTACTOS.manual = false;
+    const idx = parseInt(v);
+    const c = _LEV_CONTACTOS.lista[idx];
+    if (c){
+      // Auto-fill (visible para que el usuario confirme/edite)
+      box.style.display = '';
+      document.getElementById('levContactoNombre').value = c.nombre || '';
+      document.getElementById('levContactoCargo').value = c.cargo || '';
+      document.getElementById('levContactoTel').value = c.tel || '';
+      document.getElementById('levContactoEmail').value = c.email || '';
+      sel.dataset.origen = c.origen || 'principal';
+    }
+  }
+}
+
+function toggleContactoManual(){
+  const sel = document.getElementById('levContactoSel');
+  sel.value = '__manual';
+  onContactoChange();
+}
+
 // Mapa de plantillas extra seleccionadas por equipo { maquinaId: Set<plantillaId> }
 const _LEV_EQ_PLANTILLAS = {};
 
@@ -6568,6 +6639,17 @@ async function abrirLevantamientoSelector(){
 
   // Cargar plantillas para el selector multi-plantilla
   await _cargarPlantillas();
+
+  // Cargar contactos del cliente y poblar selector (auto-seleccionar el
+  // primero — usualmente el contacto principal — para que el campo no
+  // quede vacío por descuido del admin)
+  await _cargarContactos();
+  _renderContactosSelector();
+  if (_LEV_CONTACTOS.lista.length > 0){
+    const sel = document.getElementById('levContactoSel');
+    sel.value = '0';  // primer contacto = principal
+    onContactoChange();
+  }
 
   // Reset multi-plantilla por equipo
   Object.keys(_LEV_EQ_PLANTILLAS).forEach(k => delete _LEV_EQ_PLANTILLAS[k]);
@@ -6961,6 +7043,20 @@ async function levIniciar(){
     }
   }
 
+  // Dirección + contacto OBLIGATORIOS — calidad de información para el técnico
+  const dirVal = (document.getElementById('levDireccion')?.value || '').trim();
+  if (!dirVal){
+    ilusToast('Indica la dirección de la visita', { type:'warning' });
+    document.getElementById('levDireccion')?.focus();
+    return;
+  }
+  const contactoNombre = (document.getElementById('levContactoNombre')?.value || '').trim();
+  if (!contactoNombre){
+    ilusToast('Indica el contacto que recibirá al técnico en sitio', { type:'warning' });
+    document.getElementById('levContactoSel')?.focus();
+    return;
+  }
+
   // Multi-técnico OBLIGATORIO — la OT debe tener al menos 1 técnico asignado
   // porque el flujo es: admin crea OT → técnico la gestiona desde el módulo
   // "Órdenes de Trabajo" en su teléfono.
@@ -7012,6 +7108,12 @@ async function levIniciar(){
         direccion_lat: parseFloat(document.getElementById('levDireccion')?.dataset.lat) || null,
         direccion_lng: parseFloat(document.getElementById('levDireccion')?.dataset.lng) || null,
         direccion_place_id: document.getElementById('levDireccion')?.dataset.placeId || null,
+        // Contacto / contraparte en sitio
+        contacto_nombre: (document.getElementById('levContactoNombre')?.value || '').trim(),
+        contacto_cargo:  (document.getElementById('levContactoCargo')?.value || '').trim(),
+        contacto_tel:    (document.getElementById('levContactoTel')?.value || '').trim(),
+        contacto_email:  (document.getElementById('levContactoEmail')?.value || '').trim(),
+        contacto_origen: document.getElementById('levContactoSel')?.dataset.origen || 'manual',
       })
     });
     const d = await r.json();
@@ -10161,7 +10263,7 @@ function _planTabActualizarStatus(ctAnalizado) {
                 <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
                   <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección de la visita *</span>
                   <small class="text-muted" style="font-weight:400;font-size:.7rem">
-                    Editable — guía al técnico al lugar
+                    Google Maps verifica y guía al técnico
                   </small>
                 </label>
                 <div class="position-relative">
@@ -10170,7 +10272,52 @@ function _planTabActualizarStatus(ctAnalizado) {
                          autocomplete="off">
                   <small id="levDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
                     <i class="bi bi-info-circle me-1"></i>
-                    Default: dirección registrada del cliente. Edítala si la visita es en otro lugar.
+                    Default: dirección registrada del cliente. Selecciona una sugerencia para validar.
+                  </small>
+                </div>
+              </div>
+
+              {# ─── Contacto / contraparte que recibe en sitio ─── #}
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-person-vcard text-primary me-1"></i>Contacto en sitio (contraparte) *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Persona que recibe al técnico
+                  </small>
+                </label>
+                <div class="d-flex gap-2 align-items-start">
+                  <select id="levContactoSel" class="form-select form-select-sm" style="flex:1"
+                          onchange="onContactoChange()">
+                    <option value="">— Cargando contactos del cliente… —</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          onclick="toggleContactoManual()" title="Ingresar manualmente">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                </div>
+                {# Detalle del contacto (auto-llenado o manual) #}
+                <div id="levContactoBox" class="mt-2 p-2 rounded" style="background:#f8fafc;border:1px solid #e5e7eb;display:none">
+                  <div class="row g-2">
+                    <div class="col-md-7">
+                      <input type="text" id="levContactoNombre" class="form-control form-control-sm"
+                             placeholder="Nombre completo" maxlength="200">
+                    </div>
+                    <div class="col-md-5">
+                      <input type="text" id="levContactoCargo" class="form-control form-control-sm"
+                             placeholder="Cargo (opcional)" maxlength="120">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="text" id="levContactoTel" class="form-control form-control-sm"
+                             placeholder="Teléfono" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="email" id="levContactoEmail" class="form-control form-control-sm"
+                             placeholder="Email (opcional)" maxlength="200">
+                    </div>
+                  </div>
+                  <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Este contacto queda registrado en la OT y el técnico lo verá al llegar.
                   </small>
                 </div>
               </div>

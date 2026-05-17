@@ -15123,6 +15123,18 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id de la dirección'",
                 # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Contacto/contraparte por OT.
+                # Cuando se crea la OT, el admin elige quién recibe al técnico
+                # en sitio (puede ser distinto al contacto principal del
+                # cliente). Esto le da al técnico la persona + teléfono a
+                # contactar al llegar.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_nombre VARCHAR(200) NULL COMMENT 'Contraparte que recibe al técnico en sitio'",
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_cargo VARCHAR(120) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_tel VARCHAR(50) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_email VARCHAR(200) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_origen VARCHAR(40) NULL COMMENT 'principal|secundario|sucursal:<id>|manual'",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Ruta del técnico (F7):
                 # Registra cuándo el técnico inicia la ruta hacia el cliente
                 # (Google Maps / Waze) + ubicación de origen (su bodega o
@@ -19400,6 +19412,67 @@ def mant_maquina_solicitar_cambio(mid):
 # Para clientes con múltiples ubicaciones (cadenas, holding, franquicias).
 # Cada sucursal tiene encargado y opcionalmente contacto secundario.
 # ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/contactos", methods=["GET"])
+@_mant_required
+def mant_cliente_contactos(cid):
+    """Lista de contactos disponibles del cliente para asignar como
+    contraparte de una OT. Combina:
+      - contacto principal del cliente (contacto_nombre/cargo/tel/email)
+      - contacto secundario (contacto2_*)
+      - encargados de cada sucursal (mant_sucursales.encargado_*)
+    Cada contacto trae `origen` para auditar de dónde sale.
+    """
+    cli = mysql_fetchone(
+        "SELECT contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+        "       contacto2_nombre, contacto2_cargo, contacto2_tel, contacto2_email "
+        "  FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    out = []
+    if cli:
+        # Principal
+        if (cli.get("contacto_nombre") or "").strip():
+            out.append({
+                "nombre": cli["contacto_nombre"],
+                "cargo": cli.get("contacto_cargo") or "",
+                "tel": cli.get("contacto_tel") or "",
+                "email": cli.get("contacto_email") or "",
+                "origen": "principal",
+                "label": "Contacto principal",
+            })
+        # Secundario
+        if (cli.get("contacto2_nombre") or "").strip():
+            out.append({
+                "nombre": cli["contacto2_nombre"],
+                "cargo": cli.get("contacto2_cargo") or "",
+                "tel": cli.get("contacto2_tel") or "",
+                "email": cli.get("contacto2_email") or "",
+                "origen": "secundario",
+                "label": "Contacto secundario",
+            })
+    # Sucursales
+    try:
+        sucs = mysql_fetchall(
+            "SELECT id, nombre, encargado_nombre, encargado_cargo, "
+            "       encargado_tel, encargado_email "
+            "  FROM mant_sucursales WHERE cliente_id=%s AND activo=1 "
+            " ORDER BY nombre", (cid,)
+        ) or []
+        for s in sucs:
+            if (s.get("encargado_nombre") or "").strip():
+                out.append({
+                    "nombre": s["encargado_nombre"],
+                    "cargo": s.get("encargado_cargo") or "",
+                    "tel": s.get("encargado_tel") or "",
+                    "email": s.get("encargado_email") or "",
+                    "origen": f"sucursal:{s['id']}",
+                    "label": f"Encargado · {s.get('nombre','')}",
+                })
+    except Exception as e:
+        # Si la tabla mant_sucursales no existe o cambió schema, no rompe.
+        print(f"[contactos] sucursales fallback: {e}", flush=True)
+    return jsonify({"ok": True, "contactos": out, "total": len(out)})
+
 
 @app.route("/mantenciones/api/clientes/<int:cid>/sucursales", methods=["GET"])
 @_mant_required
@@ -28624,6 +28697,15 @@ def mant_lev_crear_o_listar(cid):
         direccion_lng = None
     direccion_place_id = (data.get("direccion_place_id") or "").strip()[:200] or None
 
+    # ─── Contacto / contraparte en sitio ───────────────────────────
+    # El admin elige quién recibe al técnico. Puede ser el principal del
+    # cliente, secundario, encargado de sucursal, o ingresarlo manual.
+    contacto_nombre = (data.get("contacto_nombre") or "").strip()[:200] or None
+    contacto_cargo  = (data.get("contacto_cargo")  or "").strip()[:120] or None
+    contacto_tel    = (data.get("contacto_tel")    or "").strip()[:50]  or None
+    contacto_email  = (data.get("contacto_email")  or "").strip()[:200] or None
+    contacto_origen = (data.get("contacto_origen") or "").strip()[:40]  or None
+
     # ─── Multi-plantilla por equipo (plantillas_por_equipo) ───────
     # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
     # Si llega, además de la plantilla estándar del tipo, aplica estas
@@ -28721,18 +28803,21 @@ def mant_lev_crear_o_listar(cid):
                     " fecha_realizada, hora_inicio, hora_fin, "
                     " tipo, estado, modalidad_cobro, prioridad, "
                     " descripcion, tecnico_user_id, levantamiento_id, created_by, "
-                    " direccion_visita, direccion_lat, direccion_lng, direccion_place_id) "
+                    " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
+                    " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,"
                     " %s,'programada',%s,'media',"
                     " %s,%s,%s,%s,"
-                    " %s,%s,%s,%s)",
+                    " %s,%s,%s,%s,"
+                    " %s,%s,%s,%s,%s)",
                     (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
                      fecha_prog, fecha_fin, hora_ini, hora_fin,
                      tipo_ot, modalidad,
                      f"OT tipo {tipo_ot} con {n_items} equipo(s). "
                      f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
                      tecnico_principal, lev_id, current_username(),
-                     direccion_visita, direccion_lat, direccion_lng, direccion_place_id)
+                     direccion_visita, direccion_lat, direccion_lng, direccion_place_id,
+                     contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen)
                 )
                 visita_id = cur.lastrowid
                 cur.execute(
