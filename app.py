@@ -23725,18 +23725,17 @@ def mant_tarea_responder(vid, tid):
 @app.route("/mantenciones/ot/<int:vid>")
 @_mant_required
 def mant_ot_ficha(vid):
-    """Ficha completa de una OT/visita con tabs (Tareas/Fotos/Repuestos/Bitácora).
+    """Ficha de OT — TODOS los roles van al modo drill-down de ejecución.
 
-    Si el usuario tiene rol 'tecnico', redirige automáticamente al modo
-    EJECUCIÓN simplificado (ot_ejecutar.html) — vista mobile-first donde
-    solo puede gestionar los equipos asignados (no asignar otros técnicos,
-    no editar metadata de la OT, etc.)."""
-    try:
-        u = getattr(g, "user", None) or {}
-        if (u.get("role") or "") == "tecnico":
-            return redirect(url_for("mant_ot_ejecutar", vid=vid))
-    except Exception:
-        pass
+    Daniel pidió (2026-05-17) que admin/superadmin también vea la misma
+    vista de drill-down (máquina → plantilla → tarea) que ve el técnico,
+    sin las tabs viejas (Fotos/Repuestos/Bitácora) que confundían.
+    Si admin necesita editar metadata de la OT, sigue teniendo los
+    botones "Editar" y "Eliminar" en /mantenciones/ots.
+    Para acceder a la ficha vieja (legacy), usar ?legacy=1 en la URL.
+    """
+    if request.args.get("legacy") != "1":
+        return redirect(url_for("mant_ot_ejecutar", vid=vid))
     # NOTA: la columna real en mant_clientes es contacto_tel (no contacto_telefono).
     # Se mantiene el alias cli_contacto_tel para que el template no cambie.
     # tecnico_principal viene preferentemente de app_users (v.tecnico_user_id, nuevo)
@@ -23908,11 +23907,14 @@ def mant_ot_ejecutar(vid):
             })
         grupos[grupo_idx[key]]["tareas"].append(t)
     # Calcular stats por grupo
-    for g in grupos:
-        g["total"] = len(g["tareas"])
-        g["completas"] = sum(1 for t in g["tareas"] if t.get("completada"))
-        g["progreso"] = round((g["completas"] / g["total"]) * 100) if g["total"] else 0
-        g["bloqueado"] = (g["completas"] == g["total"] and g["total"] > 0)
+    # CRÍTICO: usamos `grp` (no `g`) porque `g` es el contexto global de Flask
+    # (flask.g) y reutilizarlo como variable de loop lo convierte en LOCAL en
+    # toda la función — causa UnboundLocalError al acceder g.user antes del loop.
+    for grp in grupos:
+        grp["total"] = len(grp["tareas"])
+        grp["completas"] = sum(1 for t in grp["tareas"] if t.get("completada"))
+        grp["progreso"] = round((grp["completas"] / grp["total"]) * 100) if grp["total"] else 0
+        grp["bloqueado"] = (grp["completas"] == grp["total"] and grp["total"] > 0)
 
     # Compat: el viejo tareas_por_eq sigue existiendo (legacy templates)
     tareas_por_eq = {}
@@ -23929,9 +23931,9 @@ def mant_ot_ejecutar(vid):
     #   máquina → plantilla → tarea
     # ════════════════════════════════════════════════════════════════
     plantillas_por_maquina = {}
-    for g in grupos:
-        mid = g["maquina_id"]
-        plantillas_por_maquina.setdefault(mid, []).append(g)
+    for grp in grupos:
+        mid = grp["maquina_id"]
+        plantillas_por_maquina.setdefault(mid, []).append(grp)
 
     # Stats por máquina (suma de todas sus plantillas)
     stats_por_maquina = {}
