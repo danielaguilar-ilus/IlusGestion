@@ -25119,10 +25119,22 @@ def mant_visita_fotos_get(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/subir", methods=["POST"])
 @_mant_required
 def mant_visita_fotos_subir(vid):
-    """Sube una o varias fotos a la OT. Soporta multi-upload."""
-    files = request.files.getlist("fotos") or request.files.getlist("imagenes")
+    """Sube una o varias fotos a la OT.
+
+    PERSISTENCIA ROBUSTA (2026-05-17): primero intenta Cloudinary
+    (persistente, sobrevive deploys) y cae a filesystem solo si
+    Cloudinary falla. Soporta nombres de campo `fotos` (plural, legacy)
+    y `foto` (singular, frontend nuevo) — ambos funcionan.
+    Devuelve la URL del primer archivo como `url` para que el frontend
+    la muestre inline.
+    """
+    # Aceptar AMBOS nombres de campo (foto / fotos / imagenes) para que
+    # el frontend no se rompa según cómo arme el FormData.
+    files = (request.files.getlist("foto")
+             or request.files.getlist("fotos")
+             or request.files.getlist("imagenes"))
     if not files or all(not f.filename for f in files):
-        return jsonify({"ok": False, "error": "No se envió ningún archivo"}), 400
+        return jsonify({"ok": False, "error": "No se envió ningún archivo (campo esperado: foto o fotos)"}), 400
 
     tipo_foto    = (request.form.get("tipo_foto") or "general").strip().lower()
     if tipo_foto not in ("antes", "durante", "despues", "serie", "falla",
@@ -25142,7 +25154,16 @@ def mant_visita_fotos_subir(vid):
 
     saved = 0
     errors = []
+    first_url = None  # devolvemos al frontend para mostrar inline
     user = current_username()
+    # ¿Cloudinary disponible?
+    cloud_ok = False
+    try:
+        import cloudinary, cloudinary.uploader  # noqa
+        cloud_ok = bool(CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"))
+    except ImportError:
+        cloud_ok = False
+
     for i, f in enumerate(files):
         if not f or not f.filename:
             continue
@@ -25150,33 +25171,65 @@ def mant_visita_fotos_subir(vid):
         if err:
             errors.append(err)
             continue
-        # Carpeta por visita (organización)
-        visita_dir = os.path.join(MANT_FOTOS_DIR, f"v{vid}")
-        os.makedirs(visita_dir, exist_ok=True)
-        fname = f"v{vid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
-        fpath = os.path.join(visita_dir, fname)
-        try:
-            f.save(fpath)
-            size_kb = os.path.getsize(fpath) // 1024
-        except Exception as e:
-            errors.append(f"Error guardando {f.filename}: {e}")
-            continue
+        cld_url = None
+        archivo_path = None
+        size_kb = 0
+
+        # ── INTENTO 1: Cloudinary (persistente) ──────────────────────
+        if cloud_ok:
+            try:
+                import cloudinary.uploader
+                f.stream.seek(0)
+                result = cloudinary.uploader.upload(
+                    f,
+                    folder=f"ilus/visitas/v{vid}",
+                    public_id=f"v{vid}_t{tarea_id or 0}_m{maquina_id or 0}_{int(time.time())}_{i}",
+                    resource_type="image",
+                    transformation=[
+                        {"width": 1600, "height": 1600, "crop": "limit"},
+                        {"quality": "auto:good", "fetch_format": "auto"},
+                    ],
+                )
+                cld_url = result.get("secure_url")
+                size_kb = (result.get("bytes") or 0) // 1024
+            except Exception as e_cld:
+                print(f"[fotos_subir] Cloudinary falló: {e_cld}", flush=True)
+                errors.append(f"Cloudinary: {str(e_cld)[:100]}")
+                # Continúa al fallback filesystem
+
+        # ── INTENTO 2: Filesystem fallback (efímero en Railway) ─────
+        if not cld_url:
+            try:
+                f.stream.seek(0)
+                visita_dir = os.path.join(MANT_FOTOS_DIR, f"v{vid}")
+                os.makedirs(visita_dir, exist_ok=True)
+                fname = f"v{vid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+                fpath = os.path.join(visita_dir, fname)
+                f.save(fpath)
+                size_kb = os.path.getsize(fpath) // 1024
+                archivo_path = f"uploads/mantenciones/v{vid}/{fname}"
+            except Exception as e_fs:
+                errors.append(f"Filesystem fallback falló para {f.filename}: {e_fs}")
+                continue
+
         try:
             mysql_execute(
                 "INSERT INTO mant_visita_fotos "
-                "(visita_id, tarea_id, maquina_id, archivo_path, archivo_nombre, "
-                " tipo_foto, descripcion, tomada_por, file_size_kb) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+                " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     vid, tarea_id, maquina_id,
-                    f"uploads/mantenciones/v{vid}/{fname}",
+                    archivo_path, cld_url,
                     f.filename[:300],
                     tipo_foto, descripcion or None, user, size_kb
                 )
             )
             saved += 1
+            if first_url is None:
+                first_url = cld_url or (f"/static/{archivo_path}" if archivo_path else None)
         except Exception as e:
-            errors.append(f"Error BD {f.filename}: {e}")
+            errors.append(f"Error BD {f.filename}: {str(e)[:200]}")
     try:
         if saved:
             mysql_execute(
@@ -25186,7 +25239,20 @@ def mant_visita_fotos_subir(vid):
             )
     except Exception:
         pass
-    return jsonify({"ok": True, "saved": saved, "errors": errors[:3]})
+    # Si NO se guardó NINGUNA foto, devolver ok:false con detalles
+    if saved == 0:
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo guardar ninguna foto. " + (errors[0] if errors else "Causa desconocida."),
+            "errors": errors[:3],
+        }), 500
+    return jsonify({
+        "ok": True,
+        "saved": saved,
+        "url": first_url,        # para que el frontend muestre inline
+        "errors": errors[:3],
+        "persistente": bool(first_url and first_url.startswith("https://")),
+    })
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>", methods=["DELETE"])

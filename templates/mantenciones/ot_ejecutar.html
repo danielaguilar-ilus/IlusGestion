@@ -10,14 +10,29 @@
 
 .tx-wrap{max-width:820px;margin:0 auto;padding:10px 12px 110px}
 
-/* ── HEADER STICKY ── */
+/* ── HEADER STICKY — Diseño ILUS impresionante ── */
 .tx-hdr{
-  background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 35%,#7c1d1d 70%,#dc2626 100%);
+  color:#fff;
   border-radius:14px;padding:14px 16px;margin-bottom:12px;
-  box-shadow:0 4px 14px rgba(220,38,38,.25);
+  box-shadow:0 6px 18px rgba(0,0,0,.25), 0 0 0 1px rgba(220,38,38,.1);
   position:sticky;top:8px;z-index:50;
+  overflow:hidden;position:relative;
 }
-.tx-hdr h2{font-size:1.05rem;font-weight:800;margin:0;display:flex;align-items:center;gap:8px}
+.tx-hdr::before {
+  content:''; position:absolute; top:0; right:0; width:140px; height:140px;
+  background:url('/static/favicon_192.png?v=20260517a') center/contain no-repeat;
+  opacity:.06; transform:rotate(15deg); pointer-events:none;
+}
+.tx-hdr-brand{
+  display:flex;align-items:center;gap:8px;font-size:.66rem;text-transform:uppercase;
+  letter-spacing:1px;opacity:.85;font-weight:800;margin-bottom:4px;
+}
+.tx-hdr-brand .ilus-mark{
+  width:18px;height:18px;background:url('/static/favicon.png?v=20260517a') center/contain no-repeat;
+  background-color:#fff;border-radius:3px;
+}
+.tx-hdr h2{font-size:1.1rem;font-weight:900;margin:0;display:flex;align-items:center;gap:8px;letter-spacing:-.5px}
 .tx-hdr .meta{font-size:.76rem;opacity:.95;margin-top:5px;line-height:1.5}
 .tx-hdr .badge-est{display:inline-block;padding:3px 11px;border-radius:9999px;
   background:rgba(255,255,255,.22);font-size:.66rem;font-weight:800;text-transform:uppercase;
@@ -227,15 +242,67 @@
 .ra-app .ra-titulo{font-weight:800;font-size:1rem;color:#0f172a}
 .ra-app .ra-desc{font-size:.74rem;color:#6b7280;margin-top:2px}
 
-/* Modal firma */
-.firma-canvas-wrap{background:#fafafa;border:2px dashed #cbd5e1;border-radius:10px;overflow:hidden;touch-action:none}
-.firma-canvas-wrap canvas{display:block;width:100%;height:160px;cursor:crosshair}
+/* Modal firma — MÁS GRANDE Y ELEGANTE */
+.firma-modal .modal-content{background:linear-gradient(180deg,#fff 0%,#fafafa 100%);border-radius:14px;overflow:hidden}
+.firma-canvas-wrap{
+  background:#fff;
+  border:3px dashed #cbd5e1;
+  border-radius:12px;
+  overflow:hidden;
+  touch-action:none;
+  position:relative;
+  transition:border-color .2s, box-shadow .2s;
+}
+.firma-canvas-wrap.has-firma{border-color:#16a34a;border-style:solid;box-shadow:0 0 0 4px rgba(22,163,74,.1)}
+.firma-canvas-wrap canvas{
+  display:block;width:100%;height:240px;cursor:crosshair;
+  background:linear-gradient(to bottom, transparent 0%, transparent 95%, #e5e7eb 95%, #e5e7eb 100%);
+}
+.firma-canvas-wrap .firma-placeholder{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#94a3b8;font-size:.95rem;pointer-events:none;font-style:italic;font-weight:500;
+}
+.firma-canvas-wrap.has-firma .firma-placeholder{display:none}
+.firma-toolbar{
+  display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;
+}
+.firma-toolbar .firma-tool{
+  padding:8px 14px;border:1.5px solid #cbd5e1;background:#fff;color:#475569;
+  border-radius:8px;font-weight:600;font-size:.78rem;cursor:pointer;
+  transition:all .15s;min-height:40px;display:inline-flex;align-items:center;gap:5px;
+}
+.firma-toolbar .firma-tool:hover{background:#f1f5f9}
+.firma-toolbar .firma-tool.danger{border-color:#fca5a5;color:#dc2626}
+.firma-toolbar .firma-tool.danger:hover{background:#fee2e2}
+.firma-toolbar .firma-tool.success{border-color:#86efac;color:#15803d;background:#f0fdf4}
+.firma-toolbar .firma-color-pick{display:flex;gap:4px;margin-left:auto}
+.firma-toolbar .firma-color{
+  width:32px;height:32px;border-radius:50%;cursor:pointer;border:2px solid transparent;
+  transition:all .15s;
+}
+.firma-toolbar .firma-color:hover{transform:scale(1.1)}
+.firma-toolbar .firma-color.active{border-color:#0f172a;box-shadow:0 0 0 2px #fff inset}
+
+/* Banner ILUS en modal firma */
+.firma-banner{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;
+}
+.firma-banner .fb-logo{
+  width:48px;height:48px;background:#fff center/contain no-repeat;border-radius:8px;flex-shrink:0;
+}
+.firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
+.firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
 </style>
 
 <div class="tx-wrap">
 
-  {# ─── HEADER STICKY ─── #}
+  {# ─── HEADER STICKY con branding ILUS ─── #}
   <div class="tx-hdr">
+    <div class="tx-hdr-brand">
+      <span class="ilus-mark"></span>
+      ILUS · Orden de Trabajo
+    </div>
     <div class="d-flex justify-content-between align-items-start gap-2">
       <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot }}</h2>
       <span class="badge-est">{{ visita.estado|upper }}</span>
@@ -396,16 +463,20 @@
 
 </div>
 
-{# ─── BOTTOM BAR FIJO (firmar) ─── #}
+{# ─── BOTTOM BAR FIJO (firmar) — BLOQUEADO hasta tareas 100% ─── #}
 <div class="tx-bottom">
   {% if visita.estado in ['pendiente_aprobacion','completada','cerrada'] %}
   <button class="tx-btn-firmar" disabled>
     <i class="bi bi-check-circle-fill"></i> OT firmada — esperando aprobación
   </button>
   {% else %}
-  <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()">
-    <i class="bi bi-pen-fill"></i> Completar y firmar OT
+  <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()" disabled
+          data-locked="1" title="Completá todas las tareas antes de firmar">
+    <i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Cargando tareas…</span>
   </button>
+  <small id="btnFirmarHint" class="d-block text-center mt-1" style="color:#94a3b8;font-size:.72rem">
+    Verifica las tareas para habilitar la firma
+  </small>
   {% endif %}
 </div>
 
@@ -442,12 +513,17 @@
   </div>
 </div>
 
-{# ═════════ MODAL: Firmas ═════════ #}
-<div class="modal fade" id="modalFirma" tabindex="-1" data-bs-backdrop="static">
-  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
-    <div class="modal-content" style="border-radius:14px">
-      <div class="modal-header" style="background:linear-gradient(135deg,#15803d,#16a34a);color:#fff;border:0">
-        <h5 class="modal-title fw-bold"><i class="bi bi-pen-fill me-2"></i>Cerrar OT — Firmas</h5>
+{# ═════════ MODAL: Firmas — DISEÑO ILUS impresionante ═════════ #}
+<div class="modal fade firma-modal" id="modalFirma" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content">
+      {# Banner ILUS con logo #}
+      <div class="firma-banner">
+        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='Logo.png') }}')"></div>
+        <div class="flex-grow-1">
+          <h5><i class="bi bi-pen-fill me-2"></i>Cerrar Orden de Trabajo</h5>
+          <div class="fb-sub">{{ visita.numero_ot }} · {{ visita.razon_social }}</div>
+        </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -455,29 +531,66 @@
           <i class="bi bi-info-circle me-1"></i>
           Al firmar, la OT pasa a <strong>"Pendiente de aprobación"</strong>. El supervisor revisará y cerrará.
         </div>
-        <div class="mb-3">
-          <label class="form-label small fw-semibold mb-1"><i class="bi bi-person-check me-1"></i>Tu firma (técnico)</label>
-          <input type="text" id="firmaTecNombre" class="form-control form-control-sm mb-2"
+
+        {# ─── FIRMA DEL TÉCNICO ─── #}
+        <div class="mb-4">
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-person-check me-1 text-success"></i>Tu firma (técnico)
+          </label>
+          <input type="text" id="firmaTecNombre" class="form-control mb-2"
                  placeholder="Tu nombre completo" value="{{ visita.tecnico_principal or '' }}">
-          <div class="firma-canvas-wrap"><canvas id="canvasTec" width="500" height="160"></canvas></div>
-          <button class="btn btn-sm btn-outline-secondary mt-1" type="button" onclick="limpiarFirma('canvasTec')">
-            <i class="bi bi-eraser me-1"></i>Borrar
-          </button>
+          <div class="firma-canvas-wrap" id="wrap-canvasTec">
+            <canvas id="canvasTec" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ Firma aquí con el dedo o lápiz óptico</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="limpiarFirma('canvasTec')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="undoFirma('canvasTec')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a" onclick="setFirmaColor('canvasTec', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af" onclick="setFirmaColor('canvasTec', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#dc2626" onclick="setFirmaColor('canvasTec', '#dc2626', this)" title="Rojo"></div>
+            </div>
+          </div>
         </div>
+
+        {# ─── FIRMA DEL CLIENTE ─── #}
         <div class="mb-2">
-          <label class="form-label small fw-semibold mb-1"><i class="bi bi-person-badge me-1"></i>Firma del cliente</label>
-          <input type="text" id="firmaCliNombre" class="form-control form-control-sm mb-2"
-                 placeholder="Nombre del cliente que recibe">
-          <div class="firma-canvas-wrap"><canvas id="canvasCli" width="500" height="160"></canvas></div>
-          <button class="btn btn-sm btn-outline-secondary mt-1" type="button" onclick="limpiarFirma('canvasCli')">
-            <i class="bi bi-eraser me-1"></i>Borrar
-          </button>
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
+          </label>
+          <input type="text" id="firmaCliNombre" class="form-control mb-2"
+                 placeholder="Nombre del cliente que recibe"
+                 value="{{ visita.contacto_nombre or '' }}">
+          <div class="firma-canvas-wrap" id="wrap-canvasCli">
+            <canvas id="canvasCli" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ El cliente firma aquí con el dedo</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="limpiarFirma('canvasCli')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="undoFirma('canvasCli')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a" onclick="setFirmaColor('canvasCli', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af" onclick="setFirmaColor('canvasCli', '#1e40af', this)" title="Azul"></div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-success fw-bold" id="btnFirmarConfirm" onclick="enviarFirma()">
-          <i class="bi bi-check-lg me-1"></i>Firmar y enviar
+      <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg me-1"></i>Cancelar
+        </button>
+        <button type="button" class="btn btn-success fw-bold" id="btnFirmarConfirm"
+                onclick="enviarFirma()" style="padding:.6rem 1.4rem;font-size:.95rem">
+          <i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión
         </button>
       </div>
     </div>
@@ -878,7 +991,51 @@ function _updateProgress(mid, pid){
   });
   document.getElementById('statTot').textContent = totG;
   document.getElementById('statComp').textContent = compG;
+
+  // ⚠️ Lock/unlock botón "Completar y firmar OT" según progreso
+  actualizarLockFirmar(totG, compG);
 }
+
+// ════════════════════════════════════════════════════════
+//  LOCK BOTÓN FIRMAR — solo habilitado si todas las tareas están OK
+// ════════════════════════════════════════════════════════
+function actualizarLockFirmar(total, completas){
+  const btn = document.getElementById('btnFirmar');
+  const lbl = document.getElementById('btnFirmarLabel');
+  const hint = document.getElementById('btnFirmarHint');
+  if (!btn || !lbl) return;
+  if (total === 0) {
+    btn.disabled = true;
+    lbl.innerHTML = 'Sin tareas asignadas';
+    if (hint) hint.textContent = 'La OT no tiene tareas. Pide al admin que revise.';
+    btn.dataset.locked = '1';
+    return;
+  }
+  if (completas >= total){
+    // ✓ Todas completas → habilitar
+    btn.disabled = false;
+    btn.dataset.locked = '0';
+    btn.innerHTML = '<i class="bi bi-pen-fill"></i> Completar y firmar OT';
+    btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
+    if (hint) hint.textContent = '✓ Todas las tareas listas';
+  } else {
+    btn.disabled = true;
+    btn.dataset.locked = '1';
+    const falta = total - completas;
+    lbl.innerHTML = `Faltan ${falta} tarea${falta>1?'s':''} (${completas}/${total})`;
+    btn.style.background = '#cbd5e1';
+    if (hint) hint.textContent = '⏳ Completá todas las tareas antes de firmar';
+  }
+}
+
+// Llamar al cargar la página
+document.addEventListener('DOMContentLoaded', () => {
+  let totG = 0, compG = 0;
+  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
+    pls.forEach(p => { totG += p.total; compG += p.completas; });
+  });
+  actualizarLockFirmar(totG, compG);
+});
 
 // ════════════════════════════════════════════════════════
 //  HELPERS
@@ -921,17 +1078,48 @@ async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
 }
 
 // ════════════════════════════════════════════════════════
-//  GPS automático + ruta + ping periódico
+//  GPS — Permission API moderna (Android + iOS + Desktop)
+//
+//  Estrategia:
+//  1. Si navigator.permissions disponible → consultar 'geolocation' state
+//     antes de pedir GPS (evita prompt si ya fue denegado/granted)
+//  2. Si denied → mostrar botón explícito "Permitir ubicación" con
+//     instrucciones para activar en settings del navegador
+//  3. Si granted/prompt → solicitar getCurrentPosition
+//  4. iOS Safari requiere HTTPS y user gesture; manejo con fallback
 // ════════════════════════════════════════════════════════
-function pedirGPS(){
+async function pedirGPS(forzar = false){
   const bar = document.getElementById('execGpsBar');
   const ttl = document.getElementById('execGpsTitle');
   const sub = document.getElementById('execGpsSub');
   if (!navigator.geolocation){
     bar.classList.add('gps-err');
-    ttl.textContent = 'Geolocalización no soportada';
+    ttl.textContent = 'Geolocalización no soportada por este dispositivo';
+    sub.innerHTML = '<small>Usa un navegador moderno (Chrome, Safari, Firefox).</small>';
     return;
   }
+  // Consultar estado del permiso si está disponible
+  let state = 'prompt';
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      state = status.state;
+      // Reaccionar a cambios en el permiso (usuario abrió settings)
+      status.onchange = () => {
+        if (status.state === 'granted' && !window.__execOrigenLat) pedirGPS(true);
+      };
+    } catch(e){ console.warn('permissions.query:', e); }
+  }
+
+  if (state === 'denied' && !forzar) {
+    bar.classList.add('gps-err');
+    ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
+    sub.innerHTML = `<small>Para auditar tu posición, habilita la ubicación: ` +
+      `<a href="#" onclick="mostrarAyudaGPS();return false" style="color:#1d4ed8;font-weight:600">¿Cómo activarlo?</a></small>`;
+    return;
+  }
+
+  // Solicitar posición (esto dispara prompt si state='prompt')
   navigator.geolocation.getCurrentPosition(async (pos) => {
     const lat = pos.coords.latitude; const lng = pos.coords.longitude;
     window.__execOrigenLat = lat; window.__execOrigenLng = lng;
@@ -942,6 +1130,7 @@ function pedirGPS(){
       const dj = await rev.json();
       dir = dj.display_name || '';
     } catch(e) {}
+    bar.classList.remove('gps-err');
     bar.classList.add('gps-ok');
     ttl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ubicación registrada';
     sub.innerHTML = dir ? `<small>${dir}</small>` : `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>`;
@@ -953,9 +1142,62 @@ function pedirGPS(){
     } catch(e) {}
   }, (err) => {
     bar.classList.add('gps-err');
-    ttl.textContent = 'No se pudo obtener tu ubicación';
-    sub.textContent = err.message || 'Permite acceso a ubicación.';
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 });
+    if (err.code === 1){
+      ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
+      sub.innerHTML = `<small>Sin permiso de GPS no podés ejecutar la OT. ` +
+        `<a href="#" onclick="mostrarAyudaGPS();return false" style="color:#1d4ed8;font-weight:600">¿Cómo activarlo?</a></small>`;
+    } else if (err.code === 2){
+      ttl.textContent = 'Ubicación no disponible';
+      sub.innerHTML = '<small>Verifica que el GPS del dispositivo esté encendido.</small>';
+    } else if (err.code === 3){
+      ttl.textContent = 'Timeout al obtener GPS';
+      sub.innerHTML = '<small>Intenta nuevamente en un lugar con mejor señal.</small>';
+    } else {
+      ttl.textContent = 'No se pudo obtener tu ubicación';
+      sub.textContent = err.message || 'Error desconocido.';
+    }
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+}
+
+// ════════════════════════════════════════════════════════
+//  AYUDA: cómo activar GPS en cada navegador
+// ════════════════════════════════════════════════════════
+function mostrarAyudaGPS(){
+  const ua = navigator.userAgent;
+  let instr = '';
+  if (/iphone|ipad|ipod/i.test(ua)){
+    instr = `<strong>iPhone/iPad (Safari):</strong>
+      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
+        <li>Abrí <strong>Ajustes → Safari</strong></li>
+        <li>Tocá <strong>Ubicación</strong></li>
+        <li>Seleccioná <strong>"Preguntar"</strong> o <strong>"Permitir"</strong></li>
+        <li>Volvé a esta página y refrescá</li>
+      </ol>
+      <small style="color:#6b7280">También verifica: Ajustes → Privacidad → Servicios de Ubicación → Safari = Mientras uso la app</small>`;
+  } else if (/android/i.test(ua)){
+    instr = `<strong>Android (Chrome):</strong>
+      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
+        <li>Tocá el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
+        <li>Tocá <strong>Permisos</strong></li>
+        <li>En "Ubicación" elegí <strong>"Permitir"</strong></li>
+        <li>Refrescá la página</li>
+      </ol>
+      <small style="color:#6b7280">Si no aparece: Ajustes → Apps → Chrome → Permisos → Ubicación</small>`;
+  } else {
+    instr = `<strong>Chrome/Edge desktop:</strong>
+      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
+        <li>Click el <strong>candado 🔒</strong> a la izquierda de la URL</li>
+        <li>En "Ubicación" cambiá a <strong>"Permitir"</strong></li>
+        <li>Refrescá la página (Ctrl+R)</li>
+      </ol>`;
+  }
+  ilusAlert({
+    title: '🌍 Cómo permitir la ubicación',
+    message: instr,
+    messageHtml: true,
+    type: 'info',
+    okLabel: 'Entendido',
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1023,26 +1265,54 @@ function iniciarPingPeriodico(){
 window.addEventListener('beforeunload', () => { if (_pingInterval) clearInterval(_pingInterval); });
 
 // ════════════════════════════════════════════════════════
-//  FIRMAS
+//  FIRMAS — canvas interactivo con undo, color picker, has-state
 // ════════════════════════════════════════════════════════
 const _sig = {};
+
 function initCanvas(id){
   const cv = document.getElementById(id);
   if (!cv) return;
+  const wrap = document.getElementById('wrap-' + id);
   const dpr = window.devicePixelRatio || 1;
   const rect = cv.getBoundingClientRect();
   cv.width = rect.width * dpr; cv.height = rect.height * dpr;
   const ctx = cv.getContext('2d');
   ctx.scale(dpr, dpr);
-  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
-  _sig[id] = { ctx, drawing: false, last: null, has: false };
-  const start = (x,y) => { _sig[id].drawing = true; _sig[id].last = {x,y}; };
+  ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#0f172a';
+  _sig[id] = {
+    ctx, drawing: false, last: null, has: false,
+    color: '#0f172a', wrap,
+    history: [],  // para undo: stack de imágenes Base64
+  };
+
+  function pushHistory(){
+    try {
+      _sig[id].history.push(cv.toDataURL('image/png'));
+      if (_sig[id].history.length > 20) _sig[id].history.shift();  // max 20 niveles
+    } catch(e) {}
+  }
+  function setHas(){
+    _sig[id].has = true;
+    if (wrap) wrap.classList.add('has-firma');
+  }
+
+  const start = (x,y) => {
+    _sig[id].drawing = true;
+    _sig[id].last = {x,y};
+    pushHistory();  // guarda estado ANTES de dibujar (para undo)
+  };
   const move = (x,y) => {
     if (!_sig[id].drawing) return;
-    ctx.beginPath(); ctx.moveTo(_sig[id].last.x, _sig[id].last.y); ctx.lineTo(x,y); ctx.stroke();
-    _sig[id].last = {x,y}; _sig[id].has = true;
+    ctx.beginPath();
+    ctx.moveTo(_sig[id].last.x, _sig[id].last.y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    _sig[id].last = {x, y};
+    setHas();
   };
   const end = () => { _sig[id].drawing = false; _sig[id].last = null; };
+
   const getXY = (ev) => {
     const r = cv.getBoundingClientRect();
     if (ev.touches){ const t = ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
@@ -1052,15 +1322,51 @@ function initCanvas(id){
   cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
   cv.addEventListener('mouseup', end);
   cv.addEventListener('mouseleave', end);
-  cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); });
-  cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); });
+  cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); }, { passive: false });
+  cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); }, { passive: false });
   cv.addEventListener('touchend', end);
 }
+
 function limpiarFirma(id){
   const cv = document.getElementById(id);
   if (!cv) return;
   cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
-  if (_sig[id]) _sig[id].has = false;
+  if (_sig[id]) {
+    _sig[id].has = false;
+    _sig[id].history = [];
+    if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
+  }
+}
+
+function undoFirma(id){
+  if (!_sig[id] || !_sig[id].history.length) return;
+  const cv = document.getElementById(id);
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const dataUrl = _sig[id].history.pop();
+  const img = new Image();
+  img.onload = () => {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(img, 0, 0, cv.width / (window.devicePixelRatio||1), cv.height / (window.devicePixelRatio||1));
+    if (_sig[id].history.length === 0){
+      _sig[id].has = false;
+      if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
+    }
+  };
+  img.src = dataUrl;
+}
+
+function setFirmaColor(id, color, el){
+  if (!_sig[id]) return;
+  _sig[id].color = color;
+  _sig[id].ctx.strokeStyle = color;
+  // Actualizar UI: marcar color activo
+  const wrap = _sig[id].wrap;
+  if (wrap){
+    const toolbar = wrap.nextElementSibling;
+    if (toolbar) toolbar.querySelectorAll('.firma-color').forEach(c => c.classList.remove('active'));
+  }
+  if (el) el.classList.add('active');
 }
 function abrirModalFirma(){
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
