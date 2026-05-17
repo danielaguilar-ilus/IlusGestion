@@ -15264,6 +15264,18 @@ def init_mantenciones_tables():
                 # ════════════════════════════════════════════════════════════
                 "ALTER TABLE mant_visita_tareas ADD COLUMN valor_json TEXT NULL COMMENT 'Valor capturado serializado JSON según tipo_respuesta'",
                 # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Acceso y logística del sitio (F calidad OT):
+                # Información que el admin captura al crear la OT para que el
+                # técnico llegue preparado. Datos críticos: ascensor (subir
+                # equipos pesados), estacionamiento (puede traer auto/camión),
+                # piso/nivel, notas adicionales (códigos de portón, timbre,
+                # contacto seguridad, etc.).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN acceso_ascensor TINYINT(1) NULL COMMENT 'Hay ascensor?'",
+                "ALTER TABLE mant_visitas ADD COLUMN acceso_estacionamiento TINYINT(1) NULL COMMENT 'Hay estacionamiento?'",
+                "ALTER TABLE mant_visitas ADD COLUMN acceso_piso VARCHAR(50) NULL COMMENT 'Piso/nivel (ej. piso 3, subterráneo, etc)'",
+                "ALTER TABLE mant_visitas ADD COLUMN acceso_notas TEXT NULL COMMENT 'Notas adicionales de acceso/logística'",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Seguimiento de ruta en tiempo real (F admin):
                 # Cuando el técnico inicia ruta, su app envía pings periódicos
                 # con su lat/lng. El admin puede ver su ubicación en vivo en
@@ -29102,6 +29114,31 @@ def mant_lev_crear_o_listar(cid):
     contacto_email  = (data.get("contacto_email")  or "").strip()[:200] or None
     contacto_origen = (data.get("contacto_origen") or "").strip()[:40]  or None
 
+    # ─── Acceso y logística del sitio (calidad OT) ─────────────────
+    # Datos que el técnico necesita SABER ANTES de llegar:
+    #  - Si hay ascensor (equipos pesados se suben por ahí, sino escalera).
+    #  - Si hay estacionamiento (puede ir en auto/camioneta).
+    #  - Piso/nivel del local.
+    #  - Notas (códigos de portón, timbre, contacto seguridad, etc.).
+    # acceso_ascensor / acceso_estacionamiento: TINYINT(1) — 0=No, 1=Sí,
+    # NULL=No informado (legacy).
+    def _tribool(val):
+        """Convierte true/false/null/"si"/"no"/"1"/"0" a 1/0/None."""
+        if val is None or val == "":
+            return None
+        if isinstance(val, bool):
+            return 1 if val else 0
+        s = str(val).strip().lower()
+        if s in ("1", "true", "si", "sí", "yes", "y"):
+            return 1
+        if s in ("0", "false", "no", "n"):
+            return 0
+        return None
+    acceso_ascensor        = _tribool(data.get("acceso_ascensor"))
+    acceso_estacionamiento = _tribool(data.get("acceso_estacionamiento"))
+    acceso_piso            = (data.get("acceso_piso")  or "").strip()[:50] or None
+    acceso_notas           = (data.get("acceso_notas") or "").strip()[:2000] or None
+
     # ─── Multi-plantilla por equipo (plantillas_por_equipo) ───────
     # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
     # Si llega, además de la plantilla estándar del tipo, aplica estas
@@ -29200,12 +29237,14 @@ def mant_lev_crear_o_listar(cid):
                     " tipo, estado, modalidad_cobro, prioridad, "
                     " descripcion, tecnico_user_id, levantamiento_id, created_by, "
                     " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
-                    " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen) "
+                    " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
+                    " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,"
                     " %s,'programada',%s,'media',"
                     " %s,%s,%s,%s,"
                     " %s,%s,%s,%s,"
-                    " %s,%s,%s,%s,%s)",
+                    " %s,%s,%s,%s,%s,"
+                    " %s,%s,%s,%s)",
                     (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
                      fecha_prog, fecha_fin, hora_ini, hora_fin,
                      tipo_ot, modalidad,
@@ -29213,7 +29252,8 @@ def mant_lev_crear_o_listar(cid):
                      f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
                      tecnico_principal, lev_id, current_username(),
                      direccion_visita, direccion_lat, direccion_lng, direccion_place_id,
-                     contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen)
+                     contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen,
+                     acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
                 )
                 visita_id = cur.lastrowid
                 cur.execute(

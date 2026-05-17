@@ -10,74 +10,107 @@
 
 .tx-wrap{max-width:820px;margin:0 auto;padding:10px 12px 110px}
 
-/* ── HEADER STICKY — Diseño ILUS amplio y aireado ── */
+/* ── HEADER STICKY — Diseño ILUS COMPACTO + colapsable ── */
 .tx-hdr{
   background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 30%,#7c1d1d 65%,#dc2626 100%);
   color:#fff;
-  border-radius:14px;
-  padding:22px 24px 18px;  /* MÁS ESPACIO interno */
-  margin-bottom:14px;
-  box-shadow:0 8px 22px rgba(0,0,0,.25), 0 0 0 1px rgba(220,38,38,.1);
-  position:sticky;top:8px;z-index:50;
+  border-radius:12px;
+  padding:12px 14px 10px;             /* COMPACTO (era 22 24 18) */
+  margin-bottom:10px;
+  box-shadow:0 4px 14px rgba(0,0,0,.22), 0 0 0 1px rgba(220,38,38,.1);
+  position:sticky;top:6px;z-index:50;
   overflow:hidden;
+  transition:padding .2s ease;
 }
-/* Watermark del casco — más grande, mejor posicionado */
+/* Watermark del casco — más pequeño, no compite por espacio */
 .tx-hdr::before {
-  content:''; position:absolute; top:-20px; right:-15px; width:180px; height:180px;
+  content:''; position:absolute; top:-10px; right:-10px; width:110px; height:110px;
   background:url('/static/favicon_192.png?v=20260517a') center/contain no-repeat;
-  opacity:.10; transform:rotate(8deg); pointer-events:none;
+  opacity:.08; transform:rotate(8deg); pointer-events:none;
 }
-/* Brand chip arriba con logo ILUS */
+/* Brand chip arriba con logo ILUS — más chico */
 .tx-hdr-brand{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:.7rem;text-transform:uppercase;letter-spacing:1.5px;
-  font-weight:800;margin-bottom:10px;
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.62rem;text-transform:uppercase;letter-spacing:1.2px;
+  font-weight:800;margin-bottom:6px;
   background:rgba(255,255,255,.12);
-  padding:5px 12px;border-radius:9999px;
+  padding:3px 9px;border-radius:9999px;
   border:1px solid rgba(255,255,255,.18);
   backdrop-filter:blur(8px);
 }
 .tx-hdr-brand .ilus-mark{
-  width:18px;height:18px;
+  width:14px;height:14px;
   background:url('/static/favicon.png?v=20260517a') center/contain no-repeat;
-  background-color:#fff;border-radius:4px;
+  background-color:#fff;border-radius:3px;
 }
 .tx-hdr h2{
-  font-size:1.6rem;font-weight:900;margin:0;
-  display:flex;align-items:center;gap:10px;
-  letter-spacing:-1px;line-height:1;
+  font-size:1.15rem;font-weight:900;margin:0;
+  display:flex;align-items:center;gap:7px;
+  letter-spacing:-.5px;line-height:1.1;
 }
 .tx-hdr h2 i {
-  font-size:1.3rem;opacity:.85;
+  font-size:1rem;opacity:.85;
 }
 .tx-hdr .meta{
-  font-size:.84rem;opacity:.95;margin-top:10px;line-height:1.7;
+  font-size:.76rem;opacity:.95;margin-top:6px;line-height:1.5;
   position:relative;z-index:1;
 }
-.tx-hdr .meta > div{display:flex;align-items:center;gap:6px;}
-.tx-hdr .meta i{font-size:.95rem;opacity:.85;width:18px;text-align:center;flex-shrink:0;}
+.tx-hdr .meta > div{display:flex;align-items:center;gap:5px;}
+.tx-hdr .meta i{font-size:.82rem;opacity:.85;width:14px;text-align:center;flex-shrink:0;}
 .tx-hdr .badge-est{
-  display:inline-block;padding:5px 14px;border-radius:9999px;
+  display:inline-block;padding:3px 10px;border-radius:9999px;
   background:rgba(255,255,255,.22);
-  font-size:.7rem;font-weight:800;
-  text-transform:uppercase;letter-spacing:1px;
+  font-size:.62rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.8px;
   border:1px solid rgba(255,255,255,.3);
   backdrop-filter:blur(8px);
   position:relative;z-index:1;
 }
 .tx-hdr .btn-ruta{
-  display:inline-flex;align-items:center;gap:8px;
+  display:inline-flex;align-items:center;gap:6px;
   background:rgba(255,255,255,.18);color:#fff;
   border:1px solid rgba(255,255,255,.4);
-  padding:10px 18px;border-radius:9999px;
-  font-size:.85rem;font-weight:700;
+  padding:7px 13px;border-radius:9999px;
+  font-size:.76rem;font-weight:700;
   text-decoration:none;transition:all .18s;
-  margin-top:14px;cursor:pointer;
+  margin-top:8px;cursor:pointer;
   backdrop-filter:blur(6px);
   position:relative;z-index:1;
+  min-height:36px;
 }
 .tx-hdr .btn-ruta:hover{background:rgba(255,255,255,.28);color:#fff}
 .tx-hdr .btn-ruta.iniciada{background:#dcfce7;color:#15803d;border-color:#16a34a}
+
+/* Botón toggle "expandir/colapsar header" */
+.tx-hdr-toggle{
+  position:absolute;top:8px;right:8px;z-index:2;
+  width:28px;height:28px;border-radius:50%;
+  background:rgba(255,255,255,.18);
+  border:1px solid rgba(255,255,255,.3);
+  color:#fff;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:.8rem;transition:all .18s;
+}
+.tx-hdr-toggle:hover{background:rgba(255,255,255,.28)}
+.tx-hdr.collapsed .tx-hdr-extra{display:none}
+.tx-hdr.collapsed{padding:8px 12px}
+.tx-hdr.collapsed .tx-hdr-brand{display:none}
+.tx-hdr.collapsed h2{font-size:.95rem}
+.tx-hdr.collapsed h2 i{font-size:.85rem}
+.tx-hdr.collapsed .meta{margin-top:3px;font-size:.7rem}
+.tx-hdr.collapsed .meta > div:nth-child(n+2){display:none} /* solo cliente, oculta dir/fecha */
+
+/* Compact contraparte card — botones más chicos */
+.tx-hdr .contraparte-card{
+  background:rgba(255,255,255,.13);
+  border-radius:9px;padding:7px 10px;margin-top:7px;
+  border:1px solid rgba(255,255,255,.18);
+  position:relative;z-index:1;
+}
+.tx-hdr .contraparte-titulo{font-size:.62rem;opacity:.85;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.tx-hdr .contraparte-nombre{font-weight:700;font-size:.84rem;margin-top:1px}
+.tx-hdr .contraparte-actions{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+.tx-hdr .contraparte-actions .btn-ruta{margin-top:0;padding:5px 11px;font-size:.7rem;min-height:32px}
 
 /* ── GPS bar ── */
 .tx-gps{
@@ -432,41 +465,49 @@
 
 <div class="tx-wrap">
 
-  {# ─── HEADER STICKY con branding ILUS ─── #}
-  <div class="tx-hdr">
+  {# ─── HEADER STICKY con branding ILUS (compacto + colapsable) ─── #}
+  <div class="tx-hdr" id="txHdr">
+    {# Toggle expand/collapse — solo móvil, escondido en desktop #}
+    <button type="button" class="tx-hdr-toggle d-md-none" id="txHdrToggle"
+            onclick="toggleHdrCollapse()" title="Colapsar / expandir info">
+      <i class="bi bi-chevron-up" id="txHdrToggleIcon"></i>
+    </button>
     <div class="tx-hdr-brand">
       <span class="ilus-mark"></span>
-      ILUS · Orden de Trabajo
+      ILUS · OT
     </div>
-    <div class="d-flex justify-content-between align-items-start gap-2">
+    <div class="d-flex justify-content-between align-items-center gap-2">
       <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot }}</h2>
       <span class="badge-est">{{ visita.estado|upper }}</span>
     </div>
     <div class="meta">
-      <div><i class="bi bi-building me-1"></i><strong>{{ visita.razon_social }}</strong></div>
-      {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
-      {% if dir_visita %}
-      <div><i class="bi bi-geo-alt me-1"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</div>
-      {% endif %}
-      {% if visita.fecha_programada %}
-      <div><i class="bi bi-calendar3 me-1"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</div>
-      {% endif %}
+      <div><i class="bi bi-building"></i><strong>{{ visita.razon_social }}</strong></div>
+      <div class="tx-hdr-extra">
+        {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
+        {% if dir_visita %}
+        <div><i class="bi bi-geo-alt"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</div>
+        {% endif %}
+        {% if visita.fecha_programada %}
+        <div><i class="bi bi-calendar3"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</div>
+        {% endif %}
+      </div>
     </div>
 
-    {# ─── Contacto en sitio (contraparte) — botones llamar/email rápidos ─── #}
+    {# ─── Contacto en sitio (contraparte) — compacto ─── #}
+    <div class="tx-hdr-extra">
     {% if visita.contacto_nombre %}
-    <div style="background:rgba(255,255,255,.13);border-radius:9px;padding:9px 12px;margin-top:9px;border:1px solid rgba(255,255,255,.18)">
-      <div style="font-size:.7rem;opacity:.85;text-transform:uppercase;letter-spacing:.5px;font-weight:700">
-        <i class="bi bi-person-vcard me-1"></i>Recibe en sitio
+    <div class="contraparte-card">
+      <div class="contraparte-titulo">
+        <i class="bi bi-person-vcard"></i> Recibe en sitio
       </div>
-      <div style="font-weight:700;font-size:.92rem;margin-top:2px">
+      <div class="contraparte-nombre">
         {{ visita.contacto_nombre }}{% if visita.contacto_cargo %} <small style="opacity:.85;font-weight:500">— {{ visita.contacto_cargo }}</small>{% endif %}
       </div>
       {% if visita.contacto_tel or visita.contacto_email %}
-      <div class="d-flex gap-2 mt-2 flex-wrap">
+      <div class="contraparte-actions">
         {% if visita.contacto_tel %}
         <a href="tel:{{ visita.contacto_tel }}" class="btn-ruta" style="background:#dcfce7;color:#15803d;border-color:#16a34a">
-          <i class="bi bi-telephone-fill"></i> Llamar {{ visita.contacto_tel }}
+          <i class="bi bi-telephone-fill"></i> Llamar
         </a>
         <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}" target="_blank" class="btn-ruta" style="background:#25d366;color:#fff;border-color:#25d366">
           <i class="bi bi-whatsapp"></i> WhatsApp
@@ -474,7 +515,7 @@
         {% endif %}
         {% if visita.contacto_email %}
         <a href="mailto:{{ visita.contacto_email }}" class="btn-ruta" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">
-          <i class="bi bi-envelope-fill"></i> Email
+          <i class="bi bi-envelope-fill"></i>
         </a>
         {% endif %}
       </div>
@@ -484,12 +525,13 @@
     {% if visita.estado not in ['cerrada','cancelada','anulada','pendiente_aprobacion'] %}
     <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
       {% if visita.ruta_iniciada_at %}
-      <i class="bi bi-check-circle-fill"></i> Ruta iniciada · {{ (visita.ruta_app or '')|upper }}
+      <i class="bi bi-check-circle-fill"></i> Ruta · {{ (visita.ruta_app or '')|upper }}
       {% else %}
       <i class="bi bi-signpost-split-fill"></i> Iniciar ruta al cliente
       {% endif %}
     </button>
     {% endif %}
+    </div> {# /tx-hdr-extra #}
   </div>
 
   {# ─── GPS BAR ─── #}
@@ -1269,19 +1311,106 @@ async function guardarResp(tid, valor, mid, pid){
   } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
 
-function capturarGPS(tid, mid, pid){
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN DE RADIO — distancia entre GPS y destino OT
+//  (Base para bloqueo futuro: <200m del cliente = OK)
+// ════════════════════════════════════════════════════════
+const RADIO_MAX_METROS = 200;   // 200m — futuro: bloquear ejecución si excedido
+const RADIO_BLOQUEO_ACTIVO = false;  // por ahora solo advierte, no bloquea
+
+function _distanciaMetros(lat1, lng1, lat2, lng2){
+  // Fórmula Haversine
+  const R = 6371000;
+  const toRad = (g) => g * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+            Math.sin(dLng/2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+async function _validarRadio(lat, lng){
+  // Si la OT no tiene lat/lng de destino, no podemos validar
+  if (!DESTINO_LAT || !DESTINO_LNG) return { ok:true, motivo:'sin_destino' };
+  const dist = _distanciaMetros(lat, lng, DESTINO_LAT, DESTINO_LNG);
+  if (dist <= RADIO_MAX_METROS) return { ok:true, dist };
+  // Fuera de radio
+  if (RADIO_BLOQUEO_ACTIVO){
+    await ilusAlert({
+      title: '📍 Fuera de zona',
+      message: `Estás a <strong>${dist} m</strong> del cliente.<br>` +
+               `La OT solo puede gestionarse a ${RADIO_MAX_METROS} m o menos.`,
+      messageHtml: true,
+      sub: 'Acércate al lugar exacto y vuelve a capturar el GPS.',
+      type: 'warning',
+    });
+    return { ok:false, dist };
+  }
+  // Solo advertencia (no bloquea aún)
+  ilusToast(`⚠ Estás a ${dist}m del cliente (max permitido: ${RADIO_MAX_METROS}m)`, {
+    type: 'warning', duration: 4500,
+  });
+  return { ok:true, dist, fuera:true };
+}
+
+async function capturarGPS(tid, mid, pid){
   if (!navigator.geolocation){
-    ilusToast('GPS no disponible en este dispositivo', { type:'error' }); return;
+    await ilusAlert({
+      title: 'GPS no disponible',
+      message: 'Tu navegador no soporta geolocalización. Usa Safari/Chrome actualizado.',
+      type: 'error',
+    });
+    return;
+  }
+  // ── FIX 2026-05-17 iPhone: chequear estado de permiso ANTES ────
+  // En iOS Safari, si el usuario denegó una vez, getCurrentPosition
+  // falla SILENCIOSO con "User denied Geolocation" y no hay forma
+  // programática de re-pedir permiso. Hay que enviar al usuario a
+  // Ajustes → Safari → Ubicación. Ese es el caso de la imagen 3.
+  // ─────────────────────────────────────────────────────────────
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      if (status.state === 'denied'){
+        // Permiso ya denegado — mostrar modal de ayuda directamente
+        mostrarAyudaGPS();
+        return;
+      }
+    } catch(e) { /* permissions API no disponible, seguimos al getCurrentPosition */ }
   }
   ilusToast('Pidiendo permiso GPS…', { type:'info', duration: 1500 });
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
+    async (pos) => {
+      // Validar radio (advertencia o bloqueo según flag)
+      const v = await _validarRadio(pos.coords.latitude, pos.coords.longitude);
+      if (!v.ok) return;
       guardarResp(tid, { lat: pos.coords.latitude, lng: pos.coords.longitude }, mid, pid);
-      // Re-render solo esa tarea
       setTimeout(() => renderTareas(mid, pid), 600);
     },
-    (err) => { ilusToast('GPS error: ' + err.message, { type:'error' }); },
-    { enableHighAccuracy: true, timeout: 12000 }
+    (err) => {
+      // err.code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+      if (err.code === 1){
+        // Denegado → mostrar modal con instrucciones iPhone/Android
+        mostrarAyudaGPS();
+      } else if (err.code === 2){
+        ilusAlert({
+          title: 'GPS no disponible',
+          message: 'No se pudo obtener tu ubicación. Verifica que el GPS del dispositivo esté encendido.',
+          sub: 'En iPhone: Ajustes → Privacidad → Servicios de Ubicación → ENCENDIDO',
+          type: 'warning',
+        });
+      } else if (err.code === 3){
+        ilusAlert({
+          title: 'GPS timeout',
+          message: 'Tomó demasiado tiempo. Intenta nuevamente en un lugar con vista al cielo.',
+          type: 'warning',
+        });
+      } else {
+        ilusToast('GPS error: ' + (err.message || 'desconocido'), { type:'error' });
+      }
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
   );
 }
 
@@ -1409,6 +1538,64 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarAdjuntos();
   // Drag&drop sobre el uploader
   initAdjuntosDragDrop();
+});
+
+// ════════════════════════════════════════════════════════
+//  HEADER COLAPSABLE — más espacio para tareas en móvil
+// ════════════════════════════════════════════════════════
+function toggleHdrCollapse(){
+  const hdr = document.getElementById('txHdr');
+  const ic = document.getElementById('txHdrToggleIcon');
+  if (!hdr) return;
+  hdr.classList.toggle('collapsed');
+  const isCollapsed = hdr.classList.contains('collapsed');
+  if (ic) ic.className = isCollapsed ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
+  try { sessionStorage.setItem('ot_hdr_collapsed_' + VID, isCollapsed ? '1' : '0'); } catch(e){}
+}
+
+// Auto-colapso al hacer scroll hacia abajo en móvil (UX común)
+let _lastScrollY = 0;
+let _scrollTicking = false;
+window.addEventListener('scroll', () => {
+  if (window.innerWidth >= 992) return;  // desktop: no colapsar
+  if (_scrollTicking) return;
+  _scrollTicking = true;
+  requestAnimationFrame(() => {
+    const y = window.scrollY;
+    const hdr = document.getElementById('txHdr');
+    if (hdr){
+      if (y > 60 && y > _lastScrollY){
+        // scrolling down → colapsar
+        if (!hdr.classList.contains('collapsed')){
+          hdr.classList.add('collapsed');
+          const ic = document.getElementById('txHdrToggleIcon');
+          if (ic) ic.className = 'bi bi-chevron-down';
+        }
+      } else if (y < 30){
+        // back al top → expandir
+        if (hdr.classList.contains('collapsed')){
+          hdr.classList.remove('collapsed');
+          const ic = document.getElementById('txHdrToggleIcon');
+          if (ic) ic.className = 'bi bi-chevron-up';
+        }
+      }
+    }
+    _lastScrollY = y;
+    _scrollTicking = false;
+  });
+}, { passive: true });
+
+// Restaurar estado guardado
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = sessionStorage.getItem('ot_hdr_collapsed_' + VID);
+    if (saved === '1' && window.innerWidth < 992){
+      const hdr = document.getElementById('txHdr');
+      const ic = document.getElementById('txHdrToggleIcon');
+      if (hdr) hdr.classList.add('collapsed');
+      if (ic) ic.className = 'bi bi-chevron-down';
+    }
+  } catch(e){}
 });
 
 // ════════════════════════════════════════════════════════
@@ -1730,42 +1917,73 @@ async function pedirGPS(forzar = false){
 // ════════════════════════════════════════════════════════
 //  AYUDA: cómo activar GPS en cada navegador
 // ════════════════════════════════════════════════════════
-function mostrarAyudaGPS(){
+async function mostrarAyudaGPS(){
   const ua = navigator.userAgent;
   let instr = '';
+  let titulo = '';
   if (/iphone|ipad|ipod/i.test(ua)){
-    instr = `<strong>iPhone/iPad (Safari):</strong>
-      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
-        <li>Abrí <strong>Ajustes → Safari</strong></li>
-        <li>Tocá <strong>Ubicación</strong></li>
-        <li>Seleccioná <strong>"Preguntar"</strong> o <strong>"Permitir"</strong></li>
-        <li>Volvé a esta página y refrescá</li>
+    titulo = 'Activá la ubicación en tu iPhone';
+    instr = `<div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:10px">
+        <strong style="color:#dc2626">⚠️ El GPS está bloqueado en Safari</strong><br>
+        <small style="color:#7f1d1d">Sin GPS no podés validar tu posición ni cerrar la OT.</small>
+      </div>
+      <strong style="display:block;margin-bottom:6px">📱 Paso 1 — Activar GPS general:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
+        <li>Andá a <strong>Ajustes</strong> (la app gris con engranajes)</li>
+        <li>Bajá a <strong>Privacidad y Seguridad</strong></li>
+        <li>Tocá <strong>Servicios de ubicación</strong></li>
+        <li>Activá el switch verde de arriba ("Servicios de ubicación")</li>
       </ol>
-      <small style="color:#6b7280">También verifica: Ajustes → Privacidad → Servicios de Ubicación → Safari = Mientras uso la app</small>`;
+      <strong style="display:block;margin-bottom:6px">🌐 Paso 2 — Permitir a Safari:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
+        <li>En la misma pantalla, bajá hasta encontrar <strong>"Safari"</strong></li>
+        <li>Tocá Safari → elegí <strong>"Mientras uso la app"</strong> o <strong>"Preguntar la próxima vez"</strong></li>
+      </ol>
+      <strong style="display:block;margin-bottom:6px">🔄 Paso 3 — Volver acá:</strong>
+      <ol style="margin:0 0 8px;padding-left:22px;font-size:.88rem;line-height:1.7">
+        <li>Volvé a Safari (esta pestaña)</li>
+        <li>Tocá el botón <strong>"Reintentar GPS"</strong> abajo, o refrescá la página</li>
+      </ol>
+      <div style="background:#fef3c7;border:1px dashed #f59e0b;border-radius:6px;padding:8px 10px;font-size:.78rem;color:#92400e;margin-top:10px">
+        <i class="bi bi-info-circle"></i> Si seguís viendo el error, cerrá Safari completamente (deslizá hacia arriba) y volvé a abrir el link.
+      </div>`;
   } else if (/android/i.test(ua)){
-    instr = `<strong>Android (Chrome):</strong>
-      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
+    titulo = 'Activá la ubicación en tu Android';
+    instr = `<div style="background:#fee2e2;border-left:4px solid #dc2626;padding:10px 12px;border-radius:8px;margin-bottom:10px">
+        <strong style="color:#dc2626">⚠️ El GPS está bloqueado en Chrome</strong>
+      </div>
+      <strong style="display:block;margin-bottom:6px">🌐 Activar en Chrome:</strong>
+      <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7">
         <li>Tocá el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
-        <li>Tocá <strong>Permisos</strong></li>
+        <li>Tocá <strong>Permisos</strong> (o <strong>Configuración del sitio</strong>)</li>
         <li>En "Ubicación" elegí <strong>"Permitir"</strong></li>
-        <li>Refrescá la página</li>
+        <li>Volvé acá y tocá <strong>"Reintentar GPS"</strong></li>
       </ol>
-      <small style="color:#6b7280">Si no aparece: Ajustes → Apps → Chrome → Permisos → Ubicación</small>`;
+      <div style="background:#fef3c7;border:1px dashed #f59e0b;border-radius:6px;padding:8px 10px;font-size:.78rem;color:#92400e">
+        Si no aparece el candado: Ajustes Android → Apps → Chrome → Permisos → Ubicación
+      </div>`;
   } else {
-    instr = `<strong>Chrome/Edge desktop:</strong>
-      <ol style="margin:8px 0;padding-left:20px;font-size:.85rem">
+    titulo = 'Activá la ubicación en el navegador';
+    instr = `<strong>Chrome / Edge / Firefox desktop:</strong>
+      <ol style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.7">
         <li>Click el <strong>candado 🔒</strong> a la izquierda de la URL</li>
         <li>En "Ubicación" cambiá a <strong>"Permitir"</strong></li>
-        <li>Refrescá la página (Ctrl+R)</li>
+        <li>Refrescá la página (Ctrl+R / F5) y tocá "Reintentar"</li>
       </ol>`;
   }
-  ilusAlert({
-    title: '🌍 Cómo permitir la ubicación',
+  // Modal con botón "Reintentar GPS" custom
+  const reintentar = await ilusConfirm({
+    title: titulo,
     message: instr,
     messageHtml: true,
-    type: 'info',
-    okLabel: 'Entendido',
+    type: 'warning',
+    okLabel: '🔄 Reintentar GPS',
+    cancelLabel: 'Más tarde',
   });
+  if (reintentar){
+    // Forzar nueva solicitud — si el usuario ya cambió permisos, debería funcionar
+    setTimeout(() => pedirGPS(true), 200);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

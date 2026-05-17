@@ -186,15 +186,62 @@ body {
     flex-wrap: wrap;
   }
 
-  /* ── FIX #8: Sidebar mobile — drawer full height + close on tap */
+  /* ── FIX #8: Sidebar mobile — drawer full height + close on tap
+     IMPORTANTE: usamos 100dvh (dynamic viewport height) en lugar de 100vh
+     porque Safari iOS oculta/muestra la barra de URL dinámicamente y 100vh
+     no se actualiza con eso → el footer (Daniel Aguilar + AJUSTES + Cerrar
+     sesión) quedaba TAPADO por la barra inferior de Safari.
+     Además forzamos que NO sea el contenedor con scroll: solo .sidebar-nav
+     scrollea, así .sidebar-footer queda PEGADO al fondo siempre. */
   .sidebar {
     width: min(280px, 85vw) !important;
     z-index: 1050;
     box-shadow: 4px 0 20px rgba(0,0,0,.3);
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;    /* el scroll lo maneja .sidebar-nav */
+    display: flex !important;
+    flex-direction: column !important;
   }
   .sidebar-overlay {
     z-index: 1040;
     backdrop-filter: blur(2px);
+  }
+
+  /* Logo área y footer no se encogen (queda fijo arriba/abajo del drawer) */
+  .sidebar-logo-area,
+  .sidebar-ajustes-bottom,
+  .sidebar-footer {
+    flex-shrink: 0 !important;
+  }
+
+  /* Solo la navegación scrollea verticalmente */
+  .sidebar-nav {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0 !important;   /* permite que flex shrinkee correctamente */
+  }
+
+  /* Footer (avatar + AJUSTES + Cerrar sesión) siempre visible,
+     respetando la safe-area-inset-bottom del iPhone (home bar / Dynamic Island).
+     Sin este padding, el botón "Cerrar sesión" queda DEBAJO de la barra
+     inferior de Safari (URL bar + flecha atrás + refresh). */
+  .sidebar-footer {
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+    background: var(--ilus-black);  /* opaco para que no se vea contenido detrás al scrollear */
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Botón Cerrar sesión: touch target generoso (Apple HIG 44px) */
+  .btn-sidebar-logout {
+    min-height: 44px !important;
+    padding: 10px 14px !important;
+    font-size: .9rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
   }
 
   /* ── FIX #9: KPI cards no muy chicas */

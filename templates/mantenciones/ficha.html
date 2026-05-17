@@ -6517,7 +6517,9 @@ function abrirContratoModal() {
 // ════════════════════════════════════════════════════════════════════
 // _LEV ya no almacena sesión de captura — solo el id de la última OT creada.
 // La captura se hace desde la OT (módulo "Órdenes de Trabajo"), no desde la ficha.
-let _LEV = { id: null };
+// adjuntos_preliminares: archivos que el admin selecciona ANTES de crear la OT.
+// Se acumulan en memoria; se suben tras crear la OT (cuando ya tenemos visita_id).
+let _LEV = { id: null, adjuntos_preliminares: [] };
 
 // ════════════════════════════════════════════════════════════
 // ENTRY POINT: abre el modal de "Generar OT" (modal generalizado)
@@ -6736,6 +6738,10 @@ async function abrirLevantamientoSelector(){
   // Reset toggle button (todo deseleccionado al abrir)
   const tBtn = document.getElementById('btnLevToggleTodos');
   if (tBtn) tBtn.innerHTML = '<i class="bi bi-check2-square me-1"></i>Marcar todos';
+
+  // Reset campos acceso/logística y adjuntos preliminares al abrir
+  resetAccesoLogistica();
+  resetLevAdjuntos();
 
   // Recalcular contadores
   levRecalcEqCount();
@@ -7014,6 +7020,159 @@ function guardarMultiPlantilla(eqId){
   ilusToast(`✓ ${ids.length} plantilla(s) asignada(s) al equipo`, { type: 'success', duration: 2000 });
 }
 
+// ════════════════════════════════════════════════════════════
+// Acceso y logística — toggles Sí/No segmented
+// ════════════════════════════════════════════════════════════
+function setAccesoYN(btn){
+  const target = btn.dataset.target;
+  const val = btn.dataset.val;
+  const hidden = document.getElementById(target);
+  if (!hidden) return;
+  // ¿Toggle off? click sobre el activo lo limpia (volver a "no informado")
+  if (hidden.value === val){
+    hidden.value = '';
+    document.querySelectorAll(`.lev-yn-btn[data-target="${target}"]`).forEach(b => b.classList.remove('active'));
+    return;
+  }
+  hidden.value = val;
+  document.querySelectorAll(`.lev-yn-btn[data-target="${target}"]`).forEach(b => {
+    b.classList.toggle('active', b.dataset.val === val);
+  });
+}
+
+function resetAccesoLogistica(){
+  ['acceso_ascensor','acceso_estacionamiento'].forEach(id => {
+    const h = document.getElementById(id);
+    if (h) h.value = '';
+    document.querySelectorAll(`.lev-yn-btn[data-target="${id}"]`).forEach(b => b.classList.remove('active'));
+  });
+  const piso = document.getElementById('acceso_piso');
+  const notas = document.getElementById('acceso_notas');
+  if (piso) piso.value = '';
+  if (notas) notas.value = '';
+}
+
+// ════════════════════════════════════════════════════════════
+// Adjuntos preliminares — selección antes de crear la OT
+// ════════════════════════════════════════════════════════════
+function _bytesPretty(n){
+  if (!n && n !== 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(0) + ' KB';
+  return (n/(1024*1024)).toFixed(1) + ' MB';
+}
+function _adjIconClass(file){
+  const m = (file.type || '').toLowerCase();
+  const n = (file.name || '').toLowerCase();
+  if (m.startsWith('image/')) return 'bi-camera text-primary';
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'bi-file-earmark-pdf text-danger';
+  if (m.startsWith('video/')) return 'bi-film text-info';
+  if (/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'bi-file-earmark-text text-secondary';
+  return 'bi-file-earmark text-muted';
+}
+// Límites alineados al endpoint /api/visitas/<vid>/adjuntos
+const _LEV_ADJ_MAX = {
+  foto:      15 * 1024 * 1024,
+  pdf:       30 * 1024 * 1024,
+  video:    100 * 1024 * 1024,
+  documento: 25 * 1024 * 1024,
+  otro:      25 * 1024 * 1024,
+};
+function _adjTipo(file){
+  const m = (file.type || '').toLowerCase();
+  const n = (file.name || '').toLowerCase();
+  if (m.startsWith('image/')) return 'foto';
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
+  if (m.startsWith('video/')) return 'video';
+  if (/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'documento';
+  return 'otro';
+}
+
+function onLevAdjFiles(fileList){
+  if (!fileList || !fileList.length) return;
+  const rechazados = [];
+  Array.from(fileList).forEach(f => {
+    const tipo = _adjTipo(f);
+    const max = _LEV_ADJ_MAX[tipo] || _LEV_ADJ_MAX.otro;
+    if (f.size > max){
+      rechazados.push(`${f.name} (${_bytesPretty(f.size)}, máx ${_bytesPretty(max)})`);
+      return;
+    }
+    _LEV.adjuntos_preliminares.push(f);
+  });
+  // Limpia el input para permitir re-seleccionar el mismo archivo si se elimina
+  const inp = document.getElementById('levAdjInput');
+  if (inp) inp.value = '';
+  _renderLevAdjList();
+  if (rechazados.length){
+    ilusToast(`Archivo(s) muy grande(s): ${rechazados[0]}${rechazados.length>1 ? ' y ' + (rechazados.length-1) + ' más' : ''}`, { type:'warning' });
+  }
+}
+
+function _renderLevAdjList(){
+  const wrap = document.getElementById('levAdjList');
+  const counter = document.getElementById('levAdjCount');
+  if (!wrap) return;
+  const arr = _LEV.adjuntos_preliminares || [];
+  if (counter) counter.textContent = arr.length;
+  if (!arr.length){
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.innerHTML = arr.map((f, idx) => `
+    <div class="lev-adj-item">
+      <div class="lev-adj-thumb"><i class="bi ${_adjIconClass(f)}"></i></div>
+      <div class="lev-adj-info">
+        <div class="lev-adj-name" title="${escAttr(f.name)}">${escHtml(f.name)}</div>
+        <div class="lev-adj-meta">${_adjTipo(f).toUpperCase()} · ${_bytesPretty(f.size)}</div>
+      </div>
+      <button type="button" class="lev-adj-rm" onclick="removeLevAdj(${idx})" title="Quitar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+  `).join('');
+}
+
+function removeLevAdj(idx){
+  if (!_LEV.adjuntos_preliminares) return;
+  _LEV.adjuntos_preliminares.splice(idx, 1);
+  _renderLevAdjList();
+}
+
+function resetLevAdjuntos(){
+  _LEV.adjuntos_preliminares = [];
+  _renderLevAdjList();
+}
+
+// Sube los adjuntos preliminares acumulados al endpoint existente
+// /mantenciones/api/visitas/<vid>/adjuntos (uno por uno, secuencial).
+// No bloquea la UI principal — se llama tras crear la OT.
+async function _subirAdjuntosPreliminares(vid){
+  const arr = _LEV.adjuntos_preliminares || [];
+  if (!arr.length || !vid) return { ok: 0, fail: 0 };
+  let ok = 0, fail = 0;
+  for (let i = 0; i < arr.length; i++){
+    const f = arr[i];
+    try {
+      ilusToast(`Subiendo ${i+1}/${arr.length}: ${f.name}`, { type:'info', duration: 1500 });
+      const fd = new FormData();
+      fd.append('archivo', f);
+      fd.append('tipo', _adjTipo(f));
+      const r = await fetch(`/mantenciones/api/visitas/${vid}/adjuntos`, {
+        method: 'POST',
+        body: fd
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) ok++;
+      else { fail++; console.warn('Adjunto falló:', f.name, d); }
+    } catch (e){
+      fail++;
+      console.warn('Adjunto error de red:', f.name, e);
+    }
+  }
+  return { ok, fail };
+}
+
 async function levIniciar(){
   // Aunque la función se llama levIniciar (legacy), su acción ahora es
   // CREAR la OT de levantamiento. No abre captura en este modal.
@@ -7122,6 +7281,11 @@ async function levIniciar(){
         contacto_tel:    (document.getElementById('levContactoTel')?.value || '').trim(),
         contacto_email:  (document.getElementById('levContactoEmail')?.value || '').trim(),
         contacto_origen: document.getElementById('levContactoSel')?.dataset.origen || 'manual',
+        // Acceso y logística del sitio (info crítica para el técnico)
+        acceso_ascensor:        document.getElementById('acceso_ascensor')?.value || null,
+        acceso_estacionamiento: document.getElementById('acceso_estacionamiento')?.value || null,
+        acceso_piso:            (document.getElementById('acceso_piso')?.value || '').trim(),
+        acceso_notas:           (document.getElementById('acceso_notas')?.value || '').trim(),
       })
     });
     const d = await r.json();
@@ -7131,6 +7295,7 @@ async function levIniciar(){
       return;
     }
     _LEV.id = d.id;
+    const visitaId = d.visita_id;
     // ── FIX 2026-05-17: backdrop huérfano ────────────────────────
     // Esperar a que Bootstrap termine SU cleanup del backdrop
     // ANTES de abrir el ilusAlert. Si abrimos el overlay encima
@@ -7153,6 +7318,20 @@ async function levIniciar(){
     if (typeof ilusCleanModalBackdrops === 'function') ilusCleanModalBackdrops();
 
     // ──────────────────────────────────────────────────────────────
+    // Subida de adjuntos preliminares (post-creación de OT).
+    // Solo si hay archivos seleccionados Y la OT espejo (visita) se
+    // creó correctamente. Se hace SECUENCIAL para mostrar progreso.
+    // ──────────────────────────────────────────────────────────────
+    let adjResult = null;
+    const nAdj = (_LEV.adjuntos_preliminares || []).length;
+    if (nAdj > 0 && visitaId){
+      adjResult = await _subirAdjuntosPreliminares(visitaId);
+    } else if (nAdj > 0 && !visitaId){
+      // No hay OT espejo — los adjuntos no tienen dónde ir
+      console.warn('[lev] Hay adjuntos preliminares pero no se creó la OT espejo (visita_id ausente).');
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // FLUJO (2026-05-16): el admin SOLO genera la OT.
     // La gestión (captura de fotos, completar tareas) la hace el
     // técnico desde el módulo "Órdenes de Trabajo" en su teléfono.
@@ -7161,15 +7340,26 @@ async function levIniciar(){
     const otHtml = d.ot_url
       ? `<a href="${d.ot_url}" class="fw-bold text-decoration-underline" style="color:#dc2626">${d.numero_ot}</a>`
       : '';
+    let subMsg = `La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. ` +
+                 `${d.items_plantilla_aplicados||0} tarea(s) generadas por las plantillas aplicadas.`;
+    if (adjResult){
+      if (adjResult.fail === 0){
+        subMsg += ` ${adjResult.ok} archivo(s) preliminar(es) adjunto(s).`;
+      } else {
+        subMsg += ` ${adjResult.ok}/${adjResult.ok + adjResult.fail} archivo(s) preliminares subidos (${adjResult.fail} falló/fallaron).`;
+      }
+    }
     await ilusAlert({
       title: '✅ Orden de Trabajo creada',
       message: `Se generó la OT ${otHtml} con ${d.n_items} equipo(s) y ${d.tecnicos_asignados||0} técnico(s) asignado(s).`,
-      sub: `La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. ` +
-           `${d.items_plantilla_aplicados||0} tarea(s) generadas por las plantillas aplicadas.`,
+      sub: subMsg,
       messageHtml: true,
       type: 'success',
       okLabel: 'Entendido',
     });
+    // Reset de estado para que la próxima OT empiece limpia
+    resetAccesoLogistica();
+    resetLevAdjuntos();
     // El admin permanece en la ficha del cliente. La OT ya está en el sistema.
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });
@@ -10199,6 +10389,62 @@ function _planTabActualizarStatus(ctAnalizado) {
 .lev-table-eq tr { cursor: pointer; }
 .lev-table-eq tr:hover { background: #f8fafc; }
 .lev-table-eq tr.row-selected { background: #fef2f2 !important; }
+
+/* ── Acceso y logística — toggles Sí/No estilo segmented ── */
+.lev-yn-group { display:inline-flex; border-radius:8px; overflow:hidden; border:1px solid #d1d5db; background:#fff; }
+.lev-yn-btn {
+  border:0; background:transparent; padding:.45rem .9rem;
+  font-size:.82rem; font-weight:600; cursor:pointer; color:#475569;
+  min-height:36px; min-width:64px;
+  transition: background .15s, color .15s;
+}
+.lev-yn-btn + .lev-yn-btn { border-left:1px solid #e5e7eb; }
+.lev-yn-btn:hover { background:#f8fafc; }
+.lev-yn-btn.active.yes { background:#dcfce7; color:#15803d; }
+.lev-yn-btn.active.no  { background:#fee2e2; color:#b91c1c; }
+
+/* ── Adjuntos preliminares ── */
+.lev-adj-zone {
+  border:2px dashed #cbd5e1; border-radius:10px;
+  padding:18px 14px; text-align:center; cursor:pointer;
+  background:#fafafa; transition: border-color .2s, background .2s;
+}
+.lev-adj-zone:hover { border-color:#dc2626; background:#fef2f2; }
+.lev-adj-zone.dragover { border-color:#dc2626; background:#fee2e2; }
+.lev-adj-pill {
+  display:inline-flex; align-items:center; gap:.35rem;
+  padding:.25rem .65rem; border-radius:9999px;
+  background:#fff; border:1px solid #e5e7eb; color:#475569;
+  font-size:.72rem; font-weight:500;
+}
+.lev-adj-pill i { font-size:.85rem; }
+.lev-adj-item {
+  display:flex; align-items:center; gap:.6rem;
+  padding:.55rem .7rem; border-radius:8px;
+  background:#fff; border:1px solid #e5e7eb;
+  margin-top:.4rem;
+}
+.lev-adj-item .lev-adj-thumb {
+  width:36px; height:36px; border-radius:6px;
+  background:#f3f4f6; display:flex; align-items:center; justify-content:center;
+  color:#6b7280; flex-shrink:0;
+}
+.lev-adj-item .lev-adj-info { flex:1; min-width:0; }
+.lev-adj-item .lev-adj-name {
+  font-size:.82rem; font-weight:600; color:#0f172a;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lev-adj-item .lev-adj-meta { font-size:.7rem; color:#6b7280; }
+.lev-adj-rm {
+  border:0; background:transparent; color:#dc2626;
+  padding:.25rem .45rem; border-radius:6px; cursor:pointer;
+  min-height:32px; min-width:32px;
+}
+.lev-adj-rm:hover { background:#fee2e2; }
+
+@media (max-width: 575.98px){
+  .lev-yn-btn { min-width:80px; }
+}
 </style>
 <div class="modal fade" id="modalLevSelector" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
@@ -10463,6 +10709,113 @@ function _planTabActualizarStatus(ctAnalizado) {
               <strong>Auto:</strong> el tipo seleccionado en el Paso 1 aplica su plantilla estándar.
               Las plantillas extra agregan tareas adicionales.
             </div>
+          </div>
+        </div>
+
+        {# ─── Paso 6: Acceso y logística del sitio ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">6</div>
+            <div class="lev-step-title">Acceso y logística</div>
+            <div class="lev-step-sub">Info crítica para el técnico</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-building text-primary me-1"></i>¿Tiene ascensor?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Tiene ascensor?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_ascensor" data-val="1"
+                          onclick="setAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_ascensor" data-val="0"
+                          onclick="setAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_ascensor" name="acceso_ascensor" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-p-square text-primary me-1"></i>¿Hay estacionamiento?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Hay estacionamiento?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_estacionamiento" data-val="1"
+                          onclick="setAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_estacionamiento" data-val="0"
+                          onclick="setAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_estacionamiento" name="acceso_estacionamiento" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
+                </label>
+                <input type="text" id="acceso_piso" name="acceso_piso"
+                       class="form-control form-control-sm" maxlength="50"
+                       placeholder="Ej: piso 3, subterráneo 1">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
+                </label>
+                <textarea id="acceso_notas" name="acceso_notas"
+                          class="form-control form-control-sm" rows="2" maxlength="2000"
+                          placeholder="Ej: timbre 102, código del portón 1234, llamar al guardia 30 min antes, etc."></textarea>
+                <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Esta información llega completa al técnico para que esté preparado al llegar.
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 7: Documentos preliminares (opcional) ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">7</div>
+            <div class="lev-step-title">Documentos preliminares</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <input type="file" id="levAdjInput" multiple style="display:none"
+                   accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                   onchange="onLevAdjFiles(this.files)">
+            <div class="lev-adj-zone" id="levAdjZone"
+                 onclick="document.getElementById('levAdjInput').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover')"
+                 ondragleave="this.classList.remove('dragover')"
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); onLevAdjFiles(event.dataTransfer.files)">
+              <div style="font-size:1.8rem;color:#94a3b8;margin-bottom:.4rem">
+                <i class="bi bi-cloud-arrow-up"></i>
+              </div>
+              <div class="fw-semibold" style="color:#475569;font-size:.88rem">
+                Adjunta archivos preliminares
+              </div>
+              <div class="text-muted" style="font-size:.74rem">
+                Arrastra aquí o haz clic — PDFs, fotos, documentos
+              </div>
+              <div class="mt-2 d-flex flex-wrap gap-1 justify-content-center">
+                <span class="lev-adj-pill"><i class="bi bi-file-earmark-pdf text-danger"></i>PDF</span>
+                <span class="lev-adj-pill"><i class="bi bi-camera text-primary"></i>Fotos</span>
+                <span class="lev-adj-pill"><i class="bi bi-file-earmark-text text-secondary"></i>Documentos</span>
+              </div>
+            </div>
+            <div id="levAdjList" class="mt-2"></div>
+            <small class="text-muted d-block mt-2" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Los archivos se suben automáticamente DESPUÉS de crear la OT. Ejemplos:
+              cotizaciones, planos, manuales, fotos previas de la sala.
+            </small>
           </div>
         </div>
 
