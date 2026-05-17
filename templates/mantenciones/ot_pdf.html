@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>OT {{ visita.numero_ot or visita.id }} — ILUS</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #0f172a; font-size: 10pt; line-height: 1.45;
+    margin: 0; padding: 0;
+  }
+  h1, h2, h3 { margin: 0; padding: 0; }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(135deg, #0a0a0a, #1a1a1a 60%, #2a0d0d);
+    color: #fff; padding: 18px 22px; border-radius: 8px; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 18px;
+  }
+  .hero .logo-wrap { width: 80px; flex-shrink: 0; }
+  .hero .logo-wrap img { max-width: 100%; height: auto; }
+  .hero .info { flex: 1; }
+  .hero h1 { font-size: 16pt; font-weight: 900; letter-spacing: -.5px; }
+  .hero .ot-num {
+    font-family: 'Courier New', monospace; font-size: 13pt;
+    color: #fca5a5; font-weight: 800; margin-top: 2px;
+  }
+  .hero .meta {
+    font-size: 9pt; color: #cbd5e1; margin-top: 8px; line-height: 1.6;
+  }
+  .badge-estado {
+    background: #fee2e2; color: #991b1b;
+    font-weight: 800; font-size: 8pt; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 50px; letter-spacing: .5px;
+  }
+  .badge-estado.cerrada { background: #dcfce7; color: #15803d; }
+  .badge-estado.pendiente_aprobacion { background: #fef3c7; color: #92400e; }
+
+  /* Sección 2 columnas */
+  .row-2 {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
+  }
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 12px 14px; page-break-inside: avoid;
+  }
+  .card h3 {
+    font-size: 9pt; text-transform: uppercase; letter-spacing: .5px;
+    color: #dc2626; font-weight: 800; margin-bottom: 6px;
+    border-bottom: 1px solid #fee2e2; padding-bottom: 4px;
+  }
+  .card .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 9pt; }
+  .card .kv .k { color: #6b7280; font-weight: 600; }
+  .card .kv .v { color: #0f172a; font-weight: 500; word-break: break-word; }
+
+  /* Tabla equipos */
+  .section-title {
+    font-size: 11pt; font-weight: 800; color: #0f172a;
+    margin: 14px 0 8px; border-left: 4px solid #dc2626; padding-left: 10px;
+  }
+  table.equipos {
+    width: 100%; border-collapse: collapse; font-size: 9pt;
+    margin-bottom: 12px;
+  }
+  table.equipos th {
+    background: #0f172a; color: #fff; padding: 6px 8px;
+    text-align: left; font-weight: 700; font-size: 8pt; text-transform: uppercase;
+  }
+  table.equipos td {
+    border-bottom: 1px solid #e5e7eb; padding: 6px 8px; vertical-align: top;
+  }
+  table.equipos .eq-mini {
+    width: 36px; height: 36px; background: #f3f4f6 center/cover no-repeat;
+    border-radius: 4px; border: 1px solid #e5e7eb; display: inline-block;
+  }
+
+  /* Grupos (equipo × plantilla) */
+  .grupo {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 12px; margin-bottom: 10px; page-break-inside: avoid;
+  }
+  .grupo-head {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+    border-bottom: 1px dashed #e5e7eb; padding-bottom: 6px;
+  }
+  .grupo-head .gh-eq { font-weight: 800; font-size: 10pt; color: #0f172a; flex: 1; }
+  .grupo-head .gh-plant {
+    background: #dbeafe; color: #1e40af;
+    padding: 2px 8px; border-radius: 50px; font-size: 7.5pt; font-weight: 700;
+  }
+  .grupo-head .gh-stats { font-size: 8pt; color: #6b7280; font-weight: 600; }
+  .tarea-line {
+    font-size: 9pt; padding: 4px 6px; border-radius: 4px;
+    display: flex; align-items: flex-start; gap: 6px; margin-bottom: 2px;
+  }
+  .tarea-line.ok { background: #f0fdf4; }
+  .tarea-line .check {
+    width: 14px; height: 14px; border: 1.5px solid #16a34a;
+    border-radius: 3px; display: inline-block; flex-shrink: 0; margin-top: 2px;
+    background: #fff; text-align: center; line-height: 12px; font-weight: 800;
+    color: #15803d; font-size: 9pt;
+  }
+  .tarea-line.ok .check { background: #16a34a; color: #fff; }
+  .tarea-line .ttext { flex: 1; }
+  .tarea-line .tval {
+    font-family: 'Courier New', monospace; font-size: 8pt;
+    background: #fef3c7; padding: 1px 6px; border-radius: 3px; color: #92400e;
+  }
+
+  /* Fotos */
+  .fotos-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+    margin-bottom: 14px;
+  }
+  .fotos-grid img {
+    width: 100%; aspect-ratio: 1; object-fit: cover;
+    border-radius: 4px; border: 1px solid #e5e7eb;
+  }
+
+  /* Firmas — 3 columnas */
+  .firmas {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;
+    margin-top: 18px; page-break-inside: avoid;
+  }
+  .firma-box {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 10px; text-align: center;
+  }
+  .firma-box .fb-tipo {
+    font-size: 8pt; color: #6b7280; text-transform: uppercase;
+    font-weight: 700; letter-spacing: .5px; margin-bottom: 6px;
+  }
+  .firma-box .fb-img {
+    width: 100%; height: 70px; background: #fafafa;
+    border: 1px dashed #cbd5e1; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    color: #94a3b8; font-size: 8pt; margin-bottom: 6px; overflow: hidden;
+  }
+  .firma-box .fb-img img { max-width: 100%; max-height: 100%; }
+  .firma-box .fb-nombre {
+    font-size: 9pt; font-weight: 700; color: #0f172a;
+    border-top: 1px solid #e5e7eb; padding-top: 4px; margin-top: 4px;
+  }
+  .firma-box .fb-meta { font-size: 7.5pt; color: #9ca3af; }
+
+  /* Footer */
+  .footer {
+    margin-top: 20px; padding-top: 8px; border-top: 1px solid #e5e7eb;
+    text-align: center; font-size: 7.5pt; color: #9ca3af;
+  }
+</style>
+</head>
+<body>
+
+  {# ──── HERO ──── #}
+  <div class="hero">
+    <div class="logo-wrap">
+      {% if logo_b64 %}
+      <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
+      {% else %}
+      <div style="font-weight:900;font-size:16pt;color:#dc2626">ILUS.</div>
+      {% endif %}
+    </div>
+    <div class="info">
+      <h1>Orden de Trabajo</h1>
+      <div class="ot-num">{{ visita.numero_ot or 'VS-' ~ visita.id }}</div>
+      <div class="meta">
+        {{ visita.titulo or '' }}<br>
+        <strong style="color:#fff">{{ visita.razon_social }}</strong>
+        {% if visita.cli_rut %} — RUT {{ visita.cli_rut }}{% endif %}
+      </div>
+    </div>
+    <div>
+      <span class="badge-estado {{ visita.estado }}">{{ (visita.estado or 'programada')|replace('_',' ') }}</span>
+    </div>
+  </div>
+
+  {# ──── Datos generales: 2 columnas ──── #}
+  <div class="row-2">
+    <div class="card">
+      <h3>Cliente</h3>
+      <div class="kv">
+        <div class="k">Razón social</div><div class="v">{{ visita.razon_social }}</div>
+        {% if visita.cli_direccion %}
+        <div class="k">Dirección</div><div class="v">{{ visita.cli_direccion }}{% if visita.cli_comuna %}, {{ visita.cli_comuna }}{% endif %}</div>
+        {% endif %}
+        {% if visita.cli_contacto %}
+        <div class="k">Contacto</div><div class="v">{{ visita.cli_contacto }}{% if visita.cli_contacto_tel %} — {{ visita.cli_contacto_tel }}{% endif %}</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Programación</h3>
+      <div class="kv">
+        <div class="k">Tipo</div><div class="v">{{ (visita.tipo or '')|title }}</div>
+        <div class="k">Fecha</div><div class="v">{{ visita.fecha_programada or '—' }}</div>
+        {% if visita.hora_inicio %}
+        <div class="k">Horario</div><div class="v">{{ visita.hora_inicio }}{% if visita.hora_fin %} – {{ visita.hora_fin }}{% endif %}</div>
+        {% endif %}
+        {% if visita.tecnico_principal %}
+        <div class="k">Técnico</div><div class="v">{{ visita.tecnico_principal }}</div>
+        {% endif %}
+        {% if visita.modalidad_cobro %}
+        <div class="k">Modalidad</div><div class="v">{{ visita.modalidad_cobro|replace('_',' ')|title }}</div>
+        {% endif %}
+        {% if visita.direccion_visita %}
+        <div class="k">Dir. visita</div><div class="v">{{ visita.direccion_visita }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ──── Equipos ──── #}
+  {% if equipos %}
+  <div class="section-title">Equipos gestionados ({{ equipos|length }})</div>
+  <table class="equipos">
+    <thead>
+      <tr>
+        <th style="width:42px"></th>
+        <th>Equipo</th>
+        <th style="width:90px">SKU</th>
+        <th style="width:100px">Serie</th>
+        <th style="width:110px">Marca/Modelo</th>
+        <th style="width:80px">Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in equipos %}
+      <tr>
+        <td>
+          <div class="eq-mini" {% if e.foto_url %}style="background-image:url('{{ e.foto_url }}')"{% endif %}></div>
+        </td>
+        <td>
+          <strong>{{ e.nombre }}</strong>
+          {% if e.ubicacion_sala %}<div style="color:#6b7280;font-size:8pt">{{ e.ubicacion_sala }}</div>{% endif %}
+        </td>
+        <td style="font-family:monospace">{{ e.sku or '—' }}</td>
+        <td style="font-family:monospace">{{ e.serie or '—' }}</td>
+        <td>
+          {{ e.marca or '' }} {{ e.modelo or '' }}
+          {% if e.anio_fabricacion %}<div style="color:#6b7280;font-size:8pt">{{ e.anio_fabricacion }}</div>{% endif %}
+        </td>
+        <td>
+          {% if e.estado_capturado %}
+          <span class="badge-estado">{{ e.estado_capturado|replace('_',' ') }}</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {# ──── Grupos: tareas por (equipo × plantilla) ──── #}
+  {% if grupos %}
+  <div class="section-title">Checklist ejecutado</div>
+  {% for g in grupos %}
+  {% set eq = eq_idx.get(g.maquina_id) %}
+  {% if eq %}
+  <div class="grupo">
+    <div class="grupo-head">
+      <div class="gh-eq">{{ eq.nombre or ('Equipo #' ~ eq.id) }}</div>
+      <span class="gh-plant">{{ g.plantilla_nombre }}</span>
+      {% set ok = g.tareas | selectattr('completada') | list | length %}
+      {% set tot = g.tareas | length %}
+      <span class="gh-stats">{{ ok }}/{{ tot }}</span>
+    </div>
+    {% for t in g.tareas %}
+    <div class="tarea-line{% if t.completada %} ok{% endif %}">
+      <span class="check">{% if t.completada %}✓{% endif %}</span>
+      <span class="ttext">{{ t.titulo }}</span>
+      {% if t.valor %}
+      <span class="tval">
+        {% if t.valor.texto %}{{ t.valor.texto }}
+        {% elif t.valor.numero is not none %}{{ t.valor.numero }}{% if t.unidad %} {{ t.unidad }}{% endif %}
+        {% elif t.valor.valor %}{{ t.valor.valor|upper }}
+        {% elif t.valor.opcion %}{{ t.valor.opcion }}
+        {% elif t.valor.fecha %}{{ t.valor.fecha }}
+        {% elif t.valor.lat %}{{ "%.5f"|format(t.valor.lat) }}, {{ "%.5f"|format(t.valor.lng) }}
+        {% endif %}
+      </span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% endif %}
+
+  {# ──── Fotos del levantamiento ──── #}
+  {% if fotos %}
+  <div class="section-title">Evidencia fotográfica ({{ fotos|length }})</div>
+  <div class="fotos-grid">
+    {% for f in fotos[:24] %}
+    <img src="{{ f.url }}" alt="Foto OT">
+    {% endfor %}
+  </div>
+  {% if fotos|length > 24 %}
+  <div style="font-size:8pt;color:#6b7280;text-align:center;margin-top:-8px;margin-bottom:14px">
+    + {{ fotos|length - 24 }} foto(s) más en el sistema
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {# ──── Firmas ──── #}
+  <div class="section-title">Firmas y validación</div>
+  <div class="firmas">
+    <div class="firma-box">
+      <div class="fb-tipo">Técnico ejecutor</div>
+      <div class="fb-img">
+        {% if visita.firma_tecnico_url %}
+        <img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico">
+        {% else %}Sin firmar{% endif %}
+      </div>
+      <div class="fb-nombre">{{ visita.tecnico_principal or 'Técnico no asignado' }}</div>
+      <div class="fb-meta">{% if visita.firma_tecnico_at %}{{ visita.firma_tecnico_at }}{% endif %}</div>
+    </div>
+    <div class="firma-box">
+      <div class="fb-tipo">Cliente / Recibe</div>
+      <div class="fb-img">
+        {% if visita.firma_cliente_url %}
+        <img src="{{ visita.firma_cliente_url }}" alt="Firma cliente">
+        {% else %}Sin firmar{% endif %}
+      </div>
+      <div class="fb-nombre">{{ visita.firma_cliente_nombre or '—' }}</div>
+      <div class="fb-meta">{% if visita.firma_cliente_at %}{{ visita.firma_cliente_at }}{% endif %}</div>
+    </div>
+    <div class="firma-box">
+      <div class="fb-tipo">Supervisor</div>
+      <div class="fb-img">
+        {% if visita.firma_supervisor_url %}
+        <img src="{{ visita.firma_supervisor_url }}" alt="Firma supervisor">
+        {% else %}Sin aprobar{% endif %}
+      </div>
+      <div class="fb-nombre">{{ visita.cerrada_por or '—' }}</div>
+      <div class="fb-meta">{% if visita.firma_supervisor_at %}{{ visita.firma_supervisor_at }}{% endif %}</div>
+    </div>
+  </div>
+
+  {# ──── Footer ──── #}
+  <div class="footer">
+    Documento generado por ILUS Sport &amp; Health · {{ generated_at }}<br>
+    OT {{ visita.numero_ot or 'VS-' ~ visita.id }} · {{ equipos|length }} equipo(s) · {{ grupos|length }} grupo(s) · {{ fotos|length }} foto(s)
+  </div>
+
+</body>
+</html>

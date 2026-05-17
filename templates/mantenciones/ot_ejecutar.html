@@ -424,26 +424,128 @@
       </div>
       {% endif %}
 
-      {# Tareas de la plantilla — siempre visible (es lo específico de cada grupo) #}
+      {# Tareas de la plantilla — render según tipo_respuesta #}
       <div class="grupo-section">
         <div class="grupo-section-title">
           <i class="bi bi-list-check"></i>
           Tareas — {{ g.plantilla_nombre }} ({{ g.completas }}/{{ g.total }})
         </div>
         {% for tar in g.tareas %}
-        <div class="eq-tarea-row{% if tar.completada %} completada{% endif %}" id="tar-{{ tar.id }}">
+        {% set tipo_r = tar.tipo_respuesta or 'check' %}
+        <div class="eq-tarea-row tipo-{{ tipo_r }}{% if tar.completada %} completada{% endif %}"
+             id="tar-{{ tar.id }}" data-tipo="{{ tipo_r }}">
+          {# CHECK simple — checkbox #}
+          {% if tipo_r == 'check' %}
           <input type="checkbox" class="tarea-chk"
                  {% if tar.completada %}checked{% endif %}
                  {% if g.bloqueado %}disabled{% endif %}
                  onchange="toggleTarea({{ tar.id }}, this, {{ g.maquina_id }}, {{ g.plantilla_id }})">
+          {% else %}
+          {# Otros tipos: muestra un icono que indica estado #}
+          <div style="width:24px;flex-shrink:0;text-align:center;font-size:1.1rem">
+            {% if tar.completada %}<span style="color:#16a34a">✓</span>
+            {% else %}<span style="color:#cbd5e1">○</span>{% endif %}
+          </div>
+          {% endif %}
+
           <div class="tarea-info">
             <div class="tarea-titulo">
               {{ tar.titulo }}
               {% if tar.obligatoria %}<span class="tarea-badge">obligatoria</span>{% endif %}
               {% if tar.requiere_foto %}<span class="tarea-badge" style="background:#dbeafe;color:#1e3a8a">📷 foto</span>{% endif %}
+              <span class="tarea-badge" style="background:#f3f4f6;color:#6b7280">{{ tipo_r }}</span>
             </div>
             {% if tar.descripcion %}
             <div class="tarea-desc">{{ tar.descripcion }}</div>
+            {% endif %}
+
+            {# ─── Render del CONTROL según tipo_respuesta ─── #}
+            {% set valor_actual = tar.valor_json | tojson if tar.valor_json else 'null' %}
+            {% if tipo_r == 'texto' %}
+            <input type="text" class="form-control form-control-sm mt-2"
+                   id="t-input-{{ tar.id }}"
+                   value="{{ (tar.valor_json|fromjson_safe).get('texto', '') if tar.valor_json else '' }}"
+                   placeholder="Escribe la respuesta…"
+                   onblur="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                   {% if g.bloqueado %}disabled{% endif %}>
+            {% elif tipo_r == 'numero' %}
+            <div class="input-group input-group-sm mt-2" style="max-width:240px">
+              <input type="number" class="form-control" id="t-input-{{ tar.id }}"
+                     value="{{ (tar.valor_json|fromjson_safe).get('numero', '') if tar.valor_json else '' }}"
+                     placeholder="0"
+                     {% if tar.rango_min is not none %}min="{{ tar.rango_min }}"{% endif %}
+                     {% if tar.rango_max is not none %}max="{{ tar.rango_max }}"{% endif %}
+                     onblur="guardarRespuestaTarea({{ tar.id }}, parseFloat(this.value), {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                     {% if g.bloqueado %}disabled{% endif %}>
+              {% if tar.unidad %}<span class="input-group-text">{{ tar.unidad }}</span>{% endif %}
+            </div>
+            {% if tar.rango_min is not none or tar.rango_max is not none %}
+            <small class="text-muted">Rango: {{ tar.rango_min or '—' }} a {{ tar.rango_max or '—' }} {{ tar.unidad or '' }}</small>
+            {% endif %}
+            {% elif tipo_r == 'sino' %}
+            <div class="btn-group btn-group-sm mt-2" role="group" id="t-input-{{ tar.id }}">
+              {% set v_sino = (tar.valor_json|fromjson_safe).get('valor', '') if tar.valor_json else '' %}
+              <button type="button" class="btn btn-outline-success {% if v_sino == 'si' %}active{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'si', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>Sí</button>
+              <button type="button" class="btn btn-outline-danger {% if v_sino == 'no' %}active{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'no', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>No</button>
+              <button type="button" class="btn btn-outline-secondary {% if v_sino == 'na' %}active{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'na', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>N/A</button>
+            </div>
+            {% elif tipo_r == 'verificacion' %}
+            <div class="btn-group btn-group-sm mt-2" role="group">
+              {% set v_ver = (tar.valor_json|fromjson_safe).get('valor', '') if tar.valor_json else '' %}
+              <button type="button" class="btn {% if v_ver == 'aprobado' %}btn-success{% else %}btn-outline-success{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'aprobado', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>🟢 Aprobado</button>
+              <button type="button" class="btn {% if v_ver == 'alerta' %}btn-warning{% else %}btn-outline-warning{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'alerta', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>🟡 Alerta</button>
+              <button type="button" class="btn {% if v_ver == 'falla' %}btn-danger{% else %}btn-outline-danger{% endif %}"
+                      onclick="guardarRespuestaTarea({{ tar.id }}, 'falla', {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                      {% if g.bloqueado %}disabled{% endif %}>🔴 Falla</button>
+            </div>
+            {% elif tipo_r == 'lista' %}
+            <select class="form-select form-select-sm mt-2" style="max-width:280px"
+                    onchange="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                    {% if g.bloqueado %}disabled{% endif %}>
+              <option value="">— Seleccionar —</option>
+              {% set v_lista = (tar.valor_json|fromjson_safe).get('opcion', '') if tar.valor_json else '' %}
+              {% set opciones = tar.opciones_lista_json|fromjson_safe if tar.opciones_lista_json else [] %}
+              {% for op in (opciones if opciones is iterable else []) %}
+              <option value="{{ op }}" {% if v_lista == op %}selected{% endif %}>{{ op }}</option>
+              {% endfor %}
+            </select>
+            {% elif tipo_r == 'fecha_hora' %}
+            <input type="datetime-local" class="form-control form-control-sm mt-2" style="max-width:240px"
+                   value="{{ (tar.valor_json|fromjson_safe).get('fecha', '') if tar.valor_json else '' }}"
+                   onblur="guardarRespuestaTarea({{ tar.id }}, this.value, {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                   {% if g.bloqueado %}disabled{% endif %}>
+            {% elif tipo_r == 'gps' %}
+            <button type="button" class="btn btn-sm btn-outline-primary mt-2"
+                    onclick="capturarGPSTarea({{ tar.id }}, {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                    {% if g.bloqueado %}disabled{% endif %}>
+              <i class="bi bi-geo-alt-fill"></i> Capturar ubicación
+            </button>
+            {% if tar.valor_json %}
+            {% set v_gps = tar.valor_json|fromjson_safe %}
+            <small class="d-block mt-1 text-success">
+              📍 {{ "%.5f"|format(v_gps.get('lat', 0)) }}, {{ "%.5f"|format(v_gps.get('lng', 0)) }}
+            </small>
+            {% endif %}
+            {% elif tipo_r == 'foto' %}
+            <div class="mt-2">
+              <label class="btn btn-sm btn-outline-primary mb-0">
+                <i class="bi bi-camera-fill"></i> Subir foto
+                <input type="file" accept="image/*" capture="environment" style="display:none"
+                       onchange="subirFotoTarea({{ tar.id }}, this, {{ g.maquina_id }}, {{ g.plantilla_id }})"
+                       {% if g.bloqueado %}disabled{% endif %}>
+              </label>
+              <div id="t-fotos-{{ tar.id }}" class="mt-1"></div>
+            </div>
             {% endif %}
           </div>
         </div>
@@ -620,10 +722,39 @@ document.addEventListener('DOMContentLoaded', () => {
   // Si la ruta NO se inició y el destino tiene dirección, ofrecer iniciar
   if (!RUTA_YA_INICIADA && DESTINO_DIR){
     setTimeout(() => {
-      // Solo mostrar automáticamente si el usuario está en mobile (probablemente técnico en campo)
       if (window.innerWidth < 992) abrirModalRuta();
     }, 1200);
   }
+  // Ping ruta periódico (30s) si la ruta está iniciada y la OT no está cerrada
+  if (RUTA_YA_INICIADA && '{{ visita.estado }}' !== 'cerrada' && '{{ visita.estado }}' !== 'pendiente_aprobacion'){
+    iniciarPingPeriodico();
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  PING RUTA PERIÓDICO — cada 30s envía lat/lng al backend
+// ════════════════════════════════════════════════════════
+let _pingInterval = null;
+function iniciarPingPeriodico(){
+  if (_pingInterval || !navigator.geolocation) return;
+  function ping(){
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        await fetch(`/mantenciones/api/visitas/${VID}/ping-ruta`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            lat: pos.coords.latitude, lng: pos.coords.longitude,
+            speed: pos.coords.speed, accuracy: pos.coords.accuracy,
+          })
+        });
+      } catch(e) { /* silencioso */ }
+    }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 25000 });
+  }
+  ping(); // primer ping inmediato
+  _pingInterval = setInterval(ping, 30000);
+}
+window.addEventListener('beforeunload', () => {
+  if (_pingInterval) clearInterval(_pingInterval);
 });
 
 // ════════════════════════════════════════════════════════
@@ -791,6 +922,112 @@ async function subirFotoPrincipal(eqId, input){
     } else ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
   } catch(e){ ilusToast('Error de red', { type: 'error' });
   } finally { uploader.classList.remove('uploading'); }
+}
+
+// ════════════════════════════════════════════════════════
+//  TAREAS AVANZADAS — tipo_respuesta != check
+// ════════════════════════════════════════════════════════
+async function guardarRespuestaTarea(tid, valor, mid, pid){
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}/respuesta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ valor })
+    });
+    const d = await r.json();
+    if (d.ok){
+      const row = document.getElementById('tar-' + tid);
+      if (row && d.completada){
+        row.classList.add('completada');
+        // El icono de check ya lo dibuja el server al recargar; aquí lo marcamos visual.
+        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
+        if (icon) icon.innerHTML = '<span style="color:#16a34a">✓</span>';
+      } else if (row && !d.completada){
+        row.classList.remove('completada');
+        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
+        if (icon) icon.innerHTML = '<span style="color:#cbd5e1">○</span>';
+      }
+      recalcStats();
+      // Actualizar progreso del grupo
+      const card = document.getElementById(`grupo-${mid}-${pid}`);
+      if (card){
+        const filas = card.querySelectorAll('.eq-tarea-row');
+        const completas = card.querySelectorAll('.eq-tarea-row.completada').length;
+        const counter = card.querySelector('.gc-counter');
+        const bar = card.querySelector('.gc-progress > div');
+        if (counter) counter.textContent = `${completas}/${filas.length}`;
+        if (bar) bar.style.width = `${(completas / filas.length) * 100}%`;
+        if (completas === filas.length && filas.length > 0){
+          card.classList.add('done'); counter.classList.add('done');
+        } else {
+          card.classList.remove('done', 'bloqueado'); counter.classList.remove('done');
+        }
+      }
+      if (d.warning){
+        ilusToast(d.warning, { type: 'warning' });
+      } else if (d.completada) {
+        ilusToast('✓ Guardado', { type: 'success', duration: 1200 });
+      }
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type: 'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red', { type: 'error' });
+  }
+}
+
+function capturarGPSTarea(tid, mid, pid){
+  if (!navigator.geolocation){
+    ilusToast('GPS no disponible', { type: 'error' }); return;
+  }
+  ilusToast('Capturando ubicación…', { type: 'info', duration: 1500 });
+  navigator.geolocation.getCurrentPosition((pos) => {
+    guardarRespuestaTarea(tid, { lat: pos.coords.latitude, lng: pos.coords.longitude }, mid, pid);
+  }, (err) => {
+    ilusToast('Error GPS: ' + err.message, { type: 'error' });
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+async function subirFotoTarea(tid, input, mid, pid){
+  if (!input.files || !input.files[0]) return;
+  let file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){ ilusToast('Foto muy grande (max 20MB)', { type:'warning' }); return; }
+  try { file = await _comprimirImagen(file); } catch(e){}
+  const fd = new FormData();
+  fd.append('foto', file);
+  fd.append('tarea_id', tid);
+  ilusToast('Subiendo…', { type:'info', duration: 1500 });
+  try {
+    // Usar endpoint existente de fotos de visita (sube y vincula a tarea)
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos`, {
+      method: 'POST', body: fd
+    });
+    const d = await r.json();
+    if (d.ok || d.id){
+      ilusToast('✓ Foto subida', { type:'success' });
+      // Marcar la tarea como completada (tipo foto)
+      await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ completada: 1 })
+      });
+      const cont = document.getElementById('t-fotos-' + tid);
+      if (cont){
+        const url = d.url || d.cloudinary_url || '';
+        if (url) cont.innerHTML += `<img src="${url}" style="max-width:90px;border-radius:6px;margin:2px">`;
+      }
+      // Marcar row visualmente
+      const row = document.getElementById('tar-' + tid);
+      if (row){
+        row.classList.add('completada');
+        const icon = row.querySelector('div[style*="font-size:1.1rem"]');
+        if (icon) icon.innerHTML = '<span style="color:#16a34a">✓</span>';
+      }
+      recalcStats();
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red', { type:'error' });
+  }
 }
 
 async function toggleTarea(tid, chk, mid, pid){

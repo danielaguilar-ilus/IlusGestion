@@ -196,7 +196,12 @@
     <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
       <i class="bi bi-arrow-left me-1"></i>Dashboard
     </a>
-    {# Calendario integrado abajo como vista — ya no link externo #}
+    {% if permissions.admin or permissions.superadmin %}
+    <a href="{{ url_for('mant_seguimiento_vista') }}" class="btn btn-sm btn-outline-light"
+       title="Seguimiento técnicos en tiempo real">
+      <i class="bi bi-broadcast me-1"></i>Seguimiento
+    </a>
+    {% endif %}
     {% if not is_tecnico %}
     <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-light fw-bold">
       <i class="bi bi-building-add me-1"></i>Generar OT desde cliente
@@ -375,6 +380,10 @@
       {% endif %}
       <a href="{{ url_for('mant_ot_ficha', vid=o.id) }}" class="btn btn-ilus btn-sm fw-bold">
         <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
+      </a>
+      <a href="{{ url_for('mant_visita_pdf', vid=o.id) }}" target="_blank"
+         class="btn btn-outline-dark btn-sm" title="Descargar reporte PDF">
+        <i class="bi bi-filetype-pdf"></i>
       </a>
       {% if permissions.superadmin %}
       <button type="button"

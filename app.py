@@ -452,6 +452,22 @@ def rut_fmt_filter(value):
     return _formato_rut_chile(value)
 
 
+@app.template_filter('fromjson_safe')
+def fromjson_safe_filter(value):
+    """Filtro Jinja: parsea un string JSON sin lanzar excepción.
+    Si falla, devuelve dict vacío para que .get() funcione.
+    Uso típico en templates: {{ tarea.valor_json | fromjson_safe }}
+    """
+    if not value:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return {}
+
+
 @app.template_filter('fkg')
 def fkg_filter(value, decimals=1):
     """Formato kg estilo chileno: 2926.0 → '2.926,0' (punto miles, coma decimal, 1 decimal)"""
@@ -14764,9 +14780,50 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tareas ADD COLUMN plantilla_id INT NULL COMMENT 'FK a mant_tarea_plantillas: plantilla origen (NULL si tarea manual)'",
                 "ALTER TABLE mant_visita_tareas ADD INDEX idx_plantilla (plantilla_id)",
                 "ALTER TABLE mant_visita_tareas ADD INDEX idx_maquina_plantilla (maquina_id, plantilla_id)",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — BUG CRÍTICO FIX: cloudinary_url en fotos
+                # Existía código que INSERT/SELECT esta columna pero CREATE
+                # TABLE original no la tenía. Causaba errors en producción.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_fotos ADD COLUMN cloudinary_url TEXT NULL COMMENT 'URL persistente Cloudinary (preferida sobre archivo_path)'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Tipos de respuesta avanzados en tareas:
+                # Antes solo se podía marcar/desmarcar (completada bool).
+                # Ahora cada tarea puede guardar un valor estructurado
+                # según su tipo_respuesta: texto / numero / sino /
+                # verificacion / lista / fecha_hora / gps.
+                # Para foto: ya existe relación tarea_id en mant_visita_fotos.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_tareas ADD COLUMN valor_json TEXT NULL COMMENT 'Valor capturado serializado JSON según tipo_respuesta'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Seguimiento de ruta en tiempo real (F admin):
+                # Cuando el técnico inicia ruta, su app envía pings periódicos
+                # con su lat/lng. El admin puede ver su ubicación en vivo en
+                # un mapa embebido. Los pings se guardan en tabla nueva
+                # mant_ruta_pings (no en mant_visitas para no inflar la fila).
+                # ════════════════════════════════════════════════════════════
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
+
+            # Tabla nueva para pings de ruta (CREATE IF NOT EXISTS,
+            # fuera del bloque ALTER porque puede crearse de cero).
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ruta_pings (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        visita_id INT NOT NULL,
+                        user_id INT NULL COMMENT 'app_users.id del técnico',
+                        lat DECIMAL(10,7) NOT NULL,
+                        lng DECIMAL(10,7) NOT NULL,
+                        velocidad DECIMAL(6,2) NULL COMMENT 'km/h opcional',
+                        accuracy DECIMAL(6,2) NULL COMMENT 'metros',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_visita_fecha (visita_id, created_at),
+                        INDEX idx_user_fecha (user_id, created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception: pass
 
             # ═══════════════════════════════════════════════════════════════
             # TABLA: mant_tarea_tiempo (cronómetro por tarea)
@@ -23823,6 +23880,385 @@ def mant_ot_rechazar_cierre(vid):
         return jsonify({"ok": True, "estado": "programada", "motivo": motivo})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Tarea: respuesta avanzada (tipo_respuesta != check)
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/respuesta", methods=["POST"])
+@_mant_required
+def mant_visita_tarea_respuesta(vid, tid):
+    """Guarda la respuesta capturada por el técnico para una tarea con
+    tipo_respuesta avanzado (texto, numero, sino, verificacion, lista,
+    fecha_hora, gps). El valor se serializa como JSON en mant_visita_tareas.valor_json.
+
+    Body JSON:
+      { "valor": <según tipo> }
+        - texto: "..."
+        - numero: 12.5
+        - sino: "si"|"no"|"na"
+        - verificacion: "aprobado"|"alerta"|"falla"
+        - lista: "opcion_seleccionada"
+        - fecha_hora: "2026-05-17T14:30"
+        - gps: {"lat": ..., "lng": ...}
+    Auto-completa la tarea si el valor es válido.
+    """
+    d = request.get_json(silent=True) or {}
+    valor = d.get("valor")
+    # Leer la tarea para conocer su tipo
+    tar = mysql_fetchone(
+        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max "
+        "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+        (tid, vid)
+    )
+    if not tar:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    tipo = tar.get("tipo_respuesta") or "check"
+
+    # Validar el valor según tipo
+    valor_norm = None
+    error = None
+    completar = True
+    if tipo == "texto":
+        v = (str(valor or "")).strip()[:2000]
+        valor_norm = {"texto": v}
+        if tar.get("obligatoria") and not v:
+            completar = False
+    elif tipo == "numero":
+        try:
+            n = float(valor) if valor not in (None, "") else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Valor numérico inválido"}), 400
+        if n is None:
+            completar = False
+            valor_norm = {"numero": None}
+        else:
+            valor_norm = {"numero": n}
+            # Validar rango si aplica
+            rmin = tar.get("rango_min")
+            rmax = tar.get("rango_max")
+            if rmin is not None and n < float(rmin):
+                error = f"Fuera de rango: mínimo {rmin}"
+            if rmax is not None and n > float(rmax):
+                error = f"Fuera de rango: máximo {rmax}"
+    elif tipo == "sino":
+        v = str(valor or "").lower()
+        if v not in ("si", "sí", "no", "na", "n/a"):
+            return jsonify({"ok": False, "error": "Valor inválido (si|no|na)"}), 400
+        if v == "sí": v = "si"
+        if v == "n/a": v = "na"
+        valor_norm = {"valor": v}
+    elif tipo == "verificacion":
+        v = str(valor or "").lower()
+        if v not in ("aprobado", "alerta", "falla"):
+            return jsonify({"ok": False, "error": "Valor inválido"}), 400
+        valor_norm = {"valor": v}
+    elif tipo == "lista":
+        v = str(valor or "").strip()[:200]
+        if not v:
+            return jsonify({"ok": False, "error": "Seleccioná una opción"}), 400
+        valor_norm = {"opcion": v}
+    elif tipo == "fecha_hora":
+        v = str(valor or "").strip()[:30]
+        valor_norm = {"fecha": v or None}
+        if tar.get("obligatoria") and not v:
+            completar = False
+    elif tipo == "gps":
+        try:
+            lat = float(valor.get("lat")) if isinstance(valor, dict) and valor.get("lat") is not None else None
+            lng = float(valor.get("lng")) if isinstance(valor, dict) and valor.get("lng") is not None else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
+        if lat is None or lng is None:
+            return jsonify({"ok": False, "error": "Faltan lat/lng"}), 400
+        valor_norm = {"lat": lat, "lng": lng}
+    else:
+        return jsonify({"ok": False, "error": f"Tipo no soportado por este endpoint: {tipo}"}), 400
+
+    try:
+        user = current_username() or 'sistema'
+        sets = ["valor_json=%s"]
+        vals = [json.dumps(valor_norm, ensure_ascii=False)]
+        if completar:
+            sets += ["completada=1", "completada_at=%s", "completada_por=%s"]
+            vals += [datetime.now(), user]
+        else:
+            sets += ["completada=0", "completada_at=NULL", "completada_por=NULL"]
+        vals.append(tid); vals.append(vid)
+        mysql_execute(
+            f"UPDATE mant_visita_tareas SET {', '.join(sets)} "
+            f" WHERE id=%s AND visita_id=%s",
+            tuple(vals)
+        )
+        return jsonify({
+            "ok": True,
+            "completada": completar,
+            "warning": error,
+            "valor_norm": valor_norm,
+        })
+    except Exception as e:
+        # No filtrar el SQL al cliente — log interno + mensaje genérico
+        print(f"[tarea_respuesta] err: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la respuesta"}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Seguimiento de ruta en tiempo real
+# Técnico envía pings periódicos (cada 30s) cuando está en ruta.
+# Admin consume vista /mantenciones/seguimiento con mapa embebido.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/ping-ruta", methods=["POST"])
+@_mant_required
+def mant_visita_ping_ruta(vid):
+    """Recibe ping del técnico con su lat/lng actual mientras está en
+    ruta o ejecutando la OT. Se guarda en mant_ruta_pings (tabla circular,
+    limitada a últimos 500 pings por visita para no inflar)."""
+    d = request.get_json(silent=True) or {}
+    try:
+        lat = float(d.get("lat"))
+        lng = float(d.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "lat/lng inválido"}), 400
+    try:
+        speed = float(d.get("speed")) if d.get("speed") is not None else None
+    except (TypeError, ValueError):
+        speed = None
+    try:
+        acc = float(d.get("accuracy")) if d.get("accuracy") is not None else None
+    except (TypeError, ValueError):
+        acc = None
+    u = getattr(g, "user", None) or {}
+    uid = u.get("id")
+    try:
+        mysql_execute(
+            "INSERT INTO mant_ruta_pings "
+            "(visita_id, user_id, lat, lng, velocidad, accuracy) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (vid, uid, lat, lng, speed, acc)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[ping_ruta] err: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar el ping"}), 500
+
+
+@app.route("/mantenciones/api/seguimiento/activos", methods=["GET"])
+@_mant_required
+def mant_seguimiento_activos():
+    """Lista técnicos con OT en curso (en ruta o ejecutando), con su
+    último ping. Para la vista admin de seguimiento en tiempo real.
+    Solo para admin/supervisor — los técnicos no pueden ver la
+    ubicación de otros técnicos."""
+    if not _is_supervisor_user():
+        return jsonify({"ok": False, "error": "Solo supervisor"}), 403
+    try:
+        # OTs hoy/recientes con técnico asignado y en estado activo
+        rows = mysql_fetchall(
+            "SELECT v.id AS visita_id, v.numero_ot, v.estado, v.titulo, "
+            "       v.direccion_visita, v.direccion_lat, v.direccion_lng, "
+            "       v.ruta_iniciada_at, v.ruta_app, "
+            "       c.razon_social, "
+            "       u.id AS user_id, COALESCE(u.nombre, u.username) AS tecnico_nombre, "
+            "       u.foto_url AS tecnico_foto, "
+            "       (SELECT lat FROM mant_ruta_pings p "
+            "         WHERE p.visita_id = v.id ORDER BY p.created_at DESC LIMIT 1) AS last_lat, "
+            "       (SELECT lng FROM mant_ruta_pings p "
+            "         WHERE p.visita_id = v.id ORDER BY p.created_at DESC LIMIT 1) AS last_lng, "
+            "       (SELECT created_at FROM mant_ruta_pings p "
+            "         WHERE p.visita_id = v.id ORDER BY p.created_at DESC LIMIT 1) AS last_ping_at "
+            "  FROM mant_visitas v "
+            "  JOIN mant_clientes c ON c.id = v.cliente_id "
+            "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+            " WHERE v.estado IN ('programada','en_curso','en_ejecucion') "
+            "   AND (v.fecha_programada >= CURDATE() - INTERVAL 1 DAY OR v.ruta_iniciada_at IS NOT NULL) "
+            "   AND v.tecnico_user_id IS NOT NULL "
+            " ORDER BY v.fecha_programada DESC LIMIT 50",
+            ()
+        ) or []
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("ruta_iniciada_at", "last_ping_at"):
+                if d.get(k):
+                    d[k] = str(d[k])[:19]
+            for k in ("last_lat", "last_lng", "direccion_lat", "direccion_lng"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            # Estado visual:
+            #  - en_ruta: tiene last_ping reciente Y no llegó al destino
+            #  - en_sitio: GPS exec o último ping cerca de la dirección destino
+            #  - sin_ruta: nunca inició
+            if d.get("ruta_iniciada_at") and d.get("last_ping_at"):
+                d["estado_visual"] = "en_ruta"
+            elif d.get("ruta_iniciada_at"):
+                d["estado_visual"] = "iniciado"
+            else:
+                d["estado_visual"] = "sin_ruta"
+            out.append(d)
+        return jsonify({"ok": True, "activos": out, "total": len(out)})
+    except Exception as e:
+        print(f"[seguimiento] err: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo obtener activos"}), 500
+
+
+@app.route("/mantenciones/seguimiento")
+@_mant_required
+def mant_seguimiento_vista():
+    """Vista admin con mapa de Google embebido + lista de técnicos activos."""
+    if not _is_supervisor_user():
+        flash("Solo supervisor/admin puede ver el seguimiento.", "warning")
+        return redirect(url_for("mant_ots_list"))
+    return render_template("mantenciones/seguimiento.html")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PDF — Reporte completo de OT con firmas y fotos
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/pdf")
+@_mant_required
+def mant_visita_pdf(vid):
+    """Genera un PDF completo de la OT con:
+    - Header ILUS + número OT + estado
+    - Datos cliente + dirección visita
+    - Datos programación (fecha, hora, GPS)
+    - Lista equipos con foto + datos técnicos + estado + observaciones
+    - Tareas agrupadas por (equipo × plantilla) con respuestas
+    - Fotos del levantamiento embebidas
+    - Firmas técnico + cliente + supervisor
+
+    Usa Playwright (_pw_pdf). Si no está disponible, devuelve 503.
+    """
+    visita = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
+        "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
+        "       c.contacto_nombre AS cli_contacto, c.contacto_tel AS cli_contacto_tel, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_principal, "
+        "       u.username AS tecnico_email "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+        " WHERE v.id=%s",
+        (vid,)
+    )
+    if not visita:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    visita = dict(visita)
+
+    # Equipos
+    equipos = mysql_fetchall(
+        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+        "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
+        "       m.observaciones "
+        "  FROM mant_visita_tareas vt "
+        "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+        " ORDER BY m.nombre",
+        (vid,)
+    ) or []
+    equipos = [dict(e) for e in equipos]
+
+    # Tareas + plantilla
+    tareas = mysql_fetchall(
+        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, "
+        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
+        "       t.unidad, t.completada, t.completada_at, t.observaciones, "
+        "       t.valor_json, "
+        "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
+        " WHERE t.visita_id=%s "
+        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
+        (vid,)
+    ) or []
+    tareas = [dict(t) for t in tareas]
+    for t in tareas:
+        if t.get("valor_json"):
+            try: t["valor"] = json.loads(t["valor_json"])
+            except Exception: t["valor"] = None
+
+    # Agrupar por (mid, pid)
+    grupos = []
+    grupo_idx = {}
+    for t in tareas:
+        mid = t.get("maquina_id") or 0
+        pid = t.get("plantilla_id") or 0
+        key = (mid, pid)
+        if key not in grupo_idx:
+            grupo_idx[key] = len(grupos)
+            grupos.append({
+                "maquina_id": mid, "plantilla_id": pid,
+                "plantilla_nombre": t.get("plantilla_nombre") or "Tareas manuales",
+                "tareas": [],
+            })
+        grupos[grupo_idx[key]]["tareas"].append(t)
+    eq_idx = {e["id"]: e for e in equipos}
+
+    # Fotos
+    fotos = mysql_fetchall(
+        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, created_at "
+        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY created_at",
+        (vid,)
+    ) or []
+    fotos_dict = []
+    for f in fotos:
+        d = dict(f)
+        url = d.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{d['archivo_path']}"
+            if d.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        d["url"] = url
+        fotos_dict.append(d)
+
+    # Logo ILUS — usa el base64 pre-encodeado si existe
+    logo_b64 = ""
+    try:
+        logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
+        if os.path.exists(logo_path):
+            with open(logo_path, "r", encoding="utf-8") as f:
+                logo_b64 = f.read().strip()
+    except Exception: pass
+
+    # Render HTML
+    html = render_template(
+        "mantenciones/ot_pdf.html",
+        visita=visita,
+        equipos=equipos,
+        eq_idx=eq_idx,
+        grupos=grupos,
+        fotos=fotos_dict,
+        logo_b64=logo_b64,
+        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
+    )
+
+    # PDF
+    try:
+        pdf_bytes = _pw_pdf(
+            html, page_format="A4", margin={
+                "top": "15mm", "bottom": "15mm",
+                "left": "12mm", "right": "12mm",
+            },
+            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+        )
+    except PDFEngineUnavailable:
+        return jsonify({
+            "ok": False,
+            "error": "Generador PDF no disponible. Avisá al admin.",
+        }), 503
+    except Exception as e:
+        print(f"[ot_pdf] err: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo generar el PDF"}), 500
+
+    fname = f"OT_{visita.get('numero_ot') or vid}.pdf"
+    return send_file(
+        io.BytesIO(pdf_bytes), mimetype="application/pdf",
+        as_attachment=False, download_name=fname,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════

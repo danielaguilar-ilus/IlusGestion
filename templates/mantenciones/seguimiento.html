@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Seguimiento en tiempo real — ILUS{% endblock %}
+
+{% block content %}
+<style>
+.seg-wrap { display: grid; grid-template-columns: 360px 1fr; gap: 12px; height: calc(100vh - 100px); }
+@media (max-width: 992px) { .seg-wrap { grid-template-columns: 1fr; height: auto; } }
+
+.seg-sidebar {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 11px;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.seg-sidebar-head {
+  background: linear-gradient(135deg, #0a0a0a, #1f2937);
+  color: #fff; padding: 14px 16px;
+}
+.seg-sidebar-head h5 { font-size: 1rem; font-weight: 800; margin: 0; }
+.seg-sidebar-head .sub { font-size: .78rem; opacity: .8; margin-top: 4px; }
+
+.seg-list { flex: 1; overflow-y: auto; padding: 8px; }
+.seg-tec-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  padding: 12px; margin-bottom: 8px; cursor: pointer;
+  transition: all .15s;
+}
+.seg-tec-card:hover { border-color: #dc2626; box-shadow: 0 2px 8px rgba(220,38,38,.1); }
+.seg-tec-card.active { background: #fef2f2; border-color: #dc2626; }
+
+.seg-tec-row { display: flex; align-items: center; gap: 10px; }
+.seg-tec-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: .9rem; flex-shrink: 0;
+}
+.seg-tec-info { flex: 1; min-width: 0; }
+.seg-tec-name { font-weight: 700; font-size: .9rem; color: #0f172a; line-height: 1.2; }
+.seg-tec-cli { font-size: .72rem; color: #6b7280; margin-top: 2px; }
+.seg-tec-meta { font-size: .72rem; color: #9ca3af; margin-top: 6px; }
+
+.seg-estado-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 50px;
+  font-size: .66rem; font-weight: 800; text-transform: uppercase;
+}
+.seg-en_ruta { background: #dbeafe; color: #1e40af; }
+.seg-iniciado { background: #fef3c7; color: #92400e; }
+.seg-sin_ruta { background: #f3f4f6; color: #6b7280; }
+
+.seg-mapa { background: #f3f4f6; border-radius: 11px; overflow: hidden; min-height: 500px; }
+#mapaSeg { width: 100%; height: 100%; }
+
+.seg-empty {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 11px;
+  padding: 40px 20px; text-align: center; color: #6b7280;
+}
+.seg-empty i { font-size: 2.6rem; opacity: .3; display: block; margin-bottom: 10px; }
+</style>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h4 class="mb-0 fw-bold">
+      <i class="bi bi-broadcast me-2 text-danger"></i>Seguimiento en tiempo real
+    </h4>
+    <small class="text-muted">Técnicos con OT activa hoy · refresca cada 30s</small>
+  </div>
+  <div>
+    <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Volver a OTs
+    </a>
+    <button class="btn btn-sm btn-outline-primary" onclick="cargarActivos()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+    </button>
+  </div>
+</div>
+
+<div class="seg-wrap">
+
+  {# Sidebar: lista técnicos activos #}
+  <div class="seg-sidebar">
+    <div class="seg-sidebar-head">
+      <h5><i class="bi bi-people-fill me-2"></i>Técnicos activos</h5>
+      <div class="sub"><span id="segCount">0</span> en campo · ultima actualización <span id="segUpd">—</span></div>
+    </div>
+    <div class="seg-list" id="segList">
+      <div class="text-center py-4 small text-muted">Cargando…</div>
+    </div>
+  </div>
+
+  {# Mapa Google #}
+  <div class="seg-mapa">
+    <div id="mapaSeg">
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#6b7280">
+        Inicializando mapa…
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let _map = null;
+let _markers = {};
+let _activos = [];
+let _intervalRef = null;
+
+function initMapaSeg(){
+  if (!window.google || !window.google.maps){
+    if (window.__ilusGmapsPending){
+      window.__ilusGmapsPending.push(initMapaSeg);
+    }
+    return;
+  }
+  // Default Chile (Santiago)
+  _map = new google.maps.Map(document.getElementById('mapaSeg'), {
+    zoom: 11,
+    center: { lat: -33.45, lng: -70.66 },
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: true,
+    styles: [
+      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    ],
+  });
+  cargarActivos();
+  // Auto-refresh cada 30s
+  if (_intervalRef) clearInterval(_intervalRef);
+  _intervalRef = setInterval(cargarActivos, 30000);
+}
+
+async function cargarActivos(){
+  try {
+    const r = await fetch('/mantenciones/api/seguimiento/activos');
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast('Error: ' + (d.error||'?'), { type: 'error' });
+      return;
+    }
+    _activos = d.activos || [];
+    renderLista();
+    actualizarMapa();
+    document.getElementById('segCount').textContent = _activos.length;
+    document.getElementById('segUpd').textContent = new Date().toLocaleTimeString('es-CL');
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type: 'error' });
+  }
+}
+
+function _initial(name){
+  return (name || '?').trim().charAt(0).toUpperCase();
+}
+
+function renderLista(){
+  const cont = document.getElementById('segList');
+  if (!_activos.length){
+    cont.innerHTML = '<div class="seg-empty"><i class="bi bi-cup-hot"></i>' +
+      '<div class="fw-bold">Sin técnicos activos</div>' +
+      '<div class="small mt-1">No hay OTs en curso ahora.</div></div>';
+    return;
+  }
+  cont.innerHTML = _activos.map(a => `
+    <div class="seg-tec-card" onclick="centrarEn(${a.visita_id})">
+      <div class="seg-tec-row">
+        <div class="seg-tec-avatar">${_initial(a.tecnico_nombre)}</div>
+        <div class="seg-tec-info">
+          <div class="seg-tec-name">${a.tecnico_nombre || 'Técnico'}</div>
+          <div class="seg-tec-cli">
+            <i class="bi bi-building me-1"></i>${a.razon_social || 'Cliente'}
+          </div>
+        </div>
+        <span class="seg-estado-badge seg-${a.estado_visual}">${a.estado_visual.replace('_', ' ')}</span>
+      </div>
+      <div class="seg-tec-meta">
+        <div><strong>${a.numero_ot}</strong>${a.titulo ? ' · ' + a.titulo : ''}</div>
+        ${a.ruta_iniciada_at ? `<div><i class="bi bi-signpost me-1"></i>Ruta iniciada ${a.ruta_iniciada_at} (${a.ruta_app||''})</div>` : ''}
+        ${a.last_ping_at ? `<div><i class="bi bi-broadcast me-1 text-danger"></i>Último ping ${a.last_ping_at}</div>` : '<div class="text-muted"><i class="bi bi-broadcast me-1"></i>Sin pings de ubicación todavía</div>'}
+      </div>
+    </div>
+  `).join('');
+}
+
+function actualizarMapa(){
+  if (!_map) return;
+  // Limpiar markers viejos
+  Object.values(_markers).forEach(m => m.setMap(null));
+  _markers = {};
+  const bounds = new google.maps.LatLngBounds();
+  let any = false;
+  _activos.forEach(a => {
+    // Marker técnico (si tiene last_lat/lng)
+    if (a.last_lat != null && a.last_lng != null){
+      const pos = { lat: a.last_lat, lng: a.last_lng };
+      const m = new google.maps.Marker({
+        position: pos, map: _map,
+        title: `${a.tecnico_nombre} · ${a.numero_ot}`,
+        label: { text: _initial(a.tecnico_nombre), color: '#fff', fontWeight: 'bold' },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE, scale: 14,
+          fillColor: '#dc2626', fillOpacity: 1,
+          strokeColor: '#fff', strokeWeight: 3,
+        },
+      });
+      const info = new google.maps.InfoWindow({
+        content: `<div style="font-size:13px;font-weight:600">${a.tecnico_nombre}</div>
+                  <div style="font-size:11px;color:#666">${a.razon_social}</div>
+                  <div style="font-size:11px;color:#666">OT ${a.numero_ot}</div>
+                  <a href="/mantenciones/ot/${a.visita_id}" target="_blank" style="font-size:11px">Abrir OT →</a>`
+      });
+      m.addListener('click', () => info.open(_map, m));
+      _markers['v'+a.visita_id] = m;
+      bounds.extend(pos);
+      any = true;
+    }
+    // Marker destino (cliente)
+    if (a.direccion_lat != null && a.direccion_lng != null){
+      const pos = { lat: a.direccion_lat, lng: a.direccion_lng };
+      const md = new google.maps.Marker({
+        position: pos, map: _map,
+        title: `Destino: ${a.razon_social}`,
+        icon: {
+          path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW, scale: 6,
+          fillColor: '#1e40af', fillOpacity: 1,
+          strokeColor: '#fff', strokeWeight: 2,
+        },
+      });
+      _markers['d'+a.visita_id] = md;
+      bounds.extend(pos);
+      any = true;
+    }
+  });
+  if (any && !bounds.isEmpty()){
+    _map.fitBounds(bounds, 60);
+  }
+}
+
+function centrarEn(visitaId){
+  const m = _markers['v'+visitaId] || _markers['d'+visitaId];
+  if (m && _map){
+    _map.panTo(m.getPosition());
+    _map.setZoom(15);
+    google.maps.event.trigger(m, 'click');
+  }
+  // Highlight card
+  document.querySelectorAll('.seg-tec-card').forEach(c => c.classList.remove('active'));
+  event?.currentTarget?.classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.__ilusGmapsLoaded){
+    initMapaSeg();
+  } else if (window.__ilusGmapsPending){
+    window.__ilusGmapsPending.push(initMapaSeg);
+  } else {
+    document.getElementById('mapaSeg').innerHTML =
+      '<div class="alert alert-warning m-3">' +
+      '<i class="bi bi-exclamation-triangle me-1"></i>' +
+      'Google Maps no está disponible. Configura GOOGLE_MAPS_API_KEY en variables de entorno.' +
+      '</div>';
+  }
+});
+
+// Cleanup interval on navigate away
+window.addEventListener('beforeunload', () => {
+  if (_intervalRef) clearInterval(_intervalRef);
+});
+</script>
+{% endblock %}
