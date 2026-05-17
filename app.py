@@ -30451,10 +30451,18 @@ def mant_tarifas_tecnicos_list():
 
 
 if __name__ == "__main__":
+    # ⚠️  ATENCIÓN: este bloque SOLO se ejecuta en desarrollo local
+    # (`python app.py`). En Railway/producción debe correr Gunicorn vía
+    # nixpacks.toml [start] o Procfile. Si ves logs con
+    # "Debugger is active!" en producción → falló el override y está
+    # corriendo Flask dev (RIESGO DE SEGURIDAD CRÍTICO).
+    #
+    # Debug solo se activa con FLASK_ENV=development EXPLÍCITAMENTE.
+    # Si la variable no existe → False (defensivo).
     print("=" * 45)
-    print("  ILUS - Sistema de Etiquetas")
+    print("  ILUS - Sistema de Etiquetas (DEV)")
     print("  http://localhost:5000")
     print("=" * 45)
     port = int(os.environ.get("PORT", 5000))
-    debug = os.environ.get("FLASK_ENV") != "production"
+    debug = (os.environ.get("FLASK_ENV") or "").lower() == "development"
     app.run(debug=debug, host="0.0.0.0", port=port)

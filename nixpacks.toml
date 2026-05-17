@@ -30,3 +30,28 @@ cmds = [
 
 [variables]
 PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"
+
+# ════════════════════════════════════════════════════════════════════
+#  ⚠️  START COMMAND — FORZAR GUNICORN (no Flask dev server)
+# ════════════════════════════════════════════════════════════════════
+#
+#  HALLAZGO 2026-05-17: los deploys anteriores corrían con Flask dev
+#  server (warning "Debugger is active! Debugger PIN: ..." en logs).
+#  Esto era CRÍTICO:
+#    1. Debugger expuesto en producción — riesgo de seguridad alto
+#       (cualquiera con el PIN puede ejecutar código arbitrario)
+#    2. Sin workers — 1 thread, no escala
+#    3. Restarting with stat — causaba 502 transitorios
+#
+#  Aunque Procfile dice "web: gunicorn ..." Nixpacks usa auto-detection
+#  para Python y prefiere `python app.py` si encuentra
+#  `if __name__ == "__main__"`. Este bloque [start] OVERRIDE eso.
+#
+#  Workers: 2 (proud-endurance es plan Hobby; con plan Pro subir a 4).
+#  Threads: 4 por worker → 8 reqs concurrentes (--threads activa
+#  worker class gthread).
+#  Timeout 300s: por si hay generación de PDF lenta (Playwright).
+# ════════════════════════════════════════════════════════════════════
+
+[start]
+cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --worker-class gthread --timeout 300 --access-logfile - --error-logfile - app:app"
