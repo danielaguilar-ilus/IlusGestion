@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Iniciar Sesión — ILUS Sport & Health{% endblock %}
 
+{% block head_extra %}
+  {# Si hay imagen de carrusel, preload solo la PRIMERA (above-the-fold).
+     Las demás cargan lazy con CSS background-image (sin hint). #}
+  {% if login_images and login_images[0] %}
+  <link rel="preload" as="image" fetchpriority="high"
+        href="{{ login_images[0].src or login_images[0].cloudinary_url or url_for('static', filename=login_images[0].archivo_path) }}">
+  {% endif %}
+{% endblock %}
+
 {% block content %}
 <style>
 /* ── Carrusel login (transición suave entre imágenes) ── */
@@ -9,6 +18,7 @@
   position:absolute;inset:0;
   background-size:cover;background-position:center;
   opacity:0;transition:opacity 1.4s ease-in-out;
+  /* will-change: solo activado en .active para no derrochar GPU memory */
 }
 .login-carousel-slide.active{opacity:1;}
 .login-carousel-overlay{
@@ -123,7 +133,9 @@
       {# Logo arriba #}
       <div class="login-brand-top">
         {% if has_logo %}
-        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS Sport & Health">
+        <img src="{{ url_for('static', filename='Logo.png') }}"
+             alt="ILUS Sport & Health"
+             width="495" height="330" decoding="async" fetchpriority="high">
         {% else %}
         <div class="login-hero-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
         {% endif %}
@@ -174,10 +186,12 @@
   <div class="login-side">
     <div class="login-box">
 
-      {# Logo pequeño sobre el formulario #}
+      {# Logo pequeño sobre el formulario — mismo archivo que el grande
+         (mismo URL → cache hit, costo cero) pero a tamaño chico. #}
       {% if has_logo %}
       <img src="{{ url_for('static', filename='Logo.png') }}"
-           alt="ILUS" class="login-mini-logo">
+           alt="ILUS" class="login-mini-logo"
+           width="210" height="140" decoding="async">
       {% else %}
       <div class="login-mini-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>
       {% endif %}

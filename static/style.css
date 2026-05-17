@@ -497,8 +497,9 @@ body {
 ══════════════════════════════════════════════════════════════ */
 .ilus-badge       { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; }
 .badge-confirmado { background: #1a7a1a; color: #fff; }
-.badge-pendiente  { background: #e8a000; color: #fff; }
 .badge-impreso    { background: #1a4a8a; color: #fff; }
+/* .badge-pendiente — segunda regla (b35a00) ganaba por orden;
+   mantuvimos esa y eliminamos la duplicada (e8a000). */
 .badge-pendiente  { background: #b35a00; color: #fff; }
 
 /* ══════════════════════════════════════════════════════════════

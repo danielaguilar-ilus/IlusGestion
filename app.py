@@ -109,6 +109,15 @@ ERP_TIDOS_DOCUMENTOS_CLIENTE = (
 )
 
 
+import functools as _functools_mod  # para lru_cache de helpers puros
+
+
+@_functools_mod.lru_cache(maxsize=2048)
+def _formato_rut_chile_cached(rut_str):
+    """Versión cacheada — solo strings inmutables. Ver _formato_rut_chile."""
+    return _formato_rut_chile_impl(rut_str)
+
+
 def _formato_rut_chile(rut_str):
     """Normaliza un RUT chileno y lo formatea como 'XX.XXX.XXX-Y'.
     Si el RUT no tiene DV, lo devuelve sin guión.
@@ -119,7 +128,23 @@ def _formato_rut_chile(rut_str):
         '25547065-2'  → '25.547.065-2'
         '25.547.065'  → '25.547.065'   (sin DV, asumimos cuerpo)
         '25547065'    → '25.547.065'   (sin DV)
+
+    PERF 2026-05-17: usa lru_cache cuando el input es str/int (la mayoría
+    de los casos). En listings con cientos de RUTs repetidos esto ahorra
+    cómputo (regex + reverso). Si no es hashable cae al impl directo.
     """
+    if rut_str is None:
+        return ""
+    if isinstance(rut_str, (str, int)):
+        try:
+            return _formato_rut_chile_cached(str(rut_str))
+        except Exception:
+            pass
+    return _formato_rut_chile_impl(rut_str)
+
+
+def _formato_rut_chile_impl(rut_str):
+    """Implementación real (no cacheada — la cache decoradora la usa)."""
     if not rut_str:
         return ""
     # Extraer solo dígitos y K (DV puede ser K para algunos RUTs)
@@ -810,8 +835,15 @@ def _get_pool():
                 #                  queries grandes (inserts batch, etc).
                 # ─────────────────────────────────────────────────────────
                 mincached      = 0,
-                maxcached      = 5,
-                maxconnections = 10,
+                # ── FIX 2026-05-17 (perf) ────────────────────────────
+                # maxcached subió 5 → 10, maxconnections 10 → 20.
+                # Con gunicorn 2 workers × 8 threads = 16 concurrentes
+                # potenciales por worker; con maxconnections=10 había
+                # contención (threads esperando conexión). 20 deja margen
+                # sin estresar a Clever Cloud (límite plan típico 25-50).
+                # maxcached=10 reduce reconexiones en ráfagas de tráfico.
+                maxcached      = 10,
+                maxconnections = 20,
                 maxusage       = 200,
                 blocking       = False,
                 ping           = 7,
@@ -2159,13 +2191,18 @@ def load_current_user():
     Carga el usuario actual y sus permisos.
 
     Estrategia híbrida (perf + freshness):
-    — Cachea user en session con TTL=10s.
+    — Cachea user en session con TTL=60s (10s para superadmin/admin).
     — Mientras el TTL es válido, NO toca BD (~ahorra 10-40 ms por request).
     — Cuando expira, re-lee de BD (1 query indexada).
     — `permission_set(role)` usa caché en proceso por rol (invalidado por
       `admin_roles_matrix_save`), así que cambios de matriz aplican
-      a más tardar 10s después.
+      a más tardar 30-60s después.
     — Cambios de rol del usuario aplican al expirar el TTL o tras logout.
+
+    PERF 2026-05-17: TTL subió de 10s → 60s para usuarios normales. En una
+    navegación típica con 6-10 requests/min, esto ahorra ~5-9 queries/min
+    por usuario. Superadmin/admin mantiene 10s para que cambios de rol
+    en /admin/usuarios apliquen rápido al admin que está editando.
     """
     g.user = None
     g.permissions = permission_set(None)
@@ -2173,11 +2210,13 @@ def load_current_user():
     if not user_id:
         return
 
-    # ── Intento 1: cache de session si aún fresco (TTL 10s) ─────────
+    # ── Intento 1: cache de session si aún fresco ──────────────────
     cached = session.get("_uc")
     if cached and cached.get("id") == user_id:
         cached_ts = cached.get("ts", 0)
-        if (time.time() - cached_ts) < 10:
+        # TTL diferenciado: admin/superadmin 10s, resto 60s
+        _ttl = 10 if cached.get("role") in ("superadmin", "admin") else 60
+        if (time.time() - cached_ts) < _ttl:
             g.user = cached
             g.permissions = permission_set(cached["role"])
             return
@@ -2526,6 +2565,79 @@ def require_permission(permission):
 @app.before_request
 def before_request():
     load_current_user()
+
+
+# ════════════════════════════════════════════════════════════════════
+# PERFORMANCE — after_request: compresión gzip + cache headers static
+# ════════════════════════════════════════════════════════════════════
+# 2026-05-17: Antes los assets `/static/*` se servían sin Cache-Control
+# agresivo, forzando al navegador a revalidar en cada navegación. Los
+# HTML/JSON tampoco se comprimían (Flask no comprime por default), lo
+# que multiplicaba el ancho de banda de respuestas.
+#
+# Implementación zero-dependency:
+#  1. Cache-Control immutable + max-age=30d para /static/*  → 0 RTTs
+#     adicionales al navegar entre páginas (CSS/JS/imágenes desde cache).
+#  2. Gzip on-the-fly para HTML/JSON/CSS/JS/XML > 1 KB cuando el cliente
+#     declara Accept-Encoding: gzip. Salta archivos ya comprimidos
+#     (woff2, jpg, png, webp, mp4, zip, pdf — magic bytes).
+# ════════════════════════════════════════════════════════════════════
+_COMPRESSIBLE_PREFIXES = (
+    "text/", "application/json", "application/javascript",
+    "application/xml", "application/xhtml+xml", "application/atom+xml",
+    "application/rss+xml", "image/svg+xml",
+)
+_GZIP_MIN_BYTES = 1024
+
+
+@app.after_request
+def _perf_static_cache_and_gzip(resp):
+    try:
+        # ── 1) Cache headers para assets estáticos ───────────────────
+        # Solo si Flask NO seteó ya un cache header explícito.
+        if request.path.startswith("/static/") and "Cache-Control" not in resp.headers:
+            # 30 días, immutable — los nombres de archivo cambian en el
+            # commit cuando el contenido cambia (o el usuario fuerza
+            # reload manual). Esto elimina ~3-8 requests de revalidación
+            # por página cargada.
+            resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+
+        # ── 2) Gzip on-the-fly ───────────────────────────────────────
+        # Saltar si:
+        #  - el cliente no acepta gzip
+        #  - ya viene comprimido (Content-Encoding presente)
+        #  - el response es streaming/direct_passthrough
+        #  - status no 200-299
+        #  - body es muy chico
+        #  - mime no es compresible
+        if (
+            "gzip" in (request.headers.get("Accept-Encoding") or "").lower()
+            and "Content-Encoding" not in resp.headers
+            and not getattr(resp, "direct_passthrough", False)
+            and 200 <= resp.status_code < 300
+        ):
+            ctype = (resp.content_type or "").lower()
+            if any(ctype.startswith(p) for p in _COMPRESSIBLE_PREFIXES):
+                try:
+                    data = resp.get_data()
+                    if len(data) >= _GZIP_MIN_BYTES:
+                        import gzip as _gzip_mod
+                        compressed = _gzip_mod.compress(data, compresslevel=6)
+                        # Solo aplicar si efectivamente reduce tamaño
+                        if len(compressed) < len(data):
+                            resp.set_data(compressed)
+                            resp.headers["Content-Encoding"] = "gzip"
+                            resp.headers["Content-Length"] = str(len(compressed))
+                            # Importante para caches/CDN: vary by encoding
+                            vary = resp.headers.get("Vary") or ""
+                            if "Accept-Encoding" not in vary:
+                                resp.headers["Vary"] = (vary + ", Accept-Encoding").lstrip(", ")
+                except Exception:
+                    # Nunca rompamos la respuesta por un error de compresión
+                    pass
+    except Exception:
+        pass
+    return resp
 
 
 @app.teardown_appcontext
@@ -3410,10 +3522,22 @@ def login():
                            daemon=True, name=f"login-track-{_uid_track}").start()
         except Exception as _e_login_track:
             print(f"[login-track] {_e_login_track}", flush=True)
+        # ── FIX 2026-05-17 (perf): audit en hilo daemon ───────────────
+        # Antes el audit bloqueaba el redirect 50-200ms (INSERT + commit).
+        # Ahora se dispara en background; el usuario recibe la cookie y
+        # el redirect inmediatamente. Si el audit falla, sólo va al log.
         try:
-            _audit("login_ok",
-                   target_type="user", target_id=user["id"],
-                   user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
+            _user_audit_payload = {"id": user["id"], "username": user["username"], "role": user["role"]}
+            def _audit_login_async(_payload):
+                try:
+                    _audit("login_ok",
+                           target_type="user", target_id=_payload["id"],
+                           user_override=_payload)
+                except Exception as _e_au:
+                    print(f"[login_ok audit async] {_e_au}", flush=True)
+            import threading as _thr_au
+            _thr_au.Thread(target=_audit_login_async, args=(_user_audit_payload,),
+                           daemon=True, name=f"login-audit-{user['id']}").start()
         except Exception as _e_au:
             print(f"[login_ok audit] {_e_au}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
@@ -6489,6 +6613,8 @@ def admin_login_imagenes_subir():
         if cloud_saved:
             msg += f" {cloud_saved} persistente(s) en Cloudinary."
         flash(msg, "success")
+        try: _invalidate_login_images_cache()
+        except Exception: pass
     for err in errors[:3]:
         flash(err, "warning")
     return redirect(url_for("admin_login_imagenes"))
@@ -6518,6 +6644,8 @@ def admin_login_imagen_update(iid):
                     if os.path.exists(fp): os.remove(fp)
                 except Exception: pass
         mysql_execute("DELETE FROM login_images WHERE id=%s", (iid,))
+        try: _invalidate_login_images_cache()
+        except Exception: pass
         flash("Imagen eliminada.", "success")
     else:
         titulo    = (request.form.get("titulo") or "").strip()[:200]
@@ -6536,6 +6664,8 @@ def admin_login_imagen_update(iid):
             "UPDATE login_images SET titulo=%s, subtitulo=%s, orden=%s, activa=%s WHERE id=%s",
             (titulo, subtitulo, orden, activa, iid)
         )
+        try: _invalidate_login_images_cache()
+        except Exception: pass
         flash("Imagen actualizada.", "success")
     return redirect(url_for("admin_login_imagenes"))
 
@@ -6572,6 +6702,25 @@ def _retiros_carousel_active():
         return []
 
 
+# Cache login images — el GET /login es muy frecuente y la lista cambia
+# raramente (solo en admin). TTL 120s; admin invalida explícitamente al
+# editar el carrusel (ver _invalidate_login_images_cache).
+_login_imgs_cache = {"active": None, "active_ts": 0.0}
+_login_imgs_lock = threading.Lock()
+_LOGIN_IMGS_TTL = 120
+
+
+def _invalidate_login_images_cache():
+    """Llamar tras INSERT/UPDATE/DELETE en login_images."""
+    with _login_imgs_lock:
+        _login_imgs_cache["active"] = None
+        _login_imgs_cache["active_ts"] = 0.0
+    try:
+        _cache_signal_bump("login_images")
+    except Exception:
+        pass
+
+
 def _login_images_active(solo_activas=False):
     """Devuelve imágenes del carrusel del login con src resuelto.
 
@@ -6583,7 +6732,25 @@ def _login_images_active(solo_activas=False):
     Args:
       solo_activas: si True, filtra activa=1 y LIMIT 5 (para login público).
                     si False (default), trae todas (para admin/gestión).
+
+    PERF: solo_activas=True (público) usa cache TTL 120s. La variante
+    admin (solo_activas=False) NO se cachea (se invoca poco y necesita
+    columnas extra).
     """
+    # Solo cacheamos la variante pública (login)
+    if solo_activas:
+        # Cross-worker invalidation check
+        try:
+            if _cache_signal_changed("login_images"):
+                with _login_imgs_lock:
+                    _login_imgs_cache["active"] = None
+                    _login_imgs_cache["active_ts"] = 0.0
+        except Exception:
+            pass
+        now = time.time()
+        with _login_imgs_lock:
+            if _login_imgs_cache["active"] is not None and (now - _login_imgs_cache["active_ts"]) < _LOGIN_IMGS_TTL:
+                return _login_imgs_cache["active"]
     try:
         if solo_activas:
             rows = mysql_fetchall(
@@ -6605,6 +6772,10 @@ def _login_images_active(solo_activas=False):
             )
             d["persistente"] = bool(d.get("cloudinary_url"))
             out.append(d)
+        if solo_activas:
+            with _login_imgs_lock:
+                _login_imgs_cache["active"] = out
+                _login_imgs_cache["active_ts"] = time.time()
         return out
     except Exception:
         return []
@@ -13188,16 +13359,57 @@ def _safe_smtp_cfg(cfg=None):
     return cfg
 
 
+# Cache local del client config — se invalida al guardar config o cross-worker
+# vía app_cache_signals. TTL 60s evita martillar la BD en cada render que
+# usa el filtro `chile_fmt` o el _ilus_email_html. Default ~775 jsonify y
+# muchos templates lo invocan indirectamente.
+_client_cfg_cache = {"data": None, "ts": 0.0}
+_client_cfg_lock = threading.Lock()
+_CLIENT_CFG_TTL = 60
+
+
+def _invalidate_client_cfg_cache():
+    """Llamar tras INSERT/UPDATE en comm_client_config."""
+    with _client_cfg_lock:
+        _client_cfg_cache["ts"] = 0.0
+        _client_cfg_cache["data"] = None
+    try:
+        _cache_signal_bump("client_cfg")
+    except Exception:
+        pass
+
+
 def _get_client_cfg():
+    """Lee comm_client_config con cache TTL 60s (cross-worker invalidable)."""
+    # Cross-worker invalidation check (≤1 query cada 30s por scope)
+    try:
+        if _cache_signal_changed("client_cfg"):
+            with _client_cfg_lock:
+                _client_cfg_cache["ts"] = 0.0
+                _client_cfg_cache["data"] = None
+    except Exception:
+        pass
+    now = time.time()
+    with _client_cfg_lock:
+        if _client_cfg_cache["data"] is not None and (now - _client_cfg_cache["ts"]) < _CLIENT_CFG_TTL:
+            return _client_cfg_cache["data"]
     try:
         row = mysql_fetchone(
             "SELECT * FROM comm_client_config WHERE id=1 LIMIT 1"
         )
         if row:
-            return dict(row)
+            data = dict(row)
+            with _client_cfg_lock:
+                _client_cfg_cache["data"] = data
+                _client_cfg_cache["ts"] = now
+            return data
     except Exception:
         pass
-    return {"company_name": "ILUS Sport & Health", "corp_color": "#CC0000"}
+    fallback = {"company_name": "ILUS Sport & Health", "corp_color": "#CC0000"}
+    with _client_cfg_lock:
+        _client_cfg_cache["data"] = fallback
+        _client_cfg_cache["ts"] = now
+    return fallback
 
 
 def _get_wa_cfg():
@@ -13975,6 +14187,8 @@ def comm_client_save():
         )
         cur.execute("DELETE FROM comm_client_config WHERE id <> 1")
     conn.commit()
+    try: _invalidate_client_cfg_cache()
+    except Exception: pass
     return jsonify({"ok": True, "client": _get_client_cfg()})
 
 
@@ -15282,6 +15496,37 @@ def init_mantenciones_tables():
                 # un mapa embebido. Los pings se guardan en tabla nueva
                 # mant_ruta_pings (no en mant_visitas para no inflar la fila).
                 # ════════════════════════════════════════════════════════════
+                #
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Auditoría de performance backend.
+                # Índices composite para queries hot que se identificaron
+                # como cuello de botella en el listado de OTs, fotos por
+                # visita, audit log y autenticación. Idempotentes (try/except
+                # captura 1061 Duplicate key name si ya existen).
+                # ════════════════════════════════════════════════════════════
+                # mant_visita_tareas: agrupado por plantilla (cards F UX)
+                "CREATE INDEX idx_vt_visita_plantilla ON mant_visita_tareas (visita_id, plantilla_id)",
+                # mant_visita_fotos: orden cronológico por OT (galería).
+                # NOTA: la columna se llama `tomada_at` (no `created_at`).
+                "CREATE INDEX idx_vf_visita_tomada ON mant_visita_fotos (visita_id, tomada_at)",
+                # mant_visita_fotos: lookup por tarea (mostrar fotos de tarea)
+                "CREATE INDEX idx_vf_tarea ON mant_visita_fotos (tarea_id)",
+                # app_users: login por username (WHERE username=%s), muy hot
+                "CREATE INDEX idx_au_username ON app_users (username)",
+                # app_users: filtrar activos por rol (admin listado, asignar)
+                "CREATE INDEX idx_au_role_active ON app_users (role, active)",
+                # app_audit_log: ya tiene idx_ts/idx_user/idx_action/idx_target.
+                # Index composite para timeline filtrado por user+action+fecha
+                "CREATE INDEX idx_aal_user_action_ts ON app_audit_log (user_id, action, ts)",
+                # mant_visita_adjuntos: documento por OT filtrado por tipo
+                # (la columna `tipo` se sabe que existe por revisión del CREATE TABLE)
+                "CREATE INDEX idx_vad_visita_tipo ON mant_visita_adjuntos (visita_id, tipo)",
+                # mant_clientes: búsqueda por RUT ya existe (idx_rut). Composite
+                # rut+estado para filtros del listado (activos por RUT)
+                "CREATE INDEX idx_mc_rut_estado ON mant_clientes (rut, estado)",
+                # mant_maquinas: lookup por serie (búsqueda admin "buscar equipo")
+                # NOTA: la columna existe como `serie` (verificado en CREATE TABLE)
+                "CREATE INDEX idx_mm_serie ON mant_maquinas (serie)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass

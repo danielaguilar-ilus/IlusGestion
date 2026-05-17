@@ -337,7 +337,7 @@
   global.ilusPrompt  = ilusPrompt;
 
   // ════════════════════════════════════════════════════════════════
-  //  GOOGLE PLACES AUTOCOMPLETE — helper reusable
+  //  GOOGLE PLACES AUTOCOMPLETE — helper reusable (LAZY load)
   //
   //  Uso:
   //    ilusPlacesAutocomplete('inputId', {
@@ -346,12 +346,29 @@
   //      types: ['address'],    // o 'establishment', '(regions)', etc.
   //    });
   //
-  //  El SDK de Google Maps se carga desde base.html cuando
-  //  google_maps_api_key está configurada en el backend. Si no, el
-  //  input sigue funcionando como input texto plano (sin autocomplete).
+  //  Performance: el SDK de Google Maps (~250 KB) NO se carga al
+  //  abrir la página. Recién en la primera llamada a esta función
+  //  inyectamos el <script> async. Páginas que no usan autocomplete
+  //  (login, dashboards, listados) ahorran 250 KB + handshake TLS.
   //
-  //  Espera al SDK con buffer __ilusGmapsPending si aún no cargó.
+  //  Buffer __ilusGmapsPending sigue funcionando: cualquier código
+  //  legacy que pushee callbacks ahí se ejecuta cuando el SDK termina
+  //  de cargar (callback __ilusGmapsReady — definido en base.html).
   // ════════════════════════════════════════════════════════════════
+  function ensureGmapsSdk(){
+    if (window.__ilusGmapsSdkRequested) return;       // ya pedimos
+    if (window.google && window.google.maps && window.google.maps.places) return;  // ya cargó
+    if (!window.__ILUS_GMAPS_KEY) return;             // sin API key, fallback texto plano
+    window.__ilusGmapsSdkRequested = true;
+    var s = document.createElement('script');
+    s.async = true;
+    s.defer = true;
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+            encodeURIComponent(window.__ILUS_GMAPS_KEY) +
+            '&libraries=places&language=es&region=CL&callback=__ilusGmapsReady&loading=async';
+    document.head.appendChild(s);
+  }
+
   function ilusPlacesAutocomplete(inputIdOrEl, opts){
     opts = opts || {};
     const input = (typeof inputIdOrEl === 'string')
@@ -361,6 +378,9 @@
       console.warn('[ilusPlaces] input no encontrado:', inputIdOrEl);
       return;
     }
+    // Lazy-load del SDK: solo lo pedimos cuando una página realmente
+    // necesita autocomplete (no en login/dashboard).
+    ensureGmapsSdk();
     // Si Google Maps NO se cargó (no hay API key), fallback silencioso:
     // el input sigue funcionando como texto plano.
     function tryInit(){

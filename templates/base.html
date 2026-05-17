@@ -5,6 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}ILUS · Sistema de Gestión{% endblock %}</title>
 
+  {# ══════════════════════════════════════════════════════════
+     PERFORMANCE — Resource hints (preconnect / dns-prefetch)
+     Reducen RTT del primer byte de cada origen externo: el browser
+     abre TCP+TLS apenas parsea estas líneas, en paralelo al resto
+     del HTML. Ahorro típico: 100–300 ms del LCP en 3G/4G.
+  ══════════════════════════════════════════════════════════ #}
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+  {% if google_maps_api_key and not embed_mode %}
+  <link rel="preconnect" href="https://maps.googleapis.com" crossorigin>
+  <link rel="dns-prefetch" href="https://maps.googleapis.com">
+  <link rel="dns-prefetch" href="https://maps.gstatic.com">
+  {% endif %}
+  <link rel="dns-prefetch" href="https://res.cloudinary.com">
+
+  {# Preload del CSS propio (más prioridad que el de Bootstrap CDN) #}
+  <link rel="preload" href="{{ url_for('static', filename='style.css') }}" as="style">
+  {% if has_logo %}
+  <link rel="preload" href="{{ url_for('static', filename='Logo.png') }}" as="image" fetchpriority="high">
+  {% endif %}
+
   {# ── SEO + branding (cómo se ve en Google y al compartir links) ── #}
   <meta name="description" content="ILUS Sport &amp; Health — Sistema integral de gestión: etiquetas, mantenciones, transporte, retiros y catálogo de productos.">
   <meta name="theme-color" content="#0a0a0a">
@@ -12,6 +33,9 @@
   <meta name="apple-mobile-web-app-title" content="ILUS">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  {# Cache hint para HTML — el browser puede reutilizar la página por 5 min #}
+  <meta http-equiv="Cache-Control" content="public, max-age=300">
 
   {# ── Favicons (regenerados 2026-05-17 desde Logo.png oficial) ──
      Casco espartano BLANCO sobre fondo NEGRO #0a0a0a.
@@ -40,13 +64,50 @@
   <meta name="twitter:description" content="Etiquetas, mantenciones, transporte y retiros — todo en un solo sistema.">
   <meta name="twitter:image" content="{{ url_for('static', filename='Logo.png', _external=True) }}">
 
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  {# ══════════════════════════════════════════════════════════
+     CSS CRÍTICO INLINE — Above-the-fold (sidebar + topbar + body)
+     Evita el FOUC (Flash of Unstyled Content) y permite pintar la
+     UI antes de descargar style.css externo. ~2KB gzip.
+  ══════════════════════════════════════════════════════════ #}
+  <style>
+    :root{--ilus-red:#CC0000;--ilus-red-dk:#990000;--ilus-black:#111111;--sidebar-w:250px;--topbar-h:90px}
+    *,*::before,*::after{box-sizing:border-box}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#e8e8e8;min-height:100vh;overflow-x:hidden;-webkit-text-size-adjust:100%;margin:0}
+    .sidebar{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:var(--ilus-black);border-right:3px solid var(--ilus-red);display:flex;flex-direction:column;z-index:1000;overflow:hidden auto}
+    .main-wrapper{margin-left:var(--sidebar-w);min-height:100vh;padding:0 24px 50px;background:#e8e8e8}
+    .main-wrapper-login{margin-left:0;padding:0;display:flex;flex-direction:row;align-items:stretch;min-height:100vh;background:#0e0e0e}
+    .mobile-topbar{display:none}
+    .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:999}
+    @media (max-width:767px){
+      .sidebar{transform:translateX(-100%);transition:transform .25s ease}
+      .sidebar.open{transform:translateX(0)}
+      .mobile-topbar{display:flex;position:sticky;top:0;z-index:998;background:var(--ilus-black);border-bottom:2px solid var(--ilus-red);height:var(--topbar-h);align-items:center;padding:0 14px;gap:12px}
+      .main-wrapper{margin-left:0;padding:0 10px 70px}
+      .sidebar-overlay.open{display:block}
+    }
+  </style>
+
+  {# ══════════════════════════════════════════════════════════
+     CSS NO BLOQUEANTE — Bootstrap + Bootstrap Icons cargan con
+     preload + onload-swap. Si JS está desactivado, <noscript>
+     hace fallback al stylesheet sync (degrada bien).
+  ══════════════════════════════════════════════════════════ #}
+  <link rel="preload" as="style" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></noscript>
+  <link rel="preload" as="style" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"></noscript>
+
+  {# CSS propio bloqueante (necesario para layout completo) — pero ya
+     pre-cargado arriba, así que es esencialmente instantáneo. #}
   <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
   {# Mobile-first responsive overrides — debe cargarse DESPUÉS de style.css #}
   <link href="{{ url_for('static', filename='mobile.css') }}" rel="stylesheet">
   {# PWA Manifest — permite "agregar a pantalla de inicio" en iOS/Android #}
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+
+  {# Bloque opcional para que un template hijo agregue <link>/<meta>
+     adicionales en el <head> (p.ej. preload de assets específicos). #}
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
 
@@ -69,7 +130,8 @@
     <i class="bi bi-list"></i>
   </button>
   {% if has_logo %}
-    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="mobile-logo">
+    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="mobile-logo"
+         width="120" height="80" decoding="async" fetchpriority="high">
   {% else %}
     <span class="mobile-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></span>
   {% endif %}
@@ -93,7 +155,8 @@
     <a href="{{ url_for('index') }}" class="sidebar-brand">
       {% if has_logo %}
         <img src="{{ url_for('static', filename='Logo.png') }}"
-             alt="ILUS" class="sidebar-logo-img">
+             alt="ILUS" class="sidebar-logo-img"
+             width="180" height="120" decoding="async" fetchpriority="high">
       {% else %}
         <svg width="84" height="98" viewBox="0 0 34 42" fill="none" aria-label="ILUS">
           <path d="M32,5 Q20,-1 6,3 Q10,9 16,11 Q23,9 32,5Z" fill="#CC0000"/>
@@ -310,7 +373,9 @@
        style="color:inherit;cursor:pointer;border-radius:8px;transition:background .15s"
        title="Administrar mi cuenta">
       {% if current_user.foto_url %}
-      <img src="{{ current_user.foto_url }}" class="sidebar-user-avatar" style="object-fit:cover" alt="Foto">
+      <img src="{{ current_user.foto_url }}" class="sidebar-user-avatar"
+           style="object-fit:cover" alt="Foto"
+           width="36" height="36" loading="lazy" decoding="async">
       {% else %}
       <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
       {% endif %}
@@ -361,18 +426,41 @@
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
-<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+{# ══════════════════════════════════════════════════════════
+   JS — Todos cargan con `defer`: el browser los descarga en
+   paralelo al parsing del HTML y los ejecuta en orden, justo
+   antes de DOMContentLoaded. Sin bloqueo del render.
+   - Bootstrap bundle: solo necesario para modales/dropdowns
+   - JsBarcode: usado en /labels y /print-labels (no aquí, pero
+     muchos templates lo asumen disponible — lo dejamos en base
+     con defer para no romper compat). Considera moverlo al
+     bloque {% block scripts %} de las páginas que lo usan.
+   - app.js / ilus_ui.js: lógica propia del proyecto
+══════════════════════════════════════════════════════════ #}
+<script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script defer src="{{ url_for('static', filename='app.js') }}"></script>
+<script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 
-{# Google Maps Places API — solo se carga si hay API Key configurada.
-   `loading=async` evita el warning de deprecation y mejora performance.
-   El callback `__ilusGmapsReady` se dispara cuando el SDK está listo,
-   habilitando los inputs autocomplete pendientes. #}
+{# ══════════════════════════════════════════════════════════
+   Google Maps Places API — carga LAZY (on-demand).
+
+   Antes: se cargaba SIEMPRE que google_maps_api_key estuviera
+   configurada (en todas las páginas — login, dashboard, etc.).
+   Costo: ~250 KB del SDK + handshake TLS adicional, sin uso
+   real en el 90% de las páginas.
+
+   Ahora: configuramos la API Key como variable global y dejamos
+   que ilusPlacesAutocomplete() inyecte el <script> del SDK la
+   primera vez que alguien lo invoque. Páginas que no usan
+   autocomplete (login, dashboard, listados) NO descargan el SDK.
+
+   Buffer __ilusGmapsPending mantiene compatibilidad con el patrón
+   antiguo de ot_ejecutar.html / ficha.html / cliente_form.html /
+   seguimiento.html — encolan callbacks que dispara el callback. #}
 {% if google_maps_api_key and not embed_mode %}
 <script>
-  // Buffer global para inputs que esperan a que el SDK cargue
+  window.__ILUS_GMAPS_KEY = {{ google_maps_api_key|tojson }};
   window.__ilusGmapsPending = window.__ilusGmapsPending || [];
   window.__ilusGmapsReady = function(){
     window.__ilusGmapsLoaded = true;
@@ -380,10 +468,11 @@
     window.__ilusGmapsPending = [];
   };
 </script>
-<script async defer
-        src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&language=es&region=CL&callback=__ilusGmapsReady&loading=async"></script>
 {% endif %}
 <script>
+// Defer-equivalente: corre tras DOMContentLoaded para no bloquear el parser.
+// (No usamos `defer` en <script> inline porque defer solo aplica a externos.)
+document.addEventListener('DOMContentLoaded', function(){
 (function () {
   // ── Sidebar toggle ──────────────────────────
   var sidebar = document.getElementById('sidebar');
@@ -457,6 +546,7 @@
     } catch(e) {}
   })();
 })();
+});  /* end DOMContentLoaded */
 </script>
 {% block scripts %}{% endblock %}
 </body>

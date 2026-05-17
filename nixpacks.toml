@@ -48,10 +48,22 @@ PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"
 #  `if __name__ == "__main__"`. Este bloque [start] OVERRIDE eso.
 #
 #  Workers: 2 (proud-endurance es plan Hobby; con plan Pro subir a 4).
-#  Threads: 4 por worker → 8 reqs concurrentes (--threads activa
-#  worker class gthread).
-#  Timeout 300s: por si hay generación de PDF lenta (Playwright).
+#  Threads: 8 por worker → 16 reqs concurrentes (--threads activa
+#  worker class gthread). Subido de 4 → 8 (2026-05-17 perf audit):
+#  app es I/O-bound (mysql + erp + cloudinary), no CPU-bound.
+#
+#  Timeout 120s (antes 300s): con MySQL ya optimizado (read_timeout=5,
+#  pool con ping=7) ningún request normal debería tardar >60s. Si lo
+#  hace, lo más probable es bug (loop infinito) y mejor matarlo que
+#  acumular workers colgados. PDFs Playwright suelen tardar 5-15s.
+#
+#  --max-requests 1000 + jitter 100: recicla workers cada ~1000 reqs
+#  para evitar leaks de memoria (Playwright, etc). El jitter evita que
+#  ambos workers se reciclen al mismo tiempo (no degradación visible).
+#
+#  --keep-alive 5: mantener conexiones HTTP del navegador 5s → menos
+#  TLS handshakes en navegación rápida (multiplicador para SPA-like).
 # ════════════════════════════════════════════════════════════════════
 
 [start]
-cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --worker-class gthread --timeout 300 --access-logfile - --error-logfile - app:app"
+cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100 --access-logfile - --error-logfile - app:app"
