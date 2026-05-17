@@ -43,6 +43,24 @@ _ERP = erp_engine.init_engine(
 )
 
 # ══════════════════════════════════════════════════════════════════════
+#  ERP CIRCUIT BREAKER — estado compartido (los helpers se definen
+#  más abajo, en el bloque de funciones privadas).
+#  Si el ERP empieza a fallar, evitamos seguir martillándolo. Cuando se
+#  acumulan _ERP_BREAKER_THRESHOLD fallos consecutivos, el breaker abre
+#  por _ERP_BREAKER_COOLDOWN segundos; mientras está abierto, las llamadas
+#  a safe_erp_fetch_document() retornan None inmediatamente sin red.
+# ══════════════════════════════════════════════════════════════════════
+_ERP_BREAKER_THRESHOLD = 5
+_ERP_BREAKER_COOLDOWN  = 30   # segundos
+_erp_breaker_lock = threading.Lock()
+_erp_breaker_state = {
+    "consecutive_failures": 0,
+    "last_failure_at":      0.0,
+    "last_success_at":      0.0,
+    "opened_at":            0.0,
+}
+
+# ══════════════════════════════════════════════════════════════════════
 # TIPOS DE DOCUMENTO ERP (TIDO) — fuente única de verdad
 #
 # Cualquier endpoint que busque documentos en el ERP debe usar
@@ -1184,6 +1202,48 @@ def init_resets_table():
     conn.commit()
 
 
+def init_security_tables():
+    """Tablas auxiliares de seguridad/observabilidad:
+
+      app_audit_log     — trazabilidad de eventos críticos (login, reset,
+                          cambios de roles). Aditivo, no interfiere con
+                          lógica de negocio existente.
+      app_cache_signals — bus de invalidación cross-worker. Cada worker
+                          consulta `updated_at` para saber si su caché
+                          local quedó obsoleto (relevante con 2+ workers
+                          de gunicorn donde cada uno tiene su propio cache).
+    """
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_audit_log (
+                id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ts          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                user_id     INT NULL,
+                username    VARCHAR(190) NULL,
+                role        VARCHAR(40)  NULL,
+                ip          VARCHAR(64)  NULL,
+                action      VARCHAR(60)  NOT NULL,
+                target_type VARCHAR(40)  NULL,
+                target_id   VARCHAR(80)  NULL,
+                status      VARCHAR(20)  NOT NULL DEFAULT 'ok',
+                details     TEXT NULL,
+                INDEX idx_ts      (ts),
+                INDEX idx_user    (user_id),
+                INDEX idx_action  (action),
+                INDEX idx_target  (target_type, target_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_cache_signals (
+                scope      VARCHAR(60) NOT NULL PRIMARY KEY,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    conn.commit()
+
+
 def init_transporte_tables():
     """Crea tablas del módulo Transporte y Distribución."""
     conn = get_mysql()
@@ -1684,6 +1744,7 @@ def init_db():
     init_hrm_tables()
     init_eval_tables()
     init_resets_table()
+    init_security_tables()
     init_transporte_tables()
     init_pickup_tables()
     ensure_erp_table_index()
@@ -1834,11 +1895,19 @@ def _role_has_matrix_rows(role):
 
 
 def permission_set(role):
-    """Devuelve dict de permisos para un rol. Con caché en proceso."""
+    """Devuelve dict de permisos para un rol. Con caché en proceso.
+    Si otro worker invalidó el caché vía `app_cache_signals`, este worker
+    se entera a lo sumo cada _CACHE_SIGNAL_POLL_S segundos."""
     if role is None:
         return _empty_perms()
     if role == "superadmin":
         return {k: True for k in PERMS_KEYS}
+    # Detecta invalidación cross-worker (poleo BD ≤ cada 30s)
+    try:
+        if _cache_signal_changed("role_perms"):
+            _ROLE_PERMS_CACHE.clear()
+    except Exception:
+        pass
     # Cache check
     cached = _ROLE_PERMS_CACHE.get(role)
     if cached is not None:
@@ -1855,11 +1924,16 @@ def permission_set(role):
 
 def invalidate_role_cache(role=None):
     """Borra el caché de permisos de un rol (o todos si role=None).
-    Debe llamarse después de guardar la matriz de un rol."""
+    Debe llamarse después de guardar la matriz de un rol.
+    Notifica a los demás workers vía `app_cache_signals`."""
     if role:
         _ROLE_PERMS_CACHE.pop(role, None)
     else:
         _ROLE_PERMS_CACHE.clear()
+    try:
+        _cache_signal_bump("role_perms")
+    except Exception:
+        pass
 
 
 def allowed_file(filename):
@@ -2079,6 +2153,245 @@ def load_current_user():
         "active":   user["active"],
         "ts":       time.time(),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  AUDIT LOG — trazabilidad de eventos críticos.
+#  Failure-tolerant: si la inserción falla NO interrumpe la operación
+#  de negocio (solo print al stdout para que aparezca en Railway logs).
+# ══════════════════════════════════════════════════════════════════════
+def _audit(action: str, *, target_type: str = None, target_id=None,
+           details: dict = None, status: str = "ok",
+           user_override: dict = None):
+    """Inserta una fila en app_audit_log. Nunca lanza excepciones al caller."""
+    try:
+        u = user_override if user_override is not None else (g.user if hasattr(g, "user") else None)
+        user_id  = (u or {}).get("id")
+        username = (u or {}).get("username")
+        username = username[:190] if username else None
+        role     = (u or {}).get("role")
+        try:
+            ip = _rl_client_ip()
+        except Exception:
+            ip = None
+        det_json = None
+        if details is not None:
+            try:
+                det_json = json.dumps(details, ensure_ascii=False, default=str)[:4000]
+            except Exception:
+                det_json = str(details)[:4000]
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO app_audit_log
+                       (user_id, username, role, ip, action,
+                        target_type, target_id, status, details)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (user_id, username, role, ip, action[:60],
+                 target_type[:40] if target_type else None,
+                 (None if target_id is None else str(target_id)[:80]),
+                 status[:20], det_json)
+            )
+        conn.commit()
+    except Exception as exc:
+        try:
+            print(f"[ILUS][AUDIT] error al registrar '{action}': {exc}", flush=True)
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CACHE SIGNALS — invalidación cross-worker vía BD.
+#  Cada worker mira `updated_at` de un scope y compara contra la última
+#  marca local. Si avanzó, limpia el caché en memoria local. Polea como
+#  máximo cada _CACHE_SIGNAL_POLL_S segundos por scope.
+# ══════════════════════════════════════════════════════════════════════
+_cache_signal_local: dict = {}
+_cache_signal_lock = threading.Lock()
+_CACHE_SIGNAL_POLL_S = 30
+
+
+def _cache_signal_bump(scope: str):
+    """Marca un scope como invalidado en BD (notifica a otros workers)."""
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO app_cache_signals (scope, updated_at)
+                   VALUES (%s, UTC_TIMESTAMP())
+                   ON DUPLICATE KEY UPDATE updated_at = UTC_TIMESTAMP()""",
+                (scope[:60],)
+            )
+        conn.commit()
+    except Exception as exc:
+        print(f"[ILUS][CACHE-SIGNAL] bump '{scope}' falló: {exc}", flush=True)
+
+
+def _cache_signal_changed(scope: str) -> bool:
+    """True si el scope fue invalidado por otro worker desde el último check.
+    Solo consulta la BD como máximo cada _CACHE_SIGNAL_POLL_S segundos."""
+    now = time.monotonic()
+    with _cache_signal_lock:
+        last_ts, last_check = _cache_signal_local.get(scope, (None, 0.0))
+        if (now - last_check) < _CACHE_SIGNAL_POLL_S:
+            return False
+    try:
+        row = mysql_fetchone(
+            "SELECT updated_at FROM app_cache_signals WHERE scope=%s",
+            (scope[:60],)
+        )
+    except Exception:
+        with _cache_signal_lock:
+            _cache_signal_local[scope] = (last_ts, now)
+        return False
+    new_ts = (row or {}).get("updated_at") if row else None
+    with _cache_signal_lock:
+        prev_ts, _ = _cache_signal_local.get(scope, (None, 0.0))
+        _cache_signal_local[scope] = (new_ts, now)
+        return (new_ts is not None) and (prev_ts is None or new_ts != prev_ts)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  ERP CIRCUIT BREAKER — funciones (estado global se define al inicio
+#  del archivo, después de _ERP init_engine).
+# ══════════════════════════════════════════════════════════════════════
+def _erp_breaker_is_open() -> bool:
+    """True si el breaker está abierto y aún en cooldown."""
+    with _erp_breaker_lock:
+        opened = _erp_breaker_state["opened_at"]
+        if opened == 0.0:
+            return False
+        if (time.time() - opened) >= _ERP_BREAKER_COOLDOWN:
+            _erp_breaker_state["opened_at"] = 0.0
+            return False
+        return True
+
+
+def _erp_breaker_record_success():
+    with _erp_breaker_lock:
+        _erp_breaker_state["consecutive_failures"] = 0
+        _erp_breaker_state["last_success_at"]      = time.time()
+        _erp_breaker_state["opened_at"]            = 0.0
+
+
+def _erp_breaker_record_failure():
+    with _erp_breaker_lock:
+        _erp_breaker_state["consecutive_failures"] += 1
+        _erp_breaker_state["last_failure_at"]       = time.time()
+        if _erp_breaker_state["consecutive_failures"] >= _ERP_BREAKER_THRESHOLD:
+            if _erp_breaker_state["opened_at"] == 0.0:
+                _erp_breaker_state["opened_at"] = time.time()
+
+
+def safe_erp_fetch_document(tido: str, nudo: str):
+    """Wrapper con degradación elegante sobre `_ERP.fetch_document`.
+
+    Retorna **(doc_or_None, status)** donde status es uno de:
+      - 'ok'        → doc presente
+      - 'not_found' → ERP respondió pero no encontró el documento
+      - 'degraded'  → ERP caído / breaker abierto / timeout
+      - 'error'     → otro error inesperado
+
+    Recomendado para endpoints/UI que necesiten mostrar un banner
+    "ERP no disponible" en vez de un 500. Los call sites antiguos siguen
+    usando `_ERP.fetch_document` directo sin cambios.
+    """
+    if _erp_breaker_is_open():
+        return None, "degraded"
+    try:
+        doc = _ERP.fetch_document(tido, nudo)
+        _erp_breaker_record_success()
+        if not doc:
+            return None, "not_found"
+        return doc, "ok"
+    except Exception as exc:
+        _erp_breaker_record_failure()
+        try:
+            print(f"[ILUS][ERP] fetch_document falló ({tido}/{nudo}): {exc}", flush=True)
+        except Exception:
+            pass
+        return None, "degraded"
+
+
+def erp_status_snapshot() -> dict:
+    """Estado actual del ERP para UI y health checks."""
+    with _erp_breaker_lock:
+        s = dict(_erp_breaker_state)
+    open_now = _erp_breaker_is_open()
+    return {
+        "available":            not open_now,
+        "breaker_open":         open_now,
+        "consecutive_failures": s["consecutive_failures"],
+        "last_success_at":      s["last_success_at"] or None,
+        "last_failure_at":      s["last_failure_at"] or None,
+        "threshold":            _ERP_BREAKER_THRESHOLD,
+        "cooldown_seconds":     _ERP_BREAKER_COOLDOWN,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RATE LIMITING — in-process, sin dependencias externas.
+#  Suficiente para mitigar brute-force en /login y /auth/*.
+#  Con 2 workers de gunicorn el límite efectivo se duplica (aceptable).
+# ══════════════════════════════════════════════════════════════════════
+_rl_buckets: dict = {}
+_rl_lock = threading.Lock()
+
+
+def _rl_client_ip():
+    """IP del cliente respetando X-Forwarded-For (Railway está detrás de proxy)."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or "0.0.0.0"
+
+
+def _rl_check(scope: str, max_attempts: int, window_seconds: int) -> bool:
+    """True si aún hay cupo; False si excedió el límite."""
+    now = time.time()
+    key = (_rl_client_ip(), scope)
+    with _rl_lock:
+        bucket = _rl_buckets.get(key) or []
+        bucket = [t for t in bucket if (now - t) < window_seconds]
+        if len(bucket) >= max_attempts:
+            _rl_buckets[key] = bucket
+            return False
+        bucket.append(now)
+        _rl_buckets[key] = bucket
+        if len(_rl_buckets) > 5000:
+            _rl_buckets.clear()
+            _rl_buckets[key] = bucket
+        return True
+
+
+def rate_limited(scope: str, max_attempts: int, window_seconds: int,
+                 methods=("POST",)):
+    """Decorador. Aplica el límite sólo a los métodos indicados (default POST).
+    Si excede: redirect a la misma URL con flash para no ejecutar la lógica
+    del POST (no consume intento, no envía correo, etc.)."""
+    def decorator(view):
+        @wraps(view)
+        def wrapped(*a, **kw):
+            if request.method in methods:
+                if not _rl_check(scope, max_attempts, window_seconds):
+                    msg = ("Demasiados intentos. Espera unos minutos antes de "
+                           "volver a intentar.")
+                    accept = (request.headers.get("Accept") or "")
+                    xrw    = request.headers.get("X-Requested-With", "")
+                    is_ajax = (
+                        xrw == "XMLHttpRequest"
+                        or accept.startswith("application/json")
+                        or request.is_json
+                        or "/api/" in request.path
+                    )
+                    if is_ajax:
+                        return jsonify({"ok": False, "error": msg,
+                                        "error_codigo": "RATE_LIMIT"}), 429
+                    flash(msg, "danger")
+                    return redirect(request.path)
+            return view(*a, **kw)
+        return wrapped
+    return decorator
 
 
 def login_required(view):
@@ -2990,6 +3303,7 @@ def product_search():
 # ─────────────────────────────────────────────
 
 @app.route("/login", methods=["GET", "POST"])
+@rate_limited("login", max_attempts=10, window_seconds=300)
 def login():
     if g.user:
         return redirect(url_for("index"))
@@ -3002,9 +3316,18 @@ def login():
         try:
             user = get_auth_user_by_username(username)
         except Exception as exc:
+            _audit("login_error", details={"username": username, "error": str(exc)},
+                   status="error")
             flash(f"No fue posible conectar: {exc}", "danger")
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
         if not user or not user["active"] or not check_password_hash(user["password_hash"], password):
+            reason = ("no_existe" if not user
+                      else "inactivo" if not user["active"]
+                      else "password_invalida")
+            _audit("login_fail",
+                   target_type="user", target_id=(user or {}).get("id"),
+                   details={"username": username, "reason": reason},
+                   status="fail")
             flash("Usuario o contraseña incorrectos.", "danger")
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
         session.clear()
@@ -3021,6 +3344,9 @@ def login():
             )
         except Exception as _e_login_track:
             print(f"[login-track] no se pudo actualizar last_login_at: {_e_login_track}", flush=True)
+        _audit("login_ok",
+               target_type="user", target_id=user["id"],
+               user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # Anti-cache para forzar al navegador a recargar diseño actualizado
@@ -3034,6 +3360,7 @@ def login():
 @app.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    _audit("logout", target_type="user", target_id=g.user.get("id"))
     session.clear()
     flash("Sesion cerrada.", "success")
     return redirect(url_for("login"))
@@ -3806,6 +4133,7 @@ def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_nam
 
 
 @app.route("/auth/olvidar-contrasena", methods=["GET", "POST"])
+@rate_limited("forgot", max_attempts=5, window_seconds=900)
 def forgot_password():
     if g.user:
         return redirect(url_for("index"))
@@ -3824,6 +4152,15 @@ def forgot_password():
 
                     reset_url = url_for("reset_password", token=token, _external=True)
                     _send_recovery_email(user["username"], user["nombre"], reset_url)
+                    _audit("password_reset_request",
+                           target_type="user", target_id=user["id"],
+                           details={"username": user["username"]},
+                           user_override={"id": user["id"], "username": user["username"], "role": user.get("role")})
+                else:
+                    _audit("password_reset_request",
+                           details={"email": email_input,
+                                    "reason": "no_existe_o_inactivo"},
+                           status="fail")
         except Exception as _e:
             print(f"[ILUS][RESET] Error en flujo de recuperación: {_e}")
 
@@ -3833,6 +4170,7 @@ def forgot_password():
 
 
 @app.route("/auth/restablecer/<token>", methods=["GET", "POST"])
+@rate_limited("reset", max_attempts=10, window_seconds=900)
 def reset_password(token):
     if g.user:
         return redirect(url_for("index"))
@@ -3877,6 +4215,10 @@ def reset_password(token):
             )
         conn.commit()
 
+        _audit("password_reset_confirm",
+               target_type="user", target_id=row["user_id"],
+               details={"username": row["username"]},
+               user_override={"id": row["user_id"], "username": row["username"], "role": None})
         flash("Contraseña actualizada. Ahora puedes iniciar sesión.", "success")
         return redirect(url_for("login"))
 
@@ -5825,6 +6167,9 @@ def admin_roles_matrix_save():
         conn.commit()
         # CRÍTICO: invalidar caché para que el cambio aplique en próximo request
         invalidate_role_cache(rol_slug)
+        _audit("role_matrix_save",
+               target_type="role", target_id=rol_slug,
+               details={"permisos_count": len(permisos_recibidos)})
         return jsonify({"ok":True, "rol":rol_slug,
                         "permisos":len(permisos_recibidos)})
     finally:
@@ -7944,6 +8289,7 @@ def erp_engine_health():
             "retries": c.retries,
             "doc_cache_size": doc_size,
             "ent_cache_size": ent_size,
+            "breaker": erp_status_snapshot(),
             "build_commit": sha,
             "build_timestamp": build_ts,
             "server_time": datetime.now().isoformat(),
@@ -7953,9 +8299,18 @@ def erp_engine_health():
             "ok": False,
             "engine_loaded": False,
             "error": str(e),
+            "breaker": erp_status_snapshot(),
             "build_commit": sha,
             "build_timestamp": build_ts,
         }), 500
+
+
+@app.route("/api/erp/status", methods=["GET"])
+def erp_engine_status():
+    """Estado liviano del ERP para UI (banner 'ERP no disponible').
+    Pensado para polleo de la UI cada 30-60s.
+    Sin auth: la UI lo puede consultar incluso si la sesión expiró."""
+    return jsonify(erp_status_snapshot())
 
 
 @app.route("/api/erp/diagnose", methods=["POST"])
