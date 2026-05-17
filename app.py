@@ -6782,7 +6782,11 @@ def _login_images_active(solo_activas=False):
 
 
 # Helper de validación reutilizable (seguridad: extensión + tamaño + MIME)
-_ALLOWED_IMAGE_EXTS = {"png", "jpg", "jpeg", "webp"}
+# 2026-05-17: agregado HEIC/HEIF (formato default de iPhone desde iOS 11).
+# Cloudinary los convierte automáticamente a JPG; en filesystem se guardan
+# tal cual y se pueden visualizar con <img> en iOS/macOS (otros browsers
+# muestran el cloudinary_url ya convertido).
+_ALLOWED_IMAGE_EXTS = {"png", "jpg", "jpeg", "webp", "heic", "heif"}
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
@@ -6792,7 +6796,7 @@ def _validate_uploaded_image(f, label="imagen"):
         return None, f"Selecciona un archivo ({label})."
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
     if ext not in _ALLOWED_IMAGE_EXTS:
-        return None, f"Formato no permitido en {label}. Usa PNG/JPG/WEBP."
+        return None, f"Formato no permitido en {label}. Usa PNG/JPG/WEBP/HEIC."
     # Tamaño aproximado (lee header sin cargar todo)
     f.stream.seek(0, 2)
     size = f.stream.tell()
@@ -25890,13 +25894,73 @@ def mant_visita_tarea_respuesta(vid, tid):
     valor = d.get("valor")
     # Leer la tarea para conocer su tipo
     tar = mysql_fetchone(
-        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max "
+        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json "
         "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
         (tid, vid)
     )
     if not tar:
         return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
-    tipo = tar.get("tipo_respuesta") or "check"
+    # FIX 2026-05-17 (GPS DEFINITIVO): normalizar tipo_respuesta
+    # Tareas heredadas de plantillas viejas pueden tener tipo='GPS' (mayúsculas)
+    # o con espacios. Antes el strict equality fallaba y devolvía 400.
+    tipo_raw = tar.get("tipo_respuesta") or "check"
+    tipo = str(tipo_raw).strip().lower() or "check"
+
+    # ── FIX 2026-05-17 (GPS DEFINITIVO): detector de payload GPS extra ──
+    # Si el frontend manda {_gps_extra: {lat, lng, ...}} = quiere ADJUNTAR
+    # ubicación a una tarea que no es de tipo GPS. La mergeamos al valor_json
+    # existente sin pisar el valor principal y completamos como antes.
+    if isinstance(valor, dict) and isinstance(valor.get("_gps_extra"), dict):
+        try:
+            gps_lat = float(valor["_gps_extra"].get("lat")) if valor["_gps_extra"].get("lat") is not None else None
+            gps_lng = float(valor["_gps_extra"].get("lng")) if valor["_gps_extra"].get("lng") is not None else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Coordenadas inválidas en _gps_extra"}), 400
+        if gps_lat is None or gps_lng is None:
+            return jsonify({"ok": False, "error": "Faltan lat/lng en _gps_extra"}), 400
+        # Mergeamos sobre el valor_json existente (preservando lo que el técnico ya respondió)
+        try:
+            existente = {}
+            if tar.get("valor_json"):
+                try:
+                    existente = json.loads(tar["valor_json"]) if isinstance(tar["valor_json"], str) else dict(tar["valor_json"])
+                except Exception:
+                    existente = {}
+            existente["_gps_extra"] = {
+                "lat": gps_lat, "lng": gps_lng,
+                "accuracy": valor["_gps_extra"].get("accuracy"),
+                "source": str(valor["_gps_extra"].get("source") or "")[:20],
+                "dir": str(valor["_gps_extra"].get("dir") or "")[:400] or None,
+                "at": datetime.now().isoformat(timespec="seconds"),
+            }
+            mysql_execute(
+                "UPDATE mant_visita_tareas SET valor_json=%s "
+                " WHERE id=%s AND visita_id=%s",
+                (json.dumps(existente, ensure_ascii=False), tid, vid)
+            )
+            return jsonify({
+                "ok": True,
+                "completada": bool(existente.get("completada") or False),
+                "warning": None,
+                "valor_norm": existente,
+                "msg": "GPS adjunto guardado",
+            })
+        except Exception as e:
+            print(f"[tarea_respuesta _gps_extra] err: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo guardar el GPS adjunto"}), 500
+
+    # ── FIX 2026-05-17 (GPS DEFINITIVO): auto-promote a GPS ──
+    # Si el payload trae lat/lng pero la tarea NO es de tipo GPS (porque
+    # se heredó mal o cambió), igual aceptamos y guardamos como GPS.
+    # Sin esto, una tarea con tipo_respuesta=NULL nunca podría guardar GPS.
+    if isinstance(valor, dict) and valor.get("lat") is not None and valor.get("lng") is not None:
+        try:
+            test_lat = float(valor.get("lat"))
+            test_lng = float(valor.get("lng"))
+            if tipo != "gps":
+                tipo = "gps"  # promote
+        except (TypeError, ValueError):
+            pass  # cae al validador normal abajo
 
     # Validar el valor según tipo
     valor_norm = None
@@ -25947,6 +26011,7 @@ def mant_visita_tarea_respuesta(vid, tid):
         if tar.get("obligatoria") and not v:
             completar = False
     elif tipo == "gps":
+        # FIX 2026-05-17: aceptar metadata extra (accuracy, source, dir)
         try:
             lat = float(valor.get("lat")) if isinstance(valor, dict) and valor.get("lat") is not None else None
             lng = float(valor.get("lng")) if isinstance(valor, dict) and valor.get("lng") is not None else None
@@ -25955,6 +26020,19 @@ def mant_visita_tarea_respuesta(vid, tid):
         if lat is None or lng is None:
             return jsonify({"ok": False, "error": "Faltan lat/lng"}), 400
         valor_norm = {"lat": lat, "lng": lng}
+        # Metadata opcional (no rompe si no viene)
+        if isinstance(valor, dict):
+            try:
+                if valor.get("accuracy") is not None:
+                    valor_norm["accuracy"] = float(valor["accuracy"])
+            except (TypeError, ValueError):
+                pass
+            src = str(valor.get("source") or "")[:20].lower()
+            if src in ("gps", "ip", "manual", "gps_high", "gps_low", "watch"):
+                valor_norm["source"] = src
+            dir_v = str(valor.get("dir") or "")[:400].strip()
+            if dir_v:
+                valor_norm["dir"] = dir_v
     else:
         return jsonify({"ok": False, "error": f"Tipo no soportado por este endpoint: {tipo}"}), 400
 
@@ -26901,12 +26979,15 @@ def mant_visita_fotos_subir(vid):
     Devuelve la URL del primer archivo como `url` para que el frontend
     la muestre inline.
     """
+    import traceback as _tb  # logging detallado para Railway
     # Aceptar AMBOS nombres de campo (foto / fotos / imagenes) para que
     # el frontend no se rompa según cómo arme el FormData.
     files = (request.files.getlist("foto")
              or request.files.getlist("fotos")
              or request.files.getlist("imagenes"))
     if not files or all(not f.filename for f in files):
+        print(f"[fotos_subir vid={vid}] SIN ARCHIVOS — form keys: {list(request.form.keys())} "
+              f"files keys: {list(request.files.keys())}", flush=True)
         return jsonify({"ok": False, "error": "No se envió ningún archivo (campo esperado: foto o fotos)"}), 400
 
     tipo_foto    = (request.form.get("tipo_foto") or "general").strip().lower()
@@ -26925,6 +27006,12 @@ def mant_visita_fotos_subir(vid):
     except (TypeError, ValueError):
         maquina_id = None
 
+    # Log entrada — útil en Railway logs
+    print(f"[fotos_subir vid={vid}] iniciando: {len(files)} archivo(s), "
+          f"tarea_id={tarea_id} maquina_id={maquina_id} tipo={tipo_foto} "
+          f"primer_nombre={files[0].filename if files else 'N/A'} "
+          f"mime={files[0].mimetype if files else 'N/A'}", flush=True)
+
     saved = 0
     errors = []
     first_url = None  # devolvemos al frontend para mostrar inline
@@ -26936,12 +27023,18 @@ def mant_visita_fotos_subir(vid):
         cloud_ok = bool(CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"))
     except ImportError:
         cloud_ok = False
+    if not cloud_ok:
+        print(f"[fotos_subir vid={vid}] AVISO: Cloudinary no disponible "
+              f"(cloud_name={bool(CLOUDINARY_CONFIG.get('cloud_name'))} "
+              f"api_key={bool(CLOUDINARY_CONFIG.get('api_key'))}). "
+              f"Solo filesystem (NO persiste entre deploys).", flush=True)
 
     for i, f in enumerate(files):
         if not f or not f.filename:
             continue
         ext, err = _validate_uploaded_image(f, label=f.filename)
         if err:
+            print(f"[fotos_subir vid={vid}] validación FAIL: {err}", flush=True)
             errors.append(err)
             continue
         cld_url = None
@@ -26965,8 +27058,10 @@ def mant_visita_fotos_subir(vid):
                 )
                 cld_url = result.get("secure_url")
                 size_kb = (result.get("bytes") or 0) // 1024
+                print(f"[fotos_subir vid={vid}] Cloudinary OK ({size_kb} KB): {cld_url}", flush=True)
             except Exception as e_cld:
-                print(f"[fotos_subir] Cloudinary falló: {e_cld}", flush=True)
+                print(f"[fotos_subir vid={vid}] Cloudinary FAIL para "
+                      f"{f.filename!r}: {e_cld}\n{_tb.format_exc()}", flush=True)
                 errors.append(f"Cloudinary: {str(e_cld)[:100]}")
                 # Continúa al fallback filesystem
 
@@ -26981,7 +27076,10 @@ def mant_visita_fotos_subir(vid):
                 f.save(fpath)
                 size_kb = os.path.getsize(fpath) // 1024
                 archivo_path = f"uploads/mantenciones/v{vid}/{fname}"
+                print(f"[fotos_subir vid={vid}] Filesystem OK ({size_kb} KB): {archivo_path}", flush=True)
             except Exception as e_fs:
+                print(f"[fotos_subir vid={vid}] Filesystem FAIL para "
+                      f"{f.filename!r}: {e_fs}\n{_tb.format_exc()}", flush=True)
                 errors.append(f"Filesystem fallback falló para {f.filename}: {e_fs}")
                 continue
 
@@ -27002,6 +27100,8 @@ def mant_visita_fotos_subir(vid):
             if first_url is None:
                 first_url = cld_url or (f"/static/{archivo_path}" if archivo_path else None)
         except Exception as e:
+            print(f"[fotos_subir vid={vid}] INSERT BD FAIL para "
+                  f"{f.filename!r}: {e}\n{_tb.format_exc()}", flush=True)
             errors.append(f"Error BD {f.filename}: {str(e)[:200]}")
     try:
         if saved:
@@ -27014,11 +27114,15 @@ def mant_visita_fotos_subir(vid):
         pass
     # Si NO se guardó NINGUNA foto, devolver ok:false con detalles
     if saved == 0:
+        print(f"[fotos_subir vid={vid}] RESULTADO: 0 fotos guardadas. errores={errors[:3]}", flush=True)
         return jsonify({
             "ok": False,
             "error": "No se pudo guardar ninguna foto. " + (errors[0] if errors else "Causa desconocida."),
             "errors": errors[:3],
         }), 500
+    print(f"[fotos_subir vid={vid}] RESULTADO: {saved} guardadas, "
+          f"{len(errors)} errores, persistente={bool(first_url and first_url.startswith('https://'))}",
+          flush=True)
     return jsonify({
         "ok": True,
         "saved": saved,

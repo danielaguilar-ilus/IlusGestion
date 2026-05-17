@@ -564,6 +564,15 @@
                        display:inline-flex;align-items:center;gap:5px;cursor:pointer">
           <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
         </button>
+        {# FIX 2026-05-17 — Botón Diagnóstico GPS para debug remoto en iPhone #}
+        <button type="button" class="tx-gps-btn-diag"
+                onclick="mostrarDiagnosticoGPS()"
+                style="background:#fff;color:#475569;border:1px dashed #cbd5e1;
+                       border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;
+                       min-height:34px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
+                title="Mostrar log de qué estrategias GPS se intentaron — útil para reportar problemas">
+          <i class="bi bi-bug"></i> Diagnóstico GPS
+        </button>
       </div>
     </div>
   </div>
@@ -1341,7 +1350,13 @@ function renderTareas(mid, pid){
 
 function renderTareaHtml(t, bloqueada, mid, pid){
   const done = !!t.completada;
-  const tipo = t.tipo_respuesta || 'check';
+  // ── FIX 2026-05-17 (GPS DEFINITIVO) ───────────────────────────────
+  // Normalizar `tipo_respuesta`: a veces llega 'GPS' (mayúsculas),
+  // 'Gps', con espacios, o NULL (tareas heredadas de plantillas viejas
+  // sin migrar). Esto rompía el switch y nadie podía declarar ubicación.
+  // ──────────────────────────────────────────────────────────────────
+  const tipoRaw = (t.tipo_respuesta || 'check');
+  const tipo = String(tipoRaw).trim().toLowerCase() || 'check';
   let valor = {};
   try { valor = t.valor_json ? (typeof t.valor_json === 'string' ? JSON.parse(t.valor_json) : t.valor_json) : {}; } catch(e){ valor = {}; }
 
@@ -1404,20 +1419,44 @@ function renderTareaHtml(t, bloqueada, mid, pid){
         onblur="guardarResp(${t.id}, this.value, ${mid}, ${pid})"></div>`;
       break;
     case 'gps':
+      // FIX 2026-05-17 — Render GPS bulletproof:
+      //   1. Guard de toFixed (lat/lng pueden venir null o string → crash que rompía
+      //      el switch entero y dejaba al técnico sin ningún control visible).
+      //   2. Botón MUY prominente con label claro + 2 alternativas siempre visibles.
+      //   3. Si ya se capturó, mostramos cómo (GPS/IP/manual) + dirección si la hay.
       ctrlHtml = `<div class="ctrl">
-        <button class="tx-btn-gps" ${bloqueada ? 'disabled' : ''}
-          onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
-          <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación
-        </button>
-        ${valor.lat ? `<div class="gps-result"><i class="bi bi-check-circle"></i> 📍 ${valor.lat.toFixed(5)}, ${valor.lng.toFixed(5)}</div>` : ''}
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button type="button" class="tx-btn-gps"
+            style="min-height:50px;font-size:.92rem;justify-content:center;font-weight:700"
+            ${bloqueada ? 'disabled' : ''}
+            onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
+            <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación (GPS)
+          </button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button"
+              style="flex:1;min-height:40px;background:#fff;color:#0a0a0a;border:1.5px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px"
+              ${bloqueada ? 'disabled' : ''}
+              onclick="capturarGPSPorIP(${t.id}, ${mid}, ${pid})">
+              <i class="bi bi-globe2" style="color:#3b82f6"></i> Usar IP (~5km)
+            </button>
+            <button type="button"
+              style="flex:1;min-height:40px;background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px"
+              ${bloqueada ? 'disabled' : ''}
+              onclick="capturarGPSManual(${t.id}, ${mid}, ${pid})">
+              <i class="bi bi-pencil-square"></i> Escribir dirección
+            </button>
+          </div>
+        </div>
+        ${_gpsValorRenderResultado(valor)}
       </div>`;
       break;
     case 'foto':
-      // ── FIX 2026-05-17 — Patrón etiquetas (product_detail.html L86-128) ──
-      // Mobile: 2 botones FULL-WIDTH stacked vertically con estilos
-      // VISUALMENTE DISTINTOS (dark = cámara, outline = galería).
-      // Antes estaban lado a lado y se confundían entre sí.
-      // Desktop: 1 zona única con drag&drop real (Reviewer H2 fix)
+      // ── FIX 2026-05-17 v2 — UN solo botón rojo grande + sheet de elección ──
+      // Mobile: 1 botón "Agregar foto" → abre bottom-sheet con 2 opciones
+      // (Cámara / Galería). El técnico decide ahí (ilusActionSheet).
+      // Desktop: zona con drag&drop real (igual que antes).
+      // Los 2 <input type=file> quedan ocultos y se disparan via click()
+      // según lo que elija el técnico en el sheet.
       // ────────────────────────────────────────────────────────────
       ctrlHtml = `<div class="ctrl">
         {# Desktop: zona con drag&drop real #}
@@ -1434,39 +1473,35 @@ function renderTareaHtml(t, bloqueada, mid, pid){
           <i class="bi bi-camera-plus" style="font-size:1.8rem;color:#dc2626"></i>
           <div style="font-weight:700;color:#0f172a">Agregar foto</div>
           <small style="color:#94a3b8">Click o arrastra · JPG/PNG/HEIC</small>
-          <input type="file" accept="image/*" style="display:none"
+          <input type="file" accept="image/*,image/heic,image/heif" style="display:none"
             ${bloqueada ? 'disabled' : ''}
             onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
         </label>
 
-        {# Mobile: 2 botones STACKED clarísimamente distintos #}
-        <div class="d-flex d-md-none flex-column gap-2">
-          <label style="cursor:pointer;display:flex;align-items:center;gap:10px;
-            justify-content:center;padding:13px 18px;border-radius:10px;
-            background:linear-gradient(135deg,#0a0a0a,#2a2a2a);color:#fff;
-            font-weight:700;font-size:.92rem;min-height:48px;
-            box-shadow:0 3px 8px rgba(0,0,0,.18);
-            border:1px solid #1f1f1f">
-            <i class="bi bi-camera-fill" style="font-size:1.15rem"></i>
-            <span>Tomar foto con cámara</span>
-            <input type="file" accept="image/*" capture="environment" style="display:none"
-              ${bloqueada ? 'disabled' : ''}
-              onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-          </label>
-          <label style="cursor:pointer;display:flex;align-items:center;gap:10px;
-            justify-content:center;padding:13px 18px;border-radius:10px;
-            background:#fff;color:#0f172a;
-            font-weight:700;font-size:.92rem;min-height:48px;
-            border:2px solid #cbd5e1">
-            <i class="bi bi-images" style="font-size:1.15rem;color:#3b82f6"></i>
-            <span>Elegir de galería</span>
-            <input type="file" accept="image/*" style="display:none"
-              ${bloqueada ? 'disabled' : ''}
-              onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-          </label>
-          <div style="text-align:center;font-size:.7rem;color:#94a3b8;margin-top:2px">
-            <i class="bi bi-info-circle"></i> Elegí cómo querés agregar la foto
-          </div>
+        {# Mobile: UN SOLO botón rojo grande que abre sheet de elección #}
+        <div class="d-md-none">
+          <button type="button" class="ilus-foto-btn-main"
+            ${bloqueada ? 'disabled' : ''}
+            onclick="abrirSheetFoto(${t.id}, ${mid}, ${pid})"
+            style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+              padding:16px 18px;border-radius:12px;
+              background:linear-gradient(135deg,#dc2626,#b91c1c);
+              color:#fff;font-weight:700;font-size:1rem;
+              min-height:56px;border:none;cursor:pointer;
+              box-shadow:0 4px 12px rgba(220,38,38,.3);
+              transition:transform .1s, box-shadow .15s;">
+            <i class="bi bi-camera-plus-fill" style="font-size:1.3rem"></i>
+            <span>📷 Agregar foto</span>
+          </button>
+          {# Inputs ocultos, disparados via click() desde abrirSheetFoto() #}
+          <input type="file" id="fotoCam-${t.id}" accept="image/*,image/heic,image/heif"
+            capture="environment" style="display:none"
+            ${bloqueada ? 'disabled' : ''}
+            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+          <input type="file" id="fotoGal-${t.id}" accept="image/*,image/heic,image/heif"
+            style="display:none"
+            ${bloqueada ? 'disabled' : ''}
+            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
         </div>
 
         <div id="t-fotos-${t.id}" class="foto-result"></div>
@@ -1475,6 +1510,27 @@ function renderTareaHtml(t, bloqueada, mid, pid){
   }
 
   const isCheckType = (tipo === 'check');
+  // ── FIX 2026-05-17 — Mini botón "📍 Adjuntar ubicación" SIEMPRE visible ──
+  // Si la tarea NO es de tipo GPS, igual mostramos un botoncito sutil para
+  // que el técnico pueda etiquetar dónde estaba al hacer esa tarea. Esto
+  // garantiza que NUNCA quede sin opción de declarar ubicación, incluso
+  // si una tarea heredada perdió su tipo_respuesta='gps'.
+  // El indicador de "ubicación guardada" usa valor.lat/lng si fue capturado
+  // como tarea GPS, o valor._gps_extra si fue mediante el mini-botón.
+  const tieneGpsValor = (valor && (
+    (isFinite(valor.lat) && isFinite(valor.lng)) ||
+    (valor._gps_extra && isFinite(valor._gps_extra.lat))
+  ));
+  const gpsExtraHtml = (!bloqueada && tipo !== 'gps') ? `
+    <div class="tx-tarea-gps-mini" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button type="button"
+        style="background:transparent;border:1px dashed #cbd5e1;color:#475569;border-radius:7px;padding:5px 10px;font-size:.72rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;min-height:32px"
+        onclick="capturarGPS(${t.id}, ${mid}, ${pid})"
+        title="Adjuntar GPS a esta tarea (opcional)">
+        <i class="bi bi-geo-alt" style="color:#dc2626"></i> Adjuntar ubicación
+      </button>
+      ${tieneGpsValor ? `<span style="font-size:.7rem;color:#15803d;font-weight:600"><i class="bi bi-check-circle-fill"></i> GPS guardado</span>` : ''}
+    </div>` : '';
   return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}" id="tar-${t.id}">
     <div class="ttl">
       <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
@@ -1493,6 +1549,52 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       </div>
     </div>
     ${ctrlHtml}
+    ${gpsExtraHtml}
+  </div>`;
+}
+
+// ── FIX 2026-05-17 — Render del resultado GPS sin crash ──
+// valor.lat/lng pueden venir null, string, NaN, o el JSON ser undefined.
+// Antes el código hacía valor.lat.toFixed(5) lo que crasheaba todo el
+// renderTareaHtml dejando al técnico sin ningún control visible.
+function _gpsValorRenderResultado(valor){
+  if (!valor) return '';
+  // Caso normal: tarea GPS guardó lat/lng
+  let lat = Number(valor.lat);
+  let lng = Number(valor.lng);
+  let source = valor.source || valor.method || '';
+  let dir = valor.dir || valor.direccion || '';
+  // Caso extra: ubicación adjunta a tarea no-GPS
+  if ((!isFinite(lat) || !isFinite(lng)) && valor._gps_extra){
+    lat = Number(valor._gps_extra.lat);
+    lng = Number(valor._gps_extra.lng);
+    source = valor._gps_extra.source || source;
+    dir = valor._gps_extra.dir || dir;
+  }
+  if (!isFinite(lat) || !isFinite(lng)){
+    // No hay coords pero quizás hay texto manual
+    if (valor.texto && typeof valor.texto === 'string' && valor.texto.length > 5){
+      return `<div class="gps-result" style="background:#fff8e1;color:#92400e">
+        <i class="bi bi-pencil-square"></i> 📍 Manual: ${_escapeHtml(valor.texto)}
+      </div>`;
+    }
+    return '';
+  }
+  // Label según fuente
+  let label = 'GPS exacto', bg = '#dcfce7', color = '#15803d';
+  if (source === 'ip'){
+    label = 'Por IP (~5km precisión)';
+    bg = '#fff8e1'; color = '#92400e';
+  } else if (source === 'manual'){
+    label = 'Manual';
+    bg = '#dbeafe'; color = '#1e40af';
+  } else if (source === 'gps_low' || source === 'watch'){
+    label = 'GPS estándar';
+  }
+  const acc = isFinite(valor.accuracy) ? ` ±${Math.round(valor.accuracy)}m` : '';
+  return `<div class="gps-result" style="background:${bg};color:${color}">
+    <i class="bi bi-check-circle-fill"></i> 📍 ${_escapeHtml(label)}: ${lat.toFixed(5)}, ${lng.toFixed(5)}${acc}
+    ${dir ? `<div style="font-size:.7rem;margin-top:3px;opacity:.85">${_escapeHtml(dir)}</div>` : ''}
   </div>`;
 }
 
@@ -1806,63 +1908,141 @@ async function _gpsCascade(){
   throw err;
 }
 
+// ════════════════════════════════════════════════════════════════
+//  capturarGPS — entrada PRINCIPAL desde tareas
+//  FIX 2026-05-17 (DEFINITIVO):
+//   - Sin navigator.geolocation → modal manual DIRECTO (no más ilusAlert
+//     que dejaba al técnico atascado sin opción de continuar).
+//   - Cada paso loguea a window.__gpsDiag (visible en DevTools del iPhone
+//     vía Safari → Develop → connect).
+//   - Tras cualquier éxito (GPS/IP/manual), guarda en backend Y muestra
+//     toast con método + coord exacta.
+//   - Si el cascade falla con DENIED, ofrece "ver instrucciones" O ir
+//     directo a manual (no se queda colgado en el modal de ayuda).
+// ════════════════════════════════════════════════════════════════
 async function capturarGPS(tid, mid, pid){
+  _gpsLog('tarea_capturar_start', { tid, mid, pid });
   if (!navigator.geolocation){
-    await ilusAlert({
-      title: 'GPS no disponible',
-      message: 'Tu navegador no soporta geolocalización. Usa Safari/Chrome actualizado.',
-      type: 'error',
-    });
-    return;
+    _gpsLog('tarea_no_geolocation_api');
+    ilusToast('Tu navegador no soporta GPS. Abriendo modo manual…',
+              { type:'warning', duration: 2400 });
+    return await capturarGPSManual(tid, mid, pid);
   }
-  ilusToast('Pidiendo permiso GPS…', { type:'info', duration: 1500 });
+  ilusToast('📡 Pidiendo permiso GPS…', { type:'info', duration: 1500 });
+  let r = null;
   try {
-    const r = await _gpsCascade();
-    // Validar radio (advertencia o bloqueo según flag)
-    const v = await _validarRadio(r.lat, r.lng);
-    if (!v.ok) return;
-    const label = _gpsMethodLabel(r.method);
-    ilusToast(`📍 ${label}`, { type: r.method === 'ip' ? 'warning' : 'success' });
-    guardarResp(tid, { lat: r.lat, lng: r.lng }, mid, pid);
-    setTimeout(() => renderTareas(mid, pid), 600);
+    r = await _gpsCascade();
+    _gpsLog('tarea_cascade_ok', { method: r.method });
   } catch(err){
-    if (err.code === 1){
-      // Denegado → modal de ayuda iOS
-      mostrarAyudaGPS();
-    } else {
-      // Fallaron las estrategias nativas — ofrecer IP o manual
+    _gpsLog('tarea_cascade_fail', { code: err && err.code, msg: err && err.message });
+    if (err && err.code === 1){
+      // Permission DENIED → modal ayuda + alternativas siempre
       const eleccion = await ilusConfirm({
-        title: 'No pudimos obtener tu GPS',
-        message: 'Las estrategias automáticas fallaron. ¿Cómo querés continuar?',
-        sub: 'Podés usar tu ubicación aproximada (por IP, ~5km de precisión) o ingresar tu dirección manualmente.',
+        title: '📍 Permiso GPS denegado',
+        message: 'No podemos pedir el GPS hasta que actives los permisos. ' +
+                 'Mientras tanto podés <strong>escribir la dirección</strong> ' +
+                 'o usar <strong>ubicación aproximada por IP</strong>.',
+        messageHtml: true,
+        sub: 'Tocá "Ver instrucciones" para aprender a activar el GPS en tu iPhone.',
         type: 'warning',
-        okLabel: 'Usar IP aproximada',
-        cancelLabel: 'Ingresar dirección',
+        okLabel: 'Ver instrucciones GPS',
+        cancelLabel: 'Escribir dirección',
       });
-      if (eleccion){
-        // Usar IP
-        try {
-          const ip = await _gpsByIP();
-          const v = await _validarRadio(ip.lat, ip.lng);
-          if (!v.ok) return;
-          ilusToast('📍 Ubicación aproximada por IP (~5km)', { type: 'warning' });
-          guardarResp(tid, { lat: ip.lat, lng: ip.lng }, mid, pid);
-          setTimeout(() => renderTareas(mid, pid), 600);
-        } catch(e){
-          ilusToast('No se pudo obtener IP geolocation', { type: 'error' });
-        }
-      } else {
-        // Manual
-        const m = await _gpsManualPrompt();
-        if (!m) return;
-        const v = await _validarRadio(m.lat, m.lng);
-        if (!v.ok) return;
-        ilusToast('📍 Ubicación capturada manualmente', { type: 'success' });
-        guardarResp(tid, { lat: m.lat, lng: m.lng }, mid, pid);
-        setTimeout(() => renderTareas(mid, pid), 600);
-      }
+      if (eleccion){ mostrarAyudaGPS(); return; }
+      return await capturarGPSManual(tid, mid, pid);
     }
+    // Cualquier otro error (timeout, etc) → IP o manual
+    const eleccion = await ilusConfirm({
+      title: '📡 GPS no disponible ahora',
+      message: 'No pudimos obtener tu ubicación exacta. ¿Cómo querés continuar?',
+      sub: 'IP es aproximada (~5km). Manual te deja escribir la dirección exacta ' +
+           'con autocomplete de Google.',
+      type: 'warning',
+      okLabel: '🌐 Usar IP aproximada',
+      cancelLabel: '✏️ Escribir dirección',
+    });
+    if (eleccion){ return await capturarGPSPorIP(tid, mid, pid); }
+    return await capturarGPSManual(tid, mid, pid);
   }
+  // ÉXITO GPS — validar radio (warning, no bloquea aún)
+  try { await _validarRadio(r.lat, r.lng); } catch(_){}
+  const label = _gpsMethodLabel(r.method);
+  ilusToast(`📍 ${label}: ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`, {
+    type: r.method === 'ip' ? 'warning' : 'success',
+    duration: 3500,
+  });
+  await _gpsGuardarEnTarea(tid, mid, pid, {
+    lat: r.lat, lng: r.lng,
+    accuracy: r.accuracy || null,
+    source: r.method === 'ip' ? 'ip' : (r.method === 'manual' ? 'manual' : 'gps'),
+  });
+}
+
+// ── Capturar por IP (salta GPS) — usado por el botón "Usar IP" ──
+async function capturarGPSPorIP(tid, mid, pid){
+  _gpsLog('tarea_ip_start', { tid });
+  ilusToast('🌐 Obteniendo ubicación por IP…', { type:'info', duration: 1500 });
+  try {
+    const ip = await _gpsByIP();
+    _gpsLog('tarea_ip_ok', { lat: ip.lat, lng: ip.lng });
+    try { await _validarRadio(ip.lat, ip.lng); } catch(_){}
+    ilusToast(`📍 IP: ${ip.lat.toFixed(3)}, ${ip.lng.toFixed(3)} (~5km)`,
+              { type:'warning', duration: 3500 });
+    await _gpsGuardarEnTarea(tid, mid, pid, {
+      lat: ip.lat, lng: ip.lng,
+      accuracy: 5000, source: 'ip',
+      dir: ip.dir || null,
+    });
+  } catch(e){
+    _gpsLog('tarea_ip_fail', e.message);
+    ilusToast('No se pudo obtener IP geolocation. Probá manual.', { type:'error' });
+  }
+}
+
+// ── Capturar manual (Google Places autocomplete) ──
+async function capturarGPSManual(tid, mid, pid){
+  _gpsLog('tarea_manual_start', { tid });
+  const m = await abrirManualGPS();
+  if (!m){ _gpsLog('tarea_manual_cancelado'); return; }
+  _gpsLog('tarea_manual_ok', { lat: m.lat, lng: m.lng, dir: m.dir });
+  try { await _validarRadio(m.lat, m.lng); } catch(_){}
+  ilusToast(`📍 Manual: ${m.dir || (m.lat.toFixed(5) + ', ' + m.lng.toFixed(5))}`,
+            { type:'success', duration: 3500 });
+  await _gpsGuardarEnTarea(tid, mid, pid, {
+    lat: m.lat, lng: m.lng,
+    accuracy: m.accuracy || 50,
+    source: 'manual', dir: m.dir || null,
+  });
+}
+
+// ── Guardar en backend con metadata robusta ──
+// Si la tarea es de tipo GPS → manda {lat, lng, accuracy, source, dir}
+// Si NO es tipo GPS → manda {_gps_extra:{...}} para que backend lo agregue
+// como metadata sin pisar el valor principal de la tarea.
+async function _gpsGuardarEnTarea(tid, mid, pid, payload){
+  let esTipoGps = false;
+  try {
+    const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
+    if (grupo){
+      const tar = grupo.tareas.find(t => t.id === tid);
+      const tipoNorm = String(tar && tar.tipo_respuesta || '').trim().toLowerCase();
+      esTipoGps = (tipoNorm === 'gps');
+    }
+  } catch(e) { _gpsLog('check_tipo_fail', e.message); }
+  _gpsLog('guardar_tarea', { tid, esTipoGps, source: payload.source });
+  const valorPayload = esTipoGps ? {
+    lat: payload.lat, lng: payload.lng,
+    accuracy: payload.accuracy, source: payload.source,
+    dir: payload.dir || null,
+  } : {
+    _gps_extra: {
+      lat: payload.lat, lng: payload.lng,
+      accuracy: payload.accuracy, source: payload.source,
+      dir: payload.dir || null,
+    },
+  };
+  await guardarResp(tid, valorPayload, mid, pid);
+  setTimeout(() => renderTareas(mid, pid), 600);
 }
 
 function _gpsMethodLabel(method){
@@ -1876,38 +2056,153 @@ function _gpsMethodLabel(method){
   }
 }
 
+// ════════════════════════════════════════════════════════
+//  SHEET DE FOTO — 1 botón abre menú Cámara/Galería
+//  (fix mobile UX 2026-05-17: antes eran 2 botones stacked,
+//  confusos. Ahora 1 botón rojo grande → sheet con elección).
+// ════════════════════════════════════════════════════════
+async function abrirSheetFoto(tid, mid, pid){
+  if (typeof ilusActionSheet !== 'function'){
+    // Fallback defensivo si ilus_ui.js no cargó por alguna razón
+    document.getElementById('fotoGal-' + tid)?.click();
+    return;
+  }
+  const choice = await ilusActionSheet({
+    title: '📷 Agregar foto',
+    message: 'Elegí cómo querés agregar la foto',
+    options: [
+      { label: 'Tomar foto con cámara', icon: 'bi-camera-fill',   value: 'camara',  style: 'dark' },
+      { label: 'Elegir de galería',      icon: 'bi-images',         value: 'galeria', style: 'secondary' },
+    ],
+  });
+  if (!choice) return;  // canceló
+  // Disparo el click sobre el input correspondiente
+  const inputId = choice === 'camara' ? `fotoCam-${tid}` : `fotoGal-${tid}`;
+  const inp = document.getElementById(inputId);
+  if (!inp){
+    ilusToast('Error: no se encontró el input de foto', { type:'error' });
+    return;
+  }
+  // Reset value para que el mismo archivo dispare onchange si lo eligen 2 veces
+  try { inp.value = ''; } catch(e){}
+  inp.click();
+}
+
+// ════════════════════════════════════════════════════════
+//  SUBIDA DE FOTO — robusto con HEIC, logging detallado,
+//  retry en error de red, y mensajes de error precisos.
+//  (fix 2026-05-17: HEIC iOS rompía canvas decode y el
+//  backend rechazaba el formato → "Error de red" silencioso.)
+// ════════════════════════════════════════════════════════
+function _esHeic(file){
+  const name = (file.name || '').toLowerCase();
+  const mime = (file.type || '').toLowerCase();
+  return name.endsWith('.heic') || name.endsWith('.heif')
+      || mime === 'image/heic' || mime === 'image/heif';
+}
+
+async function _subirFotoIntento(fd, intento){
+  // Un solo intento — retorna {ok, status, data, networkError}
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/subir`, {
+      method:'POST', body: fd,
+    });
+    let data = null;
+    try { data = await r.json(); } catch(parseErr){
+      // El backend devolvió no-JSON (HTML de error 500 de Flask, etc.)
+      const txt = await r.text().catch(() => '');
+      console.error('[subirFoto] respuesta NO-JSON', { status: r.status, body: txt.slice(0, 500) });
+      data = { ok: false, error: `Respuesta inválida del servidor (HTTP ${r.status})` };
+    }
+    return { ok: r.ok && (data.ok || data.id), status: r.status, data, networkError: false };
+  } catch(e){
+    console.error('[subirFoto] network error intento ' + intento, e);
+    return { ok: false, status: 0, data: null, networkError: true, exception: e };
+  }
+}
+
 async function subirFotoTarea(tid, input, mid, pid){
   if (!input.files || !input.files[0]) return;
   let file = input.files[0];
-  if (file.size > 20 * 1024 * 1024){ ilusToast('Foto >20MB', { type:'warning' }); return; }
-  try { file = await _comprimirImagen(file); } catch(e){}
+  const sizeMB = (file.size / (1024*1024)).toFixed(2);
+  console.log('[subirFoto] archivo:', { name: file.name, type: file.type, size: file.size, sizeMB, tid, mid, pid });
+
+  // Validación de tamaño TEMPRANA — backend acepta máx 8MB; 20MB es la cota suave por si comprime
+  if (file.size > 20 * 1024 * 1024){
+    ilusToast(`Foto demasiado grande (${sizeMB} MB). Máx 20 MB.`, { type:'warning' });
+    return;
+  }
+
+  // HEIC/HEIF (iOS): canvas decode no funciona en la mayoría de browsers
+  // → enviamos el archivo crudo, el backend ya soporta esos formatos.
+  const heic = _esHeic(file);
+  if (heic){
+    console.log('[subirFoto] HEIC detectado → skip compresión client-side');
+  } else {
+    try {
+      file = await _comprimirImagen(file);
+      console.log('[subirFoto] comprimido:', { name: file.name, type: file.type, size: file.size });
+    } catch(e){
+      console.warn('[subirFoto] compresión falló, mando original:', e.message);
+    }
+  }
+
   const fd = new FormData();
   fd.append('foto', file);
-  fd.append('tarea_id', tid);
-  ilusToast('Subiendo…', { type:'info', duration: 1500 });
-  try {
-    // Endpoint POST es `/fotos/subir` (no `/fotos` que es GET y daba 405)
-    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/subir`, { method:'POST', body: fd });
-    const d = await r.json();
-    if (d.ok || d.id){
-      ilusToast('✓ Foto subida', { type:'success' });
+  fd.append('tarea_id', String(tid));
+
+  const toastSub = ilusToast('Subiendo foto…', { type:'info', duration: 6000 });
+
+  // Intento 1
+  let res = await _subirFotoIntento(fd, 1);
+
+  // Reintentar UNA VEZ si fue network error (no 4xx/5xx — esos son errores del backend)
+  if (!res.ok && res.networkError){
+    console.log('[subirFoto] reintentando (1/1) tras network error...');
+    await new Promise(r => setTimeout(r, 800));
+    res = await _subirFotoIntento(fd, 2);
+  }
+
+  if (toastSub && toastSub.close) toastSub.close();
+
+  if (res.ok){
+    ilusToast('✓ Foto subida', { type:'success' });
+    try {
       await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
         method: 'PATCH', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ completada: 1 })
       });
       const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
       const tar = grupo.tareas.find(t => t.id === tid);
-      tar.completada = 1;
-      _updateProgress(mid, pid);
-      const url = d.url || d.cloudinary_url || '';
-      if (url){
-        const cont = document.getElementById('t-fotos-' + tid);
-        if (cont) cont.innerHTML += `<img src="${url}" alt="">`;
-      }
-    } else {
-      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+      if (tar){ tar.completada = 1; _updateProgress(mid, pid); }
+    } catch(e){
+      console.warn('[subirFoto] marcar completada falló:', e);
     }
-  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+    const url = (res.data && (res.data.url || res.data.cloudinary_url)) || '';
+    if (url){
+      const cont = document.getElementById('t-fotos-' + tid);
+      if (cont) cont.innerHTML += `<img src="${_escapeAttr(url)}" alt="" style="max-width:100%;border-radius:8px;margin-top:6px">`;
+    }
+    return;
+  }
+
+  // ── ERROR ──
+  let msg = 'No se pudo subir la foto';
+  if (res.networkError){
+    msg = 'Sin conexión. Verificá tu internet e intentá de nuevo.';
+  } else if (res.data && res.data.error){
+    msg = res.data.error;
+    // Si fue por formato no permitido y es HEIC, dar un hint claro al técnico
+    if (heic && /formato/i.test(res.data.error)){
+      msg = 'El servidor rechazó el formato HEIC. Probá tomar la foto de nuevo (la app debería convertirla a JPG).';
+    }
+  } else if (res.status >= 500){
+    msg = `Error del servidor (HTTP ${res.status}). Reintentá en unos segundos.`;
+  } else if (res.status >= 400){
+    msg = `Error en el envío (HTTP ${res.status}). Verificá el archivo.`;
+  }
+  console.error('[subirFoto] FAIL:', { status: res.status, data: res.data, networkError: res.networkError });
+  ilusToast(msg, { type:'error', duration: 6000 });
 }
 
 function _updateProgress(mid, pid){
@@ -3088,6 +3383,113 @@ async function _gpsForzarIP(){
   } catch(e){
     ilusToast('No pudimos obtener IP geolocation: ' + (e.message || 'error'), { type:'error' });
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Diagnóstico GPS — muestra estado completo de window.__gpsDiag
+//  + botones para copiar al portapapeles y forzar re-prueba.
+//  FIX 2026-05-17: si Daniel reporta "no funciona", tocar este botón
+//  y mandar screenshot — ya tenemos todo lo necesario para depurar.
+// ════════════════════════════════════════════════════════════════
+async function mostrarDiagnosticoGPS(){
+  const diag = window.__gpsDiag || { attempts: [], note: 'sin datos' };
+  // Resumen de capacidades
+  const caps = {
+    https: location.protocol === 'https:',
+    geolocation_api: !!navigator.geolocation,
+    permissions_api: !!(navigator.permissions && navigator.permissions.query),
+    user_agent: (navigator.userAgent || '').slice(0, 180),
+    last_result_method: (window.__ilusGPS && window.__ilusGPS.method) || null,
+    last_result_lat: window.__ilusGPS && window.__ilusGPS.lat,
+    last_result_lng: window.__ilusGPS && window.__ilusGPS.lng,
+    intentos: (diag.attempts || []).length,
+  };
+  // Probar permission state on-demand
+  let permState = '(api no disponible)';
+  if (navigator.permissions && navigator.permissions.query){
+    try {
+      const s = await navigator.permissions.query({ name: 'geolocation' });
+      permState = s.state;
+    } catch(e){ permState = 'error: ' + (e.message || 'unknown'); }
+  }
+  caps.permission_state = permState;
+
+  // Tomar últimos 20 intentos (para no inundar el modal)
+  const ultimosIntentos = (diag.attempts || []).slice(-20);
+  const intentosHtml = ultimosIntentos.length === 0
+    ? '<p style="color:#94a3b8;font-style:italic;font-size:.85rem">No hay intentos registrados aún. Tocá "Reintentar GPS" para empezar.</p>'
+    : ultimosIntentos.map((a, i) => {
+        const dt = new Date(a.t || Date.now());
+        const hh = String(dt.getHours()).padStart(2,'0') + ':' +
+                   String(dt.getMinutes()).padStart(2,'0') + ':' +
+                   String(dt.getSeconds()).padStart(2,'0');
+        const isErr = /fail|denied|timeout|error/i.test(a.stage);
+        const color = isErr ? '#dc2626' : '#15803d';
+        const info = a.info ? JSON.stringify(a.info).slice(0, 200) : '';
+        return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:.74rem">
+          <span style="color:#94a3b8;min-width:60px">${hh}</span>
+          <span style="color:${color};font-weight:700;min-width:180px">${_escapeHtml(a.stage || '?')}</span>
+          <span style="color:#475569;word-break:break-all">${_escapeHtml(info)}</span>
+        </div>`;
+      }).join('');
+
+  const capsHtml = `
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:12px;font-family:monospace;font-size:.78rem;line-height:1.5">
+      <div><strong>HTTPS:</strong> ${caps.https ? '✓ sí' : '✗ NO (geolocation API NO funciona sin https)'}</div>
+      <div><strong>Geolocation API:</strong> ${caps.geolocation_api ? '✓ disponible' : '✗ NO disponible'}</div>
+      <div><strong>Permissions API:</strong> ${caps.permissions_api ? '✓ disponible' : '✗ NO'}</div>
+      <div><strong>Permission state:</strong> <span style="color:${caps.permission_state === 'denied' ? '#dc2626' : caps.permission_state === 'granted' ? '#15803d' : '#f59e0b'}">${_escapeHtml(caps.permission_state)}</span></div>
+      <div><strong>Último método OK:</strong> ${_escapeHtml(caps.last_result_method || '(ninguno)')}</div>
+      ${caps.last_result_lat ? `<div><strong>Última coord:</strong> ${caps.last_result_lat.toFixed(5)}, ${caps.last_result_lng.toFixed(5)}</div>` : ''}
+      <div><strong>Intentos registrados:</strong> ${caps.intentos}</div>
+      <div style="margin-top:5px;color:#94a3b8;font-size:.7rem">UA: ${_escapeHtml(caps.user_agent)}</div>
+    </div>`;
+
+  const fullHtml = `
+    <div style="max-height:60vh;overflow-y:auto">
+      <h6 style="font-size:.82rem;font-weight:700;color:#0a0a0a;margin:0 0 6px">📊 Capacidades del navegador</h6>
+      ${capsHtml}
+      <h6 style="font-size:.82rem;font-weight:700;color:#0a0a0a;margin:0 0 6px">📜 Últimos 20 intentos GPS</h6>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;max-height:280px;overflow-y:auto">
+        ${intentosHtml}
+      </div>
+      <div style="margin-top:10px;text-align:right">
+        <button type="button" id="gpsDiagCopy"
+          style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;cursor:pointer">
+          <i class="bi bi-clipboard"></i> Copiar al portapapeles
+        </button>
+      </div>
+    </div>`;
+
+  await ilusAlert({
+    title: '🔍 Diagnóstico GPS',
+    message: fullHtml,
+    messageHtml: true,
+    type: 'info',
+    okLabel: 'Cerrar',
+  });
+
+  // Bind del botón copiar (luego del render del modal)
+  setTimeout(() => {
+    const btn = document.getElementById('gpsDiagCopy');
+    if (btn){
+      btn.addEventListener('click', () => {
+        const full = JSON.stringify({ caps, attempts: diag.attempts || [] }, null, 2);
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(full).then(() => {
+            ilusToast('📋 Copiado al portapapeles', { type:'success' });
+          }).catch(() => ilusToast('No se pudo copiar', { type:'error' }));
+        } else {
+          // Fallback: textarea + execCommand
+          const ta = document.createElement('textarea');
+          ta.value = full; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy');
+          document.body.removeChild(ta);
+          ilusToast('📋 Copiado', { type:'success' });
+        }
+      });
+    }
+  }, 200);
 }
 
 // ════════════════════════════════════════════════════════════════

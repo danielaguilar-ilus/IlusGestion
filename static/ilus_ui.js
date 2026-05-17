@@ -330,11 +330,171 @@
     });
   }
 
+  // ── ilusActionSheet ─────────────────────────────────────────────────
+  // Sheet de N opciones (NO un Yes/No como ilusConfirm).
+  // Mobile-first: aparece desde abajo, full-width, touch-friendly.
+  // Desktop: centrado como modal normal.
+  // Cada opción es { label, icon (opcional bi-clase), value, style (primary|secondary|danger|dark) }
+  // Resuelve a `value` de la opción elegida, o null si canceló.
+  //
+  // Uso:
+  //   const v = await ilusActionSheet({
+  //     title: 'Agregar foto',
+  //     options: [
+  //       { label:'Tomar foto', icon:'bi-camera-fill', value:'camara', style:'dark' },
+  //       { label:'Galería',    icon:'bi-images',     value:'galeria', style:'secondary' },
+  //     ],
+  //   });
+  //   if (v === 'camara') ...
+  function ilusActionSheet(opts = {}){
+    const {
+      title='Elegí una opción', message='', sub='',
+      options=[], cancelLabel='Cancelar',
+      subHtml=false,
+    } = opts;
+    // Inyectar CSS de sheet la primera vez
+    if (!document.getElementById('__ilus_action_sheet_css')){
+      const s = document.createElement('style');
+      s.id = '__ilus_action_sheet_css';
+      s.textContent = `
+        .ilus-sheet-overlay{
+          position:fixed;inset:0;background:rgba(15,23,42,.55);
+          backdrop-filter:blur(3px);
+          z-index:99999;
+          opacity:0;transition:opacity .14s ease;
+          display:flex;align-items:flex-end;justify-content:center;
+        }
+        .ilus-sheet-overlay.show{opacity:1}
+        .ilus-sheet{
+          background:#fff;width:100%;max-width:520px;
+          border-radius:18px 18px 0 0;
+          box-shadow:0 -10px 40px rgba(0,0,0,.35);
+          border-top:3px solid #dc2626;
+          overflow:hidden;
+          transform:translateY(100%);
+          transition:transform .22s cubic-bezier(.2,.8,.2,1.05);
+          padding-bottom:env(safe-area-inset-bottom, 0);
+        }
+        .ilus-sheet-overlay.show .ilus-sheet{transform:translateY(0)}
+        .ilus-sheet-head{
+          padding:14px 18px 10px;text-align:center;position:relative;
+        }
+        .ilus-sheet-head::before{
+          content:'';display:block;width:42px;height:5px;
+          background:#cbd5e1;border-radius:3px;margin:0 auto 10px;
+        }
+        .ilus-sheet-head h6{
+          margin:0;font-weight:700;font-size:1.02rem;color:#0f172a;
+        }
+        .ilus-sheet-head .sheet-msg{
+          color:#475569;font-size:.85rem;margin-top:4px;
+        }
+        .ilus-sheet-head .sheet-sub{
+          color:#94a3b8;font-size:.78rem;margin-top:3px;
+        }
+        .ilus-sheet-body{padding:6px 14px 10px}
+        .ilus-sheet-opt{
+          display:flex;align-items:center;gap:12px;width:100%;
+          padding:14px 16px;border-radius:12px;
+          background:#fff;color:#0f172a;
+          border:1.5px solid #e5e7eb;
+          font-weight:600;font-size:.95rem;
+          cursor:pointer;margin-bottom:8px;
+          min-height:54px;text-align:left;
+          transition:all .12s;
+        }
+        .ilus-sheet-opt:hover{background:#f9fafb;border-color:#cbd5e1}
+        .ilus-sheet-opt:active{transform:scale(.98)}
+        .ilus-sheet-opt .ico{
+          font-size:1.35rem;width:30px;flex-shrink:0;text-align:center;
+        }
+        .ilus-sheet-opt .lbl{flex:1}
+        .ilus-sheet-opt .chev{color:#cbd5e1;font-size:1.1rem}
+        /* Estilos */
+        .ilus-sheet-opt.dark{
+          background:linear-gradient(135deg,#0a0a0a,#2a2a2a);
+          color:#fff;border-color:#1f1f1f;
+        }
+        .ilus-sheet-opt.dark:hover{background:linear-gradient(135deg,#1a1a1a,#3a3a3a)}
+        .ilus-sheet-opt.dark .chev{color:#525252}
+        .ilus-sheet-opt.primary{
+          background:#dc2626;color:#fff;border-color:#dc2626;
+        }
+        .ilus-sheet-opt.primary:hover{background:#b91c1c;border-color:#b91c1c}
+        .ilus-sheet-opt.primary .chev{color:#fecaca}
+        .ilus-sheet-opt.danger{
+          background:#fee2e2;color:#991b1b;border-color:#fecaca;
+        }
+        .ilus-sheet-opt.danger:hover{background:#fecaca}
+        .ilus-sheet-cancel{
+          width:calc(100% - 28px);margin:6px 14px 14px;
+          padding:13px;border-radius:12px;
+          background:#f3f4f6;color:#374151;border:none;
+          font-weight:700;font-size:.95rem;cursor:pointer;
+          min-height:48px;
+        }
+        .ilus-sheet-cancel:hover{background:#e5e7eb}
+        @media (min-width: 640px){
+          .ilus-sheet-overlay{align-items:center;padding:16px}
+          .ilus-sheet{
+            border-radius:14px;
+            border:2px solid #dc2626;border-top-width:3px;
+            transform:translateY(20px) scale(.97);
+          }
+          .ilus-sheet-overlay.show .ilus-sheet{transform:translateY(0) scale(1)}
+          .ilus-sheet-head::before{display:none}
+        }
+      `;
+      document.head.appendChild(s);
+    }
+
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'ilus-sheet-overlay';
+      const optsHtml = (options || []).map((o, i) => `
+        <button type="button" class="ilus-sheet-opt ${o.style || 'secondary'}" data-idx="${i}">
+          ${o.icon ? `<i class="bi ${escapeHtml(o.icon)} ico"></i>` : '<span class="ico"></span>'}
+          <span class="lbl">${escapeHtml(o.label || '')}</span>
+          <i class="bi bi-chevron-right chev"></i>
+        </button>
+      `).join('');
+      overlay.innerHTML = `
+        <div class="ilus-sheet" role="dialog" aria-modal="true">
+          <div class="ilus-sheet-head">
+            <h6>${escapeHtml(title)}</h6>
+            ${message ? `<div class="sheet-msg">${escapeHtml(message)}</div>` : ''}
+            ${sub ? `<div class="sheet-sub">${subHtml ? sub : escapeHtml(sub)}</div>` : ''}
+          </div>
+          <div class="ilus-sheet-body">${optsHtml}</div>
+          <button type="button" class="ilus-sheet-cancel" data-cancel="1">${escapeHtml(cancelLabel)}</button>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+
+      function done(val){
+        overlay.classList.remove('show');
+        setTimeout(() => { overlay.remove(); resolve(val); }, 180);
+      }
+      overlay.querySelectorAll('.ilus-sheet-opt').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx, 10);
+          done(options[idx] ? (options[idx].value !== undefined ? options[idx].value : idx) : null);
+        });
+      });
+      overlay.querySelector('.ilus-sheet-cancel').addEventListener('click', () => done(null));
+      overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
+      document.addEventListener('keydown', function esc(e){
+        if (e.key === 'Escape'){ done(null); document.removeEventListener('keydown', esc); }
+      });
+    });
+  }
+
   // Export global
   global.ilusConfirm = ilusConfirm;
   global.ilusAlert   = ilusAlert;
   global.ilusToast   = ilusToast;
   global.ilusPrompt  = ilusPrompt;
+  global.ilusActionSheet = ilusActionSheet;
 
   // ════════════════════════════════════════════════════════════════
   //  GOOGLE PLACES AUTOCOMPLETE — helper reusable (LAZY load)
