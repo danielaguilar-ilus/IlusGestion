@@ -15250,6 +15250,79 @@ def init_mantenciones_tables():
                 try: cur.execute(_mig)
                 except Exception: pass
 
+            # ════════════════════════════════════════════════════════════════
+            # 2026-05-17 — Técnicos EXTERNOS (contratistas / empresas tercerizadas).
+            # Diferente de mant_tecnicos (catálogo legacy) y de app_users (interno).
+            # Captura datos comerciales completos: empresa, facturación, contratos,
+            # especialidades JSON y rating. Se vincula opcionalmente a app_users.id
+            # para que el técnico tenga acceso a la app (rol = tecnico_externo).
+            # ════════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_tecnicos_externos (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NULL UNIQUE COMMENT 'FK app_users si tiene acceso a la app',
+                    -- Datos empresa
+                    razon_social VARCHAR(200) NOT NULL,
+                    rut_empresa VARCHAR(20) UNIQUE,
+                    giro VARCHAR(200),
+                    direccion_empresa VARCHAR(400),
+                    direccion_lat DECIMAL(10,7) NULL,
+                    direccion_lng DECIMAL(10,7) NULL,
+                    direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id',
+                    -- Contacto principal
+                    contacto_nombre VARCHAR(200) NOT NULL,
+                    contacto_tel VARCHAR(50) NOT NULL,
+                    contacto_email VARCHAR(190) NOT NULL,
+                    contacto_cargo VARCHAR(100),
+                    -- Facturación
+                    forma_pago ENUM('transferencia','cheque','efectivo','tarjeta') DEFAULT 'transferencia',
+                    banco VARCHAR(100),
+                    tipo_cuenta VARCHAR(50),
+                    numero_cuenta VARCHAR(60),
+                    factura_a_nombre_de VARCHAR(200) COMMENT 'Si difiere de razon_social',
+                    condicion_pago_dias INT DEFAULT 30,
+                    valor_hora DECIMAL(10,2),
+                    valor_visita DECIMAL(10,2),
+                    -- Especialidades (JSON array)
+                    especialidades_json TEXT COMMENT 'JSON array: [equipos, instalaciones, electrico, etc]',
+                    -- Contratos
+                    contrato_pdf_url VARCHAR(600),
+                    contrato_inicio DATE,
+                    contrato_termino DATE,
+                    contrato_renovable TINYINT(1) DEFAULT 1,
+                    -- Estado
+                    estado ENUM('activo','suspendido','baja') DEFAULT 'activo',
+                    calificacion_promedio DECIMAL(3,2) DEFAULT NULL COMMENT '1.00 a 5.00',
+                    trabajos_completados INT DEFAULT 0,
+                    notas TEXT,
+                    foto_url VARCHAR(600) NULL COMMENT 'Avatar/logo en Cloudinary',
+                    -- Invitación: token y vencimiento
+                    invite_token VARCHAR(120) NULL,
+                    invite_expires_at DATETIME NULL,
+                    invite_sent_at DATETIME NULL,
+                    invite_used_at DATETIME NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    created_by VARCHAR(190),
+                    FOREIGN KEY (user_id) REFERENCES `""" + AUTH_TABLE + """`(id) ON DELETE SET NULL,
+                    INDEX idx_estado (estado),
+                    INDEX idx_rut (rut_empresa),
+                    INDEX idx_invite (invite_token)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migración: columnas adicionales (idempotente para entornos viejos)
+            for _mig in [
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN foto_url VARCHAR(600) NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN invite_token VARCHAR(120) NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN invite_expires_at DATETIME NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN invite_sent_at DATETIME NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN invite_used_at DATETIME NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD COLUMN direccion_place_id VARCHAR(200) NULL",
+                "ALTER TABLE mant_tecnicos_externos ADD INDEX idx_invite (invite_token)",
+            ]:
+                try: cur.execute(_mig)
+                except Exception: pass
+
             # Migración: número de OT (Orden de Trabajo) único por visita
             for _mig in [
                 "ALTER TABLE mant_visitas ADD COLUMN numero_ot VARCHAR(30) NULL AFTER id",
@@ -15442,6 +15515,37 @@ def init_mantenciones_tables():
                 # ════════════════════════════════════════════════════════════
                 "ALTER TABLE mant_visitas ADD COLUMN hora_inicio_fin TIME NULL COMMENT 'Hora inicio último día visita extendida'",
                 "ALTER TABLE mant_visitas ADD COLUMN hora_fin_fin TIME NULL COMMENT 'Hora término último día visita extendida'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Fix retroactivo bug GPS heredado de plantillas:
+                # Las plantillas legacy podían tener tipo_respuesta=NULL para
+                # tareas que claramente eran GPS (por título). Al aplicarse en
+                # una OT, el frontend defaultea a 'check' y no rendea el botón
+                # GPS. Este UPDATE corrige PLANTILLAS y TAREAS YA CREADAS por
+                # heurística estricta sobre el título.
+                # ── FIX REVIEWER BLOCKER #4 + E3 ─────────────────────────────
+                # 1. Heurística MÁS ESTRICTA: solo títulos que claramente
+                #    refieren a GPS/ubicación (no "Capturar peso" o "captura firma")
+                # 2. NO tocar tareas ya completadas (estado_trabajo != 'pendiente'
+                #    significa que el técnico ya respondió y NO queremos invalidar
+                #    su respuesta cambiándole el tipo).
+                # ════════════════════════════════════════════════════════════
+                "UPDATE mant_tarea_plantilla_items SET tipo_respuesta='gps' "
+                " WHERE tipo_respuesta IS NULL "
+                "   AND (LOWER(titulo) LIKE '%gps%' "
+                "        OR LOWER(titulo) LIKE '%ubicación%' "
+                "        OR LOWER(titulo) LIKE '%ubicacion%' "
+                "        OR LOWER(titulo) LIKE '%capturar gps%' "
+                "        OR LOWER(titulo) LIKE '%captura ubicaci%' "
+                "        OR LOWER(titulo) LIKE '%danos tu ubicaci%')",
+                "UPDATE mant_visita_tareas SET tipo_respuesta='gps' "
+                " WHERE tipo_respuesta IS NULL "
+                "   AND COALESCE(estado_trabajo,'pendiente') = 'pendiente' "
+                "   AND (LOWER(titulo) LIKE '%gps%' "
+                "        OR LOWER(titulo) LIKE '%ubicación%' "
+                "        OR LOWER(titulo) LIKE '%ubicacion%' "
+                "        OR LOWER(titulo) LIKE '%capturar gps%' "
+                "        OR LOWER(titulo) LIKE '%captura ubicaci%' "
+                "        OR LOWER(titulo) LIKE '%danos tu ubicaci%')",
                 # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Ruta del técnico (F7):
                 # Registra cuándo el técnico inicia la ruta hacia el cliente
@@ -19728,6 +19832,757 @@ def mant_tecnico_eliminar(tid):
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TÉCNICOS EXTERNOS (contratistas/empresas subcontratadas) — 2026-05-17
+# Diferente de mant_tecnicos (catálogo legacy in-house) y de app_users (interno).
+# Gestión completa: alta wizard, ficha rica, invitación por email, contrato PDF.
+# ════════════════════════════════════════════════════════════════════════════
+
+def _ext_parse_json_safe(s, default=None):
+    """Parse JSON string seguro — devuelve default si falla."""
+    if not s:
+        return default if default is not None else []
+    try:
+        import json as _json
+        v = _json.loads(s)
+        return v if v is not None else (default if default is not None else [])
+    except Exception:
+        return default if default is not None else []
+
+
+def _ext_row_to_dict(r):
+    """Convierte row de mant_tecnicos_externos a dict serializable + parsea JSON."""
+    if not r:
+        return None
+    d = dict(r)
+    d["especialidades"] = _ext_parse_json_safe(d.get("especialidades_json"), [])
+    # Compactar fechas a string
+    for k in ("contrato_inicio", "contrato_termino", "created_at", "updated_at",
+              "invite_expires_at", "invite_sent_at", "invite_used_at"):
+        if d.get(k):
+            d[k] = str(d[k])
+    # Cast decimals a float si vienen como Decimal
+    for k in ("valor_hora", "valor_visita", "calificacion_promedio",
+              "direccion_lat", "direccion_lng"):
+        if d.get(k) is not None:
+            try: d[k] = float(d[k])
+            except Exception: pass
+    return d
+
+
+@app.route("/mantenciones/tecnicos-externos")
+@_mant_required
+def mant_tecnicos_externos_index():
+    """Listado de técnicos externos (cards grandes con foto, especialidades, rating)."""
+    rows = mysql_fetchall(
+        "SELECT id, razon_social, rut_empresa, giro, contacto_nombre, "
+        "       contacto_tel, contacto_email, especialidades_json, estado, "
+        "       calificacion_promedio, trabajos_completados, foto_url, "
+        "       valor_hora, valor_visita, condicion_pago_dias, "
+        "       contrato_termino, user_id, invite_sent_at, invite_used_at "
+        "  FROM mant_tecnicos_externos "
+        " ORDER BY (estado='baja') ASC, razon_social ASC",
+        ()
+    ) or []
+    tecnicos = [_ext_row_to_dict(r) for r in rows]
+    # KPIs
+    total = len(tecnicos)
+    activos = sum(1 for t in tecnicos if t.get("estado") == "activo")
+    suspendidos = sum(1 for t in tecnicos if t.get("estado") == "suspendido")
+    con_acceso = sum(1 for t in tecnicos if t.get("user_id"))
+    return render_template(
+        "mantenciones/tecnicos_externos_list.html",
+        tecnicos=tecnicos,
+        kpi_total=total, kpi_activos=activos,
+        kpi_suspendidos=suspendidos, kpi_con_acceso=con_acceso,
+    )
+
+
+@app.route("/mantenciones/tecnicos-externos/nuevo")
+@_mant_required
+def mant_tecnico_externo_wizard():
+    """Wizard de alta de técnico externo (4 pasos)."""
+    return render_template("mantenciones/tecnico_externo_wizard.html")
+
+
+@app.route("/mantenciones/tecnicos-externos/<int:eid>")
+@_mant_required
+def mant_tecnico_externo_ficha(eid):
+    """Ficha detalle del técnico externo (tabs: General · Facturación · Historial · Contrato · Notas)."""
+    r = mysql_fetchone(
+        "SELECT te.*, u.username AS user_username, u.active AS user_active "
+        "  FROM mant_tecnicos_externos te "
+        "  LEFT JOIN `" + AUTH_TABLE + "` u ON u.id = te.user_id "
+        " WHERE te.id=%s",
+        (eid,)
+    )
+    if not r:
+        flash("Técnico externo no encontrado", "warning")
+        return redirect(url_for("mant_tecnicos_externos_index"))
+    tec = _ext_row_to_dict(r)
+    # Historial de OTs si tiene user_id
+    historial = []
+    if tec.get("user_id"):
+        historial_rows = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.titulo, v.fecha_programada, v.estado, "
+            "       v.tipo, v.modalidad_cobro, c.razon_social "
+            "  FROM mant_visitas v "
+            "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            " WHERE v.tecnico_user_id=%s "
+            " ORDER BY v.fecha_programada DESC, v.id DESC "
+            " LIMIT 50",
+            (tec["user_id"],)
+        ) or []
+        historial = [dict(h) for h in historial_rows]
+        for h in historial:
+            if h.get("fecha_programada"):
+                h["fecha_programada"] = str(h["fecha_programada"])
+    return render_template(
+        "mantenciones/tecnico_externo_ficha.html",
+        tec=tec,
+        historial=historial,
+    )
+
+
+def _ext_validate_payload(d, partial=False):
+    """Valida payload de creación/edición. Retorna (campos_dict, error_str_or_None)."""
+    out = {}
+    razon = (d.get("razon_social") or "").strip()[:200]
+    if not partial and len(razon) < 2:
+        return None, "La razón social es obligatoria (mín 2 caracteres)"
+    out["razon_social"] = razon or None
+    out["rut_empresa"] = (d.get("rut_empresa") or "").strip()[:20] or None
+    out["giro"] = (d.get("giro") or "").strip()[:200] or None
+    out["direccion_empresa"] = (d.get("direccion_empresa") or "").strip()[:400] or None
+    # Lat/lng/place_id
+    try: out["direccion_lat"] = float(d["direccion_lat"]) if d.get("direccion_lat") else None
+    except (TypeError, ValueError): out["direccion_lat"] = None
+    try: out["direccion_lng"] = float(d["direccion_lng"]) if d.get("direccion_lng") else None
+    except (TypeError, ValueError): out["direccion_lng"] = None
+    out["direccion_place_id"] = (d.get("direccion_place_id") or "").strip()[:200] or None
+    # Contacto
+    cname = (d.get("contacto_nombre") or "").strip()[:200]
+    ctel  = (d.get("contacto_tel") or "").strip()[:50]
+    cmail = (d.get("contacto_email") or "").strip()[:190]
+    if not partial:
+        if len(cname) < 2:
+            return None, "El nombre del contacto es obligatorio"
+        if len(ctel) < 4:
+            return None, "El teléfono del contacto es obligatorio"
+        if "@" not in cmail or len(cmail) < 5:
+            return None, "El email del contacto es obligatorio (formato válido)"
+    out["contacto_nombre"] = cname or None
+    out["contacto_tel"] = ctel or None
+    out["contacto_email"] = cmail or None
+    out["contacto_cargo"] = (d.get("contacto_cargo") or "").strip()[:100] or None
+    # Facturación
+    fp = (d.get("forma_pago") or "transferencia").strip()
+    if fp not in ("transferencia","cheque","efectivo","tarjeta"):
+        fp = "transferencia"
+    out["forma_pago"] = fp
+    out["banco"] = (d.get("banco") or "").strip()[:100] or None
+    out["tipo_cuenta"] = (d.get("tipo_cuenta") or "").strip()[:50] or None
+    out["numero_cuenta"] = (d.get("numero_cuenta") or "").strip()[:60] or None
+    out["factura_a_nombre_de"] = (d.get("factura_a_nombre_de") or "").strip()[:200] or None
+    try: out["condicion_pago_dias"] = int(d.get("condicion_pago_dias") or 30)
+    except (TypeError, ValueError): out["condicion_pago_dias"] = 30
+    if out["condicion_pago_dias"] < 0 or out["condicion_pago_dias"] > 365:
+        out["condicion_pago_dias"] = 30
+    try: out["valor_hora"] = float(d["valor_hora"]) if d.get("valor_hora") not in (None, "") else None
+    except (TypeError, ValueError): out["valor_hora"] = None
+    try: out["valor_visita"] = float(d["valor_visita"]) if d.get("valor_visita") not in (None, "") else None
+    except (TypeError, ValueError): out["valor_visita"] = None
+    # Especialidades (lista o JSON string)
+    esp = d.get("especialidades")
+    if isinstance(esp, list):
+        try:
+            import json as _j
+            out["especialidades_json"] = _j.dumps([str(x)[:80] for x in esp if x])[:2000]
+        except Exception:
+            out["especialidades_json"] = None
+    elif isinstance(esp, str) and esp.strip():
+        out["especialidades_json"] = esp.strip()[:2000]
+    else:
+        out["especialidades_json"] = None
+    # Contrato
+    out["contrato_pdf_url"] = (d.get("contrato_pdf_url") or "").strip()[:600] or None
+    out["contrato_inicio"] = d.get("contrato_inicio") or None
+    out["contrato_termino"] = d.get("contrato_termino") or None
+    out["contrato_renovable"] = 1 if d.get("contrato_renovable") in (1, "1", True, "true") else 0
+    # Estado
+    est = (d.get("estado") or "activo").strip()
+    if est not in ("activo","suspendido","baja"):
+        est = "activo"
+    out["estado"] = est
+    out["notas"] = (d.get("notas") or "").strip()[:5000] or None
+    # FIX 2026-05-17 BLOCKER #2 — Solo aceptar foto_url de Cloudinary HTTPS.
+    # Cualquier otra URL podría usarse para CSS injection o phishing.
+    raw_foto = (d.get("foto_url") or "").strip()[:600]
+    if raw_foto and not raw_foto.startswith("https://res.cloudinary.com/"):
+        raw_foto = None  # rechaza silenciosamente; logueado en _mant_log si se intentó
+    out["foto_url"] = raw_foto or None
+    return out, None
+
+
+@app.route("/mantenciones/api/tecnicos-externos", methods=["GET"])
+@_mant_required
+def mant_tecnicos_externos_list_api():
+    """JSON ligero — para dropdowns / filtros."""
+    only_active = request.args.get("activos") == "1"
+    sql = ("SELECT id, razon_social, rut_empresa, contacto_nombre, contacto_email, "
+           "       contacto_tel, especialidades_json, estado, calificacion_promedio, "
+           "       trabajos_completados, valor_hora, valor_visita, foto_url, user_id "
+           "  FROM mant_tecnicos_externos")
+    if only_active:
+        sql += " WHERE estado='activo'"
+    sql += " ORDER BY razon_social"
+    rows = mysql_fetchall(sql, ()) or []
+    return jsonify([_ext_row_to_dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/tecnicos-externos", methods=["POST"])
+@_mant_required
+def mant_tecnico_externo_crear():
+    """Crea un técnico externo nuevo."""
+    d = request.get_json(silent=True) or {}
+    fields, err = _ext_validate_payload(d, partial=False)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    # Validar duplicado por RUT
+    if fields.get("rut_empresa"):
+        existing = mysql_fetchone(
+            "SELECT id FROM mant_tecnicos_externos WHERE rut_empresa=%s",
+            (fields["rut_empresa"],)
+        )
+        if existing:
+            return jsonify({"ok": False,
+                            "error": f"Ya existe un técnico externo con ese RUT (id #{existing['id']})"}), 409
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_tecnicos_externos
+                   (razon_social, rut_empresa, giro, direccion_empresa,
+                    direccion_lat, direccion_lng, direccion_place_id,
+                    contacto_nombre, contacto_tel, contacto_email, contacto_cargo,
+                    forma_pago, banco, tipo_cuenta, numero_cuenta,
+                    factura_a_nombre_de, condicion_pago_dias, valor_hora, valor_visita,
+                    especialidades_json, contrato_pdf_url, contrato_inicio,
+                    contrato_termino, contrato_renovable, estado, notas, foto_url,
+                    created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           %s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (fields["razon_social"], fields["rut_empresa"], fields["giro"],
+                 fields["direccion_empresa"], fields["direccion_lat"],
+                 fields["direccion_lng"], fields["direccion_place_id"],
+                 fields["contacto_nombre"], fields["contacto_tel"],
+                 fields["contacto_email"], fields["contacto_cargo"],
+                 fields["forma_pago"], fields["banco"], fields["tipo_cuenta"],
+                 fields["numero_cuenta"], fields["factura_a_nombre_de"],
+                 fields["condicion_pago_dias"], fields["valor_hora"],
+                 fields["valor_visita"], fields["especialidades_json"],
+                 fields["contrato_pdf_url"], fields["contrato_inicio"],
+                 fields["contrato_termino"], fields["contrato_renovable"],
+                 fields["estado"], fields["notas"], fields["foto_url"],
+                 current_username())
+            )
+            eid = cur.lastrowid
+        conn.commit()
+        _mant_log("tecnico_externo", eid, "creado",
+                  f"Razón social: {fields['razon_social']}")
+        return jsonify({"ok": True, "id": eid, "razon_social": fields["razon_social"]})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"No se pudo crear: {str(e)[:140]}"}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>", methods=["PUT"])
+@_mant_required
+def mant_tecnico_externo_editar(eid):
+    """Edita un técnico externo (parcial — solo campos enviados)."""
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "Técnico externo no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    # Build SET dynamically — partial update
+    fields, err = _ext_validate_payload(d, partial=True)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    # Solo actualizar columnas con clave en payload original
+    settable_keys = [
+        "razon_social","rut_empresa","giro","direccion_empresa",
+        "direccion_lat","direccion_lng","direccion_place_id",
+        "contacto_nombre","contacto_tel","contacto_email","contacto_cargo",
+        "forma_pago","banco","tipo_cuenta","numero_cuenta",
+        "factura_a_nombre_de","condicion_pago_dias","valor_hora","valor_visita",
+        "especialidades_json","contrato_pdf_url","contrato_inicio",
+        "contrato_termino","contrato_renovable","estado","notas","foto_url",
+    ]
+    # Normalizar — d.keys() incluye campos parseados (especialidades → especialidades_json)
+    keys_in_payload = set(d.keys())
+    if "especialidades" in keys_in_payload:
+        keys_in_payload.add("especialidades_json")
+    sets, params = [], []
+    for k in settable_keys:
+        if k in keys_in_payload:
+            sets.append(f"{k}=%s")
+            params.append(fields[k])
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin cambios"}), 400
+    params.append(eid)
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE mant_tecnicos_externos SET {', '.join(sets)} WHERE id=%s",
+                tuple(params)
+            )
+        conn.commit()
+        _mant_log("tecnico_externo", eid, "editado", f"{len(sets)} campos")
+        return jsonify({"ok": True})
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error: {str(e)[:140]}"}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>", methods=["DELETE"])
+@_mant_required
+def mant_tecnico_externo_eliminar(eid):
+    """Soft-delete: estado='baja'. Hard delete solo si confirm_text=BAJA y superadmin."""
+    confirm = (request.args.get("confirm_text") or "").strip().upper()
+    hard = (request.args.get("hard") == "1") and g.permissions.get("superadmin") and confirm == "BAJA"
+    row = mysql_fetchone(
+        "SELECT id, razon_social, user_id FROM mant_tecnicos_externos WHERE id=%s", (eid,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    try:
+        if hard:
+            # Hard delete: borrar definitivamente
+            mysql_execute("DELETE FROM mant_tecnicos_externos WHERE id=%s", (eid,))
+            _mant_log("tecnico_externo", eid, "hard_delete", f"{row['razon_social']}")
+            return jsonify({"ok": True, "hard": True})
+        # Soft delete
+        mysql_execute(
+            "UPDATE mant_tecnicos_externos SET estado='baja' WHERE id=%s", (eid,)
+        )
+        _mant_log("tecnico_externo", eid, "baja", f"{row['razon_social']}")
+        return jsonify({"ok": True, "soft": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:140]}), 500
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/invitar", methods=["POST"])
+@_mant_required
+def mant_tecnico_externo_invitar(eid):
+    """
+    Genera un token de invitación (7 días) y envía email al contacto.
+    Si ya tiene user_id activo, devuelve error.
+    """
+    row = mysql_fetchone(
+        "SELECT id, razon_social, contacto_nombre, contacto_email, user_id "
+        "  FROM mant_tecnicos_externos WHERE id=%s",
+        (eid,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    if row.get("user_id"):
+        return jsonify({"ok": False, "error": "Este técnico ya tiene una cuenta vinculada"}), 400
+    if not (row.get("contacto_email") and "@" in row["contacto_email"]):
+        return jsonify({"ok": False, "error": "Email de contacto inválido"}), 400
+    # Generar token y vencimiento
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now() + timedelta(days=7)
+    try:
+        mysql_execute(
+            "UPDATE mant_tecnicos_externos "
+            "   SET invite_token=%s, invite_expires_at=%s, invite_sent_at=NOW() "
+            " WHERE id=%s",
+            (token, expires, eid)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB: {str(e)[:120]}"}), 500
+    # URL de registro (host fallback)
+    try:
+        host = request.host_url.rstrip("/")
+        link = f"{host}/registro-tecnico-externo?token={token}"
+    except Exception:
+        link = f"/registro-tecnico-externo?token={token}"
+    # Envío de email (best-effort — no bloquea respuesta)
+    email_ok = False
+    email_err = None
+    try:
+        from markupsafe import escape as _esc
+        subject = f"Invitación ILUS — Activa tu cuenta de técnico externo"
+        nombre_corto = (row.get("contacto_nombre") or "").split()[0] or "Hola"
+        # FIX 2026-05-17 BLOCKER #3 — escape de todos los strings de DB que
+        # van al HTML para prevenir XSS en clientes de email que renderizan HTML.
+        e_nombre = _esc(nombre_corto)
+        e_razon = _esc(row.get("razon_social") or "")
+        e_link = _esc(link)
+        html = f"""
+        <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f4f6;padding:30px 16px;">
+          <div style="max-width:580px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.06);">
+            <div style="background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);padding:30px 28px;color:#fff;border-left:6px solid #dc2626;">
+              <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#fca5a5;font-weight:700">ILUS Sport &amp; Health</div>
+              <h1 style="margin:6px 0 0;font-size:1.5rem;color:#fff;font-weight:800">Te invitamos a colaborar con nosotros</h1>
+            </div>
+            <div style="padding:30px 28px;color:#1f2937;font-size:.95rem;line-height:1.6">
+              <p style="margin:0 0 14px">{e_nombre}, te damos la bienvenida.</p>
+              <p style="margin:0 0 14px">
+                <strong>{e_razon}</strong> ha sido registrada como técnico externo de ILUS.
+                Para empezar a recibir y gestionar órdenes de trabajo desde tu computador o tu celular,
+                activa tu cuenta haciendo click en el botón:
+              </p>
+              <div style="text-align:center;margin:28px 0">
+                <a href="{e_link}" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:14px 36px;border-radius:10px;font-weight:700;font-size:1rem;box-shadow:0 4px 14px rgba(220,38,38,.3)">
+                  Activar mi cuenta
+                </a>
+              </div>
+              <p style="margin:0 0 8px;color:#6b7280;font-size:.82rem">
+                El link expira en 7 días. Si no funciona, copia y pega esta URL en tu navegador:
+              </p>
+              <p style="word-break:break-all;background:#f9fafb;padding:10px 12px;border-radius:6px;font-size:.78rem;font-family:monospace;color:#4b5563;margin:0">
+                {e_link}
+              </p>
+            </div>
+            <div style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:.78rem;text-align:center">
+              ILUS Sport &amp; Health · Mantenciones · 2026
+            </div>
+          </div>
+        </div>
+        """
+        _send_email_dinamico(row["contacto_email"], subject, html)
+        email_ok = True
+    except Exception as ex:
+        email_err = str(ex)[:140]
+        print(f"[invitar_ext] envío email falló: {email_err}", flush=True)
+    _mant_log("tecnico_externo", eid, "invitacion_enviada",
+              f"a {row['contacto_email']} · email_ok={email_ok}")
+    return jsonify({
+        "ok": True, "email_enviado": email_ok,
+        "email_err": email_err if not email_ok else None,
+        "expira_en_dias": 7, "link": link,
+    })
+
+
+# ════════════════════════════════════════════════════════════════════
+# FIX 2026-05-17 BLOCKER #1 — Endpoint que abre el link del email
+# /registro-tecnico-externo?token=XXX
+# GET  → muestra form con email/username pre-llenado + campos password/nombre
+# POST → valida token, crea user en app_users con role='tecnico_externo',
+#        vincula a mant_tecnicos_externos, marca invite_used_at=NOW()
+# ════════════════════════════════════════════════════════════════════
+@app.route("/registro-tecnico-externo", methods=["GET", "POST"])
+def registro_tecnico_externo():
+    token = (request.values.get("token") or "").strip()
+    if not token or len(token) < 16:
+        flash("Link de invitación inválido.", "danger")
+        return redirect(url_for("login"))
+    # Buscar invitación válida (token correcto, no expirada, no usada)
+    inv = mysql_fetchone(
+        "SELECT id, razon_social, contacto_nombre, contacto_email, user_id, "
+        "       invite_expires_at, invite_used_at "
+        "  FROM mant_tecnicos_externos "
+        " WHERE invite_token=%s LIMIT 1",
+        (token,)
+    )
+    if not inv:
+        flash("Link de invitación inválido o ya expirado.", "danger")
+        return redirect(url_for("login"))
+    # Verificar expiración
+    from datetime import datetime as _dt_inv
+    exp = inv.get("invite_expires_at")
+    if exp and isinstance(exp, _dt_inv) and exp < _dt_inv.now():
+        flash("El link de invitación expiró. Pide al administrador que envíe uno nuevo.", "warning")
+        return redirect(url_for("login"))
+    if inv.get("invite_used_at"):
+        flash("Esta invitación ya fue usada. Inicia sesión normal con tu usuario.", "info")
+        return redirect(url_for("login"))
+    if inv.get("user_id"):
+        flash("Este técnico ya tiene una cuenta activa. Inicia sesión normal.", "info")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip().lower()
+        password = request.form.get("password") or ""
+        password2 = request.form.get("password2") or ""
+        nombre = (request.form.get("nombre") or inv.get("contacto_nombre") or "").strip()
+        # Validaciones
+        if not username or not re.match(r"^[a-z0-9._-]{3,30}$", username):
+            flash("Usuario: 3-30 chars, solo letras, números, punto, guión.", "danger")
+            return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+        if len(password) < 8:
+            flash("La contraseña debe tener al menos 8 caracteres.", "danger")
+            return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+        if password != password2:
+            flash("Las contraseñas no coinciden.", "danger")
+            return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+        # username único?
+        if mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s LIMIT 1", (username,)):
+            flash("Ese usuario ya existe. Elige otro.", "danger")
+            return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+        # Crear usuario
+        try:
+            from werkzeug.security import generate_password_hash as _gph
+            cur_dt = _dt_inv.now()
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"INSERT INTO `{AUTH_TABLE}` (username, password_hash, nombre, email, "
+                        f"role, active, created_at) "
+                        f"VALUES (%s,%s,%s,%s,'tecnico_externo',1,%s)",
+                        (username, _gph(password), nombre[:200],
+                         (inv.get("contacto_email") or "")[:190], cur_dt)
+                    )
+                    new_uid = cur.lastrowid
+                    # Vincular invitación → user + marcar usada
+                    cur.execute(
+                        "UPDATE mant_tecnicos_externos "
+                        "   SET user_id=%s, invite_used_at=NOW() "
+                        " WHERE id=%s AND invite_used_at IS NULL",
+                        (new_uid, inv["id"])
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+            try:
+                _audit("registro_tecnico_externo_ok",
+                       target_type="user", target_id=new_uid,
+                       user_override={"id": new_uid, "username": username, "role": "tecnico_externo"})
+            except Exception: pass
+            # Auto-login
+            session.clear()
+            session["user_id"] = new_uid
+            flash(f"¡Bienvenido {nombre}! Tu cuenta está lista.", "success")
+            return redirect(url_for("mant_index") if "mant_index" in [r.endpoint for r in app.url_map.iter_rules()] else url_for("index"))
+        except Exception as e:
+            print(f"[registro_tecnico_externo] {e}", flush=True)
+            flash("No se pudo crear la cuenta. Intenta nuevamente o contacta soporte.", "danger")
+            return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+    # GET → mostrar form
+    return render_template("registro_tecnico_externo.html", inv=inv, token=token)
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/contrato", methods=["POST"])
+@_mant_required
+def mant_tecnico_externo_subir_contrato(eid):
+    """
+    Sube PDF de contrato a Cloudinary y persiste URL.
+    Form-data: archivo (PDF), opcionalmente contrato_inicio/contrato_termino.
+    """
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    f = request.files.get("archivo") or request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No se envió archivo"}), 400
+    # Validar tipo PDF
+    mime = (f.mimetype or "").lower()
+    ext = ""
+    if "." in f.filename:
+        ext = f.filename.rsplit(".", 1)[1].lower()
+    if mime != "application/pdf" and ext != "pdf":
+        return jsonify({"ok": False, "error": "Solo PDF aceptado"}), 400
+    # Validar tamaño máx 25 MB
+    f.stream.seek(0, 2); size_bytes = f.stream.tell(); f.stream.seek(0)
+    if size_bytes > 25 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "PDF demasiado grande (máx 25 MB)"}), 413
+    # Cloudinary
+    cloud_url = None
+    try:
+        import cloudinary, cloudinary.uploader  # noqa
+        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+            result = cloudinary.uploader.upload(
+                f,
+                folder=f"ilus/tecnicos_externos/{eid}/contrato",
+                public_id=f"contrato_{eid}_{int(time.time())}",
+                resource_type="raw",
+            )
+            cloud_url = result.get("secure_url")
+    except Exception as e:
+        print(f"[ext_contrato] cloudinary falló: {e}", flush=True)
+    if not cloud_url:
+        return jsonify({"ok": False, "error": "No se pudo subir el contrato (Cloudinary no disponible)"}), 500
+    # Fechas opcionales
+    inicio = (request.form.get("contrato_inicio") or "").strip() or None
+    termino = (request.form.get("contrato_termino") or "").strip() or None
+    renovable = 1 if (request.form.get("contrato_renovable") in ("1", "true", "on", "yes")) else None
+    sets = ["contrato_pdf_url=%s"]
+    params = [cloud_url]
+    if inicio:  sets.append("contrato_inicio=%s");  params.append(inicio)
+    if termino: sets.append("contrato_termino=%s"); params.append(termino)
+    if renovable is not None:
+        sets.append("contrato_renovable=%s"); params.append(renovable)
+    params.append(eid)
+    try:
+        mysql_execute(
+            f"UPDATE mant_tecnicos_externos SET {', '.join(sets)} WHERE id=%s",
+            tuple(params)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB: {str(e)[:120]}"}), 500
+    _mant_log("tecnico_externo", eid, "contrato_subido", f"{f.filename} ({size_bytes//1024} KB)")
+    return jsonify({"ok": True, "url": cloud_url, "size_kb": size_bytes // 1024})
+
+
+@app.route("/mantenciones/api/tecnicos-externos/<int:eid>/foto", methods=["POST"])
+@_mant_required
+def mant_tecnico_externo_subir_foto(eid):
+    """Sube avatar/logo del técnico externo a Cloudinary."""
+    if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
+        return jsonify({"ok": False, "error": "No encontrado"}), 404
+    f = request.files.get("archivo") or request.files.get("file") or request.files.get("foto")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No se envió archivo"}), 400
+    f.stream.seek(0, 2); size_bytes = f.stream.tell(); f.stream.seek(0)
+    if size_bytes > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Foto demasiado grande (máx 8 MB)"}), 413
+    cloud_url = None
+    try:
+        import cloudinary, cloudinary.uploader  # noqa
+        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+            result = cloudinary.uploader.upload(
+                f,
+                folder=f"ilus/tecnicos_externos/{eid}/avatar",
+                public_id=f"avatar_{eid}_{int(time.time())}",
+                resource_type="image",
+                transformation=[
+                    {"width": 400, "height": 400, "crop": "fill", "gravity": "auto"},
+                    {"quality": "auto:good", "fetch_format": "auto"},
+                ],
+            )
+            cloud_url = result.get("secure_url")
+    except Exception as e:
+        print(f"[ext_foto] cloudinary falló: {e}", flush=True)
+    if not cloud_url:
+        return jsonify({"ok": False, "error": "No se pudo subir (Cloudinary no disponible)"}), 500
+    try:
+        mysql_execute(
+            "UPDATE mant_tecnicos_externos SET foto_url=%s WHERE id=%s",
+            (cloud_url, eid)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB: {str(e)[:120]}"}), 500
+    _mant_log("tecnico_externo", eid, "foto_subida", "")
+    return jsonify({"ok": True, "url": cloud_url})
+
+
+# Endpoint específico para grabación in-app de video — Feature 2
+@app.route("/mantenciones/api/visitas/<int:vid>/grabacion", methods=["POST"])
+@_mant_required
+def mant_visita_grabacion_video(vid):
+    """
+    Recibe un Blob de video grabado in-app desde el navegador.
+    Sube a Cloudinary con resource_type='video', persiste en mant_visita_adjuntos
+    con tipo='video', descripción default 'Grabación in-app YYYY-MM-DD HH:MM'.
+    Acepta tags opcionales (etiquetas creativas: inspección, falla, antes/después...).
+    Devuelve {ok, id, url, thumbnail_url, duration_sec}.
+    """
+    # Validar visita
+    if not mysql_fetchone("SELECT id FROM mant_visitas WHERE id=%s", (vid,)):
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    f = request.files.get("video") or request.files.get("archivo") or request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No se envió el video"}), 400
+    f.stream.seek(0, 2); size_bytes = f.stream.tell(); f.stream.seek(0)
+    if size_bytes > 100 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Video demasiado grande (máx 100 MB)"}), 413
+    # Tags opcionales
+    tag = (request.form.get("tag") or "").strip()[:80] or None
+    duration_sec_hint = None
+    try:
+        duration_sec_hint = float(request.form.get("duration_sec") or 0) or None
+    except (TypeError, ValueError):
+        duration_sec_hint = None
+    # Descripción
+    desc = (request.form.get("descripcion") or "").strip()[:1000]
+    if not desc:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        desc = f"Grabación in-app {now_str}"
+    if tag:
+        desc += f" · [{tag}]"
+    # Cloudinary upload
+    cloud_url = None
+    cloud_public_id = None
+    thumbnail_url = None
+    duration_sec = None
+    try:
+        import cloudinary, cloudinary.uploader  # noqa
+        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+            result = cloudinary.uploader.upload(
+                f,
+                folder=f"ilus/visitas/v{vid}/grabaciones",
+                public_id=f"rec_v{vid}_{int(time.time())}",
+                resource_type="video",
+                eager=[
+                    {"width": 480, "height": 360, "crop": "fill",
+                     "format": "jpg", "start_offset": "auto"},
+                ],
+            )
+            cloud_url = result.get("secure_url")
+            cloud_public_id = result.get("public_id")
+            duration_sec = result.get("duration")
+            # Generar URL de thumbnail (frame en t=auto)
+            if cloud_public_id and result.get("resource_type") == "video":
+                # Cloudinary genera thumb on-the-fly con transform en URL
+                try:
+                    from urllib.parse import quote
+                    cn = CLOUDINARY_CONFIG.get("cloud_name")
+                    thumbnail_url = (
+                        f"https://res.cloudinary.com/{cn}/video/upload/"
+                        f"so_auto,w_400,h_300,c_fill,f_jpg/{cloud_public_id}.jpg"
+                    )
+                except Exception:
+                    thumbnail_url = None
+    except Exception as e:
+        print(f"[grabacion_video] cloudinary falló: {e}", flush=True)
+    if not cloud_url:
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo subir el video (Cloudinary no disponible)"
+        }), 500
+    # Persistir
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_visita_adjuntos "
+                "(visita_id, tipo, cloudinary_url, cloudinary_public_id, "
+                " archivo_nombre, file_size_kb, mime_type, descripcion, subido_por) "
+                "VALUES (%s,'video',%s,%s,%s,%s,%s,%s,%s)",
+                (vid, cloud_url, cloud_public_id,
+                 (f.filename or f"rec_v{vid}.webm")[:300], size_bytes // 1024,
+                 (f.mimetype or "video/webm")[:100], desc, current_username())
+            )
+            adj_id = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        print(f"[grabacion_video] DB error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error guardando en BD"}), 500
+    finally:
+        conn.close()
+    _mant_log("visita", vid, "grabacion_video",
+              f"adj #{adj_id} · {size_bytes//1024} KB" +
+              (f" · tag: {tag}" if tag else ""))
+    return jsonify({
+        "ok": True,
+        "id": adj_id,
+        "url": cloud_url,
+        "thumbnail_url": thumbnail_url,
+        "duration_sec": duration_sec or duration_sec_hint,
+        "descripcion": desc,
+        "size_kb": size_bytes // 1024,
+    })
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/solicitar-cambio", methods=["POST"])
@@ -24030,6 +24885,18 @@ def mant_visita_aplicar_plantilla(vid):
 
     conn = get_mysql()
     n_creadas = 0
+    # ── FIX REVIEWER B1 — Pre-fetch UNA SOLA query de máquinas (anti N+1) ──
+    # Antes: por cada (máquina × item) un fetchone separado. Con 10 items × 5
+    # máquinas = 50 queries. Ahora: 1 query y dict en memoria.
+    maquinas_idx = {}
+    if maquina_ids:
+        placeholders = ",".join(["%s"] * len(maquina_ids))
+        m_rows = mysql_fetchall(
+            f"SELECT id, nombre, serie FROM mant_maquinas WHERE id IN ({placeholders})",
+            tuple(maquina_ids)
+        ) or []
+        for mr in m_rows:
+            maquinas_idx[mr["id"]] = mr
     try:
         with conn.cursor() as cur:
             targets = maquina_ids if maquina_ids else [None]
@@ -24041,23 +24908,37 @@ def mant_visita_aplicar_plantilla(vid):
                     # sepa de qué equipo se trata.
                     titulo = it["titulo"]
                     if mid:
-                        m_row = mysql_fetchone(
-                            "SELECT nombre, serie FROM mant_maquinas WHERE id=%s", (mid,)
-                        )
+                        m_row = maquinas_idx.get(mid)
                         if m_row:
                             sufijo = m_row["nombre"]
                             if m_row.get("serie"):
                                 sufijo += f" (S/N: {m_row['serie']})"
                             titulo = f"{titulo} — {sufijo}"
+                    # FIX 2026-05-17: bug GPS heredado de plantillas.
+                    # 1) plantilla_id se preservaba como NULL → no había trazabilidad
+                    #    de origen y el frontend no podía agrupar las tareas.
+                    # 2) it["tipo_respuesta"] (sin .get) podía ser NULL en plantillas
+                    #    legacy → el JS default `|| 'check'` convertía GPS → check
+                    #    silenciosamente. Ahora usamos .get() + COALESCE explícito.
+                    tr = it.get("tipo_respuesta") or "check"
+                    # Si el título contiene "GPS"/"ubicación" y tipo_respuesta no
+                    # estaba seteado, asumir GPS. Heurística ESTRICTA para no
+                    # producir falsos positivos en "Capturar peso", "Captura firma".
+                    if not it.get("tipo_respuesta"):
+                        ttl = (it.get("titulo") or "").lower()
+                        if ("gps" in ttl or "ubicación" in ttl or "ubicacion" in ttl
+                            or "capturar gps" in ttl or "captura ubicaci" in ttl
+                            or "danos tu ubicaci" in ttl):
+                            tr = "gps"
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
-                        "(visita_id, orden, titulo, descripcion, tipo, maquina_id, "
-                        " tipo_respuesta, obligatoria, requiere_foto, unidad, "
-                        " rango_min, rango_max, opciones_lista_json, "
+                        "(visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+                        " maquina_id, tipo_respuesta, obligatoria, requiere_foto, "
+                        " unidad, rango_min, rango_max, opciones_lista_json, "
                         " estado_trabajo, created_by) "
-                        "VALUES (%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
-                        (vid, next_orden, titulo[:300], it.get("descripcion"),
-                         mid, it["tipo_respuesta"],
+                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
+                        (vid, pid, next_orden, titulo[:300], it.get("descripcion"),
+                         mid, tr,
                          it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
                          it.get("opciones_lista_json"), current_username())

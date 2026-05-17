@@ -45,6 +45,10 @@
       <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
         <i class="bi bi-calendar3 me-1"></i>Calendario
       </a>
+      <a href="{{ url_for('mant_tecnicos_externos_index') }}" class="btn btn-outline-dark"
+         title="Contratistas y empresas tercerizadas">
+        <i class="bi bi-building-fill-gear me-1"></i>Técnicos externos
+      </a>
       {% if permissions.superadmin %}
       <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#modalResetMant"
               title="Borrar todos los datos de mantenciones (solo superadmin)">

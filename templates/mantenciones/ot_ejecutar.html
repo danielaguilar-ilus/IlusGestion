@@ -737,9 +737,184 @@
           <input type="file" accept=".doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none"
                  onchange="subirAdjuntoDesdeInput(this, 'documento')">
         </label>
+        {# Grabar video in-app (Feature 2 — 2026-05-17) #}
+        <button type="button" class="adj-pill" id="btnGrabarVideo"
+                style="background:#0a0a0a;border-color:#0a0a0a;color:#fff;
+                       font-weight:700;letter-spacing:.02em;cursor:pointer;
+                       box-shadow:0 3px 10px rgba(220,38,38,.25);
+                       border-left:3px solid #dc2626"
+                onclick="abrirGrabador()">
+          <i class="bi bi-record-circle-fill" style="color:#dc2626"></i> Grabar video
+        </button>
       </div>
 
-      {# Progreso de upload (oculto por defecto) #}
+      {# ════════════════════════════════════════════════════════════
+         GRABADOR DE VIDEO IN-APP (Feature 2 — digno 2026)
+         MediaRecorder API + Cloudinary. Soporta WebM/VP9 (Chrome/Android),
+         MP4/H.264 (Safari iOS 15+), filtros temáticos creativos.
+         ════════════════════════════════════════════════════════════ #}
+      <div id="grabadorBox" style="display:none;margin:14px 0;background:#0a0a0a;
+           border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.35)">
+        <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;
+                    background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);color:#fff;
+                    border-bottom:1px solid #1f2937">
+          <div style="font-weight:800;font-size:.95rem">
+            <i class="bi bi-camera-video-fill" style="color:#dc2626"></i>
+            <span style="margin-left:6px">Grabador de video</span>
+            <span id="grabEstadoTxt" style="margin-left:10px;font-weight:600;color:#cbd5e1;font-size:.78rem">
+              Listo para grabar
+            </span>
+          </div>
+          <button type="button" onclick="cerrarGrabador()"
+                  style="background:transparent;border:none;color:#cbd5e1;font-size:1.4rem;cursor:pointer;line-height:1;padding:4px 8px">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        {# Video preview en vivo / grabación ya hecha #}
+        <div style="position:relative;background:#000;aspect-ratio:16/9;max-height:60vh;overflow:hidden">
+          <video id="grabVideoPreview" autoplay muted playsinline
+                 style="width:100%;height:100%;object-fit:cover;display:block"></video>
+          <video id="grabVideoPlayback" controls playsinline
+                 style="width:100%;height:100%;object-fit:contain;display:none;background:#000"></video>
+          {# Indicador REC parpadeante #}
+          <div id="grabRecDot" style="display:none;position:absolute;top:12px;right:12px;
+               background:rgba(220,38,38,.9);color:#fff;padding:4px 10px;border-radius:50px;
+               font-size:.72rem;font-weight:800;letter-spacing:.08em;
+               box-shadow:0 4px 12px rgba(220,38,38,.4)">
+            <span class="grab-blink" style="display:inline-block;width:8px;height:8px;background:#fff;border-radius:50%;margin-right:5px;vertical-align:middle"></span>
+            REC
+          </div>
+          {# Cronómetro #}
+          <div id="grabTimer" style="display:none;position:absolute;top:12px;left:12px;
+               background:rgba(0,0,0,.65);color:#fff;padding:5px 12px;border-radius:50px;
+               font-family:monospace;font-size:.86rem;font-weight:800;letter-spacing:.05em">
+            00:00
+          </div>
+          {# Tag overlay #}
+          <div id="grabTagOverlay" style="display:none;position:absolute;bottom:12px;left:12px;
+               background:rgba(220,38,38,.85);color:#fff;padding:5px 12px;border-radius:8px;
+               font-size:.78rem;font-weight:700"></div>
+        </div>
+
+        <style>
+          @keyframes grabBlink{0%,49%{opacity:1}50%,100%{opacity:.25}}
+          .grab-blink{animation:grabBlink 1s infinite}
+          .grab-tag-pill{
+            background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.18);
+            color:#cbd5e1;border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:700;
+            cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;
+            min-height:36px;
+          }
+          .grab-tag-pill:hover{background:rgba(255,255,255,.14);color:#fff}
+          .grab-tag-pill.selected{background:#dc2626;border-color:#dc2626;color:#fff;
+                                  box-shadow:0 3px 10px rgba(220,38,38,.3)}
+          .grab-btn{
+            min-height:44px;padding:0 18px;border-radius:11px;font-weight:800;font-size:.85rem;
+            cursor:pointer;border:none;display:inline-flex;align-items:center;gap:6px;
+            transition:all .15s;
+          }
+          .grab-btn.rec{background:#dc2626;color:#fff;box-shadow:0 4px 14px rgba(220,38,38,.4)}
+          .grab-btn.rec:hover{background:#b91c1c}
+          .grab-btn.stop{background:#16a34a;color:#fff;box-shadow:0 4px 14px rgba(22,163,74,.32)}
+          .grab-btn.stop:hover{background:#15803d}
+          .grab-btn.pause{background:#f59e0b;color:#fff}
+          .grab-btn.ghost{background:transparent;color:#cbd5e1;border:1.5px solid rgba(255,255,255,.18)}
+          .grab-btn.ghost:hover{background:rgba(255,255,255,.08);color:#fff}
+          .grab-btn:disabled{opacity:.45;cursor:not-allowed}
+          .grab-select{
+            background:rgba(255,255,255,.06);color:#fff;border:1.5px solid rgba(255,255,255,.18);
+            border-radius:10px;padding:8px 14px;font-size:.82rem;font-weight:600;min-height:40px;
+          }
+          .grab-select option{background:#1f2937;color:#fff}
+        </style>
+
+        {# Controles de configuración (antes de grabar) #}
+        <div id="grabConfigBar" style="padding:12px 14px;border-bottom:1px solid #1f2937;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select class="grab-select" id="grabCalidad" title="Calidad">
+            <option value="auto" selected>Calidad: Auto</option>
+            <option value="1080">Alta (1080p)</option>
+            <option value="720">Media (720p)</option>
+            <option value="480">Baja (480p)</option>
+          </select>
+          <select class="grab-select" id="grabCamSelect" style="display:none">
+            <option value="user">Cámara frontal</option>
+            <option value="environment" selected>Cámara trasera</option>
+          </select>
+          <div style="flex:1"></div>
+          <div style="color:#cbd5e1;font-size:.74rem">
+            <i class="bi bi-info-circle"></i> Audio incluido
+          </div>
+        </div>
+
+        {# Tags creativos (selección obligatoria/opcional) #}
+        <div id="grabTagsBar" style="padding:10px 14px;border-bottom:1px solid #1f2937;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="color:#9ca3af;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-right:6px">
+            Etiqueta:
+          </span>
+          <button type="button" class="grab-tag-pill" data-tag="📍 Inspección equipo" onclick="selTag(this)">
+            📍 Inspección
+          </button>
+          <button type="button" class="grab-tag-pill" data-tag="⚠ Falla detectada" onclick="selTag(this)">
+            ⚠ Falla detectada
+          </button>
+          <button type="button" class="grab-tag-pill" data-tag="✓ Antes/Después" onclick="selTag(this)">
+            ✓ Antes/Después
+          </button>
+          <button type="button" class="grab-tag-pill" data-tag="🔧 Reparación en proceso" onclick="selTag(this)">
+            🔧 Reparación
+          </button>
+          <button type="button" class="grab-tag-pill" data-tag="📋 Capacitación" onclick="selTag(this)">
+            📋 Capacitación
+          </button>
+        </div>
+
+        {# Botones de control #}
+        <div style="padding:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#0a0a0a">
+          {# Estado: listo (antes de grabar) #}
+          <div id="grabPanelInicio" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+            <button type="button" class="grab-btn rec" id="btnGrabarStart" onclick="grabIniciar()">
+              <i class="bi bi-record-circle-fill"></i> GRABAR
+            </button>
+            <button type="button" class="grab-btn ghost" onclick="cerrarGrabador()">
+              <i class="bi bi-x"></i> Cancelar
+            </button>
+          </div>
+          {# Estado: grabando #}
+          <div id="grabPanelGrabando" style="display:none;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+            <button type="button" class="grab-btn pause" id="btnGrabarPause" onclick="grabPausarReanudar()">
+              <i class="bi bi-pause-fill"></i> Pausar
+            </button>
+            <button type="button" class="grab-btn stop" onclick="grabDetener()">
+              <i class="bi bi-stop-fill"></i> Detener
+            </button>
+            <button type="button" class="grab-btn ghost" onclick="grabCancelar()">
+              <i class="bi bi-trash3"></i> Cancelar
+            </button>
+          </div>
+          {# Estado: revisión post-grabación #}
+          <div id="grabPanelRevision" style="display:none;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+            <button type="button" class="grab-btn stop" id="btnGrabSubir" onclick="grabSubir()">
+              <i class="bi bi-cloud-upload-fill"></i> Subir video
+            </button>
+            <button type="button" class="grab-btn ghost" onclick="grabRehacer()">
+              <i class="bi bi-arrow-clockwise"></i> Re-grabar
+            </button>
+            <button type="button" class="grab-btn ghost" onclick="cerrarGrabador()">
+              <i class="bi bi-trash3"></i> Descartar
+            </button>
+          </div>
+          {# Progreso de upload #}
+          <div id="grabUploadWrap" style="display:none;width:100%">
+            <div style="background:#1f2937;border-radius:6px;overflow:hidden;height:6px;margin-top:6px">
+              <div id="grabUploadBar" style="height:100%;background:linear-gradient(90deg,#dc2626,#fbbf24);width:0%;transition:width .25s"></div>
+            </div>
+            <div id="grabUploadTxt" style="color:#cbd5e1;font-size:.74rem;margin-top:6px">Subiendo…</div>
+          </div>
+        </div>
+      </div>
+
+      {# Progreso de upload genérico (oculto por defecto) #}
       <div id="adjProgressWrap" style="display:none;margin-bottom:10px">
         <div style="background:#e5e7eb;border-radius:6px;overflow:hidden;height:8px">
           <div id="adjProgressBar" style="height:100%;background:linear-gradient(90deg,#dc2626,#f87171);width:0%;transition:width .25s"></div>
@@ -1238,21 +1413,62 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       </div>`;
       break;
     case 'foto':
+      // ── FIX 2026-05-17 — Patrón etiquetas (product_detail.html L86-128) ──
+      // Mobile: 2 botones FULL-WIDTH stacked vertically con estilos
+      // VISUALMENTE DISTINTOS (dark = cámara, outline = galería).
+      // Antes estaban lado a lado y se confundían entre sí.
+      // Desktop: 1 zona única con drag&drop real (Reviewer H2 fix)
+      // ────────────────────────────────────────────────────────────
       ctrlHtml = `<div class="ctrl">
-        <div class="d-flex gap-2 flex-wrap">
-          <label class="tx-btn-foto" style="cursor:pointer">
-            <i class="bi bi-camera-fill"></i> Tomar foto
+        {# Desktop: zona con drag&drop real #}
+        <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
+          style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
+          border:2px dashed #cbd5e1;border-radius:11px;background:#fafafa;
+          transition:all .15s"
+          ondragover="event.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fef2f2'"
+          ondragleave="this.style.borderColor='#cbd5e1';this.style.background='#fafafa'"
+          ondrop="event.preventDefault();this.style.borderColor='#cbd5e1';this.style.background='#fafafa';
+            const f=event.dataTransfer.files;if(f&&f.length){const inp=this.querySelector('input');
+            const dt=new DataTransfer();dt.items.add(f[0]);inp.files=dt.files;
+            subirFotoTarea(${t.id}, inp, ${mid}, ${pid});}">
+          <i class="bi bi-camera-plus" style="font-size:1.8rem;color:#dc2626"></i>
+          <div style="font-weight:700;color:#0f172a">Agregar foto</div>
+          <small style="color:#94a3b8">Click o arrastra · JPG/PNG/HEIC</small>
+          <input type="file" accept="image/*" style="display:none"
+            ${bloqueada ? 'disabled' : ''}
+            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+        </label>
+
+        {# Mobile: 2 botones STACKED clarísimamente distintos #}
+        <div class="d-flex d-md-none flex-column gap-2">
+          <label style="cursor:pointer;display:flex;align-items:center;gap:10px;
+            justify-content:center;padding:13px 18px;border-radius:10px;
+            background:linear-gradient(135deg,#0a0a0a,#2a2a2a);color:#fff;
+            font-weight:700;font-size:.92rem;min-height:48px;
+            box-shadow:0 3px 8px rgba(0,0,0,.18);
+            border:1px solid #1f1f1f">
+            <i class="bi bi-camera-fill" style="font-size:1.15rem"></i>
+            <span>Tomar foto con cámara</span>
             <input type="file" accept="image/*" capture="environment" style="display:none"
               ${bloqueada ? 'disabled' : ''}
               onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
           </label>
-          <label class="tx-btn-foto" style="cursor:pointer;background:#fff;border-color:#3b82f6;color:#3b82f6">
-            <i class="bi bi-images"></i> Desde galería
+          <label style="cursor:pointer;display:flex;align-items:center;gap:10px;
+            justify-content:center;padding:13px 18px;border-radius:10px;
+            background:#fff;color:#0f172a;
+            font-weight:700;font-size:.92rem;min-height:48px;
+            border:2px solid #cbd5e1">
+            <i class="bi bi-images" style="font-size:1.15rem;color:#3b82f6"></i>
+            <span>Elegir de galería</span>
             <input type="file" accept="image/*" style="display:none"
               ${bloqueada ? 'disabled' : ''}
               onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
           </label>
+          <div style="text-align:center;font-size:.7rem;color:#94a3b8;margin-top:2px">
+            <i class="bi bi-info-circle"></i> Elegí cómo querés agregar la foto
+          </div>
         </div>
+
         <div id="t-fotos-${t.id}" class="foto-result"></div>
       </div>`;
       break;
@@ -1898,20 +2114,50 @@ function renderAdjuntoItem(a){
   const sizeMB = a.file_size_kb ? (a.file_size_kb / 1024).toFixed(1) + ' MB' : '—';
   const fecha = a.created_at ? a.created_at.split('.')[0] : '';
   const nombre = a.archivo_nombre || ('Archivo #' + a.id);
-  // Preview thumbnail para foto
+  // Preview thumbnail para foto / video
   const isImg = (tipo === 'foto' && url);
   const isVid = (tipo === 'video' && url);
+  // Thumbnail Cloudinary para video: transform on-the-fly
+  let vidThumb = '';
+  if (isVid && a.cloudinary_url){
+    // Reemplazar /video/upload/ → /video/upload/so_auto,w_240,h_180,c_fill,f_jpg/
+    try {
+      vidThumb = a.cloudinary_url.replace(
+        '/video/upload/',
+        '/video/upload/so_auto,w_240,h_180,c_fill,f_jpg/'
+      ).replace(/\.(webm|mp4|mov|mkv|avi)$/i, '.jpg');
+    } catch(e){ vidThumb = ''; }
+  }
+  // Tag visible si la descripción tiene "· [tag]"
+  let tagTxt = '';
+  if (a.descripcion){
+    const m = String(a.descripcion).match(/\[([^\]]+)\]/);
+    if (m) tagTxt = m[1];
+  }
+  const previewSlot = isImg
+    ? `<img class="adj-item-icon" src="${_escapeAttr(url)}" style="object-fit:cover" alt="">`
+    : (isVid && vidThumb
+        ? `<div class="adj-item-icon" style="position:relative;background:#000;background-image:url('${_escapeAttr(vidThumb)}');background-size:cover;background-position:center;cursor:pointer" onclick="abrirVideoModal('${_escapeAttr(url)}','${_escapeAttr(nombre)}')">
+             <i class="bi bi-play-circle-fill" style="color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.7);font-size:1.6rem;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"></i>
+           </div>`
+        : (isVid
+            ? `<div class="adj-item-icon" style="cursor:pointer;background:#0a0a0a;color:#dc2626" onclick="abrirVideoModal('${_escapeAttr(url)}','${_escapeAttr(nombre)}')"><i class="bi bi-play-circle-fill"></i></div>`
+            : `<div class="adj-item-icon"><i class="bi ${iconos[tipo] || iconos.otro}"></i></div>`)
+      );
   return `<div class="adj-item adj-${tipo}" data-id="${a.id}">
-    ${isImg ? `<img class="adj-item-icon" src="${_escapeAttr(url)}" style="object-fit:cover" alt="">`
-            : `<div class="adj-item-icon"><i class="bi ${iconos[tipo] || iconos.otro}"></i></div>`}
+    ${previewSlot}
     <div class="adj-item-info">
       <div class="adj-item-name" title="${_escapeAttr(nombre)}">${_escapeHtml(nombre)}</div>
       <div class="adj-item-meta">
         <span class="text-uppercase fw-bold" style="color:#dc2626">${_escapeHtml(tipo)}</span>
         · ${sizeMB} ${fecha ? '· ' + _escapeHtml(fecha) : ''}
+        ${tagTxt ? ` · <span style="background:#fee2e2;color:#dc2626;padding:1px 7px;border-radius:50px;font-weight:700;font-size:.7rem">${_escapeHtml(tagTxt)}</span>` : ''}
       </div>
     </div>
     <div class="adj-actions">
+      ${isVid ? `<button class="adj-btn" onclick="abrirVideoModal('${_escapeAttr(url)}','${_escapeAttr(nombre)}')" title="Reproducir">
+        <i class="bi bi-play-fill"></i>
+      </button>` : ''}
       ${url ? `<a class="adj-btn" href="${_escapeAttr(url)}" target="_blank" title="Ver / descargar">
         <i class="bi bi-eye-fill"></i>
       </a>` : ''}
@@ -1921,6 +2167,44 @@ function renderAdjuntoItem(a){
         </button>` : ''}
     </div>
   </div>`;
+}
+
+function abrirVideoModal(url, nombre){
+  // Modal sencillo overlay para reproducir el video
+  let overlay = document.getElementById('videoModalOverlay');
+  if (!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'videoModalOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,10,.92);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(4px)';
+    overlay.onclick = (e) => { if (e.target === overlay) cerrarVideoModal(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div style="max-width:980px;width:100%;background:#000;border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6);position:relative">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#0a0a0a;color:#fff">
+        <div style="font-weight:700;font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <i class="bi bi-camera-video-fill" style="color:#dc2626"></i>
+          ${_escapeHtml(nombre || 'Video')}
+        </div>
+        <button onclick="cerrarVideoModal()" style="background:transparent;border:none;color:#cbd5e1;font-size:1.4rem;line-height:1;cursor:pointer;padding:4px 8px">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+      <video src="${_escapeAttr(url)}" controls autoplay playsinline
+             style="width:100%;max-height:75vh;display:block;background:#000"></video>
+      <div style="padding:10px 16px;background:#0a0a0a;display:flex;gap:8px;justify-content:flex-end">
+        <a href="${_escapeAttr(url)}" download class="btn btn-sm" style="background:#fff;color:#0a0a0a;font-weight:700">
+          <i class="bi bi-download"></i> Descargar
+        </a>
+      </div>
+    </div>
+  `;
+  overlay.style.display = 'flex';
+}
+
+function cerrarVideoModal(){
+  const overlay = document.getElementById('videoModalOverlay');
+  if (overlay){ overlay.style.display = 'none'; overlay.innerHTML = ''; }
 }
 
 function initAdjuntosDragDrop(){
@@ -2037,6 +2321,396 @@ async function eliminarAdjunto(aid){
     }
   } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  GRABADOR DE VIDEO IN-APP (Feature 2 — 2026-05-17)
+//  MediaRecorder API + Cloudinary backend.
+//  Soporta: Chrome/Edge/Firefox (WebM/VP9), Safari iOS 15+ (MP4/H.264).
+//  Detección de codec con MediaRecorder.isTypeSupported.
+//  Tags creativos opcionales para etiquetar la evidencia.
+// ════════════════════════════════════════════════════════════════════
+let _grabStream = null;
+let _grabRecorder = null;
+let _grabChunks = [];
+let _grabBlob = null;
+let _grabBlobMime = '';
+let _grabTagSelected = null;
+let _grabTimerInterval = null;
+let _grabStartMs = 0;
+let _grabPausedMs = 0;     // tiempo acumulado pausado
+let _grabPauseAt = 0;
+
+function _grabPickMime(){
+  // Orden de preferencia. iOS Safari 15+ soporta MP4/H.264 nativo.
+  const candidates = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
+  ];
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const m of candidates){
+    try {
+      if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+    } catch(e){ /* ignore */ }
+  }
+  // Último recurso: vacío (deja al navegador elegir)
+  return '';
+}
+
+function _grabCalidadConstraints(quality){
+  // Mapa de calidad → constraints de video
+  const base = { audio: true, video: { facingMode: { ideal: 'environment' } } };
+  if (quality === '1080'){ base.video.width = { ideal: 1920 }; base.video.height = { ideal: 1080 }; }
+  else if (quality === '720'){ base.video.width = { ideal: 1280 }; base.video.height = { ideal: 720 }; }
+  else if (quality === '480'){ base.video.width = { ideal: 854 };  base.video.height = { ideal: 480 }; }
+  // 'auto' deja al navegador decidir
+  return base;
+}
+
+async function abrirGrabador(){
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion'){
+    ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
+    return;
+  }
+  if (typeof MediaRecorder === 'undefined' ||
+      !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    await ilusAlert({
+      title: 'Navegador no compatible',
+      message: 'Tu navegador no soporta grabación de video in-app. Probá Chrome, Edge, Firefox o Safari 15+.',
+      type: 'warning',
+    });
+    return;
+  }
+  document.getElementById('grabadorBox').style.display = 'block';
+  _grabSetEstado('listo');
+  _grabResetUI();
+  // Detectar cámaras múltiples
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const cams = devs.filter(d => d.kind === 'videoinput');
+    if (cams.length >= 2){
+      document.getElementById('grabCamSelect').style.display = '';
+    }
+  } catch(e){ /* ignore */ }
+  // Iniciar preview ya (sin grabar)
+  try {
+    await _grabAbrirStream();
+  } catch(e){
+    await ilusAlert({
+      title: 'No se pudo acceder a la cámara',
+      message: 'Verificá los permisos del sitio (cámara y micrófono).',
+      sub: e && e.message ? e.message : '',
+      type: 'error',
+    });
+    cerrarGrabador();
+  }
+}
+
+async function _grabAbrirStream(){
+  const calidad = document.getElementById('grabCalidad').value || 'auto';
+  const camSel = document.getElementById('grabCamSelect');
+  const constraints = _grabCalidadConstraints(calidad);
+  if (camSel && camSel.value){
+    constraints.video.facingMode = { ideal: camSel.value };
+  }
+  _grabCerrarStream();
+  _grabStream = await navigator.mediaDevices.getUserMedia(constraints);
+  const v = document.getElementById('grabVideoPreview');
+  v.srcObject = _grabStream;
+  v.muted = true;
+  v.play().catch(()=>{});
+}
+
+function _grabCerrarStream(){
+  try {
+    if (_grabStream){
+      _grabStream.getTracks().forEach(t => t.stop());
+    }
+  } catch(e){}
+  _grabStream = null;
+}
+
+function cerrarGrabador(){
+  _grabStopTimer();
+  if (_grabRecorder && _grabRecorder.state !== 'inactive'){
+    try { _grabRecorder.stop(); } catch(e){}
+  }
+  _grabCerrarStream();
+  // FIX REVIEWER G4 — Revocar ObjectURL del playback antes de cerrar.
+  // Sin esto, cada grabación filtra ~50-100MB de memoria del browser.
+  try {
+    const pb = document.getElementById('grabVideoPlayback');
+    if (pb && pb.src && pb.src.startsWith('blob:')){
+      URL.revokeObjectURL(pb.src);
+      pb.removeAttribute('src');
+    }
+  } catch(e){}
+  _grabRecorder = null;
+  _grabChunks = [];
+  _grabBlob = null;
+  _grabTagSelected = null;
+  document.getElementById('grabadorBox').style.display = 'none';
+  _grabResetUI();
+}
+
+function _grabResetUI(){
+  document.getElementById('grabVideoPreview').style.display = '';
+  const pb = document.getElementById('grabVideoPlayback');
+  pb.style.display = 'none';
+  pb.removeAttribute('src');
+  document.getElementById('grabRecDot').style.display = 'none';
+  document.getElementById('grabTimer').style.display = 'none';
+  document.getElementById('grabTimer').textContent = '00:00';
+  document.getElementById('grabTagOverlay').style.display = 'none';
+  document.getElementById('grabUploadWrap').style.display = 'none';
+  document.getElementById('grabUploadBar').style.width = '0%';
+  document.querySelectorAll('#grabTagsBar .grab-tag-pill').forEach(t => t.classList.remove('selected'));
+  _grabSetEstado('listo');
+}
+
+function _grabSetEstado(est){
+  // 'listo' | 'grabando' | 'pausado' | 'revision' | 'subiendo'
+  const inicio = document.getElementById('grabPanelInicio');
+  const grabando = document.getElementById('grabPanelGrabando');
+  const revision = document.getElementById('grabPanelRevision');
+  const txt = document.getElementById('grabEstadoTxt');
+  const configBar = document.getElementById('grabConfigBar');
+  inicio.style.display = (est === 'listo') ? 'flex' : 'none';
+  grabando.style.display = (est === 'grabando' || est === 'pausado') ? 'flex' : 'none';
+  revision.style.display = (est === 'revision') ? 'flex' : 'none';
+  configBar.style.display = (est === 'listo') ? 'flex' : 'none';
+  const map = {
+    listo: 'Listo para grabar',
+    grabando: 'Grabando…',
+    pausado: 'Grabación pausada',
+    revision: 'Revisión — listo para subir',
+    subiendo: 'Subiendo…',
+  };
+  if (txt) txt.textContent = map[est] || '';
+  // Botón pausa: cambiar texto
+  const btnPause = document.getElementById('btnGrabarPause');
+  if (btnPause){
+    if (est === 'pausado'){
+      btnPause.innerHTML = '<i class="bi bi-play-fill"></i> Reanudar';
+    } else {
+      btnPause.innerHTML = '<i class="bi bi-pause-fill"></i> Pausar';
+    }
+  }
+}
+
+function selTag(el){
+  document.querySelectorAll('#grabTagsBar .grab-tag-pill').forEach(t => {
+    if (t !== el) t.classList.remove('selected');
+  });
+  if (el.classList.contains('selected')){
+    el.classList.remove('selected');
+    _grabTagSelected = null;
+    document.getElementById('grabTagOverlay').style.display = 'none';
+  } else {
+    el.classList.add('selected');
+    _grabTagSelected = el.dataset.tag;
+    const ov = document.getElementById('grabTagOverlay');
+    ov.textContent = _grabTagSelected;
+    ov.style.display = '';
+  }
+}
+
+async function grabIniciar(){
+  if (!_grabStream){
+    try { await _grabAbrirStream(); }
+    catch(e){
+      ilusToast('No se pudo abrir la cámara', { type:'error' });
+      return;
+    }
+  }
+  const mime = _grabPickMime();
+  _grabChunks = [];
+  _grabBlob = null;
+  _grabBlobMime = mime || (/(iPhone|iPad|iPod)/i.test(navigator.userAgent) ? 'video/mp4' : 'video/webm');
+  try {
+    const opts = mime ? { mimeType: mime } : {};
+    _grabRecorder = new MediaRecorder(_grabStream, opts);
+  } catch(e){
+    // Fallback sin opciones
+    try { _grabRecorder = new MediaRecorder(_grabStream); }
+    catch(e2){
+      await ilusAlert({
+        title: 'No se pudo iniciar la grabación',
+        message: 'MediaRecorder no está disponible en este navegador.',
+        type: 'error',
+      });
+      return;
+    }
+  }
+  _grabRecorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) _grabChunks.push(ev.data);
+  };
+  _grabRecorder.onstop = () => {
+    // Concatenar y mostrar playback
+    const blob = new Blob(_grabChunks, { type: _grabBlobMime });
+    _grabBlob = blob;
+    const pb = document.getElementById('grabVideoPlayback');
+    document.getElementById('grabVideoPreview').style.display = 'none';
+    pb.style.display = '';
+    pb.src = URL.createObjectURL(blob);
+    pb.load();
+    _grabStopTimer();
+    document.getElementById('grabRecDot').style.display = 'none';
+    _grabSetEstado('revision');
+  };
+  _grabRecorder.start(1000); // chunks cada 1s
+  _grabStartTimer();
+  document.getElementById('grabRecDot').style.display = '';
+  document.getElementById('grabTimer').style.display = '';
+  _grabSetEstado('grabando');
+}
+
+function grabPausarReanudar(){
+  if (!_grabRecorder) return;
+  if (_grabRecorder.state === 'recording'){
+    try {
+      _grabRecorder.pause();
+      _grabPauseAt = Date.now();
+      _grabSetEstado('pausado');
+    } catch(e){}
+  } else if (_grabRecorder.state === 'paused'){
+    try {
+      _grabRecorder.resume();
+      _grabPausedMs += (Date.now() - _grabPauseAt);
+      _grabPauseAt = 0;
+      _grabSetEstado('grabando');
+    } catch(e){}
+  }
+}
+
+function grabDetener(){
+  if (!_grabRecorder) return;
+  try {
+    if (_grabRecorder.state !== 'inactive') _grabRecorder.stop();
+  } catch(e){}
+}
+
+function grabCancelar(){
+  if (_grabRecorder && _grabRecorder.state !== 'inactive'){
+    try { _grabRecorder.stop(); } catch(e){}
+  }
+  _grabChunks = [];
+  _grabBlob = null;
+  _grabStopTimer();
+  document.getElementById('grabRecDot').style.display = 'none';
+  document.getElementById('grabTimer').style.display = 'none';
+  document.getElementById('grabTimer').textContent = '00:00';
+  // Reset stream visible
+  document.getElementById('grabVideoPlayback').style.display = 'none';
+  document.getElementById('grabVideoPreview').style.display = '';
+  _grabSetEstado('listo');
+}
+
+function grabRehacer(){
+  _grabBlob = null;
+  _grabChunks = [];
+  const pb = document.getElementById('grabVideoPlayback');
+  pb.style.display = 'none';
+  try { URL.revokeObjectURL(pb.src); } catch(e){}
+  pb.removeAttribute('src');
+  document.getElementById('grabVideoPreview').style.display = '';
+  // Reabrir stream
+  _grabAbrirStream().catch(()=>{
+    ilusToast('No se pudo reabrir la cámara', { type:'error' });
+  });
+  _grabSetEstado('listo');
+}
+
+function _grabStartTimer(){
+  _grabStartMs = Date.now();
+  _grabPausedMs = 0;
+  _grabPauseAt = 0;
+  if (_grabTimerInterval) clearInterval(_grabTimerInterval);
+  _grabTimerInterval = setInterval(() => {
+    let elapsed = Date.now() - _grabStartMs - _grabPausedMs;
+    if (_grabPauseAt) elapsed -= (Date.now() - _grabPauseAt);
+    const sec = Math.max(0, Math.floor(elapsed / 1000));
+    const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+    const ss = String(sec % 60).padStart(2, '0');
+    document.getElementById('grabTimer').textContent = mm + ':' + ss;
+  }, 500);
+}
+
+function _grabStopTimer(){
+  if (_grabTimerInterval) clearInterval(_grabTimerInterval);
+  _grabTimerInterval = null;
+}
+
+async function grabSubir(){
+  if (!_grabBlob){
+    ilusToast('No hay video grabado', { type:'warning' });
+    return;
+  }
+  if (_grabBlob.size > 100 * 1024 * 1024){
+    await ilusAlert({
+      title: 'Video demasiado grande',
+      message: `El video pesa ${(_grabBlob.size/(1024*1024)).toFixed(1)} MB. Máximo: 100 MB.`,
+      sub: 'Probá una calidad más baja o una grabación más corta.',
+      type: 'warning',
+    });
+    return;
+  }
+  _grabSetEstado('subiendo');
+  document.getElementById('grabUploadWrap').style.display = '';
+  const bar = document.getElementById('grabUploadBar');
+  const txt = document.getElementById('grabUploadTxt');
+  bar.style.width = '5%';
+  txt.textContent = 'Subiendo… 0%';
+  // Calcular duración aproximada
+  const durSec = Math.floor((Date.now() - _grabStartMs - _grabPausedMs) / 1000);
+  const ext = (_grabBlobMime.indexOf('mp4') >= 0) ? 'mp4' : 'webm';
+  const fname = `grabacion_v${VID}_${Date.now()}.${ext}`;
+  const fd = new FormData();
+  fd.append('video', _grabBlob, fname);
+  if (_grabTagSelected) fd.append('tag', _grabTagSelected);
+  if (durSec > 0) fd.append('duration_sec', String(durSec));
+  try {
+    const d = await _uploadConProgreso(
+      `/mantenciones/api/visitas/${VID}/grabacion`,
+      fd,
+      (pct) => {
+        bar.style.width = Math.max(5, pct) + '%';
+        txt.textContent = 'Subiendo… ' + Math.round(pct) + '%';
+      }
+    );
+    if (d.ok){
+      bar.style.width = '100%';
+      txt.textContent = '✓ Listo';
+      ilusToast('✓ Video subido a la OT', { type:'success' });
+      cargarAdjuntos();
+      setTimeout(() => cerrarGrabador(), 800);
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+      _grabSetEstado('revision');
+    }
+  } catch(e){
+    ilusToast('Error de red al subir', { type:'error' });
+    _grabSetEstado('revision');
+  }
+}
+
+// Cuando cambia calidad o cámara y aún no grabaste, reabrir stream
+document.addEventListener('DOMContentLoaded', function(){
+  const calSel = document.getElementById('grabCalidad');
+  const camSel = document.getElementById('grabCamSelect');
+  if (calSel) calSel.addEventListener('change', () => {
+    if (_grabRecorder && _grabRecorder.state !== 'inactive') return;
+    if (document.getElementById('grabadorBox').style.display === 'none') return;
+    _grabAbrirStream().catch(()=>{});
+  });
+  if (camSel) camSel.addEventListener('change', () => {
+    if (_grabRecorder && _grabRecorder.state !== 'inactive') return;
+    if (document.getElementById('grabadorBox').style.display === 'none') return;
+    _grabAbrirStream().catch(()=>{});
+  });
+});
 
 // ════════════════════════════════════════════════════════
 //  HELPERS

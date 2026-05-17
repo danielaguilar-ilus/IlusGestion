@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Activá tu cuenta — ILUS{% endblock %}
+{% block content %}
+<style>
+  .rte-wrap{max-width:520px;margin:30px auto;padding:0 14px}
+  .rte-hero{
+    background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 30%,#7c1d1d 65%,#dc2626 100%);
+    color:#fff;border-radius:16px;padding:26px 22px 22px;margin-bottom:14px;
+    box-shadow:0 8px 22px rgba(0,0,0,.22);position:relative;overflow:hidden;
+  }
+  .rte-hero::before{
+    content:'';position:absolute;top:-20px;right:-15px;width:170px;height:170px;
+    background:url('/static/favicon_192.png') center/contain no-repeat;
+    opacity:.10;transform:rotate(8deg);pointer-events:none;
+  }
+  .rte-tag{display:inline-block;font-size:.62rem;letter-spacing:.18em;
+    text-transform:uppercase;color:#fca5a5;font-weight:800;margin-bottom:6px}
+  .rte-hero h2{font-size:1.55rem;font-weight:900;margin:0 0 5px;letter-spacing:-.5px;line-height:1.15}
+  .rte-hero .razon{font-weight:700;font-size:1rem;margin-top:6px;opacity:.95}
+  .rte-card{background:#fff;border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.06);
+    padding:22px;border:1px solid #e5e7eb}
+  .rte-card label{font-weight:700;font-size:.84rem;color:#374151;display:block;margin:14px 0 5px}
+  .rte-card input{
+    width:100%;padding:11px 13px;border:1.5px solid #cbd5e1;border-radius:9px;
+    font-size:16px;min-height:46px;
+  }
+  .rte-card input:focus{border-color:#dc2626;outline:none;box-shadow:0 0 0 3px rgba(220,38,38,.1)}
+  .rte-card .hint{font-size:.74rem;color:#94a3b8;margin-top:3px}
+  .rte-btn{
+    width:100%;padding:14px;background:linear-gradient(135deg,#dc2626,#b91c1c);
+    color:#fff;border:0;border-radius:11px;font-weight:800;font-size:1rem;
+    cursor:pointer;margin-top:18px;min-height:50px;
+    box-shadow:0 4px 14px rgba(220,38,38,.25);
+  }
+  .rte-btn:hover{background:linear-gradient(135deg,#b91c1c,#991b1b)}
+  .rte-info-card{
+    background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;
+    padding:11px 14px;margin-bottom:14px;font-size:.85rem;color:#475569;
+  }
+  .rte-info-card strong{color:#0f172a}
+</style>
+
+<div class="rte-wrap">
+  <div class="rte-hero">
+    <div class="rte-tag">ILUS · Mantenciones</div>
+    <h2><i class="bi bi-person-check-fill me-2"></i>Activá tu cuenta</h2>
+    <div class="razon">{{ inv.razon_social }}</div>
+  </div>
+
+  <div class="rte-card">
+    <div class="rte-info-card">
+      <i class="bi bi-info-circle-fill text-danger me-1"></i>
+      Hola <strong>{{ inv.contacto_nombre }}</strong>, te damos la bienvenida a la
+      red de técnicos ILUS. Configura tu usuario y contraseña para empezar.
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat if cat in ['success','warning','danger','info'] else 'info' }} py-2 small">
+          {{ msg }}
+        </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="post" autocomplete="off">
+      <input type="hidden" name="token" value="{{ token }}">
+
+      <label for="rte_nombre">Tu nombre completo</label>
+      <input type="text" id="rte_nombre" name="nombre" required maxlength="200"
+             value="{{ inv.contacto_nombre or '' }}" placeholder="Ej: Juan Pérez">
+
+      <label for="rte_username">Usuario</label>
+      <input type="text" id="rte_username" name="username" required
+             pattern="^[a-z0-9._-]{3,30}$" minlength="3" maxlength="30"
+             placeholder="ej: juan.perez" autocomplete="username">
+      <div class="hint">3-30 caracteres · letras minúsculas, números, punto o guión</div>
+
+      <label for="rte_password">Contraseña</label>
+      <input type="password" id="rte_password" name="password" required
+             minlength="8" placeholder="Mínimo 8 caracteres" autocomplete="new-password">
+
+      <label for="rte_password2">Confirmar contraseña</label>
+      <input type="password" id="rte_password2" name="password2" required
+             minlength="8" placeholder="Vuelve a escribirla" autocomplete="new-password">
+
+      <button type="submit" class="rte-btn">
+        <i class="bi bi-check-circle-fill me-1"></i>Crear cuenta y entrar
+      </button>
+    </form>
+
+    <div class="text-center mt-3" style="font-size:.78rem;color:#94a3b8">
+      ¿Tenés problemas? Contactá al administrador que te invitó.
+    </div>
+  </div>
+</div>
+
+<script>
+// Validación cliente: contraseñas iguales antes de submit
+document.querySelector('form').addEventListener('submit', function(e){
+  const p1 = document.getElementById('rte_password').value;
+  const p2 = document.getElementById('rte_password2').value;
+  if (p1 !== p2){
+    e.preventDefault();
+    ilusToast('Las contraseñas no coinciden', { type:'warning' });
+  }
+});
+</script>
+{% endblock %}

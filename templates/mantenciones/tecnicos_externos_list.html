@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% block title %}Técnicos externos — Mantenciones ILUS{% endblock %}
+{% block content %}
+<style>
+/* ══ Header negro estandarizado ══════════════════════════════════════ */
+.mod-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);
+  color:#fff;border-radius:14px;padding:22px 26px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 18px rgba(0,0,0,.18);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+}
+.mod-hero h4{margin:0;font-weight:800;font-size:1.45rem}
+.mod-hero h4 i{color:var(--ilus-red)}
+.mod-hero .mod-sub{color:#cbd5e1;font-size:.85rem;margin-top:4px;letter-spacing:.01em}
+
+/* ══ KPI cards ═══════════════════════════════════════════════════════ */
+.kpi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:16px 18px;display:flex;align-items:center;gap:14px;height:100%;
+  transition:box-shadow .15s,transform .15s;
+}
+.kpi-card:hover{box-shadow:0 6px 20px rgba(0,0,0,.07);transform:translateY(-1px)}
+.kpi-icon{
+  width:46px;height:46px;border-radius:12px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.3rem;
+}
+.kpi-lbl{font-size:.64rem;font-weight:800;text-transform:uppercase;
+         letter-spacing:.08em;color:#9ca3af;margin-bottom:3px}
+.kpi-num{font-size:1.85rem;font-weight:800;color:#0a0a0a;line-height:1}
+
+/* ══ Tech card (premium) ═════════════════════════════════════════════ */
+.tx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.tx-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px;
+  display:flex;flex-direction:column;gap:12px;position:relative;
+  transition:box-shadow .18s,transform .15s,border-color .15s;
+  min-height:240px;
+}
+.tx-card:hover{
+  box-shadow:0 10px 28px rgba(0,0,0,.08);border-color:#d1d5db;
+  transform:translateY(-2px);
+}
+.tx-card.estado-suspendido{background:#fff8e1;border-color:#fcd34d}
+.tx-card.estado-baja{background:#f9fafb;border-color:#e5e7eb;opacity:.7}
+.tx-card.estado-baja::after{
+  content:"De baja";position:absolute;top:14px;right:14px;
+  background:#0a0a0a;color:#fff;font-size:.62rem;font-weight:800;
+  padding:4px 10px;border-radius:50px;letter-spacing:.05em;text-transform:uppercase;
+}
+
+.tx-head{display:flex;align-items:center;gap:14px}
+.tx-avatar{
+  width:62px;height:62px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:1.4rem;color:#fff;
+  background:linear-gradient(135deg,#dc2626 0%,#9b1c1c 100%);
+  background-size:cover;background-position:center;
+  box-shadow:0 4px 14px rgba(220,38,38,.25);
+  text-shadow:0 2px 6px rgba(0,0,0,.25);
+}
+.tx-avatar.has-img{background-image:var(--ax-img);background-color:#f3f4f6;color:transparent}
+.tx-info{flex:1;min-width:0}
+.tx-razon{font-weight:800;font-size:1rem;color:#0a0a0a;line-height:1.25;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-giro{font-size:.76rem;color:#6b7280;margin-top:2px;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.tx-pills{display:flex;flex-wrap:wrap;gap:6px}
+.tx-pill{
+  display:inline-flex;align-items:center;gap:4px;
+  background:#f3f4f6;color:#374151;border-radius:50px;
+  padding:3px 10px;font-size:.7rem;font-weight:600;
+  border:1px solid transparent;
+}
+.tx-pill.primary{background:#fee2e2;color:#dc2626;border-color:#fecaca}
+.tx-pill.info{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+
+.tx-meta-row{display:flex;align-items:center;gap:14px;font-size:.78rem;color:#4b5563}
+.tx-rating{display:inline-flex;align-items:center;gap:3px;font-weight:700}
+.tx-rating .stars{color:#f59e0b;letter-spacing:1px}
+.tx-rating .nostars{color:#d1d5db;letter-spacing:1px}
+.tx-trabajos{color:#16a34a;font-weight:700}
+
+.tx-status-dot{
+  display:inline-block;width:8px;height:8px;border-radius:50%;
+  margin-right:5px;background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.18);
+}
+.tx-status-dot.suspendido{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2)}
+.tx-status-dot.baja{background:#6b7280;box-shadow:none}
+
+.tx-actions{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap}
+.tx-btn{
+  flex:1;min-width:0;min-height:44px;padding:9px 12px;border-radius:10px;
+  border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-size:.78rem;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  transition:all .15s;text-decoration:none;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tx-btn:hover{background:#f9fafb;border-color:#d1d5db;color:#111827}
+.tx-btn.primary{background:#dc2626;color:#fff;border-color:#dc2626}
+.tx-btn.primary:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.tx-btn.success{background:#16a34a;color:#fff;border-color:#16a34a}
+.tx-btn.success:hover{background:#15803d;color:#fff}
+.tx-btn.icon{flex:0 0 44px;min-width:44px;padding:0}
+
+/* ══ Filter bar ══════════════════════════════════════════════════════ */
+.filter-bar{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:14px 16px;margin-bottom:14px;
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+}
+.filter-bar input{flex:1;min-width:180px;border:1.5px solid #e5e7eb;border-radius:10px;
+                  padding:10px 14px;font-size:.9rem;min-height:44px}
+.filter-bar input:focus{outline:none;border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.08)}
+.filter-chips{display:flex;gap:6px;flex-wrap:wrap}
+.filter-chip{
+  padding:8px 14px;border-radius:50px;background:#f3f4f6;color:#374151;
+  border:1.5px solid transparent;font-weight:600;font-size:.78rem;cursor:pointer;
+  transition:all .15s;min-height:38px;display:inline-flex;align-items:center;
+}
+.filter-chip.active{background:#dc2626;color:#fff;border-color:#dc2626;
+                    box-shadow:0 2px 8px rgba(220,38,38,.18)}
+.filter-chip:hover:not(.active){background:#e5e7eb;color:#0a0a0a}
+
+/* ══ Empty state ═════════════════════════════════════════════════════ */
+.empty-state{
+  text-align:center;padding:48px 18px;background:#fff;border-radius:14px;
+  border:2px dashed #e5e7eb;color:#6b7280;
+}
+.empty-state i{font-size:2.6rem;color:#d1d5db;display:block;margin-bottom:12px}
+.empty-state .title{font-size:1.1rem;font-weight:700;color:#0a0a0a;margin-bottom:6px}
+
+/* ══ Mobile ══════════════════════════════════════════════════════════ */
+@media(max-width:640px){
+  .tx-grid{grid-template-columns:1fr;gap:10px}
+  .mod-hero h4{font-size:1.18rem}
+  .tx-card{padding:14px}
+  .tx-avatar{width:54px;height:54px;font-size:1.2rem}
+}
+</style>
+
+{# ════ HEADER ════════════════════════════════════════════════════════════ #}
+<div class="mod-hero">
+  <div>
+    <h4><i class="bi bi-building-fill-gear me-2"></i>Técnicos externos</h4>
+    <div class="mod-sub">Empresas y contratistas tercerizados · gestión comercial completa</div>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-arrow-left me-1"></i>Mantenciones
+    </a>
+    <a href="{{ url_for('mant_tecnico_externo_wizard') }}" class="btn btn-ilus fw-bold px-3"
+       style="min-height:44px;display:inline-flex;align-items:center">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo técnico externo
+    </a>
+  </div>
+</div>
+
+{# ════ KPIs ═════════════════════════════════════════════════════════════ #}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#e0e7ff;color:#4338ca"><i class="bi bi-buildings"></i></div>
+      <div>
+        <div class="kpi-lbl">Total</div>
+        <div class="kpi-num">{{ kpi_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Activos</div>
+        <div class="kpi-num">{{ kpi_activos }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#fff8e1;color:#f59e0b"><i class="bi bi-pause-circle-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Suspendidos</div>
+        <div class="kpi-num">{{ kpi_suspendidos }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-key-fill"></i></div>
+      <div>
+        <div class="kpi-lbl">Con acceso app</div>
+        <div class="kpi-num">{{ kpi_con_acceso }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════ FILTER BAR ═══════════════════════════════════════════════════════ #}
+<div class="filter-bar">
+  <input type="text" id="txSearch" placeholder="Buscar por razón social, RUT, contacto o especialidad…"
+         autocomplete="off">
+  <div class="filter-chips" id="estadoFilters">
+    <button class="filter-chip active" data-estado="todos">
+      <i class="bi bi-grid-3x3-gap-fill me-1"></i>Todos
+    </button>
+    <button class="filter-chip" data-estado="activo">
+      <i class="bi bi-check-circle me-1"></i>Activos
+    </button>
+    <button class="filter-chip" data-estado="suspendido">
+      <i class="bi bi-pause-circle me-1"></i>Suspendidos
+    </button>
+    <button class="filter-chip" data-estado="baja">
+      <i class="bi bi-x-circle me-1"></i>De baja
+    </button>
+  </div>
+</div>
+
+{# ════ GRID DE CARDS ════════════════════════════════════════════════════ #}
+{% if tecnicos %}
+<div class="tx-grid" id="txGrid">
+  {% for t in tecnicos %}
+  <div class="tx-card estado-{{ t.estado }}"
+       data-estado="{{ t.estado }}"
+       data-search="{{ ((t.razon_social or '') ~ ' ' ~ (t.rut_empresa or '') ~ ' ' ~ (t.contacto_nombre or '') ~ ' ' ~ (t.contacto_email or '') ~ ' ' ~ ((t.especialidades or [])|join(' '))) | lower }}">
+    <div class="tx-head">
+      {% set initial = (t.razon_social or 'X')[0]|upper %}
+      {# FIX 2026-05-17 BLOCKER #2 — usar <img> en lugar de CSS background-image
+         para que Jinja autoescape sanitize el atributo src (no aplica para CSS). #}
+      <div class="tx-avatar{% if t.foto_url %} has-img{% endif %}">
+        {% if t.foto_url and t.foto_url.startswith('https://res.cloudinary.com/') %}
+          <img src="{{ t.foto_url }}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
+        {% else %}{{ initial }}{% endif %}
+      </div>
+      <div class="tx-info">
+        <div class="tx-razon" title="{{ t.razon_social }}">{{ t.razon_social or '—' }}</div>
+        <div class="tx-giro" title="{{ t.giro or '' }}">
+          {% if t.rut_empresa %}<i class="bi bi-card-text"></i> {{ t.rut_empresa | rut_fmt }}{% endif %}
+          {% if t.giro %} · {{ t.giro }}{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Especialidades como pills #}
+    {% if t.especialidades %}
+    <div class="tx-pills">
+      {% for esp in t.especialidades[:4] %}
+      <span class="tx-pill primary">{{ esp }}</span>
+      {% endfor %}
+      {% if t.especialidades|length > 4 %}
+      <span class="tx-pill">+{{ t.especialidades|length - 4 }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# Rating + trabajos #}
+    <div class="tx-meta-row">
+      <span class="tx-rating">
+        {% set r = (t.calificacion_promedio or 0)|round(0, 'floor')|int %}
+        <span class="{% if r > 0 %}stars{% else %}nostars{% endif %}">
+          {% for i in range(5) %}{% if i < r %}★{% else %}☆{% endif %}{% endfor %}
+        </span>
+        <small class="text-muted ms-1">{{ t.calificacion_promedio or '—' }}</small>
+      </span>
+      <span class="tx-trabajos">
+        <i class="bi bi-tools"></i> {{ t.trabajos_completados or 0 }} OT
+      </span>
+      <span>
+        <span class="tx-status-dot {{ t.estado }}"></span>
+        <small class="text-uppercase fw-bold" style="font-size:.66rem;letter-spacing:.06em;color:#6b7280">
+          {{ t.estado }}
+        </small>
+      </span>
+    </div>
+
+    {# Acciones #}
+    <div class="tx-actions">
+      <a class="tx-btn primary" href="{{ url_for('mant_tecnico_externo_ficha', eid=t.id) }}">
+        <i class="bi bi-eye-fill"></i>Ver ficha
+      </a>
+      {% if t.contacto_tel %}
+      <a class="tx-btn success icon"
+         href="https://wa.me/{{ t.contacto_tel|replace(' ','')|replace('+','')|replace('-','') }}"
+         target="_blank" rel="noopener" title="WhatsApp">
+        <i class="bi bi-whatsapp"></i>
+      </a>
+      <a class="tx-btn icon" href="tel:{{ t.contacto_tel }}" title="Llamar">
+        <i class="bi bi-telephone-fill"></i>
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <i class="bi bi-buildings"></i>
+  <div class="title">Aún no hay técnicos externos</div>
+  <div class="small">Agregá tu primer contratista para empezar a asignar OTs.</div>
+  <a class="btn btn-ilus mt-3 fw-bold" href="{{ url_for('mant_tecnico_externo_wizard') }}"
+     style="min-height:44px;display:inline-flex;align-items:center;padding:0 22px">
+    <i class="bi bi-plus-lg me-1"></i>Crear el primero
+  </a>
+</div>
+{% endif %}
+
+<script>
+(function(){
+  const inp = document.getElementById('txSearch');
+  const chips = document.querySelectorAll('#estadoFilters .filter-chip');
+  let estadoSel = 'todos';
+
+  function aplicarFiltros(){
+    const q = (inp.value || '').trim().toLowerCase();
+    const cards = document.querySelectorAll('#txGrid .tx-card');
+    let visibles = 0;
+    cards.forEach(c => {
+      const est = c.dataset.estado;
+      const txt = c.dataset.search || '';
+      const okEstado = (estadoSel === 'todos' || est === estadoSel);
+      const okSearch = (!q || txt.indexOf(q) >= 0);
+      const show = okEstado && okSearch;
+      c.style.display = show ? '' : 'none';
+      if (show) visibles++;
+    });
+  }
+  if (inp) inp.addEventListener('input', aplicarFiltros);
+  chips.forEach(ch => ch.addEventListener('click', () => {
+    chips.forEach(c => c.classList.remove('active'));
+    ch.classList.add('active');
+    estadoSel = ch.dataset.estado;
+    aplicarFiltros();
+  }));
+})();
+</script>
+{% endblock %}

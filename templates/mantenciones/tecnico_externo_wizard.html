@@ -1,0 +1,760 @@
+{% extends "base.html" %}
+{% block title %}Nuevo técnico externo — Wizard{% endblock %}
+{% block content %}
+<style>
+/* ══ Layout general ══════════════════════════════════════════════════════ */
+.wz-shell{max-width:880px;margin:0 auto;padding:8px 4px 28px}
+.wz-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);
+  color:#fff;border-radius:14px;padding:22px 26px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 18px rgba(0,0,0,.18);
+}
+.wz-hero h4{margin:0;font-weight:800;font-size:1.4rem}
+.wz-hero h4 i{color:var(--ilus-red)}
+.wz-hero .sub{color:#cbd5e1;font-size:.86rem;margin-top:4px}
+
+/* ══ Progress bar — moderno ═══════════════════════════════════════════════ */
+.wz-prog{display:flex;align-items:center;margin-bottom:24px;padding:0 6px}
+.wz-step-pip{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;z-index:1}
+.wz-circle{
+  width:42px;height:42px;border-radius:50%;border:2px solid #e5e7eb;
+  background:#fff;display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:.95rem;color:#9ca3af;transition:all .3s;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
+}
+.wz-step-pip.done .wz-circle{background:#16a34a;border-color:#16a34a;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.25)}
+.wz-step-pip.active .wz-circle{
+  background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
+  transform:scale(1.1);box-shadow:0 0 0 5px rgba(220,38,38,.16),0 4px 12px rgba(220,38,38,.3);
+}
+.wz-step-lbl{font-size:.66rem;color:#9ca3af;margin-top:6px;font-weight:700;text-align:center;
+             text-transform:uppercase;letter-spacing:.05em}
+.wz-step-pip.active .wz-step-lbl{color:var(--ilus-red)}
+.wz-step-pip.done .wz-step-lbl{color:#16a34a}
+.wz-line{flex:1;height:3px;background:#e5e7eb;margin-top:-18px;border-radius:2px;transition:background .3s}
+.wz-line.done{background:#16a34a}
+
+/* ══ Card del paso ═══════════════════════════════════════════════════════ */
+.wz-card{
+  background:#fff;border-radius:18px;
+  box-shadow:0 8px 30px rgba(0,0,0,.06);
+  border:1px solid #f3f4f6;padding:28px 30px;
+  position:relative;overflow:hidden;
+}
+.wz-card::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#dc2626 0%,#fbbf24 50%,#16a34a 100%);
+  opacity:.0;transition:opacity .3s;
+}
+.wz-card.has-stripe::before{opacity:1}
+.wz-step{display:none}
+.wz-step.active{display:block;animation:fadeSlide .35s ease}
+@keyframes fadeSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.wz-step h5{
+  display:flex;align-items:center;gap:10px;
+  font-size:1.18rem;font-weight:800;color:#0a0a0a;margin:0 0 6px;
+}
+.wz-step h5 i{color:var(--ilus-red);font-size:1.3rem}
+.wz-step .step-hint{color:#6b7280;font-size:.88rem;margin-bottom:22px;line-height:1.5}
+
+/* ══ Inputs / labels ═════════════════════════════════════════════════════ */
+.wz-field{margin-bottom:16px}
+.wz-field label{font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;display:block;letter-spacing:.01em}
+.wz-field label .req{color:#dc2626;margin-left:3px}
+.wz-input{
+  width:100%;border:1.8px solid #e5e7eb;border-radius:11px;
+  padding:11px 14px;font-size:1rem;background:#fff;
+  transition:border-color .15s,box-shadow .15s,background .15s;min-height:44px;
+}
+.wz-input:focus{outline:none;border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.1)}
+.wz-input::placeholder{color:#9ca3af}
+.wz-input.invalid{border-color:#dc2626;background:#fef2f2}
+.wz-input.valid-ok{border-color:#16a34a;background:#f0fdf4}
+textarea.wz-input{min-height:88px;resize:vertical;font-family:inherit}
+
+.wz-hint{font-size:.72rem;color:#6b7280;margin-top:5px;display:flex;align-items:center;gap:5px}
+.wz-hint.ok{color:#16a34a}
+.wz-hint.err{color:#dc2626}
+
+/* ══ Especialidades pills ═══════════════════════════════════════════════ */
+.esp-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.esp-pill{
+  padding:10px 16px;border-radius:50px;
+  background:#f3f4f6;color:#374151;font-weight:600;font-size:.86rem;cursor:pointer;
+  border:1.8px solid #e5e7eb;transition:all .15s;
+  display:inline-flex;align-items:center;gap:6px;min-height:42px;user-select:none;
+}
+.esp-pill:hover{border-color:#9ca3af;background:#fff}
+.esp-pill.selected{
+  background:#dc2626;color:#fff;border-color:#dc2626;
+  box-shadow:0 3px 10px rgba(220,38,38,.22);
+}
+.esp-pill.selected i{color:#fff}
+.esp-add{display:flex;gap:8px;align-items:center;margin-top:8px}
+.esp-add input{flex:1}
+.esp-add button{
+  background:#fff;border:1.5px solid #dc2626;color:#dc2626;border-radius:10px;
+  padding:0 16px;min-height:44px;font-weight:700;font-size:.85rem;cursor:pointer;
+  transition:all .15s;
+}
+.esp-add button:hover{background:#dc2626;color:#fff}
+
+/* ══ Forma pago tabs ════════════════════════════════════════════════════ */
+.fp-tabs{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;
+}
+.fp-tab{
+  padding:14px 8px;border-radius:12px;background:#f9fafb;border:1.8px solid #e5e7eb;
+  cursor:pointer;text-align:center;font-size:.78rem;font-weight:700;color:#374151;
+  transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:6px;
+  min-height:80px;justify-content:center;
+}
+.fp-tab i{font-size:1.4rem;color:#6b7280;transition:color .15s}
+.fp-tab:hover{background:#fff;border-color:#9ca3af}
+.fp-tab.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a;
+               box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.fp-tab.active i{color:#fbbf24}
+
+/* ══ Resumen final (paso 4) ═════════════════════════════════════════════ */
+.res-block{
+  background:#f9fafb;border-radius:14px;padding:18px 20px;margin-bottom:14px;
+  border:1px solid #f3f4f6;
+}
+.res-block h6{
+  display:flex;align-items:center;gap:8px;
+  font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;
+  color:#9ca3af;margin:0 0 10px;
+}
+.res-block h6 i{color:var(--ilus-red);font-size:1rem}
+.res-row{display:flex;justify-content:space-between;gap:14px;padding:6px 0;
+         border-bottom:1px dashed #f3f4f6;font-size:.9rem}
+.res-row:last-child{border-bottom:none}
+.res-row .k{color:#6b7280;font-weight:600;min-width:130px}
+.res-row .v{color:#0a0a0a;font-weight:700;text-align:right;flex:1;word-break:break-word}
+
+/* ══ Nav buttons ═══════════════════════════════════════════════════════ */
+.wz-nav{display:flex;justify-content:space-between;gap:10px;margin-top:24px;
+        padding-top:18px;border-top:1px solid #f3f4f6}
+.wz-btn{
+  min-height:48px;padding:0 22px;border-radius:12px;font-weight:800;font-size:.95rem;
+  cursor:pointer;border:none;display:inline-flex;align-items:center;gap:8px;
+  transition:all .15s;
+}
+.wz-btn-prev{background:#f3f4f6;color:#374151}
+.wz-btn-prev:hover{background:#e5e7eb}
+.wz-btn-next{
+  background:#dc2626;color:#fff;
+  box-shadow:0 4px 14px rgba(220,38,38,.28);
+}
+.wz-btn-next:hover{background:#b91c1c}
+.wz-btn-next:disabled{background:#fca5a5;cursor:not-allowed;box-shadow:none}
+.wz-btn-save{
+  background:linear-gradient(135deg,#16a34a 0%,#15803d 100%);color:#fff;
+  box-shadow:0 4px 14px rgba(22,163,74,.32);
+}
+.wz-btn-save:hover{filter:brightness(1.1)}
+
+/* ══ Two col layout ════════════════════════════════════════════════════ */
+.row-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.row-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:640px){
+  .row-2,.row-3{grid-template-columns:1fr}
+  .wz-card{padding:22px 18px;border-radius:14px}
+  .fp-tabs{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ══ Loading overlay ═══════════════════════════════════════════════════ */
+.wz-loading{
+  position:fixed;inset:0;background:rgba(10,10,10,.55);z-index:9999;
+  display:none;align-items:center;justify-content:center;backdrop-filter:blur(3px);
+}
+.wz-loading.show{display:flex}
+.wz-loading-card{
+  background:#fff;padding:32px 38px;border-radius:18px;text-align:center;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:300px;
+}
+.wz-spinner{
+  width:48px;height:48px;border:4px solid #fee2e2;border-top-color:#dc2626;
+  border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.wz-loading-card .msg{font-weight:700;color:#0a0a0a;font-size:1rem}
+.wz-loading-card .sub{color:#6b7280;font-size:.82rem;margin-top:4px}
+</style>
+
+<div class="wz-shell">
+  {# ─── Hero ─── #}
+  <div class="wz-hero">
+    <h4><i class="bi bi-building-fill-add me-2"></i>Nuevo técnico externo</h4>
+    <div class="sub">Da de alta a un contratista o empresa subcontratada en 4 pasos rápidos</div>
+  </div>
+
+  {# ─── Progress bar ─── #}
+  <div class="wz-prog">
+    <div class="wz-step-pip active" data-pip="1">
+      <div class="wz-circle">1</div>
+      <div class="wz-step-lbl">Empresa</div>
+    </div>
+    <div class="wz-line" data-line="1"></div>
+    <div class="wz-step-pip" data-pip="2">
+      <div class="wz-circle">2</div>
+      <div class="wz-step-lbl">Contacto</div>
+    </div>
+    <div class="wz-line" data-line="2"></div>
+    <div class="wz-step-pip" data-pip="3">
+      <div class="wz-circle">3</div>
+      <div class="wz-step-lbl">Facturación</div>
+    </div>
+    <div class="wz-line" data-line="3"></div>
+    <div class="wz-step-pip" data-pip="4">
+      <div class="wz-circle">4</div>
+      <div class="wz-step-lbl">Revisar</div>
+    </div>
+  </div>
+
+  {# ─── Card de pasos ─── #}
+  <form class="wz-card has-stripe" id="wzForm" onsubmit="return false">
+
+    {# ════ PASO 1 ─ Empresa ════════════════════════════════ #}
+    <div class="wz-step active" data-step="1">
+      <h5><i class="bi bi-building-fill"></i>¿Quiénes son?</h5>
+      <p class="step-hint">Empezamos por los datos de la empresa. Solo la razón social es obligatoria, el resto lo podés completar después.</p>
+
+      <div class="wz-field">
+        <label>Razón social <span class="req">*</span></label>
+        <input type="text" class="wz-input" name="razon_social" id="f_razon"
+               placeholder="Ej: Mantenciones Cardio SpA"
+               maxlength="200" autocomplete="organization" required>
+      </div>
+
+      <div class="row-2">
+        <div class="wz-field">
+          <label>RUT empresa</label>
+          <input type="text" class="wz-input" name="rut_empresa" id="f_rut"
+                 placeholder="12.345.678-9" maxlength="20" autocomplete="off">
+        </div>
+        <div class="wz-field">
+          <label>Giro / actividad</label>
+          <input type="text" class="wz-input" name="giro"
+                 placeholder="Ej: Servicios técnicos equipos fitness" maxlength="200">
+        </div>
+      </div>
+
+      <div class="wz-field">
+        <label class="d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección empresa</span>
+          <small class="text-muted" style="font-weight:400;font-size:.72rem">
+            Validada con Google Maps
+          </small>
+        </label>
+        <input type="text" class="wz-input" name="direccion_empresa"
+               id="ext_direccion_input"
+               placeholder="Empieza a escribir y elige una sugerencia…"
+               autocomplete="off">
+        <input type="hidden" name="direccion_lat" id="ext_direccion_lat">
+        <input type="hidden" name="direccion_lng" id="ext_direccion_lng">
+        <input type="hidden" name="direccion_place_id" id="ext_direccion_placeid">
+        <small id="ext_direccion_hint" class="wz-hint">
+          <i class="bi bi-info-circle"></i>
+          Opcional · selecciona una sugerencia para guardar coordenadas
+        </small>
+      </div>
+    </div>
+
+    {# ════ PASO 2 ─ Contacto + especialidades ═════════════ #}
+    <div class="wz-step" data-step="2">
+      <h5><i class="bi bi-person-fill"></i>¿A quién contactamos?</h5>
+      <p class="step-hint">El contacto principal es a quien le mandaremos la invitación para que tenga acceso a la app. Marcá también las especialidades que cubre.</p>
+
+      <div class="row-2">
+        <div class="wz-field">
+          <label>Nombre completo <span class="req">*</span></label>
+          <input type="text" class="wz-input" name="contacto_nombre" id="f_cname"
+                 placeholder="Ej: Carlos Pérez" maxlength="200" autocomplete="name" required>
+        </div>
+        <div class="wz-field">
+          <label>Cargo</label>
+          <input type="text" class="wz-input" name="contacto_cargo"
+                 placeholder="Ej: Jefe de servicio" maxlength="100">
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div class="wz-field">
+          <label>Teléfono <span class="req">*</span></label>
+          <input type="tel" class="wz-input" name="contacto_tel" id="f_ctel"
+                 placeholder="+56 9 1234 5678" maxlength="50" autocomplete="tel" required>
+        </div>
+        <div class="wz-field">
+          <label>Email <span class="req">*</span></label>
+          <input type="email" class="wz-input" name="contacto_email" id="f_cmail"
+                 placeholder="contacto@empresa.cl" maxlength="190" autocomplete="email" required>
+          <small class="wz-hint">
+            <i class="bi bi-envelope-check"></i>
+            Le enviaremos la invitación de acceso a este correo
+          </small>
+        </div>
+      </div>
+
+      <div class="wz-field">
+        <label><i class="bi bi-stars text-danger me-1"></i>Especialidades</label>
+        <div class="esp-grid" id="espGrid">
+          {% set defaults = [
+            ('Equipos cardio',     'bi-heart-pulse-fill'),
+            ('Equipos fuerza',     'bi-bicycle'),
+            ('Eléctrico',          'bi-lightning-charge-fill'),
+            ('Instalaciones',      'bi-tools'),
+            ('Carpintería',        'bi-hammer'),
+            ('Plomería',           'bi-droplet-fill'),
+            ('Pintura',            'bi-brush'),
+            ('Climatización',     'bi-snow'),
+          ] %}
+          {% for nombre, icono in defaults %}
+          <div class="esp-pill" data-esp="{{ nombre }}" onclick="toggleEsp(this)">
+            <i class="bi {{ icono }}"></i> {{ nombre }}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="esp-add">
+          <input type="text" class="wz-input" id="espCustom"
+                 placeholder="¿Agregar otra? Ej: Sistemas digitales" maxlength="60"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();addEspCustom();}">
+          <button type="button" onclick="addEspCustom()">+ Agregar</button>
+        </div>
+        <small class="wz-hint" id="espCount"><i class="bi bi-check2-circle"></i>0 seleccionadas</small>
+      </div>
+    </div>
+
+    {# ════ PASO 3 ─ Facturación ═════════════════════════════ #}
+    <div class="wz-step" data-step="3">
+      <h5><i class="bi bi-cash-coin"></i>Datos comerciales</h5>
+      <p class="step-hint">Todos los campos son opcionales en esta etapa — los podés completar más tarde desde la ficha.</p>
+
+      <div class="wz-field">
+        <label>Forma de pago</label>
+        <div class="fp-tabs" id="fpTabs">
+          <div class="fp-tab active" data-fp="transferencia">
+            <i class="bi bi-bank"></i>Transferencia
+          </div>
+          <div class="fp-tab" data-fp="cheque">
+            <i class="bi bi-file-earmark-ruled"></i>Cheque
+          </div>
+          <div class="fp-tab" data-fp="efectivo">
+            <i class="bi bi-cash-stack"></i>Efectivo
+          </div>
+          <div class="fp-tab" data-fp="tarjeta">
+            <i class="bi bi-credit-card-fill"></i>Tarjeta
+          </div>
+        </div>
+        <input type="hidden" name="forma_pago" id="f_fp" value="transferencia">
+      </div>
+
+      <div class="row-2">
+        <div class="wz-field">
+          <label>Banco</label>
+          <input type="text" class="wz-input" name="banco"
+                 placeholder="Ej: Banco de Chile" maxlength="100">
+        </div>
+        <div class="wz-field">
+          <label>Tipo de cuenta</label>
+          <input type="text" class="wz-input" name="tipo_cuenta"
+                 placeholder="Ej: Cuenta corriente / vista" maxlength="50">
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div class="wz-field">
+          <label>N° de cuenta</label>
+          <input type="text" class="wz-input" name="numero_cuenta"
+                 placeholder="000 0000 0000" maxlength="60" autocomplete="off">
+        </div>
+        <div class="wz-field">
+          <label>Facturar a nombre de</label>
+          <input type="text" class="wz-input" name="factura_a_nombre_de"
+                 placeholder="Solo si difiere de la razón social" maxlength="200">
+        </div>
+      </div>
+
+      <div class="row-3">
+        <div class="wz-field">
+          <label>Condición pago (días)</label>
+          <input type="number" class="wz-input" name="condicion_pago_dias"
+                 value="30" min="0" max="365">
+        </div>
+        <div class="wz-field">
+          <label>Valor hora (CLP)</label>
+          <input type="number" class="wz-input" name="valor_hora"
+                 placeholder="Ej: 25000" min="0" step="100">
+        </div>
+        <div class="wz-field">
+          <label>Valor visita (CLP)</label>
+          <input type="number" class="wz-input" name="valor_visita"
+                 placeholder="Ej: 60000" min="0" step="100">
+        </div>
+      </div>
+    </div>
+
+    {# ════ PASO 4 ─ Resumen ════════════════════════════════ #}
+    <div class="wz-step" data-step="4">
+      <h5><i class="bi bi-check-circle-fill" style="color:#16a34a !important"></i>Confirmar y crear</h5>
+      <p class="step-hint">Revisa los datos antes de guardar. Vas a poder editar todo desde la ficha del técnico.</p>
+
+      <div class="res-block">
+        <h6><i class="bi bi-building-fill"></i>Empresa</h6>
+        <div class="res-row"><span class="k">Razón social</span><span class="v" id="r_razon">—</span></div>
+        <div class="res-row"><span class="k">RUT</span><span class="v" id="r_rut">—</span></div>
+        <div class="res-row"><span class="k">Giro</span><span class="v" id="r_giro">—</span></div>
+        <div class="res-row"><span class="k">Dirección</span><span class="v" id="r_dir">—</span></div>
+      </div>
+
+      <div class="res-block">
+        <h6><i class="bi bi-person-fill"></i>Contacto principal</h6>
+        <div class="res-row"><span class="k">Nombre</span><span class="v" id="r_cname">—</span></div>
+        <div class="res-row"><span class="k">Cargo</span><span class="v" id="r_ccargo">—</span></div>
+        <div class="res-row"><span class="k">Teléfono</span><span class="v" id="r_ctel">—</span></div>
+        <div class="res-row"><span class="k">Email</span><span class="v" id="r_cmail">—</span></div>
+        <div class="res-row"><span class="k">Especialidades</span><span class="v" id="r_esp">—</span></div>
+      </div>
+
+      <div class="res-block">
+        <h6><i class="bi bi-cash-coin"></i>Facturación</h6>
+        <div class="res-row"><span class="k">Forma pago</span><span class="v" id="r_fp">Transferencia</span></div>
+        <div class="res-row"><span class="k">Condición</span><span class="v" id="r_cond">30 días</span></div>
+        <div class="res-row"><span class="k">Valor hora</span><span class="v" id="r_vh">—</span></div>
+        <div class="res-row"><span class="k">Valor visita</span><span class="v" id="r_vv">—</span></div>
+      </div>
+
+      <div class="wz-field" style="margin-top:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="enviarInvite" checked
+                 style="width:20px;height:20px;accent-color:#dc2626">
+          <span>
+            <i class="bi bi-envelope-paper-fill text-danger me-1"></i>
+            <strong>Enviar invitación de acceso</strong> al email del contacto
+          </span>
+        </label>
+        <small class="wz-hint" style="margin-top:6px">
+          El contacto recibirá un link válido por 7 días para crear su cuenta y acceder a la app
+        </small>
+      </div>
+    </div>
+
+    {# ─── Navegación ─── #}
+    <div class="wz-nav">
+      <button type="button" class="wz-btn wz-btn-prev" id="btnPrev" onclick="navPrev()" style="visibility:hidden">
+        <i class="bi bi-arrow-left"></i>Atrás
+      </button>
+      <div style="flex:1"></div>
+      <button type="button" class="wz-btn wz-btn-next" id="btnNext" onclick="navNext()">
+        Siguiente<i class="bi bi-arrow-right"></i>
+      </button>
+      <button type="button" class="wz-btn wz-btn-save" id="btnSave" onclick="guardarTecnico()" style="display:none">
+        <i class="bi bi-check-lg"></i>Crear y enviar invitación
+      </button>
+    </div>
+  </form>
+</div>
+
+{# ─── Loading overlay ─── #}
+<div class="wz-loading" id="wzLoading">
+  <div class="wz-loading-card">
+    <div class="wz-spinner"></div>
+    <div class="msg">Creando técnico…</div>
+    <div class="sub">Estamos enviando la invitación</div>
+  </div>
+</div>
+
+<script>
+let stepActual = 1;
+const TOTAL_STEPS = 4;
+const espSeleccionadas = new Set();
+
+function toggleEsp(el){
+  const v = el.dataset.esp;
+  if (espSeleccionadas.has(v)){
+    espSeleccionadas.delete(v);
+    el.classList.remove('selected');
+  } else {
+    espSeleccionadas.add(v);
+    el.classList.add('selected');
+  }
+  actualizarContadorEsp();
+}
+
+function addEspCustom(){
+  const inp = document.getElementById('espCustom');
+  const v = (inp.value || '').trim();
+  if (!v) return;
+  if (espSeleccionadas.has(v)){
+    ilusToast('Ya está agregada', { type:'info' });
+    return;
+  }
+  espSeleccionadas.add(v);
+  const grid = document.getElementById('espGrid');
+  const el = document.createElement('div');
+  el.className = 'esp-pill selected';
+  el.dataset.esp = v;
+  el.onclick = function(){ toggleEsp(el); };
+  el.innerHTML = '<i class="bi bi-star-fill"></i> ' + _escapeHtml(v);
+  grid.appendChild(el);
+  inp.value = '';
+  actualizarContadorEsp();
+}
+
+function actualizarContadorEsp(){
+  const c = espSeleccionadas.size;
+  const el = document.getElementById('espCount');
+  if (!el) return;
+  el.innerHTML = '<i class="bi bi-check2-circle"></i>' + c + ' seleccionada' + (c === 1 ? '' : 's');
+  el.classList.toggle('ok', c > 0);
+}
+
+function _escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[m]);
+}
+
+// Forma pago tabs
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('#fpTabs .fp-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#fpTabs .fp-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('f_fp').value = t.dataset.fp;
+    });
+  });
+});
+
+// Navegación
+function showStep(n){
+  document.querySelectorAll('.wz-step').forEach(s => s.classList.remove('active'));
+  document.querySelector(`.wz-step[data-step="${n}"]`).classList.add('active');
+  // Pips
+  document.querySelectorAll('.wz-step-pip').forEach(p => {
+    const k = parseInt(p.dataset.pip, 10);
+    p.classList.remove('active','done');
+    if (k < n) p.classList.add('done');
+    else if (k === n) p.classList.add('active');
+  });
+  // Lines
+  document.querySelectorAll('.wz-line').forEach(l => {
+    const k = parseInt(l.dataset.line, 10);
+    l.classList.toggle('done', k < n);
+  });
+  // Botones
+  document.getElementById('btnPrev').style.visibility = (n === 1 ? 'hidden' : 'visible');
+  document.getElementById('btnNext').style.display = (n === TOTAL_STEPS ? 'none' : '');
+  document.getElementById('btnSave').style.display = (n === TOTAL_STEPS ? '' : 'none');
+  if (n === TOTAL_STEPS) renderResumen();
+  // Scroll suave al top de la card
+  document.querySelector('.wz-card').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function validarPaso(n){
+  if (n === 1){
+    const razon = (document.getElementById('f_razon').value || '').trim();
+    if (razon.length < 2){
+      ilusToast('Razón social requerida (mín 2 caracteres)', { type:'warning' });
+      document.getElementById('f_razon').classList.add('invalid');
+      document.getElementById('f_razon').focus();
+      return false;
+    }
+    document.getElementById('f_razon').classList.remove('invalid');
+  }
+  if (n === 2){
+    const nm = (document.getElementById('f_cname').value || '').trim();
+    const tl = (document.getElementById('f_ctel').value || '').trim();
+    const em = (document.getElementById('f_cmail').value || '').trim();
+    if (nm.length < 2){
+      ilusToast('Nombre del contacto requerido', { type:'warning' });
+      document.getElementById('f_cname').classList.add('invalid');
+      document.getElementById('f_cname').focus();
+      return false;
+    }
+    if (tl.length < 4){
+      ilusToast('Teléfono del contacto requerido', { type:'warning' });
+      document.getElementById('f_ctel').classList.add('invalid');
+      document.getElementById('f_ctel').focus();
+      return false;
+    }
+    if (em.indexOf('@') < 0 || em.length < 5){
+      ilusToast('Email del contacto inválido', { type:'warning' });
+      document.getElementById('f_cmail').classList.add('invalid');
+      document.getElementById('f_cmail').focus();
+      return false;
+    }
+    document.getElementById('f_cname').classList.remove('invalid');
+    document.getElementById('f_ctel').classList.remove('invalid');
+    document.getElementById('f_cmail').classList.remove('invalid');
+  }
+  return true;
+}
+
+function navPrev(){
+  if (stepActual > 1){ stepActual--; showStep(stepActual); }
+}
+function navNext(){
+  if (!validarPaso(stepActual)) return;
+  if (stepActual < TOTAL_STEPS){ stepActual++; showStep(stepActual); }
+}
+
+function renderResumen(){
+  const $ = id => document.getElementById(id);
+  const get = name => {
+    const el = document.querySelector(`[name="${name}"]`);
+    return el ? (el.value || '').trim() : '';
+  };
+  $('r_razon').textContent = get('razon_social') || '—';
+  $('r_rut').textContent   = get('rut_empresa') || '—';
+  $('r_giro').textContent  = get('giro') || '—';
+  $('r_dir').textContent   = get('direccion_empresa') || '—';
+  $('r_cname').textContent = get('contacto_nombre') || '—';
+  $('r_ccargo').textContent= get('contacto_cargo') || '—';
+  $('r_ctel').textContent  = get('contacto_tel') || '—';
+  $('r_cmail').textContent = get('contacto_email') || '—';
+  const espArr = [...espSeleccionadas];
+  $('r_esp').textContent = espArr.length ? espArr.join(' · ') : '—';
+  const fp = get('forma_pago') || 'transferencia';
+  $('r_fp').textContent = fp.charAt(0).toUpperCase() + fp.slice(1);
+  $('r_cond').textContent = (get('condicion_pago_dias') || '30') + ' días';
+  const vh = get('valor_hora');
+  $('r_vh').textContent = vh ? '$' + parseInt(vh, 10).toLocaleString('es-CL') : '—';
+  const vv = get('valor_visita');
+  $('r_vv').textContent = vv ? '$' + parseInt(vv, 10).toLocaleString('es-CL') : '—';
+}
+
+// Submit
+async function guardarTecnico(){
+  if (!validarPaso(1) || !validarPaso(2)) return;
+  const form = document.getElementById('wzForm');
+  const get = n => {
+    const el = form.querySelector(`[name="${n}"]`);
+    return el ? (el.value || '').trim() : '';
+  };
+  const payload = {
+    razon_social: get('razon_social'),
+    rut_empresa: get('rut_empresa'),
+    giro: get('giro'),
+    direccion_empresa: get('direccion_empresa'),
+    direccion_lat: get('direccion_lat'),
+    direccion_lng: get('direccion_lng'),
+    direccion_place_id: get('direccion_place_id'),
+    contacto_nombre: get('contacto_nombre'),
+    contacto_tel: get('contacto_tel'),
+    contacto_email: get('contacto_email'),
+    contacto_cargo: get('contacto_cargo'),
+    forma_pago: get('forma_pago') || 'transferencia',
+    banco: get('banco'),
+    tipo_cuenta: get('tipo_cuenta'),
+    numero_cuenta: get('numero_cuenta'),
+    factura_a_nombre_de: get('factura_a_nombre_de'),
+    condicion_pago_dias: parseInt(get('condicion_pago_dias') || '30', 10),
+    valor_hora: get('valor_hora') ? parseFloat(get('valor_hora')) : null,
+    valor_visita: get('valor_visita') ? parseFloat(get('valor_visita')) : null,
+    especialidades: [...espSeleccionadas],
+  };
+
+  const overlay = document.getElementById('wzLoading');
+  overlay.classList.add('show');
+
+  try {
+    const r = await fetch('/mantenciones/api/tecnicos-externos', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      overlay.classList.remove('show');
+      await ilusAlert({
+        title: 'No se pudo crear',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
+      return;
+    }
+
+    // Invitación
+    const enviar = document.getElementById('enviarInvite').checked;
+    let inviteResult = null;
+    if (enviar){
+      try {
+        const r2 = await fetch(`/mantenciones/api/tecnicos-externos/${d.id}/invitar`, {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: '{}',
+        });
+        inviteResult = await r2.json();
+      } catch(e){ /* sigue */ }
+    }
+
+    overlay.classList.remove('show');
+    const sub = enviar
+      ? (inviteResult && inviteResult.email_enviado
+          ? `<strong style="color:#16a34a">Invitación enviada</strong> a <code>${payload.contacto_email}</code>`
+          : `Invitación generada pero no se envió el email automáticamente. Pasale el link manualmente desde la ficha.`)
+      : 'Podés enviar la invitación más tarde desde la ficha.';
+    await ilusAlert({
+      title: '✓ Técnico externo creado',
+      message: `<strong>${_escapeHtml(payload.razon_social)}</strong> fue dado de alta correctamente.`,
+      sub: sub,
+      subHtml: true,
+      type: 'success',
+    });
+    window.location.href = `/mantenciones/tecnicos-externos/${d.id}`;
+  } catch(e){
+    overlay.classList.remove('show');
+    await ilusAlert({
+      title: 'Error de red',
+      message: 'No pudimos guardar el técnico. Revisá tu conexión y volvé a intentar.',
+      type: 'error',
+    });
+  }
+}
+
+// Google Places autocomplete (skill direcciones)
+document.addEventListener('DOMContentLoaded', function(){
+  function initDir(){
+    if (typeof ilusPlacesAutocomplete !== 'function'){
+      if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(initDir);
+      return;
+    }
+    ilusPlacesAutocomplete('ext_direccion_input', {
+      country: 'cl',
+      types: ['address'],
+      onPlaceSelected: function(place){
+        document.getElementById('ext_direccion_lat').value = place.lat;
+        document.getElementById('ext_direccion_lng').value = place.lng;
+        document.getElementById('ext_direccion_placeid').value = place.place_id || '';
+        const h = document.getElementById('ext_direccion_hint');
+        if (h){
+          h.classList.add('ok');
+          h.innerHTML = '<i class="bi bi-check-circle-fill"></i> Dirección verificada · ' +
+            place.lat.toFixed(4) + ', ' + place.lng.toFixed(4);
+        }
+      },
+    });
+  }
+  initDir();
+});
+
+// Init: live validation visual
+['f_razon','f_cname','f_ctel','f_cmail'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('blur', function(){
+    if ((el.value || '').trim().length >= 2){
+      el.classList.remove('invalid');
+      el.classList.add('valid-ok');
+    } else {
+      el.classList.remove('valid-ok');
+    }
+  });
+});
+
+actualizarContadorEsp();
+</script>
+{% endblock %}

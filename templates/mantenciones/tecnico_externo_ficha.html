@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+{% block title %}{{ tec.razon_social }} — Técnico externo{% endblock %}
+{% block content %}
+<style>
+/* ══ Hero ficha ══════════════════════════════════════════════════════════ */
+.tf-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);
+  color:#fff;border-radius:18px;padding:24px 28px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 8px 28px rgba(0,0,0,.22);
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+}
+.tf-avatar{
+  width:90px;height:90px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:2.2rem;color:#fff;
+  background:linear-gradient(135deg,#dc2626 0%,#9b1c1c 100%);
+  background-size:cover;background-position:center;
+  border:3px solid rgba(255,255,255,.15);
+  box-shadow:0 6px 18px rgba(220,38,38,.32);
+  position:relative;cursor:pointer;
+}
+.tf-avatar.has-img{background-image:var(--ax-img);color:transparent;background-color:#fff}
+.tf-avatar-edit{
+  position:absolute;bottom:0;right:0;width:30px;height:30px;border-radius:50%;
+  background:#fff;color:#dc2626;display:flex;align-items:center;justify-content:center;
+  border:2px solid #0a0a0a;font-size:.85rem;box-shadow:0 3px 8px rgba(0,0,0,.3);
+}
+
+.tf-info{flex:1;min-width:0}
+.tf-razon{margin:0;font-weight:800;font-size:1.65rem;line-height:1.1}
+.tf-meta{color:#cbd5e1;font-size:.86rem;margin-top:6px;
+         display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.tf-meta i{color:var(--ilus-red);margin-right:4px}
+.tf-badge{
+  display:inline-flex;align-items:center;gap:5px;font-weight:800;
+  padding:5px 13px;border-radius:50px;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;
+}
+.tf-badge.activo{background:#dcfce7;color:#15803d}
+.tf-badge.suspendido{background:#fef3c7;color:#92400e}
+.tf-badge.baja{background:#fee2e2;color:#b91c1c}
+
+.tf-actions{display:flex;gap:8px;flex-wrap:wrap}
+.tf-actions .btn{min-height:44px;display:inline-flex;align-items:center;gap:6px;padding:0 16px;font-weight:700}
+
+/* ══ Tabs ════════════════════════════════════════════════════════════════ */
+.tf-tabs{
+  display:flex;gap:4px;border-bottom:2px solid #e5e7eb;margin-bottom:18px;
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+.tf-tabs::-webkit-scrollbar{display:none}
+.tf-tab{
+  padding:12px 18px;border:none;background:transparent;color:#6b7280;
+  font-weight:700;font-size:.9rem;cursor:pointer;
+  border-bottom:3px solid transparent;margin-bottom:-2px;
+  min-height:46px;white-space:nowrap;transition:all .15s;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.tf-tab.active{color:#dc2626;border-bottom-color:#dc2626}
+.tf-tab:hover:not(.active){color:#0a0a0a;background:#f9fafb}
+
+.tf-panel{display:none;animation:fadeIn .25s ease}
+.tf-panel.active{display:block}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+/* ══ Cards de info ═══════════════════════════════════════════════════════ */
+.info-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:18px 20px;margin-bottom:14px;
+}
+.info-card h6{
+  display:flex;align-items:center;gap:8px;
+  font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;
+  color:#9ca3af;margin:0 0 14px;
+}
+.info-card h6 i{color:var(--ilus-red);font-size:1.1rem}
+
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){ .info-grid{grid-template-columns:1fr} }
+.info-row{padding:8px 0;border-bottom:1px dashed #f3f4f6}
+.info-row:last-child{border-bottom:none}
+.info-key{font-size:.7rem;font-weight:700;color:#9ca3af;
+          text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.info-val{font-size:.95rem;color:#0a0a0a;font-weight:600;word-break:break-word}
+.info-val a{color:#dc2626;text-decoration:none;font-weight:700}
+.info-val a:hover{text-decoration:underline}
+
+/* Pills especialidades */
+.esp-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.esp-pills .pill{
+  display:inline-flex;align-items:center;gap:4px;background:#fee2e2;color:#dc2626;
+  border-radius:50px;padding:4px 12px;font-size:.78rem;font-weight:700;
+}
+
+/* Stars */
+.tf-stars{font-size:1.2rem;color:#f59e0b;letter-spacing:2px}
+.tf-stars .empty{color:#d1d5db}
+
+/* ══ Tabla historial ════════════════════════════════════════════════════ */
+.hist-tbl{width:100%;border-collapse:collapse;font-size:.86rem}
+.hist-tbl th{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;
+             color:#9ca3af;background:#f9fafb;padding:10px 12px;text-align:left;font-weight:800}
+.hist-tbl td{padding:11px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.hist-tbl tr:hover td{background:#fafbfc}
+.hist-estado{display:inline-flex;align-items:center;gap:4px;
+             padding:3px 10px;border-radius:50px;font-size:.7rem;font-weight:700;
+             text-transform:uppercase;letter-spacing:.04em}
+.he-completada{background:#dcfce7;color:#15803d}
+.he-cerrada{background:#dcfce7;color:#15803d}
+.he-programada{background:#dbeafe;color:#1d4ed8}
+.he-asignada{background:#dbeafe;color:#1d4ed8}
+.he-en_curso, .he-en_ejecucion{background:#fef3c7;color:#92400e}
+.he-cancelada,.he-anulada{background:#fee2e2;color:#b91c1c}
+
+/* ══ Contrato uploader ════════════════════════════════════════════════ */
+.contrato-zone{
+  border:2px dashed #e5e7eb;border-radius:14px;padding:30px 20px;
+  text-align:center;background:#fafbfc;cursor:pointer;transition:all .15s;
+}
+.contrato-zone:hover{border-color:#dc2626;background:#fef2f2}
+.contrato-zone i{font-size:2.4rem;color:#9ca3af;display:block;margin-bottom:8px}
+.contrato-zone .title{font-weight:700;color:#0a0a0a}
+.contrato-zone .sub{color:#6b7280;font-size:.82rem;margin-top:4px}
+
+.contrato-info{
+  background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px 16px;
+  display:flex;align-items:center;gap:12px;
+}
+.contrato-info i{font-size:1.6rem;color:#16a34a}
+
+/* ══ Empty ═══════════════════════════════════════════════════════════════ */
+.empty-mini{
+  text-align:center;padding:38px 20px;color:#9ca3af;
+  background:#fafbfc;border-radius:12px;
+}
+.empty-mini i{font-size:2rem;display:block;margin-bottom:8px;color:#d1d5db}
+
+/* Mobile */
+@media(max-width:640px){
+  .tf-razon{font-size:1.25rem}
+  .tf-hero{padding:18px 18px;gap:14px}
+  .tf-avatar{width:70px;height:70px;font-size:1.6rem}
+}
+</style>
+
+{# ════ HERO ═════════════════════════════════════════════════════════════ #}
+<div class="tf-hero">
+  {% set initial = (tec.razon_social or 'X')[0]|upper %}
+  {# FIX 2026-05-17 BLOCKER #2 — img tag autoescapado en lugar de CSS injection. #}
+  <div class="tf-avatar{% if tec.foto_url %} has-img{% endif %}"
+       onclick="subirFoto()" title="Cambiar foto" style="overflow:hidden">
+    {% if tec.foto_url and tec.foto_url.startswith('https://res.cloudinary.com/') %}
+      <img src="{{ tec.foto_url }}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
+    {% else %}{{ initial }}{% endif %}
+    <span class="tf-avatar-edit"><i class="bi bi-camera-fill"></i></span>
+  </div>
+  <div class="tf-info">
+    <h3 class="tf-razon">{{ tec.razon_social }}</h3>
+    <div class="tf-meta">
+      {% if tec.rut_empresa %}<span><i class="bi bi-card-text"></i>{{ tec.rut_empresa | rut_fmt }}</span>{% endif %}
+      {% if tec.giro %}<span><i class="bi bi-briefcase-fill"></i>{{ tec.giro }}</span>{% endif %}
+      <span class="tf-badge {{ tec.estado }}">
+        {% if tec.estado == 'activo' %}<i class="bi bi-check-circle-fill"></i>
+        {% elif tec.estado == 'suspendido' %}<i class="bi bi-pause-circle-fill"></i>
+        {% else %}<i class="bi bi-x-circle-fill"></i>{% endif %}
+        {{ tec.estado }}
+      </span>
+      {% if tec.user_id %}
+      <span class="tf-badge" style="background:#fef9c3;color:#854d0e">
+        <i class="bi bi-key-fill"></i>Con acceso app
+      </span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="tf-actions">
+    <a class="btn btn-sm btn-outline-light" href="{{ url_for('mant_tecnicos_externos_index') }}">
+      <i class="bi bi-arrow-left"></i>Volver
+    </a>
+    {% if tec.contacto_tel %}
+    <a class="btn btn-sm btn-success"
+       href="https://wa.me/{{ tec.contacto_tel|replace(' ','')|replace('+','')|replace('-','') }}"
+       target="_blank" rel="noopener">
+      <i class="bi bi-whatsapp"></i>WhatsApp
+    </a>
+    {% endif %}
+    {% if not tec.user_id and tec.estado == 'activo' %}
+    <button class="btn btn-sm btn-ilus" onclick="enviarInvitacion()">
+      <i class="bi bi-envelope-paper-fill"></i>Invitar
+    </button>
+    {% endif %}
+    <button class="btn btn-sm btn-warning text-white" onclick="cambiarEstado()">
+      {% if tec.estado == 'activo' %}<i class="bi bi-pause-fill"></i>Suspender
+      {% elif tec.estado == 'suspendido' %}<i class="bi bi-play-fill"></i>Reactivar
+      {% else %}<i class="bi bi-arrow-clockwise"></i>Restaurar{% endif %}
+    </button>
+  </div>
+</div>
+
+{# ════ TABS ═════════════════════════════════════════════════════════════ #}
+<div class="tf-tabs" role="tablist">
+  <button class="tf-tab active" data-tab="general"><i class="bi bi-info-circle-fill"></i>General</button>
+  <button class="tf-tab" data-tab="facturacion"><i class="bi bi-cash-coin"></i>Facturación</button>
+  <button class="tf-tab" data-tab="historial"><i class="bi bi-list-check"></i>Historial OTs</button>
+  <button class="tf-tab" data-tab="contrato"><i class="bi bi-file-earmark-pdf-fill"></i>Contrato</button>
+  <button class="tf-tab" data-tab="notas"><i class="bi bi-journal-text"></i>Notas</button>
+</div>
+
+{# ─── PANEL GENERAL ─── #}
+<div class="tf-panel active" data-panel="general">
+  <div class="info-card">
+    <h6><i class="bi bi-building-fill"></i>Empresa</h6>
+    <div class="info-grid">
+      <div class="info-row">
+        <div class="info-key">Razón social</div>
+        <div class="info-val">{{ tec.razon_social }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">RUT</div>
+        <div class="info-val">{{ (tec.rut_empresa | rut_fmt) if tec.rut_empresa else '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Giro</div>
+        <div class="info-val">{{ tec.giro or '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Calificación</div>
+        <div class="info-val">
+          {% set r = (tec.calificacion_promedio or 0)|round(0, 'floor')|int %}
+          <span class="tf-stars">
+            {% for i in range(5) %}{% if i < r %}★{% else %}<span class="empty">☆</span>{% endif %}{% endfor %}
+          </span>
+          <small class="text-muted ms-2">
+            {{ tec.calificacion_promedio or '—' }}{% if tec.trabajos_completados %} ({{ tec.trabajos_completados }} OT){% endif %}
+          </small>
+        </div>
+      </div>
+      <div class="info-row" style="grid-column:1/-1">
+        <div class="info-key">Dirección</div>
+        <div class="info-val">
+          {% if tec.direccion_empresa %}
+            <i class="bi bi-geo-alt-fill text-danger me-1"></i>{{ tec.direccion_empresa }}
+            {% if tec.direccion_lat and tec.direccion_lng %}
+              <a class="ms-2" target="_blank" rel="noopener"
+                 href="https://www.google.com/maps/search/?api=1&query={{ tec.direccion_lat }},{{ tec.direccion_lng }}">
+                <i class="bi bi-map-fill"></i> Ver en mapa
+              </a>
+            {% endif %}
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-card">
+    <h6><i class="bi bi-person-fill"></i>Contacto principal</h6>
+    <div class="info-grid">
+      <div class="info-row">
+        <div class="info-key">Nombre</div>
+        <div class="info-val">{{ tec.contacto_nombre }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Cargo</div>
+        <div class="info-val">{{ tec.contacto_cargo or '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Teléfono</div>
+        <div class="info-val">
+          {% if tec.contacto_tel %}<a href="tel:{{ tec.contacto_tel }}">{{ tec.contacto_tel }}</a>{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Email</div>
+        <div class="info-val">
+          {% if tec.contacto_email %}<a href="mailto:{{ tec.contacto_email }}">{{ tec.contacto_email }}</a>{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="info-row" style="grid-column:1/-1">
+        <div class="info-key">Especialidades</div>
+        <div class="info-val">
+          {% if tec.especialidades %}
+          <div class="esp-pills">
+            {% for esp in tec.especialidades %}<span class="pill"><i class="bi bi-star-fill"></i>{{ esp }}</span>{% endfor %}
+          </div>
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if tec.user_username %}
+  <div class="info-card" style="border-left:4px solid #16a34a">
+    <h6><i class="bi bi-key-fill"></i>Acceso a la app</h6>
+    <div class="info-row">
+      <div class="info-key">Usuario</div>
+      <div class="info-val">{{ tec.user_username }}{% if not tec.user_active %} <span class="badge bg-warning text-dark ms-2">inactivo</span>{% endif %}</div>
+    </div>
+  </div>
+  {% elif tec.invite_sent_at %}
+  <div class="info-card" style="border-left:4px solid #f59e0b">
+    <h6><i class="bi bi-envelope-paper-fill"></i>Invitación pendiente</h6>
+    <div class="info-row">
+      <div class="info-key">Enviada</div>
+      <div class="info-val">{{ tec.invite_sent_at | chile_fmt }}</div>
+    </div>
+    <div class="info-row">
+      <div class="info-key">Expira</div>
+      <div class="info-val">{{ tec.invite_expires_at | chile_fmt }}</div>
+    </div>
+    <button class="btn btn-ilus btn-sm mt-2" onclick="enviarInvitacion()">
+      <i class="bi bi-arrow-clockwise"></i>Reenviar invitación
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+{# ─── PANEL FACTURACIÓN ─── #}
+<div class="tf-panel" data-panel="facturacion">
+  <div class="info-card">
+    <h6><i class="bi bi-cash-coin"></i>Datos comerciales</h6>
+    <div class="info-grid">
+      <div class="info-row">
+        <div class="info-key">Forma de pago</div>
+        <div class="info-val text-capitalize">{{ tec.forma_pago }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Condición pago</div>
+        <div class="info-val">{{ tec.condicion_pago_dias or 30 }} días</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Banco</div>
+        <div class="info-val">{{ tec.banco or '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Tipo cuenta</div>
+        <div class="info-val">{{ tec.tipo_cuenta or '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">N° cuenta</div>
+        <div class="info-val" style="font-family:monospace">{{ tec.numero_cuenta or '—' }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Facturar a nombre de</div>
+        <div class="info-val">{{ tec.factura_a_nombre_de or tec.razon_social }}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Valor hora</div>
+        <div class="info-val">
+          {% if tec.valor_hora %}${{ "{:,.0f}".format(tec.valor_hora).replace(",", ".") }} CLP{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Valor visita</div>
+        <div class="info-val">
+          {% if tec.valor_visita %}${{ "{:,.0f}".format(tec.valor_visita).replace(",", ".") }} CLP{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="editarFacturacion()">
+        <i class="bi bi-pencil"></i> Editar datos comerciales
+      </button>
+    </div>
+  </div>
+</div>
+
+{# ─── PANEL HISTORIAL ─── #}
+<div class="tf-panel" data-panel="historial">
+  <div class="info-card">
+    <h6><i class="bi bi-list-check"></i>Órdenes de trabajo asignadas</h6>
+    {% if historial %}
+    <table class="hist-tbl">
+      <thead>
+        <tr>
+          <th>OT</th><th>Cliente</th><th>Fecha</th><th>Tipo</th><th>Estado</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in historial %}
+        <tr>
+          <td><strong>{{ h.numero_ot or ('#' ~ h.id) }}</strong></td>
+          <td>{{ h.razon_social or '—' }}</td>
+          <td>{{ h.fecha_programada or '—' }}</td>
+          <td class="text-capitalize">{{ h.tipo or '—' }}</td>
+          <td><span class="hist-estado he-{{ h.estado }}">{{ h.estado }}</span></td>
+          <td>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('mant_ot_ficha', vid=h.id) }}">
+              <i class="bi bi-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-mini">
+      <i class="bi bi-inbox"></i>
+      Sin órdenes asignadas todavía.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ─── PANEL CONTRATO ─── #}
+<div class="tf-panel" data-panel="contrato">
+  <div class="info-card">
+    <h6><i class="bi bi-file-earmark-pdf-fill"></i>Contrato</h6>
+    {% if tec.contrato_pdf_url %}
+    <div class="contrato-info">
+      <i class="bi bi-file-earmark-pdf-fill"></i>
+      <div style="flex:1">
+        <div style="font-weight:700;color:#0a0a0a">Contrato vigente</div>
+        <div class="small text-muted">
+          {% if tec.contrato_inicio %}Inicio: {{ tec.contrato_inicio }}{% endif %}
+          {% if tec.contrato_termino %} · Término: {{ tec.contrato_termino }}{% endif %}
+          {% if tec.contrato_renovable %} · Renovable{% endif %}
+        </div>
+      </div>
+      <a class="btn btn-success btn-sm" href="{{ tec.contrato_pdf_url }}" target="_blank" rel="noopener">
+        <i class="bi bi-eye"></i>Ver PDF
+      </a>
+    </div>
+    <div class="mt-2 text-end">
+      <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('contratoFile').click()">
+        <i class="bi bi-arrow-clockwise"></i>Reemplazar contrato
+      </button>
+    </div>
+    {% else %}
+    <div class="contrato-zone" onclick="document.getElementById('contratoFile').click()">
+      <i class="bi bi-cloud-arrow-up-fill"></i>
+      <div class="title">Subir contrato PDF</div>
+      <div class="sub">Toca aquí para seleccionar — máx 25 MB</div>
+    </div>
+    {% endif %}
+    <input type="file" id="contratoFile" accept="application/pdf,.pdf" style="display:none"
+           onchange="subirContrato(this)">
+
+    <div class="info-grid mt-3">
+      <div class="info-row">
+        <div class="info-key">Fecha de inicio</div>
+        <div class="info-val">
+          <input type="date" class="form-control form-control-sm" id="contInicio"
+                 value="{{ tec.contrato_inicio or '' }}"
+                 onchange="actualizarFechasContrato()" style="max-width:200px">
+        </div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">Fecha de término</div>
+        <div class="info-val">
+          <input type="date" class="form-control form-control-sm" id="contTermino"
+                 value="{{ tec.contrato_termino or '' }}"
+                 onchange="actualizarFechasContrato()" style="max-width:200px">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ─── PANEL NOTAS ─── #}
+<div class="tf-panel" data-panel="notas">
+  <div class="info-card">
+    <h6><i class="bi bi-journal-text"></i>Notas internas</h6>
+    <textarea class="form-control" id="notasTxt" rows="8"
+              placeholder="Observaciones, fortalezas, restricciones, acuerdos especiales…"
+              style="min-height:160px">{{ tec.notas or '' }}</textarea>
+    <div class="text-end mt-2">
+      <button class="btn btn-ilus" onclick="guardarNotas()">
+        <i class="bi bi-save"></i> Guardar notas
+      </button>
+    </div>
+  </div>
+</div>
+
+{# ─── INPUT oculto para foto ─── #}
+<input type="file" id="fotoInput" accept="image/*" style="display:none"
+       onchange="onFotoCambio(this)">
+
+<script>
+const EID = {{ tec.id }};
+
+// Tabs
+document.querySelectorAll('.tf-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tf-tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tf-panel').forEach(p => p.classList.remove('active'));
+    t.classList.add('active');
+    document.querySelector(`.tf-panel[data-panel="${t.dataset.tab}"]`).classList.add('active');
+  });
+});
+
+async function enviarInvitacion(){
+  const ok = await ilusConfirm({
+    title: 'Enviar invitación',
+    message: '¿Enviar email de invitación al contacto del técnico?',
+    sub: 'El link es válido por 7 días.',
+    okLabel: 'Sí, enviar',
+    cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/invitar`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: '{}',
+    });
+    const d = await r.json();
+    if (!d.ok){
+      await ilusAlert({ title: 'No se pudo enviar', message: d.error || '?', type: 'error' });
+      return;
+    }
+    if (d.email_enviado){
+      ilusToast('✓ Invitación enviada por email', { type: 'success' });
+    } else {
+      await ilusAlert({
+        title: 'Link generado',
+        message: 'El email no se pudo enviar automáticamente. Compartí este link manualmente:',
+        sub: '<code style="font-size:.75rem">' + d.link + '</code>',
+        subHtml: true,
+        type: 'warning',
+      });
+    }
+    setTimeout(() => location.reload(), 1200);
+  } catch(e){
+    ilusToast('Error de red', { type: 'error' });
+  }
+}
+
+async function cambiarEstado(){
+  const estadoActual = '{{ tec.estado }}';
+  const target = estadoActual === 'activo' ? 'suspendido' :
+                 (estadoActual === 'suspendido' ? 'activo' : 'activo');
+  const accion = target === 'activo' ? 'reactivar' : (target === 'suspendido' ? 'suspender' : 'restaurar');
+  const ok = await ilusConfirm({
+    title: 'Confirmar cambio',
+    message: `¿Querés ${accion} este técnico?`,
+    sub: target === 'suspendido' ? 'No podrá recibir nuevas OTs hasta que lo reactives.' : '',
+    okLabel: 'Confirmar',
+    cancelLabel: 'Cancelar',
+    danger: (target === 'suspendido'),
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ estado: target }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast(`✓ Estado: ${target}`, { type:'success' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function guardarNotas(){
+  const notas = document.getElementById('notasTxt').value || '';
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ notas }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Notas guardadas', { type:'success' });
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function editarFacturacion(){
+  // Para simplicidad — la edición completa se hace via PUT con los campos.
+  // Aquí preguntamos uno por uno con ilusPrompt para los principales.
+  // FIX REVIEWER C1 — usar tojson para escapar comillas y caracteres
+  // especiales (un banco "D'Aguila" rompía JS sin tojson).
+  const banco = await ilusPrompt({
+    title: 'Banco',
+    message: 'Nombre del banco',
+    placeholder: 'Ej: Banco de Chile',
+    defaultValue: {{ (tec.banco or "") | tojson }},
+  });
+  if (banco === null) return;
+  const numCta = await ilusPrompt({
+    title: 'N° de cuenta',
+    message: 'Número de cuenta bancaria',
+    placeholder: '000 0000 0000',
+    defaultValue: {{ (tec.numero_cuenta or "") | tojson }},
+  });
+  if (numCta === null) return;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ banco, numero_cuenta: numCta }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Datos guardados', { type:'success' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+function subirFoto(){
+  document.getElementById('fotoInput').click();
+}
+
+async function onFotoCambio(input){
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  if (f.size > 8 * 1024 * 1024){
+    ilusToast('Foto demasiado grande (máx 8 MB)', { type:'error' });
+    return;
+  }
+  const fd = new FormData();
+  fd.append('archivo', f);
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/foto`, {
+      method:'POST', body: fd,
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Foto actualizada', { type:'success' });
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function subirContrato(input){
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')){
+    ilusToast('Solo PDF aceptado', { type:'error' });
+    return;
+  }
+  if (f.size > 25 * 1024 * 1024){
+    ilusToast('PDF demasiado grande (máx 25 MB)', { type:'error' });
+    return;
+  }
+  ilusToast('Subiendo contrato…', { type:'info' });
+  const fd = new FormData();
+  fd.append('archivo', f);
+  const inicio = document.getElementById('contInicio').value;
+  const termino = document.getElementById('contTermino').value;
+  if (inicio) fd.append('contrato_inicio', inicio);
+  if (termino) fd.append('contrato_termino', termino);
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}/contrato`, {
+      method:'POST', body: fd,
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Contrato subido', { type:'success' });
+      setTimeout(() => location.reload(), 700);
+    } else {
+      ilusToast(d.error || 'Error', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+async function actualizarFechasContrato(){
+  const inicio = document.getElementById('contInicio').value || null;
+  const termino = document.getElementById('contTermino').value || null;
+  try {
+    const r = await fetch(`/mantenciones/api/tecnicos-externos/${EID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ contrato_inicio: inicio, contrato_termino: termino }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Fechas guardadas', { type:'success' });
+    }
+  } catch(e){ /* silent */ }
+}
+</script>
+{% endblock %}
