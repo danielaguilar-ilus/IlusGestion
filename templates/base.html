@@ -13,14 +13,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-  {# ── Favicons (multi-formato: SVG moderno + PNG fallback) ── #}
-  {# El SVG tiene preferencia en navegadores modernos (Chrome/Firefox/Edge/Safari 17+).
-     El PNG queda como fallback para navegadores viejos.
-     Apple touch icon usa el Logo.png oficial (se ve en home screen iOS/iPadOS). #}
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
-  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
-  <link rel="mask-icon" href="{{ url_for('static', filename='favicon.svg') }}" color="#CC0000">
+  {# ── Favicons (regenerados 2026-05-17 desde Logo.png oficial) ──
+     Casco espartano BLANCO sobre fondo NEGRO #0a0a0a.
+     PNG multi-tamaño: 16/32/64/192 para navegadores; 180x180 para iOS.
+     Cache-busting ?v=20260517a fuerza refresh del cache del navegador
+     (sin esto, los navegadores guardan el favicon agresivamente). #}
+  <link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}?v=20260517a">
+  <link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}?v=20260517a">
+  <link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}?v=20260517a">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}?v=20260517a">
+  <link rel="apple-touch-icon" sizes="180x180"      href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=20260517a">
 
   {# ── Open Graph (cómo se ve al compartir en WhatsApp / Facebook / etc.) ── #}
   <meta property="og:type" content="website">
