@@ -8514,6 +8514,132 @@ def erp_engine_peek():
     })
 
 
+# ════════════════════════════════════════════════════════════════════
+# TWILIO — Diagnóstico + envío manual (admin)
+# ════════════════════════════════════════════════════════════════════
+@app.route("/api/twilio/health", methods=["GET"])
+def twilio_health():
+    """Health-check de Twilio. Muestra qué está configurado (sin exponer
+    secretos). Daniel puede pegarle GET para verificar antes de mandar
+    mensajes reales."""
+    return jsonify({
+        "ok": True,
+        "twilio": _twilio_diagnostico(),
+        "env_vars_esperadas": [
+            "TWILIO_ACCOUNT_SID",
+            "TWILIO_AUTH_TOKEN",
+            "TWILIO_WHATSAPP_FROM",  # formato: whatsapp:+14155238886 (sandbox)
+            "TWILIO_PHONE_FROM",     # formato: +14155551234 (número comprado)
+        ],
+    })
+
+
+@app.route("/api/twilio/test", methods=["POST"])
+@login_required
+def twilio_test_send():
+    """Endpoint admin para enviar mensaje de prueba.
+    Body: { canal: 'sms'|'whatsapp', to: '+56912345678', body: 'Mensaje...' }
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin"}), 403
+    d = request.get_json(silent=True) or {}
+    canal = (d.get("canal") or "").lower().strip()
+    to = (d.get("to") or "").strip()
+    body = (d.get("body") or "Prueba ILUS Twilio").strip()[:500]
+    if canal not in ("sms", "whatsapp"):
+        return jsonify({"ok": False, "error": "canal debe ser 'sms' o 'whatsapp'"}), 400
+    if not to:
+        return jsonify({"ok": False, "error": "Falta 'to'"}), 400
+    try:
+        if canal == "whatsapp":
+            cfg = _get_wa_cfg()
+            if not (cfg.get("account_sid") and cfg.get("auth_token") and cfg.get("from_number")):
+                return jsonify({"ok": False, "error": "WhatsApp no configurado en env vars"}), 400
+            sid = _send_whatsapp(cfg["account_sid"], cfg["auth_token"], cfg["from_number"], to, body)
+        else:
+            cfg = _get_sms_cfg()
+            if not (cfg.get("account_sid") and cfg.get("auth_token") and cfg.get("from_number")):
+                return jsonify({"ok": False, "error": "SMS no configurado en env vars"}), 400
+            sid = _send_sms(cfg["account_sid"], cfg["auth_token"], cfg["from_number"], to, body)
+        try:
+            _comm_log_entry(canal, to, "Test manual", "ok", f"sid={sid}")
+        except Exception: pass
+        return jsonify({"ok": True, "sid": sid, "canal": canal, "to": to})
+    except Exception as e:
+        try:
+            _comm_log_entry(canal, to, "Test manual", "error", str(e)[:300])
+        except Exception: pass
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+
+
+def _notificar_ot_asignada(visita_id):
+    """Helper: cuando se asigna/crea una OT, intenta notificar al técnico
+    asignado y al contacto en sitio por WhatsApp/SMS (best-effort, async).
+    NO bloquea el endpoint. Solo dispara si Twilio está configurado.
+    """
+    import threading as _th_n
+    def _bg():
+        try:
+            v = mysql_fetchone(
+                "SELECT v.id, v.numero_ot, v.fecha_programada, v.hora_inicio, "
+                "       v.contacto_nombre, v.contacto_tel, "
+                "       c.razon_social, "
+                "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
+                "       u.telefono AS tecnico_tel "
+                "  FROM mant_visitas v "
+                "  JOIN mant_clientes c ON c.id = v.cliente_id "
+                "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+                " WHERE v.id=%s",
+                (visita_id,)
+            )
+            if not v: return
+            wa = _get_wa_cfg()
+            sms = _get_sms_cfg()
+            wa_ok = bool(wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number"))
+            sms_ok = bool(sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number"))
+            if not (wa_ok or sms_ok):
+                return  # nada configurado
+            # 1) Notificar al técnico
+            if v.get("tecnico_tel"):
+                msg_t = (f"📋 ILUS · OT asignada\n\n"
+                         f"OT: {v['numero_ot']}\n"
+                         f"Cliente: {v['razon_social']}\n"
+                         f"Fecha: {v['fecha_programada']}"
+                         f"{' · ' + str(v['hora_inicio']) if v.get('hora_inicio') else ''}\n\n"
+                         f"Ingresa a la app para ver detalles y gestionar.")
+                try:
+                    if wa_ok:
+                        _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
+                                       v["tecnico_tel"], msg_t)
+                    elif sms_ok:
+                        _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
+                                  v["tecnico_tel"], msg_t)
+                except Exception as e_t:
+                    print(f"[notif-ot-tec] {e_t}", flush=True)
+            # 2) Notificar al contacto en sitio (cliente)
+            if v.get("contacto_tel"):
+                msg_c = (f"🔧 ILUS Mantenciones\n\n"
+                         f"Hola {v.get('contacto_nombre') or ''},\n"
+                         f"Tu OT {v['numero_ot']} fue programada para "
+                         f"{v['fecha_programada']}"
+                         f"{' · ' + str(v['hora_inicio']) if v.get('hora_inicio') else ''}.\n\n"
+                         f"Técnico asignado: {v.get('tecnico_nombre') or 'por confirmar'}\n\n"
+                         f"Ante cualquier duda, responde este mensaje.")
+                try:
+                    if wa_ok:
+                        _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
+                                       v["contacto_tel"], msg_c)
+                    elif sms_ok:
+                        _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
+                                  v["contacto_tel"], msg_c)
+                except Exception as e_c:
+                    print(f"[notif-ot-cli] {e_c}", flush=True)
+        except Exception as e_outer:
+            print(f"[notificar_ot_asignada] {e_outer}", flush=True)
+    _th_n.Thread(target=_bg, daemon=True, name=f"notif-ot-{visita_id}").start()
+
+
 @app.route("/api/erp/health", methods=["GET"])
 def erp_engine_health():
     """Health-check del motor ERP. Útil para verificar en producción si:
@@ -13413,15 +13539,103 @@ def _get_client_cfg():
 
 
 def _get_wa_cfg():
+    """Config de WhatsApp Twilio. Primero busca BD (comm_whatsapp_config),
+    si no encuentra (o falta algún campo crítico), cae a env vars de Railway.
+
+    Env vars esperadas:
+      TWILIO_ACCOUNT_SID      (ej: AC1234567890abcdef...)
+      TWILIO_AUTH_TOKEN       (ej: abc123...)
+      TWILIO_WHATSAPP_FROM    (ej: whatsapp:+14155238886 — sandbox o número aprobado)
+    """
+    import os as _os_wa
+    cfg = {}
     try:
         row = mysql_fetchone(
             "SELECT * FROM comm_whatsapp_config WHERE id=1 LIMIT 1"
         )
         if row:
-            return dict(row)
+            cfg = dict(row)
     except Exception:
         pass
-    return {}
+    # Fallback / override desde env vars
+    env_sid = (_os_wa.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+    env_tok = (_os_wa.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+    env_from = (_os_wa.environ.get("TWILIO_WHATSAPP_FROM") or "").strip()
+    if env_sid and not cfg.get("account_sid"): cfg["account_sid"] = env_sid
+    if env_tok and not cfg.get("auth_token"):  cfg["auth_token"]  = env_tok
+    if env_from and not cfg.get("from_number"):
+        # Normaliza: si no trae prefix "whatsapp:" lo agrega
+        cfg["from_number"] = env_from if env_from.startswith("whatsapp:") else f"whatsapp:{env_from}"
+    return cfg
+
+
+def _get_sms_cfg():
+    """Config de SMS Twilio. Lee SOLO de env vars (no hay tabla BD para SMS).
+    Env vars:
+      TWILIO_ACCOUNT_SID
+      TWILIO_AUTH_TOKEN
+      TWILIO_PHONE_FROM   (ej: +14155551234 — número Twilio comprado)
+    """
+    import os as _os_sms
+    return {
+        "account_sid": (_os_sms.environ.get("TWILIO_ACCOUNT_SID") or "").strip(),
+        "auth_token":  (_os_sms.environ.get("TWILIO_AUTH_TOKEN") or "").strip(),
+        "from_number": (_os_sms.environ.get("TWILIO_PHONE_FROM") or "").strip(),
+    }
+
+
+def _send_sms(account_sid, auth_token, from_num, to_num, body):
+    """Envía SMS vía Twilio. Lanza RuntimeError si twilio no está instalado."""
+    import re as _re
+    try:
+        from twilio.rest import Client as _TwilioClient
+    except ImportError:
+        raise RuntimeError("El paquete 'twilio' no está instalado. Ejecuta: pip install twilio")
+    m = _re.search(r'(AC[a-f0-9]{32})', account_sid or "", _re.I)
+    if m:
+        account_sid = m.group(1)
+    if not account_sid or not account_sid.upper().startswith("AC"):
+        raise ValueError("El Account SID debe comenzar con 'AC'")
+    if not auth_token or auth_token in ("[AuthToken]",):
+        raise ValueError("Ingresa un Auth Token válido")
+    # Normalizar números: SIN prefijo whatsapp:, con + internacional
+    from_num = from_num.replace("whatsapp:", "").strip()
+    to_num = to_num.strip()
+    if not to_num.startswith("+"):
+        # Asumir Chile si solo tiene dígitos (formato 9xxxxxxxx → +569xxxxxxxx)
+        digits = _re.sub(r'\D', '', to_num)
+        if digits.startswith("9") and len(digits) == 9:
+            to_num = "+56" + digits
+        elif digits.startswith("56"):
+            to_num = "+" + digits
+        else:
+            to_num = "+" + digits
+    client = _TwilioClient(account_sid, auth_token)
+    msg = client.messages.create(from_=from_num, to=to_num, body=body)
+    return msg.sid
+
+
+def _twilio_diagnostico():
+    """Retorna dict con estado de configuración Twilio (sin exponer secretos)."""
+    wa = _get_wa_cfg()
+    sms = _get_sms_cfg()
+    def _mask(s):
+        if not s: return None
+        s = str(s)
+        if len(s) <= 8: return "***"
+        return s[:4] + "..." + s[-4:]
+    return {
+        "whatsapp": {
+            "configurado": bool(wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number")),
+            "account_sid": _mask(wa.get("account_sid")),
+            "from_number": wa.get("from_number") or None,
+        },
+        "sms": {
+            "configurado": bool(sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number")),
+            "account_sid": _mask(sms.get("account_sid")),
+            "from_number": sms.get("from_number") or None,
+        },
+    }
 
 
 def _comm_log_entry(canal, dest, asunto, estado, detalle=""):
