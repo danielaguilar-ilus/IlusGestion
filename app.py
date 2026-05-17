@@ -473,15 +473,22 @@ def rut_fmt_filter(value):
 @app.template_filter('fromjson_safe')
 def fromjson_safe_filter(value):
     """Filtro Jinja: parsea un string JSON sin lanzar excepción.
-    Si falla, devuelve dict vacío para que .get() funcione.
-    Uso típico en templates: {{ tarea.valor_json | fromjson_safe }}
+    Siempre devuelve un DICT (o {} si parseo falla o el valor es list/None).
+    Esto evita AttributeError al hacer .get() en templates cuando
+    el valor_json guardado es array u otro tipo no esperado.
+    Uso típico: {{ tarea.valor_json | fromjson_safe }}
     """
     if not value:
         return {}
-    if isinstance(value, (dict, list)):
+    # Si ya es dict, devolverlo
+    if isinstance(value, dict):
         return value
+    # Si es list u otro tipo, devolver dict vacío (defensivo)
+    if not isinstance(value, str):
+        return {}
     try:
-        return json.loads(value)
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
 
@@ -23913,14 +23920,21 @@ def mant_ot_ejecutar(vid):
         mid = t.get("maquina_id") or 0
         tareas_por_eq.setdefault(mid, []).append(t)
 
-    # Fotos por máquina (FIX 2026-05-16: cloudinary_url no existe en
-    # mant_visita_fotos — solo en mant_visita_fotos hay archivo_path)
+    # Fotos por máquina (FIX 2026-05-17: la columna timestamp se llama
+    # `tomada_at` no `created_at`. Tampoco hay `cloudinary_url` en el
+    # CREATE TABLE original — se agregó vía migración idempotente).
     fotos = mysql_fetchall(
-        "SELECT id, tarea_id, archivo_path, tipo_foto, created_at "
-        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY created_at",
+        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
+        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
         (vid,)
     ) or []
     fotos = [dict(f) for f in fotos]
+    # Normalizar URL preferida (Cloudinary > local)
+    for f in fotos:
+        f["url"] = f.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{f['archivo_path']}"
+            if f.get("archivo_path") else ""
+        )
 
     # Index de equipos por id (para que el template encuentre la máquina
     # de cada grupo sin loop interno).
@@ -24552,10 +24566,10 @@ def mant_visita_pdf(vid):
         grupos[grupo_idx[key]]["tareas"].append(t)
     eq_idx = {e["id"]: e for e in equipos}
 
-    # Fotos
+    # Fotos (PDF) — usar columna real `tomada_at`
     fotos = mysql_fetchall(
-        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, created_at "
-        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY created_at",
+        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
+        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
         (vid,)
     ) or []
     fotos_dict = []

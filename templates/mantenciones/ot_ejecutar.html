@@ -670,8 +670,8 @@
 
 <script>
 const VID = {{ visita.id }};
-const DESTINO_LAT = {{ visita.direccion_lat | default('null', true) | tojson }};
-const DESTINO_LNG = {{ visita.direccion_lng | default('null', true) | tojson }};
+const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
+const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
 const RUTA_YA_INICIADA = {{ 'true' if visita.ruta_iniciada_at else 'false' }};
 
