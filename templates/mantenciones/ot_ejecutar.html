@@ -281,20 +281,19 @@
      VISTA 1: LISTA DE MÁQUINAS
      ════════════════════════════════════════════════════════ #}
   <div class="tx-view active" id="view-maquinas">
-    {# Stats globales #}
-    {% set total_tar = (plantillas_por_maquina.values() | map('sum', attribute='total') | list) %}
-    {% set total_global = 0 %}
-    {% set comp_global = 0 %}
+    {# Stats globales — usa namespace porque Jinja crea scope local en {% set %} dentro de loops.
+       Sin namespace, total_global y comp_global SIEMPRE quedan en 0. #}
+    {% set ns = namespace(total=0, comp=0) %}
     {% for mid, pls in plantillas_por_maquina.items() %}
       {% for p in pls %}
-        {% set total_global = total_global + p.total %}
-        {% set comp_global = comp_global + p.completas %}
+        {% set ns.total = ns.total + p.total %}
+        {% set ns.comp = ns.comp + p.completas %}
       {% endfor %}
     {% endfor %}
     <div class="tx-stats-glob">
       <div class="tx-stat-cell"><div class="num n">{{ equipos|length }}</div><div class="l">Máquinas</div></div>
-      <div class="tx-stat-cell ok"><div class="num n" id="statComp">{{ comp_global }}</div><div class="l">Tareas OK</div></div>
-      <div class="tx-stat-cell warn"><div class="num n" id="statTot">{{ total_global }}</div><div class="l">Total</div></div>
+      <div class="tx-stat-cell ok"><div class="num n" id="statComp">{{ ns.comp }}</div><div class="l">Tareas OK</div></div>
+      <div class="tx-stat-cell warn"><div class="num n" id="statTot">{{ ns.total }}</div><div class="l">Total</div></div>
     </div>
 
     <div class="tx-section-title"><i class="bi bi-boxes"></i>Selecciona una máquina</div>
@@ -308,9 +307,11 @@
     {% endif %}
 
     {% for eq in equipos %}
-    {% set stats = stats_por_maquina.get(eq.id, {}) %}
+    {# Las keys de stats_por_maquina se serializan como string para que JS las encuentre.
+       En el template Jinja sí entiende ambas, pero para consistencia usamos string. #}
+    {% set stats = stats_por_maquina.get(eq.id|string, {}) %}
     <div class="tx-eq-card{% if stats.bloqueada %} done{% endif %}"
-         onclick="goToPlantillas({{ eq.id }})">
+         onclick="goToPlantillas('{{ eq.id }}')">
       <div class="eq-foto" {% if eq.foto_url %}style="background-image:url('{{ eq.foto_url }}')"{% endif %}>
         {% if not eq.foto_url %}<i class="bi bi-image"></i>{% endif %}
       </div>
@@ -475,12 +476,14 @@ let _state = { mid: null, pid: null, view: 'maquinas' };
 
 // ════════════════════════════════════════════════════════
 //  NAVEGACIÓN DRILL-DOWN
+//  IMPORTANTE: las keys de EQUIPOS_IDX/PLANTILLAS_POR_MAQUINA/STATS_POR_MAQUINA
+//  son STRINGS (JSON estándar). Cualquier `mid` o `pid` que llegue de un
+//  onclick lo casteamos a String() defensivamente para evitar undefined.
 // ════════════════════════════════════════════════════════
 function setView(v){
   document.querySelectorAll('.tx-view').forEach(el => el.classList.remove('active'));
   document.getElementById('view-' + v).classList.add('active');
   _state.view = v;
-  // Scroll arriba al cambiar vista
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -491,6 +494,7 @@ function goToMaquinas(){
 }
 
 function goToPlantillas(mid){
+  mid = String(mid);
   _state.mid = mid;
   _state.pid = null;
   setView('plantillas');
@@ -499,6 +503,7 @@ function goToPlantillas(mid){
 }
 
 function goToTareas(mid, pid){
+  mid = String(mid); pid = String(pid);
   _state.mid = mid;
   _state.pid = pid;
   setView('tareas');
@@ -517,7 +522,7 @@ function renderCrumbs(){
     } else {
       html += `<span class="sep">›</span><button onclick="goToPlantillas(${_state.mid})">${_escapeHtml(nom)}</button>`;
       if (_state.pid !== null){
-        const grupo = (PLANTILLAS_POR_MAQUINA[_state.mid] || []).find(p => p.plantilla_id === _state.pid);
+        const grupo = (PLANTILLAS_POR_MAQUINA[_state.mid] || []).find(p => String(p.plantilla_id) === String(_state.pid));
         const nomPl = grupo ? grupo.plantilla_nombre : 'Plantilla';
         html += `<span class="sep">›</span><span class="curr">${_escapeHtml(nomPl)}</span>`;
       }
@@ -577,7 +582,7 @@ function renderPlantillas(mid){
 // ════════════════════════════════════════════════════════
 function renderTareas(mid, pid){
   const eq = EQUIPOS_IDX[mid];
-  const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => p.plantilla_id === pid);
+  const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
   if (!grupo) return;
 
   document.getElementById('tareasHero').innerHTML = `
@@ -709,7 +714,7 @@ function refreshPills(btn, group){
 // ════════════════════════════════════════════════════════
 async function toggleCheck(tid, mid, pid){
   // Encontrar tarea en data
-  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   const tar = grupo.tareas.find(t => t.id === tid);
   const newVal = !tar.completada;
   try {
@@ -736,7 +741,7 @@ async function guardarResp(tid, valor, mid, pid){
     });
     const d = await r.json();
     if (d.ok){
-      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
       const tar = grupo.tareas.find(t => t.id === tid);
       tar.completada = d.completada;
       tar.valor_json = d.valor_norm;
@@ -786,7 +791,7 @@ async function subirFotoTarea(tid, input, mid, pid){
         method: 'PATCH', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ completada: 1 })
       });
-      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
       const tar = grupo.tareas.find(t => t.id === tid);
       tar.completada = 1;
       _updateProgress(mid, pid);
@@ -803,7 +808,7 @@ async function subirFotoTarea(tid, input, mid, pid){
 
 function _updateProgress(mid, pid){
   // Recalcular grupo
-  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => p.plantilla_id === pid);
+  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   grupo.completas = grupo.tareas.filter(t => t.completada).length;
   grupo.progreso = grupo.total ? Math.round((grupo.completas / grupo.total) * 100) : 0;
   grupo.bloqueado = (grupo.completas === grupo.total && grupo.total > 0);

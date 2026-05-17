@@ -23962,9 +23962,16 @@ def mant_ot_ejecutar(vid):
             if f.get("archivo_path") else ""
         )
 
-    # Index de equipos por id (para que el template encuentre la máquina
-    # de cada grupo sin loop interno).
-    equipos_idx = {e["id"]: e for e in equipos}
+    # ════════════════════════════════════════════════════════════════
+    # FIX 2026-05-17 — Keys stringificadas para JSON.
+    # Python dict con keys INT al pasar por |tojson en Jinja se serializa
+    # con keys STRING (estándar JSON). En JS al hacer dict[5] (int de
+    # onclick(5)) se obtiene undefined porque la key real es "5".
+    # Convertimos las keys a STRING acá para que JS las encuentre.
+    # ════════════════════════════════════════════════════════════════
+    equipos_idx = {str(e["id"]): e for e in equipos}
+    plantillas_por_maquina = {str(k): v for k, v in plantillas_por_maquina.items()}
+    stats_por_maquina = {str(k): v for k, v in stats_por_maquina.items()}
 
     return render_template(
         "mantenciones/ot_ejecutar.html",
