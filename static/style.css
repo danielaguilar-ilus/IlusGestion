@@ -3,6 +3,54 @@
    Layout: sidebar izquierdo fijo + contenido principal
 ══════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════
+   Google Places Autocomplete (.pac-container) — fix z-index modal
+   2026-05-17: el dropdown del autocomplete quedaba OCULTO detrás
+   del modal Bootstrap (z-index 1055). Forzamos z-index 9999 para
+   que aparezca arriba del modal "Generar OT" cuando el usuario
+   escribe la dirección. Estilo levemente ILUS (bordes y hover rojo).
+══════════════════════════════════════════════════════════════ */
+.pac-container {
+  z-index: 99999 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18), 0 0 0 1px rgba(220,38,38,.1) !important;
+  border: 1px solid #e5e7eb !important;
+  margin-top: 4px !important;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
+}
+.pac-item {
+  padding: 9px 12px !important;
+  cursor: pointer !important;
+  border-top: 1px solid #f1f5f9 !important;
+  font-size: .88rem !important;
+  color: #0f172a !important;
+  transition: background-color .12s !important;
+  min-height: 40px !important; /* touch target */
+}
+.pac-item:hover, .pac-item-selected {
+  background-color: #fef2f2 !important;
+}
+.pac-item:first-child {
+  border-top: none !important;
+}
+.pac-item-query {
+  font-weight: 700 !important;
+  font-size: .92rem !important;
+  color: #0f172a !important;
+}
+.pac-icon {
+  margin-right: 8px !important;
+  margin-top: 4px !important;
+}
+.pac-matched {
+  font-weight: 800 !important;
+  color: #dc2626 !important;
+}
+/* "Powered by Google" footer */
+.pac-logo:after {
+  margin: 6px 10px !important;
+}
+
 /* ── Variables ──────────────────────────────────────────────── */
 :root {
   --ilus-red:    #CC0000;
