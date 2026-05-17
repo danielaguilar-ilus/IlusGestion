@@ -25,7 +25,7 @@ from flask import (Flask, Response, flash, g, jsonify, make_response, redirect,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG
+from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY
 try:
     from config import ANTHROPIC_API_KEY as _ANTHROPIC_KEY_CFG
 except ImportError:
@@ -2764,6 +2764,9 @@ def inject_globals():
         # Modo embebido (iframe): default False; los endpoints que aceptan
         # ?embed=1 pueden sobreescribir pasando embed_mode=True en su render.
         "embed_mode":   False,
+        # Google Maps API Key — si está vacía, el frontend hace fallback
+        # a input de texto plano (sin autocomplete de direcciones).
+        "google_maps_api_key": GOOGLE_MAPS_API_KEY,
     }
 
 
@@ -14734,6 +14737,13 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN exec_gps_lng DECIMAL(10,7) NULL COMMENT 'Lng GPS al inicio de ejecución'",
                 "ALTER TABLE mant_visitas ADD COLUMN exec_gps_at DATETIME NULL",
                 "ALTER TABLE mant_visitas ADD COLUMN exec_gps_direccion VARCHAR(400) NULL COMMENT 'Dirección legible inversa (reverse geocoding)'",
+                # Dirección de la visita (Google Places autocomplete) — puede
+                # diferir de la dirección del cliente. Guía al técnico al lugar
+                # exacto donde está el equipo en esta OT.
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_visita VARCHAR(400) NULL COMMENT 'Dirección específica de la visita (puede diferir de cliente.direccion)'",
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN direccion_place_id VARCHAR(200) NULL COMMENT 'Google Places place_id de la dirección'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -27567,6 +27577,19 @@ def mant_lev_crear_o_listar(cid):
     # de cobro. NO aplica a levantamiento (siempre sin_costo).
     aplica_garantia = bool(data.get("aplica_garantia")) and tipo_ot != 'levantamiento'
 
+    # ─── Dirección de la visita (Google Places autocomplete) ───────
+    # Editable por el usuario (puede ser distinta a la dirección
+    # registrada del cliente). Guarda lat/lng para guiar al técnico
+    # en el modo ejecución (Google Maps).
+    direccion_visita = (data.get("direccion_visita") or "").strip()[:400] or None
+    try:
+        direccion_lat = float(data.get("direccion_lat")) if data.get("direccion_lat") is not None else None
+        direccion_lng = float(data.get("direccion_lng")) if data.get("direccion_lng") is not None else None
+    except (TypeError, ValueError):
+        direccion_lat = None
+        direccion_lng = None
+    direccion_place_id = (data.get("direccion_place_id") or "").strip()[:200] or None
+
     # ─── Multi-plantilla por equipo (plantillas_por_equipo) ───────
     # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
     # Si llega, además de la plantilla estándar del tipo, aplica estas
@@ -27663,16 +27686,19 @@ def mant_lev_crear_o_listar(cid):
                     "(numero_ot, cliente_id, titulo, fecha_programada, "
                     " fecha_realizada, hora_inicio, hora_fin, "
                     " tipo, estado, modalidad_cobro, prioridad, "
-                    " descripcion, tecnico_user_id, levantamiento_id, created_by) "
+                    " descripcion, tecnico_user_id, levantamiento_id, created_by, "
+                    " direccion_visita, direccion_lat, direccion_lng, direccion_place_id) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,"
                     " %s,'programada',%s,'media',"
+                    " %s,%s,%s,%s,"
                     " %s,%s,%s,%s)",
                     (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
                      fecha_prog, fecha_fin, hora_ini, hora_fin,
                      tipo_ot, modalidad,
                      f"OT tipo {tipo_ot} con {n_items} equipo(s). "
                      f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
-                     tecnico_principal, lev_id, current_username())
+                     tecnico_principal, lev_id, current_username(),
+                     direccion_visita, direccion_lat, direccion_lng, direccion_place_id)
                 )
                 visita_id = cur.lastrowid
                 cur.execute(

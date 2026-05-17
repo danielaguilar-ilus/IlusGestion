@@ -363,6 +363,24 @@
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 <script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+
+{# Google Maps Places API — solo se carga si hay API Key configurada.
+   `loading=async` evita el warning de deprecation y mejora performance.
+   El callback `__ilusGmapsReady` se dispara cuando el SDK está listo,
+   habilitando los inputs autocomplete pendientes. #}
+{% if google_maps_api_key and not embed_mode %}
+<script>
+  // Buffer global para inputs que esperan a que el SDK cargue
+  window.__ilusGmapsPending = window.__ilusGmapsPending || [];
+  window.__ilusGmapsReady = function(){
+    window.__ilusGmapsLoaded = true;
+    (window.__ilusGmapsPending || []).forEach(function(fn){ try { fn(); } catch(e) { console.warn('gmaps init:', e); } });
+    window.__ilusGmapsPending = [];
+  };
+</script>
+<script async defer
+        src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&language=es&region=CL&callback=__ilusGmapsReady&loading=async"></script>
+{% endif %}
 <script>
 (function () {
   // ── Sidebar toggle ──────────────────────────

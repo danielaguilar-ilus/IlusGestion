@@ -337,6 +337,84 @@
   global.ilusPrompt  = ilusPrompt;
 
   // ════════════════════════════════════════════════════════════════
+  //  GOOGLE PLACES AUTOCOMPLETE — helper reusable
+  //
+  //  Uso:
+  //    ilusPlacesAutocomplete('inputId', {
+  //      onPlaceSelected: (place) => { ... },
+  //      country: 'cl',         // Chile por default
+  //      types: ['address'],    // o 'establishment', '(regions)', etc.
+  //    });
+  //
+  //  El SDK de Google Maps se carga desde base.html cuando
+  //  google_maps_api_key está configurada en el backend. Si no, el
+  //  input sigue funcionando como input texto plano (sin autocomplete).
+  //
+  //  Espera al SDK con buffer __ilusGmapsPending si aún no cargó.
+  // ════════════════════════════════════════════════════════════════
+  function ilusPlacesAutocomplete(inputIdOrEl, opts){
+    opts = opts || {};
+    const input = (typeof inputIdOrEl === 'string')
+      ? document.getElementById(inputIdOrEl)
+      : inputIdOrEl;
+    if (!input) {
+      console.warn('[ilusPlaces] input no encontrado:', inputIdOrEl);
+      return;
+    }
+    // Si Google Maps NO se cargó (no hay API key), fallback silencioso:
+    // el input sigue funcionando como texto plano.
+    function tryInit(){
+      if (!window.google || !window.google.maps || !window.google.maps.places){
+        // Esperar a que cargue el SDK
+        if (window.__ilusGmapsPending){
+          window.__ilusGmapsPending.push(tryInit);
+        } else {
+          console.warn('[ilusPlaces] Google Maps SDK no disponible (sin API key). Input funcionará como texto plano.');
+        }
+        return;
+      }
+      try {
+        const country = (opts.country || 'cl').toLowerCase();
+        const ac = new google.maps.places.Autocomplete(input, {
+          componentRestrictions: { country: [country] },
+          types: opts.types || ['address'],
+          fields: ['formatted_address', 'geometry', 'address_components', 'name', 'place_id'],
+        });
+        ac.addListener('place_changed', function(){
+          const place = ac.getPlace();
+          if (!place || !place.geometry){
+            // El usuario tipeó pero no eligió sugerencia — opcional callback
+            if (typeof opts.onNoSelection === 'function') opts.onNoSelection(input.value);
+            return;
+          }
+          // Llenar el input con la dirección completa
+          if (place.formatted_address) input.value = place.formatted_address;
+          // Callback con datos enriquecidos
+          if (typeof opts.onPlaceSelected === 'function'){
+            opts.onPlaceSelected({
+              direccion: place.formatted_address,
+              lat: place.geometry.location.lat(),
+              lng: place.geometry.location.lng(),
+              place_id: place.place_id,
+              componentes: place.address_components,
+              raw: place,
+            });
+          }
+        });
+        // Marcar el input como inicializado
+        input.dataset.placesInit = '1';
+      } catch(e){
+        console.warn('[ilusPlaces] error inicializando autocomplete:', e);
+      }
+    }
+    tryInit();
+  }
+  global.ilusPlacesAutocomplete = ilusPlacesAutocomplete;
+  global.ilusGmapsDisponible = function(){
+    return !!(window.google && window.google.maps && window.google.maps.places);
+  };
+
+  // ════════════════════════════════════════════════════════════════
   //  SHIM GLOBAL — window.alert() → ilusToast/ilusAlert
   //
   //  Objetivo: eliminar TODOS los popups grises feos del navegador

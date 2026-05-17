@@ -6596,6 +6596,38 @@ async function abrirLevantamientoSelector(){
 
   document.getElementById('levSelectNotas').value = '';
 
+  // Default dirección: la del cliente (editable por el usuario).
+  // Si Google Maps está disponible, conecta autocomplete.
+  const dirInput = document.getElementById('levDireccion');
+  if (dirInput){
+    const dirCliente = {{ (cliente.direccion or '') | tojson }};
+    const comunaCliente = {{ (cliente.comuna or '') | tojson }};
+    let dirCompleta = dirCliente;
+    if (comunaCliente && !dirCompleta.toLowerCase().includes(comunaCliente.toLowerCase())){
+      dirCompleta = (dirCompleta ? dirCompleta + ', ' : '') + comunaCliente;
+    }
+    dirInput.value = dirCompleta || '';
+    // Inicializar autocomplete solo una vez por modal
+    if (!dirInput.dataset.placesInit && typeof ilusPlacesAutocomplete === 'function'){
+      ilusPlacesAutocomplete(dirInput, {
+        country: 'cl',
+        types: ['address'],
+        onPlaceSelected: (place) => {
+          const hint = document.getElementById('levDireccionHint');
+          if (hint){
+            hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>' +
+              'Dirección verificada por Google Maps · ' +
+              `<small>${place.lat.toFixed(4)}, ${place.lng.toFixed(4)}</small>`;
+          }
+          // Guardar lat/lng en datasets para enviar después
+          dirInput.dataset.lat = place.lat;
+          dirInput.dataset.lng = place.lng;
+          dirInput.dataset.placeId = place.place_id || '';
+        },
+      });
+    }
+  }
+
   // Default: fecha hoy
   const hoy = new Date();
   const yyyy = hoy.getFullYear();
@@ -6967,6 +6999,11 @@ async function levIniciar(){
         tipo_ot: document.getElementById('otTipo')?.value || 'levantamiento',
         aplica_garantia: document.getElementById('otAplicaGarantia')?.checked || false,
         plantillas_por_equipo: plantillasPorEq,
+        // Dirección de la visita (puede ser distinta a la del cliente)
+        direccion_visita: (document.getElementById('levDireccion')?.value || '').trim(),
+        direccion_lat: parseFloat(document.getElementById('levDireccion')?.dataset.lat) || null,
+        direccion_lng: parseFloat(document.getElementById('levDireccion')?.dataset.lng) || null,
+        direccion_place_id: document.getElementById('levDireccion')?.dataset.placeId || null,
       })
     });
     const d = await r.json();
@@ -10093,12 +10130,12 @@ function _planTabActualizarStatus(ctAnalizado) {
           </div>
         </div>
 
-        {# ─── Paso 2: Información básica ─── #}
+        {# ─── Paso 2: Información básica + dirección ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">2</div>
             <div class="lev-step-title">Información básica</div>
-            <div class="lev-step-sub">Título y notas</div>
+            <div class="lev-step-sub">Título, notas y dirección</div>
           </div>
           <div class="lev-step-body">
             <div class="row g-2">
@@ -10111,6 +10148,23 @@ function _planTabActualizarStatus(ctAnalizado) {
                 <label class="form-label small fw-semibold">Notas (opcional)</label>
                 <input type="text" id="levSelectNotas" class="form-control form-control-sm"
                        placeholder="Ej: Pre-contrato anual 2026">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección de la visita *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Editable — guía al técnico al lugar
+                  </small>
+                </label>
+                <div class="position-relative">
+                  <input type="text" id="levDireccion" class="form-control form-control-sm"
+                         placeholder="Empieza a escribir la dirección…"
+                         autocomplete="off">
+                  <small id="levDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Default: dirección registrada del cliente. Edítala si la visita es en otro lugar.
+                  </small>
+                </div>
               </div>
             </div>
           </div>

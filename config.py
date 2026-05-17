@@ -105,6 +105,15 @@ MAX_BULTOS = 27
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY", "")
 
 # ─────────────────────────────────────────────
+#  Google Maps Platform (opcional)
+#  Si está vacía, los inputs de dirección caen a input texto plano
+#  (sin autocomplete). La key debe tener habilitadas:
+#  Places API (New), Maps JavaScript API, Geocoding API.
+#  Configurar restricción HTTP referrers: *.up.railway.app/* + localhost/*
+# ─────────────────────────────────────────────
+GOOGLE_MAPS_API_KEY = _env("GOOGLE_MAPS_API_KEY", "")
+
+# ─────────────────────────────────────────────
 #  Cloudinary (opcional — cae a filesystem si falta)
 # ─────────────────────────────────────────────
 CLOUDINARY_CONFIG = {
@@ -149,6 +158,7 @@ def _diagnose_env_status():
         ("CLOUDINARY_API_SECRET",  CLOUDINARY_CONFIG['api_secret']),
         ("SMTP_USER",              EMAIL_CONFIG['smtp_user']),
         ("SMTP_PASSWORD",          EMAIL_CONFIG['smtp_pass']),
+        ("GOOGLE_MAPS_API_KEY",    GOOGLE_MAPS_API_KEY),
     ]
     req_missing = [name for name, val in required if not val]
     opt_missing = [name for name, val in optional if not val]
