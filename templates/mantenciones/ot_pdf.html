@@ -1105,6 +1105,10 @@
   </div>
 
   {# ── FIRMAS ── #}
+  {# 2026-05-18 — Nombres estampados al firmar:
+       firma_cliente_nombre → cliente
+       firma_tecnico_nombre → técnico (fallback: tecnico_principal)
+       firma_supervisor_nombre → aprobador (fallback: cerrada_por / created_by) #}
   <div class="sec-title">Firmas y validación</div>
   <div class="firmas">
     <div class="fir">
@@ -1113,23 +1117,23 @@
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
       <div class="fir-lbl">Aceptado Por</div>
-      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at }}</div>{% endif %}
+      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
       <div class="fir-img {{ 'empty' if not visita.firma_supervisor_url else '' }}">
         {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
       </div>
-      <div class="fir-nom">{{ visita.responsable_nombre or visita.cerrada_por or '—' }}</div>
+      <div class="fir-nom">{{ visita.firma_supervisor_nombre or visita.responsable_nombre or visita.cerrada_por or visita.created_by or '—' }}</div>
       <div class="fir-lbl">Validado Por</div>
-      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at }}</div>{% endif %}
+      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
       <div class="fir-img {{ 'empty' if not visita.firma_tecnico_url else '' }}">
         {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
       </div>
-      <div class="fir-nom">{{ visita.tecnico_principal or '—' }}</div>
+      <div class="fir-nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
       <div class="fir-lbl">Realizado Por</div>
-      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at }}</div>{% endif %}
+      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at | chile_fmt }}</div>{% endif %}
     </div>
   </div>
   {% endif %}
@@ -1256,23 +1260,23 @@
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
       <div class="fir-lbl">Aceptado Por</div>
-      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at }}</div>{% endif %}
+      {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
       <div class="fir-img {{ 'empty' if not visita.firma_supervisor_url else '' }}">
         {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="">{% else %}N/A{% endif %}
       </div>
-      <div class="fir-nom">{{ visita.responsable_nombre or visita.cerrada_por or '—' }}</div>
+      <div class="fir-nom">{{ visita.firma_supervisor_nombre or visita.responsable_nombre or visita.cerrada_por or visita.created_by or '—' }}</div>
       <div class="fir-lbl">Validado Por</div>
-      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at }}</div>{% endif %}
+      {% if visita.firma_supervisor_at %}<div class="fir-meta">{{ visita.firma_supervisor_at | chile_fmt }}</div>{% endif %}
     </div>
     <div class="fir">
       <div class="fir-img {{ 'empty' if not visita.firma_tecnico_url else '' }}">
         {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="">{% else %}—{% endif %}
       </div>
-      <div class="fir-nom">{{ visita.tecnico_principal or '—' }}</div>
+      <div class="fir-nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
       <div class="fir-lbl">Realizado Por</div>
-      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at }}</div>{% endif %}
+      {% if visita.firma_tecnico_at %}<div class="fir-meta">{{ visita.firma_tecnico_at | chile_fmt }}</div>{% endif %}
     </div>
   </div>
 

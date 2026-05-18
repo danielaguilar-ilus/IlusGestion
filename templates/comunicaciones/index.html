@@ -1112,6 +1112,54 @@
           </div>
         </div>
 
+        {# Canales activos por configuración (env var COMM_CANALES_ACTIVOS) #}
+        <div class="col-12">
+          <div class="card shadow-sm border-0" style="border-left:4px solid var(--ilus-red) !important">
+            <div class="card-body">
+              <div class="d-flex align-items-center gap-2 mb-2">
+                <i class="bi bi-toggles2 text-danger"></i>
+                <strong class="me-2">Canales habilitados en este servidor</strong>
+                <span class="badge bg-dark small" id="diagCanalesEnv">cargando…</span>
+              </div>
+              <div class="row g-2" id="diagCanalesActivos">
+                <div class="col-md-4">
+                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
+                    <span class="diag-canal-led" id="diagCanalLedEmail">●</span>
+                    <strong class="small">Email (Resend)</strong>
+                    <span class="ms-auto small fw-bold" id="diagCanalEstadoEmail">—</span>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
+                    <span class="diag-canal-led" id="diagCanalLedWA">●</span>
+                    <strong class="small">WhatsApp</strong>
+                    <span class="ms-auto small fw-bold" id="diagCanalEstadoWA">—</span>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
+                    <span class="diag-canal-led" id="diagCanalLedSMS">●</span>
+                    <strong class="small">SMS</strong>
+                    <span class="ms-auto small fw-bold" id="diagCanalEstadoSMS">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="small text-muted mt-2" id="diagCanalesHelp">
+                Configurado vía la variable de entorno
+                <code>COMM_CANALES_ACTIVOS</code> en Railway.
+                Para reactivar WhatsApp o SMS:
+                <ol class="mb-0 mt-1 ps-3">
+                  <li>Reactivar Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM o TWILIO_PHONE_FROM).</li>
+                  <li>En Railway → Variables, setear
+                    <code>COMM_CANALES_ACTIVOS=email,whatsapp</code> (o
+                    <code>email,sms,whatsapp</code> para todo).</li>
+                  <li>Reiniciar el servicio. No requiere cambios en el código.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {# Semáforos por canal #}
         <div class="col-12">
           <div class="row g-3" id="diagSemaforos">
@@ -1238,6 +1286,9 @@
 .diag-led.warn{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
 .diag-led.error{background:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.18)}
 .diag-led.pendiente{background:#9ca3af;box-shadow:0 0 0 3px rgba(156,163,175,.18)}
+.diag-canal-led{font-size:1.1rem;line-height:1}
+.diag-canal-led.activo{color:#16a34a}
+.diag-canal-led.inactivo{color:#6b7280}
 .diag-accion{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:#fff}
 .diag-accion.alta{border-left:4px solid #dc2626;background:#fef2f2}
 .diag-accion.media{border-left:4px solid #f59e0b;background:#fffbeb}
@@ -2876,6 +2927,34 @@ function diagSetLed(id, estado){
 }
 
 function diagPintar(d){
+  // ── Canales activos (env var COMM_CANALES_ACTIVOS) ───────
+  // Daniel canceló Twilio en mayo 2026: sólo email queda activo
+  // por default. El código de WhatsApp/SMS sigue en el sistema.
+  const ca = d.canales_activos || { email: true, whatsapp: false, sms: false,
+                                     raw_env: '(no seteada)' };
+  const envBadge = document.getElementById('diagCanalesEnv');
+  if (envBadge){
+    envBadge.textContent = 'COMM_CANALES_ACTIVOS = ' + (ca.raw_env || '?');
+  }
+  const setCanalChip = (key, ledId, txtId, label) => {
+    const activo = !!ca[key];
+    const led = document.getElementById(ledId);
+    const txt = document.getElementById(txtId);
+    if (led){
+      led.classList.remove('activo', 'inactivo');
+      led.classList.add(activo ? 'activo' : 'inactivo');
+      led.textContent = activo ? '●' : '○';
+    }
+    if (txt){
+      txt.innerHTML = activo
+        ? '<span style="color:#16a34a">ACTIVO</span>'
+        : '<span style="color:#6b7280">desactivado por config</span>';
+    }
+  };
+  setCanalChip('email',    'diagCanalLedEmail', 'diagCanalEstadoEmail', 'Email');
+  setCanalChip('whatsapp', 'diagCanalLedWA',    'diagCanalEstadoWA',    'WhatsApp');
+  setCanalChip('sms',      'diagCanalLedSMS',   'diagCanalEstadoSMS',   'SMS');
+
   // ── Email ─────────────────────────────────────────────────
   const smtp = d.smtp || {}; const resend = d.resend || {};
   let emailEstado = 'error';
@@ -2883,13 +2962,20 @@ function diagPintar(d){
   if (resend.api_key_configured){
     if (resend.test_request && resend.test_request.ok){
       emailEstado = resend.domain_verified ? 'ok' : 'warn';
-      emailDet.push(`<strong>Resend</strong>: ${resend.domain_verified ? '✓ con dominio <code>' + esc(resend.domain_verified) + '</code> verificado' : 'API key OK pero sin dominio verificado'}`);
+      const srcLabel = resend.api_key_source === 'env'
+        ? '<span class="badge bg-success">RESEND_API_KEY ✓ en Railway</span>'
+        : '<span class="badge bg-warning text-dark">key en BD (recomendado moverla a env)</span>';
+      emailDet.push(`<strong>Resend</strong>: ${srcLabel} — ${resend.domain_verified ? '✓ dominio <code>' + esc(resend.domain_verified) + '</code> verificado' : 'sin dominio verificado'}`);
     } else {
       emailEstado = 'error';
       emailDet.push('<strong>Resend</strong>: API key configurada pero rechazada');
     }
   } else {
-    emailDet.push('<strong>Resend</strong>: no configurado');
+    if (resend.env_var_present === false){
+      emailDet.push('<strong>Resend</strong>: <span class="text-danger">❌ RESEND_API_KEY NO está en Railway</span> — agrégala en Variables y reinicia el servicio.');
+    } else {
+      emailDet.push('<strong>Resend</strong>: no configurado');
+    }
   }
   if (smtp.configurado){
     const test = smtp.test_connection || {};
@@ -2913,9 +2999,17 @@ function diagPintar(d){
 
   // ── WhatsApp ──────────────────────────────────────────────
   const wa = d.twilio?.whatsapp || {};
-  let waEstado = wa.configurado ? (wa.sandbox ? 'warn' : 'ok') : 'error';
+  // Si el canal está desactivado por env var, el semáforo va en gris
+  // (no es un error real — es decisión deliberada).
+  let waEstado = ca.whatsapp
+    ? (wa.configurado ? (wa.sandbox ? 'warn' : 'ok') : 'error')
+    : 'pendiente';
   let waDet = [];
-  if (wa.configurado){
+  if (!ca.whatsapp){
+    waDet.push('<span class="badge bg-secondary me-1">OFF</span><strong>Desactivado por configuración</strong>');
+    waDet.push('<small class="text-muted">El canal no dispara desde el flujo automático. ' +
+               'Reactivar setando <code>COMM_CANALES_ACTIVOS=email,whatsapp</code> en Railway.</small>');
+  } else if (wa.configurado){
     waDet.push(`<strong>From</strong>: <code>${esc(wa.from_number)}</code>`);
     waDet.push(`<strong>SID</strong>: <code>${esc(wa.account_sid || '—')}</code>`);
     if (wa.sandbox){
@@ -2933,9 +3027,14 @@ function diagPintar(d){
 
   // ── SMS ───────────────────────────────────────────────────
   const sms = d.twilio?.sms || {};
-  let smsEstado = sms.configurado ? (sms.trial_warning ? 'warn' : 'ok') : 'error';
+  let smsEstado = ca.sms
+    ? (sms.configurado ? (sms.trial_warning ? 'warn' : 'ok') : 'error')
+    : 'pendiente';
   let smsDet = [];
-  if (sms.configurado){
+  if (!ca.sms){
+    smsDet.push('<span class="badge bg-secondary me-1">OFF</span><strong>Desactivado por configuración</strong>');
+    smsDet.push('<small class="text-muted">Para reactivar: <code>COMM_CANALES_ACTIVOS=email,sms</code> en Railway.</small>');
+  } else if (sms.configurado){
     smsDet.push(`<strong>From</strong>: <code>${esc(sms.from_number)}</code>`);
     smsDet.push(`<strong>SID</strong>: <code>${esc(sms.account_sid || '—')}</code>`);
     if (sms.trial_warning){

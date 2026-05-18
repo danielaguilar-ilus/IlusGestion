@@ -132,6 +132,30 @@ CLOUDINARY_CONFIG = {
 }
 
 # ─────────────────────────────────────────────
+#  CANALES DE COMUNICACIÓN ACTIVOS
+#
+#  Daniel dio de baja Twilio (WhatsApp + SMS) — todo el flujo automático
+#  del sistema debe pasar SOLO por email (Resend). El código de WhatsApp
+#  y SMS queda intacto para reactivarlo en el futuro sin redeploy.
+#
+#  Lectura: env var COMM_CANALES_ACTIVOS — lista separada por comas.
+#  Valores válidos: "email", "whatsapp", "sms".
+#
+#  Ejemplos:
+#     COMM_CANALES_ACTIVOS=email                  (default actual)
+#     COMM_CANALES_ACTIVOS=email,sms
+#     COMM_CANALES_ACTIVOS=email,whatsapp
+#     COMM_CANALES_ACTIVOS=email,sms,whatsapp     (todo activo)
+#
+#  Para reactivar WhatsApp/SMS más adelante:
+#     1. Reactivar Twilio (ACCOUNT_SID, AUTH_TOKEN, FROM)
+#     2. Setear COMM_CANALES_ACTIVOS=email,whatsapp (o el que toque)
+#     3. Reiniciar Railway
+# ─────────────────────────────────────────────
+COMM_CANALES_ACTIVOS = _env("COMM_CANALES_ACTIVOS", "email")
+
+
+# ─────────────────────────────────────────────
 #  Branding genérico ILUS (afecta email + WhatsApp + SMS)
 #
 #  Estos valores aparecen como remitente en los correos y como prefijo

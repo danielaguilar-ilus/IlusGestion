@@ -1446,12 +1446,21 @@
       para firmar como aprobador (abre modalAprobacion).
    3) Pendiente aprobación + NO puedo aprobar → mensaje "esperando aprobación".
    4) Cerrada → botón descargar PDF (link).
+
+   ⚠️ FIX 2026-05-18 (Aaron Urbina): el backend ahora pasa `puede_aprobar`,
+   `es_creador` y `es_superadmin` ya evaluados por la matriz unificada
+   (`_puede_ot_accion`). Esto soporta variantes dinámicas del rol como
+   'ejecutivo_sstt', 'supervisor_sstt', 'ejecutivo_servicio_tecnico', etc.
+   ANTES el template chequeaba `_role in ('supervisor','ejecutivo')` que
+   era case-sensitive y NO matcheaba 'ejecutivo_sstt'.
 #}
 {% set _u = current_user %}
 {% set _role = (_u.role if _u else '') | lower %}
-{% set _es_creador = _u and visita.created_by and visita.created_by == _u.username %}
-{% set _es_super_global = permissions.superadmin or permissions.admin or _role in ('supervisor','ejecutivo') %}
-{% set _puede_aprobar = _es_creador or _es_super_global %}
+{# Backwards-compat: si el backend no entregó las flags (templates legacy),
+   degradamos al check viejo. #}
+{% set _es_creador = es_creador if es_creador is defined else (_u and visita.created_by and visita.created_by == _u.username) %}
+{% set _puede_aprobar = puede_aprobar if puede_aprobar is defined else (_es_creador or permissions.superadmin or permissions.admin or _role in ('supervisor','ejecutivo')) %}
+{% set _es_superadmin = es_superadmin if es_superadmin is defined else (permissions.superadmin) %}
 
 <div class="tx-bottom">
   {% if visita.estado == 'cerrada' %}
@@ -1704,14 +1713,17 @@
         <div class="mb-2">
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-shield-check me-1" style="color:#15803d"></i>
-            Tu firma como aprobador
+            Firma a nombre de
             {% if _es_creador %}<span class="badge bg-success ms-1" style="font-size:.6rem">CREADOR</span>{% endif %}
-            {% if permissions.superadmin %}<span class="badge bg-dark ms-1" style="font-size:.6rem">SUPERADMIN</span>{% endif %}
-            {% if permissions.admin and not permissions.superadmin %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">ADMIN</span>{% endif %}
+            {% if _es_superadmin %}<span class="badge bg-dark ms-1" style="font-size:.6rem">SUPERADMIN</span>{% endif %}
+            {% if permissions.admin and not _es_superadmin %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">ADMIN</span>{% endif %}
           </label>
+          <small class="d-block text-muted mb-2" style="font-size:.72rem">
+            Este nombre quedará estampado en el PDF junto a tu firma. Puedes ajustarlo si prefieres firmar con tu nombre formal.
+          </small>
           <input type="text" id="aprobNombre" class="form-control mb-2"
-                 placeholder="Tu nombre completo"
-                 value="{{ _u.nombre or _u.username or '' }}">
+                 placeholder="Tu nombre completo (ej: Aaron Urbina)"
+                 value="{{ _u.nombre or _u.username or '' }}" maxlength="200">
           <div class="firma-canvas-wrap" id="wrap-canvasAprob">
             <canvas id="canvasAprob" width="800" height="240"></canvas>
             <div class="firma-placeholder">✍️ Firma aquí con el dedo, lápiz óptico o mouse</div>

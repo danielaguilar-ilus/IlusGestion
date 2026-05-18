@@ -119,6 +119,10 @@ def register_pickup_routes(app, ctx):
     _send_ilus_email = ctx["_send_ilus_email"]
     _get_wa_cfg = ctx["_get_wa_cfg"]
     _send_whatsapp = ctx["_send_whatsapp"]
+    # Daniel dio de baja Twilio (mayo 2026). El canal WhatsApp sólo dispara
+    # si la env var COMM_CANALES_ACTIVOS lo incluye. Email vía Resend va
+    # siempre — eso es lo importante para el flujo de retiros.
+    _canal_activo = ctx.get("_canal_activo") or (lambda canal: (canal or "").lower() == "email")
 
     REQ = ctx["PICKUP_REQUESTS_TABLE"]
     PKG = ctx["PICKUP_PACKAGES_TABLE"]
@@ -586,10 +590,14 @@ def register_pickup_routes(app, ctx):
                 pass
 
         # ── WHATSAPP ───────────────────────────────────────────────────
+        # Sólo intentamos si el canal está activo en COMM_CANALES_ACTIVOS
+        # (por default Daniel sólo tiene email). El email arriba se manda
+        # siempre — eso ya cubre la notificación al cliente.
         sent_wa = None
         try:
             wa_cfg = _get_wa_cfg()
-            if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
+            if (_canal_activo("whatsapp")
+                    and wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number")):
                 tpl_wa = _get_pickup_template(estado, "whatsapp") if estado else None
                 if tpl_wa and tpl_wa.get("cuerpo"):
                     wa_body = _apply_template(tpl_wa.get("cuerpo") or "", variables)

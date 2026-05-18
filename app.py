@@ -4324,6 +4324,53 @@ def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=No
 
 
 # ══════════════════════════════════════════════════════════════════════
+# CANALES DE COMUNICACIÓN ACTIVOS — env var COMM_CANALES_ACTIVOS
+#
+# Daniel dio de baja Twilio: WhatsApp y SMS quedan deshabilitados del
+# FLUJO automático del sistema (notificaciones de OT, accesos, etc.).
+# El CÓDIGO de _send_whatsapp / _send_sms permanece en app.py, los
+# endpoints admin de prueba (/api/twilio/test, /comunicaciones/whatsapp/test,
+# /api/comm/test-rapido) también — para que Daniel pueda re-activar el
+# canal en el futuro sin tocar código (solo env var + reinicio).
+#
+# Default: "email" (sólo email vía Resend está activo).
+# Para reactivar WhatsApp: COMM_CANALES_ACTIVOS="email,whatsapp"
+# Para todo:               COMM_CANALES_ACTIVOS="email,sms,whatsapp"
+# ══════════════════════════════════════════════════════════════════════
+
+def _canal_activo(canal: str) -> bool:
+    """Retorna True si el canal está habilitado globalmente.
+
+    Lee env var COMM_CANALES_ACTIVOS (default: 'email').
+    Para que un envío automático se dispare, el canal debe aparecer en
+    la lista. Por ejemplo, con COMM_CANALES_ACTIVOS='email':
+       _canal_activo('email')    → True
+       _canal_activo('whatsapp') → False
+       _canal_activo('sms')      → False
+
+    NO toca el kill switch global de BD ni la llave de paso por módulo —
+    es un cortacorriente PREVIO. Si el canal está apagado aquí, ni siquiera
+    se intenta el envío (no se llama a Twilio, no se loguea como bloqueado).
+    """
+    try:
+        activos = (os.environ.get("COMM_CANALES_ACTIVOS") or "email").lower()
+        canales = [c.strip() for c in activos.split(",") if c.strip()]
+        return (canal or "").strip().lower() in canales
+    except Exception:
+        # Conservador: si algo falla, sólo email activo
+        return (canal or "").strip().lower() == "email"
+
+
+def _canales_activos_lista() -> list:
+    """Devuelve la lista de canales activos en orden. Útil para diagnóstico/UI."""
+    try:
+        activos = (os.environ.get("COMM_CANALES_ACTIVOS") or "email").lower()
+        return [c.strip() for c in activos.split(",") if c.strip()]
+    except Exception:
+        return ["email"]
+
+
+# ══════════════════════════════════════════════════════════════════════
 # KILL SWITCH GLOBAL DE COMUNICACIONES
 #
 # Permite al superadministrador apagar todo envío de email y/o WhatsApp
@@ -4977,7 +5024,11 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
         result["email"] = False
         result["errors"].append(f"Email: {exc}")
 
-    if phone:
+    # WhatsApp se intenta SÓLO si el canal está activo globalmente
+    # (env var COMM_CANALES_ACTIVOS). Daniel dio de baja Twilio, así
+    # que por default queda en silencio. El email vía Resend ya partió
+    # arriba — eso es lo importante para el flujo de acceso.
+    if phone and _canal_activo("whatsapp"):
         try:
             wa_cfg = _get_wa_cfg()
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
@@ -5016,6 +5067,12 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
         except Exception as exc:
             result["whatsapp"] = False
             result["errors"].append(f"WhatsApp: {exc}")
+    elif phone:
+        # Canal apagado por config (COMM_CANALES_ACTIVOS). No es un error,
+        # el flujo principal va por email. Dejamos rastro discreto en log.
+        result["whatsapp"] = False
+        print(f"[notify_user_access] WhatsApp omitido (canal off via COMM_CANALES_ACTIVOS) phone={phone[:6]}***",
+              flush=True)
     return result
 
 
@@ -9525,6 +9582,19 @@ def comm_diagnostico():
     except Exception:
         pass
 
+    # ── Canales activos (env var COMM_CANALES_ACTIVOS) ───────────
+    try:
+        canales_activos = {
+            "raw_env":   (os.environ.get("COMM_CANALES_ACTIVOS") or "(no seteada — default 'email')").strip(),
+            "lista":     _canales_activos_lista(),
+            "email":     _canal_activo("email"),
+            "whatsapp":  _canal_activo("whatsapp"),
+            "sms":       _canal_activo("sms"),
+        }
+    except Exception:
+        canales_activos = {"raw_env": "?", "lista": ["email"],
+                           "email": True, "whatsapp": False, "sms": False}
+
     return jsonify({
         "ok": True,
         "brand": {
@@ -9536,12 +9606,13 @@ def comm_diagnostico():
             "support_email": brand["support_email"],
             "support_url":   brand["support_url"],
         },
-        "email":         email_status,
-        "whatsapp":      twilio.get("whatsapp", {}),
-        "sms":           twilio.get("sms", {}),
-        "kill_switch":   kill,
-        "ultimos_comm":  ultimos_comm,
-        "ultimos_email": ultimos_email,
+        "email":          email_status,
+        "whatsapp":       twilio.get("whatsapp", {}),
+        "sms":            twilio.get("sms", {}),
+        "kill_switch":    kill,
+        "canales_activos": canales_activos,
+        "ultimos_comm":   ultimos_comm,
+        "ultimos_email":  ultimos_email,
         "env_vars_brand": [
             "ILUS_BRAND_NAME",
             "ILUS_BRAND_FROM_NAME",
@@ -9714,8 +9785,14 @@ def comm_diagnostico_completo():
     except Exception:
         resend_cfg = {}
 
+    # Detección explícita pedida por Daniel: si RESEND_API_KEY NO está en
+    # env vars de Railway, el diagnóstico debe decirlo claro.
+    resend_env_var_present = bool((os.environ.get("RESEND_API_KEY") or "").strip())
+
     resend_status = {
         "api_key_configured": bool(resend_cfg.get("api_key")),
+        "api_key_source": resend_cfg.get("_source", ""),  # 'env' | 'db' | ''
+        "env_var_present": resend_env_var_present,
         "from_addr": resend_cfg.get("from_addr", ""),
         "source": resend_cfg.get("_source", ""),
         "domain_verified": None,
@@ -9946,17 +10023,72 @@ def comm_diagnostico_completo():
             "accion": "POST /api/comm/test-rapido con tu número/email.",
         })
 
+    # ── 7. CANALES ACTIVOS (env var COMM_CANALES_ACTIVOS) ────────────
+    # Daniel canceló Twilio en mayo 2026. El sistema sólo dispara WhatsApp/SMS
+    # automáticos si el canal está en esta lista. Esta info también ayuda al
+    # diagnóstico: si todo se ve OK pero los WhatsApps no salen, suele ser por
+    # acá (no en credenciales).
+    try:
+        canales_list = _canales_activos_lista()
+    except Exception:
+        canales_list = ["email"]
+    canales_activos_status = {
+        "raw_env":    (os.environ.get("COMM_CANALES_ACTIVOS") or "(no seteada — default 'email')").strip(),
+        "lista":      canales_list,
+        "email":      _canal_activo("email"),
+        "whatsapp":   _canal_activo("whatsapp"),
+        "sms":        _canal_activo("sms"),
+    }
+
+    # Si alguno está apagado por config, dejarlo como recomendación informativa
+    # (no como error — es una decisión deliberada de Daniel)
+    if not _canal_activo("whatsapp"):
+        recomendaciones.append({
+            "canal": "whatsapp", "prioridad": "info",
+            "titulo": "WhatsApp desactivado por configuración",
+            "detalle": ("Las notificaciones automáticas por WhatsApp están apagadas. "
+                        "El código sigue en el sistema, pero ningún flujo automático "
+                        "(asignación de OT, accesos, retiros) lo dispara."),
+            "accion": ("Para reactivar: en Railway → Variables setea "
+                       "COMM_CANALES_ACTIVOS=email,whatsapp y reinicia el servicio."),
+        })
+    if not _canal_activo("sms"):
+        recomendaciones.append({
+            "canal": "sms", "prioridad": "info",
+            "titulo": "SMS desactivado por configuración",
+            "detalle": ("Las notificaciones automáticas por SMS están apagadas. "
+                        "El código sigue en el sistema, pero ningún flujo automático lo dispara."),
+            "accion": ("Para reactivar: en Railway → Variables setea "
+                       "COMM_CANALES_ACTIVOS=email,sms y reinicia el servicio."),
+        })
+
+    # Recomendación crítica: RESEND_API_KEY faltante
+    if not resend_status.get("env_var_present"):
+        recomendaciones.insert(0, {
+            "canal": "email", "prioridad": "alta",
+            "titulo": "RESEND_API_KEY NO está en Railway",
+            "detalle": ("La variable de entorno RESEND_API_KEY no se detectó en Railway. "
+                        "Sin esta key, los emails no salen vía Resend y caen al fallback "
+                        "SMTP (que en Railway suele timear)."),
+            "accion": ("Railway → Settings → Variables → agrega "
+                       "RESEND_API_KEY=re_xxxxxxxxxxxxxxx y reinicia el servicio. "
+                       "Genera la API key en https://resend.com/api-keys."),
+            "url_externa": "https://resend.com/api-keys",
+        })
+
     return jsonify({
         "ok": True,
         "smtp": smtp_status,
         "resend": resend_status,
         "twilio": twilio_status,
+        "canales_activos": canales_activos_status,
         "kill_switch_global": kill_global,
         "kill_switch_modulos": kill_modulos,
         "ultimos_envios_email": ultimos_email,
         "ultimos_envios_wa": ultimos_wa,
         "recomendaciones": recomendaciones,
         "env_vars_requeridas": {
+            "canales": ["COMM_CANALES_ACTIVOS (default 'email'; ej: 'email,whatsapp,sms')"],
             "email": ["RESEND_API_KEY", "RESEND_FROM_ADDR (opcional)",
                       "SMTP_USER", "SMTP_PASS (App Password)", "SMTP_HOST", "SMTP_PORT"],
             "twilio": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
@@ -10107,8 +10239,20 @@ def comm_test_rapido():
 def _notificar_ot_asignada(visita_id):
     """Helper: cuando se asigna/crea una OT, intenta notificar al técnico
     asignado y al contacto en sitio por WhatsApp/SMS (best-effort, async).
-    NO bloquea el endpoint. Solo dispara si Twilio está configurado.
+    NO bloquea el endpoint. Solo dispara si Twilio está configurado Y el
+    canal está activo en env var COMM_CANALES_ACTIVOS.
+
+    Daniel dio de baja Twilio en mayo 2026, así que por default el cuerpo
+    de esta función sale temprano. El código queda en su sitio para que el
+    día que reactive Twilio sólo cambie la env var y reinicie.
     """
+    # Corte temprano: si ni WhatsApp ni SMS están activos, no hay nada que hacer.
+    if not (_canal_activo("whatsapp") or _canal_activo("sms")):
+        print(f"[notif-ot-asignada] vid={visita_id} omitido — WhatsApp y SMS están "
+              f"apagados por COMM_CANALES_ACTIVOS",
+              flush=True)
+        return
+
     import threading as _th_n
     def _bg():
         try:
@@ -10127,10 +10271,14 @@ def _notificar_ot_asignada(visita_id):
             if not v: return
             wa = _get_wa_cfg()
             sms = _get_sms_cfg()
-            wa_ok = bool(wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number"))
-            sms_ok = bool(sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number"))
+            # Sólo consideramos un canal "ok" si está configurado en Twilio Y
+            # activado por env var. Ambas condiciones deben cumplirse.
+            wa_ok = (_canal_activo("whatsapp") and
+                     bool(wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number")))
+            sms_ok = (_canal_activo("sms") and
+                      bool(sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number")))
             if not (wa_ok or sms_ok):
-                return  # nada configurado
+                return  # nada configurado o todo apagado por config
             # 1) Notificar al técnico
             if v.get("tecnico_tel"):
                 msg_t = (f"📋 ILUS · OT asignada\n\n"
@@ -16803,6 +16951,40 @@ def _no_tecnico(view):
 # excepción. Esto es petición textual y no negociable de Daniel.
 # ═════════════════════════════════════════════════════════════════════
 
+def _rol_familia(role):
+    """Devuelve la 'familia' del rol normalizada para chequear permisos OT.
+
+    Acepta variantes dinámicas creadas por el admin (ej: 'ejecutivo_sstt',
+    'supervisor_servicio_tecnico', 'ejecutivo_servicio'). El comparador
+    matchea por prefijo + por contains de tokens conocidos, así un rol
+    como 'ejecutivo_sstt' cae en la familia 'ejecutivo' y un
+    'supervisor_sstt' en 'supervisor'.
+
+    Familias reconocidas (orden de prioridad — superadmin > admin >
+    supervisor > ejecutivo > tecnico > otro):
+
+      'superadmin' | 'admin' | 'supervisor' | 'ejecutivo' | 'tecnico' | ''
+    """
+    r = (role or "").strip().lower()
+    if not r:
+        return ""
+    if r == "superadmin" or r.startswith("superadmin"):
+        return "superadmin"
+    if r == "admin" or r.startswith("admin_") or r.endswith("_admin"):
+        return "admin"
+    # supervisor_sstt, supervisor_servicio_tecnico, supervisor, etc.
+    if r == "supervisor" or r.startswith("supervisor"):
+        return "supervisor"
+    # ejecutivo_sstt, ejecutivo_servicio_tecnico, ejecutivo_servicio,
+    # ejecutivo, etc.
+    if r == "ejecutivo" or r.startswith("ejecutivo"):
+        return "ejecutivo"
+    # tecnico_externo, tecnico_jr, tecnico, etc.
+    if r == "tecnico" or r.startswith("tecnico"):
+        return "tecnico"
+    return r  # fallback: usar el slug tal cual
+
+
 def _puede_ot_accion(vid, accion, user=None):
     """Devuelve True si `user` puede ejecutar la `accion` sobre la OT `vid`.
 
@@ -16818,16 +17000,19 @@ def _puede_ot_accion(vid, accion, user=None):
     """
     if user is None:
         user = getattr(g, "user", None) or {}
-    role = (user.get("role") or "").lower()
+    role_raw = (user.get("role") or "").lower()
+    role = _rol_familia(role_raw)   # 2026-05-18: normaliza ejecutivo_sstt → ejecutivo
     uid = user.get("id")
     username = user.get("username") or ""
 
     # ── REGLA ABSOLUTA: superadmin SIEMPRE pasa ────────────────────
     if role == "superadmin":
+        print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (superadmin)", flush=True)
         return True
 
     # Sin user_id válido → denegar (sesión rota)
     if not uid:
+        print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (sin uid)", flush=True)
         return False
 
     # Cargar campos clave de la OT una vez
@@ -16842,6 +17027,7 @@ def _puede_ot_accion(vid, accion, user=None):
         print(f"[SECURITY] _puede_ot_accion BD error vid={vid}: {e}", flush=True)
         return False
     if not v:
+        print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (OT inexistente)", flush=True)
         return False
 
     tecnico_uid = v.get("tecnico_user_id")
@@ -16868,43 +17054,65 @@ def _puede_ot_accion(vid, accion, user=None):
     # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT.
     # SOLO técnico asignado/colaborador + superadmin (ya retornado arriba).
     if accion == "ejecutar":
-        return es_tecnico_asignado
+        result = es_tecnico_asignado
+        print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+              f"tecnico_uid={tecnico_uid} es_asignado={es_tecnico_asignado} -> "
+              f"{'ALLOWED' if result else 'DENIED'}", flush=True)
+        return result
 
     # ── METADATA ────────────────────────────────────────────────
     # editar campos generales (titulo, fecha, tipo, descripcion, etc.) y
     # eliminar OT. Solo admin + creador (no técnico).
     if accion == "metadata":
         if role == "admin":
+            print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} -> ALLOWED (admin)", flush=True)
             return True
         if role == "ejecutivo" and es_creador:
+            print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} -> ALLOWED (ejecutivo+creador)", flush=True)
             return True
+        print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} "
+              f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
         return False
 
     # ── APROBAR ─────────────────────────────────────────────────
     # aprobar/rechazar cierre. admin/ejecutivo/supervisor + creador.
-    # 'supervisor' (rol explícito si existe) y 'ejecutivo' pueden
-    # aprobar cualquier OT; el creador de la OT solo SUS OTs.
+    # 'supervisor' y 'ejecutivo' (incluyendo variantes _sstt, _servicio,
+    # _servicio_tecnico) pueden aprobar cualquier OT; el creador de la OT
+    # solo SUS OTs.
+    # FIX 2026-05-18 (Aaron Urbina): role 'ejecutivo_sstt' antes no
+    # matcheaba con 'ejecutivo' literal. `_rol_familia` ahora lo normaliza.
     if accion == "aprobar":
         if role in ("admin", "ejecutivo", "supervisor"):
+            print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
             return True
         # El creador siempre puede aprobar SU OT (regla del flujo de 3 firmas)
-        return es_creador
+        result = es_creador
+        print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} "
+              f"created_by={creador_username} es_creador={es_creador} -> "
+              f"{'ALLOWED (creador)' if result else 'DENIED'}", flush=True)
+        return result
 
     # ── FIRMAR_CREADOR ──────────────────────────────────────────
     # Firmar como aprobador en el flujo de 3 firmas:
-    #   - admin / supervisor / ejecutivo (rol con permiso global) → siempre
+    #   - admin / supervisor / ejecutivo (rol con permiso global, incluye
+    #     variantes _sstt, _servicio_tecnico, etc.) → siempre
     #   - el creador específico de ESTA OT → siempre
     #   - resto → 403
     if accion == "firmar_creador":
         if role in ("admin", "supervisor", "ejecutivo"):
+            print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
             return True
-        return es_creador
+        result = es_creador
+        print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} "
+              f"created_by={creador_username} es_creador={es_creador} -> "
+              f"{'ALLOWED (creador)' if result else 'DENIED'}", flush=True)
+        return result
 
     # ── VER ────────────────────────────────────────────────────
-    # Lectura: admin/ejecutivo/creador/asignado/colaborador.
+    # Lectura: admin/ejecutivo/supervisor/creador/asignado/colaborador.
     # Bloquea solo a tecnico/tecnico_externo que NO la tienen asignada.
     if accion == "ver":
-        if role in ("admin", "ejecutivo"):
+        if role in ("admin", "ejecutivo", "supervisor"):
             return True
         if es_creador:
             return True
@@ -18234,6 +18442,17 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tareas ADD COLUMN locked_at DATETIME NULL COMMENT 'Cuándo se tomó el lock (TTL 10 min)'",
                 "ALTER TABLE mant_visita_tareas ADD COLUMN version INT DEFAULT 0 COMMENT 'Contador para version-check (anti-conflictos)'",
                 "ALTER TABLE mant_visita_tareas ADD INDEX idx_locked_by (locked_by_user_id, locked_at)",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-18 — Nombre estampado del firmante (técnico + supervisor).
+                # Daniel: "Que se quede estampada la firma del usuario que firmó.
+                # Si firma Aaron, que quede Aaron Urbina; si firma Daniel Aguilar,
+                # que quede Daniel Aguilar." → necesitamos guardar el display name
+                # capturado al momento de firmar (no inferirlo después porque el
+                # usuario puede cambiar su nombre en el perfil).
+                # firma_cliente_nombre ya existía. Agregamos las otras dos.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN firma_tecnico_nombre VARCHAR(200) NULL COMMENT 'Nombre del técnico al firmar (estampado)'",
+                "ALTER TABLE mant_visitas ADD COLUMN firma_supervisor_nombre VARCHAR(200) NULL COMMENT 'Nombre del aprobador al firmar (estampado)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -26003,6 +26222,10 @@ def mant_visita_firmar(vid):
             return jsonify({"ok": False, "error": "Solo el técnico asignado puede capturar la firma del cliente."}), 403
 
     nombre = (d.get("nombre") or "").strip()[:200] or None
+    # 2026-05-18 — Si no llegó `nombre`, usar el display name del firmante
+    # (excepto cliente, donde el campo es responsabilidad del operador en sitio).
+    _u_sig = getattr(g, "user", None) or {}
+    _default_nom = (_u_sig.get("nombre") or _u_sig.get("username") or "")[:200] or None
 
     if tipo == "cliente":
         mysql_execute(
@@ -26013,14 +26236,14 @@ def mant_visita_firmar(vid):
     elif tipo == "tecnico":
         mysql_execute(
             "UPDATE mant_visitas SET firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
-            "       firma_tecnico_at=NOW() WHERE id=%s",
-            (firma, uid, vid)
+            "       firma_tecnico_nombre=%s, firma_tecnico_at=NOW() WHERE id=%s",
+            (firma, uid, (nombre or _default_nom), vid)
         )
     else:  # supervisor
         mysql_execute(
             "UPDATE mant_visitas SET firma_supervisor_url=%s, firma_supervisor_user_id=%s, "
-            "       firma_supervisor_at=NOW() WHERE id=%s",
-            (firma, uid, vid)
+            "       firma_supervisor_nombre=%s, firma_supervisor_at=NOW() WHERE id=%s",
+            (firma, uid, (nombre or _default_nom), vid)
         )
 
     try:
@@ -27425,10 +27648,14 @@ def mant_ots_list():
     ver_todas  = request.args.get("todas") == "1"
 
     # ── Lógica por rol (matriz 2026-05-18) ──────────────────────────
+    # FIX 2026-05-18 (Aaron Urbina): normalizamos vía `_rol_familia` para que
+    # variantes dinámicas (ejecutivo_sstt, tecnico_externo, etc.) caigan en
+    # la familia correcta.
     user = getattr(g, "user", None) or {}
     role_l = (user.get("role") or "").lower()
-    es_tecnico   = role_l in ("tecnico", "tecnico_externo")
-    es_ejecutivo = (role_l == "ejecutivo")
+    role_fam = _rol_familia(role_l)
+    es_tecnico   = (role_fam == "tecnico")
+    es_ejecutivo = (role_fam == "ejecutivo")
     # Técnico: forzar solo_mias siempre (refuerzo IDOR — antes intentaba
     # manipular ?solo_mias=0 para ver ajenas).
     if es_tecnico:
@@ -28300,6 +28527,17 @@ def mant_ot_ficha(vid):
         (vid,)
     ) or {"n": 0}
 
+    # 2026-05-18 — Backend evalúa permisos para mostrar el panel de firmas
+    # (creador/admin/ejecutivo_sstt/supervisor pueden firmar como aprobador).
+    _u_ficha = getattr(g, "user", None) or {}
+    _role_ficha = (_u_ficha.get("role") or "").lower()
+    puede_aprobar_flag = _puede_ot_accion(vid, "aprobar", _u_ficha)
+    _creator_username = (visita.get("created_by") or "").strip().lower()
+    es_creador_flag = bool(_creator_username) and (
+        _creator_username == (_u_ficha.get("username") or "").strip().lower()
+    )
+    es_superadmin_flag = (_rol_familia(_role_ficha) == "superadmin")
+
     return render_template(
         "mantenciones/ot_ficha.html",
         visita=visita,
@@ -28310,6 +28548,9 @@ def mant_ot_ficha(vid):
             "completas":       tareas_stats.get("completas", 0) or 0,
             "fotos":           fotos_count.get("n", 0),
         },
+        puede_aprobar=puede_aprobar_flag,
+        es_creador=es_creador_flag,
+        es_superadmin=es_superadmin_flag,
     )
 
 
@@ -28370,6 +28611,18 @@ def mant_ot_ejecutar(vid):
     # Flag para el template: indica si puede o no ejecutar (modificar) tareas.
     # Si es solo viewer (admin/ejecutivo no asignado), se ocultan los botones.
     puede_ejecutar_flag = _puede_ot_accion(vid, "ejecutar", u)
+    # 2026-05-18 — Flags para el template: evaluamos el permiso de aprobar
+    # SIEMPRE en backend (la matriz reconoce ejecutivo_sstt, supervisor_sstt,
+    # etc.). El template usa estos booleans directos en vez de re-evaluar
+    # con strings literales que no soportan variantes dinámicas.
+    puede_aprobar_flag = _puede_ot_accion(vid, "aprobar", u)
+    # Comparar created_by (varchar username) con el username del user actual,
+    # case insensitive y trim, igual que en `_puede_ot_accion`.
+    _creator_username = (visita.get("created_by") or "").strip().lower()
+    es_creador_flag = bool(_creator_username) and (
+        _creator_username == (u.get("username") or "").strip().lower()
+    )
+    es_superadmin_flag = (_rol_familia(role_u) == "superadmin")
 
     # Equipos involucrados en la OT — vienen de mant_visita_tareas distintas máquinas
     # FIX 2026-05-16: filtrar equipos dados de baja (soft-delete).
@@ -28523,6 +28776,12 @@ def mant_ot_ejecutar(vid):
         # acción y muestra la OT en "modo lectura".
         puede_ejecutar=puede_ejecutar_flag,
         es_solo_lectura=(not puede_ejecutar_flag),
+        # 2026-05-18 (Aaron Urbina fix) — Backend evalúa el permiso para
+        # aprobar usando `_puede_ot_accion`, que normaliza ejecutivo_sstt
+        # / supervisor_sstt / etc. El template usa este flag directo.
+        puede_aprobar=puede_aprobar_flag,
+        es_creador=es_creador_flag,
+        es_superadmin=es_superadmin_flag,
     )
 
 
@@ -28835,13 +29094,19 @@ def mant_ot_firmar_revision(vid):
         firma_tec_url = _subir_firma_cloudinary(firma_tec, vid, "tecnico")
         firma_cli_url = _subir_firma_cloudinary(firma_cli, vid, "cliente") if firma_cli else None
 
+        # 2026-05-18 — Estampar el nombre del técnico al firmar. Si el form
+        # no lo manda, default al display name del user (nombre o username).
+        if not nombre_tec:
+            nombre_tec = (u.get("nombre") or u.get("username") or "Técnico")[:200]
+
         mysql_execute(
             "UPDATE mant_visitas SET "
-            "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, firma_tecnico_at=NOW(), "
+            "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
+            "  firma_tecnico_nombre=%s, firma_tecnico_at=NOW(), "
             "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
             "  estado='pendiente_aprobacion' "
             " WHERE id=%s",
-            (firma_tec_url, uid, firma_cli_url, nombre_cli, vid)
+            (firma_tec_url, uid, nombre_tec, firma_cli_url, nombre_cli, vid)
         )
         # Marcar levantamiento como cerrado si la OT tenía uno
         v_info = mysql_fetchone(
@@ -28965,9 +29230,13 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                 f"Firma como aprobador para cerrarla:\n{link_ot}"
             )
 
+            # WhatsApp: sólo si está habilitado por env var Y configurado
+            # en Twilio. Email vía Resend NO depende de este flag —
+            # siempre se intenta y es el canal principal del flujo.
             wa = _get_wa_cfg()
-            wa_ok = bool(wa.get("account_sid") and wa.get("auth_token")
-                         and wa.get("from_number"))
+            wa_ok = (_canal_activo("whatsapp") and
+                     bool(wa.get("account_sid") and wa.get("auth_token")
+                          and wa.get("from_number")))
 
             for d_dest in destinos:
                 nombre_d = d_dest["nombre"] or "equipo ILUS"
@@ -28977,6 +29246,7 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                 username = d_dest["username"]
                 is_email = bool(username and "@" in username
                                 and "." in username.split("@")[-1])
+                email_ok = False
                 if is_email:
                     try:
                         # Usamos el template ILUS oficial (header negro + logo + CTA rojo)
@@ -28997,7 +29267,7 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                                 ("", "OT", numero_ot),
                             ],
                         )
-                        _send_ilus_email(
+                        email_ok = _send_ilus_email(
                             username, subject, cuerpo,
                             evento="ot_pendiente_aprobacion",
                             modulo="mantenciones",
@@ -29005,7 +29275,7 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                     except Exception as e_e:
                         print(f"[notif-pend][email] vid={vid} dest={username}: {e_e}",
                               flush=True)
-                # WhatsApp si tiene phone cargado
+                # WhatsApp si tiene phone cargado Y canal activo Y Twilio configurado
                 phone = d_dest["phone"]
                 if wa_ok and phone:
                     try:
@@ -29017,6 +29287,13 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                     except Exception as e_w:
                         print(f"[notif-pend][wa] vid={vid} dest={phone}: {e_w}",
                               flush=True)
+                # Si no logramos enviar nada para este destino, log explícito
+                # para que Daniel pueda rastrear sin que se rompa el flujo
+                if not (email_ok or (wa_ok and phone)):
+                    print(f"[notify-fail] vid={vid} dest={username or phone or 'sin-contacto'} "
+                          f"reason=sin_canal_activo "
+                          f"(canales: email={_canal_activo('email')} wa={_canal_activo('whatsapp')})",
+                          flush=True)
         except Exception as e_outer:
             print(f"[notif-pend-aprob] outer fail vid={vid}: {e_outer}",
                   flush=True)
@@ -29076,14 +29353,20 @@ def mant_ot_iniciar_ruta(vid):
 # ═════════════════════════════════════════════════════════════════════
 
 def _is_supervisor_user():
-    """True si el usuario actual puede aprobar OTs (admin/superadmin/ejecutivo)."""
+    """True si el usuario actual puede aprobar OTs (admin/superadmin/ejecutivo/supervisor).
+
+    2026-05-18 (Aaron Urbina fix): normaliza el rol vía `_rol_familia`
+    para que variantes dinámicas como `ejecutivo_sstt`, `supervisor_sstt`,
+    `ejecutivo_servicio_tecnico`, etc. también pasen.
+    """
     try:
         perms = g.get("permissions") or {}
         if perms.get("superadmin") or perms.get("admin"):
             return True
-        # Ejecutivo de mantenciones también puede aprobar
+        # Ejecutivo / supervisor de mantenciones también puede aprobar
         u = getattr(g, "user", None) or {}
-        if (u.get("role") or "") == "ejecutivo":
+        fam = _rol_familia(u.get("role") or "")
+        if fam in ("ejecutivo", "supervisor", "admin", "superadmin"):
             return True
     except Exception:
         pass
@@ -29114,6 +29397,9 @@ def mant_ot_aprobar_cierre(vid):
     d = request.get_json(silent=True) or {}
     firma_sup = (d.get("firma_supervisor") or "").strip()
     comentario = (d.get("comentario") or "").strip()[:1000] or None
+    # FIX 2026-05-18 — Capturar el nombre del firmante. Si el form no lo
+    # manda, usamos el display name del usuario actual (nombre o username).
+    firma_sup_nombre = (d.get("firma_supervisor_nombre") or "").strip()[:200]
     # Validar estado actual
     v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
@@ -29126,15 +29412,19 @@ def mant_ot_aprobar_cierre(vid):
     try:
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
+        # Default: nombre del usuario actual (Aaron Urbina, Daniel Aguilar, etc.)
+        if not firma_sup_nombre:
+            firma_sup_nombre = (u.get("nombre") or u.get("username") or "Aprobador")[:200]
         # ── BUG FIX 2026-05-17 — Subir firma supervisor a Cloudinary ──
         # Misma lógica que firmar-revision: data URL → URL pública corta.
         firma_sup_url = _subir_firma_cloudinary(firma_sup, vid, "supervisor") if firma_sup else None
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  estado='cerrada', cerrada_at=NOW(), cerrada_por=%s, "
-            "  firma_supervisor_url=%s, firma_supervisor_user_id=%s, firma_supervisor_at=NOW() "
+            "  firma_supervisor_url=%s, firma_supervisor_user_id=%s, "
+            "  firma_supervisor_nombre=%s, firma_supervisor_at=NOW() "
             " WHERE id=%s",
-            (current_username() or 'supervisor', firma_sup_url, uid, vid)
+            (current_username() or 'supervisor', firma_sup_url, uid, firma_sup_nombre, vid)
         )
         try: _mant_log("visita", vid, "aprobada_supervisor",
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
