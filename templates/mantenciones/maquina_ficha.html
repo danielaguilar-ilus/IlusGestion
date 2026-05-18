@@ -271,6 +271,144 @@
   .tl-item::before { left: -22px; width: 12px; height: 12px; }
   .lev-fotos { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
 }
+
+/* ─── Admin: controles override de foto principal ─── */
+.eq-hero-foto-wrap { flex-shrink: 0; }
+.eq-foto-admin {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 8px; width: 180px;
+}
+.btn-foto-admin {
+  border: 0; padding: 6px 10px; border-radius: 8px;
+  font-size: .72rem; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  min-height: 32px; transition: all .12s;
+}
+.btn-foto-cambiar {
+  background: #dc2626; color: #fff;
+}
+.btn-foto-cambiar:hover {
+  background: #b91c1c; transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(220,38,38,.3);
+}
+.btn-foto-borrar {
+  background: transparent; color: #fecaca; border: 1px solid #fecaca;
+}
+.btn-foto-borrar:hover {
+  background: rgba(220,38,38,.1); color: #fff; border-color: #dc2626;
+}
+.btn-foto-historial {
+  background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.25);
+}
+.btn-foto-historial:hover {
+  background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.4);
+}
+
+@media (max-width: 640px) {
+  .eq-foto-admin { width: 100px; }
+  .btn-foto-admin { font-size: .65rem; padding: 5px 6px; min-height: 28px; }
+  .btn-foto-admin span { display: none; }   /* solo icono en mobile */
+}
+
+/* ─── Historial completo intervenciones (Parte 2) ─── */
+.hist-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px; margin-bottom: 14px;
+  background: linear-gradient(135deg, #fef2f2, #fff);
+  border: 1px solid #fecaca; border-radius: 12px;
+  padding: 12px;
+}
+.hist-stat {
+  text-align: center; padding: 6px;
+}
+.hist-stat .n {
+  font-size: 1.5rem; font-weight: 900; line-height: 1; color: #0f172a;
+}
+.hist-stat .l {
+  font-size: .68rem; color: #6b7280; text-transform: uppercase;
+  letter-spacing: .5px; font-weight: 700; margin-top: 4px;
+}
+.hist-stat.success .n { color: #16a34a; }
+.hist-stat.warn .n { color: #f59e0b; }
+.hist-stat.danger .n { color: #dc2626; }
+
+.hist-filtros {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.hist-chip {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 50px;
+  padding: 5px 12px; font-size: .74rem; font-weight: 600;
+  color: #6b7280; cursor: pointer; transition: all .1s;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.hist-chip:hover {
+  border-color: #dc2626; color: #dc2626;
+}
+.hist-chip.active {
+  background: #dc2626; color: #fff; border-color: #dc2626;
+}
+.hist-chip .n {
+  font-weight: 800; opacity: .8;
+}
+
+/* Card de OT en historial completo */
+.hist-ot {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 11px;
+  padding: 12px 16px; margin-bottom: 8px; cursor: pointer;
+  transition: all .15s; position: relative;
+}
+.hist-ot:hover {
+  border-color: #dc2626;
+  box-shadow: 0 4px 12px rgba(220,38,38,.08);
+  transform: translateY(-1px);
+}
+.hist-ot .row1 {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.hist-ot .row2 {
+  font-size: .76rem; color: #6b7280;
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px;
+}
+.hist-ot .row2 .it { display: inline-flex; align-items: center; gap: 4px; }
+.hist-ot .num {
+  background: #fee2e2; color: #991b1b;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .72rem; font-weight: 800;
+  padding: 2px 8px; border-radius: 5px; letter-spacing: .03em;
+}
+.hist-ot .titulo {
+  font-weight: 700; font-size: .92rem; color: #0f172a;
+  flex: 1; min-width: 180px;
+}
+.hist-ot .resumen {
+  font-size: .78rem; color: #374151; margin-top: 5px; line-height: 1.4;
+  background: #f8fafc; border-left: 3px solid #cbd5e1;
+  padding: 6px 10px; border-radius: 6px;
+}
+.hist-ot.is-lev-aplicado {
+  border-left: 4px solid #16a34a;
+}
+
+/* Badges de tipo de OT (colores Daniel) */
+.tipo-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 50px;
+  font-size: .65rem; font-weight: 800; letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.tipo-levantamiento { background: #dbeafe; color: #1e40af; }   /* azul */
+.tipo-instalacion   { background: #dcfce7; color: #15803d; }   /* verde */
+.tipo-preventiva    { background: #fef3c7; color: #92400e; }   /* ámbar */
+.tipo-correctiva    { background: #fee2e2; color: #991b1b; }   /* rojo */
+.tipo-garantia      { background: #ede9fe; color: #6b21a8; }   /* morado */
+.tipo-otro          { background: #f3f4f6; color: #6b7280; }
+
+.lev-aplicado-pill {
+  background: #16a34a; color: #fff;
+  font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 50px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
 </style>
 
 <div class="eq-wrap">
@@ -285,9 +423,43 @@
 
   {# ═════════ Hero del equipo ═════════ #}
   <div class="eq-hero">
-    <div class="eq-hero-foto"
-         {% if equipo.foto_url %}style="background-image:url('{{ equipo.foto_url }}')"{% endif %}>
-      {% if not equipo.foto_url %}<i class="bi bi-image"></i>{% endif %}
+    <div class="eq-hero-foto-wrap" style="position:relative">
+      <div id="eqHeroFoto" class="eq-hero-foto"
+           {% if equipo.foto_url %}style="background-image:url('{{ equipo.foto_url }}')"{% endif %}>
+        {% if not equipo.foto_url %}<i class="bi bi-image"></i>{% endif %}
+      </div>
+      {% if is_admin %}
+      {# Admin/superadmin: overlay con controles para gestionar la foto principal.
+         El técnico solo puede subir si la máquina no tenía foto previa (lógica
+         en el endpoint POST /api/visitas/.../equipo/.../foto). El admin puede
+         siempre, vía /api/maquinas/<mid>/foto. #}
+      <div class="eq-foto-admin">
+        <button type="button" class="btn-foto-admin btn-foto-cambiar"
+                onclick="adminCambiarFoto({{ equipo.id }})"
+                title="Cambiar foto principal del equipo">
+          <i class="bi bi-camera"></i> <span>Cambiar foto</span>
+        </button>
+        {% if equipo.foto_url %}
+        <button type="button" class="btn-foto-admin btn-foto-borrar"
+                onclick="adminBorrarFoto({{ equipo.id }})"
+                title="Borrar foto principal del equipo">
+          <i class="bi bi-trash"></i> <span>Borrar foto</span>
+        </button>
+        {% endif %}
+        <button type="button" class="btn-foto-admin btn-foto-historial"
+                onclick="cambiarTabEq('fotos')"
+                title="Ver galería completa de fotos">
+          <i class="bi bi-images"></i> <span>Galería</span>
+        </button>
+      </div>
+      {# Inputs ocultos disparados desde el bottom-sheet del admin #}
+      <input type="file" id="adminFotoCam" accept="image/*,image/heic,image/heif"
+             capture="environment" style="display:none"
+             onchange="adminSubirFoto({{ equipo.id }}, this)">
+      <input type="file" id="adminFotoGal" accept="image/*,image/heic,image/heif"
+             style="display:none"
+             onchange="adminSubirFoto({{ equipo.id }}, this)">
+      {% endif %}
     </div>
     <div class="eq-hero-info">
       <h2>{{ equipo.nombre or ('Equipo #' ~ equipo.id) }}</h2>
@@ -414,8 +586,8 @@
 
   {# ═════════ Tabs ═════════ #}
   <div class="eq-tabs">
-    <button class="eq-tab active" data-tab="timeline" onclick="cambiarTabEq('timeline')">
-      <i class="bi bi-clock-history"></i> Historial ({{ ots|length }})
+    <button class="eq-tab active" data-tab="historial" onclick="cambiarTabEq('historial')">
+      <i class="bi bi-clock-history"></i> Historial intervenciones ({{ ots|length }})
     </button>
     <button class="eq-tab" data-tab="levantamientos" onclick="cambiarTabEq('levantamientos')">
       <i class="bi bi-clipboard-check"></i> Levantamientos ({{ levantamientos|length }})
@@ -428,33 +600,110 @@
     </button>
   </div>
 
-  {# ═════════ Tab Timeline ═════════ #}
-  <div id="tab-eq-timeline">
+  {# ═════════ Tab Historial intervenciones (completo) ═════════ #}
+  {# Daniel: "me gustaría saber dentro de la ficha si le hicieron mantención,
+     cuándo, quién lo hizo, quién lo gestionó, por qué, todo." — Esta tab
+     muestra TODAS las OTs que tocaron este equipo (no solo levantamientos),
+     con badges por tipo (color), estado, técnico, observaciones/diagnóstico
+     y un filtro por tipo. Click en una OT abre la ficha completa. #}
+  <div id="tab-eq-historial">
     {% if ots %}
-    <div class="timeline">
-      {% for o in ots %}
-      <div class="tl-item tl-{{ o.estado or 'programada' }}"
-           onclick="window.location.href='/mantenciones/ot/{{ o.id }}'">
-        <div class="tl-card">
-          <div class="tl-head">
-            <span class="tl-num">{{ o.numero_ot or ('VS-' ~ o.id) }}</span>
-            <span class="tl-fecha">
-              <i class="bi bi-calendar3 me-1"></i>{{ o.fecha_programada or '—' }}
-              {% if o.hora_inicio %} · {{ o.hora_inicio }}{% endif %}
-            </span>
-            <span class="badge-estado bs-{{ o.estado or 'programada' }} ms-auto">{{ (o.estado or 'programada')|replace('_',' ') }}</span>
-          </div>
-          <div class="tl-titulo">{{ o.titulo or (o.tipo|title + ' programada') }}</div>
-          <div class="tl-meta">
-            {% if o.tipo %}<span class="tl-meta-item"><i class="bi bi-tag"></i>{{ o.tipo|title }}</span>{% endif %}
-            {% if o.tecnico_nombre %}<span class="tl-meta-item"><i class="bi bi-person"></i>{{ o.tecnico_nombre }}</span>{% endif %}
-            {% if o.modalidad_cobro %}<span class="tl-meta-item"><i class="bi bi-cash"></i>{{ o.modalidad_cobro|replace('_',' ')|title }}</span>{% endif %}
-            {% if o.cerrada_at %}<span class="tl-meta-item"><i class="bi bi-check2-circle"></i>Cerrada {{ o.cerrada_at }}</span>{% endif %}
-          </div>
+
+    {# Card resumen con stats #}
+    <div class="hist-stats">
+      <div class="hist-stat">
+        <div class="n">{{ stats.total_ots }}</div>
+        <div class="l"><i class="bi bi-clipboard2-pulse me-1"></i>Total</div>
+      </div>
+      <div class="hist-stat success">
+        <div class="n">{{ stats.ots_cerradas }}</div>
+        <div class="l"><i class="bi bi-check-circle me-1"></i>Cerradas</div>
+      </div>
+      <div class="hist-stat warn">
+        <div class="n">{{ stats.ots_abiertas }}</div>
+        <div class="l"><i class="bi bi-clock me-1"></i>Abiertas</div>
+      </div>
+      <div class="hist-stat danger">
+        <div class="n">{{ stats.ots_canceladas }}</div>
+        <div class="l"><i class="bi bi-x-circle me-1"></i>Canceladas</div>
+      </div>
+      <div class="hist-stat">
+        <div class="n" style="font-size:.92rem;font-weight:700;line-height:1.3">
+          {{ stats.ultima_visita or '—' }}
         </div>
+        <div class="l"><i class="bi bi-calendar-event me-1"></i>Última</div>
+      </div>
+    </div>
+
+    {# Filtros por tipo #}
+    <div class="hist-filtros" id="histFiltros">
+      <button class="hist-chip active" data-tipo="todos" onclick="filtrarHist('todos')">
+        <i class="bi bi-grid"></i> Todos <span class="n">({{ stats.total_ots }})</span>
+      </button>
+      {% for tipo_key, count in stats.por_tipo.items() %}
+      <button class="hist-chip" data-tipo="{{ tipo_key }}" onclick="filtrarHist('{{ tipo_key }}')">
+        <span class="tipo-badge tipo-{{ tipo_key }}" style="padding:1px 6px;font-size:.6rem">{{ tipo_key|replace('_',' ') }}</span>
+        <span class="n">({{ count }})</span>
+      </button>
+      {% endfor %}
+    </div>
+
+    {# Lista de OTs cronológica DESC #}
+    <div id="histList">
+      {% for o in ots %}
+      {% set tipo_key = (o.tipo or 'otro')|lower %}
+      <div class="hist-ot{% if o.lev_aplicado %} is-lev-aplicado{% endif %}"
+           data-tipo="{{ tipo_key }}"
+           onclick="window.location.href='/mantenciones/ot/{{ o.id }}'">
+        <div class="row1">
+          <span class="num">{{ o.numero_ot or ('VS-%05d'|format(o.id)) }}</span>
+          <span class="tipo-badge tipo-{{ tipo_key }}">{{ tipo_key|replace('_',' ') }}</span>
+          <span class="titulo">{{ o.titulo or 'Sin título' }}</span>
+          <span class="badge-estado bs-{{ o.estado or 'programada' }}">
+            {{ (o.estado or 'programada')|replace('_',' ') }}
+          </span>
+          {% if o.lev_aplicado %}
+          <span class="lev-aplicado-pill" title="Este levantamiento ya fue aplicado a la ficha del equipo">
+            <i class="bi bi-check2-circle"></i> APLICADO A FICHA
+          </span>
+          {% endif %}
+        </div>
+        <div class="row2">
+          <span class="it">
+            <i class="bi bi-calendar3"></i> {{ o.fecha_programada or '—' }}
+            {% if o.hora_inicio %} · {{ o.hora_inicio }}{% endif %}
+          </span>
+          {% if o.tecnico_nombre %}
+          <span class="it"><i class="bi bi-person-badge"></i> {{ o.tecnico_nombre }}</span>
+          {% endif %}
+          {% if o.created_by %}
+          <span class="it"><i class="bi bi-clipboard-plus"></i> Gestionó: {{ o.created_by }}</span>
+          {% endif %}
+          {% if o.modalidad_cobro %}
+          <span class="it"><i class="bi bi-cash"></i> {{ o.modalidad_cobro|replace('_',' ')|title }}</span>
+          {% endif %}
+          {% if o.fotos_count and o.fotos_count > 0 %}
+          <span class="it"><i class="bi bi-camera"></i> {{ o.fotos_count }} foto(s)</span>
+          {% endif %}
+          {% if o.cerrada_at %}
+          <span class="it"><i class="bi bi-check2-circle"></i> Cerrada {{ o.cerrada_at }}</span>
+          {% endif %}
+        </div>
+        {% if o.descripcion or o.diagnostico or o.observaciones %}
+        <div class="resumen">
+          {% if o.diagnostico %}
+            <strong>Diagnóstico:</strong> {{ o.diagnostico|truncate(200) }}
+          {% elif o.descripcion %}
+            <strong>Motivo:</strong> {{ o.descripcion|truncate(200) }}
+          {% elif o.observaciones %}
+            {{ o.observaciones|truncate(200) }}
+          {% endif %}
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
+
     {% else %}
     <div class="empty-section">
       <i class="bi bi-clock-history"></i>
@@ -552,7 +801,7 @@
     {% for e in eventos %}
     <div class="evento-row">
       <div class="ev-icon">
-        <i class="bi bi-{% if e.tipo == 'serie_cambiada' %}123{% elif e.tipo == 'foto_subida' %}camera{% elif e.tipo == 'creado' %}plus-circle{% else %}circle{% endif %}"></i>
+        <i class="bi bi-{% if e.tipo == 'serie_cambiada' %}123{% elif e.tipo == 'foto_agregada' or e.tipo == 'foto_subida' %}camera{% elif e.tipo == 'creado' %}plus-circle{% elif e.tipo == 'levantamiento' %}clipboard-check{% else %}circle{% endif %}"></i>
       </div>
       <div class="ev-info">
         <div class="ev-tipo">{{ (e.tipo or '—')|replace('_',' ')|title }}</div>
@@ -576,7 +825,7 @@
 <script>
 function cambiarTabEq(tab){
   document.querySelectorAll('.eq-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  ['timeline','levantamientos','fotos','eventos'].forEach(name => {
+  ['historial','levantamientos','fotos','eventos'].forEach(name => {
     const el = document.getElementById('tab-eq-' + name);
     if (el) el.style.display = (name === tab) ? '' : 'none';
   });
@@ -589,6 +838,136 @@ function abrirLightbox(url){
   document.body.appendChild(lb);
   lb.addEventListener('click', () => lb.remove());
 }
+
+// ─── Filtro por tipo en historial intervenciones ───
+function filtrarHist(tipo){
+  document.querySelectorAll('.hist-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.tipo === tipo);
+  });
+  document.querySelectorAll('.hist-ot').forEach(card => {
+    if (tipo === 'todos' || card.dataset.tipo === tipo){
+      card.style.display = '';
+    } else {
+      card.style.display = 'none';
+    }
+  });
+}
+
+{% if is_admin %}
+// ═══════════════════════════════════════════════════════════════════
+// Admin/superadmin: gestionar foto principal del equipo.
+// Reemplaza, sube por primera vez o borra. NO disponible para técnicos.
+// ═══════════════════════════════════════════════════════════════════
+async function adminCambiarFoto(mid){
+  // Usa ilusActionSheet si está disponible; sino abre input galería directo.
+  if (typeof ilusActionSheet === 'function'){
+    const choice = await ilusActionSheet({
+      title: 'Cambiar foto principal',
+      sub: 'Elige el origen de la nueva foto del equipo',
+      options: [
+        { id: 'camara', label: '📸 Tomar con cámara', sub: 'Abrir cámara del dispositivo' },
+        { id: 'galeria', label: '🖼 Elegir de galería', sub: 'Seleccionar archivo existente' },
+      ],
+    });
+    if (!choice) return;
+    if (choice === 'camara') document.getElementById('adminFotoCam').click();
+    else document.getElementById('adminFotoGal').click();
+  } else {
+    document.getElementById('adminFotoGal').click();
+  }
+}
+
+async function adminSubirFoto(mid, inputEl){
+  const f = inputEl.files && inputEl.files[0];
+  if (!f) return;
+  if (f.size > 8 * 1024 * 1024){
+    await ilusAlert({
+      title: 'Archivo muy grande',
+      message: 'La foto debe pesar menos de 8MB.',
+      type: 'error',
+    });
+    inputEl.value = '';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('foto', f);
+  // Feedback inmediato
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;'
+    + 'display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1rem';
+  overlay.innerHTML = '<div><i class="bi bi-cloud-arrow-up me-2"></i>Subiendo foto…</div>';
+  document.body.appendChild(overlay);
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/foto`, {
+      method: 'POST', body: fd,
+    });
+    const d = await r.json();
+    overlay.remove();
+    if (!d.ok){
+      await ilusAlert({
+        title: 'No se pudo subir',
+        message: d.error || 'Error desconocido.',
+        type: 'error',
+      });
+      inputEl.value = '';
+      return;
+    }
+    // Cache-bust + update DOM sin recargar
+    const fotoUrl = d.foto_url || d.url;
+    const cacheBust = fotoUrl + (fotoUrl.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const heroFoto = document.getElementById('eqHeroFoto');
+    if (heroFoto){
+      heroFoto.style.backgroundImage = `url('${cacheBust}')`;
+      heroFoto.innerHTML = ''; // quitar el placeholder bi-image
+    }
+    ilusToast('✓ Foto actualizada', { type: 'success' });
+    // Recargar para refrescar botón "Borrar" y galería
+    setTimeout(() => window.location.reload(), 800);
+  } catch(e){
+    overlay.remove();
+    await ilusAlert({
+      title: 'Error de red',
+      message: 'No se pudo conectar con el servidor.',
+      type: 'error',
+    });
+  } finally {
+    inputEl.value = '';
+  }
+}
+
+async function adminBorrarFoto(mid){
+  const ok = await ilusConfirm({
+    title: 'Borrar foto del equipo',
+    message: '¿Quitar la foto principal de este equipo?',
+    sub: 'La foto se quitará de la ficha. Esta acción se puede deshacer subiendo una nueva.',
+    okLabel: 'Borrar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/foto`, {
+      method: 'DELETE',
+    });
+    const d = await r.json();
+    if (!d.ok){
+      await ilusAlert({
+        title: 'No se pudo borrar',
+        message: d.error || 'Error desconocido.',
+        type: 'error',
+      });
+      return;
+    }
+    ilusToast('✓ Foto eliminada', { type: 'success' });
+    setTimeout(() => window.location.reload(), 600);
+  } catch(e){
+    await ilusAlert({
+      title: 'Error de red',
+      message: 'No se pudo conectar con el servidor.',
+      type: 'error',
+    });
+  }
+}
+{% endif %}
 </script>
 
 {% endblock %}

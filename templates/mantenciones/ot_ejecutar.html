@@ -584,6 +584,30 @@
 }
 .firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
 .firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
+
+/* ─── Concurrencia multitécnico: badge cuando otro tiene la tarea ─── */
+.tx-tarea.is-locked-other {
+  border-left: 4px solid #f59e0b;
+  background: linear-gradient(135deg, #fff 0%, #fffbeb 100%);
+  opacity: .85;
+}
+.tx-tarea.is-locked-other .ctrl input,
+.tx-tarea.is-locked-other .ctrl select,
+.tx-tarea.is-locked-other .ctrl textarea,
+.tx-tarea.is-locked-other .ctrl button,
+.tx-tarea.is-locked-other .ttl-chk {
+  pointer-events: none;
+  filter: grayscale(.4) opacity(.7);
+}
+.tx-lock-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #fef3c7; color: #92400e;
+  font-size: .68rem; font-weight: 800; letter-spacing: .04em;
+  padding: 4px 10px; border-radius: 50px;
+  margin-top: 6px;
+  border: 1px solid #fde68a;
+}
+.tx-lock-badge i { font-size: .85rem; }
 </style>
 
 <div class="tx-wrap">
@@ -1528,6 +1552,15 @@ const EQUIPOS_IDX = {{ equipos_idx | tojson }};
 const PLANTILLAS_POR_MAQUINA = {{ plantillas_por_maquina | tojson }};
 const STATS_POR_MAQUINA = {{ stats_por_maquina | tojson }};
 
+// ─── Concurrencia multitécnico (Parte 3 - anti duplicación) ───
+// Lock TTL: si una tarea está locked_at < 10 min, otros técnicos ven badge
+// "siendo gestionada por X". Admin/supervisor SIEMPRE puede sobrescribir.
+const CURRENT_USER_ID = {{ current_user_id | tojson }};
+const IS_ADMIN_LOCK = {{ 'true' if is_admin_lock else 'false' }};
+const LOCK_TTL_MIN = 10;
+// Map de locks vivos: { tareaId: { locked_by_user_id, locked_by_nombre, locked_at } }
+let TAREAS_LOCKS = {};
+
 // Estado de navegación
 let _state = { mid: null, pid: null, view: 'maquinas' };
 
@@ -1818,7 +1851,27 @@ function renderTareaHtml(t, bloqueada, mid, pid){
   // caso ya renderiza su propio botón "Capturar mi ubicación (GPS)" dentro
   // del case 'gps' del switch de tipos. Mostrarlo en TODAS las tareas
   // confundía al técnico (no tiene nada que ver con fotos ni otras tareas).
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}" id="tar-${t.id}">
+  // ── Concurrencia: si OTRO técnico tiene el lock vivo, mostrar badge
+  //    y deshabilitar interactividad. Admin/supervisor ve el badge pero
+  //    puede igual editar (override). El dueño del lock NO ve nada raro.
+  const lockInfo = TAREAS_LOCKS[t.id];
+  let lockBadge = '';
+  let isLockedByOther = false;
+  if (lockInfo && lockInfo.locked_by_user_id && lockInfo.locked_by_user_id !== CURRENT_USER_ID){
+    isLockedByOther = true;
+    const minRel = _lockMinutosRelativos(lockInfo.locked_at);
+    const minStr = (minRel >= 0) ? `hace ${minRel} min` : 'recién';
+    lockBadge = `<div class="tx-lock-badge" title="Coordínate con el técnico antes de editar">
+      <i class="bi bi-lock-fill"></i>
+      <span>Siendo gestionada por ${_escapeHtml(lockInfo.locked_by_nombre || 'otro técnico')} · ${minStr}</span>
+    </div>`;
+  }
+  // El admin ve el badge pero NO se bloquea su input (override). Para
+  // técnicos, isLockedByOther agrega class is-locked-other (CSS deshabilita).
+  const lockClass = (isLockedByOther && !IS_ADMIN_LOCK) ? ' is-locked-other' : '';
+
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${lockClass}"
+       id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
       <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
         style="${isCheckType && !bloqueada ? 'cursor:pointer' : 'cursor:default'}">
@@ -1833,10 +1886,24 @@ function renderTareaHtml(t, bloqueada, mid, pid){
           </span>
         </div>
         ${t.descripcion ? `<div class="ttl-sub">${_escapeHtml(t.descripcion)}</div>` : ''}
+        ${lockBadge}
       </div>
     </div>
     ${ctrlHtml}
   </div>`;
+}
+
+// Devuelve los minutos transcurridos desde locked_at (string ISO o similar).
+function _lockMinutosRelativos(lockedAtStr){
+  if (!lockedAtStr) return -1;
+  try {
+    // El backend devuelve "YYYY-MM-DD HH:MM:SS" (chile_time o naive UTC).
+    // Convertimos a Date. Si falla, retornamos -1.
+    const t = new Date(lockedAtStr.replace(' ', 'T'));
+    if (!isFinite(t.getTime())) return -1;
+    const diffSec = (Date.now() - t.getTime()) / 1000;
+    return Math.max(0, Math.floor(diffSec / 60));
+  } catch(e){ return -1; }
 }
 
 // ── FIX 2026-05-17 — Render del resultado GPS sin crash ──
@@ -1891,21 +1958,133 @@ function refreshPills(btn, group){
 }
 
 // ════════════════════════════════════════════════════════
+// CONCURRENCIA MULTITÉCNICO (Parte 3 - anti duplicación)
+// ════════════════════════════════════════════════════════
+
+// Toma el lock antes de editar/responder. Devuelve true si OK seguir.
+// Si el lock está tomado por otro y no soy admin, muestra alerta y false.
+async function tomarLockTarea(tid){
+  if (IS_ADMIN_LOCK) return true;  // admin nunca pide lock (override)
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}/lock`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+    });
+    if (r.status === 423){
+      const d = await r.json();
+      await ilusAlert({
+        title: 'Tarea ocupada',
+        message: d.error || 'Otro técnico está respondiendo esta tarea.',
+        sub: 'Espera unos minutos o coordínate con el técnico antes de continuar.',
+        type: 'warning',
+      });
+      // Actualizar el lock local para que pinte el badge
+      TAREAS_LOCKS[tid] = {
+        locked_by_user_id: d.locked_by_user_id,
+        locked_by_nombre: d.locked_by_nombre,
+        locked_at: d.locked_at,
+      };
+      _refrescarTareaActual(tid);
+      return false;
+    }
+    if (r.ok){
+      const d = await r.json();
+      // Limpiar lock local (yo soy el holder ahora — no me muestro badge)
+      delete TAREAS_LOCKS[tid];
+      return true;
+    }
+  } catch(e){
+    // Si la red falla, seguimos optimistas (el version-check del POST nos protege).
+  }
+  return true;
+}
+
+// Refresca el render visual de una tarea (sin recargar nada del backend).
+function _refrescarTareaActual(tid){
+  if (!_state.mid || !_state.pid) return;
+  const grupo = (PLANTILLAS_POR_MAQUINA[_state.mid] || [])
+    .find(p => String(p.plantilla_id) === String(_state.pid));
+  if (!grupo) return;
+  const tar = grupo.tareas.find(t => t.id === tid);
+  if (!tar) return;
+  const oldEl = document.getElementById('tar-' + tid);
+  if (!oldEl) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = renderTareaHtml(tar, false, _state.mid, _state.pid);
+  oldEl.replaceWith(wrap.firstElementChild);
+}
+
+// Polling periódico de locks vivos para pintar badges sin que el técnico
+// tenga que recargar. Si la red falla, no rompe nada.
+async function _refrescarLocks(){
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/locks`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.ok) return;
+    const nuevos = {};
+    (d.locks || []).forEach(l => {
+      // Filtrar mis propios locks (no quiero ver candado en mis tareas)
+      if (l.locked_by_user_id !== CURRENT_USER_ID){
+        nuevos[l.tarea_id] = l;
+      }
+      // Actualizar version en el modelo local (para evitar 409 si otro guardó)
+      Object.values(PLANTILLAS_POR_MAQUINA).forEach(plList => {
+        plList.forEach(p => {
+          const t = p.tareas.find(tt => tt.id === l.tarea_id);
+          if (t && typeof l.version === 'number' && l.version > (t.version || 0)){
+            t.version = l.version;
+          }
+        });
+      });
+    });
+    // Detectar cambios
+    const keysAntes = Object.keys(TAREAS_LOCKS).join(',');
+    const keysNuevo = Object.keys(nuevos).join(',');
+    TAREAS_LOCKS = nuevos;
+    if (keysAntes !== keysNuevo && _state.view === 'tareas' && _state.mid && _state.pid){
+      // Re-render la vista de tareas para reflejar nuevos badges
+      renderTareas(_state.mid, _state.pid);
+    }
+  } catch(e){ /* silencioso */ }
+}
+
+// Arrancar polling cada 25s (cache 5min — barato).
+if (typeof window !== 'undefined'){
+  // Primer pull rápido, después cada 25s.
+  setTimeout(_refrescarLocks, 1500);
+  setInterval(_refrescarLocks, 25000);
+}
+
+// ════════════════════════════════════════════════════════
 //  ACCIONES DE TAREAS (guardado + actualización in-memory)
 // ════════════════════════════════════════════════════════
 async function toggleCheck(tid, mid, pid){
   // Encontrar tarea en data
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   const tar = grupo.tareas.find(t => t.id === tid);
+  // ── Lock + version check (concurrencia multitécnico) ──
+  if (!await tomarLockTarea(tid)) return;
   const newVal = !tar.completada;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
       method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ completada: newVal ? 1 : 0 })
+      body: JSON.stringify({ completada: newVal ? 1 : 0, version: tar.version || 0 })
     });
+    if (r.status === 409){
+      const d = await r.json();
+      await ilusAlert({
+        title: 'Cambio detectado',
+        message: 'Otro técnico modificó esta tarea mientras la estabas viendo.',
+        sub: 'La página se va a recargar para mostrarte la versión actual.',
+        type: 'warning',
+      });
+      window.location.reload();
+      return;
+    }
     const d = await r.json();
     if (d.ok){
       tar.completada = newVal;
+      if (typeof d.version === 'number') tar.version = d.version;
       _updateProgress(mid, pid);
       ilusToast(newVal ? '✓ Marcado' : '○ Desmarcado', { type:'success', duration: 1200 });
     } else {
@@ -1915,17 +2094,34 @@ async function toggleCheck(tid, mid, pid){
 }
 
 async function guardarResp(tid, valor, mid, pid){
+  // ── Lock + version check (concurrencia multitécnico) ──
+  if (!await tomarLockTarea(tid)) return;
+  const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
+  const tar = grupo ? grupo.tareas.find(t => t.id === tid) : null;
+  const ver = (tar && typeof tar.version === 'number') ? tar.version : 0;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}/respuesta`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ valor })
+      body: JSON.stringify({ valor, version: ver })
     });
+    if (r.status === 409){
+      const d = await r.json();
+      await ilusAlert({
+        title: 'Cambio detectado',
+        message: 'Otro técnico modificó esta tarea mientras la estabas respondiendo.',
+        sub: 'La página se va a recargar para mostrarte la versión actual y no perder tu trabajo siguiente.',
+        type: 'warning',
+      });
+      window.location.reload();
+      return;
+    }
     const d = await r.json();
     if (d.ok){
-      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
-      const tar = grupo.tareas.find(t => t.id === tid);
-      tar.completada = d.completada;
-      tar.valor_json = d.valor_norm;
+      if (tar){
+        tar.completada = d.completada;
+        tar.valor_json = d.valor_norm;
+        if (typeof d.version === 'number') tar.version = d.version;
+      }
       _updateProgress(mid, pid);
       if (d.warning){
         ilusToast(d.warning, { type:'warning' });

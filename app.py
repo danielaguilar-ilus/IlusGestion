@@ -16591,6 +16591,21 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas MODIFY COLUMN firma_cliente_url LONGTEXT NULL COMMENT 'Firma del cliente (URL Cloudinary o data URL fallback)'",
                 "ALTER TABLE mant_visitas MODIFY COLUMN firma_tecnico_url LONGTEXT NULL COMMENT 'Firma del técnico (URL Cloudinary o data URL fallback)'",
                 "ALTER TABLE mant_visitas MODIFY COLUMN firma_supervisor_url LONGTEXT NULL COMMENT 'Firma del supervisor (URL Cloudinary o data URL fallback)'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — Lock optimista en tareas (anti-duplicación
+                # multitécnico). Daniel: "¿Cómo nos garantiza que un técnico no
+                # va a borrar una ficha que otro esté abordando?".
+                #
+                # Patrón:
+                #   - locked_by_user_id: técnico que tomó la tarea (NULL = libre)
+                #   - locked_at: cuándo la tomó (TTL 10 min)
+                #   - version: contador para detectar conflictos en POST respuesta
+                # Admin/supervisor SIEMPRE puede sobrescribir el lock.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visita_tareas ADD COLUMN locked_by_user_id INT NULL COMMENT 'app_users.id que tiene la tarea bloqueada (NULL = libre)'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN locked_at DATETIME NULL COMMENT 'Cuándo se tomó el lock (TTL 10 min)'",
+                "ALTER TABLE mant_visita_tareas ADD COLUMN version INT DEFAULT 0 COMMENT 'Contador para version-check (anti-conflictos)'",
+                "ALTER TABLE mant_visita_tareas ADD INDEX idx_locked_by (locked_by_user_id, locked_at)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -26674,12 +26689,15 @@ def mant_ot_ejecutar(vid):
     ) or []
     equipos = [dict(e) for e in equipos]
 
-    # Tareas con info de plantilla origen + valor_json para tipos avanzados
+    # Tareas con info de plantilla origen + valor_json para tipos avanzados.
+    # Incluye `version` y datos del lock para sincronizar concurrencia
+    # multitécnico (Parte 3 — anti-duplicación).
     tareas = mysql_fetchall(
         "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
         "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
+        "       t.version, t.locked_by_user_id, t.locked_at, "
         "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre, "
         "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
         "  FROM mant_visita_tareas t "
@@ -26689,6 +26707,11 @@ def mant_ot_ejecutar(vid):
         (vid,)
     ) or []
     tareas = [dict(t) for t in tareas]
+    # Normalizar `version` y `locked_at` para JSON
+    for _t in tareas:
+        _t["version"] = int(_t.get("version") or 0)
+        if _t.get("locked_at"):
+            _t["locked_at"] = str(_t["locked_at"])[:19]
 
     # ════════════════════════════════════════════════════════════════
     # Agrupar por (maquina_id, plantilla_id) — UNA card por equipo×plantilla.
@@ -26779,6 +26802,12 @@ def mant_ot_ejecutar(vid):
     plantillas_por_maquina = {str(k): v for k, v in plantillas_por_maquina.items()}
     stats_por_maquina = {str(k): v for k, v in stats_por_maquina.items()}
 
+    # Datos para concurrencia multitécnico (Parte 3): id del user actual
+    # (filtrar locks propios en frontend) y flag is_admin (override del lock).
+    _user_id_actual = u.get("id") or 0
+    _perms = g.get("permissions") or {}
+    _is_admin_lock = bool(_perms.get("superadmin") or _perms.get("admin"))
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
@@ -26789,6 +26818,8 @@ def mant_ot_ejecutar(vid):
         plantillas_por_maquina=plantillas_por_maquina,
         stats_por_maquina=stats_por_maquina,
         fotos=fotos,
+        current_user_id=_user_id_actual,
+        is_admin_lock=_is_admin_lock,
     )
 
 
@@ -26836,7 +26867,13 @@ def mant_ot_equipo_datos(vid, mid):
 @_tecnico_owns_visita
 def mant_ot_equipo_foto(vid, mid):
     """Sube la FOTO PRINCIPAL del equipo (campo mant_maquinas.foto_url).
-    Esta foto es la que aparecerá en la ficha del equipo del cliente."""
+    Esta foto es la que aparecerá en la ficha del equipo del cliente.
+
+    POLÍTICA 2026-05-17 (Daniel): el técnico SOLO puede subir si la
+    máquina NO tenía foto previa. Esto preserva fotos buenas anteriores.
+    Si quiere reemplazarla, debe pedirle al admin/superadmin desde la
+    ficha del equipo (endpoint /api/maquinas/<mid>/foto admin-only).
+    """
     f = request.files.get("foto") or request.files.get("file")
     if not f:
         return jsonify({"ok": False, "error": "Sin archivo"}), 400
@@ -26844,6 +26881,25 @@ def mant_ot_equipo_foto(vid, mid):
     f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
     if size > 8 * 1024 * 1024:
         return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 8MB)"}), 400
+    # ── Preservar foto previa: solo subir si está vacía ──
+    # El admin/superadmin tiene endpoint separado que sí puede reemplazar.
+    es_admin = False
+    try:
+        perms = g.get("permissions") or {}
+        es_admin = bool(perms.get("superadmin") or perms.get("admin"))
+    except Exception:
+        es_admin = False
+    if not es_admin:
+        eq_existente = mysql_fetchone(
+            "SELECT foto_url FROM mant_maquinas WHERE id=%s", (mid,)
+        )
+        if eq_existente and (eq_existente.get("foto_url") or "").strip():
+            return jsonify({
+                "ok": False,
+                "error": "Este equipo ya tiene una foto principal. Pide al "
+                         "administrador que la reemplace desde la ficha del equipo.",
+                "error_codigo": "FOTO_YA_EXISTE",
+            }), 409
     try:
         import cloudinary, cloudinary.uploader
         result = cloudinary.uploader.upload(
@@ -26864,9 +26920,137 @@ def mant_ot_equipo_foto(vid, mid):
             "UPDATE mant_maquinas SET foto_url=%s, last_visita_id=%s WHERE id=%s",
             (url, vid, mid)
         )
+        # Audit log
+        try:
+            _mant_log("maquina", mid,
+                      "foto_subida" if not es_admin else "foto_admin_subida_ot",
+                      f"OT #{vid} · {current_username() or 'sistema'}")
+        except Exception:
+            pass
         return jsonify({"ok": True, "url": url})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2026-05-17 — Foto principal del equipo (admin/superadmin override).
+# Daniel: "Igual el super administrador puede subir y cambiar y borrar
+# la foto de la ficha del producto."
+#
+# Estos endpoints van por la FICHA del equipo (no por una OT). El admin
+# elige libremente cuál foto queda como principal, incluso si la máquina
+# ya tenía una previa (el técnico no puede hacerlo, ver endpoint arriba).
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/foto", methods=["POST"])
+@_mant_required
+def mant_maquina_foto_admin_upload(mid):
+    """Sube/reemplaza la foto principal del equipo. SOLO admin/superadmin."""
+    perms = g.get("permissions") or {}
+    if not (perms.get("superadmin") or perms.get("admin")):
+        return jsonify({
+            "ok": False,
+            "error": "Solo administradores pueden gestionar la foto principal del equipo.",
+        }), 403
+    eq = mysql_fetchone("SELECT id, foto_url, cliente_id FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+    f = request.files.get("foto") or request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "Sin archivo"}), 400
+    # Validar imagen + tamaño
+    ext, err = _validate_uploaded_image(f, label=f.filename or "foto")
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
+    if size > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 8MB)"}), 400
+    try:
+        import cloudinary, cloudinary.uploader
+        result = cloudinary.uploader.upload(
+            f,
+            folder="ilus/maquinas",
+            public_id=f"maquina_{mid}",
+            overwrite=True,
+            resource_type="image",
+            transformation=[
+                {"width": 1200, "height": 1200, "crop": "limit"},
+                {"quality": "auto", "fetch_format": "auto"},
+            ],
+        )
+        url = result.get("secure_url")
+        if not url:
+            return jsonify({"ok": False, "error": "Cloudinary no devolvió URL"}), 500
+        antes = (eq.get("foto_url") or "").strip()
+        mysql_execute(
+            "UPDATE mant_maquinas SET foto_url=%s WHERE id=%s",
+            (url, mid)
+        )
+        # Audit log + evento en timeline del equipo
+        accion = "foto_reemplazada_admin" if antes else "foto_subida_admin"
+        try:
+            _mant_log("maquina", mid, accion,
+                      f"Admin {current_username() or 'sistema'} "
+                      f"{'reemplazó' if antes else 'subió'} foto principal")
+        except Exception:
+            pass
+        try:
+            mysql_execute(
+                "INSERT INTO mant_maquina_eventos "
+                "(maquina_id, tipo, descripcion, created_by) "
+                "VALUES (%s, 'foto_agregada', %s, %s)",
+                (mid,
+                 f"{'Reemplazada' if antes else 'Subida'} foto principal por administrador",
+                 (current_username() or 'admin')[:190])
+            )
+        except Exception:
+            pass
+        return jsonify({"ok": True, "foto_url": url, "url": url})
+    except Exception as e:
+        print(f"[mant_maquina_foto_admin_upload] err mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la foto"}), 500
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/foto", methods=["DELETE"])
+@_mant_required
+def mant_maquina_foto_admin_delete(mid):
+    """Borra la foto principal del equipo. SOLO admin/superadmin."""
+    perms = g.get("permissions") or {}
+    if not (perms.get("superadmin") or perms.get("admin")):
+        return jsonify({
+            "ok": False,
+            "error": "Solo administradores pueden borrar la foto principal del equipo.",
+        }), 403
+    eq = mysql_fetchone("SELECT id, foto_url FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+    if not (eq.get("foto_url") or "").strip():
+        return jsonify({"ok": False, "error": "Este equipo no tiene foto principal"}), 400
+    try:
+        mysql_execute(
+            "UPDATE mant_maquinas SET foto_url=NULL WHERE id=%s",
+            (mid,)
+        )
+        try:
+            _mant_log("maquina", mid, "foto_borrada_admin",
+                      f"Admin {current_username() or 'sistema'} borró foto principal")
+        except Exception:
+            pass
+        try:
+            mysql_execute(
+                "INSERT INTO mant_maquina_eventos "
+                "(maquina_id, tipo, descripcion, created_by) "
+                "VALUES (%s, 'otro', %s, %s)",
+                (mid,
+                 "Foto principal borrada por administrador",
+                 (current_username() or 'admin')[:190])
+            )
+        except Exception:
+            pass
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[mant_maquina_foto_admin_delete] err mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo borrar la foto"}), 500
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/exec-gps", methods=["POST"])
@@ -27140,14 +27324,32 @@ def mant_visita_tarea_respuesta(vid, tid):
     """
     d = request.get_json(silent=True) or {}
     valor = d.get("valor")
-    # Leer la tarea para conocer su tipo
+    # Leer la tarea para conocer su tipo + version + lock-holder
     tar = mysql_fetchone(
-        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json "
+        "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json, "
+        "       version, locked_by_user_id, locked_at "
         "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
         (tid, vid)
     )
     if not tar:
         return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    # ── Version check (concurrencia multitécnico) ──
+    # Si el frontend envía version y NO coincide, otro técnico ya modificó
+    # la tarea desde que el front la cargó. El front debe recargar.
+    # admin/supervisor bypass (pueden sobreescribir cambios).
+    if "version" in d and not _is_supervisor_user():
+        try:
+            v_front = int(d.get("version"))
+            v_db = int(tar.get("version") or 0)
+            if v_front != v_db:
+                return jsonify({
+                    "ok": False,
+                    "error": "Otro técnico modificó esta tarea. Refresca para ver los cambios.",
+                    "error_codigo": "VERSION_CONFLICT",
+                    "version_db": v_db,
+                }), 409
+        except (TypeError, ValueError):
+            pass  # version inválida → seguir sin check
     # FIX 2026-05-17 (GPS DEFINITIVO): normalizar tipo_respuesta
     # Tareas heredadas de plantillas viejas pueden tener tipo='GPS' (mayúsculas)
     # o con espacios. Antes el strict equality fallaba y devolvía 400.
@@ -27328,22 +27530,210 @@ def mant_visita_tarea_respuesta(vid, tid):
             vals += [datetime.now(), user]
         else:
             sets += ["completada=0", "completada_at=NULL", "completada_por=NULL"]
+        # ── Auto-unlock + bump version (concurrencia multitécnico) ──
+        # Liberar el lock al guardar la respuesta para que otros técnicos
+        # puedan responder otras tareas. Incrementar version para que
+        # ediciones concurrentes detecten el cambio.
+        sets += ["locked_by_user_id=NULL", "locked_at=NULL",
+                 "version=COALESCE(version,0)+1"]
         vals.append(tid); vals.append(vid)
         mysql_execute(
             f"UPDATE mant_visita_tareas SET {', '.join(sets)} "
             f" WHERE id=%s AND visita_id=%s",
             tuple(vals)
         )
+        # Releer version actualizada para devolver al frontend
+        v_new = mysql_fetchone(
+            "SELECT version FROM mant_visita_tareas WHERE id=%s", (tid,)
+        )
         return jsonify({
             "ok": True,
             "completada": completar,
             "warning": error,
             "valor_norm": valor_norm,
+            "version": int((v_new or {}).get("version") or 0),
         })
     except Exception as e:
         # No filtrar el SQL al cliente — log interno + mensaje genérico
         print(f"[tarea_respuesta] err: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo guardar la respuesta"}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2026-05-17 — LOCK OPTIMISTA POR TAREA (concurrencia multitécnico)
+# Daniel: "¿Cómo nos garantiza que un técnico no va a borrar una ficha
+# que otro esté abordando?"
+#
+# Flujo:
+#   1. Técnico abre una tarea → POST /lock — marca locked_by_user_id + locked_at
+#   2. Otros técnicos ven badge "🔒 Siendo gestionada por X" y NO pueden
+#      editar/responder hasta que se libere.
+#   3. Al guardar respuesta (POST /respuesta) → auto-unlock + bump version.
+#   4. TTL del lock: 10 minutos. Si el técnico se desconecta sin guardar,
+#      el lock expira y otro puede tomarla.
+#   5. Admin/supervisor SIEMPRE puede sobrescribir el lock (override).
+# ═════════════════════════════════════════════════════════════════════
+
+# TTL del lock en minutos (configurable)
+_TAREA_LOCK_TTL_MIN = 10
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/lock", methods=["POST"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_tarea_lock(vid, tid):
+    """Toma el lock de una tarea para que el técnico actual la responda.
+
+    Reglas:
+      - Si la tarea NO está locked, o el lock expiró (>TTL), o yo mismo soy
+        el lock-holder → OK, marca con mi user_id y NOW().
+      - Si está locked por otro y el lock es reciente → 423 Locked.
+      - Admin/supervisor SIEMPRE puede sobrescribir.
+
+    Returns:
+      200 OK: {ok, locked_by, locked_at, version, expires_in_seg}
+      423 Locked: {ok:false, error, locked_by_nombre, locked_at, expires_in_seg}
+      404 si tarea no existe.
+    """
+    u = getattr(g, "user", None) or {}
+    uid = u.get("id")
+    if not uid:
+        return jsonify({"ok": False, "error": "Sesión inválida"}), 401
+    tar = mysql_fetchone(
+        "SELECT id, locked_by_user_id, locked_at, version "
+        "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+        (tid, vid)
+    )
+    if not tar:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+
+    es_supervisor = _is_supervisor_user()
+    holder_uid = tar.get("locked_by_user_id")
+    locked_at = tar.get("locked_at")
+    ahora = datetime.now()
+    lock_vivo = False
+    expires_in = 0
+    if holder_uid and locked_at:
+        try:
+            edad_seg = (ahora - locked_at).total_seconds()
+            ttl_seg = _TAREA_LOCK_TTL_MIN * 60
+            if edad_seg < ttl_seg:
+                lock_vivo = True
+                expires_in = int(ttl_seg - edad_seg)
+        except Exception:
+            lock_vivo = False
+
+    # Si está locked por OTRO y el lock está vivo → 423 (salvo supervisor)
+    if lock_vivo and holder_uid != uid and not es_supervisor:
+        holder = mysql_fetchone(
+            "SELECT COALESCE(nombre, username) AS nom FROM app_users WHERE id=%s",
+            (holder_uid,)
+        )
+        nombre = (holder or {}).get("nom") or f"Técnico #{holder_uid}"
+        # Minutos relativos desde que tomó el lock
+        try:
+            min_relat = int((ahora - locked_at).total_seconds() // 60)
+        except Exception:
+            min_relat = 0
+        return jsonify({
+            "ok": False,
+            "error": (
+                f"Esta tarea está siendo respondida por {nombre} "
+                f"hace {min_relat} min. Espera o coordínate con él."
+            ),
+            "error_codigo": "TAREA_BLOQUEADA",
+            "locked_by_user_id": holder_uid,
+            "locked_by_nombre": nombre,
+            "locked_at": str(locked_at)[:16],
+            "expires_in_seg": expires_in,
+        }), 423
+
+    # Tomar el lock (o renovarlo si yo ya era el holder)
+    try:
+        mysql_execute(
+            "UPDATE mant_visita_tareas "
+            "   SET locked_by_user_id=%s, locked_at=NOW() "
+            " WHERE id=%s AND visita_id=%s",
+            (uid, tid, vid)
+        )
+        return jsonify({
+            "ok": True,
+            "locked_by_user_id": uid,
+            "locked_by_nombre": current_username() or "Yo",
+            "version": int(tar.get("version") or 0),
+            "expires_in_seg": _TAREA_LOCK_TTL_MIN * 60,
+        })
+    except Exception as e:
+        print(f"[tarea_lock] err vid={vid} tid={tid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo tomar el lock"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/lock", methods=["DELETE"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_tarea_unlock(vid, tid):
+    """Libera el lock de una tarea (cuando el técnico cancela o se va sin
+    guardar). Solo el dueño del lock, admin o supervisor pueden liberar."""
+    u = getattr(g, "user", None) or {}
+    uid = u.get("id")
+    tar = mysql_fetchone(
+        "SELECT locked_by_user_id FROM mant_visita_tareas "
+        " WHERE id=%s AND visita_id=%s",
+        (tid, vid)
+    )
+    if not tar:
+        return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+    holder = tar.get("locked_by_user_id")
+    if holder and holder != uid and not _is_supervisor_user():
+        return jsonify({
+            "ok": False,
+            "error": "Solo el técnico que tomó el lock o un supervisor puede liberarlo.",
+        }), 403
+    try:
+        mysql_execute(
+            "UPDATE mant_visita_tareas "
+            "   SET locked_by_user_id=NULL, locked_at=NULL "
+            " WHERE id=%s AND visita_id=%s",
+            (tid, vid)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[tarea_unlock] err vid={vid} tid={tid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo liberar el lock"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/tareas/locks", methods=["GET"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_tareas_locks(vid):
+    """Lista las tareas bloqueadas de una OT con el lock-holder.
+
+    Útil para que el frontend pinte los badges 'siendo gestionada por X'
+    sin tener que pedir lock individual. Solo devuelve locks vivos
+    (dentro del TTL). El dueño NO ve sus propios locks en la respuesta
+    (filtrado en frontend para no mostrar candado en sus tareas).
+    """
+    rows = mysql_fetchall(
+        "SELECT t.id, t.locked_by_user_id, t.locked_at, "
+        "       COALESCE(u.nombre, u.username) AS locked_by_nombre, "
+        "       t.version "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN app_users u ON u.id = t.locked_by_user_id "
+        " WHERE t.visita_id=%s "
+        "   AND t.locked_by_user_id IS NOT NULL "
+        "   AND t.locked_at >= (NOW() - INTERVAL %s MINUTE)",
+        (vid, _TAREA_LOCK_TTL_MIN)
+    ) or []
+    out = []
+    for r in rows:
+        out.append({
+            "tarea_id": r["id"],
+            "locked_by_user_id": r["locked_by_user_id"],
+            "locked_by_nombre": r.get("locked_by_nombre") or f"Técnico #{r['locked_by_user_id']}",
+            "locked_at": str(r["locked_at"])[:16] if r.get("locked_at") else None,
+            "version": int(r.get("version") or 0),
+        })
+    return jsonify({"ok": True, "locks": out})
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -27974,7 +28364,8 @@ def mant_visita_tarea_update(vid, tid):
     if action == "toggle":
         # Cambiar estado completada
         row = mysql_fetchone(
-            "SELECT completada FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+            "SELECT completada, version FROM mant_visita_tareas "
+            " WHERE id=%s AND visita_id=%s",
             (tid, vid)
         )
         if not row:
@@ -27984,7 +28375,10 @@ def mant_visita_tarea_update(vid, tid):
             "UPDATE mant_visita_tareas "
             "   SET completada=%s, "
             "       completada_at=%s, "
-            "       completada_por=%s "
+            "       completada_por=%s, "
+            "       locked_by_user_id=NULL, "
+            "       locked_at=NULL, "
+            "       version=COALESCE(version,0)+1 "
             " WHERE id=%s AND visita_id=%s",
             (
                 new_state,
@@ -28004,7 +28398,8 @@ def mant_visita_tarea_update(vid, tid):
             )
         except Exception:
             pass
-        return jsonify({"ok": True, "completada": bool(new_state)})
+        return jsonify({"ok": True, "completada": bool(new_state),
+                        "version": int(row.get("version") or 0) + 1})
 
     # Update genérico
     fields = []
@@ -28032,6 +28427,10 @@ def mant_visita_tarea_update(vid, tid):
         fields.append("completada_por=%s"); vals.append(user if new_c else None)
     if not fields:
         return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
+    # Bump version + libera lock (concurrencia multitécnico)
+    fields.append("version=COALESCE(version,0)+1")
+    fields.append("locked_by_user_id=NULL")
+    fields.append("locked_at=NULL")
     vals.extend([tid, vid])
     mysql_execute(
         f"UPDATE mant_visita_tareas SET {', '.join(fields)} WHERE id=%s AND visita_id=%s",
@@ -33158,18 +33557,31 @@ def mant_maquina_ficha(mid):
             flash("Este equipo no está en ninguna OT asignada a ti.", "warning")
             return redirect(url_for("mant_ots_list"))
 
-    # Historial OTs (cronológico DESC) — reusa la lógica del API existente
+    # Historial COMPLETO de intervenciones (cronológico DESC) — Daniel:
+    # "Igual sí me gustaría saber dentro de la ficha, parte, si es que
+    # le hicieron mantención, cuándo, quién lo hizo, quién lo gestionó,
+    # por qué, todo." — Esto incluye TODAS las OTs (no solo
+    # levantamientos), con info enriquecida: diagnóstico, observaciones,
+    # número de fotos por equipo y flag de si el levantamiento se aplicó
+    # a esta ficha.
     ots_rows = mysql_fetchall(
         "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.fecha_programada, "
         "       v.hora_inicio, v.hora_fin, v.tipo, v.estado, v.descripcion, "
-        "       v.modalidad_cobro, v.cerrada_at, "
-        "       COALESCE(u.nombre, u.username) AS tecnico_nombre "
+        "       v.observaciones, v.diagnostico, "
+        "       v.modalidad_cobro, v.cerrada_at, v.created_by, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos f "
+        "          WHERE f.visita_id=v.id AND f.maquina_id=%s) AS fotos_count, "
+        "       (SELECT MAX(ml.aplicado_a_ficha) "
+        "          FROM mant_maquina_levantamientos ml "
+        "         WHERE ml.visita_id=v.id AND ml.maquina_id=%s) AS lev_aplicado "
         "  FROM mant_visitas v "
         "  JOIN mant_visita_tareas t ON t.visita_id = v.id "
         "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
         " WHERE t.maquina_id=%s "
+        " GROUP BY v.id "
         " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 100",
-        (mid,)
+        (mid, mid, mid)
     ) or []
     ots = []
     for r in ots_rows:
@@ -33182,6 +33594,8 @@ def mant_maquina_ficha(mid):
             d["hora_fin"] = str(d["hora_fin"])[:5]
         if d.get("cerrada_at"):
             d["cerrada_at"] = str(d["cerrada_at"])[:16]
+        d["fotos_count"] = int(d.get("fotos_count") or 0)
+        d["lev_aplicado"] = bool(d.get("lev_aplicado"))
         # Foto destacada: primera foto subida en esta OT para este equipo
         try:
             foto = mysql_fetchone(
@@ -33235,15 +33649,23 @@ def mant_maquina_ficha(mid):
             d["fecha_evento"] = str(d["fecha_evento"])[:16]
         eventos.append(d)
 
-    # Stats compactas
+    # Stats compactas (incluye breakdown para card de historial)
+    _estados_abiertos = ("programada", "en_curso", "en_ejecucion", "pendiente_aprobacion")
     stats = {
         "total_ots": len(ots),
         "total_fotos": len(fotos),
         "ots_cerradas": sum(1 for o in ots if o.get("estado") == "cerrada"),
+        "ots_abiertas": sum(1 for o in ots if o.get("estado") in _estados_abiertos),
+        "ots_canceladas": sum(1 for o in ots if o.get("estado") == "cancelada"),
         "primera_visita": ots[-1]["fecha_programada"] if ots else None,
         "ultima_visita": ots[0]["fecha_programada"] if ots else None,
         "tecnicos": list({o.get("tecnico_nombre") for o in ots if o.get("tecnico_nombre")}),
+        # Conteo por tipo para chips/filtros
+        "por_tipo": {},
     }
+    for _o in ots:
+        _t = (_o.get("tipo") or "otro").lower()
+        stats["por_tipo"][_t] = stats["por_tipo"].get(_t, 0) + 1
 
     # ── Levantamientos de esta máquina (último + historial) ──
     # Daniel pidió que en la ficha del equipo se vea la información
@@ -33309,6 +33731,10 @@ def mant_maquina_ficha(mid):
         levantamientos = []
     ultimo_levantamiento = levantamientos[0] if levantamientos else None
 
+    # ── Flag is_admin: el template muestra controles override de foto ──
+    perms = g.get("permissions") or {}
+    is_admin = bool(perms.get("superadmin") or perms.get("admin"))
+
     return render_template(
         "mantenciones/maquina_ficha.html",
         equipo=eq,
@@ -33318,6 +33744,7 @@ def mant_maquina_ficha(mid):
         stats=stats,
         levantamientos=levantamientos,
         ultimo_levantamiento=ultimo_levantamiento,
+        is_admin=is_admin,
     )
 
 
