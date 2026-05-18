@@ -30,7 +30,7 @@
     </li>
     <li class="nav-item">
       <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabPlantillas"
-              onclick="cargarPlantillas(true)">
+              onclick="cargarPlantillas(true); ksCargarEstado();">
         <i class="bi bi-layout-text-sidebar me-1"></i>Plantillas
       </button>
     </li>
@@ -576,35 +576,199 @@
         .tpl-modulo-card.active .tmc-count{
           background:#dc2626;color:#fff;
         }
+        /* ── Indicador de canal bloqueado en cada card de módulo ── */
+        .tpl-modulo-card .tmc-warn{
+          position:absolute;top:8px;right:10px;
+          width:22px;height:22px;border-radius:50%;
+          background:#dc2626;color:#fff;
+          display:none;align-items:center;justify-content:center;
+          font-size:.72rem;font-weight:700;
+          box-shadow:0 2px 6px rgba(220,38,38,.35);
+          cursor:help;
+        }
+        .tpl-modulo-card.has-block .tmc-warn{display:flex}
+        .tpl-modulo-card.has-block .tmc-count{display:none}
+
+        /* ── KILL SWITCH (llave de paso por módulo) ── */
+        .ks-panel{
+          background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+          padding:16px 18px;margin-bottom:18px;box-shadow:0 2px 10px rgba(15,23,42,.04);
+        }
+        .ks-panel-header{
+          display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+          padding-bottom:12px;margin-bottom:12px;border-bottom:1px dashed #e5e7eb;
+        }
+        .ks-panel-header .ks-title{
+          font-size:.95rem;font-weight:800;color:#0a0a0a;display:flex;align-items:center;gap:8px;
+        }
+        .ks-panel-header .ks-title i{color:#dc2626;font-size:1.1rem}
+        .ks-panel-sub{font-size:.78rem;color:#6b7280;flex:1;min-width:160px}
+
+        /* Banner ámbar de advertencia (siempre visible cuando hay bloqueos) */
+        .ks-warning-banner{
+          background:#fef2f2;border:2px solid #dc2626;border-radius:10px;
+          padding:14px 18px;margin-bottom:16px;
+          display:none;align-items:flex-start;gap:14px;
+          box-shadow:0 4px 14px rgba(220,38,38,.18);
+        }
+        .ks-warning-banner.visible{display:flex}
+        .ks-warning-banner .ksw-icon{
+          flex-shrink:0;width:38px;height:38px;border-radius:50%;
+          background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;
+          font-size:1.2rem;
+        }
+        .ks-warning-banner .ksw-body{flex:1}
+        .ks-warning-banner .ksw-title{font-weight:800;color:#dc2626;font-size:.95rem;margin-bottom:3px}
+        .ks-warning-banner .ksw-msg{color:#7f1d1d;font-size:.82rem;line-height:1.5}
+
+        /* Tabla */
+        .ks-table{width:100%;border-collapse:collapse;font-size:.85rem}
+        .ks-table thead th{
+          background:#f9fafb;color:#374151;text-transform:uppercase;
+          font-size:.65rem;letter-spacing:.6px;font-weight:700;
+          padding:9px 10px;text-align:left;border-bottom:2px solid #e5e7eb;
+        }
+        .ks-table thead th.ks-th-canal{text-align:center;width:78px}
+        .ks-table tbody td{
+          padding:11px 10px;border-bottom:1px solid #f1f5f9;
+          vertical-align:middle;
+        }
+        .ks-table tbody tr:last-child td{border-bottom:none}
+        .ks-table tbody tr.has-block{background:#fffaf6}
+        .ks-table .ks-mod{font-weight:700;color:#111;display:flex;align-items:center;gap:8px}
+        .ks-table .ks-mod i{color:#dc2626;font-size:1rem}
+        .ks-table .ks-td-canal{text-align:center}
+        .ks-table .ks-motivo{font-size:.76rem;color:#6b7280;font-style:italic;max-width:260px}
+        .ks-table .ks-motivo .ks-motivo-tag{
+          display:inline-block;background:#fff3cd;color:#7c4d00;
+          border:1px solid #f3c97a;padding:2px 8px;border-radius:12px;
+          font-style:normal;font-size:.7rem;font-weight:600;
+          max-width:240px;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        }
+        .ks-table .ks-meta{font-size:.7rem;color:#9ca3af;line-height:1.3}
+        .ks-table .ks-actions{white-space:nowrap}
+        .ks-row-btn{
+          font-size:.7rem;font-weight:700;padding:4px 10px;border-radius:6px;
+          border:1.5px solid #d1d5db;background:#fff;color:#374151;cursor:pointer;
+          transition:.12s;margin-left:4px;
+        }
+        .ks-row-btn:hover{background:#fff5f5;border-color:#dc2626;color:#dc2626}
+        .ks-row-btn.ks-row-btn-libera{
+          border-color:#16a34a;color:#16a34a;
+        }
+        .ks-row-btn.ks-row-btn-libera:hover{background:#f0fdf4}
+
+        /* Toggle switch ILUS */
+        .ks-toggle{
+          position:relative;width:46px;height:26px;border-radius:13px;background:#cbd5e1;
+          transition:background .2s;cursor:pointer;display:inline-block;vertical-align:middle;
+          border:none;padding:0;
+        }
+        .ks-toggle::after{
+          content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;
+          border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);
+          transition:transform .2s;
+        }
+        .ks-toggle.blocked{background:#dc2626}
+        .ks-toggle.blocked::after{transform:translateX(20px)}
+        .ks-toggle:disabled{opacity:.5;cursor:not-allowed}
+        .ks-toggle:focus{outline:2px solid #fca5a5;outline-offset:2px}
+
+        /* Responsive: en mobile, ocultar columnas meta y actions secundarias */
+        @media (max-width: 768px){
+          .ks-table thead th.ks-th-motivo,
+          .ks-table tbody td.ks-td-motivo,
+          .ks-table thead th.ks-th-meta,
+          .ks-table tbody td.ks-td-meta{display:none}
+          .ks-table thead th.ks-th-canal{width:58px;font-size:.55rem}
+          .ks-row-btn{padding:3px 7px;font-size:.65rem}
+        }
       </style>
+
+      {# ── BANNER DE ADVERTENCIA GLOBAL (solo visible si HAY bloqueos) ── #}
+      <div id="ksWarningBanner" class="ks-warning-banner" role="alert">
+        <div class="ksw-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+        <div class="ksw-body">
+          <div class="ksw-title">ATENCIÓN: Hay módulos con la llave de paso CERRADA</div>
+          <div class="ksw-msg" id="ksWarningMsg">
+            Los emails, WhatsApp y/o SMS de esos módulos NO se están enviando.
+            Recuerda abrir la llave cuando termines las pruebas.
+          </div>
+        </div>
+      </div>
+
+      {# ── PANEL LLAVE DE PASO POR MÓDULO ── #}
+      <div class="ks-panel" id="ksPanel">
+        <div class="ks-panel-header">
+          <div class="ks-title">
+            <i class="bi bi-key-fill"></i>Llave de paso por módulo
+          </div>
+          <div class="ks-panel-sub">
+            Cierra la llave para bloquear envíos de un módulo mientras pruebas.
+            Cuando está cerrada, los mensajes quedan registrados como bloqueados
+            pero NO salen.
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  onclick="ksCargarEstado(true)" title="Refrescar">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+          <table class="ks-table" id="ksTable">
+            <thead>
+              <tr>
+                <th>Módulo</th>
+                <th class="ks-th-canal">Email</th>
+                <th class="ks-th-canal">WhatsApp</th>
+                <th class="ks-th-canal">SMS</th>
+                <th class="ks-th-motivo">Motivo</th>
+                <th class="ks-th-meta">Última actualización</th>
+                <th class="text-end">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="ksTableBody">
+              <tr><td colspan="7" class="text-center text-muted py-4">
+                <div class="spinner-border spinner-border-sm text-danger me-1"></div>
+                Cargando estado de las llaves de paso…
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div class="tpl-modulo-grid" id="tplModuloGrid">
         <button type="button" class="tpl-modulo-card active" data-modulo="transporte"
                 onclick="seleccionarModulo('transporte', this)">
+          <span class="tmc-warn" id="tmcWarn-transporte" title=""><i class="bi bi-exclamation-lg"></i></span>
           <div class="tmc-icon"><i class="bi bi-truck"></i></div>
           <div class="tmc-titulo">Transporte</div>
           <div class="tmc-sub">Pedidos, courier, despachos</div>
         </button>
         <button type="button" class="tpl-modulo-card" data-modulo="retiros"
                 onclick="seleccionarModulo('retiros', this)">
+          <span class="tmc-warn" id="tmcWarn-retiros" title=""><i class="bi bi-exclamation-lg"></i></span>
           <div class="tmc-icon"><i class="bi bi-box-arrow-up"></i></div>
           <div class="tmc-titulo">Retiros</div>
           <div class="tmc-sub">Retiros en bodega</div>
         </button>
         <button type="button" class="tpl-modulo-card" data-modulo="mantenciones"
                 onclick="seleccionarModulo('mantenciones', this)">
+          <span class="tmc-warn" id="tmcWarn-mantenciones" title=""><i class="bi bi-exclamation-lg"></i></span>
           <div class="tmc-icon"><i class="bi bi-wrench-adjustable"></i></div>
           <div class="tmc-titulo">Mantenciones</div>
           <div class="tmc-sub">OTs, visitas, técnicos</div>
         </button>
         <button type="button" class="tpl-modulo-card" data-modulo="comunicacion_interna"
                 onclick="seleccionarModulo('comunicacion_interna', this)">
+          <span class="tmc-warn" id="tmcWarn-comunicacion_interna" title=""><i class="bi bi-exclamation-lg"></i></span>
           <div class="tmc-icon"><i class="bi bi-people"></i></div>
           <div class="tmc-titulo">Comunicación interna</div>
           <div class="tmc-sub">Usuarios, claves, accesos</div>
         </button>
         <button type="button" class="tpl-modulo-card" data-modulo="general"
                 onclick="seleccionarModulo('general', this)">
+          <span class="tmc-warn" id="tmcWarn-general" title=""><i class="bi bi-exclamation-lg"></i></span>
           <div class="tmc-icon"><i class="bi bi-folder"></i></div>
           <div class="tmc-titulo">General</div>
           <div class="tmc-sub">Otras plantillas</div>
@@ -1820,7 +1984,275 @@ document.addEventListener('DOMContentLoaded', () => {
     htmlSrc.addEventListener('input', () => { visual.innerHTML = htmlSrc.value; });
   }
   cargarPlantillas();
+  // Cargar estado de la llave de paso al abrir la pestaña Plantillas
+  ksCargarEstado();
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// LLAVE DE PASO POR MÓDULO — UI handlers
+// ══════════════════════════════════════════════════════════════════════
+const KS_MODULOS_LABELS = {
+  transporte:           { label:'Transporte',           icon:'bi-truck' },
+  retiros:              { label:'Retiros',              icon:'bi-box-arrow-up' },
+  mantenciones:         { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
+  comunicacion_interna: { label:'Comunicación interna', icon:'bi-people' },
+  general:              { label:'General',              icon:'bi-folder' },
+};
+const KS_CANAL_LABELS = {
+  email:    'Email',
+  whatsapp: 'WhatsApp',
+  sms:      'SMS',
+};
+
+let _ksData = null;
+
+async function ksCargarEstado(force=false) {
+  const tbody = document.getElementById('ksTableBody');
+  if (force && tbody) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+      <div class="spinner-border spinner-border-sm text-danger me-1"></div>
+      Recargando…</td></tr>`;
+  }
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch?t=' + Date.now(), { cache:'no-store' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        No se pudo cargar: ${esc(err.error || ('HTTP ' + r.status))}
+      </td></tr>`;
+      return;
+    }
+    _ksData = await r.json();
+    ksRenderTabla();
+    ksRenderBanner();
+    ksRenderCardIndicadores();
+  } catch (e) {
+    console.error('[ks] cargar estado', e);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+        Error de red al cargar el estado.</td></tr>`;
+    }
+  }
+}
+
+function ksRenderTabla() {
+  const tbody = document.getElementById('ksTableBody');
+  if (!tbody || !_ksData || !Array.isArray(_ksData.modulos)) return;
+
+  tbody.innerHTML = _ksData.modulos.map(m => {
+    const lbl     = KS_MODULOS_LABELS[m.modulo] || { label:m.label, icon:'bi-folder' };
+    const hasBlk  = m.email_bloqueado || m.whatsapp_bloqueado || m.sms_bloqueado;
+    const allBlk  = m.email_bloqueado && m.whatsapp_bloqueado && m.sms_bloqueado;
+    const motivoHtml = m.motivo
+      ? `<span class="ks-motivo-tag" title="${esc(m.motivo)}">${esc(m.motivo)}</span>`
+      : `<span class="text-muted">—</span>`;
+    const actHtml = m.actualizado_at
+      ? `<div>${esc(m.actualizado_at)}</div>
+         ${m.actualizado_por ? `<div class="ks-meta">por ${esc(m.actualizado_por)}</div>` : ''}`
+      : `<span class="text-muted ks-meta">—</span>`;
+    const cell = (canal, val) => `
+      <td class="ks-td-canal">
+        <button type="button"
+                class="ks-toggle${val ? ' blocked' : ''}"
+                aria-pressed="${val ? 'true' : 'false'}"
+                title="${val ? 'Bloqueado · click para abrir la llave' : 'Habilitado · click para cerrar la llave'}"
+                data-modulo="${esc(m.modulo)}"
+                data-canal="${canal}"
+                onclick="ksToggleClick(this)"></button>
+      </td>`;
+    const btnTodos = allBlk
+      ? `<button type="button" class="ks-row-btn ks-row-btn-libera"
+                 onclick="ksAccionMasiva('${esc(m.modulo)}', false)"
+                 title="Abrir los 3 canales para ${esc(lbl.label)}">
+           <i class="bi bi-unlock-fill"></i> Liberar todo
+         </button>`
+      : `<button type="button" class="ks-row-btn"
+                 onclick="ksAccionMasiva('${esc(m.modulo)}', true)"
+                 title="Bloquear los 3 canales para ${esc(lbl.label)}">
+           <i class="bi bi-lock-fill"></i> Bloquear todo
+         </button>`;
+
+    return `
+      <tr class="${hasBlk ? 'has-block' : ''}" data-modulo="${esc(m.modulo)}">
+        <td>
+          <div class="ks-mod"><i class="bi ${lbl.icon}"></i>${esc(lbl.label)}</div>
+        </td>
+        ${cell('email',    m.email_bloqueado)}
+        ${cell('whatsapp', m.whatsapp_bloqueado)}
+        ${cell('sms',      m.sms_bloqueado)}
+        <td class="ks-td-motivo">${motivoHtml}</td>
+        <td class="ks-td-meta">${actHtml}</td>
+        <td class="text-end ks-actions">${btnTodos}</td>
+      </tr>`;
+  }).join('');
+}
+
+function ksRenderBanner() {
+  const banner = document.getElementById('ksWarningBanner');
+  const msg    = document.getElementById('ksWarningMsg');
+  if (!banner || !_ksData) return;
+  if (_ksData.hay_bloqueados) {
+    // Construir lista concreta de qué está bloqueado
+    const bloqs = [];
+    _ksData.modulos.forEach(m => {
+      const canales = [];
+      if (m.email_bloqueado)    canales.push('Email');
+      if (m.whatsapp_bloqueado) canales.push('WhatsApp');
+      if (m.sms_bloqueado)      canales.push('SMS');
+      if (canales.length) {
+        const lbl = (KS_MODULOS_LABELS[m.modulo] || {}).label || m.modulo;
+        bloqs.push(`<strong>${esc(lbl)}</strong> (${canales.join(', ')})`);
+      }
+    });
+    msg.innerHTML = `Los mensajes de estos módulos NO se están enviando: ${bloqs.join(' · ')}.
+                     Recuerda abrir la llave cuando termines las pruebas.`;
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible');
+  }
+}
+
+function ksRenderCardIndicadores() {
+  if (!_ksData) return;
+  _ksData.modulos.forEach(m => {
+    const warn = document.getElementById('tmcWarn-' + m.modulo);
+    const card = document.querySelector(`.tpl-modulo-card[data-modulo="${m.modulo}"]`);
+    if (!warn || !card) return;
+    const canales = [];
+    if (m.email_bloqueado)    canales.push('Email');
+    if (m.whatsapp_bloqueado) canales.push('WhatsApp');
+    if (m.sms_bloqueado)      canales.push('SMS');
+    if (canales.length) {
+      card.classList.add('has-block');
+      let tooltip;
+      if (canales.length === 3) {
+        tooltip = 'Email, WhatsApp y SMS bloqueados';
+      } else if (canales.length === 2) {
+        tooltip = canales.join(' y ') + ' bloqueados';
+      } else {
+        tooltip = canales[0] + ' bloqueado';
+      }
+      warn.setAttribute('title', tooltip);
+    } else {
+      card.classList.remove('has-block');
+      warn.setAttribute('title', '');
+    }
+  });
+}
+
+async function ksToggleClick(btn) {
+  if (!btn || btn.disabled) return;
+  const modulo = btn.dataset.modulo;
+  const canal  = btn.dataset.canal;
+  const yaBloqueado = btn.classList.contains('blocked');
+  const cerrar = !yaBloqueado;
+
+  const lbl  = (KS_MODULOS_LABELS[modulo] || {}).label || modulo;
+  const cLbl = KS_CANAL_LABELS[canal] || canal;
+
+  // Confirmación distinta al bloquear vs abrir
+  let motivo = null;
+  if (cerrar) {
+    motivo = await ilusPrompt({
+      title: `Cerrar la llave de ${cLbl}`,
+      message: `¿Deseas bloquear los envíos de ${cLbl} del módulo ${lbl}?`,
+      placeholder: 'Motivo (opcional, ej: "pruebas hasta el viernes")',
+      required: false,
+      okLabel: 'Cerrar llave',
+    });
+    if (motivo === null) return; // canceló (null = canceló, '' = aceptó sin motivo)
+  } else {
+    const ok = await ilusConfirm({
+      title: `Abrir la llave de ${cLbl}`,
+      message: `¿Deseas habilitar de nuevo los envíos de ${cLbl} del módulo ${lbl}?`,
+      okLabel: 'Abrir llave',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    motivo = '';
+  }
+
+  // UI optimista
+  btn.disabled = true;
+  btn.classList.toggle('blocked');
+
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch/' + encodeURIComponent(modulo), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal, bloqueado: cerrar, motivo: motivo || '' }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      throw new Error(d.error || 'No se pudo actualizar');
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        cerrar
+          ? `Llave de ${cLbl} cerrada para ${lbl}.`
+          : `Llave de ${cLbl} abierta para ${lbl}.`,
+        { type: cerrar ? 'warning' : 'success' }
+      );
+    }
+    // Recargar estado completo (para refrescar última actualización + banner)
+    await ksCargarEstado();
+  } catch (e) {
+    // Revertir UI
+    btn.classList.toggle('blocked');
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function ksAccionMasiva(modulo, bloquear) {
+  const lbl = (KS_MODULOS_LABELS[modulo] || {}).label || modulo;
+  let motivo = null;
+  if (bloquear) {
+    motivo = await ilusPrompt({
+      title: `Bloquear TODO el módulo ${lbl}`,
+      message: 'Esto cerrará la llave de Email, WhatsApp y SMS de este módulo. Ningún mensaje saldrá.',
+      placeholder: 'Motivo (opcional, ej: "pruebas hasta el viernes")',
+      required: false,
+      okLabel: 'Bloquear los 3 canales',
+    });
+    if (motivo === null) return;
+  } else {
+    const ok = await ilusConfirm({
+      title: `Liberar TODO el módulo ${lbl}`,
+      message: '¿Abrir las 3 llaves de paso de este módulo (Email, WhatsApp y SMS)?',
+      okLabel: 'Sí, liberar todo',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    motivo = '';
+  }
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch/' + encodeURIComponent(modulo), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal: 'todos', bloqueado: !!bloquear, motivo: motivo || '' }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar');
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        bloquear
+          ? `Módulo ${lbl}: las 3 llaves quedaron cerradas.`
+          : `Módulo ${lbl}: las 3 llaves quedaron abiertas.`,
+        { type: bloquear ? 'warning' : 'success' }
+      );
+    }
+    await ksCargarEstado();
+  } catch (e) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  }
+}
 
 function tplSetVisible(id, visible, displayValue='block') {
   const el = document.getElementById(id);

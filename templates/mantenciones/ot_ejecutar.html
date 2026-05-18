@@ -219,13 +219,16 @@
 .pipeline-card{position:relative}
 .pipe-track{
   display:flex;align-items:flex-start;justify-content:space-between;
-  position:relative;padding:14px 4px 6px;
-  gap:4px;
+  position:relative;padding:16px 4px 8px;
+  gap:6px;
 }
+/* ── 2026-05-18 (Mejora UX): líneas conectoras más finas (1px pending,
+   2px done) + tipografía con jerarquía clara: label grande negro,
+   sub-info gris, timestamp monospaced y chip "Hace X" suave. ── */
 /* Línea base (gris) — pseudo-elemento, debajo de los círculos */
 .pipe-track::before{
-  content:'';position:absolute;top:30px;left:calc(8.33% + 12px);right:calc(8.33% + 12px);
-  height:4px;background:#e5e7eb;border-radius:2px;z-index:0;
+  content:'';position:absolute;top:32px;left:calc(8.33% + 14px);right:calc(8.33% + 14px);
+  height:1px;background:#e5e7eb;border-radius:2px;z-index:0;
 }
 .pipe-step{
   flex:1;display:flex;flex-direction:column;align-items:center;
@@ -234,53 +237,64 @@
 }
 .pipe-step + .pipe-step::before{
   /* Línea verde de "completado" entre el step previo y este (si el ANTERIOR está done) */
-  content:'';position:absolute;top:30px;right:calc(50% + 12px);width:calc(100% - 24px);
-  height:4px;background:transparent;z-index:0;border-radius:2px;
+  content:'';position:absolute;top:32px;right:calc(50% + 14px);width:calc(100% - 28px);
+  height:2px;background:transparent;z-index:0;border-radius:2px;
   transition:background .3s;
 }
 .pipe-step.done + .pipe-step::before,
 .pipe-step.done.current + .pipe-step::before{background:#16a34a}
-/* CASO ESPECIAL: si el step actual TIENE línea hacia el anterior y el anterior está done */
 .pipe-step.done ~ .pipe-step.current::before{background:#16a34a}
 
 .pipe-circle{
   width:36px;height:36px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  background:#fff;border:2.5px solid #cbd5e1;
+  background:#fff;border:2px solid #cbd5e1;
   color:#94a3b8;font-size:.95rem;
   transition:all .25s;position:relative;z-index:2;
   flex-shrink:0;
 }
 .pipe-step.done .pipe-circle{
   background:#16a34a;border-color:#16a34a;color:#fff;
-  box-shadow:0 2px 8px rgba(22,163,74,.25);
+  box-shadow:0 2px 8px rgba(22,163,74,.22);
 }
 .pipe-step.current .pipe-circle{
   background:#dc2626;border-color:#dc2626;color:#fff;
-  box-shadow:0 0 0 5px rgba(220,38,38,.18);
-  animation:pipePulse 1.6s ease-in-out infinite;
+  box-shadow:0 0 0 4px rgba(220,38,38,.15);
+  animation:pipePulse 2.2s ease-in-out infinite;
 }
-.pipe-step.done.current .pipe-circle{
-  /* Caso edge: completada pero también es la actual visible */
-  background:#16a34a;border-color:#16a34a;
-}
+.pipe-step.done.current .pipe-circle{ background:#16a34a;border-color:#16a34a; }
 @keyframes pipePulse{
-  0%,100%{box-shadow:0 0 0 5px rgba(220,38,38,.18)}
-  50%{box-shadow:0 0 0 11px rgba(220,38,38,.08)}
+  0%,100%{ opacity:1 }
+  50%    { opacity:.78 }
 }
-.pipe-meta{margin-top:8px;min-width:0;width:100%}
+.pipe-meta{margin-top:12px;min-width:0;width:100%;display:flex;flex-direction:column;gap:3px;align-items:center}
 .pipe-label{
-  font-size:.72rem;font-weight:700;color:#0f172a;line-height:1.2;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:.82rem;font-weight:700;color:#0a0a0a;line-height:1.2;letter-spacing:.1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
 }
-.pipe-step:not(.done):not(.current) .pipe-label{color:#94a3b8;font-weight:600}
+.pipe-step:not(.done):not(.current) .pipe-label{color:#9ca3af;font-weight:600}
 .pipe-step.current .pipe-label{color:#dc2626}
-.pipe-time{
-  font-size:.66rem;color:#6b7280;margin-top:3px;font-weight:600;
-  font-variant-numeric:tabular-nums;
+.pipe-sub{
+  font-size:.66rem;color:#6b7280;font-weight:500;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
 }
-.pipe-step.done .pipe-time{color:#16a34a}
-.pipe-step.current .pipe-time{color:#dc2626;font-weight:700}
+.pipe-time{
+  font-size:.68rem;color:#9ca3af;font-weight:500;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums;letter-spacing:-.2px;
+  line-height:1.2;
+}
+.pipe-step.done .pipe-time{color:#6b7280}
+.pipe-step.current .pipe-time{color:#dc2626}
+/* Chip "Hace X min/h" — verde suave si done, ámbar si current, gris pending */
+.pipe-ago{
+  display:inline-block;padding:2px 7px;border-radius:9999px;
+  font-size:.62rem;font-weight:700;
+  background:#f3f4f6;color:#6b7280;letter-spacing:.1px;
+  margin-top:1px;
+}
+.pipe-step.done .pipe-ago{background:#dcfce7;color:#15803d}
+.pipe-step.current .pipe-ago{background:#fef3c7;color:#b45309}
 
 /* Summary abajo */
 .pipe-summary{
@@ -310,28 +324,32 @@
   50%{transform:scale(1.4);opacity:.5}
 }
 
-/* ── Mobile: vertical layout ── */
+/* ── Mobile: vertical layout (2026-05-18 — más aire entre pasos) ── */
 @media (max-width: 640px){
   .pipe-track{
     flex-direction:column;align-items:stretch;
-    padding:8px 0;gap:0;
+    padding:10px 4px;gap:0;
   }
   .pipe-track::before{display:none}
   .pipe-step{
     flex-direction:row;align-items:flex-start;text-align:left;
-    padding:0 0 16px 0;gap:12px;position:relative;
+    padding:6px 4px 20px 4px;gap:14px;position:relative;
   }
-  .pipe-step:last-child{padding-bottom:0}
-  /* Línea vertical entre circles */
+  .pipe-step:last-child{padding-bottom:6px}
+  /* Línea vertical entre circles — fina cuando pending, gruesa cuando done */
   .pipe-step:not(:last-child)::after{
-    content:'';position:absolute;left:17px;top:38px;bottom:0;
-    width:3px;background:#e5e7eb;border-radius:2px;z-index:0;
+    content:'';position:absolute;left:17px;top:42px;bottom:6px;
+    width:1px;background:#e5e7eb;border-radius:2px;z-index:0;
   }
-  .pipe-step.done:not(:last-child)::after{background:#16a34a}
+  .pipe-step.done:not(:last-child)::after{
+    width:2px;left:16.5px;background:#16a34a;
+  }
   .pipe-step + .pipe-step::before{display:none}
-  .pipe-meta{margin-top:4px;text-align:left}
-  .pipe-label{font-size:.85rem;white-space:normal}
-  .pipe-time{font-size:.72rem}
+  .pipe-meta{margin-top:2px;text-align:left;align-items:flex-start;gap:4px;flex:1}
+  .pipe-label{font-size:.95rem;white-space:normal;line-height:1.25}
+  .pipe-sub{font-size:.72rem;white-space:normal}
+  .pipe-time{font-size:.74rem}
+  .pipe-ago{font-size:.66rem;padding:2px 8px}
 }
 
 /* ── Breadcrumb ── */
@@ -1192,7 +1210,11 @@
         </small>
       </h5>
 
-      {# Track horizontal (desktop) / vertical (mobile) con steps conectados #}
+      {# Track horizontal (desktop) / vertical (mobile) con steps conectados
+         2026-05-18 (Mejora estética):
+         - Label PRINCIPAL grande negro #0a0a0a font-weight 700
+         - Timestamp con tipografía monospaced #9ca3af
+         - "Hace X" en chip suave debajo (verde done / ámbar current) #}
       <div class="pipe-track" id="pipeTrack">
         {# Step 1: Asignada #}
         <div class="pipe-step {{ 'done' if done_asignada else '' }} {{ 'current' if _ns_pipe.idx == 0 else '' }}"
@@ -1315,18 +1337,32 @@
      ════════════════════════════════════════════════════════ #}
   <div class="tx-view active" id="view-maquinas">
     {# Stats globales — usa namespace porque Jinja crea scope local en {% set %} dentro de loops.
-       Sin namespace, total_global y comp_global SIEMPRE quedan en 0. #}
-    {% set ns = namespace(total=0, comp=0) %}
+       Sin namespace, total_global y comp_global SIEMPRE quedan en 0.
+       2026-05-18 (Mejora UX firma): además calculamos obligatorias/completas_obligatorias
+       para mostrar el progreso real que destraba el botón "Firmar OT". #}
+    {% set ns = namespace(total=0, comp=0, oblTot=0, oblComp=0) %}
     {% for mid, pls in plantillas_por_maquina.items() %}
       {% for p in pls %}
         {% set ns.total = ns.total + p.total %}
         {% set ns.comp = ns.comp + p.completas %}
+        {% for t in p.tareas %}
+          {% if t.obligatoria %}
+            {% set ns.oblTot = ns.oblTot + 1 %}
+            {% if t.completada %}{% set ns.oblComp = ns.oblComp + 1 %}{% endif %}
+          {% endif %}
+        {% endfor %}
       {% endfor %}
     {% endfor %}
     <div class="tx-stats-glob">
       <div class="tx-stat-cell"><div class="num n">{{ equipos|length }}</div><div class="l">Máquinas</div></div>
-      <div class="tx-stat-cell ok"><div class="num n" id="statComp">{{ ns.comp }}</div><div class="l">Tareas OK</div></div>
-      <div class="tx-stat-cell warn"><div class="num n" id="statTot">{{ ns.total }}</div><div class="l">Total</div></div>
+      <div class="tx-stat-cell ok">
+        <div class="num n"><span id="statOblComp">{{ ns.oblComp }}</span>/<span id="statOblTot">{{ ns.oblTot }}</span></div>
+        <div class="l">Obligatorias</div>
+      </div>
+      <div class="tx-stat-cell warn">
+        <div class="num n"><span id="statComp">{{ ns.comp }}</span>/<span id="statTot">{{ ns.total }}</span></div>
+        <div class="l">Total tareas</div>
+      </div>
     </div>
 
     <div class="tx-section-title"><i class="bi bi-boxes"></i>Selecciona una máquina</div>
@@ -1702,12 +1738,27 @@ function renderTareaHtml(t, bloqueada, mid, pid){
     case 'check':
       ctrlHtml = ''; // El check ya está arriba; toggle al click
       break;
-    case 'texto':
-      ctrlHtml = `<div class="ctrl"><input type="text" placeholder="Respuesta…"
-        value="${_escapeAttr(valor.texto || '')}"
-        ${bloqueada ? 'disabled' : ''}
-        onblur="guardarResp(${t.id}, this.value, ${mid}, ${pid})"></div>`;
+    case 'texto': {
+      // 2026-05-18 (Mejora UX): contador de caracteres + auto-completar al blur
+      // si supera el umbral. Mínimo 3 chars para opcionales, 10 para obligatorias.
+      // El usuario ve en vivo cuántas letras le faltan ANTES de salir del campo.
+      const _minChars = t.obligatoria ? 10 : 3;
+      const _curTxt = (valor && valor.texto) ? String(valor.texto) : '';
+      const _curLen = _curTxt.trim().length;
+      ctrlHtml = `<div class="ctrl">
+        <input type="text" placeholder="Escribe tu respuesta…"
+          value="${_escapeAttr(_curTxt)}"
+          ${bloqueada ? 'disabled' : ''}
+          oninput="_textoCharFeedback(this, ${t.id}, ${_minChars})"
+          onblur="_textoOnBlur(this, ${t.id}, ${mid}, ${pid}, ${_minChars})">
+        <div class="tx-texto-feedback" id="texto-fb-${t.id}"
+             style="font-size:.72rem;margin-top:4px;font-weight:600;
+                    display:flex;align-items:center;gap:6px">
+          ${_textoFeedbackHtml(_curLen, _minChars)}
+        </div>
+      </div>`;
       break;
+    }
     case 'numero':
       ctrlHtml = `<div class="ctrl d-flex gap-2 align-items-center">
         <input type="number" style="flex:1" placeholder="0"
@@ -2132,6 +2183,49 @@ async function guardarResp(tid, valor, mid, pid){
       ilusToast('Error: ' + (d.error || '?'), { type:'error' });
     }
   } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  TAREA TIPO 'texto' — Feedback en vivo + auto-completar al blur
+//  ─────────────────────────────────────────────────────────────
+//  Daniel (2026-05-18): "No encuentro que sea obligatorio. Igual
+//  debería ser amigable — no sé cuántas letras debo marcar para
+//  completar". Solución: contador en vivo + auto-marca al salir
+//  del campo si supera el umbral (3 chars opcional, 10 obligatoria).
+// ════════════════════════════════════════════════════════════════
+
+// HTML del feedback (verde si completa, gris claro si no llega al mín)
+function _textoFeedbackHtml(curLen, minChars){
+  if (curLen >= minChars){
+    return `<span style="color:#16a34a">
+      <i class="bi bi-check-circle-fill"></i> Gestionada (${curLen} caracteres)
+    </span>`;
+  }
+  const falta = minChars - curLen;
+  return `<span style="color:#94a3b8">
+    <i class="bi bi-pencil"></i> ${curLen} caracter${curLen === 1 ? '' : 'es'} ·
+    <span style="color:#6b7280">Min ${minChars} para marcar como gestionada</span>
+    ${falta > 0 ? `<span style="color:#b45309">(faltan ${falta})</span>` : ''}
+  </span>`;
+}
+
+// Actualiza el contador en vivo mientras el técnico escribe
+function _textoCharFeedback(inputEl, tid, minChars){
+  const fb = document.getElementById('texto-fb-' + tid);
+  if (!fb) return;
+  const curLen = (inputEl.value || '').trim().length;
+  fb.innerHTML = _textoFeedbackHtml(curLen, minChars);
+}
+
+// Al perder foco: si llega al umbral, guarda y marca completada
+// (el backend valida igual el umbral para evitar trampas vía API)
+function _textoOnBlur(inputEl, tid, mid, pid, minChars){
+  const valor = (inputEl.value || '').trim();
+  // Persistimos siempre (incluso si quedó corto, para no perder lo escrito).
+  // El backend decidirá si marcar completada o no según el umbral.
+  guardarResp(tid, valor, mid, pid);
+  // Refrescar feedback con el largo actual
+  _textoCharFeedback(inputEl, tid, minChars);
 }
 
 // ════════════════════════════════════════════════════════
@@ -2806,56 +2900,149 @@ function _updateProgress(mid, pid){
   };
 
   // Update stats globales
-  let totG = 0, compG = 0;
-  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
-    pls.forEach(p => { totG += p.total; compG += p.completas; });
-  });
-  document.getElementById('statTot').textContent = totG;
-  document.getElementById('statComp').textContent = compG;
+  // 2026-05-18 (Mejora UX firma): además de total/completas globales, sacamos
+  // contadores de OBLIGATORIAS — son las que destraban el botón firmar.
+  const ctxG = _calcCtxGlobal();
+  document.getElementById('statTot').textContent = ctxG.total;
+  document.getElementById('statComp').textContent = ctxG.completas;
+  const elOT = document.getElementById('statOblTot');
+  const elOC = document.getElementById('statOblComp');
+  if (elOT) elOT.textContent = ctxG.oblTot;
+  if (elOC) elOC.textContent = ctxG.oblComp;
 
-  // ⚠️ Lock/unlock botón "Completar y firmar OT" según progreso
-  actualizarLockFirmar(totG, compG);
+  // ⚠️ Lock/unlock botón "Completar y firmar OT" según obligatorias
+  actualizarLockFirmar(ctxG);
+}
+
+// Calcula contadores globales: total/completas y obligatorias/completas_obligatorias.
+// Centralizado para no duplicar el filtro t.obligatoria en varios lugares.
+function _calcCtxGlobal(){
+  let total = 0, completas = 0, oblTot = 0, oblComp = 0;
+  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
+    pls.forEach(p => {
+      total += p.total;
+      completas += p.completas;
+      (p.tareas || []).forEach(t => {
+        if (t.obligatoria){
+          oblTot++;
+          if (t.completada) oblComp++;
+        }
+      });
+    });
+  });
+  return { total, completas, oblTot, oblComp };
 }
 
 // ════════════════════════════════════════════════════════
-//  LOCK BOTÓN FIRMAR — solo habilitado si todas las tareas están OK
+//  LOCK BOTÓN FIRMAR
+//  2026-05-18 (Mejora UX): el botón se habilita cuando las
+//  OBLIGATORIAS están completas. Si hay opcionales pendientes,
+//  el botón sigue habilitado pero con hint ámbar amistoso.
+//
+//  Argumento: ctx = {total, completas, oblTot, oblComp}
+//  (compat: si llega como 2 args sueltos, los normalizamos).
 // ════════════════════════════════════════════════════════
-function actualizarLockFirmar(total, completas){
+function actualizarLockFirmar(ctxOrTotal, completas){
+  // Backwards-compat: algunos callers viejos pasaban (total, completas) sueltos.
+  let ctx;
+  if (typeof ctxOrTotal === 'object' && ctxOrTotal !== null){
+    ctx = ctxOrTotal;
+  } else {
+    ctx = { total: ctxOrTotal || 0, completas: completas || 0, oblTot: 0, oblComp: 0 };
+  }
+  const total    = ctx.total    | 0;
+  const compl    = ctx.completas| 0;
+  const oblTot   = ctx.oblTot   | 0;
+  const oblComp  = ctx.oblComp  | 0;
+  const opcTot   = total - oblTot;
+  const opcComp  = compl - oblComp;
+  const opcPend  = Math.max(0, opcTot - opcComp);
+
   const btn = document.getElementById('btnFirmar');
   const lbl = document.getElementById('btnFirmarLabel');
   const hint = document.getElementById('btnFirmarHint');
   if (!btn || !lbl) return;
-  if (total === 0) {
+
+  // CSS shared snippets para el hint inferior (siempre visible)
+  const hintCounters =
+    `<span style="color:#15803d;font-weight:700">Obligatorias: ${oblComp}/${oblTot}</span> ` +
+    `<span style="color:#94a3b8">·</span> ` +
+    `<span style="color:#6b7280;font-weight:600">Opcionales: ${opcComp}/${opcTot}</span>`;
+
+  if (total === 0){
     btn.disabled = true;
-    lbl.innerHTML = 'Sin tareas asignadas';
-    if (hint) hint.textContent = 'La OT no tiene tareas. Pide al admin que revise.';
     btn.dataset.locked = '1';
+    btn.innerHTML = '<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Sin tareas asignadas</span>';
+    btn.style.background = '#cbd5e1';
+    if (hint){
+      hint.innerHTML = 'La OT no tiene tareas. Pide al administrador que revise el levantamiento.';
+      hint.style.color = '#94a3b8';
+    }
     return;
   }
-  if (completas >= total){
-    // ✓ Todas completas → habilitar
+
+  // Caso 1: NO HAY OBLIGATORIAS → desbloqueado siempre que haya al menos 1 tarea
+  if (oblTot === 0){
     btn.disabled = false;
     btn.dataset.locked = '0';
-    btn.innerHTML = '<i class="bi bi-pen-fill"></i> Completar y firmar OT';
+    btn.innerHTML = '<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">Completar y firmar OT</span>';
     btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
-    if (hint) hint.textContent = '✓ Todas las tareas listas';
-  } else {
+    if (hint){
+      if (opcPend > 0){
+        hint.innerHTML = `Esta OT no tiene tareas obligatorias. ${hintCounters}`;
+        hint.style.color = '#6b7280';
+      } else {
+        hint.innerHTML = `Todo listo. ${hintCounters}`;
+        hint.style.color = '#15803d';
+      }
+    }
+    return;
+  }
+
+  // Caso 2: faltan OBLIGATORIAS → botón bloqueado
+  if (oblComp < oblTot){
     btn.disabled = true;
     btn.dataset.locked = '1';
-    const falta = total - completas;
-    lbl.innerHTML = `Faltan ${falta} tarea${falta>1?'s':''} (${completas}/${total})`;
+    const falta = oblTot - oblComp;
+    btn.innerHTML = `<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">` +
+      `Faltan ${falta} tarea${falta>1?'s':''} obligatoria${falta>1?'s':''} (${oblComp}/${oblTot})</span>`;
     btn.style.background = '#cbd5e1';
-    if (hint) hint.textContent = '⏳ Completá todas las tareas antes de firmar';
+    if (hint){
+      hint.innerHTML = `Completa las tareas obligatorias para habilitar la firma. ${hintCounters}`;
+      hint.style.color = '#b45309';
+    }
+    return;
+  }
+
+  // Caso 3: obligatorias OK, pero hay OPCIONALES pendientes → habilitado, hint ámbar
+  if (opcPend > 0){
+    btn.disabled = false;
+    btn.dataset.locked = '0';
+    btn.innerHTML = `<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">` +
+      `Firmar OT (${opcPend} opcional${opcPend>1?'es':''} pendiente${opcPend>1?'s':''})</span>`;
+    btn.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
+    if (hint){
+      hint.innerHTML = `Puedes firmar igual: las obligatorias están listas. ${hintCounters}`;
+      hint.style.color = '#b45309';
+    }
+    return;
+  }
+
+  // Caso 4: TODO OK
+  btn.disabled = false;
+  btn.dataset.locked = '0';
+  btn.innerHTML = '<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">Completar y firmar OT</span>';
+  btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
+  if (hint){
+    hint.innerHTML = `Todas las tareas listas. ${hintCounters}`;
+    hint.style.color = '#15803d';
   }
 }
 
 // Llamar al cargar la página
 document.addEventListener('DOMContentLoaded', () => {
-  let totG = 0, compG = 0;
-  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
-    pls.forEach(p => { totG += p.total; compG += p.completas; });
-  });
-  actualizarLockFirmar(totG, compG);
+  // 2026-05-18 (Mejora UX firma): incluir contadores de obligatorias
+  actualizarLockFirmar(_calcCtxGlobal());
   // Cargar lista de adjuntos en la pestaña Información (read-only)
   cargarAdjuntos();
   // Drag&drop sobre el uploader (no-op si no existe el uploader — técnico)
@@ -2901,25 +3088,25 @@ function _humanizeAgo(ts){
 }
 
 function actualizarPipelineTimes(){
-  // Sobre cada .pipe-time con data-ts-iso, agrega el "Hace X" debajo
-  // Mantiene el timestamp legible original (hora Chile) como primer línea.
+  // 2026-05-18 (Mejora estética): el timestamp queda en .pipe-time
+  // (monospaced) y el "Hace X" pasa a un hermano .pipe-ago (chip).
+  // El chip recibe color del estado vía CSS (done verde, current ámbar).
   const items = document.querySelectorAll('.pipe-time[data-ts-iso]');
   items.forEach(el => {
     const ts = el.getAttribute('data-ts-iso');
     if (!ts || ts === 'None' || ts === '') return;
     const ago = _humanizeAgo(ts);
     if (!ago) return;
-    // Solo añadir el "Hace X" si no existe ya el span "data-ago"
-    let span = el.querySelector('span[data-ago]');
-    if (!span){
-      // Si el contenido actual es un texto plano (timestamp formateado),
-      // lo envolvemos en un span fijo y agregamos otro span con "Hace X" debajo.
-      const txtActual = el.textContent.trim();
-      el.innerHTML = `<span style="display:block">${_escapeHtml(txtActual)}</span>
-                      <span data-ago style="display:block;font-size:.6rem;color:#94a3b8;font-weight:500;margin-top:1px">${_escapeHtml(ago)}</span>`;
-    } else {
-      span.textContent = ago;
+    // Buscar chip hermano (mismo .pipe-meta), crearlo si falta
+    const meta = el.parentElement;
+    if (!meta) return;
+    let chip = meta.querySelector('.pipe-ago');
+    if (!chip){
+      chip = document.createElement('span');
+      chip.className = 'pipe-ago';
+      el.insertAdjacentElement('afterend', chip);
     }
+    chip.textContent = ago;
   });
 
   // Total elapsed: desde el primer timestamp (asignada/created) hasta ahora

@@ -4392,22 +4392,168 @@ def comm_kill_switch_set():
     })
 
 
-def _send_ilus_email(to_addr: str, subject: str, html_body: str, *, evento: str = None, **kwargs) -> bool:
+# ══════════════════════════════════════════════════════════════════════
+# LLAVE DE PASO POR MÓDULO (kill switch granular)
+#
+# Daniel necesita poder "cerrar la llave" de los correos/WhatsApp/SMS
+# de cada módulo (transporte, retiros, mantenciones, comunicación
+# interna, general) mientras está en pruebas, sin tocar credenciales.
+#
+# Tabla: comm_killswitch (modulo, email/whatsapp/sms_bloqueado, motivo)
+# Cache: 30s para no consultar BD en cada envío.
+#
+# Funciones:
+#   _modulo_canal_bloqueado(modulo, canal) → bool
+#   _comm_killswitch_invalidar() — invalida cache (lo llaman los setters)
+# ══════════════════════════════════════════════════════════════════════
+
+_MODULOS_KILLSWITCH_VALIDOS = (
+    "transporte",
+    "retiros",
+    "mantenciones",
+    "comunicacion_interna",
+    "general",
+)
+
+_KILLSWITCH_CACHE = {"data": None, "ts": 0}
+_KILLSWITCH_TTL = 30  # segundos
+
+
+def _comm_killswitch_invalidar():
+    """Invalida el caché en memoria. Se llama tras cada cambio (PUT)."""
+    _KILLSWITCH_CACHE["ts"] = 0
+    _KILLSWITCH_CACHE["data"] = None
+
+
+def _comm_killswitch_estado():
+    """Devuelve dict {modulo: {email_bloqueado, whatsapp_bloqueado,
+    sms_bloqueado, motivo, actualizado_por, actualizado_at}} usando caché.
+    Si la tabla no existe aún, devuelve dict con todos los módulos en 0.
+    """
+    import time as _t
+    now = _t.time()
+    if (_KILLSWITCH_CACHE["data"] is not None
+            and (now - _KILLSWITCH_CACHE["ts"]) < _KILLSWITCH_TTL):
+        return _KILLSWITCH_CACHE["data"]
+
+    estado = {m: {"email_bloqueado": 0, "whatsapp_bloqueado": 0,
+                  "sms_bloqueado": 0, "motivo": "",
+                  "actualizado_por": "", "actualizado_at": None}
+              for m in _MODULOS_KILLSWITCH_VALIDOS}
+    try:
+        rows = mysql_fetchall(
+            "SELECT modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, "
+            "       motivo, actualizado_por, actualizado_at "
+            "FROM comm_killswitch"
+        ) or []
+        for r in rows:
+            mod = r.get("modulo") or ""
+            if mod not in estado:
+                estado[mod] = {"email_bloqueado": 0, "whatsapp_bloqueado": 0,
+                               "sms_bloqueado": 0, "motivo": "",
+                               "actualizado_por": "", "actualizado_at": None}
+            estado[mod]["email_bloqueado"]    = int(r.get("email_bloqueado") or 0)
+            estado[mod]["whatsapp_bloqueado"] = int(r.get("whatsapp_bloqueado") or 0)
+            estado[mod]["sms_bloqueado"]      = int(r.get("sms_bloqueado") or 0)
+            estado[mod]["motivo"]             = r.get("motivo") or ""
+            estado[mod]["actualizado_por"]    = r.get("actualizado_por") or ""
+            estado[mod]["actualizado_at"]     = r.get("actualizado_at")
+    except Exception as exc:
+        # Si la tabla aún no existe (primer arranque), nada bloqueado.
+        print(f"[KILLSWITCH] No se pudo leer comm_killswitch: {exc}")
+
+    _KILLSWITCH_CACHE["data"] = estado
+    _KILLSWITCH_CACHE["ts"]   = now
+    return estado
+
+
+def _modulo_canal_bloqueado(modulo: str, canal: str) -> bool:
+    """Devuelve True si el canal está bloqueado para ese módulo.
+
+    Args:
+      modulo: 'transporte' | 'retiros' | 'mantenciones' |
+              'comunicacion_interna' | 'general'.
+              Si no se reconoce, se usa 'general'.
+      canal:  'email' | 'whatsapp' | 'sms'.
+              Si no se reconoce, devuelve False (no bloquea).
+
+    Es defensivo: cualquier excepción → False (no bloquea por error técnico).
+    """
+    try:
+        mod = (modulo or "general").strip().lower()
+        if mod not in _MODULOS_KILLSWITCH_VALIDOS:
+            mod = "general"
+        canal = (canal or "").strip().lower()
+        key = {"email": "email_bloqueado",
+               "whatsapp": "whatsapp_bloqueado",
+               "sms": "sms_bloqueado"}.get(canal)
+        if not key:
+            return False
+        estado = _comm_killswitch_estado()
+        return bool(estado.get(mod, {}).get(key, 0))
+    except Exception:
+        return False
+
+
+def _modulo_desde_evento(evento: str) -> str:
+    """Heurística para mapear 'evento' (string usado en email_log) al módulo.
+    Útil cuando no se pasa 'modulo' explícito al enviar."""
+    if not evento:
+        return "general"
+    e = str(evento).lower()
+    if e.startswith("retry_"):
+        e = e[6:]
+    # Mantenciones
+    if any(t in e for t in ("ot_", "visita_", "reporte_", "mant_", "tecnico_",
+                            "_visita", "_ot")):
+        return "mantenciones"
+    # Comunicación interna (accesos, claves, login)
+    if any(t in e for t in ("password", "invite", "welcome", "acceso",
+                            "login", "inicio_sesion", "cambio_pass",
+                            "olvido_contrasena")):
+        return "comunicacion_interna"
+    # Retiros
+    if any(t in e for t in ("retiro", "pickup")):
+        return "retiros"
+    # Transporte
+    if any(t in e for t in ("pedido", "courier", "despacho", "programado",
+                            "en_ruta", "en_camino", "entregado", "fallido")):
+        return "transporte"
+    return "general"
+
+
+def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
+                     evento: str = None, modulo: str = None, **kwargs) -> bool:
     """
     Envía un correo HTML usando la configuración SMTP dinámica.
     Prioridad: Resend API (Railway) → SMTP con env vars → SMTP BD → SMTP config.py
     Loguea automáticamente el resultado en email_log.
 
-    KILL SWITCH: si el switch global de email está OFF, devuelve False
+    KILL SWITCH GLOBAL: si el switch global de email está OFF, devuelve False
     sin intentar enviar. Log queda con razon='kill_switch_off'.
+
+    LLAVE DE PASO POR MÓDULO: si el módulo identificado tiene el canal email
+    bloqueado en comm_killswitch, NO envía y deja log con estado='bloqueado'.
+    Si no se pasa 'modulo', se infiere del 'evento'. Default: 'general'.
     """
-    # KILL SWITCH check
+    # 1) KILL SWITCH GLOBAL (todo email)
     if not comm_is_enabled("email"):
         try:
             _email_log(to_addr, subject, evento, 'bloqueado',
-                       error_msg='Email deshabilitado por superadmin (kill switch ON)')
+                       error_msg='Email deshabilitado por superadmin (kill switch global ON)')
         except Exception: pass
-        print(f"[EMAIL][KILL_SWITCH] Bloqueado a {to_addr}: kill switch OFF")
+        print(f"[EMAIL][KILL_SWITCH] Bloqueado a {to_addr}: kill switch global OFF")
+        return False
+
+    # 2) LLAVE DE PASO POR MÓDULO
+    mod_resolved = (modulo or _modulo_desde_evento(evento) or "general").strip().lower()
+    if _modulo_canal_bloqueado(mod_resolved, "email"):
+        try:
+            _email_log(to_addr, subject, evento, 'bloqueado',
+                       error_msg=f'Llave de paso cerrada para módulo "{mod_resolved}" — email no enviado',
+                       metadata={"modulo": mod_resolved, "killswitch": True})
+        except Exception: pass
+        print(f"[KILLSWITCH] modulo={mod_resolved} canal=email bloqueado por kill switch — no enviado (to={to_addr})")
         return False
 
     # _send_ilus_email_inner hace el envío real; lo wrappeamos
@@ -4420,7 +4566,7 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *, evento: str 
     # Log
     try:
         _email_log(to_addr, subject, evento, 'enviado' if sent else 'fallido',
-                   error_msg=err)
+                   error_msg=err, metadata={"modulo": mod_resolved})
     except Exception: pass
     return sent
 
@@ -4718,7 +4864,8 @@ def _send_password_access_email(
             ("", "Solicitado por", actor_name),
         ],
     )
-    sent = _send_ilus_email(to_addr, subject, html_body, evento="password_access")
+    sent = _send_ilus_email(to_addr, subject, html_body,
+                            evento="password_access", modulo="comunicacion_interna")
     if not sent and not getattr(g, "_last_email_error", ""):
         g._last_email_error = (
             "No se pudo enviar el correo. Verifica en /comunicaciones "
@@ -4750,7 +4897,8 @@ def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, 
             ("", "Portal", login_url),
         ],
     )
-    sent = _send_ilus_email(to_addr, _brand_subject("Acceso al portal habilitado"), html_body)
+    sent = _send_ilus_email(to_addr, _brand_subject("Acceso al portal habilitado"), html_body,
+                            evento="acceso_habilitado", modulo="comunicacion_interna")
     if not sent and not getattr(g, "_last_email_error", ""):
         g._last_email_error = "No se pudo enviar la notificacion de acceso por email."
     return sent
@@ -4820,7 +4968,8 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
                           f"Por seguridad, este mensaje no incluye tu contraseña."
                         + firma
                     )
-                sid = _send_whatsapp(wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"], phone, body)
+                sid = _send_whatsapp(wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"], phone, body,
+                                     modulo="comunicacion_interna")
                 result["whatsapp"] = sid
             else:
                 result["whatsapp"] = False
@@ -9443,10 +9592,10 @@ def _notificar_ot_asignada(visita_id):
                 try:
                     if wa_ok:
                         _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
-                                       v["tecnico_tel"], msg_t)
+                                       v["tecnico_tel"], msg_t, modulo="mantenciones")
                     elif sms_ok:
                         _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
-                                  v["tecnico_tel"], msg_t)
+                                  v["tecnico_tel"], msg_t, modulo="mantenciones")
                 except Exception as e_t:
                     print(f"[notif-ot-tec] {e_t}", flush=True)
             # 2) Notificar al contacto en sitio (cliente)
@@ -9461,10 +9610,10 @@ def _notificar_ot_asignada(visita_id):
                 try:
                     if wa_ok:
                         _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
-                                       v["contacto_tel"], msg_c)
+                                       v["contacto_tel"], msg_c, modulo="mantenciones")
                     elif sms_ok:
                         _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
-                                  v["contacto_tel"], msg_c)
+                                  v["contacto_tel"], msg_c, modulo="mantenciones")
                 except Exception as e_c:
                     print(f"[notif-ot-cli] {e_c}", flush=True)
         except Exception as e_outer:
@@ -13829,10 +13978,10 @@ def init_comunicaciones_tables():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS comm_log (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
-                    canal           ENUM('email','whatsapp') NOT NULL,
+                    canal           ENUM('email','whatsapp','sms') NOT NULL,
                     destinatario    VARCHAR(300),
                     asunto          VARCHAR(500),
-                    estado          ENUM('ok','error') NOT NULL,
+                    estado          ENUM('ok','error','bloqueado') NOT NULL,
                     detalle         TEXT,
                     enviado_por     VARCHAR(190),
                     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -13840,6 +13989,13 @@ def init_comunicaciones_tables():
                     INDEX idx_fecha (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Migración idempotente: ampliar ENUMs si la tabla existía
+            for _mig_log in [
+                "ALTER TABLE comm_log MODIFY canal ENUM('email','whatsapp','sms') NOT NULL",
+                "ALTER TABLE comm_log MODIFY estado ENUM('ok','error','bloqueado') NOT NULL",
+            ]:
+                try: cur.execute(_mig_log)
+                except Exception: pass
             # ── PLANTILLAS POR ESTADO ─────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS comm_templates (
@@ -14239,6 +14395,36 @@ def init_comunicaciones_tables():
                         cur.execute(f"UPDATE {tbl} SET id=1 WHERE id<>1")
                 except Exception as _norm_err:
                     print(f"[ILUS][WARN] Normalizacion {tbl}: {_norm_err}")
+
+            # ── LLAVE DE PASO POR MÓDULO (kill switch granular) ──────────
+            # Tabla por módulo × canal — permite bloquear envíos por módulo
+            # mientras Daniel está en pruebas / desarrollo, sin tocar
+            # credenciales SMTP/Twilio. Default: todo habilitado.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_killswitch (
+                    modulo               VARCHAR(50) NOT NULL,
+                    email_bloqueado      TINYINT(1) DEFAULT 0,
+                    whatsapp_bloqueado   TINYINT(1) DEFAULT 0,
+                    sms_bloqueado        TINYINT(1) DEFAULT 0,
+                    motivo               TEXT,
+                    actualizado_por      VARCHAR(190),
+                    actualizado_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                                          ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (modulo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Seed: todos los módulos habilitados por default
+            for _ks_mod in ("transporte", "retiros", "mantenciones",
+                            "comunicacion_interna", "general"):
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO comm_killswitch "
+                        "(modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, motivo) "
+                        "VALUES (%s, 0, 0, 0, NULL)",
+                        (_ks_mod,)
+                    )
+                except Exception: pass
+
         conn.commit()
     finally:
         conn.close()
@@ -14630,8 +14816,23 @@ def _get_sms_cfg():
     }
 
 
-def _send_sms(account_sid, auth_token, from_num, to_num, body):
-    """Envía SMS vía Twilio. Lanza RuntimeError si twilio no está instalado."""
+def _send_sms(account_sid, auth_token, from_num, to_num, body, *, modulo: str = None):
+    """Envía SMS vía Twilio. Lanza RuntimeError si twilio no está instalado.
+
+    modulo: opcional — si se pasa y la llave de paso está cerrada para
+    ese módulo, NO envía y devuelve un sid pseudo 'blocked-by-killswitch'
+    (las llamadoras no se rompen, pero queda registro de que se omitió).
+    """
+    # LLAVE DE PASO POR MÓDULO (sms)
+    mod = (modulo or "general").strip().lower()
+    if _modulo_canal_bloqueado(mod, "sms"):
+        print(f"[KILLSWITCH] modulo={mod} canal=sms bloqueado por kill switch — no enviado (to={to_num})")
+        try:
+            _comm_log_entry("sms", to_num or "", "SMS bloqueado", "bloqueado",
+                            f"Llave de paso cerrada para módulo {mod}")
+        except Exception: pass
+        return "blocked-by-killswitch"
+
     import re as _re
     try:
         from twilio.rest import Client as _TwilioClient
@@ -14881,8 +15082,22 @@ def _comm_render_email_document(title, body_html, subtitle=""):
     return _email_wrapper(_email_card(header, body, footer), company)
 
 
-def _send_whatsapp(account_sid, auth_token, from_num, to_num, body):
-    """Envía WhatsApp vía Twilio. Lanza RuntimeError si twilio no está instalado."""
+def _send_whatsapp(account_sid, auth_token, from_num, to_num, body, *, modulo: str = None):
+    """Envía WhatsApp vía Twilio. Lanza RuntimeError si twilio no está instalado.
+
+    modulo: opcional — si se pasa y la llave de paso está cerrada para
+    ese módulo, NO envía y devuelve un sid pseudo 'blocked-by-killswitch'.
+    """
+    # LLAVE DE PASO POR MÓDULO (whatsapp)
+    mod = (modulo or "general").strip().lower()
+    if _modulo_canal_bloqueado(mod, "whatsapp"):
+        print(f"[KILLSWITCH] modulo={mod} canal=whatsapp bloqueado por kill switch — no enviado (to={to_num})")
+        try:
+            _comm_log_entry("whatsapp", to_num or "", "WhatsApp bloqueado", "bloqueado",
+                            f"Llave de paso cerrada para módulo {mod}")
+        except Exception: pass
+        return "blocked-by-killswitch"
+
     import re as _re
     try:
         from twilio.rest import Client as _TwilioClient
@@ -15666,6 +15881,164 @@ def comm_templates_restore_all():
     """Restaura todas las plantillas a la base oficial ILUS."""
     _comm_seed_default_templates(overwrite=True)
     return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  LLAVE DE PASO POR MÓDULO — endpoints REST
+#  Permite a admin/superadmin cerrar/abrir email + WhatsApp + SMS por
+#  módulo. Útil para pruebas: cuando Daniel cierra la llave de un módulo,
+#  los envíos quedan loggeados como 'bloqueado' pero NO salen.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/comunicaciones/killswitch", methods=["GET"])
+def comm_killswitch_get():
+    """Devuelve el estado de la llave de paso de TODOS los módulos.
+    Visible para admin o superadmin."""
+    if not g.user:
+        return jsonify({"error": "Sin sesión"}), 401
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"error": "Solo administradores"}), 403
+
+    estado = _comm_killswitch_estado()
+    # Etiquetas legibles para el UI
+    labels = {
+        "transporte":           "Transporte",
+        "retiros":              "Retiros",
+        "mantenciones":         "Mantenciones",
+        "comunicacion_interna": "Comunicación interna",
+        "general":              "General",
+    }
+    modulos = []
+    for mod in _MODULOS_KILLSWITCH_VALIDOS:
+        st = estado.get(mod, {}) or {}
+        at = st.get("actualizado_at")
+        at_iso = None
+        try:
+            if at is not None:
+                at_iso = at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(at, "strftime") else str(at)
+        except Exception:
+            at_iso = None
+        modulos.append({
+            "modulo":             mod,
+            "label":              labels.get(mod, mod),
+            "email_bloqueado":    bool(st.get("email_bloqueado")),
+            "whatsapp_bloqueado": bool(st.get("whatsapp_bloqueado")),
+            "sms_bloqueado":      bool(st.get("sms_bloqueado")),
+            "motivo":             st.get("motivo") or "",
+            "actualizado_por":    st.get("actualizado_por") or "",
+            "actualizado_at":     at_iso,
+        })
+    # Banner global: ¿hay al menos uno bloqueado?
+    hay_bloqueados = any(
+        m["email_bloqueado"] or m["whatsapp_bloqueado"] or m["sms_bloqueado"]
+        for m in modulos
+    )
+    return jsonify({
+        "ok":               True,
+        "modulos":          modulos,
+        "hay_bloqueados":   hay_bloqueados,
+    })
+
+
+@app.route("/api/comunicaciones/killswitch/<modulo>", methods=["PUT"])
+def comm_killswitch_set(modulo):
+    """Actualiza la llave de paso de un módulo.
+
+    Body JSON:
+      { canal: 'email'|'whatsapp'|'sms'|'todos',
+        bloqueado: true|false,
+        motivo?: 'texto opcional' }
+
+    Cada cambio queda en app_audit_log."""
+    if not g.user:
+        return jsonify({"error": "Sin sesión"}), 401
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"error": "Solo administradores"}), 403
+
+    modulo = (modulo or "").strip().lower()
+    if modulo not in _MODULOS_KILLSWITCH_VALIDOS:
+        return jsonify({"error": f"Módulo inválido: {modulo}"}), 400
+
+    d         = request.get_json(silent=True) or {}
+    canal     = (d.get("canal") or "").strip().lower()
+    bloqueado = bool(d.get("bloqueado"))
+    motivo    = (d.get("motivo") or "").strip()[:1000] or None
+    user      = current_username() or "sistema"
+
+    if canal not in ("email", "whatsapp", "sms", "todos"):
+        return jsonify({"error": "canal debe ser email, whatsapp, sms o todos"}), 400
+
+    # Resolver columnas a actualizar
+    cols_to_set = []
+    if canal == "todos":
+        cols_to_set = ["email_bloqueado", "whatsapp_bloqueado", "sms_bloqueado"]
+    else:
+        cols_to_set = [{
+            "email": "email_bloqueado",
+            "whatsapp": "whatsapp_bloqueado",
+            "sms": "sms_bloqueado",
+        }[canal]]
+
+    try:
+        # UPSERT: si el módulo no tenía fila aún, la crea con valores 0
+        existing = mysql_fetchone(
+            "SELECT modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, motivo "
+            "FROM comm_killswitch WHERE modulo=%s",
+            (modulo,)
+        )
+        if not existing:
+            mysql_execute(
+                "INSERT IGNORE INTO comm_killswitch "
+                "(modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, motivo, actualizado_por) "
+                "VALUES (%s, 0, 0, 0, NULL, %s)",
+                (modulo, user)
+            )
+
+        val = 1 if bloqueado else 0
+        # Construir SET dinámico: solo columnas válidas (whitelist arriba)
+        set_clauses = ", ".join([f"`{c}`=%s" for c in cols_to_set])
+        params      = [val] * len(cols_to_set)
+        # Motivo: si no se pasó, conserva el anterior (no lo borramos)
+        if motivo is not None:
+            set_clauses += ", motivo=%s"
+            params.append(motivo)
+        set_clauses += ", actualizado_por=%s"
+        params.append(user)
+        params.append(modulo)
+        mysql_execute(
+            f"UPDATE comm_killswitch SET {set_clauses} WHERE modulo=%s",
+            tuple(params)
+        )
+
+        # Invalidar caché → próximo envío leerá BD fresca
+        _comm_killswitch_invalidar()
+
+        # Audit log
+        try:
+            _audit(
+                "comm_killswitch_set",
+                target_type="comm_killswitch",
+                target_id=modulo,
+                details={"modulo": modulo, "canal": canal,
+                         "bloqueado": bloqueado, "motivo": motivo or ""},
+            )
+        except Exception: pass
+
+        # Devolver estado actualizado del módulo
+        fresh = _comm_killswitch_estado().get(modulo, {}) or {}
+        return jsonify({
+            "ok":      True,
+            "modulo":  modulo,
+            "estado": {
+                "email_bloqueado":    bool(fresh.get("email_bloqueado")),
+                "whatsapp_bloqueado": bool(fresh.get("whatsapp_bloqueado")),
+                "sms_bloqueado":      bool(fresh.get("sms_bloqueado")),
+                "motivo":             fresh.get("motivo") or "",
+            },
+        })
+    except Exception as exc:
+        print(f"[KILLSWITCH] Error al actualizar {modulo}/{canal}: {exc}")
+        return jsonify({"error": "No se pudo actualizar la llave de paso."}), 500
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -27921,9 +28294,16 @@ def mant_visita_tarea_respuesta(vid, tid):
     error = None
     completar = True
     if tipo == "texto":
+        # 2026-05-18 (Mejora UX): aplicamos umbral mínimo de caracteres para
+        # marcar la tarea como gestionada (completada=1). Si el técnico escribió
+        # menos del mínimo, persistimos el valor pero NO marcamos completada
+        # — así no pierde lo escrito y puede seguir editando.
+        #   - obligatoria → 10 caracteres mínimo
+        #   - opcional    → 3 caracteres mínimo
         v = (str(valor or "")).strip()[:2000]
         valor_norm = {"texto": v}
-        if tar.get("obligatoria") and not v:
+        _min_chars = 10 if tar.get("obligatoria") else 3
+        if len(v) < _min_chars:
             completar = False
     elif tipo == "numero":
         try:
@@ -29770,7 +30150,8 @@ def mant_visita_enviar_email(vid):
     """
     asunto = f"Visita técnica programada — {ot} ({fecha_str})"
     html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
-    ok = _send_ilus_email(destinatario, asunto, html, evento="visita_agendada")
+    ok = _send_ilus_email(destinatario, asunto, html,
+                          evento="visita_agendada", modulo="mantenciones")
 
     if ok:
         _mant_log("visita", vid, "email_enviado", f"a {destinatario} — OT {ot}")
@@ -31940,10 +32321,12 @@ def mant_reporte_enviar(rid):
     err  = None
     try:
         sent = _send_ilus_email(", ".join(destinatarios), asunto, html_email,
+                                evento="reporte_servicio", modulo="mantenciones",
                                 attachments=attachments)
     except TypeError:
         # Si el helper no acepta attachments, mandar sin adjunto
-        try: sent = _send_ilus_email(", ".join(destinatarios), asunto, html_email)
+        try: sent = _send_ilus_email(", ".join(destinatarios), asunto, html_email,
+                                     evento="reporte_servicio", modulo="mantenciones")
         except Exception as exc: err = str(exc)
     except Exception as exc:
         err = str(exc)
@@ -32737,7 +33120,8 @@ def mant_email_manual(cid):
 
     sent = False; err = None
     try:
-        sent = _send_ilus_email(destinatario, asunto, html)
+        sent = _send_ilus_email(destinatario, asunto, html,
+                                evento="mant_sla_manual", modulo="mantenciones")
     except Exception as exc: err = str(exc)
 
     # Registrar en notificaciones
@@ -32856,11 +33240,12 @@ def mant_notif_enviar(nid):
     </div>"""
 
     try:
-        resultado = _send_via_resend(
-            to=destinatario,
-            subject=f"[ILUS Mantenciones] {notif['titulo']}",
-            html=html_body,
-            from_addr="mantenciones@sphs.cl"
+        # Pasa por el wrapper para respetar kill switch global + llave por módulo
+        resultado = _send_ilus_email(
+            destinatario,
+            f"[ILUS Mantenciones] {notif['titulo']}",
+            html_body,
+            evento="mant_notificacion", modulo="mantenciones",
         )
         conn = get_mysql()
         try:
