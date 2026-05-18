@@ -667,7 +667,7 @@
     <div class="flex-grow-1">
       <strong id="execGpsTitle"><i class="bi bi-geo-alt"></i> Sin ubicación capturada</strong>
       <div id="execGpsSub" style="font-size:.72rem;opacity:.8">
-        <small>Tocá <strong>Capturar ahora</strong> para registrar tu posición. iPhone te pedirá permiso la primera vez.</small>
+        <small>Toca <strong>Capturar ahora</strong> para registrar tu posición. iPhone te pedirá permiso la primera vez.</small>
       </div>
       <div id="execGpsActions" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px">
         {# Botón principal — GRANDE y rojo (CTA) #}
@@ -721,6 +721,43 @@
      TAB 1: INFORMACIÓN (OT details + documentos/adjuntos)
      ════════════════════════════════════════════════════════ #}
   <div class="tx-tab-panel" id="tabPanel-info" role="tabpanel" aria-labelledby="tabBtn-info">
+
+    {# ────────────────────────────────────────────────────────────
+       FIX 2026-05-17 — Botón "Instalar app en mi iPhone"
+       En iOS Safari los permisos de geolocation se pierden con frecuencia
+       (cuando el browser recicla el tab o el técnico cambia de app). Si
+       el usuario instala la web como PWA (Añadir a pantalla de inicio),
+       el contexto persiste y los permisos quedan más estables.
+
+       Solo se muestra:
+         · Si el usuario está en iOS (iPhone/iPad)
+         · Y todavía NO está corriendo como PWA (standalone)
+       Se oculta solo después del primer render mediante el script
+       de abajo — así evitamos parpadeo en desktop.
+    ──────────────────────────────────────────────────────────── #}
+    <div id="iosInstallBanner" style="display:none;background:#fff;border:1px solid #fecaca;
+                                       border-left:4px solid #dc2626;border-radius:10px;
+                                       padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="font-size:1.5rem;color:#dc2626;flex:0 0 auto">
+          <i class="bi bi-phone-fill"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;color:#0f172a;font-size:.88rem">
+            ¿Estás teniendo problemas con el GPS?
+          </div>
+          <div style="font-size:.75rem;color:#475569;line-height:1.45;margin-top:2px">
+            Instala ILUS como app en tu iPhone — los permisos GPS quedan más
+            estables y no tendrás que reactivarlos cada vez.
+          </div>
+        </div>
+        <button type="button" onclick="mostrarInstrIosInstall()"
+                style="background:#dc2626;color:#fff;border:none;border-radius:7px;
+                       padding:8px 12px;font-size:.74rem;font-weight:700;flex:0 0 auto;cursor:pointer">
+          <i class="bi bi-info-circle"></i> Cómo instalar
+        </button>
+      </div>
+    </div>
 
     {# ─── Card: Datos de la OT ─── #}
     <div class="info-card">
@@ -2164,13 +2201,26 @@ async function capturarGPS(tid, mid, pid){
   // NO se acepta IP (no es certero) ni manual (vulnera auditoría).
   // Si el GPS está denegado, el usuario debe ir a Ajustes a habilitarlo.
   // ═══════════════════════════════════════════════════════════════
+  //
+  // FIX 2026-05-17 (DEFINITIVO iPhone 15 Pro Max + iOS 17/18):
+  //   El timeout era 15s + highAccuracy:true sin fallback. En iPhones
+  //   nuevos indoor, highAccuracy:true se cuelga sin error visible.
+  //   Ahora:
+  //     1. Primer intento highAccuracy:true con 10s (no 15s — el técnico
+  //        cree que está colgado).
+  //     2. Si TIMEOUT (code=3), segundo intento highAccuracy:false con 6s.
+  //        El segundo call NO está bajo gesto, pero si el primero ya
+  //        obtuvo el permiso, iOS no requiere gesto otra vez.
+  //     3. Si permiso denegado → modal de ayuda (sin reintentar).
+  //   El handler de éxito se extrae para que ambos intentos lo reusen.
+  // ═══════════════════════════════════════════════════════════════
   _gpsLog('tarea_capturar_start', { tid, mid, pid });
   if (!navigator.geolocation){
     _gpsLog('tarea_no_geolocation_api');
     await ilusAlert({
       title: 'GPS no disponible',
       message: 'Tu navegador no soporta geolocalización. ' +
-               'Usá Safari/Chrome actualizado.',
+               'Usa Safari o Chrome actualizado.',
       type: 'error',
     });
     return;
@@ -2181,82 +2231,107 @@ async function capturarGPS(tid, mid, pid){
   // ilusToast (que es sync) está OK, pero NO podemos meter awaits acá.
   ilusToast('📡 Pidiendo GPS…', { type:'info', duration: 1500 });
 
-  // getCurrentPosition DIRECTO — el prompt nativo iOS aparece acá si
-  // nunca preguntó antes. Si ya está granted, resuelve directo.
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      const acc = pos.coords.accuracy || null;
-      _gpsLog('tarea_gps_ok', { lat, lng, accuracy: acc });
-      // Validar precisión razonable (GPS de iPhone suele dar <50m al aire libre,
-      // hasta 100-200m en edificios. Si excede 500m, sospechoso → rechazar).
-      if (acc && acc > 500){
-        _gpsLog('tarea_gps_accuracy_too_low', { acc });
-        await ilusAlert({
-          title: 'GPS impreciso',
-          message: `La precisión del GPS es de ±${Math.round(acc)} m, ` +
-                   'demasiado baja para auditar tu posición.',
-          sub: 'Sal al aire libre (lejos de paredes/metales) y reintenta.',
-          type: 'warning',
-        });
-        return;
-      }
-      ilusToast(`📍 GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} ±${Math.round(acc||0)}m`, {
-        type: 'success', duration: 3500,
-      });
-      try { await _validarRadio(lat, lng); } catch(_){}
-      await _gpsGuardarEnTarea(tid, mid, pid, {
-        lat, lng, accuracy: acc, source: 'gps',
-      });
-      // Refrescar barra GPS arriba
-      try { await _gpsRegistrarResultado({ lat, lng, accuracy: acc, method: 'gps' }); } catch(_){}
-    },
-    async (err) => {
-      _gpsLog('tarea_gps_error', { code: err && err.code, msg: err && err.message });
-      if (err.code === 1){
-        // PERMISSION_DENIED → modal claro con instrucciones iPhone + Reintentar
-        const reintentar = await ilusConfirm({
-          title: '🔒 GPS bloqueado en este iPhone',
-          message: 'Para auditar tu posición necesitamos que actives el GPS en Ajustes. ' +
-                   'Tocá <strong>"Ver cómo activar"</strong> para ver el paso a paso.',
-          messageHtml: true,
-          sub: 'Una vez activado, vuelve aquí y toca "Capturar mi ubicación" otra vez.',
-          type: 'warning',
-          okLabel: 'Ver cómo activar',
-          cancelLabel: 'Después',
-          danger: false,
-        });
-        if (reintentar){ mostrarAyudaGPS(); }
-        return;
-      }
-      if (err.code === 2){
-        await ilusAlert({
-          title: 'GPS no disponible',
-          message: 'Tu iPhone no puede obtener señal GPS ahora.',
-          sub: 'Verificá que los Servicios de Ubicación estén ON ' +
-               '(Ajustes → Privacidad → Servicios de Ubicación) ' +
-               'y sal al aire libre. Después toca "Capturar" otra vez.',
-          type: 'error',
-        });
-        return;
-      }
-      if (err.code === 3){
-        await ilusAlert({
-          title: 'GPS tardó demasiado',
-          message: 'No respondió a tiempo. Probá otra vez en un lugar con vista al cielo.',
-          type: 'warning',
-        });
-        return;
-      }
-      // Otro error
+  // Handler de éxito — reusado por highAccuracy:true Y por el fallback false
+  const _onSuccess = async (pos, methodTag) => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    const acc = pos.coords.accuracy || null;
+    _gpsLog('tarea_gps_ok', { lat, lng, accuracy: acc, method: methodTag });
+    // Validar precisión razonable (GPS de iPhone suele dar <50m al aire libre,
+    // hasta 100-200m en edificios. Si excede 500m, sospechoso → rechazar).
+    if (acc && acc > 500){
+      _gpsLog('tarea_gps_accuracy_too_low', { acc });
       await ilusAlert({
-        title: 'Error GPS',
-        message: err.message || 'Error desconocido al obtener ubicación.',
+        title: 'GPS impreciso',
+        message: `La precisión del GPS es de ±${Math.round(acc)} m, ` +
+                 'demasiado baja para auditar tu posición.',
+        sub: 'Sal al aire libre (lejos de paredes/metales) y reintenta.',
+        type: 'warning',
+      });
+      return;
+    }
+    ilusToast(`📍 GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} ±${Math.round(acc||0)}m`, {
+      type: 'success', duration: 3500,
+    });
+    try { await _validarRadio(lat, lng); } catch(_){}
+    await _gpsGuardarEnTarea(tid, mid, pid, {
+      lat, lng, accuracy: acc, source: 'gps',
+    });
+    // Refrescar barra GPS arriba
+    try { await _gpsRegistrarResultado({ lat, lng, accuracy: acc, method: methodTag }); } catch(_){}
+  };
+
+  // Handler de error final — solo se llama cuando ya no hay más fallbacks
+  const _onErrorFinal = async (err) => {
+    _gpsLog('tarea_gps_error_final', { code: err && err.code, msg: err && err.message });
+    if (err.code === 1){
+      // PERMISSION_DENIED → modal claro con instrucciones iPhone + Reintentar
+      const reintentar = await ilusConfirm({
+        title: '🔒 GPS bloqueado en este iPhone',
+        message: 'Para auditar tu posición necesitamos que actives el GPS en Ajustes. ' +
+                 'Toca <strong>"Ver cómo activar"</strong> para ver el paso a paso.',
+        messageHtml: true,
+        sub: 'Una vez activado, vuelve aquí y toca "Capturar mi ubicación" otra vez.',
+        type: 'warning',
+        okLabel: 'Ver cómo activar',
+        cancelLabel: 'Después',
+        danger: false,
+      });
+      if (reintentar){ mostrarAyudaGPS(); }
+      return;
+    }
+    if (err.code === 2){
+      await ilusAlert({
+        title: 'GPS no disponible',
+        message: 'Tu iPhone no puede obtener señal GPS ahora.',
+        sub: 'Verifica que los Servicios de Ubicación estén ON ' +
+             '(Ajustes → Privacidad → Servicios de Ubicación) ' +
+             'y sal al aire libre. Después toca "Capturar" otra vez.',
         type: 'error',
       });
+      return;
+    }
+    if (err.code === 3){
+      await ilusAlert({
+        title: 'GPS tardó demasiado',
+        message: 'No respondió a tiempo. Prueba otra vez en un lugar con vista al cielo.',
+        type: 'warning',
+      });
+      return;
+    }
+    // Otro error
+    await ilusAlert({
+      title: 'Error GPS',
+      message: err.message || 'Error desconocido al obtener ubicación.',
+      type: 'error',
+    });
+  };
+
+  // getCurrentPosition DIRECTO — el prompt nativo iOS aparece acá si
+  // nunca preguntó antes. Si ya está granted, resuelve directo.
+  // Timeout 10s (no 15s) para que el técnico no piense que está colgado.
+  navigator.geolocation.getCurrentPosition(
+    (pos) => _onSuccess(pos, 'gps_high'),
+    (err) => {
+      _gpsLog('tarea_gps_high_fail', { code: err && err.code, msg: err && err.message });
+      // Si fue PERMISSION_DENIED → no insistir, ir directo al modal
+      if (err && err.code === 1){
+        _onErrorFinal(err);
+        return;
+      }
+      // TIMEOUT o POSITION_UNAVAILABLE → fallback a highAccuracy:false (6s).
+      // Funciona en iPhone 15 Pro Max indoor cuando highAccuracy:true falla.
+      // No requiere gesto nuevo porque ya tenemos el permiso del primer intento.
+      _gpsLog('tarea_gps_fallback_low_accuracy');
+      ilusToast('📡 Reintentando GPS (precisión estándar)…',
+                { type:'info', duration: 1500 });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => _onSuccess(pos, 'gps_low'),
+        (err2) => _onErrorFinal(err2),
+        { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
+      );
     },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
   );
 }
 
@@ -2346,7 +2421,7 @@ async function abrirSheetFoto(tid, mid, pid){
   }
   const choice = await ilusActionSheet({
     title: '📷 Agregar foto',
-    message: 'Elegí cómo querés agregar la foto',
+    message: 'Elige cómo quieres agregar la foto',
     options: [
       { label: 'Tomar foto con cámara', icon: 'bi-camera-fill',   value: 'camara',  style: 'dark' },
       { label: 'Elegir de galería',      icon: 'bi-images',         value: 'galeria', style: 'secondary' },
@@ -2466,17 +2541,17 @@ async function subirFotoTarea(tid, input, mid, pid){
   // ── ERROR ──
   let msg = 'No se pudo subir la foto';
   if (res.networkError){
-    msg = 'Sin conexión. Verificá tu internet e intentá de nuevo.';
+    msg = 'Sin conexión. Verifica tu internet e intenta de nuevo.';
   } else if (res.data && res.data.error){
     msg = res.data.error;
     // Si fue por formato no permitido y es HEIC, dar un hint claro al técnico
     if (heic && /formato/i.test(res.data.error)){
-      msg = 'El servidor rechazó el formato HEIC. Probá tomar la foto de nuevo (la app debería convertirla a JPG).';
+      msg = 'El servidor rechazó el formato HEIC. Prueba tomar la foto de nuevo (la app debería convertirla a JPG).';
     }
   } else if (res.status >= 500){
-    msg = `Error del servidor (HTTP ${res.status}). Reintentá en unos segundos.`;
+    msg = `Error del servidor (HTTP ${res.status}). Reintenta en unos segundos.`;
   } else if (res.status >= 400){
-    msg = `Error en el envío (HTTP ${res.status}). Verificá el archivo.`;
+    msg = `Error en el envío (HTTP ${res.status}). Verifica el archivo.`;
   }
   console.error('[subirFoto] FAIL:', { status: res.status, data: res.data, networkError: res.networkError });
   ilusToast(msg, { type:'error', duration: 6000 });
@@ -3052,7 +3127,7 @@ async function abrirGrabador(){
       !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
     await ilusAlert({
       title: 'Navegador no compatible',
-      message: 'Tu navegador no soporta grabación de video in-app. Probá Chrome, Edge, Firefox o Safari 15+.',
+      message: 'Tu navegador no soporta grabación de video in-app. Prueba Chrome, Edge, Firefox o Safari 15+.',
       type: 'warning',
     });
     return;
@@ -3074,7 +3149,7 @@ async function abrirGrabador(){
   } catch(e){
     await ilusAlert({
       title: 'No se pudo acceder a la cámara',
-      message: 'Verificá los permisos del sitio (cámara y micrófono).',
+      message: 'Verifica los permisos del sitio (cámara y micrófono).',
       sub: e && e.message ? e.message : '',
       type: 'error',
     });
@@ -3326,7 +3401,7 @@ async function grabSubir(){
     await ilusAlert({
       title: 'Video demasiado grande',
       message: `El video pesa ${(_grabBlob.size/(1024*1024)).toFixed(1)} MB. Máximo: 100 MB.`,
-      sub: 'Probá una calidad más baja o una grabación más corta.',
+      sub: 'Prueba una calidad más baja o una grabación más corta.',
       type: 'warning',
     });
     return;
@@ -3463,7 +3538,7 @@ async function pedirGPS(forzar = false){
           // Refrescamos UI; si granted y no tenemos GPS, mostramos botón visible
           if (status.state === 'granted'){
             ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Ubicación lista — toca para capturar';
-            sub.innerHTML = '<small>Permiso concedido. Tocá <strong>Capturar ahora</strong>.</small>';
+            sub.innerHTML = '<small>Permiso concedido. Toca <strong>Capturar ahora</strong>.</small>';
           }
         };
         window.__gpsPermSubscribed = true;
@@ -3478,7 +3553,7 @@ async function pedirGPS(forzar = false){
   if (!forzar && !window.__ilusGPS){
     bar.classList.remove('gps-ok', 'gps-err');
     ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Sin ubicación capturada';
-    sub.innerHTML = '<small>Tocá <strong>Capturar ahora</strong> para registrar tu posición. ' +
+    sub.innerHTML = '<small>Toca <strong>Capturar ahora</strong> para registrar tu posición. ' +
                     'iPhone te pedirá permiso la primera vez.</small>';
     if (actions) actions.style.display = 'flex';
     return;
@@ -3507,7 +3582,7 @@ async function pedirGPS(forzar = false){
       // Denegado → mostrar bar de error + acciones + auto-abrir ayuda
       bar.classList.add('gps-err');
       ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
-      sub.innerHTML = '<small>iPhone bloqueó el GPS. Tocá <strong>¿Cómo activar GPS?</strong> para ver instrucciones.</small>';
+      sub.innerHTML = '<small>iPhone bloqueó el GPS. Toca <strong>¿Cómo activar GPS?</strong> para ver instrucciones.</small>';
       if (actions) actions.style.display = 'flex';
       return;
     }
@@ -3518,7 +3593,7 @@ async function pedirGPS(forzar = false){
       sub.innerHTML = '<small>El iPhone tardó demasiado. Sal al aire libre y toca <strong>Reintentar GPS</strong>.</small>';
     } else if (err.code === 2){
       ttl.innerHTML = '<i class="bi bi-wifi-off"></i> GPS no disponible';
-      sub.innerHTML = '<small>Tu iPhone no puede obtener GPS ahora. Probá afuera o usá <strong>ingresar manual</strong>.</small>';
+      sub.innerHTML = '<small>Tu iPhone no puede obtener GPS ahora. Prueba al aire libre.</small>';
     } else {
       ttl.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> No pudimos detectar ubicación';
       sub.innerHTML = '<small>Toca <strong>Reintentar</strong>.</small>';
@@ -3650,14 +3725,14 @@ async function mostrarAyudaGPS(){
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">📱 Paso 1 — Servicios de Ubicación globales:</strong>
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Abrí la app <strong>Ajustes</strong> (la gris con engranajes)</li>
-        <li>Tocá <strong>Privacidad y Seguridad</strong></li>
-        <li>Tocá <strong>Servicios de ubicación</strong></li>
-        <li>Activá el <strong>switch verde de arriba</strong> ("Servicios de ubicación")</li>
+        <li>Toca <strong>Privacidad y Seguridad</strong></li>
+        <li>Toca <strong>Servicios de ubicación</strong></li>
+        <li>Activa el <strong>switch verde de arriba</strong> ("Servicios de ubicación")</li>
       </ol>
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Paso 2 — Permitir a Safari:</strong>
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
-        <li>En la misma pantalla, scrolleá hasta encontrar <strong>"Safari"</strong> en la lista</li>
-        <li>Tocá <strong>Safari → Sitios web → Ubicación</strong></li>
+        <li>En la misma pantalla, desliza hasta encontrar <strong>"Safari"</strong> en la lista</li>
+        <li>Toca <strong>Safari → Sitios web → Ubicación</strong></li>
         <li>O elige directamente <strong>"Preguntar la próxima vez"</strong> o <strong>"Mientras uso la app"</strong></li>
       </ol>
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🔄 Paso 3 — Volver acá y reintentar:</strong>
@@ -3674,7 +3749,7 @@ async function mostrarAyudaGPS(){
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🔍 Verificar permiso específico de Safari:</strong>
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Ajustes → <strong>Apps</strong> → buscar <strong>Safari</strong></li>
-        <li>Tocá Safari → <strong>Ubicación</strong></li>
+        <li>Toca Safari → <strong>Ubicación</strong></li>
         <li>Debe estar en <strong>"Preguntar"</strong> o <strong>"Permitir"</strong></li>
       </ol>
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Limpiar caché del sitio:</strong>
@@ -3715,8 +3790,8 @@ async function mostrarAyudaGPS(){
       </div>
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🌐 Activar en Chrome:</strong>
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
-        <li>Tocá el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
-        <li>Tocá <strong>Permisos</strong> (o <strong>Configuración del sitio</strong>)</li>
+        <li>Toca el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
+        <li>Toca <strong>Permisos</strong> (o <strong>Configuración del sitio</strong>)</li>
         <li>En "Ubicación" elige <strong>"Permitir"</strong></li>
         <li>Vuelve aquí y toca <strong>Reintentar GPS</strong></li>
       </ol>`;
@@ -3751,7 +3826,7 @@ async function mostrarAyudaGPS(){
       <strong>Si seguís sin GPS:</strong>
       <ul style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.6;color:#1f2937">
         <li>Asegurate de tener <strong>HTTPS</strong> (la URL debe empezar con https://)</li>
-        <li>Probá en modo incógnito (Ctrl+Shift+N) para descartar extensiones</li>
+        <li>Prueba en modo incógnito (Ctrl+Shift+N) para descartar extensiones</li>
         <li>Revisá Ajustes del SO: en Windows 11 → Configuración → Privacidad → Ubicación</li>
       </ul>`;
     tabOtras = `
@@ -3792,9 +3867,9 @@ async function mostrarAyudaGPS(){
     <div class="gps-help-panel active" id="gpsHelpPanel-activar">${tabActivar}</div>
     <div class="gps-help-panel" id="gpsHelpPanel-verificar">${tabVerificar}</div>`;
 
-  const titulo = isIOS ? 'Activá la ubicación en tu iPhone'
-    : isAndroid ? 'Activá la ubicación en tu Android'
-    : 'Activá la ubicación en el navegador';
+  const titulo = isIOS ? 'Activa la ubicación en tu iPhone'
+    : isAndroid ? 'Activa la ubicación en tu Android'
+    : 'Activa la ubicación en el navegador';
 
   const reintentar = await ilusConfirm({
     title: titulo,
@@ -3874,7 +3949,7 @@ async function mostrarDiagnosticoGPS(){
   // Tomar últimos 20 intentos (para no inundar el modal)
   const ultimosIntentos = (diag.attempts || []).slice(-20);
   const intentosHtml = ultimosIntentos.length === 0
-    ? '<p style="color:#94a3b8;font-style:italic;font-size:.85rem">No hay intentos registrados aún. Tocá "Reintentar GPS" para empezar.</p>'
+    ? '<p style="color:#94a3b8;font-style:italic;font-size:.85rem">No hay intentos registrados aún. Toca "Reintentar GPS" para empezar.</p>'
     : ultimosIntentos.map((a, i) => {
         const dt = new Date(a.t || Date.now());
         const hh = String(dt.getHours()).padStart(2,'0') + ':' +
@@ -3910,10 +3985,18 @@ async function mostrarDiagnosticoGPS(){
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;max-height:280px;overflow-y:auto">
         ${intentosHtml}
       </div>
-      <div style="margin-top:10px;text-align:right">
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end">
         <button type="button" id="gpsDiagCopy"
           style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;cursor:pointer">
           <i class="bi bi-clipboard"></i> Copiar al portapapeles
+        </button>
+        {# FIX 2026-05-17 — Envío del diagnóstico al servidor para que Daniel (admin)
+           lo revise SIN tener que pedirle al técnico que conecte el iPhone a un Mac.
+           El backend devuelve un ID corto que el técnico le comparte por WhatsApp
+           para acelerar el lookup en /mantenciones/diagnostico-gps. #}
+        <button type="button" id="gpsDiagSend"
+          style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:700;cursor:pointer">
+          <i class="bi bi-send-fill"></i> Enviar al admin
         </button>
       </div>
     </div>`;
@@ -3943,6 +4026,86 @@ async function mostrarDiagnosticoGPS(){
           ta.select(); document.execCommand('copy');
           document.body.removeChild(ta);
           ilusToast('📋 Copiado', { type:'success' });
+        }
+      });
+    }
+
+    // ── Botón ENVIAR AL ADMIN ──────────────────────────────────────
+    // Hace POST /api/diagnostico/gps con todo el contexto. El backend
+    // guarda en mant_diag_gps y devuelve un id. Mostramos toast +
+    // ilusAlert con el número para que el técnico se lo diga a Daniel.
+    const btnSend = document.getElementById('gpsDiagSend');
+    if (btnSend){
+      btnSend.addEventListener('click', async () => {
+        // Antibloqueo doble click
+        btnSend.disabled = true;
+        const original = btnSend.innerHTML;
+        btnSend.innerHTML = '<i class="bi bi-hourglass-split"></i> Enviando…';
+        try {
+          // Último error: el más reciente que tenga substring 'fail/denied/timeout/error'
+          let lastError = null;
+          const attempts = diag.attempts || [];
+          for (let i = attempts.length - 1; i >= 0; i--){
+            const a = attempts[i];
+            if (a && /fail|denied|timeout|error/i.test(a.stage || '')){
+              try {
+                lastError = (a.stage || '') + ' :: ' + JSON.stringify(a.info || {}).slice(0, 300);
+              } catch(e){ lastError = a.stage || 'error'; }
+              break;
+            }
+          }
+          const body = {
+            visita_id: (typeof VID !== 'undefined') ? VID : null,
+            user_agent: navigator.userAgent || '',
+            https: location.protocol === 'https:',
+            permissions_state: caps.permission_state || '?',
+            attempts: attempts,
+            browser_features: {
+              geolocation_api: caps.geolocation_api,
+              permissions_api: caps.permissions_api,
+              last_result_method: caps.last_result_method,
+              last_result_lat: caps.last_result_lat,
+              last_result_lng: caps.last_result_lng,
+              standalone_pwa: !!(window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches),
+              language: navigator.language || '',
+              platform: navigator.platform || '',
+              cookieEnabled: !!navigator.cookieEnabled,
+              online: !!navigator.onLine,
+              screen: {
+                w: screen && screen.width, h: screen && screen.height,
+                dpr: window.devicePixelRatio || 1,
+              },
+            },
+            last_error: lastError,
+          };
+          const res = await fetch('/api/diagnostico/gps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            body: JSON.stringify(body),
+            credentials: 'same-origin',
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok){
+            const msg = (data && data.error) || 'Error de red (HTTP ' + res.status + ')';
+            ilusToast('No se pudo enviar: ' + msg, { type:'error' });
+            btnSend.disabled = false;
+            btnSend.innerHTML = original;
+            return;
+          }
+          ilusToast('Diagnóstico #' + data.id + ' enviado', { type:'success' });
+          // Aviso con el código grande para que el técnico lo lea a Daniel
+          await ilusAlert({
+            title: 'Diagnóstico enviado',
+            message: 'Mándale a Daniel este número por WhatsApp:',
+            sub: '<div style="font-size:2rem;font-weight:800;color:#dc2626;text-align:center;font-family:monospace;letter-spacing:.05em">#' + data.id + '</div><div style="text-align:center;font-size:.78rem;color:#6b7280;margin-top:4px">Él lo revisará en el panel admin.</div>',
+            subHtml: true,
+            type: 'success',
+            okLabel: 'Entendido',
+          });
+        } catch(e){
+          ilusToast('No se pudo enviar: ' + (e.message || 'error de red'), { type:'error' });
+          btnSend.disabled = false;
+          btnSend.innerHTML = original;
         }
       });
     }
@@ -4079,7 +4242,7 @@ async function abrirManualGPS(){
           });
         }
         errBox.style.display = 'block';
-        errBox.textContent = 'No encontramos esa dirección. Probá con más detalle (calle, número, comuna, ciudad).';
+        errBox.textContent = 'No encontramos esa dirección. Prueba con más detalle (calle, número, comuna, ciudad).';
         hint.innerHTML = `<i class="bi bi-info-circle"></i> Empieza a escribir y elige una sugerencia.`;
       } catch(e){
         errBox.style.display = 'block';
@@ -4352,6 +4515,59 @@ async function enviarFirma(){
     ilusToast('Error de red', { type:'error' });
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  PWA — Instalación en iOS
+//  Muestra el banner solo si:
+//    · El dispositivo es iOS (iPhone/iPad)
+//    · Y la app NO está corriendo en modo standalone (PWA instalada)
+//  Las PWA en iOS mantienen los permisos de geolocation con más
+//  estabilidad que Safari abierto — por eso pedimos instalación.
+// ════════════════════════════════════════════════════════════════
+(function detectIosAndShowInstallBanner(){
+  try {
+    const ua = navigator.userAgent || '';
+    const isIos = /iPad|iPhone|iPod/.test(ua)
+               || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad iOS 13+
+    const isStandalone = !!(window.navigator.standalone
+                           || window.matchMedia('(display-mode: standalone)').matches);
+    if (isIos && !isStandalone){
+      const el = document.getElementById('iosInstallBanner');
+      if (el) el.style.display = 'block';
+    }
+  } catch(e){ /* defensivo — nunca romper la página por el banner */ }
+})();
+
+// Instrucciones para "Añadir a pantalla de inicio" en iOS Safari.
+// Modal informativo — usa ilusAlert (regla #1 de CLAUDE.md).
+async function mostrarInstrIosInstall(){
+  await ilusAlert({
+    title: 'Instalar ILUS en tu iPhone',
+    message: 'Sigue estos 3 pasos en Safari:',
+    sub: `
+      <ol style="text-align:left;font-size:.86rem;line-height:1.7;padding-left:20px;margin:8px 0 0">
+        <li>Toca el botón <strong>Compartir</strong>
+          <i class="bi bi-box-arrow-up" style="color:#dc2626"></i>
+          en la barra inferior de Safari.
+        </li>
+        <li>Desliza hacia abajo y elige
+          <strong>"Añadir a pantalla de inicio"</strong>
+          <i class="bi bi-plus-square" style="color:#dc2626"></i>.
+        </li>
+        <li>Confirma el nombre <strong>ILUS</strong> y toca <strong>Agregar</strong>.</li>
+      </ol>
+      <div style="background:#fff8e1;border:1px solid #f59e0b;color:#92400e;padding:8px 10px;border-radius:6px;font-size:.78rem;margin-top:10px">
+        <i class="bi bi-lightbulb"></i>
+        <strong>Importante:</strong> abre ILUS desde el ícono en tu pantalla
+        de inicio (no desde Safari). Los permisos del GPS quedan más estables
+        cuando entras como app.
+      </div>
+    `,
+    subHtml: true,
+    type: 'info',
+    okLabel: 'Entendido',
+  });
 }
 </script>
 

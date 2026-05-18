@@ -21,7 +21,8 @@ from email.mime.text import MIMEText
 from functools import wraps
 
 from flask import (Flask, Response, flash, g, jsonify, make_response, redirect,
-                   render_template, request, send_file, session, url_for)
+                   render_template, render_template_string, request, send_file,
+                   session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -2593,6 +2594,23 @@ _GZIP_MIN_BYTES = 1024
 @app.after_request
 def _perf_static_cache_and_gzip(resp):
     try:
+        # ── 0) Permissions-Policy: habilitar geolocation explícitamente ───
+        # FIX 2026-05-17 (CRÍTICO iOS Safari + Railway/CDN):
+        #   Si NO seteamos este header, algunos intermediarios (Cloudflare,
+        #   Railway proxy, ciertas configuraciones de Safari) inyectan por
+        #   default `Permissions-Policy: geolocation=()` que BLOQUEA TOTAL-
+        #   mente navigator.geolocation.getCurrentPosition en iOS, sin
+        #   mostrar siquiera el prompt nativo. El técnico ve "Pidiendo GPS…"
+        #   y nunca pasa nada.
+        #   Acá lo seteamos a `geolocation=(self)` que permite GPS solo en
+        #   nuestro propio origin (no en iframes de terceros), que es lo
+        #   que necesita la app de mantenciones (ot_ejecutar.html).
+        #   También habilitamos camera para la captura de fotos de tareas.
+        if "Permissions-Policy" not in resp.headers:
+            resp.headers["Permissions-Policy"] = (
+                "geolocation=(self), camera=(self), microphone=()"
+            )
+
         # ── 1) Cache headers para assets estáticos ───────────────────
         # Solo si Flask NO seteó ya un cache header explícito.
         if request.path.startswith("/static/") and "Cache-Control" not in resp.headers:
@@ -16915,6 +16933,44 @@ def init_mantenciones_tables():
                     )
                 except Exception: pass
 
+            # ════════════════════════════════════════════════════════════
+            # ── Diagnóstico GPS remoto ─────────────────────────────────
+            # ════════════════════════════════════════════════════════════
+            # Cuando un técnico (típicamente desde iPhone Safari) reporta
+            # que no funciona el GPS en una OT, puede tocar "Enviar
+            # diagnóstico al admin" desde el modal de diagnóstico GPS.
+            # El cliente envía todo el contexto (UA, permisos, intentos,
+            # último error) a esta tabla. Daniel lo revisa después en
+            # /mantenciones/diagnostico-gps SIN tener que conectarse a
+            # Safari DevTools por USB.
+            # 2026-05-17 — Daniel reportó GPS fallando en iPhone 15 Pro Max.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_diag_gps (
+                    id                 INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id          INT NULL,
+                    user_id            INT NULL,
+                    username           VARCHAR(190) NULL,
+                    user_agent         VARCHAR(500),
+                    https              TINYINT(1),
+                    permissions_state  VARCHAR(40),
+                    attempts_json      TEXT,
+                    last_error         VARCHAR(500),
+                    created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_visita   (visita_id),
+                    INDEX idx_user     (user_id),
+                    INDEX idx_created  (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migración idempotente: si la tabla ya existía sin la columna
+            # `username`, la agregamos. El catch silencia "Duplicate column".
+            for _diag_mig in [
+                "ALTER TABLE mant_diag_gps ADD COLUMN username VARCHAR(190) NULL",
+            ]:
+                try:
+                    cur.execute(_diag_mig)
+                except Exception:
+                    pass
+
             # ── Roles dinámicos (matriz módulo × acción) ───────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS roles_dinamicos (
@@ -25430,9 +25486,18 @@ def mant_ot_ficha(vid):
 @_mant_required
 def mant_ot_ejecutar(vid):
     """Vista simplificada de ejecución de OT (modo técnico)."""
+    # NOTE 2026-05-17 (cliente_default GPS): traemos c.direccion_lat/lng
+    # como fallback para cuando v.direccion_lat/lng vienen NULL (OTs viejas
+    # creadas antes de que mant_visitas tuviera esas columnas, o OTs donde
+    # no se sobrescribió la dirección a nivel OT). Esto le permite al
+    # frontend (DESTINO_LAT/LNG) y al endpoint de respuesta GPS usar la
+    # dirección ya parametrizada del cliente cuando el GPS del dispositivo
+    # del técnico no funciona (default 'cliente_default').
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
         "       c.direccion AS cli_direccion, "
+        "       c.direccion_lat AS cli_direccion_lat, "
+        "       c.direccion_lng AS cli_direccion_lng, "
         "       c.comuna AS cli_comuna, c.contacto_nombre AS cli_contacto, "
         "       c.contacto_tel AS cli_contacto_tel, "
         "       COALESCE(u.nombre, u.username) AS tecnico_principal "
@@ -32804,6 +32869,336 @@ def mant_tarifas_tecnicos_list():
 # ══════════════════════════════════════════════════════════════════════
 # FIN COTIZADOR DE MANTENCIONES
 # ══════════════════════════════════════════════════════════════════════
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DIAGNÓSTICO REMOTO DE GPS — debug del técnico → ojos del admin
+# ──────────────────────────────────────────────────────────────────────
+# Daniel (admin) reportó que el GPS no funciona en iPhone 15 Pro Max
+# durante la ejecución de OTs. Sin estos endpoints, depurar requiere
+# conectar el iPhone por USB a un Mac, abrir Safari → Develop → device →
+# inspector — un flujo lento y que rompe la concentración del técnico.
+#
+# Con este flujo: el técnico toca un botón en el modal de diagnóstico
+# del navegador y el servidor recibe TODO el contexto (UA, permission
+# state, intentos, último error). Daniel revisa la vista admin y diagnostica
+# remotamente sin tocar el dispositivo del técnico.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/api/diagnostico/gps", methods=["POST"])
+@login_required
+def api_diagnostico_gps_post():
+    """
+    Recibe del cliente el snapshot completo del estado GPS.
+
+    Body JSON esperado:
+        visita_id (int|null)         OT en curso (puede venir null si el
+                                     técnico envía diagnóstico desde otro lado)
+        user_agent (str)             navigator.userAgent
+        https (bool|0/1)             location.protocol === 'https:'
+        permissions_state (str)      'granted' | 'denied' | 'prompt' | 'error: ...'
+        attempts (list)              window.__gpsDiag.attempts (últimos N)
+        browser_features (dict)      capacidades (geolocation API, permissions API, etc)
+        last_error (str|null)        Último mensaje de error si lo hubo
+
+    Retorna:
+        {ok: true, id: N}            id del diagnóstico — el técnico lo
+                                     comparte con el admin por WhatsApp/Slack
+                                     para acelerar el lookup.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "JSON inválido"}), 400
+
+    # Extraer y sanear campos (defensivo — el cliente puede mandar cualquier cosa)
+    visita_id = data.get("visita_id")
+    try:
+        visita_id = int(visita_id) if visita_id not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        visita_id = None
+
+    user_agent = (data.get("user_agent") or "")[:500]
+    https_val = 1 if data.get("https") in (True, 1, "1", "true") else 0
+    perm_state = (data.get("permissions_state") or "")[:40]
+    last_error = (data.get("last_error") or "")[:500] or None
+
+    # attempts + browser_features los serializamos juntos en attempts_json
+    # para no agregar más columnas. JSON queda inspeccionable en MySQL.
+    payload = {
+        "attempts": data.get("attempts") or [],
+        "browser_features": data.get("browser_features") or {},
+    }
+    try:
+        attempts_json = json.dumps(payload, ensure_ascii=False)[:60000]
+    except Exception:
+        attempts_json = "{}"
+
+    user_id = (g.user or {}).get("id")
+    username = current_username() or None
+
+    # Insert + capturar last_insert_id en la misma conexión (mysql_execute no
+    # devuelve el id, así que abrimos cursor explícito para leer lastrowid).
+    diag_id = None
+    try:
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO mant_diag_gps
+                         (visita_id, user_id, username, user_agent, https,
+                          permissions_state, attempts_json, last_error)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (visita_id, user_id, username, user_agent, https_val,
+                     perm_state, attempts_json, last_error)
+                )
+                diag_id = cur.lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        # No exponemos detalles del error SQL al cliente (regla #4 CLAUDE.md)
+        app.logger.error("Error guardando diagnóstico GPS: %s", e)
+        return jsonify({"ok": False, "error": "No pudimos guardar el diagnóstico"}), 500
+
+    return jsonify({"ok": True, "id": diag_id})
+
+
+@app.route("/api/diagnostico/gps", methods=["GET"])
+@login_required
+def api_diagnostico_gps_list():
+    """Lista los últimos diagnósticos GPS — solo admin/superadmin.
+
+    Query params opcionales:
+        visita_id (int)   Filtra por una OT específica
+        limit (int)       Máx 200 (default 50)
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    visita_id = request.args.get("visita_id", type=int)
+    try:
+        limit = max(1, min(200, int(request.args.get("limit") or 50)))
+    except (TypeError, ValueError):
+        limit = 50
+
+    if visita_id:
+        rows = mysql_fetchall(
+            """SELECT id, visita_id, user_id, username, user_agent, https,
+                      permissions_state, attempts_json, last_error, created_at
+                 FROM mant_diag_gps
+                WHERE visita_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s""",
+            (visita_id, limit)
+        ) or []
+    else:
+        rows = mysql_fetchall(
+            """SELECT id, visita_id, user_id, username, user_agent, https,
+                      permissions_state, attempts_json, last_error, created_at
+                 FROM mant_diag_gps
+                ORDER BY created_at DESC
+                LIMIT %s""",
+            (limit,)
+        ) or []
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        # Parsear attempts_json para que el cliente lo reciba estructurado
+        try:
+            d["payload"] = json.loads(d.pop("attempts_json") or "{}")
+        except Exception:
+            d["payload"] = {"_parse_error": True, "raw": d.pop("attempts_json", "")[:500]}
+        # ISO format de fecha para JS
+        if d.get("created_at"):
+            try:
+                d["created_at"] = d["created_at"].isoformat()
+            except Exception:
+                d["created_at"] = str(d["created_at"])
+        out.append(d)
+    return jsonify({"ok": True, "diagnosticos": out, "total": len(out)})
+
+
+@app.route("/mantenciones/diagnostico-gps")
+@login_required
+def mant_diagnostico_gps_view():
+    """Vista admin: tabla con los últimos 50 diagnósticos GPS.
+
+    Solo admin/superadmin. Lista cruda con expand para ver el JSON
+    completo (attempts + browser_features). Útil para que Daniel revise
+    sin tener que ir directo a MySQL.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        flash("Solo administradores pueden ver el diagnóstico GPS.", "warning")
+        return redirect(url_for("mant_index"))
+
+    rows = mysql_fetchall(
+        """SELECT id, visita_id, user_id, username, user_agent, https,
+                  permissions_state, attempts_json, last_error, created_at
+             FROM mant_diag_gps
+            ORDER BY created_at DESC
+            LIMIT 50"""
+    ) or []
+
+    # Pre-parsear el JSON para que el template no tenga que hacer
+    # json.loads inline (Jinja no lo tiene como filtro nativo aquí).
+    diags = []
+    for r in rows:
+        d = dict(r)
+        try:
+            payload = json.loads(d.get("attempts_json") or "{}")
+        except Exception:
+            payload = {}
+        d["attempts"] = payload.get("attempts") or []
+        d["browser_features"] = payload.get("browser_features") or {}
+        # Resumen rápido para la tabla
+        d["ua_short"] = (d.get("user_agent") or "")[:90]
+        d["num_intentos"] = len(d["attempts"])
+        diags.append(d)
+
+    # HTML inline — vista simple, no creamos template separado.
+    # Mobile-first, mismo look ILUS (rojo + negro).
+    html = """
+{% extends "base.html" %}
+{% block title %}Diagnóstico GPS · ILUS{% endblock %}
+{% block content %}
+<div style="max-width:1280px;margin:0 auto;padding:18px 10px 60px">
+  <div style="background:#0a0a0a;color:#fff;padding:16px 18px;border-radius:12px;
+              border-left:4px solid #dc2626;margin-bottom:16px">
+    <h3 style="margin:0;font-size:1.15rem;font-weight:800">
+      <i class="bi bi-geo-alt-fill" style="color:#dc2626"></i>
+      Diagnóstico GPS remoto
+    </h3>
+    <p style="margin:6px 0 0;font-size:.82rem;opacity:.85">
+      Snapshots enviados por técnicos cuando el GPS no funciona en su dispositivo.
+      Cada técnico te avisa el número de diagnóstico (ID) que aparece acá.
+    </p>
+  </div>
+
+  {% if not diags %}
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;
+              padding:30px;text-align:center;color:#6b7280">
+    <i class="bi bi-inbox" style="font-size:2rem"></i>
+    <p style="margin:10px 0 0;font-size:.95rem">
+      No hay diagnósticos enviados todavía.
+    </p>
+  </div>
+  {% else %}
+
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+    <div style="overflow-x:auto">
+      <table class="table table-sm mb-0" style="font-size:.82rem;min-width:760px">
+        <thead style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+          <tr>
+            <th style="padding:10px 12px">ID</th>
+            <th style="padding:10px 12px">Fecha</th>
+            <th style="padding:10px 12px">Usuario</th>
+            <th style="padding:10px 12px">OT</th>
+            <th style="padding:10px 12px">HTTPS</th>
+            <th style="padding:10px 12px">Permiso</th>
+            <th style="padding:10px 12px">Intentos</th>
+            <th style="padding:10px 12px">User Agent</th>
+            <th style="padding:10px 12px"></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in diags %}
+          <tr style="border-bottom:1px solid #f1f5f9">
+            <td style="padding:10px 12px;font-weight:700;color:#dc2626">#{{ d.id }}</td>
+            <td style="padding:10px 12px;font-family:monospace;font-size:.74rem">
+              {{ d.created_at | chile_fmt }}
+            </td>
+            <td style="padding:10px 12px">{{ d.username or '(anónimo)' }}</td>
+            <td style="padding:10px 12px">
+              {% if d.visita_id %}
+                <a href="{{ url_for('mant_ot_ejecutar', vid=d.visita_id) }}"
+                   style="color:#dc2626;font-weight:600">
+                  #{{ d.visita_id }}
+                </a>
+              {% else %}<span style="color:#9ca3af">—</span>{% endif %}
+            </td>
+            <td style="padding:10px 12px">
+              {% if d.https %}
+                <span style="color:#15803d">si</span>
+              {% else %}
+                <span style="color:#dc2626;font-weight:700">NO</span>
+              {% endif %}
+            </td>
+            <td style="padding:10px 12px">
+              {% set st = d.permissions_state or '?' %}
+              <span style="font-family:monospace;font-size:.74rem;
+                {% if st == 'denied' %}color:#dc2626;font-weight:700
+                {% elif st == 'granted' %}color:#15803d
+                {% else %}color:#f59e0b{% endif %}">{{ st }}</span>
+            </td>
+            <td style="padding:10px 12px;text-align:center">{{ d.num_intentos }}</td>
+            <td style="padding:10px 12px;font-family:monospace;font-size:.7rem;
+                       max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="{{ d.user_agent }}">
+              {{ d.ua_short }}
+            </td>
+            <td style="padding:10px 12px">
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      onclick="toggleDiagDetail({{ d.id }})"
+                      style="font-size:.7rem;padding:3px 8px">
+                Ver
+              </button>
+            </td>
+          </tr>
+          <tr id="diag-detail-{{ d.id }}" style="display:none;background:#f9fafb">
+            <td colspan="9" style="padding:14px 18px">
+              {% if d.last_error %}
+              <div style="background:#fef2f2;color:#991b1b;padding:8px 12px;border-radius:6px;
+                          font-family:monospace;font-size:.78rem;margin-bottom:10px">
+                <strong>Último error:</strong> {{ d.last_error }}
+              </div>
+              {% endif %}
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                <div>
+                  <h6 style="margin:0 0 6px;font-size:.8rem;color:#0a0a0a;font-weight:700">
+                    Capacidades del navegador
+                  </h6>
+                  <pre style="background:#0a0a0a;color:#84cc16;padding:10px;border-radius:6px;
+                              font-size:.7rem;max-height:240px;overflow:auto">{{ d.browser_features | tojson(indent=2) }}</pre>
+                </div>
+                <div>
+                  <h6 style="margin:0 0 6px;font-size:.8rem;color:#0a0a0a;font-weight:700">
+                    Intentos GPS ({{ d.num_intentos }})
+                  </h6>
+                  <pre style="background:#0a0a0a;color:#84cc16;padding:10px;border-radius:6px;
+                              font-size:.7rem;max-height:240px;overflow:auto">{{ d.attempts | tojson(indent=2) }}</pre>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p style="margin:14px 0 0;font-size:.75rem;color:#6b7280">
+    Mostrando últimos 50 diagnósticos. Para filtrar por OT:
+    <code>?visita_id=N</code> en el endpoint JSON
+    <code>/api/diagnostico/gps</code>.
+  </p>
+  {% endif %}
+</div>
+
+<script>
+function toggleDiagDetail(id){
+  var row = document.getElementById('diag-detail-' + id);
+  if (!row) return;
+  row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+</script>
+{% endblock %}
+"""
+    # Render inline a partir del string (más simple que crear template file).
+    from jinja2 import Template
+    # Necesitamos pasar el contexto base (current_user, permissions, etc).
+    # Usamos render_template_string que respeta el entorno Jinja del app.
+    return render_template_string(html, diags=diags)
 
 
 if __name__ == "__main__":

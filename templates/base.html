@@ -28,11 +28,16 @@
 
   {# ── SEO + branding (cómo se ve en Google y al compartir links) ── #}
   <meta name="description" content="ILUS Sport &amp; Health — Sistema integral de gestión: etiquetas, mantenciones, transporte, retiros y catálogo de productos.">
-  <meta name="theme-color" content="#0a0a0a">
+  {# theme-color: usamos rojo ILUS para que el chrome del navegador / barra de
+     status de la PWA en iOS combine con la paleta. Antes era #0a0a0a (negro). #}
+  <meta name="theme-color" content="#dc2626">
   <meta name="application-name" content="ILUS">
   <meta name="apple-mobile-web-app-title" content="ILUS">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  {# mobile-web-app-capable (sin 'apple-' prefix) es el equivalente estandarizado
+     que usan Chrome/Edge en Android. Permite la instalación PWA fullscreen. #}
+  <meta name="mobile-web-app-capable" content="yes">
 
   {# Cache hint para HTML — el browser puede reutilizar la página por 5 min #}
   <meta http-equiv="Cache-Control" content="public, max-age=300">
