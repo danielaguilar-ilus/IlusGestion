@@ -4720,11 +4720,25 @@ function abrirEmailManual() {
             {% endif %}
           </td>
           <td class="py-2 d-none d-sm-table-cell">
-            {% set tipo_col = {'preventiva':'#dcfce7','correctiva':'#fee2e2','garantia':'#dbeafe','inspeccion':'#fef3c7'} %}
-            {% set tipo_txt = {'preventiva':'#166534','correctiva':'#991b1b','garantia':'#1e40af','inspeccion':'#92400e'} %}
+            {# 2026-05-18 (Daniel) — Colores para TODOS los tipos de OT.
+               Antes faltaban 'levantamiento' e 'instalacion' y caían al gris fallback. #}
+            {% set tipo_col = {
+              'preventiva':'#dcfce7','correctiva':'#fee2e2','garantia':'#dbeafe',
+              'inspeccion':'#fef3c7','levantamiento':'#fce7f3','instalacion':'#e0e7ff',
+              'visita_tecnica':'#f0f9ff','visita_correctiva':'#fee2e2',
+              'cambio_equipo':'#fef3c7','desinstalacion':'#f3e8ff',
+              'capacitacion':'#ecfeff','repuesto':'#fef3c7','revision_interna':'#f1f5f9'
+            } %}
+            {% set tipo_txt = {
+              'preventiva':'#166534','correctiva':'#991b1b','garantia':'#1e40af',
+              'inspeccion':'#92400e','levantamiento':'#9f1239','instalacion':'#3730a3',
+              'visita_tecnica':'#075985','visita_correctiva':'#991b1b',
+              'cambio_equipo':'#92400e','desinstalacion':'#6b21a8',
+              'capacitacion':'#155e75','repuesto':'#92400e','revision_interna':'#475569'
+            } %}
             <span style="display:inline-block;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;
                          background:{{ tipo_col.get(v.tipo,'#f3f4f6') }};color:{{ tipo_txt.get(v.tipo,'#374151') }}">
-              {{ v.tipo.title() if v.tipo else '—' }}
+              {{ v.tipo.replace('_',' ').title() if v.tipo else '—' }}
             </span>
           </td>
           <td class="py-2 d-none d-md-table-cell" style="color:#6b7280">

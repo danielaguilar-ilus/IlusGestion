@@ -369,9 +369,14 @@
       <span class="badge-estado bs-{{ o.estado or 'programada' }} mt-1 d-inline-block">{{ (o.estado or 'programada').replace('_',' ').title() }}</span>
     </div>
 
-    {# Acciones: Abrir OT + (si es supervisor y OT pendiente) Revisar + (solo superadmin) Editar + Eliminar #}
+    {# Acciones: Abrir OT + (si tiene permiso de aprobar y OT pendiente) Revisar + (solo superadmin) Editar + Eliminar
+       2026-05-18 (Aaron Urbina fix): el backend ahora inyecta `o.puede_aprobar`
+       evaluado por `_is_aprobador()` + check de creador. ANTES esta condición
+       usaba `permissions.admin or permissions.superadmin` literal, lo que
+       bloqueaba al rol dinámico `ejecutivo_sstt` (que NO tiene admin=True).
+    #}
     <div class="d-flex gap-1 flex-shrink-0">
-      {% if o.estado == 'pendiente_aprobacion' and (permissions.admin or permissions.superadmin) %}
+      {% if o.estado == 'pendiente_aprobacion' and o.puede_aprobar %}
       <button type="button" class="btn btn-aprobar btn-sm"
               onclick="abrirRevisarOT({{ o.id }}, '{{ (o.numero_ot or 'VS-' ~ o.id) }}', '{{ (o.titulo or '')|replace("'", "\\'") }}')"
               title="Revisar y aprobar/rechazar OT firmada por el técnico">
@@ -632,9 +637,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
 {# ═══════════════════════════════════════════════════════════════
    F6 — Modal Revisar OT (supervisor aprueba o rechaza la OT firmada)
-   Visible para admin/superadmin/ejecutivo
+   Visible para admin/superadmin/ejecutivo/supervisor (familia normalizada)
+   o para quien creó AL MENOS UNA de las OTs listadas (que tenga
+   `o.puede_aprobar=True` arriba). Daniel: "Aaron también firma sus OTs."
+
+   2026-05-18 (Aaron Urbina fix): ANTES `permissions.admin or
+   permissions.superadmin` excluía a `ejecutivo_sstt`. Ahora usamos
+   `puede_aprobar_global` calculado server-side con `_is_aprobador()`.
+   Si el flag global es False, fallback: render si CUALQUIER OT del
+   listado tiene `puede_aprobar=True` (caso usuario que solo aprueba
+   las que creó pero no es supervisor global).
    ═══════════════════════════════════════════════════════════════ #}
-{% if permissions.admin or permissions.superadmin %}
+{% set _any_puede = puede_aprobar_global or (ots and ots|selectattr('puede_aprobar')|list|length > 0) %}
+{% if _any_puede %}
 <div class="modal fade" id="modalRevisarOT" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="border-radius:14px">

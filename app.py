@@ -27885,6 +27885,7 @@ def mant_ots_list():
             "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
             "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
             "       v.tecnico_id, t.nombre AS tecnico_nombre, "
+            "       v.created_by, "
             "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
             "       COALESCE(tar.n_completas, 0) AS n_completas, "
             "       COALESCE(fot.n_fotos, 0)     AS n_fotos "
@@ -27926,6 +27927,7 @@ def mant_ots_list():
                 "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.costo, "
                 "       v.cliente_id, c.razon_social, c.comuna AS cli_comuna, "
                 "       v.tecnico_id, v.tecnico AS tecnico_nombre, "
+                "       v.created_by, "
                 "       0 AS n_tareas, 0 AS n_completas, 0 AS n_fotos "
                 "  FROM mant_visitas v "
                 "  JOIN mant_clientes c ON c.id=v.cliente_id "
@@ -27965,6 +27967,49 @@ def mant_ots_list():
     except Exception:
         tecnicos = []
 
+    # ── 2026-05-18 (Aaron Urbina fix) ─────────────────────────────
+    # Inyectar `puede_aprobar` por OT y un flag global `puede_aprobar_global`
+    # para el template. ANTES el template usaba `permissions.admin or
+    # permissions.superadmin` literal → ejecutivo_sstt (rol dinámico) no
+    # tenía permissions.admin=True, así que el botón "Revisar" jamás
+    # aparecía aunque la matriz `_puede_ot_accion('aprobar')` sí lo
+    # permitía. Ahora el flag se calcula server-side con la matriz
+    # unificada y el template solo lo lee.
+    #
+    # Por performance NO recalculamos por OT (sería N+1 queries a
+    # mant_visitas + mant_visita_tecnicos). En su lugar inferimos:
+    #   - si es admin/superadmin/supervisor/ejecutivo (familia) → True
+    #     para CUALQUIER OT (matchea la matriz exactamente).
+    #   - si NO, fallback al check del creador (created_by ==
+    #     user.username, case insensitive + trim).
+    # El backend de aprobar-cierre revalida con `_puede_ot_accion`,
+    # así que aunque alguien fuerce el botón, el server bloquea.
+    puede_aprobar_global = _is_aprobador(user)
+    _username_lower = (user.get("username") or "").strip().lower()
+    _n_aprob = 0
+    _n_pendientes = 0
+    for _o in ots:
+        if puede_aprobar_global:
+            _o["puede_aprobar"] = True
+        else:
+            _created_by = (_o.get("created_by") or "").strip().lower()
+            _o["puede_aprobar"] = bool(_created_by) and _created_by == _username_lower
+        if _o.get("puede_aprobar"):
+            _n_aprob += 1
+        if (_o.get("estado") or "") == "pendiente_aprobacion":
+            _n_pendientes += 1
+
+    # 🔍 Log para diagnóstico (Daniel pidió poder ver en Railway logs por qué
+    # aparece o no el botón "Revisar" para Aaron). Se emite SIEMPRE.
+    print(
+        f"[ots_list] user={user.get('username')} role={role_l}->{role_fam} "
+        f"mostrando={len(ots)} pendientes_aprobacion={_n_pendientes} "
+        f"con_puede_aprobar={_n_aprob} puede_aprobar_global={puede_aprobar_global} "
+        f"es_tecnico={es_tecnico} es_ejecutivo={es_ejecutivo} "
+        f"solo_mias={solo_mias} ver_todas={ver_todas}",
+        flush=True
+    )
+
     return render_template(
         "mantenciones/ots_list.html",
         ots=ots,
@@ -27981,6 +28026,10 @@ def mant_ots_list():
         es_ejecutivo=es_ejecutivo,
         ver_todas=ver_todas,
         solo_mias_activo=solo_mias,
+        # 2026-05-18 (Aaron Urbina) — Permisos de aprobación inyectados
+        # desde la matriz para que el template no use comparaciones de
+        # rol literal que no soportan variantes dinámicas (ejecutivo_sstt).
+        puede_aprobar_global=puede_aprobar_global,
     )
 
 
@@ -29501,6 +29550,25 @@ def _is_supervisor_user():
     except Exception:
         pass
     return False
+
+
+def _is_aprobador(user=None):
+    """True si el usuario puede aprobar/firmar OTs (familia: superadmin,
+    admin, supervisor, ejecutivo, incluyendo variantes dinámicas).
+
+    Wrapper canónico para chequeos de "¿puede ver botón Revisar?" en
+    contextos donde NO tenemos vid (ej. listado global). Para chequeos
+    por OT específica usar `_puede_ot_accion(vid, "aprobar", user)`.
+
+    2026-05-18 (Aaron Urbina fix): centraliza la comparación de rol vía
+    `_rol_familia` para que `ejecutivo_sstt`, `supervisor_servicio_tecnico`,
+    etc. caigan en su familia correctamente. Antes había comparaciones
+    `role == 'ejecutivo'` literal repartidas por el código que bloqueaban
+    a roles dinámicos creados por el admin.
+    """
+    u = user or getattr(g, "user", None) or {}
+    fam = _rol_familia((u.get("role") or "").lower())
+    return fam in ("superadmin", "admin", "supervisor", "ejecutivo")
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/aprobar-cierre", methods=["POST"])
