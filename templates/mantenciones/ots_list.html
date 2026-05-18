@@ -649,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div class="alert alert-info py-2 small mb-3">
           <i class="bi bi-info-circle me-1"></i>
-          El técnico ya firmó. Como supervisor podés <strong>aprobar</strong> (la OT pasa a <em>cerrada</em>)
+          El técnico ya firmó. Como supervisor puedes <strong>aprobar</strong> (la OT pasa a <em>cerrada</em>)
           o <strong>rechazar</strong> (vuelve a programada y el técnico debe corregir).
         </div>
         <div class="mb-2">
@@ -717,7 +717,7 @@ async function rechazarOT(){
   const id = document.getElementById('rvOTId').value;
   const ok = await ilusConfirm({
     title: 'Rechazar OT',
-    message: '¿Rechazás la OT y la devolvés al técnico?',
+    message: '¿Rechazas la OT y la devuelves al técnico?',
     sub: 'La OT volverá a estado "programada" y el técnico deberá corregir y firmar de nuevo.',
     okLabel: 'Sí, rechazar',
     cancelLabel: 'Cancelar',

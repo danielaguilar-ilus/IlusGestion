@@ -2197,7 +2197,7 @@ async function capturarGPS(tid, mid, pid){
           title: 'GPS impreciso',
           message: `La precisión del GPS es de ±${Math.round(acc)} m, ` +
                    'demasiado baja para auditar tu posición.',
-          sub: 'Salí al aire libre (lejos de paredes/metales) y reintentá.',
+          sub: 'Sal al aire libre (lejos de paredes/metales) y reintenta.',
           type: 'warning',
         });
         return;
@@ -2221,7 +2221,7 @@ async function capturarGPS(tid, mid, pid){
           message: 'Para auditar tu posición necesitamos que actives el GPS en Ajustes. ' +
                    'Tocá <strong>"Ver cómo activar"</strong> para ver el paso a paso.',
           messageHtml: true,
-          sub: 'Una vez activado, volvé acá y tocá "Capturar mi ubicación" otra vez.',
+          sub: 'Una vez activado, vuelve aquí y toca "Capturar mi ubicación" otra vez.',
           type: 'warning',
           okLabel: 'Ver cómo activar',
           cancelLabel: 'Después',
@@ -2236,7 +2236,7 @@ async function capturarGPS(tid, mid, pid){
           message: 'Tu iPhone no puede obtener señal GPS ahora.',
           sub: 'Verificá que los Servicios de Ubicación estén ON ' +
                '(Ajustes → Privacidad → Servicios de Ubicación) ' +
-               'y salí al aire libre. Después tocá "Capturar" otra vez.',
+               'y sal al aire libre. Después toca "Capturar" otra vez.',
           type: 'error',
         });
         return;
@@ -3462,7 +3462,7 @@ async function pedirGPS(forzar = false){
           _gpsLog('permission_changed', status.state);
           // Refrescamos UI; si granted y no tenemos GPS, mostramos botón visible
           if (status.state === 'granted'){
-            ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Ubicación lista — tocá para capturar';
+            ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Ubicación lista — toca para capturar';
             sub.innerHTML = '<small>Permiso concedido. Tocá <strong>Capturar ahora</strong>.</small>';
           }
         };
@@ -3493,7 +3493,7 @@ async function pedirGPS(forzar = false){
   // ── forzar=true (usuario tocó "Capturar ahora") ──
   // Estado intermedio
   ttl.innerHTML = '<i class="bi bi-arrow-repeat"></i> Detectando ubicación…';
-  sub.innerHTML = '<small>Si iPhone te pregunta, tocá <strong>Permitir</strong>.</small>';
+  sub.innerHTML = '<small>Si iPhone te pregunta, toca <strong>Permitir</strong>.</small>';
   bar.classList.remove('gps-ok', 'gps-err');
   if (actions) actions.style.display = 'none';
 
@@ -3515,13 +3515,13 @@ async function pedirGPS(forzar = false){
     bar.classList.add('gps-err');
     if (err.code === 3){
       ttl.innerHTML = '<i class="bi bi-clock-history"></i> GPS lento — intenta de nuevo';
-      sub.innerHTML = '<small>El iPhone tardó demasiado. Salí al aire libre y tocá <strong>Reintentar GPS</strong>.</small>';
+      sub.innerHTML = '<small>El iPhone tardó demasiado. Sal al aire libre y toca <strong>Reintentar GPS</strong>.</small>';
     } else if (err.code === 2){
       ttl.innerHTML = '<i class="bi bi-wifi-off"></i> GPS no disponible';
       sub.innerHTML = '<small>Tu iPhone no puede obtener GPS ahora. Probá afuera o usá <strong>ingresar manual</strong>.</small>';
     } else {
       ttl.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> No pudimos detectar ubicación';
-      sub.innerHTML = '<small>Tocá <strong>Reintentar</strong> o <strong>ingresá la dirección a mano</strong>.</small>';
+      sub.innerHTML = '<small>Toca <strong>Reintentar</strong>.</small>';
     }
     if (actions) actions.style.display = 'flex';
     return;
@@ -3658,13 +3658,13 @@ async function mostrarAyudaGPS(){
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>En la misma pantalla, scrolleá hasta encontrar <strong>"Safari"</strong> en la lista</li>
         <li>Tocá <strong>Safari → Sitios web → Ubicación</strong></li>
-        <li>O elegí directamente <strong>"Preguntar la próxima vez"</strong> o <strong>"Mientras uso la app"</strong></li>
+        <li>O elige directamente <strong>"Preguntar la próxima vez"</strong> o <strong>"Mientras uso la app"</strong></li>
       </ol>
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">🔄 Paso 3 — Volver acá y reintentar:</strong>
       <ol style="margin:0 0 8px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
-        <li>Volvé a Safari (deslizá desde abajo o tocá Safari)</li>
+        <li>Vuelve a Safari (desliza desde abajo o toca Safari)</li>
         <li>Esta página detectará el cambio automáticamente</li>
-        <li>O tocá el botón <strong>🔄 Reintentar GPS</strong> abajo</li>
+        <li>O toca el botón <strong>🔄 Reintentar GPS</strong> abajo</li>
       </ol>`;
     tabVerificar = `
       <strong style="display:block;margin-bottom:8px;color:#0a0a0a">¿Activado pero sigue sin funcionar?</strong>
@@ -3691,7 +3691,7 @@ async function mostrarAyudaGPS(){
         <li>VPN activa → desactivar temporalmente</li>
       </ul>`;
     tabOtras = `
-      <strong style="display:block;margin-bottom:8px;color:#0a0a0a">Si no podés activar el GPS:</strong>
+      <strong style="display:block;margin-bottom:8px;color:#0a0a0a">Si no puedes activar el GPS:</strong>
       <div style="background:#dbeafe;border-left:4px solid #3b82f6;padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem;color:#1e40af">
         Estas opciones permiten <strong>avanzar la OT</strong> aunque el GPS no funcione. La precisión es menor pero queda registrada.
       </div>
@@ -3717,8 +3717,8 @@ async function mostrarAyudaGPS(){
       <ol style="margin:0 0 12px;padding-left:22px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Tocá el <strong>candado 🔒</strong> a la izquierda de la URL arriba</li>
         <li>Tocá <strong>Permisos</strong> (o <strong>Configuración del sitio</strong>)</li>
-        <li>En "Ubicación" elegí <strong>"Permitir"</strong></li>
-        <li>Volvé acá y tocá <strong>Reintentar GPS</strong></li>
+        <li>En "Ubicación" elige <strong>"Permitir"</strong></li>
+        <li>Vuelve aquí y toca <strong>Reintentar GPS</strong></li>
       </ol>`;
     tabVerificar = `
       <strong style="display:block;margin-bottom:6px;color:#0a0a0a">Si el candado no aparece:</strong>
@@ -3745,7 +3745,7 @@ async function mostrarAyudaGPS(){
       <ol style="margin:8px 0;padding-left:20px;font-size:.88rem;line-height:1.7;color:#1f2937">
         <li>Click el <strong>candado 🔒</strong> a la izquierda de la URL</li>
         <li>En "Ubicación" cambiá a <strong>"Permitir"</strong></li>
-        <li>Refrescá la página (Ctrl+R / F5) y tocá Reintentar</li>
+        <li>Refresca la página (Ctrl+R / F5) y toca Reintentar</li>
       </ol>`;
     tabVerificar = `
       <strong>Si seguís sin GPS:</strong>
@@ -3755,7 +3755,7 @@ async function mostrarAyudaGPS(){
         <li>Revisá Ajustes del SO: en Windows 11 → Configuración → Privacidad → Ubicación</li>
       </ul>`;
     tabOtras = `
-      <p style="font-size:.88rem;color:#1f2937">En desktop podés ingresar la dirección manualmente:</p>
+      <p style="font-size:.88rem;color:#1f2937">En desktop puedes ingresar la dirección manualmente:</p>
       <button type="button" onclick="_gpsDismissHelpAnd('manual')"
               style="background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:12px 14px;font-weight:600;cursor:pointer">
         <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
@@ -3986,7 +3986,7 @@ async function abrirManualGPS(){
              style="width:100%;padding:12px 14px;border:2px solid #e5e7eb;border-radius:10px;
                     font-size:16px;outline:none;min-height:48px;color:#0a0a0a;background:#fff">
       <div id="gpsManualHint" style="margin-top:8px;font-size:.78rem;color:#6b7280">
-        <i class="bi bi-info-circle"></i> Empezá a tipear y elegí una sugerencia de Google para mejor precisión.
+        <i class="bi bi-info-circle"></i> Empieza a escribir y elige una sugerencia de Google para mejor precisión.
       </div>
       <div id="gpsManualError" style="display:none;margin-top:8px;padding:8px 10px;background:#fee2e2;
                                        border-radius:6px;color:#dc2626;font-size:.82rem"></div>
@@ -4080,7 +4080,7 @@ async function abrirManualGPS(){
         }
         errBox.style.display = 'block';
         errBox.textContent = 'No encontramos esa dirección. Probá con más detalle (calle, número, comuna, ciudad).';
-        hint.innerHTML = `<i class="bi bi-info-circle"></i> Empezá a tipear y elegí una sugerencia.`;
+        hint.innerHTML = `<i class="bi bi-info-circle"></i> Empieza a escribir y elige una sugerencia.`;
       } catch(e){
         errBox.style.display = 'block';
         errBox.textContent = 'No pudimos verificar la dirección. Revisá tu conexión a internet.';
@@ -4132,7 +4132,7 @@ document.addEventListener('visibilitychange', () => {
       if (!bar || !ttl || !sub) return;
       bar.classList.remove('gps-ok', 'gps-err');
       ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Volviste — listo para capturar';
-      sub.innerHTML = '<small>Si activaste el permiso en Ajustes, tocá <strong>Capturar ahora</strong>.</small>';
+      sub.innerHTML = '<small>Si activaste el permiso en Ajustes, toca <strong>Capturar ahora</strong>.</small>';
       if (actions) actions.style.display = 'flex';
     }, 600);
   }
