@@ -57,13 +57,18 @@ PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"
 #  hace, lo más probable es bug (loop infinito) y mejor matarlo que
 #  acumular workers colgados. PDFs Playwright suelen tardar 5-15s.
 #
-#  --max-requests 1000 + jitter 100: recicla workers cada ~1000 reqs
-#  para evitar leaks de memoria (Playwright, etc). El jitter evita que
-#  ambos workers se reciclen al mismo tiempo (no degradación visible).
+#  --max-requests 5000 + jitter 500 (subido 2026-05-18 perf audit): antes
+#  era 1000/100, lo que reciclaba workers cada ~10-30 min de tráfico
+#  moderado. Cada reciclaje paga el cold-start (272 ALTER TABLE + carga
+#  de módulos + first-request latency). 5000 reciclar cada ~1-2 horas
+#  es suficiente para mitigar leaks de Playwright sin matar perf.
+#  ALTERNATIVA: setear ILUS_SKIP_MIGRATIONS=1 en Railway env vars una
+#  vez que el schema esté estable — recorta cold-start de ~3s a <500ms.
 #
-#  --keep-alive 5: mantener conexiones HTTP del navegador 5s → menos
-#  TLS handshakes en navegación rápida (multiplicador para SPA-like).
+#  --keep-alive 30 (subido de 5): el navegador puede reusar la TCP+TLS
+#  por 30s. Para una sesión activa de Daniel revisando OTs, esto evita
+#  ~6 handshakes TLS por minuto.
 # ════════════════════════════════════════════════════════════════════
 
 [start]
-cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100 --access-logfile - --error-logfile - app:app"
+cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 30 --max-requests 5000 --max-requests-jitter 500 --access-logfile - --error-logfile - app:app"

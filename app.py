@@ -249,7 +249,22 @@ app.config.update(
     SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT") or
                                os.environ.get("FLASK_ENV") == "production"),
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # 30 días
+    # ── PERF 2026-05-18 (audit Daniel) ─────────────────────────────
+    # Flask por default setea `Cache-Control: no-cache` en send_static_file
+    # vía send_file_max_age=None. Forzamos 30 días → el navegador cachea
+    # CSS/JS/imágenes sin revalidar. La capa after_request además agrega
+    # `immutable` para que ni siquiera Ctrl+F5 fuerce revalidación de
+    # archivos versionados.
+    # IMPORTANTE: si cambias style.css/ilus_ui.js, agregá ?v=YYYYMMDD en
+    # base.html para forzar refresh inmediato.
+    SEND_FILE_MAX_AGE_DEFAULT=60 * 60 * 24 * 30,   # 30 días
+    # Plantillas Jinja: usar el cache de bytecode (compila .py una vez por
+    # template y reusa entre requests). Por default Jinja recompila si
+    # detecta cambio en disco — en prod no hace falta.
+    TEMPLATES_AUTO_RELOAD=False,
 )
+# Jinja2: activar auto-reload solo en dev
+app.jinja_env.auto_reload = False
 
 
 @app.template_filter("hm")
@@ -2979,34 +2994,58 @@ def _perf_static_cache_and_gzip(resp):
             )
 
         # ── 1) Cache headers para assets estáticos ───────────────────
-        # Solo si Flask NO seteó ya un cache header explícito.
-        if request.path.startswith("/static/") and "Cache-Control" not in resp.headers:
+        # FIX 2026-05-18 (perf audit Daniel): Flask por default setea
+        # `Cache-Control: no-cache` en send_static_file. Antes saltábamos
+        # cuando el header ya estaba presente — pero ¡ya estaba presente
+        # con valor `no-cache`! Resultado: el navegador revalidaba CSS/JS/
+        # Logo.png en cada navegación. Ahora forzamos `public, max-age=30d,
+        # immutable` SIEMPRE para /static/* (sobrescribimos el no-cache).
+        # Si necesitás romper cache, cambiá el nombre del archivo o agregá
+        # ?v=YYYYMMDD (ver favicons en base.html).
+        if request.path.startswith("/static/"):
             # 30 días, immutable — los nombres de archivo cambian en el
             # commit cuando el contenido cambia (o el usuario fuerza
             # reload manual). Esto elimina ~3-8 requests de revalidación
             # por página cargada.
             resp.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+            # Drop Pragma/Expires legacy headers that contradict Cache-Control.
+            resp.headers.pop("Pragma", None)
+            resp.headers.pop("Expires", None)
 
         # ── 2) Gzip on-the-fly ───────────────────────────────────────
+        # FIX 2026-05-18 (perf audit): Flask sirve /static/* con
+        # `direct_passthrough=True` (streaming sin cargar a memoria),
+        # lo que ANTES nos hacía saltar la compresión. Resultado: style.css
+        # (38KB), ilus_ui.js (32KB), templates HTML grandes salían sin
+        # gzip. Ahora forzamos `implicit_sequence_conversion`/`get_data()`
+        # para responses estáticas compresibles. Resp.get_data() en pas-
+        # sthrough cierra el stream y carga a memoria — perfectamente OK
+        # para nuestros assets (todos <2MB) y agarra el compresor gzip
+        # normal. Para passthrough NO compresible (PNG, JPG, woff2) sigue
+        # streaming sin pasar por gzip.
         # Saltar si:
         #  - el cliente no acepta gzip
         #  - ya viene comprimido (Content-Encoding presente)
-        #  - el response es streaming/direct_passthrough
         #  - status no 200-299
         #  - body es muy chico
         #  - mime no es compresible
         if (
             "gzip" in (request.headers.get("Accept-Encoding") or "").lower()
             and "Content-Encoding" not in resp.headers
-            and not getattr(resp, "direct_passthrough", False)
             and 200 <= resp.status_code < 300
         ):
             ctype = (resp.content_type or "").lower()
             if any(ctype.startswith(p) for p in _COMPRESSIBLE_PREFIXES):
                 try:
+                    # Force-read stream incluso en direct_passthrough mode.
+                    # Solo lo hacemos para mimes compresibles (text/*, JSON, JS, CSS,
+                    # XML, SVG) — imágenes/binaries no entran acá.
+                    if getattr(resp, "direct_passthrough", False):
+                        resp.direct_passthrough = False
                     data = resp.get_data()
                     if len(data) >= _GZIP_MIN_BYTES:
                         import gzip as _gzip_mod
+                        # Level 6 = sweet spot entre CPU y ratio para text.
                         compressed = _gzip_mod.compress(data, compresslevel=6)
                         # Solo aplicar si efectivamente reduce tamaño
                         if len(compressed) < len(data):
@@ -35491,6 +35530,36 @@ def mant_maquina_ficha(mid):
         " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 100",
         (mid, mid, mid)
     ) or []
+    # ── PERF 2026-05-18 (audit Daniel) ─────────────────────────────
+    # Antes: N+1 — 1 query por cada OT en `ots_rows` para traer su primera
+    # foto. Para una ficha con 100 OTs eran 100 queries extras.
+    # Ahora: 1 sola query batched que trae la primera foto por OT vía
+    # subquery con MIN(created_at). Luego dict lookup en Python.
+    fotos_por_ot = {}
+    try:
+        ot_ids = [int(r["id"]) for r in ots_rows if r.get("id")]
+        if ot_ids:
+            # Placeholder list para IN (...)
+            ph = ",".join(["%s"] * len(ot_ids))
+            rows_foto = mysql_fetchall(
+                f"SELECT f.visita_id, f.archivo_path "
+                f"  FROM mant_visita_fotos f "
+                f"  JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+                f"  JOIN (SELECT f2.visita_id, MIN(f2.created_at) AS minc "
+                f"          FROM mant_visita_fotos f2 "
+                f"          JOIN mant_visita_tareas t2 ON t2.id = f2.tarea_id "
+                f"         WHERE f2.visita_id IN ({ph}) AND t2.maquina_id=%s "
+                f"         GROUP BY f2.visita_id) x "
+                f"    ON x.visita_id = f.visita_id AND x.minc = f.created_at "
+                f" WHERE t.maquina_id=%s ",
+                tuple(ot_ids) + (mid, mid)
+            ) or []
+            for rf in rows_foto:
+                if rf.get("visita_id") and rf["visita_id"] not in fotos_por_ot:
+                    fotos_por_ot[rf["visita_id"]] = rf.get("archivo_path")
+    except Exception:
+        pass
+
     ots = []
     for r in ots_rows:
         d = dict(r)
@@ -35504,18 +35573,8 @@ def mant_maquina_ficha(mid):
             d["cerrada_at"] = str(d["cerrada_at"])[:16]
         d["fotos_count"] = int(d.get("fotos_count") or 0)
         d["lev_aplicado"] = bool(d.get("lev_aplicado"))
-        # Foto destacada: primera foto subida en esta OT para este equipo
-        try:
-            foto = mysql_fetchone(
-                "SELECT archivo_path FROM mant_visita_fotos f "
-                "  JOIN mant_visita_tareas t ON t.id = f.tarea_id "
-                " WHERE f.visita_id=%s AND t.maquina_id=%s "
-                " ORDER BY f.created_at ASC LIMIT 1",
-                (d["id"], mid)
-            )
-            d["foto_destacada"] = (foto.get("archivo_path") if foto else None)
-        except Exception:
-            d["foto_destacada"] = None
+        # Foto destacada (batched arriba — sin queries individuales)
+        d["foto_destacada"] = fotos_por_ot.get(d["id"])
         ots.append(d)
 
     # Fotos cronológicas del equipo (de mant_maquina_fotos — capturadas
@@ -35766,31 +35825,55 @@ try:
 except Exception as _pickup_reg_err:
     print(f"[ILUS][WARN] register_pickup_routes: {_pickup_reg_err}")
 
-try:
-    with app.app_context():
-        init_db()
-    print("[ILUS] Tablas inicializadas correctamente.")
-except Exception as _init_err:
-    print(f"[ILUS][WARN] init_db: {_init_err}")
+# ════════════════════════════════════════════════════════════════════════
+#  COLD-START PERFORMANCE — saltar migraciones idempotentes en cada worker
+# ════════════════════════════════════════════════════════════════════════
+# Audit Daniel 2026-05-18: cada worker Gunicorn (max-requests=1000 + jitter)
+# se recicla periódicamente. Al arrancar, app.py ejecuta:
+#   - init_db()               → ~50 ALTER TABLE  + 5 CREATE TABLE
+#   - init_transporte_tables()
+#   - init_comunicaciones_tables()
+#   - init_mantenciones_tables() → ~200 ALTER TABLE + 30 CREATE TABLE
+# TOTAL: ~272 ALTER + 85 CREATE en cada cold start. Cada ALTER fallido
+# (porque la columna existe) es un round-trip a Clever Cloud MySQL — entre
+# 5-30ms cada uno. Worst case: 10+ segundos de cold-start.
+#
+# Solución: ENV VAR `ILUS_SKIP_MIGRATIONS=1` salta TODAS las migraciones.
+# La primera vez que se despliega (o cuando se agrega una migración nueva),
+# Daniel desactiva la env var por 1 deploy, luego la reactiva.
+# Default es CORRER las migraciones (backward compatible).
+_SKIP_MIGS = (os.environ.get("ILUS_SKIP_MIGRATIONS", "").strip().lower()
+              in ("1", "true", "yes", "on"))
 
-# init_transporte_tables usa get_mysql() (sin app context), siempre funciona
-try:
-    init_transporte_tables()
-    print("[ILUS] Tablas de transporte OK.")
-except Exception as _tr_init_err:
-    print(f"[ILUS][WARN] init_transporte_tables: {_tr_init_err}")
+if _SKIP_MIGS:
+    print("[ILUS][PERF] ILUS_SKIP_MIGRATIONS=1 — migraciones idempotentes "
+          "salteadas (cold-start rápido). Para correrlas: unset la var y redeploy.")
+else:
+    try:
+        with app.app_context():
+            init_db()
+        print("[ILUS] Tablas inicializadas correctamente.")
+    except Exception as _init_err:
+        print(f"[ILUS][WARN] init_db: {_init_err}")
 
-try:
-    init_comunicaciones_tables()
-    print("[ILUS] Tablas de comunicaciones OK.")
-except Exception as _comm_init_err:
-    print(f"[ILUS][WARN] init_comunicaciones_tables: {_comm_init_err}")
+    # init_transporte_tables usa get_mysql() (sin app context), siempre funciona
+    try:
+        init_transporte_tables()
+        print("[ILUS] Tablas de transporte OK.")
+    except Exception as _tr_init_err:
+        print(f"[ILUS][WARN] init_transporte_tables: {_tr_init_err}")
 
-try:
-    init_mantenciones_tables()
-    print("[ILUS] Tablas de mantenciones OK.")
-except Exception as _mant_init_err:
-    print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
+    try:
+        init_comunicaciones_tables()
+        print("[ILUS] Tablas de comunicaciones OK.")
+    except Exception as _comm_init_err:
+        print(f"[ILUS][WARN] init_comunicaciones_tables: {_comm_init_err}")
+
+    try:
+        init_mantenciones_tables()
+        print("[ILUS] Tablas de mantenciones OK.")
+    except Exception as _mant_init_err:
+        print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 
