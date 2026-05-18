@@ -498,25 +498,124 @@
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabPlantillas">
 
-      {# Selector de módulo (Transporte / Retiros) #}
-      <div class="d-flex align-items-center gap-2 mb-3 flex-wrap p-3"
-           style="background:#fafafa;border:1px solid #e5e7eb;border-radius:8px">
-        <strong style="font-size:.84rem;color:#374151">
-          <i class="bi bi-collection me-1" style="color:#dc2626"></i>Módulo:
-        </strong>
-        <div class="btn-group btn-group-sm" role="group">
-          <input type="radio" class="btn-check" name="tplModulo" id="modTransporte" value="transporte" checked
-                 onchange="cargarPlantillas(true)">
-          <label class="btn btn-outline-dark" for="modTransporte">
-            <i class="bi bi-truck me-1"></i>Transporte / Despachos
-          </label>
-          <input type="radio" class="btn-check" name="tplModulo" id="modRetiros" value="retiros"
-                 onchange="cargarPlantillas(true)">
-          <label class="btn btn-outline-dark" for="modRetiros">
-            <i class="bi bi-box-arrow-up me-1"></i>Retiros en bodega
-          </label>
-        </div>
-        <span class="ms-auto small text-muted" id="tplModuloHelp">
+      {# ── Selector de MÓDULOS (cards horizontales / scrollables en mobile) ── #}
+      <style>
+        .tpl-modulo-grid{
+          display:grid;
+          grid-template-columns:repeat(5, 1fr);
+          gap:10px;
+          margin-bottom:18px;
+        }
+        @media (max-width: 991.98px){
+          .tpl-modulo-grid{
+            grid-auto-flow:column;
+            grid-template-columns:auto;
+            grid-auto-columns:minmax(180px, 1fr);
+            overflow-x:auto;
+            scroll-snap-type:x mandatory;
+            padding-bottom:8px;
+            -webkit-overflow-scrolling:touch;
+          }
+          .tpl-modulo-card{scroll-snap-align:start}
+        }
+        .tpl-modulo-card{
+          background:#fff;
+          border:1.5px solid #e5e7eb;
+          border-radius:10px;
+          padding:14px 14px 12px;
+          cursor:pointer;
+          transition:all .15s ease;
+          position:relative;
+          min-height:44px;
+          display:flex;
+          flex-direction:column;
+          gap:4px;
+          text-align:left;
+        }
+        .tpl-modulo-card:hover{
+          border-color:#dc2626;
+          background:#fffafa;
+          transform:translateY(-1px);
+        }
+        .tpl-modulo-card.active{
+          border-color:#dc2626;
+          background:linear-gradient(180deg,#fff5f5 0,#fff 100%);
+          box-shadow:0 4px 12px rgba(220,38,38,.12);
+        }
+        .tpl-modulo-card.active::before{
+          content:"";
+          position:absolute;
+          top:-1.5px;left:-1.5px;right:-1.5px;
+          height:3px;
+          background:#dc2626;
+          border-radius:10px 10px 0 0;
+        }
+        .tpl-modulo-card .tmc-icon{
+          width:34px;height:34px;
+          border-radius:8px;
+          background:#fff5f5;
+          display:flex;align-items:center;justify-content:center;
+          color:#dc2626;font-size:1.05rem;
+          margin-bottom:4px;
+        }
+        .tpl-modulo-card.active .tmc-icon{
+          background:#dc2626;color:#fff;
+        }
+        .tpl-modulo-card .tmc-titulo{
+          font-size:.86rem;font-weight:700;color:#111;line-height:1.2;
+        }
+        .tpl-modulo-card .tmc-sub{
+          font-size:.7rem;color:#6b7280;line-height:1.3;
+        }
+        .tpl-modulo-card .tmc-count{
+          position:absolute;top:8px;right:10px;
+          background:#f3f4f6;color:#6b7280;
+          font-size:.65rem;font-weight:700;
+          padding:2px 7px;border-radius:50px;
+        }
+        .tpl-modulo-card.active .tmc-count{
+          background:#dc2626;color:#fff;
+        }
+      </style>
+
+      <div class="tpl-modulo-grid" id="tplModuloGrid">
+        <button type="button" class="tpl-modulo-card active" data-modulo="transporte"
+                onclick="seleccionarModulo('transporte', this)">
+          <div class="tmc-icon"><i class="bi bi-truck"></i></div>
+          <div class="tmc-titulo">Transporte</div>
+          <div class="tmc-sub">Pedidos, courier, despachos</div>
+        </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="retiros"
+                onclick="seleccionarModulo('retiros', this)">
+          <div class="tmc-icon"><i class="bi bi-box-arrow-up"></i></div>
+          <div class="tmc-titulo">Retiros</div>
+          <div class="tmc-sub">Retiros en bodega</div>
+        </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="mantenciones"
+                onclick="seleccionarModulo('mantenciones', this)">
+          <div class="tmc-icon"><i class="bi bi-wrench-adjustable"></i></div>
+          <div class="tmc-titulo">Mantenciones</div>
+          <div class="tmc-sub">OTs, visitas, técnicos</div>
+        </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="comunicacion_interna"
+                onclick="seleccionarModulo('comunicacion_interna', this)">
+          <div class="tmc-icon"><i class="bi bi-people"></i></div>
+          <div class="tmc-titulo">Comunicación interna</div>
+          <div class="tmc-sub">Usuarios, claves, accesos</div>
+        </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="general"
+                onclick="seleccionarModulo('general', this)">
+          <div class="tmc-icon"><i class="bi bi-folder"></i></div>
+          <div class="tmc-titulo">General</div>
+          <div class="tmc-sub">Otras plantillas</div>
+        </button>
+      </div>
+
+      {# Estado oculto del módulo seleccionado (input compat con código viejo) #}
+      <input type="hidden" name="tplModulo" id="tplModuloSelected" value="transporte">
+
+      <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+        <span class="small text-muted" id="tplModuloHelp">
           Plantillas que se envían al cliente por cada estado del proceso
         </span>
       </div>
@@ -1463,16 +1562,52 @@ const TPL_ESTADOS_RETIROS = [
     color:'#dc2626', desc:'Cuando la solicitud queda anulada' },
 ];
 
+const TPL_ESTADOS_MANTENCIONES = [
+  { key:'visita_agendada',     label:'Visita agendada',       icon:'bi-calendar-check',  grupo:'mantencion',
+    color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
+  { key:'ot_asignada',         label:'OT asignada a técnico', icon:'bi-person-check',    grupo:'mantencion',
+    color:'#f59e0b', desc:'Cuando se asigna una orden de trabajo a un técnico' },
+  { key:'recordatorio_visita', label:'Recordatorio visita',   icon:'bi-bell',            grupo:'mantencion',
+    color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
+  { key:'ot_completada',       label:'OT completada',         icon:'bi-check-circle-fill',grupo:'mantencion',
+    color:'#16a34a', desc:'Cuando se completa la visita y se firma la OT' },
+];
+
+const TPL_ESTADOS_COMUNICACION_INTERNA = [
+  { key:'usuario_nuevo',       label:'Crear usuario nuevo',     icon:'bi-person-plus',  grupo:'interna',
+    color:'#dc2626', desc:'Email + WhatsApp de bienvenida al crear cuenta nueva' },
+  { key:'cambio_clave',        label:'Cambio de contraseña',    icon:'bi-key',          grupo:'interna',
+    color:'#fd7e14', desc:'Aviso cuando se cambia la contraseña del usuario' },
+  { key:'olvido_contrasena',   label:'Olvido de contraseña',    icon:'bi-shield-lock',  grupo:'interna',
+    color:'#6f42c1', desc:'Link de recuperación cuando el usuario olvidó su clave' },
+];
+
+const TPL_ESTADOS_GENERAL = [];
+
 // Devuelve los estados según el módulo seleccionado en la UI
 function getCurrentModulo(){
-  const sel = document.querySelector('input[name=tplModulo]:checked');
+  const sel = document.getElementById('tplModuloSelected');
   return sel ? sel.value : 'transporte';
 }
 function getEstadosForModulo(){
   const m = getCurrentModulo();
-  if (m === 'retiros') return TPL_ESTADOS_RETIROS;
+  if (m === 'retiros')              return TPL_ESTADOS_RETIROS;
+  if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
+  if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
+  if (m === 'general')              return TPL_ESTADOS_GENERAL;
   return TPL_ESTADOS_TRANSPORTE;
 }
+
+// Selección de módulo desde las cards
+function seleccionarModulo(mod, cardEl){
+  const hidden = document.getElementById('tplModuloSelected');
+  if (hidden) hidden.value = mod;
+  // Actualiza visual de cards
+  document.querySelectorAll('.tpl-modulo-card').forEach(c => c.classList.remove('active'));
+  if (cardEl) cardEl.classList.add('active');
+  cargarPlantillas(true);
+}
+
 // Variable global compatibilidad — siempre apunta al módulo actual
 let TPL_ESTADOS = TPL_ESTADOS_TRANSPORTE;
 
@@ -1508,6 +1643,26 @@ const TPL_VARS = {
     { v:'{{warehouse_name}}',   label:'Nombre bodega' },
     { v:'{{warehouse_addr}}',   label:'Dirección bodega' },
     { v:'{{link_seguimiento}}', label:'Link de seguimiento' },
+  ],
+  mantencion: [
+    { v:'{{ot}}',               label:'N° Orden trabajo' },
+    { v:'{{cliente}}',          label:'Razón social cliente' },
+    { v:'{{tecnico}}',          label:'Nombre del técnico' },
+    { v:'{{fecha}}',            label:'Fecha visita' },
+    { v:'{{horario}}',          label:'Horario' },
+    { v:'{{direccion}}',        label:'Dirección visita' },
+    { v:'{{tipo_mantencion}}',  label:'Tipo de mantención' },
+    { v:'{{maquina}}',          label:'Equipo / Máquina' },
+    { v:'{{link_ot}}',          label:'Link a la OT' },
+  ],
+  interna: [
+    { v:'{{nombre_usuario}}',   label:'Nombre del usuario' },
+    { v:'{{email_usuario}}',    label:'Email del usuario' },
+    { v:'{{rol}}',              label:'Rol asignado' },
+    { v:'{{link_acceso}}',      label:'Link para crear/cambiar clave' },
+    { v:'{{fecha_hora}}',       label:'Fecha y hora' },
+    { v:'{{ip_acceso}}',        label:'IP de acceso' },
+    { v:'{{creado_por}}',       label:'Quien creó la cuenta' },
   ],
 };
 
@@ -1679,18 +1834,26 @@ function tplSetVisible(id, visible, displayValue='block') {
   }
 }
 
+// Etiquetas legibles por módulo (mostradas en panel y help)
+const MODULO_LABELS = {
+  transporte:           { name:'Transporte',           help:'Plantillas que se envían al cliente por cada estado del despacho' },
+  retiros:              { name:'Retiros',              help:'Plantillas que se envían al cliente en cada estado de su solicitud de retiro' },
+  mantenciones:         { name:'Mantenciones',         help:'Plantillas operacionales: OTs, visitas técnicas y notificaciones al cliente' },
+  comunicacion_interna: { name:'Comunicación interna', help:'Plantillas del ciclo de vida del usuario: bienvenida, claves y accesos' },
+  general:              { name:'General',              help:'Plantillas que no caen en ningún módulo específico' },
+};
+
 async function cargarPlantillas(force=false) {
   // Refrescar TPL_ESTADOS según el módulo actual
   const modulo = getCurrentModulo();
   TPL_ESTADOS = getEstadosForModulo();
 
   // Etiqueta visual del módulo actual
-  const lbl = document.getElementById('tplModuloLabel');
-  if (lbl) lbl.textContent = '— ' + (modulo === 'retiros' ? 'Retiros' : 'Transporte');
+  const lbl  = document.getElementById('tplModuloLabel');
+  const info = MODULO_LABELS[modulo] || MODULO_LABELS.transporte;
+  if (lbl) lbl.textContent = '— ' + info.name;
   const help = document.getElementById('tplModuloHelp');
-  if (help) help.textContent = modulo === 'retiros'
-    ? 'Plantillas que se envían al cliente en cada estado de su solicitud de retiro'
-    : 'Plantillas que se envían al cliente por cada estado del proceso';
+  if (help) help.textContent = info.help;
 
   if (force) {
     _tplLoaded = false;
@@ -1706,31 +1869,63 @@ async function cargarPlantillas(force=false) {
   }
   _tplLoaded = true;
   renderTplEstados();
-  if (!_tplEstado && TPL_ESTADOS.length) tplSeleccionar(TPL_ESTADOS[0].key);
-  else if (_tplEstado) tplMostrarVista();
+  if (!_tplEstado && TPL_ESTADOS.length) {
+    tplSeleccionar(TPL_ESTADOS[0].key);
+  } else if (_tplEstado && TPL_ESTADOS.find(e => e.key === _tplEstado)) {
+    tplMostrarVista();
+  } else {
+    // Módulo sin plantillas (ej: general) → mostrar placeholder
+    _tplEstado = null;
+    tplSetVisible('tplEditorWrap', false);
+    tplSetVisible('tplViewWrap', false);
+    tplSetVisible('tplEditorPlaceholder', true, 'flex');
+  }
 }
+
+// Etiquetas legibles e iconos por grupo de estados
+const GRUPO_LABELS = {
+  despacho:   { label:'Despacho',             icon:'bi-truck' },
+  sistema:    { label:'Sistema',              icon:'bi-gear' },
+  retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
+  mantencion: { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
+  interna:    { label:'Comunicación interna', icon:'bi-people' },
+};
 
 function renderTplEstados() {
   const list = document.getElementById('tplEstadoList');
+  if (!list) return;
+
+  // Caso especial: módulo "general" sin plantillas
+  if (!TPL_ESTADOS.length) {
+    list.innerHTML = `
+      <div style="padding:30px 18px;color:#999;font-size:.78rem;line-height:1.5;text-align:center">
+        <i class="bi bi-folder2-open" style="font-size:1.4rem;display:block;margin-bottom:8px;opacity:.4"></i>
+        Aún no hay plantillas en este módulo.
+        <div style="margin-top:6px;font-size:.7rem;color:#666">
+          Próximamente podrás crear plantillas personalizadas aquí.
+        </div>
+      </div>`;
+    return;
+  }
+
   let html = '';
   let lastGrupo = '';
   TPL_ESTADOS.forEach(e => {
     if (e.grupo !== lastGrupo) {
-      const gLabel = e.grupo === 'despacho' ? 'Despacho' : 'Sistema';
-      const gIcon  = e.grupo === 'despacho' ? 'bi-truck' : 'bi-gear';
+      const meta = GRUPO_LABELS[e.grupo] || { label: e.grupo, icon: 'bi-folder' };
       html += `<div style="padding:10px 16px 4px;color:#555;font-size:.58rem;font-weight:700;
                            text-transform:uppercase;letter-spacing:1.2px">
-                 <i class="bi ${gIcon} me-1"></i>${gLabel}</div>`;
+                 <i class="bi ${meta.icon} me-1"></i>${esc(meta.label)}</div>`;
       lastGrupo = e.grupo;
     }
     const isActive = _tplEstado === e.key;
     html += `<button onclick="tplSeleccionar('${e.key}')"
-               style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 18px;
+               style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 18px;
                       background:${isActive?'rgba(204,0,0,.18)':'transparent'};border:none;
                       border-left:3px solid ${isActive?'var(--ilus-red)':'transparent'};
                       color:${isActive?'#fff':'#aaa'};font-size:.84rem;font-weight:600;
-                      text-align:left;cursor:pointer;transition:.12s">
-               <i class="bi ${e.icon}" style="font-size:.9rem;flex-shrink:0;color:${e.color}"></i>
+                      text-align:left;cursor:pointer;transition:.12s;min-height:44px">
+               <i class="bi ${e.icon}" style="font-size:.95rem;flex-shrink:0;color:${e.color}"></i>
                ${esc(e.label)}
              </button>`;
   });
@@ -1748,12 +1943,19 @@ function tplSeleccionar(key) {
 // ── VISTA (solo lectura) ───────────────────────────────
 function tplMostrarVista() {
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
-  if (!meta) return;
+  if (!meta) {
+    // Sin plantillas → mantén el placeholder
+    tplSetVisible('tplViewWrap', false);
+    tplSetVisible('tplEditorWrap', false);
+    tplSetVisible('tplEditorPlaceholder', true, 'flex');
+    return;
+  }
   tplSetVisible('tplEditorPlaceholder', false);
   tplSetVisible('tplEditorWrap', false);
   tplSetVisible('tplViewWrap', true, 'block');
 
-  document.getElementById('tvEstadoBadge').textContent = meta.grupo === 'despacho' ? 'Despacho' : 'Sistema';
+  const grupoLabel = (GRUPO_LABELS[meta.grupo] || {}).label || meta.grupo;
+  document.getElementById('tvEstadoBadge').textContent = grupoLabel;
   document.getElementById('tvEstadoTitulo').textContent = meta.label;
   document.getElementById('tvMsg').innerHTML = '';
 
@@ -1954,14 +2156,15 @@ async function tplRestaurarTodo() {
   const d = await r.json();
   if (!d.ok) {
     if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudieron restaurar las plantillas', { type:'error' });
-    else alert(d.error || 'No se pudieron restaurar las plantillas');
     return;
   }
   _tplLoaded = false;
   _tplData = {};
   await cargarPlantillas();
   if (_tplEstado) tplMostrarVista();
-  alert('Plantillas ILUS restauradas correctamente');
+  if (typeof ilusToast === 'function') {
+    ilusToast('Plantillas ILUS restauradas correctamente', { type:'success' });
+  }
 }
 
 function tplVistaPreviaModal() {

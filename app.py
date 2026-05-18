@@ -14019,6 +14019,198 @@ def init_comunicaciones_tables():
                         (_est, _can, _asu, _cue)
                     )
                 except Exception: pass
+
+            # ── PLANTILLAS DE MANTENCIONES (siembra idempotente) ────────────
+            # Variables: {{ot}}, {{cliente}}, {{tecnico}}, {{fecha}}, {{horario}},
+            # {{direccion}}, {{tipo_mantencion}}, {{maquina}}, {{link_ot}}
+            _MANT_TPL = [
+                ('visita_agendada', 'email',
+                 'Visita técnica programada — {{ot}} ({{fecha}})',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'Te informamos que se ha programado una visita técnica en tus dependencias.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Orden:</strong>&nbsp; '
+                 '<span style="color:#dc2626;font-weight:700">{{ot}}</span></td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha:</strong>&nbsp; <strong>{{fecha}}</strong> · {{horario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:0;font-size:13px;color:#888;line-height:1.5">'
+                 'Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.</p>'),
+                ('visita_agendada', 'whatsapp',
+                 '',
+                 '🔧 *ILUS Mantenciones*\n\nHola *{{cliente}}*, agendamos visita técnica:\n\n'
+                 '📋 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}} ({{horario}})\n'
+                 '👷 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\n'
+                 'Si necesitas reagendar, escríbenos.'),
+
+                ('ot_asignada', 'email',
+                 'Nueva OT asignada — {{ot}}',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola {{tecnico}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'Se te asignó una nueva orden de trabajo. Revisa los detalles abajo.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #f59e0b;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
+                 '<span style="color:#dc2626;font-weight:700">{{ot}}</span></td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{cliente}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha visita:</strong>&nbsp; {{fecha}} · {{horario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:14px 0 0;font-size:13px"><a href="{{link_ot}}" style="background:#dc2626;color:#fff;'
+                 'padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">'
+                 'Ver orden de trabajo</a></p>'),
+                ('ot_asignada', 'whatsapp',
+                 '',
+                 '👷 *ILUS Mantenciones*\n\nHola *{{tecnico}}*, tienes una nueva OT asignada.\n\n'
+                 '📋 *OT:* {{ot}}\n🏢 *Cliente:* {{cliente}}\n📅 *Visita:* {{fecha}} ({{horario}})\n'
+                 '🔧 *Equipo:* {{maquina}}\n\n📲 Detalles: {{link_ot}}'),
+
+                ('recordatorio_visita', 'email',
+                 'Recordatorio — Visita mañana ({{fecha}})',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'Te recordamos que mañana tienes agendada una visita técnica.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff7ed;border-left:4px solid #fb923c;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📅 Fecha:</strong>&nbsp; '
+                 '<strong>{{fecha}}</strong> · {{horario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📋 OT:</strong>&nbsp; {{ot}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">👷 Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📍 Dirección:</strong>&nbsp; {{direccion}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:0;font-size:13px;color:#888;line-height:1.5">'
+                 'Por favor asegúrate de que alguien pueda recibir al técnico en el horario indicado.</p>'),
+                ('recordatorio_visita', 'whatsapp',
+                 '',
+                 '⏰ *ILUS Mantenciones*\n\nRecordatorio: mañana visita técnica.\n\n'
+                 '📅 *Fecha:* {{fecha}} ({{horario}})\n📋 *OT:* {{ot}}\n'
+                 '👷 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}'),
+
+                ('ot_completada', 'email',
+                 'OT {{ot}} completada — Reporte adjunto',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'El servicio de mantención se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#dcfce7;border-left:4px solid #16a34a;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
+                 '<span style="color:#16a34a;font-weight:700">{{ot}}</span></td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:0;font-size:13px;color:#444;line-height:1.6">'
+                 'Gracias por confiar en ILUS Sport & Health para el cuidado de tus equipos. '
+                 'Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.</p>'),
+                ('ot_completada', 'whatsapp',
+                 '',
+                 '✅ *ILUS Mantenciones*\n\nHola *{{cliente}}*, la OT *{{ot}}* fue completada exitosamente.\n\n'
+                 '🔧 *Servicio:* {{tipo_mantencion}}\n⚙️ *Equipo:* {{maquina}}\n'
+                 '👷 *Técnico:* {{tecnico}}\n\n¡Gracias por confiar en ILUS! 💪'),
+            ]
+            for _est, _can, _asu, _cue in _MANT_TPL:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                        "VALUES ('mantenciones', %s, %s, %s, %s)",
+                        (_est, _can, _asu, _cue)
+                    )
+                except Exception: pass
+
+            # ── PLANTILLAS DE COMUNICACIÓN INTERNA (siembra idempotente) ────
+            # Variables: {{nombre_usuario}}, {{email_usuario}}, {{rol}}, {{link_acceso}},
+            # {{fecha_hora}}, {{ip_acceso}}, {{creado_por}}
+            _INTERNA_TPL = [
+                ('usuario_nuevo', 'email',
+                 'Tu cuenta ILUS está lista — Crea tu contraseña',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Sport & Health.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; {{rol}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:14px 0 0;font-size:13px"><a href="{{link_acceso}}" style="background:#dc2626;color:#fff;'
+                 'padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">'
+                 'Crear mi contraseña</a></p>'
+                 '<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">'
+                 'Por seguridad, la contraseña no se envía. Debes crearla desde el botón. '
+                 'Este enlace vence en 7 días y solo puede usarse una vez.</p>'),
+                ('usuario_nuevo', 'whatsapp',
+                 '',
+                 '🎉 *ILUS Sport & Health*\n\nHola *{{nombre_usuario}}*, *{{creado_por}}* creó tu cuenta de acceso.\n\n'
+                 '📧 *Cuenta:* {{email_usuario}}\n👤 *Rol:* {{rol}}\n\n'
+                 '🔐 Crea tu contraseña aquí: {{link_acceso}}\n\n'
+                 '_Enlace válido por 7 días, un solo uso._'),
+
+                ('cambio_clave', 'email',
+                 'Tu contraseña ILUS fue actualizada',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'La contraseña de tu cuenta ILUS fue <strong>actualizada exitosamente</strong>.</p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>'
+                 '</table>'
+                 '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;'
+                 'font-size:13px;color:#664d03;margin-top:4px">'
+                 '🔒 Si <strong>no reconoces este cambio</strong>, contacta al administrador del sistema de inmediato.</div>'),
+                ('cambio_clave', 'whatsapp',
+                 '',
+                 '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, tu contraseña fue actualizada el *{{fecha_hora}}*.\n\n'
+                 '📧 *Cuenta:* {{email_usuario}}\n\nSi no realizaste este cambio, '
+                 'contacta al administrador de inmediato. 🚨'),
+
+                ('olvido_contrasena', 'email',
+                 'Recupera tu acceso a ILUS',
+                 '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
+                 '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+                 'Recibimos una solicitud para restablecer la contraseña de tu cuenta ILUS.</p>'
+                 '<p style="margin:14px 0;font-size:13px"><a href="{{link_acceso}}" style="background:#dc2626;color:#fff;'
+                 'padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">'
+                 'Restablecer contraseña</a></p>'
+                 '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
+                 'border-radius:4px;padding:14px 18px;margin:18px 0">'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+                 '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Solicitado:</strong>&nbsp; {{fecha_hora}}</td></tr>'
+                 '</table>'
+                 '<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">'
+                 'Este enlace vence en 60 minutos y solo puede usarse una vez. '
+                 'Si no solicitaste este cambio, ignora este correo.</p>'),
+                ('olvido_contrasena', 'whatsapp',
+                 '',
+                 '🔐 *ILUS — Recuperación de acceso*\n\nHola *{{nombre_usuario}}*, recibimos tu solicitud de '
+                 'restablecer contraseña.\n\n📧 *Cuenta:* {{email_usuario}}\n\n'
+                 '🔑 Restablece tu acceso: {{link_acceso}}\n\n'
+                 '_Enlace válido por 60 minutos, un solo uso._\n'
+                 'Si no fuiste tú, ignora este mensaje.'),
+            ]
+            for _est, _can, _asu, _cue in _INTERNA_TPL:
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                        "VALUES ('comunicacion_interna', %s, %s, %s, %s)",
+                        (_est, _can, _asu, _cue)
+                    )
+                except Exception: pass
+
+            # ── BACKFILL: mover plantillas viejas de "transporte" al módulo correcto ──
+            # Plantillas inicio_sesion y cambio_pass son de comunicación interna, no de transporte.
+            # Si quedaron sembradas como 'transporte' por el código viejo, las re-clasificamos.
+            try:
+                cur.execute(
+                    "UPDATE comm_templates SET modulo='comunicacion_interna' "
+                    "WHERE modulo='transporte' AND estado IN ('inicio_sesion','cambio_pass')"
+                )
+            except Exception: pass
+
             # ── Normalización: dejar máximo UNA fila por tabla (id=1) ────
             # Si por bugs anteriores quedaron filas duplicadas, conservamos
             # la más reciente y la forzamos a id=1 para que la lectura
@@ -15382,13 +15574,24 @@ def comm_wa_test():
         }), 500
 
 
+# Módulos válidos para plantillas — mantener sincronizado con el frontend
+_COMM_MODULOS_VALIDOS = (
+    "transporte",
+    "retiros",
+    "mantenciones",
+    "comunicacion_interna",
+    "general",
+)
+
+
 @app.route("/comunicaciones/templates", methods=["GET"])
 @_require_superadmin
 def comm_templates_get():
     """Devuelve plantillas agrupadas por estado.
-    Filtra por ?modulo=transporte (default), retiros, mantenciones."""
+    Filtra por ?modulo=transporte (default), retiros, mantenciones,
+    comunicacion_interna o general."""
     modulo = (request.args.get("modulo") or "transporte").strip()
-    if modulo not in ("transporte", "retiros", "mantenciones"):
+    if modulo not in _COMM_MODULOS_VALIDOS:
         modulo = "transporte"
     rows = mysql_fetchall(
         "SELECT * FROM comm_templates WHERE modulo=%s ORDER BY estado, canal",
@@ -15422,12 +15625,13 @@ def comm_templates_get():
 @_require_superadmin
 def comm_template_save(estado, canal):
     """Guarda/actualiza una plantilla para estado + canal en un módulo dado.
-    Body opcional: { modulo: 'transporte' | 'retiros' | 'mantenciones' }"""
+    Body opcional: { modulo: 'transporte' | 'retiros' | 'mantenciones' |
+                              'comunicacion_interna' | 'general' }"""
     if canal not in ("email", "whatsapp"):
         return jsonify({"error": "Canal inválido"}), 400
     d      = request.get_json(silent=True) or {}
     modulo = (d.get("modulo") or "transporte").strip()
-    if modulo not in ("transporte", "retiros", "mantenciones"):
+    if modulo not in _COMM_MODULOS_VALIDOS:
         modulo = "transporte"
     asunto = d.get("asunto", "")
     cuerpo = d.get("cuerpo", "")
@@ -15442,6 +15646,17 @@ def comm_template_save(estado, canal):
             (modulo, estado, canal, asunto, cuerpo, user)
         )
     conn.commit()
+    # Audit log del cambio
+    try:
+        _audit(
+            "comm_template_save",
+            target_type="comm_template",
+            target_id=f"{modulo}:{estado}:{canal}",
+            details={"modulo": modulo, "estado": estado, "canal": canal,
+                     "asunto_len": len(asunto or ""), "cuerpo_len": len(cuerpo or "")},
+        )
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
