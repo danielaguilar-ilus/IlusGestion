@@ -6791,12 +6791,35 @@ _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
 def _validate_uploaded_image(f, label="imagen"):
-    """Valida un FileStorage de imagen. Retorna (ext_ok, error_msg)."""
+    """Valida un FileStorage de imagen. Retorna (ext_ok, error_msg).
+
+    FIX 2026-05-17: si la extensión es desconocida (iOS a veces manda
+    el archivo sin extensión o como 'image' a secas), miramos el
+    mimetype como fallback. Sin esto, fotos legítimas de iPhone
+    eran rechazadas con "Formato no permitido".
+    """
     if not f or not f.filename:
         return None, f"Selecciona un archivo ({label})."
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+
+    # Fallback por mime cuando la extensión no se puede determinar o es desconocida.
+    # iOS Safari a veces envía files con name "image.jpg" pero mimetype real "image/heic".
     if ext not in _ALLOWED_IMAGE_EXTS:
-        return None, f"Formato no permitido en {label}. Usa PNG/JPG/WEBP/HEIC."
+        mime = (getattr(f, "mimetype", "") or "").lower()
+        mime_to_ext = {
+            "image/jpeg": "jpg", "image/jpg": "jpg",
+            "image/png": "png", "image/webp": "webp",
+            "image/heic": "heic", "image/heif": "heif",
+        }
+        if mime in mime_to_ext:
+            ext = mime_to_ext[mime]
+        elif mime.startswith("image/"):
+            # Mime es de imagen pero no reconocemos el subtipo — aceptar como JPG
+            # (Cloudinary se encarga de convertir igual)
+            ext = "jpg"
+        else:
+            return None, f"Formato no permitido en {label}. Usa PNG/JPG/WEBP/HEIC."
+
     # Tamaño aproximado (lee header sin cargar todo)
     f.stream.seek(0, 2)
     size = f.stream.tell()

@@ -7067,6 +7067,7 @@ function _adjIconClass(file){
   if (m.startsWith('image/')) return 'bi-camera text-primary';
   if (m === 'application/pdf' || n.endsWith('.pdf')) return 'bi-file-earmark-pdf text-danger';
   if (m.startsWith('video/')) return 'bi-film text-info';
+  if (m.startsWith('audio/')) return 'bi-mic text-purple';
   if (/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'bi-file-earmark-text text-secondary';
   return 'bi-file-earmark text-muted';
 }
@@ -7075,6 +7076,7 @@ const _LEV_ADJ_MAX = {
   foto:      15 * 1024 * 1024,
   pdf:       30 * 1024 * 1024,
   video:    100 * 1024 * 1024,
+  audio:     30 * 1024 * 1024,
   documento: 25 * 1024 * 1024,
   otro:      25 * 1024 * 1024,
 };
@@ -7084,6 +7086,7 @@ function _adjTipo(file){
   if (m.startsWith('image/')) return 'foto';
   if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
   if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'audio';
   if (/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'documento';
   return 'otro';
 }
@@ -10442,6 +10445,19 @@ function _planTabActualizarStatus(ctAnalizado) {
 }
 .lev-adj-rm:hover { background:#fee2e2; }
 
+/* Pills "abrir input por tipo" — mismo look que tenía la pestaña Info del técnico */
+.lev-adj-pill-input{
+  display:inline-flex;align-items:center;gap:.4rem;
+  padding:8px 14px;border:1.5px solid #cbd5e1;background:#fff;
+  border-radius:9999px;font-size:.78rem;font-weight:600;color:#475569;
+  cursor:pointer;transition:all .12s;min-height:38px;
+  user-select:none;
+}
+.lev-adj-pill-input:hover{filter:brightness(.97);transform:translateY(-1px);
+  box-shadow:0 3px 8px rgba(0,0,0,.08)}
+.lev-adj-pill-input:active{transform:scale(.97)}
+.lev-adj-pill-input i{font-size:.95rem}
+
 @media (max-width: 575.98px){
   .lev-yn-btn { min-width:80px; }
 }
@@ -10777,44 +10793,86 @@ function _planTabActualizarStatus(ctAnalizado) {
           </div>
         </div>
 
-        {# ─── Paso 7: Documentos preliminares (opcional) ─── #}
+        {# ════════════════════════════════════════════════════════════
+           Paso 7: Documentos y archivos preliminares
+           ────────────────────────────────────────────────────────────
+           2026-05-17 — REFACTOR UX: SUBIR ARCHIVOS VA AQUÍ.
+           El técnico es un VISOR — toda la información se sirve desde
+           este paso (cotizaciones, planos, fotos previas, videos, audios).
+           Los archivos se acumulan en memoria (_LEV.adjuntos_preliminares)
+           y se suben TRAS crear la OT al endpoint POST /mantenciones/api/visitas/<vid>/adjuntos.
+           Polish: 6 pills por tipo (PDF · Foto cámara · Galería · Video · Audio · Documento)
+           con inputs específicos + drag&drop genérico.
+           ════════════════════════════════════════════════════════════ #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">7</div>
-            <div class="lev-step-title">Documentos preliminares</div>
+            <div class="lev-step-title">Documentos y archivos preliminares</div>
             <div class="lev-step-sub">
               <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
             </div>
           </div>
           <div class="lev-step-body">
+            {# Input genérico (drag&drop o click en zone) — multi-archivo #}
             <input type="file" id="levAdjInput" multiple style="display:none"
-                   accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                   accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
                    onchange="onLevAdjFiles(this.files)">
             <div class="lev-adj-zone" id="levAdjZone"
                  onclick="document.getElementById('levAdjInput').click()"
                  ondragover="event.preventDefault(); this.classList.add('dragover')"
                  ondragleave="this.classList.remove('dragover')"
                  ondrop="event.preventDefault(); this.classList.remove('dragover'); onLevAdjFiles(event.dataTransfer.files)">
-              <div style="font-size:1.8rem;color:#94a3b8;margin-bottom:.4rem">
-                <i class="bi bi-cloud-arrow-up"></i>
+              <div style="font-size:1.9rem;color:#94a3b8;margin-bottom:.4rem">
+                <i class="bi bi-cloud-arrow-up-fill"></i>
               </div>
-              <div class="fw-semibold" style="color:#475569;font-size:.88rem">
-                Adjunta archivos preliminares
+              <div class="fw-semibold" style="color:#475569;font-size:.92rem">
+                Toca o arrastra para subir
               </div>
               <div class="text-muted" style="font-size:.74rem">
-                Arrastra aquí o haz clic — PDFs, fotos, documentos
-              </div>
-              <div class="mt-2 d-flex flex-wrap gap-1 justify-content-center">
-                <span class="lev-adj-pill"><i class="bi bi-file-earmark-pdf text-danger"></i>PDF</span>
-                <span class="lev-adj-pill"><i class="bi bi-camera text-primary"></i>Fotos</span>
-                <span class="lev-adj-pill"><i class="bi bi-file-earmark-text text-secondary"></i>Documentos</span>
+                PDFs, fotos, videos, audios o cualquier archivo (máx 100 MB)
               </div>
             </div>
+
+            {# Pills por tipo — 6 categorías con inputs específicos (mismo polish que tenía el técnico) #}
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <label class="lev-adj-pill-input" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
+                <i class="bi bi-file-earmark-pdf-fill"></i> PDF
+                <input type="file" accept="application/pdf" multiple style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-camera-fill"></i> Foto (cámara)
+                <input type="file" accept="image/*" capture="environment" style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-images"></i> Galería
+                <input type="file" accept="image/*" multiple style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
+                <i class="bi bi-camera-video-fill"></i> Video
+                <input type="file" accept="video/*" capture="environment" style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
+                <i class="bi bi-mic-fill"></i> Audio
+                <input type="file" accept="audio/*" capture style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
+                <i class="bi bi-file-earmark-text-fill"></i> Documento
+                <input type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" multiple style="display:none"
+                       onchange="onLevAdjFiles(this.files); this.value='';">
+              </label>
+            </div>
+
             <div id="levAdjList" class="mt-2"></div>
             <small class="text-muted d-block mt-2" style="font-size:.72rem">
               <i class="bi bi-info-circle me-1"></i>
-              Los archivos se suben automáticamente DESPUÉS de crear la OT. Ejemplos:
-              cotizaciones, planos, manuales, fotos previas de la sala.
+              Los archivos se suben automáticamente DESPUÉS de crear la OT.
+              El técnico podrá verlos como información — no podrá modificarlos.
+              Ejemplos: cotizaciones, planos, manuales, fotos previas, videos de inducción.
             </small>
           </div>
         </div>

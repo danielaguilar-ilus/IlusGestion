@@ -211,6 +211,129 @@
 .adj-btn:hover{background:#f8fafc;color:#0f172a}
 .adj-btn.danger:hover{background:#fee2e2;color:#dc2626;border-color:#fca5a5}
 
+/* ════════════════════════════════════════════════════════════
+   PIPELINE TRACKING — estilo logística (Uber Eats / FedEx)
+   2026-05-17 — Reemplaza la lista vertical estática.
+   Horizontal en desktop, vertical en mobile.
+   ════════════════════════════════════════════════════════════ */
+.pipeline-card{position:relative}
+.pipe-track{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  position:relative;padding:14px 4px 6px;
+  gap:4px;
+}
+/* Línea base (gris) — pseudo-elemento, debajo de los círculos */
+.pipe-track::before{
+  content:'';position:absolute;top:30px;left:calc(8.33% + 12px);right:calc(8.33% + 12px);
+  height:4px;background:#e5e7eb;border-radius:2px;z-index:0;
+}
+.pipe-step{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  text-align:center;position:relative;z-index:1;min-width:0;
+  padding:0 2px;
+}
+.pipe-step + .pipe-step::before{
+  /* Línea verde de "completado" entre el step previo y este (si el ANTERIOR está done) */
+  content:'';position:absolute;top:30px;right:calc(50% + 12px);width:calc(100% - 24px);
+  height:4px;background:transparent;z-index:0;border-radius:2px;
+  transition:background .3s;
+}
+.pipe-step.done + .pipe-step::before,
+.pipe-step.done.current + .pipe-step::before{background:#16a34a}
+/* CASO ESPECIAL: si el step actual TIENE línea hacia el anterior y el anterior está done */
+.pipe-step.done ~ .pipe-step.current::before{background:#16a34a}
+
+.pipe-circle{
+  width:36px;height:36px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:#fff;border:2.5px solid #cbd5e1;
+  color:#94a3b8;font-size:.95rem;
+  transition:all .25s;position:relative;z-index:2;
+  flex-shrink:0;
+}
+.pipe-step.done .pipe-circle{
+  background:#16a34a;border-color:#16a34a;color:#fff;
+  box-shadow:0 2px 8px rgba(22,163,74,.25);
+}
+.pipe-step.current .pipe-circle{
+  background:#dc2626;border-color:#dc2626;color:#fff;
+  box-shadow:0 0 0 5px rgba(220,38,38,.18);
+  animation:pipePulse 1.6s ease-in-out infinite;
+}
+.pipe-step.done.current .pipe-circle{
+  /* Caso edge: completada pero también es la actual visible */
+  background:#16a34a;border-color:#16a34a;
+}
+@keyframes pipePulse{
+  0%,100%{box-shadow:0 0 0 5px rgba(220,38,38,.18)}
+  50%{box-shadow:0 0 0 11px rgba(220,38,38,.08)}
+}
+.pipe-meta{margin-top:8px;min-width:0;width:100%}
+.pipe-label{
+  font-size:.72rem;font-weight:700;color:#0f172a;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.pipe-step:not(.done):not(.current) .pipe-label{color:#94a3b8;font-weight:600}
+.pipe-step.current .pipe-label{color:#dc2626}
+.pipe-time{
+  font-size:.66rem;color:#6b7280;margin-top:3px;font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+.pipe-step.done .pipe-time{color:#16a34a}
+.pipe-step.current .pipe-time{color:#dc2626;font-weight:700}
+
+/* Summary abajo */
+.pipe-summary{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-top:14px;padding:10px 12px;background:#f8fafc;
+  border-radius:10px;border:1px solid #e5e7eb;flex-wrap:wrap;gap:8px;
+}
+.pipe-summary-item{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.78rem;font-weight:600;color:#475569;
+}
+.pipe-summary-item i{color:#dc2626;font-size:.95rem}
+.pipe-current-tag{
+  background:#fee2e2;color:#b91c1c;padding:4px 10px;border-radius:9999px;
+  font-weight:700;font-size:.74rem;
+}
+.pipe-done-tag{
+  background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:9999px;
+  font-weight:700;font-size:.74rem;
+}
+.pipe-pulse-dot{
+  display:inline-block;width:8px;height:8px;background:#dc2626;
+  border-radius:50%;animation:pipePulseDot 1.2s ease-in-out infinite;
+}
+@keyframes pipePulseDot{
+  0%,100%{transform:scale(1);opacity:1}
+  50%{transform:scale(1.4);opacity:.5}
+}
+
+/* ── Mobile: vertical layout ── */
+@media (max-width: 640px){
+  .pipe-track{
+    flex-direction:column;align-items:stretch;
+    padding:8px 0;gap:0;
+  }
+  .pipe-track::before{display:none}
+  .pipe-step{
+    flex-direction:row;align-items:flex-start;text-align:left;
+    padding:0 0 16px 0;gap:12px;position:relative;
+  }
+  .pipe-step:last-child{padding-bottom:0}
+  /* Línea vertical entre circles */
+  .pipe-step:not(:last-child)::after{
+    content:'';position:absolute;left:17px;top:38px;bottom:0;
+    width:3px;background:#e5e7eb;border-radius:2px;z-index:0;
+  }
+  .pipe-step.done:not(:last-child)::after{background:#16a34a}
+  .pipe-step + .pipe-step::before{display:none}
+  .pipe-meta{margin-top:4px;text-align:left}
+  .pipe-label{font-size:.85rem;white-space:normal}
+  .pipe-time{font-size:.72rem}
+}
+
 /* ── Breadcrumb ── */
 .tx-crumbs{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#6b7280;
   margin-bottom:10px;padding:8px 0;flex-wrap:wrap}
@@ -534,44 +657,50 @@
     </div> {# /tx-hdr-extra #}
   </div>
 
-  {# ─── GPS BAR ─── #}
+  {# ─── GPS BAR ───
+       FIX 2026-05-17: las acciones son visibles SIEMPRE (display:flex),
+       no escondidas tras intentar auto-detección que en iOS Safari
+       jamás funciona. El botón "Capturar ahora" es prominente, rojo,
+       grande para que el técnico vea de una qué hacer. #}
   <div class="tx-gps" id="execGpsBar">
     <i class="bi bi-geo-alt-fill"></i>
     <div class="flex-grow-1">
-      <strong id="execGpsTitle">Detectando ubicación…</strong>
+      <strong id="execGpsTitle"><i class="bi bi-geo-alt"></i> Sin ubicación capturada</strong>
       <div id="execGpsSub" style="font-size:.72rem;opacity:.8">
-        Se registra para auditar que ejecutas la OT en el lugar correcto.
+        <small>Tocá <strong>Capturar ahora</strong> para registrar tu posición. iPhone te pedirá permiso la primera vez.</small>
       </div>
-      <div id="execGpsActions" style="display:none;flex-wrap:wrap;gap:6px;margin-top:7px">
+      <div id="execGpsActions" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px">
+        {# Botón principal — GRANDE y rojo (CTA) #}
         <button type="button" class="tx-gps-btn-retry"
                 onclick="pedirGPS(true)"
-                style="background:#dc2626;color:#fff;border:none;border-radius:6px;
-                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:34px;
-                       display:inline-flex;align-items:center;gap:5px;cursor:pointer">
-          <i class="bi bi-arrow-clockwise"></i> Reintentar GPS
+                style="background:#dc2626;color:#fff;border:none;border-radius:8px;
+                       padding:10px 14px;font-size:.82rem;font-weight:700;min-height:40px;
+                       display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+                       box-shadow:0 2px 8px rgba(220,38,38,.25)">
+          <i class="bi bi-geo-alt-fill"></i> Capturar ahora
         </button>
         <button type="button" class="tx-gps-btn-help"
                 onclick="mostrarAyudaGPS()"
                 style="background:#fff;color:#dc2626;border:1.5px solid #dc2626;
-                       border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;
-                       min-height:34px;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+                       border-radius:7px;padding:7px 12px;font-size:.75rem;font-weight:600;
+                       min-height:36px;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
           <i class="bi bi-question-circle"></i> ¿Cómo activar GPS?
         </button>
         <button type="button" class="tx-gps-btn-manual"
                 onclick="abrirManualGPS()"
-                style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;
-                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:34px;
+                style="background:#0a0a0a;color:#fff;border:none;border-radius:7px;
+                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:36px;
                        display:inline-flex;align-items:center;gap:5px;cursor:pointer">
-          <i class="bi bi-pencil-square"></i> Ingresar dirección manualmente
+          <i class="bi bi-pencil-square"></i> Ingresar manual
         </button>
         {# FIX 2026-05-17 — Botón Diagnóstico GPS para debug remoto en iPhone #}
         <button type="button" class="tx-gps-btn-diag"
                 onclick="mostrarDiagnosticoGPS()"
                 style="background:#fff;color:#475569;border:1px dashed #cbd5e1;
-                       border-radius:6px;padding:7px 12px;font-size:.72rem;font-weight:600;
-                       min-height:34px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
-                title="Mostrar log de qué estrategias GPS se intentaron — útil para reportar problemas">
-          <i class="bi bi-bug"></i> Diagnóstico GPS
+                       border-radius:6px;padding:6px 10px;font-size:.7rem;font-weight:600;
+                       min-height:32px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
+                title="Log de estrategias GPS — útil para reportar problemas">
+          <i class="bi bi-bug"></i> Diagnóstico
         </button>
       </div>
     </div>
@@ -696,64 +825,67 @@
     </div>
     {% endif %}
 
-    {# ─── Card: Documentos y archivos adjuntos ─── #}
+    {# ════════════════════════════════════════════════════════════
+       Card: Documentos y archivos PRELIMINARES (read-only)
+       ────────────────────────────────────────────────────────────
+       2026-05-17 — REFACTOR UX:
+       El técnico es un VISOR. Los archivos se cargan ANTES de
+       crear la OT en el modal "Generar OT" de la ficha del cliente.
+       Esta card solo MUESTRA esos adjuntos preliminares.
+       Sin uploader, sin botones de eliminar, sin pills por tipo.
+       (Las funciones JS subirAdjuntoFile/initAdjuntosDragDrop quedan
+       definidas para reúso futuro pero no hay UI que las dispare.)
+       ════════════════════════════════════════════════════════════ #}
     <div class="info-card">
       <h5>
-        <i class="bi bi-paperclip"></i>Documentos y archivos
+        <i class="bi bi-paperclip"></i>Documentos y archivos preliminares
         <small class="ms-auto text-muted" style="font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0">
-          PDFs · Fotos · Videos · Audios
+          Solo lectura · cargados al generar la OT
         </small>
       </h5>
 
-      {# Uploader: zona drag-drop con pills por tipo #}
-      <label class="adj-uploader" id="adjUploader" for="adjFileInput" style="margin-bottom:10px">
-        <i class="bi bi-cloud-arrow-up-fill"></i>
-        <div class="adj-uploader-text">Toca o arrastra para subir</div>
-        <div class="adj-uploader-hint">PDFs, fotos, videos, audios o cualquier archivo (máx 100 MB)</div>
-        <input type="file" id="adjFileInput" style="display:none"
-               accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.csv,.txt"
-               onchange="subirAdjuntoDesdeInput(this)">
-      </label>
+      {# Lista de adjuntos (read-only para el técnico) #}
+      <div class="adj-list" id="adjList">
+        <div class="text-center text-muted small py-2">
+          <i class="bi bi-hourglass-split"></i> Cargando adjuntos…
+        </div>
+      </div>
+    </div>
 
-      <div class="adj-tipo-pills" style="margin-bottom:10px">
-        <label class="adj-pill" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
-          <i class="bi bi-file-earmark-pdf-fill"></i> PDF
-          <input type="file" accept="application/pdf" style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'pdf')">
-        </label>
-        <label class="adj-pill" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
-          <i class="bi bi-camera-fill"></i> Foto (cámara)
-          <input type="file" accept="image/*" capture="environment" style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'foto')">
-        </label>
-        <label class="adj-pill" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
-          <i class="bi bi-images"></i> Galería
-          <input type="file" accept="image/*" style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'foto')">
-        </label>
-        <label class="adj-pill" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
-          <i class="bi bi-camera-video-fill"></i> Video
-          <input type="file" accept="video/*" capture="environment" style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'video')">
-        </label>
-        <label class="adj-pill" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
-          <i class="bi bi-mic-fill"></i> Audio
-          <input type="file" accept="audio/*" capture style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'audio')">
-        </label>
-        <label class="adj-pill" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
-          <i class="bi bi-file-earmark-text-fill"></i> Documento
-          <input type="file" accept=".doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none"
-                 onchange="subirAdjuntoDesdeInput(this, 'documento')">
-        </label>
-        {# Grabar video in-app (Feature 2 — 2026-05-17) #}
+    {# ════════════════════════════════════════════════════════════
+       Card: Evidencia de video — GRABADOR IN-APP
+       ────────────────────────────────────────────────────────────
+       2026-05-17 — Reubicado fuera de "Documentos".
+       Permite al técnico capturar EVIDENCIA en sitio (no es para
+       compartir docs preliminares). Va etiquetado y se sube a
+       Cloudinary; aparece luego en la lista de adjuntos preliminares.
+       ════════════════════════════════════════════════════════════ #}
+    <div class="info-card">
+      <h5>
+        <i class="bi bi-camera-video-fill"></i>Evidencia de video
+        <small class="ms-auto text-muted" style="font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0">
+          Grabación en sitio
+        </small>
+      </h5>
+      <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;
+                  padding:12px 14px;display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <div style="font-size:1.6rem;color:#dc2626">
+          <i class="bi bi-record-circle-fill"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;color:#0f172a;font-size:.9rem">¿Necesitas grabar evidencia?</div>
+          <div style="font-size:.74rem;color:#6b7280;line-height:1.4">
+            Falla, inspección, antes/después, capacitación. Se etiqueta y queda asociada a la OT.
+          </div>
+        </div>
         <button type="button" class="adj-pill" id="btnGrabarVideo"
                 style="background:#0a0a0a;border-color:#0a0a0a;color:#fff;
                        font-weight:700;letter-spacing:.02em;cursor:pointer;
                        box-shadow:0 3px 10px rgba(220,38,38,.25);
-                       border-left:3px solid #dc2626"
+                       border-left:3px solid #dc2626;flex-shrink:0;
+                       padding:9px 14px;min-height:44px;font-size:.82rem"
                 onclick="abrirGrabador()">
-          <i class="bi bi-record-circle-fill" style="color:#dc2626"></i> Grabar video
+          <i class="bi bi-record-circle-fill" style="color:#dc2626"></i> Grabar
         </button>
       </div>
 
@@ -923,51 +1055,156 @@
         </div>
       </div>
 
-      {# Progreso de upload genérico (oculto por defecto) #}
-      <div id="adjProgressWrap" style="display:none;margin-bottom:10px">
-        <div style="background:#e5e7eb;border-radius:6px;overflow:hidden;height:8px">
-          <div id="adjProgressBar" style="height:100%;background:linear-gradient(90deg,#dc2626,#f87171);width:0%;transition:width .25s"></div>
-        </div>
-        <div id="adjProgressText" class="small text-muted mt-1">Subiendo…</div>
-      </div>
-
-      {# Lista de adjuntos #}
-      <div class="adj-list" id="adjList">
-        <div class="text-center text-muted small py-2">
-          <i class="bi bi-hourglass-split"></i> Cargando adjuntos…
-        </div>
-      </div>
     </div>
 
-    {# ─── Card: Mini-resumen progreso (pipeline) ─── #}
-    <div class="info-card">
-      <h5><i class="bi bi-bar-chart-line-fill"></i>Pipeline de la OT</h5>
-      <div id="pipelineList" style="display:flex;flex-direction:column;gap:6px;font-size:.84rem">
-        {% set est = (visita.estado or '').lower() %}
-        {% set pasos = [
-          ('asignada', 'Asignada al técnico', 'bi-person-check-fill'),
-          ('iniciada', 'En ruta al cliente', 'bi-signpost-split-fill'),
-          ('en_ejecucion', 'Ejecutando tareas', 'bi-tools'),
-          ('pendiente_aprobacion', 'Firmada — pendiente aprobación', 'bi-pen-fill'),
-          ('cerrada', 'OT cerrada', 'bi-check-circle-fill'),
-        ] %}
-        {% set orden = ['asignada','iniciada','en_ejecucion','pendiente_aprobacion','cerrada'] %}
-        {% set idx_actual = orden.index(est) if est in orden else 0 %}
-        {% for k, label, icono in pasos %}
-        {% set i = loop.index0 %}
-        {% set estado_paso = 'done' if i < idx_actual else ('current' if i == idx_actual else 'pending') %}
-        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;
-          {% if estado_paso == 'done' %}background:#dcfce7;color:#15803d
-          {% elif estado_paso == 'current' %}background:#fef3c7;color:#92400e;border:1.5px solid #fcd34d;font-weight:700
-          {% else %}background:#f3f4f6;color:#6b7280{% endif %}">
-          <i class="bi {{ 'bi-check-circle-fill' if estado_paso == 'done' else icono }}"
-             style="font-size:1rem"></i>
-          <span>{{ label }}</span>
-          {% if estado_paso == 'current' %}
-          <span class="ms-auto" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800">Actual</span>
-          {% endif %}
+    {# ════════════════════════════════════════════════════════════
+       Card: PIPELINE DE LA OT — tracking dinámico tipo logística
+       ────────────────────────────────────────────────────────────
+       2026-05-17 — REFACTOR estilo Uber Eats / FedEx / MercadoLibre.
+       6 fases (Asignada · En ruta · En sitio · Ejecutando · Firmada · Cerrada).
+       Derivado del estado + timestamps reales de la BD.
+       Visualización: horizontal en desktop, vertical en mobile.
+       ════════════════════════════════════════════════════════════ #}
+    {% set _est = (visita.estado or '').lower() %}
+    {# Inferir timestamps por cada fase. Usamos visita.get(...) para que
+       las columnas opcionales (no aún migradas) retornen None silenciosamente. #}
+    {% set ts_asignada = visita.get('created_at') %}
+    {% set ts_ruta     = visita.get('ruta_iniciada_at') %}
+    {% set ts_sitio    = visita.get('llego_al_sitio_at') %}
+    {% set ts_ejec     = visita.get('hora_real_inicio') %}
+    {% set ts_firma    = visita.get('firma_tecnico_at') %}
+    {% set ts_cerrada  = visita.get('firma_supervisor_at') or visita.get('cerrada_at') or visita.get('hora_real_fin') %}
+    {# Booleans completados (un paso está hecho si tiene timestamp REAL o si el estado avanzó pasado él) #}
+    {% set done_asignada = true %}  {# siempre done — la OT existe #}
+    {% set done_ruta     = (ts_ruta) or (_est in ['en_ejecucion','pendiente_aprobacion','cerrada']) %}
+    {% set done_sitio    = (ts_sitio) or (ts_ejec) or (_est in ['en_ejecucion','pendiente_aprobacion','cerrada']) %}
+    {% set done_ejec     = (ts_ejec) or (_est in ['pendiente_aprobacion','cerrada']) %}
+    {% set done_firma    = (ts_firma) or (visita.get('firma_tecnico_url')) or (_est == 'cerrada') %}
+    {% set done_cerrada  = (ts_cerrada) or (_est == 'cerrada') %}
+
+    {# Calcular el "current" — primer paso no-done #}
+    {% set _ns_pipe = namespace(found=false, idx=0) %}
+    {% set _flags = [done_asignada, done_ruta, done_sitio, done_ejec, done_firma, done_cerrada] %}
+    {% for f in _flags %}
+      {% if not f and not _ns_pipe.found %}
+        {% set _ns_pipe.idx = loop.index0 %}
+        {% set _ns_pipe.found = true %}
+      {% endif %}
+    {% endfor %}
+    {% if not _ns_pipe.found %}{% set _ns_pipe.idx = 6 %}{% endif %}  {# todos done #}
+
+    <div class="info-card pipeline-card">
+      <h5>
+        <i class="bi bi-truck"></i>Pipeline de la OT
+        <small class="ms-auto text-muted" style="font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0">
+          Seguimiento en tiempo real
+        </small>
+      </h5>
+
+      {# Track horizontal (desktop) / vertical (mobile) con steps conectados #}
+      <div class="pipe-track" id="pipeTrack">
+        {# Step 1: Asignada #}
+        <div class="pipe-step {{ 'done' if done_asignada else '' }} {{ 'current' if _ns_pipe.idx == 0 else '' }}"
+             data-ts="{{ ts_asignada or '' }}" data-key="asignada">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-check-lg' if (done_asignada and _ns_pipe.idx != 0) else 'bi-person-check-fill' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">Asignada</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_asignada or '' }}">
+              {% if ts_asignada %}{{ ts_asignada | chile_fmt('%d/%m %H:%M') }}{% else %}—{% endif %}
+            </div>
+          </div>
         </div>
-        {% endfor %}
+
+        {# Step 2: En ruta #}
+        <div class="pipe-step {{ 'done' if done_ruta else '' }} {{ 'current' if _ns_pipe.idx == 1 else '' }}"
+             data-ts="{{ ts_ruta or '' }}" data-key="ruta">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-check-lg' if (done_ruta and _ns_pipe.idx != 1) else 'bi-signpost-split-fill' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">En ruta</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_ruta or '' }}">
+              {% if ts_ruta %}{{ ts_ruta | chile_fmt('%d/%m %H:%M') }}{% elif _ns_pipe.idx == 1 %}En curso{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Step 3: En sitio #}
+        <div class="pipe-step {{ 'done' if done_sitio else '' }} {{ 'current' if _ns_pipe.idx == 2 else '' }}"
+             data-ts="{{ ts_sitio or '' }}" data-key="sitio">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-check-lg' if (done_sitio and _ns_pipe.idx != 2) else 'bi-geo-alt-fill' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">En sitio</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_sitio or '' }}">
+              {% if ts_sitio %}{{ ts_sitio | chile_fmt('%d/%m %H:%M') }}{% elif _ns_pipe.idx == 2 %}Pendiente{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Step 4: Ejecutando #}
+        <div class="pipe-step {{ 'done' if done_ejec else '' }} {{ 'current' if _ns_pipe.idx == 3 else '' }}"
+             data-ts="{{ ts_ejec or '' }}" data-key="ejec">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-check-lg' if (done_ejec and _ns_pipe.idx != 3) else 'bi-tools' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">Ejecutando</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_ejec or '' }}">
+              {% if ts_ejec %}{{ ts_ejec | chile_fmt('%d/%m %H:%M') }}{% elif _ns_pipe.idx == 3 %}En curso{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Step 5: Pendiente aprobación (firma técnico) #}
+        <div class="pipe-step {{ 'done' if done_firma else '' }} {{ 'current' if _ns_pipe.idx == 4 else '' }}"
+             data-ts="{{ ts_firma or '' }}" data-key="firma">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-check-lg' if (done_firma and _ns_pipe.idx != 4) else 'bi-pen-fill' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">Pend. aprobación</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_firma or '' }}">
+              {% if ts_firma %}{{ ts_firma | chile_fmt('%d/%m %H:%M') }}{% elif _ns_pipe.idx == 4 %}Esperando supervisor{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Step 6: Cerrada #}
+        <div class="pipe-step {{ 'done' if done_cerrada else '' }} {{ 'current' if _ns_pipe.idx == 5 else '' }}"
+             data-ts="{{ ts_cerrada or '' }}" data-key="cerrada">
+          <div class="pipe-circle">
+            <i class="bi {{ 'bi-trophy-fill' if done_cerrada else 'bi-flag-fill' }}"></i>
+          </div>
+          <div class="pipe-meta">
+            <div class="pipe-label">Cerrada</div>
+            <div class="pipe-time" data-ts-iso="{{ ts_cerrada or '' }}">
+              {% if ts_cerrada %}{{ ts_cerrada | chile_fmt('%d/%m %H:%M') }}{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# Resumen abajo (tiempo transcurrido / ETA) #}
+      <div class="pipe-summary" id="pipeSummary">
+        <div class="pipe-summary-item">
+          <i class="bi bi-stopwatch-fill"></i>
+          <span id="pipeTotalElapsed">—</span>
+        </div>
+        {% if _ns_pipe.idx < 6 %}
+        <div class="pipe-summary-item pipe-current-tag">
+          <span class="pipe-pulse-dot"></span>
+          <span id="pipeCurrentLabel">Avanzando…</span>
+        </div>
+        {% else %}
+        <div class="pipe-summary-item pipe-done-tag">
+          <i class="bi bi-check-circle-fill"></i>
+          <span>Completada</span>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -1831,33 +2068,39 @@ async function _gpsByIP(){
   throw new Error('Todos los servicios de IP geolocation fallaron');
 }
 
-// Cascade A→B→C→D — devuelve { lat, lng, accuracy, method } o lanza error
+// ════════════════════════════════════════════════════════════════
+//  Cascade NATIVO — devuelve { lat, lng, accuracy, method } o lanza
+//  ─────────────────────────────────────────────────────────────────
+//  FIX 2026-05-17 CRÍTICO PARA iOS Safari:
+//   Antes esto hacía `await navigator.permissions.query(...)` ANTES de
+//   llamar a getCurrentPosition. En iOS Safari, **cualquier await que
+//   resuelve antes de getCurrentPosition rompe el contexto de gesto del
+//   usuario** → el prompt nativo NUNCA aparecía o aparecía sin permisos.
+//   Ahora vamos DIRECTO: el primer call es getCurrentPosition síncrono
+//   dentro del mismo "tick" del evento click. Sin permissions.query
+//   previo, sin awaits previos.
+//  Estrategias en orden (todas SIN await previo):
+//    A) getCurrentPosition(highAccuracy=true, 10s) — el que dispara prompt
+//    B) getCurrentPosition(highAccuracy=false, 6s) — workaround iOS hang
+//    C) watchPosition(8s) — fallback idle bug iOS
+//  Si todos fallan con code=1 (denied), se propaga para que el caller
+//  muestre el modal de ayuda. Cualquier otro error → fallback IP/manual.
+// ════════════════════════════════════════════════════════════════
 async function _gpsCascade(){
   if (!navigator.geolocation){
-    throw new Error('Geolocalización no soportada');
-  }
-  // ── A) Pre-check de permisos ──
-  let permState = 'unknown';
-  if (navigator.permissions && navigator.permissions.query){
-    try {
-      const status = await navigator.permissions.query({ name: 'geolocation' });
-      permState = status.state;
-      _gpsLog('permission_state', permState);
-      if (permState === 'denied'){
-        const err = new Error('PERMISSION_DENIED');
-        err.code = 1;
-        throw err;
-      }
-    } catch(e){
-      if (e && e.code === 1) throw e; // re-lanzar denied
-      _gpsLog('permission_query_failed', e.message);
-    }
+    const err = new Error('Geolocalización no soportada');
+    err.code = 2;
+    throw err;
   }
 
-  // ── B) High accuracy (8s) ──
+  // ⚠️ NO permissions.query acá. Ese await rompía el gesto en iOS.
+  // En vez de eso, dejamos que el primer getCurrentPosition haga
+  // el prompt nativo si nunca pidió, o devuelva error 1 si denied.
+
+  // ── A) High accuracy (10s) — CALL DIRECTO desde gesto ──
   try {
     _gpsLog('try_high_accuracy');
-    const pos = await _gpsGetPosition(true, 8000);
+    const pos = await _gpsGetPosition(true, 10000);
     _gpsLog('high_accuracy_ok', { acc: pos.coords.accuracy });
     return {
       lat: pos.coords.latitude,
@@ -1870,10 +2113,10 @@ async function _gpsCascade(){
     if (e.code === 1) throw e; // permission denied → no insistir
   }
 
-  // ── C) Low accuracy (5s) — workaround iOS ──
+  // ── B) Low accuracy (6s) — workaround iOS ──
   try {
     _gpsLog('try_low_accuracy');
-    const pos = await _gpsGetPosition(false, 5000);
+    const pos = await _gpsGetPosition(false, 6000);
     _gpsLog('low_accuracy_ok', { acc: pos.coords.accuracy });
     return {
       lat: pos.coords.latitude,
@@ -1886,10 +2129,10 @@ async function _gpsCascade(){
     if (e.code === 1) throw e;
   }
 
-  // ── D) watchPosition (6s) — fallback iOS idle bug ──
+  // ── C) watchPosition (8s) — fallback iOS idle bug ──
   try {
     _gpsLog('try_watch');
-    const pos = await _gpsWatch(6000);
+    const pos = await _gpsWatch(8000);
     _gpsLog('watch_ok', { acc: pos.coords.accuracy });
     return {
       lat: pos.coords.latitude,
@@ -1928,7 +2171,12 @@ async function capturarGPS(tid, mid, pid){
               { type:'warning', duration: 2400 });
     return await capturarGPSManual(tid, mid, pid);
   }
-  ilusToast('📡 Pidiendo permiso GPS…', { type:'info', duration: 1500 });
+  // ⚠️ IMPORTANTE iOS Safari: NO await ningún modal antes del cascade.
+  // ilusToast es síncrono (no devuelve Promise resuelto antes del cascade)
+  // así que mantiene el contexto de gesto del usuario.
+  // El primer getCurrentPosition dentro de _gpsCascade dispara EL PROMPT
+  // NATIVO de iOS si nunca pidió permiso, o resuelve directo si ya tiene.
+  ilusToast('📡 Pidiendo GPS…', { type:'info', duration: 1500 });
   let r = null;
   try {
     r = await _gpsCascade();
@@ -1939,29 +2187,39 @@ async function capturarGPS(tid, mid, pid){
       // Permission DENIED → modal ayuda + alternativas siempre
       const eleccion = await ilusConfirm({
         title: '📍 Permiso GPS denegado',
-        message: 'No podemos pedir el GPS hasta que actives los permisos. ' +
-                 'Mientras tanto podés <strong>escribir la dirección</strong> ' +
-                 'o usar <strong>ubicación aproximada por IP</strong>.',
+        message: 'iPhone bloqueó el GPS para esta página. Tenés que activarlo en ' +
+                 '<strong>Ajustes → Privacidad → Servicios de Ubicación → Safari</strong>. ' +
+                 'Mientras tanto, podés <strong>escribir la dirección a mano</strong>.',
         messageHtml: true,
-        sub: 'Tocá "Ver instrucciones" para aprender a activar el GPS en tu iPhone.',
+        sub: 'Tocá "Ver instrucciones" para el paso a paso completo.',
         type: 'warning',
-        okLabel: 'Ver instrucciones GPS',
+        okLabel: 'Ver instrucciones iPhone',
         cancelLabel: 'Escribir dirección',
       });
       if (eleccion){ mostrarAyudaGPS(); return; }
       return await capturarGPSManual(tid, mid, pid);
     }
-    // Cualquier otro error (timeout, etc) → IP o manual
+    if (err && err.code === 2){
+      // Position unavailable → "intenta afuera"
+      ilusToast('GPS no disponible. Intenta al aire libre.', { type:'error', duration: 3500 });
+    } else if (err && err.code === 3){
+      // Timeout
+      ilusToast('GPS lento — intenta de nuevo.', { type:'warning', duration: 3500 });
+    }
+    // Cualquier otro error (timeout, etc) → opción IP o manual
     const eleccion = await ilusConfirm({
-      title: '📡 GPS no disponible ahora',
+      title: '📡 GPS no respondió',
       message: 'No pudimos obtener tu ubicación exacta. ¿Cómo querés continuar?',
-      sub: 'IP es aproximada (~5km). Manual te deja escribir la dirección exacta ' +
-           'con autocomplete de Google.',
+      sub: 'Reintentá si fue lento. Si no funciona, IP es aproximada (~5km) o ' +
+           'manual te deja escribir la dirección con Google.',
       type: 'warning',
-      okLabel: '🌐 Usar IP aproximada',
+      okLabel: '🔄 Reintentar GPS',
       cancelLabel: '✏️ Escribir dirección',
     });
-    if (eleccion){ return await capturarGPSPorIP(tid, mid, pid); }
+    if (eleccion){
+      // Reintento del cascade DIRECTO (sigue siendo gesto del usuario)
+      return await capturarGPS(tid, mid, pid);
+    }
     return await capturarGPSManual(tid, mid, pid);
   }
   // ÉXITO GPS — validar radio (warning, no bloquea aún)
@@ -1976,6 +2234,9 @@ async function capturarGPS(tid, mid, pid){
     accuracy: r.accuracy || null,
     source: r.method === 'ip' ? 'ip' : (r.method === 'manual' ? 'manual' : 'gps'),
   });
+  // FIX 2026-05-17: también refrescamos la GPS bar arriba con el resultado
+  // (antes solo se mostraba en la tarea — Daniel quería verla SIEMPRE)
+  try { await _gpsRegistrarResultado(r); } catch(_){}
 }
 
 // ── Capturar por IP (salta GPS) — usado por el botón "Usar IP" ──
@@ -2291,11 +2552,111 @@ document.addEventListener('DOMContentLoaded', () => {
     pls.forEach(p => { totG += p.total; compG += p.completas; });
   });
   actualizarLockFirmar(totG, compG);
-  // Cargar lista de adjuntos en la pestaña Información
+  // Cargar lista de adjuntos en la pestaña Información (read-only)
   cargarAdjuntos();
-  // Drag&drop sobre el uploader
+  // Drag&drop sobre el uploader (no-op si no existe el uploader — técnico)
   initAdjuntosDragDrop();
+  // Pipeline tracking: actualizar "tiempo transcurrido" cada 60s
+  actualizarPipelineTimes();
+  setInterval(actualizarPipelineTimes, 60_000);
 });
+
+// ════════════════════════════════════════════════════════════
+//  PIPELINE TRACKING — tiempo transcurrido + ETA
+//  2026-05-17 — Refresca labels "Hace X min" / "Hace X horas"
+//  desde data-ts-iso en cada .pipe-time, sin reload de página.
+// ════════════════════════════════════════════════════════════
+function _humanizeAgo(ts){
+  // ts: ISO string (UTC desde MySQL) o Date
+  if (!ts) return '';
+  let d;
+  try {
+    // MySQL devuelve 'YYYY-MM-DD HH:MM:SS' (sin TZ) — asumir UTC
+    if (typeof ts === 'string'){
+      const norm = ts.replace(' ', 'T');
+      d = new Date(norm.endsWith('Z') || norm.includes('+') ? norm : norm + 'Z');
+    } else {
+      d = ts;
+    }
+    if (isNaN(d.getTime())) return '';
+  } catch(e){ return ''; }
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return 'En segundos';
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return 'Hace ' + secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return 'Hace ' + mins + ' min';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24){
+    const restoMin = mins % 60;
+    return restoMin ? `Hace ${hrs}h ${restoMin}m` : `Hace ${hrs}h`;
+  }
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `Hace ${days}d`;
+  return d.toLocaleDateString('es-CL');
+}
+
+function actualizarPipelineTimes(){
+  // Sobre cada .pipe-time con data-ts-iso, agrega el "Hace X" debajo
+  // Mantiene el timestamp legible original (hora Chile) como primer línea.
+  const items = document.querySelectorAll('.pipe-time[data-ts-iso]');
+  items.forEach(el => {
+    const ts = el.getAttribute('data-ts-iso');
+    if (!ts || ts === 'None' || ts === '') return;
+    const ago = _humanizeAgo(ts);
+    if (!ago) return;
+    // Solo añadir el "Hace X" si no existe ya el span "data-ago"
+    let span = el.querySelector('span[data-ago]');
+    if (!span){
+      // Si el contenido actual es un texto plano (timestamp formateado),
+      // lo envolvemos en un span fijo y agregamos otro span con "Hace X" debajo.
+      const txtActual = el.textContent.trim();
+      el.innerHTML = `<span style="display:block">${_escapeHtml(txtActual)}</span>
+                      <span data-ago style="display:block;font-size:.6rem;color:#94a3b8;font-weight:500;margin-top:1px">${_escapeHtml(ago)}</span>`;
+    } else {
+      span.textContent = ago;
+    }
+  });
+
+  // Total elapsed: desde el primer timestamp (asignada/created) hasta ahora
+  // O hasta el último timestamp si la OT ya está cerrada.
+  const firstStep = document.querySelector('.pipe-step[data-key="asignada"]');
+  const lastDone = document.querySelector('.pipe-step.done[data-key="cerrada"]');
+  const elapsedEl = document.getElementById('pipeTotalElapsed');
+  if (!elapsedEl) return;
+  const tStart = firstStep ? firstStep.getAttribute('data-ts') : null;
+  if (!tStart || tStart === 'None'){ elapsedEl.textContent = '—'; return; }
+  let tEnd = null;
+  if (lastDone){ tEnd = lastDone.getAttribute('data-ts'); }
+  try {
+    const norm = (s) => {
+      const n = s.replace(' ', 'T');
+      return new Date(n.endsWith('Z') || n.includes('+') ? n : n + 'Z');
+    };
+    const dStart = norm(tStart);
+    const dEnd = (tEnd && tEnd !== 'None') ? norm(tEnd) : new Date();
+    const diffMs = dEnd.getTime() - dStart.getTime();
+    if (diffMs < 0){ elapsedEl.textContent = '—'; return; }
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60){ elapsedEl.textContent = `${tEnd ? 'Cerrada en' : 'Iniciada hace'} ${mins} min`; return; }
+    const hrs = Math.floor(mins / 60);
+    const rmin = mins % 60;
+    const txt = rmin ? `${hrs}h ${rmin}m` : `${hrs}h`;
+    elapsedEl.textContent = (tEnd ? 'Cerrada en ' : 'Iniciada hace ') + txt;
+  } catch(e){
+    elapsedEl.textContent = '—';
+  }
+
+  // Etiqueta del paso actual
+  const currLbl = document.getElementById('pipeCurrentLabel');
+  if (currLbl){
+    const currentStep = document.querySelector('.pipe-step.current:not(.done)');
+    if (currentStep){
+      const lblEl = currentStep.querySelector('.pipe-label');
+      if (lblEl) currLbl.textContent = lblEl.textContent.trim();
+    }
+  }
+}
 
 // ════════════════════════════════════════════════════════
 //  HEADER COLAPSABLE — más espacio para tareas en móvil
@@ -2388,7 +2749,10 @@ async function cargarAdjuntos(){
     if (!items.length){
       cont.innerHTML = `<div class="text-muted small text-center py-3" style="font-style:italic">
         <i class="bi bi-folder-x" style="font-size:1.5rem;display:block;margin-bottom:4px;opacity:.4"></i>
-        Sin archivos adjuntos aún
+        Sin documentos preliminares cargados
+        <div style="font-size:.7rem;margin-top:4px;color:#94a3b8">
+          Pídele al supervisor que adjunte cotizaciones, planos o manuales al generar la OT.
+        </div>
       </div>`;
       return;
     }
@@ -2456,10 +2820,9 @@ function renderAdjuntoItem(a){
       ${url ? `<a class="adj-btn" href="${_escapeAttr(url)}" target="_blank" title="Ver / descargar">
         <i class="bi bi-eye-fill"></i>
       </a>` : ''}
-      ${VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'pendiente_aprobacion' ?
-        `<button class="adj-btn danger" onclick="eliminarAdjunto(${a.id})" title="Eliminar">
-          <i class="bi bi-trash3-fill"></i>
-        </button>` : ''}
+      {# 2026-05-17 — REFACTOR UX: la pestaña Info del técnico es SOLO LECTURA.
+         El técnico no puede eliminar adjuntos preliminares.
+         (eliminarAdjunto sigue definida pero ningún botón la dispara desde acá.) #}
     </div>
   </div>`;
 }
@@ -3049,9 +3412,15 @@ async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
 
 // ════════════════════════════════════════════════════════════════
 //  GPS BAR (auditoría de inicio de ejecución)
-//  Usa el motor _gpsCascade + opciones de fallback (IP / manual)
-//  Listener visibilitychange: cuando el usuario vuelve de Ajustes
-//  iOS, reintenta automáticamente.
+//  ──────────────────────────────────────────────────────────────
+//  FIX 2026-05-17 CRÍTICO iOS: NO disparamos getCurrentPosition en
+//  page load. iOS Safari requiere gesto de usuario, y un auto-call
+//  desde DOMContentLoaded NUNCA muestra el prompt nativo de iOS.
+//  En vez de eso:
+//   - Si NO tenemos GPS aún: mostramos "Sin ubicación · [Capturar ahora]".
+//   - Si forzar=true (usuario tocó "Capturar ahora"): cascade NATIVO directo.
+//   - Suscribimos permisson change (no-await, en idle) para refrescar UI
+//     cuando el usuario vuelve de Ajustes.
 // ════════════════════════════════════════════════════════════════
 async function pedirGPS(forzar = false){
   const bar = document.getElementById('execGpsBar');
@@ -3067,59 +3436,94 @@ async function pedirGPS(forzar = false){
     if (actions) actions.style.display = 'flex';
     return;
   }
-  // Suscribirse a cambios de permiso una sola vez (sin esto, no detectamos
-  // cuando el usuario vuelve de Ajustes con el permiso activado).
+  // ── Suscripción a cambios de permiso (idle, no bloquea gesto) ──
   if (!window.__gpsPermSubscribed && navigator.permissions && navigator.permissions.query){
-    try {
-      const status = await navigator.permissions.query({ name: 'geolocation' });
-      status.onchange = () => {
-        _gpsLog('permission_changed', status.state);
-        if (status.state === 'granted' && !window.__ilusGPS) pedirGPS(true);
-      };
-      window.__gpsPermSubscribed = true;
-    } catch(e){ _gpsLog('subscribe_perm_failed', e.message); }
+    // ⚠️ NO await acá si forzar=true — rompería el gesto. Lo hacemos en background.
+    Promise.resolve().then(async () => {
+      try {
+        const status = await navigator.permissions.query({ name: 'geolocation' });
+        status.onchange = () => {
+          _gpsLog('permission_changed', status.state);
+          // Refrescamos UI; si granted y no tenemos GPS, mostramos botón visible
+          if (status.state === 'granted'){
+            ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Ubicación lista — tocá para capturar';
+            sub.innerHTML = '<small>Permiso concedido. Tocá <strong>Capturar ahora</strong>.</small>';
+          }
+        };
+        window.__gpsPermSubscribed = true;
+      } catch(e){ _gpsLog('subscribe_perm_failed', e.message); }
+    });
   }
 
-  // Estado intermedio en el banner
+  // ── Si NO es forzado y NO tenemos GPS aún → solo mostrar el placeholder ──
+  // En iOS Safari, el auto-prompt jamás funciona (sin gesto). Mostramos el
+  // CTA grande para que el técnico decida tocarlo. Esto es lo que el prompt
+  // nativo necesita.
+  if (!forzar && !window.__ilusGPS){
+    bar.classList.remove('gps-ok', 'gps-err');
+    ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Sin ubicación capturada';
+    sub.innerHTML = '<small>Tocá <strong>Capturar ahora</strong> para registrar tu posición. ' +
+                    'iPhone te pedirá permiso la primera vez.</small>';
+    if (actions) actions.style.display = 'flex';
+    return;
+  }
+
+  // Si ya tenemos GPS y no se forzó, solo re-renderizamos el banner
+  if (!forzar && window.__ilusGPS){
+    _gpsRefrescarBanner();
+    return;
+  }
+
+  // ── forzar=true (usuario tocó "Capturar ahora") ──
+  // Estado intermedio
   ttl.innerHTML = '<i class="bi bi-arrow-repeat"></i> Detectando ubicación…';
-  sub.innerHTML = '<small>Buscando GPS (puede tomar unos segundos)…</small>';
+  sub.innerHTML = '<small>Si iPhone te pregunta, tocá <strong>Permitir</strong>.</small>';
   bar.classList.remove('gps-ok', 'gps-err');
   if (actions) actions.style.display = 'none';
 
   let result = null;
   try {
+    // CALL DIRECTO — el await del cascade va ANTES de cualquier otro await
     result = await _gpsCascade();
   } catch(err){
     _gpsLog('cascade_failed_main', { code: err.code, msg: err.message });
     if (err.code === 1){
-      // Denegado → mostrar bar de error + acciones
+      // Denegado → mostrar bar de error + acciones + auto-abrir ayuda
       bar.classList.add('gps-err');
       ttl.innerHTML = '<i class="bi bi-shield-x"></i> Permiso de ubicación denegado';
-      sub.innerHTML = '<small>Para registrar tu posición tenés que activar el GPS o ingresar la dirección a mano.</small>';
+      sub.innerHTML = '<small>iPhone bloqueó el GPS. Tocá <strong>¿Cómo activar GPS?</strong> para ver instrucciones.</small>';
       if (actions) actions.style.display = 'flex';
       return;
     }
-    // Fallaron todas las estrategias nativas — intentar IP como auto-fallback
-    try {
-      _gpsLog('try_ip_fallback');
-      const ip = await _gpsByIP();
-      result = ip;
-      ilusToast('Usando ubicación aproximada por IP', { type: 'warning', duration: 3000 });
-    } catch(e){
-      _gpsLog('ip_fallback_failed', e.message);
-      bar.classList.add('gps-err');
-      ttl.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> No pudimos detectar tu ubicación';
-      sub.innerHTML = '<small>Tocá <strong>Reintentar</strong> o <strong>Ingresá la dirección a mano</strong> para continuar.</small>';
-      if (actions) actions.style.display = 'flex';
-      return;
+    // Otros errores (timeout, unavailable) → opción reintento + alternativas
+    bar.classList.add('gps-err');
+    if (err.code === 3){
+      ttl.innerHTML = '<i class="bi bi-clock-history"></i> GPS lento — intenta de nuevo';
+      sub.innerHTML = '<small>El iPhone tardó demasiado. Salí al aire libre y tocá <strong>Reintentar GPS</strong>.</small>';
+    } else if (err.code === 2){
+      ttl.innerHTML = '<i class="bi bi-wifi-off"></i> GPS no disponible';
+      sub.innerHTML = '<small>Tu iPhone no puede obtener GPS ahora. Probá afuera o usá <strong>ingresar manual</strong>.</small>';
+    } else {
+      ttl.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> No pudimos detectar ubicación';
+      sub.innerHTML = '<small>Tocá <strong>Reintentar</strong> o <strong>ingresá la dirección a mano</strong>.</small>';
     }
+    if (actions) actions.style.display = 'flex';
+    return;
   }
 
-  // Éxito (GPS o IP) — registrar y mostrar
+  // Éxito (GPS) — registrar y mostrar
   await _gpsRegistrarResultado(result);
 }
 
+// Refresca el banner sin volver a pedir GPS (cuando ya tenemos resultado)
+function _gpsRefrescarBanner(){
+  const r = window.__ilusGPS;
+  if (!r) return;
+  _gpsRegistrarResultado(r);
+}
+
 // Aplica el resultado al banner + lo persiste en el backend
+// FIX 2026-05-17: muestra coords + dirección + "captured X min ago"
 async function _gpsRegistrarResultado(result){
   const bar = document.getElementById('execGpsBar');
   const ttl = document.getElementById('execGpsTitle');
@@ -3131,6 +3535,9 @@ async function _gpsRegistrarResultado(result){
   window.__ilusGPS = result;
   window.__execOrigenLat = lat;
   window.__execOrigenLng = lng;
+  // Timestamp en ms — usado para "captured X min ago"
+  if (!result.capturedAt) result.capturedAt = Date.now();
+  window.__execGpsCapturedAt = result.capturedAt;
 
   // Si vino con `dir` (IP) ya tenemos dirección legible. Si no, reverse geocoding.
   let dir = result.dir || '';
@@ -3140,6 +3547,7 @@ async function _gpsRegistrarResultado(result){
         { headers: { 'Accept-Language': 'es' } });
       const dj = await rev.json();
       dir = dj.display_name || '';
+      result.dir = dir; // cache para refresh
     } catch(e) { /* sin dirección, OK */ }
   }
 
@@ -3154,13 +3562,16 @@ async function _gpsRegistrarResultado(result){
   } else {
     bar.style.background = ''; bar.style.borderColor = '';
   }
-  ttl.innerHTML = `<i class="bi bi-${isApprox ? 'geo' : 'check-circle-fill'}"></i> ${methodLabel}` +
-                  (isApprox ? '' : ' registrada');
-  sub.innerHTML = dir
-    ? `<small>${_escapeHtml(dir)}</small>`
-    : `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}${result.accuracy ? ` (±${Math.round(result.accuracy)}m)` : ''}</small>`;
-  // Si fue IP/manual, mantenemos acciones visibles para que pueda reintentar GPS
-  if (actions) actions.style.display = (method === 'gps_high' || method === 'gps_low') ? 'none' : 'flex';
+  ttl.innerHTML = `<i class="bi bi-${isApprox ? 'geo' : 'check-circle-fill'}"></i> ` +
+                  `${methodLabel}: <span style="font-family:monospace;font-weight:700">` +
+                  `${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+  const accStr = result.accuracy ? ` ±${Math.round(result.accuracy)}m` : '';
+  const ago = _gpsTimeAgo(result.capturedAt);
+  const dirStr = dir ? `<div>${_escapeHtml(dir)}</div>` : '';
+  sub.innerHTML = `<small>${dirStr}<span style="color:#6b7280">capturado ${ago}${accStr}</span></small>`;
+  // SIEMPRE mostrar las acciones (incluyendo recapturar) para que el técnico
+  // pueda actualizar la posición en cualquier momento.
+  if (actions) actions.style.display = 'flex';
 
   // Persistir en backend (best-effort)
   try {
@@ -3173,6 +3584,34 @@ async function _gpsRegistrarResultado(result){
     });
   } catch(e) { _gpsLog('exec_gps_persist_failed', e.message); }
 }
+
+// "hace X min" formato humano para el banner GPS
+function _gpsTimeAgo(ts){
+  if (!ts) return 'recién';
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 30) return 'recién';
+  if (secs < 90) return 'hace 1 min';
+  if (secs < 3600) return 'hace ' + Math.floor(secs/60) + ' min';
+  if (secs < 7200) return 'hace 1 hora';
+  return 'hace ' + Math.floor(secs/3600) + ' horas';
+}
+
+// Refresca solo el "hace X min" en el banner cada 30s sin re-pedir GPS
+setInterval(() => {
+  if (window.__ilusGPS && window.__execGpsCapturedAt){
+    const sub = document.getElementById('execGpsSub');
+    if (!sub) return;
+    // Solo si el banner está en "OK" state (no en error o capturando)
+    const bar = document.getElementById('execGpsBar');
+    if (!bar || !bar.classList.contains('gps-ok')) return;
+    // Re-render solo el "hace X min" sin cambiar la dirección
+    const r = window.__ilusGPS;
+    const accStr = r.accuracy ? ` ±${Math.round(r.accuracy)}m` : '';
+    const ago = _gpsTimeAgo(r.capturedAt);
+    const dirStr = r.dir ? `<div>${_escapeHtml(r.dir)}</div>` : '';
+    sub.innerHTML = `<small>${dirStr}<span style="color:#6b7280">capturado ${ago}${accStr}</span></small>`;
+  }
+}, 30000);
 
 // ════════════════════════════════════════════════════════
 //  AYUDA: cómo activar GPS en cada navegador
@@ -3353,7 +3792,12 @@ async function mostrarAyudaGPS(){
     cancelLabel: 'Cerrar',
   });
   if (reintentar){
-    setTimeout(() => pedirGPS(true), 200);
+    // El "OK" del modal cuenta como gesto. Si el permiso ya está
+    // 'granted' (porque el técnico volvió de Ajustes), getCurrentPosition
+    // funciona aunque pase un setTimeout (los browsers cachean el estado
+    // de gesto unos ms). Damos delay corto para que el modal se cierre
+    // antes de mostrar el banner intermedio.
+    setTimeout(() => pedirGPS(true), 150);
   }
 }
 
@@ -3654,18 +4098,29 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// ─── Auto-retry cuando el usuario vuelve a la pestaña tras cambiar permisos ──
-// En iOS, al volver de Ajustes el visibilitychange se dispara → si aún no
-// tenemos GPS y el permiso ya está OK, reintentamos solo.
+// ─── Auto-refresh del banner cuando el usuario vuelve a la pestaña tras Ajustes ──
+// FIX 2026-05-17: en iOS Safari, getCurrentPosition desde visibilitychange NO tiene
+// gesto del usuario → falla silenciosamente. Lo que hacemos:
+//   1. Actualizar el banner para que el técnico vea claro que tiene que tocar
+//      el botón nuevamente.
+//   2. Si permissions.query reporta 'granted', mostrar mensaje de éxito que
+//      lo invite a re-capturar.
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !window.__ilusGPS){
     // Pequeño delay para que el navegador termine de re-renderizar
     setTimeout(() => {
-      // Solo si seguimos sin GPS
-      if (!window.__ilusGPS){
-        _gpsLog('visibility_retry');
-        pedirGPS(true);
-      }
+      if (window.__ilusGPS) return;
+      _gpsLog('visibility_back');
+      // Re-render del banner para que el técnico vea el CTA grande otra vez
+      const bar = document.getElementById('execGpsBar');
+      const ttl = document.getElementById('execGpsTitle');
+      const sub = document.getElementById('execGpsSub');
+      const actions = document.getElementById('execGpsActions');
+      if (!bar || !ttl || !sub) return;
+      bar.classList.remove('gps-ok', 'gps-err');
+      ttl.innerHTML = '<i class="bi bi-geo-alt"></i> Volviste — listo para capturar';
+      sub.innerHTML = '<small>Si activaste el permiso en Ajustes, tocá <strong>Capturar ahora</strong>.</small>';
+      if (actions) actions.style.display = 'flex';
     }, 600);
   }
 });
