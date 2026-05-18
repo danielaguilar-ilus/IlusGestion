@@ -3982,11 +3982,16 @@ def login():
             print(f"[login_ok audit] {_e_au}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
-    # Anti-cache para forzar al navegador a recargar diseño actualizado
+    # FIX 2026-05-18 (perf): cache privado corto (30s) en GET /login.
+    # El HTML cambia muy poco entre requests y antes lo forzábamos a
+    # `no-store` que invalidaba el cache del navegador en cada toque.
+    # `private, max-age=30` permite back-button instantáneo sin filtrar
+    # entre usuarios (Vary: Cookie ya lo segmenta) y ahorra round-trips.
+    # POST sigue siendo no-cache porque retornamos render dentro del if
+    # de validación, no llega acá.
     resp = make_response(render_template("login.html", next_url=next_url, username="", login_images=imgs, marca=_get_marca()))
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
+    resp.headers["Cache-Control"] = "private, max-age=30"
+    resp.headers["Vary"] = "Cookie"
     return resp
 
 
@@ -19732,6 +19737,82 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
             " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL",
             (vid,)
         ) or []
+        fuente_maquinas = "tareas"
+
+        # ── FIX 2026-05-18 — Fallback A: si las tareas no traen maquina_id,
+        # buscar en mant_levantamiento_items (las máquinas que el técnico
+        # capturó durante el wizard de levantamiento). Esto es lo más común
+        # cuando el levantamiento se hizo desde el wizard y NO desde la
+        # ejecución de la OT (las tareas quedaron sin maquina_id).
+        if not maquinas:
+            lev_id = v.get("levantamiento_id")
+            # mant_visitas.levantamiento_id puede no venir en el SELECT inicial
+            if lev_id is None:
+                try:
+                    _row_lev = mysql_fetchone(
+                        "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if _row_lev:
+                        lev_id = _row_lev.get("levantamiento_id")
+                except Exception:
+                    lev_id = None
+            if lev_id:
+                try:
+                    maquinas = mysql_fetchall(
+                        "SELECT DISTINCT maquina_id FROM mant_levantamiento_items "
+                        " WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
+                        (lev_id,)
+                    ) or []
+                    if maquinas:
+                        fuente_maquinas = "levantamiento_items"
+                except Exception as _e_li:
+                    print(f"[promover_lev] vid={vid} fallback levantamiento_items error: {_e_li}",
+                          flush=True)
+
+        # ── FIX 2026-05-18 — Fallback B: si nada de lo anterior dio fruto,
+        # tomar todas las máquinas vinculadas al cliente de la visita. Esto
+        # solo aplica si la visita tiene cliente_id y es el último recurso
+        # para que un cierre de OT no quede sin promoción a ficha. Si el
+        # cliente tiene muchísimas máquinas (>20) NO usamos este fallback
+        # para evitar promover ruido.
+        if not maquinas:
+            try:
+                _cli = mysql_fetchone(
+                    "SELECT cliente_id FROM mant_visitas WHERE id=%s", (vid,)
+                )
+                _cid = (_cli or {}).get("cliente_id")
+                if _cid:
+                    _max_cli = mysql_fetchall(
+                        "SELECT id AS maquina_id FROM mant_maquinas "
+                        " WHERE cliente_id=%s "
+                        "   AND COALESCE(estado,'activo') <> 'baja' "
+                        " LIMIT 25",
+                        (_cid,)
+                    ) or []
+                    if 0 < len(_max_cli) <= 20:
+                        maquinas = _max_cli
+                        fuente_maquinas = "cliente_maquinas"
+            except Exception as _e_cm:
+                print(f"[promover_lev] vid={vid} fallback cliente_maquinas error: {_e_cm}",
+                      flush=True)
+
+        print(f"[promover_lev] vid={vid} tipo={(v.get('tipo') or '')} "
+              f"estado={(v.get('estado') or '')} maquinas={len(maquinas)} "
+              f"fuente={fuente_maquinas}", flush=True)
+        if not maquinas:
+            print(f"[promover_lev] vid={vid} NO tiene tareas con maquina_id, "
+                  f"tampoco levantamiento_items ni máquinas del cliente — "
+                  f"nada que promover", flush=True)
+            try:
+                _mant_log("visita", vid, "levantamiento_no_promovido",
+                          f"tipo={v.get('tipo')}, estado={v.get('estado')}, "
+                          f"sin máquinas vinculadas a tareas ni a "
+                          f"mant_levantamiento_items. Verificar "
+                          f"mant_visita_tareas.maquina_id o asociar el "
+                          f"levantamiento_id a la visita.")
+            except Exception:
+                pass
 
         for row in maquinas:
             mid = row.get("maquina_id")
@@ -19902,9 +19983,11 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
         try:
             _mant_log("visita", vid, "levantamiento_promovido",
                       f"equipos procesados: {out['procesados']} · "
-                      f"aplicados: {out['aplicados']} · errores: {out['errores']}")
+                      f"aplicados: {out['aplicados']} · errores: {out['errores']} · "
+                      f"fuente: {fuente_maquinas}")
         except Exception:
             pass
+        out["fuente"] = fuente_maquinas
         return out
     except Exception as e:
         print(f"[promover_lev] error general vid={vid}: {e}", flush=True)
@@ -21287,9 +21370,38 @@ def mant_ultimo_cliente():
 @_mant_required
 @_no_tecnico
 def mant_ficha(cid):
+    try:
+        return _mant_ficha_impl(cid)
+    except Exception as _e_ficha:
+        import traceback as _tb
+        print(f"[ficha-cli] cid={cid} ERROR: {_e_ficha}\n{_tb.format_exc()}",
+              flush=True)
+        try:
+            flash(
+                f"No se pudo cargar la ficha del cliente #{cid}. "
+                f"Reporta este código al admin: cid={cid}.",
+                "danger")
+        except Exception:
+            pass
+        return redirect(url_for("mant_clientes"))
+
+
+def _mant_ficha_impl(cid):
     cliente   = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return redirect(url_for("mant_clientes"))
+    # FIX 2026-05-18 — defensiva contra rows legacy con campos None.
+    # El template ficha.html hace `cliente.estado.title()` directo en varios
+    # lugares, así que un valor None reventaría el render. Forzamos
+    # defaults sensatos antes de pasar al template.
+    try:
+        cliente = dict(cliente)
+        if not (cliente.get("estado") or "").strip():
+            cliente["estado"] = "activo"
+        if not (cliente.get("razon_social") or "").strip():
+            cliente["razon_social"] = f"Cliente #{cid}"
+    except Exception:
+        pass
 
     # ── Helper: normaliza datetime/date de MySQL a datetime.date ──────────
     def _d(val):
@@ -21338,6 +21450,13 @@ def mant_ficha(cid):
                   'created_at', 'updated_at'):
             if k in r:
                 r[k] = _d(r[k])
+        # FIX 2026-05-18 — defensiva: estado/nombre/nivel_riesgo nunca None.
+        # El template usa .replace().title() directo sobre contratos[0].estado
+        # y otros campos, así que un None hace 500.
+        if r.get('estado') is None:
+            r['estado'] = ''
+        if r.get('nivel_riesgo') is None:
+            r['nivel_riesgo'] = ''
         return r
 
     def _norm_visita(row):
@@ -21352,6 +21471,13 @@ def mant_ficha(cid):
             r['hora_inicio'] = _h(r.get('hora_inicio'))
         if 'hora_fin' in r:
             r['hora_fin'] = _h(r.get('hora_fin'))
+        # FIX 2026-05-18 — defensiva: tipo/estado/titulo nunca None.
+        # El template usa .title() y .replace() directamente sobre estos
+        # campos en varios sitios, así que si vienen None la ficha
+        # explota. Forzar string vacío evita 500 silencioso.
+        for _k in ('tipo', 'estado', 'titulo', 'tecnico'):
+            if _k in r and r[_k] is None:
+                r[_k] = ''
         return r
 
     # 2026-05-15: filtrar máquinas dadas de baja del listado principal de la ficha.
@@ -21542,11 +21668,15 @@ def mant_ficha(cid):
         })
     # 4. Próxima mantención cercana
     if dias_hasta_prox is not None and 0 <= dias_hasta_prox <= 7:
+        # FIX 2026-05-18 — defensiva: .get("x","") devuelve None si la
+        # clave existe con None. Usar `or ""` antes de .title() evita el
+        # AttributeError típico de "NoneType has no attribute 'title'".
+        _detalle_tipo = (prox_visita.get("tipo") or "").title()
         alertas_smart.append({
             "tipo": "info",
             "icon": "calendar-check",
             "titulo": f"Próxima visita en {dias_hasta_prox} día{'s' if dias_hasta_prox != 1 else ''}",
-            "detalle": prox_visita.get("titulo") or prox_visita.get("tipo","").title(),
+            "detalle": (prox_visita.get("titulo") or "") or _detalle_tipo or "Visita",
         })
 
     stats = {
@@ -36136,8 +36266,11 @@ _SKIP_MIGS = (os.environ.get("ILUS_SKIP_MIGRATIONS", "").strip().lower()
               in ("1", "true", "yes", "on"))
 
 if _SKIP_MIGS:
-    print("[ILUS][PERF] ILUS_SKIP_MIGRATIONS=1 — migraciones idempotentes "
-          "salteadas (cold-start rápido). Para correrlas: unset la var y redeploy.")
+    print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
+          "init_transporte_tables / init_comunicaciones_tables / "
+          "init_mantenciones_tables. Para correr migraciones nuevas: "
+          "unset ILUS_SKIP_MIGRATIONS en Railway y redeploy (1 deploy), "
+          "luego reactivar para cold-starts rápidos.", flush=True)
 else:
     try:
         with app.app_context():

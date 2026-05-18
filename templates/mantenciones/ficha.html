@@ -1176,7 +1176,7 @@
               'tipo':   'log',
               'fecha':  l.created_at,
               'fecha_str': (l.created_at.strftime('%Y-%m-%d') if l.created_at else '0000-00-00'),
-              'titulo': l.accion.replace('_',' ').capitalize(),
+              'titulo': ((l.accion or '')|replace('_',' '))|capitalize,
               'detalle': l.detalle,
               'usuario': l.usuario,
             }) %}
