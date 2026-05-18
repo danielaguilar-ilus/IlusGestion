@@ -686,13 +686,9 @@
                        min-height:36px;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
           <i class="bi bi-question-circle"></i> ¿Cómo activar GPS?
         </button>
-        <button type="button" class="tx-gps-btn-manual"
-                onclick="abrirManualGPS()"
-                style="background:#0a0a0a;color:#fff;border:none;border-radius:7px;
-                       padding:7px 12px;font-size:.75rem;font-weight:600;min-height:36px;
-                       display:inline-flex;align-items:center;gap:5px;cursor:pointer">
-          <i class="bi bi-pencil-square"></i> Ingresar manual
-        </button>
+        {# FIX 2026-05-17 — Botón "Ingresar manual" ELIMINADO por política
+           de auditoría: solo se acepta GPS real del dispositivo. Daniel
+           necesita controlar que el técnico no manipule su ubicación. #}
         {# FIX 2026-05-17 — Botón Diagnóstico GPS para debug remoto en iPhone #}
         <button type="button" class="tx-gps-btn-diag"
                 onclick="mostrarDiagnosticoGPS()"
@@ -1664,24 +1660,23 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       ctrlHtml = `<div class="ctrl">
         <div style="display:flex;flex-direction:column;gap:8px">
           <button type="button" class="tx-btn-gps"
-            style="min-height:50px;font-size:.92rem;justify-content:center;font-weight:700"
+            style="min-height:54px;font-size:.95rem;justify-content:center;font-weight:800"
             ${bloqueada ? 'disabled' : ''}
             onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
             <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación (GPS)
           </button>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button type="button"
-              style="flex:1;min-height:40px;background:#fff;color:#0a0a0a;border:1.5px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px"
-              ${bloqueada ? 'disabled' : ''}
-              onclick="capturarGPSPorIP(${t.id}, ${mid}, ${pid})">
-              <i class="bi bi-globe2" style="color:#3b82f6"></i> Usar IP (~5km)
-            </button>
-            <button type="button"
-              style="flex:1;min-height:40px;background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:.78rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px"
-              ${bloqueada ? 'disabled' : ''}
-              onclick="capturarGPSManual(${t.id}, ${mid}, ${pid})">
-              <i class="bi bi-pencil-square"></i> Escribir dirección
-            </button>
+          {# ── POLÍTICA 2026-05-17 (Daniel) ──────────────────────────
+             Solo se acepta GPS real del dispositivo. Los botones
+             "Usar IP" y "Escribir dirección" fueron ELIMINADOS porque
+             vulneran la auditoría — el técnico podría falsear su
+             posición. Si el GPS está denegado, el flujo enviá al
+             usuario a Ajustes (mostrarAyudaGPS) para habilitar permiso.
+             ────────────────────────────────────────────────────────── #}
+          <div style="background:#fef3c7;border:1px dashed #f59e0b;
+            border-radius:8px;padding:7px 10px;font-size:.7rem;color:#92400e;
+            display:flex;align-items:center;gap:6px">
+            <i class="bi bi-shield-check" style="color:#a16207"></i>
+            Solo se acepta GPS real del dispositivo para validar tu posición.
           </div>
         </div>
         ${_gpsValorRenderResultado(valor)}
@@ -2164,104 +2159,125 @@ async function _gpsCascade(){
 //     directo a manual (no se queda colgado en el modal de ayuda).
 // ════════════════════════════════════════════════════════════════
 async function capturarGPS(tid, mid, pid){
+  // ═══════════════════════════════════════════════════════════════
+  // POLÍTICA 2026-05-17 (Daniel) — Solo GPS REAL del dispositivo.
+  // NO se acepta IP (no es certero) ni manual (vulnera auditoría).
+  // Si el GPS está denegado, el usuario debe ir a Ajustes a habilitarlo.
+  // ═══════════════════════════════════════════════════════════════
   _gpsLog('tarea_capturar_start', { tid, mid, pid });
   if (!navigator.geolocation){
     _gpsLog('tarea_no_geolocation_api');
-    ilusToast('Tu navegador no soporta GPS. Abriendo modo manual…',
-              { type:'warning', duration: 2400 });
-    return await capturarGPSManual(tid, mid, pid);
+    await ilusAlert({
+      title: 'GPS no disponible',
+      message: 'Tu navegador no soporta geolocalización. ' +
+               'Usá Safari/Chrome actualizado.',
+      type: 'error',
+    });
+    return;
   }
-  // ⚠️ IMPORTANTE iOS Safari: NO await ningún modal antes del cascade.
-  // ilusToast es síncrono (no devuelve Promise resuelto antes del cascade)
-  // así que mantiene el contexto de gesto del usuario.
-  // El primer getCurrentPosition dentro de _gpsCascade dispara EL PROMPT
-  // NATIVO de iOS si nunca pidió permiso, o resuelve directo si ya tiene.
+  // ⚠️ CRÍTICO iOS Safari: el getCurrentPosition() debe disparar dentro
+  // del MISMO macrotask del click. Cualquier await previo a ese call
+  // rompe el contexto de gesto y iOS NO muestra el prompt. Por eso
+  // ilusToast (que es sync) está OK, pero NO podemos meter awaits acá.
   ilusToast('📡 Pidiendo GPS…', { type:'info', duration: 1500 });
-  let r = null;
-  try {
-    r = await _gpsCascade();
-    _gpsLog('tarea_cascade_ok', { method: r.method });
-  } catch(err){
-    _gpsLog('tarea_cascade_fail', { code: err && err.code, msg: err && err.message });
-    if (err && err.code === 1){
-      // Permission DENIED → modal ayuda + alternativas siempre
-      const eleccion = await ilusConfirm({
-        title: '📍 Permiso GPS denegado',
-        message: 'iPhone bloqueó el GPS para esta página. Tenés que activarlo en ' +
-                 '<strong>Ajustes → Privacidad → Servicios de Ubicación → Safari</strong>. ' +
-                 'Mientras tanto, podés <strong>escribir la dirección a mano</strong>.',
-        messageHtml: true,
-        sub: 'Tocá "Ver instrucciones" para el paso a paso completo.',
-        type: 'warning',
-        okLabel: 'Ver instrucciones iPhone',
-        cancelLabel: 'Escribir dirección',
+
+  // getCurrentPosition DIRECTO — el prompt nativo iOS aparece acá si
+  // nunca preguntó antes. Si ya está granted, resuelve directo.
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const acc = pos.coords.accuracy || null;
+      _gpsLog('tarea_gps_ok', { lat, lng, accuracy: acc });
+      // Validar precisión razonable (GPS de iPhone suele dar <50m al aire libre,
+      // hasta 100-200m en edificios. Si excede 500m, sospechoso → rechazar).
+      if (acc && acc > 500){
+        _gpsLog('tarea_gps_accuracy_too_low', { acc });
+        await ilusAlert({
+          title: 'GPS impreciso',
+          message: `La precisión del GPS es de ±${Math.round(acc)} m, ` +
+                   'demasiado baja para auditar tu posición.',
+          sub: 'Salí al aire libre (lejos de paredes/metales) y reintentá.',
+          type: 'warning',
+        });
+        return;
+      }
+      ilusToast(`📍 GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} ±${Math.round(acc||0)}m`, {
+        type: 'success', duration: 3500,
       });
-      if (eleccion){ mostrarAyudaGPS(); return; }
-      return await capturarGPSManual(tid, mid, pid);
-    }
-    if (err && err.code === 2){
-      // Position unavailable → "intenta afuera"
-      ilusToast('GPS no disponible. Intenta al aire libre.', { type:'error', duration: 3500 });
-    } else if (err && err.code === 3){
-      // Timeout
-      ilusToast('GPS lento — intenta de nuevo.', { type:'warning', duration: 3500 });
-    }
-    // Cualquier otro error (timeout, etc) → opción IP o manual
-    const eleccion = await ilusConfirm({
-      title: '📡 GPS no respondió',
-      message: 'No pudimos obtener tu ubicación exacta. ¿Cómo querés continuar?',
-      sub: 'Reintentá si fue lento. Si no funciona, IP es aproximada (~5km) o ' +
-           'manual te deja escribir la dirección con Google.',
-      type: 'warning',
-      okLabel: '🔄 Reintentar GPS',
-      cancelLabel: '✏️ Escribir dirección',
-    });
-    if (eleccion){
-      // Reintento del cascade DIRECTO (sigue siendo gesto del usuario)
-      return await capturarGPS(tid, mid, pid);
-    }
-    return await capturarGPSManual(tid, mid, pid);
-  }
-  // ÉXITO GPS — validar radio (warning, no bloquea aún)
-  try { await _validarRadio(r.lat, r.lng); } catch(_){}
-  const label = _gpsMethodLabel(r.method);
-  ilusToast(`📍 ${label}: ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`, {
-    type: r.method === 'ip' ? 'warning' : 'success',
-    duration: 3500,
-  });
-  await _gpsGuardarEnTarea(tid, mid, pid, {
-    lat: r.lat, lng: r.lng,
-    accuracy: r.accuracy || null,
-    source: r.method === 'ip' ? 'ip' : (r.method === 'manual' ? 'manual' : 'gps'),
-  });
-  // FIX 2026-05-17: también refrescamos la GPS bar arriba con el resultado
-  // (antes solo se mostraba en la tarea — Daniel quería verla SIEMPRE)
-  try { await _gpsRegistrarResultado(r); } catch(_){}
+      try { await _validarRadio(lat, lng); } catch(_){}
+      await _gpsGuardarEnTarea(tid, mid, pid, {
+        lat, lng, accuracy: acc, source: 'gps',
+      });
+      // Refrescar barra GPS arriba
+      try { await _gpsRegistrarResultado({ lat, lng, accuracy: acc, method: 'gps' }); } catch(_){}
+    },
+    async (err) => {
+      _gpsLog('tarea_gps_error', { code: err && err.code, msg: err && err.message });
+      if (err.code === 1){
+        // PERMISSION_DENIED → modal claro con instrucciones iPhone + Reintentar
+        const reintentar = await ilusConfirm({
+          title: '🔒 GPS bloqueado en este iPhone',
+          message: 'Para auditar tu posición necesitamos que actives el GPS en Ajustes. ' +
+                   'Tocá <strong>"Ver cómo activar"</strong> para ver el paso a paso.',
+          messageHtml: true,
+          sub: 'Una vez activado, volvé acá y tocá "Capturar mi ubicación" otra vez.',
+          type: 'warning',
+          okLabel: 'Ver cómo activar',
+          cancelLabel: 'Después',
+          danger: false,
+        });
+        if (reintentar){ mostrarAyudaGPS(); }
+        return;
+      }
+      if (err.code === 2){
+        await ilusAlert({
+          title: 'GPS no disponible',
+          message: 'Tu iPhone no puede obtener señal GPS ahora.',
+          sub: 'Verificá que los Servicios de Ubicación estén ON ' +
+               '(Ajustes → Privacidad → Servicios de Ubicación) ' +
+               'y salí al aire libre. Después tocá "Capturar" otra vez.',
+          type: 'error',
+        });
+        return;
+      }
+      if (err.code === 3){
+        await ilusAlert({
+          title: 'GPS tardó demasiado',
+          message: 'No respondió a tiempo. Probá otra vez en un lugar con vista al cielo.',
+          type: 'warning',
+        });
+        return;
+      }
+      // Otro error
+      await ilusAlert({
+        title: 'Error GPS',
+        message: err.message || 'Error desconocido al obtener ubicación.',
+        type: 'error',
+      });
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+  );
 }
 
-// ── Capturar por IP (salta GPS) — usado por el botón "Usar IP" ──
+// ─── DEPRECADO 2026-05-17 ───────────────────────────────────────
+// Las funciones capturarGPSPorIP y capturarGPSManual quedaron sin
+// invocación desde la UI (botones eliminados) por política de Daniel:
+// solo GPS real del dispositivo. Las dejo aquí marcadas como deprecated
+// por si en el futuro Daniel quiere reactivar el flujo manual con
+// alguna salvaguarda (ej. requerir aprobación supervisor para entries
+// manuales). NO BORRAR sin discutir.
 async function capturarGPSPorIP(tid, mid, pid){
-  _gpsLog('tarea_ip_start', { tid });
-  ilusToast('🌐 Obteniendo ubicación por IP…', { type:'info', duration: 1500 });
-  try {
-    const ip = await _gpsByIP();
-    _gpsLog('tarea_ip_ok', { lat: ip.lat, lng: ip.lng });
-    try { await _validarRadio(ip.lat, ip.lng); } catch(_){}
-    ilusToast(`📍 IP: ${ip.lat.toFixed(3)}, ${ip.lng.toFixed(3)} (~5km)`,
-              { type:'warning', duration: 3500 });
-    await _gpsGuardarEnTarea(tid, mid, pid, {
-      lat: ip.lat, lng: ip.lng,
-      accuracy: 5000, source: 'ip',
-      dir: ip.dir || null,
-    });
-  } catch(e){
-    _gpsLog('tarea_ip_fail', e.message);
-    ilusToast('No se pudo obtener IP geolocation. Probá manual.', { type:'error' });
-  }
+  console.warn('[GPS] capturarGPSPorIP DEPRECATED — solo GPS real permitido');
+  return;
+}
+async function capturarGPSManual(tid, mid, pid){
+  console.warn('[GPS] capturarGPSManual DEPRECATED — solo GPS real permitido');
+  return;
 }
 
-// ── Capturar manual (Google Places autocomplete) ──
-async function capturarGPSManual(tid, mid, pid){
+// ─── (resto del código manual histórico, ya no invocado) ────────
+async function _capturarGPSManual_DEPRECATED(tid, mid, pid){
   _gpsLog('tarea_manual_start', { tid });
   const m = await abrirManualGPS();
   if (!m){ _gpsLog('tarea_manual_cancelado'); return; }
@@ -3759,6 +3775,8 @@ async function mostrarAyudaGPS(){
       .gps-help-panel{display:none;font-size:.85rem;color:#0a0a0a}
       .gps-help-panel.active{display:block}
     </style>`;
+  // FIX 2026-05-17 (Daniel): tab "Alternativas" ELIMINADA — solo
+  // se permite GPS real del dispositivo. Los tabs ahora son Activar + Verificar.
   const tabsHtml = `
     ${tabsCss}
     <div class="gps-help-tabs" role="tablist">
@@ -3770,14 +3788,9 @@ async function mostrarAyudaGPS(){
               onclick="this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.querySelectorAll('.gps-help-panel').forEach(p=>p.classList.remove('active'));document.getElementById('gpsHelpPanel-verificar').classList.add('active');return false;">
         <i class="bi bi-search"></i> Verificar
       </button>
-      <button type="button" data-tab="otras"
-              onclick="this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.querySelectorAll('.gps-help-panel').forEach(p=>p.classList.remove('active'));document.getElementById('gpsHelpPanel-otras').classList.add('active');return false;">
-        <i class="bi bi-three-dots"></i> Alternativas
-      </button>
     </div>
     <div class="gps-help-panel active" id="gpsHelpPanel-activar">${tabActivar}</div>
-    <div class="gps-help-panel" id="gpsHelpPanel-verificar">${tabVerificar}</div>
-    <div class="gps-help-panel" id="gpsHelpPanel-otras">${tabOtras}</div>`;
+    <div class="gps-help-panel" id="gpsHelpPanel-verificar">${tabVerificar}</div>`;
 
   const titulo = isIOS ? 'Activá la ubicación en tu iPhone'
     : isAndroid ? 'Activá la ubicación en tu Android'

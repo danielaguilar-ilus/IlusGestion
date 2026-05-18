@@ -25948,6 +25948,20 @@ def mant_visita_tarea_respuesta(vid, tid):
             return jsonify({"ok": False, "error": "Coordenadas inválidas en _gps_extra"}), 400
         if gps_lat is None or gps_lng is None:
             return jsonify({"ok": False, "error": "Faltan lat/lng en _gps_extra"}), 400
+        # POLÍTICA 2026-05-17: solo GPS real, sin IP/manual, accuracy<=500m
+        _src_x = str(valor["_gps_extra"].get("source") or "").strip().lower()[:20]
+        if _src_x and _src_x in ("ip", "manual"):
+            return jsonify({"ok": False,
+                "error": "Solo GPS real. IP/manual deshabilitados por auditoría."}), 403
+        _acc_x = None
+        if valor["_gps_extra"].get("accuracy") is not None:
+            try:
+                _acc_x = float(valor["_gps_extra"]["accuracy"])
+                if _acc_x > 500:
+                    return jsonify({"ok": False,
+                        "error": f"Precisión GPS muy baja (±{int(_acc_x)}m)."}), 400
+            except (TypeError, ValueError):
+                _acc_x = None
         # Mergeamos sobre el valor_json existente (preservando lo que el técnico ya respondió)
         try:
             existente = {}
@@ -25958,8 +25972,8 @@ def mant_visita_tarea_respuesta(vid, tid):
                     existente = {}
             existente["_gps_extra"] = {
                 "lat": gps_lat, "lng": gps_lng,
-                "accuracy": valor["_gps_extra"].get("accuracy"),
-                "source": str(valor["_gps_extra"].get("source") or "")[:20],
+                "accuracy": _acc_x,
+                "source": "gps",   # forzado tras validación
                 "dir": str(valor["_gps_extra"].get("dir") or "")[:400] or None,
                 "at": datetime.now().isoformat(timespec="seconds"),
             }
@@ -26041,7 +26055,14 @@ def mant_visita_tarea_respuesta(vid, tid):
         if tar.get("obligatoria") and not v:
             completar = False
     elif tipo == "gps":
-        # FIX 2026-05-17: aceptar metadata extra (accuracy, source, dir)
+        # ═══════════════════════════════════════════════════════════
+        # POLÍTICA 2026-05-17 (Daniel) — Solo GPS REAL del dispositivo.
+        # Se RECHAZAN entries con source='ip' o source='manual' porque
+        # vulneran la auditoría (el técnico podría falsear su posición).
+        # Solo se aceptan: 'gps', 'gps_high', 'gps_low', 'watch'.
+        # Adicionalmente: si accuracy > 500m la captura se rechaza por
+        # impresión sospechosa.
+        # ═══════════════════════════════════════════════════════════
         try:
             lat = float(valor.get("lat")) if isinstance(valor, dict) and valor.get("lat") is not None else None
             lng = float(valor.get("lng")) if isinstance(valor, dict) and valor.get("lng") is not None else None
@@ -26049,20 +26070,34 @@ def mant_visita_tarea_respuesta(vid, tid):
             return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
         if lat is None or lng is None:
             return jsonify({"ok": False, "error": "Faltan lat/lng"}), 400
-        valor_norm = {"lat": lat, "lng": lng}
-        # Metadata opcional (no rompe si no viene)
+        # Validar source — rechazar IP y manual
+        src_raw = ""
         if isinstance(valor, dict):
+            src_raw = str(valor.get("source") or "").strip().lower()[:20]
+        if src_raw and src_raw in ("ip", "manual"):
+            return jsonify({
+                "ok": False,
+                "error": "Solo se acepta GPS real del dispositivo. " +
+                         "IP y manual están deshabilitados por política de auditoría."
+            }), 403
+        # Validar accuracy — rechazar imprecisiones absurdas (>500m sugiere wifi/IP)
+        acc = None
+        if isinstance(valor, dict) and valor.get("accuracy") is not None:
             try:
-                if valor.get("accuracy") is not None:
-                    valor_norm["accuracy"] = float(valor["accuracy"])
+                acc = float(valor["accuracy"])
+                if acc > 500:
+                    return jsonify({
+                        "ok": False,
+                        "error": f"Precisión GPS muy baja (±{int(acc)}m). " +
+                                 "Salí al aire libre y reintentá."
+                    }), 400
             except (TypeError, ValueError):
-                pass
-            src = str(valor.get("source") or "")[:20].lower()
-            if src in ("gps", "ip", "manual", "gps_high", "gps_low", "watch"):
-                valor_norm["source"] = src
-            dir_v = str(valor.get("dir") or "")[:400].strip()
-            if dir_v:
-                valor_norm["dir"] = dir_v
+                acc = None
+        valor_norm = {"lat": lat, "lng": lng}
+        if acc is not None:
+            valor_norm["accuracy"] = acc
+        # source siempre se normaliza a 'gps' (rechazamos otros arriba)
+        valor_norm["source"] = "gps"
     else:
         return jsonify({"ok": False, "error": f"Tipo no soportado por este endpoint: {tipo}"}), 400
 
