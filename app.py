@@ -14681,6 +14681,13 @@ def _mant_required(view):
     Si la petición viene de AJAX/wizard (X-Wizard, JSON o XMLHttpRequest),
     devuelve 403 JSON en lugar de redirect 302. Esto evita que el frontend
     reciba HTML cuando esperaba JSON y muestre un error genérico.
+
+    FIX 2026-05-17 (Daniel): cuando un usuario intentaba abrir una OT y
+    su rol no tenía el permiso `mantenciones`, lo redirigíamos a `index`
+    que es el catálogo de productos. Eso confundía: parecía que abrir la
+    OT "te llevaba a los productos". Ahora el redirect prioriza el
+    `request.referrer` (vuelve a la página anterior con flash explicando)
+    y solo cae a `index` si no hay referrer (acceso directo por URL).
     """
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -14702,7 +14709,17 @@ def _mant_required(view):
                              "en /admin/roles para tu rol.",
                     "error_codigo": "SIN_PERMISO_MANTENCIONES",
                 }), 403
-            flash("Tu usuario no tiene permiso para Mantenciones.", "warning")
+            flash(
+                "No tienes permiso para abrir esta sección de Mantenciones. "
+                "Pide al superadministrador que active 'mantenciones.ver' para tu rol.",
+                "warning",
+            )
+            # Vuelve a la página anterior si vino de un link interno; sino al home.
+            # Evita el efecto "abrir OT → caer en productos" que confundía a Daniel.
+            ref = request.referrer or ""
+            host_url = request.host_url.rstrip("/")
+            if ref and ref.startswith(host_url) and "/mantenciones/" not in ref:
+                return redirect(ref)
             return redirect(url_for("index"))
         return view(*args, **kwargs)
     return login_required(wrapped)

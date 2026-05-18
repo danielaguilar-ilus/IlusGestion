@@ -39,6 +39,18 @@
      que usan Chrome/Edge en Android. Permite la instalación PWA fullscreen. #}
   <meta name="mobile-web-app-capable" content="yes">
 
+  {# ── FIX iOS Safari (Daniel 2026-05-17): Auto-detección de números ──
+     iOS Safari y algunos navegadores Android convierten automáticamente
+     ciertos patrones en links activos (números largos → tel:, fechas →
+     calendario, direcciones → mapas, emails → mailto). Esto rompe los
+     SKUs del catálogo (ej: 1237101026) porque iOS los detecta como
+     teléfonos y al tocarlos intenta llamar. Estos meta tags lo bloquean
+     globalmente para todo el sitio. #}
+  <meta name="format-detection" content="telephone=no">
+  <meta name="format-detection" content="date=no">
+  <meta name="format-detection" content="address=no">
+  <meta name="format-detection" content="email=no">
+
   {# Cache hint para HTML — el browser puede reutilizar la página por 5 min #}
   <meta http-equiv="Cache-Control" content="public, max-age=300">
 

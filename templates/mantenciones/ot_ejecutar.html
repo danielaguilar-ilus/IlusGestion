@@ -1779,27 +1779,11 @@ function renderTareaHtml(t, bloqueada, mid, pid){
   }
 
   const isCheckType = (tipo === 'check');
-  // ── FIX 2026-05-17 — Mini botón "📍 Adjuntar ubicación" SIEMPRE visible ──
-  // Si la tarea NO es de tipo GPS, igual mostramos un botoncito sutil para
-  // que el técnico pueda etiquetar dónde estaba al hacer esa tarea. Esto
-  // garantiza que NUNCA quede sin opción de declarar ubicación, incluso
-  // si una tarea heredada perdió su tipo_respuesta='gps'.
-  // El indicador de "ubicación guardada" usa valor.lat/lng si fue capturado
-  // como tarea GPS, o valor._gps_extra si fue mediante el mini-botón.
-  const tieneGpsValor = (valor && (
-    (isFinite(valor.lat) && isFinite(valor.lng)) ||
-    (valor._gps_extra && isFinite(valor._gps_extra.lat))
-  ));
-  const gpsExtraHtml = (!bloqueada && tipo !== 'gps') ? `
-    <div class="tx-tarea-gps-mini" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <button type="button"
-        style="background:transparent;border:1px dashed #cbd5e1;color:#475569;border-radius:7px;padding:5px 10px;font-size:.72rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;min-height:32px"
-        onclick="capturarGPS(${t.id}, ${mid}, ${pid})"
-        title="Adjuntar GPS a esta tarea (opcional)">
-        <i class="bi bi-geo-alt" style="color:#dc2626"></i> Adjuntar ubicación
-      </button>
-      ${tieneGpsValor ? `<span style="font-size:.7rem;color:#15803d;font-weight:600"><i class="bi bi-check-circle-fill"></i> GPS guardado</span>` : ''}
-    </div>` : '';
+  // ── FIX 2026-05-17 (Daniel) — El mini botón "Adjuntar ubicación" se
+  // quitó porque sólo aplica para tareas tipo `tipo_respuesta='gps'`. Ese
+  // caso ya renderiza su propio botón "Capturar mi ubicación (GPS)" dentro
+  // del case 'gps' del switch de tipos. Mostrarlo en TODAS las tareas
+  // confundía al técnico (no tiene nada que ver con fotos ni otras tareas).
   return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}" id="tar-${t.id}">
     <div class="ttl">
       <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
@@ -1818,7 +1802,6 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       </div>
     </div>
     ${ctrlHtml}
-    ${gpsExtraHtml}
   </div>`;
 }
 
