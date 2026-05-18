@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Iniciar Sesión — ILUS Sport & Health{% endblock %}
+{% block title %}Iniciar Sesión — {{ marca.name if marca else 'ILUS Fitness' }}{% endblock %}
 
 {% block head_extra %}
   {# Si hay imagen de carrusel, preload solo la PRIMERA (above-the-fold).
@@ -134,7 +134,7 @@
       <div class="login-brand-top">
         {% if has_logo %}
         <img src="{{ url_for('static', filename='Logo.png') }}"
-             alt="ILUS Sport & Health"
+             alt="{{ marca.name if marca else 'ILUS Fitness' }}"
              width="495" height="330" decoding="async" fetchpriority="high">
         {% else %}
         <div class="login-hero-brand">ILUS<span style="color:var(--ilus-red)">.</span></div>

@@ -588,6 +588,29 @@
 
 <div class="tx-wrap">
 
+  {# ════════════════════════════════════════════════════════════════
+     BUG FIX 2026-05-17 — Detectar si la OT tiene tareas tipo GPS.
+     Si NO las tiene, ocultamos toda la UI relacionada con GPS:
+       · La barra GPS arriba (#execGpsBar)
+       · El banner ámbar "¿Estás teniendo problemas con el GPS?"
+         dentro de la pestaña Información (#iosInstallBanner)
+     Daniel quitó GPS de las plantillas → ya no hay razón para mostrar
+     esa UI cuando ningún checklist requiere ubicación.
+
+     Usamos `namespace` porque `{% set %}` dentro de loops Jinja NO
+     propaga al scope superior (cierre de scope por bloque).
+  ════════════════════════════════════════════════════════════════ #}
+  {% set ns = namespace(hay_gps=false) %}
+  {% for eq in equipos %}
+    {% for p in plantillas_por_maquina.get(eq.id|string, []) %}
+      {% for t in p.tareas %}
+        {% if (t.tipo_respuesta or '')|lower == 'gps' %}
+          {% set ns.hay_gps = true %}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  {% endfor %}
+
   {# ─── HEADER STICKY con branding ILUS (compacto + colapsable) ─── #}
   <div class="tx-hdr" id="txHdr">
     {# Toggle expand/collapse — solo móvil, escondido en desktop #}
@@ -661,7 +684,12 @@
        FIX 2026-05-17: las acciones son visibles SIEMPRE (display:flex),
        no escondidas tras intentar auto-detección que en iOS Safari
        jamás funciona. El botón "Capturar ahora" es prominente, rojo,
-       grande para que el técnico vea de una qué hacer. #}
+       grande para que el técnico vea de una qué hacer.
+       BUG FIX 2026-05-17 (alertas GPS): solo mostrar la barra GPS si
+       la OT tiene tareas tipo GPS (ns.hay_gps). Si no las hay (porque
+       Daniel quitó GPS de las plantillas), no tiene sentido ofrecer
+       capturar ubicación arriba. #}
+  {% if ns.hay_gps %}
   <div class="tx-gps" id="execGpsBar">
     <i class="bi bi-geo-alt-fill"></i>
     <div class="flex-grow-1">
@@ -701,6 +729,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   {# ─── TABS PRINCIPALES: Información · Gestión de tareas ─── #}
   <div class="tx-tabs" role="tablist">
@@ -734,7 +763,11 @@
          · Y todavía NO está corriendo como PWA (standalone)
        Se oculta solo después del primer render mediante el script
        de abajo — así evitamos parpadeo en desktop.
+
+       BUG FIX 2026-05-17 (alertas GPS): solo mostrar este banner si la OT
+       tiene tareas GPS — sin GPS no hay problema de permisos que resolver.
     ──────────────────────────────────────────────────────────── #}
+    {% if ns.hay_gps %}
     <div id="iosInstallBanner" style="display:none;background:#fff;border:1px solid #fecaca;
                                        border-left:4px solid #dc2626;border-radius:10px;
                                        padding:12px 14px;margin-bottom:12px">
@@ -758,6 +791,7 @@
         </button>
       </div>
     </div>
+    {% endif %}
 
     {# ─── Card: Datos de la OT ─── #}
     <div class="info-card">
@@ -830,7 +864,7 @@
         {% endif %}
         {% if visita.contacto_tel %}
         <div class="k">Teléfono</div>
-        <div class="v font-monospace">{{ visita.contacto_tel }}</div>
+        <div class="v font-monospace">{{ visita.contacto_tel | tel_chile_fmt }}</div>
         {% endif %}
         {% if visita.contacto_email %}
         <div class="k">Email</div>
@@ -4248,7 +4282,12 @@ async function _gpsManualPrompt(){
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  pedirGPS();
+  // BUG FIX 2026-05-17 — Solo invocar GPS si la barra está renderizada.
+  // Si la OT no tiene tareas GPS (hay_gps=false en Jinja), execGpsBar no
+  // existe y no tiene sentido pedir permisos GPS al cargar.
+  if (document.getElementById('execGpsBar')) {
+    pedirGPS();
+  }
   if (!RUTA_YA_INICIADA && DESTINO_DIR && window.innerWidth < 992){
     setTimeout(() => abrirModalRuta(), 1200);
   }

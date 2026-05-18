@@ -445,7 +445,7 @@
     {% if visita.cli_contacto %}
     <div class="ot-meta-card">
       <div class="ot-meta-lbl">📞 Contacto</div>
-      <div class="ot-meta-val" style="font-size:.82rem">{{ visita.cli_contacto }}{% if visita.cli_contacto_tel %} · {{ visita.cli_contacto_tel }}{% endif %}</div>
+      <div class="ot-meta-val" style="font-size:.82rem">{{ visita.cli_contacto }}{% if visita.cli_contacto_tel %} · {{ visita.cli_contacto_tel | tel_chile_fmt }}{% endif %}</div>
     </div>
     {% endif %}
   </div>
@@ -832,7 +832,7 @@
     <div class="flex-grow-1">
       <div class="fw-bold">{{ visita.tecnico_principal }}</div>
       <div class="small text-muted">
-        {% if visita.tecnico_tel %}<i class="bi bi-telephone me-1"></i>{{ visita.tecnico_tel }}{% endif %}
+        {% if visita.tecnico_tel %}<i class="bi bi-telephone me-1"></i>{{ visita.tecnico_tel | tel_chile_fmt }}{% endif %}
         {% if visita.tecnico_email %} · <i class="bi bi-envelope me-1"></i>{{ visita.tecnico_email }}{% endif %}
       </div>
     </div>

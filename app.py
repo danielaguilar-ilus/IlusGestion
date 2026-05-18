@@ -509,6 +509,48 @@ def rut_fmt_filter(value):
     return _formato_rut_chile(value)
 
 
+@app.template_filter('tel_chile_fmt')
+def tel_chile_fmt_filter(value):
+    """Filtro Jinja: formatea un teléfono chileno raw a formato legible.
+
+    Ej:
+        +56977468766   →  '+56 9 7746 8766'
+        977468766      →  '+56 9 7746 8766'
+        56977468766    →  '+56 9 7746 8766'
+        56 9 77468766  →  '+56 9 7746 8766'
+        222345678      →  '+56 2 2234 5678'  (fijo Santiago)
+        56222345678    →  '+56 2 2234 5678'
+
+    Si el formato no calza con un número chileno reconocible, devuelve el
+    valor original sin modificar.
+
+    Uso: {{ visita.contacto_tel | tel_chile_fmt }}
+
+    Nota: aplica SOLO al texto mostrado. NO usar en href="tel:..." porque
+    los protocolos necesitan el formato raw (sin espacios).
+    """
+    if not value:
+        return ""
+    # Solo dígitos
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if not digits:
+        return str(value)
+    # Quitar el prefijo 56 (país Chile) si está presente
+    if digits.startswith("56") and len(digits) >= 10:
+        digits = digits[2:]
+    # Formato celular: 9 dígitos empezando con 9
+    if len(digits) == 9 and digits.startswith("9"):
+        return f"+56 9 {digits[1:5]} {digits[5:9]}"
+    # Formato fijo: 9 dígitos (2 código área + 7 número) — Santiago: empieza con 2
+    if len(digits) == 9 and not digits.startswith("9"):
+        return f"+56 {digits[0]} {digits[1:5]} {digits[5:9]}"
+    # Formato fijo regiones más cortos: 8 dígitos (1 código área + 7)
+    if len(digits) == 8:
+        return f"+56 {digits[0]} {digits[1:5]} {digits[5:8]}"
+    # Si no calza con ningún patrón chileno, devolver original
+    return str(value)
+
+
 @app.template_filter('fromjson_safe')
 def fromjson_safe_filter(value):
     """Filtro Jinja: parsea un string JSON sin lanzar excepción.
@@ -713,6 +755,44 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
 # PDFs en resource_type='image' (HTTP 401 anónimo, política post-2021).
 # La función correcta sigue siendo _cloud_upload_raw() de arriba.
 # Histórico: ver commits a2a6f6d (creada) → 8d8061f (deprecada).
+
+
+def _subir_firma_cloudinary(data_url: str, vid: int, tipo: str) -> str:
+    """Sube una firma (canvas data URL base64) a Cloudinary y devuelve la
+    URL pública. Si Cloudinary no está disponible o falla, retorna el data
+    URL original como fallback (la columna ahora es LONGTEXT y lo soporta).
+
+    BUG FIX 2026-05-17: las firmas pesaban 100-500KB y la columna TEXT
+    (max 64KB) las truncaba o lanzaba error 1406 "Data too long".
+
+    Args:
+        data_url: 'data:image/png;base64,iVBOR...' del canvas firma.
+        vid: ID de la visita (mant_visitas.id) — usado en public_id.
+        tipo: 'tecnico' | 'cliente' | 'supervisor' — usado en public_id.
+
+    Returns:
+        URL pública de Cloudinary (corta) o el data URL original si falla.
+    """
+    if not data_url or not data_url.startswith("data:"):
+        return data_url or ""
+    # Sin Cloudinary configurado → guardar tal cual (LONGTEXT acepta).
+    if not _CLD_READY or not _cloudinary_uploader:
+        return data_url
+    try:
+        public_id = f"firma_{tipo}_{vid}_{int(time.time())}"
+        result = _cloudinary_uploader.upload(
+            data_url,
+            public_id     = public_id,
+            folder        = "ilus/mantenciones/firmas",
+            overwrite     = True,
+            resource_type = "image",
+        )
+        return result.get("secure_url") or data_url
+    except Exception as e:
+        print(f"[firma_cloudinary] fallo subida tipo={tipo} vid={vid}: {e}", flush=True)
+        # Fallback defensivo: devolver el data URL para no perder la firma.
+        # La columna LONGTEXT lo soporta sin problema.
+        return data_url
 
 
 def _cloud_delete(url_or_filename: str) -> None:
@@ -1285,7 +1365,9 @@ def init_mysql_schema():
 
 
 def init_resets_table():
-    """Crea la tabla de tokens de recuperación de contraseña."""
+    """Crea la tabla de tokens de recuperación de contraseña + migración
+    idempotente del flag `requires_password_change` en AUTH_TABLE.
+    """
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -1300,6 +1382,16 @@ def init_resets_table():
                 INDEX idx_user  (user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Flag: usuario debe crear/cambiar contraseña en su próximo login.
+        # Lo seteamos en =1 cuando admin crea usuario sin clave manual.
+        # Se limpia al activar la cuenta vía /welcome/<token> o /reset/<token>.
+        try:
+            cur.execute(
+                f"ALTER TABLE `{AUTH_TABLE}` "
+                f"ADD COLUMN requires_password_change TINYINT(1) NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # ya existe
     conn.commit()
 
 
@@ -3271,6 +3363,18 @@ def _build_label_pdf_legacy(product, bulto, total_bultos):
 @app.context_processor
 def inject_globals():
     _role = (g.user["role"] if g.user else "") or ""
+    # Marca dinámica disponible en TODOS los templates como {{ marca.name }},
+    # {{ marca.logo_url }}, etc. Daniel edita comm_client_config en
+    # /comunicaciones y cambia inmediatamente en el front (login, footer,
+    # emails, etc) sin reiniciar.
+    try:
+        _marca_ctx = _get_marca()
+    except Exception:
+        _marca_ctx = {
+            "name": "ILUS Fitness",
+            "logo_url": "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png",
+            "corp_color": "#DC143C",
+        }
     return {
         "has_logo":    os.path.exists(os.path.join(app.static_folder, "Logo.png")),
         "current_user": g.user,
@@ -3294,6 +3398,9 @@ def inject_globals():
         # Google Maps API Key — si está vacía, el frontend hace fallback
         # a input de texto plano (sin autocomplete de direcciones).
         "google_maps_api_key": GOOGLE_MAPS_API_KEY,
+        # Marca dinámica (lectura BD comm_client_config + env vars).
+        # Disponible en todos los templates como {{ marca.name }} etc.
+        "marca": _marca_ctx,
     }
 
 
@@ -3517,7 +3624,7 @@ def login():
             _audit("login_error", details={"username": username, "error": str(exc)},
                    status="error")
             flash(f"No fue posible conectar: {exc}", "danger")
-            return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
+            return render_template("login.html", next_url=next_url, username=username, login_images=imgs, marca=_get_marca())
         if not user or not user["active"] or not check_password_hash(user["password_hash"], password):
             reason = ("no_existe" if not user
                       else "inactivo" if not user["active"]
@@ -3527,7 +3634,7 @@ def login():
                    details={"username": username, "reason": reason},
                    status="fail")
             flash("Usuario o contraseña incorrectos.", "danger")
-            return render_template("login.html", next_url=next_url, username=username, login_images=imgs)
+            return render_template("login.html", next_url=next_url, username=username, login_images=imgs, marca=_get_marca())
         session.clear()
         session["user_id"] = user["id"]
         # ── FIX 2026-05-17 ──────────────────────────────────────────
@@ -3574,7 +3681,7 @@ def login():
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # Anti-cache para forzar al navegador a recargar diseño actualizado
-    resp = make_response(render_template("login.html", next_url=next_url, username="", login_images=imgs))
+    resp = make_response(render_template("login.html", next_url=next_url, username="", login_images=imgs, marca=_get_marca()))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
@@ -3622,16 +3729,15 @@ def _ilus_email_html(
     Genera HTML de correo con el diseño oficial ILUS:
     Header negro con logo → banda oscura título/subtítulo → cuerpo blanco → botones → footer negro.
     """
-    # ── Logo y empresa desde config (base64 o URL) ──────────────────────────
+    # ── Logo y empresa desde marca dinámica (BD comm_client_config) ─────
+    # Marca cambia desde /comunicaciones sin tocar código.
     try:
-        cc       = _get_client_cfg()
-        logo_src = cc.get("logo_url") or ""
-        company  = cc.get("company_name") or "ILUS Sport &amp; Health"
+        marca    = _get_marca()
+        logo_src = marca["logo_url"]
+        company  = marca["name"]
     except Exception:
-        logo_src = ""
-        company  = "ILUS Sport &amp; Health"
-    if not logo_src:
         logo_src = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
+        company  = "ILUS Fitness"
 
     # ── Info box ─────────────────────────────────────────────────────────────
     info_html = ""
@@ -3677,18 +3783,18 @@ def _ilus_email_html(
         f'<div style="padding:0 30px 30px;text-align:center">{btn1}{btn2}</div>'
     ) if (btn1 or btn2) else ""
 
-    # ── Branding genérico para footer (no-reply + soporte) ─────────────
+    # ── Branding del footer: usa la misma marca dinámica ───────────────
     try:
-        brand = _get_brand_cfg()
+        marca2 = _get_marca()
     except Exception:
-        brand = {
-            "name": "ILUS Sport & Health",
+        marca2 = {
+            "name": "ILUS Fitness",
             "support_email": "servicio.tecnico@ilusfitness.com",
             "support_url":   "https://ilusfitness.com/soporte",
         }
-    brand_name    = brand.get("name") or company
-    support_email = brand.get("support_email") or "servicio.tecnico@ilusfitness.com"
-    support_url   = brand.get("support_url") or ""
+    brand_name    = marca2.get("name") or company
+    support_email = marca2.get("support_email") or "servicio.tecnico@ilusfitness.com"
+    support_url   = marca2.get("support_url") or ""
     año_actual    = datetime.now().year if 'datetime' in globals() else 2026
 
     soporte_html = (
@@ -4074,31 +4180,79 @@ def _get_brand_cfg() -> dict:
     }
 
 
-def _brand_subject(tema: str) -> str:
-    """Genera el subject estandarizado del email: "ILUS · {tema}".
+def _get_marca() -> dict:
+    """Marca activa = mezcla de BD (`comm_client_config`) + env vars.
 
-    El prefijo siempre es la marca, NUNCA un nombre de persona, para que
-    el destinatario reconozca el remitente sin ambigüedad.
+    FUENTE DE VERDAD: la BD para todo lo visible al cliente final (nombre,
+    logo, color, soporte). Las env vars sólo rellenan campos que no están
+    en la tabla (from_email técnico, reply_to por defecto, support_url).
+
+    Esto permite que Daniel cambie "ILUS Sport & Health" → "ILUS Fitness"
+    desde /comunicaciones sin tocar código ni reiniciar. Igual con el logo
+    y el color corporativo. Todas las comunicaciones (email/WhatsApp/SMS)
+    invocan esta función en cada envío.
+
+    Returns:
+      dict con: name, from_name, from_email, reply_to, wa_name, logo_url,
+      support_email, support_url, footer, corp_color, support_phone.
     """
-    brand = _get_brand_cfg()
+    try:
+        cc = _get_client_cfg() or {}
+    except Exception:
+        cc = {}
+    try:
+        be = _get_brand_cfg() or {}
+    except Exception:
+        be = {}
+
+    name = (cc.get("company_name") or be.get("name") or "ILUS Fitness").strip()
+    # Logo: BD primero, luego CDN ILUS Fitness oficial
+    logo = (cc.get("logo_url") or "").strip()
+    if not logo:
+        logo = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
+
+    return {
+        "name":          name,
+        "from_name":     (be.get("from_name") or name or "ILUS Fitness").strip(),
+        "from_email":    (be.get("from_email") or "no-reply@ilusfitness.com").strip(),
+        "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "servicio.tecnico@ilusfitness.com").strip(),
+        "wa_name":       (be.get("wa_name") or name or "ILUS Fitness").strip(),
+        "logo_url":      logo,
+        "support_email": (cc.get("support_email") or be.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
+        "support_url":   (be.get("support_url") or "https://ilusfitness.com/soporte").strip(),
+        "footer":        f"{name} · Plataforma operacional",
+        "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
+        "support_phone": (cc.get("support_phone") or "").strip(),
+    }
+
+
+def _brand_subject(tema: str) -> str:
+    """Subject estandarizado del email: "{marca} · {tema}".
+
+    Marca dinámica desde `comm_client_config` (vía `_get_marca`) —
+    Daniel puede cambiar el nombre de empresa en /comunicaciones
+    sin tocar código.
+    """
+    marca = _get_marca()
+    prefijo = marca["from_name"]
     tema = (tema or "").strip()
-    # Evitar duplicar el prefijo si quien llama ya lo agregó
-    if tema.startswith(f"{brand['from_name']} ·") or tema.startswith(f"{brand['from_name']} -"):
+    # Evitar duplicar prefijo si quien llama ya lo agregó
+    if tema.startswith(f"{prefijo} ·") or tema.startswith(f"{prefijo} -"):
         return tema
-    return f"{brand['from_name']} · {tema}" if tema else brand['from_name']
+    return f"{prefijo} · {tema}" if tema else prefijo
 
 
 def _brand_wa_prefix(asunto: str) -> str:
-    """Prefijo estandarizado para mensajes WhatsApp/SMS.
+    """Prefijo WhatsApp/SMS: "🔧 {marca} · {asunto}\\n\\n"
 
-    Formato: "🔧 ILUS · {asunto}\\n\\n"  → el destinatario sabe de inmediato
-    quién envía, antes incluso de leer el cuerpo.
+    Marca dinámica desde `comm_client_config` (vía `_get_marca`).
     """
-    brand = _get_brand_cfg()
+    marca = _get_marca()
+    prefijo = marca["wa_name"]
     asunto = (asunto or "").strip()
     if asunto:
-        return f"🔧 {brand['wa_name']} · {asunto}\n\n"
-    return f"🔧 {brand['wa_name']}\n\n"
+        return f"🔧 {prefijo} · {asunto}\n\n"
+    return f"🔧 {prefijo}\n\n"
 
 
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
@@ -4115,19 +4269,20 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     from_email). El Reply-To apunta al buzón de soporte para que las
     respuestas del destinatario lleguen a un humano y no al no-reply.
     """
-    brand = _get_brand_cfg()
+    # Marca dinámica desde BD (`comm_client_config`) — Daniel puede cambiar
+    # nombre/logo/reply-to en /comunicaciones sin tocar código ni reiniciar.
+    marca = _get_marca()
 
     # ── 1. Intento Resend primero (si está configurado) ─────────────────
     resend_cfg = _get_resend_cfg()
     if resend_cfg.get("api_key"):
-        # Construir From genérico ILUS — solo se usa la dirección SMTP guardada
-        # como fallback si el dominio aún no está verificado en Resend.
+        # From genérico de marca — SMTP guardado sólo como fallback si el
+        # dominio aún no está verificado en Resend.
         from_for_resend = None
         try:
             smtp_cfg = _get_smtp_cfg()
-            # Prioridad: BRAND > SMTP guardado > Resend default
-            brand_email = brand.get("from_email") or smtp_cfg.get("from_addr") or resend_cfg.get("from_addr")
-            from_name   = brand.get("from_name") or smtp_cfg.get("from_name") or "ILUS"
+            brand_email = marca["from_email"] or smtp_cfg.get("from_addr") or resend_cfg.get("from_addr")
+            from_name   = marca["from_name"]  or smtp_cfg.get("from_name") or "ILUS Fitness"
             if brand_email:
                 from_for_resend = f"{from_name} <{brand_email}>"
         except Exception:
@@ -4135,7 +4290,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
 
         if _send_via_resend(to_addr, subject, html_body,
                             from_addr=from_for_resend,
-                            reply_to=brand.get("reply_to")):
+                            reply_to=marca["reply_to"]):
             return True
         # Resend falló — guardar error legible y caer a SMTP
         err = getattr(g, "_last_resend_error", None) or {}
@@ -4151,10 +4306,10 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     except Exception:
         cfg = dict(EMAIL_CONFIG)
 
-    # Branding: SIEMPRE genérico para From, sin tocar credenciales SMTP
-    from_name     = brand.get("from_name") or cfg.get("from_name") or "ILUS"
-    from_addr_cfg = brand.get("from_email") or cfg.get("from_addr") or cfg.get("smtp_user", "")
-    reply_to      = brand.get("reply_to") or cfg.get("reply_to") or ""
+    # Branding desde la marca (BD), SMTP credentials no se tocan
+    from_name     = marca["from_name"]  or cfg.get("from_name") or "ILUS Fitness"
+    from_addr_cfg = marca["from_email"] or cfg.get("from_addr") or cfg.get("smtp_user", "")
+    reply_to      = marca["reply_to"]   or cfg.get("reply_to") or ""
 
     # ── Envío vía SMTP (único método; configurable desde el front) ──────
     msg = MIMEMultipart("alternative")
@@ -4172,7 +4327,9 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     passwd    = cfg.get("smtp_pass", "")
     from_addr = from_addr_cfg or user
 
-    def _try_send(p, sec, timeout=25):
+    def _try_send(p, sec, timeout=30):
+        # Timeout 30s para Railway: Gmail SMTP desde IPs cloud puede tomar
+        # 15-25s en abrir el socket TLS. Antes era 25s y a veces no alcanzaba.
         if sec:
             with _open_smtp_client(host, p, True, timeout=timeout) as srv:
                 srv.login(user, passwd)
@@ -4253,39 +4410,29 @@ def _send_password_access_email(
     minutes: int = 60,
     skip_diagnose: bool = False,
 ) -> bool:
-    """Envia correo ILUS para crear o cambiar clave mediante token seguro.
+    """Envía correo para crear o cambiar clave con token seguro.
 
-    skip_diagnose=True omite la validación SMTP previa (10s de timeout). Útil
-    cuando se envía desde un thread en background — el diagnóstico se hace
-    cuando el admin va a /admin/comunicaciones, no en cada email.
+    NOTA IMPORTANTE: NO se valida SMTP previamente. El flujo real
+    (`_send_ilus_email_real`) intenta primero Resend (HTTPS, funciona desde
+    Railway) y si falla cae a SMTP. Validar SMTP antes hacía que incluso con
+    Resend configurado este email NO se enviara — el diagnose SMTP timeaba
+    en Railway y Resend nunca se intentaba. El parámetro `skip_diagnose`
+    se mantiene por retrocompatibilidad pero ya no controla nada.
     """
-    # Validación SMTP previa antes de enviar (omitir si se pidió)
-    if not skip_diagnose:
-        try:
-            diag = _smtp_connection_diagnose(_get_smtp_cfg())
-            if not diag.get("ok"):
-                detail = diag.get("message") or "No se pudo validar la conexion SMTP."
-                suggestions = diag.get("suggestions") or []
-                if suggestions:
-                    detail += " " + " ".join(suggestions[:3])
-                g._last_email_error = detail
-                return False
-        except Exception as exc:
-            g._last_email_error = f"No se pudo validar SMTP antes de enviar: {exc}"
-            return False
+    _ = skip_diagnose  # noqa: F841 (mantener firma para callers existentes)
 
-    is_setup = mode == "setup"
-    titulo = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
-    # Subject estandarizado "ILUS · {tema}" — el From ya identifica la marca,
-    # acá solo necesitamos describir el tema con claridad
+    is_setup     = mode == "setup"
+    marca        = _get_marca()
+    marca_nombre = marca["name"]
+    titulo  = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
     subject = _brand_subject(
         "Crea tu contraseña de acceso" if is_setup else "Cambio seguro de contraseña"
     )
-    button = "Crear mi contraseña" if is_setup else "Cambiar contraseña"
+    button = "Crear mi contraseña" if is_setup else "Restablecer contraseña"
     intro = (
-        f"<strong>{actor_name}</strong> creo una cuenta para ti en el sistema ILUS."
+        f"<strong>{actor_name}</strong> creó una cuenta para ti en el sistema {marca_nombre}."
         if is_setup
-        else f"<strong>{actor_name}</strong> solicito un cambio de contraseña para tu cuenta ILUS."
+        else f"Recibimos una solicitud para cambiar la contraseña de tu cuenta {marca_nombre}."
     )
     html_body = _ilus_email_html(
         titulo=titulo,
@@ -4293,13 +4440,13 @@ def _send_password_access_email(
         saludo=f"Hola, {to_name}",
         parrafos=[
             intro,
-            "Por seguridad, la contraseña no se envia ni se escribe manualmente. "
-            "Debes definirla desde el boton de este correo.",
+            "Por seguridad, la contraseña no se envía ni se escribe manualmente. "
+            "Debes definirla desde el botón de este correo.",
             f"Este enlace vence en <strong>{minutes} minutos</strong>, solo puede usarse una vez "
             "y reemplaza cualquier enlace anterior.",
-            f'Si no esperabas este correo, ignoralo o avisa al administrador.<br>'
+            f'Si no esperabas este correo, ignóralo o avísale al administrador.<br>'
             f'<span style="font-size:11px;color:#777">Enlace directo: '
-            f'<a href="{action_url}" style="color:#CC0000">{action_url}</a></span>',
+            f'<a href="{action_url}" style="color:{marca["corp_color"]}">{action_url}</a></span>',
         ],
         btn_primario_txt=button,
         btn_primario_url=action_url,
@@ -4308,9 +4455,12 @@ def _send_password_access_email(
             ("", "Solicitado por", actor_name),
         ],
     )
-    sent = _send_ilus_email(to_addr, subject, html_body)
+    sent = _send_ilus_email(to_addr, subject, html_body, evento="password_access")
     if not sent and not getattr(g, "_last_email_error", ""):
-        g._last_email_error = "El servidor SMTP rechazo el envio. Revisa la configuracion en Comunicaciones."
+        g._last_email_error = (
+            "No se pudo enviar el correo. Verifica en /comunicaciones "
+            "que Resend o SMTP estén configurados correctamente."
+        )
     return sent
 
 
@@ -4381,28 +4531,28 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
         try:
             wa_cfg = _get_wa_cfg()
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
-                brand = _get_brand_cfg()
-                firma = f"\n— {brand.get('name','ILUS Sport & Health')}"
+                marca = _get_marca()
+                firma = f"\n— {marca['name']}"
                 if mode == "token" and action_url and email_purpose == "change":
                     body = (
-                        _brand_wa_prefix("Cambio de contraseña")
-                        + f"Hola {nombre}, recibimos una solicitud para cambiar la contraseña de tu cuenta.\n\n"
+                        _brand_wa_prefix("Recupera tu contraseña")
+                        + f"Hola {nombre}, recibimos una solicitud para cambiar tu contraseña.\n\n"
                           f"Define tu nueva clave aquí (válido 60 min, un solo uso):\n{action_url}\n\n"
                           f"Si no fuiste tú, ignora este mensaje."
                         + firma
                     )
                 elif mode == "token" and action_url:
                     body = (
-                        _brand_wa_prefix("Bienvenido al portal")
-                        + f"Hola {nombre}, habilitamos tu acceso al portal ILUS.\n\n"
-                          f"Crea tu contraseña aquí (válido 24 h):\n{action_url}\n\n"
+                        _brand_wa_prefix(f"Bienvenido a {marca['name']}")
+                        + f"Hola {nombre}, habilitamos tu acceso al portal {marca['name']}.\n\n"
+                          f"Crea tu contraseña aquí (válido 7 días):\n{action_url}\n\n"
                           f"Portal: {login_url}"
                         + firma
                     )
                 else:
                     body = (
                         _brand_wa_prefix("Acceso habilitado")
-                        + f"Hola {nombre}, tus credenciales del portal ILUS están listas.\n\n"
+                        + f"Hola {nombre}, tus credenciales del portal {marca['name']} están listas.\n\n"
                           f"Ingresa aquí: {login_url}\n"
                           f"Por seguridad, este mensaje no incluye tu contraseña."
                         + firma
@@ -4438,37 +4588,16 @@ def _access_notification_flash(result: dict, *, token_mode: bool = False) -> tup
 # ─────────────────────────────────────────────
 
 def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
-    """Envía el correo HTML de recuperación con diseño ILUS unificado."""
-    html_body = _ilus_email_html(
-        titulo          = "Recuperar contraseña",
-        subtitulo       = "Sistema de Gestión ILUS Sport &amp; Health",
-        saludo          = f"Hola, {to_name}",
-        parrafos        = [
-            "Recibimos una solicitud para restablecer la contraseña de tu cuenta en el sistema ILUS.",
-            "Haz clic en el botón a continuación para crear una nueva contraseña. "
-            "Este enlace es válido por <strong>60 minutos</strong>.",
-            f'Si no solicitaste este cambio, puedes ignorar este correo — '
-            f'tu contraseña seguirá siendo la misma.<br>'
-            f'<span style="font-size:11px;color:#bbb">O copia: '
-            f'<a href="{reset_url}" style="color:#CC0000">{reset_url}</a></span>',
-        ],
-        btn_primario_txt = "Restablecer contraseña",
-        btn_primario_url = reset_url,
-    )
-    return _send_ilus_email(to_addr, _brand_subject("Recuperar contraseña"), html_body)
-
-
-def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
-    """Version vigente: cambio de clave con token seguro."""
+    """Olvido de contraseña — token de 60 min con flujo seguro."""
     return _send_password_access_email(
         to_addr, to_name, reset_url, actor_name="ILUS", mode="reset", minutes=60
     )
 
 
 def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_name: str = "ILUS") -> bool:
-    """Version vigente: alta de usuario con token seguro."""
+    """Alta de usuario (bienvenida) — token de 7 días."""
     return _send_password_access_email(
-        to_addr, to_name, set_url, actor_name=creator_name, mode="setup", minutes=1440
+        to_addr, to_name, set_url, actor_name=creator_name, mode="setup", minutes=10080
     )
 
 
@@ -4489,12 +4618,31 @@ def forgot_password():
                 user = get_auth_user_by_username(email_input)
                 if user and user.get("active"):
                     token, _expires = _issue_password_token(user["id"], minutes=60)
-
                     reset_url = url_for("reset_password", token=token, _external=True)
-                    _send_recovery_email(user["username"], user["nombre"], reset_url)
+
+                    # Email + WhatsApp en background (no bloquea respuesta HTTP)
+                    # _notify_user_access maneja ambos canales y respeta config
+                    snap_user  = user["username"]
+                    snap_nom   = user["nombre"]
+                    snap_phone = user.get("phone") or ""
+                    snap_url   = reset_url
+
+                    def _bg_recovery():
+                        try:
+                            _notify_user_access(
+                                snap_user, snap_nom, snap_phone,
+                                mode="token",
+                                action_url=snap_url,
+                                email_purpose="change",
+                            )
+                        except Exception as _exc:
+                            print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
+
+                    threading.Thread(target=_bg_recovery, daemon=True).start()
+
                     _audit("password_reset_request",
                            target_type="user", target_id=user["id"],
-                           details={"username": user["username"]},
+                           details={"username": user["username"], "channels": "email+wa_if_phone"},
                            user_override={"id": user["id"], "username": user["username"], "role": user.get("role")})
                 else:
                     _audit("password_reset_request",
@@ -4506,7 +4654,7 @@ def forgot_password():
 
         return redirect(url_for("forgot_password"))
 
-    return render_template("forgot_password.html")
+    return render_template("forgot_password.html", marca=_get_marca())
 
 
 @app.route("/auth/restablecer/<token>", methods=["GET", "POST"])
@@ -4531,17 +4679,19 @@ def reset_password(token):
         flash("El enlace no es válido o ha expirado.", "danger")
         return redirect(url_for("forgot_password"))
 
+    marca = _get_marca()  # nombre/logo dinámico desde BD
+
     if request.method == "POST":
         pw1 = request.form.get("password", "")
         pw2 = request.form.get("password2", "")
         if pw1 != pw2:
             flash("Las contraseñas no coinciden.", "danger")
-            return render_template("reset_password.html", token=token, nombre=row["nombre"])
+            return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
 
         strength_errors = _password_strength_errors(pw1)
         if strength_errors:
             flash(" ".join(strength_errors), "danger")
-            return render_template("reset_password.html", token=token, nombre=row["nombre"])
+            return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
 
         new_hash = generate_password_hash(pw1)
         with conn.cursor() as cur:
@@ -4553,6 +4703,14 @@ def reset_password(token):
                 f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE token=%s",
                 (token,)
             )
+            # Si la cuenta tenía requires_password_change=1, limpiar el flag
+            try:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET requires_password_change=0 WHERE id=%s",
+                    (row["user_id"],)
+                )
+            except Exception:
+                pass
         conn.commit()
 
         _audit("password_reset_confirm",
@@ -4562,7 +4720,82 @@ def reset_password(token):
         flash("Contraseña actualizada. Ahora puedes iniciar sesión.", "success")
         return redirect(url_for("login"))
 
-    return render_template("reset_password.html", token=token, nombre=row["nombre"])
+    return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
+
+
+@app.route("/welcome/<token>", methods=["GET", "POST"])
+@rate_limited("welcome", max_attempts=10, window_seconds=900)
+def welcome_activate(token):
+    """Activación de cuenta nueva — mismo flujo que `reset_password` pero
+    con copy distinto orientado a bienvenida. Usa la misma tabla de tokens
+    (`app_password_resets`) y la misma validación de expiración/uso único.
+
+    El admin crea un usuario en /admin/users y NO recibe ni asigna la clave;
+    el usuario nuevo recibe email + WhatsApp con link `/welcome/<token>` y
+    define su propia contraseña aquí.
+    """
+    if g.user:
+        return redirect(url_for("index"))
+
+    conn = get_db()
+    row  = None
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""SELECT r.*, u.nombre, u.username
+                FROM `{RESETS_TABLE}` r
+                JOIN `{AUTH_TABLE}` u ON u.id = r.user_id
+                WHERE r.token=%s AND r.used=0 AND r.expires_at > UTC_TIMESTAMP()""",
+            (token,)
+        )
+        row = cur.fetchone()
+
+    if not row:
+        flash("El enlace de activación no es válido o ya expiró. "
+              "Pídele al administrador que te reenvíe la invitación.", "danger")
+        return redirect(url_for("login"))
+
+    marca = _get_marca()
+
+    if request.method == "POST":
+        pw1 = request.form.get("password", "")
+        pw2 = request.form.get("password2", "")
+        if pw1 != pw2:
+            flash("Las contraseñas no coinciden.", "danger")
+            return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
+
+        strength_errors = _password_strength_errors(pw1)
+        if strength_errors:
+            flash(" ".join(strength_errors), "danger")
+            return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
+
+        new_hash = generate_password_hash(pw1)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s WHERE id=%s",
+                (new_hash, row["user_id"])
+            )
+            cur.execute(
+                f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE token=%s",
+                (token,)
+            )
+            # Limpiar flag requires_password_change si existe (columna opcional)
+            try:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET requires_password_change=0 WHERE id=%s",
+                    (row["user_id"],)
+                )
+            except Exception:
+                pass  # columna no existe en este deploy — OK
+        conn.commit()
+
+        _audit("user_welcome_activate",
+               target_type="user", target_id=row["user_id"],
+               details={"username": row["username"]},
+               user_override={"id": row["user_id"], "username": row["username"], "role": None})
+        flash(f"¡Cuenta activada! Bienvenido, {row['nombre']}. Ya puedes iniciar sesión.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
 
 
 # ── PERFIL DE USUARIO (autogestión) ─────────────────────────────────────
@@ -6168,36 +6401,64 @@ def new_user():
             return render_template("user_form.html", errors=errors, user=None, fd=request.form,
                                    roles=_get_roles_disponibles())
 
-        # Crear usuario con contraseña placeholder (bloqueada hasta que use el enlace)
+        # Crear usuario con contraseña placeholder aleatoria.
+        # - Si admin asignó manual_password, esa es la clave inicial.
+        # - Si NO, generamos un placeholder aleatorio fuerte (32 hex chars)
+        #   que el usuario JAMÁS conoce — solo se activa la cuenta vía
+        #   /welcome/<token>. El admin NUNCA ve la clave del usuario.
+        # - requires_password_change=1 cuando no hay clave manual, para
+        #   que el sistema sepa que esta cuenta aún está sin activar.
         placeholder_hash = generate_password_hash(manual_password or secrets.token_hex(32))
+        needs_change = 0 if manual_password else 1
         conn = get_db()
         with conn.cursor() as cur:
-            cur.execute(
-                f"INSERT INTO `{AUTH_TABLE}` (username,nombre,password_hash,phone,role,active) VALUES (%s,%s,%s,%s,%s,%s)",
-                (username, nombre, placeholder_hash, phone or None, role, active),
-            )
+            # Intentamos con requires_password_change; si la columna no existe
+            # (deploy antiguo), caemos al INSERT sin esa columna.
+            try:
+                cur.execute(
+                    f"INSERT INTO `{AUTH_TABLE}` "
+                    f"(username,nombre,password_hash,phone,role,active,requires_password_change) "
+                    f"VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (username, nombre, placeholder_hash, phone or None, role, active, needs_change),
+                )
+            except Exception:
+                cur.execute(
+                    f"INSERT INTO `{AUTH_TABLE}` "
+                    f"(username,nombre,password_hash,phone,role,active) "
+                    f"VALUES (%s,%s,%s,%s,%s,%s)",
+                    (username, nombre, placeholder_hash, phone or None, role, active),
+                )
         conn.commit()
 
-        # Generar token de invitación (usa la misma tabla de resets, válido 24h)
-        # OPTIMIZACIÓN: el envío de email se hace en BACKGROUND para que el admin
-        # no tenga que esperar 10-15s del diagnóstico SMTP + envío. La respuesta
-        # es inmediata; si el email falla, queda log en stdout.
+        # Bienvenida: token de 7 días + endpoint /welcome/<token>.
+        # El envío se hace en background para no bloquear el HTTP response
+        # (SMTP + WhatsApp pueden tardar 10-15s combinados).
         if send_invite and not manual_password:
             try:
                 new_uid   = mysql_fetchone(f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s", (username,))["id"]
-                token, _expires = _issue_password_token(new_uid, minutes=1440)
-                set_url   = url_for("reset_password", token=token, _external=True)
-                # Enviar email + WhatsApp en background (no bloquea el HTTP response)
+                # 10080 minutos = 7 días — bienvenida tiene ventana amplia
+                token, _expires = _issue_password_token(new_uid, minutes=10080)
+                # ⬇️  Endpoint dedicado a activación de cuenta (welcome.html, copy distinto)
+                welcome_url = url_for("welcome_activate", token=token, _external=True)
+
+                # _notify_user_access manda email + WhatsApp en un solo call,
+                # con copy de bienvenida (mode=token, sin email_purpose=change).
                 actor_name_snap = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
-                def _send_bg(_un=username, _nom=nombre, _ph=wa_number or phone, _url=set_url, _actor=actor_name_snap):
+                snap_phone = wa_number or phone or ""
+                def _send_bg(_un=username, _nom=nombre, _ph=snap_phone, _url=welcome_url, _actor=actor_name_snap):
                     try:
-                        _send_invitation_email(_un, _nom, _url, _actor)
+                        _notify_user_access(
+                            _un, _nom, _ph,
+                            mode="token", action_url=_url,
+                            email_purpose="invite",
+                        )
                     except Exception as _se:
-                        print(f"[new_user/bg-email] fail: {_se}", flush=True)
+                        print(f"[new_user/bg-notify] fail: {_se}", flush=True)
                 threading.Thread(target=_send_bg, daemon=True).start()
-                flash(f"✅ Usuario creado. Invitación enviada a {username} en segundo plano.", "success")
+                ch = "email + WhatsApp" if snap_phone else "email"
+                flash(f"✅ Usuario creado. Invitación enviada por {ch} a {username} en segundo plano.", "success")
             except Exception as _ie:
-                flash(f"Usuario creado, pero fallo el envio de invitacion: {_ie}", "warning")
+                flash(f"Usuario creado, pero falló el envío de invitación: {_ie}", "warning")
         else:
             if manual_password:
                 # Notificación de clave manual también en background
@@ -13842,8 +14103,18 @@ def _get_client_cfg():
 
 
 def _get_wa_cfg():
-    """Config de WhatsApp Twilio. Primero busca BD (comm_whatsapp_config),
-    si no encuentra (o falta algún campo crítico), cae a env vars de Railway.
+    """Config de WhatsApp Twilio.
+
+    PRECEDENCIA (importante):
+      1. Env vars Railway (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM)
+         → SIEMPRE ganan, son fuente de verdad en producción.
+      2. BD (comm_whatsapp_config) → fallback de retrocompatibilidad para
+         instalaciones donde la config aún está sólo en la tabla.
+
+    POR QUÉ env > BD: el admin a veces guarda un SID viejo en BD y luego rota
+    credenciales en Railway. Si BD ganaba (como hasta antes), los envíos
+    seguían usando el SID viejo y fallaban con error críptico. Ahora rotar
+    credenciales solo requiere editar la env var en Railway.
 
     Env vars esperadas:
       TWILIO_ACCOUNT_SID      (ej: AC1234567890abcdef...)
@@ -13852,6 +14123,7 @@ def _get_wa_cfg():
     """
     import os as _os_wa
     cfg = {}
+    # 1) BD como base (retrocompat — la UI de comunicaciones escribe aquí)
     try:
         row = mysql_fetchone(
             "SELECT * FROM comm_whatsapp_config WHERE id=1 LIMIT 1"
@@ -13860,15 +14132,23 @@ def _get_wa_cfg():
             cfg = dict(row)
     except Exception:
         pass
-    # Fallback / override desde env vars
-    env_sid = (_os_wa.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
-    env_tok = (_os_wa.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+
+    # 2) Env vars Railway → OVERRIDE (ganan siempre cuando estén presentes)
+    env_sid  = (_os_wa.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+    env_tok  = (_os_wa.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
     env_from = (_os_wa.environ.get("TWILIO_WHATSAPP_FROM") or "").strip()
-    if env_sid and not cfg.get("account_sid"): cfg["account_sid"] = env_sid
-    if env_tok and not cfg.get("auth_token"):  cfg["auth_token"]  = env_tok
-    if env_from and not cfg.get("from_number"):
+    if env_sid:
+        cfg["account_sid"] = env_sid
+    if env_tok:
+        cfg["auth_token"] = env_tok
+    if env_from:
         # Normaliza: si no trae prefix "whatsapp:" lo agrega
         cfg["from_number"] = env_from if env_from.startswith("whatsapp:") else f"whatsapp:{env_from}"
+    # Marca origen para diagnóstico
+    if env_sid or env_tok or env_from:
+        cfg["_source"] = "env"
+    elif cfg:
+        cfg["_source"] = "db"
     return cfg
 
 
@@ -14062,14 +14342,16 @@ def _smtp_connection_diagnose(cfg):
         if secure:
             checks.append(f"Conectando con SSL a {host}:{port}")
             ctx = _ssl.create_default_context()
-            with _open_smtp_client(host, port, True, timeout=10, context=ctx) as srv:
+            # Timeout 30s: en Railway/cloud el handshake TLS con Gmail puede demorar
+            # 15-25s por enrutamiento adicional. Antes era 10s y daba timeout falso.
+            with _open_smtp_client(host, port, True, timeout=30, context=ctx) as srv:
                 checks.append("Servidor SSL respondio correctamente")
                 srv.ehlo()
                 checks.append("Autenticando usuario SMTP")
                 srv.login(user, password)
         else:
             checks.append(f"Conectando a {host}:{port}")
-            with _open_smtp_client(host, port, False, timeout=10) as srv:
+            with _open_smtp_client(host, port, False, timeout=30) as srv:
                 srv.ehlo()
                 if srv.has_extn("starttls"):
                     checks.append("STARTTLS disponible; negociando cifrado")
@@ -14102,7 +14384,9 @@ def _smtp_connection_diagnose(cfg):
         hints = [
             "Revisa host y puerto.",
             "Para Gmail usa 587 sin SSL/TLS marcado, o 465 con SSL/TLS marcado.",
-            "Si esta en Railway o hosting, confirma que el proveedor permita conexiones SMTP salientes.",
+            "Si estás en Railway o hosting cloud, Gmail suele bloquear el puerto SMTP saliente. "
+            "Configura RESEND_API_KEY como variable de entorno (resend.com — 100 envíos/día gratis) "
+            "y el sistema lo usará como ruta principal automáticamente.",
         ]
         return {"ok": False, "stage": "connect", "message": "No se pudo conectar correctamente al servidor SMTP.", "detail": str(exc), "checks": checks, "suggestions": hints + suggestions}
     except _ssl.SSLError as exc:
@@ -14719,6 +15003,41 @@ def comm_client_save():
     try: _invalidate_client_cfg_cache()
     except Exception: pass
     return jsonify({"ok": True, "client": _get_client_cfg()})
+
+
+@app.route("/comunicaciones/whatsapp/env-vars", methods=["GET"])
+@_require_superadmin
+def comm_wa_env_vars():
+    """Devuelve los valores ACTIVOS de las env vars Twilio en Railway.
+
+    Útil cuando el admin rotó credenciales en Railway y la BD tiene valores
+    viejos: el botón "Sincronizar con env vars" en /comunicaciones lo llama
+    para mostrar los valores reales en el formulario antes de guardar.
+
+    NOTA SEGURIDAD: este endpoint requiere superadmin. Aún así, NO retorna
+    el `auth_token` completo — solo los primeros y últimos 4 chars para
+    poder confirmar que se actualizó. El admin debe ingresar el token
+    completo manualmente si quiere persistirlo en BD.
+    """
+    import os as _os_e
+    sid  = (_os_e.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+    tok  = (_os_e.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+    frm  = (_os_e.environ.get("TWILIO_WHATSAPP_FROM") or "").strip()
+    if frm and not frm.startswith("whatsapp:"):
+        frm = f"whatsapp:{frm}"
+    if not (sid or tok or frm):
+        return jsonify({
+            "ok": False,
+            "error": "No hay env vars Twilio configuradas en Railway. "
+                     "Define TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_WHATSAPP_FROM."
+        }), 404
+    return jsonify({
+        "ok": True,
+        "account_sid": sid,
+        "auth_token":  tok,
+        "from_number": frm,
+        "source":      "env",
+    })
 
 
 @app.route("/comunicaciones/whatsapp/config", methods=["POST"])
@@ -16261,6 +16580,17 @@ def init_mantenciones_tables():
                 # mant_maquinas: lookup por serie (búsqueda admin "buscar equipo")
                 # NOTA: la columna existe como `serie` (verificado en CREATE TABLE)
                 "CREATE INDEX idx_mm_serie ON mant_maquinas (serie)",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-17 — BUG CRÍTICO: firmas guardadas como data URL
+                # base64 pesan 100-500KB. La columna TEXT (max 65,535 bytes ≈
+                # 64KB) las truncaba o fallaba con error 1406 "Data too long".
+                # Solución: ampliar a LONGTEXT (max 4GB) para soportar tanto
+                # la URL pública de Cloudinary (corta) como el data URL crudo
+                # cuando Cloudinary no esté disponible (fallback defensivo).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas MODIFY COLUMN firma_cliente_url LONGTEXT NULL COMMENT 'Firma del cliente (URL Cloudinary o data URL fallback)'",
+                "ALTER TABLE mant_visitas MODIFY COLUMN firma_tecnico_url LONGTEXT NULL COMMENT 'Firma del técnico (URL Cloudinary o data URL fallback)'",
+                "ALTER TABLE mant_visitas MODIFY COLUMN firma_supervisor_url LONGTEXT NULL COMMENT 'Firma del supervisor (URL Cloudinary o data URL fallback)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -25970,10 +26300,27 @@ def mant_visita_aplicar_plantilla(vid):
         ) or []
         for mr in m_rows:
             maquinas_idx[mr["id"]] = mr
+    n_skipped = 0  # contador de máquinas saltadas por dedup
     try:
         with conn.cursor() as cur:
             targets = maquina_ids if maquina_ids else [None]
             for mid in targets:
+                # BUG FIX 2026-05-17 — DEDUP por (visita, plantilla, máquina).
+                # Si ya existen tareas de esta plantilla en esta máquina, NO
+                # se duplican. Evita el caso de aplicar la misma plantilla
+                # "Levantamiento fotográfico" dos veces (manual o por hook).
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+                    " WHERE visita_id=%s AND plantilla_id=%s "
+                    "   AND ((maquina_id=%s) OR (maquina_id IS NULL AND %s IS NULL))",
+                    (vid, pid, mid, mid)
+                )
+                _dup = cur.fetchone() or {}
+                if (_dup.get("n") or 0) > 0:
+                    n_skipped += 1
+                    print(f"[aplicar-plantilla] DEDUP — plantilla {pid} ya aplicada "
+                          f"a máquina {mid} en visita {vid}, skip", flush=True)
+                    continue
                 for it in items:
                     next_orden += 1
                     # Si tenemos máquina específica y la tarea es foto/levantamiento,
@@ -26020,9 +26367,13 @@ def mant_visita_aplicar_plantilla(vid):
         conn.commit()
         try:
             _mant_log("visita", vid, "plantilla_aplicada",
-                      f"Plantilla '{plant['nombre']}' → {n_creadas} tarea(s)")
+                      f"Plantilla '{plant['nombre']}' → {n_creadas} tarea(s)"
+                      + (f" · dedup {n_skipped} máquina(s)" if n_skipped else ""))
         except Exception: pass
-        return jsonify({"ok": True, "creadas": n_creadas, "plantilla": plant["nombre"]})
+        return jsonify({
+            "ok": True, "creadas": n_creadas, "plantilla": plant["nombre"],
+            "skipped_dedup": n_skipped,
+        })
     finally:
         conn.close()
 
@@ -26588,13 +26939,22 @@ def mant_ot_firmar_revision(vid):
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
 
+        # ── BUG FIX 2026-05-17 — Subir firmas a Cloudinary ──
+        # Las firmas son data URLs base64 de ~100-500KB. La columna TEXT
+        # legacy las truncaba (error 1406). Ahora subimos a Cloudinary
+        # y guardamos solo la URL pública (corta). Si Cloudinary falla,
+        # _subir_firma_cloudinary devuelve el data URL original como
+        # fallback — la columna ahora es LONGTEXT y lo soporta.
+        firma_tec_url = _subir_firma_cloudinary(firma_tec, vid, "tecnico")
+        firma_cli_url = _subir_firma_cloudinary(firma_cli, vid, "cliente") if firma_cli else None
+
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, firma_tecnico_at=NOW(), "
             "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
             "  estado='pendiente_aprobacion' "
             " WHERE id=%s",
-            (firma_tec, uid, firma_cli or None, nombre_cli, vid)
+            (firma_tec_url, uid, firma_cli_url, nombre_cli, vid)
         )
         # Marcar levantamiento como cerrado si la OT tenía uno
         v_info = mysql_fetchone(
@@ -26696,12 +27056,15 @@ def mant_ot_aprobar_cierre(vid):
     try:
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
+        # ── BUG FIX 2026-05-17 — Subir firma supervisor a Cloudinary ──
+        # Misma lógica que firmar-revision: data URL → URL pública corta.
+        firma_sup_url = _subir_firma_cloudinary(firma_sup, vid, "supervisor") if firma_sup else None
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  estado='cerrada', cerrada_at=NOW(), cerrada_por=%s, "
             "  firma_supervisor_url=%s, firma_supervisor_user_id=%s, firma_supervisor_at=NOW() "
             " WHERE id=%s",
-            (current_username() or 'supervisor', firma_sup or None, uid, vid)
+            (current_username() or 'supervisor', firma_sup_url, uid, vid)
         )
         try: _mant_log("visita", vid, "aprobada_supervisor",
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
@@ -31986,19 +32349,64 @@ def mant_lev_crear_o_listar(cid):
                         except Exception as _e_n:
                             print(f"[lev_crear] mant_visita_tecnicos insert falló para uid={tuid}: {_e_n}", flush=True)
 
-                # ─── 1 tarea TIPO FOTO por equipo (legacy fallback) ─
-                for idx, m in enumerate(maquinas, 1):
-                    cur.execute(
-                        "INSERT INTO mant_visita_tareas "
-                        "(visita_id, orden, titulo, descripcion, maquina_id, "
-                        " tipo, tipo_respuesta, obligatoria, requiere_foto, "
-                        " estado_trabajo, created_by) "
-                        "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,'pendiente',%s)",
-                        (visita_id, idx,
-                         f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
-                         "Capturar fotos generales del equipo + N° serie + placa + datos técnicos.",
-                         m["id"], current_username() or 'sistema')
-                    )
+                # ─── BUG FIX 2026-05-17 — "Gestión de tareas" duplicada ──
+                # Antes: SIEMPRE se insertaba 1 tarea "📷 Documentar:" por
+                # equipo SIN plantilla_id, que aparecía como "Gestión de tareas"
+                # en la UI del técnico (fallback de COALESCE(p.nombre)).
+                # Esto convivía con las plantillas que se aplicaban después
+                # → duplicación visible.
+                #
+                # Ahora: SOLO se inserta este fallback legacy si NO se va a
+                # aplicar ninguna plantilla (ni la estándar del tipo ni las
+                # extra). Si se aplican plantillas, ellas ya generan las
+                # tareas con plantilla_id y aparecen agrupadas correctamente.
+                # Esta validación es defensiva — si no hay match de plantilla
+                # estándar y plantillas_por_equipo está vacío, queda esta
+                # tarea para que el técnico tenga AL MENOS qué hacer.
+                _tiene_plantillas = bool(plantillas_por_equipo)
+                if not _tiene_plantillas:
+                    # Chequear si hay plantilla estándar para el tipo
+                    try:
+                        _nombre_test = {
+                            'levantamiento':  'Levantamiento fotográfico estándar',
+                            'instalacion':    'Instalación estándar',
+                            'preventiva':     'Mantención preventiva estándar',
+                            'correctiva':     'Mantención correctiva estándar',
+                            'visita_tecnica': 'Visita técnica estándar',
+                            'inspeccion':     'Inspección estándar',
+                            'garantia':       'Garantía estándar',
+                        }.get(tipo_ot)
+                        if _nombre_test:
+                            _check_p = mysql_fetchone(
+                                "SELECT id FROM mant_tarea_plantillas "
+                                "WHERE nombre=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                                (_nombre_test,)
+                            )
+                            if _check_p: _tiene_plantillas = True
+                        if not _tiene_plantillas:
+                            _check_p2 = mysql_fetchone(
+                                "SELECT id FROM mant_tarea_plantillas "
+                                "WHERE tipo_visita=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                                (tipo_ot,)
+                            )
+                            if _check_p2: _tiene_plantillas = True
+                    except Exception:
+                        pass
+                # Solo crear el fallback "📷 Documentar" si NO hay plantillas
+                # que se vayan a aplicar (evita duplicación con plantillas).
+                if not _tiene_plantillas:
+                    for idx, m in enumerate(maquinas, 1):
+                        cur.execute(
+                            "INSERT INTO mant_visita_tareas "
+                            "(visita_id, orden, titulo, descripcion, maquina_id, "
+                            " tipo, tipo_respuesta, obligatoria, requiere_foto, "
+                            " estado_trabajo, created_by) "
+                            "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,'pendiente',%s)",
+                            (visita_id, idx,
+                             f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
+                             "Capturar fotos generales del equipo + N° serie + placa + datos técnicos.",
+                             m["id"], current_username() or 'sistema')
+                        )
             except Exception as e_ot:
                 print(f"[lev_crear] no se pudo crear OT espejo: {e_ot}", flush=True)
                 visita_id = None
@@ -32015,7 +32423,13 @@ def mant_lev_crear_o_listar(cid):
 
         def _aplicar_plantilla_a_equipos(plantilla_id, mq_ids):
             """Clona los items de la plantilla y los inserta como tareas
-            de la OT para CADA máquina del listado. Retorna n items creados."""
+            de la OT para CADA máquina del listado. Retorna n items creados.
+
+            BUG FIX 2026-05-17 — DEDUP: si ya existe (visita_id, plantilla_id,
+            maquina_id) en mant_visita_tareas, SKIP esa máquina. Esto evita
+            duplicación cuando la misma plantilla se intenta aplicar 2 veces
+            (ej: paso 1 estándar del tipo + paso 2 plantillas_por_equipo).
+            """
             nonlocal items_plantilla
             if not plantilla_id or not mq_ids:
                 return 0
@@ -32037,6 +32451,17 @@ def mant_lev_crear_o_listar(cid):
                     )
                     next_orden = int((cur2.fetchone() or {}).get("mx") or 0)
                     for mq_id in mq_ids:
+                        # DEDUP: ¿ya hay tareas de esta plantilla para esta máquina?
+                        cur2.execute(
+                            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+                            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id=%s",
+                            (visita_id, plantilla_id, mq_id)
+                        )
+                        _dup = cur2.fetchone() or {}
+                        if (_dup.get("n") or 0) > 0:
+                            print(f"[lev_crear] DEDUP — plantilla {plantilla_id} ya aplicada "
+                                  f"a máquina {mq_id} en visita {visita_id}, skip", flush=True)
+                            continue
                         m_row = mysql_fetchone(
                             "SELECT nombre, serie FROM mant_maquinas WHERE id=%s",
                             (mq_id,)
@@ -32076,7 +32501,13 @@ def mant_lev_crear_o_listar(cid):
             return n_added
 
         # 1) Plantilla estándar del tipo
-        if visita_id and equipo_ids:
+        #
+        # BUG FIX 2026-05-17 — Si el usuario ya pasó plantillas explícitas
+        # en plantillas_por_equipo, NO aplicamos la estándar automática:
+        # el usuario sabe lo que quiere, evitamos duplicación silenciosa.
+        # (El dedup interno de _aplicar_plantilla_a_equipos también lo
+        # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
+        if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
                 # Mapeo tipo_ot → nombre de plantilla estándar (convención del proyecto)
                 plantilla_estandar_por_tipo = {

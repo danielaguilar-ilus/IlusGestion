@@ -122,7 +122,7 @@
                   <div class="col-md-7">
                     <label class="form-label small fw-semibold">Nombre del remitente</label>
                     <input id="smtpFromName" class="form-control form-control-sm"
-                           value="{{ smtp_cfg.from_name or 'ILUS Sport &amp; Health' }}">
+                           value="{{ smtp_cfg.from_name or client_cfg.company_name or 'ILUS Fitness' }}">
                   </div>
                   <div class="col-md-5">
                     <label class="form-label small fw-semibold">Email remitente</label>
@@ -168,7 +168,12 @@
                 <div class="col-12">
                   <label class="form-label small fw-semibold">Nombre de empresa</label>
                   <input id="ccCompany" class="form-control form-control-sm"
-                         value="{{ client_cfg.company_name or 'ILUS Sport &amp; Health' }}">
+                         value="{{ client_cfg.company_name or 'ILUS Fitness' }}"
+                         placeholder="ILUS Fitness">
+                  <div class="form-text small">
+                    Aparece en emails, WhatsApp, footer de login y todas las
+                    comunicaciones. Cambia aquí para reflejar el nombre legal/comercial actual.
+                  </div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label small fw-semibold">Reply-To</label>
@@ -366,6 +371,15 @@
                 <button class="btn btn-outline-success btn-sm" onclick="abrirTestWA()">
                   <i class="bi bi-whatsapp me-1"></i>Enviar mensaje de prueba
                 </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="sincronizarWAConEnv()"
+                        title="Trae los valores de las env vars de Railway (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM) y los muestra en este formulario. Útil si rotaste credenciales en Railway y la BD tiene valores viejos.">
+                  <i class="bi bi-arrow-clockwise me-1"></i>Sincronizar con env vars
+                </button>
+              </div>
+              <div class="mt-2 small text-muted" style="font-size:.72rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Recuerda: las env vars de Railway tienen prioridad sobre lo que guardes aquí.
+                Si rotaste credenciales en Railway, usa <strong>Sincronizar</strong>.
               </div>
               <div id="waMsg" class="small mt-2"></div>
             </div>
@@ -605,7 +619,7 @@
                   <div style="background:#075e54;color:#fff;padding:10px 14px;
                               display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600">
                     <i class="bi bi-whatsapp" style="font-size:16px"></i>
-                    ILUS Sport &amp; Health
+                    {{ client_cfg.company_name or 'ILUS Fitness' }}
                     <span style="margin-left:auto;font-size:10px;opacity:.7">en línea</span>
                   </div>
                   {# Chat area #}
@@ -1235,7 +1249,7 @@ async function actualizarPreview() {
     } catch(e) {}
   }
   const color   = val('ccColorText') || val('ccColor') || '#CC0000';
-  const company = val('ccCompany')   || 'ILUS Sport & Health';
+  const company = val('ccCompany')   || 'ILUS Fitness';
   const logo    = _logoBase64 || '';
   const logoBlock = logo
     ? `<img src="${logo}" alt="${company}" style="height:40px;margin-bottom:12px;object-fit:contain"><br>`
@@ -1351,6 +1365,51 @@ function abrirTestWA() {
   _modalTestWA.show();
 }
 
+/**
+ * Sincroniza el formulario con los valores de las env vars de Railway.
+ *
+ * Por qué existe: el admin a veces guarda un SID en la BD y luego rota
+ * credenciales en Railway. Como `_get_wa_cfg()` ahora da prioridad a env
+ * (env > BD), el envío usa el SID de env. Este botón actualiza la UI
+ * para que el admin vea los valores ACTIVOS antes de tocar "Guardar".
+ *
+ * Acción: trae las env vars desde /comunicaciones/whatsapp/env-vars
+ * y rellena los inputs. NO guarda en BD automáticamente — el admin
+ * decide si presiona "Guardar configuración" después.
+ */
+async function sincronizarWAConEnv() {
+  const msg = document.getElementById('waMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary me-1"></div>Leyendo env vars…';
+  try {
+    const r = await fetch('/comunicaciones/whatsapp/env-vars');
+    const d = await r.json();
+    if (!d.ok) {
+      msg.innerHTML = `<span class="text-warning">${esc(d.error||'No se pudieron leer las env vars')}</span>`;
+      return;
+    }
+    const cambios = [];
+    if (d.account_sid && d.account_sid !== val('waSid')) {
+      document.getElementById('waSid').value = d.account_sid;
+      cambios.push('Account SID');
+    }
+    if (d.auth_token && d.auth_token !== val('waToken')) {
+      document.getElementById('waToken').value = d.auth_token;
+      cambios.push('Auth Token');
+    }
+    if (d.from_number && d.from_number !== val('waFrom')) {
+      document.getElementById('waFrom').value = d.from_number;
+      cambios.push('Número From');
+    }
+    if (cambios.length === 0) {
+      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>La BD ya está sincronizada con las env vars de Railway.</span>';
+    } else {
+      msg.innerHTML = `<span class="text-info"><i class="bi bi-arrow-clockwise me-1"></i>Cargado de env vars: <strong>${cambios.join(', ')}</strong>. Presiona <strong>Guardar configuración</strong> para persistir en BD.</span>`;
+    }
+  } catch(e) {
+    msg.innerHTML = `<span class="text-danger">Error al leer env vars: ${esc(e.message||String(e))}</span>`;
+  }
+}
+
 async function enviarTestWA() {
   const to  = document.getElementById('testWATo').value.trim();
   const msg = document.getElementById('testWAMsg');
@@ -1457,7 +1516,7 @@ function _buildEmailHtml(titulo, cuerpo) {
   // Logo: usa la imagen configurada (base64) o cae al CDN oficial
   const logoSrc = _logoBase64 ||
     'https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png';
-  const comp = val('ccCompany') || '{{ client_cfg.company_name or "ILUS Sport &amp; Health" }}';
+  const comp = val('ccCompany') || '{{ client_cfg.company_name or "ILUS Fitness" }}';
 
   return `<!DOCTYPE html>
 <html lang="es">

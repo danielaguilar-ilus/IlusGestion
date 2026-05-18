@@ -221,7 +221,17 @@
 {% block scripts %}
 <script>
 async function enviarPasswordLink(uid, nombre, email, btn) {
-  if (!confirm(`Solicitar cambio de contrasena por email/WhatsApp a ${nombre} (${email})?`)) return;
+  // REGLA #1 CLAUDE.md — usar ilusConfirm (no confirm nativo)
+  const ok = await ilusConfirm({
+    title: 'Enviar cambio de contraseña',
+    message: `¿Solicitar cambio de contraseña a ${nombre}?`,
+    sub: `Se enviará un enlace de cambio al correo <strong>${email}</strong>.`,
+    subHtml: true,
+    okLabel: 'Enviar enlace',
+    cancelLabel: 'Cancelar',
+    type: 'question',
+  });
+  if (!ok) return;
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
@@ -230,13 +240,22 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
     const d = await r.json();
     if (d.ok) {
       btn.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+      ilusToast('Enlace de cambio enviado a ' + email, { type: 'success' });
       setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
     } else {
-      alert('Error: ' + (d.error || 'No se pudo enviar'));
+      await ilusAlert({
+        title: 'No se pudo enviar',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
       btn.innerHTML = orig; btn.disabled = false;
     }
   } catch(e) {
-    alert('Error de red');
+    await ilusAlert({
+      title: 'Error de red',
+      message: 'No se pudo contactar al servidor. Reintenta en unos segundos.',
+      type: 'error',
+    });
     btn.innerHTML = orig; btn.disabled = false;
   }
 }
