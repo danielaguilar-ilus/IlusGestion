@@ -171,7 +171,10 @@
   <header class="pub-top">
     <div class="pub-top-inner">
       <div class="logo-wrap">
-        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+        <picture>
+          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" decoding="async" fetchpriority="high">
+        </picture>
       </div>
       <div class="actions">
         <a href="{{ url_for('pickup_public_request') }}" class="btn-volver">
@@ -378,7 +381,10 @@
   </div>
 
   <footer class="footer">
-    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+    <picture>
+      <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
+      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+    </picture>
     <div class="fw-bold text-white mb-1">ILUS Fitness</div>
     <div class="small">© Todos los derechos reservados · Página pública de seguimiento</div>
   </footer>

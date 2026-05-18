@@ -36,7 +36,10 @@
      URL versionada ya está en cache. Subir _ASSET_V cuando cambie CSS/JS. #}
   <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260518" as="style">
   {% if has_logo %}
-  <link rel="preload" href="{{ url_for('static', filename='Logo.png') }}" as="image" fetchpriority="high">
+  {# Preload WebP (~27 KB) en lugar del PNG original (~945 KB). El <picture> de
+     más abajo entrega el WebP a navegadores modernos (~96%) y el PNG optimizado
+     como fallback. Original Logo.png se conserva para favicons / og:image. #}
+  <link rel="preload" href="{{ url_for('static', filename='Logo.webp') }}" as="image" type="image/webp" fetchpriority="high">
   {% endif %}
 
   {# ── SEO + branding (cómo se ve en Google y al compartir links) ── #}
@@ -224,8 +227,11 @@
     <i class="bi bi-list"></i>
   </button>
   {% if has_logo %}
-    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="mobile-logo"
-         width="120" height="80" decoding="async" fetchpriority="high">
+    <picture>
+      <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" class="mobile-logo"
+           width="120" height="80" decoding="async" fetchpriority="high">
+    </picture>
   {% else %}
     <span class="mobile-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></span>
   {% endif %}
@@ -248,9 +254,12 @@
   <div class="sidebar-logo-area">
     <a href="{{ url_for('index') }}" class="sidebar-brand">
       {% if has_logo %}
-        <img src="{{ url_for('static', filename='Logo.png') }}"
-             alt="ILUS" class="sidebar-logo-img"
-             width="180" height="120" decoding="async" fetchpriority="high">
+        <picture>
+          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+          <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
+               alt="ILUS" class="sidebar-logo-img"
+               width="180" height="120" decoding="async" fetchpriority="high">
+        </picture>
       {% else %}
         <svg width="84" height="98" viewBox="0 0 34 42" fill="none" aria-label="ILUS">
           <path d="M32,5 Q20,-1 6,3 Q10,9 16,11 Q23,9 32,5Z" fill="#CC0000"/>

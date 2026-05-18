@@ -615,8 +615,13 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
         <div class="d-flex justify-content-between align-items-start">
           <div class="d-flex align-items-center gap-3">
             {% if has_logo %}
-            <img src="{{ url_for('static', filename='Logo.png') }}"
-                 style="height:162px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.5))">
+            <picture>
+              <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+              <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
+                   alt="ILUS"
+                   style="height:162px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.5))"
+                   decoding="async">
+            </picture>
             {% else %}
             <svg width="46" height="54" viewBox="0 0 34 42" fill="none" style="flex-shrink:0">
               <path d="M32,5 Q20,-1 6,3 Q10,9 16,11 Q23,9 32,5Z" fill="#CC0000"/>

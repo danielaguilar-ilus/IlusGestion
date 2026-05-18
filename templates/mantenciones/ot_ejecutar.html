@@ -1539,9 +1539,10 @@
 <div class="modal fade firma-modal" id="modalFirma" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
     <div class="modal-content">
-      {# Banner ILUS con logo #}
+      {# Banner ILUS con logo. image-set() entrega WebP (~27 KB) a navegadores
+         modernos y cae al PNG optimizado (~70 KB) en el resto. #}
       <div class="firma-banner">
-        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='Logo.png') }}')"></div>
+        <div class="fb-logo" style="background-image:image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'));background-image:-webkit-image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'))"></div>
         <div class="flex-grow-1">
           <h5><i class="bi bi-pen-fill me-2"></i>Cerrar Orden de Trabajo</h5>
           <div class="fb-sub">{{ visita.numero_ot }} · {{ visita.razon_social }}</div>
@@ -1634,7 +1635,7 @@
   <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
     <div class="modal-content">
       <div class="firma-banner" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#15803d 100%)">
-        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='Logo.png') }}')"></div>
+        <div class="fb-logo" style="background-image:image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'));background-image:-webkit-image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'))"></div>
         <div class="flex-grow-1">
           <h5><i class="bi bi-pen-fill me-2"></i>Firmar y cerrar OT</h5>
           <div class="fb-sub">{{ visita.numero_ot or ('OT #' ~ visita.id) }} · {{ visita.razon_social }}</div>

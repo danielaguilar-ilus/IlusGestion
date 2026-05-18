@@ -308,7 +308,10 @@
     <div class="hero-grid">
       <div>
         <div class="hero-logo-wrap">
-          <img src="{{ url_for('static', filename='Logo.png') }}" class="hero-logo" alt="ILUS">
+          <picture>
+            <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="hero-logo" alt="ILUS" decoding="async" fetchpriority="high">
+          </picture>
         </div>
         <div class="hero-pill-row">
           <span class="hero-pill red"><i class="bi bi-lightning-charge-fill me-1"></i>Servicio premium</span>
@@ -692,7 +695,10 @@
   </main>
 
   <footer class="footer">
-    <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
+    <picture>
+      <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
+      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+    </picture>
     <div class="fw-bold text-white mb-1">ILUS Fitness</div>
     <div class="small">© Todos los derechos reservados · Solicitud de retiro segura</div>
   </footer>

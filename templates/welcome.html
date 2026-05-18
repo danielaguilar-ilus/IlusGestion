@@ -26,10 +26,14 @@
   <div class="login-hero">
     <div class="login-hero-content" style="padding:52px;">
       <div class="login-brand-top">
-        <img src="{{ url_for('static', filename='Logo.png') }}"
-             alt="{{ marca.name if marca else 'ILUS Fitness' }}"
-             style="width:clamp(260px,36vw,495px);height:auto;display:block;
-                    filter:drop-shadow(0 4px 18px rgba(0,0,0,.7));">
+        <picture>
+          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+          <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
+               alt="{{ marca.name if marca else 'ILUS Fitness' }}"
+               style="width:clamp(260px,36vw,495px);height:auto;display:block;
+                      filter:drop-shadow(0 4px 18px rgba(0,0,0,.7));"
+               decoding="async" fetchpriority="high">
+        </picture>
       </div>
       <h1 style="font-family:'Inter',-apple-system,system-ui,sans-serif;
                  font-weight:900;font-size:clamp(2.4rem,4.5vw,3.4rem);
@@ -53,9 +57,12 @@
   <div class="login-side">
     <div class="login-box">
 
-      <img src="{{ url_for('static', filename='Logo.png') }}"
-           alt="{{ marca.name if marca else 'ILUS Fitness' }}"
-           class="login-mini-logo" style="margin-bottom:14px">
+      <picture>
+        <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+        <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
+             alt="{{ marca.name if marca else 'ILUS Fitness' }}"
+             class="login-mini-logo" style="margin-bottom:14px" decoding="async">
+      </picture>
 
       <span class="welcome-badge">
         <i class="bi bi-shield-lock-fill me-1"></i>Activación de cuenta
