@@ -138,6 +138,7 @@
               {% if permissions.delete %}
               <form method="post" action="{{ url_for('colab_eliminar', cid=col.id) }}"
                     onsubmit="return confirmarEliminarColab(event, {{ col.nombre_completo|tojson }})">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"
                         style="padding:6px 9px">
                   <i class="bi bi-trash3"></i>

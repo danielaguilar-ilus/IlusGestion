@@ -33,6 +33,7 @@
 
 <div class="px-2 px-md-0" style="max-width:720px">
 <form method="post" enctype="multipart/form-data" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {# ══ DATOS PERSONALES ══ #}
   <div class="ilus-card">

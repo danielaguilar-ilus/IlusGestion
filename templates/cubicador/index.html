@@ -19,6 +19,7 @@
   </div>
   <div class="card-body p-3">
     <form method="post" id="cubicadorForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
       {# Encabezados de columnas (solo en pantallas medianas+) #}
       <div class="row g-2 mb-1 d-none d-sm-flex">
@@ -91,6 +92,7 @@
 
   <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline"
         onsubmit="const b=this.querySelector('button');const old=b.innerHTML;b.disabled=true;b.innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...';setTimeout(()=>{b.disabled=false;b.innerHTML=old},8000)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for i in range(rdocs|length) %}
     <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
     <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">
@@ -104,6 +106,7 @@
 
   <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline"
         onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for i in range(rdocs|length) %}
     <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
     <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">

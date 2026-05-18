@@ -94,6 +94,7 @@
   </style>
   <form method="post" action="{{ url_for('admin_login_imagenes_subir') }}"
         enctype="multipart/form-data" id="formLoginUpload" class="mb-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="li-dropzone" id="liDropZone" onclick="document.getElementById('liFileInput').click()">
       <i class="bi bi-cloud-arrow-up"></i>
       <div class="fw-bold" style="font-size:1rem;color:#374151">
@@ -150,6 +151,7 @@
         </span>
         {% endif %}
         <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}" id="form-login-img-{{ img.id }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="li-form-row">
             <div class="d-flex align-items-center justify-content-between">
               <span class="{% if img.activa %}li-status-on{% else %}li-status-off{% endif %}">
@@ -283,6 +285,7 @@
   <div class="li-card mb-4 p-3" style="background:#fff8f8;border-color:#fecaca">
     <h6 class="mb-3"><i class="bi bi-calendar2-x me-2 text-danger"></i>Bloquear día / franjas horarias</h6>
     <form method="post" action="{{ url_for('pickup_blocks_new_batch') }}" id="formBkNew">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2 align-items-end mb-3">
         <div class="col-md-4">
           <label class="form-label small fw-semibold">📅 Fecha a bloquear <span class="text-danger">*</span></label>
@@ -381,6 +384,7 @@
             <td class="text-end pe-3">
               <form method="post" action="{{ url_for('pickup_blocks_delete', bid=b.id) }}"
                     onsubmit="return confirmarEliminarBloqueo(event)" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
                   <i class="bi bi-trash"></i>
                 </button>

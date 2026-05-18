@@ -87,6 +87,7 @@
       {# ── Desktop: zona drag/click ── #}
       <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
             enctype="multipart/form-data" id="photoFormDesk" class="d-none d-md-block">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
                style="min-height:120px;cursor:pointer" for="photoInputDesk">
           <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
@@ -101,6 +102,7 @@
         {# Cámara (capture=environment) #}
         <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
               enctype="multipart/form-data" id="photoFormCam">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label for="photoInputCam"
                  class="btn btn-dark-ilus w-100 d-flex align-items-center justify-content-center gap-2 py-3"
                  style="cursor:pointer;border-radius:8px;font-size:.9rem">
@@ -114,6 +116,7 @@
         {# Galería #}
         <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
               enctype="multipart/form-data" id="photoFormGal">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label for="photoInputGal"
                  class="btn btn-outline-secondary w-100 d-flex align-items-center justify-content-center gap-2 py-3"
                  style="cursor:pointer;border-radius:8px;font-size:.9rem">
@@ -225,6 +228,7 @@
         <p class="mb-2">Escribe el SKU para confirmar la eliminación:</p>
         <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}"
               id="deletePhotoForm{{ ph.id }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="photoSkuInput{{ ph.id }}" name="confirm_sku"
                  class="form-control font-monospace text-uppercase mb-3"
                  placeholder="{{ product.sku }}" autocomplete="off">
@@ -257,6 +261,7 @@
         </div>
         <p>Para confirmar, escribe el SKU <strong>{{ product.sku }}</strong> en el campo:</p>
         <form method="post" action="{{ url_for('delete_product', pid=product.id) }}" id="deleteProductForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="confirmSkuInput" name="confirm_sku"
                  class="form-control font-monospace text-uppercase mb-3"
                  placeholder="{{ product.sku }}" autocomplete="off">

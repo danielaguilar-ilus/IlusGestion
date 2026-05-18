@@ -31,6 +31,7 @@
 {# ── Subir nueva imagen ── #}
 <div class="li-card mb-4 p-3">
   <form method="post" action="{{ url_for('admin_login_imagenes_subir') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3 align-items-end">
       <div class="col-md-3">
         <label class="form-label small fw-semibold">Imagen <span class="text-danger">*</span></label>
@@ -80,6 +81,7 @@
       </span>
       {% endif %}
       <form method="post" action="{{ url_for('admin_login_imagen_update', iid=img.id) }}" id="frmImg_{{ img.id }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="li-form-row">
           <div class="d-flex align-items-center justify-content-between">
             <span class="{% if img.activa %}li-status-on{% else %}li-status-off{% endif %}">

@@ -30,6 +30,7 @@
   {# Botón actualizar caché (pequeño, arriba a la derecha del bloque) #}
   <div class="d-flex justify-content-end mb-1">
     <form method="post" action="{{ url_for('refresh_listing_cache') }}" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-sm btn-outline-secondary px-2 py-0"
               style="font-size:.72rem;border-radius:5px" title="Actualizar datos ahora">
         <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
@@ -427,6 +428,7 @@
         <p class="mb-1">Eliminar: <strong id="dqNombre">—</strong></p>
         <p class="mb-3">Escribe el SKU <strong id="dqSkuLabel">—</strong> para confirmar:</p>
         <form method="post" id="deleteQuickForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="dqSkuInput" name="confirm_sku"
                  class="form-control font-monospace text-uppercase mb-3"
                  placeholder="Escribe el SKU..." autocomplete="off">

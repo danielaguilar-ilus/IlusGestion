@@ -277,6 +277,7 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
         <form method="post" action="{{ url_for('delete_user', user_id=user.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-outline-danger">Eliminar usuario</button>
         </form>
       </div>

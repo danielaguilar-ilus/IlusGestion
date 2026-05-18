@@ -87,6 +87,7 @@
         Se importaran los productos nuevos del ERP y se actualizaran nombres y estados sin sobrescribir las medidas locales.
       </p>
       <form method="post" id="syncForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-ilus btn-lg fw-bold px-5" id="syncBtn"
                 onclick="this.innerHTML='<span class=\'spinner-border spinner-border-sm me-2\'></span>Sincronizando...';this.disabled=true;document.getElementById(\'syncForm\').submit()">
           <i class="bi bi-arrow-repeat me-2"></i>Sincronizar con ERP

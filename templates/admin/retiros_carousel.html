@@ -80,6 +80,7 @@
 {# ── Drop zone + multi-upload ── #}
 <form method="post" action="{{ url_for('admin_retiros_carousel_subir') }}"
       enctype="multipart/form-data" id="formUpload" class="mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="rc-dropzone" id="dropZone" onclick="document.getElementById('fileInput').click()">
     <i class="bi bi-cloud-arrow-up"></i>
     <div class="fw-bold" style="font-size:1.05rem;color:#374151">
@@ -132,6 +133,7 @@
       </span>
       {% endif %}
       <form method="post" action="{{ url_for('admin_retiros_carousel_update', iid=img.id) }}" id="form-img-{{ img.id }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="rc-form-row">
           <div class="d-flex align-items-center justify-content-between">
             <span class="{% if img.activa %}rc-status-on{% else %}rc-status-off{% endif %}">

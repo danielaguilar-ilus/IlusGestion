@@ -76,6 +76,7 @@
   {% for r in roles %}
   <form method="post" action="{{ url_for('admin_roles_matrix_save') }}"
         id="form-{{ r.slug }}" class="rm-form" style="{% if not loop.first %}display:none{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="rol_slug" value="{{ r.slug }}">
     <table class="rm-matrix-table">
       <thead>
@@ -142,6 +143,7 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <form method="post" action="{{ url_for('admin_rol_crear') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header" style="background:#0f172a;color:#fff">
           <h5 class="modal-title"><i class="bi bi-shield-plus me-2"></i>Crear nuevo rol</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>

@@ -39,6 +39,7 @@
       {# Form invisible para upload de tarifas multi-hoja #}
       <form method="post" action="{{ url_for('tr_couriers_import_tariffs') }}"
             enctype="multipart/form-data" class="d-none" id="formImportMulti">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="file" name="file" id="fileImportMulti" accept=".xlsx,.xlsm"
                onchange="document.getElementById('formImportMulti').submit()">
       </form>
@@ -239,6 +240,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form method="post" action="{{ url_for('tr_courier_nuevo') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div class="row g-3">
             <div class="col-md-6">

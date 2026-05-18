@@ -1434,6 +1434,22 @@ def init_security_tables():
                             ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # ── app_rate_limits — bucket persistente cross-worker ──────────
+        # FIX seguridad 2026-05-17: antes los buckets vivían en memoria
+        # de cada worker gunicorn → con 2 workers el límite efectivo se
+        # duplicaba (round-robin). Ahora se persiste en BD con ventanas
+        # truncadas (window_start = floor(now / window) * window) para
+        # que todos los workers compartan el mismo contador.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_rate_limits (
+                scope        VARCHAR(64)  NOT NULL,
+                identifier   VARCHAR(190) NOT NULL,
+                window_start DATETIME     NOT NULL,
+                count        INT          NOT NULL DEFAULT 1,
+                PRIMARY KEY (scope, identifier, window_start),
+                INDEX idx_window (window_start)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
     conn.commit()
 
 
@@ -2333,7 +2349,8 @@ def load_current_user():
         user = get_auth_user_by_id(user_id)
     except Exception as exc:
         session.clear()
-        flash(f"No fue posible validar la sesion: {exc}", "danger")
+        print(f"[load_current_user] error validando sesión user_id={user_id}: {exc}", flush=True)
+        flash("No fue posible validar la sesión. Intenta iniciar sesión de nuevo.", "danger")
         return
 
     if not user or not user["active"]:
@@ -2530,12 +2547,16 @@ def erp_status_snapshot() -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  RATE LIMITING — in-process, sin dependencias externas.
-#  Suficiente para mitigar brute-force en /login y /auth/*.
-#  Con 2 workers de gunicorn el límite efectivo se duplica (aceptable).
+#  RATE LIMITING — persistido en BD (cross-worker)
+#  FIX seguridad 2026-05-17 (code review senior):
+#  Antes los buckets vivían en memoria del worker, así que con 2 workers
+#  de gunicorn el límite efectivo se duplicaba. Ahora se persiste en
+#  `app_rate_limits` con ventanas truncadas; todos los workers ven el
+#  mismo contador. Fallback a memoria si la BD se cae (degrada bien).
 # ══════════════════════════════════════════════════════════════════════
-_rl_buckets: dict = {}
+_rl_buckets: dict = {}   # fallback in-memory si la BD falla
 _rl_lock = threading.Lock()
+_rl_cleanup_started = False
 
 
 def _rl_client_ip():
@@ -2546,8 +2567,20 @@ def _rl_client_ip():
     return request.remote_addr or "0.0.0.0"
 
 
-def _rl_check(scope: str, max_attempts: int, window_seconds: int) -> bool:
-    """True si aún hay cupo; False si excedió el límite."""
+def _rl_identifier() -> str:
+    """Identificador para el límite. Si el usuario está autenticado usa
+    user_id (más estable). Si no, cae a IP. Truncado a 190 chars."""
+    try:
+        u = getattr(g, "user", None)
+        if u and u.get("id"):
+            return f"u:{u['id']}"[:190]
+    except Exception:
+        pass
+    return f"ip:{_rl_client_ip()}"[:190]
+
+
+def _rl_check_memory_fallback(scope, max_attempts, window_seconds):
+    """Backup in-memory por worker — solo se usa si la BD no responde."""
     now = time.time()
     key = (_rl_client_ip(), scope)
     with _rl_lock:
@@ -2562,6 +2595,81 @@ def _rl_check(scope: str, max_attempts: int, window_seconds: int) -> bool:
             _rl_buckets.clear()
             _rl_buckets[key] = bucket
         return True
+
+
+def _rl_cleanup_loop():
+    """Daemon: borra ventanas > 24h cada hora.
+    Mantiene la tabla compacta sin necesidad de un cron externo."""
+    while True:
+        try:
+            time.sleep(3600)  # 1 hora
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM app_rate_limits "
+                        "WHERE window_start < (NOW() - INTERVAL 24 HOUR)"
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as _e_clean:
+            print(f"[rate_limit cleanup] {_e_clean}", flush=True)
+
+
+def _rl_check(scope: str, max_attempts: int, window_seconds: int) -> bool:
+    """True si aún hay cupo; False si excedió el límite.
+    Persiste en app_rate_limits (cross-worker). Fallback a memoria si la
+    BD falla — preferimos NUNCA bloquear al usuario por un bug del limiter.
+    """
+    global _rl_cleanup_started
+    # Arrancar daemon de cleanup la primera vez que se llama el limiter
+    if not _rl_cleanup_started:
+        try:
+            threading.Thread(target=_rl_cleanup_loop, daemon=True,
+                             name="rate-limit-cleanup").start()
+            _rl_cleanup_started = True
+        except Exception:
+            pass
+
+    identifier = _rl_identifier()
+    # Ventana truncada: floor(now / window) * window → todos los workers
+    # convergen al mismo bucket aunque sus relojes difieran en segundos.
+    bucket_epoch = int(time.time() // window_seconds) * window_seconds
+    window_start = datetime.utcfromtimestamp(bucket_epoch)
+
+    try:
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                # UPSERT atómico: si la tupla (scope,identifier,window_start)
+                # existe → +1, si no → insert con count=1.
+                cur.execute(
+                    "INSERT INTO app_rate_limits (scope, identifier, window_start, count) "
+                    "VALUES (%s, %s, %s, 1) "
+                    "ON DUPLICATE KEY UPDATE count = count + 1",
+                    (scope[:64], identifier, window_start)
+                )
+                # Releer el count actualizado
+                cur.execute(
+                    "SELECT count FROM app_rate_limits "
+                    "WHERE scope=%s AND identifier=%s AND window_start=%s",
+                    (scope[:64], identifier, window_start)
+                )
+                row = cur.fetchone()
+                conn.commit()
+        finally:
+            conn.close()
+        # row puede ser dict o tupla según el cursor — handle ambos
+        if not row:
+            return True
+        current = row.get("count") if isinstance(row, dict) else row[0]
+        return (current or 0) <= max_attempts
+    except Exception as exc:
+        # Si la BD se cae, no bloqueamos al usuario — caemos al fallback
+        # in-memory por worker (peor que cross-worker pero mejor que nada).
+        print(f"[rate_limit] BD fallback: {exc}", flush=True)
+        return _rl_check_memory_fallback(scope, max_attempts, window_seconds)
 
 
 def rate_limited(scope: str, max_attempts: int, window_seconds: int,
@@ -2592,6 +2700,108 @@ def rate_limited(scope: str, max_attempts: int, window_seconds: int,
             return view(*a, **kw)
         return wrapped
     return decorator
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CSRF — protección anti Cross-Site Request Forgery
+#  FIX seguridad 2026-05-17 (code review senior):
+#  Antes el sistema no tenía CSRF en absoluto. Cualquier sitio externo
+#  podía forzar a un técnico autenticado a hacer cualquier POST.
+#
+#  Implementación manual (sin flask-wtf para no agregar dependencias):
+#  - Token de 32 bytes generado en sesión la primera vez que se necesita.
+#  - Se compara con form.csrf_token o header X-CSRF-Token (para fetch JSON).
+#  - Endpoints públicos (login, forgot, reset, welcome, retiros públicos,
+#    webhooks) están en _CSRF_EXEMPT_PATHS / _CSRF_EXEMPT_PREFIXES.
+#  - El helper Jinja `csrf_token()` lo expone a templates.
+#  - JS global en base.html inyecta header X-CSRF-Token en todo fetch().
+# ══════════════════════════════════════════════════════════════════════
+_CSRF_EXEMPT_PATHS: set = {
+    # endpoints públicos que ESTABLECEN o inician sesión: no pueden requerir
+    # un token previo porque aún no existe sesión.
+    "/login",
+    "/auth/olvidar-contrasena",
+    # registro/activación públicos (token via URL ya autentica el flujo)
+    "/registro-tecnico-externo",
+    # formularios públicos sin sesión (clientes externos solicitan retiro)
+    "/retiros/solicitar",
+}
+# Prefijos exentos: cubren rutas dinámicas (token o id variable).
+_CSRF_EXEMPT_PREFIXES: tuple = (
+    "/auth/restablecer/",      # /auth/restablecer/<token>
+    "/welcome/",                # /welcome/<token>
+    "/retiros/seguimiento/",    # /retiros/seguimiento/<token>
+    "/webhook/",                # webhooks externos (Twilio, etc.)
+    "/webhooks/",               # alias plural
+)
+
+
+def _csrf_get_token() -> str:
+    """Devuelve el token CSRF actual; lo genera si no existe."""
+    tok = session.get("csrf_token")
+    if not tok:
+        tok = secrets.token_urlsafe(32)
+        session["csrf_token"] = tok
+    return tok
+
+
+def _csrf_is_exempt(path: str) -> bool:
+    if path in _CSRF_EXEMPT_PATHS:
+        return True
+    for pref in _CSRF_EXEMPT_PREFIXES:
+        if path.startswith(pref):
+            return True
+    return False
+
+
+@app.context_processor
+def _inject_csrf_token():
+    """Expone csrf_token() a TODOS los templates. Sin args, devuelve el
+    token de la sesión actual (lo crea si no existe). Igual nombre que
+    flask-wtf para que pegar snippets sea trivial."""
+    return {"csrf_token": _csrf_get_token}
+
+
+def _csrf_check_request():
+    """Helper: valida CSRF de la request actual. Devuelve un Response
+    (jsonify/redirect) si hay que rechazar, None si pasa. Se llama desde
+    el `before_request` global tras cargar el usuario."""
+    if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
+        return None
+    path = request.path or ""
+    if _csrf_is_exempt(path):
+        return None
+    token_session = session.get("csrf_token")
+    token_req = (request.headers.get("X-CSRF-Token")
+                 or request.form.get("csrf_token")
+                 or "")
+    # Comparación constante de tiempo
+    if not token_session or not token_req \
+            or not secrets.compare_digest(str(token_session), str(token_req)):
+        # Logueo discreto pero útil para diagnosticar formularios sin token
+        try:
+            print(f"[CSRF] reject path={path} method={request.method} "
+                  f"has_session={bool(token_session)} has_req={bool(token_req)}",
+                  flush=True)
+        except Exception:
+            pass
+        is_ajax = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or (request.headers.get("Accept") or "").startswith("application/json")
+            or request.is_json
+            or "/api/" in path
+        )
+        if is_ajax:
+            return jsonify({"ok": False,
+                            "error": "CSRF token inválido. Recarga la página."}), 403
+        flash("Tu sesión expiró o el formulario perdió validez. "
+              "Recarga la página e intenta de nuevo.", "warning")
+        # Si el usuario está autenticado, volvemos a la misma URL vía GET
+        if getattr(g, "user", None):
+            return redirect(request.path)
+        # Sin sesión: al login
+        return redirect(url_for("login"))
+    return None
 
 
 def login_required(view):
@@ -2670,7 +2880,17 @@ def require_permission(permission):
 
 @app.before_request
 def before_request():
+    """Pipeline global pre-request:
+       1. Carga el usuario actual desde sesión → g.user / g.permissions.
+       2. Valida CSRF en métodos mutadores (POST/PUT/DELETE/PATCH).
+          DEBE correr tras load_current_user para poder redirigir a la
+          misma URL si el usuario está autenticado (UX más amable que
+          forzar login). Si CSRF falla, devuelve una Response y Flask
+          interrumpe el pipeline."""
     load_current_user()
+    csrf_resp = _csrf_check_request()
+    if csrf_resp is not None:
+        return csrf_resp
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2714,6 +2934,48 @@ def _perf_static_cache_and_gzip(resp):
         if "Permissions-Policy" not in resp.headers:
             resp.headers["Permissions-Policy"] = (
                 "geolocation=(self), camera=(self), microphone=()"
+            )
+
+        # ── 0.1) Headers de seguridad globales ───────────────────────────
+        # Code review senior 2026-05-17: el sitio no tenía las cabeceras
+        # mínimas que cualquier app web moderna debe enviar:
+        #   - nosniff: evita MIME-sniffing (XSS via tipo mal interpretado)
+        #   - Referrer-Policy: no enviar referers con paths privados a 3os.
+        #   - HSTS: fuerza HTTPS por 2 años (Railway sirve TLS válido).
+        #   - X-Frame-Options SAMEORIGIN: bloquea clickjacking en iframes
+        #       externos. NO usamos DENY para mantener compat con el preview
+        #       interno de OTs/PDFs que se carga en iframes del mismo origen.
+        #   - CSP en modo Report-Only: enumera explícitamente los orígenes
+        #       permitidos (jsdelivr, maps.googleapis, cloudinary, etc.).
+        #       En Report-Only por ahora — si nada se rompe en 1-2 semanas
+        #       lo movemos a Content-Security-Policy (enforce).
+        if "X-Content-Type-Options" not in resp.headers:
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+        if "Referrer-Policy" not in resp.headers:
+            resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if "Strict-Transport-Security" not in resp.headers:
+            resp.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains; preload"
+            )
+        if "X-Frame-Options" not in resp.headers:
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+        if "Content-Security-Policy-Report-Only" not in resp.headers \
+                and "Content-Security-Policy" not in resp.headers:
+            resp.headers["Content-Security-Policy-Report-Only"] = (
+                "default-src 'self' https://cdn.jsdelivr.net "
+                "https://maps.googleapis.com https://res.cloudinary.com "
+                "https://*.cloudinary.com data: blob:; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+                "https://maps.googleapis.com; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net data:; "
+                "img-src 'self' data: blob: https:; "
+                "connect-src 'self' https://maps.googleapis.com "
+                "https://*.cloudinary.com https://api.cloudinary.com "
+                "https://api.twilio.com; "
+                "frame-ancestors 'self'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
             )
 
         # ── 1) Cache headers para assets estáticos ───────────────────
@@ -3623,7 +3885,8 @@ def login():
         except Exception as exc:
             _audit("login_error", details={"username": username, "error": str(exc)},
                    status="error")
-            flash(f"No fue posible conectar: {exc}", "danger")
+            print(f"[login] error conectando para {username}: {exc}", flush=True)
+            flash("No fue posible conectar con el servidor. Intenta nuevamente en unos segundos.", "danger")
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs, marca=_get_marca())
         if not user or not user["active"] or not check_password_hash(user["password_hash"], password):
             reason = ("no_existe" if not user
@@ -5199,7 +5462,7 @@ def new_product():
         conn.commit()
 
         _invalidate_listing_cache()
-        flash(f"Producto <b>{sku}</b> creado con código <b>{codigo}</b>.", "success")
+        flash(f"Producto {sku} creado con código {codigo}.", "success")
         return redirect(url_for("product_detail", pid=pid))
 
     return render_template("product_form.html", errors=[], product=None, fd={},
@@ -5393,7 +5656,7 @@ def edit_product(pid):
         conn.commit()
 
         _invalidate_listing_cache()
-        flash(f"Producto <b>{sku}</b> actualizado.", "success")
+        flash(f"Producto {sku} actualizado.", "success")
         return redirect(url_for("product_detail", pid=pid))
 
     return render_template("product_form.html", errors=[], product=product,
@@ -5439,7 +5702,7 @@ def delete_product(pid):
     conn.commit()
 
     _invalidate_listing_cache()
-    flash(f"Producto <b>{product['sku']}</b> eliminado permanentemente.", "warning")
+    flash(f"Producto {product['sku']} eliminado permanentemente.", "warning")
     return redirect(url_for("index"))
 
 
@@ -5473,8 +5736,8 @@ def upload_photo(pid):
             filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
             print(f"[ILUS] Foto subida a Cloudinary: {filename}")
         except Exception as exc:
-            print(f"[ILUS] Cloudinary upload error: {exc}")
-            flash(f"Error al subir la foto a la nube: {exc}", "danger")
+            print(f"[ILUS] Cloudinary upload error: {exc}", flush=True)
+            flash("Error al subir la foto a la nube. Intenta nuevamente.", "danger")
             return redirect(url_for("product_detail", pid=pid))
     else:
         filename = f"p{pid}_{ts}.{ext}"
@@ -5482,8 +5745,8 @@ def upload_photo(pid):
             file.save(os.path.join(UPLOAD_FOLDER, filename))
             print(f"[ILUS] Foto guardada localmente: {filename}")
         except Exception as exc:
-            print(f"[ILUS] Error guardando foto local: {exc}")
-            flash(f"Error al guardar la foto: {exc}", "danger")
+            print(f"[ILUS] Error guardando foto local: {exc}", flush=True)
+            flash("Error al guardar la foto. Intenta nuevamente.", "danger")
             return redirect(url_for("product_detail", pid=pid))
 
     # Guardamos URL completa (Cloudinary) o nombre local
@@ -6392,8 +6655,10 @@ def new_user():
             errors.append("Solo un superadministrador puede asignar el rol superadmin.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
-        if manual_password and len(manual_password) < 8:
-            errors.append("La clave manual debe tener al menos 8 caracteres.")
+        if manual_password:
+            # FIX seguridad 2026-05-17: política unificada con el resto
+            # del proyecto (12+ chars, mayús/minús/dígito/símbolo).
+            errors.extend(_password_strength_errors(manual_password))
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
 
@@ -6513,8 +6778,10 @@ def edit_user(user_id):
             errors.append("Solo un superadministrador puede asignar el rol superadmin.")
         if manual_password and not is_superadmin:
             errors.append("Solo un superadministrador puede definir clave manual.")
-        if manual_password and len(manual_password) < 8:
-            errors.append("La clave manual debe tener al menos 8 caracteres.")
+        if manual_password:
+            # FIX seguridad 2026-05-17: política unificada con el resto
+            # del proyecto (12+ chars, mayús/minús/dígito/símbolo).
+            errors.extend(_password_strength_errors(manual_password))
         if mysql_fetchone(
             f"SELECT id FROM `{AUTH_TABLE}` WHERE username=%s AND id<>%s", (username, user_id)
         ):
@@ -6824,7 +7091,8 @@ def admin_rol_crear():
 
         flash(f"✅ Rol \"{nombre}\" creado con {sum(len(m['acciones']) for m in PERMISSIONS_MATRIX.values())} permisos inicializados (todos en 'no'). Marca los que quieras autorizar.", "success")
     except Exception as exc:
-        flash(f"Error al crear rol: {exc}", "danger")
+        print(f"[admin_rol_crear] error: {exc}", flush=True)
+        flash("Error al crear rol. Revisa el log del servidor.", "danger")
     return redirect(url_for("admin_roles_matrix"))
 
 
@@ -9876,7 +10144,8 @@ def cubicador_export_excel():
         try:
             headers, lineas, errors = _fetch_multi_docs(docs)
         except Exception as ex:
-            flash(f"Error al consultar el ERP: {ex}", "danger")
+            print(f"[cubicador] ERP error: {ex}", flush=True)
+            flash("Error al consultar el ERP. Intenta nuevamente en unos segundos.", "danger")
             return redirect(url_for("cubicador"))
 
     if not headers:
@@ -10308,7 +10577,8 @@ def cubicador_export_pdf():
     try:
         headers, lineas, errors = _fetch_multi_docs(docs)
     except Exception as ex:
-        flash(f"Error al consultar el ERP: {ex}", "danger")
+        print(f"[asignar_cotizar] ERP error: {ex}", flush=True)
+        flash("Error al consultar el ERP. Intenta nuevamente en unos segundos.", "danger")
         return redirect(url_for("cubicador"))
 
     if not headers:
@@ -12630,7 +12900,8 @@ def tr_couriers_import_tariffs():
             "success"
         )
     except Exception as e:
-        flash(f"Error importando tarifas: {e}", "danger")
+        print(f"[tr_couriers_import_tarifas] error: {e}", flush=True)
+        flash("Error importando tarifas. Revisa el archivo y vuelve a intentar.", "danger")
     return redirect(url_for("tr_couriers"))
 
 
@@ -21652,8 +21923,12 @@ def registro_tecnico_externo():
         if not username or not re.match(r"^[a-z0-9._-]{3,30}$", username):
             flash("Usuario: 3-30 chars, solo letras, números, punto, guión.", "danger")
             return render_template("registro_tecnico_externo.html", inv=inv, token=token)
-        if len(password) < 8:
-            flash("La contraseña debe tener al menos 8 caracteres.", "danger")
+        # FIX seguridad 2026-05-17: aplicamos la MISMA política que el resto
+        # del proyecto (reset, welcome, mi-cuenta). Antes este flujo aceptaba
+        # claves de 8 chars sin complexity — inconsistente y débil.
+        strength_errors = _password_strength_errors(password)
+        if strength_errors:
+            flash(" ".join(strength_errors), "danger")
             return render_template("registro_tecnico_externo.html", inv=inv, token=token)
         if password != password2:
             flash("Las contraseñas no coinciden.", "danger")

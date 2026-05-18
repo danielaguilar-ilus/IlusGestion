@@ -29,6 +29,7 @@
 {% endif %}
 
 <form method="post" id="productForm" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {# ══ BUSCADOR ERP (solo en crear) ══════════════════════════════════════ #}
   {% if not product %}
@@ -242,6 +243,7 @@
         </div>
         <p>Para confirmar, escribe el SKU <strong>{{ product.sku }}</strong>:</p>
         <form method="post" action="{{ url_for('delete_product', pid=product.id) }}" id="deleteFormEdit">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="confirmSkuEdit" name="confirm_sku"
                  class="form-control font-monospace text-uppercase mb-3"
                  placeholder="{{ product.sku }}" autocomplete="off">
@@ -289,6 +291,7 @@
     {% if can_add %}
     <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
           enctype="multipart/form-data" id="photoFormEdit">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
              style="min-height:120px" for="photoInputEdit">
         <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
@@ -327,6 +330,7 @@
         <p class="mb-1">Producto: <strong>{{ product.sku }}</strong></p>
         <p class="mb-3">Escribe el SKU para confirmar la eliminación:</p>
         <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="delFotoInput{{ ph.id }}" name="confirm_sku"
                  class="form-control font-monospace text-uppercase mb-3"
                  placeholder="{{ product.sku }}" autocomplete="off">

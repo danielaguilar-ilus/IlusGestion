@@ -54,6 +54,17 @@
   {# Cache hint para HTML — el browser puede reutilizar la página por 5 min #}
   <meta http-equiv="Cache-Control" content="public, max-age=300">
 
+  {# ── CSRF token (seguridad) ──────────────────────────────────────
+     El backend valida CSRF en POST/PUT/DELETE/PATCH excepto endpoints
+     públicos (login, forgot, reset, welcome, /retiros/solicitar, etc.).
+     Acá lo exponemos como meta tag para que el wrapper de fetch() en
+     este mismo archivo lo inyecte automáticamente como header
+     X-CSRF-Token en todas las requests AJAX. Para <form method="post">
+     debes agregar manualmente:
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  #}
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+
   {# ── Favicons (regenerados 2026-05-17 desde Logo.png oficial) ──
      Casco espartano BLANCO sobre fondo NEGRO #0a0a0a.
      PNG multi-tamaño: 16/32/64/192 para navegadores; 180x180 para iOS.
@@ -125,6 +136,59 @@
   {# Bloque opcional para que un template hijo agregue <link>/<meta>
      adicionales en el <head> (p.ej. preload de assets específicos). #}
   {% block head_extra %}{% endblock %}
+
+  {# ══ CSRF: wrapper global de fetch ═══════════════════════════════
+     Inyecta automáticamente el header X-CSRF-Token en TODO fetch que
+     no sea GET/HEAD. Esto se carga inline en <head> (antes de
+     DOMContentLoaded) para que cualquier script que use fetch
+     posteriormente herede el wrapper sin necesidad de tocar caller
+     por caller. Si la app cambia de stack JS (p.ej. axios), agregar
+     un interceptor equivalente acá. #}
+  <script>
+  (function(){
+    try {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      window.__CSRF_TOKEN = meta ? meta.getAttribute('content') : '';
+    } catch(e) { window.__CSRF_TOKEN = ''; }
+    if (!window.fetch || !window.__CSRF_TOKEN) return;
+    var _origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init){
+      init = init || {};
+      var method = (init.method || (typeof input === 'object' && input && input.method) || 'GET').toString().toUpperCase();
+      if (method === 'GET' || method === 'HEAD') return _origFetch(input, init);
+      try {
+        if (init.headers instanceof Headers) {
+          if (!init.headers.has('X-CSRF-Token')) init.headers.set('X-CSRF-Token', window.__CSRF_TOKEN);
+        } else if (Array.isArray(init.headers)) {
+          var has = init.headers.some(function(p){ return (p[0]||'').toLowerCase() === 'x-csrf-token'; });
+          if (!has) init.headers.push(['X-CSRF-Token', window.__CSRF_TOKEN]);
+        } else {
+          init.headers = init.headers || {};
+          var keys = Object.keys(init.headers).map(function(k){return k.toLowerCase();});
+          if (keys.indexOf('x-csrf-token') === -1) init.headers['X-CSRF-Token'] = window.__CSRF_TOKEN;
+        }
+      } catch(e) { /* fail-open: si el wrap falla, no rompemos el request */ }
+      return _origFetch(input, init);
+    };
+    // Wrap XMLHttpRequest también (ot_ejecutar.html lo usa para uploads con progreso)
+    try {
+      var _origOpen = XMLHttpRequest.prototype.open;
+      var _origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url){
+        this.__csrf_method = (method || 'GET').toString().toUpperCase();
+        return _origOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function(body){
+        try {
+          if (this.__csrf_method && this.__csrf_method !== 'GET' && this.__csrf_method !== 'HEAD' && window.__CSRF_TOKEN) {
+            this.setRequestHeader('X-CSRF-Token', window.__CSRF_TOKEN);
+          }
+        } catch(e) {}
+        return _origSend.apply(this, arguments);
+      };
+    } catch(e) {}
+  })();
+  </script>
 </head>
 <body>
 
@@ -403,6 +467,7 @@
       <i class="bi bi-gear ms-auto" style="color:#94a3b8;font-size:.95rem;opacity:.7"></i>
     </a>
     <form method="post" action="{{ url_for('logout') }}" class="mt-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn-sidebar-logout">
         <i class="bi bi-box-arrow-left me-2"></i>Cerrar sesion
       </button>
@@ -422,7 +487,13 @@
 ══════════════════════════════════════════════ #}
 <div class="main-wrapper{% if not current_user %} main-wrapper-login{% endif %}">
 
-  {# Flash messages #}
+  {# Flash messages
+     FIX seguridad 2026-05-17: removido |safe. Jinja escapa por defecto y
+     ahora cualquier HTML inyectado en el mensaje (intencional o no) se
+     renderiza como texto. Los 3 callers legacy que usaban <b> en mensajes
+     fueron migrados a texto plano. Si en el futuro se necesita HTML
+     genuino, agregar un canal `flash_html()` con Markup() — NO devolver
+     |safe acá. #}
   {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
     <div class="flash-container no-print">
@@ -431,7 +502,7 @@
                   {% if cat == 'success' %}ilus-flash-ok{% elif cat == 'warning' %}ilus-flash-warn{% elif cat == 'danger' %}ilus-flash-err{% endif %}"
            role="alert">
         <i class="bi bi-{% if cat == 'success' %}check-circle-fill{% elif cat == 'danger' %}x-circle-fill{% elif cat == 'warning' %}exclamation-triangle-fill{% else %}info-circle-fill{% endif %} me-2"></i>
-        {{ msg|safe }}
+        {{ msg }}
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
       </div>
       {% endfor %}

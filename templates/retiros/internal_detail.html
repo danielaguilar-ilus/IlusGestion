@@ -225,6 +225,7 @@
 
       {# ── 2) PESO / VOLUMEN / TIEMPO ── #}
       <form method="post" action="{{ url_for('pickup_validar_doc', rid=req.id) }}" id="formValidacion">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #fdba74">
           <div class="val-section-title">
             <i class="bi bi-rulers"></i>2) Cubicaje y tiempo estimado
@@ -524,6 +525,7 @@
       <div class="ilus-card-header"><span><i class="bi bi-lightning-charge me-2"></i>Acciones</span></div>
       <div class="card-body p-3">
         <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" class="mb-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="form-label small fw-bold">Cambiar estado</label>
           <select name="status" class="form-select mb-2">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
           <textarea name="notes" class="form-control mb-2" rows="2" placeholder="Nota interna"></textarea>
@@ -531,6 +533,7 @@
         </form>
         <hr>
         <form id="sec-propuesta" method="post" action="{{ url_for('pickup_create_proposal', rid=req.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="form-label small fw-bold">Proponer agenda</label>
           {% if not _doc_ok %}
           <div class="alert alert-warning py-2 small mb-2">
@@ -557,6 +560,7 @@
       <div class="ilus-card-header"><span><i class="bi bi-chat-dots me-2"></i>Comunicacion rapida</span></div>
       <div class="card-body p-3">
         <form method="post" action="{{ url_for('pickup_send_message', rid=req.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <select name="template_id" class="form-select mb-2"><option value="">Mensaje manual</option>{% for t in templates %}<option value="{{ t.id }}">{{ t.title }}</option>{% endfor %}</select>
           <textarea name="message" class="form-control mb-2" rows="3" placeholder="Puedes escribir un mensaje o usar una plantilla"></textarea>
           <button class="btn btn-outline-danger w-100"><i class="bi bi-envelope-paper me-1"></i>Enviar al cliente</button>

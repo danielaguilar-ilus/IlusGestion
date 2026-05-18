@@ -26,6 +26,7 @@
 {% endif %}
 
 <form method="post" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="ilus-card mb-3">
     <div class="ilus-card-header">
       <span><i class="bi bi-person-vcard me-2"></i>Datos del usuario</span>
