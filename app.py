@@ -28,6 +28,19 @@ from werkzeug.utils import secure_filename
 
 from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY
 try:
+    from config import BRAND_CONFIG
+except ImportError:
+    # Compat: si por alguna razón config.py es antiguo, default sensato
+    BRAND_CONFIG = {
+        "name":          "ILUS Sport & Health",
+        "from_name":     "ILUS",
+        "from_email":    "no-reply@ilusfitness.com",
+        "reply_to":      "servicio.tecnico@ilusfitness.com",
+        "wa_name":       "ILUS",
+        "support_url":   "https://ilusfitness.com/soporte",
+        "support_email": "servicio.tecnico@ilusfitness.com",
+    }
+try:
     from config import ANTHROPIC_API_KEY as _ANTHROPIC_KEY_CFG
 except ImportError:
     _ANTHROPIC_KEY_CFG = ""
@@ -3664,6 +3677,29 @@ def _ilus_email_html(
         f'<div style="padding:0 30px 30px;text-align:center">{btn1}{btn2}</div>'
     ) if (btn1 or btn2) else ""
 
+    # ── Branding genérico para footer (no-reply + soporte) ─────────────
+    try:
+        brand = _get_brand_cfg()
+    except Exception:
+        brand = {
+            "name": "ILUS Sport & Health",
+            "support_email": "servicio.tecnico@ilusfitness.com",
+            "support_url":   "https://ilusfitness.com/soporte",
+        }
+    brand_name    = brand.get("name") or company
+    support_email = brand.get("support_email") or "servicio.tecnico@ilusfitness.com"
+    support_url   = brand.get("support_url") or ""
+    año_actual    = datetime.now().year if 'datetime' in globals() else 2026
+
+    soporte_html = (
+        f'<a href="mailto:{support_email}" '
+        f'style="color:#DC143C;text-decoration:none">{support_email}</a>'
+    )
+    portal_html = (
+        f' &middot; <a href="{support_url}" '
+        f'style="color:#9ca3af;text-decoration:none">Portal de soporte</a>'
+    ) if support_url else ""
+
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -3678,7 +3714,7 @@ def _ilus_email_html(
 
   <!-- HEADER: negro + logo -->
   <div style="background:#000;padding:24px 28px;text-align:center">
-    <img src="{logo_src}" alt="{company}"
+    <img src="{logo_src}" alt="{brand_name}"
          style="height:48px;display:block;margin:0 auto;max-width:230px;width:auto;object-fit:contain">
   </div>
 
@@ -3700,13 +3736,13 @@ def _ilus_email_html(
 
   <!-- FOOTER: negro -->
   <div style="background:#000;padding:24px 32px;text-align:center">
-    <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{company}</div>
+    <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{brand_name}</div>
     <div style="color:#9ca3af;font-size:11px;margin-top:5px">
-      Equipamiento profesional para alto rendimiento
+      Equipamiento profesional para alto rendimiento &middot; {año_actual}
     </div>
     <div style="margin-top:14px;font-size:11px;line-height:1.6;color:#6b7280">
-      Este correo fue generado automáticamente.<br>
-      Para soporte, utiliza nuestros canales oficiales.
+      Este mensaje fue enviado automáticamente desde una dirección que no recibe respuestas.<br>
+      Para soporte, escribe a {soporte_html}{portal_html}
     </div>
   </div>
 
@@ -3778,10 +3814,18 @@ def _get_resend_cfg() -> dict:
     return {"api_key": "", "from_addr": "", "_source": ""}
 
 
-def _send_via_resend(to, subject: str, html: str, from_addr: str = None) -> bool:
+def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
+                     reply_to: str = None) -> bool:
     """
     Envía email vía API HTTPS de Resend (no usa puertos SMTP).
     Funciona desde cualquier IP, incluyendo cloud hosting (Railway, Heroku, AWS).
+
+    Args:
+      to: destinatario(s) - string o lista
+      subject: asunto
+      html: cuerpo HTML
+      from_addr: opcional "Nombre <email@dominio>"; default Resend config
+      reply_to: opcional buzón de respuesta (header Reply-To)
 
     En caso de fallo, deja info en `g._last_resend_error` (dict con message/http_code/raw_body).
     """
@@ -3799,12 +3843,16 @@ def _send_via_resend(to, subject: str, html: str, from_addr: str = None) -> bool
 
     sender = (from_addr or cfg.get("from_addr") or "onboarding@resend.dev").strip()
     recipients = [to] if isinstance(to, str) else list(to)
-    payload = json.dumps({
+    payload_dict = {
         "from": sender,
         "to": recipients,
         "subject": subject,
         "html": html,
-    }).encode("utf-8")
+    }
+    if reply_to:
+        # Resend acepta string o lista
+        payload_dict["reply_to"] = reply_to
+    payload = json.dumps(payload_dict).encode("utf-8")
 
     req = _ur.Request(
         "https://api.resend.com/emails",
@@ -4008,6 +4056,51 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *, evento: str 
     return sent
 
 
+def _get_brand_cfg() -> dict:
+    """Devuelve el branding genérico ILUS, respetando overrides de env vars.
+
+    Se invoca en CADA envío de email/WhatsApp/SMS para que los cambios en
+    Railway tomen efecto sin reiniciar la app. Defaults sensatos arriba.
+    """
+    import os as _os_b
+    return {
+        "name":          (_os_b.environ.get("ILUS_BRAND_NAME")       or BRAND_CONFIG.get("name")       or "ILUS Sport & Health").strip(),
+        "from_name":     (_os_b.environ.get("ILUS_BRAND_FROM_NAME")  or BRAND_CONFIG.get("from_name")  or "ILUS").strip(),
+        "from_email":    (_os_b.environ.get("ILUS_BRAND_FROM_EMAIL") or BRAND_CONFIG.get("from_email") or "no-reply@ilusfitness.com").strip(),
+        "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "servicio.tecnico@ilusfitness.com").strip(),
+        "wa_name":       (_os_b.environ.get("ILUS_BRAND_WA_NAME")    or BRAND_CONFIG.get("wa_name")    or "ILUS").strip(),
+        "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/soporte").strip(),
+        "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
+    }
+
+
+def _brand_subject(tema: str) -> str:
+    """Genera el subject estandarizado del email: "ILUS · {tema}".
+
+    El prefijo siempre es la marca, NUNCA un nombre de persona, para que
+    el destinatario reconozca el remitente sin ambigüedad.
+    """
+    brand = _get_brand_cfg()
+    tema = (tema or "").strip()
+    # Evitar duplicar el prefijo si quien llama ya lo agregó
+    if tema.startswith(f"{brand['from_name']} ·") or tema.startswith(f"{brand['from_name']} -"):
+        return tema
+    return f"{brand['from_name']} · {tema}" if tema else brand['from_name']
+
+
+def _brand_wa_prefix(asunto: str) -> str:
+    """Prefijo estandarizado para mensajes WhatsApp/SMS.
+
+    Formato: "🔧 ILUS · {asunto}\\n\\n"  → el destinatario sabe de inmediato
+    quién envía, antes incluso de leer el cuerpo.
+    """
+    brand = _get_brand_cfg()
+    asunto = (asunto or "").strip()
+    if asunto:
+        return f"🔧 {brand['wa_name']} · {asunto}\n\n"
+    return f"🔧 {brand['wa_name']}\n\n"
+
+
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     """
     Implementación real con fallback inteligente:
@@ -4017,23 +4110,32 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     Esto resuelve el bug "el email funciona en local pero no en Railway":
     Gmail bloquea/limita conexiones SMTP desde IPs cloud, pero acepta emails
     enviados vía Resend porque pasan por sus propios MTAs ya whitelisted.
+
+    Branding: el From siempre es genérico (BRAND_CONFIG.from_name +
+    from_email). El Reply-To apunta al buzón de soporte para que las
+    respuestas del destinatario lleguen a un humano y no al no-reply.
     """
+    brand = _get_brand_cfg()
+
     # ── 1. Intento Resend primero (si está configurado) ─────────────────
     resend_cfg = _get_resend_cfg()
     if resend_cfg.get("api_key"):
-        # Si el remitente Resend está configurado, lo usamos. Si no, dejamos el default
-        # de Resend (onboarding@resend.dev) ya manejado por _send_via_resend.
+        # Construir From genérico ILUS — solo se usa la dirección SMTP guardada
+        # como fallback si el dominio aún no está verificado en Resend.
         from_for_resend = None
         try:
             smtp_cfg = _get_smtp_cfg()
-            from_name = smtp_cfg.get("from_name", "ILUS Sport & Health")
-            from_addr = smtp_cfg.get("from_addr") or resend_cfg.get("from_addr")
-            if from_addr:
-                from_for_resend = f"{from_name} <{from_addr}>"
+            # Prioridad: BRAND > SMTP guardado > Resend default
+            brand_email = brand.get("from_email") or smtp_cfg.get("from_addr") or resend_cfg.get("from_addr")
+            from_name   = brand.get("from_name") or smtp_cfg.get("from_name") or "ILUS"
+            if brand_email:
+                from_for_resend = f"{from_name} <{brand_email}>"
         except Exception:
             pass
 
-        if _send_via_resend(to_addr, subject, html_body, from_addr=from_for_resend):
+        if _send_via_resend(to_addr, subject, html_body,
+                            from_addr=from_for_resend,
+                            reply_to=brand.get("reply_to")):
             return True
         # Resend falló — guardar error legible y caer a SMTP
         err = getattr(g, "_last_resend_error", None) or {}
@@ -4049,14 +4151,18 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     except Exception:
         cfg = dict(EMAIL_CONFIG)
 
-    from_name = cfg.get("from_name", "ILUS Sport & Health")
-    from_addr_cfg = cfg.get("from_addr") or cfg.get("smtp_user", "")
+    # Branding: SIEMPRE genérico para From, sin tocar credenciales SMTP
+    from_name     = brand.get("from_name") or cfg.get("from_name") or "ILUS"
+    from_addr_cfg = brand.get("from_email") or cfg.get("from_addr") or cfg.get("smtp_user", "")
+    reply_to      = brand.get("reply_to") or cfg.get("reply_to") or ""
 
     # ── Envío vía SMTP (único método; configurable desde el front) ──────
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = f"{from_name} <{from_addr_cfg}>"
     msg["To"]      = to_addr
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     host      = cfg["smtp_host"]
@@ -4064,7 +4170,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     secure    = bool(cfg.get("secure"))
     user      = cfg["smtp_user"]
     passwd    = cfg.get("smtp_pass", "")
-    from_addr = cfg.get("from_addr") or user
+    from_addr = from_addr_cfg or user
 
     def _try_send(p, sec, timeout=25):
         if sec:
@@ -4170,7 +4276,11 @@ def _send_password_access_email(
 
     is_setup = mode == "setup"
     titulo = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
-    subject = "ILUS - Crea tu contraseña de acceso" if is_setup else "ILUS - Cambio seguro de contraseña"
+    # Subject estandarizado "ILUS · {tema}" — el From ya identifica la marca,
+    # acá solo necesitamos describir el tema con claridad
+    subject = _brand_subject(
+        "Crea tu contraseña de acceso" if is_setup else "Cambio seguro de contraseña"
+    )
     button = "Crear mi contraseña" if is_setup else "Cambiar contraseña"
     intro = (
         f"<strong>{actor_name}</strong> creo una cuenta para ti en el sistema ILUS."
@@ -4227,7 +4337,7 @@ def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, 
             ("", "Portal", login_url),
         ],
     )
-    sent = _send_ilus_email(to_addr, "ILUS - Acceso al portal habilitado", html_body)
+    sent = _send_ilus_email(to_addr, _brand_subject("Acceso al portal habilitado"), html_body)
     if not sent and not getattr(g, "_last_email_error", ""):
         g._last_email_error = "No se pudo enviar la notificacion de acceso por email."
     return sent
@@ -4271,31 +4381,37 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
         try:
             wa_cfg = _get_wa_cfg()
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
+                brand = _get_brand_cfg()
+                firma = f"\n— {brand.get('name','ILUS Sport & Health')}"
                 if mode == "token" and action_url and email_purpose == "change":
                     body = (
-                        f"Hola {nombre}, se solicito un *cambio de contrasena* para tu cuenta ILUS.\n\n"
-                        f"Define tu nueva contrasena aqui: {action_url}\n"
-                        f"El enlace es de un solo uso y vence en 60 minutos.\n\n"
-                        f"Si no esperabas esta solicitud, ignora este mensaje."
+                        _brand_wa_prefix("Cambio de contraseña")
+                        + f"Hola {nombre}, recibimos una solicitud para cambiar la contraseña de tu cuenta.\n\n"
+                          f"Define tu nueva clave aquí (válido 60 min, un solo uso):\n{action_url}\n\n"
+                          f"Si no fuiste tú, ignora este mensaje."
+                        + firma
                     )
                 elif mode == "token" and action_url:
                     body = (
-                        f"Hola {nombre}, ILUS habilito tu acceso al portal.\n\n"
-                        f"Crea tu contrasena aqui: {action_url}\n"
-                        f"El enlace es de un solo uso y vence pronto.\n\n"
-                        f"Portal: {login_url}"
+                        _brand_wa_prefix("Bienvenido al portal")
+                        + f"Hola {nombre}, habilitamos tu acceso al portal ILUS.\n\n"
+                          f"Crea tu contraseña aquí (válido 24 h):\n{action_url}\n\n"
+                          f"Portal: {login_url}"
+                        + firma
                     )
                 else:
                     body = (
-                        f"Hola {nombre}, ILUS habilito tus credenciales de acceso al portal.\n\n"
-                        f"Ingresa aqui: {login_url}\n"
-                        f"Por seguridad, este mensaje no incluye tu contrasena."
+                        _brand_wa_prefix("Acceso habilitado")
+                        + f"Hola {nombre}, tus credenciales del portal ILUS están listas.\n\n"
+                          f"Ingresa aquí: {login_url}\n"
+                          f"Por seguridad, este mensaje no incluye tu contraseña."
+                        + firma
                     )
                 sid = _send_whatsapp(wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"], phone, body)
                 result["whatsapp"] = sid
             else:
                 result["whatsapp"] = False
-                result["errors"].append("WhatsApp no esta configurado.")
+                result["errors"].append("WhatsApp no está configurado.")
         except Exception as exc:
             result["whatsapp"] = False
             result["errors"].append(f"WhatsApp: {exc}")
@@ -4339,7 +4455,7 @@ def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
         btn_primario_txt = "Restablecer contraseña",
         btn_primario_url = reset_url,
     )
-    return _send_ilus_email(to_addr, "Recuperar contraseña — ILUS Sport & Health", html_body)
+    return _send_ilus_email(to_addr, _brand_subject("Recuperar contraseña"), html_body)
 
 
 def _send_recovery_email(to_addr: str, to_name: str, reset_url: str) -> bool:
@@ -8575,6 +8691,148 @@ def twilio_health():
             "TWILIO_AUTH_TOKEN",
             "TWILIO_WHATSAPP_FROM",  # formato: whatsapp:+14155238886 (sandbox)
             "TWILIO_PHONE_FROM",     # formato: +14155551234 (número comprado)
+        ],
+    })
+
+
+# ════════════════════════════════════════════════════════════════════
+# COMUNICACIONES — Diagnóstico unificado (email + WhatsApp + SMS + brand)
+# Endpoint admin para chequear el estado completo de canales sin exponer
+# secretos. Útil antes de mandar invitaciones masivas o ante reclamos
+# del tipo "no me llegó el correo".
+# ════════════════════════════════════════════════════════════════════
+@app.route("/api/comm/diagnostico", methods=["GET"])
+def comm_diagnostico():
+    """Estado completo de los canales de comunicación.
+
+    Solo admin/superadmin. Retorna JSON con:
+      - brand: cómo aparecerá el remitente / firma
+      - email: SMTP + Resend (configurado? source? from?)
+      - whatsapp / sms: Twilio configurado y mascaras de credenciales
+      - kill_switch: estado actual del switch global
+      - ultimos_envios: top 10 de comm_log + email_log para diagnóstico rápido
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin"}), 403
+
+    # ── Brand ─────────────────────────────────────────────────────
+    brand = _get_brand_cfg()
+
+    # ── Email (SMTP + Resend) ─────────────────────────────────────
+    try:
+        smtp_cfg = _get_smtp_cfg()
+    except Exception:
+        smtp_cfg = {}
+    try:
+        resend_cfg = _get_resend_cfg()
+    except Exception:
+        resend_cfg = {}
+
+    smtp_status = {
+        "configurado": bool(smtp_cfg.get("smtp_user") and smtp_cfg.get("smtp_pass")),
+        "host":        smtp_cfg.get("smtp_host", ""),
+        "port":        smtp_cfg.get("smtp_port"),
+        "user":        smtp_cfg.get("smtp_user", ""),
+        "from_addr":   smtp_cfg.get("from_addr", ""),
+        "from_name":   smtp_cfg.get("from_name", ""),
+        "source":      smtp_cfg.get("_source", "config"),
+    }
+    resend_status = {
+        "configurado": bool(resend_cfg.get("api_key")),
+        "from_addr":   resend_cfg.get("from_addr", ""),
+        "source":      resend_cfg.get("_source", ""),
+    }
+    email_status = {
+        "smtp":            smtp_status,
+        "resend":          resend_status,
+        "metodo_preferido": "resend" if resend_status["configurado"] else ("smtp" if smtp_status["configurado"] else "ninguno"),
+        "from_efectivo":   f"{brand['from_name']} <{brand['from_email']}>",
+        "reply_to":        brand["reply_to"],
+    }
+
+    # ── Twilio (WhatsApp + SMS) ───────────────────────────────────
+    try:
+        twilio = _twilio_diagnostico()
+    except Exception:
+        twilio = {"whatsapp": {"configurado": False}, "sms": {"configurado": False}}
+
+    # ── Kill switch ───────────────────────────────────────────────
+    try:
+        kill = {
+            "email":    comm_is_enabled("email"),
+            "whatsapp": comm_is_enabled("whatsapp"),
+        }
+    except Exception:
+        kill = {"email": True, "whatsapp": True}
+
+    # ── Últimos envíos (best-effort, no falla si la tabla no existe) ──
+    ultimos_comm = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT canal, destinatario, asunto, estado, detalle, created_at "
+            "  FROM comm_log ORDER BY created_at DESC LIMIT 10"
+        ) or []
+        for r in rows:
+            r = dict(r)
+            # Sanitizar destinatario: enmascarar parte local del email
+            dest = r.get("destinatario") or ""
+            if "@" in dest:
+                local, _, dom = dest.partition("@")
+                if len(local) > 3:
+                    dest = local[:2] + "***@" + dom
+            r["destinatario"] = dest
+            if r.get("created_at"):
+                r["created_at"] = str(r["created_at"])
+            ultimos_comm.append(r)
+    except Exception:
+        pass
+
+    ultimos_email = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT destinatario, asunto, evento, estado, error_msg, creado_en "
+            "  FROM email_log ORDER BY id DESC LIMIT 10"
+        ) or []
+        for r in rows:
+            r = dict(r)
+            dest = r.get("destinatario") or ""
+            if "@" in dest:
+                local, _, dom = dest.partition("@")
+                if len(local) > 3:
+                    dest = local[:2] + "***@" + dom
+            r["destinatario"] = dest
+            if r.get("creado_en"):
+                r["creado_en"] = str(r["creado_en"])
+            ultimos_email.append(r)
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "brand": {
+            "name":          brand["name"],
+            "from_name":     brand["from_name"],
+            "from_email":    brand["from_email"],
+            "reply_to":      brand["reply_to"],
+            "wa_name":       brand["wa_name"],
+            "support_email": brand["support_email"],
+            "support_url":   brand["support_url"],
+        },
+        "email":         email_status,
+        "whatsapp":      twilio.get("whatsapp", {}),
+        "sms":           twilio.get("sms", {}),
+        "kill_switch":   kill,
+        "ultimos_comm":  ultimos_comm,
+        "ultimos_email": ultimos_email,
+        "env_vars_brand": [
+            "ILUS_BRAND_NAME",
+            "ILUS_BRAND_FROM_NAME",
+            "ILUS_BRAND_FROM_EMAIL",
+            "ILUS_BRAND_REPLY_TO",
+            "ILUS_BRAND_WA_NAME",
+            "ILUS_BRAND_SUPPORT_EMAIL",
+            "ILUS_BRAND_SUPPORT_URL",
         ],
     })
 
@@ -14083,6 +14341,18 @@ def comm_index():
     return resp
 
 
+@app.route("/admin/comunicaciones-test", methods=["GET"])
+@_require_superadmin
+def comm_test_page():
+    """Vista admin para enviar email/WhatsApp/SMS de prueba.
+
+    Permite al superadmin validar configuración sin tener que crear un
+    usuario de prueba o esperar un caso real. Útil cuando se cambian
+    env vars de branding o credenciales SMTP.
+    """
+    return render_template("comunicaciones/test.html")
+
+
 @app.route("/comunicaciones/smtp/config", methods=["POST"])
 @_require_superadmin
 def comm_smtp_save():
@@ -14754,12 +15024,89 @@ def _no_tecnico(view):
             if is_ajax:
                 return jsonify({
                     "ok": False,
-                    "error": "Acceso restringido para técnicos. Gestioná tus OTs desde 'Órdenes de Trabajo'.",
+                    "error": "Acceso restringido para técnicos. Gestiona tus OTs desde 'Órdenes de Trabajo'.",
                     "error_codigo": "TECNICO_SIN_ACCESO",
                 }), 403
-            flash("Como técnico, solo podés ver las Órdenes de Trabajo asignadas a ti.", "warning")
+            flash("Como técnico, solo puedes ver las Órdenes de Trabajo asignadas a ti.", "warning")
             return redirect(url_for("mant_ots_list"))
         return view(*args, **kwargs)
+    return wrapped
+
+
+def _tecnico_owns_visita(view_func):
+    """Decorador: si el usuario actual es 'tecnico' o 'tecnico_externo',
+    valida que sea dueño de la visita (mant_visitas.tecnico_user_id) o
+    colaborador (mant_visita_tecnicos.tecnico_user_id). Admin/superadmin
+    y demás roles pasan sin restricción.
+
+    Espera que el view reciba `vid` como primer parámetro de URL.
+
+    Distingue AJAX/JSON vs navegación normal:
+    - AJAX → 403 JSON con error en español
+    - Navegación → flash + redirect a /mantenciones/ots
+
+    Loguea cada intento bloqueado en consola con prefijo [SECURITY] para
+    quedar en Railway logs (audit trail de IDOR attempts).
+
+    Aplicar SIEMPRE después de @_mant_required (convención del proyecto).
+
+    Test cases (NO implementar como tests, solo documentar):
+    - T1 abre /ot/<vid_t1>/ejecutar             → 200 OK
+    - T1 abre /ot/<vid_t2>/ejecutar             → redirect con flash
+    - T1 PATCH /api/visitas/<vid_t2>/tareas/<tid> → 403 JSON
+    - T1 GET /api/visitas (calendario)          → solo ve sus OTs
+    - Admin abre cualquier OT                   → 200 OK (bypass)
+    - Tecnico_externo aplica las mismas restricciones que tecnico
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        role = (u.get("role") or "").lower()
+        if role in ("tecnico", "tecnico_externo"):
+            uid = u.get("id")
+            asignado = None
+            if uid:
+                try:
+                    asignado = mysql_fetchone(
+                        "SELECT 1 AS x FROM mant_visitas "
+                        " WHERE id=%s AND tecnico_user_id=%s "
+                        "UNION ALL "
+                        "SELECT 1 FROM mant_visita_tecnicos "
+                        " WHERE visita_id=%s AND tecnico_user_id=%s "
+                        "LIMIT 1",
+                        (vid, uid, vid, uid)
+                    )
+                except Exception as e_sql:
+                    # En caso de error de BD, denegar por seguridad (fail-closed)
+                    print(
+                        f"[SECURITY] Error validando ownership vid={vid} "
+                        f"uid={uid}: {e_sql}",
+                        flush=True
+                    )
+                    asignado = None
+            if not asignado:
+                # Audit trail en Railway logs
+                print(
+                    f"[SECURITY] {uid} ({u.get('username')}) intento acceder "
+                    f"vid={vid} sin asignacion (role={role}, path={request.path})",
+                    flush=True
+                )
+                # Distinguir AJAX/JSON vs navegación
+                is_api = (
+                    request.is_json
+                    or request.path.startswith("/mantenciones/api/")
+                    or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                    or (request.headers.get("Accept") or "").startswith("application/json")
+                )
+                if is_api:
+                    return jsonify({
+                        "ok": False,
+                        "error": "No estás asignado a esta OT",
+                        "error_codigo": "OT_NO_ASIGNADA",
+                    }), 403
+                flash("No tienes acceso a esa orden de trabajo.", "warning")
+                return redirect(url_for("mant_ots_list"))
+        return view_func(vid, *args, **kwargs)
     return wrapped
 
 
@@ -16570,6 +16917,52 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # ════════════════════════════════════════════════════════════
+            # 2026-05-17 — PROMOCIÓN LEVANTAMIENTO → FICHA DE EQUIPO
+            # Daniel pidió que las OTs tipo 'levantamiento' al cerrarse
+            # promuevan sus datos capturados (fotos, observaciones, tareas)
+            # a la ficha de cada equipo involucrado en mant_maquinas. Las
+            # otras OTs (preventiva, correctiva, etc.) solo generan
+            # historial (mant_maquina_eventos) sin sobreescribir la ficha.
+            #
+            # Esta tabla guarda UN snapshot por (visita_id, maquina_id):
+            #   - datos_json: valores capturados por tarea (tipo_respuesta)
+            #   - fotos_count: foto(s) asociadas al equipo en esa OT
+            #   - observaciones: notas del técnico sobre el equipo
+            #   - aplicado_a_ficha: 0 (procesado pero no aplicado) | 1
+            #
+            # Se consulta desde la ficha de equipo para mostrar el último
+            # levantamiento + historial cronológico de levantamientos.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_maquina_levantamientos (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    maquina_id          INT NOT NULL,
+                    visita_id           INT NOT NULL,
+                    fecha_levantamiento DATE NOT NULL
+                                        COMMENT 'Fecha programada de la OT levantamiento',
+                    tecnico_user_id     INT NULL
+                                        COMMENT 'app_users.id del técnico que firmó',
+                    tecnico_nombre      VARCHAR(190),
+                    datos_json          TEXT
+                                        COMMENT 'Snapshot JSON de respuestas de tareas (titulo + valor)',
+                    fotos_count         INT DEFAULT 0
+                                        COMMENT 'Fotos asociadas a este equipo en esa OT',
+                    observaciones       TEXT
+                                        COMMENT 'Observaciones del técnico sobre el equipo',
+                    aplicado_a_ficha    TINYINT(1) DEFAULT 0
+                                        COMMENT '1 si los campos principales de mant_maquinas se actualizaron',
+                    aplicado_at         DATETIME NULL,
+                    aplicado_por        VARCHAR(190),
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                    FOREIGN KEY (visita_id)  REFERENCES mant_visitas(id)  ON DELETE CASCADE,
+                    UNIQUE KEY uq_maquina_visita (maquina_id, visita_id),
+                    INDEX idx_maquina_fecha (maquina_id, fecha_levantamiento DESC),
+                    INDEX idx_visita (visita_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Tabla N:N para múltiples técnicos asignados a una visita
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_visita_tecnicos (
@@ -17066,6 +17459,280 @@ def _mant_log(entidad, entidad_id, accion, detalle=""):
         )
     except Exception:
         pass
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2026-05-17 — PROMOCIÓN LEVANTAMIENTO → FICHA DE EQUIPO
+# Daniel: "Una vez que la gestión de ficha de cliente sea terminada, la
+# idea es que asigne las fotos y esta información a la ficha de cada
+# producto seleccionado". SOLO OTs tipo 'levantamiento' afectan la
+# ficha principal. Las otras OTs (preventiva, correctiva, instalación,
+# etc.) solo generan historial en mant_maquina_eventos.
+# ═════════════════════════════════════════════════════════════════════
+
+def _promover_levantamiento_a_maquina(vid, usuario=None):
+    """Promueve datos capturados en una OT de levantamiento a la ficha
+    de cada equipo (mant_maquinas). Idempotente: si ya se promovió, no
+    duplica filas (UNIQUE KEY uq_maquina_visita lo evita).
+
+    Estrategia:
+      1. Verifica que la visita es tipo='levantamiento' Y estado='cerrada'.
+      2. Por cada maquina_id presente en las tareas de la OT:
+         - Calcula snapshot de respuestas (titulo + valor_json/observaciones).
+         - Cuenta fotos asociadas (mant_visita_fotos.maquina_id = mid
+           AND visita_id = vid).
+         - INSERT IGNORE en mant_maquina_levantamientos (snapshot + flag).
+         - Si no estaba aplicada todavía, actualiza mant_maquinas:
+           * foto_url: si la máquina NO tenía Y la OT trajo foto, se
+             actualiza. Si ya tenía, NO se reemplaza (conservador —
+             el técnico decide explícitamente desde la ficha si quiere
+             reemplazar). Esto evita perder fotos buenas anteriores.
+           * observaciones: APPEND con timestamp (no reemplaza).
+           * ultima_intervencion = MAX(actual, fecha visita).
+           * visitas_count += 1.
+           * last_visita_id = vid.
+         - Marca aplicado_a_ficha=1, aplicado_at=NOW().
+         - Registra evento en mant_maquina_eventos (timeline).
+
+    Tolerante a fallos: cada equipo es try/except independiente. Si una
+    máquina falla, las demás siguen. NO bloquea respuesta HTTP (llamar
+    desde hilo daemon vía _promover_levantamiento_async).
+
+    Returns: dict {procesados, aplicados, errores, skipped}
+    """
+    out = {"procesados": 0, "aplicados": 0, "errores": 0, "skipped": False}
+    try:
+        v = mysql_fetchone(
+            "SELECT id, tipo, estado, fecha_programada, tecnico_user_id, tecnico "
+            "  FROM mant_visitas WHERE id=%s",
+            (vid,)
+        )
+        if not v:
+            out["skipped"] = True
+            return out
+        # Solo levantamientos cerrados afectan la ficha
+        if (v.get("tipo") or "").lower() != "levantamiento":
+            out["skipped"] = True
+            return out
+        if (v.get("estado") or "").lower() != "cerrada":
+            out["skipped"] = True
+            return out
+
+        # Técnico que firmó: prefiero el user_id, fallback al texto libre
+        tec_uid = v.get("tecnico_user_id")
+        tec_nombre = v.get("tecnico") or usuario or ""
+        if tec_uid:
+            try:
+                u_row = mysql_fetchone(
+                    "SELECT COALESCE(nombre, username) AS nom FROM app_users WHERE id=%s",
+                    (tec_uid,)
+                )
+                if u_row and u_row.get("nom"):
+                    tec_nombre = u_row["nom"]
+            except Exception:
+                pass
+
+        fecha_lev = v.get("fecha_programada")
+
+        # Máquinas distintas presentes en las tareas de esta OT
+        maquinas = mysql_fetchall(
+            "SELECT DISTINCT t.maquina_id FROM mant_visita_tareas t "
+            " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL",
+            (vid,)
+        ) or []
+
+        for row in maquinas:
+            mid = row.get("maquina_id")
+            if not mid:
+                continue
+            out["procesados"] += 1
+            try:
+                # ── Idempotencia: si ya fue aplicada, saltamos ──
+                existente = mysql_fetchone(
+                    "SELECT aplicado_a_ficha FROM mant_maquina_levantamientos "
+                    " WHERE maquina_id=%s AND visita_id=%s",
+                    (mid, vid)
+                )
+                if existente and existente.get("aplicado_a_ficha"):
+                    continue
+
+                # ── Snapshot de respuestas de tareas del equipo ──
+                tareas = mysql_fetchall(
+                    "SELECT id, titulo, tipo_respuesta, valor_json, observaciones, "
+                    "       completada, completada_at "
+                    "  FROM mant_visita_tareas "
+                    " WHERE visita_id=%s AND maquina_id=%s "
+                    " ORDER BY orden, id",
+                    (vid, mid)
+                ) or []
+                snapshot = []
+                for t in tareas:
+                    valor = None
+                    if t.get("valor_json"):
+                        try: valor = json.loads(t["valor_json"])
+                        except Exception: valor = t.get("valor_json")
+                    snapshot.append({
+                        "tarea_id": t["id"],
+                        "titulo": t.get("titulo") or "",
+                        "tipo": t.get("tipo_respuesta") or "check",
+                        "valor": valor,
+                        "obs": (t.get("observaciones") or "")[:500],
+                        "completada": bool(t.get("completada")),
+                    })
+
+                # ── Fotos de esta OT asociadas a este equipo ──
+                fotos = mysql_fetchall(
+                    "SELECT id, archivo_path, descripcion, tomada_at "
+                    "  FROM mant_visita_fotos "
+                    " WHERE visita_id=%s AND maquina_id=%s "
+                    " ORDER BY tomada_at DESC",
+                    (vid, mid)
+                ) or []
+                fotos_count = len(fotos)
+                primera_foto_url = (fotos[0].get("archivo_path") if fotos else None)
+
+                # ── Observaciones agregadas (visita + tareas) ──
+                obs_partes = []
+                try:
+                    v_obs = mysql_fetchone(
+                        "SELECT observaciones, diagnostico FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if v_obs:
+                        if (v_obs.get("observaciones") or "").strip():
+                            obs_partes.append(v_obs["observaciones"].strip())
+                        if (v_obs.get("diagnostico") or "").strip():
+                            obs_partes.append(v_obs["diagnostico"].strip())
+                except Exception:
+                    pass
+                for s in snapshot:
+                    if s.get("obs"):
+                        obs_partes.append(f"[{s['titulo'][:60]}] {s['obs']}")
+                obs_text = "\n".join(obs_partes)[:5000] or None
+
+                datos_json_str = json.dumps(snapshot, ensure_ascii=False)[:60000]
+
+                # ── INSERT IGNORE para idempotencia (uq_maquina_visita) ──
+                try:
+                    mysql_execute(
+                        "INSERT IGNORE INTO mant_maquina_levantamientos "
+                        "(maquina_id, visita_id, fecha_levantamiento, tecnico_user_id, "
+                        " tecnico_nombre, datos_json, fotos_count, observaciones, "
+                        " aplicado_a_ficha) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0)",
+                        (mid, vid, fecha_lev, tec_uid, (tec_nombre or '')[:190],
+                         datos_json_str, fotos_count, obs_text)
+                    )
+                except Exception as _e_ins:
+                    print(f"[promover_lev] INSERT fallo m={mid} v={vid}: {_e_ins}",
+                          flush=True)
+                    out["errores"] += 1
+                    continue
+
+                # ── Aplicar a ficha principal (conservador) ──
+                eq = mysql_fetchone(
+                    "SELECT foto_url, observaciones, visitas_count, ultima_intervencion "
+                    "  FROM mant_maquinas WHERE id=%s",
+                    (mid,)
+                ) or {}
+
+                # Foto: solo si la máquina NO tenía (no reemplazar)
+                set_foto = ""
+                if (not (eq.get("foto_url") or "").strip()) and primera_foto_url:
+                    set_foto = ", foto_url=%s"
+
+                # Observaciones: APPEND con timestamp del levantamiento
+                obs_existente = (eq.get("observaciones") or "").strip()
+                bloque_nuevo = ""
+                if obs_text:
+                    fecha_str = str(fecha_lev) if fecha_lev else _now_chile_str("%Y-%m-%d")
+                    cabecera = f"\n\n--- Levantamiento {fecha_str} por {tec_nombre or 'Técnico'} ---\n"
+                    bloque_nuevo = cabecera + obs_text
+                obs_final = (obs_existente + bloque_nuevo)[:8000] if bloque_nuevo else obs_existente
+
+                params_upd = []
+                sql_upd = (
+                    "UPDATE mant_maquinas SET "
+                    "  visitas_count = COALESCE(visitas_count,0) + 1, "
+                    "  ultima_intervencion = GREATEST(COALESCE(ultima_intervencion, %s), %s), "
+                    "  last_visita_id = %s"
+                )
+                params_upd.extend([fecha_lev, fecha_lev, vid])
+                if bloque_nuevo:
+                    sql_upd += ", observaciones=%s"
+                    params_upd.append(obs_final)
+                if set_foto:
+                    sql_upd += set_foto
+                    params_upd.append(primera_foto_url)
+                sql_upd += " WHERE id=%s"
+                params_upd.append(mid)
+                try:
+                    mysql_execute(sql_upd, tuple(params_upd))
+                except Exception as _e_upd:
+                    print(f"[promover_lev] UPDATE mant_maquinas m={mid}: {_e_upd}",
+                          flush=True)
+
+                # Marcar aplicado
+                try:
+                    mysql_execute(
+                        "UPDATE mant_maquina_levantamientos SET "
+                        "  aplicado_a_ficha=1, aplicado_at=NOW(), aplicado_por=%s "
+                        " WHERE maquina_id=%s AND visita_id=%s",
+                        ((tec_nombre or usuario or 'sistema')[:190], mid, vid)
+                    )
+                except Exception:
+                    pass
+
+                # Evento en timeline del equipo
+                try:
+                    mysql_execute(
+                        "INSERT INTO mant_maquina_eventos "
+                        "(maquina_id, tipo, descripcion, referencia_tabla, "
+                        " referencia_id, created_by) "
+                        "VALUES (%s,'levantamiento',%s,'mant_visitas',%s,%s)",
+                        (mid,
+                         f"Ficha actualizada por levantamiento OT #{vid}: "
+                         f"{fotos_count} foto(s), {len(snapshot)} tarea(s) capturadas",
+                         vid,
+                         (tec_nombre or usuario or 'sistema')[:190])
+                    )
+                except Exception:
+                    pass
+
+                out["aplicados"] += 1
+            except Exception as _e_mq:
+                print(f"[promover_lev] error maquina_id={mid} vid={vid}: {_e_mq}",
+                      flush=True)
+                out["errores"] += 1
+                continue
+
+        # Audit log global
+        try:
+            _mant_log("visita", vid, "levantamiento_promovido",
+                      f"equipos procesados: {out['procesados']} · "
+                      f"aplicados: {out['aplicados']} · errores: {out['errores']}")
+        except Exception:
+            pass
+        return out
+    except Exception as e:
+        print(f"[promover_lev] error general vid={vid}: {e}", flush=True)
+        out["errores"] += 1
+        return out
+
+
+def _promover_levantamiento_async(vid, usuario=None):
+    """Wrapper que ejecuta _promover_levantamiento_a_maquina en hilo
+    daemon para NO bloquear la respuesta HTTP del cierre de OT.
+    Best-effort: si el hilo no arranca, log pero no rompe el flujo."""
+    try:
+        threading.Thread(
+            target=_promover_levantamiento_a_maquina,
+            args=(vid, usuario),
+            daemon=True,
+        ).start()
+    except Exception as e:
+        print(f"[promover_lev_async] no se pudo iniciar hilo vid={vid}: {e}",
+              flush=True)
 
 
 def _next_ot_number():
@@ -20799,6 +21466,7 @@ def mant_tecnico_externo_subir_foto(eid):
 # Endpoint específico para grabación in-app de video — Feature 2
 @app.route("/mantenciones/api/visitas/<int:vid>/grabacion", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_grabacion_video(vid):
     """
     Recibe un Blob de video grabado in-app desde el navegador.
@@ -22894,6 +23562,32 @@ def mant_tarea_cronometro(tid):
         return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
     tarea = dict(tarea)
     vid   = tarea["visita_id"]
+
+    # 🔐 SEGURIDAD (2026-05-17): si es técnico/tecnico_externo, validar
+    # ownership por la visita asociada a la tarea (endpoint usa <tid>, no <vid>).
+    u_curr = getattr(g, "user", None) or {}
+    role_curr = (u_curr.get("role") or "").lower()
+    if role_curr in ("tecnico", "tecnico_externo"):
+        uid_curr = u_curr.get("id")
+        ok_owner = None
+        if uid_curr:
+            ok_owner = mysql_fetchone(
+                "SELECT 1 AS x FROM mant_visitas "
+                " WHERE id=%s AND tecnico_user_id=%s "
+                "UNION ALL "
+                "SELECT 1 FROM mant_visita_tecnicos "
+                " WHERE visita_id=%s AND tecnico_user_id=%s "
+                "LIMIT 1",
+                (vid, uid_curr, vid, uid_curr)
+            )
+        if not ok_owner:
+            print(
+                f"[SECURITY] {uid_curr} ({u_curr.get('username')}) intento "
+                f"cronometro tid={tid} (vid={vid}) sin asignacion (role={role_curr})",
+                flush=True
+            )
+            return jsonify({"ok": False, "error": "No estás asignado a esta OT"}), 403
+
     estado_actual = tarea.get("estado_trabajo") or "pendiente"
 
     # Validaciones de transición
@@ -23083,6 +23777,33 @@ def mant_tarea_cronometro_get(tid):
     )
     if not tarea:
         return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
+
+    # 🔐 SEGURIDAD (2026-05-17): tarea pertenece a una visita — verificar
+    # ownership si el actor es técnico/tecnico_externo (endpoint sin <vid>).
+    vid_chk = dict(tarea).get("visita_id")
+    u_curr = getattr(g, "user", None) or {}
+    role_curr = (u_curr.get("role") or "").lower()
+    if role_curr in ("tecnico", "tecnico_externo") and vid_chk:
+        uid_curr = u_curr.get("id")
+        ok_owner = None
+        if uid_curr:
+            ok_owner = mysql_fetchone(
+                "SELECT 1 AS x FROM mant_visitas "
+                " WHERE id=%s AND tecnico_user_id=%s "
+                "UNION ALL "
+                "SELECT 1 FROM mant_visita_tecnicos "
+                " WHERE visita_id=%s AND tecnico_user_id=%s "
+                "LIMIT 1",
+                (vid_chk, uid_curr, vid_chk, uid_curr)
+            )
+        if not ok_owner:
+            print(
+                f"[SECURITY] {uid_curr} ({u_curr.get('username')}) intento "
+                f"cronometro_get tid={tid} (vid={vid_chk}) sin asignacion",
+                flush=True
+            )
+            return jsonify({"ok": False, "error": "No estás asignado a esta OT"}), 403
+
     eventos = mysql_fetchall(
         "SELECT id, accion, `timestamp`, duracion_segmento_seg, nota, creado_por "
         "  FROM mant_tarea_tiempo WHERE tarea_id=%s ORDER BY id DESC LIMIT 20",
@@ -23114,6 +23835,7 @@ def mant_tarea_cronometro_get(tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cronometro-resumen", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_cronometro_resumen(vid):
     """Resumen de tiempo de toda la visita (todas las tareas)."""
     visita = mysql_fetchone(
@@ -23208,6 +23930,7 @@ def _ot_visita_basic(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/iniciar", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_iniciar(vid):
     """Cambia el estado de 'programada' a 'en_curso'. Solo el técnico asignado
     (o un admin/supervisor) puede iniciar el trabajo. Setea hora_real_inicio
@@ -23243,6 +23966,7 @@ def mant_visita_iniciar(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_firmar(vid):
     """Guarda una de las 3 firmas (cliente / tecnico / supervisor).
     Body: {"tipo": "cliente"|"tecnico"|"supervisor",
@@ -23402,6 +24126,7 @@ def _ot_validar_cierre(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/validacion-cierre", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_validacion_cierre(vid):
     """Endpoint que devuelve si la OT cumple las 4 reglas de cierre.
     El frontend lo llama para mostrar el estado del cierre antes de
@@ -23411,6 +24136,7 @@ def mant_visita_validacion_cierre(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cerrar", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_cerrar(vid):
     """Cierra la visita aplicando las 4 reglas de cierre auditable (FASE 5).
     Bloquea cierre si falta alguna:
@@ -23482,6 +24208,10 @@ def mant_visita_cerrar(vid):
         )
     except Exception:
         pass
+    # ── Promoción levantamiento → ficha de equipo (async, no bloquea) ──
+    # Solo aplica si la visita es tipo='levantamiento'. El wrapper interno
+    # valida el tipo y descarta silenciosamente si no corresponde.
+    _promover_levantamiento_async(vid, usuario=user)
     return jsonify({
         "ok": True,
         "estado": "cerrada",
@@ -23516,6 +24246,24 @@ def mant_visitas_api():
     tipo_f = (request.args.get("tipo") or "").strip().lower()
     estado_f = (request.args.get("estado") or "").strip().lower()
     where, params = [], []
+    # 🔐 SEGURIDAD (2026-05-17): si el usuario es técnico/tecnico_externo,
+    # filtrar el calendario para que solo vea SUS OTs (las que tiene
+    # asignadas como principal o como colaborador). Antes este endpoint
+    # devolvía TODAS las visitas, lo que era IDOR de lectura.
+    u = getattr(g, "user", None) or {}
+    role = (u.get("role") or "").lower()
+    if role in ("tecnico", "tecnico_externo"):
+        uid = u.get("id")
+        if uid:
+            where.append(
+                "(v.tecnico_user_id=%s OR EXISTS("
+                "  SELECT 1 FROM mant_visita_tecnicos vt "
+                "   WHERE vt.visita_id=v.id AND vt.tecnico_user_id=%s))"
+            )
+            params.extend([int(uid), int(uid)])
+        else:
+            # Sin uid no puede ver nada
+            where.append("1=0")
     if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
     if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
     if cid:   where.append("v.cliente_id=%s"); params.append(int(cid))
@@ -24050,6 +24798,7 @@ def mant_visita_crear():
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["PUT"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_update(vid):
     d = request.get_json(silent=True) or {}
     # COMPAT: el dropdown legacy puede mandar `tecnico_id` esperando que sea
@@ -24117,6 +24866,7 @@ def mant_visita_update(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_del(vid):
     # Capturar info ANTES de borrar para el log y para encontrar levantamiento asociado
     v_info = mysql_fetchone(
@@ -24648,10 +25398,11 @@ def mant_ots_list():
     q          = (request.args.get("q") or "").strip()
     solo_mias  = request.args.get("solo_mias") == "1"
 
-    # Si el rol es "tecnico" PURO (no admin), forzar solo_mias para evitar
-    # que vea OTs de otros técnicos manipulando la URL.
+    # Si el rol es "tecnico" o "tecnico_externo" (no admin), forzar solo_mias
+    # para evitar que vea OTs de otros técnicos manipulando la URL.
+    # 🔐 SEGURIDAD (2026-05-17): incluído tecnico_externo (antes solo tecnico).
     user = getattr(g, "user", None)
-    if user and user.get("role") == "tecnico":
+    if user and (user.get("role") or "") in ("tecnico", "tecnico_externo"):
         solo_mias = True
 
     where = ["1=1"]
@@ -25162,6 +25913,7 @@ def mant_plantilla_eliminar(pid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/aplicar-plantilla", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_aplicar_plantilla(vid):
     """Aplica una plantilla a una OT: clona sus items como mant_visita_tareas.
     Body: { plantilla_id, maquina_ids?: [int,...]  // opcional: si viene,
@@ -25277,6 +26029,7 @@ def mant_visita_aplicar_plantilla(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/responder", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_tarea_responder(vid, tid):
     """Guarda la respuesta a una tarea de checklist según su tipo_respuesta.
     Body acepta cualquiera de:
@@ -25406,6 +26159,7 @@ def mant_tarea_responder(vid, tid):
 
 @app.route("/mantenciones/ot/<int:vid>")
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_ficha(vid):
     """Ficha de OT — TODOS los roles van al modo drill-down de ejecución.
 
@@ -25529,9 +26283,11 @@ def mant_ot_ejecutar(vid):
         return redirect(url_for("mant_ots_list"))
     visita = dict(visita)
 
-    # Si el usuario es técnico, validar que tenga la OT asignada
+    # Si el usuario es técnico/tecnico_externo, validar que tenga la OT asignada
+    # 🔐 SEGURIDAD (2026-05-17): se añadió tecnico_externo (antes solo tecnico).
     u = getattr(g, "user", None) or {}
-    if (u.get("role") or "") == "tecnico":
+    role_u = (u.get("role") or "").lower()
+    if role_u in ("tecnico", "tecnico_externo"):
         uid = u.get("id")
         es_mio = (visita.get("tecnico_user_id") == uid)
         if not es_mio:
@@ -25543,6 +26299,11 @@ def mant_ot_ejecutar(vid):
             )
             es_mio = bool(colab)
         if not es_mio:
+            print(
+                f"[SECURITY] {uid} ({u.get('username')}) intento ejecutar OT "
+                f"vid={vid} sin asignacion (role={role_u})",
+                flush=True
+            )
             flash("Esta OT no está asignada a ti.", "warning")
             return redirect(url_for("mant_ots_list"))
 
@@ -25682,6 +26443,7 @@ def mant_ot_ejecutar(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/datos", methods=["PATCH"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_equipo_datos(vid, mid):
     """Actualiza los datos del equipo (mant_maquinas) en el contexto de la OT.
     Aplica cuando el técnico edita serie, marca, modelo, año, voltaje,
@@ -25720,6 +26482,7 @@ def mant_ot_equipo_datos(vid, mid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/foto", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_equipo_foto(vid, mid):
     """Sube la FOTO PRINCIPAL del equipo (campo mant_maquinas.foto_url).
     Esta foto es la que aparecerá en la ficha del equipo del cliente."""
@@ -25757,6 +26520,7 @@ def mant_ot_equipo_foto(vid, mid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/exec-gps", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_exec_gps(vid):
     """Registra la geolocalización del técnico al INICIAR la ejecución.
     Sirve para auditar que ejecutó la OT desde la dirección del cliente."""
@@ -25787,6 +26551,7 @@ def mant_ot_exec_gps(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_firmar_revision(vid):
     """El técnico firma la OT y la pasa a estado 'pendiente_revision'.
     El supervisor luego deberá aprobarla y cerrarla.
@@ -25854,6 +26619,7 @@ def mant_ot_firmar_revision(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/iniciar-ruta", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_iniciar_ruta(vid):
     """Registra que el técnico inició la navegación hacia la dirección
     del cliente. Guarda timestamp + ubicación de origen + app elegida
@@ -25940,6 +26706,12 @@ def mant_ot_aprobar_cierre(vid):
         try: _mant_log("visita", vid, "aprobada_supervisor",
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
         except Exception: pass
+        # ── Promoción levantamiento → ficha de equipo (async, no bloquea) ──
+        # Si la OT era tipo='levantamiento', los datos capturados por el
+        # técnico (fotos, observaciones, valores de tareas) se promueven a
+        # mant_maquinas para cada equipo involucrado. Otras OTs solo
+        # generan historial — el wrapper interno valida el tipo.
+        _promover_levantamiento_async(vid, usuario=current_username())
         return jsonify({"ok": True, "estado": "cerrada"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -25955,7 +26727,7 @@ def mant_ot_rechazar_cierre(vid):
     d = request.get_json(silent=True) or {}
     motivo = (d.get("motivo") or "").strip()[:1000]
     if not motivo:
-        return jsonify({"ok": False, "error": "Indicá el motivo del rechazo"}), 400
+        return jsonify({"ok": False, "error": "Indica el motivo del rechazo"}), 400
     v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -25986,6 +26758,7 @@ def mant_ot_rechazar_cierre(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/respuesta", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_tarea_respuesta(vid, tid):
     """Guarda la respuesta capturada por el técnico para una tarea con
     tipo_respuesta avanzado (texto, numero, sino, verificacion, lista,
@@ -26218,6 +26991,7 @@ def mant_visita_tarea_respuesta(vid, tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/ping-ruta", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_ping_ruta(vid):
     """Recibe ping del técnico con su lat/lng actual mientras está en
     ruta o ejecutando la OT. Se guarda en mant_ruta_pings (tabla circular,
@@ -26326,6 +27100,7 @@ def mant_seguimiento_vista():
 
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_pdf(vid):
     """Genera un PDF completo de la OT con:
     - Header ILUS + número OT + estado
@@ -26490,6 +27265,7 @@ def mant_visita_pdf(vid):
 
 @app.route("/mantenciones/ot/<int:vid>/pdf")
 @_mant_required
+@_tecnico_owns_visita
 def mant_ot_pdf_render(vid):
     """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
 
@@ -26746,6 +27522,7 @@ def mant_ot_pdf_render(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_tareas_get(vid):
     """Lista las tareas de una OT con su estado y métricas de cronómetro."""
     rows = mysql_fetchall(
@@ -26777,6 +27554,7 @@ def mant_visita_tareas_get(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/nueva", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_tarea_nueva(vid):
     """Crea una tarea dentro de la OT. Acepta JSON o form-data."""
     d = request.get_json(silent=True) or request.form
@@ -26819,6 +27597,7 @@ def mant_visita_tarea_nueva(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>", methods=["POST", "PATCH", "DELETE"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_tarea_update(vid, tid):
     """Actualiza, completa o elimina una tarea."""
     if request.method == "DELETE":
@@ -26911,6 +27690,7 @@ def mant_visita_tarea_update(vid, tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/protocolo/<protocolo>", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_protocolo(vid, protocolo):
     """Aplica un protocolo a la OT: genera N tareas estándar.
 
@@ -27095,6 +27875,7 @@ os.makedirs(MANT_FOTOS_DIR, exist_ok=True)
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_fotos_get(vid):
     """Lista las fotos de una OT."""
     rows = mysql_fetchall(
@@ -27116,6 +27897,7 @@ def mant_visita_fotos_get(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/subir", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_fotos_subir(vid):
     """Sube una o varias fotos a la OT.
 
@@ -27286,6 +28068,7 @@ def mant_visita_fotos_subir(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_adjuntos_list(vid):
     """Lista de adjuntos (PDFs, videos, documentos) de una OT.
     Distintos de fotos (que tienen su propia tabla mant_visita_fotos)."""
@@ -27310,6 +28093,7 @@ def mant_visita_adjuntos_list(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_adjuntos_upload(vid):
     """Sube un adjunto a la OT — PDF, video, documento. Persistente
     en Cloudinary (resource_type según el tipo). Fallback filesystem
@@ -27436,6 +28220,7 @@ def mant_visita_adjuntos_upload(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos/<int:aid>", methods=["DELETE"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_adjunto_delete(vid, aid):
     """Elimina un adjunto de la OT (Cloudinary + BD)."""
     row = mysql_fetchone(
@@ -27465,6 +28250,7 @@ def mant_visita_adjunto_delete(vid, aid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>", methods=["DELETE"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_foto_delete(vid, fid):
     """Elimina una foto de la OT (archivo + registro)."""
     row = mysql_fetchone(
@@ -27489,9 +28275,51 @@ def mant_visita_foto_delete(vid, fid):
 # GALERÍA POR MÁQUINA (inventario fotográfico permanente)
 # ═════════════════════════════════════════════════════════════════════
 
+def _maquina_tecnico_owns(mid):
+    """Helper: True si el usuario actual NO es técnico/tecnico_externo
+    (admin/superadmin/ejecutivo pasan), o si lo es y tiene al menos una
+    visita asignada que involucra esta máquina. False ⇒ denegar.
+
+    Una máquina "involucra" al técnico si:
+    - tiene una tarea en una visita asignada al técnico (principal o N:N)
+    """
+    u = getattr(g, "user", None) or {}
+    role = (u.get("role") or "").lower()
+    if role not in ("tecnico", "tecnico_externo"):
+        return True
+    uid = u.get("id")
+    if not uid:
+        return False
+    try:
+        ok = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_visita_tareas vt "
+            "  JOIN mant_visitas v ON v.id=vt.visita_id "
+            " WHERE vt.maquina_id=%s "
+            "   AND (v.tecnico_user_id=%s "
+            "        OR EXISTS(SELECT 1 FROM mant_visita_tecnicos vtc "
+            "                   WHERE vtc.visita_id=v.id "
+            "                     AND vtc.tecnico_user_id=%s)) "
+            " LIMIT 1",
+            (mid, uid, uid)
+        )
+        return bool(ok)
+    except Exception as e_chk:
+        print(f"[SECURITY] Error validando maquina mid={mid} uid={uid}: {e_chk}", flush=True)
+        return False
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos", methods=["GET"])
 @_mant_required
 def mant_maquina_fotos_get(mid):
+    # 🔐 SEGURIDAD: técnico solo ve fotos de máquinas que está atendiendo
+    if not _maquina_tecnico_owns(mid):
+        u = getattr(g, "user", None) or {}
+        print(
+            f"[SECURITY] {u.get('id')} ({u.get('username')}) intento ver fotos "
+            f"maquina mid={mid} sin OT asignada",
+            flush=True
+        )
+        return jsonify({"ok": False, "error": "No tienes acceso a esta máquina"}), 403
     rows = mysql_fetchall(
         "SELECT id, archivo_path, archivo_nombre, tipo_foto, descripcion, "
         "       es_principal, visita_origen, tomada_por, tomada_at "
@@ -27505,6 +28333,15 @@ def mant_maquina_fotos_get(mid):
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos/subir", methods=["POST"])
 @_mant_required
 def mant_maquina_fotos_subir(mid):
+    # 🔐 SEGURIDAD: técnico solo sube fotos a máquinas que está atendiendo
+    if not _maquina_tecnico_owns(mid):
+        u = getattr(g, "user", None) or {}
+        print(
+            f"[SECURITY] {u.get('id')} ({u.get('username')}) intento subir foto "
+            f"a maquina mid={mid} sin OT asignada",
+            flush=True
+        )
+        return jsonify({"ok": False, "error": "No tienes acceso a esta máquina"}), 403
     files = request.files.getlist("fotos") or request.files.getlist("imagenes")
     if not files or all(not f.filename for f in files):
         return jsonify({"ok": False, "error": "No se envió ningún archivo"}), 400
@@ -27555,6 +28392,7 @@ def mant_maquina_fotos_subir(mid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/repuestos", methods=["GET"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_repuestos_get(vid):
     rows = mysql_fetchall(
         "SELECT id, sku, producto_id, descripcion, cantidad, "
@@ -27592,6 +28430,7 @@ def mant_productos_search():
 
 @app.route("/mantenciones/api/visitas/<int:vid>/enviar-email", methods=["POST"])
 @_mant_required
+@_tecnico_owns_visita
 def mant_visita_enviar_email(vid):
     """
     Envía un email al cliente notificando que se agendó la visita,
@@ -31812,6 +32651,13 @@ def mant_lev_cerrar(lid):
                 conn.commit()
             finally:
                 conn.close()
+            # ── Promoción levantamiento → ficha de equipo (async) ──
+            # La OT espejo del levantamiento ya está cerrada y suele ser
+            # tipo='levantamiento'. Promovemos datos a mant_maquinas.
+            try:
+                _promover_levantamiento_async(vid, usuario=user)
+            except Exception:
+                pass
         except Exception as e_ot:
             print(f"[lev_cerrar] error procesando OT espejo: {e_ot}", flush=True)
 
@@ -31856,9 +32702,11 @@ def mant_maquina_ficha(mid):
         return redirect(url_for("mant_clientes"))
     eq = dict(eq)
 
-    # Permisos: técnico solo ve equipos que están en OTs asignadas a él
+    # Permisos: técnico/tecnico_externo solo ve equipos que están en OTs asignadas a él
+    # 🔐 SEGURIDAD (2026-05-17): se añadió tecnico_externo (antes solo tecnico).
     u = getattr(g, "user", None) or {}
-    if (u.get("role") or "") == "tecnico":
+    role_u = (u.get("role") or "").lower()
+    if role_u in ("tecnico", "tecnico_externo"):
         uid = u.get("id")
         autorizado = mysql_fetchone(
             "SELECT 1 FROM mant_visita_tareas vt "
@@ -31871,6 +32719,11 @@ def mant_maquina_ficha(mid):
             (mid, uid, uid)
         )
         if not autorizado:
+            print(
+                f"[SECURITY] {uid} ({u.get('username')}) intento abrir ficha "
+                f"equipo mid={mid} sin OT asignada (role={role_u})",
+                flush=True
+            )
             flash("Este equipo no está en ninguna OT asignada a ti.", "warning")
             return redirect(url_for("mant_ots_list"))
 
@@ -31961,6 +32814,70 @@ def mant_maquina_ficha(mid):
         "tecnicos": list({o.get("tecnico_nombre") for o in ots if o.get("tecnico_nombre")}),
     }
 
+    # ── Levantamientos de esta máquina (último + historial) ──
+    # Daniel pidió que en la ficha del equipo se vea la información
+    # que rellenó el técnico SOLAMENTE durante el levantamiento de
+    # ficha. Otras OTs (preventiva, correctiva, etc.) quedan en el
+    # historial pero no se mezclan acá.
+    levantamientos = []
+    try:
+        lev_rows = mysql_fetchall(
+            "SELECT ml.id, ml.visita_id, ml.fecha_levantamiento, ml.tecnico_nombre, "
+            "       ml.datos_json, ml.fotos_count, ml.observaciones, "
+            "       ml.aplicado_a_ficha, ml.aplicado_at, ml.created_at, "
+            "       v.numero_ot, v.titulo AS ot_titulo "
+            "  FROM mant_maquina_levantamientos ml "
+            "  LEFT JOIN mant_visitas v ON v.id = ml.visita_id "
+            " WHERE ml.maquina_id=%s "
+            " ORDER BY ml.fecha_levantamiento DESC, ml.id DESC "
+            " LIMIT 50",
+            (mid,)
+        ) or []
+        for r in lev_rows:
+            d = dict(r)
+            if d.get("fecha_levantamiento"):
+                d["fecha_levantamiento"] = str(d["fecha_levantamiento"])[:10]
+            if d.get("aplicado_at"):
+                d["aplicado_at"] = str(d["aplicado_at"])[:16]
+            if d.get("created_at"):
+                d["created_at"] = str(d["created_at"])[:16]
+            # Parsear datos_json para mostrarlos como lista
+            d["datos"] = []
+            if d.get("datos_json"):
+                try:
+                    d["datos"] = json.loads(d["datos_json"]) or []
+                except Exception:
+                    d["datos"] = []
+            d.pop("datos_json", None)
+            # Adjuntar fotos de la OT vinculadas a este equipo
+            try:
+                fr = mysql_fetchall(
+                    "SELECT id, archivo_path, descripcion, tomada_por, tomada_at "
+                    "  FROM mant_visita_fotos "
+                    " WHERE visita_id=%s AND maquina_id=%s "
+                    " ORDER BY tomada_at ASC LIMIT 12",
+                    (d["visita_id"], mid)
+                ) or []
+                d["fotos"] = [
+                    {
+                        "url": f.get("archivo_path"),
+                        "descripcion": f.get("descripcion") or "",
+                        "tomada_por": f.get("tomada_por") or "",
+                        "tomada_at": str(f["tomada_at"])[:16] if f.get("tomada_at") else "",
+                    }
+                    for f in fr if f.get("archivo_path")
+                ]
+            except Exception:
+                d["fotos"] = []
+            d["numero_ot"] = d.get("numero_ot") or f"VS-{d['visita_id']:05d}"
+            levantamientos.append(d)
+    except Exception as _e_lev:
+        # La tabla puede no existir si la migración no corrió todavía
+        print(f"[maquina_ficha] no se pudo cargar levantamientos m={mid}: {_e_lev}",
+              flush=True)
+        levantamientos = []
+    ultimo_levantamiento = levantamientos[0] if levantamientos else None
+
     return render_template(
         "mantenciones/maquina_ficha.html",
         equipo=eq,
@@ -31968,6 +32885,8 @@ def mant_maquina_ficha(mid):
         fotos=fotos,
         eventos=eventos,
         stats=stats,
+        levantamientos=levantamientos,
+        ultimo_levantamiento=ultimo_levantamiento,
     )
 
 

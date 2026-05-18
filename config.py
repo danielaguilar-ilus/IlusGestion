@@ -31,7 +31,16 @@ Configurar en Railway → Settings → Variables:
     ANTHROPIC_API_KEY     = <sk-ant-...>
     CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
-    SMTP_FROM_NAME, SMTP_FROM_ADDR
+    SMTP_FROM_NAME, SMTP_FROM_ADDR, SMTP_REPLY_TO
+
+  Branding genérico (overrides opcionales — defaults sensatos):
+    ILUS_BRAND_NAME         (ej: "ILUS Sport & Health")
+    ILUS_BRAND_FROM_NAME    (ej: "ILUS")           — visible en "De:"
+    ILUS_BRAND_FROM_EMAIL   (ej: no-reply@ilusfitness.com)
+    ILUS_BRAND_REPLY_TO     (ej: servicio.tecnico@ilusfitness.com)
+    ILUS_BRAND_WA_NAME      (ej: "ILUS")           — prefijo WhatsApp/SMS
+    ILUS_BRAND_SUPPORT_URL  (ej: https://ilusfitness.com/soporte)
+    ILUS_BRAND_SUPPORT_EMAIL(ej: servicio.tecnico@ilusfitness.com)
 
 DESARROLLO LOCAL
 ================
@@ -123,15 +132,45 @@ CLOUDINARY_CONFIG = {
 }
 
 # ─────────────────────────────────────────────
+#  Branding genérico ILUS (afecta email + WhatsApp + SMS)
+#
+#  Estos valores aparecen como remitente en los correos y como prefijo
+#  en los mensajes de WhatsApp/SMS. Son SIEMPRE genéricos — nunca un
+#  email o teléfono personal del equipo. Si el destinatario quiere
+#  responder, el reply-to lo enruta al buzón corporativo de soporte.
+#
+#  Configurables vía env vars en Railway (recomendado):
+#     ILUS_BRAND_NAME         — nombre legal completo, footer de emails
+#     ILUS_BRAND_FROM_NAME    — nombre visible en la cabecera "De"
+#     ILUS_BRAND_FROM_EMAIL   — dirección remitente (no-reply genérico)
+#     ILUS_BRAND_REPLY_TO     — buzón donde caen las respuestas reales
+#     ILUS_BRAND_WA_NAME      — prefijo corto para WhatsApp/SMS
+#     ILUS_BRAND_SUPPORT_URL  — URL del portal de soporte (footer)
+# ─────────────────────────────────────────────
+BRAND_CONFIG = {
+    "name":         _env('ILUS_BRAND_NAME',        'ILUS Sport & Health'),
+    "from_name":    _env('ILUS_BRAND_FROM_NAME',   'ILUS'),
+    "from_email":   _env('ILUS_BRAND_FROM_EMAIL',  'no-reply@ilusfitness.com'),
+    "reply_to":     _env('ILUS_BRAND_REPLY_TO',    'servicio.tecnico@ilusfitness.com'),
+    "wa_name":      _env('ILUS_BRAND_WA_NAME',     'ILUS'),
+    "support_url":  _env('ILUS_BRAND_SUPPORT_URL', 'https://ilusfitness.com/soporte'),
+    "support_email":_env('ILUS_BRAND_SUPPORT_EMAIL','servicio.tecnico@ilusfitness.com'),
+}
+
+
+# ─────────────────────────────────────────────
 #  Email SMTP (opcional — envío falla con warning si falta)
+#  Si SMTP_FROM_ADDR está vacío en env vars, cae al ILUS_BRAND_FROM_EMAIL
+#  para que el remitente siempre sea consistente.
 # ─────────────────────────────────────────────
 EMAIL_CONFIG = {
     "smtp_host":  _env('SMTP_HOST', 'smtp.gmail.com'),
     "smtp_port":  int(_env('SMTP_PORT', '587')),
     "smtp_user":  _env('SMTP_USER'),
     "smtp_pass":  _env('SMTP_PASSWORD'),
-    "from_name":  _env('SMTP_FROM_NAME', 'ILUS Sport & Health'),
-    "from_addr":  _env('SMTP_FROM_ADDR'),
+    "from_name":  _env('SMTP_FROM_NAME', BRAND_CONFIG["from_name"]),
+    "from_addr":  _env('SMTP_FROM_ADDR', BRAND_CONFIG["from_email"]),
+    "reply_to":   _env('SMTP_REPLY_TO',  BRAND_CONFIG["reply_to"]),
 }
 
 

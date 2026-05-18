@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Comunicaciones · Test rápido — ILUS{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width:880px">
+
+  <div class="d-flex align-items-center mb-3">
+    <h1 class="h4 mb-0 flex-grow-1" style="color:#0a0a0a">
+      <span style="color:#dc2626">●</span>
+      Test rápido de comunicaciones
+    </h1>
+    <a href="{{ url_for('comm_index') }}" class="btn btn-sm btn-outline-dark">
+      ← Comunicaciones
+    </a>
+  </div>
+
+  <p class="text-muted small mb-4">
+    Envía un email, WhatsApp o SMS de prueba para verificar que la
+    configuración funciona. Usa tu propio número/correo para validar antes
+    de notificar a clientes o técnicos.
+  </p>
+
+  <!-- ── Estado de canales (se carga al abrir) ────────────────────────── -->
+  <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+    <div class="card-body">
+      <div class="d-flex align-items-center mb-3">
+        <h2 class="h6 mb-0 flex-grow-1" style="color:#0a0a0a">Estado actual</h2>
+        <button id="btnRefresh" class="btn btn-sm btn-outline-secondary">
+          ↻ Refrescar
+        </button>
+      </div>
+
+      <div id="estadoContainer" class="row g-2 small">
+        <div class="col-12 text-center text-muted py-3">Cargando estado…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Email ────────────────────────────────────────────────────────── -->
+  <div class="card border-0 shadow-sm mb-3" style="border-radius:12px">
+    <div class="card-body">
+      <h2 class="h6 mb-3" style="color:#0a0a0a">
+        <span style="color:#dc2626">✉</span> Email de prueba
+      </h2>
+      <div class="row g-2">
+        <div class="col-md-8">
+          <label class="form-label small text-muted mb-1">Destinatario</label>
+          <input type="email" id="emailTo" class="form-control"
+                 placeholder="tu.email@dominio.cl"
+                 value="{{ g.user.username if g.user else '' }}">
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button id="btnEmail" class="btn w-100 fw-bold text-white"
+                  style="background:#dc2626;border:0;min-height:44px">
+            Enviar email
+          </button>
+        </div>
+      </div>
+      <div id="emailResult" class="mt-2 small"></div>
+    </div>
+  </div>
+
+  <!-- ── WhatsApp ─────────────────────────────────────────────────────── -->
+  <div class="card border-0 shadow-sm mb-3" style="border-radius:12px">
+    <div class="card-body">
+      <h2 class="h6 mb-3" style="color:#0a0a0a">
+        <span style="color:#16a34a">💬</span> WhatsApp de prueba
+      </h2>
+      <div class="row g-2">
+        <div class="col-md-8">
+          <label class="form-label small text-muted mb-1">
+            Teléfono (formato internacional, ej +56912345678)
+          </label>
+          <input type="text" id="waTo" class="form-control"
+                 placeholder="+56912345678">
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button id="btnWa" class="btn w-100 fw-bold text-white"
+                  style="background:#16a34a;border:0;min-height:44px">
+            Enviar WhatsApp
+          </button>
+        </div>
+      </div>
+      <div id="waResult" class="mt-2 small"></div>
+    </div>
+  </div>
+
+  <!-- ── SMS ──────────────────────────────────────────────────────────── -->
+  <div class="card border-0 shadow-sm mb-4" style="border-radius:12px">
+    <div class="card-body">
+      <h2 class="h6 mb-3" style="color:#0a0a0a">
+        <span style="color:#3b82f6">📱</span> SMS de prueba
+      </h2>
+      <div class="row g-2">
+        <div class="col-md-8">
+          <label class="form-label small text-muted mb-1">
+            Teléfono (formato internacional, ej +56912345678)
+          </label>
+          <input type="text" id="smsTo" class="form-control"
+                 placeholder="+56912345678">
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button id="btnSms" class="btn w-100 fw-bold text-white"
+                  style="background:#3b82f6;border:0;min-height:44px">
+            Enviar SMS
+          </button>
+        </div>
+      </div>
+      <div id="smsResult" class="mt-2 small"></div>
+    </div>
+  </div>
+
+  <div class="alert alert-light border small text-muted">
+    <strong>Tip:</strong> Si algún canal aparece como "no configurado",
+    revisa las variables de entorno en Railway. Para detalles consulta
+    la sección <code>Comunicaciones ILUS</code> en CLAUDE.md.
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ── Carga estado ─────────────────────────────────────────────────────
+  async function cargarEstado(){
+    const cont = document.getElementById('estadoContainer');
+    cont.innerHTML = '<div class="col-12 text-center text-muted py-2">Consultando…</div>';
+    try{
+      const r = await fetch('{{ url_for("comm_diagnostico") }}', {credentials:'same-origin'});
+      const d = await r.json();
+      if (!d.ok){
+        cont.innerHTML = '<div class="col-12 text-danger">'+(d.error||'Error')+'</div>';
+        return;
+      }
+      const brand = d.brand || {};
+      const email = d.email || {};
+      const wa = d.whatsapp || {};
+      const sms = d.sms || {};
+      const kill = d.kill_switch || {};
+
+      const badge = (ok, txtOk, txtNo) =>
+        ok ? '<span class="badge bg-success">'+txtOk+'</span>'
+           : '<span class="badge bg-secondary">'+txtNo+'</span>';
+
+      cont.innerHTML = `
+        <div class="col-md-6">
+          <div class="border rounded p-2 h-100" style="background:#fff8e1">
+            <div class="text-muted mb-1">REMITENTE GENÉRICO</div>
+            <div><strong>${brand.from_name||''}</strong> &lt;${brand.from_email||''}&gt;</div>
+            <div class="text-muted mt-1">Reply-To: ${brand.reply_to||'—'}</div>
+            <div class="text-muted">Prefijo WA/SMS: 🔧 ${brand.wa_name||'ILUS'} · …</div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="border rounded p-2 h-100">
+            <div class="text-muted mb-1">CANALES</div>
+            <div>Email: ${badge(email.metodo_preferido!=='ninguno','OK ('+(email.metodo_preferido||'')+')','sin config')}
+                 ${kill.email===false?'<span class="badge bg-warning text-dark ms-1">kill switch OFF</span>':''}</div>
+            <div>WhatsApp: ${badge(!!wa.configurado,'configurado','sin config')}
+                 ${kill.whatsapp===false?'<span class="badge bg-warning text-dark ms-1">kill switch OFF</span>':''}</div>
+            <div>SMS: ${badge(!!sms.configurado,'configurado','sin config')}</div>
+          </div>
+        </div>
+      `;
+    }catch(e){
+      cont.innerHTML = '<div class="col-12 text-danger">No se pudo cargar el estado: '+e.message+'</div>';
+    }
+  }
+
+  // ── Envío Email ──────────────────────────────────────────────────────
+  document.getElementById('btnEmail').addEventListener('click', async () => {
+    const to = document.getElementById('emailTo').value.trim();
+    const res = document.getElementById('emailResult');
+    if (!to){
+      ilusToast('Ingresa un destinatario', {type:'warning'});
+      return;
+    }
+    res.innerHTML = '<span class="text-muted">Enviando…</span>';
+    try{
+      const r = await fetch('{{ url_for("comm_email_enviar") }}', {
+        method:'POST',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          to: to,
+          subject: 'Prueba de comunicaciones',
+          html: '<p>Este es un correo de <strong>prueba</strong> enviado desde el panel de comunicaciones ILUS.</p>'
+        })
+      });
+      const d = await r.json();
+      if (d.ok){
+        res.innerHTML = '<span class="text-success">✓ Enviado a '+to+'</span>';
+        ilusToast('✓ Email enviado', {type:'success'});
+      }else{
+        res.innerHTML = '<span class="text-danger">✗ '+(d.error||'Error desconocido')+'</span>';
+      }
+    }catch(e){
+      res.innerHTML = '<span class="text-danger">✗ '+e.message+'</span>';
+    }
+  });
+
+  // ── Envío WhatsApp ───────────────────────────────────────────────────
+  document.getElementById('btnWa').addEventListener('click', async () => {
+    const to = document.getElementById('waTo').value.trim();
+    const res = document.getElementById('waResult');
+    if (!to){
+      ilusToast('Ingresa un número', {type:'warning'});
+      return;
+    }
+    res.innerHTML = '<span class="text-muted">Enviando…</span>';
+    try{
+      const r = await fetch('{{ url_for("twilio_test_send") }}', {
+        method:'POST',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          canal: 'whatsapp',
+          to: to,
+          body: '🔧 ILUS · Test\n\nEste es un mensaje de prueba enviado desde el panel de comunicaciones.\n\n— ILUS Sport & Health'
+        })
+      });
+      const d = await r.json();
+      if (d.ok){
+        res.innerHTML = '<span class="text-success">✓ Enviado (sid: '+(d.sid||'—')+')</span>';
+        ilusToast('✓ WhatsApp enviado', {type:'success'});
+      }else{
+        res.innerHTML = '<span class="text-danger">✗ '+(d.error||'Error desconocido')+'</span>';
+      }
+    }catch(e){
+      res.innerHTML = '<span class="text-danger">✗ '+e.message+'</span>';
+    }
+  });
+
+  // ── Envío SMS ────────────────────────────────────────────────────────
+  document.getElementById('btnSms').addEventListener('click', async () => {
+    const to = document.getElementById('smsTo').value.trim();
+    const res = document.getElementById('smsResult');
+    if (!to){
+      ilusToast('Ingresa un número', {type:'warning'});
+      return;
+    }
+    res.innerHTML = '<span class="text-muted">Enviando…</span>';
+    try{
+      const r = await fetch('{{ url_for("twilio_test_send") }}', {
+        method:'POST',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          canal: 'sms',
+          to: to,
+          body: '🔧 ILUS - Test SMS desde panel de comunicaciones.'
+        })
+      });
+      const d = await r.json();
+      if (d.ok){
+        res.innerHTML = '<span class="text-success">✓ Enviado (sid: '+(d.sid||'—')+')</span>';
+        ilusToast('✓ SMS enviado', {type:'success'});
+      }else{
+        res.innerHTML = '<span class="text-danger">✗ '+(d.error||'Error desconocido')+'</span>';
+      }
+    }catch(e){
+      res.innerHTML = '<span class="text-danger">✗ '+e.message+'</span>';
+    }
+  });
+
+  document.getElementById('btnRefresh').addEventListener('click', cargarEstado);
+  cargarEstado();
+})();
+</script>
+{% endblock %}

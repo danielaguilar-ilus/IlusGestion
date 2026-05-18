@@ -177,12 +177,99 @@
 }
 .empty-section i { font-size: 2.6rem; opacity: .3; display: block; margin-bottom: 10px; }
 
+/* ─── Levantamiento (info levantada por el técnico) ─── */
+.lev-highlight {
+  background: linear-gradient(135deg, #fff 0%, #fef2f2 100%);
+  border: 1.5px solid #fecaca; border-radius: 13px;
+  padding: 18px; margin-bottom: 16px;
+  box-shadow: 0 2px 10px rgba(220,38,38,.05);
+}
+.lev-highlight .lev-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.lev-highlight .lev-titulo {
+  font-weight: 800; font-size: 1.02rem; color: #0a0a0a; letter-spacing: -.01em;
+  display: flex; align-items: center; gap: 6px;
+}
+.lev-highlight .lev-titulo i { color: #dc2626; }
+.lev-highlight .lev-meta {
+  font-size: .76rem; color: #6b7280; display: flex; gap: 12px; flex-wrap: wrap;
+}
+.lev-highlight .lev-meta strong { color: #0f172a; }
+.lev-highlight .lev-meta a { color: #dc2626; text-decoration: none; font-weight: 700; }
+.lev-highlight .lev-meta a:hover { text-decoration: underline; }
+.lev-section-title {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+  color: #6b7280; font-weight: 800; margin: 12px 0 6px;
+}
+.lev-datos {
+  display: grid; gap: 6px; margin-bottom: 8px;
+}
+.lev-dato-row {
+  background: #fff; border: 1px solid #f1f5f9; border-radius: 8px;
+  padding: 8px 12px; font-size: .85rem;
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start;
+}
+.lev-dato-row .lev-dato-label {
+  color: #0f172a; font-weight: 600;
+}
+.lev-dato-row .lev-dato-valor {
+  color: #6b7280; font-family: 'JetBrains Mono', monospace; font-size: .78rem;
+  text-align: right; word-break: break-word;
+}
+.lev-dato-row .lev-dato-obs {
+  grid-column: 1 / -1; font-size: .76rem; color: #92400e;
+  background: #fef3c7; padding: 4px 8px; border-radius: 5px;
+  margin-top: 4px;
+}
+.lev-fotos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px; margin-top: 8px;
+}
+.lev-foto-mini {
+  aspect-ratio: 1; background: #f3f4f6 center/cover no-repeat;
+  border-radius: 7px; cursor: pointer; transition: transform .12s;
+  border: 1px solid #e5e7eb;
+}
+.lev-foto-mini:hover { transform: scale(1.04); border-color: #dc2626; }
+.lev-obs-card {
+  background: #fff; border-left: 3px solid #dc2626; border-radius: 7px;
+  padding: 10px 14px; font-size: .85rem; color: #374151;
+  white-space: pre-wrap; line-height: 1.5;
+  max-height: 200px; overflow-y: auto;
+}
+.lev-card-hist {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 11px;
+  padding: 14px 18px; margin-bottom: 10px; transition: all .15s;
+}
+.lev-card-hist:hover {
+  border-color: #fecaca; box-shadow: 0 3px 10px rgba(220,38,38,.08);
+}
+.lev-card-hist .lev-card-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.lev-card-hist .lev-card-fecha {
+  background: #fef2f2; color: #991b1b;
+  font-family: 'JetBrains Mono', monospace; font-size: .74rem; font-weight: 800;
+  padding: 3px 9px; border-radius: 6px;
+}
+.lev-card-hist .lev-card-tecnico {
+  font-size: .82rem; color: #0f172a; font-weight: 600;
+}
+.lev-card-hist .lev-card-stats {
+  font-size: .76rem; color: #6b7280; margin-top: 4px;
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+
 @media (max-width: 640px) {
   .eq-hero-foto { width: 100px; height: 100px; }
   .eq-hero h2 { font-size: 1.2rem; }
   .timeline { padding-left: 22px; }
   .timeline::before { left: 6px; }
   .tl-item::before { left: -22px; width: 12px; height: 12px; }
+  .lev-fotos { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
 }
 </style>
 
@@ -256,10 +343,82 @@
   </div>
   {% endif %}
 
+  {# ═════════ Última información de levantamiento (HIGHLIGHT) ═════════ #}
+  {# Daniel: "podremos ver la información que rellenó el técnico
+     solamente para el levantamiento de ficha". Esta tarjeta muestra
+     el último levantamiento promovido a la ficha — datos, fotos y
+     observaciones que capturó el técnico en terreno. #}
+  {% if ultimo_levantamiento %}
+  <div class="lev-highlight">
+    <div class="lev-head">
+      <div class="lev-titulo">
+        <i class="bi bi-clipboard-check"></i>
+        Última información de levantamiento
+      </div>
+      <div class="lev-meta ms-auto">
+        <span><i class="bi bi-calendar3"></i> <strong>{{ ultimo_levantamiento.fecha_levantamiento }}</strong></span>
+        {% if ultimo_levantamiento.tecnico_nombre %}
+        <span><i class="bi bi-person"></i> {{ ultimo_levantamiento.tecnico_nombre }}</span>
+        {% endif %}
+        <a href="/mantenciones/ot/{{ ultimo_levantamiento.visita_id }}">
+          <i class="bi bi-box-arrow-up-right"></i> Ver OT {{ ultimo_levantamiento.numero_ot }}
+        </a>
+      </div>
+    </div>
+
+    {% if ultimo_levantamiento.datos %}
+    <div class="lev-section-title"><i class="bi bi-list-check me-1"></i>Datos capturados</div>
+    <div class="lev-datos">
+      {% for dato in ultimo_levantamiento.datos %}
+      <div class="lev-dato-row">
+        <div class="lev-dato-label">
+          {{ dato.titulo or '(Sin título)' }}
+          {% if not dato.completada %}<span class="badge bg-warning text-dark ms-2" style="font-size:.62rem">PENDIENTE</span>{% endif %}
+        </div>
+        <div class="lev-dato-valor">
+          {% if dato.valor is none or dato.valor == '' %}
+            <span style="color:#9ca3af">—</span>
+          {% elif dato.valor is mapping %}
+            {{ (dato.valor | tojson) | truncate(80, true, '…') }}
+          {% elif dato.valor is iterable and dato.valor is not string %}
+            {{ dato.valor | join(', ') }}
+          {% else %}
+            {{ dato.valor }}
+          {% endif %}
+        </div>
+        {% if dato.obs %}<div class="lev-dato-obs"><i class="bi bi-chat-left-text me-1"></i>{{ dato.obs }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if ultimo_levantamiento.fotos %}
+    <div class="lev-section-title">
+      <i class="bi bi-camera me-1"></i>Fotos del levantamiento ({{ ultimo_levantamiento.fotos|length }})
+    </div>
+    <div class="lev-fotos">
+      {% for f in ultimo_levantamiento.fotos %}
+      <div class="lev-foto-mini" style="background-image:url('{{ f.url }}')"
+           onclick="abrirLightbox('{{ f.url|e }}')"
+           title="{{ f.descripcion or f.tomada_por or '' }}"></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if ultimo_levantamiento.observaciones %}
+    <div class="lev-section-title"><i class="bi bi-chat-square-text me-1"></i>Observaciones del técnico</div>
+    <div class="lev-obs-card">{{ ultimo_levantamiento.observaciones }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {# ═════════ Tabs ═════════ #}
   <div class="eq-tabs">
     <button class="eq-tab active" data-tab="timeline" onclick="cambiarTabEq('timeline')">
       <i class="bi bi-clock-history"></i> Historial ({{ ots|length }})
+    </button>
+    <button class="eq-tab" data-tab="levantamientos" onclick="cambiarTabEq('levantamientos')">
+      <i class="bi bi-clipboard-check"></i> Levantamientos ({{ levantamientos|length }})
     </button>
     <button class="eq-tab" data-tab="fotos" onclick="cambiarTabEq('fotos')">
       <i class="bi bi-images"></i> Galería ({{ fotos|length }})
@@ -301,6 +460,65 @@
       <i class="bi bi-clock-history"></i>
       <div class="fw-bold" style="color:#0f172a">Sin historial todavía</div>
       <div class="small mt-1">Este equipo no ha sido incluido en ninguna OT.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ═════════ Tab Levantamientos ═════════ #}
+  <div id="tab-eq-levantamientos" style="display:none">
+    {% if levantamientos %}
+    <div class="small text-muted mb-2">
+      <i class="bi bi-info-circle me-1"></i>
+      Cada vez que se cierra una OT tipo <strong>levantamiento</strong>, los datos del
+      técnico se promueven a esta ficha. Acá tienes el historial completo.
+    </div>
+    {% for lv in levantamientos %}
+    <div class="lev-card-hist">
+      <div class="lev-card-head">
+        <span class="lev-card-fecha">{{ lv.fecha_levantamiento }}</span>
+        <span class="lev-card-tecnico">
+          <i class="bi bi-person me-1"></i>{{ lv.tecnico_nombre or 'Técnico' }}
+        </span>
+        {% if lv.aplicado_a_ficha %}
+        <span class="badge bg-success" style="font-size:.65rem">
+          <i class="bi bi-check2-circle"></i> APLICADO A FICHA
+        </span>
+        {% else %}
+        <span class="badge bg-secondary" style="font-size:.65rem">PENDIENTE APLICAR</span>
+        {% endif %}
+        <a href="/mantenciones/ot/{{ lv.visita_id }}" class="ms-auto small fw-bold"
+           style="color:#dc2626; text-decoration:none">
+          {{ lv.numero_ot }} <i class="bi bi-box-arrow-up-right"></i>
+        </a>
+      </div>
+      <div class="lev-card-stats">
+        <span><i class="bi bi-camera me-1"></i>{{ lv.fotos_count or 0 }} foto(s)</span>
+        <span><i class="bi bi-list-check me-1"></i>{{ lv.datos|length }} tarea(s) capturadas</span>
+        {% if lv.aplicado_at %}
+        <span><i class="bi bi-clock me-1"></i>Aplicado {{ lv.aplicado_at }}</span>
+        {% endif %}
+      </div>
+      {% if lv.observaciones %}
+      <div class="lev-obs-card mt-2" style="font-size:.78rem">{{ lv.observaciones|truncate(400) }}</div>
+      {% endif %}
+      {% if lv.fotos %}
+      <div class="lev-fotos mt-2">
+        {% for f in lv.fotos[:6] %}
+        <div class="lev-foto-mini" style="background-image:url('{{ f.url }}'); height:80px"
+             onclick="abrirLightbox('{{ f.url|e }}')"></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-section">
+      <i class="bi bi-clipboard-check"></i>
+      <div class="fw-bold" style="color:#0f172a">Sin levantamientos todavía</div>
+      <div class="small mt-1">
+        Cuando se cierre una OT tipo <strong>levantamiento</strong> con este equipo,
+        los datos capturados por el técnico aparecerán acá automáticamente.
+      </div>
     </div>
     {% endif %}
   </div>
@@ -358,7 +576,7 @@
 <script>
 function cambiarTabEq(tab){
   document.querySelectorAll('.eq-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  ['timeline','fotos','eventos'].forEach(name => {
+  ['timeline','levantamientos','fotos','eventos'].forEach(name => {
     const el = document.getElementById('tab-eq-' + name);
     if (el) el.style.display = (name === tab) ? '' : 'none';
   });

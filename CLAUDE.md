@@ -204,6 +204,60 @@ o solo Yes/No, usar `ilusConfirm` / `ilusPrompt`.
 
 ---
 
+## 📨 REGLA #11 — Comunicaciones ILUS (email + WhatsApp + SMS)
+
+Todos los mensajes salen con **branding genérico ILUS**, no con el correo
+o teléfono personal del operador. Esto da consistencia y permite cambiar
+quien firma sin tocar código.
+
+### Variables de entorno (Railway → Settings → Variables)
+
+Todas son **opcionales** — si no se setean, hay defaults sensatos:
+
+| Variable                  | Default                                  | Para qué sirve                          |
+|---------------------------|------------------------------------------|------------------------------------------|
+| `ILUS_BRAND_NAME`         | `ILUS Sport & Health`                    | Nombre legal completo (footer email)     |
+| `ILUS_BRAND_FROM_NAME`    | `ILUS`                                   | Visible en cabecera "De:" del email      |
+| `ILUS_BRAND_FROM_EMAIL`   | `no-reply@ilusfitness.com`               | Dirección remitente (no-reply genérico)  |
+| `ILUS_BRAND_REPLY_TO`     | `servicio.tecnico@ilusfitness.com`       | Buzón donde caen respuestas reales       |
+| `ILUS_BRAND_WA_NAME`      | `ILUS`                                   | Prefijo de WhatsApp/SMS (`🔧 ILUS · …`)  |
+| `ILUS_BRAND_SUPPORT_EMAIL`| `servicio.tecnico@ilusfitness.com`       | Email en footer "Para soporte: …"        |
+| `ILUS_BRAND_SUPPORT_URL`  | `https://ilusfitness.com/soporte`        | URL portal soporte (footer)              |
+
+**Cómo aparece para el destinatario:**
+
+- **Email:** `De: ILUS <no-reply@ilusfitness.com>` · `Reply-To: servicio.tecnico@ilusfitness.com`
+  Asunto: `ILUS · Cambio seguro de contraseña`
+- **WhatsApp/SMS:** comienza con `🔧 ILUS · {tema}` y termina con `— ILUS Sport & Health`
+
+### Helpers
+
+```python
+from app import _get_brand_cfg, _brand_subject, _brand_wa_prefix
+
+brand = _get_brand_cfg()           # dict con name/from_name/from_email/etc
+subject = _brand_subject("Confirmación de OT")  # → "ILUS · Confirmación de OT"
+prefix  = _brand_wa_prefix("OT lista")          # → "🔧 ILUS · OT lista\n\n"
+```
+
+### Diagnóstico (admin)
+
+- **GET** `/api/comm/diagnostico` — JSON con estado SMTP/Resend/Twilio,
+  últimos envíos, brand efectivo. Solo `admin`/`superadmin`.
+- **GET** `/admin/comunicaciones-test` — UI para mandar email/WhatsApp/SMS
+  de prueba al destinatario propio antes de notificar a clientes.
+
+### Cómo agregar un nuevo canal o tipo de mensaje
+
+1. Reutiliza `_send_ilus_email(to, subject, html_body)` para email
+   (el branding se aplica automáticamente).
+2. Usa `_brand_subject("tema")` para el asunto.
+3. Para WhatsApp/SMS, arma el cuerpo con `_brand_wa_prefix(asunto) + cuerpo + firma`.
+4. Si se trata de notificaciones masivas, respeta `comm_is_enabled('email')`
+   y `comm_is_enabled('whatsapp')` antes de mandar (kill switch global).
+
+---
+
 ## 🤖 REGLA #10 — Cuando llega un agente nuevo
 
 Cualquier agente nuevo debe leer **este archivo primero** antes de
@@ -215,5 +269,5 @@ sueltos del código.
 
 ---
 
-_Última actualización: 2026-05-16_
+_Última actualización: 2026-05-17_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
