@@ -1180,6 +1180,18 @@ def mysql_execute(query, params=None):
     conn.commit()
 
 
+def mysql_execute_returning_rowcount(query, params=None):
+    """Igual que mysql_execute pero devuelve cur.rowcount (cuántas filas
+    fueron afectadas). Útil para backfills/migraciones donde el caller
+    quiere reportar cuántas filas se tocaron."""
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(query, params or ())
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 # ─────────────────────────────────────────────
 #  Schema init
 # ─────────────────────────────────────────────
@@ -1314,6 +1326,9 @@ def init_mysql_schema():
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN last_login_at   DATETIME    DEFAULT NULL COMMENT 'Última vez que el usuario inició sesión'",
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN last_login_ip   VARCHAR(64) DEFAULT NULL",
                 f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN login_count     INT         DEFAULT 0    COMMENT 'Total de logins exitosos del usuario'",
+                # 2026-05-18: heartbeat por request — alimenta el LED online/offline en /admin/users
+                f"ALTER TABLE `{AUTH_TABLE}` ADD COLUMN last_seen_at    DATETIME    DEFAULT NULL COMMENT 'Última actividad del usuario (heartbeat por request, throttle 60s)'",
+                f"ALTER TABLE `{AUTH_TABLE}` ADD INDEX idx_last_seen (last_seen_at)",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -2323,6 +2338,53 @@ def get_auth_user_by_username(username):
     )
 
 
+# ── 2026-05-18: heartbeat last_seen_at ─────────────────────────────────
+# Throttle in-process: 1 update por usuario cada 60s máx. Evita que
+# usuarios con muchos requests (carga de lista grande, polling) actualicen
+# la fila cada segundo. El UPDATE corre en thread daemon usando conexión
+# directa (pymysql.connect) — NO usa `g._db` porque eso requiere request
+# context (que el thread NO tiene). Esa fue la causa raíz del bug de
+# last_login_at antes del FIX 2026-05-18.
+_last_seen_cache = {}
+_last_seen_lock  = threading.Lock()
+_LAST_SEEN_THROTTLE_SEC = 60
+
+
+def _update_last_seen(uid):
+    """Actualiza last_seen_at del usuario (heartbeat). Throttle 60s en
+    memoria del proceso. El UPDATE corre en hilo daemon con conexión
+    directa (no toca `g`)."""
+    if not uid:
+        return
+    now_ts = time.time()
+    with _last_seen_lock:
+        last = _last_seen_cache.get(uid, 0)
+        if (now_ts - last) < _LAST_SEEN_THROTTLE_SEC:
+            return
+        _last_seen_cache[uid] = now_ts
+
+    def _do_update():
+        # Conexión directa (NO usa get_db → g — el thread no tiene contexto).
+        conn = None
+        try:
+            conn = get_mysql()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET last_seen_at=NOW() WHERE id=%s",
+                    (uid,)
+                )
+            conn.commit()
+        except Exception as e:
+            print(f"[last-seen] err uid={uid}: {e}", flush=True)
+        finally:
+            if conn is not None:
+                try: conn.close()
+                except Exception: pass
+
+    threading.Thread(target=_do_update, daemon=True,
+                     name=f"last-seen-{uid}").start()
+
+
 def load_current_user():
     """
     Carga el usuario actual y sus permisos.
@@ -2340,6 +2402,10 @@ def load_current_user():
     navegación típica con 6-10 requests/min, esto ahorra ~5-9 queries/min
     por usuario. Superadmin/admin mantiene 10s para que cambios de rol
     en /admin/usuarios apliquen rápido al admin que está editando.
+
+    HEARTBEAT 2026-05-18: tras cargar el usuario (sea desde caché o BD),
+    invoca _update_last_seen(uid) que asincrónicamente actualiza
+    last_seen_at (throttle 60s). Esto alimenta el LED online/offline.
     """
     g.user = None
     g.permissions = permission_set(None)
@@ -2356,6 +2422,8 @@ def load_current_user():
         if (time.time() - cached_ts) < _ttl:
             g.user = cached
             g.permissions = permission_set(cached["role"])
+            # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
+            _update_last_seen(cached.get("id"))
             return
         # TTL expirado → cae a fetch fresh abajo
 
@@ -2385,6 +2453,10 @@ def load_current_user():
         "active":   user["active"],
         "ts":       time.time(),
     }
+
+    # Heartbeat last_seen_at (throttle 60s en memoria del proceso) —
+    # alimenta el LED online/offline en /admin/users.
+    _update_last_seen(user["id"])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3939,45 +4011,60 @@ def login():
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs, marca=_get_marca())
         session.clear()
         session["user_id"] = user["id"]
-        # ── FIX 2026-05-17 ──────────────────────────────────────────
-        # Tracking de actividad (last_login_at + login_count + ip) en
-        # HILO DAEMON — NO bloquea el login. Si la BD está lenta tras
-        # idle largo, el usuario ya recibe su cookie + redirect sin esperar
-        # el UPDATE (que tomaba 5-20s con conexión zombi).
+        # ── FIX 2026-05-18 ──────────────────────────────────────────
+        # CAUSA RAÍZ del bug "Nunca se conectó" para usuarios que SÍ se
+        # conectaron: la versión anterior corría en un hilo daemon y llamaba
+        # a `mysql_execute()` → `get_db()` → `g._db`. Pero `g` es Flask
+        # request-bound; el thread daemon corre FUERA del request context y
+        # `get_db()` lanzaba `RuntimeError("Working outside of request context")`.
+        # La excepción la atrapaba el except y solo printeaba al stdout, así
+        # que el UPDATE NUNCA se ejecutaba para ningún login → todos los
+        # usuarios quedaban con last_login_at congelado (el último valor de
+        # la versión síncrona, que era 2026-05-15).
+        #
+        # FIX: hacerlo SÍNCRONO (el UPDATE indexado por PK toma <30ms, no
+        # justifica el overhead/complejidad de un thread). Si la BD está
+        # zombi peor, mejor que el usuario lo note al loguearse (10s
+        # connect_timeout) que tener tracking roto para siempre.
+        # Try/except envuelve para que un error de BD NO impida el login.
         # ─────────────────────────────────────────────────────────────
         try:
             ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64]
-            _uid_track = user["id"]
-            def _track_login_async(_uid, _ip):
-                try:
-                    mysql_execute(
-                        f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                        f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                        (_ip, _uid)
-                    )
-                except Exception as _e_tl:
-                    print(f"[login-track-async] {_e_tl}", flush=True)
-            import threading as _thr_lg
-            _thr_lg.Thread(target=_track_login_async, args=(_uid_track, ip),
-                           daemon=True, name=f"login-track-{_uid_track}").start()
+            try:
+                # Intento principal: actualiza también last_seen_at en el mismo UPDATE.
+                mysql_execute(
+                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
+                    f"last_seen_at=NOW(), login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                    (ip, user["id"])
+                )
+            except Exception as _e_lst:
+                # Fallback si last_seen_at aún no existe (migración no corrió):
+                # actualiza solo last_login_at + last_login_ip + login_count.
+                print(f"[login-track] fallback sin last_seen_at: {_e_lst}", flush=True)
+                mysql_execute(
+                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
+                    f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                    (ip, user["id"])
+                )
+            print(f"[login-track] OK uid={user['id']} username={user['username']} ip={ip}", flush=True)
         except Exception as _e_login_track:
-            print(f"[login-track] {_e_login_track}", flush=True)
-        # ── FIX 2026-05-17 (perf): audit en hilo daemon ───────────────
-        # Antes el audit bloqueaba el redirect 50-200ms (INSERT + commit).
-        # Ahora se dispara en background; el usuario recibe la cookie y
-        # el redirect inmediatamente. Si el audit falla, sólo va al log.
+            # Log con traceback completo para forensia (antes solo el mensaje).
+            import traceback as _tb_lt
+            print(f"[login-track] FAIL uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
+        # ── FIX 2026-05-18 (revertido a síncrono) ─────────────────────
+        # El thread daemon anterior tenía el MISMO bug que _track_login_async:
+        # _audit() llama internamente a get_db() que requiere `g` (Flask
+        # request context). El thread NO tiene contexto → RuntimeError →
+        # excepción atrapada y solo printeada → la fila login_ok NUNCA se
+        # insertaba. Esto es por qué Daniel veía usuarios "Nunca conectados"
+        # incluso cuando sí se logueaban.
+        # Volver a síncrono: el INSERT es <50ms y el redirect no es crítico
+        # en ese rango. Try/except externo garantiza que un error de BD
+        # NO impide el login (el usuario igual recibe su cookie).
         try:
-            _user_audit_payload = {"id": user["id"], "username": user["username"], "role": user["role"]}
-            def _audit_login_async(_payload):
-                try:
-                    _audit("login_ok",
-                           target_type="user", target_id=_payload["id"],
-                           user_override=_payload)
-                except Exception as _e_au:
-                    print(f"[login_ok audit async] {_e_au}", flush=True)
-            import threading as _thr_au
-            _thr_au.Thread(target=_audit_login_async, args=(_user_audit_payload,),
-                           daemon=True, name=f"login-audit-{user['id']}").start()
+            _audit("login_ok",
+                   target_type="user", target_id=user["id"],
+                   user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
         except Exception as _e_au:
             print(f"[login_ok audit] {_e_au}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
@@ -6817,30 +6904,120 @@ def users_index():
         like = f"%{q_f}%"
         params += [like, like, like, like]
 
-    users = mysql_fetchall(
-        f"SELECT * FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
-        "ORDER BY active DESC, last_login_at DESC, nombre, username",
-        tuple(params)
-    ) or []
+    # 2026-05-18: SELECT * + columna virtual `online` calculada por SQL.
+    # `online=1` si last_seen_at está a menos de 5 minutos de NOW().
+    # Se ordena los online primero, después por última conexión.
+    # Si la columna last_seen_at aún no existe (migración no corrió por
+    # ILUS_SKIP_MIGRATIONS=1), fallback a query sin esa columna.
+    try:
+        users = mysql_fetchall(
+            f"SELECT *, "
+            f"  CASE WHEN last_seen_at IS NOT NULL AND "
+            f"            last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
+            f"       THEN 1 ELSE 0 END AS online "
+            f"FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
+            f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username",
+            tuple(params)
+        ) or []
+    except Exception as _e_ls:
+        # Columna last_seen_at no existe aún → fallback
+        print(f"[users_index] fallback sin last_seen_at: {_e_ls}", flush=True)
+        users = mysql_fetchall(
+            f"SELECT *, 0 AS online FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
+            f"ORDER BY active DESC, last_login_at DESC, nombre, username",
+            tuple(params)
+        ) or []
 
     # Conteos para badges en la cabecera de filtros
-    counts = mysql_fetchone(
-        f"SELECT "
-        f" SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS activos, "
-        f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
-        f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
-        f"          THEN 1 ELSE 0 END) AS conectados_7d, "
-        f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
-        f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
-        f" COUNT(*) AS total "
-        f"FROM `{AUTH_TABLE}`"
-    ) or {}
+    try:
+        counts = mysql_fetchone(
+            f"SELECT "
+            f" SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS activos, "
+            f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
+            f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+            f"          THEN 1 ELSE 0 END) AS conectados_7d, "
+            # 2026-05-18: en línea ahora = last_seen_at en los últimos 5 min
+            f" SUM(CASE WHEN active=1 AND last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
+            f"          THEN 1 ELSE 0 END) AS online_ahora, "
+            f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
+            f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
+            f" COUNT(*) AS total "
+            f"FROM `{AUTH_TABLE}`"
+        ) or {}
+    except Exception:
+        counts = mysql_fetchone(
+            f"SELECT "
+            f" SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS activos, "
+            f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
+            f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+            f"          THEN 1 ELSE 0 END) AS conectados_7d, "
+            f" 0 AS online_ahora, "
+            f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
+            f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
+            f" COUNT(*) AS total "
+            f"FROM `{AUTH_TABLE}`"
+        ) or {}
 
     return render_template("users.html",
         users=users,
         filtros={"estado": estado_f, "rol": rol_f, "q": q_f},
         counts=counts,
     )
+
+
+@app.route("/admin/api/users/online", methods=["GET"])
+@require_permission("admin")
+def admin_users_online():
+    """JSON compact: lista de {id, online} para refrescar LEDs sin recargar.
+    Refresca cada 30s desde el frontend. Admin / superadmin only.
+
+    `online=true` si last_seen_at está a menos de 5 minutos de NOW().
+    """
+    try:
+        rows = mysql_fetchall(
+            f"SELECT id, "
+            f"       (last_seen_at IS NOT NULL AND "
+            f"        last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)) AS online "
+            f"FROM `{AUTH_TABLE}` WHERE active=1"
+        ) or []
+        users_payload = [{"id": r["id"], "online": bool(r["online"])} for r in rows]
+        online_total = sum(1 for r in users_payload if r["online"])
+        return jsonify(ok=True, users=users_payload, online_total=online_total)
+    except Exception as e:
+        print(f"[admin_users_online] {e}", flush=True)
+        return jsonify(ok=False, error="No fue posible consultar el estado en vivo"), 500
+
+
+@app.route("/admin/api/users/backfill-last-login", methods=["POST"])
+@require_permission("admin")
+def admin_users_backfill_last_login():
+    """Repara el bug histórico de tracking (commit c9440a2): para usuarios
+    con last_login_at NULL pero que tienen entradas `login_ok` en
+    app_audit_log, infiere last_login_at = MAX(ts) y login_count = COUNT.
+    Idempotente — corre todas las veces que sea necesario.
+    Solo admin/superadmin. Devuelve cuántas filas se actualizaron.
+    """
+    try:
+        # Backfill last_login_at desde el último login_ok del audit log.
+        # JOIN garantiza que solo afecta filas con audit asociado real.
+        n_login = mysql_execute_returning_rowcount(
+            f"UPDATE `{AUTH_TABLE}` u "
+            f"JOIN (SELECT target_id, MAX(ts) AS last_ts, COUNT(*) AS n "
+            f"      FROM app_audit_log "
+            f"      WHERE action='login_ok' AND target_type='user' "
+            f"      GROUP BY target_id) a "
+            f"  ON a.target_id = CAST(u.id AS CHAR) "
+            f"SET u.last_login_at = COALESCE(u.last_login_at, a.last_ts), "
+            f"    u.login_count   = GREATEST(COALESCE(u.login_count,0), a.n) "
+            f"WHERE u.last_login_at IS NULL OR COALESCE(u.login_count,0) < a.n"
+        )
+        print(f"[backfill-last-login] OK rows_updated={n_login} by={(g.user or {}).get('username')}", flush=True)
+        return jsonify(ok=True, filas_actualizadas=n_login,
+                       mensaje=f"Se repararon {n_login} usuario(s) usando el registro de auditoría.")
+    except Exception as e:
+        import traceback as _tb_bf
+        print(f"[backfill-last-login] FAIL: {e}\n{_tb_bf.format_exc()}", flush=True)
+        return jsonify(ok=False, error="No fue posible reparar el tracking. Revisa los logs."), 500
 
 
 def _normalizar_telefono_cl(raw):

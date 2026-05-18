@@ -8,9 +8,18 @@
       <h4><i class="bi bi-people me-2" style="color:var(--ilus-red)"></i>Usuarios y roles</h4>
       <div class="sub">Gestión de usuarios y permisos del sistema</div>
     </div>
-    <a href="{{ url_for('new_user') }}" class="btn btn-ilus fw-bold px-3">
-      <i class="bi bi-person-plus me-1"></i>Nuevo usuario
-    </a>
+    <div class="d-flex gap-2 flex-wrap">
+      {% if current_user.role in ('admin','superadmin') %}
+      <button type="button" class="btn btn-outline-secondary"
+              id="btn-backfill-last-login"
+              title="Repara usuarios marcados como 'Nunca se conectó' usando el registro de auditoría">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Reparar tracking
+      </button>
+      {% endif %}
+      <a href="{{ url_for('new_user') }}" class="btn btn-ilus fw-bold px-3">
+        <i class="bi bi-person-plus me-1"></i>Nuevo usuario
+      </a>
+    </div>
   </div>
 </div>
 
@@ -49,6 +58,27 @@
     .conx-never{color:#6b7280}
     .badge-active{background:#dcfce7;color:#166534;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
     .badge-inactive{background:#fee2e2;color:#991b1b;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
+
+    /* ── LED online/offline (REGLA #1: paleta ILUS) ───────────────── */
+    .user-status{
+      display:inline-block;width:12px;height:12px;border-radius:50%;
+      box-shadow:0 0 0 2px #fff;vertical-align:middle;
+      transition:background .2s;
+    }
+    .user-status.online{
+      background:#16a34a;
+      animation:pulse-green 2s infinite;
+    }
+    .user-status.offline{
+      background:#9ca3af;
+      animation:none;
+    }
+    @keyframes pulse-green{
+      0%  {box-shadow:0 0 0 0 rgba(22,163,74,.6), 0 0 0 2px #fff;}
+      70% {box-shadow:0 0 0 8px rgba(22,163,74,0),  0 0 0 2px #fff;}
+      100%{box-shadow:0 0 0 0 rgba(22,163,74,0),    0 0 0 2px #fff;}
+    }
+    .status-cell{text-align:center;width:60px}
   </style>
 
   <div class="uk-row">
@@ -81,6 +111,15 @@
       <div>
         <div class="uk-n">{{ counts.conectados_7d or 0 }}</div>
         <div class="uk-l">Conectados 7d</div>
+      </div>
+    </div>
+    <div class="uk-card" style="cursor:default" title="Usuarios con actividad en los últimos 5 minutos">
+      <div class="uk-ico" style="background:#dcfce7;color:#166534">
+        <span class="user-status online" style="position:static"></span>
+      </div>
+      <div>
+        <div class="uk-n" id="kpi-online-ahora">{{ counts.online_ahora or 0 }}</div>
+        <div class="uk-l">En línea ahora</div>
       </div>
     </div>
   </div>
@@ -116,6 +155,7 @@
       <table class="table ilus-table mb-0">
         <thead>
           <tr>
+            <th class="status-cell" title="En línea ahora (verde) o desconectado (gris). Se refresca cada 30 segundos.">En línea</th>
             <th>Usuario</th>
             <th>Nombre</th>
             <th>WhatsApp</th>
@@ -128,7 +168,14 @@
         </thead>
         <tbody>
           {% for user in users %}
-          <tr {% if not user.active %}style="opacity:.55"{% endif %}>
+          <tr data-user-id="{{ user.id }}" {% if not user.active %}style="opacity:.55"{% endif %}>
+            <td class="status-cell">
+              {% if user.online %}
+                <span class="user-status online" title="En línea ahora (actividad en los últimos 5 minutos)"></span>
+              {% else %}
+                <span class="user-status offline" title="Desconectado"></span>
+              {% endif %}
+            </td>
             <td class="font-monospace">{{ user.username }}</td>
             <td>{{ user.nombre }}</td>
             <td class="small text-muted">{{ user.phone or '-' }}</td>
@@ -207,7 +254,7 @@
           {% endfor %}
           {% if not users %}
           <tr>
-            <td colspan="8" class="text-center py-4 text-muted">
+            <td colspan="9" class="text-center py-4 text-muted">
               <i class="bi bi-search me-2"></i>Sin usuarios para este filtro
             </td>
           </tr>
@@ -259,6 +306,109 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
     btn.innerHTML = orig; btn.disabled = false;
   }
 }
+
+// ── 2026-05-18: Botón "Reparar tracking" (admin) ──────────────────
+// Llama al endpoint backfill que repara usuarios con last_login_at
+// NULL pero que SÍ tienen entradas login_ok en app_audit_log.
+// Idempotente — se puede correr todas las veces que sea necesario.
+(function bindBackfillButton(){
+  const btn = document.getElementById('btn-backfill-last-login');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const ok = await ilusConfirm({
+      title: 'Reparar tracking de conexiones',
+      message: '¿Reparar usuarios marcados como "Nunca se conectó" pero que sí tienen registros de login en el audit log?',
+      sub: 'Esta acción es segura e idempotente. Solo completa datos faltantes — no modifica los que ya están correctos.',
+      okLabel: 'Reparar ahora',
+      cancelLabel: 'Cancelar',
+      type: 'question',
+    });
+    if (!ok) return;
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Reparando...';
+    try {
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+      const r = await fetch('/admin/api/users/backfill-last-login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: csrf ? {'X-CSRF-Token': csrf} : {},
+      });
+      const d = await r.json();
+      if (d.ok) {
+        await ilusAlert({
+          title: 'Tracking reparado',
+          message: d.mensaje || `Filas actualizadas: ${d.filas_actualizadas}`,
+          type: 'success',
+        });
+        // Recarga para mostrar los datos actualizados.
+        location.reload();
+      } else {
+        await ilusAlert({
+          title: 'No fue posible reparar',
+          message: d.error || 'Error desconocido',
+          type: 'error',
+        });
+      }
+    } catch(e) {
+      await ilusAlert({
+        title: 'Error de red',
+        message: 'No se pudo contactar al servidor. Reintenta en unos segundos.',
+        type: 'error',
+      });
+    } finally {
+      btn.innerHTML = orig;
+      btn.disabled = false;
+    }
+  });
+})();
+
+// ── 2026-05-18: Polling LED online/offline cada 30s ────────────────
+// Refresca solo los LEDs sin recargar toda la página. Pasa por
+// /admin/api/users/online que devuelve JSON compact [{id, online}, ...].
+// El primer fetch ocurre 30s después de cargar la página (el render
+// inicial ya trae el estado correcto). Si el fetch falla, no muestra
+// error al usuario — solo loggea por consola; el siguiente intento
+// reintenta automáticamente.
+(function startOnlinePolling(){
+  async function refreshOnlineStatus(){
+    try {
+      const r = await fetch('/admin/api/users/online', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d || !d.ok || !Array.isArray(d.users)) return;
+      d.users.forEach(u => {
+        const row = document.querySelector(`tr[data-user-id="${u.id}"]`);
+        if (!row) return;
+        const led = row.querySelector('.user-status');
+        if (!led) return;
+        if (u.online) {
+          led.classList.remove('offline');
+          led.classList.add('online');
+          led.title = 'En línea ahora (actividad en los últimos 5 minutos)';
+        } else {
+          led.classList.remove('online');
+          led.classList.add('offline');
+          led.title = 'Desconectado';
+        }
+      });
+      // Actualizar el KPI "En línea ahora"
+      const kpi = document.getElementById('kpi-online-ahora');
+      if (kpi && typeof d.online_total === 'number') {
+        kpi.textContent = d.online_total;
+      }
+    } catch(e) {
+      // Silencioso — el siguiente tick reintenta. No molestamos al admin
+      // con toasts de error por un endpoint de refresh secundario.
+      console.warn('[online-polling]', e);
+    }
+  }
+  // No ejecuta de inmediato — el render inicial ya tiene el estado correcto.
+  setInterval(refreshOnlineStatus, 30000);
+})();
 </script>
 {% endblock %}
 
