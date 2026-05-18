@@ -16211,79 +16211,298 @@ def _no_tecnico(view):
     return wrapped
 
 
+# ═════════════════════════════════════════════════════════════════════
+# 🔐 MATRIZ DE PERMISOS POR ACCIÓN — OT (2026-05-18)
+# ─────────────────────────────────────────────────────────────────────
+# Daniel pidió que SOLAMENTE el técnico asignado pueda gestionar/ejecutar
+# una OT (responder tareas, subir fotos, firmar como técnico, etc.). El
+# ejecutivo que la creó (Aaron) NO debe poder ejecutarla — solo puede
+# crearla, supervisarla y firmar como creador en la pantalla de
+# aprobación. El superadministrador SIEMPRE puede hacer y deshacer todo,
+# sin excepción.
+#
+# La matriz se aplica vía el helper `_puede_ot_accion(vid, accion, user)`
+# y dos decoradores:
+#
+#   `_tecnico_owns_visita` (legacy name, mantenido por compat)
+#       Endpoints de EJECUCIÓN: solo superadmin + técnico asignado/
+#       colaborador. Todos los demás roles (admin, ejecutivo, editor,
+#       etc.) son BLOQUEADOS.
+#
+#   `_ot_can_view` (nuevo, para endpoints de SOLO LECTURA)
+#       superadmin + admin + ejecutivo + supervisor + creador + técnico
+#       asignado/colaborador. Bloquea solo a tecnico/tecnico_externo que
+#       NO tienen la OT asignada (no espiar OTs ajenas).
+#
+# Acciones reconocidas (claves de la matriz):
+#   - 'ejecutar'      → responder tareas, fotos, GPS, firmar técnico,
+#                        iniciar/cerrar OT, etc. SOLO técnico asignado +
+#                        colaborador + superadmin.
+#   - 'aprobar'       → aprobar/rechazar cierre. Supervisor (admin/
+#                        ejecutivo) + superadmin + creador de la OT.
+#   - 'firmar_creador' → firmar como supervisor/responsable que asignó.
+#                        Solo el `created_by` user + superadmin + admin.
+#   - 'ver'           → lectura simple. Técnico solo SUS OTs; admin/
+#                        ejecutivo/supervisor/creador ven todo.
+#   - 'metadata'      → editar metadata, eliminar. Solo admin/superadmin
+#                        + creador (para corregir un error al crear).
+#                        Técnico NO puede borrar/editar metadata aunque
+#                        sea la asignada.
+#
+# REGLA ABSOLUTA: superadmin SIEMPRE pasa todas las verificaciones, sin
+# excepción. Esto es petición textual y no negociable de Daniel.
+# ═════════════════════════════════════════════════════════════════════
+
+def _puede_ot_accion(vid, accion, user=None):
+    """Devuelve True si `user` puede ejecutar la `accion` sobre la OT `vid`.
+
+    Args:
+      vid:    int o str ID de mant_visitas
+      accion: 'ejecutar' | 'aprobar' | 'firmar_creador' | 'ver' | 'metadata'
+      user:   dict de g.user o None (en cuyo caso usa g.user actual)
+
+    Returns:
+      bool — True si pasa, False si denegado.
+
+    Fail-closed: en cualquier error de BD devuelve False (denegar).
+    """
+    if user is None:
+        user = getattr(g, "user", None) or {}
+    role = (user.get("role") or "").lower()
+    uid = user.get("id")
+    username = user.get("username") or ""
+
+    # ── REGLA ABSOLUTA: superadmin SIEMPRE pasa ────────────────────
+    if role == "superadmin":
+        return True
+
+    # Sin user_id válido → denegar (sesión rota)
+    if not uid:
+        return False
+
+    # Cargar campos clave de la OT una vez
+    try:
+        v = mysql_fetchone(
+            "SELECT tecnico_user_id, created_by, firma_supervisor_user_id, "
+            "       estado, tipo "
+            "  FROM mant_visitas WHERE id=%s",
+            (vid,)
+        )
+    except Exception as e:
+        print(f"[SECURITY] _puede_ot_accion BD error vid={vid}: {e}", flush=True)
+        return False
+    if not v:
+        return False
+
+    tecnico_uid = v.get("tecnico_user_id")
+    creador_username = (v.get("created_by") or "").strip().lower()
+    es_creador = bool(creador_username) and creador_username == username.strip().lower()
+
+    # ¿Es técnico asignado (principal o colaborador)?
+    es_tecnico_asignado = False
+    if tecnico_uid and int(tecnico_uid) == int(uid):
+        es_tecnico_asignado = True
+    else:
+        try:
+            colab = mysql_fetchone(
+                "SELECT 1 FROM mant_visita_tecnicos "
+                " WHERE visita_id=%s AND tecnico_user_id=%s LIMIT 1",
+                (vid, uid)
+            )
+            es_tecnico_asignado = bool(colab)
+        except Exception as e:
+            print(f"[SECURITY] error consultando colaboradores vid={vid}: {e}",
+                  flush=True)
+
+    # ── EJECUTAR ─────────────────────────────────────────────────
+    # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT.
+    # SOLO técnico asignado/colaborador + superadmin (ya retornado arriba).
+    if accion == "ejecutar":
+        return es_tecnico_asignado
+
+    # ── METADATA ────────────────────────────────────────────────
+    # editar campos generales (titulo, fecha, tipo, descripcion, etc.) y
+    # eliminar OT. Solo admin + creador (no técnico).
+    if accion == "metadata":
+        if role == "admin":
+            return True
+        if role == "ejecutivo" and es_creador:
+            return True
+        return False
+
+    # ── APROBAR ─────────────────────────────────────────────────
+    # aprobar/rechazar cierre. admin/ejecutivo/supervisor + creador.
+    # 'supervisor' (rol explícito si existe) y 'ejecutivo' pueden
+    # aprobar cualquier OT; el creador de la OT solo SUS OTs.
+    if accion == "aprobar":
+        if role in ("admin", "ejecutivo", "supervisor"):
+            return True
+        # El creador siempre puede aprobar SU OT (regla del flujo de 3 firmas)
+        return es_creador
+
+    # ── FIRMAR_CREADOR ──────────────────────────────────────────
+    # Firmar como aprobador en el flujo de 3 firmas:
+    #   - admin / supervisor / ejecutivo (rol con permiso global) → siempre
+    #   - el creador específico de ESTA OT → siempre
+    #   - resto → 403
+    if accion == "firmar_creador":
+        if role in ("admin", "supervisor", "ejecutivo"):
+            return True
+        return es_creador
+
+    # ── VER ────────────────────────────────────────────────────
+    # Lectura: admin/ejecutivo/creador/asignado/colaborador.
+    # Bloquea solo a tecnico/tecnico_externo que NO la tienen asignada.
+    if accion == "ver":
+        if role in ("admin", "ejecutivo"):
+            return True
+        if es_creador:
+            return True
+        if es_tecnico_asignado:
+            return True
+        return False
+
+    # Acción desconocida → denegar
+    return False
+
+
+def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
+    """Helper común para devolver 403 con audit trail. AJAX → JSON, GET → flash."""
+    print(
+        f"[SECURITY] {uid} ({username}) intento {accion} "
+        f"vid={vid} sin permiso (role={role}, path={request.path})",
+        flush=True
+    )
+    is_api = (
+        request.is_json
+        or request.path.startswith("/mantenciones/api/")
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.headers.get("Accept") or "").startswith("application/json")
+    )
+    if is_api:
+        if accion == "ejecutar":
+            msg = "Solo el técnico asignado puede gestionar esta OT."
+        elif accion == "metadata":
+            msg = "Solo administradores pueden editar/eliminar esta OT."
+        elif accion in ("aprobar", "firmar_creador"):
+            msg = "Solo el supervisor/creador puede aprobar o firmar esta OT."
+        else:
+            msg = "No tienes acceso a esa orden de trabajo."
+        return jsonify({
+            "ok": False,
+            "error": msg,
+            "error_codigo": "OT_SIN_PERMISO",
+        }), 403
+    flash("No tienes acceso a esa orden de trabajo.", "warning")
+    return redirect(url_for("mant_ots_list"))
+
+
 def _tecnico_owns_visita(view_func):
-    """Decorador: si el usuario actual es 'tecnico' o 'tecnico_externo',
-    valida que sea dueño de la visita (mant_visitas.tecnico_user_id) o
-    colaborador (mant_visita_tecnicos.tecnico_user_id). Admin/superadmin
-    y demás roles pasan sin restricción.
+    """Decorador para endpoints de EJECUCIÓN de OT.
+
+    🔐 SEGURIDAD 2026-05-18 (Daniel) — refuerzo crítico:
+    Antes solo bloqueaba a roles tecnico/tecnico_externo. Eso permitía
+    que Aaron (rol=ejecutivo) y otros pudieran ejecutar la OT de un
+    técnico ajeno (responder tareas, subir fotos, firmar). Ahora:
+
+    - SUPERADMIN: siempre pasa (regla absoluta de Daniel).
+    - TÉCNICO ASIGNADO (principal o colaborador en mant_visita_tecnicos):
+      pasa.
+    - TODOS LOS DEMÁS ROLES (admin, ejecutivo, editor, lector, etc.):
+      bloqueados con 403/redirect. No pueden ejecutar OTs ajenas.
+
+    Si admin/ejecutivo necesita editar metadata o aprobar cierre, usar
+    los endpoints específicos (PUT visita, aprobar-cierre, etc.) que
+    aplican la matriz de permisos correspondiente.
 
     Espera que el view reciba `vid` como primer parámetro de URL.
-
-    Distingue AJAX/JSON vs navegación normal:
-    - AJAX → 403 JSON con error en español
-    - Navegación → flash + redirect a /mantenciones/ots
-
-    Loguea cada intento bloqueado en consola con prefijo [SECURITY] para
-    quedar en Railway logs (audit trail de IDOR attempts).
-
     Aplicar SIEMPRE después de @_mant_required (convención del proyecto).
 
-    Test cases (NO implementar como tests, solo documentar):
-    - T1 abre /ot/<vid_t1>/ejecutar             → 200 OK
-    - T1 abre /ot/<vid_t2>/ejecutar             → redirect con flash
-    - T1 PATCH /api/visitas/<vid_t2>/tareas/<tid> → 403 JSON
-    - T1 GET /api/visitas (calendario)          → solo ve sus OTs
-    - Admin abre cualquier OT                   → 200 OK (bypass)
-    - Tecnico_externo aplica las mismas restricciones que tecnico
+    Test cases:
+    - Superadmin → cualquier OT → 200 OK
+    - Técnico asignado a OT-X → /ot/X/ejecutar → 200 OK
+    - Técnico no asignado a OT-X → /ot/X/ejecutar → 403/redirect
+    - Aaron (ejecutivo, creador de OT-X asignada a Daniel) → POST tarea → 403
+    - Aaron → GET /ot/X (ver ficha) → debe usar endpoint con _ot_can_view
+    - Admin → POST tarea en OT ajena → 403 (admin no ejecuta OTs)
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
         u = getattr(g, "user", None) or {}
-        role = (u.get("role") or "").lower()
-        if role in ("tecnico", "tecnico_externo"):
-            uid = u.get("id")
-            asignado = None
-            if uid:
-                try:
-                    asignado = mysql_fetchone(
-                        "SELECT 1 AS x FROM mant_visitas "
-                        " WHERE id=%s AND tecnico_user_id=%s "
-                        "UNION ALL "
-                        "SELECT 1 FROM mant_visita_tecnicos "
-                        " WHERE visita_id=%s AND tecnico_user_id=%s "
-                        "LIMIT 1",
-                        (vid, uid, vid, uid)
-                    )
-                except Exception as e_sql:
-                    # En caso de error de BD, denegar por seguridad (fail-closed)
-                    print(
-                        f"[SECURITY] Error validando ownership vid={vid} "
-                        f"uid={uid}: {e_sql}",
-                        flush=True
-                    )
-                    asignado = None
-            if not asignado:
-                # Audit trail en Railway logs
-                print(
-                    f"[SECURITY] {uid} ({u.get('username')}) intento acceder "
-                    f"vid={vid} sin asignacion (role={role}, path={request.path})",
-                    flush=True
-                )
-                # Distinguir AJAX/JSON vs navegación
-                is_api = (
-                    request.is_json
-                    or request.path.startswith("/mantenciones/api/")
-                    or request.headers.get("X-Requested-With") == "XMLHttpRequest"
-                    or (request.headers.get("Accept") or "").startswith("application/json")
-                )
-                if is_api:
-                    return jsonify({
-                        "ok": False,
-                        "error": "No estás asignado a esta OT",
-                        "error_codigo": "OT_NO_ASIGNADA",
-                    }), 403
-                flash("No tienes acceso a esa orden de trabajo.", "warning")
-                return redirect(url_for("mant_ots_list"))
+        if not _puede_ot_accion(vid, "ejecutar", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="ejecutar",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
+def _ot_can_view(view_func):
+    """Decorador para endpoints de SOLO LECTURA (GET) de una OT.
+
+    Permite el acceso a admin/ejecutivo/superadmin/creador/técnico
+    asignado. Bloquea a técnico no asignado (no puede espiar OTs ajenas).
+
+    Espera `vid` como primer parámetro de URL.
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "ver", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="ver",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
+def _ot_can_metadata(view_func):
+    """Decorador para PUT/DELETE de visita (editar metadata, eliminar).
+
+    Solo superadmin + admin + ejecutivo creador pasan. Técnico NO puede
+    borrar ni editar metadata aunque sea la asignada (eso lo decide el
+    admin que la creó).
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "metadata", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="metadata",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
+def _ot_can_approve(view_func):
+    """Decorador para aprobar/rechazar cierre.
+
+    Permite a admin/ejecutivo/superadmin + creador de la OT. Bloquea
+    al técnico (no aprueba su propio trabajo).
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "aprobar", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="aprobar",
+            )
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -25043,7 +25262,7 @@ def mant_tarea_cronometro_get(tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cronometro-resumen", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_cronometro_resumen(vid):
     """Resumen de tiempo de toda la visita (todas las tareas)."""
     visita = mysql_fetchone(
@@ -25151,9 +25370,15 @@ def mant_visita_iniciar(vid):
     uid = (g.user or {}).get("id")
     if not uid:
         return jsonify({"ok": False, "error": "Sesión inválida"}), 401
+    # 🔐 2026-05-18 — La verificación de "técnico asignado o superadmin"
+    # ya la hace el decorador @_tecnico_owns_visita (strict). Acá solo
+    # validamos coherencia adicional (ej. hay técnico asignado de verdad).
     asignado = v.get("tecnico_user_id")
-    if not _ot_es_admin_o_super() and asignado and int(asignado) != int(uid):
-        return jsonify({"ok": False, "error": "Solo el técnico asignado puede iniciar esta OT."}), 403
+    if not asignado:
+        # Permitir si es superadmin (puede iniciar OTs sin asignar)
+        _u = getattr(g, "user", None) or {}
+        if (_u.get("role") or "").lower() != "superadmin":
+            return jsonify({"ok": False, "error": "Esta OT no tiene técnico asignado todavía. Pide al supervisor que asigne uno."}), 400
     mysql_execute(
         "UPDATE mant_visitas "
         "   SET estado='en_curso', "
@@ -25174,13 +25399,28 @@ def mant_visita_iniciar(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar", methods=["POST"])
 @_mant_required
-@_tecnico_owns_visita
 def mant_visita_firmar(vid):
     """Guarda una de las 3 firmas (cliente / tecnico / supervisor).
     Body: {"tipo": "cliente"|"tecnico"|"supervisor",
            "firma": "data:image/png;base64,...",
            "nombre": "Juan Pérez"  // solo para cliente }
+
+    🔐 SEGURIDAD 2026-05-18: no se aplica decorador genérico porque cada
+    `tipo` de firma tiene su propia regla de quién puede hacerla:
+      - cliente   → técnico asignado + superadmin (el técnico captura la
+                    firma del cliente en su dispositivo).
+      - tecnico   → solo el técnico asignado + superadmin.
+      - supervisor→ admin/superadmin + creador de la OT.
+    Las validaciones por-tipo están más abajo. Aquí filtramos por la
+    acción genérica 'ver' (cualquiera con vista válida puede ENTRAR al
+    endpoint, pero recibe 403 si el tipo no le corresponde).
     """
+    if not _puede_ot_accion(vid, "ver"):
+        u = getattr(g, "user", None) or {}
+        return _ot_403_response(
+            vid, (u.get("role") or "").lower(),
+            u.get("id"), u.get("username"), accion="ver",
+        )
     v = _ot_visita_basic(vid)
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -25195,21 +25435,22 @@ def mant_visita_firmar(vid):
     if not uid:
         return jsonify({"ok": False, "error": "Sesión inválida"}), 401
 
-    # Validaciones de identidad por tipo de firma
+    # Validaciones de identidad por tipo de firma (matriz 2026-05-18)
     if tipo == "tecnico":
-        asignado = v.get("tecnico_user_id")
-        if not asignado:
-            return jsonify({"ok": False, "error": "Esta OT no tiene técnico asignado todavía."}), 400
-        if not _ot_es_admin_o_super() and int(asignado) != int(uid):
+        # Solo técnico asignado + superadmin (acción 'ejecutar').
+        if not _puede_ot_accion(vid, "ejecutar"):
             return jsonify({"ok": False, "error": "Solo el técnico asignado puede firmar como técnico."}), 403
     elif tipo == "supervisor":
-        # El supervisor es quien asignó la OT (created_by) o un admin/superadmin.
-        creador = v.get("created_by")
-        es_admin = _ot_es_admin_o_super()
-        es_creador = bool(creador) and creador == (g.user or {}).get("username")
-        if not (es_admin or es_creador):
+        # admin/superadmin + creador de la OT (acción 'firmar_creador').
+        if not _puede_ot_accion(vid, "firmar_creador"):
             return jsonify({"ok": False, "error": "Solo el supervisor que asignó esta OT (o un admin) puede firmar."}), 403
-    # 'cliente' no requiere validar identidad (el cliente firma en el dispositivo del técnico).
+    elif tipo == "cliente":
+        # El cliente firma en el dispositivo del técnico → solo el técnico
+        # asignado + superadmin pueden capturarla. Antes no se validaba y
+        # cualquier rol con permiso 'mantenciones' podía falsificar la firma
+        # del cliente desde otra sesión (IDOR).
+        if not _puede_ot_accion(vid, "ejecutar"):
+            return jsonify({"ok": False, "error": "Solo el técnico asignado puede capturar la firma del cliente."}), 403
 
     nombre = (d.get("nombre") or "").strip()[:200] or None
 
@@ -25334,7 +25575,7 @@ def _ot_validar_cierre(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/validacion-cierre", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_validacion_cierre(vid):
     """Endpoint que devuelve si la OT cumple las 4 reglas de cierre.
     El frontend lo llama para mostrar el estado del cierre antes de
@@ -26006,7 +26247,7 @@ def mant_visita_crear():
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["PUT"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_metadata
 def mant_visita_update(vid):
     d = request.get_json(silent=True) or {}
     # COMPAT: el dropdown legacy puede mandar `tecnico_id` esperando que sea
@@ -26074,8 +26315,27 @@ def mant_visita_update(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_metadata
 def mant_visita_del(vid):
+    # 🔐 SEGURIDAD 2026-05-18 (Daniel): el DELETE de OT es STRICT.
+    # Solo superadmin puede eliminar definitivamente. admin/ejecutivo
+    # creador pueden EDITAR (PUT) pero NO eliminar. Si quieren cancelar
+    # una OT mal creada, deben usar PUT estado='cancelada'.
+    _u = getattr(g, "user", None) or {}
+    _role = (_u.get("role") or "").lower()
+    if _role != "superadmin":
+        print(
+            f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento DELETE "
+            f"vid={vid} sin permiso (role={_role})",
+            flush=True
+        )
+        return jsonify({
+            "ok": False,
+            "error": "Solo el superadministrador puede eliminar una OT. "
+                     "Si necesitas cancelarla, usa el botón 'Cancelar OT' "
+                     "que cambia el estado pero conserva el historial.",
+            "error_codigo": "OT_DELETE_RESTRINGIDO",
+        }), 403
     # Capturar info ANTES de borrar para el log y para encontrar levantamiento asociado
     v_info = mysql_fetchone(
         "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
@@ -26595,9 +26855,16 @@ def mant_cliente_maquinas_list(cid):
 def mant_ots_list():
     """Listado global de Órdenes de Trabajo (visitas) con filtros.
 
-    Soporta filtro `?solo_mias=1` para que un técnico solo vea SUS OTs
-    asignadas. El técnico se identifica buscando su email en mant_tecnicos.
-    Si el usuario tiene rol "tecnico" se aplica solo_mias automáticamente.
+    🔐 SEGURIDAD 2026-05-18 (Daniel) — filtro por rol:
+      - tecnico / tecnico_externo: SIEMPRE `solo_mias` (no puede ver
+        ajenas — refuerzo doble; cualquier intento se ignora server-side).
+      - ejecutivo (ej. Aaron): por DEFAULT ve SOLO las OTs que él CREÓ
+        (`created_by = self.username`). Puede pasar `?todas=1` para ver
+        el resto del módulo (consultivo, sin ejecutar).
+      - admin / superadmin: ve TODAS por default. Puede usar `?solo_mias=1`
+        para filtrar SOLO sus asignadas (raramente útil para ellos).
+      - Otros roles (editor, lector, vendedor) → no llegan acá porque el
+        decorador @_mant_required ya los bloquea por permisos.
     """
     estado     = (request.args.get("estado") or "").strip().lower()
     tipo       = (request.args.get("tipo") or "").strip().lower()
@@ -26605,16 +26872,32 @@ def mant_ots_list():
     cliente_id = request.args.get("cliente_id")
     q          = (request.args.get("q") or "").strip()
     solo_mias  = request.args.get("solo_mias") == "1"
+    ver_todas  = request.args.get("todas") == "1"
 
-    # Si el rol es "tecnico" o "tecnico_externo" (no admin), forzar solo_mias
-    # para evitar que vea OTs de otros técnicos manipulando la URL.
-    # 🔐 SEGURIDAD (2026-05-17): incluído tecnico_externo (antes solo tecnico).
-    user = getattr(g, "user", None)
-    if user and (user.get("role") or "") in ("tecnico", "tecnico_externo"):
+    # ── Lógica por rol (matriz 2026-05-18) ──────────────────────────
+    user = getattr(g, "user", None) or {}
+    role_l = (user.get("role") or "").lower()
+    es_tecnico   = role_l in ("tecnico", "tecnico_externo")
+    es_ejecutivo = (role_l == "ejecutivo")
+    # Técnico: forzar solo_mias siempre (refuerzo IDOR — antes intentaba
+    # manipular ?solo_mias=0 para ver ajenas).
+    if es_tecnico:
         solo_mias = True
 
     where = ["1=1"]
     params = []
+
+    # ── EJECUTIVO (Aaron) — filtrar a sus OTs creadas por DEFAULT ──
+    # Daniel: "el ejecutivo NO ejecuta — solo crea/supervisa". Por
+    # default mostramos las OTs que él mismo creó (created_by =
+    # username). Puede pasar ?todas=1 para ver el resto del módulo
+    # (útil para coordinar con técnicos), pero igualmente no puede
+    # ejecutarlas (las APIs lo bloquean).
+    if es_ejecutivo and not ver_todas and not solo_mias:
+        username_actual = (user.get("username") or "").strip()
+        if username_actual:
+            where.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            params.append(username_actual)
 
     # Filtro "mis OTs": muestra TODAS las OTs donde el usuario aparece como
     # técnico, sea como principal (v.tecnico_user_id) o como colaborador en
@@ -26785,6 +27068,12 @@ def mant_ots_list():
             "estado": estado, "tipo": tipo,
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
         },
+        # 🔐 2026-05-18 — Flags de rol para el template (ocultar botones
+        # de "Eliminar" / "Editar" que el rol no debería ver).
+        es_tecnico=es_tecnico,
+        es_ejecutivo=es_ejecutivo,
+        ver_todas=ver_todas,
+        solo_mias_activo=solo_mias,
     )
 
 
@@ -27388,7 +27677,7 @@ def mant_tarea_responder(vid, tid):
 
 @app.route("/mantenciones/ot/<int:vid>")
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_ot_ficha(vid):
     """Ficha de OT — TODOS los roles van al modo drill-down de ejecución.
 
@@ -27512,29 +27801,25 @@ def mant_ot_ejecutar(vid):
         return redirect(url_for("mant_ots_list"))
     visita = dict(visita)
 
-    # Si el usuario es técnico/tecnico_externo, validar que tenga la OT asignada
-    # 🔐 SEGURIDAD (2026-05-17): se añadió tecnico_externo (antes solo tecnico).
+    # 🔐 SEGURIDAD 2026-05-18 (Daniel) — matriz unificada de permisos.
+    # Permite VER la página a: superadmin, admin, ejecutivo, creador de
+    # la OT y técnico asignado/colaborador. Bloquea a técnico/tecnico_externo
+    # que NO la tienen asignada (no espiar OTs ajenas). Las acciones de
+    # ejecución (botones que llaman a /api/visitas/.../tareas, etc.) están
+    # protegidas a nivel API con `_tecnico_owns_visita` strict.
     u = getattr(g, "user", None) or {}
+    if not _puede_ot_accion(vid, "ver", u):
+        print(
+            f"[SECURITY] {u.get('id')} ({u.get('username')}) intento ver OT "
+            f"vid={vid} sin permiso (role={(u.get('role') or '').lower()})",
+            flush=True
+        )
+        flash("Esta OT no está asignada a ti.", "warning")
+        return redirect(url_for("mant_ots_list"))
     role_u = (u.get("role") or "").lower()
-    if role_u in ("tecnico", "tecnico_externo"):
-        uid = u.get("id")
-        es_mio = (visita.get("tecnico_user_id") == uid)
-        if not es_mio:
-            # ¿es colaborador en mant_visita_tecnicos?
-            colab = mysql_fetchone(
-                "SELECT 1 FROM mant_visita_tecnicos "
-                " WHERE visita_id=%s AND tecnico_user_id=%s LIMIT 1",
-                (vid, uid)
-            )
-            es_mio = bool(colab)
-        if not es_mio:
-            print(
-                f"[SECURITY] {uid} ({u.get('username')}) intento ejecutar OT "
-                f"vid={vid} sin asignacion (role={role_u})",
-                flush=True
-            )
-            flash("Esta OT no está asignada a ti.", "warning")
-            return redirect(url_for("mant_ots_list"))
+    # Flag para el template: indica si puede o no ejecutar (modificar) tareas.
+    # Si es solo viewer (admin/ejecutivo no asignado), se ocultan los botones.
+    puede_ejecutar_flag = _puede_ot_accion(vid, "ejecutar", u)
 
     # Equipos involucrados en la OT — vienen de mant_visita_tareas distintas máquinas
     # FIX 2026-05-16: filtrar equipos dados de baja (soft-delete).
@@ -27683,6 +27968,11 @@ def mant_ot_ejecutar(vid):
         fotos=fotos,
         current_user_id=_user_id_actual,
         is_admin_lock=_is_admin_lock,
+        # 🔐 2026-05-18 — Si el usuario solo puede VER (admin/ejecutivo no
+        # asignado, creador no técnico), el template oculta botones de
+        # acción y muestra la OT en "modo lectura".
+        puede_ejecutar=puede_ejecutar_flag,
+        es_solo_lectura=(not puede_ejecutar_flag),
     )
 
 
@@ -28015,9 +28305,178 @@ def mant_ot_firmar_revision(vid):
             )
         _mant_log("visita", vid, "firmada_tecnico",
                   f"{nombre_tec or ''} → pendiente_aprobacion")
+        # ── Notificación al creador + supervisores ──────────────────
+        # Best-effort, dispara en hilo. Si email/WA están deshabilitados
+        # por kill-switch global, los helpers lo manejan internamente
+        # (no rompe el flujo del técnico).
+        try:
+            _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
+        except Exception as e_n:
+            print(f"[notif-pend-aprob] fail vid={vid}: {e_n}", flush=True)
         return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# NOTIFICACIÓN: OT pasa a 'pendiente_aprobacion' → avisar al creador
+# (y supervisores/admin) para que entren a firmar la aprobación final.
+# Email + WhatsApp best-effort, en hilo daemon. Respeta kill-switches.
+# ═════════════════════════════════════════════════════════════════════
+
+def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
+    """Dispara hilo daemon que envía email + WhatsApp al `created_by` y
+    a los supervisores/admin que tengan email o teléfono cargado, con
+    un link directo a la OT para firmar como aprobador.
+
+    NO bloquea la respuesta del endpoint. Si hay errores, los loguea pero
+    nunca falla la firma del técnico.
+    """
+    import threading as _th_p
+    base = (host_url or "").rstrip("/")
+
+    def _bg():
+        try:
+            v = mysql_fetchone(
+                "SELECT v.id, v.numero_ot, v.fecha_programada, v.created_by, "
+                "       v.tecnico_user_id, c.razon_social, "
+                "       COALESCE(ut.nombre, ut.username, v.tecnico) AS tecnico_nombre "
+                "  FROM mant_visitas v "
+                "  JOIN mant_clientes c ON c.id = v.cliente_id "
+                "  LEFT JOIN app_users ut ON ut.id = v.tecnico_user_id "
+                " WHERE v.id=%s",
+                (vid,)
+            )
+            if not v:
+                return
+            numero_ot = v.get("numero_ot") or f"OT #{vid}"
+            razon = v.get("razon_social") or "Cliente"
+            tecnico = v.get("tecnico_nombre") or "el técnico"
+            creador_username = (v.get("created_by") or "").strip()
+
+            # ── Destinatarios: creador + admins + supervisores + ejecutivos ──
+            # Cada uno se notifica solo una vez (dedupe por user id).
+            destinos = []  # lista de dicts {id, username, nombre, phone, kind}
+            seen_ids = set()
+
+            def _add(user_dict, kind):
+                if not user_dict:
+                    return
+                uid = user_dict.get("id")
+                if not uid or uid in seen_ids:
+                    return
+                seen_ids.add(uid)
+                destinos.append({
+                    "id":       uid,
+                    "username": (user_dict.get("username") or "").strip(),
+                    "nombre":   (user_dict.get("nombre") or user_dict.get("username") or "").strip(),
+                    "phone":    (user_dict.get("phone") or "").strip(),
+                    "kind":     kind,
+                })
+
+            # 1) Creador de la OT (prioridad)
+            if creador_username:
+                try:
+                    row = mysql_fetchone(
+                        f"SELECT id, username, nombre, phone FROM `{AUTH_TABLE}` "
+                        f" WHERE username=%s AND active=1 LIMIT 1",
+                        (creador_username,)
+                    )
+                    _add(row, "creador")
+                except Exception as _e:
+                    print(f"[notif-pend] err buscando creador {creador_username}: {_e}",
+                          flush=True)
+
+            # 2) Supervisores + admins + superadmin (todos los que pueden aprobar)
+            try:
+                supers = mysql_fetchall(
+                    f"SELECT id, username, nombre, phone, role FROM `{AUTH_TABLE}` "
+                    f" WHERE active=1 AND role IN ('superadmin','admin','supervisor') "
+                    f" ORDER BY role, nombre"
+                ) or []
+                for r in supers:
+                    _add(r, r.get("role") or "supervisor")
+            except Exception as _e:
+                print(f"[notif-pend] err buscando supervisores: {_e}", flush=True)
+
+            if not destinos:
+                print(f"[notif-pend-aprob] sin destinatarios vid={vid}", flush=True)
+                return
+
+            # Link a la OT (el aprobador entra desde computador y firma)
+            link_ot = (f"{base}/mantenciones/ot/{vid}/ejecutar"
+                       if base else f"/mantenciones/ot/{vid}/ejecutar")
+
+            subject = f"ILUS · {numero_ot} esperando tu firma de aprobación"
+            wa_template = (
+                f"ILUS · {numero_ot} esperando tu firma\n\n"
+                f"Hola {{nombre}}, el técnico {tecnico} terminó la OT "
+                f"{numero_ot} para el cliente {razon}.\n\n"
+                f"Firma como aprobador para cerrarla:\n{link_ot}"
+            )
+
+            wa = _get_wa_cfg()
+            wa_ok = bool(wa.get("account_sid") and wa.get("auth_token")
+                         and wa.get("from_number"))
+
+            for d_dest in destinos:
+                nombre_d = d_dest["nombre"] or "equipo ILUS"
+                # En el sistema ILUS muchos usernames SON correos
+                # (ej: daniel.aguilar@sphs.cl). Para email usamos username
+                # si tiene formato de correo, sino lo saltamos.
+                username = d_dest["username"]
+                is_email = bool(username and "@" in username
+                                and "." in username.split("@")[-1])
+                if is_email:
+                    try:
+                        # Usamos el template ILUS oficial (header negro + logo + CTA rojo)
+                        cuerpo = _ilus_email_html(
+                            titulo="OT esperando tu firma",
+                            subtitulo=f"{numero_ot} · {razon}",
+                            saludo=nombre_d,
+                            parrafos=[
+                                f"El técnico <strong>{tecnico}</strong> terminó la OT "
+                                f"<strong>{numero_ot}</strong> y firmó como ejecutor.",
+                                "Necesita tu firma como aprobador para cerrarla.",
+                            ],
+                            btn_primario_txt="Firmar y cerrar la OT",
+                            btn_primario_url=link_ot,
+                            info_lineas=[
+                                ("", "Cliente", razon),
+                                ("", "Técnico", tecnico),
+                                ("", "OT", numero_ot),
+                            ],
+                        )
+                        _send_ilus_email(
+                            username, subject, cuerpo,
+                            evento="ot_pendiente_aprobacion",
+                            modulo="mantenciones",
+                        )
+                    except Exception as e_e:
+                        print(f"[notif-pend][email] vid={vid} dest={username}: {e_e}",
+                              flush=True)
+                # WhatsApp si tiene phone cargado
+                phone = d_dest["phone"]
+                if wa_ok and phone:
+                    try:
+                        _send_whatsapp(
+                            wa["account_sid"], wa["auth_token"], wa["from_number"],
+                            phone, wa_template.replace("{nombre}", nombre_d),
+                            modulo="mantenciones",
+                        )
+                    except Exception as e_w:
+                        print(f"[notif-pend][wa] vid={vid} dest={phone}: {e_w}",
+                              flush=True)
+        except Exception as e_outer:
+            print(f"[notif-pend-aprob] outer fail vid={vid}: {e_outer}",
+                  flush=True)
+
+    try:
+        _th_p.Thread(target=_bg, daemon=True,
+                     name=f"notif-pend-aprob-{vid}").start()
+    except Exception as e:
+        print(f"[notif-pend-aprob] no se pudo iniciar hilo vid={vid}: {e}",
+              flush=True)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -28085,9 +28544,23 @@ def _is_supervisor_user():
 @_mant_required
 def mant_ot_aprobar_cierre(vid):
     """Supervisor aprueba la OT firmada por el técnico → estado 'cerrada'.
-    Guarda firma_supervisor + comentario + timestamp + user_id."""
-    if not _is_supervisor_user():
-        return jsonify({"ok": False, "error": "Solo supervisor/admin puede aprobar OTs"}), 403
+    Guarda firma_supervisor + comentario + timestamp + user_id.
+
+    🔐 SEGURIDAD 2026-05-18: solo superadmin/admin/ejecutivo + creador
+    de la OT pueden aprobar (matriz `_puede_ot_accion('aprobar')`).
+    """
+    if not _puede_ot_accion(vid, "aprobar"):
+        _u = getattr(g, "user", None) or {}
+        print(
+            f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento aprobar "
+            f"vid={vid} sin permiso (role={(_u.get('role') or '').lower()})",
+            flush=True
+        )
+        return jsonify({
+            "ok": False,
+            "error": "Solo el supervisor (admin/ejecutivo) o el creador "
+                     "de la OT puede aprobar el cierre.",
+        }), 403
     d = request.get_json(silent=True) or {}
     firma_sup = (d.get("firma_supervisor") or "").strip()
     comentario = (d.get("comentario") or "").strip()[:1000] or None
@@ -28131,9 +28604,23 @@ def mant_ot_aprobar_cierre(vid):
 @_mant_required
 def mant_ot_rechazar_cierre(vid):
     """Supervisor rechaza la OT → vuelve a 'programada' para que técnico
-    corrija. Limpia firma_tecnico (debe firmar de nuevo)."""
-    if not _is_supervisor_user():
-        return jsonify({"ok": False, "error": "Solo supervisor/admin puede rechazar OTs"}), 403
+    corrija. Limpia firma_tecnico (debe firmar de nuevo).
+
+    🔐 SEGURIDAD 2026-05-18: solo superadmin/admin/ejecutivo + creador
+    de la OT pueden rechazar (matriz `_puede_ot_accion('aprobar')`).
+    """
+    if not _puede_ot_accion(vid, "aprobar"):
+        _u = getattr(g, "user", None) or {}
+        print(
+            f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento rechazar "
+            f"vid={vid} sin permiso (role={(_u.get('role') or '').lower()})",
+            flush=True
+        )
+        return jsonify({
+            "ok": False,
+            "error": "Solo el supervisor (admin/ejecutivo) o el creador "
+                     "de la OT puede rechazar el cierre.",
+        }), 403
     d = request.get_json(silent=True) or {}
     motivo = (d.get("motivo") or "").strip()[:1000]
     if not motivo:
@@ -28574,7 +29061,7 @@ def mant_visita_tarea_unlock(vid, tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/locks", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_tareas_locks(vid):
     """Lista las tareas bloqueadas de una OT con el lock-holder.
 
@@ -28723,7 +29210,7 @@ def mant_seguimiento_vista():
 
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_pdf(vid):
     """Genera un PDF completo de la OT con:
     - Header ILUS + número OT + estado
@@ -28751,6 +29238,41 @@ def mant_visita_pdf(vid):
     if not visita:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     visita = dict(visita)
+
+    # ── Validación 2026-05-18 (Daniel): el PDF requiere las 3 firmas ──
+    # Solo permitimos generar el PDF cuando la OT está cerrada con las
+    # 3 firmas presentes (cliente + técnico + supervisor/aprobador).
+    # Si falta alguna, devolvemos 409 con el detalle de qué falta.
+    estado = (visita.get("estado") or "").lower()
+    razones_pdf = []
+    if estado != "cerrada":
+        razones_pdf.append(
+            f"La OT debe estar cerrada para descargar el PDF (estado actual: {estado or '—'})."
+        )
+    if not visita.get("firma_cliente_url"):
+        razones_pdf.append("Falta firma del cliente.")
+    if not visita.get("firma_tecnico_url"):
+        razones_pdf.append("Falta firma del técnico.")
+    if not visita.get("firma_supervisor_url"):
+        razones_pdf.append("Falta firma del aprobador.")
+    if razones_pdf:
+        # Si es petición browser (no AJAX), redirigir con flash a la OT
+        is_ajax = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or (request.headers.get("Accept") or "").startswith("application/json")
+        )
+        if not is_ajax:
+            flash(
+                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+                + " ".join(razones_pdf),
+                "warning",
+            )
+            return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        return jsonify({
+            "ok": False,
+            "error": "Faltan requisitos para generar el PDF",
+            "razones": razones_pdf,
+        }), 409
 
     # Equipos
     equipos = mysql_fetchall(
@@ -28888,7 +29410,7 @@ def mant_visita_pdf(vid):
 
 @app.route("/mantenciones/ot/<int:vid>/pdf")
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_ot_pdf_render(vid):
     """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
 
@@ -29145,7 +29667,7 @@ def mant_ot_pdf_render(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_tareas_get(vid):
     """Lista las tareas de una OT con su estado y métricas de cronómetro."""
     rows = mysql_fetchall(
@@ -29507,7 +30029,7 @@ os.makedirs(MANT_FOTOS_DIR, exist_ok=True)
 
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_fotos_get(vid):
     """Lista las fotos de una OT."""
     rows = mysql_fetchall(
@@ -29700,7 +30222,7 @@ def mant_visita_fotos_subir(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_adjuntos_list(vid):
     """Lista de adjuntos (PDFs, videos, documentos) de una OT.
     Distintos de fotos (que tienen su propia tabla mant_visita_fotos)."""
@@ -30024,7 +30546,7 @@ def mant_maquina_fotos_subir(mid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/repuestos", methods=["GET"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_view
 def mant_visita_repuestos_get(vid):
     rows = mysql_fetchall(
         "SELECT id, sku, producto_id, descripcion, cantidad, "

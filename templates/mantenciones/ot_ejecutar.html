@@ -1439,19 +1439,57 @@
 </div>
 
 {# ─── BOTTOM BAR FIJO (firmar) — BLOQUEADO hasta tareas 100% ─── #}
+{# 2026-05-18 — Flujo de 3 firmas (Daniel):
+   El bottom bar tiene 3 estados según el rol y el estado de la OT:
+   1) Técnico ejecutando → "Cargando tareas…" → "Completar y firmar OT"
+   2) Pendiente aprobación + soy creador/admin/superadmin/supervisor → CTA verde
+      para firmar como aprobador (abre modalAprobacion).
+   3) Pendiente aprobación + NO puedo aprobar → mensaje "esperando aprobación".
+   4) Cerrada → botón descargar PDF (link).
+#}
+{% set _u = current_user %}
+{% set _role = (_u.role if _u else '') | lower %}
+{% set _es_creador = _u and visita.created_by and visita.created_by == _u.username %}
+{% set _es_super_global = permissions.superadmin or permissions.admin or _role in ('supervisor','ejecutivo') %}
+{% set _puede_aprobar = _es_creador or _es_super_global %}
+
 <div class="tx-bottom">
-  {% if visita.estado in ['pendiente_aprobacion','completada','cerrada'] %}
-  <button class="tx-btn-firmar" disabled>
-    <i class="bi bi-check-circle-fill"></i> OT firmada — esperando aprobación
-  </button>
+  {% if visita.estado == 'cerrada' %}
+    {# OT cerrada — botón descargar PDF #}
+    <a href="/mantenciones/api/visitas/{{ visita.id }}/pdf"
+       class="tx-btn-firmar" target="_blank" rel="noopener"
+       style="background:linear-gradient(135deg,#16a34a,#15803d);text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px">
+      <i class="bi bi-file-earmark-pdf-fill"></i> Descargar PDF de la OT
+    </a>
+  {% elif visita.estado == 'pendiente_aprobacion' %}
+    {% if _puede_aprobar %}
+      {# CTA verde para el creador/admin/supervisor — firmar y cerrar #}
+      <button class="tx-btn-firmar" id="btnAprobar" onclick="abrirModalAprobacion()"
+              style="background:linear-gradient(135deg,#16a34a,#15803d)">
+        <i class="bi bi-pen-fill"></i>
+        Firmar y cerrar OT como aprobador
+      </button>
+      <small class="d-block text-center mt-1" style="color:#16a34a;font-size:.72rem;font-weight:600">
+        El técnico ya firmó. Falta tu firma para cerrar la OT.
+      </small>
+    {% else %}
+      <button class="tx-btn-firmar" disabled>
+        <i class="bi bi-clock-history"></i> OT firmada — esperando aprobación
+        {% if visita.created_by %}de {{ visita.created_by }}{% endif %}
+      </button>
+    {% endif %}
+  {% elif visita.estado == 'completada' %}
+    <button class="tx-btn-firmar" disabled>
+      <i class="bi bi-check-circle-fill"></i> OT completada
+    </button>
   {% else %}
-  <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()" disabled
-          data-locked="1" title="Completá todas las tareas antes de firmar">
-    <i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Cargando tareas…</span>
-  </button>
-  <small id="btnFirmarHint" class="d-block text-center mt-1" style="color:#94a3b8;font-size:.72rem">
-    Verifica las tareas para habilitar la firma
-  </small>
+    <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()" disabled
+            data-locked="1" title="Completá todas las tareas antes de firmar">
+      <i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Cargando tareas…</span>
+    </button>
+    <small id="btnFirmarHint" class="d-block text-center mt-1" style="color:#94a3b8;font-size:.72rem">
+      Verifica las tareas para habilitar la firma
+    </small>
   {% endif %}
 </div>
 
@@ -1571,6 +1609,156 @@
     </div>
   </div>
 </div>
+
+{# ═════════ MODAL: APROBACIÓN (3ra firma) — diseño ILUS ═════════
+   Solo visible cuando estado='pendiente_aprobacion' Y el usuario actual
+   tiene permiso (creador / admin / supervisor / superadmin / ejecutivo).
+   Muestra:
+     - Resumen rápido de la OT
+     - Thumbnails de las firmas ya capturadas (técnico + cliente)
+     - Canvas para firmar como aprobador
+     - Botón verde grande "Firmar y cerrar OT"
+     - Botón rojo "Rechazar y devolver al técnico"
+   ════════════════════════════════════════════════════════════════════ #}
+{% if visita.estado == 'pendiente_aprobacion' and _puede_aprobar %}
+<div class="modal fade firma-modal" id="modalAprobacion" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="firma-banner" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#15803d 100%)">
+        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='Logo.png') }}')"></div>
+        <div class="flex-grow-1">
+          <h5><i class="bi bi-pen-fill me-2"></i>Firmar y cerrar OT</h5>
+          <div class="fb-sub">{{ visita.numero_ot or ('OT #' ~ visita.id) }} · {{ visita.razon_social }}</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert py-2 small mb-3" style="background:#dcfce7;color:#15803d;border:1px solid #16a34a">
+          <i class="bi bi-info-circle me-1"></i>
+          Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
+          y el PDF quedará disponible para descarga.
+        </div>
+
+        {# ─── RESUMEN DE LA OT ─── #}
+        <div class="mb-3" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.82rem">
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Cliente</div>
+              <div class="fw-bold">{{ visita.razon_social }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Técnico</div>
+              <div class="fw-bold">{{ visita.tecnico_principal or visita.tecnico or '—' }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Fecha programada</div>
+              <div class="fw-bold">{{ visita.fecha_programada | chile_fmt('%d/%m/%Y') if visita.fecha_programada else '—' }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Firmada por técnico</div>
+              <div class="fw-bold">{{ visita.firma_tecnico_at | chile_fmt('%d/%m %H:%M') if visita.firma_tecnico_at else '—' }}</div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── FIRMAS PREVIAS (preview thumbnails) ─── #}
+        <div class="mb-3">
+          <label class="form-label small fw-bold mb-2" style="color:#0f172a">
+            <i class="bi bi-check2-circle text-success me-1"></i>Firmas ya capturadas
+          </label>
+          <div class="row g-2">
+            <div class="col-6">
+              <div style="border:1.5px solid #16a34a;background:#f0fdf4;border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:.65rem;font-weight:700;color:#15803d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                  <i class="bi bi-tools me-1"></i>Técnico
+                </div>
+                {% if visita.firma_tecnico_url %}
+                  <img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico"
+                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                {% else %}
+                  <div class="text-muted small">Sin firma</div>
+                {% endif %}
+              </div>
+            </div>
+            <div class="col-6">
+              <div style="border:1.5px solid {{ '#16a34a' if visita.firma_cliente_url else '#cbd5e1' }};
+                          background:{{ '#f0fdf4' if visita.firma_cliente_url else '#f8fafc' }};
+                          border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:.65rem;font-weight:700;
+                            color:{{ '#15803d' if visita.firma_cliente_url else '#94a3b8' }};
+                            text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                  <i class="bi bi-person-badge me-1"></i>Cliente
+                </div>
+                {% if visita.firma_cliente_url %}
+                  <img src="{{ visita.firma_cliente_url }}" alt="Firma cliente"
+                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                {% else %}
+                  <div class="text-muted small" style="font-size:.7rem">No capturada en sitio</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── FIRMA DEL APROBADOR ─── #}
+        <div class="mb-2">
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-shield-check me-1" style="color:#15803d"></i>
+            Tu firma como aprobador
+            {% if _es_creador %}<span class="badge bg-success ms-1" style="font-size:.6rem">CREADOR</span>{% endif %}
+            {% if permissions.superadmin %}<span class="badge bg-dark ms-1" style="font-size:.6rem">SUPERADMIN</span>{% endif %}
+            {% if permissions.admin and not permissions.superadmin %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">ADMIN</span>{% endif %}
+          </label>
+          <input type="text" id="aprobNombre" class="form-control mb-2"
+                 placeholder="Tu nombre completo"
+                 value="{{ _u.nombre or _u.username or '' }}">
+          <div class="firma-canvas-wrap" id="wrap-canvasAprob">
+            <canvas id="canvasAprob" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ Firma aquí con el dedo, lápiz óptico o mouse</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="limpiarFirma('canvasAprob')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="undoFirma('canvasAprob')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a"
+                   onclick="setFirmaColor('canvasAprob', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af"
+                   onclick="setFirmaColor('canvasAprob', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#dc2626"
+                   onclick="setFirmaColor('canvasAprob', '#dc2626', this)" title="Rojo"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label small fw-semibold">Comentario (opcional)</label>
+          <textarea id="aprobComentario" class="form-control" rows="2"
+                    placeholder="Observación interna del cierre…"
+                    maxlength="500" style="font-size:.85rem"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb;flex-wrap:wrap;gap:6px">
+        <button type="button" class="btn btn-outline-danger fw-bold" id="btnRechazarAprob"
+                onclick="rechazarAprobacion()">
+          <i class="bi bi-x-circle me-1"></i>Rechazar y devolver
+        </button>
+        <div class="flex-grow-1"></div>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-arrow-left me-1"></i>Cerrar
+        </button>
+        <button type="button" class="btn btn-success fw-bold" id="btnAprobConfirm"
+                onclick="confirmarAprobacion()" style="padding:.6rem 1.4rem;font-size:.95rem">
+          <i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <script>
 // ════════════════════════════════════════════════════════
@@ -4919,6 +5107,117 @@ async function enviarFirma(){
   } catch(e){
     ilusToast('Error de red', { type:'error' });
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FLUJO DE 3 FIRMAS — APROBACIÓN FINAL (creador / admin / supervisor)
+//  2026-05-18 (Daniel): tras la firma del técnico+cliente, el creador
+//  de la OT (o admin/supervisor) entra desde computador y firma como
+//  aprobador. Al confirmar, la OT pasa a 'cerrada'.
+// ════════════════════════════════════════════════════════════════
+
+function abrirModalAprobacion(){
+  const modalEl = document.getElementById('modalAprobacion');
+  if (!modalEl){
+    ilusToast('Modal de aprobación no disponible', { type:'error' });
+    return;
+  }
+  new bootstrap.Modal(modalEl).show();
+  // Init canvas con un pequeño delay para que el modal calcule layout
+  setTimeout(() => { initCanvas('canvasAprob'); }, 250);
+}
+
+async function confirmarAprobacion(){
+  const cv = document.getElementById('canvasAprob');
+  if (!_sig.canvasAprob || !_sig.canvasAprob.has){
+    ilusToast('Falta tu firma como aprobador', { type:'warning' });
+    return;
+  }
+  const firma = cv.toDataURL('image/png');
+  const nombre = (document.getElementById('aprobNombre')?.value || '').trim();
+  const comentario = (document.getElementById('aprobComentario')?.value || '').trim();
+  const btn = document.getElementById('btnAprobConfirm');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cerrando OT…';
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/aprobar-cierre`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        firma_supervisor: firma,
+        firma_supervisor_nombre: nombre,
+        comentario: comentario,
+      })
+    });
+    const d = await r.json();
+    if (d.ok){
+      bootstrap.Modal.getInstance(document.getElementById('modalAprobacion'))?.hide();
+      await ilusAlert({
+        title: '✅ OT cerrada',
+        message: 'Firmaste como aprobador. La OT quedó cerrada.',
+        sub: 'El cliente recibirá la confirmación. El PDF ya está disponible.',
+        type: 'success',
+        okLabel: 'Ver OT',
+      });
+      setTimeout(() => location.reload(), 400);
+    } else {
+      ilusToast(d.error || 'Error al cerrar la OT', { type:'error' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT';
+    }
+  } catch(e){
+    ilusToast('Error de red al cerrar', { type:'error' });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT';
+  }
+}
+
+async function rechazarAprobacion(){
+  const motivo = await ilusPrompt({
+    title: 'Rechazar y devolver al técnico',
+    message: 'Indica el motivo del rechazo:',
+    sub: 'La OT volverá a estado "programada" y el técnico podrá corregir y firmar de nuevo.',
+    placeholder: 'Ej: falta foto del equipo X, diagnóstico no es claro…',
+    required: true,
+    okLabel: 'Rechazar OT',
+    cancelLabel: 'Cancelar',
+  });
+  if (!motivo) return;
+  const btn = document.getElementById('btnRechazarAprob');
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Rechazando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/rechazar-cierre`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ motivo: motivo })
+    });
+    const d = await r.json();
+    if (d.ok){
+      bootstrap.Modal.getInstance(document.getElementById('modalAprobacion'))?.hide();
+      await ilusAlert({
+        title: 'OT devuelta al técnico',
+        message: 'La OT volvió a estado "programada".',
+        sub: 'El técnico deberá corregir y firmar de nuevo.',
+        type: 'warning',
+      });
+      setTimeout(() => location.reload(), 400);
+    } else {
+      ilusToast(d.error || 'Error al rechazar', { type:'error' });
+      if (btn){
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>Rechazar y devolver';
+      }
+    }
+  } catch(e){
+    ilusToast('Error de red', { type:'error' });
+    if (btn){
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>Rechazar y devolver';
+    }
   }
 }
 

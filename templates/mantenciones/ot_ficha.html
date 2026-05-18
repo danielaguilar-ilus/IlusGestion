@@ -944,12 +944,15 @@
    2) Firma técnico   → solo el técnico asignado (current_user.id == tecnico_user_id)
    3) Firma supervisor→ solo el que asignó (created_by) o admin/superadmin
    ═══════════════════════════════════════════════════════════════ #}
-{% if visita.estado in ('en_curso','completada','programada') %}
+{% if visita.estado in ('en_curso','completada','programada','pendiente_aprobacion','cerrada') %}
 {% set _firma_cli = visita.firma_cliente_url %}
 {% set _firma_tec = visita.firma_tecnico_url %}
 {% set _firma_sup = visita.firma_supervisor_url %}
 {% set _es_creador = current_user and visita.created_by and visita.created_by == current_user.username %}
-{% set _puede_firmar_sup = _es_creador or (permissions.admin or permissions.superadmin) %}
+{# 2026-05-18 — Flujo 3 firmas: el creador, admin, superadmin, supervisor
+   y ejecutivo pueden firmar como aprobador. Superadmin SIEMPRE pasa. #}
+{% set _role_low = (current_user.role if current_user else '') | lower %}
+{% set _puede_firmar_sup = _es_creador or permissions.admin or permissions.superadmin or (_role_low in ['supervisor','ejecutivo']) %}
 
 <div class="ot-firmas-panel" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;
      padding:18px 22px;margin:18px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)">
