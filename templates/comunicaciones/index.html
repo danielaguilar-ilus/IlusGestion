@@ -39,6 +39,12 @@
         <i class="bi bi-list-ul me-1"></i>Historial
       </button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabDiagnostico"
+              onclick="diagCargar()">
+        <i class="bi bi-activity me-1"></i>Diagnóstico
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content">
@@ -1085,8 +1091,163 @@
       </div>
     </div>
 
+    {# ══════════════════════════════════════════════
+       TAB 5 — DIAGNÓSTICO COMPLETO
+       Semáforo por canal + lista de problemas detectados + acciones.
+       Pensado para que Daniel sepa QUÉ está roto y QUÉ hacer al respecto.
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tabDiagnostico">
+      <div class="row g-3">
+
+        {# Cabecera con CTA Refrescar #}
+        <div class="col-12">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+              <h5 class="mb-1 fw-bold"><i class="bi bi-activity me-2 text-danger"></i>Estado real de las comunicaciones</h5>
+              <div class="text-muted small">Verifica conexión real con cada canal y muestra qué hay que corregir.</div>
+            </div>
+            <button class="btn btn-sm btn-outline-dark" id="diagBtnRefresh" onclick="diagCargar()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Re-ejecutar diagnóstico
+            </button>
+          </div>
+        </div>
+
+        {# Semáforos por canal #}
+        <div class="col-12">
+          <div class="row g-3" id="diagSemaforos">
+            <div class="col-md-4">
+              <div class="card shadow-sm border-0">
+                <div class="card-body">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <span id="diagLedEmail" class="diag-led pendiente"></span>
+                    <strong><i class="bi bi-envelope me-1"></i>Email</strong>
+                  </div>
+                  <div id="diagDetEmail" class="small text-muted">Cargando…</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="card shadow-sm border-0">
+                <div class="card-body">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <span id="diagLedWA" class="diag-led pendiente"></span>
+                    <strong><i class="bi bi-whatsapp me-1"></i>WhatsApp</strong>
+                  </div>
+                  <div id="diagDetWA" class="small text-muted">Cargando…</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="card shadow-sm border-0">
+                <div class="card-body">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <span id="diagLedSMS" class="diag-led pendiente"></span>
+                    <strong><i class="bi bi-chat-text me-1"></i>SMS</strong>
+                  </div>
+                  <div id="diagDetSMS" class="small text-muted">Cargando…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# Acciones pendientes (recomendaciones) #}
+        <div class="col-12">
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <strong><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Acciones pendientes</strong>
+            </div>
+            <div class="card-body" id="diagAcciones">
+              <div class="text-muted small">Cargando…</div>
+            </div>
+          </div>
+        </div>
+
+        {# Test rápido por canal #}
+        <div class="col-12">
+          <div class="card shadow-sm border-0">
+            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+              <strong><i class="bi bi-send-check me-2 text-danger"></i>Test rápido</strong>
+              <span class="ms-2 small text-light opacity-75">Envía un mensaje real para verificar el canal</span>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <div class="d-flex gap-2 align-items-end">
+                    <div class="flex-grow-1">
+                      <label class="form-label small fw-bold"><i class="bi bi-envelope me-1"></i>Email</label>
+                      <input id="diagTestEmail" type="email" class="form-control form-control-sm" placeholder="tu@correo.cl">
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary" onclick="diagTestEnviar('email')">
+                      <i class="bi bi-send"></i>
+                    </button>
+                  </div>
+                  <div id="diagTestEmailMsg" class="small mt-1"></div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex gap-2 align-items-end">
+                    <div class="flex-grow-1">
+                      <label class="form-label small fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp</label>
+                      <input id="diagTestWA" type="text" class="form-control form-control-sm" placeholder="+56912345678">
+                    </div>
+                    <button class="btn btn-sm btn-outline-success" onclick="diagTestEnviar('whatsapp')">
+                      <i class="bi bi-send"></i>
+                    </button>
+                  </div>
+                  <div id="diagTestWAMsg" class="small mt-1"></div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex gap-2 align-items-end">
+                    <div class="flex-grow-1">
+                      <label class="form-label small fw-bold"><i class="bi bi-chat-text me-1"></i>SMS</label>
+                      <input id="diagTestSMS" type="text" class="form-control form-control-sm" placeholder="+56912345678">
+                    </div>
+                    <button class="btn btn-sm btn-outline-warning" onclick="diagTestEnviar('sms')">
+                      <i class="bi bi-send"></i>
+                    </button>
+                  </div>
+                  <div id="diagTestSMSMsg" class="small mt-1"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# Detalle técnico desplegable (para devs) #}
+        <div class="col-12">
+          <details class="card shadow-sm border-0">
+            <summary class="card-header" style="cursor:pointer;background:#f3f4f6">
+              <strong><i class="bi bi-code-slash me-2"></i>Detalle técnico (JSON crudo)</strong>
+              <small class="text-muted ms-2">Útil para soporte</small>
+            </summary>
+            <div class="card-body">
+              <pre id="diagJsonRaw" class="small mb-0" style="max-height:400px;overflow:auto;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;font-size:.74rem">Cargando…</pre>
+            </div>
+          </details>
+        </div>
+
+      </div>{# /row #}
+    </div>{# /tab-pane diag #}
+
   </div>{# /tab-content #}
 </div>{# /container #}
+
+<style>
+.diag-led{display:inline-block;width:14px;height:14px;border-radius:50%;flex-shrink:0}
+.diag-led.ok{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.18)}
+.diag-led.warn{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.diag-led.error{background:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.18)}
+.diag-led.pendiente{background:#9ca3af;box-shadow:0 0 0 3px rgba(156,163,175,.18)}
+.diag-accion{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:#fff}
+.diag-accion.alta{border-left:4px solid #dc2626;background:#fef2f2}
+.diag-accion.media{border-left:4px solid #f59e0b;background:#fffbeb}
+.diag-accion.info{border-left:4px solid #16a34a;background:#f0fdf4}
+.diag-accion-titulo{font-weight:700;color:#0f172a;font-size:.95rem;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.diag-accion-detalle{font-size:.85rem;color:#374151;margin-bottom:6px;line-height:1.45}
+.diag-accion-accion{font-size:.82rem;color:#0c4a6e;background:#e0f2fe;padding:8px 10px;border-radius:6px;line-height:1.45}
+.diag-accion-cta{display:inline-flex;align-items:center;gap:5px;background:var(--ilus-red);color:#fff;padding:4px 12px;border-radius:50px;font-size:.78rem;font-weight:700;text-decoration:none;margin-top:6px}
+.diag-accion-cta:hover{background:#b91c1c;color:#fff}
+</style>
 
 <script>
 // Filtros combinados client-side del tab Historial
@@ -2676,6 +2837,173 @@ function togglePass(id, btn) {
   const show = inp.type === 'password';
   inp.type = show ? 'text' : 'password';
   btn.querySelector('i').className = 'bi bi-eye' + (show ? '-slash' : '');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TAB DIAGNÓSTICO — Estado real de las comunicaciones
+   Carga GET /api/comm/diagnostico-completo y pinta semáforos +
+   recomendaciones. Incluye test rápido por canal.
+   ══════════════════════════════════════════════════════════════ */
+let _diagData = null;
+
+async function diagCargar(){
+  const btn = document.getElementById('diagBtnRefresh');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Verificando…'; }
+  document.getElementById('diagDetEmail').textContent = 'Verificando…';
+  document.getElementById('diagDetWA').textContent = 'Verificando…';
+  document.getElementById('diagDetSMS').textContent = 'Verificando…';
+  document.getElementById('diagAcciones').innerHTML = '<div class="text-muted small">Verificando…</div>';
+
+  try {
+    const r = await fetch('/api/comm/diagnostico-completo');
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'fallo');
+    _diagData = d;
+    diagPintar(d);
+  } catch (e) {
+    const err = String(e.message || e);
+    document.getElementById('diagDetEmail').innerHTML = '<span class="text-danger">Error: ' + esc(err) + '</span>';
+    document.getElementById('diagAcciones').innerHTML = '<div class="text-danger small">No se pudo cargar el diagnóstico: ' + esc(err) + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Re-ejecutar diagnóstico'; }
+  }
+}
+
+function diagSetLed(id, estado){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'diag-led ' + estado;
+}
+
+function diagPintar(d){
+  // ── Email ─────────────────────────────────────────────────
+  const smtp = d.smtp || {}; const resend = d.resend || {};
+  let emailEstado = 'error';
+  let emailDet = [];
+  if (resend.api_key_configured){
+    if (resend.test_request && resend.test_request.ok){
+      emailEstado = resend.domain_verified ? 'ok' : 'warn';
+      emailDet.push(`<strong>Resend</strong>: ${resend.domain_verified ? '✓ con dominio <code>' + esc(resend.domain_verified) + '</code> verificado' : 'API key OK pero sin dominio verificado'}`);
+    } else {
+      emailEstado = 'error';
+      emailDet.push('<strong>Resend</strong>: API key configurada pero rechazada');
+    }
+  } else {
+    emailDet.push('<strong>Resend</strong>: no configurado');
+  }
+  if (smtp.configurado){
+    const test = smtp.test_connection || {};
+    if (test.ok){
+      if (emailEstado === 'error') emailEstado = 'warn';
+      emailDet.push(`<strong>SMTP</strong>: <span class="text-success">conexión OK</span> (<code>${esc(smtp.host)}:${esc(smtp.port)}</code>, ${test.ms}ms)`);
+    } else {
+      emailDet.push(`<strong>SMTP</strong>: <span class="text-danger">${esc(test.error || 'fallo')}</span> (stage: ${esc(test.stage || '?')})`);
+    }
+    emailDet.push(`<small>User: <code>${esc(smtp.user)}</code> · Password: ${esc(smtp.password_format)} (${smtp.password_length} chars)</small>`);
+    if (smtp.alerta_spf) emailDet.push(`<small class="text-warning">⚠ ${esc(smtp.alerta_spf)}</small>`);
+  } else {
+    emailDet.push('<strong>SMTP</strong>: no configurado');
+  }
+  if (!d.kill_switch_global.email){
+    emailEstado = 'error';
+    emailDet.unshift('<strong class="text-danger">⛔ Kill switch GLOBAL email APAGADO</strong>');
+  }
+  diagSetLed('diagLedEmail', emailEstado);
+  document.getElementById('diagDetEmail').innerHTML = emailDet.join('<br>');
+
+  // ── WhatsApp ──────────────────────────────────────────────
+  const wa = d.twilio?.whatsapp || {};
+  let waEstado = wa.configurado ? (wa.sandbox ? 'warn' : 'ok') : 'error';
+  let waDet = [];
+  if (wa.configurado){
+    waDet.push(`<strong>From</strong>: <code>${esc(wa.from_number)}</code>`);
+    waDet.push(`<strong>SID</strong>: <code>${esc(wa.account_sid || '—')}</code>`);
+    if (wa.sandbox){
+      waDet.push('<small class="text-warning">⚠ Sandbox compartido — cada destinatario debe enviar <code>join finger-cry</code> al +1 415 523 8886</small>');
+    }
+  } else {
+    waDet.push('<span class="text-danger">No configurado — falta TWILIO_ACCOUNT_SID / TOKEN / TWILIO_WHATSAPP_FROM</span>');
+  }
+  if (!d.kill_switch_global.whatsapp){
+    waEstado = 'error';
+    waDet.unshift('<strong class="text-danger">⛔ Kill switch GLOBAL WhatsApp APAGADO</strong>');
+  }
+  diagSetLed('diagLedWA', waEstado);
+  document.getElementById('diagDetWA').innerHTML = waDet.join('<br>');
+
+  // ── SMS ───────────────────────────────────────────────────
+  const sms = d.twilio?.sms || {};
+  let smsEstado = sms.configurado ? (sms.trial_warning ? 'warn' : 'ok') : 'error';
+  let smsDet = [];
+  if (sms.configurado){
+    smsDet.push(`<strong>From</strong>: <code>${esc(sms.from_number)}</code>`);
+    smsDet.push(`<strong>SID</strong>: <code>${esc(sms.account_sid || '—')}</code>`);
+    if (sms.trial_warning){
+      smsDet.push('<small class="text-warning">⚠ Cuenta Trial — solo permite enviar a números verificados en console.twilio.com</small>');
+    }
+  } else {
+    smsDet.push('<span class="text-muted">No configurado (opcional — TWILIO_PHONE_FROM)</span>');
+  }
+  diagSetLed('diagLedSMS', smsEstado);
+  document.getElementById('diagDetSMS').innerHTML = smsDet.join('<br>');
+
+  // ── Acciones pendientes ───────────────────────────────────
+  const acc = d.recomendaciones || [];
+  const accDiv = document.getElementById('diagAcciones');
+  if (!acc.length){
+    accDiv.innerHTML = '<div class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Todo OK, no hay acciones pendientes.</div>';
+  } else {
+    // Ordenar: alta → media → info
+    const orden = { alta: 0, media: 1, info: 2 };
+    acc.sort((a,b)=> (orden[a.prioridad]||9) - (orden[b.prioridad]||9));
+    accDiv.innerHTML = acc.map(a => {
+      const icono = { email: 'bi-envelope', whatsapp: 'bi-whatsapp', sms: 'bi-chat-text', todos: 'bi-check-circle' }[a.canal] || 'bi-info-circle';
+      const cta = a.url_externa
+        ? `<a href="${esc(a.url_externa)}" target="_blank" rel="noopener" class="diag-accion-cta"><i class="bi bi-box-arrow-up-right"></i>Abrir</a>`
+        : '';
+      return `<div class="diag-accion ${esc(a.prioridad)}">
+        <div class="diag-accion-titulo">
+          <i class="bi ${icono}"></i>${esc(a.titulo)}
+          <span class="badge ms-auto" style="background:${a.prioridad==='alta'?'#dc2626':(a.prioridad==='media'?'#f59e0b':'#16a34a')};color:#fff;font-size:.62rem">${esc(a.prioridad.toUpperCase())}</span>
+        </div>
+        <div class="diag-accion-detalle">${esc(a.detalle)}</div>
+        <div class="diag-accion-accion"><i class="bi bi-arrow-right me-1"></i><strong>Acción:</strong> ${esc(a.accion)}</div>
+        ${cta}
+      </div>`;
+    }).join('');
+  }
+
+  // ── JSON crudo ────────────────────────────────────────────
+  document.getElementById('diagJsonRaw').textContent = JSON.stringify(d, null, 2);
+}
+
+async function diagTestEnviar(tipo){
+  const inputId = { email: 'diagTestEmail', whatsapp: 'diagTestWA', sms: 'diagTestSMS' }[tipo];
+  const msgId   = { email: 'diagTestEmailMsg', whatsapp: 'diagTestWAMsg', sms: 'diagTestSMSMsg' }[tipo];
+  const dest = (document.getElementById(inputId)?.value || '').trim();
+  const msg  = document.getElementById(msgId);
+  if (!dest){
+    msg.innerHTML = '<span class="text-danger">Ingresa un destinatario.</span>';
+    return;
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Enviando…';
+  try {
+    const r = await fetch('/api/comm/test-rapido', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipo, destinatario: dest }),
+    });
+    const d = await r.json();
+    if (d.ok){
+      msg.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.mensaje || 'Enviado')}</span>`;
+    } else {
+      let html = `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>${esc(d.error || 'Fallo')}</span>`;
+      if (d.hint) html += `<br><span class="text-warning small">💡 ${esc(d.hint)}</span>`;
+      msg.innerHTML = html;
+    }
+  } catch (e) {
+    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e.message||e))}</span>`;
+  }
 }
 </script>
 {% endblock %}

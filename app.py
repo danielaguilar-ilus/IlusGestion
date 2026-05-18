@@ -9554,6 +9554,517 @@ def twilio_test_send():
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
+# ════════════════════════════════════════════════════════════════════
+# DIAGNÓSTICO COMPLETO DE COMUNICACIONES
+#   Endpoint admin que devuelve TODO el estado de los canales:
+#     - SMTP: conexión real con timeout 5s (HELO + AUTH probable)
+#     - Resend: ping a la API + verificación de dominio
+#     - Twilio: SMS + WhatsApp + detección de sandbox/trial
+#     - Kill switches: globales + por módulo
+#     - Últimos 10 envíos por canal
+#     - Lista de RECOMENDACIONES priorizadas (qué hacer YA)
+#
+#   Útil cuando Daniel dice "configuré todo pero no funciona": una sola
+#   llamada GET y aparece el problema con instrucciones de remedio.
+# ════════════════════════════════════════════════════════════════════
+@app.route("/api/comm/diagnostico-completo", methods=["GET"])
+def comm_diagnostico_completo():
+    """Diagnóstico exhaustivo de TODOS los canales de comunicación.
+
+    Sólo admin/superadmin. Devuelve JSON con estado real, errores
+    específicos y lista de acciones que el operador debe tomar.
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin"}), 403
+
+    import socket as _sock
+    import ssl as _ssl_d
+
+    recomendaciones = []  # acciones priorizadas para Daniel
+
+    # ── 1. SMTP — config + test real de conexión (timeout 5s) ────────
+    try:
+        smtp_cfg = _get_smtp_cfg()
+    except Exception as e:
+        smtp_cfg = {"smtp_user": "", "smtp_pass": "", "_source": f"error: {e}"}
+
+    smtp_pass = smtp_cfg.get("smtp_pass") or ""
+    # Detectar formato del password: App Password de Gmail tiene 16 chars
+    # sin espacios (aunque Google los muestra con espacios al copiar).
+    pass_clean = smtp_pass.replace(" ", "")
+    if not smtp_pass:
+        pass_format = "no_configurada"
+    elif len(pass_clean) == 16 and pass_clean.isalnum():
+        pass_format = "app_password_16ch"
+    elif " " in smtp_pass and len(pass_clean) == 16:
+        pass_format = "app_password_16ch_con_espacios"
+    else:
+        pass_format = "normal_password_o_inusual"
+
+    smtp_test = {"ok": False, "error": None, "ms": None, "stage": None}
+    if smtp_cfg.get("smtp_user") and smtp_cfg.get("smtp_pass"):
+        import time as _t_smtp
+        t0 = _t_smtp.time()
+        try:
+            host = smtp_cfg.get("smtp_host") or "smtp.gmail.com"
+            port = int(smtp_cfg.get("smtp_port") or 587)
+            secure = bool(smtp_cfg.get("secure"))
+            # Test ligero: sólo abrir socket + EHLO + STARTTLS (sin login real
+            # para no spammear Gmail con intentos cada vez que se carga el dashboard)
+            if secure:
+                ctx = _ssl_d.create_default_context()
+                with _open_smtp_client(host, port, True, timeout=5, context=ctx) as srv:
+                    srv.ehlo()
+                    smtp_test["stage"] = "ssl_connected"
+                    smtp_test["ok"] = True
+            else:
+                with _open_smtp_client(host, port, False, timeout=5) as srv:
+                    srv.ehlo()
+                    smtp_test["stage"] = "tcp_connected"
+                    if srv.has_extn("starttls"):
+                        smtp_test["stage"] = "starttls_available"
+                    smtp_test["ok"] = True
+        except _sock.timeout:
+            smtp_test["error"] = f"Timeout (>5s) — Railway probablemente bloquea puerto {smtp_cfg.get('smtp_port', 587)} SMTP saliente. Configura RESEND_API_KEY en Railway."
+            smtp_test["stage"] = "timeout"
+        except _sock.gaierror as e:
+            smtp_test["error"] = f"DNS no resuelve {host}: {e}"
+            smtp_test["stage"] = "dns"
+        except smtplib.SMTPAuthenticationError as e:
+            smtp_test["error"] = f"Credenciales rechazadas: {e}"
+            smtp_test["stage"] = "auth"
+        except Exception as e:
+            smtp_test["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            smtp_test["stage"] = "exception"
+        smtp_test["ms"] = int((_t_smtp.time() - t0) * 1000)
+
+    smtp_status = {
+        "host": smtp_cfg.get("smtp_host", ""),
+        "port": smtp_cfg.get("smtp_port", 587),
+        "user": smtp_cfg.get("smtp_user", ""),
+        "password_format": pass_format,
+        "password_length": len(pass_clean),
+        "from_email": smtp_cfg.get("from_addr", ""),
+        "from_name": smtp_cfg.get("from_name", ""),
+        "secure": bool(smtp_cfg.get("secure")),
+        "source": smtp_cfg.get("_source", ""),
+        "configurado": bool(smtp_cfg.get("smtp_user") and smtp_cfg.get("smtp_pass")),
+        "test_connection": smtp_test,
+    }
+
+    # Si SMTP es Gmail pero from_email NO es @gmail.com / @sphs.cl, alertar SPF
+    from_email = (smtp_cfg.get("from_addr") or "").lower()
+    smtp_user_lc = (smtp_cfg.get("smtp_user") or "").lower()
+    is_gmail = "gmail.com" in (smtp_cfg.get("smtp_host") or "").lower()
+    if is_gmail and from_email and "@" in from_email:
+        from_domain = from_email.split("@")[-1]
+        user_domain = smtp_user_lc.split("@")[-1] if "@" in smtp_user_lc else ""
+        # Gmail rechaza envíos donde el From es de un dominio distinto al user
+        # (a menos que el usuario configure "Send mail as..." con SMTP del dominio)
+        if from_domain and user_domain and from_domain != user_domain:
+            smtp_status["alerta_spf"] = (
+                f"El From ({from_domain}) NO coincide con el dominio SMTP user "
+                f"({user_domain}). Gmail puede rechazar o marcar como spam. "
+                f"Solución: usa Resend con dominio verificado, o cambia el From a tu cuenta Gmail."
+            )
+
+    # ── 2. RESEND — config + ping API ────────────────────────────────
+    try:
+        resend_cfg = _get_resend_cfg()
+    except Exception:
+        resend_cfg = {}
+
+    resend_status = {
+        "api_key_configured": bool(resend_cfg.get("api_key")),
+        "from_addr": resend_cfg.get("from_addr", ""),
+        "source": resend_cfg.get("_source", ""),
+        "domain_verified": None,
+        "test_request": None,
+        "domains": [],
+    }
+
+    if resend_cfg.get("api_key"):
+        try:
+            ok, code, data = _resend_api_call("GET", "/domains")
+            resend_status["test_request"] = {"http": code, "ok": ok}
+            if ok and isinstance(data, dict):
+                doms = data.get("data") or []
+                if isinstance(doms, list):
+                    resend_status["domains"] = [
+                        {"name": d.get("name"), "status": d.get("status"),
+                         "region": d.get("region")}
+                        for d in doms if isinstance(d, dict)
+                    ]
+                    verified = [d for d in doms if isinstance(d, dict)
+                                and (d.get("status") or "").lower() == "verified"]
+                    resend_status["domain_verified"] = verified[0].get("name") if verified else None
+            elif not ok:
+                resend_status["test_error"] = (data.get("error")
+                                               or data.get("message")
+                                               or "ping fallido")
+        except Exception as e:
+            resend_status["test_error"] = f"{type(e).__name__}: {e}"
+
+    # ── 3. TWILIO — SMS + WhatsApp + detección sandbox/trial ─────────
+    try:
+        twilio_diag = _twilio_diagnostico()
+    except Exception:
+        twilio_diag = {"whatsapp": {}, "sms": {}}
+
+    wa = twilio_diag.get("whatsapp", {})
+    sms = twilio_diag.get("sms", {})
+
+    # Detectar si WhatsApp está usando el sandbox compartido
+    wa_from = wa.get("from_number") or ""
+    is_wa_sandbox = "+14155238886" in wa_from  # número público sandbox Twilio
+    sms_from = sms.get("from_number") or ""
+    # Trial accounts típicamente reciben números USA empezando con +1...
+    # No es 100% determinístico (compras pueden ser US también), pero +1507...
+    # es el rango típico de trial. Lo marcamos como advertencia.
+    sms_trial_warning = sms_from.startswith("+1") and len(sms_from) >= 11
+
+    twilio_status = {
+        "whatsapp": {
+            "configurado": wa.get("configurado", False),
+            "account_sid": wa.get("account_sid"),
+            "from_number": wa_from,
+            "sandbox": is_wa_sandbox,
+            "sandbox_join_code": "join finger-cry" if is_wa_sandbox else None,
+            "sandbox_join_number": "+1 415 523 8886" if is_wa_sandbox else None,
+        },
+        "sms": {
+            "configurado": sms.get("configurado", False),
+            "account_sid": sms.get("account_sid"),
+            "from_number": sms_from,
+            "trial_warning": sms_trial_warning,
+        },
+    }
+
+    # ── 4. KILL SWITCHES — global + por módulo ───────────────────────
+    try:
+        kill_global = {
+            "email": comm_is_enabled("email"),
+            "whatsapp": comm_is_enabled("whatsapp"),
+        }
+    except Exception:
+        kill_global = {"email": True, "whatsapp": True}
+
+    kill_modulos = {}
+    try:
+        estado = _comm_killswitch_estado() or {}
+        for mod, conf in estado.items():
+            kill_modulos[mod] = {
+                "email_bloqueado": bool(conf.get("email_bloqueado")),
+                "whatsapp_bloqueado": bool(conf.get("whatsapp_bloqueado")),
+                "sms_bloqueado": bool(conf.get("sms_bloqueado")),
+            }
+    except Exception:
+        pass
+
+    # ── 5. Últimos envíos por canal ──────────────────────────────────
+    ultimos_email = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT destinatario, asunto, evento, estado, error_msg, creado_en "
+            "  FROM email_log ORDER BY id DESC LIMIT 10"
+        ) or []
+        for r in rows:
+            r = dict(r)
+            dest = r.get("destinatario") or ""
+            if "@" in dest:
+                local, _, dom = dest.partition("@")
+                if len(local) > 3:
+                    dest = local[:2] + "***@" + dom
+            r["destinatario"] = dest
+            if r.get("creado_en"):
+                r["creado_en"] = str(r["creado_en"])
+            ultimos_email.append(r)
+    except Exception:
+        pass
+
+    ultimos_wa = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT canal, destinatario, asunto, estado, detalle, created_at "
+            "  FROM comm_log WHERE canal IN ('whatsapp','sms') "
+            "  ORDER BY created_at DESC LIMIT 10"
+        ) or []
+        for r in rows:
+            r = dict(r)
+            if r.get("created_at"):
+                r["created_at"] = str(r["created_at"])
+            ultimos_wa.append(r)
+    except Exception:
+        pass
+
+    # ── 6. RECOMENDACIONES ───────────────────────────────────────────
+    # Priorizadas: las primeras son las que más probablemente
+    # estén causando que las comunicaciones no funcionen ahora mismo.
+
+    # Email — si SMTP falla y no hay Resend
+    if not resend_status["api_key_configured"]:
+        if not smtp_status["configurado"]:
+            recomendaciones.append({
+                "canal": "email", "prioridad": "alta",
+                "titulo": "Email completamente inactivo",
+                "detalle": "No hay ni Resend ni SMTP configurados. Configura una de las dos opciones.",
+                "accion": "Ir a /comunicaciones → tab Email → guardar credenciales SMTP, o configurar RESEND_API_KEY en Railway.",
+            })
+        elif smtp_test.get("stage") == "timeout":
+            recomendaciones.append({
+                "canal": "email", "prioridad": "alta",
+                "titulo": "Railway bloquea SMTP saliente",
+                "detalle": "Railway bloquea el puerto SMTP de Gmail. Daniel debe configurar Resend (envío vía HTTPS).",
+                "accion": "1) Crear cuenta en resend.com (gratis 100/día). 2) Generar API Key. 3) Configurar RESEND_API_KEY en Railway Variables. 4) Verificar dominio ilusfitness.com en resend.com/domains.",
+                "url_externa": "https://resend.com/api-keys",
+            })
+        elif smtp_test.get("stage") == "auth":
+            recomendaciones.append({
+                "canal": "email", "prioridad": "alta",
+                "titulo": "Gmail rechazó las credenciales SMTP",
+                "detalle": "El email/password de Gmail no son válidos. Gmail desde 2022 requiere App Password de 16 caracteres (no la clave normal).",
+                "accion": "1) Activa verificación en 2 pasos en la cuenta Gmail. 2) Ve a myaccount.google.com/apppasswords. 3) Genera una App Password. 4) Pégala en /comunicaciones → SMTP password.",
+                "url_externa": "https://myaccount.google.com/apppasswords",
+            })
+        elif pass_format == "normal_password_o_inusual":
+            recomendaciones.append({
+                "canal": "email", "prioridad": "media",
+                "titulo": "El password Gmail no parece App Password",
+                "detalle": "Gmail desde 2022 requiere App Password (16 caracteres). Tu password actual tiene formato inusual.",
+                "accion": "Genera una App Password en https://myaccount.google.com/apppasswords y reemplázala en /comunicaciones.",
+                "url_externa": "https://myaccount.google.com/apppasswords",
+            })
+    else:
+        # Resend SÍ configurada — chequear si tiene dominio verificado
+        if resend_status["test_request"] and not resend_status["test_request"].get("ok"):
+            recomendaciones.append({
+                "canal": "email", "prioridad": "alta",
+                "titulo": "Resend rechaza la API Key",
+                "detalle": f"La API Key de Resend no es válida: {resend_status.get('test_error', '')}",
+                "accion": "Genera una nueva API Key en resend.com/api-keys y actualízala en Railway (RESEND_API_KEY).",
+                "url_externa": "https://resend.com/api-keys",
+            })
+        elif not resend_status["domain_verified"]:
+            recomendaciones.append({
+                "canal": "email", "prioridad": "media",
+                "titulo": "Resend sin dominio verificado",
+                "detalle": "Sin dominio verificado, Resend solo permite enviar al email REGISTRADO en la cuenta Resend (no a usuarios).",
+                "accion": "Verifica el dominio ilusfitness.com en resend.com/domains (5 min — añadir 3 registros DNS).",
+                "url_externa": "https://resend.com/domains",
+            })
+
+    # WhatsApp — sandbox issue
+    if twilio_status["whatsapp"]["configurado"] and twilio_status["whatsapp"]["sandbox"]:
+        recomendaciones.append({
+            "canal": "whatsapp", "prioridad": "alta",
+            "titulo": "WhatsApp Sandbox — cada destinatario debe 'opt-in'",
+            "detalle": ("Estás usando el sandbox compartido de Twilio (+14155238886). "
+                        "Antes de recibir mensajes, cada usuario destinatario DEBE enviar "
+                        "'join finger-cry' al +1 415 523 8886 desde su propio WhatsApp."),
+            "accion": ("1) Envía 'join finger-cry' desde tu WhatsApp al +1 415 523 8886. "
+                       "2) Espera confirmación de Twilio (texto 'Twilio Sandbox: You are all set!'). "
+                       "3) Repite para cada técnico/cliente que deba recibir mensajes. "
+                       "4) Para producción sin restricción de opt-in: registra un Sender Number aprobado por WhatsApp (paga, 1-2 semanas)."),
+            "url_externa": "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
+        })
+
+    # SMS — trial warning
+    if twilio_status["sms"]["configurado"] and twilio_status["sms"]["trial_warning"]:
+        recomendaciones.append({
+            "canal": "sms", "prioridad": "media",
+            "titulo": "SMS desde número Twilio Trial — solo a verificados",
+            "detalle": ("El número SMS configurado parece ser de cuenta Trial. "
+                        "En Trial, Twilio solo permite enviar SMS a números VERIFICADOS en la console."),
+            "accion": ("1) Ve a console.twilio.com → Phone Numbers → Verified Caller IDs. "
+                       "2) Agrega y verifica tu número (+56 9 xxxx xxxx) por SMS o llamada. "
+                       "3) Para producción real: paga la cuenta Twilio (~USD 20 minimum) para quitar restricción."),
+            "url_externa": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified",
+        })
+
+    # Kill switches encendidos
+    if not kill_global.get("email"):
+        recomendaciones.append({
+            "canal": "email", "prioridad": "alta",
+            "titulo": "Kill switch GLOBAL de email está OFF",
+            "detalle": "Todos los envíos de email están bloqueados por kill switch global.",
+            "accion": "Ve a /comunicaciones → Plantillas → re-activar email global.",
+        })
+    if not kill_global.get("whatsapp"):
+        recomendaciones.append({
+            "canal": "whatsapp", "prioridad": "alta",
+            "titulo": "Kill switch GLOBAL de WhatsApp está OFF",
+            "detalle": "Todos los envíos de WhatsApp están bloqueados por kill switch global.",
+            "accion": "Ve a /comunicaciones → Plantillas → re-activar WhatsApp global.",
+        })
+
+    # Si todo bien, dejar mensaje positivo
+    if not recomendaciones:
+        recomendaciones.append({
+            "canal": "todos", "prioridad": "info",
+            "titulo": "Todos los canales aparentan estar OK",
+            "detalle": "No detecté problemas obvios. Si aún así no llegan mensajes, prueba el envío real con el botón Test rápido.",
+            "accion": "POST /api/comm/test-rapido con tu número/email.",
+        })
+
+    return jsonify({
+        "ok": True,
+        "smtp": smtp_status,
+        "resend": resend_status,
+        "twilio": twilio_status,
+        "kill_switch_global": kill_global,
+        "kill_switch_modulos": kill_modulos,
+        "ultimos_envios_email": ultimos_email,
+        "ultimos_envios_wa": ultimos_wa,
+        "recomendaciones": recomendaciones,
+        "env_vars_requeridas": {
+            "email": ["RESEND_API_KEY", "RESEND_FROM_ADDR (opcional)",
+                      "SMTP_USER", "SMTP_PASS (App Password)", "SMTP_HOST", "SMTP_PORT"],
+            "twilio": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                       "TWILIO_WHATSAPP_FROM", "TWILIO_PHONE_FROM"],
+            "branding": ["ILUS_BRAND_NAME", "ILUS_BRAND_FROM_EMAIL", "ILUS_BRAND_REPLY_TO"],
+        },
+    })
+
+
+@app.route("/api/comm/test-rapido", methods=["POST"])
+def comm_test_rapido():
+    """Envía 1 mensaje de prueba REAL por el canal indicado y reporta resultado.
+
+    Body JSON: { tipo: 'email'|'whatsapp'|'sms', destinatario: '...' }
+
+    A diferencia de /api/twilio/test, este endpoint:
+      - cubre los 3 canales (incluye email vía la pipeline real)
+      - devuelve mensajes de error específicos y accionables
+      - registra el intento en comm_log/email_log para trazabilidad
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin"}), 403
+
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "").lower().strip()
+    dest = (d.get("destinatario") or "").strip()
+
+    if tipo not in ("email", "whatsapp", "sms"):
+        return jsonify({"ok": False, "error": "tipo debe ser email|whatsapp|sms"}), 400
+    if not dest:
+        return jsonify({"ok": False, "error": "Falta el destinatario"}), 400
+
+    # ── EMAIL ────────────────────────────────────────────────────────
+    if tipo == "email":
+        if "@" not in dest:
+            return jsonify({"ok": False, "error": "Destinatario inválido (debe ser un email)"}), 400
+        try:
+            html = _ilus_email_html(
+                titulo="Prueba de comunicaciones ILUS",
+                subtitulo="Test rápido — diagnóstico",
+                saludo=f"Hola, {dest}",
+                parrafos=[
+                    "Este es un mensaje de prueba enviado desde el panel de diagnóstico de comunicaciones ILUS.",
+                    f"Enviado por: <strong>{current_username() or 'sistema'}</strong>",
+                    f"Fecha: <strong>{_now_chile_str('%d/%m/%Y %H:%M')}</strong>",
+                    "Si recibiste este mensaje, el canal email está funcionando correctamente.",
+                ],
+            )
+            sent = _send_ilus_email(
+                dest, _brand_subject("Prueba de comunicaciones"),
+                html, evento="test_rapido", modulo="comunicacion_interna"
+            )
+            if sent:
+                return jsonify({
+                    "ok": True,
+                    "canal": "email",
+                    "destinatario": dest,
+                    "mensaje": f"Email enviado a {dest}. Revisa la bandeja (puede tardar 1-2 min).",
+                })
+            err = getattr(g, "_last_email_error", "") or "Envío fallido sin error específico"
+            return jsonify({
+                "ok": False, "canal": "email", "destinatario": dest,
+                "error": str(err)[:500],
+                "hint": "Revisa /api/comm/diagnostico-completo para ver SMTP/Resend status.",
+            }), 422
+        except Exception as e:
+            return jsonify({"ok": False, "canal": "email", "destinatario": dest,
+                            "error": f"{type(e).__name__}: {str(e)[:300]}"}), 500
+
+    # ── WHATSAPP ─────────────────────────────────────────────────────
+    if tipo == "whatsapp":
+        wa = _get_wa_cfg()
+        if not (wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number")):
+            return jsonify({
+                "ok": False, "canal": "whatsapp",
+                "error": "WhatsApp Twilio no está configurado. Falta TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN o TWILIO_WHATSAPP_FROM.",
+            }), 400
+        body = (f"🔧 ILUS · Prueba de comunicaciones\n\n"
+                f"Este es un mensaje de prueba enviado a las "
+                f"{_now_chile_str('%H:%M')} del {_now_chile_str('%d/%m/%Y')}.\n\n"
+                f"Si recibes este mensaje, el canal WhatsApp está OK.")
+        try:
+            sid = _send_whatsapp(wa["account_sid"], wa["auth_token"],
+                                 wa["from_number"], dest, body,
+                                 modulo="comunicacion_interna")
+            try: _comm_log_entry("whatsapp", dest, "Test rápido", "ok", f"sid={sid}")
+            except Exception: pass
+            return jsonify({
+                "ok": True, "canal": "whatsapp", "destinatario": dest, "sid": sid,
+                "mensaje": (f"WhatsApp enviado. SID: {sid}. "
+                            f"IMPORTANTE: si usas el sandbox, el destinatario "
+                            f"debe haber enviado 'join finger-cry' a +1 415 523 8886 antes."),
+            })
+        except Exception as e:
+            err_str = str(e)[:400]
+            try: _comm_log_entry("whatsapp", dest, "Test rápido", "error", err_str)
+            except Exception: pass
+            hint = ""
+            if "63007" in err_str or "Channel" in err_str:
+                hint = "Error 63007: el número destinatario NO ha hecho opt-in al sandbox. Pídele que envíe 'join finger-cry' al +1 415 523 8886."
+            elif "21211" in err_str or "not a valid" in err_str.lower():
+                hint = "Error 21211: el número destinatario no es válido. Formato esperado: +56912345678."
+            elif "authenticate" in err_str.lower() or "20003" in err_str:
+                hint = "Credenciales Twilio inválidas. Revisa TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN en Railway."
+            return jsonify({
+                "ok": False, "canal": "whatsapp", "destinatario": dest,
+                "error": err_str, "hint": hint,
+            }), 422
+
+    # ── SMS ──────────────────────────────────────────────────────────
+    if tipo == "sms":
+        sms = _get_sms_cfg()
+        if not (sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number")):
+            return jsonify({
+                "ok": False, "canal": "sms",
+                "error": "SMS Twilio no está configurado. Falta TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN o TWILIO_PHONE_FROM.",
+            }), 400
+        body = (f"ILUS · Prueba SMS {_now_chile_str('%H:%M')}. "
+                f"Si lees esto, el canal funciona.")
+        try:
+            sid = _send_sms(sms["account_sid"], sms["auth_token"],
+                            sms["from_number"], dest, body,
+                            modulo="comunicacion_interna")
+            try: _comm_log_entry("sms", dest, "Test rápido", "ok", f"sid={sid}")
+            except Exception: pass
+            return jsonify({
+                "ok": True, "canal": "sms", "destinatario": dest, "sid": sid,
+                "mensaje": f"SMS enviado. SID: {sid}.",
+            })
+        except Exception as e:
+            err_str = str(e)[:400]
+            try: _comm_log_entry("sms", dest, "Test rápido", "error", err_str)
+            except Exception: pass
+            hint = ""
+            if "21608" in err_str:
+                hint = "Error 21608: cuenta Trial → el destinatario debe estar VERIFICADO en console.twilio.com/us1/develop/phone-numbers/manage/verified."
+            elif "21211" in err_str:
+                hint = "Error 21211: número destinatario inválido. Formato esperado: +56912345678."
+            return jsonify({
+                "ok": False, "canal": "sms", "destinatario": dest,
+                "error": err_str, "hint": hint,
+            }), 422
+
+    return jsonify({"ok": False, "error": "Caso no esperado"}), 500
+
+
 def _notificar_ot_asignada(visita_id):
     """Helper: cuando se asigna/crea una OT, intenta notificar al técnico
     asignado y al contacto en sitio por WhatsApp/SMS (best-effort, async).
