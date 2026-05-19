@@ -10904,6 +10904,293 @@ def erp_documento_unificado():
     return jsonify({"hdr": h, "lineas": out_lineas})
 
 
+# ════════════════════════════════════════════════════════════════════════
+# FALLBACK SQL DIRECTO — _cubicador_fetch_doc_via_sql
+# ════════════════════════════════════════════════════════════════════════
+# Cuando la REST API de Random (lab.random.cl/ilus) está caída (HTTP 502),
+# armamos el mismo dict que devuelve _ERP.fetch_document() pero leyendo
+# directo del SQL Server de Random vía _random_sql_query (motor blindado
+# read-only, mismo que usan Transporte y Mantenciones).
+#
+# Reusa erp_engine.nudo_variants/TIDO_NUDO_MAP para mapear VD/WEB → NVV.
+# Reusa _normalize_phone_cl / _cmen_to_comuna ya definidos en app.py.
+# ════════════════════════════════════════════════════════════════════════
+
+def _cubicador_fetch_doc_via_sql(tido, nudo):
+    """Fallback SQL al SQL Server de Random cuando la REST API está caída.
+
+    Devuelve un dict con EXACTAMENTE el mismo shape que
+    erp_engine.ERPClient.fetch_document() — para que el código de cruzado
+    con BD local en _cubicador_fetch siga funcionando sin cambios.
+
+    Si el SQL falla, retorna None (igual que fetch_document cuando no
+    encuentra el documento). En ese caso el cubicador mostrará un error
+    legible al usuario.
+    """
+    import erp_engine as _erpe
+
+    t0 = time.time()
+    display_tido = tido
+    # Mapeo VD/WEB → NVV con prefijo en NUDO (mismo que el motor REST)
+    if tido in _erpe.TIDO_NUDO_MAP:
+        erp_tido, nudo_fn = _erpe.TIDO_NUDO_MAP[tido]
+        erp_nudo = nudo_fn(nudo)
+    else:
+        erp_tido = tido
+        erp_nudo = str(nudo).strip()
+
+    # Probar varias variantes de NUDO (ceros a la izquierda, sin padding, etc.)
+    nudo_candidatos = _erpe.nudo_variants(erp_nudo)
+    diag = {
+        "nudo_tried": [], "rut_tried": [],
+        "fallback_chain": ["⚠ SQL FALLBACK (REST API caída)"],
+        "latency_ms": 0, "match_nudo": None, "match_rut": None,
+        "source": "sql_fallback",
+    }
+
+    header_row = None
+    matched_nudo = None
+    for nv in nudo_candidatos:
+        diag["nudo_tried"].append(nv)
+        try:
+            header_row = _random_sql_one("""
+                SELECT TOP 1
+                    LTRIM(RTRIM(TIDO))   AS TIDO,
+                    LTRIM(RTRIM(NUDO))   AS NUDO,
+                    FEEMDO,
+                    VANEDO, VAIVDO, VABRDO,
+                    LTRIM(RTRIM(COALESCE(ENDO, '')))   AS ENDO,
+                    LTRIM(RTRIM(COALESCE(NOKOEN, ''))) AS NOKOEN,
+                    LTRIM(RTRIM(COALESCE(DIENDESP, ''))) AS DIENDESP,
+                    LTRIM(RTRIM(COALESCE(OBDO, ''))) AS OBDO,
+                    LTRIM(RTRIM(COALESCE(TEXTO1, ''))) AS TEXTO1
+                FROM MAEEDO
+                WHERE LTRIM(RTRIM(TIDO)) = %s
+                  AND LTRIM(RTRIM(NUDO)) = %s
+                  AND LTRIM(RTRIM(EMDO)) = '01'
+            """, (erp_tido, nv))
+        except Exception as e:
+            print(f"[cub-fetch-sql] MAEEDO query falló: {e}", flush=True)
+            header_row = None
+        if header_row:
+            matched_nudo = nv
+            diag["match_nudo"] = nv
+            diag["fallback_chain"].append(f"MAEEDO OK con nudo={nv}")
+            break
+
+    diag["latency_ms"] = int((time.time() - t0) * 1000)
+
+    if not header_row:
+        # No encontrado por SQL — mismo comportamiento que fetch_document
+        print(f"[cub-fetch-sql] MAEEDO sin match para {erp_tido}/{erp_nudo} "
+              f"(probé {len(diag['nudo_tried'])} variantes)", flush=True)
+        return None
+
+    # ── Líneas (MAEDDO) ───────────────────────────────────────────────
+    lineas_raw = []
+    try:
+        lineas_raw = _random_sql_query("""
+            SELECT
+                LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT,
+                LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR,
+                COALESCE(CAPRCO1, 0) AS CAPRCO1,
+                COALESCE(CAPRAD1, 0) AS CAPRAD1,
+                COALESCE(VANELI,  0) AS VANELI,
+                LTRIM(RTRIM(COALESCE(OBDO, ''))) AS OBDO
+            FROM MAEDDO
+            WHERE LTRIM(RTRIM(TIDO)) = %s
+              AND LTRIM(RTRIM(NUDO)) = %s
+              AND LTRIM(RTRIM(EMDO)) = '01'
+        """, (erp_tido, matched_nudo), max_rows=500) or []
+    except Exception as e:
+        print(f"[cub-fetch-sql] MAEDDO query falló: {e}", flush=True)
+
+    # ── Observaciones (MAEEDOOB) — opcional, si falla no rompe ──────────
+    obs_table_main = ""
+    dir_despacho_obs = ""
+    try:
+        obs_row = _random_sql_one("""
+            SELECT TOP 1
+                LTRIM(RTRIM(COALESCE(OBDO,     ''))) AS OBDO,
+                LTRIM(RTRIM(COALESCE(DIENDESP, ''))) AS DIENDESP,
+                LTRIM(RTRIM(COALESCE(TEXTO1,   ''))) AS TEXTO1,
+                LTRIM(RTRIM(COALESCE(TEXTO2,   ''))) AS TEXTO2,
+                LTRIM(RTRIM(COALESCE(TEXTO3,   ''))) AS TEXTO3
+            FROM MAEEDOOB
+            WHERE LTRIM(RTRIM(TIDO)) = %s
+              AND LTRIM(RTRIM(NUDO)) = %s
+              AND LTRIM(RTRIM(EMDO)) = '01'
+        """, (erp_tido, matched_nudo)) or {}
+        obs_table_main = _erpe.fix_yen_to_n(obs_row.get("OBDO") or "")
+        dir_despacho_obs = _erpe.fix_yen_to_n(obs_row.get("DIENDESP") or "")
+        # Concatenar textos extra si vienen llenos
+        extras = []
+        for k in ("TEXTO1", "TEXTO2", "TEXTO3"):
+            v = _erpe.fix_yen_to_n((obs_row.get(k) or "").strip())
+            if v and v not in extras:
+                extras.append(v)
+        if extras:
+            if obs_table_main:
+                obs_table_main = obs_table_main + " / " + " / ".join(extras[:3])
+            else:
+                obs_table_main = " / ".join(extras[:3])
+        if obs_table_main:
+            diag["fallback_chain"].append(f"obs desde MAEEDOOB (SQL)")
+    except Exception as e:
+        # Tabla MAEEDOOB no es crítica — si falla seguimos
+        print(f"[cub-fetch-sql] MAEEDOOB query falló (no crítico): {e}", flush=True)
+
+    # ── Datos del cliente desde MAEEN (enriquecimiento, opcional) ────────
+    cliente_nombre  = ""
+    cliente_rut     = (header_row.get("ENDO") or "").strip()
+    cliente_email   = ""
+    cliente_telefono = ""
+    cliente_dir_base = ""
+    cliente_cmen    = ""
+    cliente_cien    = ""
+    cliente_obs_en  = ""
+
+    if cliente_rut:
+        # ENDO en MAEEDO viene con DV (formato "65206047-K"); MAEEN.RTEN típicamente
+        # guarda solo la parte numérica. Probamos por prefijo.
+        rut_base = cliente_rut.split("-")[0].strip() if "-" in cliente_rut else cliente_rut
+        diag["rut_tried"] = [rut_base, cliente_rut]
+        try:
+            ent_row = _random_sql_one("""
+                SELECT TOP 1
+                    LTRIM(RTRIM(COALESCE(RTEN,    ''))) AS RTEN,
+                    LTRIM(RTRIM(COALESCE(NOKOEN,  ''))) AS NOKOEN,
+                    LTRIM(RTRIM(COALESCE(EMAIL,   ''))) AS EMAIL,
+                    LTRIM(RTRIM(COALESCE(FOEN,    ''))) AS FOEN,
+                    LTRIM(RTRIM(COALESCE(FAEN,    ''))) AS FAEN,
+                    LTRIM(RTRIM(COALESCE(DIEN,    ''))) AS DIEN,
+                    LTRIM(RTRIM(COALESCE(CMEN,    ''))) AS CMEN,
+                    LTRIM(RTRIM(COALESCE(CIEN,    ''))) AS CIEN,
+                    LTRIM(RTRIM(COALESCE(OBEN,    ''))) AS OBEN
+                FROM MAEEN
+                WHERE LTRIM(RTRIM(RTEN)) = %s
+            """, (rut_base,))
+            if ent_row:
+                cliente_nombre   = _erpe.fix_yen_to_n(ent_row.get("NOKOEN") or "").title()
+                cliente_rut      = ent_row.get("RTEN") or cliente_rut
+                cliente_email    = (ent_row.get("EMAIL") or "").strip()
+                cliente_telefono = _erpe.normalize_phone_cl(
+                    ent_row.get("FOEN") or ent_row.get("FAEN") or ""
+                )
+                cliente_dir_base = _erpe.fix_yen_to_n(ent_row.get("DIEN") or "").title()
+                cliente_cien     = (ent_row.get("CIEN") or "").strip()
+                cliente_cmen     = (ent_row.get("CMEN") or "").strip()
+                cliente_obs_en   = _erpe.fix_yen_to_n(ent_row.get("OBEN") or "")
+                diag["match_rut"] = cliente_rut
+                diag["fallback_chain"].append(f"entidad MAEEN OK (RUT={rut_base})")
+        except Exception as e:
+            print(f"[cub-fetch-sql] MAEEN query falló (no crítico): {e}", flush=True)
+
+    # ── Consolidar: header > entidad para nombre/email/teléfono/dir ────
+    header_nombre = _erpe.fix_yen_to_n(header_row.get("NOKOEN") or "").title()
+    cliente_nombre = cliente_nombre or header_nombre
+
+    # Dirección: DIENDESP de MAEEDOOB > DIENDESP de MAEEDO > DIEN de MAEEN
+    direccion_final = (
+        dir_despacho_obs
+        or _erpe.fix_yen_to_n(header_row.get("DIENDESP") or "")
+        or cliente_dir_base
+    )
+
+    # Observaciones: MAEEDOOB > MAEEDO.OBDO/TEXTO1 > MAEEN.OBEN
+    obs_header = _erpe.fix_yen_to_n(
+        (header_row.get("OBDO") or "").strip()
+        or (header_row.get("TEXTO1") or "").strip()
+    )
+    obs_final = obs_table_main or obs_header or cliente_obs_en
+
+    # Comuna resuelta desde código (cien/cmen) de MAEEN
+    comuna_final = _erpe.cmen_to_comuna(cliente_cien, cliente_cmen) if cliente_cmen else ""
+
+    # ── Tipo de operación: detectar SKUs ZZ en las líneas ───────────────
+    # Reusar la misma lógica de _scan_lines del motor (clase ERPClient).
+    line_data = _ERP._scan_lines(lineas_raw)
+
+    # ── Formatear fecha ─────────────────────────────────────────────────
+    fecha_raw = header_row.get("FEEMDO")
+    if fecha_raw:
+        try:
+            if hasattr(fecha_raw, "strftime"):
+                fecha_str = fecha_raw.strftime("%d/%m/%Y")
+            else:
+                fecha_str = datetime.fromisoformat(
+                    str(fecha_raw).replace("Z", "+00:00")
+                ).strftime("%d/%m/%Y")
+        except Exception:
+            fecha_str = str(fecha_raw)
+    else:
+        fecha_str = ""
+
+    # ── Snapshot diagnóstico (mismas keys que motor REST) ──────────────
+    raw_sample = {}
+    for k, v in (header_row or {}).items():
+        if v is None:
+            continue
+        sv = str(v).strip()
+        if sv and sv not in ("0", "0.0", "0.00", "False"):
+            raw_sample[k] = sv[:200]
+    raw_line_sample = {}
+    if lineas_raw:
+        chosen = lineas_raw[0]
+        for k, v in chosen.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if sv and sv not in ("0", "0.0", "0.00", "False"):
+                raw_line_sample[k] = sv[:200]
+
+    diag["latency_ms"] = int((time.time() - t0) * 1000)
+    diag["extracted"] = {
+        "cliente_nombre":  bool(cliente_nombre),
+        "email":           bool(cliente_email),
+        "telefono":        bool(cliente_telefono),
+        "direccion":       bool(direccion_final),
+        "comuna":          bool(comuna_final),
+        "observaciones":   bool(obs_final),
+        "obs_source":      "maeedoob_sql" if obs_table_main else (
+                            "header_sql" if obs_header else
+                            "entidad_oben_sql" if cliente_obs_en else "ninguno"),
+        "source":          "sql_fallback",
+    }
+
+    doc = {
+        "tido":             display_tido,
+        "nudo":             str(nudo),
+        "nudo_display":     str(nudo).lstrip("0") or str(nudo),
+        "erp_tido":         erp_tido,
+        "erp_nudo":         matched_nudo or erp_nudo,
+        "fecha":            fecha_str,
+        "cliente_nombre":   cliente_nombre,
+        "cliente_rut":      cliente_rut,
+        "email":            cliente_email,
+        "telefono":         cliente_telefono,
+        "direccion":        direccion_final,
+        "comuna":           comuna_final,
+        "observaciones":    obs_final,
+        "tipo_operacion":   line_data.get("tipo_operacion", ""),
+        "tipo_codigo":      line_data.get("tipo_codigo", ""),
+        "valor_neto":       float(header_row.get("VANEDO") or 0),
+        "valor_iva":        float(header_row.get("VAIVDO") or 0),
+        "valor_bruto":      float(header_row.get("VABRDO") or 0),
+        "lineas_raw":       lineas_raw,
+        "all_fields":       list((header_row or {}).keys()),
+        "raw_sample":       raw_sample,
+        "raw_linea_sample": raw_line_sample,
+        "raw_obs_sample":   {},
+        "n_lineas":         len(lineas_raw),
+        "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
+        "diagnostics":      diag,
+    }
+    print(f"[cub-fetch-sql] OK {erp_tido}/{matched_nudo}: cliente={(cliente_nombre or '?')[:30]} "
+          f"lineas={len(lineas_raw)} latency={diag['latency_ms']}ms", flush=True)
+    return doc
+
+
 def _cubicador_fetch(tido, nudo):
     """
     SHIM de compatibilidad sobre erp_engine.ERPClient.
@@ -10940,12 +11227,31 @@ def _cubicador_fetch(tido, nudo):
     no a esta función — esto es solo para mantener la API legacy.
     ════════════════════════════════════════════════════════════════════
     """
-    # 1. Llamar al motor unificado
+    # 1. Llamar al motor unificado — con FALLBACK SQL si REST API cae
+    # ─────────────────────────────────────────────────────────────────
+    # Si Random REST (lab.random.cl/ilus) devuelve 502/503/504/timeout,
+    # caemos al SQL Server (mismo que usan Transporte/Mantenciones) para
+    # no romper el cubicador cuando el backend HTTP del ERP está caído.
+    # ─────────────────────────────────────────────────────────────────
+    doc = None
     try:
         doc = _ERP.fetch_document(tido, nudo)
     except Exception as e:
-        # Re-raise para que el caller maneje (ConnectionError típico)
-        raise
+        err_str = str(e)
+        # Patrones que indican que la REST API está caída (no error del documento)
+        if any(p in err_str for p in ("ERP_DOWN", "Bad Gateway", "502", "503", "504",
+                                       "Connection refused", "Connection aborted",
+                                       "timed out", "Read timed out")):
+            print(f"[cub-fetch] REST API caída ({err_str[:120]}), usando fallback SQL "
+                  f"para {tido}/{nudo}", flush=True)
+            try:
+                doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+            except Exception as sql_e:
+                print(f"[cub-fetch] Fallback SQL también falló: {sql_e}", flush=True)
+                doc = None
+        else:
+            # Otro tipo de error — re-raise para que el caller maneje
+            raise
 
     if not doc:
         return None, []

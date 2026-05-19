@@ -557,6 +557,10 @@ function _fmtFecha(f){
 
 // ════════════════════════════════════════════════════════════
 //  KANBAN — render
+//  2026-05-19 (Aaron Urbina fix vista Kanban): se agrega botón
+//  "Revisar" cuando `o.puede_aprobar && estado === 'pendiente_aprobacion'`.
+//  El campo `puede_aprobar` viene inyectado por el backend por cada OT
+//  vía `_is_aprobador()` (mismo flag que usa la Lista — unificado).
 // ════════════════════════════════════════════════════════════
 function renderKanban(){
   const cols = { pendiente: [], proceso: [], verificacion: [], finalizada: [] };
@@ -574,8 +578,33 @@ function renderKanban(){
     }
     list.innerHTML = cols[g].map(o => {
       const prog = o.n_tareas > 0 ? Math.round((o.n_completas / o.n_tareas) * 100) : 0;
+      const numEsc = _escHtml(o.numero_ot || ('VS-' + o.id));
+      const tituloJs = String(o.titulo || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      const showRevisar = !!o.puede_aprobar && o.estado === 'pendiente_aprobacion';
+      // OJO: evitamos <button> dentro de <a> (HTML inválido). Cuando hay
+      // botón Revisar, renderizamos un <div> con click handler en el body
+      // (que navega) + el botón como elemento separado.
+      if (showRevisar) {
+        return `<div class="kban-card" style="cursor:default">
+          <div onclick="location.href='/mantenciones/ot/${o.id}'" style="cursor:pointer">
+            <div class="kc-num">${numEsc}</div>
+            <div class="kc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
+            <div class="kc-meta">
+              ${o.tipo ? `<span><i class="bi bi-tag"></i> ${_escHtml(o.tipo)}</span>` : ''}
+              ${o.fecha_programada ? `<span><i class="bi bi-calendar3"></i> ${_fmtFecha(o.fecha_programada)}</span>` : ''}
+              ${o.tecnico_nombre ? `<span><i class="bi bi-person"></i> ${_escHtml(o.tecnico_nombre)}</span>` : ''}
+            </div>
+            ${o.n_tareas > 0 ? `<div class="kc-progress"><div style="width:${prog}%"></div></div>` : ''}
+          </div>
+          <button type="button" class="btn btn-aprobar btn-sm w-100 mt-2"
+                  onclick="abrirRevisarOT(${o.id}, '${numEsc}', '${tituloJs}')"
+                  title="Revisar y aprobar/rechazar OT firmada por el técnico">
+            <i class="bi bi-patch-check-fill me-1"></i>Revisar
+          </button>
+        </div>`;
+      }
       return `<a href="/mantenciones/ot/${o.id}" class="kban-card text-decoration-none text-dark d-block">
-        <div class="kc-num">${_escHtml(o.numero_ot || ('VS-' + o.id))}</div>
+        <div class="kc-num">${numEsc}</div>
         <div class="kc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
         <div class="kc-meta">
           ${o.tipo ? `<span><i class="bi bi-tag"></i> ${_escHtml(o.tipo)}</span>` : ''}
@@ -590,6 +619,9 @@ function renderKanban(){
 
 // ════════════════════════════════════════════════════════════
 //  CARDS — render
+//  2026-05-19 (Aaron Urbina fix vista Mosaico): igual que en Kanban,
+//  se agrega botón "Revisar" cuando `o.puede_aprobar &&
+//  estado === 'pendiente_aprobacion'`. Lógica unificada con la vista Lista.
 // ════════════════════════════════════════════════════════════
 function renderCards(){
   const grid = document.getElementById('cards-grid');
@@ -603,10 +635,20 @@ function renderCards(){
   empty.style.display = 'none';
   grid.innerHTML = data.map(o => {
     const prog = o.n_tareas > 0 ? Math.round((o.n_completas / o.n_tareas) * 100) : 0;
+    const numEsc = _escHtml(o.numero_ot || ('VS-' + o.id));
+    const tituloJs = String(o.titulo || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     const editBtn = {{ 'true' if permissions.superadmin else 'false' }} ?
       `<button class="btn btn-sm btn-outline-secondary" onclick="event.preventDefault();editarOTRapido(${o.id},'${(o.titulo||'').replace(/'/g,"\\'")}','${o.estado||''}','${o.tipo||''}','${o.modalidad_cobro||'pagado'}','${o.prioridad||'media'}')" title="Editar"><i class="bi bi-pencil"></i></button>` : '';
+    const showRevisar = !!o.puede_aprobar && o.estado === 'pendiente_aprobacion';
+    const revisarBtn = showRevisar
+      ? `<button type="button" class="btn btn-aprobar btn-sm"
+                  onclick="event.preventDefault();abrirRevisarOT(${o.id}, '${numEsc}', '${tituloJs}')"
+                  title="Revisar y aprobar/rechazar OT firmada por el técnico">
+            <i class="bi bi-patch-check-fill me-1"></i>Revisar
+         </button>`
+      : '';
     return `<div class="ot-card estado-${o.estado || 'programada'}">
-      <span class="oc-num">${_escHtml(o.numero_ot || ('VS-' + o.id))}</span>
+      <span class="oc-num">${numEsc}</span>
       <div class="oc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
       <div class="oc-tit">${_escHtml(o.titulo || (o.tipo || 'visita') + ' programada')}</div>
       <div class="oc-stats">
@@ -616,7 +658,8 @@ function renderCards(){
       </div>
       <div class="oc-footer">
         <span class="badge-estado bs-${o.estado || 'programada'}">${(o.estado||'programada').replace('_',' ')}</span>
-        <div class="d-flex gap-1">
+        <div class="d-flex gap-1 flex-wrap justify-content-end">
+          ${revisarBtn}
           ${editBtn}
           <a href="/mantenciones/ot/${o.id}" class="btn btn-sm btn-ilus fw-bold"><i class="bi bi-arrow-right"></i></a>
         </div>
