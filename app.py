@@ -9836,8 +9836,8 @@ def erp_sql_test():
     Pensado para que Daniel pueda diagnosticar "¿por qué BLV 19893 no
     aparece?" sin tener que mirar logs de Railway.
     """
-    rol = g.user.get("rol") if g.user else None
-    if rol not in ("admin", "superadmin"):
+    # FIX: el campo es 'role' no 'rol'. Y también verificar permissions
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
         return jsonify({"error": "Solo admin/superadmin"}), 403
 
     import erp_engine as _erpe
