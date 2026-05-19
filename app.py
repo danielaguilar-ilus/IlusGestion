@@ -9480,12 +9480,8 @@ def erp_documento_raw():
                 break
         except Exception as exc:
             err_str = str(exc)
-            if "ERP_CIRCUIT_OPEN" in err_str:
-                return jsonify({
-                    "error": err_str.replace("ERP_CIRCUIT_OPEN: ", ""),
-                    "error_tipo": "ERP_CIRCUIT_OPEN",
-                }), 503
-            elif "ERP_DOWN" in err_str:
+            print(f"[erp-doc-raw] error tido={erp_tido} nudo={nv}: {err_str[:200]}", flush=True)
+            if "ERP_DOWN" in err_str:
                 return jsonify({
                     "error": "El ERP de Random está caído temporalmente. Reintenta en 1-2 minutos.",
                     "error_tipo": "ERP_DOWN",
@@ -10634,21 +10630,34 @@ def erp_documento_unificado():
         nudo = (request.args.get("nudo") or "").strip()
     if not tido or not nudo:
         return jsonify({"error":"tido y nudo son obligatorios"}), 400
+
+    # FIX 2026-05-19: logging detallado + check breaker GLOBAL antes de intentar
+    print(f"[cub-fetch] inicio tido={tido} nudo={nudo} user={current_username()}", flush=True)
+
+    # Si el breaker global está abierto, devolver mensaje claro SIN intentar
+    if _erp_breaker_is_open():
+        snap = erp_status_snapshot()
+        print(f"[cub-fetch] breaker abierto: {snap}", flush=True)
+        return jsonify({
+            "error": "El ERP de Random no está respondiendo. Reintentando automáticamente — espera 30 segundos y vuelve a intentar.",
+            "error_tipo": "ERP_BREAKER_OPEN",
+            "breaker": snap,
+        }), 503
+
     try:
         hdr, lineas = _cubicador_fetch(tido, nudo)
+        print(f"[cub-fetch] OK tido={tido} nudo={nudo} hdr={bool(hdr)} lineas={len(lineas) if lineas else 0}", flush=True)
     except Exception as exc:
-        # FIX 2026-05-19: mensajes amigables según tipo de error ERP
+        import traceback as _tb_cub
         err_str = str(exc)
-        if "ERP_CIRCUIT_OPEN" in err_str:
-            # Circuit breaker abierto — extraer segundos del mensaje
+        print(f"[cub-fetch] ERROR tido={tido} nudo={nudo}: {err_str[:300]}", flush=True)
+        # Log traceback solo si es error inesperado
+        if not any(p in err_str for p in ("ERP_DOWN", "ERP_AUTH", "ERP_NOT_FOUND")):
+            print(f"[cub-fetch] traceback:\n{_tb_cub.format_exc()}", flush=True)
+        # Mensajes amigables según tipo de error ERP
+        if "ERP_DOWN" in err_str:
             return jsonify({
-                "error": err_str.replace("ERP_CIRCUIT_OPEN: ", ""),
-                "error_tipo": "ERP_CIRCUIT_OPEN",
-                "reintentar_en_seg": 30,
-            }), 503
-        elif "ERP_DOWN" in err_str:
-            return jsonify({
-                "error": "El ERP de Random está caído temporalmente (no es problema de la app). Reintenta en 1-2 minutos.",
+                "error": "El ERP de Random está caído temporalmente. Reintenta en 1-2 minutos.",
                 "error_tipo": "ERP_DOWN",
             }), 503
         elif "ERP_AUTH" in err_str:
@@ -10659,7 +10668,11 @@ def erp_documento_unificado():
         elif "ERP_NOT_FOUND" in err_str:
             return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
         else:
-            return jsonify({"error": f"Error al consultar ERP: {err_str[:200]}", "error_tipo": "ERP_DESCONOCIDO"}), 503
+            return jsonify({
+                "error": f"Error al consultar ERP: {err_str[:200]}",
+                "error_tipo": "ERP_DESCONOCIDO",
+                "detalle_tecnico": err_str[:500],
+            }), 503
     if not hdr:
         return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
 
