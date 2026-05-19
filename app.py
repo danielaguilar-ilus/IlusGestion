@@ -9479,7 +9479,18 @@ def erp_documento_raw():
                 used_nudo = nv
                 break
         except Exception as exc:
-            return jsonify({"error": f"ERP no respondió: {exc}"}), 503
+            err_str = str(exc)
+            if "ERP_CIRCUIT_OPEN" in err_str:
+                return jsonify({
+                    "error": err_str.replace("ERP_CIRCUIT_OPEN: ", ""),
+                    "error_tipo": "ERP_CIRCUIT_OPEN",
+                }), 503
+            elif "ERP_DOWN" in err_str:
+                return jsonify({
+                    "error": "El ERP de Random está caído temporalmente. Reintenta en 1-2 minutos.",
+                    "error_tipo": "ERP_DOWN",
+                }), 503
+            return jsonify({"error": f"ERP no respondió: {err_str[:200]}"}), 503
 
     if not raw_body or not raw_body.get("data"):
         return jsonify({"error": "Documento no encontrado"}), 404
@@ -10626,7 +10637,29 @@ def erp_documento_unificado():
     try:
         hdr, lineas = _cubicador_fetch(tido, nudo)
     except Exception as exc:
-        return jsonify({"error": f"ERP no respondió: {exc}"}), 503
+        # FIX 2026-05-19: mensajes amigables según tipo de error ERP
+        err_str = str(exc)
+        if "ERP_CIRCUIT_OPEN" in err_str:
+            # Circuit breaker abierto — extraer segundos del mensaje
+            return jsonify({
+                "error": err_str.replace("ERP_CIRCUIT_OPEN: ", ""),
+                "error_tipo": "ERP_CIRCUIT_OPEN",
+                "reintentar_en_seg": 30,
+            }), 503
+        elif "ERP_DOWN" in err_str:
+            return jsonify({
+                "error": "El ERP de Random está caído temporalmente (no es problema de la app). Reintenta en 1-2 minutos.",
+                "error_tipo": "ERP_DOWN",
+            }), 503
+        elif "ERP_AUTH" in err_str:
+            return jsonify({
+                "error": "Credenciales del ERP rechazadas. Contacta al administrador.",
+                "error_tipo": "ERP_AUTH",
+            }), 502
+        elif "ERP_NOT_FOUND" in err_str:
+            return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
+        else:
+            return jsonify({"error": f"Error al consultar ERP: {err_str[:200]}", "error_tipo": "ERP_DESCONOCIDO"}), 503
     if not hdr:
         return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
 
