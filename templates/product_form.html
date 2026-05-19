@@ -525,19 +525,9 @@ const FORM_DATA = {
   /* ── Build dropdown items ─────────────────── */
   function buildResults(data, erpApiOk) {
     var html = '';
-
-    /* ── Banner: ERP API caída ──
-       Si el ERP REST no respondió, advertimos al usuario que solo
-       está viendo productos ya cargados localmente. */
-    if (erpApiOk === false) {
-      html += '<div style="padding:10px 14px;background:#fff8e1;border-bottom:1px solid #ffe0a0;'
-            + 'color:#8a5a00;font-size:.78rem;display:flex;align-items:flex-start;gap:8px;'
-            + 'position:sticky;top:0;z-index:2">'
-            + '<i class="bi bi-cloud-slash" style="font-size:1rem;flex-shrink:0;margin-top:1px"></i>'
-            + '<div><strong>ERP no disponible.</strong> Solo se muestran productos que ya están en el sistema. '
-            + 'Para crear uno NUEVO, escribe el SKU y nombre manualmente abajo.</div>'
-            + '</div>';
-    }
+    // Banner ERP-caído REMOVIDO (2026-05-19): Daniel pidió quitarlo.
+    // El fallback SQL al ERP debería traer los productos del catálogo aún
+    // cuando la REST API esté caída.
 
     if (!data.length) {
       html += '<div style="padding:16px 18px;color:#888;font-size:.88rem;display:flex;align-items:center;gap:8px">'

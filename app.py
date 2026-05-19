@@ -3940,6 +3940,7 @@ def product_search():
         pass
 
     # ── 3. REST API ERP /productos — fuente en tiempo real ───────────
+    erp_api_tried = False
     if len(q) >= 2:
         try:
             TOKEN = ERP_CONFIG.get("api_token", "")
@@ -3954,6 +3955,7 @@ def product_search():
                 },
                 TOKEN, timeout=6,
             )
+            erp_api_tried = True
             existing_skus = {r["sku"] for r in results}
             for p in (body.get("data") or []):
                 p_sku  = (p.get("KOPR") or "").strip().upper()
@@ -3971,18 +3973,59 @@ def product_search():
                 if len(results) >= 25:
                     break
         except Exception as e:
-            # ERP API caída: marcar el flag para que el frontend muestre banner.
-            # Igual devolvemos lo local (mejor que nada).
+            # REST API caída → marcar flag (sin banner UI; lo maneja fallback SQL).
             erp_api_ok = False
-            erp_api_error = type(e).__name__
             try:
-                # Mensaje compacto para diagnóstico (sin tokens / urls completas).
                 msg = str(e)
                 if len(msg) > 120:
                     msg = msg[:120] + "..."
                 erp_api_error = f"{type(e).__name__}: {msg}"
             except Exception:
-                pass
+                erp_api_error = type(e).__name__
+
+    # ── 4. FALLBACK SQL directo a MAEPR (cuando REST API cae) ────────
+    # 2026-05-19: si la REST API del ERP no responde, vamos directo al
+    # SQL Server de Random (mismo que usa Transporte/Mantenciones). Esto
+    # restaura el comportamiento de búsqueda CATÁLOGO completo del ERP.
+    if not erp_api_ok and len(q) >= 2:
+        try:
+            like_sql = f"%{q.upper()}%"
+            erp_rows = _random_sql_query(
+                f"""
+                SELECT TOP 25
+                       LTRIM(RTRIM(KOPR))   AS sku,
+                       LTRIM(RTRIM(NOKOPR)) AS nombre
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE UPPER(LTRIM(RTRIM(KOPR)))   LIKE %s
+                    OR UPPER(LTRIM(RTRIM(NOKOPR))) LIKE %s
+                 ORDER BY KOPR
+                """,
+                (like_sql, like_sql),
+                max_rows=25,
+            ) or []
+            existing_skus = {r["sku"] for r in results}
+            for r in erp_rows:
+                p_sku  = (r.get("sku") or "").strip().upper()
+                p_name = (r.get("nombre") or "").strip()
+                if not p_sku or p_sku in seen:
+                    continue
+                already = p_sku in existing_skus
+                results.append({
+                    "sku":           p_sku,
+                    "nombre":        p_name,
+                    "source":        "erp-sql",
+                    "already_exists": already,
+                })
+                seen.add(p_sku)
+                if len(results) >= 25:
+                    break
+            # SQL respondió OK → la búsqueda funcionó aunque la REST haya caído
+            erp_api_ok = True
+            erp_api_error = None
+            print(f"[product-search] fallback SQL ERP exitoso: {len(erp_rows)} filas para q={q!r}", flush=True)
+        except Exception as e2:
+            print(f"[product-search] fallback SQL ERP falló: {type(e2).__name__}: {str(e2)[:200]}", flush=True)
+            # Quedamos con erp_api_ok=False pero sin banner UI (Daniel pidió quitarlo)
 
     # ── Verificación final: consulta batch a app_products para todos los SKUs ──
     # Esto corrige casos donde la búsqueda por nombre falló (acentos/case) pero
