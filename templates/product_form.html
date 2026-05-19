@@ -523,17 +523,31 @@ const FORM_DATA = {
   }
 
   /* ── Build dropdown items ─────────────────── */
-  function buildResults(data) {
+  function buildResults(data, erpApiOk) {
+    var html = '';
+
+    /* ── Banner: ERP API caída ──
+       Si el ERP REST no respondió, advertimos al usuario que solo
+       está viendo productos ya cargados localmente. */
+    if (erpApiOk === false) {
+      html += '<div style="padding:10px 14px;background:#fff8e1;border-bottom:1px solid #ffe0a0;'
+            + 'color:#8a5a00;font-size:.78rem;display:flex;align-items:flex-start;gap:8px;'
+            + 'position:sticky;top:0;z-index:2">'
+            + '<i class="bi bi-cloud-slash" style="font-size:1rem;flex-shrink:0;margin-top:1px"></i>'
+            + '<div><strong>ERP no disponible.</strong> Solo se muestran productos que ya están en el sistema. '
+            + 'Para crear uno NUEVO, escribe el SKU y nombre manualmente abajo.</div>'
+            + '</div>';
+    }
+
     if (!data.length) {
-      return '<div style="padding:16px 18px;color:#888;font-size:.88rem;display:flex;align-items:center;gap:8px">'
-           + '<i class="bi bi-search" style="font-size:1rem"></i>&nbsp;Sin resultados para esta búsqueda</div>';
+      html += '<div style="padding:16px 18px;color:#888;font-size:.88rem;display:flex;align-items:center;gap:8px">'
+            + '<i class="bi bi-search" style="font-size:1rem"></i>&nbsp;Sin resultados para esta búsqueda</div>';
+      return html;
     }
 
     // Separar en dos grupos (el API ya los ordena, aquí confirmamos)
     var nuevos    = data.filter(function(i){ return !i.already_exists; });
     var existentes = data.filter(function(i){ return  i.already_exists; });
-
-    var html = '';
 
     /* ── Grupo 1: No registrados (disponibles para crear) ── */
     if (nuevos.length) {
@@ -586,11 +600,22 @@ const FORM_DATA = {
     setLoading(true);
     fetch('/api/product-search?q=' + encodeURIComponent(q))
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-      .then(function (data) {
+      .then(function (resp) {
         setLoading(false);                    // siempre apagar spinner
         if (inp.value.trim() !== q) return;  // respuesta stale: ignorar
 
-        showDropdown(buildResults(data));
+        /* Compat: el endpoint puede devolver array plano (legacy)
+           o el envelope nuevo { items, erp_api_ok, erp_api_error }. */
+        var items, erpApiOk;
+        if (Array.isArray(resp)) {
+          items = resp;
+          erpApiOk = true;  // legacy: no sabíamos
+        } else {
+          items = (resp && resp.items) || [];
+          erpApiOk = (resp && resp.erp_api_ok !== false);
+        }
+
+        showDropdown(buildResults(items, erpApiOk));
 
         /* attach click handlers */
         dropdown.querySelectorAll('.ta-item').forEach(function (el, idx) {
@@ -598,7 +623,7 @@ const FORM_DATA = {
           el.addEventListener('mouseleave', function () { el.style.background = ''; });
           el.addEventListener('mousedown', function (e) {
             e.preventDefault(); // prevent blur before click
-            var item = data[idx];
+            var item = items[idx];
             skuFld.value = item.sku.toUpperCase();
             nomFld.value = item.nombre;
             inp.value    = item.nombre + '  ·  ' + item.sku;
@@ -627,7 +652,8 @@ const FORM_DATA = {
       .catch(function () {
         setLoading(false);
         showDropdown('<div style="padding:12px 14px;color:#e67e00;font-size:.85rem">'
-                   + '<i class="bi bi-wifi-off me-1"></i>ERP no disponible en este momento</div>');
+                   + '<i class="bi bi-wifi-off me-1"></i>ERP no disponible en este momento. '
+                   + 'Puedes escribir SKU y nombre manualmente abajo.</div>');
       });
   }
 

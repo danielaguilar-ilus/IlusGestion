@@ -3859,16 +3859,38 @@ def product_search():
     """
     Typeahead unificado para el formulario de nuevo producto.
     Fuentes: app_products → tabla ERP local → ERP REST API (fallback).
-    Devuelve JSON: [{sku, nombre, source, already_exists}]
+
+    Devuelve JSON con envelope:
+      {
+        "items": [{sku, nombre, source, already_exists}, ...],
+        "erp_api_ok": bool,        # True si la REST API del ERP respondió OK
+        "erp_api_error": str|None  # mensaje del fallo (para diagnóstico)
+      }
+
+    Compat retro: si el frontend espera un array plano (versión antigua),
+    debe migrarse a leer .items — el envelope no rompe nada porque arrays
+    JSON y objetos son distinguibles client-side.
+
+    ════════════════════════════════════════════════════════════════════
+    NOTA CRÍTICA (bug 2026-05-19):
+    La tabla local `etiquetas` (ERP_TABLE) es un MIRROR de app_products
+    via sync_erp_table(), NO un cache del catálogo ERP completo. Por
+    eso, cuando la REST API del ERP cae (HTTP 502), la fuente #2 NO
+    aporta SKUs "nuevos" — solo devuelve los mismos que ya están en
+    app_products. Resultado: TODOS los items aparecían como "Ya
+    registrado" cuando en realidad faltaba la fuente externa.
+    FIX: devolver erp_api_ok=False para que el frontend muestre banner.
+    ════════════════════════════════════════════════════════════════════
     """
     q = request.args.get("q", "").strip()
     if len(q) < 2:
-        return jsonify([])
+        return jsonify({"items": [], "erp_api_ok": True, "erp_api_error": None})
 
     like_u  = f"%{q.upper()}%"
-    like_p  = f"%{q}%"
     results = []
     seen    = set()
+    erp_api_ok = True
+    erp_api_error = None
 
     # ── 1. app_products ──────────────────────────────────────────────
     try:
@@ -3891,6 +3913,8 @@ def product_search():
         pass
 
     # ── 2. Tabla ERP local ───────────────────────────────────────────
+    # Esta tabla es un mirror de app_products+app_bultos (ver sync_erp_table).
+    # Todo SKU que aparezca aquí ya está registrado por definición.
     try:
         rows2 = mysql_fetchall(
             f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
@@ -3903,14 +3927,14 @@ def product_search():
                 LIMIT 20""",
             (like_u, like_u, q.upper()),
         )
-        existing_skus = {r["sku"] for r in results}
         for r in rows2:
             sku = (r.get("sku") or "").strip().upper()
             if not sku or sku in seen:
                 continue
-            already = sku in existing_skus
+            # Marcamos already_exists=True por defecto: este es un mirror.
+            # La verificación final confirma con app_products de todas formas.
             results.append({"sku": sku, "nombre": (r.get("nombre") or "").strip(),
-                             "source": "erp", "already_exists": already})
+                             "source": "erp", "already_exists": True})
             seen.add(sku)
     except Exception:
         pass
@@ -3946,8 +3970,19 @@ def product_search():
                 seen.add(p_sku)
                 if len(results) >= 25:
                     break
-        except Exception:
-            pass   # si la API no responde, igual devolvemos lo local
+        except Exception as e:
+            # ERP API caída: marcar el flag para que el frontend muestre banner.
+            # Igual devolvemos lo local (mejor que nada).
+            erp_api_ok = False
+            erp_api_error = type(e).__name__
+            try:
+                # Mensaje compacto para diagnóstico (sin tokens / urls completas).
+                msg = str(e)
+                if len(msg) > 120:
+                    msg = msg[:120] + "..."
+                erp_api_error = f"{type(e).__name__}: {msg}"
+            except Exception:
+                pass
 
     # ── Verificación final: consulta batch a app_products para todos los SKUs ──
     # Esto corrige casos donde la búsqueda por nombre falló (acentos/case) pero
@@ -3973,7 +4008,11 @@ def product_search():
         x["nombre"].lower()
     ))
 
-    return jsonify(results[:20])
+    return jsonify({
+        "items": results[:20],
+        "erp_api_ok": erp_api_ok,
+        "erp_api_error": erp_api_error,
+    })
 
 
 # ─────────────────────────────────────────────
