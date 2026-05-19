@@ -13039,18 +13039,46 @@ def _tr_sync_mes_actual_bg(modo="resync"):
             print(f"[tr_sync_mes_actual] limpieza error: {e}", flush=True)
 
     # Resync desde ERP — del primer día del mes a hoy
+    # FIX 2026-05-19: agregar logging detallado y traceback para diagnóstico
+    import traceback as _tb_sync
+    print(f"[transp-sync] inicio modo={modo} rango={primer_dia}..{hoy_cl}", flush=True)
     try:
         count_ok, errs = _tr_bulk_sync_erp_mysql(
             primer_dia.strftime("%Y-%m-%d"),
             hoy_cl.strftime("%Y-%m-%d"),
         )
+        print(f"[transp-sync] OK sincronizados={count_ok} errores={len(errs or [])}", flush=True)
+        if errs:
+            for i, err in enumerate((errs or [])[:5]):
+                print(f"[transp-sync] err[{i}]: {str(err)[:200]}", flush=True)
     except Exception as e:
+        tb = _tb_sync.format_exc()
+        print(f"[transp-sync] EXCEPCION: {e}\n{tb}", flush=True)
+        # Clasificar el error para que el frontend muestre mensaje amigable
+        err_msg = str(e)
+        err_tipo = "ERP_DESCONOCIDO"
+        if "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+            err_tipo = "ERP_TIMEOUT"
+            err_msg_amigable = "El ERP no respondió a tiempo. Reintenta en unos minutos."
+        elif "auth" in err_msg.lower() or "login" in err_msg.lower() or "credential" in err_msg.lower():
+            err_tipo = "ERP_AUTH"
+            err_msg_amigable = "Credenciales ERP inválidas o expiradas. Contacta al administrador."
+        elif "connection" in err_msg.lower() or "connect" in err_msg.lower():
+            err_tipo = "ERP_CONNECTION"
+            err_msg_amigable = "No se pudo conectar al ERP Random. Verifica conexión de red."
+        elif "no module named" in err_msg.lower() or "import" in err_msg.lower():
+            err_tipo = "ERP_MODULO"
+            err_msg_amigable = "Módulo ERP no disponible en el servidor. Revisa requirements."
+        else:
+            err_msg_amigable = f"Error inesperado al consultar ERP: {err_msg[:100]}"
         return {
             "ok": False,
-            "error": f"Error al consultar ERP: {e}",
+            "error": err_msg_amigable,
+            "error_tipo": err_tipo,
+            "error_detalle": err_msg[:300],
             "limpiados": limpiados,
             "sincronizados": 0,
-            "errores": [str(e)],
+            "errores": [{"tipo": err_tipo, "mensaje": err_msg[:300]}],
             "ts": now_cl.isoformat(),
         }
 
@@ -13074,6 +13102,120 @@ def _tr_sync_mes_actual_bg(modo="resync"):
             + (f" · {limpiados} pendientes limpiados" if limpiados else "")
         ),
     }
+
+
+@app.route("/transporte/api/sync/diagnostico", methods=["GET"])
+@_tr_required
+def tr_sync_diagnostico():
+    """Endpoint diagnóstico ERP — verifica conexión, credenciales y query de prueba.
+    Útil cuando sync falla con '1 error(es) en el ERP' sin más detalle.
+    """
+    import time as _time_diag
+    import datetime as _dt_diag
+    from zoneinfo import ZoneInfo
+    now_cl = _dt_diag.datetime.now(ZoneInfo("America/Santiago"))
+    result = {
+        "ok": True,
+        "ts": now_cl.isoformat(),
+        "checks": [],
+    }
+
+    # Check 1: ¿Está el módulo erp_engine cargado?
+    try:
+        import erp_engine
+        result["checks"].append({"name": "modulo_erp_engine", "ok": True, "detalle": "Cargado"})
+    except Exception as e:
+        result["checks"].append({"name": "modulo_erp_engine", "ok": False, "detalle": f"NO cargado: {e}"})
+        result["ok"] = False
+        return jsonify(result), 200  # devolver 200 con detalle para que el frontend muestre
+
+    # Check 2: ¿pymssql disponible?
+    try:
+        import pymssql
+        result["checks"].append({"name": "pymssql_lib", "ok": True, "detalle": pymssql.__version__})
+    except Exception as e:
+        result["checks"].append({"name": "pymssql_lib", "ok": False, "detalle": f"NO instalado: {e}"})
+        result["ok"] = False
+
+    # Check 3: env vars del ERP
+    import os as _os_diag
+    erp_host = (_os_diag.environ.get("ERP_HOST") or "").strip()
+    erp_user = (_os_diag.environ.get("ERP_USER") or "").strip()
+    erp_db = (_os_diag.environ.get("ERP_DATABASE") or "").strip()
+    erp_pass_present = bool(_os_diag.environ.get("ERP_PASSWORD"))
+    erp_token_present = bool(_os_diag.environ.get("ERP_API_TOKEN"))
+    result["checks"].append({
+        "name": "env_vars",
+        "ok": bool(erp_host and erp_user and (erp_pass_present or erp_token_present)),
+        "detalle": {
+            "ERP_HOST": erp_host if erp_host else "FALTA",
+            "ERP_USER": erp_user if erp_user else "FALTA",
+            "ERP_DATABASE": erp_db if erp_db else "(default)",
+            "ERP_PASSWORD": "presente" if erp_pass_present else "FALTA",
+            "ERP_API_TOKEN": "presente" if erp_token_present else "(opcional)",
+        },
+    })
+
+    # Check 4: conexión real al ERP (con timeout 8s)
+    t0 = _time_diag.time()
+    try:
+        client = erp_engine.get_client()
+        if not client:
+            result["checks"].append({"name": "erp_client", "ok": False, "detalle": "get_client() retorna None"})
+            result["ok"] = False
+        else:
+            result["checks"].append({"name": "erp_client", "ok": True, "detalle": "Cliente inicializado"})
+            # Check 5: query de prueba — peek a un documento BLV reciente
+            try:
+                docs = client.peek_recent(tido="BLV", limit=1)
+                latency_ms = int((_time_diag.time() - t0) * 1000)
+                result["checks"].append({
+                    "name": "erp_query_peek",
+                    "ok": True,
+                    "detalle": f"Encontró {len(docs)} doc(s) en {latency_ms}ms",
+                })
+            except AttributeError:
+                # Si peek_recent no existe, intentar fetch_document de un nudo de prueba
+                try:
+                    test_doc = client.fetch_document("BLV", 1)
+                    latency_ms = int((_time_diag.time() - t0) * 1000)
+                    result["checks"].append({
+                        "name": "erp_query_test",
+                        "ok": True,
+                        "detalle": f"Query BLV/1 responde en {latency_ms}ms (existe={bool(test_doc)})",
+                    })
+                except Exception as e2:
+                    result["checks"].append({
+                        "name": "erp_query_test",
+                        "ok": False,
+                        "detalle": f"Query falla: {str(e2)[:200]}",
+                    })
+                    result["ok"] = False
+            except Exception as e:
+                result["checks"].append({
+                    "name": "erp_query_peek",
+                    "ok": False,
+                    "detalle": f"Query falla: {str(e)[:200]}",
+                })
+                result["ok"] = False
+    except Exception as e:
+        import traceback as _tb_diag
+        result["checks"].append({
+            "name": "erp_conexion",
+            "ok": False,
+            "detalle": f"{str(e)[:200]}",
+            "traceback": _tb_diag.format_exc()[:1000],
+        })
+        result["ok"] = False
+
+    # Resumen
+    fallidos = [c for c in result["checks"] if not c["ok"]]
+    result["resumen"] = {
+        "total_checks": len(result["checks"]),
+        "fallidos": len(fallidos),
+        "primer_error": fallidos[0]["detalle"] if fallidos else None,
+    }
+    return jsonify(result)
 
 
 @app.route("/transporte/api/sync/mes-actual", methods=["POST"])

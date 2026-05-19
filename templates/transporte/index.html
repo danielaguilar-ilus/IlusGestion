@@ -2,52 +2,115 @@
 {% block title %}Transporte y Distribución — ILUS{% endblock %}
 
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div>
-    <h4><i class="bi bi-truck me-2" style="color:var(--ilus-red)"></i>Transporte y Distribución</h4>
-    <div class="sub">Monitor de compromisos pendientes de despacho</div>
+<style>
+/* ── Hardening: cualquier .modal-backdrop sin .modal.show es huérfano.
+   Tener un selector defensivo evita que el bug del "overlay oscuro
+   persistente" lo arruine todo si el listener de Bootstrap falla. ── */
+body:not(.modal-open) .modal-backdrop { display:none !important; }
+</style>
+{# ════════════════════════════════════════════════════════════════
+   HERO COMPACTO — fondo blanco con accent ILUS rojo
+   Lo crítico: título + estado de sincronización + acciones primarias
+   ════════════════════════════════════════════════════════════════ #}
+<div class="tr-hero">
+  <div class="tr-hero-left">
+    <div class="tr-hero-icon">
+      <i class="bi bi-truck"></i>
+    </div>
+    <div>
+      <h1 class="tr-hero-title">Monitor de Transporte</h1>
+      <div class="tr-hero-sub">
+        Compromisos de despacho · <span id="trSyncStatus" class="tr-sync-status">cargando…</span>
+      </div>
+    </div>
   </div>
-  <div class="d-flex gap-2 flex-wrap">
-    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addDocModal"
-            title="Buscar y agregar un documento puntual del ERP (TIDO + NUDO)">
-      <i class="bi bi-plus-circle me-1"></i>Agregar uno
+  <div class="tr-hero-actions">
+    <button class="tr-btn tr-btn-primary" id="btnSyncMes" onclick="sincronizarMesActual()"
+            title="Trae todos los documentos del mes con saldo pendiente desde el ERP">
+      <i class="bi bi-arrow-clockwise"></i>
+      <span>Sincronizar mes</span>
     </button>
-    {# ── Sincronizar mes actual ──
-       Reemplaza "Sincronizar HOY". Trae todos los BLV+FCV con saldo del mes
-       corriente. Se complementa con el cron automático 09/11/15/17. #}
-    <button class="btn btn-sm fw-bold text-white" id="btnSyncMes"
-            style="background:linear-gradient(135deg,#15803d,#16a34a)"
-            onclick="sincronizarMesActual()"
-            title="Trae todos los documentos del mes actual con saldo pendiente desde el ERP">
-      <i class="bi bi-calendar-month me-1"></i>Sincronizar mes actual
+    <button class="tr-btn tr-btn-ghost" id="btnSyncHoy" onclick="sincronizarHoy()"
+            title="Importa documentos emitidos HOY (rápido)">
+      <i class="bi bi-calendar-check"></i>
+      <span>Solo hoy</span>
     </button>
-    <button class="btn btn-sm btn-outline-success" id="btnSyncHoy"
-            onclick="sincronizarHoy()"
-            title="Importa todos los documentos del ERP emitidos HOY (rápido)">
-      <i class="bi bi-calendar-check me-1"></i>Solo HOY
-    </button>
-    <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#syncModal"
+    <button class="tr-btn tr-btn-ghost" data-bs-toggle="modal" data-bs-target="#syncModal"
             title="Sincronización por rango de fechas (más amplio)">
-      <i class="bi bi-arrow-repeat me-1"></i>Rango fechas
+      <i class="bi bi-calendar-range"></i>
+      <span>Rango</span>
     </button>
-    <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-ilus">
-      <i class="bi bi-clipboard-check me-1"></i>Manifiestos
+    <button class="tr-btn tr-btn-ghost" data-bs-toggle="modal" data-bs-target="#addDocModal"
+            title="Buscar y agregar un documento puntual del ERP (TIDO + NUDO)">
+      <i class="bi bi-plus-lg"></i>
+      <span>Agregar uno</span>
+    </button>
+    <a href="{{ url_for('tr_manifiestos') }}" class="tr-btn tr-btn-dark"
+       title="Ver manifiestos creados">
+      <i class="bi bi-clipboard-check"></i>
+      <span>Manifiestos</span>
     </a>
-    {# Acciones destructivas — solo admin/superadmin.
-       Pide doble confirmación con ilusConfirm danger. #}
     {% if permissions.superadmin or permissions.admin %}
-    <button class="btn btn-sm fw-semibold" id="btnLimpiarResync"
-            style="background:#dc2626;color:#fff;border:none"
-            onclick="limpiarYResync()"
-            title="Borra documentos pendientes del mes que NO tengan manifiesto y resincroniza desde ERP">
-      <i class="bi bi-eraser me-1"></i>Limpiar pendientes + resync
-    </button>
-    <button class="btn btn-sm btn-outline-danger" id="btnLimpiarMon"
-            onclick="limpiarMonitor()"
-            title="Borra TODOS los registros del monitor (admin)">
-      <i class="bi bi-trash3 me-1"></i>Limpiar todo
-    </button>
+    {# Acciones destructivas — agrupadas en dropdown para no saturar la barra #}
+    <div class="dropdown">
+      <button class="tr-btn tr-btn-ghost-danger" type="button" data-bs-toggle="dropdown" aria-expanded="false"
+              title="Acciones administrativas">
+        <i class="bi bi-three-dots-vertical"></i>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="font-size:.85rem;border-radius:10px">
+        <li><button class="dropdown-item" id="btnLimpiarResync" onclick="limpiarYResync()">
+          <i class="bi bi-eraser me-2" style="color:#dc2626"></i>Limpiar pendientes + resync
+        </button></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><button class="dropdown-item text-danger" id="btnLimpiarMon" onclick="limpiarMonitor()">
+          <i class="bi bi-trash3 me-2"></i>Limpiar todo el monitor
+        </button></li>
+      </ul>
+    </div>
     {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════
+   KPIs — 4 cards horizontales con números grandes
+   Total pendiente · En camino · Entregados · Atrasados
+   Los valores se completan desde JS al cargar el monitor.
+   ════════════════════════════════════════════════════════════════ #}
+<div class="tr-kpis">
+  <div class="tr-kpi tr-kpi-red" role="button" tabindex="0"
+       onclick="setVistaMonitorById('pendientes')"
+       title="Ver compromisos pendientes de despacho">
+    <div class="tr-kpi-icon"><i class="bi bi-hourglass-split"></i></div>
+    <div class="tr-kpi-body">
+      <div class="tr-kpi-num" id="kpiPendientes">—</div>
+      <div class="tr-kpi-label">Pendientes</div>
+    </div>
+  </div>
+  <div class="tr-kpi tr-kpi-blue" role="button" tabindex="0"
+       onclick="setVistaMonitorById('parciales')"
+       title="Documentos con despacho parcial">
+    <div class="tr-kpi-icon"><i class="bi bi-truck"></i></div>
+    <div class="tr-kpi-body">
+      <div class="tr-kpi-num" id="kpiParciales">—</div>
+      <div class="tr-kpi-label">En camino</div>
+    </div>
+  </div>
+  <div class="tr-kpi tr-kpi-green" role="button" tabindex="0"
+       onclick="setVistaMonitorById('entregados')"
+       title="Documentos completamente entregados">
+    <div class="tr-kpi-icon"><i class="bi bi-check2-all"></i></div>
+    <div class="tr-kpi-body">
+      <div class="tr-kpi-num" id="kpiEntregados">—</div>
+      <div class="tr-kpi-label">Entregados</div>
+    </div>
+  </div>
+  <div class="tr-kpi tr-kpi-amber" role="button" tabindex="0"
+       title="Compromisos pendientes con más de 7 días desde la emisión">
+    <div class="tr-kpi-icon"><i class="bi bi-clock-history"></i></div>
+    <div class="tr-kpi-body">
+      <div class="tr-kpi-num" id="kpiAtrasados">—</div>
+      <div class="tr-kpi-label">Atrasados</div>
+    </div>
   </div>
 </div>
 
@@ -78,6 +141,8 @@ async function sincronizarHoy(){
     } else {
       alert(d.mensaje);
     }
+    // Cleanup defensivo de cualquier backdrop huérfano antes de reload
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
     if (d.importados > 0) {
       setTimeout(() => location.reload(), 600);
     }
@@ -87,6 +152,7 @@ async function sincronizarHoy(){
   } finally {
     btn.disabled = false;
     btn.innerHTML = txt;
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
   }
 }
 
@@ -119,12 +185,14 @@ async function limpiarMonitor(){
     }
     if (typeof ilusToast === 'function') ilusToast(d.mensaje || 'Monitor limpio', {type:'success'});
     else alert(d.mensaje || 'Monitor limpio');
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
     setTimeout(() => location.reload(), 600);
   } catch(e){
     if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
     else alert('Error de red: '+e.message);
   } finally {
     if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
   }
 }
 
@@ -155,6 +223,9 @@ async function sincronizarMesActual(){
         type: (d.sincronizados||0) > 0 ? 'success' : 'info',
       });
     }
+    // Cleanup defensivo: si quedó algún backdrop huérfano del modal, lo
+    // matamos antes del reload o de mostrar el listado refrescado.
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
     if ((d.sincronizados||0) > 0 || (d.limpiados||0) > 0) {
       setTimeout(() => location.reload(), 500);
     }
@@ -162,6 +233,7 @@ async function sincronizarMesActual(){
     if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
   } finally {
     if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
   }
 }
 
@@ -203,194 +275,688 @@ async function limpiarYResync(){
         type: 'success',
       });
     }
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
     setTimeout(() => location.reload(), 500);
   } catch(e){
     if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
   } finally {
     if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
   }
 }
 </script>
 
 {# ── Filtros ── #}
-<form method="get" class="ilus-card mb-3 p-3">
-  <div class="row g-2 align-items-end">
-    <div class="col-12 col-sm-3">
-      <input type="text" name="q" value="{{ filtros.q }}" class="form-control form-control-sm"
-             placeholder="🔍 Cliente, N° doc, comuna…">
+<form method="get" class="tr-filters">
+  <div class="tr-filters-row">
+    <div class="tr-filter-search">
+      <i class="bi bi-search tr-filter-icon"></i>
+      <input type="text" name="q" value="{{ filtros.q }}"
+             placeholder="Buscar por cliente, N° documento o comuna…">
     </div>
-    <div class="col-6 col-sm-2">
-      <select name="estado" class="form-select form-select-sm">
-        <option value="">Todos estados</option>
-        {% for e in estados %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="col-6 col-sm-2">
-      <select name="clasificacion" class="form-select form-select-sm">
-        <option value="">Despacho y retiro</option>
-        <option value="despacho" {% if filtros.clasificacion=='despacho' %}selected{% endif %}>Solo despacho</option>
-        <option value="retiro"   {% if filtros.clasificacion=='retiro'   %}selected{% endif %}>Solo retiro</option>
-      </select>
-    </div>
-    <div class="col-6 col-sm-2">
-      <input type="date" name="fecha_desde" value="{{ filtros.fecha_desde }}"
-             class="form-control form-control-sm" title="Fecha desde">
-    </div>
-    <div class="col-6 col-sm-2">
-      <input type="date" name="fecha_hasta" value="{{ filtros.fecha_hasta }}"
-             class="form-control form-control-sm" title="Fecha hasta">
-    </div>
-    <div class="col-auto">
-      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
-      <a href="{{ url_for('transporte_index') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+    <select name="estado" class="tr-filter-select" title="Filtrar por estado">
+      <option value="">Todos los estados</option>
+      {% for e in estados %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+    </select>
+    <select name="clasificacion" class="tr-filter-select" title="Tipo de operación">
+      <option value="">Despacho y retiro</option>
+      <option value="despacho" {% if filtros.clasificacion=='despacho' %}selected{% endif %}>Solo despacho</option>
+      <option value="retiro"   {% if filtros.clasificacion=='retiro'   %}selected{% endif %}>Solo retiro</option>
+    </select>
+    <input type="date" name="fecha_desde" value="{{ filtros.fecha_desde }}"
+           class="tr-filter-date" title="Fecha desde">
+    <input type="date" name="fecha_hasta" value="{{ filtros.fecha_hasta }}"
+           class="tr-filter-date" title="Fecha hasta">
+    <div class="tr-filter-actions">
+      <button type="submit" class="tr-btn tr-btn-primary tr-btn-sm">
+        <i class="bi bi-funnel"></i><span>Filtrar</span>
+      </button>
+      <a href="{{ url_for('transporte_index') }}" class="tr-btn tr-btn-ghost tr-btn-sm" title="Limpiar filtros">
+        <i class="bi bi-x-lg"></i>
+      </a>
     </div>
   </div>
-  <div class="d-flex gap-2 mt-2 flex-wrap">
-    <small class="text-muted me-1">Rango rápido:</small>
-    <a href="?periodo=mes" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
-       style="font-size:.75rem">Último mes</a>
-    <a href="?periodo=3m"  class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
-       style="font-size:.75rem">3 meses</a>
-    <a href="?periodo=año" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
-       style="font-size:.75rem">Este año</a>
-    <a href="?periodo=todo" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2"
-       style="font-size:.75rem">Todo</a>
+  <div class="tr-filter-quick">
+    <span class="tr-filter-quick-label">Rango rápido:</span>
+    <a href="?periodo=mes" class="tr-filter-quick-chip">Último mes</a>
+    <a href="?periodo=3m"  class="tr-filter-quick-chip">3 meses</a>
+    <a href="?periodo=año" class="tr-filter-quick-chip">Este año</a>
+    <a href="?periodo=todo" class="tr-filter-quick-chip">Todo</a>
   </div>
 </form>
 
 {# ─────────────────────────────────────────────────────────────
-   Pestañas de VISTA (flujo del documento)
-   Pendientes → todavía no salieron del bodega (sin guía)
-   Parciales  → salió algo, queda saldo (con guía)
-   Entregados → salió completo (sin saldo)
-   Todos      → muestra todo (incluso lo entregado)
+   Pestañas de VISTA (flujo del documento) — segmented control
+   Pendientes → sin despachar · Parciales → en camino · Entregados · Todos
    ───────────────────────────────────────────────────────────── #}
-<div class="d-flex gap-1 flex-wrap mb-2 align-items-center">
-  <span class="text-muted small me-1" style="font-weight:600">Vista:</span>
-  <button type="button" class="btn btn-sm btn-vista active" data-vista="pendientes"
-          onclick="setVistaMonitor(this,'pendientes')"
-          style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-weight:600">
-    <i class="bi bi-hourglass-split me-1"></i>Pendientes
-    <span class="badge ms-1" id="vbPendientes" style="background:#dc2626;color:#fff;font-size:.62rem">0</span>
-  </button>
-  <button type="button" class="btn btn-sm btn-vista" data-vista="parciales"
-          onclick="setVistaMonitor(this,'parciales')"
-          style="background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;font-weight:600">
-    <i class="bi bi-truck-flatbed me-1"></i>En camino (parcial)
-    <span class="badge ms-1" id="vbParciales" style="background:#1d4ed8;color:#fff;font-size:.62rem">0</span>
-  </button>
-  <button type="button" class="btn btn-sm btn-vista" data-vista="entregados"
-          onclick="setVistaMonitor(this,'entregados')"
-          style="background:#dcfce7;color:#166534;border:1px solid #86efac;font-weight:600">
-    <i class="bi bi-check2-all me-1"></i>Entregados
-    <span class="badge ms-1" id="vbEntregados" style="background:#16a34a;color:#fff;font-size:.62rem">0</span>
-  </button>
-  <button type="button" class="btn btn-sm btn-vista" data-vista="todos"
-          onclick="setVistaMonitor(this,'todos')"
-          style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;font-weight:600">
-    <i class="bi bi-list-ul me-1"></i>Todos
-    <span class="badge ms-1" id="vbTodos" style="background:#6b7280;color:#fff;font-size:.62rem">0</span>
-  </button>
+<div class="tr-segment">
+  <span class="tr-segment-label">Vista</span>
+  <div class="tr-segment-group" role="tablist">
+    <button type="button" class="tr-segment-btn active" data-vista="pendientes"
+            onclick="setVistaMonitor(this,'pendientes')" role="tab">
+      <i class="bi bi-hourglass-split"></i>
+      <span>Pendientes</span>
+      <span class="tr-segment-badge tr-segment-badge-red" id="vbPendientes">0</span>
+    </button>
+    <button type="button" class="tr-segment-btn" data-vista="parciales"
+            onclick="setVistaMonitor(this,'parciales')" role="tab">
+      <i class="bi bi-truck"></i>
+      <span>En camino</span>
+      <span class="tr-segment-badge tr-segment-badge-blue" id="vbParciales">0</span>
+    </button>
+    <button type="button" class="tr-segment-btn" data-vista="entregados"
+            onclick="setVistaMonitor(this,'entregados')" role="tab">
+      <i class="bi bi-check2-all"></i>
+      <span>Entregados</span>
+      <span class="tr-segment-badge tr-segment-badge-green" id="vbEntregados">0</span>
+    </button>
+    <button type="button" class="tr-segment-btn" data-vista="todos"
+            onclick="setVistaMonitor(this,'todos')" role="tab">
+      <i class="bi bi-list-ul"></i>
+      <span>Todos</span>
+      <span class="tr-segment-badge tr-segment-badge-gray" id="vbTodos">0</span>
+    </button>
+  </div>
 </div>
 
 <style>
-  .btn-vista{opacity:.55;transition:opacity .18s ease,transform .12s ease}
-  .btn-vista.active{opacity:1;transform:scale(1.02);box-shadow:0 2px 6px rgba(0,0,0,.12)}
-  .btn-vista:hover{opacity:.85}
-  .cobertura-cell{font-family:monospace;font-size:.72rem;font-weight:700}
-  .cobertura-bar{height:4px;background:#f3f4f6;border-radius:2px;overflow:hidden;margin-top:2px}
-  .cobertura-fill{height:100%;background:linear-gradient(90deg,#fbbf24,#16a34a)}
+/* ════════════════════════════════════════════════════════════════
+   MONITOR DE TRANSPORTE — diseño premium ILUS (rojo · negro · blanco)
+   Toda la paleta y tokens están aquí. No usa Bootstrap btn classes
+   en componentes propios (.tr-*) para evitar conflictos.
+   ════════════════════════════════════════════════════════════════ */
+:root {
+  --tr-radius:        12px;
+  --tr-radius-sm:     8px;
+  --tr-radius-lg:     16px;
+  --tr-border:        #e6e8eb;
+  --tr-border-strong: #d6d9de;
+  --tr-text:          #0f172a;
+  --tr-text-muted:    #64748b;
+  --tr-text-soft:     #94a3b8;
+  --tr-bg:            #ffffff;
+  --tr-bg-soft:       #f8fafc;
+  --tr-bg-hover:      #fef2f2;
+  --tr-shadow-sm:     0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --tr-shadow-md:     0 4px 6px rgba(15,23,42,.05), 0 2px 4px rgba(15,23,42,.04);
+  --tr-shadow-lg:     0 10px 25px rgba(15,23,42,.08), 0 4px 10px rgba(15,23,42,.04);
+}
+
+/* ── HERO ── compacto, fondo blanco, accent rojo a la izquierda */
+.tr-hero {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:16px; flex-wrap:wrap;
+  padding:14px 18px; margin-bottom:16px;
+  background:#fff; border:1px solid var(--tr-border);
+  border-left:4px solid var(--ilus-red);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+}
+.tr-hero-left { display:flex; align-items:center; gap:14px; min-width:0; }
+.tr-hero-icon {
+  width:44px; height:44px; flex-shrink:0;
+  background:linear-gradient(135deg, #dc2626, #991b1b);
+  color:#fff; border-radius:11px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.35rem; box-shadow:0 4px 10px rgba(220,38,38,.28);
+}
+.tr-hero-title {
+  font-size:1.25rem; font-weight:800; color:var(--tr-text);
+  margin:0; line-height:1.15; letter-spacing:-.01em;
+}
+.tr-hero-sub {
+  font-size:.78rem; color:var(--tr-text-muted);
+  margin-top:2px; line-height:1.3;
+}
+.tr-sync-status {
+  font-weight:600; color:#16a34a;
+  display:inline-flex; align-items:center; gap:5px;
+}
+.tr-sync-status::before {
+  content:''; width:6px; height:6px; border-radius:50%;
+  background:#16a34a; box-shadow:0 0 0 3px rgba(22,163,74,.18);
+  animation:trPulseDot 2s infinite;
+}
+.tr-sync-status.tr-sync-stale { color:#f59e0b; }
+.tr-sync-status.tr-sync-stale::before {
+  background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.18);
+}
+@keyframes trPulseDot {
+  0%, 100% { transform:scale(1); opacity:1; }
+  50%      { transform:scale(1.3); opacity:.7; }
+}
+.tr-hero-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+
+@media (max-width:640px) {
+  .tr-hero { padding:12px 14px; gap:10px; }
+  .tr-hero-icon { width:38px; height:38px; font-size:1.1rem; }
+  .tr-hero-title { font-size:1.05rem; }
+  .tr-hero-sub { font-size:.72rem; }
+  .tr-hero-actions { width:100%; }
+  .tr-hero-actions .tr-btn { flex:1 1 auto; }
+  .tr-hero-actions .tr-btn-primary { flex-basis:100%; }
+}
+
+/* ── BOTONES TR ── sistema propio, no Bootstrap */
+.tr-btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  padding:8px 12px; min-height:38px;
+  font-size:.82rem; font-weight:600;
+  border:1px solid transparent; border-radius:9px;
+  background:#fff; color:var(--tr-text);
+  cursor:pointer; transition:all .14s ease;
+  text-decoration:none; line-height:1; white-space:nowrap;
+}
+.tr-btn i { font-size:.95rem; line-height:1; }
+.tr-btn:hover { transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+.tr-btn:active { transform:translateY(0); box-shadow:var(--tr-shadow-sm); }
+.tr-btn:disabled { opacity:.55; cursor:not-allowed; transform:none !important; }
+.tr-btn-sm { padding:6px 11px; min-height:32px; font-size:.78rem; border-radius:7px; }
+
+.tr-btn-primary {
+  background:linear-gradient(180deg, #ef4444, #dc2626);
+  color:#fff; border-color:#b91c1c;
+  box-shadow:0 1px 2px rgba(220,38,38,.3);
+}
+.tr-btn-primary:hover { background:linear-gradient(180deg, #f87171, #dc2626); }
+.tr-btn-ghost {
+  background:#fff; color:var(--tr-text); border-color:var(--tr-border);
+}
+.tr-btn-ghost:hover { background:#f8fafc; border-color:var(--tr-border-strong); color:var(--ilus-red); }
+.tr-btn-dark {
+  background:linear-gradient(180deg, #1f2937, #0f172a);
+  color:#fff; border-color:#0f172a;
+}
+.tr-btn-dark:hover { background:linear-gradient(180deg, #374151, #1f2937); color:#fff; }
+.tr-btn-ghost-danger {
+  background:#fff; color:#dc2626; border-color:#fecaca;
+  width:38px; padding:8px; min-width:38px;
+}
+.tr-btn-ghost-danger:hover { background:#fef2f2; }
+
+@media (max-width:640px) {
+  .tr-btn span { display:none; }
+  .tr-btn { padding:8px; min-width:38px; }
+  .tr-btn-sm span { display:inline; }
+  .tr-btn-sm { padding:6px 11px; }
+}
+
+/* ── KPIs ── */
+.tr-kpis {
+  display:grid; grid-template-columns:repeat(4, 1fr);
+  gap:10px; margin-bottom:16px;
+}
+@media (max-width:900px) { .tr-kpis { grid-template-columns:repeat(2, 1fr); } }
+.tr-kpi {
+  display:flex; align-items:center; gap:12px;
+  padding:14px 16px;
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+  cursor:pointer; transition:transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+  position:relative; overflow:hidden;
+  min-height:72px;
+}
+.tr-kpi::before {
+  content:''; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:currentColor; opacity:.95;
+}
+.tr-kpi:hover { transform:translateY(-2px); box-shadow:var(--tr-shadow-md); }
+.tr-kpi:focus-visible { outline:2px solid var(--ilus-red); outline-offset:2px; }
+.tr-kpi-icon {
+  flex-shrink:0; width:42px; height:42px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.2rem; background:currentColor;
+}
+.tr-kpi-icon i { color:#fff; }
+.tr-kpi-body { min-width:0; flex:1; color:var(--tr-text); }
+.tr-kpi-num {
+  font-size:1.7rem; font-weight:800; line-height:1.1;
+  font-feature-settings:"tnum";
+  letter-spacing:-.02em;
+}
+.tr-kpi-label {
+  font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+  margin-top:2px;
+}
+.tr-kpi-red   { color:#dc2626; }
+.tr-kpi-blue  { color:#3b82f6; }
+.tr-kpi-green { color:#16a34a; }
+.tr-kpi-amber { color:#f59e0b; }
+
+/* ── FILTROS ── */
+.tr-filters {
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); padding:12px 14px;
+  margin-bottom:12px; box-shadow:var(--tr-shadow-sm);
+}
+.tr-filters-row {
+  display:grid; gap:8px;
+  grid-template-columns: minmax(180px, 2fr) 1fr 1fr 130px 130px auto;
+  align-items:center;
+}
+@media (max-width:980px) {
+  .tr-filters-row { grid-template-columns:1fr 1fr; }
+  .tr-filter-search { grid-column:1 / -1; }
+  .tr-filter-actions { grid-column:1 / -1; }
+}
+.tr-filter-search { position:relative; }
+.tr-filter-search input {
+  width:100%; padding:9px 12px 9px 36px;
+  border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.86rem; background:#fff; color:var(--tr-text);
+  transition:border-color .14s, box-shadow .14s;
+}
+.tr-filter-search input:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-filter-icon {
+  position:absolute; left:11px; top:50%; transform:translateY(-50%);
+  color:var(--tr-text-soft); font-size:.95rem; pointer-events:none;
+}
+.tr-filter-select, .tr-filter-date {
+  padding:9px 10px; border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.84rem; background:#fff; color:var(--tr-text);
+  font-family:inherit;
+}
+.tr-filter-select:focus, .tr-filter-date:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-filter-actions { display:flex; gap:6px; justify-content:flex-end; }
+.tr-filter-quick {
+  display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  margin-top:10px; padding-top:10px; border-top:1px dashed var(--tr-border);
+}
+.tr-filter-quick-label {
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+}
+.tr-filter-quick-chip {
+  padding:4px 10px; border-radius:99px;
+  border:1px solid var(--tr-border); background:#fff;
+  font-size:.74rem; font-weight:600; color:var(--tr-text-muted);
+  text-decoration:none; transition:all .14s ease;
+}
+.tr-filter-quick-chip:hover {
+  background:var(--ilus-red); color:#fff; border-color:var(--ilus-red);
+}
+
+/* ── SEGMENTED CONTROL — Vista (Pendientes/En camino/Entregados/Todos) ── */
+.tr-segment {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  margin-bottom:12px;
+}
+.tr-segment-label {
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+}
+.tr-segment-group {
+  display:inline-flex; padding:4px; gap:2px;
+  background:#f1f5f9; border:1px solid var(--tr-border);
+  border-radius:11px; box-shadow:var(--tr-shadow-sm) inset;
+}
+.tr-segment-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:7px 14px; min-height:36px;
+  background:transparent; border:none; border-radius:8px;
+  font-size:.83rem; font-weight:600; color:var(--tr-text-muted);
+  cursor:pointer; transition:all .14s ease; line-height:1;
+}
+.tr-segment-btn:hover { color:var(--tr-text); }
+.tr-segment-btn.active {
+  background:#fff; color:var(--tr-text);
+  box-shadow:0 1px 3px rgba(15,23,42,.1), 0 1px 2px rgba(15,23,42,.06);
+  font-weight:700;
+}
+.tr-segment-btn i { font-size:.9rem; }
+.tr-segment-badge {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; padding:2px 7px; border-radius:99px;
+  font-size:.66rem; font-weight:800; color:#fff;
+  font-feature-settings:"tnum";
+}
+.tr-segment-badge-red   { background:#dc2626; }
+.tr-segment-badge-blue  { background:#3b82f6; }
+.tr-segment-badge-green { background:#16a34a; }
+.tr-segment-badge-gray  { background:#64748b; }
+@media (max-width:640px) {
+  .tr-segment-group { width:100%; overflow-x:auto; }
+  .tr-segment-btn span { font-size:.78rem; }
+}
+
+/* ── COBERTURA — barra mejorada ── */
+.cobertura-cell{font-family:ui-monospace, "SF Mono", Consolas, monospace; font-size:.74rem; font-weight:700}
+.cobertura-bar{height:5px; background:#f1f5f9; border-radius:99px; overflow:hidden; margin-top:3px}
+.cobertura-fill{height:100%; background:linear-gradient(90deg, #fbbf24, #16a34a); border-radius:99px; transition:width .3s ease}
 </style>
 
-{# ── Pestañas de clasificación ── #}
-<ul class="nav nav-tabs mb-0" id="monitorTabs" style="border-bottom:none">
-  <li class="nav-item">
-    <button class="nav-link active fw-semibold py-2 px-3" data-clasif=""
-            onclick="filtrarTabMonitor(this,'')">
-      <i class="bi bi-grid me-1"></i>Todos
-      <span class="badge bg-secondary ms-1" id="cntTodos">…</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link fw-semibold py-2 px-3" data-clasif="despacho"
-            onclick="filtrarTabMonitor(this,'despacho')">
-      <i class="bi bi-box-arrow-right me-1"></i>Despachos
-      <span class="badge bg-secondary ms-1" id="cntDespacho">0</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link fw-semibold py-2 px-3" data-clasif="retiro"
-            onclick="filtrarTabMonitor(this,'retiro')">
-      <i class="bi bi-arrow-return-left me-1"></i>Retiros
-      <span class="badge bg-secondary ms-1" id="cntRetiro">0</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link fw-semibold py-2 px-3" data-clasif="instalacion"
-            onclick="filtrarTabMonitor(this,'instalacion')">
-      <i class="bi bi-tools me-1"></i>Instalación
-      <span class="badge bg-secondary ms-1" id="cntInstalacion">0</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link fw-semibold py-2 px-3" data-clasif="mantencion"
-            onclick="filtrarTabMonitor(this,'mantencion')">
-      <i class="bi bi-wrench me-1"></i>Mantención
-      <span class="badge bg-secondary ms-1" id="cntMantencion">0</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link fw-semibold py-2 px-3" data-clasif="garantia"
-            onclick="filtrarTabMonitor(this,'garantia')">
-      <i class="bi bi-shield-check me-1"></i>Garantía
-      <span class="badge bg-secondary ms-1" id="cntGarantia">0</span>
-    </button>
-  </li>
-</ul>
+{# ── Pestañas de clasificación (Despachos/Retiros/Instalación/Mantención/Garantía) ── #}
+<div class="tr-tabs">
+  <button class="tr-tab active" data-clasif="" onclick="filtrarTabMonitor(this,'')">
+    <i class="bi bi-grid-3x3-gap"></i><span>Todos</span>
+    <span class="tr-tab-count" id="cntTodos">…</span>
+  </button>
+  <button class="tr-tab" data-clasif="despacho" onclick="filtrarTabMonitor(this,'despacho')">
+    <i class="bi bi-box-arrow-right"></i><span>Despachos</span>
+    <span class="tr-tab-count" id="cntDespacho">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="retiro" onclick="filtrarTabMonitor(this,'retiro')">
+    <i class="bi bi-arrow-return-left"></i><span>Retiros</span>
+    <span class="tr-tab-count" id="cntRetiro">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="instalacion" onclick="filtrarTabMonitor(this,'instalacion')">
+    <i class="bi bi-tools"></i><span>Instalación</span>
+    <span class="tr-tab-count" id="cntInstalacion">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="mantencion" onclick="filtrarTabMonitor(this,'mantencion')">
+    <i class="bi bi-wrench-adjustable"></i><span>Mantención</span>
+    <span class="tr-tab-count" id="cntMantencion">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="garantia" onclick="filtrarTabMonitor(this,'garantia')">
+    <i class="bi bi-shield-check"></i><span>Garantía</span>
+    <span class="tr-tab-count" id="cntGarantia">0</span>
+  </button>
+</div>
+{# Mantengo el #monitorTabs vacío fuera del DOM para compat con JS que pueda
+   estar buscándolo, pero el visual ahora es .tr-tabs. La función
+   filtrarTabMonitor() usa .tr-tab classes directamente. #}
+<ul id="monitorTabs" style="display:none"></ul>
 
 {# ── Tabla desktop ── #}
-<div class="ilus-card d-none d-md-block mb-3" style="border-top-left-radius:0">
+<div class="tr-table-card d-none d-md-block">
   <div class="table-responsive">
-    <table class="table ilus-table mb-0" style="font-size:.82rem">
+    <table class="tr-table" style="width:100%; border-collapse:separate; border-spacing:0">
       <thead>
         <tr>
-          <th style="width:44px;padding:0!important;text-align:center;border-right:1px solid #eee"
-              title="Arrastra filas al manifiesto">
-            <i class="bi bi-grip-vertical text-muted" style="font-size:.75rem"></i>
+          <th class="tr-th-drag" title="Arrastra filas al manifiesto">
+            <i class="bi bi-grip-vertical"></i>
           </th>
-          <th>N° Documento</th>
+          <th>Documento</th>
           <th>Fecha</th>
           <th>Cliente</th>
           <th>Comuna</th>
           <th>Estado</th>
           <th class="text-center" title="Número de guía de despacho asociada en el ERP">Guía</th>
           <th class="text-center" title="% del ZZ ya despachado (cantidades por línea)">Cobertura</th>
-          <th class="text-end">Costo ZZ</th>
+          <th class="text-end">Costo</th>
           <th class="text-center">Tipo</th>
-          <th class="text-center">Acciones</th>
+          <th class="text-center" style="width:170px">Acciones</th>
         </tr>
       </thead>
       <tbody id="monitorTbody">
-        <tr><td colspan="11" class="text-center py-4">
-          <div class="spinner-border spinner-border-sm text-danger me-2"></div>Cargando…
+        <tr><td colspan="11" class="tr-td-loading">
+          <div class="tr-spinner"></div>
+          <span>Cargando compromisos…</span>
         </td></tr>
       </tbody>
     </table>
   </div>
-  <div class="px-3 pb-2 pt-1 d-flex justify-content-between align-items-center"
-       style="font-size:.75rem;color:#888;border-top:1px solid #eee">
-    <span>Total visible: <strong id="monitorCount">…</strong></span>
-    <span>
-      <i class="bi bi-info-circle me-1"></i>Clic en una fila abre el detalle ·
-      <i class="bi bi-grip-vertical mx-1"></i>arrastra para crear manifiesto
+  <div class="tr-table-footer">
+    <span><strong id="monitorCount">…</strong> documento(s) visible(s)</span>
+    <span class="tr-table-hint">
+      <i class="bi bi-mouse2"></i>Clic en una fila abre el detalle
+      <span class="tr-dot-sep">·</span>
+      <i class="bi bi-grip-vertical"></i>arrastra para crear manifiesto
     </span>
   </div>
 </div>
 
+<style>
+/* ── TABLE TR — premium dashboard look ── */
+.tr-table-card {
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); margin-bottom:16px;
+  box-shadow:var(--tr-shadow-sm); overflow:hidden;
+}
+.tr-table { font-size:.85rem; color:var(--tr-text); }
+.tr-table thead th {
+  background:#f8fafc; color:var(--tr-text-muted);
+  font-size:.7rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.6px;
+  padding:11px 12px; text-align:left;
+  border-bottom:1px solid var(--tr-border);
+  position:sticky; top:0; z-index:1; white-space:nowrap;
+}
+.tr-table thead th.text-center { text-align:center; }
+.tr-table thead th.text-end    { text-align:right;  }
+.tr-th-drag {
+  width:38px !important; padding:0 !important;
+  text-align:center !important; color:var(--tr-text-soft);
+}
+.tr-table tbody tr {
+  border-left:3px solid transparent;
+  transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.tr-table tbody tr:not(:last-child) td { border-bottom:1px solid #f1f5f9; }
+.tr-table tbody td {
+  padding:14px 12px; vertical-align:middle;
+  font-size:.85rem;
+}
+.tr-table tbody tr:hover {
+  background:var(--tr-bg-hover);
+}
+.tr-table tbody tr.tr-row-pendiente { border-left-color:#fbbf24; }
+.tr-table tbody tr.tr-row-parcial   { border-left-color:#3b82f6; }
+.tr-table tbody tr.tr-row-entregado { border-left-color:#16a34a; }
+.tr-table tbody tr.tr-row-pendiente:hover { border-left-color:#dc2626; /* urgencia */ }
+.tr-table tbody tr.tr-row-parcial:hover   { border-left-color:#1d4ed8; }
+.tr-table tbody tr.tr-row-entregado:hover { border-left-color:#15803d; }
+
+/* Documento (TIDO + NUDO) */
+.tr-doc-num {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-size:.92rem; font-weight:700; color:var(--tr-text);
+  letter-spacing:-.01em;
+}
+.tr-doc-tido {
+  display:inline-block; padding:2px 7px;
+  background:#f1f5f9; border-radius:5px;
+  font-size:.66rem; font-weight:800;
+  color:var(--tr-text-muted); margin-right:6px;
+  letter-spacing:.4px;
+}
+/* Cliente block */
+.tr-cliente-name {
+  font-weight:700; color:var(--tr-text); font-size:.88rem;
+  line-height:1.25;
+}
+.tr-cliente-rut {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-size:.72rem; color:var(--tr-text-muted); margin-top:2px;
+}
+/* Fecha */
+.tr-fecha {
+  font-size:.82rem; color:var(--tr-text); white-space:nowrap;
+  font-feature-settings:"tnum";
+}
+.tr-fecha-day  { font-weight:700; }
+.tr-fecha-rel  { display:block; font-size:.68rem; color:var(--tr-text-muted); margin-top:1px; }
+/* Estado pill */
+.tr-estado-pill {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 11px; border-radius:99px;
+  font-size:.72rem; font-weight:700;
+  white-space:nowrap; border:1px solid transparent;
+}
+.tr-estado-pill::before {
+  content:''; width:6px; height:6px; border-radius:50%;
+  background:currentColor; flex-shrink:0;
+}
+.tr-estado-warning { background:#fffbeb; color:#92400e; border-color:#fde68a; }
+.tr-estado-primary { background:#eff6ff; color:#1e3a8a; border-color:#bfdbfe; }
+.tr-estado-success { background:#f0fdf4; color:#166534; border-color:#bbf7d0; }
+.tr-estado-danger  { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+.tr-estado-info    { background:#ecfeff; color:#155e75; border-color:#a5f3fc; }
+.tr-estado-secondary { background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
+/* Guía */
+.tr-guia-pill {
+  display:inline-block; padding:3px 9px;
+  background:#dcfce7; color:#166534; border:1px solid #86efac;
+  border-radius:6px; font-family:ui-monospace, monospace;
+  font-size:.74rem; font-weight:700;
+}
+/* Costo */
+.tr-costo {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-weight:700; color:var(--tr-text); font-size:.9rem;
+  white-space:nowrap; font-feature-settings:"tnum";
+}
+/* Tipo badge (despacho/retiro/instalación/mantención/garantía) */
+.tr-tipo-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 9px; border-radius:6px;
+  font-size:.7rem; font-weight:700;
+  border:1px solid;
+}
+.tr-tipo-despacho    { background:#f1f5f9; color:#0f172a; border-color:#cbd5e1; }
+.tr-tipo-retiro      { background:#ecfeff; color:#155e75; border-color:#a5f3fc; }
+.tr-tipo-instalacion { background:#fef3c7; color:#92400e; border-color:#fde68a; }
+.tr-tipo-mantencion  { background:#f3e8ff; color:#6b21a8; border-color:#d8b4fe; }
+.tr-tipo-garantia    { background:#dcfce7; color:#166534; border-color:#86efac; }
+/* Acciones */
+.tr-actions-cell { white-space:nowrap; }
+.tr-action {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:34px; height:34px; min-width:34px; padding:0;
+  background:#fff; border:1px solid var(--tr-border); border-radius:8px;
+  color:var(--tr-text-muted); cursor:pointer;
+  transition:all .12s ease; font-size:.88rem;
+  margin-left:4px;
+}
+.tr-action:first-child { margin-left:0; }
+.tr-action:hover {
+  background:var(--ilus-red); color:#fff;
+  border-color:var(--ilus-red); transform:translateY(-1px);
+}
+.tr-action-primary {
+  background:var(--ilus-red); color:#fff; border-color:#b91c1c;
+  width:auto; min-width:34px; padding:0 11px; gap:5px;
+  font-size:.78rem; font-weight:700;
+}
+.tr-action-primary:hover { background:#b91c1c; color:#fff; }
+/* Loading row */
+.tr-td-loading {
+  padding:42px 12px !important;
+  text-align:center; color:var(--tr-text-muted);
+}
+.tr-td-loading .tr-spinner { display:inline-block; }
+.tr-spinner {
+  width:18px; height:18px; border:2.5px solid #fee2e2;
+  border-top-color:var(--ilus-red); border-radius:50%;
+  animation:trSpin .7s linear infinite; margin-right:8px;
+  vertical-align:middle;
+}
+@keyframes trSpin { to { transform:rotate(360deg); } }
+/* Empty state */
+.tr-empty {
+  padding:48px 18px; text-align:center;
+}
+.tr-empty-icon {
+  width:64px; height:64px; margin:0 auto 12px;
+  background:#fef2f2; color:var(--ilus-red);
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:1.8rem;
+}
+.tr-empty-title { font-size:1rem; font-weight:700; color:var(--tr-text); margin-bottom:4px; }
+.tr-empty-sub { font-size:.84rem; color:var(--tr-text-muted); max-width:380px; margin:0 auto 14px; }
+.tr-empty-cta {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:9px 16px; background:var(--ilus-red); color:#fff;
+  border:none; border-radius:9px; font-weight:700; font-size:.84rem;
+  cursor:pointer; transition:all .14s ease;
+}
+.tr-empty-cta:hover { background:#b91c1c; transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+/* Footer */
+.tr-table-footer {
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;
+  gap:8px; padding:10px 14px;
+  background:#f8fafc; border-top:1px solid var(--tr-border);
+  font-size:.76rem; color:var(--tr-text-muted);
+}
+.tr-table-hint { display:inline-flex; align-items:center; gap:4px; }
+.tr-dot-sep { color:var(--tr-text-soft); }
+
+/* ── TIPOS TABS — fusionadas con la tabla (no Bootstrap nav-tabs) ── */
+.tr-tabs {
+  display:flex; gap:2px; flex-wrap:wrap;
+  background:#fff;
+  border:1px solid var(--tr-border); border-bottom:none;
+  border-radius:var(--tr-radius) var(--tr-radius) 0 0;
+  padding:6px 6px 0;
+  margin-bottom:-1px; /* solapa con la tabla */
+  position:relative; z-index:1;
+}
+.tr-tab {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:9px 14px; background:transparent; border:none;
+  border-radius:8px 8px 0 0; cursor:pointer;
+  font-size:.83rem; font-weight:600; color:var(--tr-text-muted);
+  transition:all .12s ease; line-height:1;
+  border-bottom:3px solid transparent;
+}
+.tr-tab i { font-size:.95rem; }
+.tr-tab:hover { color:var(--tr-text); background:#f8fafc; }
+.tr-tab.active {
+  color:var(--ilus-red); font-weight:700;
+  background:#fff;
+  border-bottom-color:var(--ilus-red);
+}
+.tr-tab-count {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:20px; padding:1px 6px; border-radius:99px;
+  font-size:.66rem; font-weight:700;
+  background:#f1f5f9; color:var(--tr-text-muted);
+  font-feature-settings:"tnum";
+}
+.tr-tab.active .tr-tab-count { background:var(--ilus-red); color:#fff; }
+@media (max-width:640px) {
+  .tr-tabs { overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; }
+  .tr-tab span { font-size:.78rem; }
+}
+
+/* Cuando se solapa con tabla, ajustar bordes */
+.tr-tabs + .tr-table-card { border-top-left-radius:0; border-top-right-radius:0; }
+</style>
+
 {# ── Cards mobile ── #}
-<div id="monitorCards" class="d-md-none">
-  <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-danger"></div></div>
+<div id="monitorCards" class="d-md-none tr-mcards-wrap">
+  <div class="text-center py-4"><div class="tr-spinner"></div></div>
 </div>
+
+<style>
+/* ── MOBILE CARDS ── */
+.tr-mcards-wrap { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+.tr-mcard {
+  background:#fff; border:1px solid var(--tr-border);
+  border-left:4px solid var(--tr-border);
+  border-radius:var(--tr-radius); padding:14px;
+  box-shadow:var(--tr-shadow-sm); cursor:pointer;
+  transition:transform .14s ease, box-shadow .14s ease;
+}
+.tr-mcard:hover { transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+.tr-mcard.tr-row-pendiente { border-left-color:#fbbf24; }
+.tr-mcard.tr-row-parcial   { border-left-color:#3b82f6; }
+.tr-mcard.tr-row-entregado { border-left-color:#16a34a; }
+.tr-mcard-top {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  gap:8px; margin-bottom:8px;
+}
+.tr-mcard-cliente {
+  font-weight:700; font-size:.95rem; color:var(--tr-text);
+  line-height:1.3; margin-bottom:6px;
+}
+.tr-mcard-meta {
+  display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  font-size:.78rem; color:var(--tr-text-muted); margin-bottom:10px;
+}
+.tr-mcard-meta i { font-size:.85rem; margin-right:3px; }
+.tr-mcard-costo {
+  margin-left:auto; font-weight:700; color:var(--ilus-red);
+  font-family:ui-monospace, monospace; font-size:.85rem;
+}
+.tr-mcard-actions { display:flex; gap:8px; }
+</style>
 
 {# ══════════════════════════════════════════════
    PANEL MANIFIESTO — colapsable en desktop, overlay en mobile.
@@ -398,16 +964,77 @@ async function limpiarYResync(){
    con el botón flotante #dpReopenBtn que aparece abajo a la derecha.
 ══════════════════════════════════════════════ #}
 <button id="dpReopenBtn" type="button"
+        class="tr-fab-reopen"
         onclick="openDragPanel()"
-        title="Mostrar panel de manifiesto"
-        style="display:none;position:fixed;bottom:18px;right:18px;z-index:1052;
-               background:var(--ilus-red);color:#fff;border:none;border-radius:50px;
-               padding:11px 17px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,.3);
-               cursor:pointer;font-size:.82rem">
-  <i class="bi bi-clipboard-plus me-1"></i>Panel manifiesto
-  <span id="dpReopenBadge" style="display:none;background:#fff;color:var(--ilus-red);
-        border-radius:50px;font-size:.65rem;font-weight:800;padding:1px 7px;margin-left:6px">0</span>
+        title="Mostrar panel de manifiesto">
+  <i class="bi bi-clipboard-plus"></i>
+  <span class="tr-fab-label">Manifiesto</span>
+  <span id="dpReopenBadge" class="tr-fab-badge" style="display:none">0</span>
 </button>
+
+<style>
+/* ── FAB Reopen Panel Manifiesto ── */
+.tr-fab-reopen {
+  display:none;
+  position:fixed; bottom:24px; right:24px; z-index:1052;
+  align-items:center; gap:9px;
+  padding:14px 22px; min-height:56px;
+  background:linear-gradient(135deg, #ef4444, #b91c1c);
+  color:#fff; border:none; border-radius:99px;
+  font-weight:700; font-size:.88rem; cursor:pointer;
+  box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2);
+  transition:all .18s cubic-bezier(.4,0,.2,1);
+}
+.tr-fab-reopen:hover {
+  transform:translateY(-3px) scale(1.03);
+  box-shadow:
+    0 14px 36px rgba(220,38,38,.55),
+    0 6px 16px rgba(15,23,42,.22),
+    inset 0 1px 0 rgba(255,255,255,.25);
+}
+.tr-fab-reopen:active { transform:translateY(-1px) scale(1.0); }
+.tr-fab-reopen i { font-size:1.15rem; line-height:1; }
+.tr-fab-reopen .tr-fab-label { line-height:1; letter-spacing:.2px; }
+.tr-fab-badge {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:24px; height:24px; padding:0 8px;
+  background:#fff; color:var(--ilus-red);
+  border-radius:99px; font-size:.74rem; font-weight:800;
+  margin-left:4px; font-feature-settings:"tnum";
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+/* Pulse cuando tiene items en cola */
+.tr-fab-reopen.tr-has-items {
+  animation:trFabPulse 2.4s infinite;
+}
+@keyframes trFabPulse {
+  0%, 100% { box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2),
+    0 0 0 0 rgba(220,38,38,.6); }
+  50% { box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2),
+    0 0 0 14px rgba(220,38,38,0); }
+}
+@media (max-width:640px) {
+  .tr-fab-reopen {
+    bottom:16px; right:16px; padding:12px 16px;
+    font-size:.82rem; min-height:50px;
+  }
+  .tr-fab-reopen .tr-fab-label { display:none; }
+  .tr-fab-reopen i { font-size:1.3rem; }
+  .tr-fab-reopen .tr-fab-badge {
+    position:absolute; top:-4px; right:-4px;
+    margin-left:0; min-width:22px; height:22px;
+  }
+}
+</style>
 
 <div id="dragPanel"
      style="position:fixed;top:0;right:0;width:360px;max-width:100vw;height:100vh;
@@ -616,45 +1243,41 @@ async function limpiarYResync(){
   padding:4px 0;border-bottom:1px solid #152015;font-size:.76rem;
 }
 .dp-prevale-row:last-child { border-bottom:none; }
-/* Pestañas monitor — sobreescribir azul de Bootstrap */
+/* Legacy: #monitorTabs ya está oculto (display:none) pero mantengo
+   las reglas para compat por si algún flujo lo usa programáticamente. */
 #monitorTabs .nav-link {
   color:#666; border:none; border-bottom:2px solid transparent;
   padding:.5rem .85rem; font-size:.82rem; transition:color .12s;
 }
-#monitorTabs .nav-link:hover { color:#222; background:rgba(0,0,0,.03); border-bottom-color:#ccc; }
 #monitorTabs .nav-link.active {
-  color:var(--ilus-red)!important; font-weight:700;
-  border-bottom:2.5px solid var(--ilus-red)!important;
-  background:none; border-radius:0;
+  color:var(--ilus-red); font-weight:700;
 }
-#monitorTabs .nav-link .badge { font-size:.62rem; vertical-align:middle; }
-/* ── Filas del monitor ── */
+/* ── Filas del monitor — hover handled by .tr-table tbody tr:hover ── */
 .tr-monitor-row { transition:background .12s; }
-.tr-monitor-row:hover { background:rgba(204,0,0,.04) !important; }
-.tr-monitor-row td { vertical-align:middle; padding:10px 8px !important; }
 
 /* Handle de drag */
 .dp-drag-handle {
-  width:44px !important;
+  width:38px;
   padding:0 !important;
   text-align:center;
   background:transparent;
   transition:background .1s;
-  border-right:1px solid #f0f0f0 !important;
+  border-right:1px solid #f1f5f9;
 }
 .dp-drag-handle:hover {
-  background:rgba(204,0,0,.08) !important;
+  background:#fef2f2;
   cursor:grab !important;
 }
+.dp-drag-handle:hover i { color:var(--ilus-red) !important; }
 .dp-drag-handle:active { cursor:grabbing !important; }
 
 /* Fila siendo arrastrada */
-.dp-row-dragging { opacity:.3; background:rgba(204,0,0,.06)!important;
+.dp-row-dragging { opacity:.3; background:rgba(220,38,38,.06)!important;
                    outline:2px dashed var(--ilus-red); cursor:grabbing!important; }
 
 /* Fila ya en cola de manifiesto */
-.dp-in-queue { background:rgba(204,0,0,.07)!important;
-               outline:1.5px solid rgba(204,0,0,.35);
+.dp-in-queue { background:rgba(220,38,38,.06)!important;
+               border-left-color:var(--ilus-red) !important;
                position:relative; }
 .dp-in-queue .dp-drag-handle::after {
   content:'\F26E'; font-family:'bootstrap-icons';
@@ -742,8 +1365,12 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content" style="border-radius:12px;overflow:hidden">
 
-      {# — Encabezado oscuro con info del documento — #}
-      <div id="vistaHeader" style="background:var(--ilus-black);padding:20px 24px 16px;flex-shrink:0">
+      {# — Encabezado oscuro con info del documento — logo más chico para
+         dejar espacio al número del documento (más importante) — #}
+      <div id="vistaHeader"
+           style="background:linear-gradient(135deg, #0f172a 0%, #0a0a0a 100%);
+                  padding:20px 24px 18px;flex-shrink:0;
+                  border-bottom:3px solid var(--ilus-red)">
         <div class="d-flex justify-content-between align-items-start">
           <div class="d-flex align-items-center gap-3">
             {% if has_logo %}
@@ -751,7 +1378,7 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
               <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
               <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
                    alt="ILUS"
-                   style="height:162px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.5))"
+                   style="height:62px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4))"
                    decoding="async">
             </picture>
             {% else %}
@@ -765,8 +1392,8 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
             </svg>
             {% endif %}
             <div>
-              <div class="fw-bold text-white font-monospace" style="font-size:1.15rem" id="vistaDocNum">—</div>
-              <div style="color:#aaa;font-size:.82rem;margin-top:2px" id="vistaFecha"></div>
+              <div class="fw-bold text-white font-monospace" style="font-size:1.45rem; letter-spacing:-.01em; line-height:1.1" id="vistaDocNum">—</div>
+              <div style="color:#94a3b8;font-size:.8rem;margin-top:4px" id="vistaFecha"></div>
             </div>
           </div>
           <button type="button" class="btn-close btn-close-white mt-1" data-bs-dismiss="modal"></button>
@@ -925,27 +1552,32 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 
       </div>
 
-      {# Footer con acciones — Daniel pidió que el modal tenga botones de
-         acción visibles (asignar a manifiesto, cotizar, cerrar). Se ven
-         como CTAs claros, no como tabs. #}
-      <div class="modal-footer py-2 border-top d-flex justify-content-between flex-wrap gap-1">
-        <div class="d-flex gap-1 flex-wrap">
-          <button class="btn btn-sm btn-outline-secondary" onclick="cotizarActual()" id="btnCotizar"
-                  title="Comparar tarifas disponibles según peso predicho">
-            <i class="bi bi-calculator me-1"></i>Cotizar envío
-          </button>
-          <button class="btn btn-sm btn-ilus fw-bold" id="btnVistaManifiesto"
+      {# Footer con acciones — jerarquía: primario asignar manifiesto (rojo),
+         secundarios cotizar/editar (ghost), close button al final. #}
+      <div class="modal-footer py-3 border-top d-flex justify-content-between flex-wrap gap-2"
+           style="background:#f8fafc">
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="tr-btn tr-btn-primary" id="btnVistaManifiesto"
                   onclick="vistaAsignarManifiesto()"
                   title="Agregar este documento al panel de manifiesto">
-            <i class="bi bi-clipboard-plus me-1"></i>Agregar a manifiesto
+            <i class="bi bi-clipboard-plus"></i>
+            <span>Asignar a manifiesto</span>
           </button>
-          <button class="btn btn-sm btn-outline-dark" id="btnVistaEditar"
+          <button class="tr-btn tr-btn-ghost" onclick="cotizarActual()" id="btnCotizar"
+                  title="Comparar tarifas disponibles según peso predicho">
+            <i class="bi bi-calculator"></i>
+            <span>Cotizar envío</span>
+          </button>
+          <button class="tr-btn tr-btn-ghost" id="btnVistaEditar"
                   onclick="vistaEditar()"
                   title="Editar estado, costo, notas del documento">
-            <i class="bi bi-pencil-square me-1"></i>Editar campos
+            <i class="bi bi-pencil-square"></i>
+            <span>Editar campos</span>
           </button>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-dark" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg"></i><span>Cerrar</span>
+        </button>
       </div>
 
     </div>
@@ -1108,6 +1740,8 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 var _vistaModal = null;
 var _fotoModal  = null;
 var _vistaCurrentSku = null;   // SKU activo para upload de fotos
+var _trLastSync     = null;     // timestamp última sync para el header
+var _trSyncTimer    = null;
 
 document.addEventListener('DOMContentLoaded', function() {
   _vistaModal = new bootstrap.Modal(document.getElementById('vistaModal'));
@@ -1118,8 +1752,97 @@ document.addEventListener('DOMContentLoaded', function() {
   // Daniel pidió: solo aparece cuando el usuario lo activa (botón flotante)
   // o cuando arrastra un documento. Esto evita que estorbe el listado.
   var btn = document.getElementById('dpReopenBtn');
-  if (btn) btn.style.display = '';
+  if (btn) btn.style.display = 'inline-flex';
+  // Iniciar refresh periódico del estado de sync (cada 30s)
+  _trActualizarSyncStatus();
+  if (_trSyncTimer) clearInterval(_trSyncTimer);
+  _trSyncTimer = setInterval(_trActualizarSyncStatus, 30000);
 });
+
+// ── Helpers de UI nuevos ────────────────────────────────────────
+// Formatea una fecha del backend (ISO o dd/mm/yyyy) a "30 abr 2026"
+// con relación humana ("hoy", "ayer", "hace 3d") como subtexto.
+function trFormatFecha(s) {
+  if (!s) return '<span style="color:var(--tr-text-soft)">—</span>';
+  var meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  var d = null;
+  try {
+    // Soporta dd/mm/yyyy, yyyy-mm-dd e ISO
+    if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) {
+      var parts = s.split(/[\/ ]/);
+      d = new Date(parseInt(parts[2]), parseInt(parts[1])-1, parseInt(parts[0]));
+    } else {
+      d = new Date(s);
+    }
+    if (!d || isNaN(d.getTime())) return '<span>' + s + '</span>';
+  } catch(e) { return '<span>' + s + '</span>'; }
+
+  var hoy = new Date(); hoy.setHours(0,0,0,0);
+  var solo = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var diff = Math.round((hoy - solo) / 86400000);
+  var rel = '';
+  if (diff === 0) rel = 'hoy';
+  else if (diff === 1) rel = 'ayer';
+  else if (diff > 1 && diff < 7) rel = 'hace ' + diff + 'd';
+  else if (diff >= 7 && diff < 30) rel = 'hace ' + Math.floor(diff/7) + 'sem';
+  else if (diff >= 30) rel = 'hace ' + Math.floor(diff/30) + 'm';
+
+  var fechaTxt = d.getDate() + ' ' + meses[d.getMonth()] + ' ' + d.getFullYear();
+  return '<div class="tr-fecha"><span class="tr-fecha-day">' + fechaTxt + '</span>' +
+         (rel ? '<span class="tr-fecha-rel">' + rel + '</span>' : '') + '</div>';
+}
+
+// Cambia la vista del monitor desde los KPI cards (clic directo).
+function setVistaMonitorById(vista) {
+  var btn = document.querySelector('.tr-segment-btn[data-vista="' + vista + '"]');
+  if (btn) setVistaMonitor(btn, vista);
+}
+
+// Actualiza el indicador de estado de sync en el header
+function _trActualizarSyncStatus() {
+  var el = document.getElementById('trSyncStatus');
+  if (!el) return;
+  if (!_trLastSync) {
+    el.textContent = 'sincronizado al cargar';
+    el.classList.remove('tr-sync-stale');
+    return;
+  }
+  var diff = Math.round((Date.now() - _trLastSync) / 60000);
+  if (diff < 1) { el.textContent = 'sincronizado ahora'; el.classList.remove('tr-sync-stale'); }
+  else if (diff < 60) {
+    el.textContent = 'hace ' + diff + ' min';
+    el.classList.toggle('tr-sync-stale', diff > 30);
+  } else {
+    el.textContent = 'hace ' + Math.floor(diff/60) + ' h';
+    el.classList.add('tr-sync-stale');
+  }
+}
+
+// Cleanup de cualquier backdrop huérfano. Usa la función global del ilus_ui
+// si existe, y agrega una pasada defensiva extra. Llamar tras cualquier
+// modal Bootstrap O ilusAlert.
+function trLimpiarBackdrops() {
+  try {
+    if (typeof window.ilusCleanModalBackdrops === 'function') {
+      window.ilusCleanModalBackdrops();
+    }
+    // Pasada extra: matar cualquier .modal-backdrop si no queda modal visible
+    var abiertos = document.querySelectorAll('.modal.show').length;
+    var backdrops = document.querySelectorAll('.modal-backdrop');
+    if (abiertos === 0 && backdrops.length > 0) {
+      backdrops.forEach(function(b){ b.remove(); });
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+    }
+    // También cleanup de ilus-overlay huérfanos (defensivo)
+    var ilusOverlays = document.querySelectorAll('.ilus-overlay');
+    ilusOverlays.forEach(function(ov){
+      // Si no tiene class .show ni está animando in, es huérfano
+      if (!ov.classList.contains('show')) ov.remove();
+    });
+  } catch(e) { console.warn('[transporte] trLimpiarBackdrops:', e); }
+}
 
 function setSync(days) {
   var hoy   = new Date();
@@ -1568,14 +2291,20 @@ var _vistaActual = (function(){
 function setVistaMonitor(btn, vista){
   _vistaActual = vista || 'pendientes';
   try { localStorage.setItem('tr_vista_actual', _vistaActual); } catch(e){}
-  document.querySelectorAll('.btn-vista').forEach(function(b){ b.classList.remove('active'); });
+  // Quitar active de TODOS los segmented btns y legacy .btn-vista
+  document.querySelectorAll('.tr-segment-btn, .btn-vista').forEach(function(b){ b.classList.remove('active'); });
   if (btn) btn.classList.add('active');
+  else {
+    // Fallback: buscar por data-vista
+    var target = document.querySelector('.tr-segment-btn[data-vista="' + _vistaActual + '"]');
+    if (target) target.classList.add('active');
+  }
   cargarMonitor();
 }
 
 // Sincronizar estado UI inicial al cargar (porque la vista viene de localStorage)
 document.addEventListener('DOMContentLoaded', function(){
-  document.querySelectorAll('.btn-vista').forEach(function(b){
+  document.querySelectorAll('.tr-segment-btn, .btn-vista').forEach(function(b){
     b.classList.toggle('active', b.dataset.vista === _vistaActual);
   });
 });
@@ -1605,78 +2334,150 @@ function cargarMonitor() {
         setBadge('vbParciales',  d.conteos.parciales  || 0);
         setBadge('vbEntregados', d.conteos.entregados || 0);
         setBadge('vbTodos',      d.conteos.total      || 0);
+        // KPI cards en hero
+        setBadge('kpiPendientes', d.conteos.pendientes || 0);
+        setBadge('kpiParciales',  d.conteos.parciales  || 0);
+        setBadge('kpiEntregados', d.conteos.entregados || 0);
+        // Atrasados: en la vista pendientes, cuántos tienen > 7 días desde la emisión
+        var atrasados = 0;
+        try {
+          (_monitorData || []).forEach(function(c){
+            if (c.fecha) {
+              var d2 = new Date(c.fecha);
+              if (!isNaN(d2.getTime())) {
+                var dias = Math.floor((Date.now() - d2.getTime()) / 86400000);
+                // Solo cuentan los que aún no están entregados
+                if (dias > 7 && (c.cobertura_pct||0) < 100) atrasados++;
+              }
+            }
+          });
+        } catch(e){}
+        setBadge('kpiAtrasados', atrasados);
       }
+      // Marcar timestamp de sync para el indicador en el header
+      _trLastSync = Date.now();
+      _trActualizarSyncStatus();
 
       // Renderizar tabla desktop
       var tbody = document.getElementById('monitorTbody');
       if (tbody) {
         if (!_monitorData.length) {
-          var msgVacio = {
-            pendientes: 'No hay documentos pendientes de despacho. ¡Bien!',
-            parciales:  'Sin despachos parciales en curso.',
-            entregados: 'Aún no hay documentos completamente entregados.',
-            todos:      'Sin documentos en el rango seleccionado. Usa "Sincronizar HOY" para traer los del día.',
-          }[_vistaActual] || 'Sin compromisos pendientes';
-          tbody.innerHTML = '<tr><td colspan="11" class="text-center py-4 text-muted">'+ msgVacio +'</td></tr>';
+          // Empty state con CTA según la vista actual
+          var emptyConfig = {
+            pendientes: {
+              icon:  'bi-check2-circle',
+              title: 'Sin pendientes',
+              sub:   'No hay documentos pendientes de despacho. ¡Buen trabajo!',
+              cta:   null,
+            },
+            parciales: {
+              icon:  'bi-truck',
+              title: 'Sin despachos parciales',
+              sub:   'Cuando un documento salga parcialmente del bodega, aparecerá aquí.',
+              cta:   null,
+            },
+            entregados: {
+              icon:  'bi-box-seam',
+              title: 'Sin entregas completadas',
+              sub:   'Los documentos entregados al 100% aparecerán acá una vez confirmados.',
+              cta:   null,
+            },
+            todos: {
+              icon:  'bi-cloud-download',
+              title: 'Aún no hay datos',
+              sub:   'Sincroniza con el ERP para traer los documentos del mes en curso.',
+              cta:   '<button class="tr-empty-cta" onclick="sincronizarMesActual()"><i class="bi bi-arrow-clockwise"></i>Sincronizar ahora</button>',
+            },
+          };
+          var conf = emptyConfig[_vistaActual] || emptyConfig.todos;
+          tbody.innerHTML =
+            '<tr><td colspan="11" style="padding:0">' +
+              '<div class="tr-empty">' +
+                '<div class="tr-empty-icon"><i class="bi ' + conf.icon + '"></i></div>' +
+                '<div class="tr-empty-title">' + conf.title + '</div>' +
+                '<div class="tr-empty-sub">' + conf.sub + '</div>' +
+                (conf.cta || '') +
+              '</div>' +
+            '</td></tr>';
         } else {
           tbody.innerHTML = _monitorData.map(function(c) {
-            var color = ESTADO_COLORS[c.estado] || 'secondary';
-            var darkText = color === 'warning' ? 'text-dark' : 'text-white';
+            // Map de colores del estado → clase pill
+            var pillClass = ({
+              warning: 'tr-estado-warning',
+              primary: 'tr-estado-primary',
+              success: 'tr-estado-success',
+              danger:  'tr-estado-danger',
+              info:    'tr-estado-info',
+              secondary: 'tr-estado-secondary',
+            }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
+
             var costoHtml = c.costo_zz
-              ? '$' + Math.round(c.costo_zz).toLocaleString('es-CL')
-              : '<span class="text-muted">—</span>';
-            /* NOTE: drag attributes added via initDragRows() after render */
+              ? '<span class="tr-costo">$' + Math.round(c.costo_zz).toLocaleString('es-CL') + '</span>'
+              : '<span style="color:var(--tr-text-soft)">—</span>';
+
+            // Tipo (clasificación) badge
             var clasifMap = {
-              retiro:'<span class="badge bg-info text-dark"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>',
-              instalacion:'<span class="badge bg-warning text-dark"><i class="bi bi-tools me-1"></i>Instalación</span>',
-              mantencion:'<span class="badge bg-secondary"><i class="bi bi-wrench me-1"></i>Mantención</span>',
-              garantia:'<span class="badge bg-success"><i class="bi bi-shield-check me-1"></i>Garantía</span>',
+              retiro:      { cls:'tr-tipo-retiro',      icon:'bi-arrow-return-left',  label:'Retiro' },
+              instalacion: { cls:'tr-tipo-instalacion', icon:'bi-tools',              label:'Instalación' },
+              mantencion:  { cls:'tr-tipo-mantencion',  icon:'bi-wrench-adjustable', label:'Mantención' },
+              garantia:    { cls:'tr-tipo-garantia',    icon:'bi-shield-check',       label:'Garantía' },
+              despacho:    { cls:'tr-tipo-despacho',    icon:'bi-box-arrow-right',    label:'Despacho' },
             };
-            var clasificHtml = clasifMap[c.clasificacion]
-              || '<span class="badge bg-dark"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>';
+            var tipo = clasifMap[c.clasificacion] || clasifMap.despacho;
+            var clasificHtml = '<span class="tr-tipo-badge ' + tipo.cls + '">' +
+              '<i class="bi ' + tipo.icon + '"></i>' + tipo.label + '</span>';
+
+            // Borde lateral por estado (orientado a flujo)
+            var rowFlowClass = '';
+            if (c.cobertura_pct >= 100) rowFlowClass = 'tr-row-entregado';
+            else if (c.cobertura_pct > 0) rowFlowClass = 'tr-row-parcial';
+            else rowFlowClass = 'tr-row-pendiente';
+
+            // Fecha formateada bonito
+            var fechaHtml = c.fecha ? trFormatFecha(c.fecha) : '<span style="color:var(--tr-text-soft)">—</span>';
+
             var lbl    = (c.tido+' '+c.nudo).replace(/"/g,'&quot;');
             var cli    = (c.cliente||'').replace(/"/g,'&quot;');
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\'");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
-            return '<tr class="tr-monitor-row" data-id="' + c.id + '" data-clasif="' + (c.clasificacion||'despacho') + '" ' +
+            return '<tr class="tr-monitor-row ' + rowFlowClass + '" data-id="' + c.id + '" ' +
+              'data-clasif="' + (c.clasificacion||'despacho') + '" ' +
               'data-label="' + lbl + '" data-cliente="' + cli + '">' +
 
               /* ── Handle de drag ── */
               '<td class="dp-drag-handle" title="Arrastrar al manifiesto" ' +
                   'ondragstart="_dragHandleStart(event,' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')" draggable="true">' +
-                '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-                            'width:36px;height:100%;cursor:grab;color:#aaa;gap:2px;padding:6px 0">' +
-                  '<i class="bi bi-grip-vertical" style="font-size:1.1rem"></i>' +
-                  '<span style="font-size:.55rem;letter-spacing:.5px;text-transform:uppercase;font-weight:700;' +
-                               'color:#ccc;line-height:1;margin-top:1px">drag</span>' +
-                '</div>' +
+                '<i class="bi bi-grip-vertical" style="font-size:1.1rem; color:var(--tr-text-soft); cursor:grab"></i>' +
               '</td>' +
 
-              /* ── N° / Folio (abre MODAL con detalle, no panel lateral) ── */
+              /* ── Documento — TIDO + NUDO ── */
               '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
-                '<span class="fw-bold font-monospace" style="font-size:.88rem">' + c.tido + ' ' + c.nudo + '</span>' +
+                '<span class="tr-doc-tido">' + (c.tido||'') + '</span>' +
+                '<span class="tr-doc-num">' + (c.nudo||'') + '</span>' +
               '</td>' +
 
               /* ── Fecha ── */
-              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer;white-space:nowrap">' + (c.fecha||'—') + '</td>' +
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' + fechaHtml + '</td>' +
 
               /* ── Cliente ── */
               '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
-                '<div class="fw-semibold">' + (c.cliente||'—') + '</div>' +
-                '<div class="small text-muted">' + (c.rut||'') + '</div>' +
+                '<div class="tr-cliente-name">' + (c.cliente||'—') + '</div>' +
+                (c.rut ? '<div class="tr-cliente-rut">' + c.rut + '</div>' : '') +
               '</td>' +
 
               /* ── Comuna ── */
-              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' + (c.comuna||'—') + '</td>' +
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer; color:var(--tr-text-muted)">' +
+                (c.comuna||'<span style="color:var(--tr-text-soft)">—</span>') +
+              '</td>' +
 
               /* ── Estado ── */
-              '<td><span class="badge rounded-pill bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span></td>' +
+              '<td><span class="tr-estado-pill ' + pillClass + '">' + (c.estado||'—') + '</span></td>' +
 
               /* ── Guía de despacho (NUDGIA del ERP) ── */
-              '<td class="text-center" style="font-family:monospace;font-size:.78rem">' +
+              '<td class="text-center">' +
                 (c.guia_numero
-                  ? '<span class="badge bg-success-subtle text-success border border-success-subtle" title="Guía de despacho asociada en el ERP">' + c.guia_numero + '</span>'
-                  : '<span class="text-muted">—</span>') +
+                  ? '<span class="tr-guia-pill" title="Guía de despacho asociada en el ERP">' + c.guia_numero + '</span>'
+                  : '<span style="color:var(--tr-text-soft)">—</span>') +
               '</td>' +
 
               /* ── Cobertura (% despachado) ── */
@@ -1686,7 +2487,7 @@ function cargarMonitor() {
                       (c.cobertura_pct >= 100 ? '#166534' : (c.cobertura_pct >= 50 ? '#92400e' : '#991b1b')) +
                       '">' + c.cobertura_pct.toFixed(0) + '%</div>' +
                     '<div class="cobertura-bar"><div class="cobertura-fill" style="width:' + Math.min(c.cobertura_pct,100) + '%"></div></div>'
-                  : '<span class="text-muted small">0%</span>') +
+                  : '<span style="color:var(--tr-text-soft); font-size:.75rem">0%</span>') +
               '</td>' +
 
               /* ── Costo ── */
@@ -1695,17 +2496,16 @@ function cargarMonitor() {
               /* ── Clasificación ── */
               '<td class="text-center">' + clasificHtml + '</td>' +
 
-              /* ── Acciones ── */
-              '<td class="text-center" onclick="event.stopPropagation()">' +
-                '<div style="display:flex;gap:4px;justify-content:center;align-items:center">' +
-                  '<button class="btn btn-sm btn-outline-danger" title="Ver detalle" style="padding:3px 7px" ' +
-                    'onclick="openVista(' + c.id + ')"><i class="bi bi-eye"></i></button>' +
-                  '<button class="btn btn-sm btn-ilus fw-bold" title="Agregar al manifiesto" style="padding:3px 9px" ' +
-                    'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
-                    '<i class="bi bi-clipboard-plus me-1"></i><span style="font-size:.75rem">Manifiesto</span></button>' +
-                  '<button class="btn btn-sm btn-outline-secondary" title="Editar" style="padding:3px 7px" ' +
-                    'onclick="openPanel(' + c.id + ')"><i class="bi bi-pencil-square"></i></button>' +
-                '</div>' +
+              /* ── Acciones — botón primario "Ver" + botones secundarios ── */
+              '<td class="text-center tr-actions-cell" onclick="event.stopPropagation()">' +
+                '<button class="tr-action tr-action-primary" title="Ver detalle" ' +
+                  'onclick="openVista(' + c.id + ')">' +
+                  '<i class="bi bi-eye"></i><span>Ver</span></button>' +
+                '<button class="tr-action" title="Agregar al manifiesto" ' +
+                  'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
+                  '<i class="bi bi-clipboard-plus"></i></button>' +
+                '<button class="tr-action" title="Editar" ' +
+                  'onclick="openPanel(' + c.id + ')"><i class="bi bi-pencil-square"></i></button>' +
               '</td>' +
               '</tr>';
           }).join('');
@@ -1716,25 +2516,58 @@ function cargarMonitor() {
       var cards = document.getElementById('monitorCards');
       if (cards) {
         if (!_monitorData.length) {
-          cards.innerHTML = '<div class="text-center py-4 text-muted">Sin compromisos pendientes</div>';
+          var emptyConf = ({
+            pendientes: { icon:'bi-check2-circle', title:'Sin pendientes', sub:'Buen trabajo, no hay documentos por despachar.' },
+            parciales:  { icon:'bi-truck', title:'Sin despachos parciales', sub:'Cuando salga algo parcial, aparecerá aquí.' },
+            entregados: { icon:'bi-box-seam', title:'Sin entregados', sub:'Aún no hay documentos completados.' },
+            todos:      { icon:'bi-cloud-download', title:'Aún no hay datos', sub:'Sincroniza con el ERP para empezar.' },
+          })[_vistaActual] || { icon:'bi-inbox', title:'Sin compromisos', sub:'' };
+          cards.innerHTML =
+            '<div class="tr-empty">' +
+              '<div class="tr-empty-icon"><i class="bi ' + emptyConf.icon + '"></i></div>' +
+              '<div class="tr-empty-title">' + emptyConf.title + '</div>' +
+              '<div class="tr-empty-sub">' + emptyConf.sub + '</div>' +
+              (_vistaActual === 'todos'
+                ? '<button class="tr-empty-cta" onclick="sincronizarMesActual()">' +
+                  '<i class="bi bi-arrow-clockwise"></i>Sincronizar ahora</button>'
+                : '') +
+            '</div>';
         } else {
           cards.innerHTML = _monitorData.map(function(c) {
-            var color = ESTADO_COLORS[c.estado] || 'secondary';
-            var darkText = color === 'warning' ? 'text-dark' : 'text-white';
-            return '<div class="ilus-card mb-2">' +
-              '<div class="p-3" onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
-                '<div class="d-flex justify-content-between align-items-start">' +
-                  '<div class="fw-bold font-monospace" style="font-size:.82rem">' + c.tido + ' ' + c.nudo + '</div>' +
-                  '<span class="badge bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span>' +
+            var pillClass = ({
+              warning:'tr-estado-warning', primary:'tr-estado-primary',
+              success:'tr-estado-success', danger:'tr-estado-danger',
+              info:'tr-estado-info', secondary:'tr-estado-secondary',
+            }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
+            var costo = c.costo_zz
+              ? '$' + Math.round(c.costo_zz).toLocaleString('es-CL')
+              : null;
+            var rowFlow = '';
+            if (c.cobertura_pct >= 100) rowFlow = 'tr-row-entregado';
+            else if (c.cobertura_pct > 0) rowFlow = 'tr-row-parcial';
+            else rowFlow = 'tr-row-pendiente';
+            var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\u0027");
+            var cliEsc = (c.cliente||'').replace(/'/g,"\\u0027");
+            return '<div class="tr-mcard ' + rowFlow + '" onclick="openVista(' + c.id + ')">' +
+              '<div class="tr-mcard-top">' +
+                '<div>' +
+                  '<span class="tr-doc-tido">' + c.tido + '</span>' +
+                  '<span class="tr-doc-num">' + c.nudo + '</span>' +
                 '</div>' +
-                '<div class="fw-semibold mt-1">' + (c.cliente||'—') + '</div>' +
-                '<div class="small text-muted">' + (c.comuna||'') + ' · ' + (c.fecha||'') + '</div>' +
+                '<span class="tr-estado-pill ' + pillClass + '">' + (c.estado||'') + '</span>' +
               '</div>' +
-              '<div class="px-3 pb-2 d-flex gap-2" onclick="event.stopPropagation()">' +
-                '<button class="btn btn-sm btn-outline-danger w-50" onclick="openVista(' + c.id + ')">' +
-                  '<i class="bi bi-eye me-1"></i>Ver detalle</button>' +
-                '<button class="btn btn-sm btn-ilus w-50" onclick="abrirDragPanelConCid(' + c.id + ',\'' + (c.tido+' '+c.nudo).replace(/'/g,"\\u0027") + '\',\'' + (c.cliente||"").replace(/'/g,"\\u0027") + '\')">' +
-                  '<i class="bi bi-clipboard-plus me-1"></i>Manifiesto</button>' +
+              '<div class="tr-mcard-cliente">' + (c.cliente||'—') + '</div>' +
+              '<div class="tr-mcard-meta">' +
+                (c.comuna ? '<span><i class="bi bi-geo-alt"></i> ' + c.comuna + '</span>' : '') +
+                (c.fecha ? '<span><i class="bi bi-calendar3"></i> ' + c.fecha + '</span>' : '') +
+                (costo ? '<span class="tr-mcard-costo">' + costo + '</span>' : '') +
+              '</div>' +
+              '<div class="tr-mcard-actions" onclick="event.stopPropagation()">' +
+                '<button class="tr-btn tr-btn-ghost tr-btn-sm" style="flex:1" onclick="openVista(' + c.id + ')">' +
+                  '<i class="bi bi-eye"></i><span>Ver detalle</span></button>' +
+                '<button class="tr-btn tr-btn-primary tr-btn-sm" style="flex:1" ' +
+                  'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
+                  '<i class="bi bi-clipboard-plus"></i><span>Manifiesto</span></button>' +
               '</div>' +
             '</div>';
           }).join('');
@@ -1929,8 +2762,9 @@ var _tabClasif = '';  // '' = todos
 
 function filtrarTabMonitor(btn, clasif) {
   _tabClasif = clasif;
-  document.querySelectorAll('#monitorTabs button').forEach(function(b){ b.classList.remove('active'); });
-  btn.classList.add('active');
+  // Limpiar active de la nueva clase .tr-tab y de los legacy nav-link por si acaso
+  document.querySelectorAll('.tr-tab, #monitorTabs button').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
   var rows = document.querySelectorAll('#monitorTbody tr[data-clasif]');
   var visible = 0;
   rows.forEach(function(tr) {
@@ -2043,15 +2877,19 @@ function _dpRenderCola() {
     badge.textContent = _dpQueue.length;
     badge.style.display = _dpQueue.length ? 'inline-block' : 'none';
   }
-  // Badge en el botón flotante (si el panel está cerrado)
+  // Badge en el botón flotante (si el panel está cerrado) + pulse-attention
   var reopenBadge = document.getElementById('dpReopenBadge');
+  var reopenBtn   = document.getElementById('dpReopenBtn');
   if (reopenBadge) {
     if (_dpQueue.length) {
-      reopenBadge.style.display = '';
+      reopenBadge.style.display = 'inline-flex';
       reopenBadge.textContent = _dpQueue.length;
     } else {
       reopenBadge.style.display = 'none';
     }
+  }
+  if (reopenBtn) {
+    reopenBtn.classList.toggle('tr-has-items', _dpQueue.length > 0);
   }
 
   if (!_dpQueue.length) {
@@ -2221,7 +3059,10 @@ function openDragPanel() {
     document.getElementById('dragOverlay').style.display = 'block';
   }
   var btn = document.getElementById('dpReopenBtn');
-  if (btn) btn.style.display = 'none';
+  if (btn) {
+    btn.style.display = 'none';
+    btn.classList.remove('tr-has-items');
+  }
   if (!_manifestosActivos) cargarDragPanel();
 }
 
@@ -2231,18 +3072,20 @@ function closeDragPanel() {
   document.body.classList.remove('dp-open-desktop');
   document.getElementById('dragOverlay').style.display = 'none';
   _dragCid = null;
-  // Mostrar el botón flotante para reabrir. Si hay items en cola, mostrar badge.
+  // Mostrar el botón flotante para reabrir. Si hay items en cola, mostrar badge + pulse.
   var btn = document.getElementById('dpReopenBtn');
   if (btn) {
-    btn.style.display = '';
+    btn.style.display = 'inline-flex';
     var badge = document.getElementById('dpReopenBadge');
-    if (badge) {
-      if (_dpQueue.length) {
-        badge.style.display = '';
+    if (_dpQueue.length) {
+      btn.classList.add('tr-has-items');
+      if (badge) {
+        badge.style.display = 'inline-flex';
         badge.textContent = _dpQueue.length;
-      } else {
-        badge.style.display = 'none';
       }
+    } else {
+      btn.classList.remove('tr-has-items');
+      if (badge) badge.style.display = 'none';
     }
   }
 }
