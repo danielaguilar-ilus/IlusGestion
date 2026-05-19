@@ -12,11 +12,19 @@
             title="Buscar y agregar un documento puntual del ERP (TIDO + NUDO)">
       <i class="bi bi-plus-circle me-1"></i>Agregar uno
     </button>
-    <button class="btn btn-sm fw-bold text-white" id="btnSyncHoy"
+    {# ── Sincronizar mes actual ──
+       Reemplaza "Sincronizar HOY". Trae todos los BLV+FCV con saldo del mes
+       corriente. Se complementa con el cron automático 09/11/15/17. #}
+    <button class="btn btn-sm fw-bold text-white" id="btnSyncMes"
             style="background:linear-gradient(135deg,#15803d,#16a34a)"
+            onclick="sincronizarMesActual()"
+            title="Trae todos los documentos del mes actual con saldo pendiente desde el ERP">
+      <i class="bi bi-calendar-month me-1"></i>Sincronizar mes actual
+    </button>
+    <button class="btn btn-sm btn-outline-success" id="btnSyncHoy"
             onclick="sincronizarHoy()"
-            title="Importa todos los documentos del ERP emitidos HOY">
-      <i class="bi bi-calendar-check me-1"></i>Sincronizar HOY
+            title="Importa todos los documentos del ERP emitidos HOY (rápido)">
+      <i class="bi bi-calendar-check me-1"></i>Solo HOY
     </button>
     <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#syncModal"
             title="Sincronización por rango de fechas (más amplio)">
@@ -25,13 +33,19 @@
     <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-ilus">
       <i class="bi bi-clipboard-check me-1"></i>Manifiestos
     </a>
-    {# Limpiar monitor — solo admin/superadmin. Útil para reiniciar el flujo
-       y validar que el sync diario funciona. Pide doble confirmación. #}
+    {# Acciones destructivas — solo admin/superadmin.
+       Pide doble confirmación con ilusConfirm danger. #}
     {% if permissions.superadmin or permissions.admin %}
+    <button class="btn btn-sm fw-semibold" id="btnLimpiarResync"
+            style="background:#dc2626;color:#fff;border:none"
+            onclick="limpiarYResync()"
+            title="Borra documentos pendientes del mes que NO tengan manifiesto y resincroniza desde ERP">
+      <i class="bi bi-eraser me-1"></i>Limpiar pendientes + resync
+    </button>
     <button class="btn btn-sm btn-outline-danger" id="btnLimpiarMon"
             onclick="limpiarMonitor()"
             title="Borra TODOS los registros del monitor (admin)">
-      <i class="bi bi-trash3 me-1"></i>Limpiar monitor
+      <i class="bi bi-trash3 me-1"></i>Limpiar todo
     </button>
     {% endif %}
   </div>
@@ -85,7 +99,7 @@ async function limpiarMonitor(){
     ? await ilusConfirm({
         title: 'Limpiar TODO el monitor',
         message: '¿Eliminar TODOS los registros del monitor de transporte?',
-        sub: 'No se borra nada del ERP. El próximo "Sincronizar HOY" repuebla automáticamente con los documentos del día.',
+        sub: 'No se borra nada del ERP. El próximo sync repuebla automáticamente con los documentos del día.',
         okLabel: 'Sí, limpiar todo',
         cancelLabel: 'Cancelar',
         type: 'danger',
@@ -109,6 +123,89 @@ async function limpiarMonitor(){
   } catch(e){
     if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
     else alert('Error de red: '+e.message);
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SINCRONIZAR MES ACTUAL — trae todos los BLV+FCV con saldo
+//  del primer día del mes hasta hoy. Idéntico a lo que corre el
+//  cron 4 veces al día (09/11/15/17).
+// ════════════════════════════════════════════════════════════
+async function sincronizarMesActual(){
+  const btn = document.getElementById('btnSyncMes');
+  const txt = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando mes…'; }
+  try {
+    const r = await fetch('/transporte/api/sync/mes-actual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ limpiar: false })
+    });
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Sincronización del mes',
+        message: d.mensaje || ('Documentos sincronizados: ' + (d.sincronizados||0)),
+        sub: 'Rango: ' + (d.rango||'') + ((d.errores||[]).length ? ' · ' + d.errores.length + ' error(es) en el ERP' : ''),
+        type: (d.sincronizados||0) > 0 ? 'success' : 'info',
+      });
+    }
+    if ((d.sincronizados||0) > 0 || (d.limpiados||0) > 0) {
+      setTimeout(() => location.reload(), 500);
+    }
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  LIMPIAR PENDIENTES + RESYNC — solo admin
+//  Borra pendientes del mes SIN manifiesto y vuelve a traer
+//  desde ERP. No toca lo que ya está en manifiesto.
+// ════════════════════════════════════════════════════════════
+async function limpiarYResync(){
+  const ok = (typeof ilusConfirm === 'function')
+    ? await ilusConfirm({
+        title: 'Limpiar pendientes del mes + resincronizar',
+        message: '¿Borrar los documentos pendientes del mes corriente que aún NO están en un manifiesto y volver a traerlos desde el ERP?',
+        sub: 'Los documentos ya asignados a un manifiesto se respetan. Es seguro repetir esta acción cuantas veces quieras.',
+        okLabel: 'Sí, limpiar y resync',
+        cancelLabel: 'Cancelar',
+        type: 'danger',
+      })
+    : confirm('¿Limpiar pendientes del mes y resincronizar desde ERP?');
+  if (!ok) return;
+  const btn = document.getElementById('btnLimpiarResync');
+  const txt = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando + resync…'; }
+  try {
+    const r = await fetch('/transporte/api/sync/mes-actual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ limpiar: true })
+    });
+    const d = await r.json();
+    if (!d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Limpieza + resync OK',
+        message: 'Pendientes limpiados: ' + (d.limpiados||0) + ' · Sincronizados: ' + (d.sincronizados||0),
+        sub: 'Rango: ' + (d.rango||''),
+        type: 'success',
+      });
+    }
+    setTimeout(() => location.reload(), 500);
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
   } finally {
     if (btn){ btn.disabled = false; btn.innerHTML = txt; }
   }
@@ -283,7 +380,10 @@ async function limpiarMonitor(){
   <div class="px-3 pb-2 pt-1 d-flex justify-content-between align-items-center"
        style="font-size:.75rem;color:#888;border-top:1px solid #eee">
     <span>Total visible: <strong id="monitorCount">…</strong></span>
-    <span><i class="bi bi-grip-vertical me-1"></i>Arrastra filas al panel para crear manifiesto</span>
+    <span>
+      <i class="bi bi-info-circle me-1"></i>Clic en una fila abre el detalle ·
+      <i class="bi bi-grip-vertical mx-1"></i>arrastra para crear manifiesto
+    </span>
   </div>
 </div>
 
@@ -293,8 +393,22 @@ async function limpiarMonitor(){
 </div>
 
 {# ══════════════════════════════════════════════
-   PANEL MANIFIESTO — fijo en desktop, overlay en mobile
+   PANEL MANIFIESTO — colapsable en desktop, overlay en mobile.
+   Daniel pidió poder ocultarlo: ahora se cierra con la X y se reabre
+   con el botón flotante #dpReopenBtn que aparece abajo a la derecha.
 ══════════════════════════════════════════════ #}
+<button id="dpReopenBtn" type="button"
+        onclick="openDragPanel()"
+        title="Mostrar panel de manifiesto"
+        style="display:none;position:fixed;bottom:18px;right:18px;z-index:1052;
+               background:var(--ilus-red);color:#fff;border:none;border-radius:50px;
+               padding:11px 17px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,.3);
+               cursor:pointer;font-size:.82rem">
+  <i class="bi bi-clipboard-plus me-1"></i>Panel manifiesto
+  <span id="dpReopenBadge" style="display:none;background:#fff;color:var(--ilus-red);
+        border-radius:50px;font-size:.65rem;font-weight:800;padding:1px 7px;margin-left:6px">0</span>
+</button>
+
 <div id="dragPanel"
      style="position:fixed;top:0;right:0;width:360px;max-width:100vw;height:100vh;
             background:#0f0f0f;color:#fff;box-shadow:-6px 0 32px rgba(0,0,0,.6);
@@ -313,10 +427,11 @@ async function limpiarMonitor(){
         <span id="dpBadge" style="display:none;
               background:var(--ilus-red);color:#fff;border-radius:50px;
               font-size:.65rem;font-weight:800;padding:2px 7px;min-width:22px;text-align:center">0</span>
-        {# Botón cerrar (sólo en mobile — en desktop se oculta vía CSS) #}
-        <button class="btn btn-sm btn-outline-secondary text-white border-secondary dp-close-btn"
+        {# Botón cerrar — ahora SIEMPRE visible (no solo en mobile).
+           Daniel pidió poder ocultarlo para que no estorbe el listado. #}
+        <button class="btn btn-sm btn-outline-secondary text-white border-secondary"
                 onclick="closeDragPanel()" title="Cerrar panel">
-          <i class="bi bi-chevron-right"></i>
+          <i class="bi bi-x-lg"></i>
         </button>
       </div>
     </div>
@@ -408,14 +523,27 @@ async function limpiarMonitor(){
     </div>
   </div>
 
-  {# ── Footer ── #}
+  {# ── Footer ──
+     Mejorado: ahora el courier se elige de un <select> con las opciones
+     definidas por el ERP (configuradas en /transporte/couriers). Cuando
+     el usuario elige un courier, aparece un hint con la info relevante
+     (tipo, peso máx, tarifa) y se habilita el botón Crear. #}
   <div style="padding:10px 12px;border-top:1px solid #1e1e1e;flex-shrink:0;background:#0a0a0a">
+    <label style="font-size:.62rem;color:#666;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:3px">
+      <i class="bi bi-truck me-1"></i>Courier del manifiesto
+    </label>
     <div class="d-flex gap-2 align-items-center mb-2">
-      <input id="ddCourier" list="ddCourierList" class="form-control form-control-sm flex-grow-1"
-             style="background:#1a1a1a;border-color:#2a2a2a;color:#ddd;font-size:.78rem"
-             placeholder="Courier del nuevo manifiesto…">
+      <select id="ddCourier" class="form-select form-select-sm flex-grow-1"
+              style="background:#1a1a1a;border-color:#2a2a2a;color:#ddd;font-size:.78rem"
+              onchange="onCourierChange()">
+        <option value="">— Elige courier —</option>
+      </select>
+      {# Mantengo datalist por compat con código existente, oculto. #}
       <datalist id="ddCourierList"></datalist>
     </div>
+    {# Hint del courier elegido — peso máx, tipo, etc #}
+    <div id="ddCourierHint" style="display:none;font-size:.7rem;color:#888;
+         background:#151515;border:1px solid #1f1f1f;border-radius:6px;padding:6px 8px;margin-bottom:6px"></div>
     <div id="ddMsg" style="min-height:16px;font-size:.74rem;margin-bottom:6px"></div>
     <div class="d-flex gap-2">
       <button class="btn btn-sm fw-bold flex-grow-1"
@@ -438,15 +566,19 @@ async function limpiarMonitor(){
      onclick="closeDragPanel()"></div>
 
 <style>
-/* ── Panel: siempre visible en desktop ── */
+/* ── Panel manifiesto ──
+   Comportamiento: empieza CERRADO. El usuario decide cuándo abrirlo
+   con el botón flotante (#dpReopenBtn). Esto le da al listado todo
+   el ancho del viewport por defecto y evita que estorbe.
+   El padding-right del main-wrapper se aplica SOLO cuando #dragPanel
+   tiene la clase .dp-open. */
+#dragPanel { right:-380px; }
+#dragPanel.dp-open { right:0 !important; }
 @media (min-width:768px) {
-  #dragPanel  { right:0 !important; box-shadow:none !important; }
-  #dragOverlay{ display:none !important; }
-  .dp-close-btn { display:none !important; }   /* no hay botón cerrar en desktop */
-  .main-wrapper { padding-right:366px; }        /* deja espacio para el panel */
+  body.dp-open-desktop .main-wrapper { padding-right:366px; transition:padding-right .24s ease; }
 }
 @media (max-width:767.98px) {
-  #dragPanel { right:-380px; }   /* empieza oculto en mobile */
+  /* en mobile no movemos el wrapper — el panel queda sobre la UI con overlay */
 }
 
 /* ── Zona de drop activa ── */
@@ -793,11 +925,26 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 
       </div>
 
-      {# Footer con acciones #}
-      <div class="modal-footer py-2 border-top d-flex justify-content-between">
-        <button class="btn btn-sm btn-outline-secondary" onclick="cotizarActual()" id="btnCotizar">
-          <i class="bi bi-calculator me-1"></i>Cotizar envío
-        </button>
+      {# Footer con acciones — Daniel pidió que el modal tenga botones de
+         acción visibles (asignar a manifiesto, cotizar, cerrar). Se ven
+         como CTAs claros, no como tabs. #}
+      <div class="modal-footer py-2 border-top d-flex justify-content-between flex-wrap gap-1">
+        <div class="d-flex gap-1 flex-wrap">
+          <button class="btn btn-sm btn-outline-secondary" onclick="cotizarActual()" id="btnCotizar"
+                  title="Comparar tarifas disponibles según peso predicho">
+            <i class="bi bi-calculator me-1"></i>Cotizar envío
+          </button>
+          <button class="btn btn-sm btn-ilus fw-bold" id="btnVistaManifiesto"
+                  onclick="vistaAsignarManifiesto()"
+                  title="Agregar este documento al panel de manifiesto">
+            <i class="bi bi-clipboard-plus me-1"></i>Agregar a manifiesto
+          </button>
+          <button class="btn btn-sm btn-outline-dark" id="btnVistaEditar"
+                  onclick="vistaEditar()"
+                  title="Editar estado, costo, notas del documento">
+            <i class="bi bi-pencil-square me-1"></i>Editar campos
+          </button>
+        </div>
         <button type="button" class="btn btn-sm btn-outline-dark" data-bs-dismiss="modal">Cerrar</button>
       </div>
 
@@ -967,7 +1114,11 @@ document.addEventListener('DOMContentLoaded', function() {
   _fotoModal  = new bootstrap.Modal(document.getElementById('fotoModal'));
   setSync(30);   // Pre-fill rango sync: último mes
   cargarMonitor();
-  cargarDragPanel();   // panel siempre visible en desktop — carga manifiestos al abrir la página
+  // Panel manifiesto: empieza CERRADO en escritorio y mobile.
+  // Daniel pidió: solo aparece cuando el usuario lo activa (botón flotante)
+  // o cuando arrastra un documento. Esto evita que estorbe el listado.
+  var btn = document.getElementById('dpReopenBtn');
+  if (btn) btn.style.display = '';
 });
 
 function setSync(days) {
@@ -1501,22 +1652,22 @@ function cargarMonitor() {
                 '</div>' +
               '</td>' +
 
-              /* ── N° / Folio ── */
-              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+              /* ── N° / Folio (abre MODAL con detalle, no panel lateral) ── */
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
                 '<span class="fw-bold font-monospace" style="font-size:.88rem">' + c.tido + ' ' + c.nudo + '</span>' +
               '</td>' +
 
               /* ── Fecha ── */
-              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer;white-space:nowrap">' + (c.fecha||'—') + '</td>' +
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer;white-space:nowrap">' + (c.fecha||'—') + '</td>' +
 
               /* ── Cliente ── */
-              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
                 '<div class="fw-semibold">' + (c.cliente||'—') + '</div>' +
                 '<div class="small text-muted">' + (c.rut||'') + '</div>' +
               '</td>' +
 
               /* ── Comuna ── */
-              '<td onclick="openPanel(' + c.id + ')" style="cursor:pointer">' + (c.comuna||'—') + '</td>' +
+              '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' + (c.comuna||'—') + '</td>' +
 
               /* ── Estado ── */
               '<td><span class="badge rounded-pill bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span></td>' +
@@ -1571,7 +1722,7 @@ function cargarMonitor() {
             var color = ESTADO_COLORS[c.estado] || 'secondary';
             var darkText = color === 'warning' ? 'text-dark' : 'text-white';
             return '<div class="ilus-card mb-2">' +
-              '<div class="p-3" onclick="openPanel(' + c.id + ')" style="cursor:pointer">' +
+              '<div class="p-3" onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
                 '<div class="d-flex justify-content-between align-items-start">' +
                   '<div class="fw-bold font-monospace" style="font-size:.82rem">' + c.tido + ' ' + c.nudo + '</div>' +
                   '<span class="badge bg-' + color + ' ' + darkText + '">' + (c.estado||'') + '</span>' +
@@ -1581,9 +1732,9 @@ function cargarMonitor() {
               '</div>' +
               '<div class="px-3 pb-2 d-flex gap-2" onclick="event.stopPropagation()">' +
                 '<button class="btn btn-sm btn-outline-danger w-50" onclick="openVista(' + c.id + ')">' +
-                  '<i class="bi bi-eye me-1"></i>Ver</button>' +
-                '<button class="btn btn-sm btn-outline-secondary w-50" onclick="openPanel(' + c.id + ')">' +
-                  '<i class="bi bi-pencil-square me-1"></i>Editar</button>' +
+                  '<i class="bi bi-eye me-1"></i>Ver detalle</button>' +
+                '<button class="btn btn-sm btn-ilus w-50" onclick="abrirDragPanelConCid(' + c.id + ',\'' + (c.tido+' '+c.nudo).replace(/'/g,"\\u0027") + '\',\'' + (c.cliente||"").replace(/'/g,"\\u0027") + '\')">' +
+                  '<i class="bi bi-clipboard-plus me-1"></i>Manifiesto</button>' +
               '</div>' +
             '</div>';
           }).join('');
@@ -1863,6 +2014,11 @@ function _dpAddToQueue(cid, label, cliente) {
   _dpRenderCola();
   // cargar manifiestos si aún no se cargaron
   if (!_manifestosActivos) cargarDragPanel();
+  // Auto-abrir el panel: cuando el usuario empieza a armar un manifiesto,
+  // el panel pasa a estar visible (Daniel pidió que aparezca solo cuando
+  // realmente se está creando un manifiesto, no siempre).
+  var dp = document.getElementById('dragPanel');
+  if (dp && !dp.classList.contains('dp-open')) openDragPanel();
 }
 
 function dpLimpiarCola() {
@@ -1886,6 +2042,16 @@ function _dpRenderCola() {
   if (badge) {
     badge.textContent = _dpQueue.length;
     badge.style.display = _dpQueue.length ? 'inline-block' : 'none';
+  }
+  // Badge en el botón flotante (si el panel está cerrado)
+  var reopenBadge = document.getElementById('dpReopenBadge');
+  if (reopenBadge) {
+    if (_dpQueue.length) {
+      reopenBadge.style.display = '';
+      reopenBadge.textContent = _dpQueue.length;
+    } else {
+      reopenBadge.style.display = 'none';
+    }
   }
 
   if (!_dpQueue.length) {
@@ -2042,20 +2208,43 @@ async function _dpActualizarPrevale() {
 }
 
 function _dpAbrirPanel() {
-  // En desktop el panel ya está visible; en mobile lo deslizamos
-  if (window.innerWidth < 768) {
-    document.getElementById('dragPanel').style.right = '0';
+  openDragPanel();
+}
+
+function openDragPanel() {
+  // Mostrar panel + ajustar padding del main-wrapper en desktop
+  var dp = document.getElementById('dragPanel');
+  if (dp) dp.classList.add('dp-open');
+  if (window.innerWidth >= 768) {
+    document.body.classList.add('dp-open-desktop');
+  } else {
     document.getElementById('dragOverlay').style.display = 'block';
   }
+  var btn = document.getElementById('dpReopenBtn');
+  if (btn) btn.style.display = 'none';
   if (!_manifestosActivos) cargarDragPanel();
 }
 
 function closeDragPanel() {
-  // Sólo cierra en mobile
-  if (window.innerWidth >= 768) return;
-  document.getElementById('dragPanel').style.right = '-380px';
+  var dp = document.getElementById('dragPanel');
+  if (dp) dp.classList.remove('dp-open');
+  document.body.classList.remove('dp-open-desktop');
   document.getElementById('dragOverlay').style.display = 'none';
   _dragCid = null;
+  // Mostrar el botón flotante para reabrir. Si hay items en cola, mostrar badge.
+  var btn = document.getElementById('dpReopenBtn');
+  if (btn) {
+    btn.style.display = '';
+    var badge = document.getElementById('dpReopenBadge');
+    if (badge) {
+      if (_dpQueue.length) {
+        badge.style.display = '';
+        badge.textContent = _dpQueue.length;
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+  }
 }
 
 // ── CARGAR Y RENDERIZAR MANIFIESTOS ──────────────────────────────
@@ -2117,13 +2306,73 @@ function renderDragPanel(lista) {
 
   document.getElementById('dragPanelBody').innerHTML = html;
 
-  // Rellenar datalist del courier (footer)
+  // Rellenar datalist (legacy) + select de couriers
   var dl = document.getElementById('ddCourierList');
   if (dl) {
     dl.innerHTML = (COURIERS||[]).map(function(c){
       return '<option value="' + esc(c.nombre||c) + '">';
     }).join('');
   }
+  _cargarCouriersSelect();
+}
+
+// ── COURIER SELECTOR — pobla <select> con couriers de BD ──────────
+var _couriersCache = null;
+async function _cargarCouriersSelect() {
+  var sel = document.getElementById('ddCourier');
+  if (!sel) return;
+  if (!_couriersCache) {
+    try {
+      var r = await fetch('/transporte/api/couriers/lista');
+      var d = await r.json();
+      _couriersCache = (d && d.ok && d.couriers) ? d.couriers : [];
+    } catch(err) { _couriersCache = []; }
+  }
+  // Rellenar solo si el select tiene solo el placeholder (evita reset al renderizar manifiestos)
+  if (sel.options.length > 1) return;
+  _couriersCache.forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = c.nombre;
+    opt.textContent = c.nombre + (c.peso_max_guia ? ' (max ' + c.peso_max_guia + ' kg)' : '');
+    opt.dataset.tipo = c.tipo || '';
+    opt.dataset.pesoMax = c.peso_max_guia || 0;
+    opt.dataset.cid = c.id || '';
+    sel.appendChild(opt);
+  });
+}
+
+function onCourierChange() {
+  var sel = document.getElementById('ddCourier');
+  var hint = document.getElementById('ddCourierHint');
+  var btnCrear = document.getElementById('dpBtnCrear');
+  if (!sel || !hint) return;
+  var opt = sel.options[sel.selectedIndex];
+  if (!opt || !sel.value) {
+    hint.style.display = 'none';
+    if (btnCrear) btnCrear.disabled = !_dpQueue.length || true;
+    return;
+  }
+  // Mostrar hint con info del courier elegido
+  var tipo = opt.dataset.tipo || 'nacional';
+  var pesoMax = parseFloat(opt.dataset.pesoMax || 0);
+  var bits = [];
+  bits.push('<span style="color:#aaa"><i class="bi bi-info-circle me-1"></i>Tipo: <strong style="color:#ddd">' + esc(tipo) + '</strong></span>');
+  if (pesoMax > 0) {
+    bits.push('<span style="color:#aaa">Peso máx por guía: <strong style="color:#fbbf24">' + pesoMax + ' kg</strong></span>');
+  }
+  // Hint específico por courier conocido
+  var nombre = sel.value.toLowerCase();
+  if (/starken/.test(nombre)) {
+    bits.push('<span style="color:#93c5fd"><i class="bi bi-card-list me-1"></i>Recuerda registrar el OT al imprimir</span>');
+  } else if (/chilexp|chile express/.test(nombre)) {
+    bits.push('<span style="color:#93c5fd"><i class="bi bi-card-list me-1"></i>Requiere número de tracking al cerrar</span>');
+  } else if (/clickex|dropit/.test(nombre)) {
+    bits.push('<span style="color:#86efac"><i class="bi bi-lightning-charge me-1"></i>Despacho mismo día disponible</span>');
+  }
+  hint.innerHTML = bits.join(' &middot; ');
+  hint.style.display = '';
+  // Habilitar crear si hay cola
+  if (btnCrear) btnCrear.disabled = !_dpQueue.length;
 }
 
 // ── DROP HANDLERS ─────────────────────────────────────────────────
@@ -2263,6 +2512,29 @@ function fmtKg(v) {
 
 function closeCotizador() {
   document.getElementById('vistaCotizador').style.display = 'none';
+}
+
+// ── Acciones del modal de vista ──────────────────────────────────
+// "Agregar a manifiesto" desde el modal: cierra el modal y agrega el doc
+// actual a la cola del panel de manifiesto (se auto-abre).
+function vistaAsignarManifiesto() {
+  if (!_cotizarCid) return;
+  var docNum = (document.getElementById('vistaDocNum')?.textContent || '').trim();
+  var cliente = (document.getElementById('vistaCliente')?.textContent || '').trim();
+  if (_vistaModal) _vistaModal.hide();
+  // pequeño delay para que el modal termine de cerrarse antes de abrir el panel
+  setTimeout(function(){
+    abrirDragPanelConCid(_cotizarCid, docNum, cliente);
+  }, 220);
+}
+
+// "Editar campos" desde el modal: cierra el modal y abre el panel lateral
+// con los inputs de estado/costo/notas (que sigue siendo útil para edición).
+function vistaEditar() {
+  if (!_cotizarCid) return;
+  var cid = _cotizarCid;
+  if (_vistaModal) _vistaModal.hide();
+  setTimeout(function(){ openPanel(cid); }, 220);
 }
 
 // ── FOTOS INLINE EN MODAL DE VISTA ───────────────────────────────

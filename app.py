@@ -12980,6 +12980,288 @@ def tr_limpiar_monitor():
         conn.close()
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  SYNC MES ACTUAL — limpieza + resync de pendientes del mes en curso
+# ═══════════════════════════════════════════════════════════════════════
+def _tr_sync_mes_actual_bg(modo="resync"):
+    """
+    Sincronización del mes actual desde el primer día del mes hasta hoy.
+
+    `modo`:
+      - "resync"        → solo UPSERT desde ERP (no borra nada).
+      - "limpiar_resync"→ borra pendientes del mes SIN manifiesto y luego resync.
+
+    Trae todos los documentos BLV/FCV (+ GDV/NVV/NVI/COV) con líneas ZZ
+    emitidos en el mes corriente (1 al hoy). Reutiliza la lógica probada
+    de `_tr_bulk_sync_erp_mysql` para clasificación + UPSERT.
+
+    Retorna dict: {ok, limpiados, sincronizados, errores, ts}.
+    """
+    from datetime import date as _date
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    now_cl = _dt.datetime.now(ZoneInfo("America/Santiago"))
+    hoy_cl = now_cl.date()
+    primer_dia = hoy_cl.replace(day=1)
+
+    limpiados = 0
+    if modo == "limpiar_resync":
+        # Borrar SOLO los pendientes del mes actual que NO estén en manifiesto.
+        # `transport_manifest_items` los referencia por `commitment_id`.
+        # Nota: ON DELETE CASCADE en `transport_commitment_lines` se encarga
+        # de las líneas. No tocamos los que YA están asignados a manifiesto.
+        try:
+            conn = get_mysql()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) AS n FROM transport_commitments tc
+                    WHERE tc.fecha_emision >= %s
+                      AND tc.fecha_emision <= %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM transport_manifest_items mi
+                         WHERE mi.commitment_id = tc.id
+                      )
+                """, (primer_dia, hoy_cl))
+                limpiados = int((cur.fetchone() or {}).get("n", 0) or 0)
+                cur.execute("""
+                    DELETE tc FROM transport_commitments tc
+                    WHERE tc.fecha_emision >= %s
+                      AND tc.fecha_emision <= %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM transport_manifest_items mi
+                         WHERE mi.commitment_id = tc.id
+                      )
+                """, (primer_dia, hoy_cl))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[tr_sync_mes_actual] limpieza error: {e}", flush=True)
+
+    # Resync desde ERP — del primer día del mes a hoy
+    try:
+        count_ok, errs = _tr_bulk_sync_erp_mysql(
+            primer_dia.strftime("%Y-%m-%d"),
+            hoy_cl.strftime("%Y-%m-%d"),
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"Error al consultar ERP: {e}",
+            "limpiados": limpiados,
+            "sincronizados": 0,
+            "errores": [str(e)],
+            "ts": now_cl.isoformat(),
+        }
+
+    try:
+        _tr_log("commitment", 0, "sync_mes_actual",
+                f"Mes {primer_dia.strftime('%Y-%m')} ({modo}): "
+                f"limpiados={limpiados}, sincronizados={count_ok}, "
+                f"errores={len(errs or [])}")
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "limpiados": limpiados,
+        "sincronizados": int(count_ok or 0),
+        "errores": (errs or [])[:10],
+        "rango": f"{primer_dia.strftime('%d/%m/%Y')} → {hoy_cl.strftime('%d/%m/%Y')}",
+        "ts": now_cl.isoformat(),
+        "mensaje": (
+            f"{count_ok} documento(s) del mes actualizados"
+            + (f" · {limpiados} pendientes limpiados" if limpiados else "")
+        ),
+    }
+
+
+@app.route("/transporte/api/sync/mes-actual", methods=["POST"])
+@_tr_required
+def tr_sync_mes_actual():
+    """Sincroniza TODOS los BLV+FCV del mes corriente desde ERP.
+
+    Body opcional (JSON): {"limpiar": true} → borra pendientes del mes que
+    no tengan manifiesto antes de resincronizar. Por defecto solo UPSERT.
+
+    Permiso: admin / superadmin (limpieza). Usuarios con permiso transporte
+    pueden disparar el resync sin limpiar.
+    """
+    data = request.get_json(silent=True) or {}
+    quiere_limpiar = bool(data.get("limpiar"))
+    if quiere_limpiar and not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({
+            "ok": False,
+            "error": "Solo admin/superadmin puede limpiar pendientes."
+        }), 403
+    modo = "limpiar_resync" if quiere_limpiar else "resync"
+    res = _tr_sync_mes_actual_bg(modo=modo)
+    return jsonify(res), (200 if res.get("ok") else 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  SCHEDULER CRON-LIKE — sync automático 09:00 / 11:00 / 15:00 / 17:00 CL
+# ═══════════════════════════════════════════════════════════════════════
+def _ensure_transp_sync_lock_table():
+    """Tabla idempotente para coordinar el sync cross-worker."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transp_sync_lock (
+                    id          INT PRIMARY KEY,
+                    slot_hora   VARCHAR(20)  NOT NULL DEFAULT '',
+                    hora_lock   DATETIME     NOT NULL,
+                    worker_id   INT          NOT NULL,
+                    ultima_corrida DATETIME  DEFAULT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[transp-cron] no se pudo asegurar transp_sync_lock: {e}", flush=True)
+
+
+def _tr_intentar_lock_slot(slot_str):
+    """Intenta tomar el lock para un slot dado (ej. '2026-05-19 09:00').
+
+    Solo el primer worker que llegue insertará la fila. Los demás
+    fallarán con duplicate key. Devuelve True si SE OBTUVO el lock
+    (es decir, este worker debe correr la sync).
+    """
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            # PRIMARY KEY = id=1 fijo. Usamos UPDATE con WHERE para distinguir
+            # quién corre. Estrategia: insertar/upsert con `slot_hora` único.
+            # Si la fila tiene un slot_hora != actual, lo pisamos y ganamos.
+            # Si ya tiene el slot_hora actual, NO ganamos (otro worker corrió).
+            cur.execute("""
+                INSERT INTO transp_sync_lock (id, slot_hora, hora_lock, worker_id, ultima_corrida)
+                VALUES (1, %s, NOW(), %s, NULL)
+                ON DUPLICATE KEY UPDATE
+                  slot_hora = IF(slot_hora = VALUES(slot_hora), slot_hora, VALUES(slot_hora)),
+                  hora_lock = IF(slot_hora = VALUES(slot_hora), hora_lock, VALUES(hora_lock)),
+                  worker_id = IF(slot_hora = VALUES(slot_hora), worker_id, VALUES(worker_id))
+            """, (slot_str, os.getpid()))
+            # Verificar si nosotros somos los holders del slot
+            cur.execute("SELECT worker_id, slot_hora FROM transp_sync_lock WHERE id=1")
+            row = cur.fetchone() or {}
+        conn.commit()
+        conn.close()
+        return (row.get("worker_id") == os.getpid() and row.get("slot_hora") == slot_str)
+    except Exception as e:
+        print(f"[transp-cron] lock error: {e}", flush=True)
+        return False
+
+
+def _tr_marcar_lock_completado(slot_str):
+    """Después de correr la sync, marca ultima_corrida en la fila."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE transp_sync_lock SET ultima_corrida=NOW() WHERE id=1 AND slot_hora=%s",
+                (slot_str,)
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[transp-cron] marcar completado: {e}", flush=True)
+
+
+def _transporte_scheduler_loop():
+    """Hilo daemon: dispara sync mes-actual a 09/11/15/17 hora Chile.
+
+    Estrategia anti-doble-ejecución con 2 workers Gunicorn:
+      1. Cada worker corre su propio loop pero ambos hacen lock en
+         `transp_sync_lock` antes de ejecutar la sync.
+      2. El primer worker en llegar gana el lock; el segundo lo detecta
+         y se salta el slot.
+
+    Se calcula la próxima hora objetivo en cada vuelta y se duerme hasta
+    1 minuto antes para minimizar drift. A los 10s del slot real, intenta
+    obtener el lock y, si lo logra, corre la sync.
+    """
+    import datetime as _dt
+    import time as _time
+    from zoneinfo import ZoneInfo
+
+    HORAS_SYNC = [9, 11, 15, 17]
+    TZ = ZoneInfo("America/Santiago")
+    _ensure_transp_sync_lock_table()
+    print(f"[transp-cron] arrancado en worker pid={os.getpid()} "
+          f"(horas: {HORAS_SYNC})", flush=True)
+
+    while True:
+        try:
+            now_cl = _dt.datetime.now(TZ)
+
+            # ── Calcular próximo slot ──
+            proxima = None
+            for h in HORAS_SYNC:
+                candidato = now_cl.replace(hour=h, minute=0, second=0, microsecond=0)
+                if candidato > now_cl:
+                    proxima = candidato
+                    break
+            if proxima is None:
+                # Pasó la última (17:00). Esperar hasta 09:00 del día siguiente.
+                proxima = (now_cl + _dt.timedelta(days=1)).replace(
+                    hour=HORAS_SYNC[0], minute=0, second=0, microsecond=0
+                )
+
+            espera_seg = max(1.0, (proxima - now_cl).total_seconds())
+            print(f"[transp-cron] próxima sync: {proxima.strftime('%Y-%m-%d %H:%M')} "
+                  f"(en {espera_seg/60:.1f} min)", flush=True)
+            _time.sleep(espera_seg)
+
+            # Reintentar tomar lock en ventana de 30 seg
+            slot_str = proxima.strftime("%Y-%m-%d %H:%M")
+            soy_holder = _tr_intentar_lock_slot(slot_str)
+            if not soy_holder:
+                print(f"[transp-cron] slot {slot_str} tomado por otro worker, "
+                      f"este worker (pid={os.getpid()}) lo omite", flush=True)
+                _time.sleep(60)   # esperar 1 min para que avance el clock
+                continue
+
+            print(f"[transp-cron] disparando sync mes-actual para slot {slot_str} "
+                  f"(pid={os.getpid()})", flush=True)
+            try:
+                res = _tr_sync_mes_actual_bg(modo="resync")
+                print(f"[transp-cron] sync OK: {res.get('mensaje','')} "
+                      f"(errs={len(res.get('errores') or [])})", flush=True)
+            except Exception as e:
+                print(f"[transp-cron] sync falló: {e}", flush=True)
+            finally:
+                _tr_marcar_lock_completado(slot_str)
+        except Exception as e:
+            print(f"[transp-cron] loop error: {e}", flush=True)
+            _time.sleep(300)  # esperar 5 min ante error inesperado
+
+
+# Arranca el thread en el módulo. Evita doble arranque si por alguna
+# razón se importa más de una vez (defensa por nombre de thread).
+def _start_transp_scheduler_once():
+    import threading as _th
+    nombre = "transp-cron"
+    for t in _th.enumerate():
+        if t.name == nombre and t.is_alive():
+            return
+    # Solo arrancar si NO estamos en modo migrations-skip o si lo está, igual
+    # arranca: el job consulta el ERP, no las migraciones locales.
+    try:
+        t = _th.Thread(target=_transporte_scheduler_loop, daemon=True, name=nombre)
+        t.start()
+    except Exception as e:
+        print(f"[transp-cron] no se pudo arrancar: {e}", flush=True)
+
+
+try:
+    _start_transp_scheduler_once()
+except Exception as _e_sched:
+    print(f"[transp-cron] startup error: {_e_sched}", flush=True)
+
+
 @app.route("/transporte/api/inline-bulto", methods=["POST"])
 @_tr_required
 def tr_inline_bulto():
@@ -14794,6 +15076,36 @@ def tr_manifiestos_activos():
         (),
     )
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/transporte/api/couriers/lista")
+@_tr_required
+def tr_couriers_lista():
+    """Devuelve los couriers configurados en BD para poblar el selector
+    del panel de manifiesto. Incluye atributos útiles para el comportamiento
+    interactivo (peso máx, tipo, logo).
+    """
+    try:
+        rows = mysql_fetchall(
+            """SELECT id, nombre, tipo, activo,
+                      COALESCE(peso_max_bulto, 0) AS peso_max_bulto,
+                      COALESCE(peso_max_guia, 0)  AS peso_max_guia,
+                      COALESCE(logo_url, '')      AS logo_url
+               FROM transport_couriers
+               WHERE activo=1
+               ORDER BY nombre""",
+            (),
+        ) or []
+    except Exception as e:
+        print(f"[tr_couriers_lista] {e}", flush=True)
+        rows = []
+    # Si no hay configurados en BD, devolvemos los nombres legacy de la
+    # constante COURIERS para no romper el selector
+    if not rows:
+        rows = [{"id": None, "nombre": n, "tipo": "nacional",
+                 "peso_max_bulto": 0, "peso_max_guia": 0, "logo_url": ""}
+                for n in COURIERS]
+    return jsonify({"ok": True, "couriers": [dict(r) for r in rows]})
 
 
 # ══════════════════════════════════════════════════════════════
