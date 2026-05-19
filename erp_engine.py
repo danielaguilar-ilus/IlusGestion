@@ -666,31 +666,19 @@ class ERPClient:
     # ── HTTP ────────────────────────────────────────────────────────
 
     def _get(self, path: str, params: dict, *, timeout: Optional[int] = None) -> dict:
-        """GET autenticado con CIRCUIT BREAKER y clasificación de errores.
+        """GET autenticado con clasificación de errores HTTP.
 
-        Lanza ConnectionError si falla todos los retries.
+        Lanza ConnectionError con prefijo ERP_DOWN/ERP_AUTH/ERP_NOT_FOUND
+        según el código HTTP recibido, para que la capa superior pueda
+        mostrar mensajes amigables al usuario.
 
-        FIX 2026-05-19: si el ERP devuelve 502/503/504 (servidor caído) o
-        timeout repetido, el circuit breaker pausa las llamadas por 60s para
-        no saturar al ERP cuando ya sabemos que está caído. Esto evita el
-        cascada de "3 intentos" × N documentos = 30+ requests fallidos.
+        IMPORTANTE: el circuit breaker GLOBAL del proyecto vive en
+        `app.py` (_erp_breaker_*) y se aplica ANTES de invocar esta
+        función. No hay breaker propio aquí (evita doble-breaker).
+
+        FIX 2026-05-19: removido circuit breaker duplicado que estaba
+        bloqueando llamadas válidas al ERP.
         """
-        # ── Circuit breaker estado (compartido entre instancias del cliente) ──
-        # Si el ERP devolvió 5+ fallos 5xx en los últimos 30s, abrimos el circuito
-        # y devolvemos error inmediato durante 60s (sin pegarle al ERP).
-        now = time.time()
-        with self._lock:
-            cb = getattr(self.__class__, "_circuit", None)
-            if cb is None:
-                cb = {"fails": [], "open_until": 0}
-                self.__class__._circuit = cb
-            if now < cb["open_until"]:
-                seg = int(cb["open_until"] - now)
-                raise ConnectionError(
-                    f"ERP_CIRCUIT_OPEN: El ERP de Random está caído. "
-                    f"Reintentando automáticamente en {seg}s. Espera y vuelve a intentar."
-                )
-
         url = self.base_url + path
         qs = urllib.parse.urlencode(params)
         req = urllib.request.Request(
@@ -706,23 +694,10 @@ class ERPClient:
                     body = _json.loads(resp.read().decode("utf-8"))
                     elapsed_ms = int((time.time() - t0) * 1000)
                     self.log.debug("ERP GET %s %s → %d ms", path, params, elapsed_ms)
-                    # Éxito: limpiar contador de fails del circuit breaker
-                    with self._lock:
-                        cb["fails"] = []
                     return body
             except urllib.error.HTTPError as e:
                 last_err = e
                 last_code = e.code
-                # 502/503/504 = ERP caído del lado servidor → registrar en circuit breaker
-                if e.code in (502, 503, 504):
-                    with self._lock:
-                        cb["fails"].append(now)
-                        # Mantener solo fails de los últimos 30s
-                        cb["fails"] = [t for t in cb["fails"] if now - t < 30]
-                        # Si 5+ fails en 30s, abrir circuito por 60s
-                        if len(cb["fails"]) >= 5:
-                            cb["open_until"] = now + 60
-                            self.log.warning("ERP circuit breaker ABIERTO 60s tras %d fallos 5xx", len(cb["fails"]))
                 if attempt < self.retries:
                     backoff = 0.3 * (2 ** attempt)
                     self.log.debug("ERP GET retry %d (%.1fs) %s: HTTP %d",
