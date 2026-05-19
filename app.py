@@ -9567,6 +9567,102 @@ def _get_build_version():
             return "unknown", "unknown"
 
 
+@app.route("/api/erp/ping-raw", methods=["GET"])
+@login_required
+def erp_ping_raw():
+    """Ping ULTRA detallado al ERP — devuelve headers, body y status code
+    EXACTOS de Random. Útil cuando hay HTTP 502 para diagnosticar si es
+    problema de auth, de endpoint específico, o de IP bloqueada.
+
+    Solo admin/superadmin (expone detalles internos).
+    """
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"error":"Solo admin/superadmin"}), 403
+
+    import urllib.request as _urlreq
+    import urllib.error as _urlerr
+    import urllib.parse as _urlparse
+    import time as _t_ping
+
+    base = ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus").rstrip("/")
+    token = ERP_CONFIG.get("api_token", "")
+    token_prefix = token[:30] + "..." if token else "(VACÍO)"
+    token_suffix = "..." + token[-20:] if len(token) > 20 else ""
+
+    tests = []
+    # Test 1: GET base URL sin auth
+    for label, path, with_auth, params in [
+        ("base_sin_auth", "/", False, {}),
+        ("base_con_auth", "/", True, {}),
+        ("documentos_render", "/documentos/render", True, {"tido":"FCV","nudo":"10599","empresa":"01"}),
+        ("entidades", "/entidades", True, {"q":"test"}),
+    ]:
+        url = base + path
+        qs = _urlparse.urlencode(params) if params else ""
+        full_url = f"{url}?{qs}" if qs else url
+        headers = {}
+        if with_auth and token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = _urlreq.Request(full_url, headers=headers)
+        t0 = _t_ping.time()
+        try:
+            with _urlreq.urlopen(req, timeout=8) as resp:
+                body_bytes = resp.read()[:800]
+                latency_ms = int((_t_ping.time() - t0) * 1000)
+                tests.append({
+                    "label": label,
+                    "url": full_url,
+                    "method": "GET",
+                    "auth": with_auth,
+                    "status": resp.status,
+                    "latency_ms": latency_ms,
+                    "response_headers": dict(resp.headers),
+                    "body_preview": body_bytes.decode("utf-8", errors="replace")[:500],
+                    "ok": True,
+                })
+        except _urlerr.HTTPError as e:
+            body_bytes = b""
+            try:
+                body_bytes = e.read()[:800]
+            except Exception: pass
+            latency_ms = int((_t_ping.time() - t0) * 1000)
+            tests.append({
+                "label": label,
+                "url": full_url,
+                "method": "GET",
+                "auth": with_auth,
+                "status": e.code,
+                "latency_ms": latency_ms,
+                "response_headers": dict(e.headers) if e.headers else {},
+                "body_preview": body_bytes.decode("utf-8", errors="replace")[:500],
+                "ok": False,
+                "error_type": "HTTPError",
+            })
+        except Exception as e:
+            latency_ms = int((_t_ping.time() - t0) * 1000)
+            tests.append({
+                "label": label,
+                "url": full_url,
+                "method": "GET",
+                "auth": with_auth,
+                "status": None,
+                "latency_ms": latency_ms,
+                "ok": False,
+                "error_type": type(e).__name__,
+                "error_msg": str(e)[:300],
+            })
+
+    return jsonify({
+        "ok": True,
+        "base_url": base,
+        "token_present": bool(token),
+        "token_length": len(token),
+        "token_preview": f"{token_prefix}{token_suffix}" if token else "(VACÍO)",
+        "tests": tests,
+        "ts": datetime.now().isoformat(),
+    })
+
+
 @app.route("/api/erp/peek", methods=["GET"])
 @login_required
 def erp_engine_peek():
