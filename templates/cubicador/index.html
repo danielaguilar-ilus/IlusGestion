@@ -91,13 +91,14 @@
 <div class="d-flex gap-2 mb-3 justify-content-end flex-wrap">
 
   <form method="post" action="{{ url_for('cubicador_export_excel') }}" style="display:inline"
+        id="excelExportForm"
         onsubmit="const b=this.querySelector('button');const old=b.innerHTML;b.disabled=true;b.innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...';setTimeout(()=>{b.disabled=false;b.innerHTML=old},8000)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for i in range(rdocs|length) %}
     <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
     <input type="hidden" name="nudo_{{ i }}" value="{{ rdocs[i][1] }}">
     {% endfor %}
-    <input type="hidden" name="payload_json" value='{{ resultado.export_payload|tojson }}'>
+    <input type="hidden" name="payload_json" id="excelPayloadInput" value='{{ resultado.export_payload|tojson }}'>
     <button type="submit" class="btn btn-sm fw-semibold"
             style="background:#1a7a1a;color:#fff;border:none;padding:6px 16px">
       <i class="bi bi-file-earmark-excel me-1"></i>Excel
@@ -105,7 +106,7 @@
   </form>
 
   <form method="post" action="{{ url_for('cubicador_export_pdf') }}" style="display:inline"
-        onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerHTML='<span class=\'spinner-border spinner-border-sm me-1\'></span>Generando...'">
+        id="pdfExportForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for i in range(rdocs|length) %}
     <input type="hidden" name="tido_{{ i }}" value="{{ rdocs[i][0] }}">
@@ -325,7 +326,7 @@
       </div>
       <div class="ilus-money-card">
         <div class="lbl">SKUs</div>
-        <div class="val">{{ lineas|length }}</div>
+        <div class="val" id="skuCountHeader">{{ lineas|length }}</div>
       </div>
     </div>
   </div>
@@ -344,16 +345,157 @@
   {% set ns.tot_bultos = ns.tot_bultos + l.total_bultos %}
 {% endfor %}
 
+{# ── Estilos para selección masiva, checkboxes ILUS y animación de borrado ── #}
+<style>
+/* Checkbox con acento ILUS rojo */
+.ilus-check{
+  width:18px;height:18px;
+  accent-color:var(--ilus-red);
+  cursor:pointer;
+  flex-shrink:0;
+}
+@media (max-width:767.98px){
+  .ilus-check{ width:24px; height:24px; }
+}
+
+/* Botón eliminar fila */
+.btn-row-del{
+  background:transparent;
+  border:1px solid #fecaca;
+  color:#dc2626;
+  padding:.2rem .45rem;
+  border-radius:6px;
+  transition:background .12s, color .12s, border-color .12s;
+  line-height:1;
+}
+.btn-row-del:hover, .btn-row-del:focus{
+  background:#dc2626; color:#fff; border-color:#dc2626;
+}
+@media (max-width:767.98px){
+  .btn-row-del{ min-height:36px; min-width:36px; padding:.35rem .55rem; }
+}
+
+/* Fila resaltada cuando está checkeada */
+.cub-row.is-selected{ background:rgba(220,38,38,.06) !important; }
+.cub-row.is-selected td{ background:rgba(220,38,38,.06); }
+
+/* Animación de salida de fila/card */
+@keyframes cubFadeOut{
+  0%   { opacity:1; transform:translateX(0);   max-height:200px; }
+  60%  { opacity:0; transform:translateX(20px); }
+  100% { opacity:0; transform:translateX(20px); max-height:0; padding-top:0; padding-bottom:0; border-width:0; margin:0; }
+}
+.cub-row.removing{
+  animation:cubFadeOut .32s ease-in forwards;
+  overflow:hidden;
+  pointer-events:none;
+}
+
+/* Toolbar bulk (sticky-ish, queda debajo del header) */
+.bulk-toolbar{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);
+  color:#fff;
+  border-radius:10px;
+  border-left:4px solid var(--ilus-red);
+  box-shadow:0 4px 14px rgba(0,0,0,.18);
+  animation:slideInDown .22s ease-out;
+}
+@keyframes slideInDown{
+  from{ opacity:0; transform:translateY(-8px); }
+  to{ opacity:1; transform:translateY(0); }
+}
+.bulk-toolbar-inner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 16px;
+  flex-wrap:wrap;
+}
+.bulk-count{
+  font-size:.88rem;
+  color:#e5e7eb;
+}
+.bulk-count strong{ color:#fff; font-size:1rem; }
+.bulk-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+.btn-bulk-danger{
+  background:var(--ilus-red); color:#fff; border:none;
+  font-weight:600;
+  padding:6px 14px;
+  border-radius:6px;
+  transition:filter .12s, transform .08s;
+}
+.btn-bulk-danger:hover:not(:disabled){ filter:brightness(1.1); }
+.btn-bulk-danger:active:not(:disabled){ transform:translateY(1px); }
+.btn-bulk-danger:disabled{ background:#7f1d1d; opacity:.55; cursor:not-allowed; }
+
+.btn-ghost-light{
+  background:transparent; color:#e5e7eb;
+  border:1px solid rgba(255,255,255,.25);
+  padding:6px 12px; border-radius:6px;
+  transition:background .12s, border-color .12s;
+}
+.btn-ghost-light:hover{ background:rgba(255,255,255,.08); border-color:#fff; color:#fff; }
+
+/* Empty state cuando se borran todas las filas */
+#cubicadorEmptyState{
+  text-align:center;
+  padding:48px 16px;
+}
+#cubicadorEmptyState .icon{
+  font-size:3rem;
+  margin-bottom:8px;
+}
+#cubicadorEmptyState h5{
+  margin:0 0 4px 0;
+  color:#1a1a1a;
+  font-weight:700;
+}
+#cubicadorEmptyState p{
+  color:#6b7280;
+  font-size:.88rem;
+  margin:0 0 16px 0;
+}
+
+@media (max-width:767.98px){
+  .bulk-toolbar-inner{ padding:10px 12px; }
+  .bulk-actions{ width:100%; }
+  .bulk-actions .btn{ flex:1; }
+}
+</style>
+
+{# ── Toolbar de selección (aparece sólo cuando hay filas marcadas) ── #}
+<div id="bulkToolbar" class="bulk-toolbar d-none mb-2" role="region" aria-label="Acciones masivas">
+  <div class="bulk-toolbar-inner">
+    <span class="bulk-count">
+      <i class="bi bi-check2-square me-2"></i>
+      <strong id="bulkCount">0</strong> de <span id="bulkTotal">0</span> seleccionados
+    </span>
+    <div class="bulk-actions">
+      <button type="button" class="btn btn-sm btn-ghost-light" id="bulkClearBtn">
+        <i class="bi bi-x-circle me-1"></i>Deseleccionar todos
+      </button>
+      <button type="button" class="btn btn-sm btn-bulk-danger" id="bulkDeleteBtn">
+        <i class="bi bi-trash me-1"></i>Eliminar seleccionados
+      </button>
+    </div>
+  </div>
+</div>
+
 {# ── Tabla desktop ── #}
-<div class="ilus-card d-none d-md-block mb-3">
+<div class="ilus-card d-none d-md-block mb-3" id="cubicadorTableCard">
   <div class="ilus-card-header">
     <span><i class="bi bi-table me-2"></i>Detalle de cubicaje{% if multi %} combinado{% endif %}</span>
-    <span class="text-muted small fw-normal">{{ lineas|length }} SKU(s)</span>
+    <span class="text-muted small fw-normal"><span id="skuCount">{{ lineas|length }}</span> SKU(s)</span>
   </div>
   <div class="table-responsive">
     <table class="table ilus-table mb-0" id="cubicadorTable" style="font-size:.82rem">
       <thead>
         <tr>
+          <th class="text-center no-print" style="width:38px">
+            <input type="checkbox" id="chkAll" class="ilus-check" aria-label="Seleccionar todos">
+          </th>
           <th>SKU</th>
           <th>Descripción ERP</th>
           <th class="text-center">Cant</th>
@@ -363,12 +505,22 @@
           <th class="text-end">Vol cm³/u</th>
           <th class="text-end">Predom/u</th>
           <th class="text-end" style="color:var(--ilus-red)">Total Predom</th>
-          <th class="text-center no-print">Acciones</th>
+          <th class="text-center no-print" style="width:90px">Acciones</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="cubicadorTbody">
         {% for l in lineas %}
-        <tr>
+        <tr class="cub-row"
+            data-sku="{{ l.sku|e }}"
+            data-kg-tot="{{ l.peso_kg_tot }}"
+            data-pv-tot="{{ l.peso_vol_tot }}"
+            data-vol-tot="{{ l.vol_tot }}"
+            data-pred-tot="{{ l.pred_tot }}"
+            data-qty="{{ l.cantidad }}"
+            data-bultos="{{ l.total_bultos }}">
+          <td class="text-center no-print">
+            <input type="checkbox" class="ilus-check cub-check" aria-label="Seleccionar {{ l.sku }}">
+          </td>
           <td>
             <div class="fw-bold font-monospace">{{ l.sku }}</div>
             {% if not l.tiene_ficha %}
@@ -438,28 +590,37 @@
           </td>
 
           <td class="text-center no-print">
-            {% if l.tiene_ficha and l.app_id %}
-            <button type="button" class="btn btn-sm btn-outline-secondary"
-                    title="Vista rápida del producto"
-                    onclick="quickView({{ l.app_id }})">
-              <i class="bi bi-eye"></i>
-            </button>
-            {% endif %}
+            <div class="d-inline-flex gap-1">
+              {% if l.tiene_ficha and l.app_id %}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      title="Vista rápida del producto"
+                      onclick="quickView({{ l.app_id }})">
+                <i class="bi bi-eye"></i>
+              </button>
+              {% endif %}
+              <button type="button" class="btn btn-sm btn-row-del"
+                      title="Eliminar línea"
+                      aria-label="Eliminar línea {{ l.sku }}"
+                      data-action="del-row">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
           </td>
         </tr>
         {% endfor %}
       </tbody>
 
       <tfoot>
-        <tr style="background:#1a1a1a;font-weight:700;font-size:.82rem">
+        <tr id="cubicadorFootRow" style="background:#1a1a1a;font-weight:700;font-size:.82rem">
+          <td class="no-print"></td>
           <td colspan="2" class="text-end" style="color:#888;font-size:.75rem;letter-spacing:.5px">TOTALES</td>
-          <td class="text-center" style="color:#fff">{{ ns.tot_qty|int }}</td>
-          <td class="text-center" style="color:#fff">{{ ns.tot_bultos }}</td>
-          <td class="text-end" style="color:#fff">{{ ns.tot_kg|fkg }}</td>
-          <td class="text-end" style="color:#fff">{{ ns.tot_pv|fkg }}</td>
-          <td class="text-end" style="color:#fff">{{ ns.tot_vol|fvol }}</td>
+          <td class="text-center" style="color:#fff" data-foot="qty">{{ ns.tot_qty|int }}</td>
+          <td class="text-center" style="color:#fff" data-foot="bultos">{{ ns.tot_bultos }}</td>
+          <td class="text-end" style="color:#fff" data-foot="kg">{{ ns.tot_kg|fkg }}</td>
+          <td class="text-end" style="color:#fff" data-foot="pv">{{ ns.tot_pv|fkg }}</td>
+          <td class="text-end" style="color:#fff" data-foot="vol">{{ ns.tot_vol|fvol }}</td>
           <td class="text-end" style="color:#888">—</td>
-          <td class="text-end" style="color:var(--ilus-red);font-size:.95rem">{{ ns.tot_pred|fkg }}</td>
+          <td class="text-end" style="color:var(--ilus-red);font-size:.95rem" data-foot="pred">{{ ns.tot_pred|fkg }}</td>
           <td class="no-print"></td>
         </tr>
       </tfoot>
@@ -468,7 +629,7 @@
 </div>
 
 {# ── Tarjeta de totales (desktop) ── #}
-<div class="d-none d-md-block mb-3">
+<div class="d-none d-md-block mb-3" id="cubicadorDesktopTotals">
   <div class="ilus-card">
     <div class="ilus-card-header">
       <span><i class="bi bi-sigma me-2"></i>Totales{% if multi %} combinados{% endif %}</span>
@@ -478,32 +639,32 @@
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Unidades</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_qty|int }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="qty">{{ ns.tot_qty|int }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Bultos</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_bultos }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="bultos">{{ ns.tot_bultos }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total Kg</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_kg|fkg }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="kg">{{ ns.tot_kg|fkg }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Total PV</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_pv|fkg }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="pv">{{ ns.tot_pv|fkg }}</div>
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Vol cm³</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a">{{ ns.tot_vol|fvol }}</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="vol">{{ ns.tot_vol|fvol }}</div>
         </div>
 
         <div class="text-center px-4 py-3 flex-fill" style="background:#1a1a1a;border-radius:0 0 8px 0">
           <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#aaa;font-weight:600">Predom. Total</div>
-          <div class="fw-bold" style="font-size:1.6rem;color:var(--ilus-red);line-height:1.1">{{ ns.tot_pred|fkg }}</div>
+          <div class="fw-bold" style="font-size:1.6rem;color:var(--ilus-red);line-height:1.1" data-foot-d="pred">{{ ns.tot_pred|fkg }}</div>
           <div style="font-size:.62rem;color:#777">kg predominante</div>
         </div>
 
@@ -513,14 +674,24 @@
 </div>
 
 {# ── Cards mobile ── #}
-<div class="d-md-none mb-3">
+<div class="d-md-none mb-3" id="cubicadorMobileWrap">
   {% for l in lineas %}
-  <div class="ilus-card mb-2">
+  <div class="ilus-card mb-2 cub-row"
+       data-sku="{{ l.sku|e }}"
+       data-kg-tot="{{ l.peso_kg_tot }}"
+       data-pv-tot="{{ l.peso_vol_tot }}"
+       data-vol-tot="{{ l.vol_tot }}"
+       data-pred-tot="{{ l.pred_tot }}"
+       data-qty="{{ l.cantidad }}"
+       data-bultos="{{ l.total_bultos }}">
     <div class="p-3">
       <div class="d-flex justify-content-between align-items-start mb-2">
-        <div>
-          <div class="fw-bold font-monospace">{{ l.sku }}</div>
-          <div class="small" style="color:#bbb">{{ l.descripcion_erp }}</div>
+        <div class="d-flex align-items-start gap-2" style="min-width:0;flex:1">
+          <input type="checkbox" class="ilus-check cub-check mt-1" aria-label="Seleccionar {{ l.sku }}">
+          <div style="min-width:0">
+            <div class="fw-bold font-monospace">{{ l.sku }}</div>
+            <div class="small" style="color:#bbb">{{ l.descripcion_erp }}</div>
+          </div>
         </div>
         <div class="d-flex flex-column align-items-end gap-1">
           <span class="badge rounded-pill" style="background:var(--ilus-black);font-size:.72rem">
@@ -531,6 +702,12 @@
             {{ l.total_bultos }} bulto(s)
           </span>
           {% endif %}
+          <button type="button" class="btn btn-sm btn-row-del"
+                  title="Eliminar línea"
+                  aria-label="Eliminar línea {{ l.sku }}"
+                  data-action="del-row">
+            <i class="bi bi-trash"></i>
+          </button>
         </div>
       </div>
       {% if l.diferencia %}
@@ -574,7 +751,7 @@
   {% endfor %}
 
   {# Totales mobile #}
-  <div class="ilus-card" style="background:#1a1a1a;border-color:#333">
+  <div class="ilus-card" id="cubicadorMobileTotals" style="background:#1a1a1a;border-color:#333">
     <div class="p-3">
       <div class="fw-bold text-white mb-2 text-center" style="font-size:.8rem;letter-spacing:.5px">
         TOTALES{% if multi %} COMBINADOS{% endif %}
@@ -582,27 +759,27 @@
       <div class="row g-2 text-center" style="font-size:.82rem">
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Unidades</div>
-          <div class="fw-bold text-white">{{ ns.tot_qty|int }}</div>
+          <div class="fw-bold text-white" data-foot-m="qty">{{ ns.tot_qty|int }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Bultos</div>
-          <div class="fw-bold text-white">{{ ns.tot_bultos }}</div>
+          <div class="fw-bold text-white" data-foot-m="bultos">{{ ns.tot_bultos }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Total Kg</div>
-          <div class="fw-bold text-white">{{ ns.tot_kg|fkg }}</div>
+          <div class="fw-bold text-white" data-foot-m="kg">{{ ns.tot_kg|fkg }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Total PV</div>
-          <div class="fw-bold text-white">{{ ns.tot_pv|fkg }}</div>
+          <div class="fw-bold text-white" data-foot-m="pv">{{ ns.tot_pv|fkg }}</div>
         </div>
         <div class="col-6">
           <div style="color:#888;font-size:.7rem">Vol cm³</div>
-          <div class="fw-bold text-white">{{ ns.tot_vol|fvol }}</div>
+          <div class="fw-bold text-white" data-foot-m="vol">{{ ns.tot_vol|fvol }}</div>
         </div>
         <div class="col-6">
           <div style="color:var(--ilus-red);font-weight:700;font-size:.7rem">Predom total</div>
-          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.15rem">{{ ns.tot_pred|fkg }}</div>
+          <div class="fw-bold" style="color:var(--ilus-red);font-size:1.15rem" data-foot-m="pred">{{ ns.tot_pred|fkg }}</div>
         </div>
       </div>
     </div>
@@ -614,6 +791,20 @@
   <div class="empty-state">
     <div class="empty-icon">📋</div>
     <p>El documento no tiene líneas de producto.</p>
+  </div>
+</div>
+{% endif %}
+
+{# ── Empty state cuando el usuario elimina TODAS las líneas en sesión ── #}
+{% if lineas %}
+<div id="cubicadorEmptyStateCard" class="ilus-card d-none mb-3">
+  <div id="cubicadorEmptyState">
+    <div class="icon">🧹</div>
+    <h5>Todas las líneas fueron eliminadas</h5>
+    <p>Removiste todos los SKUs del detalle de cubicaje. Puedes recargar la página o cubicar otro documento.</p>
+    <a href="{{ url_for('cubicador') }}" class="btn btn-ilus fw-semibold">
+      <i class="bi bi-arrow-clockwise me-1"></i>Cubicar otro documento
+    </a>
   </div>
 </div>
 {% endif %}
@@ -841,5 +1032,377 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
       .catch(function(){ alert('Error de red al sincronizar.'); });
   });
 });
+
+/* ════════════════════════════════════════════════════════════════════
+   ELIMINAR LÍNEAS DEL CUBICADOR (solo en sesión cliente, no toca ERP)
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  var tbody          = document.getElementById('cubicadorTbody');
+  var mobileWrap     = document.getElementById('cubicadorMobileWrap');
+  if (!tbody && !mobileWrap) return;  // No hay tabla → no cubicador con resultados
+
+  var chkAll         = document.getElementById('chkAll');
+  var bulkToolbar    = document.getElementById('bulkToolbar');
+  var bulkCountEl    = document.getElementById('bulkCount');
+  var bulkTotalEl    = document.getElementById('bulkTotal');
+  var bulkClearBtn   = document.getElementById('bulkClearBtn');
+  var bulkDeleteBtn  = document.getElementById('bulkDeleteBtn');
+  var skuCountEl     = document.getElementById('skuCount');
+  var skuCountHdrEl  = document.getElementById('skuCountHeader');
+  var tableCard      = document.getElementById('cubicadorTableCard');
+  var desktopTotals  = document.getElementById('cubicadorDesktopTotals');
+  var mobileTotals   = document.getElementById('cubicadorMobileTotals');
+  var emptyCard      = document.getElementById('cubicadorEmptyStateCard');
+  var excelInput     = document.getElementById('excelPayloadInput');
+
+  /* ── Formatos chilenos (espejo de fkg / fvol del backend) ── */
+  function fkg(n, decimals){
+    decimals = (decimals == null) ? 1 : decimals;
+    var num = Number(n) || 0;
+    var s = num.toFixed(decimals);
+    var neg = s.charAt(0) === '-';
+    s = neg ? s.slice(1) : s;
+    var parts = s.split('.');
+    var intPart = parts[0];
+    var decPart = parts[1] || '';
+    var withSep = '';
+    for (var i = 0, l = intPart.length; i < l; i++){
+      if (i > 0 && (l - i) % 3 === 0) withSep += '.';
+      withSep += intPart.charAt(i);
+    }
+    return (neg ? '-' : '') + withSep + (decPart ? (',' + decPart) : '');
+  }
+  function fvol(n){
+    var num = Math.round(Number(n) || 0);
+    var neg = num < 0;
+    var s = String(Math.abs(num));
+    var withSep = '';
+    for (var i = 0, l = s.length; i < l; i++){
+      if (i > 0 && (l - i) % 3 === 0) withSep += '.';
+      withSep += s.charAt(i);
+    }
+    return (neg ? '-' : '') + withSep;
+  }
+
+  /* ── Selección de filas activas (no .removing) en desktop + mobile ── */
+  function rowsDesktop(){
+    return tbody ? Array.prototype.slice.call(tbody.querySelectorAll('tr.cub-row')).filter(function(r){
+      return !r.classList.contains('removing');
+    }) : [];
+  }
+  function rowsMobile(){
+    return mobileWrap ? Array.prototype.slice.call(mobileWrap.querySelectorAll('.cub-row')).filter(function(r){
+      return !r.classList.contains('removing');
+    }) : [];
+  }
+  function allRows(){ return rowsDesktop().concat(rowsMobile()); }
+  function activeSkus(){
+    var skus = {};
+    rowsDesktop().forEach(function(r){ skus[r.dataset.sku] = true; });
+    rowsMobile().forEach(function(r){ skus[r.dataset.sku] = true; });
+    return Object.keys(skus);
+  }
+  function checkedRows(){
+    return allRows().filter(function(r){
+      var c = r.querySelector('.cub-check');
+      return c && c.checked;
+    });
+  }
+  function checkedSkus(){
+    var set = {};
+    checkedRows().forEach(function(r){ set[r.dataset.sku] = true; });
+    return Object.keys(set);
+  }
+
+  /* ── Sincronizar checkbox desktop ↔ mobile (mismo SKU) ── */
+  function syncCheckBySku(sku, checked){
+    allRows().forEach(function(r){
+      if (r.dataset.sku === sku){
+        var c = r.querySelector('.cub-check');
+        if (c) c.checked = checked;
+        r.classList.toggle('is-selected', checked);
+      }
+    });
+  }
+
+  /* ── Recalcular totales ── */
+  function recalcularTotales(){
+    var totals = { qty:0, bultos:0, kg:0, pv:0, vol:0, pred:0, skus:0 };
+    // Usar SOLO desktop si existe (evita doble conteo); si no, mobile
+    var src = rowsDesktop().length ? rowsDesktop() : rowsMobile();
+    // Deduplicar por SKU (en multi-doc una SKU puede aparecer una sola vez ya
+    // — pero por las dudas, contamos rows visibles)
+    src.forEach(function(r){
+      totals.qty    += Number(r.dataset.qty)     || 0;
+      totals.bultos += Number(r.dataset.bultos)  || 0;
+      totals.kg     += Number(r.dataset.kgTot)   || 0;
+      totals.pv     += Number(r.dataset.pvTot)   || 0;
+      totals.vol    += Number(r.dataset.volTot)  || 0;
+      totals.pred   += Number(r.dataset.predTot) || 0;
+    });
+    totals.skus = activeSkus().length;
+
+    // Footer desktop
+    document.querySelectorAll('[data-foot="qty"]').forEach(function(el){    el.textContent = Math.round(totals.qty); });
+    document.querySelectorAll('[data-foot="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
+    document.querySelectorAll('[data-foot="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
+    document.querySelectorAll('[data-foot="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
+    document.querySelectorAll('[data-foot="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
+
+    // Tarjeta totales desktop
+    document.querySelectorAll('[data-foot-d="qty"]').forEach(function(el){    el.textContent = Math.round(totals.qty); });
+    document.querySelectorAll('[data-foot-d="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
+    document.querySelectorAll('[data-foot-d="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
+    document.querySelectorAll('[data-foot-d="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
+    document.querySelectorAll('[data-foot-d="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot-d="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
+
+    // Tarjeta totales mobile
+    document.querySelectorAll('[data-foot-m="qty"]').forEach(function(el){    el.textContent = Math.round(totals.qty); });
+    document.querySelectorAll('[data-foot-m="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
+    document.querySelectorAll('[data-foot-m="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
+    document.querySelectorAll('[data-foot-m="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
+    document.querySelectorAll('[data-foot-m="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot-m="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
+
+    // Contador SKUs
+    if (skuCountEl)    skuCountEl.textContent    = totals.skus;
+    if (skuCountHdrEl) skuCountHdrEl.textContent = totals.skus;
+  }
+
+  /* ── Estado del bulk toolbar ── */
+  function updateBulkToolbar(){
+    var total    = activeSkus().length;
+    var selected = checkedSkus().length;
+    if (bulkTotalEl) bulkTotalEl.textContent = total;
+    if (bulkCountEl) bulkCountEl.textContent = selected;
+    if (bulkDeleteBtn) bulkDeleteBtn.disabled = (selected === 0);
+    if (bulkToolbar) bulkToolbar.classList.toggle('d-none', selected === 0);
+    if (chkAll){
+      chkAll.checked = (selected > 0 && selected === total);
+      chkAll.indeterminate = (selected > 0 && selected < total);
+    }
+  }
+
+  /* ── Actualizar el payload Excel filtrando SKUs eliminados ── */
+  function actualizarPayloadExcel(){
+    if (!excelInput) return;
+    try {
+      var orig = JSON.parse(excelInput.dataset.original || excelInput.value);
+      if (!excelInput.dataset.original) excelInput.dataset.original = excelInput.value;
+      var keep = {};
+      activeSkus().forEach(function(s){ keep[s] = true; });
+      var filtered = {
+        docs:    orig.docs,
+        headers: orig.headers,
+        lineas:  (orig.lineas || []).filter(function(l){
+          return keep[String(l.sku || '')];
+        })
+      };
+      excelInput.value = JSON.stringify(filtered);
+    } catch(e){ /* si falla, dejamos payload original */ }
+  }
+
+  /* ── Verificar empty-state ── */
+  function checkEmpty(){
+    if (activeSkus().length === 0){
+      if (tableCard)     tableCard.classList.add('d-none');
+      if (desktopTotals) desktopTotals.classList.add('d-none');
+      if (mobileWrap)    mobileWrap.classList.add('d-none');
+      if (mobileTotals)  mobileTotals.classList.add('d-none');
+      if (bulkToolbar)   bulkToolbar.classList.add('d-none');
+      if (emptyCard)     emptyCard.classList.remove('d-none');
+    }
+  }
+
+  /* ── Eliminar UNA línea (con o sin confirmación según predominio) ── */
+  function eliminarFila(sku){
+    var rows = allRows().filter(function(r){ return r.dataset.sku === sku; });
+    if (!rows.length) return;
+    var pred = Number(rows[0].dataset.predTot) || 0;
+
+    var doRemove = function(){
+      rows.forEach(function(r){ r.classList.add('removing'); });
+      // Esperar fin de animación, luego sacar del DOM y recalcular
+      setTimeout(function(){
+        rows.forEach(function(r){ if (r.parentNode) r.parentNode.removeChild(r); });
+        recalcularTotales();
+        updateBulkToolbar();
+        actualizarPayloadExcel();
+        checkEmpty();
+        if (typeof ilusToast === 'function'){
+          ilusToast('Línea eliminada · Totales actualizados', { type:'success' });
+        }
+      }, 330);
+    };
+
+    // Si tiene predominio > 0, confirmar
+    if (pred > 0 && typeof ilusConfirm === 'function'){
+      ilusConfirm({
+        title: 'Eliminar línea',
+        message: '¿Quitar la línea ' + sku + ' del cubicaje?',
+        sub: 'Solo afecta tu sesión — no se modifica el ERP ni la BD.',
+        okLabel: 'Eliminar',
+        cancelLabel: 'Cancelar',
+        danger: true,
+      }).then(function(ok){ if (ok) doRemove(); });
+    } else {
+      doRemove();
+    }
+  }
+
+  /* ── Eliminar varias (confirmación obligatoria) ── */
+  function eliminarSeleccionados(){
+    var skus = checkedSkus();
+    if (!skus.length) return;
+    var conf = (typeof ilusConfirm === 'function')
+      ? ilusConfirm({
+          title: 'Eliminar líneas seleccionadas',
+          message: '¿Quitar ' + skus.length + ' línea(s) del cubicaje?',
+          sub: 'Los totales se recalcularán automáticamente. Solo afecta tu sesión — no se modifica el ERP.',
+          okLabel: 'Eliminar ' + skus.length,
+          cancelLabel: 'Cancelar',
+          danger: true,
+        })
+      : Promise.resolve(window.confirm('¿Eliminar ' + skus.length + ' líneas?'));
+
+    conf.then(function(ok){
+      if (!ok) return;
+      var rows = allRows().filter(function(r){
+        return skus.indexOf(r.dataset.sku) !== -1;
+      });
+      rows.forEach(function(r){ r.classList.add('removing'); });
+      setTimeout(function(){
+        rows.forEach(function(r){ if (r.parentNode) r.parentNode.removeChild(r); });
+        recalcularTotales();
+        updateBulkToolbar();
+        actualizarPayloadExcel();
+        checkEmpty();
+        if (typeof ilusToast === 'function'){
+          ilusToast('✓ ' + skus.length + ' líneas eliminadas', { type:'success' });
+        }
+      }, 330);
+    });
+  }
+
+  /* ── Event delegation: checkbox individual ── */
+  function onCheckChange(e){
+    var t = e.target;
+    if (!t.classList || !t.classList.contains('cub-check')) return;
+    var row = t.closest('.cub-row');
+    if (!row) return;
+    // Sincronizar la misma SKU en la otra vista (desktop ↔ mobile)
+    syncCheckBySku(row.dataset.sku, t.checked);
+    updateBulkToolbar();
+  }
+  if (tbody)      tbody.addEventListener('change', onCheckChange);
+  if (mobileWrap) mobileWrap.addEventListener('change', onCheckChange);
+
+  /* ── Event delegation: botón eliminar fila individual ── */
+  function onRowDelClick(e){
+    var btn = e.target.closest('[data-action="del-row"]');
+    if (!btn) return;
+    e.preventDefault();
+    var row = btn.closest('.cub-row');
+    if (!row) return;
+    eliminarFila(row.dataset.sku);
+  }
+  if (tbody)      tbody.addEventListener('click', onRowDelClick);
+  if (mobileWrap) mobileWrap.addEventListener('click', onRowDelClick);
+
+  /* ── "Seleccionar todos" maestro ── */
+  if (chkAll){
+    chkAll.addEventListener('change', function(){
+      var checked = chkAll.checked;
+      allRows().forEach(function(r){
+        var c = r.querySelector('.cub-check');
+        if (c) c.checked = checked;
+        r.classList.toggle('is-selected', checked);
+      });
+      updateBulkToolbar();
+    });
+  }
+
+  /* ── Botón "Deseleccionar todos" ── */
+  if (bulkClearBtn){
+    bulkClearBtn.addEventListener('click', function(){
+      allRows().forEach(function(r){
+        var c = r.querySelector('.cub-check');
+        if (c) c.checked = false;
+        r.classList.remove('is-selected');
+      });
+      updateBulkToolbar();
+    });
+  }
+
+  /* ── Botón "Eliminar seleccionados" ── */
+  if (bulkDeleteBtn){
+    bulkDeleteBtn.addEventListener('click', eliminarSeleccionados);
+  }
+
+  /* ── Antes de submitear el form Excel: filtrar payload ── */
+  var excelForm = document.getElementById('excelExportForm');
+  if (excelForm){
+    excelForm.addEventListener('submit', function(){
+      actualizarPayloadExcel();
+    });
+  }
+
+  /* ── Antes de submitear PDF: advertir si hay filas eliminadas
+        (el PDF re-consulta el ERP, no hay forma de filtrarlo sin tocar
+        el backend del cubicador — convención del proyecto) ── */
+  var pdfForm = document.getElementById('pdfExportForm');
+  if (pdfForm){
+    pdfForm.addEventListener('submit', function(ev){
+      // Si nadie eliminó líneas → comportamiento original
+      var totalInPayload = null;
+      try {
+        var orig = JSON.parse(excelInput && (excelInput.dataset.original || excelInput.value) || '{}');
+        totalInPayload = (orig.lineas || []).length;
+      } catch(e){}
+      var nowCount = activeSkus().length;
+      if (totalInPayload !== null && nowCount < totalInPayload){
+        ev.preventDefault();
+        if (typeof ilusConfirm === 'function'){
+          ilusConfirm({
+            title: 'PDF con todas las líneas originales',
+            message: 'El PDF se genera consultando nuevamente el ERP, por lo que incluirá las ' + totalInPayload + ' líneas originales (no respeta las eliminaciones de tu sesión).',
+            sub: 'Para un PDF filtrado, usa Excel — ese sí respeta tu selección.',
+            okLabel: 'Generar PDF completo',
+            cancelLabel: 'Cancelar',
+            danger: false,
+          }).then(function(ok){
+            if (ok){
+              // Submit sin volver a interceptar
+              var b = pdfForm.querySelector('button[type=submit]');
+              if (b){
+                b.disabled = true;
+                b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generando...';
+              }
+              pdfForm.submit();
+            }
+          });
+        } else {
+          if (window.confirm('El PDF incluirá las ' + totalInPayload + ' líneas originales. ¿Continuar?')){
+            pdfForm.submit();
+          }
+        }
+      } else {
+        // Comportamiento original: spinner y enviar
+        var b = pdfForm.querySelector('button[type=submit]');
+        if (b){
+          b.disabled = true;
+          b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generando...';
+        }
+      }
+    });
+  }
+
+  /* ── Init ── */
+  updateBulkToolbar();
+  // Guardar payload original como backup para filtrados sucesivos
+  if (excelInput) excelInput.dataset.original = excelInput.value;
+})();
 </script>
 {% endblock %}
