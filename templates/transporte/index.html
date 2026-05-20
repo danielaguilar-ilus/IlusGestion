@@ -24,6 +24,31 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
       </div>
     </div>
   </div>
+
+  {# ── Widget en vivo: estado de sincronización ──
+     Daniel pidió que esté siempre visible un pequeño "panel de control" del
+     auto-sync: cuándo fue el último, cuándo el próximo, y si el ERP responde.
+     Se refresca cada 30s y al volver a la tab. #}
+  <div class="tr-sync-widget" id="trSyncWidget" role="status" aria-live="polite">
+    <button class="tr-sync-pulse" id="trSyncSqlDot" title="Estado del ERP Random SQL Server"
+            data-status="loading" type="button" tabindex="-1" aria-label="Estado del ERP"></button>
+    <div class="tr-sync-info">
+      <div class="tr-sync-line">
+        <span class="tr-sync-key">Último:</span>
+        <span class="tr-sync-val" id="trSyncWidgetUltimo">—</span>
+      </div>
+      <div class="tr-sync-line">
+        <span class="tr-sync-key">Próximo:</span>
+        <span class="tr-sync-val" id="trSyncWidgetProximo">—</span>
+      </div>
+    </div>
+    <button class="tr-sync-now" id="trSyncWidgetBtn" onclick="trSyncWidgetSyncAhora()"
+            title="Disparar sync ahora (mes en curso)">
+      <i class="bi bi-arrow-clockwise"></i>
+      <span>Sincronizar ahora</span>
+    </button>
+  </div>
+
   <div class="tr-hero-actions">
     <button class="tr-btn tr-btn-primary" id="btnSyncMes" onclick="sincronizarMesActual()"
             title="Trae todos los documentos del mes con saldo pendiente desde el ERP">
@@ -65,11 +90,62 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
         <li><button class="dropdown-item text-danger" id="btnLimpiarMon" onclick="limpiarMonitor()">
           <i class="bi bi-trash3 me-2"></i>Limpiar todo el monitor
         </button></li>
+        {% if permissions.superadmin %}
+        <li><hr class="dropdown-divider"></li>
+        <li><button class="dropdown-item text-danger fw-bold" id="btnLimpiarTodoSA"
+                    onclick="limpiarMonitorConfirmText()">
+          <i class="bi bi-shield-exclamation me-2"></i>Limpiar TODO (escribir LIMPIAR)
+        </button></li>
+        {% endif %}
       </ul>
     </div>
     {% endif %}
   </div>
 </div>
+
+{% if permissions.superadmin %}
+{# ════════════════════════════════════════════════════════════════
+   IMPORTAR FORZADO — solo superadmin
+   Caja independiente para meter docs ad-hoc al monitor saltando la
+   whitelist del sync (BLV/GDV). Útil cuando hay que probar un NVV
+   o un FCV puntual que no llega por el cron diario.
+   ════════════════════════════════════════════════════════════════ #}
+<div class="tr-forced-import">
+  <div class="tr-forced-import-left">
+    <div class="tr-forced-import-icon" title="Solo superadmin">
+      <i class="bi bi-shield-lock-fill"></i>
+    </div>
+    <div>
+      <div class="tr-forced-import-title">Importar documento forzado</div>
+      <div class="tr-forced-import-sub">
+        Trae un TIDO+N° al monitor saltando la whitelist del sync (solo superadmin).
+      </div>
+    </div>
+  </div>
+  <div class="tr-forced-import-form">
+    <select id="fiTido" class="tr-forced-import-input" title="Tipo de documento">
+      <option value="FCV">FCV — Factura</option>
+      <option value="BLV">BLV — Boleta</option>
+      <option value="GDV" selected>GDV — Guía despacho</option>
+      <option value="NVV">NVV — N. Venta</option>
+      <option value="NVI">NVI — N. Venta Interna</option>
+      <option value="COV">COV — Cotización</option>
+      <option value="GDP">GDP — Guía Proveedor</option>
+      <option value="GDI">GDI — Guía Despacho Interna</option>
+      <option value="RGI">RGI — Recepción Guía Interna</option>
+      <option value="NVR">NVR — N. Venta Repuestos</option>
+      <option value="GTI">GTI — Guía Traspaso Interno</option>
+    </select>
+    <input type="text" id="fiNudo" class="tr-forced-import-input tr-forced-import-input-num"
+           placeholder="N° documento (ej: 31005)" autocomplete="off"
+           onkeydown="if(event.key==='Enter')trImportarForzado()">
+    <button class="tr-btn tr-btn-primary" id="btnImportarForzado" onclick="trImportarForzado()">
+      <i class="bi bi-cloud-download"></i>
+      <span>Importar forzado</span>
+    </button>
+  </div>
+</div>
+{% endif %}
 
 {# ════════════════════════════════════════════════════════════════
    KPIs — 4 cards horizontales con números grandes
@@ -426,6 +502,101 @@ async function limpiarYResync(){
 }
 .tr-hero-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 
+/* ── WIDGET de auto-sync en vivo ──
+   Pequeño "panel de control" del cron. Pulse-dot indica estado SQL Server,
+   las dos líneas de texto muestran último/próximo sync, el botón dispara
+   sync manual. Se refresca cada 30s desde JS. */
+.tr-sync-widget {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 12px;
+  background:linear-gradient(135deg, #0f172a, #1e293b);
+  color:#e2e8f0; border-radius:11px;
+  border:1px solid #1e293b;
+  box-shadow:0 2px 6px rgba(15,23,42,.18);
+  flex-wrap:wrap;
+}
+.tr-sync-pulse {
+  width:11px; height:11px; min-width:11px; flex-shrink:0;
+  border-radius:50%; background:#94a3b8; border:none; padding:0;
+  position:relative; cursor:help;
+  transition:background .25s ease, box-shadow .25s ease;
+}
+.tr-sync-pulse::after {
+  content:''; position:absolute; inset:-3px; border-radius:50%;
+  border:1.5px solid currentColor; opacity:0;
+  animation:trPulseSyncRing 2.4s ease infinite;
+}
+.tr-sync-pulse[data-status="ok"]        { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }
+.tr-sync-pulse[data-status="ok"]::after { color:#22c55e; opacity:1; }
+.tr-sync-pulse[data-status="degradado"]        { background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.2); }
+.tr-sync-pulse[data-status="degradado"]::after { color:#f59e0b; opacity:1; }
+.tr-sync-pulse[data-status="down"]        { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
+.tr-sync-pulse[data-status="down"]::after { color:#ef4444; opacity:1; }
+.tr-sync-pulse[data-status="loading"]   { background:#64748b; }
+@keyframes trPulseSyncRing {
+  0%   { transform:scale(.9); opacity:.85; }
+  100% { transform:scale(1.6); opacity:0; }
+}
+.tr-sync-info { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.tr-sync-line { display:flex; gap:5px; align-items:baseline; font-size:.72rem; line-height:1.25; }
+.tr-sync-key {
+  color:#94a3b8; font-weight:600; text-transform:uppercase;
+  letter-spacing:.5px; font-size:.62rem;
+}
+.tr-sync-val {
+  color:#f8fafc; font-weight:700; font-feature-settings:"tnum";
+  white-space:nowrap;
+}
+.tr-sync-now {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  padding:6px 10px; min-height:32px;
+  background:rgba(220,38,38,.18); color:#fecaca;
+  border:1px solid rgba(220,38,38,.4); border-radius:7px;
+  font-size:.76rem; font-weight:700; cursor:pointer;
+  transition:all .14s ease; white-space:nowrap;
+}
+.tr-sync-now:hover {
+  background:var(--ilus-red); color:#fff; border-color:var(--ilus-red);
+  transform:translateY(-1px); box-shadow:0 4px 10px rgba(220,38,38,.35);
+}
+.tr-sync-now:disabled { opacity:.55; cursor:wait; transform:none !important; }
+.tr-sync-now i { font-size:.85rem; }
+
+/* ── Importar forzado (superadmin) ── */
+.tr-forced-import {
+  display:flex; align-items:center; gap:12px;
+  padding:11px 14px; margin-bottom:14px;
+  background:#fff; border:1px solid #fecaca;
+  border-left:4px solid var(--ilus-red);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+  flex-wrap:wrap;
+}
+.tr-forced-import-left { display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 240px; }
+.tr-forced-import-icon {
+  width:34px; height:34px; flex-shrink:0; border-radius:8px;
+  background:#fef2f2; color:var(--ilus-red);
+  display:flex; align-items:center; justify-content:center; font-size:1rem;
+}
+.tr-forced-import-title { font-weight:700; color:var(--tr-text); font-size:.86rem; line-height:1.2; }
+.tr-forced-import-sub { font-size:.72rem; color:var(--tr-text-muted); margin-top:2px; }
+.tr-forced-import-form { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.tr-forced-import-input {
+  padding:7px 10px; min-height:36px;
+  border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.82rem; color:var(--tr-text); background:#fff;
+  font-family:inherit;
+}
+.tr-forced-import-input:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-forced-import-input-num {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace; min-width:160px;
+}
+
+@media (max-width:980px) {
+  .tr-sync-widget { width:100%; order:3; }
+}
 @media (max-width:640px) {
   .tr-hero { padding:12px 14px; gap:10px; }
   .tr-hero-icon { width:38px; height:38px; font-size:1.1rem; }
@@ -434,6 +605,14 @@ async function limpiarYResync(){
   .tr-hero-actions { width:100%; }
   .tr-hero-actions .tr-btn { flex:1 1 auto; }
   .tr-hero-actions .tr-btn-primary { flex-basis:100%; }
+  .tr-sync-widget { padding:8px 10px; gap:8px; }
+  .tr-sync-now span { display:none; }
+  .tr-sync-now { padding:6px 9px; min-width:32px; }
+  .tr-forced-import { padding:10px 12px; }
+  .tr-forced-import-form { width:100%; }
+  .tr-forced-import-form select,
+  .tr-forced-import-form input { flex:1 1 110px; }
+  .tr-forced-import-form .tr-btn { flex:1 1 100%; }
 }
 
 /* ── BOTONES TR ── sistema propio, no Bootstrap */
@@ -676,6 +855,9 @@ async function limpiarYResync(){
           <th>Fecha</th>
           <th>Cliente</th>
           <th>Comuna</th>
+          <th>Dirección</th>
+          <th class="text-center" title="ZZ envío detectados en el documento">ZZ</th>
+          <th>Observaciones</th>
           <th>Estado</th>
           <th class="text-center" title="Número de guía de despacho asociada en el ERP">Guía</th>
           <th class="text-center" title="% del ZZ ya despachado (cantidades por línea)">Cobertura</th>
@@ -685,7 +867,7 @@ async function limpiarYResync(){
         </tr>
       </thead>
       <tbody id="monitorTbody">
-        <tr><td colspan="11" class="tr-td-loading">
+        <tr><td colspan="14" class="tr-td-loading">
           <div class="tr-spinner"></div>
           <span>Cargando compromisos…</span>
         </td></tr>
@@ -742,6 +924,24 @@ async function limpiarYResync(){
 .tr-table tbody tr.tr-row-pendiente:hover { border-left-color:#dc2626; /* urgencia */ }
 .tr-table tbody tr.tr-row-parcial:hover   { border-left-color:#1d4ed8; }
 .tr-table tbody tr.tr-row-entregado:hover { border-left-color:#15803d; }
+
+/* Celdas truncadas con tooltip (dirección, observaciones) */
+.tr-cell-truncate {
+  max-width:200px; min-width:120px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:.78rem; color:var(--tr-text-muted);
+}
+.tr-cell-truncate-soft { color:var(--tr-text-soft); font-style:italic; }
+
+/* Chip ZZ envío (chip pequeño) */
+.tr-zz-chip {
+  display:inline-block; padding:2px 7px;
+  background:#fef2f2; color:#991b1b; border:1px solid #fecaca;
+  border-radius:99px; font-family:ui-monospace, monospace;
+  font-size:.66rem; font-weight:700; letter-spacing:.3px;
+  margin:1px;
+}
+.tr-zz-chips { display:inline-flex; flex-wrap:wrap; gap:2px; max-width:140px; }
 
 /* Documento (TIDO + NUDO) */
 .tr-doc-num {
@@ -1818,6 +2018,199 @@ function _trActualizarSyncStatus() {
   }
 }
 
+// ════════════════════════════════════════════════════════════
+//  WIDGET de auto-sync (header) — pinta último/próximo + estado SQL
+// ════════════════════════════════════════════════════════════
+var _trSyncWidgetTimer = null;
+async function trCargarSyncStatus() {
+  var dot   = document.getElementById('trSyncSqlDot');
+  var ulVal = document.getElementById('trSyncWidgetUltimo');
+  var pxVal = document.getElementById('trSyncWidgetProximo');
+  try {
+    var r = await fetch('/transporte/api/sync-status', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var d = await r.json();
+    if (!d.ok) throw new Error('respuesta no-ok');
+
+    // Estado del SQL Server (pulse-dot)
+    if (dot) {
+      dot.setAttribute('data-status', d.sql_status || 'down');
+      var tooltipMap = {
+        ok: 'ERP Random SQL Server: OK',
+        degradado: 'ERP Random SQL Server: degradado (timeouts)',
+        down: 'ERP Random SQL Server: no responde',
+      };
+      dot.setAttribute('title', tooltipMap[d.sql_status] || 'ERP: estado desconocido');
+    }
+
+    // Texto último/próximo
+    if (ulVal) ulVal.textContent = d.ultimo_sync_relativo || '—';
+    if (pxVal) {
+      var hhmm = d.proximo_sync_hhmm || '';
+      var rel  = d.proximo_sync_relativo || '';
+      pxVal.textContent = hhmm + (rel ? ' (' + rel + ')' : '');
+    }
+  } catch(e) {
+    if (dot) {
+      dot.setAttribute('data-status', 'down');
+      dot.setAttribute('title', 'ERP: no se pudo consultar el estado');
+    }
+    if (ulVal) ulVal.textContent = '—';
+    if (pxVal) pxVal.textContent = '—';
+  }
+}
+
+// Dispara sync ahora desde el widget. Reusa el flujo de "sincronizar mes".
+async function trSyncWidgetSyncAhora() {
+  var btn = document.getElementById('trSyncWidgetBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:.85rem;height:.85rem"></span>';
+  }
+  try {
+    var r = await fetch('/transporte/api/sync/mes-actual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ limpiar: false })
+    });
+    var d = await r.json();
+    if (d.ok) {
+      if (typeof ilusToast === 'function') {
+        ilusToast('Sync OK: ' + (d.mensaje || 'documentos actualizados'), {type:'success'});
+      }
+      // Recargar status + listado
+      trCargarSyncStatus();
+      if (typeof cargarMonitor === 'function') cargarMonitor();
+    } else {
+      if (typeof ilusToast === 'function') {
+        ilusToast('Error de sync: ' + (d.error || 'desconocido'), {type:'error'});
+      }
+    }
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i><span>Sincronizar ahora</span>';
+    }
+  }
+}
+
+// Iniciar el widget cuando el DOM esté listo. Refresh cada 30s.
+function _trIniciarSyncWidget() {
+  if (!document.getElementById('trSyncWidget')) return;
+  trCargarSyncStatus();
+  if (_trSyncWidgetTimer) clearInterval(_trSyncWidgetTimer);
+  _trSyncWidgetTimer = setInterval(trCargarSyncStatus, 30000);
+  // Refresh al volver a la tab
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) trCargarSyncStatus();
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _trIniciarSyncWidget);
+} else {
+  _trIniciarSyncWidget();
+}
+
+// ════════════════════════════════════════════════════════════
+//  IMPORTAR FORZADO (superadmin) — sin recargar página
+// ════════════════════════════════════════════════════════════
+async function trImportarForzado() {
+  var tido = (document.getElementById('fiTido')?.value || '').trim().toUpperCase();
+  var nudo = (document.getElementById('fiNudo')?.value || '').trim();
+  var btn  = document.getElementById('btnImportarForzado');
+  if (!nudo) {
+    if (typeof ilusToast === 'function') ilusToast('Ingresa el N° de documento', {type:'warning'});
+    return;
+  }
+  var orig = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span><span>Importando…</span>';
+  }
+  try {
+    var r = await fetch('/transporte/api/importar-forzado', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ tido: tido, nudo: nudo })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo importar', {type:'error'});
+      else alert(d.error || 'Error');
+      return;
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(d.mensaje || (tido + ' ' + nudo + ' importado'), {type:'success'});
+    }
+    // Limpiar input para siguiente import
+    var nudoEl = document.getElementById('fiNudo');
+    if (nudoEl) { nudoEl.value = ''; nudoEl.focus(); }
+    // Recargar el monitor sin refresh completo
+    if (typeof cargarMonitor === 'function') cargarMonitor();
+    trCargarSyncStatus();
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  LIMPIAR MONITOR (superadmin) — versión con confirm_text=LIMPIAR
+// ════════════════════════════════════════════════════════════
+async function limpiarMonitorConfirmText() {
+  if (typeof ilusPrompt !== 'function') {
+    if (typeof ilusToast === 'function') ilusToast('UI helpers no disponibles', {type:'error'});
+    return;
+  }
+  var texto = await ilusPrompt({
+    title: 'Limpiar TODO el monitor',
+    message: 'Esta acción borra TODOS los compromisos. Para confirmar, escribe la palabra:',
+    sub: '<strong style="color:#dc2626">LIMPIAR</strong> (en mayúsculas)',
+    subHtml: true,
+    placeholder: 'Escribe LIMPIAR',
+    okLabel: 'Borrar todo',
+    cancelLabel: 'Cancelar',
+    required: true,
+  });
+  if (!texto) return;
+  if (texto.trim().toUpperCase() !== 'LIMPIAR') {
+    if (typeof ilusToast === 'function') ilusToast('Texto incorrecto. Operación cancelada.', {type:'warning'});
+    return;
+  }
+  var btn = document.getElementById('btnLimpiarTodoSA');
+  var orig = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Limpiando…';
+  }
+  try {
+    var r = await fetch('/transporte/api/limpiar-todo', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ confirm_text: 'LIMPIAR' })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'Error', {type:'error'});
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Monitor limpiado',
+        message: 'Se eliminaron ' + (d.eliminados||0) + ' registros.',
+        sub: 'Próximo sync repuebla con datos del ERP.',
+        type: 'success',
+      });
+    }
+    if (typeof trLimpiarBackdrops === 'function') trLimpiarBackdrops();
+    setTimeout(function(){ location.reload(); }, 400);
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
 // Cleanup de cualquier backdrop huérfano. Usa la función global del ilus_ui
 // si existe, y agrega una pasada defensiva extra. Llamar tras cualquier
 // modal Bootstrap O ilusAlert.
@@ -2391,7 +2784,7 @@ function cargarMonitor() {
           };
           var conf = emptyConfig[_vistaActual] || emptyConfig.todos;
           tbody.innerHTML =
-            '<tr><td colspan="11" style="padding:0">' +
+            '<tr><td colspan="14" style="padding:0">' +
               '<div class="tr-empty">' +
                 '<div class="tr-empty-icon"><i class="bi ' + conf.icon + '"></i></div>' +
                 '<div class="tr-empty-title">' + conf.title + '</div>' +
@@ -2469,6 +2862,37 @@ function cargarMonitor() {
               '<td onclick="openVista(' + c.id + ')" style="cursor:pointer; color:var(--tr-text-muted)">' +
                 (c.comuna||'<span style="color:var(--tr-text-soft)">—</span>') +
               '</td>' +
+
+              /* ── Dirección (truncada + tooltip) ── */
+              (function() {
+                var dir = (c.direccion||'').trim();
+                if (!dir) return '<td><span class="tr-cell-truncate tr-cell-truncate-soft">—</span></td>';
+                return '<td><div class="tr-cell-truncate" title="' + esc(dir) + '">' + esc(dir) + '</div></td>';
+              })() +
+
+              /* ── ZZ envío detectados ── */
+              (function() {
+                var skus = (c.zz_skus||'').trim();
+                if (!skus) return '<td class="text-center"><span style="color:var(--tr-text-soft); font-size:.72rem">—</span></td>';
+                var parts = skus.split(',').filter(function(s){ return s.trim(); });
+                // Mostrar máx 2 chips, contar el resto
+                var visibles = parts.slice(0,2).map(function(s) {
+                  // Mostrar solo el sufijo (ZZENVIO -> ENVIO) para que quepa
+                  var lbl = s.trim().replace(/^ZZ/, '');
+                  return '<span class="tr-zz-chip" title="' + esc(s.trim()) + '">' + esc(lbl) + '</span>';
+                }).join('');
+                var extra = parts.length > 2
+                  ? '<span class="tr-zz-chip" title="' + esc(parts.slice(2).join(', ')) + '" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1">+' + (parts.length-2) + '</span>'
+                  : '';
+                return '<td class="text-center"><div class="tr-zz-chips">' + visibles + extra + '</div></td>';
+              })() +
+
+              /* ── Observaciones (truncada + tooltip) ── */
+              (function() {
+                var obs = (c.observaciones||'').trim();
+                if (!obs) return '<td><span class="tr-cell-truncate tr-cell-truncate-soft">—</span></td>';
+                return '<td><div class="tr-cell-truncate" title="' + esc(obs) + '">' + esc(obs) + '</div></td>';
+              })() +
 
               /* ── Estado ── */
               '<td><span class="tr-estado-pill ' + pillClass + '">' + (c.estado||'—') + '</span></td>' +
@@ -2588,7 +3012,7 @@ function cargarMonitor() {
     .catch(function(e) {
       console.error('cargarMonitor error:', e);
       var tbody = document.getElementById('monitorTbody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-danger">Error al cargar</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="14" class="text-center py-4 text-danger">Error al cargar</td></tr>';
     });
 }
 

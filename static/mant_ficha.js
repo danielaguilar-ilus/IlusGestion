@@ -1975,12 +1975,9 @@ async function abrirModalProductosConDatos(doc, items) {
   document.getElementById('ep_btnImportar').disabled = true;
   document.getElementById('ep_btnCount').textContent = '0';
 
-  // Validación de mismatch RUT (igual que abrirModalProductos)
-  const _rutClean = (r) => (r||'').replace(/[.\-\s]/g,'').toUpperCase();
-  const rutFichaC = _rutClean(RUT_FICHA);
-  const rutDocC = _rutClean(doc.rut);
-  const noCoincide = rutFichaC && rutDocC &&
-      rutFichaC.slice(0,-1) !== rutDocC.slice(0,-1) && rutFichaC !== rutDocC;
+  // Validación de mismatch RUT — usar ilusRutsMatch que tolera DV
+  // presente/ausente (ver static/ilus_ui.js).
+  const noCoincide = !ilusRutsMatch(doc.rut, RUT_FICHA);
   const alertEl = document.getElementById('ep_mismatchAlert');
   if (noCoincide) {
     window._erpMismatch = {
@@ -2077,7 +2074,9 @@ async function buscarErpSql() {
     </thead>
     <tbody>`;
   data.documentos.forEach((d, i) => {
-    const rutMatch = (d.rut||'').replace(/[.\-\s]/g,'') === (RUT_FICHA||'').replace(/[.\-\s]/g,'');
+    // FIX 2026-05-19: tolerar que uno tenga DV y el otro no
+    // (ej: "78.129.118-8" vs "78129118" deben coincidir).
+    const rutMatch = ilusRutsMatch(d.rut, RUT_FICHA);
     const tidoBadge = `<span class="badge bg-secondary" style="font-size:.62rem;font-family:monospace">${escHtml(d.tido_display)}</span>`;
     const total = d.valor_total ? '$' + Math.round(d.valor_total).toLocaleString('es-CL') : '—';
     html += `<tr>
@@ -2125,10 +2124,11 @@ async function abrirModalProductos(doc) {
   document.getElementById('ep_btnImportar').disabled = true;
   document.getElementById('ep_btnCount').textContent = '0';
 
-  // Validar RUT mismatch
-  const rutFicha = (RUT_FICHA||'').replace(/[.\-\s]/g,'').toUpperCase();
-  const rutDoc   = (doc.rut||'').replace(/[.\-\s]/g,'').toUpperCase();
-  const noCoincide = rutFicha && rutDoc && rutFicha.slice(0,-1) !== rutDoc.slice(0,-1) && rutFicha !== rutDoc;
+  // Validar RUT mismatch — tolerante a DV presente/ausente.
+  // FIX 2026-05-19: antes hacíamos slice(0,-1) en AMBOS, lo que cortaba
+  // un dígito real cuando uno no traía DV (ej: doc "78129118" vs
+  // ficha "78.129.118-8" → comparaba "7812911" vs "78129118" → distinto).
+  const noCoincide = !ilusRutsMatch(doc.rut, RUT_FICHA);
   const alertEl = document.getElementById('ep_mismatchAlert');
   if (noCoincide) {
     window._erpMismatch = { rutDoc:doc.rut, clienteDoc:doc.razon_social, tido:doc.tido, nudo:doc.nudo, confirmado:false, motivo:'' };

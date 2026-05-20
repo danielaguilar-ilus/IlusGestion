@@ -660,9 +660,28 @@ ERP_TABLE      = MYSQL_CONFIG["table"]
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-DEFAULT_USERS = (
-    ("daniel.aguilar@sphs.cl", "Daniel Aguilar", "superadmin", "19109364Daniel"),
-)
+#  SEED del superadmin — credenciales vienen EXCLUSIVAMENTE de env vars.
+#  - DEFAULT_SUPERADMIN_EMAIL : email del superadmin a crear al boot (1ra vez)
+#  - DEFAULT_SUPERADMIN_NAME  : nombre legible
+#  - DEFAULT_SUPERADMIN_PASS  : password inicial (se hashea; cambiar en 1er login)
+#
+#  Si DEFAULT_SUPERADMIN_PASS NO está seteada → NO se crea el usuario seed.
+#  Esto fuerza a setear la env var antes del primer boot. Para cambiar el
+#  password del superadmin después: hacerlo desde la UI (perfil → cambiar
+#  contraseña), no desde aquí.
+_seed_email = os.environ.get("DEFAULT_SUPERADMIN_EMAIL", "").strip()
+_seed_name  = os.environ.get("DEFAULT_SUPERADMIN_NAME", "").strip()
+_seed_pass  = os.environ.get("DEFAULT_SUPERADMIN_PASS", "").strip()
+if _seed_email and _seed_pass:
+    DEFAULT_USERS = (
+        (_seed_email, _seed_name or _seed_email, "superadmin", _seed_pass),
+    )
+else:
+    DEFAULT_USERS = ()  # No hay seed — esperando env vars
+    if not _seed_pass:
+        print("[ILUS][SEED] DEFAULT_SUPERADMIN_PASS no seteada — no se creará "
+              "usuario seed al boot. Setear en Railway → Variables si es la "
+              "primera vez que se despliega.", flush=True)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(COLABS_FOLDER, exist_ok=True)
@@ -1534,10 +1553,15 @@ def init_transporte_tables():
             # MIGRACIÓN 2026-05-14: agregar cobertura_pct (% de cantidad ZZ
             # despachada vs total). El sync lo recalcula. Permite mostrar
             # en UI "80% despachado" sin re-consultar el ERP.
+            # MIGRACIÓN 2026-05-19: agregar observaciones (OBDO completo) y
+            # zz_skus (lista compactada "ZZENVIO,ZZRETIRO") para mostrar en
+            # la grilla del monitor sin re-consultar el ERP.
             for _mig in [
                 "ALTER TABLE transport_commitments ADD COLUMN cobertura_pct DECIMAL(5,1) DEFAULT 0 COMMENT '% del ZZ ya despachado (CAPRAD1/CAPRCO1)'",
                 "ALTER TABLE transport_commitments ADD COLUMN cant_total_zz DECIMAL(12,3) DEFAULT 0 COMMENT 'Total CAPRCO1 de líneas ZZ'",
                 "ALTER TABLE transport_commitments ADD COLUMN cant_despachada_zz DECIMAL(12,3) DEFAULT 0 COMMENT 'Total CAPRAD1 de líneas ZZ'",
+                "ALTER TABLE transport_commitments ADD COLUMN observaciones TEXT NULL COMMENT 'OBDO crudo del ERP (incluye direccion/tel/email/notas)'",
+                "ALTER TABLE transport_commitments ADD COLUMN zz_skus VARCHAR(120) NULL COMMENT 'Lista compacta de SKUs ZZ del doc, ej: ZZENVIO,ZZRETIRO'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -11059,13 +11083,19 @@ def erp_documento_unificado():
     if not tido or not nudo:
         return jsonify({"error":"tido y nudo son obligatorios"}), 400
 
-    # FIX 2026-05-19: logging detallado + check breaker GLOBAL antes de intentar
+    # FIX 2026-05-19: logging detallado
     print(f"[cub-fetch] inicio tido={tido} nudo={nudo} user={current_username()}", flush=True)
 
-    # Si el breaker global está abierto, devolver mensaje claro SIN intentar
-    if _erp_breaker_is_open():
+    # 🔧 FIX 2026-05-19: el check de breaker AQUÍ bloqueaba el endpoint cuando
+    # se abría por algún otro callsite, aunque SQL pudiera responder. Ahora
+    # _cubicador_fetch internamente decide REST/SQL según ILUS_ERP_PREFER_SQL
+    # y el estado del breaker. Si está en modo SQL-first, el breaker no
+    # importa y siempre seguimos al SQL Server.
+    _prefer_sql_mode = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                        in ("1", "true", "yes", "on"))
+    if not _prefer_sql_mode and _erp_breaker_is_open():
         snap = erp_status_snapshot()
-        print(f"[cub-fetch] breaker abierto: {snap}", flush=True)
+        print(f"[cub-fetch] breaker abierto y prefer_sql=0: {snap}", flush=True)
         return jsonify({
             "error": "El ERP de Random no está respondiendo. Reintentando automáticamente — espera 30 segundos y vuelve a intentar.",
             "error_tipo": "ERP_BREAKER_OPEN",
@@ -11167,17 +11197,30 @@ def erp_documento_unificado():
 # ════════════════════════════════════════════════════════════════════════
 
 def _cubicador_fetch_doc_via_sql(tido, nudo):
-    """Fallback SQL al ERP (MySQL Random) cuando la REST API está caída.
+    """Fallback SQL al ERP (SQL Server Random) cuando la REST API está caída.
 
     🔧 FIX 2026-05-19 (Daniel reportó BLV/FCV no encontrados):
-    Antes esta función usaba `_random_sql_query` (pymssql → SQL Server)
-    pero el ERP de Random EN REALIDAD es **MySQL** (puerto 8058, vía
-    pymysql) — el mismo motor que usa Transporte/Mantenciones con
-    `get_erp_conn()`. El stack pymssql no se conecta al MySQL ERP, así
-    que el fallback retornaba silenciosamente None y el cubicador
-    mostraba "No se encontró".
-    Esta versión copia el patrón de `_tr_bulk_sync_erp_mysql` (Transporte)
-    para garantizar conectividad correcta + SQL en sintaxis MySQL.
+    El ERP de Random es **SQL Server** (cloud.random.cl:8058, vía pymssql)
+    — el mismo motor blindado read-only que ya usan Mantenciones y los
+    endpoints `/api/erp/buscar-rut`. Se reescribe usando `_random_sql_query`
+    y `_random_sql_one` (definidos en app.py:1121 — capas WHITELIST +
+    BLACKLIST + parametrización + autocommit OFF).
+
+    Antes la función abría conexión vía `get_erp_conn()` (pymysql) que
+    apunta a otra BD MySQL distinta, por eso retornaba silenciosamente
+    None y el cubicador mostraba "No se encontró" mientras la REST estaba
+    caída.
+
+    Sintaxis SQL Server (no MySQL):
+        - TOP 1 en lugar de LIMIT 1
+        - EMPRESA en lugar de EMDO
+        - LTRIM(RTRIM(x)) en lugar de TRIM(x) por compatibilidad
+
+    JOINs según documentación oficial Random:
+        - MAEEDO (header)              → header_row vía EMPRESA+TIDO+NUDO
+        - MAEDDO (líneas)              → JOIN por EMPRESA+TIDO+NUDO
+        - MAEEDOOB (observaciones)     → JOIN por IDMAEEDO
+        - MAEEN  (cliente)             → JOIN por RTEN = MAEEDO.ENDO
 
     Devuelve un dict con EXACTAMENTE el mismo shape que
     erp_engine.ERPClient.fetch_document() — para que el código de cruzado
@@ -11201,258 +11244,247 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     nudo_candidatos = _erpe.nudo_variants(erp_nudo)
     diag = {
         "nudo_tried": [], "rut_tried": [],
-        "fallback_chain": ["SQL FALLBACK MySQL (REST API caída)"],
+        "fallback_chain": ["SQL FALLBACK SQL Server (REST API caída)"],
         "latency_ms": 0, "match_nudo": None, "match_rut": None,
-        "source": "sql_fallback_mysql",
-        "engine": "pymysql/get_erp_conn",
+        "source": "sql_fallback_mssql",
+        "engine": "pymssql/_random_sql_query",
     }
 
-    print(f"[cub-sql] inicio tido={tido} nudo={nudo} → erp_tido={erp_tido} "
+    print(f"[cub-sql-mssql] inicio tido={tido} nudo={nudo} → erp_tido={erp_tido} "
           f"erp_nudo_base={erp_nudo} variantes={len(nudo_candidatos)}",
           flush=True)
 
-    # ── Conexión MySQL al ERP (mismo motor que Transporte) ─────────────
-    conn_erp = get_erp_conn()
-    if not conn_erp:
-        print(f"[cub-sql][ERROR] get_erp_conn() devolvió None — "
-              f"revisar ERP_MYSQL_HOST/USER/PASSWORD en Railway", flush=True)
-        diag["fallback_chain"].append("ERR: conexión MySQL ERP no disponible")
-        diag["latency_ms"] = int((time.time() - t0) * 1000)
-        return None
-
     header_row = None
     matched_nudo = None
+    empresa_real = "01"
 
-    try:
-        # ── 1. MAEEDO (cabecera) ────────────────────────────────────────
-        # Sintaxis MySQL: LIMIT 1 en vez de TOP 1, TRIM() unificado.
-        # Filtro EMDO='01' igual que Transporte.
-        for nv in nudo_candidatos:
-            diag["nudo_tried"].append(nv)
-            try:
-                with conn_erp.cursor() as cur:
-                    cur.execute("""
-                        SELECT
-                            TRIM(TIDO)   AS TIDO,
-                            TRIM(NUDO)   AS NUDO,
-                            FEEMDO,
-                            COALESCE(VANEDO, 0) AS VANEDO,
-                            COALESCE(VAIVDO, 0) AS VAIVDO,
-                            COALESCE(VABRDO, 0) AS VABRDO,
-                            TRIM(COALESCE(ENDO, ''))     AS ENDO,
-                            TRIM(COALESCE(NOKOEN, ''))   AS NOKOEN,
-                            TRIM(COALESCE(DIENDESP, '')) AS DIENDESP,
-                            TRIM(COALESCE(OBDO, ''))     AS OBDO,
-                            TRIM(COALESCE(TEXTO1, ''))   AS TEXTO1
-                        FROM MAEEDO
-                        WHERE TRIM(TIDO) = %s
-                          AND TRIM(NUDO) = %s
-                          AND TRIM(EMDO) = '01'
-                        LIMIT 1
-                    """, (erp_tido, nv))
-                    header_row = cur.fetchone()
-            except Exception as e:
-                print(f"[cub-sql] MAEEDO query falló para nudo={nv}: "
-                      f"{type(e).__name__}: {str(e)[:200]}", flush=True)
-                header_row = None
-            if header_row:
+    # ── 1. JOIN consolidado: MAEEDO + MAEEDOOB + MAEEN en UN solo query ────
+    # ⚡ OPTIMIZACIÓN 2026-05-19: antes eran 3 round-trips separados al cloud
+    # (~870ms). Ahora un solo LEFT JOIN: una query, una latencia (~290ms).
+    #
+    # Cambio: prefijo todas las columnas con AS (E_*, OB_*, EN_*) para
+    # evitar colisiones; los lectores abajo usan esos aliases.
+    _HEADER_JOIN_SQL = """
+        SELECT TOP 1
+            e.IDMAEEDO,
+            LTRIM(RTRIM(e.EMPRESA))             AS E_EMPRESA,
+            LTRIM(RTRIM(e.TIDO))                AS E_TIDO,
+            LTRIM(RTRIM(e.NUDO))                AS E_NUDO,
+            e.FEEMDO                            AS E_FEEMDO,
+            LTRIM(RTRIM(COALESCE(e.ESDO, '')))  AS E_ESDO,
+            COALESCE(e.VANEDO, 0)               AS E_VANEDO,
+            COALESCE(e.VAIVDO, 0)               AS E_VAIVDO,
+            COALESCE(e.VABRDO, 0)               AS E_VABRDO,
+            LTRIM(RTRIM(COALESCE(e.ENDO,   '')))   AS E_ENDO,
+            LTRIM(RTRIM(COALESCE(e.SUENDO, '')))   AS E_SUENDO,
+            LTRIM(RTRIM(COALESCE(o.OBDO,     ''))) AS OB_OBDO,
+            LTRIM(RTRIM(COALESCE(o.DIENDESP, ''))) AS OB_DIENDESP,
+            LTRIM(RTRIM(COALESCE(o.TEXTO1,   ''))) AS OB_TEXTO1,
+            LTRIM(RTRIM(COALESCE(o.TEXTO2,   ''))) AS OB_TEXTO2,
+            LTRIM(RTRIM(COALESCE(o.TEXTO3,   ''))) AS OB_TEXTO3,
+            LTRIM(RTRIM(COALESCE(en.RTEN,      ''))) AS EN_RTEN,
+            LTRIM(RTRIM(COALESCE(en.NOKOEN,    ''))) AS EN_NOKOEN,
+            LTRIM(RTRIM(COALESCE(en.NOKOENAMP, ''))) AS EN_NOKOENAMP,
+            LTRIM(RTRIM(COALESCE(en.EMAIL,     ''))) AS EN_EMAIL,
+            LTRIM(RTRIM(COALESCE(en.FOEN,      ''))) AS EN_FOEN,
+            LTRIM(RTRIM(COALESCE(en.FAEN,      ''))) AS EN_FAEN,
+            LTRIM(RTRIM(COALESCE(en.DIEN,      ''))) AS EN_DIEN,
+            LTRIM(RTRIM(COALESCE(en.CMEN,      ''))) AS EN_CMEN,
+            LTRIM(RTRIM(COALESCE(en.CIEN,      ''))) AS EN_CIEN,
+            LTRIM(RTRIM(COALESCE(en.OBEN,      ''))) AS EN_OBEN
+        FROM MAEEDO e
+        LEFT JOIN MAEEDOOB o
+               ON o.IDMAEEDO = e.IDMAEEDO
+        LEFT JOIN MAEEN en
+               ON LTRIM(RTRIM(en.RTEN)) =
+                  CASE
+                    WHEN CHARINDEX('-', e.ENDO) > 0
+                      THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
+                    ELSE LTRIM(RTRIM(e.ENDO))
+                  END
+        WHERE LTRIM(RTRIM(e.EMPRESA)) = %s
+          AND LTRIM(RTRIM(e.TIDO))    = %s
+          AND LTRIM(RTRIM(e.NUDO))    = %s
+          AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+    """
+
+    for nv in nudo_candidatos:
+        diag["nudo_tried"].append(nv)
+        try:
+            rows = _random_sql_query(
+                _HEADER_JOIN_SQL,
+                ('01', erp_tido, nv),
+                max_rows=1,
+            )
+            if rows:
+                header_row = rows[0]
                 matched_nudo = nv
+                empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
                 diag["match_nudo"] = nv
-                diag["fallback_chain"].append(f"MAEEDO OK con nudo={nv}")
-                print(f"[cub-sql] MAEEDO match: tido={erp_tido} nudo={nv} "
-                      f"endo={(header_row.get('ENDO') or '')[:20]}",
+                diag["fallback_chain"].append(f"MAEEDO+OB+EN JOIN OK con nudo={nv}")
+                print(f"[cub-sql-mssql] JOIN match: tido={erp_tido} nudo={nv} "
+                      f"endo={(header_row.get('E_ENDO') or '')[:20]} "
+                      f"cliente={(header_row.get('EN_NOKOEN') or '')[:30]}",
                       flush=True)
                 break
-
-        if not header_row:
-            # Último intento: sin filtro EMDO (por si hay otras empresas)
-            print(f"[cub-sql] no match con EMDO='01', reintentando sin filtro EMDO",
-                  flush=True)
-            for nv in nudo_candidatos:
-                try:
-                    with conn_erp.cursor() as cur:
-                        cur.execute("""
-                            SELECT
-                                TRIM(TIDO)   AS TIDO,
-                                TRIM(NUDO)   AS NUDO,
-                                FEEMDO,
-                                COALESCE(VANEDO, 0) AS VANEDO,
-                                COALESCE(VAIVDO, 0) AS VAIVDO,
-                                COALESCE(VABRDO, 0) AS VABRDO,
-                                TRIM(COALESCE(ENDO, ''))     AS ENDO,
-                                TRIM(COALESCE(NOKOEN, ''))   AS NOKOEN,
-                                TRIM(COALESCE(DIENDESP, '')) AS DIENDESP,
-                                TRIM(COALESCE(OBDO, ''))     AS OBDO,
-                                TRIM(COALESCE(TEXTO1, ''))   AS TEXTO1,
-                                TRIM(COALESCE(EMDO, ''))     AS EMDO
-                            FROM MAEEDO
-                            WHERE TRIM(TIDO) = %s
-                              AND TRIM(NUDO) = %s
-                            LIMIT 1
-                        """, (erp_tido, nv))
-                        header_row = cur.fetchone()
-                except Exception:
-                    header_row = None
-                if header_row:
-                    matched_nudo = nv
-                    diag["match_nudo"] = nv
-                    emdo_real = header_row.get("EMDO") or "?"
-                    diag["fallback_chain"].append(
-                        f"MAEEDO OK con nudo={nv} (EMDO={emdo_real}, sin filtro)"
-                    )
-                    print(f"[cub-sql] MAEEDO match SIN filtro EMDO: nudo={nv} "
-                          f"EMDO real={emdo_real}", flush=True)
-                    break
-
-        diag["latency_ms"] = int((time.time() - t0) * 1000)
-
-        if not header_row:
-            print(f"[cub-sql] MAEEDO sin match para {erp_tido}/{erp_nudo} "
-                  f"(probé {len(diag['nudo_tried'])} variantes: "
-                  f"{','.join(diag['nudo_tried'][:5])}...) "
-                  f"latency={diag['latency_ms']}ms", flush=True)
-            return None
-
-        # ── 2. MAEDDO (líneas) ──────────────────────────────────────────
-        lineas_raw = []
-        try:
-            with conn_erp.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        TRIM(COALESCE(KOPRCT, '')) AS KOPRCT,
-                        TRIM(COALESCE(NOKOPR, '')) AS NOKOPR,
-                        COALESCE(CAPRCO1, 0) AS CAPRCO1,
-                        COALESCE(CAPRAD1, 0) AS CAPRAD1,
-                        COALESCE(VANELI,  0) AS VANELI,
-                        TRIM(COALESCE(OBDO, '')) AS OBDO
-                    FROM MAEDDO
-                    WHERE TRIM(TIDO) = %s
-                      AND TRIM(NUDO) = %s
-                    LIMIT 500
-                """, (erp_tido, matched_nudo))
-                lineas_raw = list(cur.fetchall() or [])
-            print(f"[cub-sql] MAEDDO: {len(lineas_raw)} líneas", flush=True)
         except Exception as e:
-            print(f"[cub-sql] MAEDDO query falló: "
+            print(f"[cub-sql-mssql] JOIN query falló para nudo={nv}: "
                   f"{type(e).__name__}: {str(e)[:200]}", flush=True)
 
-        # ── 3. MAEEDOOB (observaciones extendidas) — opcional ───────────
-        obs_table_main = ""
-        dir_despacho_obs = ""
-        try:
-            with conn_erp.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        TRIM(COALESCE(OBDO,     '')) AS OBDO,
-                        TRIM(COALESCE(DIENDESP, '')) AS DIENDESP,
-                        TRIM(COALESCE(TEXTO1,   '')) AS TEXTO1,
-                        TRIM(COALESCE(TEXTO2,   '')) AS TEXTO2,
-                        TRIM(COALESCE(TEXTO3,   '')) AS TEXTO3
-                    FROM MAEEDOOB
-                    WHERE TRIM(TIDO) = %s
-                      AND TRIM(NUDO) = %s
-                    LIMIT 1
-                """, (erp_tido, matched_nudo))
-                obs_row = cur.fetchone() or {}
-            obs_table_main = _erpe.fix_yen_to_n(obs_row.get("OBDO") or "")
-            dir_despacho_obs = _erpe.fix_yen_to_n(obs_row.get("DIENDESP") or "")
-            extras = []
-            for k in ("TEXTO1", "TEXTO2", "TEXTO3"):
-                v = _erpe.fix_yen_to_n((obs_row.get(k) or "").strip())
-                if v and v not in extras:
-                    extras.append(v)
-            if extras:
-                if obs_table_main:
-                    obs_table_main = obs_table_main + " / " + " / ".join(extras[:3])
-                else:
-                    obs_table_main = " / ".join(extras[:3])
-            if obs_table_main:
-                diag["fallback_chain"].append("obs desde MAEEDOOB (SQL)")
-        except Exception as e:
-            print(f"[cub-sql] MAEEDOOB query falló (no crítico): "
-                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
-
-        # ── 4. MAEEN (datos del cliente — enriquecimiento, opcional) ────
-        cliente_nombre   = ""
-        cliente_rut      = (header_row.get("ENDO") or "").strip()
-        cliente_email    = ""
-        cliente_telefono = ""
-        cliente_dir_base = ""
-        cliente_cmen     = ""
-        cliente_cien     = ""
-        cliente_obs_en   = ""
-
-        if cliente_rut:
-            rut_base = (cliente_rut.split("-")[0].strip()
-                        if "-" in cliente_rut else cliente_rut)
-            diag["rut_tried"] = [rut_base, cliente_rut]
+    if not header_row:
+        # ── Fallback: sin filtro EMPRESA (por si está en otra empresa) ──
+        # Misma query JOIN pero sin el AND EMPRESA = '01'
+        print(f"[cub-sql-mssql] no match con EMPRESA='01', reintentando sin filtro",
+              flush=True)
+        _HEADER_JOIN_SQL_NO_EMP = _HEADER_JOIN_SQL.replace(
+            "WHERE LTRIM(RTRIM(e.EMPRESA)) = %s\n          AND LTRIM(RTRIM(e.TIDO))    = %s",
+            "WHERE LTRIM(RTRIM(e.TIDO))    = %s"
+        )
+        for nv in nudo_candidatos:
             try:
-                with conn_erp.cursor() as cur:
-                    cur.execute("""
-                        SELECT
-                            TRIM(COALESCE(RTEN,   '')) AS RTEN,
-                            TRIM(COALESCE(NOKOEN, '')) AS NOKOEN,
-                            TRIM(COALESCE(EMAIL,  '')) AS EMAIL,
-                            TRIM(COALESCE(FOEN,   '')) AS FOEN,
-                            TRIM(COALESCE(FAEN,   '')) AS FAEN,
-                            TRIM(COALESCE(DIEN,   '')) AS DIEN,
-                            TRIM(COALESCE(CMEN,   '')) AS CMEN,
-                            TRIM(COALESCE(CIEN,   '')) AS CIEN,
-                            TRIM(COALESCE(OBEN,   '')) AS OBEN
-                        FROM MAEEN
-                        WHERE TRIM(RTEN) = %s
-                        LIMIT 1
-                    """, (rut_base,))
-                    ent_row = cur.fetchone()
-                if ent_row:
-                    cliente_nombre   = _erpe.fix_yen_to_n(ent_row.get("NOKOEN") or "").title()
-                    cliente_rut      = ent_row.get("RTEN") or cliente_rut
-                    cliente_email    = (ent_row.get("EMAIL") or "").strip()
-                    cliente_telefono = _erpe.normalize_phone_cl(
-                        ent_row.get("FOEN") or ent_row.get("FAEN") or ""
+                rows = _random_sql_query(
+                    _HEADER_JOIN_SQL_NO_EMP,
+                    (erp_tido, nv),
+                    max_rows=1,
+                )
+                if rows:
+                    header_row = rows[0]
+                    matched_nudo = nv
+                    empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
+                    diag["match_nudo"] = nv
+                    diag["fallback_chain"].append(
+                        f"JOIN OK con nudo={nv} (EMPRESA={empresa_real}, sin filtro)"
                     )
-                    cliente_dir_base = _erpe.fix_yen_to_n(ent_row.get("DIEN") or "").title()
-                    cliente_cien     = (ent_row.get("CIEN") or "").strip()
-                    cliente_cmen     = (ent_row.get("CMEN") or "").strip()
-                    cliente_obs_en   = _erpe.fix_yen_to_n(ent_row.get("OBEN") or "")
-                    diag["match_rut"] = cliente_rut
-                    diag["fallback_chain"].append(f"entidad MAEEN OK (RUT={rut_base})")
+                    print(f"[cub-sql-mssql] JOIN match SIN filtro EMPRESA: "
+                          f"nudo={nv} EMPRESA real={empresa_real}", flush=True)
+                    break
             except Exception as e:
-                print(f"[cub-sql] MAEEN query falló (no crítico): "
+                print(f"[cub-sql-mssql] JOIN fallback falló nudo={nv}: "
                       f"{type(e).__name__}: {str(e)[:200]}", flush=True)
-    finally:
-        try:
-            conn_erp.close()
-        except Exception:
-            pass
 
-    # ── Consolidar: header > entidad para nombre/email/teléfono/dir ────
-    header_nombre = _erpe.fix_yen_to_n(header_row.get("NOKOEN") or "").title()
-    cliente_nombre = cliente_nombre or header_nombre
+    diag["latency_ms"] = int((time.time() - t0) * 1000)
 
-    # Dirección: DIENDESP de MAEEDOOB > DIENDESP de MAEEDO > DIEN de MAEEN
-    direccion_final = (
-        dir_despacho_obs
-        or _erpe.fix_yen_to_n(header_row.get("DIENDESP") or "")
-        or cliente_dir_base
-    )
+    if not header_row:
+        print(f"[cub-sql-mssql] MAEEDO sin match para {erp_tido}/{erp_nudo} "
+              f"(probé {len(diag['nudo_tried'])} variantes: "
+              f"{','.join(diag['nudo_tried'][:5])}...) "
+              f"latency={diag['latency_ms']}ms", flush=True)
+        return None
 
-    # Observaciones: MAEEDOOB > MAEEDO.OBDO/TEXTO1 > MAEEN.OBEN
-    obs_header = _erpe.fix_yen_to_n(
-        (header_row.get("OBDO") or "").strip()
-        or (header_row.get("TEXTO1") or "").strip()
-    )
-    obs_final = obs_table_main or obs_header or cliente_obs_en
+    id_maeedo = header_row.get("IDMAEEDO")
+    endo_full = (header_row.get("E_ENDO") or "").strip()
 
-    # Comuna resuelta desde código (cien/cmen) de MAEEN
-    comuna_final = _erpe.cmen_to_comuna(cliente_cien, cliente_cmen) if cliente_cmen else ""
+    # ── 2. MAEDDO (líneas) ──────────────────────────────────────────────
+    # OPTIMIZACIÓN: corre en paralelo con… nada en este punto, porque el JOIN
+    # ya nos dio header+obs+entidad. Pero igual lo hacemos en un thread por
+    # si en el futuro queremos paralelizarlo con más cosas. Por ahora simple.
+    lineas_raw = []
+    try:
+        lineas_rows = _random_sql_query(
+            "SELECT NULIDO, "
+            "       LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT, "
+            "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
+            "       COALESCE(CAPRCO1, 0) AS CAPRCO1, "
+            "       COALESCE(PPPRNE,  0) AS PPPRNE, "
+            "       COALESCE(VANELI,  0) AS VANELI, "
+            "       COALESCE(VABRLI,  0) AS VABRLI "
+            "  FROM MAEDDO "
+            " WHERE LTRIM(RTRIM(EMPRESA)) = %s "
+            "   AND LTRIM(RTRIM(TIDO))    = %s "
+            "   AND LTRIM(RTRIM(NUDO))    = %s "
+            " ORDER BY NULIDO",
+            (empresa_real, erp_tido, matched_nudo),
+            max_rows=500,
+        ) or []
+        lineas_raw = [dict(r) for r in lineas_rows]
+        print(f"[cub-sql-mssql] MAEDDO: {len(lineas_raw)} líneas", flush=True)
+    except Exception as e:
+        print(f"[cub-sql-mssql] MAEDDO query falló: "
+              f"{type(e).__name__}: {str(e)[:200]}", flush=True)
 
-    # ── Tipo de operación: detectar SKUs ZZ en las líneas ───────────────
+    # ── 3 + 4. Observaciones + Cliente ya VIENEN del JOIN inicial ──────
+    # OPTIMIZACIÓN 2026-05-19: estos datos antes requerían 2 queries
+    # adicionales (MAEEDOOB + MAEEN). Ahora vienen como columnas OB_* y
+    # EN_* del JOIN. Solo extraemos.
+    obs_table_main   = _erpe.fix_yen_to_n(header_row.get("OB_OBDO") or "")
+    dir_despacho_obs = _erpe.fix_yen_to_n(header_row.get("OB_DIENDESP") or "")
+    extras = []
+    for k in ("OB_TEXTO1", "OB_TEXTO2", "OB_TEXTO3"):
+        v = _erpe.fix_yen_to_n((header_row.get(k) or "").strip())
+        if v and v not in extras:
+            extras.append(v)
+    if extras:
+        if obs_table_main:
+            obs_table_main = obs_table_main + " / " + " / ".join(extras[:3])
+        else:
+            obs_table_main = " / ".join(extras[:3])
+    if obs_table_main:
+        diag["fallback_chain"].append("obs desde MAEEDOOB (JOIN)")
+
+    # Cliente extraído del LEFT JOIN MAEEN (NULL-safe — puede no haber match)
+    cliente_rut      = endo_full
+    cliente_nombre   = ""
+    cliente_email    = ""
+    cliente_telefono = ""
+    cliente_dir_base = ""
+    cliente_cmen     = ""
+    cliente_cien     = ""
+    cliente_obs_en   = ""
+
+    en_rten = (header_row.get("EN_RTEN") or "").strip()
+    if cliente_rut:
+        rut_base = (cliente_rut.split("-")[0].strip()
+                    if "-" in cliente_rut else cliente_rut)
+        diag["rut_tried"] = [rut_base, cliente_rut]
+    if en_rten:
+        # JOIN matcheó MAEEN — extraer datos del cliente
+        nombre_largo = (header_row.get("EN_NOKOENAMP") or "").strip()
+        nombre_corto = (header_row.get("EN_NOKOEN")    or "").strip()
+        cliente_nombre   = _erpe.fix_yen_to_n(nombre_largo or nombre_corto).title()
+        cliente_rut      = en_rten or cliente_rut
+        cliente_email    = (header_row.get("EN_EMAIL") or "").strip()
+        cliente_telefono = _erpe.normalize_phone_cl(
+            header_row.get("EN_FOEN") or header_row.get("EN_FAEN") or ""
+        )
+        cliente_dir_base = _erpe.fix_yen_to_n(header_row.get("EN_DIEN") or "").title()
+        cliente_cien     = (header_row.get("EN_CIEN") or "").strip()
+        cliente_cmen     = (header_row.get("EN_CMEN") or "").strip()
+        cliente_obs_en   = _erpe.fix_yen_to_n(header_row.get("EN_OBEN") or "")
+        diag["match_rut"] = cliente_rut
+        diag["fallback_chain"].append(f"entidad MAEEN OK (JOIN, RUT={en_rten})")
+
+    # ── Tipo de operación + scan completo de líneas ─────────────────────
     # Reusar la misma lógica de _scan_lines del motor (clase ERPClient).
+    # Esto también detecta NOKOEN/DIEN/COMUNA/OBDO embebidos en líneas
+    # del MAEDDO (Random a veces los duplica ahí).
     line_data = _ERP._scan_lines(lineas_raw)
 
+    # ── Consolidar: entidad (MAEEN) > líneas scan > otros fallbacks ─────
+    # Nombre: MAEEN.NOKOEN > NOKOEN embebido en líneas
+    cliente_nombre = cliente_nombre or line_data.get("nombre", "")
+
+    # Dirección: MAEEDOOB.DIENDESP > MAEEN.DIEN > línea scan
+    direccion_final = (
+        dir_despacho_obs
+        or cliente_dir_base
+        or line_data.get("direccion", "")
+    )
+
+    # Observaciones: MAEEDOOB > MAEEN.OBEN > obs embebidas en líneas
+    obs_final = obs_table_main or cliente_obs_en or line_data.get("obs", "")
+
+    # Comuna: resolver código (cien/cmen) de MAEEN si existe,
+    # sino código embebido en líneas (scan)
+    if cliente_cmen:
+        comuna_final = _erpe.cmen_to_comuna(cliente_cien, cliente_cmen) or cliente_cmen
+    else:
+        cmen_line = (line_data.get("comuna") or "").strip()
+        comuna_final = (
+            _erpe.cmen_to_comuna("", cmen_line) if cmen_line else ""
+        ) or cmen_line
+
     # ── Formatear fecha ─────────────────────────────────────────────────
-    fecha_raw = header_row.get("FEEMDO")
+    fecha_raw = header_row.get("E_FEEMDO")
     if fecha_raw:
         try:
             if hasattr(fecha_raw, "strftime"):
@@ -11492,10 +11524,10 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "direccion":       bool(direccion_final),
         "comuna":          bool(comuna_final),
         "observaciones":   bool(obs_final),
-        "obs_source":      "maeedoob_sql" if obs_table_main else (
-                            "header_sql" if obs_header else
-                            "entidad_oben_sql" if cliente_obs_en else "ninguno"),
-        "source":          "sql_fallback_mysql",
+        "obs_source":      "maeedoob_join" if obs_table_main else (
+                            "entidad_oben_join" if cliente_obs_en else
+                            "lineas_scan" if line_data.get("obs") else "ninguno"),
+        "source":          "sql_fallback_mssql",
     }
 
     doc = {
@@ -11514,9 +11546,9 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "observaciones":    obs_final,
         "tipo_operacion":   line_data.get("tipo_operacion", ""),
         "tipo_codigo":      line_data.get("tipo_codigo", ""),
-        "valor_neto":       float(header_row.get("VANEDO") or 0),
-        "valor_iva":        float(header_row.get("VAIVDO") or 0),
-        "valor_bruto":      float(header_row.get("VABRDO") or 0),
+        "valor_neto":       float(header_row.get("E_VANEDO") or 0),
+        "valor_iva":        float(header_row.get("E_VAIVDO") or 0),
+        "valor_bruto":      float(header_row.get("E_VABRDO") or 0),
         "lineas_raw":       lineas_raw,
         "all_fields":       list((header_row or {}).keys()),
         "raw_sample":       raw_sample,
@@ -11526,7 +11558,7 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
         "diagnostics":      diag,
     }
-    print(f"[cub-sql] OK {erp_tido}/{matched_nudo}: cliente={(cliente_nombre or '?')[:30]} "
+    print(f"[cub-sql-mssql] OK {erp_tido}/{matched_nudo}: cliente={(cliente_nombre or '?')[:30]} "
           f"lineas={len(lineas_raw)} latency={diag['latency_ms']}ms", flush=True)
     return doc
 
@@ -11581,25 +11613,70 @@ def _cubicador_fetch(tido, nudo):
     # ─────────────────────────────────────────────────────────────────
     doc = None
     rest_err = None
-    try:
-        doc = _ERP.fetch_document(tido, nudo)
-    except ConnectionError as ce:
-        # erp_engine lanza ConnectionError cuando la REST falla de red
-        rest_err = f"ConnectionError: {ce}"
-        print(f"[cub-fetch] ConnectionError REST → fallback SQL para {tido}/{nudo}: {ce}",
+
+    # ⚡ MODO SQL-FIRST (Daniel 2026-05-19): mientras Random REST está
+    # inestable, vamos directo al SQL Server. Esto es controlable por env
+    # `ILUS_ERP_PREFER_SQL` — default "1" mientras REST esté caído.
+    # Cuando Random REST vuelva, basta cambiar a "0" en Railway y redeploy.
+    _PREFER_SQL = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                   in ("1", "true", "yes", "on"))
+
+    if _PREFER_SQL:
+        rest_err = "prefer_sql_mode"
+        # Nada de log spam — esto es el modo normal por ahora
+    elif _erp_breaker_is_open():
+        rest_err = "breaker_open"
+        print(f"[cub-fetch] breaker ABIERTO → skip REST, SQL directo para {tido}/{nudo}",
               flush=True)
-    except Exception as e:
-        err_str = str(e)
-        # Patrones que indican que la REST API está caída (no error del documento)
-        if any(p in err_str for p in ("ERP_DOWN", "Bad Gateway", "502", "503", "504",
-                                       "Connection refused", "Connection aborted",
-                                       "timed out", "Read timed out")):
-            rest_err = err_str
-            print(f"[cub-fetch] REST API caída ({err_str[:120]}), fallback SQL para "
-                  f"{tido}/{nudo}", flush=True)
-        else:
-            # Otro tipo de error — re-raise para que el caller maneje
-            raise
+    else:
+        # 🔧 Cubicador usa timeout corto (2s) en vez del default (6s) — si REST
+        # tarda más, casi seguro está caído y SQL será más rápido.
+        _orig_timeout = getattr(_ERP, "timeout", 6)
+        try:
+            _ERP.timeout = 2  # corto, solo para esta llamada
+            doc = _ERP.fetch_document(tido, nudo)
+            _erp_breaker_record_success()
+        except ConnectionError as ce:
+            # erp_engine lanza ConnectionError cuando la REST falla de red
+            ce_str = str(ce)
+            rest_err = f"ConnectionError: {ce}"
+            # 502/503/504 = backend de Random caído (nginx upstream). NO es
+            # transitorio — trip el breaker INMEDIATAMENTE para no quemar
+            # más tiempo en reintentos los próximos 30s.
+            if any(p in ce_str for p in ("502", "503", "504", "ERP_DOWN", "Bad Gateway")):
+                with _erp_breaker_lock:
+                    _erp_breaker_state["consecutive_failures"] = _ERP_BREAKER_THRESHOLD
+                    _erp_breaker_state["last_failure_at"]      = time.time()
+                    if _erp_breaker_state["opened_at"] == 0.0:
+                        _erp_breaker_state["opened_at"] = time.time()
+                print(f"[cub-fetch] REST 502/503/504 → breaker ABIERTO 30s para "
+                      f"{tido}/{nudo}. SQL directo el resto del cooldown.",
+                      flush=True)
+            else:
+                _erp_breaker_record_failure()
+                print(f"[cub-fetch] ConnectionError REST → fallback SQL para {tido}/{nudo}: {ce}",
+                      flush=True)
+        except Exception as e:
+            err_str = str(e)
+            # Patrones que indican que la REST API está caída (no error del documento)
+            if any(p in err_str for p in ("ERP_DOWN", "Bad Gateway", "502", "503", "504",
+                                           "Connection refused", "Connection aborted",
+                                           "timed out", "Read timed out")):
+                rest_err = err_str
+                # Mismo trip inmediato como arriba
+                with _erp_breaker_lock:
+                    _erp_breaker_state["consecutive_failures"] = _ERP_BREAKER_THRESHOLD
+                    _erp_breaker_state["last_failure_at"]      = time.time()
+                    if _erp_breaker_state["opened_at"] == 0.0:
+                        _erp_breaker_state["opened_at"] = time.time()
+                print(f"[cub-fetch] REST API caída ({err_str[:120]}), breaker abierto, "
+                      f"fallback SQL para {tido}/{nudo}", flush=True)
+            else:
+                # Otro tipo de error — re-raise para que el caller maneje
+                _ERP.timeout = _orig_timeout
+                raise
+        finally:
+            _ERP.timeout = _orig_timeout
 
     # Si la REST falló O devolvió None (doc no encontrado), intentar SQL.
     if doc is None:
@@ -12730,14 +12807,23 @@ def cubicador_sync_nombre():
 #  MÓDULO: ASIGNAR Y COTIZAR
 # ═══════════════════════════════════════════════════════════════
 
-# ── Credenciales FedEx Rate API ─────────────────────────────────
-FEDEX_RATE_CLIENT_ID     = "l74e144461994249a0abc124abef203e10"
-FEDEX_RATE_CLIENT_SECRET = "2ce7d089fbf642e89c0748389cfda22d"
-FEDEX_ACCOUNT            = "204155375"
-FEDEX_ORIGIN_POSTAL      = "9276181"
-FEDEX_ORIGIN_CITY        = "Maipu"
+# ── Credenciales FedEx Rate API (env vars; placeholders solo si faltan) ─
+# FEDEX_RATE_CLIENT_ID, FEDEX_RATE_CLIENT_SECRET, FEDEX_ACCOUNT deben
+# setearse en Railway → Variables. Si faltan, los endpoints de cotización
+# FedEx devuelven 503 amigable en vez de crashear.
+FEDEX_RATE_CLIENT_ID     = os.environ.get("FEDEX_RATE_CLIENT_ID", "").strip()
+FEDEX_RATE_CLIENT_SECRET = os.environ.get("FEDEX_RATE_CLIENT_SECRET", "").strip()
+FEDEX_ACCOUNT            = os.environ.get("FEDEX_ACCOUNT", "").strip()
+FEDEX_ORIGIN_POSTAL      = os.environ.get("FEDEX_ORIGIN_POSTAL", "9276181").strip()
+FEDEX_ORIGIN_CITY        = os.environ.get("FEDEX_ORIGIN_CITY", "Maipu").strip()
 FEDEX_OAUTH_URL          = "https://apis.fedex.com/oauth/token"
 FEDEX_RATE_URL           = "https://apis.fedex.com/rate/v1/rates/quotes"
+
+if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+    print("[ILUS][FEDEX] Credenciales FedEx Rate API NO configuradas — "
+          "cotización FedEx deshabilitada. Setear FEDEX_RATE_CLIENT_ID, "
+          "FEDEX_RATE_CLIENT_SECRET, FEDEX_ACCOUNT en Railway → Variables.",
+          flush=True)
 
 # Cache del token OAuth (dura ~3600 s)
 _fedex_token_cache = {"token": None, "expires_at": 0}
@@ -12747,6 +12833,9 @@ _fedex_token_lock  = threading.Lock()
 def _fedex_get_token() -> str:
     """Obtiene un Bearer token de FedEx (con cache para evitar re-autenticar en cada request)."""
     import requests as _req
+    # Fail-fast si las credenciales no están seteadas — evita request 401 inútil.
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET):
+        raise RuntimeError("FedEx Rate API no configurada (faltan FEDEX_RATE_CLIENT_ID/SECRET)")
     with _fedex_token_lock:
         now = time.time()
         if _fedex_token_cache["token"] and now < _fedex_token_cache["expires_at"] - 30:
@@ -13329,9 +13418,9 @@ def _tr_fetch_from_erp(tido, nudo):
 
 # ── SYNC MASIVO ERP → TRANSPORTE ────────────────────────────────
 
-def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
+def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
     """
-    Sincronización masiva desde el ERP vía MySQL directo.
+    Sincronización masiva desde el ERP (Random SQL Server, vía _random_sql_query).
 
     NUEVA LÓGICA (2026-05-14):
     Trae TODOS los documentos con líneas ZZ del rango, INCLUIDOS los que
@@ -13344,50 +13433,121 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
     Eso permite ver el flujo completo del día: lo que falta, lo que se
     está moviendo, y lo que ya salió. El frontend filtra por tab.
 
+    FIX 2026-05-19: el ERP Random es SQL Server, no MySQL. Se reescribe
+    la query usando T-SQL (TOP, STUFF FOR XML PATH en vez de
+    GROUP_CONCAT, CASE en vez de GREATEST, LEFT JOIN a MAEEN para nombre
+    del cliente, LEFT JOIN a MAEEDOOB para observaciones, sin columnas
+    inexistentes en SQL Server). Va vía `_random_sql_query` (read-only
+    blindado).
+
+    UPDATE 2026-05-19 (Daniel): el sync por defecto sólo trae **BLV** (Boleta)
+    y **GDV** (Guía Despacho). El resto de TIDOs (FCV, NVV, NVI, COV…) se
+    importan vía el endpoint manual `/transporte/api/importar-forzado`
+    cuando el usuario superadmin lo necesita. Esto evita engordar el monitor
+    con ventas-internas que no son despachos reales.
+    `tidos_override` permite forzar otra lista desde código (ej. backfill).
+
     Retorna (count_ok, list_errors).
     """
-    conn_erp = get_erp_conn()
-    if not conn_erp:
-        return 0, ["No se pudo conectar al ERP (MySQL)"]
-
-    zz_list      = list(ZZ_SKUS)
+    zz_list      = [s.upper() for s in ZZ_SKUS]
     zz_in        = ",".join(["%s"] * len(zz_list))
-    TIDOS_VALIDOS = ("FCV", "BLV", "GDV", "NVV", "NVI", "COV")
+    TIDOS_VALIDOS = tuple(tidos_override) if tidos_override else ("BLV", "GDV")
     tido_in      = ",".join(["%s"] * len(TIDOS_VALIDOS))
 
+    # T-SQL: agregación por header con subqueries blindadas.
+    # - `STUFF((SELECT DISTINCT ',' + KOPRCT ... FOR XML PATH('')), 1, 1, '')`
+    #   reemplaza a GROUP_CONCAT(DISTINCT ...) que SQL Server no soporta.
+    # - `LEFT JOIN MAEEN` mapea ENDO ("RUT-DV") → MAEEN.RTEN (RUT base sin DV).
+    # - `LEFT JOIN MAEEDOOB` para obs/dirección de despacho.
+    # - Comuna: SQL Server no tiene las columnas NOKOZO/NOKOCOMU/etc.
+    #   Solo dejamos CMEN (código de comuna). El front lo resuelve si necesita.
+    sql = f"""
+        SELECT
+            LTRIM(RTRIM(h.TIDO)) AS TIDO,
+            LTRIM(RTRIM(h.NUDO)) AS NUDO,
+            LTRIM(RTRIM(COALESCE(h.ENDO, ''))) AS ENDO,
+            h.FEEMDO,
+            h.FEER,
+            LTRIM(RTRIM(COALESCE(en.NOKOEN, ''))) AS NOKOEN,
+            LTRIM(RTRIM(COALESCE(o.OBDO, o.TEXTO1, ''))) AS OBDO,
+            LTRIM(RTRIM(COALESCE(o.DIENDESP, ''))) AS DIENDESP,
+            COALESCE(h.VANEDO, 0) AS VANEDO,
+            COALESCE(h.VABRDO, 0) AS VABRDO,
+            LTRIM(RTRIM(COALESCE(en.CMEN, ''))) AS COMUNA,
+            LTRIM(RTRIM(COALESCE(h.NUDGIA, ''))) AS NUDGIA,
+            (SELECT COALESCE(SUM(d.CAPRCO1), 0)
+               FROM MAEDDO d
+              WHERE d.IDMAEEDO = h.IDMAEEDO
+                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS cant_total_zz,
+            (SELECT COALESCE(SUM(COALESCE(d.CAPRAD1, 0)), 0)
+               FROM MAEDDO d
+              WHERE d.IDMAEEDO = h.IDMAEEDO
+                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS cant_despachada_zz,
+            (SELECT COALESCE(SUM(
+                       CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0) > 0
+                            THEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)
+                            ELSE 0 END), 0)
+               FROM MAEDDO d
+              WHERE d.IDMAEEDO = h.IDMAEEDO
+                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS saldo_zz,
+            (SELECT COALESCE(SUM(COALESCE(d.PPPRNE, 0)), 0)
+               FROM MAEDDO d
+              WHERE d.IDMAEEDO = h.IDMAEEDO
+                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS costo_zz_sum,
+            STUFF(
+                (SELECT ',' + UPPER(LTRIM(RTRIM(d2.KOPRCT)))
+                   FROM MAEDDO d2
+                  WHERE d2.IDMAEEDO = h.IDMAEEDO
+                    AND UPPER(LTRIM(RTRIM(d2.KOPRCT))) IN ({zz_in})
+                  GROUP BY UPPER(LTRIM(RTRIM(d2.KOPRCT)))
+                  ORDER BY UPPER(LTRIM(RTRIM(d2.KOPRCT)))
+                  FOR XML PATH('')), 1, 1, '') AS zz_skus
+        FROM MAEEDO h
+        LEFT JOIN MAEEDOOB o ON o.IDMAEEDO = h.IDMAEEDO
+        LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+              CASE
+                WHEN CHARINDEX('-', h.ENDO) > 0
+                  THEN LTRIM(RTRIM(SUBSTRING(h.ENDO, 1, CHARINDEX('-', h.ENDO) - 1)))
+                ELSE LTRIM(RTRIM(COALESCE(h.ENDO, '')))
+              END
+        WHERE LTRIM(RTRIM(h.TIDO)) IN ({tido_in})
+          AND h.FEEMDO >= %s
+          AND h.FEEMDO <= %s
+          AND EXISTS (
+                SELECT 1 FROM MAEDDO d3
+                 WHERE d3.IDMAEEDO = h.IDMAEEDO
+                   AND UPPER(LTRIM(RTRIM(d3.KOPRCT))) IN ({zz_in})
+          )
+          AND (h.ESDO IS NULL OR LTRIM(RTRIM(h.ESDO)) <> 'NULO')
+        ORDER BY h.FEEMDO DESC
+    """
+
+    # Params: 5 grupos de zz (4 subqueries + EXISTS + STUFF) + tidos + 2 fechas.
+    # Recuento por orden de aparición en el SQL:
+    #   subquery cant_total, cant_despachada, saldo, costo, STUFF, EXISTS  = 6
+    params = (
+        zz_list +  # cant_total_zz
+        zz_list +  # cant_despachada_zz
+        zz_list +  # saldo_zz
+        zz_list +  # costo_zz_sum
+        zz_list +  # STUFF (zz_skus)
+        list(TIDOS_VALIDOS) +
+        [fecha_desde, fecha_hasta] +
+        zz_list    # EXISTS
+    )
+
     try:
-        with conn_erp.cursor() as cur:
-            cur.execute(f"""
-                SELECT
-                    h.TIDO, h.NUDO, h.ENDO, h.FEEMDO, h.FEER,
-                    h.NOKOEN,
-                    COALESCE(h.OBDO, h.TEXTO1, '') AS OBDO,
-                    COALESCE(h.DIENDESP, '')        AS DIENDESP,
-                    COALESCE(h.VANEDO, 0)           AS VANEDO,
-                    COALESCE(h.VABRDO, 0)           AS VABRDO,
-                    COALESCE(h.NOKOZO, h.CMEN, h.NOKOCOMU, h.NOKOCOMUNADE,
-                             h.NOKOMUENDE, h.NOKOMUNEN, h.NOKCOMENDESP, '') AS COMUNA,
-                    COALESCE(h.NUDGIA, '')           AS NUDGIA,
-                    SUM(d.CAPRCO1)                                       AS cant_total_zz,
-                    SUM(COALESCE(d.CAPRAD1, 0))                          AS cant_despachada_zz,
-                    SUM(GREATEST(d.CAPRCO1 - COALESCE(d.CAPRAD1, 0), 0)) AS saldo_zz,
-                    SUM(COALESCE(d.PPPRNE, 0))       AS costo_zz_sum,
-                    GROUP_CONCAT(DISTINCT UPPER(d.KOPRCT) ORDER BY d.KOPRCT) AS zz_skus
-                FROM MAEEDO h
-                JOIN MAEDDO d ON d.TIDO = h.TIDO AND d.NUDO = h.NUDO
-                WHERE d.KOPRCT IN ({zz_in})
-                  AND h.TIDO IN ({tido_in})
-                  AND h.FEEMDO BETWEEN %s AND %s
-                GROUP BY h.TIDO, h.NUDO
-                HAVING cant_total_zz > 0
-                ORDER BY h.FEEMDO DESC
-                LIMIT 1000
-            """, zz_list + list(TIDOS_VALIDOS) + [fecha_desde, fecha_hasta])
-            rows = cur.fetchall()
+        rows = _random_sql_query(sql, tuple(params), max_rows=1000)
+    except PermissionError as pe:
+        return 0, [f"Error de seguridad SQL: {pe}"]
     except Exception as exc:
+        print(f"[tr-bulk-sync-sql] error: {exc}", flush=True)
         return 0, [f"Error al consultar ERP: {exc}"]
-    finally:
-        conn_erp.close()
+
+    if rows is None:
+        return 0, ["No se pudo conectar al ERP (SQL Server)"]
+    if not rows:
+        rows = []
 
     count, errs = 0, []
     local_conn = get_mysql()
@@ -13459,11 +13619,12 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                           (tido,nudo,endo,fecha_emision,fecha_entrega,
                            cliente_nombre,cliente_rut,
                            comuna,direccion,telefono,email,
+                           observaciones,zz_skus,
                            valor_neto,valor_bruto,costo_zz,
                            tiene_saldo,guia_numero,clasificacion,estado,
                            cobertura_pct,cant_total_zz,cant_despachada_zz,
                            erp_synced_at,created_by,updated_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),'sync','sync')
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),'sync','sync')
                         ON DUPLICATE KEY UPDATE
                           fecha_emision =VALUES(fecha_emision),
                           fecha_entrega =VALUES(fecha_entrega),
@@ -13473,6 +13634,8 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                           direccion     =VALUES(direccion),
                           telefono      =VALUES(telefono),
                           email         =VALUES(email),
+                          observaciones =VALUES(observaciones),
+                          zz_skus       =VALUES(zz_skus),
                           valor_neto    =VALUES(valor_neto),
                           valor_bruto   =VALUES(valor_bruto),
                           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
@@ -13490,6 +13653,8 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta):
                           erp_synced_at =NOW()
                     """, (tido, nudo, endo, fecha_em, fecha_ent,
                           nombre, endo, comuna, dir_, tel, mail,
+                          obdo[:2000] if obdo else None,
+                          zz_present[:120] if zz_present else None,
                           vneto, vbruto, costo_zz,
                           tiene_saldo_flag, guia, clasif, estado_auto,
                           cobertura_pct, cant_total, cant_despachada))
@@ -13789,6 +13954,10 @@ def tr_compromisos_json():
 
     result = []
     for r in rows:
+        # NUEVO 2026-05-19: incluir direccion/observaciones/zz_skus para que
+        # el monitor pueda mostrarlos sin re-consultar el ERP.
+        # Las columnas pueden no existir todavía en BDs viejas — usar .get()
+        # con default, ya que DictCursor de pymysql devuelve dicts reales.
         result.append({
             "id":           r["id"],
             "tido":         r["tido"],
@@ -13797,6 +13966,9 @@ def tr_compromisos_json():
             "cliente":      r["cliente_nombre"] or "—",
             "rut":          r["cliente_rut"] or "",
             "comuna":       r["comuna"] or "—",
+            "direccion":    r.get("direccion") or "",
+            "observaciones": r.get("observaciones") or r.get("notas") or "",
+            "zz_skus":      r.get("zz_skus") or "",
             "estado":       r["estado"] or "Pendiente",
             "costo_zz":     float(r["costo_zz"] or 0),
             "clasificacion":r["clasificacion"] or "despacho",
@@ -13872,6 +14044,218 @@ def tr_limpiar_monitor():
         })
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  LIMPIAR-TODO (superadmin) — versión con confirm_text obligatorio
+#  Daniel pidió un endpoint paralelo que exija texto exacto "LIMPIAR"
+#  para evitar accidentes de teclado. Se mantiene `limpiar-monitor` arriba
+#  por compatibilidad con el botón legacy.
+# ═══════════════════════════════════════════════════════════════════════
+@app.route("/transporte/api/limpiar-todo", methods=["POST"])
+@_tr_required
+def tr_limpiar_todo():
+    """Borra TODOS los registros del monitor exigiendo confirm_text='LIMPIAR'.
+    Solo superadmin. Usado por el botón "Limpiar monitor" del rediseño.
+    """
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede limpiar el monitor."}), 403
+
+    data = request.get_json(silent=True) or {}
+    confirm_text = (data.get("confirm_text") or "").strip().upper()
+    if confirm_text != "LIMPIAR":
+        return jsonify({
+            "ok": False,
+            "error": "Para confirmar la operación escribe exactamente 'LIMPIAR'.",
+        }), 400
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM transport_commitments")
+            n_antes = (cur.fetchone() or {}).get("n", 0)
+            cur.execute("DELETE FROM transport_commitments")
+        conn.commit()
+        try:
+            _tr_log("commitment", 0, "limpieza_total_v2",
+                    f"limpiar-todo por {current_username()}: {n_antes} registros eliminados")
+        except Exception:
+            pass
+        return jsonify({
+            "ok": True,
+            "eliminados": int(n_antes or 0),
+            "mensaje": f"Monitor limpio. Se eliminaron {n_antes} registros.",
+        })
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  IMPORTAR-FORZADO (superadmin) — trae un doc específico por TIDO+NUDO
+#  ignorando la whitelist del sync (BLV/GDV). Útil cuando hay que meter
+#  un NVV, FCV, GTI etc. al monitor para probar o casos puntuales.
+#  Reusa _tr_fetch_from_erp (motor blindado vía API ERP).
+# ═══════════════════════════════════════════════════════════════════════
+@app.route("/transporte/api/importar-forzado", methods=["POST"])
+@_tr_required
+def tr_importar_forzado():
+    """Importa un documento puntual del ERP saltándose la whitelist del sync.
+
+    Solo superadmin. Body JSON:
+        { "tido": "NVV", "nudo": "31005" }
+    Retorna { ok, id, mensaje } o { ok:false, error }.
+    """
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede importar forzado."}), 403
+
+    data = request.get_json(silent=True) or {}
+    tido = (data.get("tido") or "").strip().upper()
+    nudo = (data.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"ok": False, "error": "Faltan parámetros tido/nudo."}), 400
+
+    # Lista de TIDOs aceptados (defensiva — evita SQLi por tido raro)
+    TIDOS_OK = {"FCV", "BLV", "GDV", "NVV", "NVI", "COV", "GDP", "GDI", "RGI",
+                "NVR", "VD", "WEB", "GTI"}
+    if tido not in TIDOS_OK:
+        return jsonify({
+            "ok": False,
+            "error": f"TIDO '{tido}' no permitido. Usa: {', '.join(sorted(TIDOS_OK))}",
+        }), 400
+
+    try:
+        comm_id, err = _tr_fetch_from_erp(tido, nudo)
+    except Exception as e:
+        print(f"[tr_importar_forzado] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"Error consultando ERP: {e}"}), 500
+
+    if err or not comm_id:
+        return jsonify({"ok": False, "error": err or "No se pudo importar el documento."}), 404
+
+    try:
+        _tr_log("commitment", comm_id, "importar_forzado",
+                f"{tido} {nudo} importado forzadamente por {current_username()}")
+    except Exception:
+        pass
+    return jsonify({
+        "ok": True,
+        "id": comm_id,
+        "mensaje": f"{tido} {nudo} importado al monitor (id #{comm_id}).",
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  SYNC-STATUS — widget del header con estado del cron + del SQL ERP
+#  Devuelve último sync, próximo sync, estado SQL Server y contadores.
+# ═══════════════════════════════════════════════════════════════════════
+@app.route("/transporte/api/sync-status", methods=["GET"])
+@_tr_required
+def tr_sync_status():
+    """Estado en vivo del auto-sync para mostrar en el header del monitor.
+
+    Retorna:
+        {
+          ok: true,
+          ultimo_sync: ISO datetime UTC | None,
+          ultimo_sync_relativo: "hace 23 min" | None,
+          proximo_sync: ISO datetime UTC,
+          proximo_sync_relativo: "en 1h 12m",
+          sql_status: "ok" | "degradado" | "down",
+          documentos_total: int,
+          documentos_pendientes: int,
+        }
+    """
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    TZ = ZoneInfo("America/Santiago")
+    now_cl = _dt.datetime.now(TZ)
+
+    # ── Próximo slot del cron (mismas horas que _transporte_scheduler_loop)
+    HORAS = [9, 12, 16]
+    proxima = None
+    for h in HORAS:
+        cand = now_cl.replace(hour=h, minute=0, second=0, microsecond=0)
+        if cand > now_cl:
+            proxima = cand
+            break
+    if proxima is None:
+        proxima = (now_cl + _dt.timedelta(days=1)).replace(
+            hour=HORAS[0], minute=0, second=0, microsecond=0
+        )
+
+    def _rel(dt_target, _now=now_cl):
+        delta = dt_target - _now
+        secs = int(delta.total_seconds())
+        sign = "en " if secs >= 0 else "hace "
+        secs = abs(secs)
+        if secs < 60:
+            return sign + f"{secs}s"
+        mins = secs // 60
+        if mins < 60:
+            return sign + f"{mins} min"
+        hrs = mins // 60
+        rem = mins % 60
+        return sign + (f"{hrs}h {rem}m" if rem else f"{hrs}h")
+
+    # ── Último sync conocido (tabla `transp_sync_lock` o `erp_synced_at` máx)
+    ultimo_sync_iso = None
+    ultimo_rel = None
+    try:
+        row = mysql_fetchone(
+            "SELECT MAX(erp_synced_at) AS u FROM transport_commitments"
+        )
+        u = (row or {}).get("u") if row else None
+        if u:
+            # u puede ser datetime naive UTC del MySQL — anclar a UTC
+            if u.tzinfo is None:
+                u = u.replace(tzinfo=_dt.timezone.utc)
+            ultimo_sync_iso = u.isoformat()
+            u_cl = u.astimezone(TZ)
+            ultimo_rel = _rel(u_cl)
+    except Exception:
+        pass
+
+    # ── Estado SQL Server (ping rápido con una query mínima)
+    sql_status = "down"
+    try:
+        rows = _random_sql_query("SELECT TOP 1 1 AS x", (), max_rows=1)
+        if rows is not None:
+            sql_status = "ok"
+    except Exception as e:
+        msg = str(e).lower()
+        if "timeout" in msg or "timed" in msg:
+            sql_status = "degradado"
+        else:
+            sql_status = "down"
+
+    # ── Contadores rápidos
+    documentos_total = 0
+    documentos_pendientes = 0
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n, "
+            "  SUM(CASE WHEN tiene_saldo=1 THEN 1 ELSE 0 END) AS p "
+            "FROM transport_commitments"
+        )
+        if row:
+            documentos_total = int(row.get("n") or 0)
+            documentos_pendientes = int(row.get("p") or 0)
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "ultimo_sync": ultimo_sync_iso,
+        "ultimo_sync_relativo": ultimo_rel,
+        "proximo_sync": proxima.astimezone(_dt.timezone.utc).isoformat(),
+        "proximo_sync_relativo": _rel(proxima),
+        "proximo_sync_hhmm": proxima.strftime("%H:%M"),
+        "sql_status": sql_status,
+        "documentos_total": documentos_total,
+        "documentos_pendientes": documentos_pendientes,
+        "horas_cron": HORAS,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -14223,7 +14607,9 @@ def _transporte_scheduler_loop():
     import time as _time
     from zoneinfo import ZoneInfo
 
-    HORAS_SYNC = [9, 11, 15, 17]
+    # NUEVA CADENCIA (Daniel 2026-05-19): sync 3 veces al día (09/12/16)
+    # en vez de 4. Coincide con los turnos de bodega (mañana / postlunch / tarde).
+    HORAS_SYNC = [9, 12, 16]
     TZ = ZoneInfo("America/Santiago")
     _ensure_transp_sync_lock_table()
     print(f"[transp-cron] arrancado en worker pid={os.getpid()} "
@@ -19482,6 +19868,18 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_levantamiento_items ADD COLUMN voltaje VARCHAR(20) NULL",
                 "ALTER TABLE mant_levantamiento_items ADD COLUMN ultima_intervencion DATE NULL",
                 "ALTER TABLE mant_levantamiento_items ADD COLUMN componentes_json TEXT NULL",
+                # ════════════════════════════════════════════════════════
+                # 2026-05-19 (Daniel) — Vínculo último levantamiento → ficha
+                # Necesario para que la ficha del equipo (UI y reportes)
+                # pueda apuntar directo al levantamiento OT que cerró su
+                # información actual. Lo setea `_promover_levantamiento_a_maquina`.
+                # ════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquinas ADD COLUMN ultimo_levantamiento_vid INT NULL "
+                "COMMENT 'mant_visitas.id de la última OT levantamiento que actualizó esta ficha'",
+                "ALTER TABLE mant_maquinas ADD INDEX idx_ult_lev_vid (ultimo_levantamiento_vid)",
+                # Composite index para idempotencia en asignación de fotos
+                # del levantamiento a la galería permanente del equipo.
+                "ALTER TABLE mant_maquina_fotos ADD INDEX idx_mqf_visita_origen (maquina_id, visita_origen)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -21220,9 +21618,10 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
     máquina falla, las demás siguen. NO bloquea respuesta HTTP (llamar
     desde hilo daemon vía _promover_levantamiento_async).
 
-    Returns: dict {procesados, aplicados, errores, skipped}
+    Returns: dict {procesados, aplicados, errores, skipped, fotos_asignadas}
     """
-    out = {"procesados": 0, "aplicados": 0, "errores": 0, "skipped": False}
+    out = {"procesados": 0, "aplicados": 0, "errores": 0, "skipped": False,
+           "fotos_asignadas": 0}
     try:
         v = mysql_fetchone(
             "SELECT id, tipo, estado, fecha_programada, tecnico_user_id, tecnico "
@@ -21379,15 +21778,25 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     })
 
                 # ── Fotos de esta OT asociadas a este equipo ──
+                # 2026-05-19 (Daniel): además de contarlas, las asignamos
+                # formalmente a la galería permanente del equipo
+                # (mant_maquina_fotos) más abajo. Esto convierte la foto
+                # del levantamiento en "contenido de la ficha" permanente,
+                # no solo evidencia de la OT.
                 fotos = mysql_fetchall(
-                    "SELECT id, archivo_path, descripcion, tomada_at "
+                    "SELECT id, archivo_path, cloudinary_url, descripcion, "
+                    "       tipo_foto, tomada_por, tomada_at "
                     "  FROM mant_visita_fotos "
                     " WHERE visita_id=%s AND maquina_id=%s "
                     " ORDER BY tomada_at DESC",
                     (vid, mid)
                 ) or []
                 fotos_count = len(fotos)
-                primera_foto_url = (fotos[0].get("archivo_path") if fotos else None)
+                # Preferir cloudinary (persistente) sobre archivo local
+                primera_foto_url = None
+                if fotos:
+                    primera_foto_url = (fotos[0].get("cloudinary_url")
+                                        or fotos[0].get("archivo_path"))
 
                 # ── Observaciones agregadas (visita + tareas) ──
                 obs_partes = []
@@ -21453,9 +21862,10 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     "UPDATE mant_maquinas SET "
                     "  visitas_count = COALESCE(visitas_count,0) + 1, "
                     "  ultima_intervencion = GREATEST(COALESCE(ultima_intervencion, %s), %s), "
-                    "  last_visita_id = %s"
+                    "  last_visita_id = %s, "
+                    "  ultimo_levantamiento_vid = %s"
                 )
-                params_upd.extend([fecha_lev, fecha_lev, vid])
+                params_upd.extend([fecha_lev, fecha_lev, vid, vid])
                 if bloque_nuevo:
                     sql_upd += ", observaciones=%s"
                     params_upd.append(obs_final)
@@ -21481,6 +21891,62 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 except Exception:
                     pass
 
+                # ── Asignación formal de fotos a la ficha del equipo ──
+                # 2026-05-19 (Daniel): cada foto del levantamiento se inserta
+                # en mant_maquina_fotos (galería PERMANENTE de la ficha) con
+                # vínculo a la OT origen (visita_origen) para trazabilidad.
+                # Idempotente: si ya hay una foto con el mismo
+                # archivo_path/cloudinary_url para esta máquina y visita
+                # origen, no se duplica.
+                fotos_asignadas = 0
+                for _f in fotos:
+                    _ap = _f.get("archivo_path") or ""
+                    _cu = _f.get("cloudinary_url") or ""
+                    if not (_ap or _cu):
+                        continue
+                    # Anti-duplicado: misma maquina + visita origen + URL
+                    try:
+                        _dup = mysql_fetchone(
+                            "SELECT id FROM mant_maquina_fotos "
+                            " WHERE maquina_id=%s AND visita_origen=%s "
+                            "   AND (archivo_path=%s OR cloudinary_url=%s) "
+                            " LIMIT 1",
+                            (mid, vid, _ap, _cu)
+                        )
+                    except Exception:
+                        _dup = None
+                    if _dup:
+                        continue
+                    try:
+                        # Nombre legible para archivo_nombre: tomamos las
+                        # primeras 100 chars de la descripción del técnico
+                        # si la hay, sino quedará en NULL (acepta NULL).
+                        _f_desc = (_f.get("descripcion") or "").strip()
+                        _f_nombre = (_f_desc[:100] or None)
+                        mysql_execute(
+                            "INSERT INTO mant_maquina_fotos "
+                            "(maquina_id, archivo_path, cloudinary_url, "
+                            " archivo_nombre, tipo_foto, descripcion, "
+                            " visita_origen, levantamiento_id, tomada_por) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (mid, _ap or "",
+                             _cu or None,
+                             _f_nombre,
+                             # tipo_foto del levantamiento → 'instalada' si es la
+                             # primera vez para una ficha, sino 'detalle'.
+                             "instalada" if (not (eq.get("foto_url") or "").strip()
+                                             and fotos_asignadas == 0)
+                             else "detalle",
+                             _f_desc[:500] or None,
+                             vid, None,
+                             (_f.get("tomada_por") or tec_nombre or "")[:190]
+                             or None)
+                        )
+                        fotos_asignadas += 1
+                    except Exception as _e_pic:
+                        print(f"[promover_lev] foto m={mid} v={vid} url={_ap or _cu}: {_e_pic}",
+                              flush=True)
+
                 # Evento en timeline del equipo
                 try:
                     mysql_execute(
@@ -21490,12 +21956,17 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                         "VALUES (%s,'levantamiento',%s,'mant_visitas',%s,%s)",
                         (mid,
                          f"Ficha actualizada por levantamiento OT #{vid}: "
-                         f"{fotos_count} foto(s), {len(snapshot)} tarea(s) capturadas",
+                         f"{fotos_count} foto(s) en OT · "
+                         f"{fotos_asignadas} asignada(s) a ficha · "
+                         f"{len(snapshot)} tarea(s) capturadas",
                          vid,
                          (tec_nombre or usuario or 'sistema')[:190])
                     )
                 except Exception:
                     pass
+
+                # Acumular fotos asignadas en el out para el log global
+                out["fotos_asignadas"] = out.get("fotos_asignadas", 0) + fotos_asignadas
 
                 out["aplicados"] += 1
             except Exception as _e_mq:
@@ -21504,11 +21975,16 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 out["errores"] += 1
                 continue
 
-        # Audit log global
+        # Audit log global — 2026-05-19 (Daniel): incluye fotos asignadas
+        # para trazabilidad. Visible en mant_logs → "levantamiento_completado
+        # vid=X equipos=N fotos_asignadas=M".
         try:
-            _mant_log("visita", vid, "levantamiento_promovido",
+            _mant_log("visita", vid, "levantamiento_completado",
+                      f"levantamiento OT #{vid} promovido — "
                       f"equipos procesados: {out['procesados']} · "
-                      f"aplicados: {out['aplicados']} · errores: {out['errores']} · "
+                      f"aplicados: {out['aplicados']} · "
+                      f"fotos asignadas a fichas: {out.get('fotos_asignadas', 0)} · "
+                      f"errores: {out['errores']} · "
                       f"fuente: {fuente_maquinas}")
         except Exception:
             pass
@@ -22176,39 +22652,52 @@ def _erp_buscar_clientes(q, limit=20):
     """
     Busca clientes en el ERP por RUT o razón social.
     Normaliza el RUT (con/sin puntos) para máxima compatibilidad.
+
+    FIX 2026-05-19: el ERP Random es SQL Server, no MySQL — `HEBDOC` no
+    existe en su schema. Buscamos directo en MAEEN (entidad/cliente):
+        - NOKOEN / NOKOENAMP  → razón social
+        - RTEN               → RUT base (sin DV)
     """
-    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
-    # Normalizar RUT: buscar con y sin puntos
-    q_like       = f"%{q}%"
-    q_sin_puntos = q.replace(".", "").replace(" ", "")
+    if not q:
+        return []
+    q_upper      = q.upper()
+    q_like       = f"%{q_upper}%"
+    q_sin_puntos = q.replace(".", "").replace(" ", "").replace("-", "")
     q_sin_like   = f"%{q_sin_puntos}%"
-    erp_conn = get_erp_conn()
-    if not erp_conn:
-        return []
     try:
-        with erp_conn.cursor() as cur:
-            cur.execute(
-                f"""SELECT DISTINCT
-                       TRIM(d.NRAZON) AS razon_social,
-                       TRIM(d.NRUC)   AS rut
-                    FROM `{ERP_SALES}` d
-                    WHERE (
-                        TRIM(d.NRAZON) LIKE %s
-                        OR TRIM(d.NRUC)   LIKE %s
-                        OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
-                    )
-                      AND d.TIDO IN {_erp_tidos_filter_sql()}
-                    ORDER BY d.NRAZON
-                    LIMIT {int(limit)}""",
-                (q_like, q_like, q_sin_like)
-            )
-            rows = cur.fetchall()
-        return [{"razon_social": r["razon_social"], "rut": r["rut"]} for r in rows if r.get("razon_social")]
-    except Exception:
+        top_n = max(1, min(int(limit or 20), 200))
+    except (TypeError, ValueError):
+        top_n = 20
+    try:
+        rows = _random_sql_query(
+            f"""
+            SELECT DISTINCT TOP {top_n}
+                   LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social,
+                   LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut
+              FROM MAEEN en
+             WHERE (
+                   UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
+                OR UPPER(LTRIM(RTRIM(COALESCE(en.NOKOENAMP, '')))) LIKE %s
+                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+             )
+               AND LTRIM(RTRIM(COALESCE(en.TIEN, ''))) IN ('C','A')
+             ORDER BY razon_social
+            """,
+            (q_like, q_like, q_like, q_sin_like),
+            max_rows=top_n,
+        )
+        if not rows:
+            return []
+        return [{"razon_social": r.get("razon_social") or "",
+                 "rut":          r.get("rut") or ""}
+                for r in rows if r.get("razon_social")]
+    except PermissionError as pe:
+        print(f"[erp-buscar-clientes-sql] bloqueado por seguridad: {pe}", flush=True)
         return []
-    finally:
-        try: erp_conn.close()
-        except: pass
+    except Exception as e:
+        print(f"[erp-buscar-clientes-sql] error: {e}", flush=True)
+        return []
 
 
 @app.route("/mantenciones/api/clientes/autocomplete")
@@ -22845,10 +23334,67 @@ def mant_enriquecer_cliente():
     Consulta /entidades del ERP por RUT exacto y devuelve datos normalizados.
     GET /mantenciones/api/clientes/enriquecer?rut=77.123.456-7
     Usa _normalize_phone_cl y _cmen_to_comuna para máxima calidad.
+
+    PREFER_SQL=1 (default): consulta directo a MAEEN vía SQL Server.
+    Fallback: REST /entidades.
     """
     rut = (request.args.get("rut") or "").strip()
     if not rut:
         return jsonify({"error": "RUT requerido"}), 400
+
+    # Cuerpo del RUT (sin DV, sin puntos): "77.123.456-7" → "77123456"
+    rut_clean = rut.replace(".", "").replace(" ", "").strip()
+    rut_body  = rut_clean.split("-")[0] if "-" in rut_clean else rut_clean
+
+    # ── Path SQL (primario cuando PREFER_SQL=1) ──
+    _prefer_sql = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                   in ("1", "true", "yes", "on"))
+    if _prefer_sql:
+        try:
+            row = _random_sql_one(
+                "SELECT TOP 1 "
+                "       LTRIM(RTRIM(COALESCE(RTEN,      ''))) AS RTEN, "
+                "       LTRIM(RTRIM(COALESCE(NOKOEN,    ''))) AS NOKOEN, "
+                "       LTRIM(RTRIM(COALESCE(NOKOENAMP, ''))) AS NOKOENAMP, "
+                "       LTRIM(RTRIM(COALESCE(EMAIL,     ''))) AS EMAIL, "
+                "       LTRIM(RTRIM(COALESCE(FOEN,      ''))) AS FOEN, "
+                "       LTRIM(RTRIM(COALESCE(FAEN,      ''))) AS FAEN, "
+                "       LTRIM(RTRIM(COALESCE(DIEN,      ''))) AS DIEN, "
+                "       LTRIM(RTRIM(COALESCE(CMEN,      ''))) AS CMEN, "
+                "       LTRIM(RTRIM(COALESCE(CIEN,      ''))) AS CIEN, "
+                "       LTRIM(RTRIM(COALESCE(GIEN,      ''))) AS GIEN, "
+                "       LTRIM(RTRIM(COALESCE(OBEN,      ''))) AS OBEN "
+                "  FROM MAEEN "
+                " WHERE LTRIM(RTRIM(RTEN)) = %s",
+                (rut_body,),
+            )
+            if row:
+                cien = (row.get("CIEN") or "").strip()
+                cmen = (row.get("CMEN") or "").strip()
+                raw_tel = (row.get("FOEN") or row.get("FAEN") or "").strip()
+                nombre_largo = (row.get("NOKOENAMP") or "").strip()
+                nombre_corto = (row.get("NOKOEN") or "").strip()
+                import erp_engine as _erpe_local
+                return jsonify({
+                    "encontrado":    True,
+                    "razon_social":  _erpe_local.fix_yen_to_n(nombre_largo or nombre_corto).title(),
+                    "rut":           (row.get("RTEN") or rut).strip(),
+                    "email":         (row.get("EMAIL") or "").strip(),
+                    "telefono":      _normalize_phone_cl(raw_tel),
+                    "direccion":     _erpe_local.fix_yen_to_n(row.get("DIEN") or "").title(),
+                    "comuna":        _cmen_to_comuna(cien, cmen),
+                    "region":        _REGION_NOMBRES.get(str(cien).zfill(3), ""),
+                    "giro":          (row.get("GIEN") or "").strip(),
+                    "observaciones": _erpe_local.fix_yen_to_n(row.get("OBEN") or ""),
+                    "cien":          cien,
+                    "cmen":          cmen,
+                    "fuente":        "sql_server",
+                })
+            # No encontrado en SQL → seguir al fallback REST por si REST tiene más
+        except Exception as ex_sql:
+            print(f"[mant-enriquecer-sql] error: {ex_sql} — cae a REST", flush=True)
+
+    # ── Path REST (fallback) ──
     TOKEN = ERP_CONFIG.get("api_token", "")
     try:
         body = _erp_get("/entidades", {"rten": rut}, TOKEN, timeout=8)
@@ -22873,6 +23419,7 @@ def mant_enriquecer_cliente():
             "observaciones": (e.get("OBEN")   or "").strip(),
             "cien":          cien,
             "cmen":          cmen,
+            "fuente":        "rest_api",
         })
     except Exception as ex:
         return jsonify({"error": str(ex), "encontrado": False}), 503
@@ -30495,13 +31042,31 @@ def mant_ot_ejecutar(vid):
 def mant_ot_equipo_datos(vid, mid):
     """Actualiza los datos del equipo (mant_maquinas) en el contexto de la OT.
     Aplica cuando el técnico edita serie, marca, modelo, año, voltaje,
-    estado, observaciones, etc."""
+    estado, observaciones, etc.
+
+    2026-05-19 (Daniel) — Si cambia el SERIAL durante un levantamiento, se
+    registra en mant_maquina_audit con el valor antes/después + usuario +
+    referencia a la OT levantamiento. Esto cumple la regla de trazabilidad
+    para datos críticos del equipo.
+    """
     d = request.get_json(silent=True) or {}
     permitidos = {
         "serie": (str, 100), "marca": (str, 120), "modelo": (str, 120),
         "voltaje": (str, 40), "ubicacion_sala": (str, 200),
         "estado_capturado": (str, 40), "observaciones": (str, 5000),
     }
+    # ── Capturar valores ANTES del update para auditoría de campos críticos ──
+    valores_antes = {}
+    try:
+        _antes = mysql_fetchone(
+            "SELECT serie, marca, modelo FROM mant_maquinas WHERE id=%s",
+            (mid,)
+        )
+        if _antes:
+            valores_antes = dict(_antes)
+    except Exception:
+        valores_antes = {}
+
     sets, vals = [], []
     for k, (typ, maxlen) in permitidos.items():
         if k in d:
@@ -30523,6 +31088,38 @@ def mant_ot_equipo_datos(vid, mid):
     vals.append(mid)
     try:
         mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
+        # ── Audit log de cambios sensibles ──
+        # Solo escribimos en mant_maquina_audit cuando cambia un campo CRÍTICO
+        # (serie / marca / modelo). Para no inflar la tabla con cada edición.
+        try:
+            v_obs = mysql_fetchone(
+                "SELECT cliente_id, tipo FROM mant_visitas WHERE id=%s", (vid,)
+            ) or {}
+            es_lev = (v_obs.get("tipo") or "").lower() == "levantamiento"
+            user = current_username()
+            motivo_base = (f"Levantamiento OT #{vid}" if es_lev
+                           else f"Edición desde OT #{vid}")
+            for campo in ("serie", "marca", "modelo"):
+                if campo not in d:
+                    continue
+                nuevo = (str(d.get(campo) or "").strip())[:120] or None
+                antes = (valores_antes.get(campo) or "") or None
+                if (antes or "") == (nuevo or ""):
+                    continue
+                try:
+                    mysql_execute(
+                        "INSERT INTO mant_maquina_audit "
+                        "(maquina_id, cliente_id, campo, valor_antes, valor_nuevo, "
+                        " motivo, usuario) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (mid, v_obs.get("cliente_id"),
+                         campo, antes, nuevo, motivo_base, (user or "")[:190])
+                    )
+                except Exception as _e_aud:
+                    print(f"[mant_ot_equipo_datos] audit {campo} fallo: {_e_aud}",
+                          flush=True)
+        except Exception:
+            pass
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -33842,15 +34439,54 @@ def api_uf_actual():
 def mant_productos_buscar():
     """
     Typeahead de productos ERP por SKU o descripción.
-    Usa la REST API (funciona desde Railway).
-    Devuelve [{sku, nombre}].
+
+    PREFER_SQL=1 (default): consulta MAEPR directo en SQL Server (rápido,
+    confiable, no depende del REST API).
+    Fallback REST si SQL devuelve None o falla.
+
+    Devuelve [{sku, nombre, tipo}].
     """
     q = request.args.get("q", "").strip()
     if len(q) < 2:
         return jsonify([])
-    TOKEN = ERP_CONFIG.get("api_token", "")
+
     resultados = []
     seen = set()
+
+    # ── Path SQL (primario cuando PREFER_SQL=1) ──
+    _prefer_sql = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                   in ("1", "true", "yes", "on"))
+    if _prefer_sql:
+        try:
+            q_like = f"%{q}%"
+            rows = _random_sql_query(
+                "SELECT TOP 25 "
+                "       LTRIM(RTRIM(COALESCE(KOPR,   ''))) AS KOPR, "
+                "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
+                "       LTRIM(RTRIM(COALESCE(KOPRTE, ''))) AS KOPRTE "
+                "  FROM MAEPR "
+                " WHERE (UPPER(LTRIM(RTRIM(KOPR)))   LIKE UPPER(%s) "
+                "        OR UPPER(LTRIM(RTRIM(NOKOPR))) LIKE UPPER(%s)) "
+                " ORDER BY KOPR",
+                (q_like, q_like),
+                max_rows=25,
+            ) or []
+            for r in rows:
+                sku    = (r.get("KOPR")   or "").strip().upper()
+                nombre = (r.get("NOKOPR") or "").strip()
+                tipo   = (r.get("KOPRTE") or "").strip()
+                if not sku or sku in seen:
+                    continue
+                resultados.append({"sku": sku, "nombre": nombre, "tipo": tipo})
+                seen.add(sku)
+            if resultados:
+                return jsonify(resultados)
+            # Si SQL no devolvió nada, dejamos seguir al REST por si tiene match
+        except Exception as ex_sql:
+            print(f"[mant-productos-buscar-sql] error: {ex_sql} — cae a REST", flush=True)
+
+    # ── Path REST (fallback) ──
+    TOKEN = ERP_CONFIG.get("api_token", "")
     try:
         body = _erp_get(
             "/productos",
@@ -34390,71 +35026,123 @@ def mant_buscar_erp_sql():
 @app.route("/mantenciones/api/buscar-erp", methods=["POST"])
 @_mant_required
 def mant_buscar_erp():
-    """Busca cliente/documentos en el ERP por RUT o razón social."""
+    """Busca cliente/documentos en el ERP por RUT o razón social.
+
+    FIX 2026-05-19: el ERP Random es SQL Server (no MySQL); la tabla
+    HEBDOC no existe en su schema. Reescrito usando MAEEDO (header) +
+    MAEDDO (líneas) + MAEEN (entidad) vía `_random_sql_query`.
+    Estrategia:
+      1) Buscar RUTs candidatos en MAEEN por nombre/RUT (tabla chica).
+      2) Traer documentos del MAEEDO cuyos ENDO matchean esos RUTs.
+      3) Joinear con MAEDDO para las líneas (producto+sku+cantidad).
+    """
     d   = request.get_json(silent=True) or {}
     q   = d.get("q", "").strip()
     if not q:
         return jsonify({"error": "Término de búsqueda requerido"}), 400
-    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
-    erp_conn = get_erp_conn()
-    if not erp_conn:
-        return jsonify({
-            "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
-            "documentos": [], "sin_conexion": True
-        }), 200
-    # Normalizar el query:
-    #  - quitar puntos/guión/espacios para que "65.206.047-1" matchee "65206047" o "65206047-1"
-    #  - upper para que el LIKE en NRAZON sea case-insensitive (NRAZON suele estar en mayúsculas)
+
+    # Normalizar query
     q_clean    = q.replace(".", "").replace(" ", "")
     q_sin_dv   = q_clean.split("-")[0] if "-" in q_clean else q_clean
-    q_like     = f"%{q.upper()}%"
-    q_like_clean = f"%{q_clean}%"
-    q_like_sindv = f"%{q_sin_dv}%"
+    q_like_up  = f"%{q.upper()}%"
+    q_like_cln = f"%{q_clean}%"
+    q_like_sdv = f"%{q_sin_dv}%"
+    tidos_list = list(ERP_TIDOS_DOCUMENTOS_CLIENTE)
+    tidos_in   = ",".join(["%s"] * len(tidos_list))
+
     try:
-        with erp_conn.cursor() as cur:
-            cur.execute(
-                f"""SELECT DISTINCT
-                       TRIM(d.NRAZON) AS razon_social,
-                       TRIM(d.NRUC)   AS rut,
-                       TRIM(d.TIDO)   AS tipo_doc,
-                       TRIM(d.NUDO)   AS num_doc,
-                       d.FEMIS        AS fecha,
-                       TRIM(d.NOMBR)  AS producto,
-                       TRIM(d.KOPRCT) AS sku,
-                       d.CANTD        AS cantidad
-                    FROM `{ERP_SALES}` d
-                    WHERE (
-                          UPPER(TRIM(d.NRAZON)) LIKE %s
-                       OR TRIM(d.NRUC) LIKE %s
-                       OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
-                       OR REPLACE(REPLACE(TRIM(d.NRUC),'.',''),' ','') LIKE %s
-                    )
-                      AND d.TIDO IN {_erp_tidos_filter_sql()}
-                    ORDER BY d.FEMIS DESC
-                    LIMIT 200""",
-                (q_like, q_like_clean, q_like_clean, q_like_sindv)
-            )
-            rows = cur.fetchall()
-        erp_conn.close()
+        # ── 1) RUTs candidatos en MAEEN ─────────────────────────────────
+        ent_rows = _random_sql_query(
+            """
+            SELECT TOP 50
+                   LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut,
+                   LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social
+              FROM MAEEN en
+             WHERE (
+                   UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
+                OR UPPER(LTRIM(RTRIM(COALESCE(en.NOKOENAMP, '')))) LIKE %s
+                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+             )
+            """,
+            (q_like_up, q_like_up, q_like_cln, q_like_sdv),
+            max_rows=50,
+        ) or []
+
+        if not ent_rows:
+            return jsonify({"ok": True, "documentos": []})
+
+        rut_map = {(r.get("rut") or "").strip(): (r.get("razon_social") or "").strip()
+                   for r in ent_rows
+                   if (r.get("rut") or "").strip()}
+        if not rut_map:
+            return jsonify({"ok": True, "documentos": []})
+
+        # ── 2) Documentos en MAEEDO + líneas en MAEDDO ─────────────────
+        rut_keys      = list(rut_map.keys())
+        like_clauses  = " OR ".join(["e.ENDO LIKE %s"] * len(rut_keys))
+        rut_params    = tuple(f"{rk}%" for rk in rut_keys)
+
+        rows = _random_sql_query(
+            f"""
+            SELECT TOP 200
+                   LTRIM(RTRIM(COALESCE(e.TIDO, '')))   AS tipo_doc,
+                   LTRIM(RTRIM(COALESCE(e.NUDO, '')))   AS num_doc,
+                   LTRIM(RTRIM(COALESCE(e.ENDO, '')))   AS endo,
+                   e.FEEMDO                              AS fecha,
+                   LTRIM(RTRIM(COALESCE(l.KOPRCT, ''))) AS sku,
+                   LTRIM(RTRIM(COALESCE(l.NOKOPR, ''))) AS producto,
+                   COALESCE(l.CAPRCO1, 0)               AS cantidad
+              FROM MAEEDO e
+              LEFT JOIN MAEDDO l ON l.IDMAEEDO = e.IDMAEEDO
+             WHERE ({like_clauses})
+               AND LTRIM(RTRIM(COALESCE(e.TIDO, ''))) IN ({tidos_in})
+               AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+             ORDER BY e.FEEMDO DESC
+            """,
+            rut_params + tuple(tidos_list),
+            max_rows=2000,
+        ) or []
+
         docs = {}
         for r in rows:
-            key = f"{r['tipo_doc']} {r['num_doc']}"
+            tipo = (r.get("tipo_doc") or "").strip()
+            num  = (r.get("num_doc")  or "").strip()
+            if not tipo or not num:
+                continue
+            key = f"{tipo} {num}"
+            endo = (r.get("endo") or "").strip()
+            rut_base = endo.split("-")[0] if "-" in endo else endo
             if key not in docs:
                 docs[key] = {
-                    "razon_social": r["razon_social"],
-                    "rut":          r["rut"],
-                    "tipo_doc":     r["tipo_doc"],
-                    "num_doc":      r["num_doc"],
-                    "fecha":        str(r["fecha"]) if r["fecha"] else "",
+                    "razon_social": rut_map.get(rut_base, ""),
+                    "rut":          endo or rut_base,
+                    "tipo_doc":     tipo,
+                    "num_doc":      num,
+                    "fecha":        str(r.get("fecha")) if r.get("fecha") else "",
                     "lineas":       []
                 }
-            docs[key]["lineas"].append({
-                "sku":      r["sku"],
-                "nombre":   r["producto"],
-                "cantidad": int(r["cantidad"] or 1),
-            })
+            sku = (r.get("sku") or "").strip()
+            nom = (r.get("producto") or "").strip()
+            if sku or nom:
+                try:
+                    qty = int(float(r.get("cantidad") or 1))
+                except Exception:
+                    qty = 1
+                docs[key]["lineas"].append({
+                    "sku":      sku,
+                    "nombre":   nom or sku,
+                    "cantidad": qty,
+                })
         return jsonify({"ok": True, "documentos": list(docs.values())})
+    except PermissionError as pe:
+        print(f"[mant-buscar-erp-sql] bloqueado por seguridad: {pe}", flush=True)
+        return jsonify({
+            "error": "Búsqueda bloqueada por seguridad.",
+            "documentos": [], "sin_conexion": True
+        }), 200
     except Exception as e:
+        print(f"[mant-buscar-erp-sql] error: {e}", flush=True)
         return jsonify({
             "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
             "documentos": [], "sin_conexion": True
@@ -34688,60 +35376,96 @@ def mant_documentos_por_rut(cid):
     placeholders = ",".join(["%s"] * len(candidatos))
     params_rut   = list(candidatos)
 
-    ERP_SALES = ERP_CONFIG.get("table_sales", "HEBDOC")
-    erp_conn = get_erp_conn()
-    if not erp_conn:
-        # ─── FALLBACK REST API ──────────────────────────────────────
-        # Railway no tiene acceso a la red interna de Random, pero SÍ
-        # puede llamar a la REST pública. Probamos por RUT primero.
-        # Si no encuentra → buscamos por nombre.
+    # ── PRIMARIO: SQL Server vía _random_sql_query ─────────────────────
+    # FIX 2026-05-19: el ERP Random es SQL Server (cloud.random.cl:8058,
+    # vía pymssql). La tabla HEBDOC no existe en su schema — la lógica
+    # queda en MAEEDO/MAEDDO/MAEEN. Si el SQL falla (timeouts, conexión)
+    # caemos a la REST API como antes (es lo que funciona desde Railway).
+    tidos_list   = list(ERP_TIDOS_DOCUMENTOS_CLIENTE)
+    tidos_in_p   = ",".join(["%s"] * len(tidos_list))
+
+    # Para JOIN con MAEEN.RTEN: extraer base sin DV del ENDO.
+    # Patrones a probar por ENDO: por cada candidato, "candidato%" cubre
+    # "65206047", "65206047-1", "65206047-K", etc.
+    endo_like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(candidatos))
+    endo_like_params  = tuple(f"{c}%" for c in candidatos)
+
+    sql_docs = f"""
+        SELECT TOP 500
+               LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social,
+               LTRIM(RTRIM(COALESCE(e.ENDO, ''))) AS rut,
+               LTRIM(RTRIM(COALESCE(e.TIDO, ''))) AS tipo_doc,
+               LTRIM(RTRIM(COALESCE(e.NUDO, ''))) AS num_doc,
+               e.FEEMDO                            AS fecha,
+               LTRIM(RTRIM(COALESCE(l.KOPRCT, ''))) AS sku,
+               LTRIM(RTRIM(COALESCE(l.NOKOPR, ''))) AS producto,
+               COALESCE(l.CAPRCO1, 0)              AS cantidad
+          FROM MAEEDO e
+          LEFT JOIN MAEDDO l ON l.IDMAEEDO = e.IDMAEEDO
+          LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                CASE
+                  WHEN CHARINDEX('-', e.ENDO) > 0
+                    THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
+                  ELSE LTRIM(RTRIM(COALESCE(e.ENDO, '')))
+                END
+         WHERE LTRIM(RTRIM(COALESCE(e.TIDO, ''))) IN ({tidos_in_p})
+           AND ({endo_like_clauses})
+           AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+         ORDER BY e.FEEMDO DESC
+    """
+
+    rows = None
+    sql_error = None
+    try:
+        rows = _random_sql_query(
+            sql_docs,
+            tuple(tidos_list) + endo_like_params,
+            max_rows=2000,
+        )
+    except PermissionError as pe:
+        sql_error = f"seguridad SQL: {pe}"
+        print(f"[mant-docs-por-rut-sql] bloqueado por seguridad: {pe}", flush=True)
+        rows = None
+    except Exception as e:
+        sql_error = str(e)
+        print(f"[mant-docs-por-rut-sql] error: {e}", flush=True)
+        rows = None
+
+    # Si SQL devolvió None (pool sin configurar / error de conexión / excepción)
+    # caemos a la REST API graceful — esa funciona desde Railway.
+    if rows is None:
         return _docs_erp_por_rut_rest(rut, cliente.get("razon_social"), cid)
 
     try:
-        with erp_conn.cursor() as cur:
-            # IN con literales exactos → el ERP puede usar índice en NRUC.
-            # Sin funciones sobre la columna = mucho más rápido.
-            # TIDO IN usa la constante centralizada (incluye GDP=préstamos)
-            cur.execute(
-                f"""SELECT
-                       TRIM(d.NRAZON) AS razon_social,
-                       TRIM(d.NRUC)   AS rut,
-                       TRIM(d.TIDO)   AS tipo_doc,
-                       TRIM(d.NUDO)   AS num_doc,
-                       d.FEMIS        AS fecha,
-                       TRIM(d.NOMBR)  AS producto,
-                       TRIM(d.KOPRCT) AS sku,
-                       d.CANTD        AS cantidad
-                    FROM `{ERP_SALES}` d
-                    WHERE d.TIDO IN {_erp_tidos_filter_sql()}
-                      AND TRIM(d.NRUC) IN ({placeholders})
-                    ORDER BY d.FEMIS DESC
-                    LIMIT 500""",
-                params_rut
-            )
-            rows = cur.fetchall()
-        erp_conn.close()
-
         docs = {}
         for r in rows:
-            key = f"{r['tipo_doc']}|{r['num_doc']}"
+            tipo_doc = (r.get("tipo_doc") or "").strip()
+            num_doc  = (r.get("num_doc")  or "").strip()
+            if not tipo_doc or not num_doc:
+                continue
+            key = f"{tipo_doc}|{num_doc}"
             if key not in docs:
+                fe = r.get("fecha")
                 docs[key] = {
-                    "razon_social": r["razon_social"] or "",
-                    "rut":          r["rut"] or "",
-                    "tipo_doc":     r["tipo_doc"],
-                    "num_doc":      str(r["num_doc"] or "").lstrip("0") or str(r["num_doc"]),
-                    "num_doc_raw":  str(r["num_doc"] or ""),
-                    "fecha":        str(r["fecha"])[:10] if r["fecha"] else "",
+                    "razon_social": (r.get("razon_social") or "").strip(),
+                    "rut":          (r.get("rut")          or "").strip(),
+                    "tipo_doc":     tipo_doc,
+                    "num_doc":      num_doc.lstrip("0") or num_doc,
+                    "num_doc_raw":  num_doc,
+                    "fecha":        str(fe)[:10] if fe else "",
                     "lineas":       []
                 }
-            nom = (r["producto"] or "").strip()
-            sku = (r["sku"] or "").strip().upper()
+            nom = (r.get("producto") or "").strip()
+            sku = (r.get("sku")      or "").strip().upper()
             if nom or sku:
+                try:
+                    qty = int(float(r.get("cantidad") or 1))
+                except Exception:
+                    qty = 1
                 docs[key]["lineas"].append({
                     "sku":      sku,
                     "nombre":   nom or sku,
-                    "cantidad": int(float(r["cantidad"] or 1)),
+                    "cantidad": qty,
                 })
 
         # Conteo por tipo de documento — diagnóstico visual al usuario
@@ -34759,15 +35483,12 @@ def mant_documentos_por_rut(cid):
             "conteo_por_tipo": conteo_por_tipo,
             "tipos_buscados": list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
             "filas_erp":     len(rows),
+            "fuente":        "sql_server",
         })
     except Exception as e:
-        erp_conn and erp_conn.close()
-        return jsonify({
-            "sin_conexion": True,
-            "rut": rut,
-            "documentos": [],
-            "msg": "No se pudo conectar al ERP. Usa la búsqueda por número de documento."
-        }), 200
+        print(f"[mant-docs-por-rut-sql] post-process error: {e}", flush=True)
+        # Cualquier error procesando filas → caer a REST API
+        return _docs_erp_por_rut_rest(rut, cliente.get("razon_social"), cid)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -37796,6 +38517,192 @@ def mant_maquina_historial_ots(mid):
     return jsonify({"ok": True, "ots": out, "total": len(out)})
 
 
+# ════════════════════════════════════════════════════════════════════════
+# FICHA TÉCNICA INLINE (JSON) — usado en el modal "Ver ficha técnica"
+# del flujo de levantamiento (ot_ejecutar.html). Devuelve un snapshot
+# compacto: datos del equipo, fotos previas, contratos del cliente,
+# OTs cerradas e historial.
+# Daniel pidió que el técnico pueda VALIDAR la información actual de la
+# máquina antes de modificarla — este endpoint la entrega en un solo
+# request para alimentar el modal flotante.
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/maquinas/<int:mid>/ficha-tecnica")
+@_mant_required
+def mant_maquina_ficha_tecnica_json(mid):
+    """Snapshot JSON de la ficha técnica del equipo (para modal inline).
+
+    Incluye:
+      - Datos básicos del equipo (mant_maquinas)
+      - Cliente asociado (razón social, RUT, dirección)
+      - Hasta 8 fotos previas (mant_maquina_fotos)
+      - Contratos vigentes del cliente
+      - Últimas 5 OTs cerradas con tipo, fecha, técnico
+      - Stats: total OTs, fotos, primera/última intervención
+    """
+    eq = mysql_fetchone(
+        "SELECT m.*, c.razon_social, c.rut AS cli_rut, c.direccion AS cli_direccion, "
+        "       c.comuna AS cli_comuna "
+        "  FROM mant_maquinas m "
+        "  JOIN mant_clientes c ON c.id = m.cliente_id "
+        " WHERE m.id=%s AND COALESCE(m.estado,'activo') <> 'baja'",
+        (mid,)
+    )
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado o dado de baja"}), 404
+    eq = dict(eq)
+
+    # Permisos: técnico solo ve si la máquina está en una OT asignada a él.
+    # (Cumple el mismo criterio que `mant_maquina_ficha` HTML).
+    u = getattr(g, "user", None) or {}
+    role_u = (u.get("role") or "").lower()
+    if role_u in ("tecnico", "tecnico_externo"):
+        uid = u.get("id")
+        autorizado = mysql_fetchone(
+            "SELECT 1 FROM mant_visita_tareas vt "
+            "  JOIN mant_visitas v ON v.id = vt.visita_id "
+            " WHERE vt.maquina_id=%s "
+            "   AND (v.tecnico_user_id=%s "
+            "        OR v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+            "                    WHERE tecnico_user_id=%s)) "
+            " LIMIT 1",
+            (mid, uid, uid)
+        )
+        if not autorizado:
+            return jsonify({"ok": False, "error": "Equipo no asignado a tus OTs"}), 403
+
+    # ── Fotos previas (de mant_maquina_fotos — galería permanente) ──
+    fotos_rows = mysql_fetchall(
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+        "       created_at, levantamiento_id "
+        "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+        " ORDER BY created_at DESC LIMIT 8",
+        (mid,)
+    ) or []
+    fotos = []
+    for r in fotos_rows:
+        url = r.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{r['archivo_path']}"
+            if r.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        fotos.append({
+            "id": r["id"],
+            "url": url,
+            "descripcion": r.get("descripcion") or "",
+            "tomada_por": r.get("tomada_por") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+        })
+
+    # ── Contratos del cliente (vigentes / indefinidos) ──
+    contratos = []
+    try:
+        c_rows = mysql_fetchall(
+            "SELECT id, nombre, fecha_inicio, fecha_vencimiento, es_indefinido, "
+            "       estado, monto_mensual "
+            "  FROM mant_contratos "
+            " WHERE cliente_id=%s "
+            "   AND estado IN ('vigente','indefinido','por_vencer') "
+            " ORDER BY fecha_inicio DESC LIMIT 5",
+            (eq.get("cliente_id"),)
+        ) or []
+        for r in c_rows:
+            contratos.append({
+                "id": r["id"],
+                "nombre": r.get("nombre") or "",
+                "fecha_inicio": str(r["fecha_inicio"])[:10] if r.get("fecha_inicio") else "",
+                "fecha_vencimiento": str(r["fecha_vencimiento"])[:10] if r.get("fecha_vencimiento") else "",
+                "es_indefinido": bool(r.get("es_indefinido")),
+                "estado": r.get("estado") or "vigente",
+            })
+    except Exception:
+        contratos = []
+
+    # ── Últimas 5 OTs de este equipo (resumen) ──
+    ots_rows = mysql_fetchall(
+        "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
+        "       v.fecha_programada, v.cerrada_at, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  JOIN mant_visita_tareas t ON t.visita_id=v.id "
+        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
+        " WHERE t.maquina_id=%s "
+        " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 5",
+        (mid,)
+    ) or []
+    ots = []
+    for r in ots_rows:
+        ots.append({
+            "id": r["id"],
+            "numero_ot": r.get("numero_ot") or f"VS-{r['id']:05d}",
+            "titulo": r.get("titulo") or "",
+            "tipo": r.get("tipo") or "",
+            "estado": r.get("estado") or "",
+            "fecha": str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
+            "tecnico": r.get("tecnico_nombre") or "",
+            "url": f"/mantenciones/ot/{r['id']}",
+        })
+
+    # Stats compactas
+    total_ots = mysql_fetchone(
+        "SELECT COUNT(DISTINCT v.id) AS n "
+        "  FROM mant_visitas v JOIN mant_visita_tareas t ON t.visita_id=v.id "
+        " WHERE t.maquina_id=%s",
+        (mid,)
+    ) or {}
+    total_fotos = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_maquina_fotos WHERE maquina_id=%s",
+        (mid,)
+    ) or {}
+
+    # Limpiar datos sensibles / no usados antes de devolver
+    out_eq = {
+        "id": eq["id"],
+        "cliente_id": eq.get("cliente_id"),
+        "razon_social": eq.get("razon_social") or "",
+        "cli_rut": eq.get("cli_rut") or "",
+        "cli_direccion": eq.get("cli_direccion") or "",
+        "cli_comuna": eq.get("cli_comuna") or "",
+        "nombre": eq.get("nombre") or "",
+        "sku": eq.get("sku") or "",
+        "serie": eq.get("serie") or "",
+        "marca": eq.get("marca") or "",
+        "modelo": eq.get("modelo") or "",
+        "anio_fabricacion": eq.get("anio_fabricacion"),
+        "voltaje": eq.get("voltaje") or "",
+        "ubicacion_sala": eq.get("ubicacion_sala") or "",
+        "ubicacion_cliente": eq.get("ubicacion_cliente") or "",
+        "familia_equipo": eq.get("familia_equipo") or "",
+        "fecha_instalacion": str(eq["fecha_instalacion"])[:10] if eq.get("fecha_instalacion") else "",
+        "fecha_fin_garantia": str(eq["fecha_fin_garantia"])[:10] if eq.get("fecha_fin_garantia") else "",
+        "estado": eq.get("estado") or "activo",
+        "estado_op": eq.get("estado_op") or "operativo",
+        "estado_capturado": eq.get("estado_capturado") or "",
+        "tiene_dano": bool(eq.get("tiene_dano")),
+        "observaciones": eq.get("observaciones") or "",
+        "foto_url": eq.get("foto_url") or "",
+        "tag_1": eq.get("tag_1") or "",
+        "tag_2": eq.get("tag_2") or "",
+        "ultima_intervencion": str(eq["ultima_intervencion"])[:10] if eq.get("ultima_intervencion") else "",
+        "visitas_count": int(eq.get("visitas_count") or 0),
+        "doc_origen": eq.get("doc_origen") or "",
+        "doc_fecha": str(eq["doc_fecha"])[:10] if eq.get("doc_fecha") else "",
+    }
+    return jsonify({
+        "ok": True,
+        "equipo": out_eq,
+        "fotos": fotos,
+        "contratos": contratos,
+        "ots": ots,
+        "stats": {
+            "total_ots": int(total_ots.get("n") or 0),
+            "total_fotos": int(total_fotos.get("n") or 0),
+        },
+        # URL de la ficha completa por si el técnico quiere abrirla
+        "ficha_url": f"/mantenciones/maquinas/{mid}",
+    })
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos")
 @_mant_required
 def mant_maquina_fotos_list(mid):
@@ -37857,6 +38764,61 @@ except Exception as _pickup_reg_err:
 # Default es CORRER las migraciones (backward compatible).
 _SKIP_MIGS = (os.environ.get("ILUS_SKIP_MIGRATIONS", "").strip().lower()
               in ("1", "true", "yes", "on"))
+
+# ── ⚡ Pool pymssql Random SQL Server: warmup + keepalive ─────────────────
+# 1) WARMUP: el pool se inicializa lazy en la primera query. Eso paga
+#    ~500-1000ms en el PRIMER request (handshake TLS + login). Lo forzamos
+#    en boot para que los requests reales nazcan calientes.
+# 2) KEEPALIVE: cloud.random.cl cierra conexiones IDLE después de ~5-10
+#    minutos. Si Daniel deja la app abierta y no hace queries en un rato, la
+#    siguiente query paga reconexión (~500-3000ms). Un thread daemon hace
+#    "SELECT 1" cada 60s para mantener la conexión cached siempre viva.
+# 3) FAILSAFE: si Random SQL está caído, ambos fallan silenciosos y el resto
+#    del app sigue funcionando (sin cubicador/SQL pero sin crashear).
+try:
+    import threading as _th
+    def _warmup_random_pool():
+        try:
+            t0 = time.time()
+            pool = _random_sql_pool()
+            if pool is None:
+                print("[RANDOM SQL][warmup] pool no inicializado (falta config o ImportError)",
+                      flush=True)
+                return
+            # Ejecutar query trivial para forzar handshake + abrir conexión cached
+            _random_sql_query("SELECT TOP 1 1 AS x FROM MAEEN", max_rows=1)
+            print(f"[RANDOM SQL][warmup] pool caliente en {int((time.time()-t0)*1000)}ms",
+                  flush=True)
+        except Exception as _wu_e:
+            print(f"[RANDOM SQL][warmup] falló (no crítico): {_wu_e}", flush=True)
+    _th.Thread(target=_warmup_random_pool, daemon=True, name="random-sql-warmup").start()
+
+    def _keepalive_random_pool():
+        """Mantiene viva la conexión cached del pool con un ping cada 60s.
+        Sin esto, la primera query después de >5min idle paga reconexión
+        (los famosos 5189ms que reportó Daniel)."""
+        # Espera inicial: dejar que el warmup termine
+        time.sleep(75)
+        while True:
+            try:
+                t0 = time.time()
+                _random_sql_query("SELECT 1 AS x", max_rows=1)
+                ms = int((time.time() - t0) * 1000)
+                if ms > 800:
+                    # Si el ping mismo tarda >800ms, la conexión estaba muerta
+                    # y se reconectó. Lo logueamos para ver si hay patrones.
+                    print(f"[RANDOM SQL][keepalive] ping lento ({ms}ms) — "
+                          f"posible reconnect", flush=True)
+            except Exception:
+                # Silencioso — no queremos spam si Random SQL está caído
+                pass
+            time.sleep(60)
+    _th.Thread(target=_keepalive_random_pool, daemon=True,
+               name="random-sql-keepalive").start()
+    print("[RANDOM SQL] Keepalive activo (ping cada 60s para evitar idle disconnect)",
+          flush=True)
+except Exception as _wu_outer:
+    print(f"[RANDOM SQL][warmup/keepalive] no se pudo agendar: {_wu_outer}", flush=True)
 
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
