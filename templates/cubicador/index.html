@@ -1216,40 +1216,24 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     }
   }
 
-  /* ── Eliminar UNA línea (con o sin confirmación según predominio) ── */
+  /* ── Eliminar UNA línea (sin confirmar — criterio del usuario) ──
+     2026-05-20: Daniel pidió que se borre directo sin distinción de
+     predominio. La acción es sólo client-side (no toca ERP ni BD),
+     así que confiamos en el criterio del usuario. */
   function eliminarFila(sku){
     var rows = allRows().filter(function(r){ return r.dataset.sku === sku; });
     if (!rows.length) return;
-    var pred = Number(rows[0].dataset.predTot) || 0;
-
-    var doRemove = function(){
-      rows.forEach(function(r){ r.classList.add('removing'); });
-      // Esperar fin de animación, luego sacar del DOM y recalcular
-      setTimeout(function(){
-        rows.forEach(function(r){ if (r.parentNode) r.parentNode.removeChild(r); });
-        recalcularTotales();
-        updateBulkToolbar();
-        actualizarPayloadExcel();
-        checkEmpty();
-        if (typeof ilusToast === 'function'){
-          ilusToast('Línea eliminada · Totales actualizados', { type:'success' });
-        }
-      }, 330);
-    };
-
-    // Si tiene predominio > 0, confirmar
-    if (pred > 0 && typeof ilusConfirm === 'function'){
-      ilusConfirm({
-        title: 'Eliminar línea',
-        message: '¿Quitar la línea ' + sku + ' del cubicaje?',
-        sub: 'Solo afecta tu sesión — no se modifica el ERP ni la BD.',
-        okLabel: 'Eliminar',
-        cancelLabel: 'Cancelar',
-        danger: true,
-      }).then(function(ok){ if (ok) doRemove(); });
-    } else {
-      doRemove();
-    }
+    rows.forEach(function(r){ r.classList.add('removing'); });
+    setTimeout(function(){
+      rows.forEach(function(r){ if (r.parentNode) r.parentNode.removeChild(r); });
+      recalcularTotales();
+      updateBulkToolbar();
+      actualizarPayloadExcel();
+      checkEmpty();
+      if (typeof ilusToast === 'function'){
+        ilusToast('Línea eliminada · Totales actualizados', { type:'success' });
+      }
+    }, 330);
   }
 
   /* ── Eliminar varias (confirmación obligatoria) ── */
