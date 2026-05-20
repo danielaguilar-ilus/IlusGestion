@@ -497,6 +497,39 @@
   global.ilusActionSheet = ilusActionSheet;
 
   // ════════════════════════════════════════════════════════════════
+  //  COMPARADOR DE RUT CHILENO — tolerante a presencia/ausencia de DV
+  // ════════════════════════════════════════════════════════════════
+  //  El ERP a veces guarda RUT con código verificador ("78.129.118-8")
+  //  y otras veces solo el cuerpo ("78129118"). Una comparación normal
+  //  los marca como distintos aunque sean el mismo cliente.
+  //
+  //  ilusRutsMatch normaliza ambos (sin puntos/guiones/espacios) y
+  //  acepta que uno termine en DV y el otro no, comparando los cuerpos.
+  //
+  //  Ejemplos:
+  //    ilusRutsMatch("78.129.118-8", "78129118")   → true
+  //    ilusRutsMatch("12345678-K",   "12345678")   → true
+  //    ilusRutsMatch("76993445-6",   "76993445")   → true
+  //    ilusRutsMatch("76993445",     "76123456")   → false
+  //    ilusRutsMatch("",             "78129118")   → false
+  //
+  //  Uso típico (reemplazo del .replace(/[.\-\s]/g,'') manual):
+  //    const match = ilusRutsMatch(d.rut, RUT_FICHA);
+  // ════════════════════════════════════════════════════════════════
+  function ilusRutsMatch(a, b){
+    const clean = (r) => String(r||'').replace(/[.\s\-]/g, '').toUpperCase();
+    const cA = clean(a);
+    const cB = clean(b);
+    if (!cA || !cB) return false;
+    if (cA === cB) return true;
+    // Uno trae DV y el otro no: la diferencia en largo es 1 char
+    if (cA.length === cB.length + 1 && cA.slice(0,-1) === cB) return true;
+    if (cB.length === cA.length + 1 && cB.slice(0,-1) === cA) return true;
+    return false;
+  }
+  global.ilusRutsMatch = ilusRutsMatch;
+
+  // ════════════════════════════════════════════════════════════════
   //  GOOGLE PLACES AUTOCOMPLETE — helper reusable (LAZY load)
   //
   //  Uso:

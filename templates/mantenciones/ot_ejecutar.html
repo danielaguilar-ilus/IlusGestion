@@ -387,11 +387,38 @@
   transform:translateY(-1px)}
 .tx-eq-card:active{transform:scale(.98)}
 .tx-eq-card.done{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-color:#16a34a}
-.tx-eq-card .eq-foto{
-  width:64px;height:64px;border-radius:10px;
-  background:#f3f4f6 center/cover no-repeat;flex-shrink:0;border:1px solid #e5e7eb;
-  display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1.8rem
+
+/* ── Foto del equipo en la tarjeta (vista 1) ── */
+.tx-eq-card .eq-foto-wrap{
+  position:relative;width:56px;height:56px;flex-shrink:0;border-radius:10px;
+  overflow:hidden;background:#f3f4f6;border:1px solid #e5e7eb;
+  box-shadow:0 2px 6px rgba(0,0,0,.08);
 }
+.tx-eq-card .eq-foto-img{
+  width:100%;height:100%;object-fit:cover;display:block;
+  transition:opacity .25s;
+}
+.tx-eq-card .eq-foto-empty{
+  width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  color:#94a3b8;font-size:1.5rem;
+  background:linear-gradient(135deg,#f8fafc,#eef2f7);
+}
+.tx-eq-card.done .eq-foto-empty{
+  background:linear-gradient(135deg,#f0fdf4,#dcfce7);color:#16a34a;
+}
+.tx-eq-card .eq-foto-skel{
+  position:absolute;inset:0;
+  background:linear-gradient(90deg,#f3f4f6 0%,#e5e7eb 50%,#f3f4f6 100%);
+  background-size:200% 100%;
+  animation:eqFotoSkel 1.1s linear infinite;
+  pointer-events:none;
+}
+@keyframes eqFotoSkel{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+
 .tx-eq-card .eq-info{flex:1;min-width:0}
 .tx-eq-card .eq-name{font-weight:800;font-size:1rem;color:#0f172a;line-height:1.2;
   display:flex;align-items:center;gap:6px}
@@ -400,6 +427,32 @@
 .tx-eq-card .eq-prog-bar{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);transition:width .3s}
 .tx-eq-card .eq-arrow{font-size:1.3rem;color:#cbd5e1;flex-shrink:0}
 .tx-eq-card.done .eq-arrow{color:#16a34a}
+
+/* ── Columna de acciones en cada tarjeta de equipo (vista 1) ── */
+.tx-eq-card .eq-actions{
+  display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0;
+}
+.tx-eq-card .eq-action-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:40px;height:40px;border-radius:10px;
+  background:#fff;border:1.5px solid #e5e7eb;color:#0a0a0a;
+  font-size:1.05rem;cursor:pointer;transition:all .15s;
+  padding:0;
+}
+.tx-eq-card .eq-action-btn:hover{
+  background:#dc2626;color:#fff;border-color:#dc2626;
+  transform:translateY(-1px);
+  box-shadow:0 4px 10px rgba(220,38,38,.25);
+}
+.tx-eq-card .eq-action-btn:active{transform:scale(.94)}
+.tx-eq-card .eq-action-btn:focus-visible{
+  outline:2px solid #dc2626;outline-offset:2px;
+}
+@media(max-width:600px){
+  .tx-eq-card .eq-action-btn{width:44px;height:44px;font-size:1.1rem}
+  .tx-eq-card .eq-foto-wrap{width:52px;height:52px}
+  .tx-eq-card{gap:10px;padding:12px}
+}
 
 .tx-eq-meta-row{display:flex;gap:10px;font-size:.7rem;color:#6b7280;margin-top:5px;flex-wrap:wrap}
 .tx-eq-meta-item{display:inline-flex;align-items:center;gap:3px}
@@ -411,7 +464,7 @@
    ════════════════════════════════════════════════════════ */
 .tx-eq-hero{
   background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;
-  margin-bottom:14px;display:flex;align-items:center;gap:14px
+  margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap
 }
 .tx-eq-hero .h-foto{width:80px;height:80px;border-radius:12px;background:#f3f4f6 center/cover;
   flex-shrink:0;border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;
@@ -419,6 +472,97 @@
 .tx-eq-hero .h-info{flex:1;min-width:0}
 .tx-eq-hero .h-name{font-weight:800;font-size:1.1rem;color:#0f172a}
 .tx-eq-hero .h-meta{font-size:.78rem;color:#6b7280;margin-top:4px;line-height:1.5}
+.tx-eq-hero .h-actions{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── 2026-05-19 (Daniel): banner que avisa "esta foto va a la ficha
+   técnica" cuando la OT es tipo levantamiento. ── */
+.lev-banner-ficha{
+  margin-top:12px;display:flex;gap:10px;align-items:flex-start;
+  background:linear-gradient(135deg,#fef2f2,#fee2e2);
+  border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;
+  padding:11px 13px;color:#7f1d1d;font-size:.82rem;line-height:1.4;
+  width:100%; /* ocupa todo el ancho del hero */
+}
+.lev-banner-ficha i{color:#dc2626;font-size:1.15rem;flex-shrink:0;margin-top:2px}
+.lev-banner-ficha strong{display:block;color:#0a0a0a;font-size:.86rem;margin-bottom:2px}
+
+/* Botón "Ver ficha técnica" en hero del equipo */
+.btn-ver-ficha{
+  display:inline-flex;align-items:center;gap:6px;
+  background:#0a0a0a;color:#fff;border:none;border-radius:9px;
+  padding:8px 14px;font-size:.82rem;font-weight:700;cursor:pointer;
+  min-height:36px;transition:transform .1s, background .15s;
+}
+.btn-ver-ficha:hover{background:#dc2626}
+.btn-ver-ficha:active{transform:scale(.97)}
+.btn-ver-ficha i{font-size:1rem}
+
+/* Botón inline "Sugerir serial registrado" — usado en banner serial */
+.btn-sugerir-serial{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#fff;color:#dc2626;border:1px solid #dc2626;border-radius:8px;
+  padding:6px 10px;font-size:.78rem;font-weight:700;cursor:pointer;
+  min-height:36px;transition:all .15s;
+}
+.btn-sugerir-serial:hover{background:#dc2626;color:#fff}
+.btn-sugerir-serial:active{transform:scale(.97)}
+.btn-sugerir-serial:disabled{opacity:.4;cursor:not-allowed}
+
+/* Banner inline "Esta foto va a la ficha técnica" sobre input de foto */
+.tx-foto-aviso-ficha{
+  margin:6px 0 8px;display:flex;gap:8px;align-items:flex-start;
+  background:#fff8e1;border:1px solid #fde68a;border-radius:9px;
+  padding:8px 11px;font-size:.74rem;color:#7c2d12;line-height:1.35;
+}
+.tx-foto-aviso-ficha i{color:#dc2626;font-size:.95rem;flex-shrink:0;margin-top:1px}
+
+/* Banner inline sobre input de serial */
+.tx-serial-aviso{
+  margin:6px 0 8px;display:flex;gap:8px;align-items:flex-start;
+  flex-wrap:wrap;
+  background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;
+  padding:8px 11px;font-size:.74rem;color:#1e3a8a;line-height:1.35;
+}
+.tx-serial-aviso .meta{flex:1;min-width:160px}
+.tx-serial-aviso i{color:#1d4ed8;font-size:.95rem;flex-shrink:0;margin-top:1px}
+
+/* Ficha modal estilizada */
+#modalFichaTecnica .ficha-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;
+}
+#modalFichaTecnica .ficha-row{
+  display:flex;flex-direction:column;gap:2px;
+  background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;
+}
+#modalFichaTecnica .ficha-row .lbl{font-size:.65rem;font-weight:700;color:#6b7280;
+  letter-spacing:.04em;text-transform:uppercase}
+#modalFichaTecnica .ficha-row .val{font-size:.85rem;color:#0a0a0a;font-weight:600;word-break:break-word}
+#modalFichaTecnica .ficha-row .val.muted{color:#9ca3af;font-weight:400;font-style:italic}
+#modalFichaTecnica .ficha-section-title{
+  font-weight:800;color:#0a0a0a;font-size:.92rem;margin:16px 0 8px;
+  display:flex;align-items:center;gap:7px;
+}
+#modalFichaTecnica .ficha-section-title i{color:#dc2626}
+#modalFichaTecnica .ficha-fotos{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+}
+#modalFichaTecnica .ficha-fotos img{
+  width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;
+  border:1px solid #e5e7eb;background:#f3f4f6;
+}
+#modalFichaTecnica .ficha-ots .ot-row{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:7px 10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:5px;
+  background:#fff;text-decoration:none;color:#0a0a0a;font-size:.82rem;
+}
+#modalFichaTecnica .ficha-ots .ot-row:hover{border-color:#dc2626;background:#fef2f2}
+#modalFichaTecnica .ficha-ots .ot-meta{font-size:.7rem;color:#6b7280}
+
+/* Mobile: 1 columna para grid + 3 cols para fotos */
+@media(max-width:600px){
+  #modalFichaTecnica .ficha-grid{grid-template-columns:1fr}
+  #modalFichaTecnica .ficha-fotos{grid-template-columns:repeat(3,1fr)}
+}
 
 .tx-pl-card{
   background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;
@@ -1381,8 +1525,16 @@
     {% set stats = stats_por_maquina.get(eq.id|string, {}) %}
     <div class="tx-eq-card{% if stats.bloqueada %} done{% endif %}"
          onclick="goToPlantillas('{{ eq.id }}')">
-      <div class="eq-foto" {% if eq.foto_url %}style="background-image:url('{{ eq.foto_url }}')"{% endif %}>
-        {% if not eq.foto_url %}<i class="bi bi-image"></i>{% endif %}
+      <div class="eq-foto-wrap">
+        {% if eq.foto_url %}
+          <img class="eq-foto-img"
+               src="{{ eq.foto_url }}"
+               alt="Foto de {{ eq.nombre or 'equipo' }}"
+               loading="lazy"
+               onerror="(function(el){const w=el.parentNode;w.innerHTML='<div class=\'eq-foto-empty\'><i class=\'bi bi-camera\'></i></div>';})(this);">
+        {% else %}
+          <div class="eq-foto-empty"><i class="bi bi-camera"></i></div>
+        {% endif %}
       </div>
       <div class="eq-info">
         <div class="eq-name">
@@ -1400,6 +1552,14 @@
           <span class="tx-eq-meta-item"><i class="bi bi-list-check"></i>{{ stats.completas or 0 }}/{{ stats.total or 0 }}</span>
         </div>
         <div class="eq-prog-wrap"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
+      </div>
+      <div class="eq-actions" onclick="event.stopPropagation()">
+        <button type="button" class="eq-action-btn"
+                title="Ver ficha técnica"
+                aria-label="Ver ficha técnica del equipo {{ eq.nombre or eq.id }}"
+                onclick="event.stopPropagation(); abrirModalFichaTecnica({{ eq.id }})">
+          <i class="bi bi-clipboard-data"></i>
+        </button>
       </div>
       <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
@@ -1773,12 +1933,56 @@
 </div>
 {% endif %}
 
+{# ════════════════════════════════════════════════════════════
+   MODAL: VER FICHA TÉCNICA (2026-05-19 Daniel)
+   Se abre desde el hero del equipo en vista 2 (plantillas).
+   Muestra los datos ACTUALES de la máquina + fotos previas +
+   contratos + últimas OTs. El técnico puede validar y, si tiene
+   permisos, editar serial/marca/modelo (que pisa la ficha al
+   guardar y queda logueado en mant_maquina_audit).
+   ════════════════════════════════════════════════════════════ #}
+<div class="modal fade firma-modal" id="modalFichaTecnica" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header"
+           style="background:linear-gradient(135deg,#0a0a0a,#1f2937);color:#fff;border:0">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-file-earmark-medical-fill me-2"></i>Ficha técnica del equipo
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="modalFichaBody" style="max-height:75vh;overflow-y:auto">
+        <div class="text-center text-muted py-5">
+          <div class="spinner-border" role="status" style="color:#dc2626"></div>
+          <div class="mt-2 small">Cargando ficha técnica…</div>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb">
+        <a href="#" id="modalFichaAbrirFull" target="_blank" rel="noopener"
+           class="btn btn-light"
+           style="font-size:.85rem">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Ver ficha completa
+        </a>
+        <div class="flex-grow-1"></div>
+        <button type="button" class="btn btn-dark" data-bs-dismiss="modal">
+          <i class="bi bi-check-lg me-1"></i>Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ════════════════════════════════════════════════════════
 //  DATOS DEL SERVIDOR
 // ════════════════════════════════════════════════════════
 const VID = {{ visita.id }};
 const VISITA_ESTADO = "{{ visita.estado }}";
+// 2026-05-19 (Daniel) — VISITA_TIPO se usa para mostrar el banner
+// "esta foto va a la ficha técnica" cuando la OT es un levantamiento.
+const VISITA_TIPO = "{{ visita.tipo or '' }}";
+const ES_LEVANTAMIENTO = (VISITA_TIPO === 'levantamiento');
 const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
 const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
@@ -1865,6 +2069,22 @@ function renderPlantillas(mid){
   const eq = EQUIPOS_IDX[mid];
   const pls = PLANTILLAS_POR_MAQUINA[mid] || [];
   if (!eq) return;
+  // ── 2026-05-19 (Daniel) — En OT tipo levantamiento, mostramos un
+  //    banner que avisa al técnico que sus fotos van a la ficha técnica.
+  // ── 2026-05-20 (Daniel) — El botón "Ver ficha técnica" se movió a la
+  //    tarjeta de cada equipo en la vista 1 (lista). El header de la vista
+  //    2 ya no lo lleva para evitar duplicación.
+  const levBannerHtml = ES_LEVANTAMIENTO
+    ? `<div class="lev-banner-ficha" role="status" aria-live="polite">
+         <i class="bi bi-camera-fill"></i>
+         <div>
+           <strong>Levantamiento de ficha</strong>
+           <div>Las fotos y datos que captures aquí van a formar parte de la
+             <strong>ficha técnica permanente</strong> del equipo
+             ${_escapeHtml(eq.nombre || ('#' + eq.id))}.</div>
+         </div>
+       </div>`
+    : '';
   // Hero
   document.getElementById('plHero').innerHTML = `
     <div class="h-foto" ${eq.foto_url ? `style="background-image:url('${_escapeAttr(eq.foto_url)}')"` : ''}>
@@ -1878,7 +2098,8 @@ function renderPlantillas(mid){
         ${eq.marca || eq.modelo ? `<br><i class="bi bi-tools"></i> ${_escapeHtml(eq.marca || '')} ${_escapeHtml(eq.modelo || '')}` : ''}
         ${eq.ubicacion_sala ? `<br><i class="bi bi-geo-alt"></i> ${_escapeHtml(eq.ubicacion_sala)}` : ''}
       </div>
-    </div>`;
+    </div>
+    ${levBannerHtml}`;
 
   // Lista de plantillas
   const cont = document.getElementById('plList');
@@ -1946,8 +2167,37 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       const _minChars = t.obligatoria ? 10 : 3;
       const _curTxt = (valor && valor.texto) ? String(valor.texto) : '';
       const _curLen = _curTxt.trim().length;
+      // ── 2026-05-19 (Daniel) — Detectar inputs que piden serial/N° serie.
+      //    Si la OT es levantamiento Y el título sugiere serial, mostramos
+      //    un banner azul con "Sugerir serial registrado" que precarga el
+      //    valor actual de mant_maquinas.serie (al guardar pisa la ficha).
+      const _esSerialInput = _esCampoSerial(t.titulo || '');
+      let _serialBannerHtml = '';
+      if (ES_LEVANTAMIENTO && _esSerialInput && mid){
+        const eq = EQUIPOS_IDX[String(mid)] || {};
+        const serieReg = (eq.serie || '').trim();
+        _serialBannerHtml = `<div class="tx-serial-aviso">
+          <i class="bi bi-info-circle-fill"></i>
+          <div class="meta">
+            <strong>Serial actual en ficha:</strong>
+            ${serieReg
+              ? `<code style="background:#fff;padding:1px 5px;border-radius:4px;border:1px solid #bfdbfe">${_escapeHtml(serieReg)}</code>`
+              : '<em style="color:#6b7280">sin registrar</em>'}
+            <div style="font-size:.69rem;color:#475569;margin-top:2px">
+              Si lo escribes igual, se mantiene. Si lo cambias, se actualiza la ficha al cerrar la OT.
+            </div>
+          </div>
+          ${serieReg ? `<button type="button" class="btn-sugerir-serial"
+            ${bloqueada ? 'disabled' : ''}
+            data-serial="${_escapeAttr(serieReg)}"
+            onclick="sugerirSerialRegistrado(${t.id}, this.dataset.serial, ${mid}, ${pid})">
+            <i class="bi bi-magic"></i>Usar este serial
+          </button>` : ''}
+        </div>`;
+      }
       ctrlHtml = `<div class="ctrl">
-        <input type="text" placeholder="Escribe tu respuesta…"
+        ${_serialBannerHtml}
+        <input type="text" id="texto-input-${t.id}" placeholder="Escribe tu respuesta…"
           value="${_escapeAttr(_curTxt)}"
           ${bloqueada ? 'disabled' : ''}
           oninput="_textoCharFeedback(this, ${t.id}, ${_minChars})"
@@ -2038,7 +2288,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
         ${_gpsValorRenderResultado(valor)}
       </div>`;
       break;
-    case 'foto':
+    case 'foto': {
       // ── FIX 2026-05-17 v2 — UN solo botón rojo grande + sheet de elección ──
       // Mobile: 1 botón "Agregar foto" → abre bottom-sheet con 2 opciones
       // (Cámara / Galería). El técnico decide ahí (ilusActionSheet).
@@ -2046,7 +2296,18 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       // Los 2 <input type=file> quedan ocultos y se disparan via click()
       // según lo que elija el técnico en el sheet.
       // ────────────────────────────────────────────────────────────
+      // ── 2026-05-19 (Daniel) — Aviso visual: foto va a la ficha técnica.
+      //    Solo se muestra en OTs tipo levantamiento, justo arriba del botón
+      //    para que el técnico entienda que NO es solo evidencia de la OT.
+      const _fotoAvisoHtml = (ES_LEVANTAMIENTO && mid)
+        ? `<div class="tx-foto-aviso-ficha" role="status">
+            <i class="bi bi-camera-fill"></i>
+            <div>Esta foto se asignará a la <strong>ficha técnica del equipo</strong>
+              al cerrar la OT.</div>
+          </div>`
+        : '';
       ctrlHtml = `<div class="ctrl">
+        ${_fotoAvisoHtml}
         {# Desktop: zona con drag&drop real #}
         <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
           style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
@@ -2095,6 +2356,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
         <div id="t-fotos-${t.id}" class="foto-result"></div>
       </div>`;
       break;
+    }
   }
 
   const isCheckType = (tipo === 'check');
@@ -2207,6 +2469,198 @@ function refreshPills(btn, group){
   const cont = btn.closest('.tx-btn-group');
   cont.querySelectorAll('.tx-btn-pill').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+}
+
+// ════════════════════════════════════════════════════════
+// 2026-05-19 (Daniel) — INTEGRACIÓN LEVANTAMIENTO ↔ FICHA TÉCNICA
+// Helpers que conectan el levantamiento fotográfico con la ficha
+// permanente del equipo (mant_maquinas).
+// ════════════════════════════════════════════════════════
+
+// Heurística: detecta si el título de una tarea pide un serial/N° serie.
+// Cubre las variantes castellano + inglés que usa Daniel en las plantillas.
+function _esCampoSerial(titulo){
+  if (!titulo) return false;
+  const t = String(titulo).toLowerCase();
+  return /(\bserie\b|\bserial\b|n[°º]?\s*serie|sn\b|\bs\/n\b|numero\s+de\s+serie|n[uú]mero\s+de\s+serie)/i.test(t);
+}
+
+// Sugiere el serial actualmente registrado en mant_maquinas (que vino en
+// EQUIPOS_IDX). Al click: precarga el input + dispara guardado normal.
+// Importante: NO modifica nada en BD directamente — el serial pisará la
+// ficha técnica recién cuando se cierre el levantamiento (vía
+// _promover_levantamiento_a_maquina, que ya audita los cambios).
+async function sugerirSerialRegistrado(tid, serieReg, mid, pid){
+  const inp = document.getElementById('texto-input-' + tid);
+  if (!inp){
+    ilusToast('No se encontró el campo de serial', { type: 'error' });
+    return;
+  }
+  if (!serieReg){
+    ilusToast('No hay serial registrado en la ficha', { type: 'warning' });
+    return;
+  }
+  // Si ya hay valor y es distinto, preguntar antes de pisarlo
+  const curVal = (inp.value || '').trim();
+  if (curVal && curVal !== serieReg){
+    const ok = await ilusConfirm({
+      title: 'Reemplazar serial',
+      message: '¿Reemplazar el valor actual con el serial registrado en la ficha?',
+      sub: `<strong>Actual:</strong> ${_escapeHtml(curVal)}<br><strong>Registrado:</strong> ${_escapeHtml(serieReg)}`,
+      subHtml: true,
+      okLabel: 'Sí, usar el registrado',
+      cancelLabel: 'No, mantener actual',
+    });
+    if (!ok) return;
+  }
+  inp.value = serieReg;
+  inp.focus();
+  // Disparar el guardado normal (texto onblur) y feedback visual
+  if (typeof _textoOnBlur === 'function'){
+    _textoOnBlur(inp, tid, mid, pid, 3);
+  } else {
+    inp.dispatchEvent(new Event('blur'));
+  }
+  ilusToast('✓ Serial sugerido aplicado', { type: 'success' });
+}
+
+// Abre modal con la ficha técnica del equipo. Carga datos en vivo
+// vía /mantenciones/api/maquinas/<mid>/ficha-tecnica. Read-only por
+// default: el técnico VALIDA. Si necesita editar la ficha completa,
+// usa el link "Ver ficha completa" del footer.
+async function abrirModalFichaTecnica(mid){
+  const modalEl = document.getElementById('modalFichaTecnica');
+  if (!modalEl){ ilusToast('Modal no disponible', { type: 'error' }); return; }
+  const body = document.getElementById('modalFichaBody');
+  const linkFull = document.getElementById('modalFichaAbrirFull');
+  // Estado loading
+  body.innerHTML = `<div class="text-center text-muted py-5">
+      <div class="spinner-border" role="status" style="color:#dc2626"></div>
+      <div class="mt-2 small">Cargando ficha técnica…</div>
+    </div>`;
+  if (linkFull) linkFull.href = '/mantenciones/maquinas/' + mid;
+  // Abrir Bootstrap modal
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  modal.show();
+  try {
+    const r = await fetch('/mantenciones/api/maquinas/' + mid + '/ficha-tecnica', {
+      headers: { 'Accept': 'application/json' },
+    });
+    const data = await r.json();
+    if (!data.ok){
+      body.innerHTML = `<div class="alert alert-warning" style="margin:0">
+        <i class="bi bi-exclamation-triangle me-2"></i>${_escapeHtml(data.error || 'No se pudo cargar la ficha')}
+      </div>`;
+      return;
+    }
+    body.innerHTML = _renderFichaTecnicaModalBody(data);
+  } catch(err){
+    console.error('[abrirModalFichaTecnica]', err);
+    body.innerHTML = `<div class="alert alert-danger" style="margin:0">
+      <i class="bi bi-x-circle me-2"></i>Error de conexión al cargar la ficha técnica.
+    </div>`;
+  }
+}
+
+function _renderFichaTecnicaModalBody(data){
+  const e = data.equipo || {};
+  const fotos = data.fotos || [];
+  const contratos = data.contratos || [];
+  const ots = data.ots || [];
+  const stats = data.stats || {};
+
+  // Helper: campo de la ficha (label + value, o "—" si vacío)
+  const row = (lbl, val) => {
+    const v = (val === null || val === undefined || val === '') ? null : val;
+    return `<div class="ficha-row">
+      <div class="lbl">${_escapeHtml(lbl)}</div>
+      <div class="val ${v ? '' : 'muted'}">${v ? _escapeHtml(String(v)) : '—'}</div>
+    </div>`;
+  };
+
+  // Datos del cliente (header)
+  const clienteHtml = `
+    <div style="background:#0a0a0a;color:#fff;padding:10px 14px;border-radius:10px;margin-bottom:14px">
+      <div style="font-size:.7rem;opacity:.7;letter-spacing:.05em;text-transform:uppercase">Cliente</div>
+      <div style="font-weight:800;font-size:1rem">${_escapeHtml(e.razon_social || '—')}</div>
+      <div style="font-size:.75rem;opacity:.85;margin-top:2px">
+        ${e.cli_rut ? 'RUT: ' + _escapeHtml(e.cli_rut) : ''}
+        ${e.cli_direccion ? ' · ' + _escapeHtml(e.cli_direccion) : ''}
+        ${e.cli_comuna ? ', ' + _escapeHtml(e.cli_comuna) : ''}
+      </div>
+    </div>`;
+
+  // Foto principal + datos esenciales
+  const fotoUrl = e.foto_url || '';
+  const fotoHtml = fotoUrl
+    ? `<img src="${_escapeAttr(fotoUrl)}" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">`
+    : `<div style="width:100%;height:120px;background:#f3f4f6;border:1px dashed #cbd5e1;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#94a3b8"><i class="bi bi-image" style="font-size:2rem"></i></div>`;
+
+  const dataHtml = `
+    <div style="margin-bottom:14px">
+      ${fotoHtml}
+      <div style="margin-top:10px;font-weight:800;font-size:1.05rem;color:#0a0a0a">${_escapeHtml(e.nombre || ('Equipo #' + e.id))}</div>
+      ${e.sku ? `<div style="font-size:.78rem;color:#6b7280">SKU: ${_escapeHtml(e.sku)}</div>` : ''}
+    </div>
+    <div class="ficha-grid">
+      ${row('Serial / N° Serie', e.serie)}
+      ${row('Marca', e.marca)}
+      ${row('Modelo', e.modelo)}
+      ${row('Año fabricación', e.anio_fabricacion)}
+      ${row('Voltaje', e.voltaje)}
+      ${row('Ubicación', e.ubicacion_sala || e.ubicacion_cliente)}
+      ${row('Familia', e.familia_equipo)}
+      ${row('Fecha instalación', e.fecha_instalacion)}
+      ${row('Fin garantía', e.fecha_fin_garantia)}
+      ${row('Última intervención', e.ultima_intervencion)}
+      ${row('Estado equipo', e.estado)}
+      ${row('Estado operativo', e.estado_op)}
+      ${row('Doc origen', e.doc_origen)}
+      ${row('Visitas totales', stats.total_ots)}
+    </div>`;
+
+  // Observaciones (puede ser largo)
+  const obsHtml = e.observaciones && e.observaciones.trim()
+    ? `<div class="ficha-section-title"><i class="bi bi-chat-square-text-fill"></i>Observaciones acumuladas</div>
+       <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;padding:10px;font-size:.78rem;color:#374151;white-space:pre-wrap;max-height:140px;overflow:auto">${_escapeHtml(e.observaciones)}</div>`
+    : '';
+
+  // Fotos previas (galería compacta)
+  const fotosHtml = fotos.length
+    ? `<div class="ficha-section-title"><i class="bi bi-images"></i>Fotos previas en ficha (${fotos.length})</div>
+       <div class="ficha-fotos">
+         ${fotos.map(f => `<img src="${_escapeAttr(f.url)}" alt="" title="${_escapeAttr(f.descripcion || '')}" loading="lazy">`).join('')}
+       </div>`
+    : `<div class="ficha-section-title"><i class="bi bi-images"></i>Fotos previas en ficha</div>
+       <div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:.78rem;color:#7c2d12">
+         Sin fotos previas. Las que tomes aquí serán las primeras de la ficha.
+       </div>`;
+
+  // Contratos
+  const contratosHtml = contratos.length
+    ? `<div class="ficha-section-title"><i class="bi bi-file-earmark-text-fill"></i>Contratos del cliente</div>
+       ${contratos.map(c => `<div class="ficha-row" style="margin-bottom:5px">
+          <div class="lbl">${_escapeHtml(c.estado || 'vigente')}${c.es_indefinido ? ' · indefinido' : ''}</div>
+          <div class="val">${_escapeHtml(c.nombre || ('Contrato #' + c.id))}</div>
+          ${c.fecha_inicio ? `<div style="font-size:.7rem;color:#6b7280">Desde ${_escapeHtml(c.fecha_inicio)}${c.fecha_vencimiento ? ' hasta ' + _escapeHtml(c.fecha_vencimiento) : ''}</div>` : ''}
+        </div>`).join('')}`
+    : '';
+
+  // Últimas OTs
+  const otsHtml = ots.length
+    ? `<div class="ficha-section-title"><i class="bi bi-clock-history"></i>Últimas OTs (${ots.length})</div>
+       <div class="ficha-ots">
+         ${ots.map(o => `<a class="ot-row" href="${_escapeAttr(o.url)}" target="_blank" rel="noopener">
+            <div>
+              <strong>${_escapeHtml(o.numero_ot)}</strong>
+              <span class="ot-meta">· ${_escapeHtml(o.tipo)} · ${_escapeHtml(o.estado)}</span>
+            </div>
+            <div class="ot-meta">${_escapeHtml(o.fecha)} ${o.tecnico ? '· ' + _escapeHtml(o.tecnico) : ''}</div>
+          </a>`).join('')}
+       </div>`
+    : '';
+
+  return clienteHtml + dataHtml + obsHtml + fotosHtml + contratosHtml + otsHtml;
 }
 
 // ════════════════════════════════════════════════════════
@@ -3010,6 +3464,12 @@ async function subirFotoTarea(tid, input, mid, pid){
   const fd = new FormData();
   fd.append('foto', file);
   fd.append('tarea_id', String(tid));
+  // 2026-05-19 (Daniel) — vínculo formal foto→máquina para que al cerrar
+  // un levantamiento, la foto se asigne automáticamente a la ficha técnica.
+  // Si la OT es tipo `levantamiento`, además marcamos tipo_foto para la
+  // promoción posterior (ver _promover_levantamiento_a_maquina).
+  if (mid) fd.append('maquina_id', String(mid));
+  if (VISITA_TIPO === 'levantamiento') fd.append('tipo_foto', 'levantamiento');
 
   const toastSub = ilusToast('Subiendo foto…', { type:'info', duration: 6000 });
 

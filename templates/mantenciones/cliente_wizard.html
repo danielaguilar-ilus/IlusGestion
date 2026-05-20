@@ -2004,8 +2004,9 @@ async function buscarErpEq() {
             <th style="width:130px"></th></tr>
       </thead><tbody>`;
   data.documentos.forEach(d => {
-    const rutDoc = (d.rut||'').replace(/[.\-\s]/g,'');
-    const rutMatch = rutWizard && rutDoc && (rutDoc.slice(0,-1) === rutWizard.slice(0,-1) || rutDoc === rutWizard);
+    // FIX 2026-05-19: usar ilusRutsMatch para tolerar DV presente/ausente
+    // (ej: "78.129.118-8" vs "78129118" deben coincidir).
+    const rutMatch = ilusRutsMatch(d.rut, rutWizard);
     const total = d.valor_total ? '$' + Math.round(d.valor_total).toLocaleString('es-CL') : '—';
     html += `<tr>
       <td><span class="badge bg-secondary" style="font-size:.62rem">${_escHtml(d.tido_display)}</span></td>
@@ -2111,10 +2112,11 @@ async function wzAbrirModalProds(doc) {
   document.getElementById('wzpBtnImp').disabled = true;
   document.getElementById('wzpBtnCount').textContent = '0';
 
-  // Validar mismatch RUT
-  const rutWiz = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'').toUpperCase();
-  const rutDoc = (doc.rut||'').replace(/[.\-\s]/g,'').toUpperCase();
-  const noCoincide = rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc;
+  // Validar mismatch RUT — tolerante a DV presente/ausente.
+  // FIX 2026-05-19: ilusRutsMatch compara cuerpos correctamente
+  // aunque uno traiga DV y el otro no.
+  const rutWiz = (document.getElementById('s1_rut')?.value || '');
+  const noCoincide = !!rutWiz && !!doc.rut && !ilusRutsMatch(doc.rut, rutWiz);
   const mEl = document.getElementById('wzpMismatch');
   if (noCoincide) {
     window._wzMismatch = { rutDoc:doc.rut, tido:doc.tido, nudo:doc.nudo, confirmado:false, motivo:'' };
@@ -2295,11 +2297,12 @@ async function importarEq() {
   }
 
   // Validar mismatch RUT por línea (documentos pueden traer rut)
-  const rutWiz = (document.getElementById('s1_rut')?.value || '').replace(/[.\-\s]/g,'');
+  // FIX 2026-05-19: ilusRutsMatch maneja DV presente/ausente
+  const rutWiz = (document.getElementById('s1_rut')?.value || '');
   let justifMismatch = '';
   for (const [, l] of lineas) {
-    const rutDoc = (l.rut || '').replace(/[.\-\s]/g,'');
-    if (rutWiz && rutDoc && rutWiz.slice(0,-1) !== rutDoc.slice(0,-1) && rutWiz !== rutDoc) {
+    if (rutWiz && l.rut && !ilusRutsMatch(l.rut, rutWiz)) {
+      const rutDoc = (l.rut || '').replace(/[.\s]/g,'');
       const motivo = await ilusPrompt({
         title: '⚠️ RUT distinto en documento',
         message: `Doc ${l.doc_origen||''} · RUT documento: ${rutDoc} · RUT cliente: ${rutWiz}`,

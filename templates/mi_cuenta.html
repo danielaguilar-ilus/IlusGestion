@@ -411,6 +411,15 @@ function evaluarPw() {
   if (!c) { m.textContent = ' '; m.style.color = '#6b7280'; }
   else if (c === v) { m.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Coinciden'; m.style.color = '#16a34a'; }
   else { m.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>No coinciden'; m.style.color = '#dc2626'; }
+
+  // 2026-05-19: botón verde cuando TODAS las reglas pasan + coinciden las
+  // dos contraseñas. Antes quedaba rojo aunque todo estuviera OK.
+  const btnSave = document.getElementById('btnSavePw');
+  if (btnSave) {
+    const allOk = score === 5 && v && c && v === c;
+    btnSave.classList.toggle('btn-danger',  !allOk);
+    btnSave.classList.toggle('btn-success',  allOk);
+  }
 }
 
 async function cambiarPassword() {
