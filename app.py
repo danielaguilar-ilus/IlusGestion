@@ -13474,7 +13474,12 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             COALESCE(h.VANEDO, 0) AS VANEDO,
             COALESCE(h.VABRDO, 0) AS VABRDO,
             LTRIM(RTRIM(COALESCE(en.CMEN, ''))) AS COMUNA,
-            LTRIM(RTRIM(COALESCE(h.NUDGIA, ''))) AS NUDGIA,
+            -- NUDGIA no existe como columna directa en MAEEDO de SQL Server.
+            -- 2026-05-20: dejamos string vacío. La lógica Python clasifica como
+            -- 'Pendiente' (sin guía) cuando NUDGIA='', y como 'Despachado parcial'
+            -- solo cuando hay valor. Para detectar guía-relacionada habría que
+            -- hacer JOIN a MAEDOREL o consultar otra tabla — fuera de scope ahora.
+            '' AS NUDGIA,
             (SELECT COALESCE(SUM(d.CAPRCO1), 0)
                FROM MAEDDO d
               WHERE d.IDMAEEDO = h.IDMAEEDO
