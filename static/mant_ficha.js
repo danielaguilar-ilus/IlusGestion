@@ -1726,6 +1726,514 @@ async function verAuditSerie(mid) {
 
 
 // ════════════════════════════════════════════════════════════════════
+// FICHA TÉCNICA COMPLETA — Modal con stats + visitas + fotos + alertas
+// Daniel 2026-05-21: trazabilidad profunda por equipo
+// ════════════════════════════════════════════════════════════════════
+let _modalFichaTec = null;
+let _ftCurrentMid = null;
+let _ftCurrentData = null;
+
+async function verFichaTecnicaEquipo(mid, nombre) {
+  _ftCurrentMid = mid;
+  _ftCurrentData = null;
+  if (!_modalFichaTec) {
+    _modalFichaTec = new bootstrap.Modal(document.getElementById('modalFichaTecnica'));
+  }
+  document.getElementById('ft_eq_nombre').textContent = nombre || `Equipo #${mid}`;
+  document.getElementById('ft_loading').style.display = 'block';
+  document.getElementById('ft_content').style.display = 'none';
+  document.getElementById('ft_edit_panel').style.display = 'none';
+  // Resetear tab activo a Visitas
+  try {
+    document.querySelectorAll('#ftTabs .nav-link').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#modalFichaTecnica .tab-pane').forEach(p => p.classList.remove('show','active'));
+    document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabVisitas"]').classList.add('active');
+    document.getElementById('ftTabVisitas').classList.add('show','active');
+  } catch(_){}
+  _modalFichaTec.show();
+
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/ficha-tecnica`);
+    const d = await r.json();
+    if (!d.ok) {
+      document.getElementById('ft_loading').innerHTML =
+        `<div class="alert alert-danger m-4">${escHtml(d.error || 'No se pudo cargar la ficha')}</div>`;
+      return;
+    }
+    _ftCurrentData = d;
+    _ftRender(d);
+    document.getElementById('ft_loading').style.display = 'none';
+    document.getElementById('ft_content').style.display = 'block';
+  } catch(e) {
+    document.getElementById('ft_loading').innerHTML =
+      `<div class="alert alert-danger m-4">Error de red: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _ftRender(d) {
+  const eq = d.equipo || {};
+  const stats = d.stats || {};
+  const alertas = d.alertas || [];
+
+  // ── Header con foto + datos clave ──
+  const fotoEl = document.getElementById('ft_foto_principal');
+  if (eq.foto_principal_url || eq.foto_url) {
+    fotoEl.innerHTML = `<img src="${escAttr(eq.foto_principal_url || eq.foto_url)}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+  } else {
+    fotoEl.innerHTML = `<i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>`;
+  }
+  document.getElementById('ft_eq_titulo').textContent = eq.nombre || '—';
+  const subParts = [];
+  if (eq.marca) subParts.push(eq.marca);
+  if (eq.modelo) subParts.push(eq.modelo);
+  if (eq.sku) subParts.push(`SKU ${eq.sku}`);
+  document.getElementById('ft_eq_subtitulo').textContent = subParts.join(' · ') || 'Sin datos';
+
+  // Chips: serie, estado, ubicación
+  const chipsHtml = [];
+  if (eq.serie_actual || eq.serie) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:6px 10px;font-size:.74rem"><i class="bi bi-upc me-1"></i>Serie: <span style="font-family:monospace;font-weight:700">${escHtml(eq.serie_actual || eq.serie)}</span></span>`);
+  const estadoColor = {activo:'#16a34a', inactivo:'#6b7280', baja:'#dc2626'}[(eq.estado||'').toLowerCase()] || '#6b7280';
+  chipsHtml.push(`<span class="badge" style="background:${estadoColor}15;color:${estadoColor};border:1px solid ${estadoColor}50;padding:6px 10px;font-size:.74rem"><i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>${escHtml((eq.estado||'activo').toUpperCase())}</span>`);
+  if (eq.ubicacion_sala) chipsHtml.push(`<span class="badge" style="background:#dbeafe;color:#1e40af;padding:6px 10px;font-size:.74rem"><i class="bi bi-geo-alt me-1"></i>${escHtml(eq.ubicacion_sala)}</span>`);
+  if (eq.anio_fabricacion) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;padding:6px 10px;font-size:.74rem"><i class="bi bi-calendar3 me-1"></i>${eq.anio_fabricacion}</span>`);
+  document.getElementById('ft_eq_chips').innerHTML = chipsHtml.join('');
+
+  document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
+
+  // ── Alertas ──
+  const alertasEl = document.getElementById('ft_alertas');
+  if (alertas.length) {
+    alertasEl.innerHTML = alertas.map(a => `
+      <span class="ft-alert-chip ft-alert-${escAttr(a.severidad || 'info')}">
+        <i class="bi bi-${escAttr(a.icono || 'info-circle')}"></i>
+        ${escHtml(a.texto)}
+      </span>
+    `).join('');
+    alertasEl.style.display = 'block';
+  } else {
+    alertasEl.innerHTML = '';
+    alertasEl.style.display = 'none';
+  }
+
+  // ── Stats cards ──
+  _ftRenderStat('visitas', stats.n_visitas_total || 0, 'Visitas totales');
+  _ftRenderStat('preventivas', stats.n_visitas_preventivas || 0, 'Preventivas', stats.n_visitas_preventivas ? 'success' : '');
+  _ftRenderStat('correctivas', stats.n_visitas_correctivas || 0, 'Correctivas', stats.n_visitas_correctivas ? 'warn' : '');
+  const diasUlt = stats.dias_desde_ultima_visita;
+  _ftRenderStat('dias_ultima',
+    diasUlt !== null && diasUlt !== undefined ? `${diasUlt}d` : '—',
+    'Desde última visita',
+    diasUlt !== null && diasUlt !== undefined && diasUlt > 120 ? 'warn' : ''
+  );
+  _ftRenderStat('edad',
+    stats.edad_anios !== null && stats.edad_anios !== undefined ? `${stats.edad_anios}a` : '—',
+    'Edad equipo'
+  );
+  const diasGar = stats.dias_en_garantia;
+  let garLabel = '—';
+  let garCls = '';
+  if (diasGar !== null && diasGar !== undefined) {
+    if (diasGar < 0) { garLabel = `Vencida`; garCls = 'danger'; }
+    else if (diasGar <= 30) { garLabel = `${diasGar}d`; garCls = 'warn'; }
+    else { garLabel = `${diasGar}d`; garCls = 'success'; }
+  }
+  _ftRenderStat('garantia', garLabel, 'Garantía', garCls);
+
+  // ── Badges en tabs ──
+  document.getElementById('ft_bdg_visitas').textContent = (d.historial_visitas || []).length;
+  document.getElementById('ft_bdg_fotos').textContent = (d.fotos_galeria || []).length;
+  document.getElementById('ft_bdg_seriales').textContent = (d.historial_seriales || []).length;
+  document.getElementById('ft_bdg_estado').textContent = (d.historial_estado || []).length;
+  document.getElementById('ft_bdg_contratos').textContent = (d.contratos_relacionados || []).length;
+  // 2026-05-21 (Daniel) — Revisiones por equipo (trazabilidad profunda)
+  const _bdgRev = document.getElementById('ft_bdg_revisiones');
+  if (_bdgRev) _bdgRev.textContent = (d.revisiones_timeline || []).length;
+
+  // ── Contenido de tabs ──
+  _ftRenderVisitas(d.historial_visitas || []);
+  _ftRenderFotos(d.fotos_galeria || []);
+  _ftRenderSeriales(d.historial_seriales || []);
+  _ftRenderEstado(d.historial_estado || []);
+  _ftRenderContratos(d.contratos_relacionados || []);
+  _ftRenderRevisiones(d.revisiones_timeline || [], d.revisiones_counters || {});
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 2026-05-21 (Daniel) — Tab "Revisiones" — timeline de cada vez que
+// este equipo apareció en una visita, con estado de revisión
+// (verificado / con_cambios / saltado / falla_detectada).
+// Da trazabilidad completa: "Revisado 5 veces, 1 saltado, 4 verificado".
+// ════════════════════════════════════════════════════════════════════
+function _ftRenderRevisiones(revisiones, counters) {
+  const el = document.getElementById('ftTabRevisiones');
+  if (!el) return;
+  if (!revisiones.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-clipboard-pulse" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin revisiones registradas</div>
+      <div class="small mt-1">Cuando un técnico revise este equipo en una OT, se mostrará aquí.</div>
+    </div>`;
+    return;
+  }
+  // ── Header con contadores ──
+  const c = counters || {};
+  const total = c.total || revisiones.length;
+  const _statCard = (cls, icon, n, label) => `
+    <div class="ft-rev-stat ${cls}">
+      <div class="ft-rev-stat-icon"><i class="bi bi-${icon}"></i></div>
+      <div>
+        <div class="ft-rev-stat-num">${n || 0}</div>
+        <div class="ft-rev-stat-lbl">${escHtml(label)}</div>
+      </div>
+    </div>`;
+  const headerHtml = `
+    <div class="ft-rev-counters">
+      ${_statCard('all',           'list-check',              total,                 'Revisiones')}
+      ${_statCard('verificado',    'check-circle-fill',       c.verificado || 0,     'Verificadas')}
+      ${_statCard('con_cambios',   'pencil-fill',             c.con_cambios || 0,    'Con cambios')}
+      ${_statCard('saltado',       'skip-forward-fill',       c.saltado || 0,        'Saltadas')}
+      ${_statCard('falla',         'exclamation-triangle-fill', c.falla_detectada || 0, 'Fallas detectadas')}
+    </div>
+    <style>
+      .ft-rev-counters{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+        gap:8px;margin-bottom:16px;padding:8px 0;}
+      .ft-rev-stat{display:flex;gap:8px;align-items:center;padding:9px 11px;
+        border-radius:10px;border:1px solid #e5e7eb;background:#fafafa;}
+      .ft-rev-stat-icon{width:28px;height:28px;border-radius:7px;display:flex;
+        align-items:center;justify-content:center;color:#fff;font-size:.95rem;flex-shrink:0;}
+      .ft-rev-stat.all       .ft-rev-stat-icon{background:#374151}
+      .ft-rev-stat.verificado .ft-rev-stat-icon{background:#16a34a}
+      .ft-rev-stat.con_cambios .ft-rev-stat-icon{background:#3b82f6}
+      .ft-rev-stat.saltado    .ft-rev-stat-icon{background:#f59e0b}
+      .ft-rev-stat.falla      .ft-rev-stat-icon{background:#dc2626}
+      .ft-rev-stat-num{font-weight:800;font-size:1.1rem;color:#0f172a;line-height:1}
+      .ft-rev-stat-lbl{font-size:.68rem;color:#6b7280;margin-top:2px;text-transform:uppercase;letter-spacing:.03em}
+      .ft-rev-item{display:flex;gap:12px;padding:12px;border:1px solid #e5e7eb;
+        border-radius:11px;margin-bottom:10px;background:#fff;}
+      .ft-rev-item.saltado{border-left:3px solid #f59e0b;background:#fffbeb}
+      .ft-rev-item.falla_detectada{border-left:3px solid #dc2626;background:#fef2f2}
+      .ft-rev-item.con_cambios{border-left:3px solid #3b82f6}
+      .ft-rev-item.verificado{border-left:3px solid #16a34a}
+      .ft-rev-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+        justify-content:center;font-size:1rem;color:#fff;flex-shrink:0;}
+      .ft-rev-info{flex:1;min-width:0}
+      .ft-rev-title{font-weight:700;color:#0f172a;font-size:.92rem;line-height:1.2}
+      .ft-rev-meta{font-size:.72rem;color:#6b7280;margin-top:3px}
+      .ft-rev-obs{margin-top:6px;font-size:.78rem;color:#374151;background:#f9fafb;
+        padding:7px 9px;border-radius:7px;border-left:2px solid #d1d5db;}
+      .ft-rev-link{font-size:.74rem;color:#dc2626;font-weight:600;text-decoration:none;}
+      .ft-rev-link:hover{text-decoration:underline}
+    </style>
+  `;
+
+  // ── Items ──
+  const items = revisiones.map(r => {
+    const estado = (r.estado_revision || 'verificado').toLowerCase();
+    const iconBg = {
+      'verificado':       '#16a34a',
+      'con_cambios':      '#3b82f6',
+      'saltado':          '#f59e0b',
+      'falla_detectada':  '#dc2626',
+    }[estado] || '#6b7280';
+    const iconName = {
+      'verificado':       'check-circle-fill',
+      'con_cambios':      'pencil-fill',
+      'saltado':          'skip-forward-fill',
+      'falla_detectada':  'exclamation-triangle-fill',
+    }[estado] || 'circle';
+    const estadoLabel = {
+      'verificado':       'Verificado',
+      'con_cambios':      'Con cambios',
+      'saltado':          `Saltado${r.razon_saltado ? ' · ' + r.razon_saltado.replace(/_/g,' ') : ''}`,
+      'falla_detectada':  'Falla detectada',
+    }[estado] || estado;
+    const fecha = r.revisado_at || r.fecha || '';
+    const tipoBadge = r.tipo_visita
+      ? `<span class="badge bg-light text-dark me-1" style="font-size:.66rem;font-weight:600">${escHtml(r.tipo_visita)}</span>`
+      : '';
+    return `
+      <div class="ft-rev-item ${estado}">
+        <div class="ft-rev-icon" style="background:${iconBg}">
+          <i class="bi bi-${iconName}"></i>
+        </div>
+        <div class="ft-rev-info">
+          <div class="ft-rev-title">
+            ${escHtml(estadoLabel)}
+            ${r.fotos_count ? `<span class="badge bg-light text-dark ms-1" style="font-size:.66rem"><i class="bi bi-camera"></i> ${r.fotos_count}</span>` : ''}
+          </div>
+          <div class="ft-rev-meta">
+            ${tipoBadge}
+            <i class="bi bi-receipt"></i> ${escHtml(r.numero_ot || '')}
+            ${fecha ? ` · <i class="bi bi-calendar3"></i> ${escHtml(fecha)}` : ''}
+            ${r.revisado_por ? ` · <i class="bi bi-person"></i> ${escHtml(r.revisado_por)}` : ''}
+          </div>
+          ${r.observacion ? `<div class="ft-rev-obs">${escHtml(r.observacion)}</div>` : ''}
+          ${r.url_ot ? `<a href="${escAttr(r.url_ot)}" class="ft-rev-link mt-1 d-inline-block" target="_blank" rel="noopener">
+            <i class="bi bi-box-arrow-up-right"></i> Ver OT
+          </a>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = headerHtml + items;
+}
+
+function _ftRenderStat(key, val, label, cls) {
+  const el = document.querySelector(`.ft-stat[data-key="${key}"]`);
+  if (!el) return;
+  el.className = `ft-stat${cls ? ' ft-stat-' + cls : ''}`;
+  el.dataset.key = key;
+  el.innerHTML = `
+    <div class="ft-stat-val">${escHtml(String(val))}</div>
+    <div class="ft-stat-lbl">${escHtml(label)}</div>
+  `;
+}
+
+function _ftRenderVisitas(visitas) {
+  const el = document.getElementById('ftTabVisitas');
+  if (!visitas.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-calendar-x" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin visitas registradas</div>
+      <div class="small mt-1">Cuando este equipo aparezca en una OT, se mostrará aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = visitas.map(v => {
+    const tipoLower = (v.tipo || '').toLowerCase();
+    const estadoBadge = {
+      'cerrada':     '<span class="badge" style="background:#dcfce7;color:#166534">Cerrada</span>',
+      'completada':  '<span class="badge" style="background:#dcfce7;color:#166534">Completada</span>',
+      'en_curso':    '<span class="badge" style="background:#fef3c7;color:#92400e">En curso</span>',
+      'programada':  '<span class="badge" style="background:#dbeafe;color:#1e40af">Pendiente</span>',
+      'cancelada':   '<span class="badge" style="background:#fee2e2;color:#991b1b">Cancelada</span>',
+    }[v.estado] || `<span class="badge bg-secondary">${escHtml(v.estado||'—')}</span>`;
+    const fact = v.factura ? `<span class="badge bg-light text-dark ms-1" title="Factura ERP" style="font-family:monospace">${escHtml(v.factura.tido)} ${escHtml(v.factura.nudo)}</span>` : '';
+    return `
+      <div class="ft-timeline-item ${tipoLower}">
+        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+          <div style="flex:1;min-width:200px">
+            <div class="fw-bold" style="font-size:.92rem">
+              <a href="${escAttr(v.url)}" target="_blank" class="text-decoration-none text-dark" style="font-family:monospace">${escHtml(v.numero_ot)}</a>
+              ${v.titulo ? ` · ${escHtml(v.titulo)}` : ''}
+            </div>
+            <div class="d-flex gap-2 flex-wrap mt-1" style="font-size:.78rem;color:#6b7280">
+              <span><i class="bi bi-calendar3 me-1"></i>${escHtml(v.fecha || '—')}</span>
+              <span><i class="bi bi-tag me-1"></i>${escHtml(v.tipo || '—')}</span>
+              <span><i class="bi bi-person me-1"></i>${escHtml(v.tecnico || '—')}</span>
+              ${v.fotos_count ? `<span style="color:#16a34a"><i class="bi bi-images me-1"></i>${v.fotos_count} foto(s)</span>` : ''}
+              ${fact}
+            </div>
+            ${v.observaciones ? `<div class="small mt-1" style="color:#374151;background:#f9fafb;padding:6px 10px;border-radius:6px;border-left:3px solid #e5e7eb">${escHtml(v.observaciones)}</div>` : ''}
+          </div>
+          <div class="text-end">${estadoBadge}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function _ftRenderFotos(fotos) {
+  const el = document.getElementById('ftTabFotos');
+  if (!fotos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-image" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin fotos</div>
+      <div class="small mt-1">Las fotos del levantamiento y de visitas posteriores aparecerán aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="d-grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
+      ${fotos.map(f => `
+        <div class="ft-photo-card" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
+          <img src="${escAttr(f.url)}" alt="" loading="lazy">
+        </div>
+      `).join('')}
+    </div>
+    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Click en una foto para abrir en pantalla completa.</div>
+  `;
+}
+
+function _ftRenderSeriales(seriales) {
+  const el = document.getElementById('ftTabSeriales');
+  if (!seriales.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-shield-check" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin cambios de N° serie</div>
+      <div class="small mt-1">Cuando se actualice el serial del equipo, los cambios aparecerán aquí con su justificación.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm" style="font-size:.84rem">
+        <thead style="background:#f9fafb"><tr>
+          <th>Fecha</th><th>Antes</th><th>Después</th><th>Usuario</th><th>Razón</th>
+        </tr></thead>
+        <tbody>
+          ${seriales.map(s => `
+            <tr>
+              <td class="text-muted" style="white-space:nowrap">${escHtml(s.fecha)}</td>
+              <td class="font-monospace text-danger small" style="text-decoration:line-through">${escHtml(s.valor_anterior || '(vacío)')}</td>
+              <td class="font-monospace text-success small fw-bold">${escHtml(s.valor_nuevo || '')}</td>
+              <td class="small">${escHtml(s.usuario || '—')}</td>
+              <td class="small text-muted" style="max-width:280px">${escHtml(s.razon || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _ftRenderEstado(estados) {
+  const el = document.getElementById('ftTabEstado');
+  if (!estados.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-clipboard-check" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin cambios de estado</div>
+      <div class="small mt-1">Cuando se cambie el estado del equipo (activo/inactivo/baja), los cambios aparecerán aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm" style="font-size:.84rem">
+        <thead style="background:#f9fafb"><tr>
+          <th>Fecha</th><th>Estado anterior</th><th>Nuevo estado</th><th>Usuario</th><th>Justificación</th>
+        </tr></thead>
+        <tbody>
+          ${estados.map(s => `
+            <tr>
+              <td class="text-muted" style="white-space:nowrap">${escHtml(s.fecha)}</td>
+              <td><span class="badge bg-secondary">${escHtml(s.estado_anterior || '—')}</span></td>
+              <td><span class="badge" style="background:#dc2626;color:#fff">${escHtml(s.estado_nuevo || '—')}</span></td>
+              <td class="small">${escHtml(s.usuario || '—')}</td>
+              <td class="small text-muted" style="max-width:280px">${escHtml(s.razon || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _ftRenderContratos(contratos) {
+  const el = document.getElementById('ftTabContratos');
+  if (!contratos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-file-earmark" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin contratos vigentes</div>
+      <div class="small mt-1">El cliente no tiene contratos activos en este momento.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = contratos.map(c => {
+    const dr = c.dias_restantes;
+    let chipColor = '#6b7280', chipText = c.es_indefinido ? 'Indefinido' : 'Vigente';
+    if (!c.es_indefinido && dr !== null && dr !== undefined) {
+      if (dr < 0) { chipColor = '#dc2626'; chipText = 'Vencido'; }
+      else if (dr <= 30) { chipColor = '#f59e0b'; chipText = `Vence en ${dr}d`; }
+      else { chipColor = '#16a34a'; chipText = `Vigente · ${dr}d`; }
+    }
+    return `
+      <div class="border rounded p-3 mb-2 d-flex justify-content-between align-items-start gap-2 flex-wrap" style="background:#fafafa">
+        <div style="flex:1;min-width:200px">
+          <div class="fw-bold">${escHtml(c.nombre || `Contrato #${c.id}`)}</div>
+          <div class="small text-muted mt-1">
+            <i class="bi bi-calendar3 me-1"></i>${escHtml(c.fecha_inicio || '—')} → ${escHtml(c.fecha_vencimiento || (c.es_indefinido ? 'Indefinido' : '—'))}
+          </div>
+        </div>
+        <span class="badge" style="background:${chipColor}15;color:${chipColor};border:1px solid ${chipColor}50;padding:6px 10px">${escHtml(chipText)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Edición inline ────────────────────────────────────────────────────
+function ftAbrirEditar() {
+  const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
+  if (!eq) return;
+  document.getElementById('ft_edit_serie').value = eq.serie_actual || eq.serie || '';
+  document.getElementById('ft_edit_estado').value = (eq.estado || 'activo').toLowerCase();
+  document.getElementById('ft_edit_estado_op').value = (eq.estado_op || 'operativo').toLowerCase();
+  document.getElementById('ft_edit_ubicacion').value = eq.ubicacion_sala || '';
+  document.getElementById('ft_edit_marca').value = eq.marca || '';
+  document.getElementById('ft_edit_modelo').value = eq.modelo || '';
+  document.getElementById('ft_edit_obs').value = eq.observaciones || '';
+  document.getElementById('ft_edit_motivo').value = '';
+  document.getElementById('ft_edit_panel').style.display = 'block';
+  // Scroll al panel
+  setTimeout(() => {
+    document.getElementById('ft_edit_panel').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }, 100);
+}
+
+function ftCancelarEditar() {
+  document.getElementById('ft_edit_panel').style.display = 'none';
+}
+
+async function ftGuardarEditar() {
+  if (!_ftCurrentMid) return;
+  const eq = _ftCurrentData ? _ftCurrentData.equipo : {};
+  const payload = {
+    serie: document.getElementById('ft_edit_serie').value.trim(),
+    estado: document.getElementById('ft_edit_estado').value,
+    estado_op: document.getElementById('ft_edit_estado_op').value,
+    ubicacion_sala: document.getElementById('ft_edit_ubicacion').value.trim(),
+    marca: document.getElementById('ft_edit_marca').value.trim(),
+    modelo: document.getElementById('ft_edit_modelo').value.trim(),
+    observaciones: document.getElementById('ft_edit_obs').value.trim(),
+    motivo: document.getElementById('ft_edit_motivo').value.trim(),
+  };
+  // Validación local: si cambia serial o estado, exigir motivo
+  const cambia_serial = (payload.serie || '') !== (eq.serie_actual || eq.serie || '');
+  const cambia_estado = (payload.estado || '') !== ((eq.estado || 'activo').toLowerCase());
+  if ((cambia_serial || cambia_estado) && payload.motivo.length < 5) {
+    await ilusAlert({
+      title: 'Motivo requerido',
+      message: 'Para cambiar el N° serie o el estado del equipo necesitas ingresar un motivo de al menos 5 caracteres.',
+      type: 'warning',
+    });
+    document.getElementById('ft_edit_motivo').focus();
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${_ftCurrentMid}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({
+        title: 'No se pudo guardar',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
+      return;
+    }
+    ilusToast('Equipo actualizado correctamente', { type: 'success' });
+    // Refrescar el modal con los datos nuevos
+    document.getElementById('ft_edit_panel').style.display = 'none';
+    if (_ftCurrentMid) await verFichaTecnicaEquipo(_ftCurrentMid, eq.nombre);
+    // Actualizar la fila en la tabla (al menos el serial)
+    if (cambia_serial) {
+      const span = document.getElementById('serie-' + _ftCurrentMid);
+      if (span) span.textContent = payload.serie || '—';
+    }
+  } catch(e) {
+    await ilusAlert({
+      title: 'Error de red',
+      message: e.message || 'No se pudo contactar al servidor.',
+      type: 'error',
+    });
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════
 // BUSCADOR ERP en modal "Agregar equipo manual"
 // Autocomplete por nombre o SKU desde catálogo ERP
 // ════════════════════════════════════════════════════════════════════
@@ -1815,6 +2323,7 @@ async function guardarCliente() {
     razon_social:      $v('ec_razon'),
     rut:               $v('ec_rut'),
     estado:            document.getElementById('ec_estado').value,
+    tipo_cliente:      (document.getElementById('ec_tipo_cliente')?.value || 'mantencion'),
     giro:              $v('ec_giro'),
     email_empresa:     $v('ec_email_empresa'),
     tel_empresa:       $v('ec_tel_empresa'),
@@ -1836,14 +2345,19 @@ async function guardarCliente() {
     // Notas
     notas:             $v('ec_notas'),
   };
-  if (!data.razon_social) { alert('Razón social requerida'); return; }
+  if (!data.razon_social) {
+    if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
+    return;
+  }
   const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
     method: 'PUT',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(data)
   });
   if (r.ok) { location.reload(); }
-  else { alert('Error al guardar'); }
+  else {
+    if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Error al guardar'});
+  }
 }
 
 // ─── ERP — tabs ──────────────────────────────────────────────
@@ -2948,6 +3462,311 @@ async function eliminarVisita() {
 }
 
 // ─── Plan de Mejora IA ────────────────────────────────────
+// Estado del análisis (cacheado en memoria de la página) — se rellena
+// al abrir el tab IA y después de cada acción que lo modifique.
+let _PLAN_IA_ESTADO = null;
+
+// Punto de entrada único del botón "Analizar con IA". Su comportamiento
+// depende del estado actual:
+//   - sin plan previo          → genera uno nuevo (no gasta tokens si ya
+//                                 el backend tiene cache de 1h)
+//   - plan no verificado       → abre modal de verificación
+//   - plan vigente sin info nueva → no hace nada (botón debería estar deshabilitado)
+//   - plan verificado >6 meses → genera uno nuevo
+//   - info nueva detectada     → genera uno nuevo
+async function planAccionIA() {
+  if (!_PLAN_IA_ESTADO) {
+    await planActualizarEstadoIA();
+  }
+  const e = _PLAN_IA_ESTADO || {};
+
+  // Si hay un plan anterior y no está verificado → abrir modal
+  if (e.ultimo_plan && !e.ultimo_plan.verificado_at) {
+    planAbrirModalVerificar();
+    return;
+  }
+
+  // Si no puede regenerar (>6 meses + sin info nueva) → toast informativo
+  if (!e.puede_regenerar) {
+    ilusToast(e.motivo_bloqueo || 'El plan anterior aún está vigente.', { type: 'info' });
+    return;
+  }
+
+  // Genera (puede ser primer plan o re-generación legítima)
+  await generarPlanMejora();
+}
+
+// Llama al endpoint de estado y refresca el botón / chips. NO gasta tokens.
+async function planActualizarEstadoIA() {
+  const btn = document.getElementById('btnGenerarPlan');
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ia-plan-estado`);
+    const data = await r.json();
+    if (data && data.ok) {
+      _PLAN_IA_ESTADO = data;
+    } else {
+      _PLAN_IA_ESTADO = null;
+    }
+  } catch(e) {
+    _PLAN_IA_ESTADO = null;
+  }
+  planRenderEstadoIA();
+
+  // Si hay un plan vigente, también lo rehidrata en pantalla sin volver a llamar
+  // al endpoint IA (que sí gastaría tokens si el cache RAM expiró).
+  const e = _PLAN_IA_ESTADO || {};
+  if (e.ultimo_plan && !document.getElementById('planResultado').dataset.rendered) {
+    // Solo intentamos rehidratar leyendo el campo plan_json — si no viene en el
+    // payload, dejamos el área vacía. (El endpoint actual no lo expone para
+    // evitar payloads pesados; la rehidratación visual aparece al regenerar.)
+    // Nada que hacer aquí — el render real ocurre cuando el usuario presiona el botón.
+  }
+}
+
+// Pinta el estado en el botón principal + chips informativos.
+function planRenderEstadoIA() {
+  const btn   = document.getElementById('btnGenerarPlan');
+  const status = document.getElementById('planCtStatus');
+  const chips  = document.getElementById('planEstadoChips');
+  if (!btn || !status) return;
+
+  const e = _PLAN_IA_ESTADO || {};
+  const ult = e.ultimo_plan;
+
+  // Por defecto, botón habilitado morado
+  btn.disabled = false;
+  btn.classList.remove('btn-secondary','btn-warning','btn-ilus','btn-purple','disabled');
+  btn.style.background = '';
+  btn.style.color = '';
+  btn.style.borderColor = '';
+  btn.classList.add('btn-ilus');
+
+  // Reset chips
+  if (chips) { chips.style.display = 'none'; chips.innerHTML = ''; }
+
+  // CASO 1: sin plan previo
+  if (!ult) {
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar análisis IA';
+    status.innerHTML = '<span class="text-muted"><i class="bi bi-info-circle me-1"></i>Aún no se ha generado un análisis IA para este cliente</span>';
+    return;
+  }
+
+  // Datos comunes
+  const verif = !!ult.verificado_at;
+  const edad  = ult.edad_dias ?? 0;
+  const dias  = e.dias_para_proximo ?? 0;
+  const infoNueva = !!e.info_nueva_disponible;
+  const fechaGen = (ult.generado_at || '').slice(0, 10);
+
+  // CASO 2: plan no verificado → botón ámbar
+  if (!verif) {
+    btn.classList.remove('btn-ilus');
+    btn.style.background = '#f59e0b';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#f59e0b';
+    btn.innerHTML = '<i class="bi bi-clipboard-check me-2"></i>Verificar cumplimiento del plan anterior';
+    status.innerHTML = `<span style="color:#92400e"><i class="bi bi-exclamation-triangle me-1"></i>Plan del ${fechaGen} pendiente de verificación</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#fef3c7;color:#92400e;font-size:.7rem">
+          <i class="bi bi-exclamation-triangle me-1"></i>Falta verificar cumplimiento
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Análisis vigente del ${fechaGen}
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 3: plan verificado + info nueva → botón morado con badge
+  if (infoNueva) {
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-2"></i>Actualizar análisis (info nueva)';
+    const motivos = (e.info_nueva_resumen || []).slice(0, 2).join(' · ');
+    status.innerHTML = `<span style="color:#7c3aed"><i class="bi bi-stars me-1"></i>${motivos || 'Hay información nueva relevante'}</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#dcfce7;color:#166534;font-size:.7rem">
+          <i class="bi bi-stars me-1"></i>Info nueva disponible
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Plan vigente del ${fechaGen}
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-check2-circle me-1"></i>Verificado
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 4: plan verificado + >=6 meses (puede regenerar)
+  if (e.puede_regenerar) {
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar nuevo análisis IA';
+    status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Plan anterior verificado · ya pasaron 6 meses</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Último plan: ${fechaGen} (${edad} días)
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 5: plan verificado pero <6 meses sin info nueva → deshabilitado
+  btn.disabled = true;
+  btn.classList.remove('btn-ilus');
+  btn.style.background = '#9ca3af';
+  btn.style.color = '#fff';
+  btn.style.borderColor = '#9ca3af';
+  btn.innerHTML = `<i class="bi bi-hourglass-split me-2"></i>Análisis vigente — próximo en ${dias} días`;
+  status.innerHTML = `<span class="text-muted"><i class="bi bi-info-circle me-1"></i>Plan del ${fechaGen} verificado · siguiente disponible en ${dias} días</span>`;
+  if (chips) {
+    chips.style.display = '';
+    chips.innerHTML = `
+      <span class="badge" style="background:#dcfce7;color:#166534;font-size:.7rem">
+        <i class="bi bi-check2-circle me-1"></i>Verificado
+      </span>
+      <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+        <i class="bi bi-calendar3 me-1"></i>Plan vigente del ${fechaGen}
+      </span>
+    `;
+  }
+}
+
+// Abre el modal de verificación con los objetivos del plan anterior.
+async function planAbrirModalVerificar() {
+  const e = _PLAN_IA_ESTADO || {};
+  const ult = e.ultimo_plan;
+  if (!ult || !ult.id) {
+    ilusToast('No hay plan anterior por verificar', { type: 'info' });
+    return;
+  }
+
+  // Necesitamos el JSON completo del plan anterior para listar los objetivos.
+  // El endpoint /ia-plan-estado no lo devuelve por temas de payload. Pero el
+  // plan ya quedó guardado en mant_ia_planes — para reconstruir objetivos en
+  // la UI, sin gastar tokens, vamos a inferirlos de la última render del plan
+  // (si el usuario lo vio antes). Si no hay render previo en esta sesión,
+  // listamos un objetivo genérico ("Plan IA del DD/MM").
+  let objetivos = [];
+  const rendered = window._PLAN_IA_ULTIMO_RENDER;
+  if (rendered && rendered.plan_id === ult.id) {
+    const p = rendered.plan || {};
+    // 1) Próxima visita sugerida
+    if (p.proxima_visita && p.proxima_visita.razon) {
+      objetivos.push({
+        texto: `Realizar visita ${p.proxima_visita.tipo || ''} sugerida para ${p.proxima_visita.fecha_sugerida || ''}: ${p.proxima_visita.razon}`,
+      });
+    }
+    // 2) Propuestas de mejora
+    (p.propuestas_mejora || []).slice(0, 6).forEach(pm => {
+      objetivos.push({ texto: pm.titulo || pm.descripcion || 'Propuesta de mejora' });
+    });
+    // 3) Recomendaciones equipos (solo las urgentes/atencion)
+    (p.recomendaciones_equipos || []).filter(r => r.estado !== 'ok').slice(0, 4).forEach(r => {
+      objetivos.push({ texto: `${r.equipo}: ${r.accion} (${r.plazo || ''})` });
+    });
+    // 4) Oportunidades comerciales
+    (p.oportunidades_comerciales || []).slice(0, 3).forEach(oc => {
+      objetivos.push({ texto: typeof oc === 'string' ? oc : (oc.titulo || JSON.stringify(oc)) });
+    });
+  }
+
+  // Fallback: si la sesión actual no tiene el render del plan, ofrecer
+  // un objetivo genérico para que el usuario aún pueda verificar.
+  if (objetivos.length === 0) {
+    objetivos = [
+      { texto: `Plan IA del ${(ult.generado_at || '').slice(0,10)} — cumplimiento general` }
+    ];
+  }
+
+  // Render del modal
+  const cont = document.getElementById('vpObjetivos');
+  const info = document.getElementById('vpInfoPlan');
+  info.innerHTML = `
+    <div><strong>Plan #${ult.id}</strong> generado el ${(ult.generado_at || '').slice(0,16).replace('T',' ')}</div>
+    <div>Generado por: ${ult.generado_por || '—'} · Antigüedad: ${ult.edad_dias} días</div>
+  `;
+  cont.innerHTML = objetivos.map((o, idx) => `
+    <div class="vp-obj p-2 rounded mb-2"
+         style="border:1px solid #e5e7eb;background:#fff">
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" id="vp_obj_${idx}" checked>
+        <label class="form-check-label fw-semibold" for="vp_obj_${idx}" style="font-size:.86rem">
+          ${o.texto.replace(/</g,'&lt;')}
+        </label>
+      </div>
+      <textarea class="form-control" id="vp_obj_${idx}_txt" rows="2"
+                placeholder="Evidencia si se cumplió (ej: visita #156 el 15/05) o razón si no se cumplió"
+                style="font-size:.82rem"></textarea>
+    </div>
+  `).join('');
+  document.getElementById('vpNotas').value = '';
+  // Guardar referencia para usar en confirmación
+  window._VP_PLAN_ID = ult.id;
+  window._VP_OBJETIVOS = objetivos;
+  new bootstrap.Modal(document.getElementById('modalVerificarPlan')).show();
+}
+
+// Envía la verificación al backend y refresca el estado.
+async function planConfirmarVerificacion() {
+  const planId = window._VP_PLAN_ID;
+  const objetivos = window._VP_OBJETIVOS || [];
+  if (!planId) {
+    ilusToast('No hay plan a verificar', { type: 'error' });
+    return;
+  }
+  const payload = objetivos.map((o, idx) => {
+    const cumplido = document.getElementById(`vp_obj_${idx}`).checked;
+    const txt = (document.getElementById(`vp_obj_${idx}_txt`).value || '').trim();
+    return cumplido
+      ? { texto: o.texto, cumplido: true, evidencia: txt }
+      : { texto: o.texto, cumplido: false, razon: txt };
+  });
+  const notas = (document.getElementById('vpNotas').value || '').trim();
+
+  const btn = document.getElementById('vpBtnConfirmar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Guardando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ia-plan-verificar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId, objetivos_cumplidos: payload, notas }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      ilusToast(data.error || 'Error al guardar la verificación', { type: 'error' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento';
+      return;
+    }
+    bootstrap.Modal.getInstance(document.getElementById('modalVerificarPlan')).hide();
+    ilusToast('Verificación guardada', { type: 'success' });
+    await planActualizarEstadoIA();
+    // Si tras verificar ya puede regenerar (caso info nueva), avisar al usuario.
+    if (data.ya_puede_regenerar) {
+      const ok = await ilusConfirm({
+        title: '¿Generar análisis nuevo?',
+        message: 'El plan anterior quedó verificado. Hay información nueva relevante.',
+        sub: '¿Quieres generar un análisis IA actualizado ahora?',
+        okLabel: 'Sí, generar', cancelLabel: 'Más tarde',
+      });
+      if (ok) await generarPlanMejora();
+    }
+  } catch(e) {
+    ilusToast('Error de conexión: ' + e.message, { type: 'error' });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento';
+  }
+}
+
+// Llama al endpoint pesado (gasta tokens si no hay cache RAM en backend).
 async function generarPlanMejora() {
   const btn = document.getElementById('btnGenerarPlan');
   const spinner = document.getElementById('planSpinner');
@@ -2959,50 +3778,149 @@ async function generarPlanMejora() {
   resultado.style.display = 'none';
 
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/plan-mejora`, { method: 'POST' });
+    const url = `/mantenciones/api/clientes/${CID}/plan-mejora`;
+    const r = await fetch(url, { method: 'POST' });
     const data = await r.json();
 
     spinner.style.display = 'none';
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Re-generar Plan';
+
+    if (r.status === 409) {
+      // Bloqueo de política (no verificado / dentro de 6 meses)
+      resultado.style.display = '';
+      resultado.innerHTML = `<div class="alert alert-warning"><i class="bi bi-shield-exclamation me-1"></i>${data.error || 'No se puede regenerar ahora'}</div>`;
+      await planActualizarEstadoIA();
+      return;
+    }
 
     if (!data.ok) {
       resultado.style.display = '';
       resultado.innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'Error al generar plan'}</div>`;
+      await planActualizarEstadoIA();
       return;
     }
 
-    renderPlan(data.plan, data.cliente);
+    // Guardar referencia para que el modal de verificación pueda listar objetivos
+    window._PLAN_IA_ULTIMO_RENDER = { plan_id: data.plan_id, plan: data.plan };
+    renderPlan(data.plan, data.cliente, data);
     resultado.style.display = '';
+    document.getElementById('planResultado').dataset.rendered = '1';
+    // Refrescar estado del botón (ahora muestra "vigente" porque hay plan nuevo no verificado)
+    await planActualizarEstadoIA();
 
   } catch(e) {
     spinner.style.display = 'none';
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar Plan de Mejora';
     resultado.style.display = '';
     resultado.innerHTML = `<div class="alert alert-danger">Error de conexión: ${e.message}</div>`;
+    await planActualizarEstadoIA();
   }
 }
 
-function renderPlan(p, clienteNombre) {
+// Al cargar el tab IA por primera vez, cargar el estado.
+// (sin window load — se dispara cuando el usuario abre el tab para no
+//  ralentizar la carga inicial de la ficha).
+(function _planEstadoIniHook() {
+  const btnTab = document.querySelector('.ftab-btn[data-tab="ia"]');
+  if (!btnTab) return;
+  let cargado = false;
+  btnTab.addEventListener('click', () => {
+    if (!cargado) {
+      cargado = true;
+      planActualizarEstadoIA();
+    }
+  });
+  // Si el tab IA es el que quedó guardado en localStorage, cargar al iniciar
+  try {
+    const saved = localStorage.getItem(TAB_KEY);
+    if (saved === 'ia') {
+      cargado = true;
+      // Pequeño defer para que el DOM esté completo
+      setTimeout(() => planActualizarEstadoIA(), 50);
+    }
+  } catch(e) {}
+})();
+
+// SVG gauge sencillo (sin librerías) — círculo con stroke-dasharray.
+// Mobile-first: 88x88 (44+44, cumple touch target). En desktop crece via flex.
+function _ilusSvgGauge(value, label, color) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const radius = 36;
+  const circ = 2 * Math.PI * radius;
+  const offset = circ * (1 - v / 100);
+  return `<div style="position:relative;width:88px;height:88px;flex-shrink:0">
+    <svg width="88" height="88" viewBox="0 0 88 88" style="transform:rotate(-90deg)">
+      <circle cx="44" cy="44" r="${radius}" fill="none" stroke="#e5e7eb" stroke-width="7"/>
+      <circle cx="44" cy="44" r="${radius}" fill="none" stroke="${color}" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="${circ.toFixed(2)}"
+              stroke-dashoffset="${offset.toFixed(2)}"
+              style="transition:stroke-dashoffset .6s ease"/>
+    </svg>
+    <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+      <div style="font-size:1.35rem;font-weight:900;color:${color};line-height:1">${value ?? '—'}</div>
+      <div style="font-size:.52rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;font-weight:700;margin-top:2px">${label}</div>
+    </div>
+  </div>`;
+}
+
+// Formateo CLP compacto: 850000 → "$850.000"
+function _ilusClp(n) {
+  if (n == null || isNaN(Number(n))) return '';
+  return '$' + Number(n).toLocaleString('es-CL');
+}
+
+function renderPlan(p, clienteNombre, envelope) {
+  envelope = envelope || {};
   const estadoColor = {bueno:'#16a34a', regular:'#ea580c', critico:'#dc2626'}[p.estado_flota] || '#6b7280';
-  const healthBg = p.indice_salud >= 70 ? '#16a34a' : p.indice_salud >= 40 ? '#ea580c' : '#dc2626';
+  const ringColor = (n) => n >= 70 ? '#16a34a' : n >= 40 ? '#ea580c' : '#dc2626';
   const impactoColor = {alto:'#dc2626', medio:'#ea580c', bajo:'#16a34a'};
   const catIcon = {contrato:'bi-file-earmark-text', equipo:'bi-bicycle', proceso:'bi-gear', costos:'bi-currency-dollar'};
+
+  // Banda informativa cache + refresh
+  const cached = !!envelope.cached;
+  const meta = envelope.meta || {};
+  const cacheBadge = cached
+    ? `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:6px"
+              title="Resultado en caché (TTL 1h). Click 'Refrescar' para regenerar.">
+         <i class="bi bi-cloud-check"></i> Cache · ${Math.round((envelope.cache_age_seconds||0)/60)} min
+       </span>`
+    : `<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:6px">
+         <i class="bi bi-stars"></i> Recién generado${meta.elapsed_ms ? ` · ${(meta.elapsed_ms/1000).toFixed(1)}s` : ''}
+       </span>`;
 
   let html = `<div class="plan-result-card">`;
 
   // ── Resumen ejecutivo ──
   html += `<div class="plan-section" style="background:linear-gradient(135deg,#f8faff,#f0fdf4)">
+    <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
+      <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed">
+        Plan generado por IA
+        ${cacheBadge}
+      </div>
+      <button onclick="planAccionIA()"
+              class="btn btn-sm btn-outline-secondary"
+              title="Genera un análisis nuevo si la política IA lo permite (verificación + 6 meses o info nueva)"
+              style="font-size:.72rem">
+        <i class="bi bi-arrow-clockwise me-1"></i>Revisar / actualizar
+      </button>
+    </div>
     <div class="d-flex align-items-center gap-3 flex-wrap">
-      <div class="health-ring" style="background:${healthBg}">
-        <span class="health-num">${p.indice_salud}</span>
+      <div class="health-ring" style="background:${ringColor(p.indice_salud)}">
+        <span class="health-num">${p.indice_salud ?? '—'}</span>
         <span class="health-label">Salud</span>
       </div>
-      <div style="flex:1;min-width:0">
+      ${typeof p.indice_cumplimiento_sla === 'number' ? `
+      <div class="health-ring" style="background:${ringColor(p.indice_cumplimiento_sla)}" title="Cumplimiento de frecuencia contractual vs real">
+        <span class="health-num">${p.indice_cumplimiento_sla}</span>
+        <span class="health-label">SLA</span>
+      </div>` : ''}
+      ${typeof p.indice_cobranza === 'number' ? `
+      <div class="health-ring" style="background:${ringColor(p.indice_cobranza)}" title="% facturado vs prestado (últimos 365 días)">
+        <span class="health-num">${p.indice_cobranza}</span>
+        <span class="health-label">Cobranza</span>
+      </div>` : ''}
+      <div style="flex:1;min-width:200px">
         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-          <span style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed">Plan generado por IA</span>
           <span style="background:${estadoColor};color:#fff;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">${(p.estado_flota||'').toUpperCase()}</span>
+          ${p.tipo_cliente_inferido ? `<span style="background:#e0e7ff;color:#3730a3;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">Tipo: ${p.tipo_cliente_inferido}</span>` : ''}
         </div>
         <p style="font-size:.84rem;color:#374151;margin:0;line-height:1.55">${p.resumen_ejecutivo || ''}</p>
       </div>
@@ -3047,11 +3965,13 @@ function renderPlan(p, clienteNombre) {
       <div class="plan-section-title" style="color:#2563eb"><i class="bi bi-bicycle me-1"></i>Recomendaciones por equipo</div>`;
     p.recomendaciones_equipos.forEach(rec => {
       const dc = {ok:'rec-ok', atencion:'rec-atencion', urgente:'rec-urgente'}[rec.estado] || 'rec-ok';
+      const monto = (typeof rec.monto_estimado_clp === 'number') ? _ilusClp(rec.monto_estimado_clp) : '';
       html += `<div class="rec-item">
         <div class="rec-dot ${dc}" style="margin-top:4px"></div>
         <div style="flex:1;min-width:0">
           <div class="fw-semibold" style="font-size:.82rem">${rec.equipo}</div>
           <div style="font-size:.78rem;color:#374151;margin-top:2px">${rec.accion}</div>
+          ${monto ? `<div style="font-size:.7rem;color:#7c2d12;font-weight:700;margin-top:3px"><i class="bi bi-cash me-1"></i>${monto}</div>` : ''}
         </div>
         <span style="font-size:.65rem;background:#f3f4f6;color:#374151;padding:1px 7px;border-radius:50px;font-weight:600;white-space:nowrap">${rec.plazo}</span>
       </div>`;
@@ -3091,15 +4011,17 @@ function renderPlan(p, clienteNombre) {
     p.propuestas_mejora.forEach(prop => {
       const ic = catIcon[prop.categoria] || 'bi-lightbulb';
       const col = impactoColor[prop.impacto] || '#6b7280';
+      const monto = (typeof prop.monto_estimado_clp === 'number') ? _ilusClp(prop.monto_estimado_clp) : '';
       html += `<div class="prop-card prop-impacto-${prop.impacto}">
         <div class="d-flex align-items-start gap-2">
           <i class="bi ${ic}" style="color:${col};font-size:.9rem;flex-shrink:0;margin-top:2px"></i>
           <div style="flex:1">
             <div class="fw-bold" style="font-size:.83rem">${prop.titulo}</div>
             <div style="font-size:.78rem;color:#374151;margin-top:3px">${prop.descripcion}</div>
-            <div class="mt-1">
+            <div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
               <span style="background:${col};color:#fff;font-size:.6rem;padding:1px 7px;border-radius:50px;font-weight:700">Impacto ${prop.impacto}</span>
-              <span style="font-size:.68rem;color:#9ca3af;margin-left:6px">${prop.categoria}</span>
+              <span style="font-size:.68rem;color:#9ca3af">${prop.categoria}</span>
+              ${monto ? `<span style="font-size:.7rem;color:#7c2d12;font-weight:700"><i class="bi bi-cash me-1"></i>${monto}</span>` : ''}
             </div>
           </div>
         </div>
@@ -3109,10 +4031,209 @@ function renderPlan(p, clienteNombre) {
   }
 
   // ── Oportunidades comerciales ──
+  // Compat: ahora cada item puede ser string (legacy) o {titulo,descripcion,monto_estimado_clp}.
   if (p.oportunidades_comerciales?.length) {
     html += `<div class="plan-section">
-      <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>
-      ${p.oportunidades_comerciales.map(o => `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`).join('')}
+      <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>`;
+    p.oportunidades_comerciales.forEach(o => {
+      if (typeof o === 'string') {
+        html += `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`;
+      } else if (o && typeof o === 'object') {
+        const monto = (typeof o.monto_estimado_clp === 'number') ? _ilusClp(o.monto_estimado_clp) : '';
+        html += `<div class="oport-item" style="flex-direction:column;align-items:stretch">
+          <div class="d-flex align-items-start gap-2 w-100">
+            <i class="bi bi-check-circle-fill flex-shrink-0"></i>
+            <div style="flex:1">
+              <div class="fw-bold" style="font-size:.82rem">${o.titulo || ''}</div>
+              ${o.descripcion ? `<div style="font-size:.76rem;color:#14532d;margin-top:2px">${o.descripcion}</div>` : ''}
+            </div>
+            ${monto ? `<span style="font-size:.72rem;color:#14532d;font-weight:800;white-space:nowrap;margin-left:6px"><i class="bi bi-cash me-1"></i>${monto}</span>` : ''}
+          </div>
+        </div>`;
+      }
+    });
+    html += `</div>`;
+  }
+
+  // ── Riesgos financieros (NUEVO 2026-05-21) ──
+  if (Array.isArray(p.riesgos_financieros) && p.riesgos_financieros.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#dc2626"><i class="bi bi-cash-stack me-1"></i>Riesgos financieros</div>`;
+    p.riesgos_financieros.forEach(r => {
+      const monto = (typeof r.monto_estimado === 'number')
+        ? `<span style="font-weight:800;color:#7c2d12;white-space:nowrap;margin-left:8px">$${Number(r.monto_estimado).toLocaleString('es-CL')}</span>`
+        : '';
+      const tipoLbl = (r.tipo || '').replace(/_/g, ' ');
+      html += `<div class="alerta-item" style="background:#fef2f2;border-color:#fecaca">
+        <i class="bi bi-exclamation-octagon-fill flex-shrink-0" style="color:#dc2626"></i>
+        <div style="flex:1">
+          <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;color:#991b1b;font-weight:800">${tipoLbl}</div>
+          <div style="font-size:.82rem;color:#374151">${r.detalle || ''}</div>
+        </div>
+        ${monto}
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── Renovación de contrato (NUEVO 2026-05-21) ──
+  if (p.renovacion_contrato && (p.renovacion_contrato.aplica || p.renovacion_contrato.dias_para_vencer != null)) {
+    const rc = p.renovacion_contrato;
+    const rec = !!rc.recomendar_renovar;
+    const dias = rc.dias_para_vencer;
+    const urgente = (typeof dias === 'number' && dias <= 60);
+    const bgGrad = rec
+      ? 'linear-gradient(135deg,#f0fdf4,#dcfce7)'
+      : 'linear-gradient(135deg,#fafafa,#f3f4f6)';
+    html += `<div class="plan-section" style="background:${bgGrad}">
+      <div class="plan-section-title" style="color:${rec ? '#166534' : '#475569'}">
+        <i class="bi bi-file-earmark-medical me-1"></i>Renovación de contrato
+      </div>
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        ${dias != null ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.5rem;font-weight:900;color:${urgente ? '#dc2626' : '#475569'}">${dias}</div>
+            <div style="font-size:.62rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">días para vencer</div>
+          </div>` : ''}
+        <div style="flex:1;min-width:220px">
+          <div class="mb-1">
+            <span style="background:${rec ? '#16a34a' : '#6b7280'};color:#fff;font-size:.62rem;padding:2px 10px;border-radius:50px;font-weight:700">
+              ${rec ? '✓ Recomendar renovar' : '⊘ No recomendar renovar'}
+            </span>
+          </div>
+          ${Array.isArray(rc.argumentos) ? rc.argumentos.map(a => `
+            <div style="font-size:.78rem;color:#374151;margin:3px 0;display:flex;gap:6px;align-items:flex-start">
+              <i class="bi bi-dot" style="font-size:1rem;flex-shrink:0;color:${rec?'#16a34a':'#9ca3af'}"></i>
+              <span>${a}</span>
+            </div>`).join('') : ''}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // NUEVAS SECCIONES — Trazabilidad profunda (2026-05-21)
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── Score Global (4 gauges SVG) ──
+  if (p.score_global && typeof p.score_global === 'object') {
+    const sg = p.score_global;
+    const items = [
+      { key: 'salud_operacional', lbl: 'Operacional' },
+      { key: 'cumplimiento_sla',  lbl: 'SLA' },
+      { key: 'salud_financiera',  lbl: 'Financiera' },
+      { key: 'promedio',          lbl: 'Promedio' },
+    ].filter(it => typeof sg[it.key] === 'number');
+    if (items.length) {
+      html += `<div class="plan-section" style="background:linear-gradient(135deg,#fafbff,#f0fdf4)">
+        <div class="plan-section-title" style="color:#7c3aed"><i class="bi bi-speedometer2 me-1"></i>Score global</div>
+        <div class="d-flex align-items-center gap-3 flex-wrap" style="justify-content:center">
+          ${items.map(it => _ilusSvgGauge(sg[it.key], it.lbl, ringColor(sg[it.key]))).join('')}
+        </div>
+      </div>`;
+    }
+  }
+
+  // ── Deuda técnica (NUEVO) ──
+  const dt = p.deuda_tecnica;
+  if (dt && typeof dt === 'object' && (
+        (typeof dt.equipos_sin_intervencion_reciente === 'number' && dt.equipos_sin_intervencion_reciente > 0)
+        || dt.edad_promedio_parque_anios != null
+        || (Array.isArray(dt.componentes_obsoletos_detectados) && dt.componentes_obsoletos_detectados.length)
+        || (typeof dt.monto_estimado_modernizacion_clp === 'number' && dt.monto_estimado_modernizacion_clp > 0)
+      )) {
+    const edad = dt.edad_promedio_parque_anios;
+    const edadColor = (typeof edad === 'number')
+      ? (edad >= 7 ? '#dc2626' : edad >= 4 ? '#ea580c' : '#16a34a')
+      : '#6b7280';
+    const monto = dt.monto_estimado_modernizacion_clp;
+    html += `<div class="plan-section" style="background:#fff7ed">
+      <div class="plan-section-title" style="color:#9a3412"><i class="bi bi-tools me-1"></i>Deuda técnica del parque</div>
+      <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+        ${(typeof edad === 'number') ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.6rem;font-weight:900;color:${edadColor};line-height:1">${edad}</div>
+            <div style="font-size:.6rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">años edad promedio</div>
+          </div>` : ''}
+        ${(typeof dt.equipos_sin_intervencion_reciente === 'number') ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.6rem;font-weight:900;color:#9a3412;line-height:1">${dt.equipos_sin_intervencion_reciente}</div>
+            <div style="font-size:.6rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">eq. sin intervención &gt;12m</div>
+          </div>` : ''}
+        ${(typeof monto === 'number' && monto > 0) ? `
+          <div style="flex:1;min-width:160px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px">
+            <div style="font-size:.62rem;text-transform:uppercase;color:#9a3412;font-weight:800;letter-spacing:.4px">Modernización estimada</div>
+            <div style="font-size:1.05rem;font-weight:900;color:#7c2d12">${_ilusClp(monto)}</div>
+          </div>` : ''}
+      </div>
+      ${(Array.isArray(dt.componentes_obsoletos_detectados) && dt.componentes_obsoletos_detectados.length) ? `
+        <div style="margin-top:6px;font-size:.78rem;color:#7c2d12">
+          <span style="font-weight:700">Componentes obsoletos detectados:</span>
+          <ul style="margin:4px 0 0 18px;padding:0;font-size:.76rem;color:#374151">
+            ${dt.componentes_obsoletos_detectados.slice(0,8).map(c => `<li>${c}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+    </div>`;
+  }
+
+  // ── Patrón de fallas (NUEVO) ──
+  const pf = p.patron_fallas;
+  if (pf && typeof pf === 'object'
+      && Array.isArray(pf.equipos_problematicos)
+      && pf.equipos_problematicos.length) {
+    html += `<div class="plan-section" style="background:#fef2f2">
+      <div class="plan-section-title" style="color:#991b1b"><i class="bi bi-graph-down-arrow me-1"></i>Patrón de fallas recurrentes</div>`;
+    pf.equipos_problematicos.slice(0, 8).forEach(eq => {
+      html += `<div class="alerta-item" style="background:#fff;border-color:#fecaca">
+        <i class="bi bi-arrow-repeat flex-shrink-0" style="color:#dc2626"></i>
+        <div style="flex:1">
+          <div style="font-weight:800;font-size:.85rem;color:#7f1d1d">${eq.nombre || 'Equipo'}</div>
+          <div style="font-size:.76rem;color:#991b1b;margin-top:2px">${eq.diagnostico || ''}</div>
+        </div>
+        <span style="background:#dc2626;color:#fff;font-size:.65rem;padding:2px 8px;border-radius:50px;font-weight:700;white-space:nowrap">
+          ${eq.reparaciones_12m || '?'} rep / 12m
+        </span>
+      </div>`;
+    });
+    if (Array.isArray(pf.tipo_fallas_mas_comunes) && pf.tipo_fallas_mas_comunes.length) {
+      html += `<div style="margin-top:6px;font-size:.76rem;color:#7f1d1d">
+        <span style="font-weight:700">Tipos de falla más comunes:</span>
+        ${pf.tipo_fallas_mas_comunes.map(t => `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:50px;font-size:.7rem;font-weight:700;margin-right:4px">${t}</span>`).join('')}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Seguimiento planes anteriores (NUEVO) ──
+  if (Array.isArray(p.seguimiento_planes_anteriores) && p.seguimiento_planes_anteriores.length) {
+    html += `<div class="plan-section" style="background:#fafaff">
+      <div class="plan-section-title" style="color:#6d28d9"><i class="bi bi-clock-history me-1"></i>Seguimiento de planes anteriores</div>`;
+    p.seguimiento_planes_anteriores.slice(0, 10).forEach(sp => {
+      const cumplido = !!sp.cumplido;
+      const bg = cumplido ? '#f0fdf4' : '#fef2f2';
+      const border = cumplido ? '#bbf7d0' : '#fecaca';
+      const ic = cumplido ? 'bi-check-circle-fill' : 'bi-x-circle-fill';
+      const col = cumplido ? '#16a34a' : '#dc2626';
+      html += `<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:10px 12px;margin-bottom:6px">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi ${ic} flex-shrink-0" style="color:${col};font-size:.95rem;margin-top:2px"></i>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.82rem;font-weight:700;color:#374151">${sp.titulo || ''}</div>
+            ${(!cumplido && sp.razon_no_cumplimiento) ? `<div style="font-size:.74rem;color:#991b1b;margin-top:2px"><span style="font-weight:700">Por qué no:</span> ${sp.razon_no_cumplimiento}</div>` : ''}
+            ${sp.accion_actual ? `<div style="font-size:.74rem;color:#1e3a8a;margin-top:3px"><span style="font-weight:700">Acción:</span> ${sp.accion_actual}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── Footer técnico (debug/auditoría) ──
+  if (meta && meta.model) {
+    const ct = meta.context_size || {};
+    html += `<div style="margin-top:10px;padding:8px 12px;background:#fafafa;border-radius:8px;font-size:.66rem;color:#9ca3af;text-align:center;line-height:1.5">
+      ${meta.model}${meta.elapsed_ms ? ' · ' + (meta.elapsed_ms/1000).toFixed(1) + 's' : ''}${(meta.tokens_in||meta.tokens_out) ? ` · ${meta.tokens_in||0}↑/${meta.tokens_out||0}↓ tokens` : ''}
+      · ctx: ${ct.maquinas||0} eq · ${ct.contratos_vigentes||0} ct · ${ct.visitas_completadas||0}+${ct.visitas_futuras||0} visitas${ct.garantias_proximas ? ' · ' + ct.garantias_proximas + ' gar.' : ''}${ct.lev_items ? ' · ' + ct.lev_items + ' lev' : ''}${ct.eventos_24m ? ' · ' + ct.eventos_24m + ' eventos' : ''}${ct.planes_previos ? ' · ' + ct.planes_previos + ' planes prev.' : ''}
     </div>`;
   }
 

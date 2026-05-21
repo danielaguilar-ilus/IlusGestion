@@ -770,6 +770,110 @@
   border: 1px solid #fde68a;
 }
 .tx-lock-badge i { font-size: .85rem; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   2026-05-21 (Daniel) — Trazabilidad por equipo (skip + revisión)
+   Badges visuales por estado: verificado / con_cambios / saltado / falla
+   ═══════════════════════════════════════════════════════════════════ */
+.eqrev-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:.68rem;font-weight:800;letter-spacing:.02em;
+  padding:3px 8px;border-radius:50px;
+  border:1px solid transparent;
+  white-space:nowrap;
+}
+.eqrev-badge i{font-size:.78rem}
+.eqrev-verificado{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.eqrev-con_cambios{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.eqrev-saltado{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.eqrev-falla_detectada{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+
+/* Card de equipo: borde lateral según estado de revisión */
+.tx-eq-card[data-rev="saltado"]{border-left:4px solid #f59e0b}
+.tx-eq-card[data-rev="falla_detectada"]{border-left:4px solid #dc2626}
+.tx-eq-card[data-rev="con_cambios"]{border-left:4px solid #3b82f6}
+
+/* Acciones secundarias del equipo (botón saltar) en la card */
+.eq-skip-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  background:#fff;color:#92400e;border:1px solid #fde68a;border-radius:9px;
+  padding:6px 11px;font-size:.74rem;font-weight:700;cursor:pointer;
+  min-height:36px;transition:all .15s;width:100%;margin-top:4px;
+}
+.eq-skip-btn:hover{background:#fef3c7;border-color:#f59e0b}
+.eq-skip-btn:active{transform:scale(.97)}
+.eq-skip-btn i{font-size:.92rem}
+
+/* Card "Observación rápida" — siempre visible en vista de plantillas */
+.tx-obs-rapida{
+  margin:14px 0 4px;background:#fff;
+  border:1px solid #e5e7eb;border-radius:12px;
+  padding:12px 14px;
+}
+.tx-obs-rapida label{
+  display:flex;align-items:center;gap:6px;
+  font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;
+}
+.tx-obs-rapida label i{color:#6b7280;font-size:.92rem}
+.tx-obs-rapida textarea{
+  width:100%;min-height:60px;
+  font-size:.86rem;line-height:1.4;
+  padding:8px 11px;border:1px solid #e5e7eb;border-radius:9px;
+  resize:vertical;background:#fafafa;
+}
+.tx-obs-rapida textarea:focus{
+  outline:none;border-color:#dc2626;background:#fff;
+  box-shadow:0 0 0 3px rgba(220,38,38,.08);
+}
+.tx-obs-rapida textarea[readonly]{color:#6b7280;background:#f9fafb;cursor:not-allowed}
+.tx-obs-rapida .tx-obs-status{
+  font-size:.7rem;color:#9ca3af;margin-top:5px;
+  display:flex;align-items:center;gap:5px;
+}
+.tx-obs-rapida .tx-obs-status.saved{color:#16a34a}
+.tx-obs-rapida .tx-obs-status.saving{color:#f59e0b}
+.tx-obs-rapida .tx-obs-status.error{color:#dc2626}
+
+/* Botones de acción rápida del equipo (saltar / marcar falla) en la
+   vista de plantillas — debajo del hero */
+.eq-acciones-rapidas{
+  display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px;
+}
+.eq-accion-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.78rem;font-weight:700;cursor:pointer;
+  padding:8px 13px;border-radius:9px;border:1px solid;
+  min-height:38px;transition:all .15s;
+}
+.eq-accion-btn.warn{
+  background:#fff;color:#92400e;border-color:#fde68a;
+}
+.eq-accion-btn.warn:hover{background:#fef3c7}
+.eq-accion-btn.danger{
+  background:#fff;color:#991b1b;border-color:#fecaca;
+}
+.eq-accion-btn.danger:hover{background:#fee2e2}
+.eq-accion-btn.success{
+  background:#fff;color:#166534;border-color:#bbf7d0;
+}
+.eq-accion-btn.success:hover{background:#dcfce7}
+.eq-accion-btn:active{transform:scale(.97)}
+.eq-accion-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Modal "Saltar equipo" */
+#modalSaltarEquipo .skip-radio-group{display:flex;flex-direction:column;gap:6px}
+#modalSaltarEquipo .skip-radio{
+  display:flex;align-items:flex-start;gap:9px;
+  padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;
+  cursor:pointer;transition:all .15s;
+}
+#modalSaltarEquipo .skip-radio:hover{border-color:#f59e0b;background:#fffbeb}
+#modalSaltarEquipo .skip-radio input[type=radio]{margin-top:2px;flex-shrink:0;accent-color:#f59e0b}
+#modalSaltarEquipo .skip-radio input[type=radio]:checked + .skip-radio-content strong{color:#92400e}
+#modalSaltarEquipo .skip-radio:has(input:checked){border-color:#f59e0b;background:#fef3c7}
+#modalSaltarEquipo .skip-radio-content{flex:1}
+#modalSaltarEquipo .skip-radio-content strong{display:block;font-size:.88rem;color:#0f172a}
+#modalSaltarEquipo .skip-radio-content span{display:block;font-size:.72rem;color:#6b7280;margin-top:2px}
 </style>
 
 <div class="tx-wrap">
@@ -1523,7 +1627,11 @@
     {# Las keys de stats_por_maquina se serializan como string para que JS las encuentre.
        En el template Jinja sí entiende ambas, pero para consistencia usamos string. #}
     {% set stats = stats_por_maquina.get(eq.id|string, {}) %}
+    {% set rev = equipos_estado_revision.get(eq.id|string) if equipos_estado_revision else None %}
+    {% set _rev_estado = (rev.estado_revision if rev else '') %}
     <div class="tx-eq-card{% if stats.bloqueada %} done{% endif %}"
+         id="tx-eq-card-{{ eq.id }}"
+         data-rev="{{ _rev_estado }}"
          onclick="goToPlantillas('{{ eq.id }}')">
       <div class="eq-foto-wrap">
         {% if eq.foto_url %}
@@ -1550,6 +1658,19 @@
         <div class="tx-eq-meta-row">
           <span class="tx-eq-badge-plant">{{ stats.n_plantillas or 0 }} plantilla{% if (stats.n_plantillas or 0) != 1 %}s{% endif %}</span>
           <span class="tx-eq-meta-item"><i class="bi bi-list-check"></i>{{ stats.completas or 0 }}/{{ stats.total or 0 }}</span>
+          {# Badge de estado de revisión 2026-05-21 (Daniel) #}
+          <span class="eqrev-badge eqrev-{{ _rev_estado or 'verificado' }}" id="eqrev-badge-{{ eq.id }}"
+                {% if not _rev_estado %}style="display:none"{% endif %}>
+            {% if _rev_estado == 'saltado' %}
+              <i class="bi bi-skip-forward-fill"></i>Saltado
+            {% elif _rev_estado == 'falla_detectada' %}
+              <i class="bi bi-exclamation-triangle-fill"></i>Falla
+            {% elif _rev_estado == 'con_cambios' %}
+              <i class="bi bi-pencil-fill"></i>Con cambios
+            {% else %}
+              <i class="bi bi-check-circle-fill"></i>Verificado
+            {% endif %}
+          </span>
         </div>
         <div class="eq-prog-wrap"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
       </div>
@@ -1560,6 +1681,15 @@
                 onclick="event.stopPropagation(); abrirModalFichaTecnica({{ eq.id }})">
           <i class="bi bi-clipboard-data"></i>
         </button>
+        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar %}
+        <button type="button" class="eq-action-btn"
+                title="Saltar este equipo"
+                aria-label="Saltar este equipo"
+                style="background:#fff7ed;border-color:#fde68a;color:#92400e"
+                onclick="event.stopPropagation(); abrirModalSaltarEquipo({{ eq.id }})">
+          <i class="bi bi-skip-forward-fill"></i>
+        </button>
+        {% endif %}
       </div>
       <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
@@ -1660,6 +1790,96 @@
       Verifica las tareas para habilitar la firma
     </small>
   {% endif %}
+</div>
+
+{# ═════════ MODAL: Saltar equipo (2026-05-21 Daniel) ═════════
+   Pide razón (radios) + observación libre obligatoria (mín 5 chars).
+   Quien lo cierra debe haber elegido razón y escrito justificación.
+   Se confirma con `ilusConfirm` para evitar accidentes.
+#}
+<div class="modal fade" id="modalSaltarEquipo" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header" style="background:linear-gradient(135deg,#92400e,#f59e0b);color:#fff;border:0">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-skip-forward-fill me-2"></i>Saltar este equipo
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3 p-3" style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px">
+          <div class="fw-bold mb-1" style="color:#92400e">
+            <i class="bi bi-info-circle-fill me-1"></i>Equipo:
+            <span id="skipEqNombre">—</span>
+          </div>
+          <div style="font-size:.78rem;color:#78350f">
+            Saltar este equipo NO detiene la OT. La razón + tu nombre quedan
+            registrados en el historial del equipo y de la visita.
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="fw-bold mb-2 d-block" style="font-size:.86rem;color:#374151">
+            ¿Por qué no puedes revisar este equipo? <span class="text-danger">*</span>
+          </label>
+          <div class="skip-radio-group">
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="no_encontrado">
+              <div class="skip-radio-content">
+                <strong>No lo encontré</strong>
+                <span>El equipo no estaba donde decía la ficha o no aparece en la sala.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="dado_de_baja">
+              <div class="skip-radio-content">
+                <strong>Dado de baja</strong>
+                <span>El cliente lo retiró o ya no está operativo y no nos avisó.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="danado_inaccesible">
+              <div class="skip-radio-content">
+                <strong>Dañado o inaccesible</strong>
+                <span>Está roto, en reparación, bloqueado por obra, etc. No se puede revisar.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="cliente_lo_quito">
+              <div class="skip-radio-content">
+                <strong>El cliente lo quitó / movió</strong>
+                <span>El cliente lo cambió de sala, lo donó o no nos informó del traslado.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="otro">
+              <div class="skip-radio-content">
+                <strong>Otro motivo</strong>
+                <span>Explica en la observación.</span>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="fw-bold mb-1 d-block" style="font-size:.86rem;color:#374151"
+                 for="skipObservacion">
+            Observación <span class="text-danger">*</span>
+            <small class="text-muted fw-normal" style="font-size:.72rem">(mínimo 5 caracteres)</small>
+          </label>
+          <textarea id="skipObservacion" class="form-control"
+                    rows="3" maxlength="2000"
+                    placeholder="Describe brevemente qué pasó (lo verá el supervisor al revisar el cierre)"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn"
+                style="background:#92400e;color:#fff;font-weight:700"
+                onclick="confirmarSaltarEquipo()">
+          <i class="bi bi-skip-forward-fill me-1"></i>Saltar equipo
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# ═════════ MODAL: Iniciar Ruta ═════════ #}
@@ -1992,6 +2212,11 @@ const EQUIPOS = {{ equipos | tojson }};
 const EQUIPOS_IDX = {{ equipos_idx | tojson }};
 const PLANTILLAS_POR_MAQUINA = {{ plantillas_por_maquina | tojson }};
 const STATS_POR_MAQUINA = {{ stats_por_maquina | tojson }};
+// 2026-05-21 (Daniel) — trazabilidad por equipo: estado de revisión
+// (verificado | con_cambios | saltado | falla_detectada) + observación.
+// Keys = String(maquina_id). Vacío {} si nada se ha tocado todavía.
+let EQUIPOS_ESTADO_REVISION = {{ (equipos_estado_revision or {}) | tojson }};
+const PUEDE_EJECUTAR_FLAG = {{ 'true' if puede_ejecutar else 'false' }};
 
 // ─── Concurrencia multitécnico (Parte 3 - anti duplicación) ───
 // Lock TTL: si una tarea está locked_at < 10 min, otros técnicos ven badge
@@ -2101,28 +2326,318 @@ function renderPlantillas(mid){
     </div>
     ${levBannerHtml}`;
 
+  // ── 2026-05-21 (Daniel) — Acciones rápidas + observación ────────────
+  // Permiten saltar / marcar falla / dejar nota sin tener que completar
+  // todas las tareas. El bloqueo (OT cerrada / no puede ejecutar) está
+  // contemplado en _renderAccionesRapidasYObs.
+  const accionesYObsHtml = _renderAccionesRapidasYObs(mid);
+
   // Lista de plantillas
   const cont = document.getElementById('plList');
+  let plantillasHtml = '';
   if (!pls.length){
-    cont.innerHTML = '<div class="tx-empty"><i class="bi bi-list-check"></i><div class="fw-bold">Sin plantillas</div></div>';
+    plantillasHtml = '<div class="tx-empty"><i class="bi bi-list-check"></i><div class="fw-bold">Sin plantillas</div></div>';
+  } else {
+    plantillasHtml = pls.map(p => {
+      const done = p.completas === p.total && p.total > 0;
+      return `<div class="tx-pl-card${done ? ' done' : ''}" onclick="goToTareas(${mid}, ${p.plantilla_id})">
+        <div class="pl-icon"><i class="bi bi-${done ? 'check-circle-fill' : 'list-check'}"></i></div>
+        <div class="pl-info">
+          <div class="pl-name">${_escapeHtml(p.plantilla_nombre)}</div>
+          <div class="pl-meta">
+            <span class="badge">${_escapeHtml(p.plantilla_tipo)}</span>
+            <span>${p.completas}/${p.total} tareas</span>
+            ${done ? '<span style="color:#16a34a;font-weight:700">✓ COMPLETA</span>' : ''}
+          </div>
+          <div class="pl-prog"><div style="width:${p.progreso}%"></div></div>
+        </div>
+        <i class="bi bi-chevron-right text-muted"></i>
+      </div>`;
+    }).join('');
+  }
+  cont.innerHTML = accionesYObsHtml + plantillasHtml;
+}
+
+// ════════════════════════════════════════════════════════
+// 2026-05-21 (Daniel) — Acciones rápidas + observación por equipo
+// Se inyectan al tope de la vista de plantillas, siempre visibles
+// (no ocultas en submenú). Permiten al técnico:
+//   - Saltar este equipo (con razón + observación)
+//   - Marcar falla detectada (observación obligatoria)
+//   - Marcar verificado (vuelve al default)
+//   - Dejar nota libre (auto-save al blur)
+// ════════════════════════════════════════════════════════
+function _renderAccionesRapidasYObs(mid){
+  const readonly = (VISITA_ESTADO === 'cerrada' ||
+                    VISITA_ESTADO === 'pendiente_aprobacion' ||
+                    !PUEDE_EJECUTAR_FLAG);
+  const midStr = String(mid);
+  const rev = EQUIPOS_ESTADO_REVISION[midStr] || {};
+  const estado = rev.estado_revision || '';
+  const obs = rev.observacion_tecnico || '';
+  const revAt = rev.revisado_at ? `<span class="text-muted">· ${_escapeHtml(rev.revisado_at)}</span>` : '';
+  const revBy = rev.revisado_por ? `por ${_escapeHtml(rev.revisado_por)}` : '';
+
+  let badgeHtml = '';
+  if (estado === 'saltado'){
+    badgeHtml = `<span class="eqrev-badge eqrev-saltado"><i class="bi bi-skip-forward-fill"></i>Saltado${rev.razon_saltado ? ' · ' + _escapeHtml(rev.razon_saltado.replace(/_/g,' ')) : ''}</span>`;
+  } else if (estado === 'falla_detectada'){
+    badgeHtml = `<span class="eqrev-badge eqrev-falla_detectada"><i class="bi bi-exclamation-triangle-fill"></i>Falla detectada</span>`;
+  } else if (estado === 'con_cambios'){
+    badgeHtml = `<span class="eqrev-badge eqrev-con_cambios"><i class="bi bi-pencil-fill"></i>Con cambios</span>`;
+  } else if (estado === 'verificado'){
+    badgeHtml = `<span class="eqrev-badge eqrev-verificado"><i class="bi bi-check-circle-fill"></i>Verificado</span>`;
+  }
+
+  const accionesHtml = readonly ? '' : `
+    <div class="eq-acciones-rapidas">
+      <button type="button" class="eq-accion-btn warn"
+              onclick="abrirModalSaltarEquipo(${mid})">
+        <i class="bi bi-skip-forward-fill"></i>Saltar equipo
+      </button>
+      <button type="button" class="eq-accion-btn danger"
+              onclick="abrirModalFallaEquipo(${mid})">
+        <i class="bi bi-exclamation-triangle-fill"></i>Reportar falla
+      </button>
+      ${estado && estado !== 'verificado' ? `
+        <button type="button" class="eq-accion-btn success"
+                onclick="marcarEquipoEstado(${mid}, 'verificado')">
+          <i class="bi bi-check-circle-fill"></i>Marcar verificado
+        </button>` : ''}
+    </div>
+  `;
+
+  return `
+    <div class="d-flex align-items-center gap-2 mb-1" style="flex-wrap:wrap">
+      ${badgeHtml}
+      ${estado ? `<small class="text-muted" style="font-size:.7rem">${revBy} ${revAt}</small>` : ''}
+    </div>
+    ${accionesHtml}
+    <div class="tx-obs-rapida">
+      <label for="obs-rapida-${mid}">
+        <i class="bi bi-chat-left-text-fill"></i>
+        Observación rápida sobre este equipo
+      </label>
+      <textarea id="obs-rapida-${mid}"
+        placeholder="¿Algo que quieras dejar registrado de este equipo? (limpieza, ruido raro, sugerencia, lo que sea)"
+        ${readonly ? 'readonly' : ''}
+        maxlength="2000"
+        onblur="guardarObsRapida(${mid}, this.value)"
+      >${_escapeHtml(obs)}</textarea>
+      <div class="tx-obs-status" id="obs-rapida-status-${mid}"></div>
+    </div>
+  `;
+}
+
+// Guarda observación libre (sin cambiar estado) auto-save al blur.
+async function guardarObsRapida(mid, valor){
+  const statusEl = document.getElementById(`obs-rapida-status-${mid}`);
+  const _setStatus = (cls, text) => {
+    if (statusEl){
+      statusEl.className = 'tx-obs-status ' + cls;
+      statusEl.innerHTML = text;
+    }
+  };
+  const prev = (EQUIPOS_ESTADO_REVISION[String(mid)] || {}).observacion_tecnico || '';
+  if ((valor || '').trim() === prev.trim()) {
+    return; // sin cambios
+  }
+  _setStatus('saving', '<i class="bi bi-arrow-clockwise"></i> Guardando…');
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipos/${mid}/observacion`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({observacion: valor || ''})
+    });
+    const d = await r.json();
+    if (!d.ok){ throw new Error(d.error || 'No se pudo guardar'); }
+    // Actualizar caché local
+    EQUIPOS_ESTADO_REVISION[String(mid)] = {
+      ...(EQUIPOS_ESTADO_REVISION[String(mid)] || {}),
+      observacion_tecnico: d.observacion || '',
+      revisado_por: d.revisado_por || '',
+      revisado_at: (new Date()).toISOString().slice(0,19).replace('T',' '),
+    };
+    _setStatus('saved', '<i class="bi bi-check-circle-fill"></i> Guardado');
+    // Auto-clear status tras 2.5s
+    setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2500);
+  } catch (e){
+    _setStatus('error', `<i class="bi bi-x-circle-fill"></i> ${_escapeHtml(e.message || 'Error')}`);
+  }
+}
+
+// Cambia el badge visual de un equipo en la lista de máquinas (vista 1).
+function _refreshEqCardBadge(mid){
+  const rev = EQUIPOS_ESTADO_REVISION[String(mid)] || {};
+  const estado = rev.estado_revision || '';
+  const card = document.getElementById(`tx-eq-card-${mid}`);
+  const badge = document.getElementById(`eqrev-badge-${mid}`);
+  if (card){ card.setAttribute('data-rev', estado || ''); }
+  if (badge){
+    if (!estado){
+      badge.style.display = 'none';
+      return;
+    }
+    badge.style.display = '';
+    badge.className = `eqrev-badge eqrev-${estado}`;
+    const label = {
+      verificado:       '<i class="bi bi-check-circle-fill"></i>Verificado',
+      con_cambios:      '<i class="bi bi-pencil-fill"></i>Con cambios',
+      saltado:          '<i class="bi bi-skip-forward-fill"></i>Saltado',
+      falla_detectada:  '<i class="bi bi-exclamation-triangle-fill"></i>Falla',
+    }[estado] || estado;
+    badge.innerHTML = label;
+  }
+}
+
+// Marca el equipo en un estado simple (sin modal). Útil para "volver a
+// verificado" o flujos sin observación obligatoria.
+async function marcarEquipoEstado(mid, estado, extra){
+  extra = extra || {};
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipos/${mid}/marcar`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({estado_revision: estado, ...extra})
+    });
+    const d = await r.json();
+    if (!d.ok){ throw new Error(d.error || 'No se pudo marcar'); }
+    EQUIPOS_ESTADO_REVISION[String(mid)] = {
+      estado_revision: d.estado_revision,
+      razon_saltado:   d.razon || '',
+      observacion_tecnico: d.observacion || '',
+      revisado_at: (new Date()).toISOString().slice(0,19).replace('T',' '),
+      revisado_por: d.revisado_por || '',
+    };
+    _refreshEqCardBadge(mid);
+    if (_state.view === 'plantillas' && String(_state.mid) === String(mid)){
+      renderPlantillas(mid);
+    }
+    // Recalcular lock del botón firmar — saltar / falla excluyen las tareas
+    // del equipo, así que pueden destrabar el firmar.
+    try { actualizarLockFirmar(_calcCtxGlobal()); } catch(_) {}
+    if (typeof ilusToast === 'function'){
+      const _msg = {
+        verificado:       '✓ Marcado como verificado',
+        con_cambios:      'Marcado con cambios',
+        saltado:          '⏭️ Equipo saltado',
+        falla_detectada:  '🚨 Falla detectada — registrada',
+      }[estado] || 'Estado actualizado';
+      ilusToast(_msg, {type: estado === 'falla_detectada' ? 'danger' : 'success'});
+    }
+  } catch (e){
+    if (typeof ilusAlert === 'function'){
+      ilusAlert({title:'Error', message: e.message || 'No se pudo guardar', type:'error'});
+    } else {
+      console.error(e);
+    }
+  }
+}
+
+// Modal "Saltar equipo" — pide razón (radios) + observación obligatoria.
+let _modalSaltarEquipo = null;
+let _saltarEquipoMid = null;
+function abrirModalSaltarEquipo(mid){
+  _saltarEquipoMid = mid;
+  if (!_modalSaltarEquipo){
+    _modalSaltarEquipo = new bootstrap.Modal(document.getElementById('modalSaltarEquipo'));
+  }
+  // Reset
+  document.querySelectorAll('#modalSaltarEquipo input[name="skipRazon"]').forEach(r => r.checked = false);
+  const txt = document.getElementById('skipObservacion');
+  if (txt){ txt.value = ''; }
+  // Header con nombre del equipo
+  const eq = EQUIPOS_IDX[String(mid)] || {};
+  const nameEl = document.getElementById('skipEqNombre');
+  if (nameEl) nameEl.textContent = eq.nombre || `Equipo #${mid}`;
+  _modalSaltarEquipo.show();
+}
+
+async function confirmarSaltarEquipo(){
+  const mid = _saltarEquipoMid;
+  if (!mid){ return; }
+  const razonInput = document.querySelector('#modalSaltarEquipo input[name="skipRazon"]:checked');
+  const obs = (document.getElementById('skipObservacion').value || '').trim();
+  if (!razonInput){
+    if (typeof ilusToast === 'function'){
+      ilusToast('Selecciona una razón para saltar', {type:'warning'});
+    }
     return;
   }
-  cont.innerHTML = pls.map(p => {
-    const done = p.completas === p.total && p.total > 0;
-    return `<div class="tx-pl-card${done ? ' done' : ''}" onclick="goToTareas(${mid}, ${p.plantilla_id})">
-      <div class="pl-icon"><i class="bi bi-${done ? 'check-circle-fill' : 'list-check'}"></i></div>
-      <div class="pl-info">
-        <div class="pl-name">${_escapeHtml(p.plantilla_nombre)}</div>
-        <div class="pl-meta">
-          <span class="badge">${_escapeHtml(p.plantilla_tipo)}</span>
-          <span>${p.completas}/${p.total} tareas</span>
-          ${done ? '<span style="color:#16a34a;font-weight:700">✓ COMPLETA</span>' : ''}
-        </div>
-        <div class="pl-prog"><div style="width:${p.progreso}%"></div></div>
-      </div>
-      <i class="bi bi-chevron-right text-muted"></i>
-    </div>`;
-  }).join('');
+  if (obs.length < 5){
+    if (typeof ilusToast === 'function'){
+      ilusToast('Escribe al menos 5 caracteres de observación', {type:'warning'});
+    }
+    document.getElementById('skipObservacion').focus();
+    return;
+  }
+  const razon = razonInput.value;
+  // Confirmación final con ilusConfirm (regla ILUS #1)
+  if (typeof ilusConfirm === 'function'){
+    const ok = await ilusConfirm({
+      title: 'Confirmar saltado',
+      message: `¿Saltar este equipo y registrar la razón?`,
+      sub: 'La OT NO se detendrá, pero quedará registrado quién lo saltó y por qué.',
+      okLabel: 'Sí, saltar',
+      cancelLabel: 'Cancelar',
+      danger: false,
+    });
+    if (!ok) return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipos/${mid}/saltar`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({razon, observacion: obs})
+    });
+    const d = await r.json();
+    if (!d.ok){ throw new Error(d.error || 'No se pudo saltar'); }
+    EQUIPOS_ESTADO_REVISION[String(mid)] = {
+      estado_revision: 'saltado',
+      razon_saltado: d.razon || razon,
+      observacion_tecnico: d.observacion || obs,
+      revisado_at: (new Date()).toISOString().slice(0,19).replace('T',' '),
+      revisado_por: d.revisado_por || '',
+    };
+    _refreshEqCardBadge(mid);
+    if (_state.view === 'plantillas' && String(_state.mid) === String(mid)){
+      renderPlantillas(mid);
+    }
+    try { actualizarLockFirmar(_calcCtxGlobal()); } catch(_) {}
+    if (_modalSaltarEquipo){ _modalSaltarEquipo.hide(); }
+    if (typeof ilusToast === 'function'){
+      ilusToast('⏭️ Equipo saltado — la OT continúa', {type:'success'});
+    }
+  } catch (e){
+    if (typeof ilusAlert === 'function'){
+      ilusAlert({title:'Error', message: e.message || 'No se pudo guardar', type:'error'});
+    }
+  }
+}
+
+// Modal "Reportar falla" — pide observación detallada (mín 5 chars).
+async function abrirModalFallaEquipo(mid){
+  if (typeof ilusPrompt !== 'function'){
+    console.error('ilusPrompt no disponible');
+    return;
+  }
+  const eq = EQUIPOS_IDX[String(mid)] || {};
+  const nombreEq = eq.nombre || ('Equipo #'+mid);
+  const desc = await ilusPrompt({
+    title: 'Reportar falla — ' + nombreEq,
+    message: 'Describe la falla detectada en este equipo:',
+    sub: 'La OT no se detendrá. La falla queda registrada en el historial del equipo.',
+    placeholder: 'Ej: ruido en motor, banda desgastada, display no enciende…',
+    required: true,
+    multiline: true,
+  });
+  if (!desc || desc.trim().length < 5){
+    if (typeof ilusToast === 'function'){
+      ilusToast('La descripción debe tener al menos 5 caracteres', {type:'warning'});
+    }
+    return;
+  }
+  await marcarEquipoEstado(mid, 'falla_detectada', {observacion: desc.trim()});
 }
 
 // ════════════════════════════════════════════════════════
@@ -3577,9 +4092,15 @@ function _updateProgress(mid, pid){
 
 // Calcula contadores globales: total/completas y obligatorias/completas_obligatorias.
 // Centralizado para no duplicar el filtro t.obligatoria en varios lugares.
+// 2026-05-21 (Daniel) — EXCLUYE tareas de equipos en estado_revision
+// 'saltado' o 'falla_detectada': esos equipos no deben bloquear el cierre.
 function _calcCtxGlobal(){
   let total = 0, completas = 0, oblTot = 0, oblComp = 0;
-  Object.values(PLANTILLAS_POR_MAQUINA).forEach(pls => {
+  Object.entries(PLANTILLAS_POR_MAQUINA).forEach(([midStr, pls]) => {
+    const rev = (EQUIPOS_ESTADO_REVISION || {})[midStr] || {};
+    const _excluir = (rev.estado_revision === 'saltado' ||
+                      rev.estado_revision === 'falla_detectada');
+    if (_excluir) return;
     pls.forEach(p => {
       total += p.total;
       completas += p.completas;

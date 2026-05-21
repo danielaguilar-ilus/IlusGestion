@@ -42,6 +42,12 @@
       <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
         <i class="bi bi-building-add me-1"></i>Nuevo cliente
       </a>
+      {# Plan 2026-05-21 Capa 9-C: dashboard puede cargar visitas históricas
+         eligiendo el cliente vía autocomplete. #}
+      <button type="button" class="btn btn-outline-secondary" onclick="abrirVisitaHistDashboard()"
+              title="Registrar una visita que ya ocurrió">
+        <i class="bi bi-clock-history me-1"></i>Visita histórica
+      </button>
       <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
         <i class="bi bi-calendar3 me-1"></i>Calendario
       </a>
@@ -198,6 +204,37 @@ async function ejecutarResetMantenciones(){
 </div>
 
 <div class="row g-3">
+
+  {# ── Pendientes de facturar (Plan 2026-05-21 Capa 9-B) ── #}
+  <div class="col-12">
+    <div class="ilus-card" id="pendientesFacturarWrap"
+         style="background:linear-gradient(135deg,#fffaf0,#fef2f2);border-left:5px solid #f59e0b">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <div class="fw-bold" style="font-size:.95rem;color:#7c2d12">
+          <i class="bi bi-exclamation-triangle-fill me-2" style="color:#dc2626"></i>
+          Visitas sin facturar
+          <span class="badge ms-2" id="pfBadge" style="background:#dc2626;color:#fff;font-size:.7rem">—</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <label class="small text-muted me-1">Antigüedad mín.</label>
+          <select id="pfDiasMin" class="form-select form-select-sm" style="width:auto" onchange="cargarPendientesFacturar()">
+            <option value="3" selected>3 días</option>
+            <option value="7">7 días</option>
+            <option value="15">15 días</option>
+            <option value="30">30 días</option>
+          </select>
+          <button class="btn btn-sm btn-outline-dark" onclick="cargarPendientesFacturar()" title="Refrescar">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      <div id="pfList">
+        <div class="text-muted py-3 text-center small">
+          <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+        </div>
+      </div>
+    </div>
+  </div>
 
   {# ── Próximas OTs (visitas) ── #}
   <div class="col-12 col-lg-7">
@@ -389,4 +426,276 @@ async function ejecutarResetMantenciones(){
   </div>
 
 </div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: Visita histórica desde el dashboard (sin contexto cliente fijo).
+   Plan 2026-05-21 Capa 9-C. Reusa endpoint /clientes/<cid>/visitas/retroactiva.
+════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalVisitaHistDashboard" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a,#334155);color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-clock-history me-2"></i>Cargar visita histórica
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2" style="font-size:.85rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Registra una mantención que YA ocurrió. Útil cuando un cliente
+          se acaba de migrar al sistema y tiene historial pasado.
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Cliente <span class="text-danger">*</span></label>
+            <div class="position-relative">
+              <input type="text" id="vhd_cliente_search" class="form-control"
+                     placeholder="Escribe razón social o RUT…"
+                     autocomplete="off" oninput="vhdBuscarCliente()">
+              <div id="vhd_cliente_drop" class="position-absolute w-100"
+                   style="display:none;background:#fff;border:1px solid #d1d5db;border-radius:8px;
+                          box-shadow:0 4px 14px rgba(0,0,0,.1);z-index:5;max-height:240px;overflow-y:auto;top:100%"></div>
+            </div>
+            <div class="small mt-1" id="vhd_cliente_sel" style="display:none">
+              <i class="bi bi-check-circle text-success me-1"></i>
+              <strong id="vhd_cliente_lbl">—</strong>
+              <button class="btn btn-sm btn-link p-0 ms-2 text-decoration-none" onclick="vhdResetCliente()">cambiar</button>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Fecha de la mantención <span class="text-danger">*</span></label>
+            <input type="date" id="vhd_fecha" class="form-control" max="{{ hoy.strftime('%Y-%m-%d') if hoy else '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Tipo</label>
+            <select id="vhd_tipo" class="form-select">
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="garantia">Garantía</option>
+              <option value="inspeccion">Inspección</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Nota libre / Observaciones</label>
+            <textarea id="vhd_nota" class="form-control" rows="2"
+                      placeholder="Qué se hizo, qué se cambió, qué quedó pendiente…"></textarea>
+          </div>
+        </div>
+
+        <div id="vhd_result" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" id="vhd_btn" class="btn btn-ilus fw-bold" onclick="vhdGuardar()">
+          <i class="bi bi-save me-1"></i>Registrar visita
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ──────────────────────────────────────────────────────────────
+   Dashboard: widget "Pendientes de facturar" + Modal Visita Histórica
+   Plan 2026-05-21 Capa 9.
+   ────────────────────────────────────────────────────────────── */
+async function cargarPendientesFacturar(){
+  const cont = document.getElementById('pfList');
+  const dMin = parseInt(document.getElementById('pfDiasMin').value || 3);
+  cont.innerHTML = '<div class="text-muted py-3 text-center small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  try {
+    const r = await fetch(`/mantenciones/api/visitas-sin-facturar?dias_min=${dMin}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error');
+    document.getElementById('pfBadge').textContent = d.total;
+    const arr = d.visitas || [];
+    if (!arr.length){
+      cont.innerHTML = `
+        <div class="text-center py-3" style="color:#166534">
+          <i class="bi bi-check-circle-fill" style="font-size:1.8rem;display:block;margin-bottom:6px;opacity:.8"></i>
+          <strong>Todo al día</strong> — no hay visitas pendientes de facturar (>= ${dMin} días).
+        </div>`;
+      return;
+    }
+    const top = arr.slice(0, 10);
+    cont.innerHTML = `
+      <div class="table-responsive">
+        <table class="table mant-table mb-0">
+          <thead><tr>
+            <th>Cliente</th>
+            <th>Tipo</th>
+            <th class="text-nowrap">Fecha visita</th>
+            <th class="text-end">Días</th>
+            <th>Estado</th>
+            <th class="text-end pe-2">Acción</th>
+          </tr></thead>
+          <tbody>
+            ${top.map(v => {
+              const fStr = v.fecha
+                ? new Date(v.fecha + 'T00:00:00').toLocaleDateString('es-CL')
+                : '—';
+              const dias = v.dias_sin_facturar;
+              const col = dias >= 30 ? '#991b1b' : dias >= 15 ? '#b45309' : '#1e40af';
+              const estBadge = {
+                sin_cotizar: ['#fee2e2','#991b1b','Sin cotizar'],
+                cotizado:    ['#fef3c7','#92400e','Cotizado'],
+                con_oc:      ['#ffedd5','#9a3412','Con OC'],
+              }[v.estado_facturacion] || ['#f3f4f6','#475569', v.estado_facturacion || '—'];
+              return `<tr>
+                <td>
+                  <a href="${_pfEsc(v.url)}" class="fw-semibold text-decoration-none">${_pfEsc(v.cliente || '—')}</a>
+                  ${v.titulo ? '<div class="small text-muted text-truncate" style="max-width:280px">'+_pfEsc(v.titulo)+'</div>' : ''}
+                </td>
+                <td><span class="badge bg-secondary" style="font-size:.65rem">${_pfEsc(v.tipo_visita || '—')}</span></td>
+                <td class="text-nowrap">${fStr}</td>
+                <td class="text-end fw-bold" style="color:${col}">${dias} d</td>
+                <td><span style="background:${estBadge[0]};color:${estBadge[1]};padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700">${estBadge[2]}</span></td>
+                <td class="text-end pe-2">
+                  <a href="${_pfEsc(v.url)}#tab-finanzas" class="btn btn-sm btn-ilus py-0 px-2" style="font-size:.72rem">
+                    <i class="bi bi-arrow-right"></i> Ir a ficha
+                  </a>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${arr.length > 10 ? `<div class="text-muted small mt-2 text-center">${arr.length - 10} más no mostradas — usa la antigüedad para refinar.</div>` : ''}
+    `;
+  } catch(e){
+    cont.innerHTML = `<div class="alert alert-danger small mb-0">Error: ${_pfEsc(e.message)}</div>`;
+  }
+}
+
+function _pfEsc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+document.addEventListener('DOMContentLoaded', () => {
+  cargarPendientesFacturar();
+});
+
+/* ── Modal visita histórica (dashboard) ── */
+let _vhdCidSel = null;
+let _vhdSearchTo = null;
+
+function abrirVisitaHistDashboard(){
+  // Reset
+  _vhdCidSel = null;
+  document.getElementById('vhd_cliente_search').value = '';
+  document.getElementById('vhd_cliente_sel').style.display = 'none';
+  document.getElementById('vhd_cliente_drop').style.display = 'none';
+  document.getElementById('vhd_fecha').value = '';
+  document.getElementById('vhd_tipo').value = 'preventiva';
+  document.getElementById('vhd_nota').value  = '';
+  document.getElementById('vhd_result').style.display = 'none';
+  const btn = document.getElementById('vhd_btn');
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar visita';
+  // Default fecha hace 30 días
+  const f = new Date(); f.setDate(f.getDate() - 30);
+  document.getElementById('vhd_fecha').value = f.toISOString().slice(0,10);
+  if (!window._modalVHD){
+    window._modalVHD = new bootstrap.Modal(document.getElementById('modalVisitaHistDashboard'));
+  }
+  window._modalVHD.show();
+}
+
+function vhdResetCliente(){
+  _vhdCidSel = null;
+  document.getElementById('vhd_cliente_sel').style.display = 'none';
+  document.getElementById('vhd_cliente_search').value = '';
+  document.getElementById('vhd_cliente_search').focus();
+}
+
+function vhdBuscarCliente(){
+  const q = document.getElementById('vhd_cliente_search').value.trim();
+  if (_vhdSearchTo) clearTimeout(_vhdSearchTo);
+  if (q.length < 2){
+    document.getElementById('vhd_cliente_drop').style.display = 'none';
+    return;
+  }
+  _vhdSearchTo = setTimeout(async () => {
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/autocomplete?q=${encodeURIComponent(q)}`);
+      let arr = [];
+      if (r.ok){ arr = await r.json(); }
+      if (!Array.isArray(arr)) arr = arr.clientes || [];
+      // Filtramos solo locales (los de ERP no tienen id en mant_clientes)
+      arr = arr.filter(c => c.origen === 'local' || (c.id && typeof c.id === 'number'));
+      const drop = document.getElementById('vhd_cliente_drop');
+      if (!arr.length){
+        drop.innerHTML = '<div class="p-2 text-muted small">Sin resultados</div>';
+        drop.onclick = null;
+      } else {
+        drop.innerHTML = arr.slice(0, 12).map(c => {
+          const nm = c.razon_social || c.nombre || '—';
+          return `<div class="p-2 border-bottom vhd-opt" data-id="${c.id}" data-nm="${_pfEsc(nm)}"
+                       style="cursor:pointer;font-size:.85rem"
+                       onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background=''">
+            <strong>${_pfEsc(nm)}</strong>
+            ${c.rut ? '<span class="small text-muted ms-2 font-monospace">'+_pfEsc(c.rut)+'</span>' : ''}
+          </div>`;
+        }).join('');
+        drop.onclick = function(ev){
+          let t = ev.target;
+          while (t && !t.classList.contains('vhd-opt')) t = t.parentElement;
+          if (!t) return;
+          vhdSelCliente(parseInt(t.dataset.id), t.dataset.nm);
+        };
+      }
+      drop.style.display = '';
+    } catch(e){}
+  }, 250);
+}
+
+function vhdSelCliente(cid, lbl){
+  _vhdCidSel = cid;
+  document.getElementById('vhd_cliente_lbl').textContent = lbl;
+  document.getElementById('vhd_cliente_sel').style.display = '';
+  document.getElementById('vhd_cliente_drop').style.display = 'none';
+  document.getElementById('vhd_cliente_search').value = '';
+}
+
+async function vhdGuardar(){
+  if (!_vhdCidSel){
+    if (typeof ilusAlert === 'function')
+      await ilusAlert({title:'Falta cliente', message:'Busca y selecciona el cliente.', type:'warning'});
+    else alert('Selecciona el cliente');
+    return;
+  }
+  const fecha = document.getElementById('vhd_fecha').value;
+  if (!fecha){
+    if (typeof ilusAlert === 'function')
+      await ilusAlert({title:'Falta fecha', message:'Indica cuándo se realizó la mantención.', type:'warning'});
+    else alert('Falta fecha');
+    return;
+  }
+  const tipo  = document.getElementById('vhd_tipo').value || 'retroactiva';
+  const nota  = (document.getElementById('vhd_nota').value || '').trim();
+  const btn = document.getElementById('vhd_btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${_vhdCidSel}/visitas/retroactiva`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({fecha, tipo, nota_libre: nota}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error');
+    if (typeof ilusToast === 'function')
+      ilusToast('✓ Visita histórica registrada', {type:'success'});
+    if (window._modalVHD) window._modalVHD.hide();
+    // Refrescar pendientes
+    cargarPendientesFacturar();
+  } catch(e){
+    document.getElementById('vhd_result').innerHTML =
+      `<div class="alert alert-danger small">${_pfEsc(e.message)}</div>`;
+    document.getElementById('vhd_result').style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar visita';
+  }
+}
+</script>
 {% endblock %}

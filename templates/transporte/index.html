@@ -1176,7 +1176,8 @@ async function limpiarYResync(){
 /* ── FAB Reopen Panel Manifiesto ── */
 .tr-fab-reopen {
   display:none;
-  position:fixed; bottom:24px; right:24px; z-index:1052;
+  position:fixed; bottom:24px; right:24px; z-index:9000;
+  min-width:56px;
   align-items:center; gap:9px;
   padding:14px 22px; min-height:56px;
   background:linear-gradient(135deg, #ef4444, #b91c1c);
@@ -1236,12 +1237,8 @@ async function limpiarYResync(){
 }
 </style>
 
-<div id="dragPanel"
-     style="position:fixed;top:0;right:0;width:360px;max-width:100vw;height:100vh;
-            background:#0f0f0f;color:#fff;box-shadow:-6px 0 32px rgba(0,0,0,.6);
-            z-index:1055;transition:right .24s cubic-bezier(.4,0,.2,1);
-            overflow-y:auto;display:flex;flex-direction:column;
-            border-left:3px solid var(--ilus-red)">
+<div id="dragPanel" class="dp-drawer"
+     aria-hidden="true" role="dialog" aria-label="Panel manifiesto">
 
   {# ── Cabecera ── #}
   <div style="background:#1a1a1a;padding:13px 14px 10px;border-bottom:1px solid #2a2a2a;flex-shrink:0">
@@ -1254,10 +1251,10 @@ async function limpiarYResync(){
         <span id="dpBadge" style="display:none;
               background:var(--ilus-red);color:#fff;border-radius:50px;
               font-size:.65rem;font-weight:800;padding:2px 7px;min-width:22px;text-align:center">0</span>
-        {# Botón cerrar — ahora SIEMPRE visible (no solo en mobile).
-           Daniel pidió poder ocultarlo para que no estorbe el listado. #}
-        <button class="btn btn-sm btn-outline-secondary text-white border-secondary"
-                onclick="closeDragPanel()" title="Cerrar panel">
+        {# Botón cerrar — drawer cierra completamente y vuelve a mostrar el FAB.
+           Touch-friendly 44x44px. #}
+        <button type="button" class="dp-close-btn"
+                onclick="closeDragPanel()" title="Cerrar panel" aria-label="Cerrar panel">
           <i class="bi bi-x-lg"></i>
         </button>
       </div>
@@ -1344,10 +1341,8 @@ async function limpiarYResync(){
     </div>
   </div>
   <div class="flex-grow-1 px-2 pb-2" id="dragPanelBody">
-    <div class="text-center py-4" style="color:#555">
-      <div class="spinner-border spinner-border-sm text-danger mb-2"></div>
-      <div style="font-size:.75rem">Cargando manifiestos…</div>
-    </div>
+    {# Vacío al inicio. Se rellena con spinner / lista / error
+       cuando se llama cargarDragPanel(). #}
   </div>
 
   {# ── Footer ──
@@ -1387,26 +1382,66 @@ async function limpiarYResync(){
 
 </div>
 
-{# Overlay sólo en mobile #}
-<div id="dragOverlay"
-     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1054"
-     onclick="closeDragPanel()"></div>
+{# Overlay (desktop + mobile) — click cierra el drawer #}
+<div id="dragOverlay" class="dp-overlay"
+     onclick="closeDragPanel()" aria-hidden="true"></div>
 
 <style>
-/* ── Panel manifiesto ──
-   Comportamiento: empieza CERRADO. El usuario decide cuándo abrirlo
-   con el botón flotante (#dpReopenBtn). Esto le da al listado todo
-   el ancho del viewport por defecto y evita que estorbe.
-   El padding-right del main-wrapper se aplica SOLO cuando #dragPanel
-   tiene la clase .dp-open. */
-#dragPanel { right:-380px; }
-#dragPanel.dp-open { right:0 !important; }
-@media (min-width:768px) {
-  body.dp-open-desktop .main-wrapper { padding-right:366px; transition:padding-right .24s ease; }
+/* ── Drawer panel manifiesto ──
+   Empieza CERRADO siempre (desktop + mobile). Solo se abre cuando el
+   usuario hace click en el FAB o arrastra un documento. NO empuja el
+   layout — flota sobre la UI con overlay oscuro detrás.
+   Usa transform: translateX para hide determinista (no depende de
+   inline styles). visibility:hidden cuando cerrado para que tampoco
+   capture eventos accidentales mientras está fuera de pantalla. */
+.dp-drawer {
+  position:fixed; top:0; right:0;
+  width:400px; max-width:100vw; height:100vh;
+  background:#0f0f0f; color:#fff;
+  box-shadow:-6px 0 32px rgba(0,0,0,.6);
+  border-left:3px solid var(--ilus-red);
+  z-index:9999;
+  display:flex; flex-direction:column;
+  overflow-y:auto;
+  transform:translateX(100%);
+  visibility:hidden;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear .25s;
+  will-change:transform;
+}
+.dp-drawer.dp-open {
+  transform:translateX(0);
+  visibility:visible;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear 0s;
 }
 @media (max-width:767.98px) {
-  /* en mobile no movemos el wrapper — el panel queda sobre la UI con overlay */
+  .dp-drawer { width:100vw; max-width:100vw; }
 }
+
+/* ── Overlay (desktop + mobile) ── */
+.dp-overlay {
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.5);
+  z-index:9998;
+  opacity:0; visibility:hidden;
+  transition:opacity .22s ease, visibility 0s linear .22s;
+}
+.dp-overlay.dp-open {
+  opacity:1; visibility:visible;
+  transition:opacity .22s ease, visibility 0s linear 0s;
+}
+
+/* ── Botón cerrar del drawer (touch-friendly 44x44) ── */
+.dp-close-btn {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:44px; height:44px; min-width:44px;
+  background:rgba(255,255,255,.06);
+  color:#fff; border:1px solid rgba(255,255,255,.18);
+  border-radius:10px; cursor:pointer;
+  transition:background .15s, transform .1s;
+  font-size:1.1rem; line-height:1;
+}
+.dp-close-btn:hover { background:rgba(220,38,38,.85); border-color:var(--ilus-red); }
+.dp-close-btn:active { transform:scale(.94); }
 
 /* ── Zona de drop activa ── */
 .dp-drag-over { background:rgba(204,0,0,.14)!important;border-color:var(--ilus-red)!important; }
@@ -3474,27 +3509,44 @@ function _dpAbrirPanel() {
 }
 
 function openDragPanel() {
-  // Mostrar panel + ajustar padding del main-wrapper en desktop
+  // Mostrar drawer + overlay oscuro detrás (desktop + mobile).
+  // El drawer flota sobre la UI sin empujar el contenido.
   var dp = document.getElementById('dragPanel');
-  if (dp) dp.classList.add('dp-open');
-  if (window.innerWidth >= 768) {
-    document.body.classList.add('dp-open-desktop');
-  } else {
-    document.getElementById('dragOverlay').style.display = 'block';
+  var ov = document.getElementById('dragOverlay');
+  if (dp) {
+    dp.classList.add('dp-open');
+    dp.setAttribute('aria-hidden', 'false');
   }
+  if (ov) {
+    ov.classList.add('dp-open');
+    ov.setAttribute('aria-hidden', 'false');
+  }
+  // Bloquear scroll del body para que el contenido no se mueva detrás
+  document.body.style.overflow = 'hidden';
   var btn = document.getElementById('dpReopenBtn');
   if (btn) {
     btn.style.display = 'none';
     btn.classList.remove('tr-has-items');
   }
+  // Cargar manifiestos solo cuando se abre por primera vez
   if (!_manifestosActivos) cargarDragPanel();
 }
 
 function closeDragPanel() {
   var dp = document.getElementById('dragPanel');
-  if (dp) dp.classList.remove('dp-open');
+  var ov = document.getElementById('dragOverlay');
+  if (dp) {
+    dp.classList.remove('dp-open');
+    dp.setAttribute('aria-hidden', 'true');
+  }
+  if (ov) {
+    ov.classList.remove('dp-open');
+    ov.setAttribute('aria-hidden', 'true');
+  }
+  // Restaurar scroll del body
+  document.body.style.overflow = '';
+  // Compat: limpiar clase legacy si quedó pegada por código viejo
   document.body.classList.remove('dp-open-desktop');
-  document.getElementById('dragOverlay').style.display = 'none';
   _dragCid = null;
   // Mostrar el botón flotante para reabrir. Si hay items en cola, mostrar badge + pulse.
   var btn = document.getElementById('dpReopenBtn');
@@ -3514,22 +3566,56 @@ function closeDragPanel() {
   }
 }
 
+// ESC key cierra el drawer si está abierto
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape' && e.keyCode !== 27) return;
+  var dp = document.getElementById('dragPanel');
+  if (dp && dp.classList.contains('dp-open')) {
+    closeDragPanel();
+  }
+});
+
 // ── CARGAR Y RENDERIZAR MANIFIESTOS ──────────────────────────────
+// Timeout máximo 8s + botón Reintentar si falla. Daniel reportó loader
+// colgado indefinidamente — esto garantiza que SIEMPRE termina en
+// success / empty / error en menos de 8s.
 async function cargarDragPanel(force) {
   if (!force && _manifestosActivos) {
     renderDragPanel(_manifestosActivos);
     return;
   }
-  document.getElementById('dragPanelBody').innerHTML =
-    '<div class="text-center py-3" style="color:#555">' +
-    '<div class="spinner-border spinner-border-sm text-danger"></div></div>';
+  var body = document.getElementById('dragPanelBody');
+  if (!body) return;
+  body.innerHTML =
+    '<div class="text-center py-3" style="color:#666">' +
+    '<div class="spinner-border spinner-border-sm text-danger mb-2"></div>' +
+    '<div style="font-size:.74rem">Cargando manifiestos…</div></div>';
+
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var timeoutId = setTimeout(function() {
+    if (ctrl) ctrl.abort();
+  }, 8000);
+
   try {
-    const r = await fetch('/transporte/api/manifiestos/activos');
+    const r = await fetch('/transporte/api/manifiestos/activos',
+      ctrl ? {signal: ctrl.signal, cache:'no-store'} : {cache:'no-store'});
+    clearTimeout(timeoutId);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     _manifestosActivos = await r.json();
     renderDragPanel(_manifestosActivos);
   } catch(err) {
-    document.getElementById('dragPanelBody').innerHTML =
-      '<div class="p-2 small" style="color:#c55"><i class="bi bi-wifi-off me-1"></i>Error cargando</div>';
+    clearTimeout(timeoutId);
+    var isTimeout = (err && (err.name === 'AbortError' || err.code === 20));
+    body.innerHTML =
+      '<div class="text-center py-3 px-2" style="color:#c66">' +
+      '<i class="bi ' + (isTimeout ? 'bi-clock-history' : 'bi-wifi-off') +
+      '" style="font-size:1.4rem;display:block;opacity:.55;margin-bottom:6px"></i>' +
+      '<div style="font-size:.78rem;margin-bottom:8px">' +
+      (isTimeout ? 'El servidor tardó demasiado' : 'No se pudieron cargar') + '</div>' +
+      '<button type="button" class="btn btn-sm btn-outline-danger" ' +
+      'onclick="cargarDragPanel(true)" style="font-size:.72rem">' +
+      '<i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>' +
+      '</div>';
   }
 }
 
