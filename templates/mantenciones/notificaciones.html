@@ -1,203 +1,605 @@
 {% extends "base.html" %}
-{% block title %}Centro de Notificaciones — Mantenciones{% endblock %}
+{% block title %}Notificaciones — Mantenciones{% endblock %}
 {% block content %}
+{# ════════════════════════════════════════════════════════════════════
+   PÁGINA: Centro de Notificaciones (mant_notificaciones — NUEVO schema)
+
+   Schema BD (tabla `mant_notificaciones`):
+     id, destino_user_id, cliente_id, visita_id, tipo, prioridad,
+     titulo, cuerpo, url_accion, leida_at, archivada_at, created_at
+
+   Consume:
+     GET  /mantenciones/api/notif-interna?leidas=0|1&tipo=X&prioridad=Y&limit=N
+     POST /mantenciones/api/notif-interna/<nid>/leida
+     POST /mantenciones/api/notif-interna/<nid>/archivar
+
+   NOTA: La ruta GET /mantenciones/notificaciones que sirve esta página
+   es responsabilidad del backend (agente paralelo en app.py).
+   Si la ruta no existe aún, los usuarios verán un 404 pero la campana
+   en base.html sí funciona (degrada bien).
+   ════════════════════════════════════════════════════════════════════ #}
+
 <style>
-:root{--red:#e63946;}
-.notif-hero{background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;padding:24px 28px;margin-bottom:24px;}
-.notif-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;}
-.notif-kpi-card{background:#fff;border-radius:10px;border:1px solid #eaecf0;padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.05);}
-.notif-kpi-num{font-size:1.8rem;font-weight:900;line-height:1;}
-.notif-kpi-lbl{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;margin-top:3px;}
-.notif-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:14px;transition:border-color .15s;}
-.notif-row:hover{border-color:#cbd5e1;}
-.notif-row.pendiente{border-left:4px solid #f59e0b;}
-.notif-row.enviada{border-left:4px solid #2563eb;}
-.notif-row.leida{border-left:4px solid #9ca3af;opacity:.75;}
-.notif-row.ignorada{border-left:4px solid #e5e7eb;opacity:.55;}
-.notif-icon{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.95rem;}
-.notif-titulo{font-size:.85rem;font-weight:700;color:#111;margin-bottom:3px;}
-.notif-msg{font-size:.78rem;color:#374151;line-height:1.45;}
-.notif-meta{font-size:.68rem;color:#9ca3af;margin-top:4px;}
-.notif-acciones{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap;}
-.tipo-badge{font-size:.6rem;padding:2px 8px;border-radius:50px;font-weight:700;display:inline-block;}
-.canal-email{background:#dbeafe;color:#1e40af;}
-.canal-sistema{background:#f3f4f6;color:#374151;}
-.tipo-ai_alerta{background:#fef3c7;color:#92400e;}
-.tipo-vencimiento{background:#fee2e2;color:#991b1b;}
-.tipo-visita_proxima{background:#dcfce7;color:#166534;}
-.tipo-sla{background:#ede9fe;color:#5b21b6;}
-.filtros{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
-.filtros .btn{font-size:.78rem;}
+:root{
+  --notif-red:    #dc2626;
+  --notif-amber:  #f59e0b;
+  --notif-blue:   #3b82f6;
+  --notif-gray:   #6b7280;
+}
+
+/* ── Header / hero ──────────────────────────────────────────── */
+.notif-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);
+  border-left:5px solid var(--notif-red);
+  border-radius:14px;padding:20px 26px;margin-bottom:20px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  box-shadow:0 4px 16px rgba(0,0,0,.08);
+}
+.notif-hero-icon{
+  width:54px;height:54px;border-radius:14px;
+  background:linear-gradient(135deg,#dc2626,#991b1b);
+  color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:1.6rem;flex-shrink:0;
+  box-shadow:0 4px 12px rgba(220,38,38,.35);
+}
+.notif-hero h4{color:#fff;font-weight:800;margin:0;font-size:1.25rem;letter-spacing:-.01em}
+.notif-hero .hero-sub{color:#94a3b8;font-size:.84rem;margin-top:2px}
+.notif-hero-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.btn-notif{
+  border:1.5px solid rgba(255,255,255,.18);
+  background:transparent;color:#fff;font-weight:600;font-size:.78rem;
+  padding:7px 14px;border-radius:9px;display:inline-flex;align-items:center;gap:6px;
+  cursor:pointer;transition:all .15s;text-decoration:none;
+}
+.btn-notif:hover{background:rgba(220,38,38,.15);border-color:#dc2626;color:#fff}
+.btn-notif-primary{
+  background:var(--notif-red);border-color:var(--notif-red);
+}
+.btn-notif-primary:hover{background:#b91c1c;border-color:#b91c1c}
+
+/* ── KPI strip ──────────────────────────────────────────────── */
+.notif-kpi-strip{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;margin-bottom:18px;
+}
+.notif-kpi{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:12px 14px;display:flex;align-items:center;gap:10px;
+  transition:transform .15s, box-shadow .15s, border-color .15s;
+}
+.notif-kpi:hover{
+  transform:translateY(-2px);
+  box-shadow:0 6px 14px rgba(0,0,0,.06);
+  border-color:#d1d5db;
+}
+.notif-kpi-icon{
+  width:36px;height:36px;border-radius:9px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.05rem;
+}
+.notif-kpi-num{font-size:1.4rem;font-weight:800;color:#0a0a0a;line-height:1}
+.notif-kpi-lbl{
+  font-size:.6rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.5px;color:#9ca3af;margin-top:2px;line-height:1.1;
+}
+
+/* ── Pills de filtro (tipo + prioridad) ─────────────────────── */
+.notif-filters{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:10px 14px;margin-bottom:14px;
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+}
+.notif-filter-group{
+  display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+}
+.notif-filter-lbl{
+  font-size:.66rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.5px;color:#9ca3af;
+}
+.notif-pill{
+  background:#f3f4f6;color:#374151;border:1px solid transparent;
+  font-size:.74rem;font-weight:700;padding:5px 11px;border-radius:50px;
+  cursor:pointer;transition:all .15s;
+  display:inline-flex;align-items:center;gap:4px;
+  text-decoration:none;
+}
+.notif-pill:hover{background:#e5e7eb;color:#0a0a0a;text-decoration:none}
+.notif-pill-active{
+  background:#0a0a0a;color:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+.notif-pill-urgente.notif-pill-active{ background:var(--notif-red); }
+.notif-pill-alta.notif-pill-active   { background:var(--notif-amber); }
+.notif-pill-media.notif-pill-active  { background:var(--notif-blue); }
+.notif-pill-baja.notif-pill-active   { background:var(--notif-gray); }
+
+/* ── Notification card ─────────────────────────────────────── */
+.notif-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:14px 16px;margin-bottom:9px;
+  display:flex;gap:14px;align-items:flex-start;
+  transition:border-color .15s, box-shadow .15s, transform .15s;
+  cursor:pointer;position:relative;
+}
+.notif-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 6px 16px rgba(0,0,0,.07);
+  border-color:#cbd5e1;
+}
+.notif-card-prio-urgente{ border-left:4px solid var(--notif-red); }
+.notif-card-prio-alta   { border-left:4px solid var(--notif-amber); }
+.notif-card-prio-media  { border-left:4px solid var(--notif-blue); }
+.notif-card-prio-baja   { border-left:4px solid var(--notif-gray); }
+
+.notif-card.notif-leida{ opacity:.72; background:#fafafa; }
+
+.notif-card-icon{
+  width:38px;height:38px;border-radius:10px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1rem;
+}
+.notif-card-body{flex:1;min-width:0}
+.notif-card-titulo{
+  font-weight:700;color:#0a0a0a;font-size:.92rem;line-height:1.3;
+  margin-bottom:3px;
+}
+.notif-card-cuerpo{
+  color:#475569;font-size:.8rem;line-height:1.45;
+}
+.notif-card-meta{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  font-size:.7rem;color:#9ca3af;margin-top:6px;
+}
+.notif-tipo-badge{
+  display:inline-block;font-size:.6rem;font-weight:700;
+  padding:2px 8px;border-radius:50px;letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.notif-card-acciones{
+  flex-shrink:0;display:flex;gap:5px;align-items:center;
+}
+.notif-action-btn{
+  background:#fff;border:1px solid #e5e7eb;color:#6b7280;
+  width:32px;height:32px;border-radius:8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:.85rem;
+  transition:all .15s;
+}
+.notif-action-btn:hover{
+  background:#f3f4f6;color:#0a0a0a;border-color:#cbd5e1;
+}
+.notif-action-btn-leida:hover{
+  background:#dcfce7;color:#16a34a;border-color:#86efac;
+}
+.notif-action-btn-archivar:hover{
+  background:#fee2e2;color:#dc2626;border-color:#fca5a5;
+}
+
+/* ── Empty state ──────────────────────────────────────────── */
+.notif-empty{
+  text-align:center;padding:50px 20px;color:#6b7280;
+  background:#fff;border:1px dashed #e5e7eb;border-radius:14px;
+}
+.notif-empty-icon{font-size:3rem;color:#cbd5e1;display:block;margin-bottom:12px}
+.notif-empty-title{font-weight:700;color:#0a0a0a;font-size:1rem}
+.notif-empty-sub{font-size:.82rem;margin-top:4px}
+
+/* ── Skeleton loader ──────────────────────────────────────── */
+.notif-skel{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:14px 16px;margin-bottom:9px;display:flex;gap:14px;
+}
+.notif-skel-bar{
+  background:linear-gradient(90deg,#f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size:200% 100%;animation: notifSkel 1.4s infinite;
+  border-radius:6px;
+}
+@keyframes notifSkel{
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Mobile tweaks ────────────────────────────────────────── */
+@media (max-width: 575px){
+  .notif-hero{padding:14px 16px;gap:12px}
+  .notif-hero h4{font-size:1.05rem}
+  .notif-hero-icon{width:42px;height:42px;font-size:1.25rem}
+  .notif-kpi{padding:9px 11px}
+  .notif-kpi-num{font-size:1.15rem}
+  .notif-card{padding:11px 12px;gap:10px}
+  .notif-card-icon{width:34px;height:34px}
+  .notif-filters{padding:9px 10px}
+}
 </style>
 
-<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-  <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
-  <nav aria-label="breadcrumb" style="font-size:.78rem">
-    <span class="text-muted">Mantenciones /</span>
-    <span class="fw-semibold ms-1">Centro de Notificaciones</span>
-  </nav>
-  {% if pendientes > 0 %}
-  <span class="badge bg-warning text-dark ms-1">{{ pendientes }} pendiente{{ 's' if pendientes!=1 }}</span>
-  {% endif %}
-</div>
-
+{# ──────────────────────────────────────────────────────────────────
+   HEADER
+   ────────────────────────────────────────────────────────────────── #}
 <div class="notif-hero">
-  <div class="d-flex align-items-center gap-3">
-    <div style="font-size:2.5rem">🔔</div>
-    <div>
-      <div style="font-size:1.15rem;font-weight:800;color:#fff">Centro de Notificaciones</div>
-      <div style="color:#94a3b8;font-size:.82rem">Seguimiento de alertas IA, vencimientos y comunicaciones de mantenciones</div>
+  <div class="notif-hero-icon">
+    <i class="bi bi-bell-fill"></i>
+  </div>
+  <div style="flex:1;min-width:0">
+    <h4>Centro de Notificaciones</h4>
+    <div class="hero-sub">
+      Alertas internas — visitas próximas, vencimientos, facturas pendientes y eventos del sistema
     </div>
-    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-outline-light ms-auto">
-      <i class="bi bi-people me-1"></i>Clientes
+  </div>
+  <div class="notif-hero-actions">
+    <button type="button" class="btn-notif" id="btnMarcarTodas" title="Marcar todas como leídas">
+      <i class="bi bi-check2-all"></i>Marcar todas leídas
+    </button>
+    <a href="{{ url_for('mant_clientes') }}" class="btn-notif">
+      <i class="bi bi-arrow-left"></i>Volver
     </a>
   </div>
 </div>
 
-{# KPIs #}
-{% set pendiente_c = notifs|selectattr('estado','equalto','pendiente')|list|length %}
-{% set enviada_c   = notifs|selectattr('estado','equalto','enviada')|list|length %}
-{% set leida_c     = notifs|selectattr('estado','equalto','leida')|list|length %}
-{% set email_c     = notifs|selectattr('canal','equalto','email')|list|length %}
-<div class="notif-kpi">
-  <div class="notif-kpi-card">
-    <div class="notif-kpi-num" style="color:#f59e0b">{{ pendiente_c }}</div>
-    <div class="notif-kpi-lbl">Pendientes</div>
-  </div>
-  <div class="notif-kpi-card">
-    <div class="notif-kpi-num" style="color:#2563eb">{{ enviada_c }}</div>
-    <div class="notif-kpi-lbl">Enviadas</div>
-  </div>
-  <div class="notif-kpi-card">
-    <div class="notif-kpi-num" style="color:#6b7280">{{ leida_c }}</div>
-    <div class="notif-kpi-lbl">Leídas</div>
-  </div>
-  <div class="notif-kpi-card">
-    <div class="notif-kpi-num" style="color:#111">{{ notifs|length }}</div>
-    <div class="notif-kpi-lbl">Total</div>
-  </div>
-  <div class="notif-kpi-card">
-    <div class="notif-kpi-num" style="color:#1e40af">{{ email_c }}</div>
-    <div class="notif-kpi-lbl">Por email</div>
-  </div>
-</div>
-
-{# Filtros #}
-<div class="filtros">
-  <button class="btn btn-sm btn-dark-ilus fw-semibold" onclick="filtrar('')" id="f-todos">Todas</button>
-  <button class="btn btn-sm btn-outline-warning" onclick="filtrar('pendiente')" id="f-pendiente">Pendientes</button>
-  <button class="btn btn-sm btn-outline-primary" onclick="filtrar('enviada')" id="f-enviada">Enviadas</button>
-  <button class="btn btn-sm btn-outline-secondary" onclick="filtrar('leida')" id="f-leida">Leídas</button>
-  <button class="btn btn-sm btn-outline-danger ms-auto" onclick="marcarTodasLeidas()">
-    <i class="bi bi-check-all me-1"></i>Marcar todas leídas
-  </button>
-</div>
-
-{# Lista #}
-<div id="notifLista">
-{% if notifs %}
-  {% for n in notifs %}
-  <div class="notif-row {{ n.estado }}" id="notif-{{ n.id }}" data-estado="{{ n.estado }}">
-    <div class="notif-icon" style="background:{{ '#fef3c7' if n.tipo=='ai_alerta' else '#fee2e2' if n.tipo=='vencimiento' else '#dcfce7' if n.tipo=='visita_proxima' else '#ede9fe' if n.tipo=='sla' else '#f3f4f6' }}">
-      <i class="bi bi-{{ 'stars' if n.tipo=='ai_alerta' else 'calendar-x' if n.tipo=='vencimiento' else 'calendar-check' if n.tipo=='visita_proxima' else 'stopwatch' if n.tipo=='sla' else 'bell' }}" style="color:{{ '#d97706' if n.tipo=='ai_alerta' else '#dc2626' if n.tipo=='vencimiento' else '#16a34a' if n.tipo=='visita_proxima' else '#7c3aed' else '#6b7280' }}"></i>
+{# KPIs (dinámicos vía JS desde la API) #}
+<div class="notif-kpi-strip" id="notifKpiStrip">
+  <div class="notif-kpi">
+    <div class="notif-kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle-fill"></i></div>
+    <div>
+      <div class="notif-kpi-num" id="kpiUrgentes">—</div>
+      <div class="notif-kpi-lbl">Urgentes</div>
     </div>
-    <div style="flex:1;min-width:0">
-      <div class="notif-titulo">{{ n.titulo }}</div>
-      <div class="notif-msg">{{ n.mensaje }}</div>
-      <div class="notif-meta">
-        {% if n.razon_social %}<span class="me-2"><i class="bi bi-building me-1"></i>{{ n.razon_social }}</span>{% endif %}
-        <span class="me-2"><i class="bi bi-clock me-1"></i>{{ n.created_at }}</span>
-        <span class="tipo-badge tipo-{{ n.tipo }}">{{ n.tipo.replace('_',' ').title() }}</span>
-        <span class="tipo-badge canal-{{ n.canal }} ms-1">{{ n.canal }}</span>
-        {% if n.fecha_envio %}<span class="ms-2 text-success" style="font-size:.65rem"><i class="bi bi-check2 me-1"></i>Enviado {{ n.fecha_envio }}</span>{% endif %}
+  </div>
+  <div class="notif-kpi">
+    <div class="notif-kpi-icon" style="background:#fff7ed;color:#f59e0b"><i class="bi bi-bell-fill"></i></div>
+    <div>
+      <div class="notif-kpi-num" id="kpiNoLeidas">—</div>
+      <div class="notif-kpi-lbl">No leídas</div>
+    </div>
+  </div>
+  <div class="notif-kpi">
+    <div class="notif-kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+    <div>
+      <div class="notif-kpi-num" id="kpiLeidas">—</div>
+      <div class="notif-kpi-lbl">Leídas</div>
+    </div>
+  </div>
+  <div class="notif-kpi">
+    <div class="notif-kpi-icon" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-collection"></i></div>
+    <div>
+      <div class="notif-kpi-num" id="kpiTotal">—</div>
+      <div class="notif-kpi-lbl">Total</div>
+    </div>
+  </div>
+</div>
+
+{# ──────────────────────────────────────────────────────────────────
+   FILTROS — pills (estado leida + tipo + prioridad)
+   ────────────────────────────────────────────────────────────────── #}
+<div class="notif-filters">
+  <div class="notif-filter-group">
+    <span class="notif-filter-lbl">Estado</span>
+    <button type="button" class="notif-pill notif-pill-active" data-filter="leidas" data-value="0">
+      <i class="bi bi-bell-fill"></i>No leídas
+    </button>
+    <button type="button" class="notif-pill" data-filter="leidas" data-value="1">
+      <i class="bi bi-check2-all"></i>Leídas
+    </button>
+    <button type="button" class="notif-pill" data-filter="leidas" data-value="">
+      <i class="bi bi-collection"></i>Todas
+    </button>
+  </div>
+
+  <div class="notif-filter-group">
+    <span class="notif-filter-lbl">Tipo</span>
+    <button type="button" class="notif-pill notif-pill-active" data-filter="tipo" data-value="">Todos</button>
+    <button type="button" class="notif-pill" data-filter="tipo" data-value="visita_proxima">
+      <i class="bi bi-calendar-check"></i>Visita próxima
+    </button>
+    <button type="button" class="notif-pill" data-filter="tipo" data-value="factura_pendiente">
+      <i class="bi bi-file-earmark-text"></i>Factura pendiente
+    </button>
+    <button type="button" class="notif-pill" data-filter="tipo" data-value="vencimiento">
+      <i class="bi bi-calendar-x"></i>Vencimiento
+    </button>
+    <button type="button" class="notif-pill" data-filter="tipo" data-value="ot_asignada">
+      <i class="bi bi-clipboard-check"></i>OT asignada
+    </button>
+    <button type="button" class="notif-pill" data-filter="tipo" data-value="sla">
+      <i class="bi bi-stopwatch"></i>SLA
+    </button>
+  </div>
+
+  <div class="notif-filter-group">
+    <span class="notif-filter-lbl">Prioridad</span>
+    <button type="button" class="notif-pill notif-pill-active" data-filter="prioridad" data-value="">Todas</button>
+    <button type="button" class="notif-pill notif-pill-urgente" data-filter="prioridad" data-value="urgente">Urgente</button>
+    <button type="button" class="notif-pill notif-pill-alta"    data-filter="prioridad" data-value="alta">Alta</button>
+    <button type="button" class="notif-pill notif-pill-media"   data-filter="prioridad" data-value="media">Media</button>
+    <button type="button" class="notif-pill notif-pill-baja"    data-filter="prioridad" data-value="baja">Baja</button>
+  </div>
+</div>
+
+{# ──────────────────────────────────────────────────────────────────
+   LISTA (dinámica vía JS)
+   ────────────────────────────────────────────────────────────────── #}
+<div id="notifLista">
+  {# Skeleton de carga inicial #}
+  <div id="notifSkeleton">
+    {% for i in range(4) %}
+    <div class="notif-skel">
+      <div class="notif-skel-bar" style="width:38px;height:38px;border-radius:10px;flex-shrink:0"></div>
+      <div style="flex:1">
+        <div class="notif-skel-bar" style="width:60%;height:14px;margin-bottom:8px"></div>
+        <div class="notif-skel-bar" style="width:90%;height:10px"></div>
       </div>
     </div>
-    <div class="notif-acciones">
-      {% if n.estado == 'pendiente' %}
-      {% if n.canal == 'email' and n.destinatario %}
-      <button class="btn btn-xs btn-primary" onclick="enviarNotif({{ n.id }}, this)">
-        <i class="bi bi-envelope me-1"></i>Enviar
-      </button>
-      {% endif %}
-      <button class="btn btn-xs btn-outline-secondary" onclick="cambiarEstado({{ n.id }}, 'leida', this)">
-        <i class="bi bi-check"></i>
-      </button>
-      <button class="btn btn-xs btn-outline-danger" onclick="cambiarEstado({{ n.id }}, 'ignorada', this)">
-        <i class="bi bi-x"></i>
-      </button>
-      {% elif n.estado == 'enviada' %}
-      <span class="badge bg-primary" style="font-size:.6rem">Enviada</span>
-      <button class="btn btn-xs btn-outline-secondary" onclick="cambiarEstado({{ n.id }}, 'leida', this)">
-        <i class="bi bi-check2-all"></i>
-      </button>
-      {% endif %}
-      {% if n.cliente_id %}
-      <a href="{{ url_for('mant_ficha', cid=n.cliente_id) }}" class="btn btn-xs btn-outline-dark" title="Ver ficha">
-        <i class="bi bi-arrow-right"></i>
-      </a>
-      {% endif %}
-    </div>
+    {% endfor %}
   </div>
-  {% endfor %}
-{% else %}
-  <div class="text-center py-5 text-muted">
-    <i class="bi bi-bell-slash" style="font-size:3rem;opacity:.25"></i>
-    <div class="fw-semibold mt-3">Sin notificaciones</div>
-    <div style="font-size:.84rem">Las alertas IA de contratos y reportes aparecerán aquí</div>
-  </div>
-{% endif %}
 </div>
 
+{# ──────────────────────────────────────────────────────────────────
+   JS — render dinámico + filtros + acciones
+   ────────────────────────────────────────────────────────────────── #}
 <script>
-function filtrar(estado) {
-  document.querySelectorAll('.notif-row').forEach(r => {
-    r.style.display = (!estado || r.dataset.estado===estado) ? '' : 'none';
-  });
-}
+(function(){
+  const lista       = document.getElementById('notifLista');
+  const skeleton    = document.getElementById('notifSkeleton');
+  const kpiUrgentes = document.getElementById('kpiUrgentes');
+  const kpiNoLeidas = document.getElementById('kpiNoLeidas');
+  const kpiLeidas   = document.getElementById('kpiLeidas');
+  const kpiTotal    = document.getElementById('kpiTotal');
+  const btnMarcarTodas = document.getElementById('btnMarcarTodas');
 
-async function cambiarEstado(nid, estado, btn) {
-  const r = await fetch(`/mantenciones/api/notificaciones/${nid}`,{
-    method:'PUT', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({estado})
-  });
-  if (r.ok) {
-    const row = document.getElementById(`notif-${nid}`);
-    row.className = `notif-row ${estado}`;
-    row.dataset.estado = estado;
-    // Quitar botones de acción
-    row.querySelector('.notif-acciones').innerHTML = `<span class="badge bg-secondary" style="font-size:.6rem">${estado}</span>`;
-  }
-}
+  // Estado de filtros
+  let filtros = {
+    leidas: '0',  // '0' = no leídas, '1' = leídas, '' = todas
+    tipo: '',
+    prioridad: ''
+  };
 
-async function enviarNotif(nid, btn) {
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-  const r = await fetch(`/mantenciones/api/notificaciones/${nid}/enviar`,{method:'POST'});
-  const data = await r.json();
-  if (data.ok) {
-    const row = document.getElementById(`notif-${nid}`);
-    row.className = 'notif-row enviada';
-    row.dataset.estado = 'enviada';
-    row.querySelector('.notif-acciones').innerHTML = '<span class="badge bg-primary" style="font-size:.6rem">Enviada ✓</span>';
-  } else {
-    alert('Error: ' + (data.error||'No se pudo enviar'));
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-envelope me-1"></i>Enviar';
-  }
-}
+  // Estado global de notifs (para KPIs)
+  let stateKpi = { urgentes: 0, no_leidas: 0, leidas: 0, total: 0 };
 
-async function marcarTodasLeidas() {
-  const pendientes = document.querySelectorAll('.notif-row.pendiente');
-  for (const row of pendientes) {
-    const nid = row.id.replace('notif-','');
-    await fetch(`/mantenciones/api/notificaciones/${nid}`,{
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({estado:'leida'})
+  // ── Helpers ─────────────────────────────────────────────────
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
     });
-    row.className = 'notif-row leida';
-    row.dataset.estado = 'leida';
-    row.querySelector('.notif-acciones').innerHTML = '<span class="badge bg-secondary" style="font-size:.6rem">leida</span>';
   }
-}
+
+  function tiempoRelativo(iso){
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return 'ahora';
+      if (diff < 3600) return Math.floor(diff/60) + ' min';
+      if (diff < 86400) return Math.floor(diff/3600) + ' h';
+      if (diff < 86400 * 7) return Math.floor(diff/86400) + ' d';
+      return d.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'});
+    } catch(e) { return '—'; }
+  }
+
+  const TIPO_META = {
+    visita_proxima:    { icon: 'calendar-check',  color:'#16a34a', bg:'#dcfce7', lbl:'Visita próxima' },
+    factura_pendiente: { icon: 'file-earmark-text', color:'#3b82f6', bg:'#dbeafe', lbl:'Factura pendiente' },
+    vencimiento:       { icon: 'calendar-x',      color:'#dc2626', bg:'#fee2e2', lbl:'Vencimiento' },
+    ot_asignada:       { icon: 'clipboard-check', color:'#7c3aed', bg:'#ede9fe', lbl:'OT asignada' },
+    sla:               { icon: 'stopwatch',       color:'#f59e0b', bg:'#fff7ed', lbl:'SLA' },
+    ai_alerta:         { icon: 'stars',           color:'#d97706', bg:'#fef3c7', lbl:'Alerta IA' },
+  };
+
+  function metaDeTipo(tipo){
+    return TIPO_META[tipo] || { icon: 'bell', color:'#6b7280', bg:'#f3f4f6', lbl: (tipo || 'Sistema').replace(/_/g,' ') };
+  }
+
+  // ── Cargar y renderizar lista ───────────────────────────────
+  async function cargarLista(){
+    if (skeleton) skeleton.style.display = '';
+    const params = new URLSearchParams();
+    if (filtros.leidas !== '')    params.set('leidas', filtros.leidas);
+    if (filtros.tipo)             params.set('tipo', filtros.tipo);
+    if (filtros.prioridad)        params.set('prioridad', filtros.prioridad);
+    params.set('limit', '100');
+
+    try {
+      const r = await fetch('/mantenciones/api/notif-interna?' + params.toString(), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!r.ok) {
+        renderError(r.status === 404
+          ? 'El endpoint /mantenciones/api/notif-interna aún no está disponible. Pídele al admin que active la ruta backend.'
+          : 'Error ' + r.status + ' al cargar notificaciones.');
+        return;
+      }
+      const d = await r.json();
+      if (!d.ok && d.error) { renderError(d.error); return; }
+      const arr = d.notificaciones || [];
+      stateKpi.total = d.total || arr.length;
+      renderLista(arr);
+    } catch(e) {
+      renderError('Error de conexión: ' + (e.message || e));
+    }
+  }
+
+  function renderError(msg){
+    if (skeleton) skeleton.style.display = 'none';
+    lista.innerHTML = `
+      <div class="notif-empty">
+        <i class="bi bi-cloud-slash notif-empty-icon" style="color:#dc2626"></i>
+        <div class="notif-empty-title">No se pudo cargar</div>
+        <div class="notif-empty-sub">${escapeHtml(msg)}</div>
+      </div>`;
+  }
+
+  function renderLista(arr){
+    if (skeleton) skeleton.style.display = 'none';
+    if (!arr.length) {
+      lista.innerHTML = `
+        <div class="notif-empty">
+          <i class="bi bi-bell-slash notif-empty-icon"></i>
+          <div class="notif-empty-title">Sin notificaciones</div>
+          <div class="notif-empty-sub">No hay alertas con los filtros actuales.</div>
+        </div>`;
+      return;
+    }
+
+    const html = arr.map(function(n){
+      const meta = metaDeTipo(n.tipo);
+      const prio = n.prioridad || 'media';
+      const leida = !!n.leida_at;
+      return `
+        <div class="notif-card notif-card-prio-${escapeHtml(prio)} ${leida ? 'notif-leida' : ''}"
+             data-id="${n.id}" data-url="${escapeHtml(n.url_accion || '')}">
+          <div class="notif-card-icon" style="background:${meta.bg};color:${meta.color}">
+            <i class="bi bi-${meta.icon}"></i>
+          </div>
+          <div class="notif-card-body">
+            <div class="notif-card-titulo">${escapeHtml(n.titulo || '(sin título)')}</div>
+            ${n.cuerpo ? `<div class="notif-card-cuerpo">${escapeHtml(n.cuerpo)}</div>` : ''}
+            <div class="notif-card-meta">
+              <span class="notif-tipo-badge" style="background:${meta.bg};color:${meta.color}">
+                <i class="bi bi-${meta.icon} me-1"></i>${escapeHtml(meta.lbl)}
+              </span>
+              <span><i class="bi bi-clock me-1"></i>${escapeHtml(tiempoRelativo(n.created_at))}</span>
+              ${leida ? '<span style="color:#16a34a"><i class="bi bi-check2-all me-1"></i>Leída</span>' : ''}
+            </div>
+          </div>
+          <div class="notif-card-acciones">
+            ${!leida ? `
+              <button type="button" class="notif-action-btn notif-action-btn-leida" data-action="leida"
+                      title="Marcar como leída" aria-label="Marcar como leída">
+                <i class="bi bi-check2"></i>
+              </button>` : ''}
+            <button type="button" class="notif-action-btn notif-action-btn-archivar" data-action="archivar"
+                    title="Archivar" aria-label="Archivar">
+              <i class="bi bi-archive"></i>
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+    lista.innerHTML = html;
+
+    // KPIs locales (basados en lo cargado)
+    stateKpi.no_leidas = arr.filter(n => !n.leida_at).length;
+    stateKpi.leidas    = arr.filter(n =>  n.leida_at).length;
+    stateKpi.urgentes  = arr.filter(n => n.prioridad === 'urgente' && !n.leida_at).length;
+    refrescarKpis();
+
+    // Bind acciones por card
+    lista.querySelectorAll('.notif-card').forEach(function(card){
+      card.addEventListener('click', async function(e){
+        // Si fue click en un botón de acción → no navegar
+        const btn = e.target.closest('.notif-action-btn');
+        const id  = card.dataset.id;
+        if (btn) {
+          e.stopPropagation();
+          await ejecutarAccion(btn.dataset.action, id, card);
+          return;
+        }
+        // Click en la card → marcar leída + navegar (si hay url_accion)
+        const url = card.dataset.url;
+        try {
+          await fetch('/mantenciones/api/notif-interna/' + id + '/leida', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+          });
+        } catch(_){}
+        if (url) window.location.href = url;
+        else cargarLista();
+      });
+    });
+  }
+
+  function refrescarKpis(){
+    kpiUrgentes.textContent = stateKpi.urgentes;
+    kpiNoLeidas.textContent = stateKpi.no_leidas;
+    kpiLeidas.textContent   = stateKpi.leidas;
+    kpiTotal.textContent    = stateKpi.total;
+  }
+
+  async function ejecutarAccion(accion, nid, card){
+    if (accion === 'archivar') {
+      const ok = await ilusConfirm({
+        title: 'Archivar notificación',
+        message: '¿Mover esta notificación al archivo?',
+        sub: 'No se elimina, solo queda fuera del listado activo.',
+        okLabel: 'Archivar', cancelLabel: 'Cancelar',
+      });
+      if (!ok) return;
+    }
+    const endpoint = accion === 'leida'
+      ? '/mantenciones/api/notif-interna/' + nid + '/leida'
+      : '/mantenciones/api/notif-interna/' + nid + '/archivar';
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!r.ok) {
+        ilusToast('No se pudo ' + accion + ' (HTTP ' + r.status + ')', { type:'error' });
+        return;
+      }
+      // Anim de salida + recarga
+      card.style.transition = 'opacity .25s, transform .25s';
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(40px)';
+      setTimeout(function(){
+        if (accion === 'archivar' || filtros.leidas === '0') {
+          card.remove();
+        }
+        cargarLista();
+      }, 260);
+      ilusToast(accion === 'leida' ? 'Marcada como leída' : 'Archivada', { type:'success' });
+    } catch(e) {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  }
+
+  // ── Marcar todas leídas ─────────────────────────────────────
+  btnMarcarTodas.addEventListener('click', async function(){
+    const cards = lista.querySelectorAll('.notif-card:not(.notif-leida)');
+    if (!cards.length) {
+      ilusToast('No hay notificaciones por marcar', { type:'info' });
+      return;
+    }
+    const ok = await ilusConfirm({
+      title: 'Marcar todas como leídas',
+      message: '¿Marcar ' + cards.length + ' notificación(es) como leídas?',
+      okLabel: 'Marcar todas', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    btnMarcarTodas.disabled = true;
+    btnMarcarTodas.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Marcando…';
+    const ids = Array.from(cards).map(c => c.dataset.id);
+    let okCount = 0, failCount = 0;
+    await Promise.all(ids.map(async function(id){
+      try {
+        const r = await fetch('/mantenciones/api/notif-interna/' + id + '/leida', {
+          method: 'POST', credentials:'same-origin', headers:{'Accept':'application/json'}
+        });
+        if (r.ok) okCount++; else failCount++;
+      } catch(_) { failCount++; }
+    }));
+    btnMarcarTodas.disabled = false;
+    btnMarcarTodas.innerHTML = '<i class="bi bi-check2-all"></i>Marcar todas leídas';
+    if (failCount > 0) ilusToast('Marcadas ' + okCount + ', fallaron ' + failCount, { type:'warning' });
+    else               ilusToast('Marcadas ' + okCount + ' como leídas', { type:'success' });
+    cargarLista();
+  });
+
+  // ── Bind pills de filtro ────────────────────────────────────
+  document.querySelectorAll('.notif-pill[data-filter]').forEach(function(pill){
+    pill.addEventListener('click', function(){
+      const filter = this.dataset.filter;
+      const value  = this.dataset.value;
+      filtros[filter] = value;
+      // Mark active dentro del mismo grupo
+      this.parentElement.querySelectorAll('.notif-pill').forEach(function(p){
+        p.classList.toggle('notif-pill-active', p === pill);
+      });
+      cargarLista();
+    });
+  });
+
+  // Inicio
+  cargarLista();
+})();
 </script>
 {% endblock %}

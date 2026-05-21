@@ -2033,8 +2033,13 @@ def to_f(value):
 
 
 def current_username():
-    """Devuelve el nombre (no el correo) del usuario activo para registrar quién actuó."""
-    return g.user["nombre"] if getattr(g, "user", None) else None
+    """Devuelve el nombre (no el correo) del usuario activo para registrar quién actuó.
+    Safe-fallback fuera de request context (cron daemons, etc.): devuelve None."""
+    try:
+        return g.user["nombre"] if getattr(g, "user", None) else None
+    except RuntimeError:
+        # "Working outside of application context" — los crons no tienen g
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -14762,6 +14767,507 @@ except Exception as _e_sched:
     print(f"[transp-cron] startup error: {_e_sched}", flush=True)
 
 
+# ═════════════════════════════════════════════════════════════════════
+#  PLAN 2026-05-21 — CRON DAEMON MANTENCIONES (06:00 hora Chile)
+#  Auto-calendariza contratos + crea notificaciones internas + (opcional)
+#  envía emails recordatorio. Patrón idéntico a _transporte_scheduler_loop
+#  con lock anti-doble-corrida (mant_cron_lock).
+# ═════════════════════════════════════════════════════════════════════
+
+def _mant_intentar_lock_slot(slot_str):
+    """Intenta tomar el lock del cron de mantenciones para un slot dado.
+    PRIMARY KEY = slot_str — solo el primer worker que llegue gana."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO mant_cron_lock (slot_str, taken_by, taken_at) "
+                    "VALUES (%s, %s, NOW())",
+                    (slot_str, os.getpid())
+                )
+                soy_holder = True
+            except Exception:
+                soy_holder = False
+        conn.commit()
+        conn.close()
+        return soy_holder
+    except Exception as e:
+        print(f"[mant-cron] lock error: {e}", flush=True)
+        return False
+
+
+def _mant_marcar_lock_completado(slot_str):
+    """Marca el slot como completado. Usa get_mysql() directo (no get_db())
+    para funcionar también desde fuera de un app_context."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_cron_lock SET completed_at=NOW() WHERE slot_str=%s",
+                (slot_str,)
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[mant-cron] marcar completado: {e}", flush=True)
+
+
+def _mantenciones_cron_run_once(slot_str=""):
+    """Ejecuta UNA pasada del cron de mantenciones. Devuelve dict con métricas.
+
+    Pasos:
+        1. Auto-calendarización de contratos vigentes.
+        2. Notificaciones internas (batch INSERT con executemany).
+        3. Email recordatorio si MANT_RECORDATORIOS_EMAIL_ENABLED=1, sino DRY-RUN.
+
+    Idempotente: si se corre 2x el mismo día, no duplica notificaciones
+    (helper _mant_notificar ya chequea duplicados).
+    """
+    import time as _time
+    from datetime import datetime as _dtm, date as _date
+    import calendar as _cal
+
+    _t0 = _time.time()
+    metricas = {
+        "calendarizadas": 0,
+        "notif_visita_proxima": 0,
+        "notif_visita_atrasada": 0,
+        "notif_factura_pendiente": 0,
+        "notif_garantia_por_vencer": 0,
+        "notif_contrato_por_vencer": 0,
+        "emails_dry_run": 0,
+        "emails_enviados": 0,
+        "errores": [],
+    }
+
+    email_flag = os.environ.get("MANT_RECORDATORIOS_EMAIL_ENABLED", "0").strip().lower()
+    email_on = email_flag in ("1", "true", "yes", "on")
+
+    # ── Paso 1: Auto-calendarización de contratos ────────────────────
+    try:
+        contratos = mysql_fetchall(
+            "SELECT ct.id, ct.cliente_id, ct.fecha_inicio, ct.fecha_vencimiento, "
+            "       ct.es_indefinido, ct.frecuencia_meses, ct.ai_frecuencia_sug, "
+            "       c.razon_social "
+            "FROM mant_contratos ct "
+            "JOIN mant_clientes c ON c.id = ct.cliente_id "
+            "WHERE ct.estado IN ('vigente','indefinido') "
+            "  AND COALESCE(ct.auto_calendar_enabled, 1) = 1 "
+            "  AND COALESCE(ct.frecuencia_meses, ct.ai_frecuencia_sug, 0) > 0 "
+        ) or []
+
+        hoy = _date.today()
+        batch_visitas = []
+        for ct in contratos:
+            freq = ct.get("frecuencia_meses") or ct.get("ai_frecuencia_sug") or 0
+            if freq <= 0:
+                continue
+            cid = ct["cliente_id"]
+            ctid = ct["id"]
+
+            if ct.get("es_indefinido") or not ct.get("fecha_vencimiento"):
+                hasta = hoy + timedelta(days=180)  # 6 meses de runway para indefinidos
+            else:
+                hasta = ct.get("fecha_vencimiento")
+                if isinstance(hasta, _dtm): hasta = hasta.date()
+                if hasta <= hoy:
+                    continue
+
+            # Meses ya programados para evitar duplicar
+            try:
+                existentes = mysql_fetchall(
+                    "SELECT YEAR(fecha_programada) AS y, MONTH(fecha_programada) AS m "
+                    "FROM mant_visitas WHERE contrato_id=%s AND tipo='preventiva' "
+                    "  AND estado NOT IN ('anulada','cancelada') "
+                    "  AND fecha_programada >= %s",
+                    (ctid, hoy)
+                ) or []
+            except Exception:
+                existentes = []
+            existentes_set = {(r["y"], r["m"]) for r in existentes}
+
+            # Generar fechas a partir de hoy + freq
+            cursor_d = hoy + timedelta(days=int(freq) * 30)
+            limite = 0
+            while cursor_d <= hasta and limite < 24:  # cap 24 visitas/contrato/corrida
+                limite += 1
+                if (cursor_d.year, cursor_d.month) not in existentes_set:
+                    batch_visitas.append((
+                        cid, ctid,
+                        f"Mantención preventiva — {ct.get('razon_social','')}"[:200],
+                        cursor_d, "preventiva", "programada",
+                        "mant-cron",
+                    ))
+                    existentes_set.add((cursor_d.year, cursor_d.month))
+                anio = cursor_d.year
+                mes  = cursor_d.month + int(freq)
+                while mes > 12:
+                    mes -= 12
+                    anio += 1
+                try:
+                    dia = min(cursor_d.day, _cal.monthrange(anio, mes)[1])
+                    cursor_d = _date(anio, mes, dia)
+                except ValueError:
+                    break
+
+        if batch_visitas:
+            try:
+                conn = get_mysql()
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "INSERT INTO mant_visitas "
+                        "  (cliente_id, contrato_id, titulo, fecha_programada, "
+                        "   tipo, estado, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        batch_visitas
+                    )
+                    metricas["calendarizadas"] = cur.rowcount
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                metricas["errores"].append(f"calendarizacion: {e}")
+    except Exception as e:
+        metricas["errores"].append(f"paso_calendarizacion: {e}")
+
+    # ── Paso 2: Notificaciones internas (batch) ──────────────────────
+    try:
+        notif_batch = []
+
+        # 2a — Visitas próximas (3-7 días)
+        rows = mysql_fetchall(
+            "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
+            "       v.tipo, v.tecnico_user_id, c.razon_social "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id = v.cliente_id "
+            "WHERE v.estado='programada' "
+            "  AND v.fecha_programada BETWEEN (CURDATE() + INTERVAL 3 DAY) "
+            "                            AND (CURDATE() + INTERVAL 7 DAY)"
+        ) or []
+        for r in rows:
+            f = r["fecha_programada"]
+            if isinstance(f, _dtm): f = f.date()
+            notif_batch.append({
+                "destino_user_id": r.get("tecnico_user_id"),
+                "tipo": "visita_proxima",
+                "prioridad": "media",
+                "titulo": f"Visita próxima ({r.get('tipo')}): {r.get('razon_social','')}",
+                "cuerpo": f"Visita programada para el {f.strftime('%d/%m/%Y')}",
+                "url_accion": f"/mantenciones/ot/{r['id']}",
+                "cliente_id": r["cliente_id"],
+                "visita_id":  r["id"],
+            })
+        metricas["notif_visita_proxima"] = len(rows)
+
+        # 2b — Visitas atrasadas
+        rows = mysql_fetchall(
+            "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
+            "       v.tipo, v.tecnico_user_id, c.razon_social, "
+            "       DATEDIFF(CURDATE(), v.fecha_programada) AS dias_atraso "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id = v.cliente_id "
+            "WHERE v.estado='programada' "
+            "  AND v.fecha_programada < CURDATE()"
+        ) or []
+        for r in rows:
+            f = r["fecha_programada"]
+            if isinstance(f, _dtm): f = f.date()
+            notif_batch.append({
+                "destino_user_id": r.get("tecnico_user_id"),
+                "tipo": "visita_atrasada",
+                "prioridad": "alta",
+                "titulo": f"Visita atrasada {r.get('dias_atraso')}d: {r.get('razon_social','')}",
+                "cuerpo": f"Visita {r.get('tipo')} del {f.strftime('%d/%m/%Y')} sin ejecutar",
+                "url_accion": f"/mantenciones/ot/{r['id']}",
+                "cliente_id": r["cliente_id"],
+                "visita_id":  r["id"],
+            })
+        metricas["notif_visita_atrasada"] = len(rows)
+
+        # 2c — Facturas pendientes (visitas completadas hace >3d sin factura)
+        rows = mysql_fetchall(
+            "SELECT v.id, v.cliente_id, v.fecha_realizada, v.fecha_programada, "
+            "       v.titulo, v.estado_facturacion, c.razon_social, "
+            "       DATEDIFF(CURDATE(), COALESCE(v.fecha_realizada, v.fecha_programada)) AS dias "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id = v.cliente_id "
+            "WHERE v.estado='completada' "
+            "  AND v.estado_facturacion IN ('sin_cotizar','cotizado','con_oc') "
+            "  AND COALESCE(v.cubierto_por,'contrato') != 'garantia' "
+            "  AND COALESCE(v.fecha_realizada, v.fecha_programada) < (CURDATE() - INTERVAL 3 DAY)"
+        ) or []
+        for r in rows:
+            notif_batch.append({
+                "destino_user_id": None,  # broadcast a admin (cobranza)
+                "tipo": "factura_pendiente",
+                "prioridad": "alta",
+                "titulo": f"Factura pendiente: {r.get('razon_social','')} ({r.get('dias')}d)",
+                "cuerpo": f"Visita completada sin factura emitida. Estado: {r.get('estado_facturacion')}",
+                "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#finanzas",
+                "cliente_id": r["cliente_id"],
+                "visita_id":  r["id"],
+            })
+        metricas["notif_factura_pendiente"] = len(rows)
+
+        # 2d — Garantía por vencer (equipos con fecha_fin_garantia en 30 días)
+        try:
+            rows = mysql_fetchall(
+                "SELECT m.id AS maquina_id, m.cliente_id, m.nombre, "
+                "       m.fecha_fin_garantia, c.razon_social, "
+                "       DATEDIFF(m.fecha_fin_garantia, CURDATE()) AS dias_restantes "
+                "FROM mant_maquinas m "
+                "JOIN mant_clientes c ON c.id = m.cliente_id "
+                "WHERE m.fecha_fin_garantia BETWEEN CURDATE() AND (CURDATE() + INTERVAL 30 DAY) "
+                "  AND COALESCE(m.estado, 'activo') = 'activo' "
+            ) or []
+        except Exception:
+            rows = []  # tabla puede no tener fecha_fin_garantia
+        for r in rows:
+            notif_batch.append({
+                "destino_user_id": None,
+                "tipo": "garantia_por_vencer",
+                "prioridad": "media",
+                "titulo": f"Garantía por vencer: {r.get('razon_social','')}",
+                "cuerpo": (f"Equipo {r.get('nombre','')} — garantía vence en "
+                           f"{r.get('dias_restantes')} días"),
+                "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#equipos",
+                "cliente_id": r["cliente_id"],
+                "visita_id":  None,
+            })
+        metricas["notif_garantia_por_vencer"] = len(rows)
+
+        # 2e — Contratos por vencer (60 días)
+        rows = mysql_fetchall(
+            "SELECT ct.id, ct.cliente_id, ct.fecha_vencimiento, "
+            "       c.razon_social, DATEDIFF(ct.fecha_vencimiento, CURDATE()) AS dias "
+            "FROM mant_contratos ct "
+            "JOIN mant_clientes c ON c.id = ct.cliente_id "
+            "WHERE ct.estado='vigente' "
+            "  AND COALESCE(ct.es_indefinido, 0) = 0 "
+            "  AND ct.fecha_vencimiento BETWEEN CURDATE() AND (CURDATE() + INTERVAL 60 DAY)"
+        ) or []
+        for r in rows:
+            notif_batch.append({
+                "destino_user_id": None,
+                "tipo": "contrato_por_vencer",
+                "prioridad": "media",
+                "titulo": f"Contrato por vencer: {r.get('razon_social','')}",
+                "cuerpo": f"Vence en {r.get('dias')} días — preparar renegociación",
+                "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#contratos",
+                "cliente_id": r["cliente_id"],
+                "visita_id":  None,
+            })
+        metricas["notif_contrato_por_vencer"] = len(rows)
+
+        # Insertar batch (idempotente)
+        if notif_batch:
+            insertadas = _mant_notificar_batch(notif_batch)
+            print(f"[mant-cron] notificaciones nuevas insertadas: {insertadas} "
+                  f"(de {len(notif_batch)} candidatas — el resto eran duplicadas)",
+                  flush=True)
+    except Exception as e:
+        metricas["errores"].append(f"paso_notificaciones: {e}")
+
+    # ── Paso 3: Email recordatorio (DRY-RUN o real según flag) ──────
+    try:
+        # 3a — Visitas próximas: email al cliente (si tiene email + flag ON)
+        rows = mysql_fetchall(
+            "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
+            "       c.razon_social, c.contacto_email, "
+            "       v.recordatorio_visita_enviado_at "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id = v.cliente_id "
+            "WHERE v.estado='programada' "
+            "  AND v.fecha_programada BETWEEN (CURDATE() + INTERVAL 3 DAY) "
+            "                            AND (CURDATE() + INTERVAL 7 DAY) "
+            "  AND v.recordatorio_visita_enviado_at IS NULL"
+        ) or []
+        for r in rows:
+            email = (r.get("contacto_email") or "").strip()
+            f = r.get("fecha_programada")
+            if isinstance(f, _dtm): f = f.date()
+            asunto = f"Recordatorio visita {f.strftime('%d/%m/%Y')} — {r.get('razon_social','')}"
+            if not email_on:
+                metricas["emails_dry_run"] += 1
+                print(f"[mant-cron][DRY-RUN] email a {email or '(sin email)'} "
+                      f"re: {asunto}", flush=True)
+                continue
+            if not email:
+                continue
+            # Modo ON: enviar email real
+            try:
+                _send_ilus_email(
+                    email, _brand_subject(asunto),
+                    f"<p>Recordatorio: visita programada para {f.strftime('%d/%m/%Y')}</p>",
+                    evento="mant_recordatorio_visita", modulo="mantenciones",
+                )
+                mysql_execute(
+                    "UPDATE mant_visitas SET recordatorio_visita_enviado_at=NOW() WHERE id=%s",
+                    (r["id"],)
+                )
+                metricas["emails_enviados"] += 1
+            except Exception as e_em:
+                metricas["errores"].append(f"email visita {r['id']}: {e_em}")
+
+        # 3b — Facturas pendientes: email a admin interno
+        rows = mysql_fetchall(
+            "SELECT v.id, v.cliente_id, c.razon_social, "
+            "       v.recordatorio_factura_enviado_at "
+            "FROM mant_visitas v "
+            "JOIN mant_clientes c ON c.id = v.cliente_id "
+            "WHERE v.estado='completada' "
+            "  AND v.estado_facturacion IN ('sin_cotizar','cotizado','con_oc') "
+            "  AND COALESCE(v.cubierto_por,'contrato') != 'garantia' "
+            "  AND COALESCE(v.fecha_realizada, v.fecha_programada) < (CURDATE() - INTERVAL 7 DAY) "
+            "  AND v.recordatorio_factura_enviado_at IS NULL"
+        ) or []
+        for r in rows:
+            asunto = f"Factura pendiente: {r.get('razon_social','')}"
+            if not email_on:
+                metricas["emails_dry_run"] += 1
+                print(f"[mant-cron][DRY-RUN] email factura pendiente re: {asunto}",
+                      flush=True)
+                continue
+            try:
+                _send_ilus_email(
+                    "daniel.aguilar@sphs.cl", _brand_subject(asunto),
+                    f"<p>Visita completada sin facturar (>7 días)</p>",
+                    evento="mant_recordatorio_factura", modulo="mantenciones",
+                )
+                mysql_execute(
+                    "UPDATE mant_visitas SET recordatorio_factura_enviado_at=NOW() WHERE id=%s",
+                    (r["id"],)
+                )
+                metricas["emails_enviados"] += 1
+            except Exception as e_em:
+                metricas["errores"].append(f"email factura {r['id']}: {e_em}")
+    except Exception as e:
+        metricas["errores"].append(f"paso_email: {e}")
+
+    metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
+    print(
+        f"[mant-cron] OK slot={slot_str or 'manual'} "
+        f"calendarizadas={metricas['calendarizadas']} "
+        f"notif_visita={metricas['notif_visita_proxima']}+{metricas['notif_visita_atrasada']} "
+        f"notif_factura={metricas['notif_factura_pendiente']} "
+        f"notif_garantia={metricas['notif_garantia_por_vencer']} "
+        f"notif_contrato={metricas['notif_contrato_por_vencer']} "
+        f"emails={metricas['emails_enviados']} dry_run={metricas['emails_dry_run']} "
+        f"tiempo={metricas['tiempo_ms']}ms "
+        f"errores={len(metricas['errores'])}",
+        flush=True
+    )
+    return metricas
+
+
+def _mantenciones_scheduler_run_now():
+    """Helper para testing manual: ejecuta el cron una vez sin esperar
+    a las 06:00. Usable desde Python REPL local:
+
+        >>> from app import _mantenciones_scheduler_run_now
+        >>> _mantenciones_scheduler_run_now()
+    """
+    return _mant_cron_run_with_lock(slot_str_override="manual")
+
+
+def _mant_cron_run_with_lock(slot_str_override=None):
+    """Ejecuta el cron tomando el lock primero. Asegura un app_context()
+    para que los helpers que usan Flask `g` funcionen aunque se llamen
+    desde un REPL/REPL/thread fuera de un request."""
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("America/Santiago")
+    if slot_str_override:
+        slot_str = slot_str_override
+    else:
+        slot_str = _dt.datetime.now(TZ).strftime("%Y-%m-%d 06:00")
+    if not _mant_intentar_lock_slot(slot_str):
+        print(f"[mant-cron] slot {slot_str} tomado por otro worker, skip", flush=True)
+        return {"skipped": True, "slot": slot_str}
+    try:
+        # Si ya hay un app_context (tests, REPL con app pusheada), reutiliza.
+        # Si no, abre uno nuevo. Try/except evita doble push.
+        try:
+            from flask import current_app as _ca
+            _ca.name  # ping — si falla, no hay app_context
+            return _mantenciones_cron_run_once(slot_str=slot_str)
+        except RuntimeError:
+            with app.app_context():
+                return _mantenciones_cron_run_once(slot_str=slot_str)
+    finally:
+        _mant_marcar_lock_completado(slot_str)
+
+
+def _mantenciones_scheduler_loop():
+    """Hilo daemon: dispara el cron de mantenciones a las 06:00 hora Chile.
+    Patrón espejo del transp scheduler con lock en mant_cron_lock.
+
+    Importante: corre dentro de `app.app_context()` para que helpers que
+    usan Flask `g` (mysql_fetchall via get_db, current_username, etc.)
+    funcionen sin RuntimeError."""
+    import datetime as _dt
+    import time as _time
+    from zoneinfo import ZoneInfo
+
+    HORA_RUN = 6     # 06:00 hora Chile
+    TZ = ZoneInfo("America/Santiago")
+    print(f"[mant-cron] arrancado en worker pid={os.getpid()} "
+          f"(hora: {HORA_RUN:02d}:00 CL)", flush=True)
+
+    while True:
+        try:
+            now_cl = _dt.datetime.now(TZ)
+            proxima = now_cl.replace(hour=HORA_RUN, minute=0, second=0, microsecond=0)
+            if proxima <= now_cl:
+                proxima = proxima + _dt.timedelta(days=1)
+            espera_seg = max(1.0, (proxima - now_cl).total_seconds())
+            print(f"[mant-cron] próxima corrida: {proxima.strftime('%Y-%m-%d %H:%M')} "
+                  f"(en {espera_seg/60:.1f} min)", flush=True)
+            _time.sleep(espera_seg)
+
+            slot_str = proxima.strftime("%Y-%m-%d %H:%M")
+            if not _mant_intentar_lock_slot(slot_str):
+                print(f"[mant-cron] slot {slot_str} tomado por otro worker, skip",
+                      flush=True)
+                _time.sleep(120)  # esperar 2 min para avanzar el clock
+                continue
+
+            print(f"[mant-cron] disparando cron para slot {slot_str} "
+                  f"(pid={os.getpid()})", flush=True)
+            try:
+                # app_context() permite usar Flask `g` desde un thread sin
+                # request — necesario para mysql_fetchall (get_db), helpers,
+                # etc. NO pushea request_context (no necesitamos session).
+                with app.app_context():
+                    _mantenciones_cron_run_once(slot_str=slot_str)
+            except Exception as e:
+                print(f"[mant-cron] corrida falló: {e}", flush=True)
+            finally:
+                _mant_marcar_lock_completado(slot_str)
+        except Exception as e:
+            print(f"[mant-cron] loop error: {e}", flush=True)
+            _time.sleep(300)  # esperar 5 min ante error inesperado
+
+
+def _start_mant_scheduler_once():
+    import threading as _th
+    nombre = "mant-cron"
+    for t in _th.enumerate():
+        if t.name == nombre and t.is_alive():
+            return
+    try:
+        t = _th.Thread(target=_mantenciones_scheduler_loop, daemon=True, name=nombre)
+        t.start()
+    except Exception as e:
+        print(f"[mant-cron] no se pudo arrancar: {e}", flush=True)
+
+
+try:
+    _start_mant_scheduler_once()
+except Exception as _e_msched:
+    print(f"[mant-cron] startup error: {_e_msched}", flush=True)
+
+
 @app.route("/transporte/api/inline-bulto", methods=["POST"])
 @_tr_required
 def tr_inline_bulto():
@@ -21641,6 +22147,148 @@ def init_mantenciones_tables():
             except Exception:
                 pass  # ya existe el índice
 
+            # ════════════════════════════════════════════════════════════════
+            #  PLAN 2026-05-21 — Ficha del cliente: tipo + retroactivas +
+            #  trazabilidad financiera (Cotización → OC → Factura) +
+            #  notificaciones internas + cron auto-calendar.
+            #  Todas las migraciones son idempotentes (silencian errores
+            #  de "Duplicate column" / "Duplicate key").
+            # ════════════════════════════════════════════════════════════════
+            for _mig in [
+                # A. Tipo de cliente: mantención (default) / arriendo / leasing
+                "ALTER TABLE mant_clientes ADD COLUMN tipo_cliente "
+                "  ENUM('mantencion','arriendo','leasing') NOT NULL DEFAULT 'mantencion' "
+                "  COMMENT 'Categoría del cliente — usado para filtros y reportes'",
+                "ALTER TABLE mant_clientes ADD INDEX idx_tipo_cliente (tipo_cliente)",
+
+                # B. Visita retroactiva (registro histórico sin OT formal)
+                "ALTER TABLE mant_visitas ADD COLUMN es_retroactiva TINYINT(1) NOT NULL DEFAULT 0 "
+                "  COMMENT 'Flag: visita histórica cargada sin tareas/firmas formales'",
+                "ALTER TABLE mant_visitas ADD COLUMN nota_libre TEXT NULL "
+                "  COMMENT 'Nota informal para visitas retroactivas sin tareas'",
+                # Agregar 'retroactiva' al ENUM tipo (preservando los valores existentes)
+                "ALTER TABLE mant_visitas MODIFY COLUMN tipo "
+                "  ENUM('preventiva','correctiva','garantia','inspeccion',"
+                "       'levantamiento','instalacion','retroactiva') "
+                "  NOT NULL DEFAULT 'preventiva'",
+
+                # C. Liga visita ↔ flujo comercial COMPLETO en Random ERP
+                # Cotización (COV/NVV) → OC del cliente → Factura (FCV/BLV)
+                "ALTER TABLE mant_visitas ADD COLUMN cotizacion_tido VARCHAR(5) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN cotizacion_nudo VARCHAR(20) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN oc_numero VARCHAR(50) NULL "
+                "  COMMENT 'Número de orden de compra del cliente (texto libre)'",
+                "ALTER TABLE mant_visitas ADD COLUMN oc_fecha DATE NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN oc_archivo_url VARCHAR(600) NULL "
+                "  COMMENT 'PDF de la OC subido a Cloudinary (opcional)'",
+                "ALTER TABLE mant_visitas ADD COLUMN factura_tido VARCHAR(5) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN factura_nudo VARCHAR(20) NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN factura_emitida_at DATETIME NULL",
+                "ALTER TABLE mant_visitas ADD INDEX idx_cotizacion (cotizacion_tido, cotizacion_nudo)",
+                "ALTER TABLE mant_visitas ADD INDEX idx_factura (factura_tido, factura_nudo)",
+
+                # D. Estado de facturación (denormalizado para queries rápidas)
+                "ALTER TABLE mant_visitas ADD COLUMN estado_facturacion "
+                "  ENUM('sin_cotizar','cotizado','con_oc','facturado','no_aplica') "
+                "  NOT NULL DEFAULT 'sin_cotizar' "
+                "  COMMENT 'Pipeline comercial denormalizado para filtros'",
+                "ALTER TABLE mant_visitas ADD INDEX idx_estado_factur (estado_facturacion)",
+
+                # E. Cobertura financiera (garantía transversal)
+                "ALTER TABLE mant_visitas ADD COLUMN cubierto_por "
+                "  ENUM('contrato','cliente','garantia','mixto') NOT NULL DEFAULT 'contrato' "
+                "  COMMENT 'Quién paga este servicio'",
+                "ALTER TABLE mant_visitas ADD INDEX idx_cubierto_por (cubierto_por)",
+
+                # F. Toggle por contrato para apagar auto-calendarización
+                "ALTER TABLE mant_contratos ADD COLUMN auto_calendar_enabled "
+                "  TINYINT(1) NOT NULL DEFAULT 1 "
+                "  COMMENT 'Si 0, el cron no genera visitas automáticas para este contrato'",
+
+                # G. Anti-reenvío de recordatorios
+                "ALTER TABLE mant_visitas ADD COLUMN recordatorio_visita_enviado_at DATETIME NULL",
+                "ALTER TABLE mant_visitas ADD COLUMN recordatorio_factura_enviado_at DATETIME NULL",
+            ]:
+                try:
+                    cur.execute(_mig)
+                except Exception:
+                    pass  # idempotente — la columna/índice ya existe
+
+            # H. Lock anti-doble-corrida del cron de mantenciones
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_cron_lock (
+                        slot_str     VARCHAR(20) PRIMARY KEY,
+                        taken_by     INT,
+                        taken_at     DATETIME,
+                        completed_at DATETIME NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
+            # I. Centro de notificaciones INTERNAS (sin DNS, vive dentro del sistema)
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_notificaciones (
+                        id              INT AUTO_INCREMENT PRIMARY KEY,
+                        destino_user_id INT NULL,
+                        cliente_id      INT NULL,
+                        visita_id       INT NULL,
+                        tipo            ENUM('visita_proxima','visita_atrasada','factura_pendiente',
+                                             'garantia_por_vencer','contrato_por_vencer','cobranza','otro')
+                                        NOT NULL,
+                        prioridad       ENUM('baja','media','alta','urgente') DEFAULT 'media',
+                        titulo          VARCHAR(200) NOT NULL,
+                        cuerpo          TEXT,
+                        url_accion      VARCHAR(500) NULL,
+                        leida_at        DATETIME NULL,
+                        archivada_at    DATETIME NULL,
+                        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_destino_no_leida (destino_user_id, leida_at, archivada_at),
+                        INDEX idx_cliente (cliente_id),
+                        INDEX idx_visita  (visita_id),
+                        INDEX idx_tipo_prio (tipo, prioridad),
+                        INDEX idx_created  (created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
+            # I.b — La tabla mant_notificaciones legacy YA EXISTE en producción con
+            # otro schema (entidad, mensaje, canal, estado). Coexistimos: el código
+            # nuevo lee/escribe destino_user_id / cuerpo / prioridad / leida_at /
+            # archivada_at; el endpoint legacy (que envía emails) sigue mirando
+            # los campos antiguos. Todas las migraciones son idempotentes.
+            for _mig_notif in [
+                "ALTER TABLE mant_notificaciones ADD COLUMN destino_user_id INT NULL "
+                "  COMMENT 'Destinatario interno (NULL = broadcast a admins)' AFTER id",
+                "ALTER TABLE mant_notificaciones ADD COLUMN visita_id INT NULL "
+                "  COMMENT 'Visita asociada (para factura_pendiente, visita_proxima, etc.)'",
+                "ALTER TABLE mant_notificaciones ADD COLUMN prioridad "
+                "  ENUM('baja','media','alta','urgente') DEFAULT 'media'",
+                "ALTER TABLE mant_notificaciones ADD COLUMN cuerpo TEXT "
+                "  COMMENT 'Cuerpo nuevo — convive con mensaje legacy'",
+                "ALTER TABLE mant_notificaciones ADD COLUMN url_accion VARCHAR(500) NULL",
+                "ALTER TABLE mant_notificaciones ADD COLUMN leida_at DATETIME NULL",
+                "ALTER TABLE mant_notificaciones ADD COLUMN archivada_at DATETIME NULL",
+                # Ampliar el ENUM tipo para los nuevos casos del cron
+                "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
+                "  ENUM('vencimiento','sla','visita_proxima','visita_atrasada',"
+                "       'factura_pendiente','garantia','garantia_por_vencer',"
+                "       'contrato_por_vencer','cobranza','sin_mantencion',"
+                "       'contrato_riesgo','ai_alerta','otro') DEFAULT 'otro'",
+                "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
+                "  (destino_user_id, leida_at, archivada_at)",
+                "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
+                "ALTER TABLE mant_notificaciones ADD INDEX idx_tipo_prio (tipo, prioridad)",
+                "ALTER TABLE mant_notificaciones ADD INDEX idx_created (created_at)",
+            ]:
+                try:
+                    cur.execute(_mig_notif)
+                except Exception:
+                    pass  # idempotente
+
         conn.commit()
     finally:
         conn.close()
@@ -21657,6 +22305,309 @@ def _mant_log(entidad, entidad_id, accion, detalle=""):
         )
     except Exception:
         pass
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLAN 2026-05-21 — NOTIFICACIONES INTERNAS (campana en header sin DNS)
+# Helper para crear notificaciones idempotentes desde endpoints + cron.
+# Convive con el schema legacy (mensaje/estado/canal/entidad/entidad_id)
+# y el schema nuevo (destino_user_id/cuerpo/prioridad/leida_at/...).
+# ═════════════════════════════════════════════════════════════════════
+
+def _mant_notificar(destino_user_id, tipo, titulo, cuerpo='', url_accion='',
+                    prioridad='media', cliente_id=None, visita_id=None):
+    """Inserta una notificación interna en mant_notificaciones.
+
+    Idempotencia: si ya existe una notif del mismo (tipo, cliente_id,
+    visita_id, destino_user_id) sin leer ni archivar, NO inserta otra.
+    Devuelve el id (nuevo o existente).
+
+    Compatible con el schema legacy (mensaje/canal/estado/entidad/entidad_id)
+    — escribimos a ambos campos donde aplica para no romper código viejo.
+
+    Args:
+        destino_user_id: user_id del destinatario. None = broadcast (admin).
+        tipo: visita_proxima | visita_atrasada | factura_pendiente |
+              garantia_por_vencer | contrato_por_vencer | cobranza | otro
+        titulo: título corto.
+        cuerpo: descripción larga.
+        url_accion: deep link a la entidad ('/mantenciones/ot/123').
+        prioridad: baja | media | alta | urgente.
+        cliente_id: cliente asociado (opcional).
+        visita_id: visita asociada (opcional).
+
+    Returns:
+        int (id de la notificación) o None si todo falló silenciosamente.
+    """
+    try:
+        # ── Idempotencia: ¿ya hay una notif equivalente abierta? ──
+        # Match por tipo + cliente_id + visita_id + destino_user_id
+        # ignorando NULL coincidencias con IS NULL.
+        sql_match = (
+            "SELECT id FROM mant_notificaciones WHERE tipo=%s "
+            "  AND leida_at IS NULL AND archivada_at IS NULL "
+        )
+        params = [tipo]
+        if cliente_id is None:
+            sql_match += " AND cliente_id IS NULL "
+        else:
+            sql_match += " AND cliente_id=%s "
+            params.append(cliente_id)
+        if visita_id is None:
+            sql_match += " AND visita_id IS NULL "
+        else:
+            sql_match += " AND visita_id=%s "
+            params.append(visita_id)
+        if destino_user_id is None:
+            sql_match += " AND destino_user_id IS NULL "
+        else:
+            sql_match += " AND destino_user_id=%s "
+            params.append(destino_user_id)
+        sql_match += " LIMIT 1"
+        try:
+            existing = mysql_fetchone(sql_match, tuple(params))
+        except Exception:
+            existing = None
+        if existing:
+            return existing.get("id")
+
+        # ── INSERT escribiendo tanto schema nuevo como legacy ──
+        # `mensaje` legacy NOT NULL en algunos despliegues; escribimos cuerpo ahí también.
+        # `estado` legacy default 'pendiente' — lo dejamos así explícito.
+        # `entidad`/`entidad_id` legacy: rellenamos con la entidad más fina (visita > cliente).
+        ent = "visita" if visita_id else ("cliente" if cliente_id else "cliente")
+        ent_id = visita_id or cliente_id
+
+        sql_ins = (
+            "INSERT INTO mant_notificaciones "
+            "  (destino_user_id, cliente_id, visita_id, tipo, prioridad, "
+            "   titulo, cuerpo, mensaje, url_accion, estado, canal, "
+            "   entidad, entidad_id, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pendiente','sistema',%s,%s,%s)"
+        )
+        params_ins = (
+            destino_user_id, cliente_id, visita_id, tipo, prioridad,
+            (titulo or "")[:200], cuerpo or "", cuerpo or "",
+            (url_accion or "")[:500], ent, ent_id, current_username(),
+        )
+        conn = get_db()
+        with conn.cursor() as cur:
+            try:
+                cur.execute(sql_ins, params_ins)
+                nid = cur.lastrowid
+            except Exception:
+                # Si fallan columnas nuevas (DB sin migrar), caer al legacy puro.
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_notificaciones "
+                        "  (cliente_id, tipo, titulo, mensaje, estado, canal, "
+                        "   entidad, entidad_id, created_by) "
+                        "VALUES (%s,%s,%s,%s,'pendiente','sistema',%s,%s,%s)",
+                        (cliente_id, tipo, (titulo or "")[:200], cuerpo or "",
+                         ent, ent_id, current_username())
+                    )
+                    nid = cur.lastrowid
+                except Exception:
+                    nid = None
+        conn.commit()
+        return nid
+    except Exception as e:
+        try:
+            print(f"[mant-notif] error creando notif tipo={tipo}: {e}", flush=True)
+        except Exception:
+            pass
+        return None
+
+
+def _mant_notificar_batch(rows):
+    """Versión batch para el cron: usa executemany.
+
+    Args:
+        rows: list[dict] con keys: destino_user_id, tipo, titulo, cuerpo,
+              url_accion, prioridad, cliente_id, visita_id.
+
+    Returns:
+        int (cuántas se insertaron de verdad, excluyendo las duplicadas).
+    """
+    if not rows:
+        return 0
+
+    # ── Filtrar duplicadas con una sola query (IN ...) para no martillar ──
+    # Construimos un set de claves abiertas (tipo|visita|cliente|destino)
+    # y solo insertamos las nuevas.
+    try:
+        # Tomar un slice razonable para evitar IN explosivo
+        vids = list({r.get("visita_id") for r in rows if r.get("visita_id")})
+        cids = list({r.get("cliente_id") for r in rows if r.get("cliente_id")})
+        existentes = set()
+        if vids:
+            ph = ",".join(["%s"] * len(vids))
+            rs = mysql_fetchall(
+                f"SELECT tipo, visita_id, cliente_id, destino_user_id "
+                f"FROM mant_notificaciones "
+                f"WHERE leida_at IS NULL AND archivada_at IS NULL "
+                f"  AND visita_id IN ({ph})",
+                tuple(vids)
+            ) or []
+            for r in rs:
+                existentes.add((r.get("tipo"), r.get("visita_id"),
+                                r.get("cliente_id"), r.get("destino_user_id")))
+        if cids:
+            ph = ",".join(["%s"] * len(cids))
+            rs = mysql_fetchall(
+                f"SELECT tipo, visita_id, cliente_id, destino_user_id "
+                f"FROM mant_notificaciones "
+                f"WHERE leida_at IS NULL AND archivada_at IS NULL "
+                f"  AND cliente_id IN ({ph}) AND visita_id IS NULL",
+                tuple(cids)
+            ) or []
+            for r in rs:
+                existentes.add((r.get("tipo"), r.get("visita_id"),
+                                r.get("cliente_id"), r.get("destino_user_id")))
+
+        batch = []
+        for r in rows:
+            key = (r.get("tipo"), r.get("visita_id"),
+                   r.get("cliente_id"), r.get("destino_user_id"))
+            if key in existentes:
+                continue
+            existentes.add(key)  # evita duplicar dentro del mismo batch
+            ent = "visita" if r.get("visita_id") else "cliente"
+            ent_id = r.get("visita_id") or r.get("cliente_id")
+            batch.append((
+                r.get("destino_user_id"), r.get("cliente_id"),
+                r.get("visita_id"), r.get("tipo"),
+                r.get("prioridad", "media"),
+                (r.get("titulo") or "")[:200],
+                r.get("cuerpo", ""), r.get("cuerpo", ""),
+                (r.get("url_accion") or "")[:500],
+                ent, ent_id, current_username() or "cron",
+            ))
+        if not batch:
+            return 0
+
+        conn = get_db()
+        with conn.cursor() as cur:
+            try:
+                cur.executemany(
+                    "INSERT INTO mant_notificaciones "
+                    "  (destino_user_id, cliente_id, visita_id, tipo, prioridad, "
+                    "   titulo, cuerpo, mensaje, url_accion, estado, canal, "
+                    "   entidad, entidad_id, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pendiente','sistema',%s,%s,%s)",
+                    batch
+                )
+                n = cur.rowcount
+            except Exception:
+                # Fallback fila por fila usando _mant_notificar (más seguro)
+                conn.rollback()
+                n = 0
+                for r in rows:
+                    if _mant_notificar(
+                        r.get("destino_user_id"), r.get("tipo"),
+                        r.get("titulo", ""), r.get("cuerpo", ""),
+                        r.get("url_accion", ""), r.get("prioridad", "media"),
+                        r.get("cliente_id"), r.get("visita_id"),
+                    ):
+                        n += 1
+                return n
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            print(f"[mant-notif] batch error: {e}", flush=True)
+        except Exception:
+            pass
+        return 0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLAN 2026-05-21 — CACHE ERP en RAM para tab Finanzas
+# Cruza visitas con cotizaciones/OCs/facturas en Random ERP.
+# TTL 5 min, key = "tido|nudo". threading.Lock para concurrencia.
+# ═════════════════════════════════════════════════════════════════════
+_MANT_ERP_DOC_CACHE = {}     # {"FCV|10499": (timestamp, header_dict, lineas_list)}
+_MANT_ERP_DOC_CACHE_LOCK = threading.Lock()
+_MANT_ERP_DOC_CACHE_TTL = 300  # 5 min
+
+
+def _mant_erp_doc_cached(tido, nudo):
+    """Devuelve (header, lineas) desde cache RAM si está caliente, sino
+    consulta Random vía _cubicador_fetch y cachea por 5 min."""
+    if not tido or not nudo:
+        return None, []
+    key = f"{(tido or '').strip().upper()}|{(nudo or '').strip()}"
+    now = time.time()
+    with _MANT_ERP_DOC_CACHE_LOCK:
+        cached = _MANT_ERP_DOC_CACHE.get(key)
+        if cached and (now - cached[0]) < _MANT_ERP_DOC_CACHE_TTL:
+            return cached[1], cached[2]
+    # Cache miss → consultar ERP fuera del lock para no bloquear otras requests
+    try:
+        header, lineas = _cubicador_fetch(tido, nudo)
+    except Exception as e:
+        print(f"[mant-erp-cache] {key} fetch error: {e}", flush=True)
+        return None, []
+    with _MANT_ERP_DOC_CACHE_LOCK:
+        _MANT_ERP_DOC_CACHE[key] = (now, header, lineas)
+        # LRU lite: si supera 500 entradas, drop la más vieja
+        if len(_MANT_ERP_DOC_CACHE) > 500:
+            oldest = min(_MANT_ERP_DOC_CACHE.items(), key=lambda x: x[1][0])
+            _MANT_ERP_DOC_CACHE.pop(oldest[0], None)
+    return header, lineas
+
+
+def _mant_erp_doc_montos(tido, nudo):
+    """Calcula (monto_base, monto_repuestos, total) de un documento ERP.
+
+    Heurística para clasificar líneas:
+      - SKU empieza con 'ZZ' → es categoría/marcador, no se cuenta.
+      - SKU empieza con 'MANT' (KOPRRA) → suma a monto_base (servicio mant).
+      - Si la línea está en mant_repuestos del cliente → suma a repuestos.
+      - Resto (productos físicos) → suma a repuestos (asumimos compras).
+
+    Returns:
+        dict {monto_base, monto_repuestos, total, n_lineas, header_cliente}
+    """
+    header, lineas = _mant_erp_doc_cached(tido, nudo)
+    if not header:
+        return {"monto_base": 0, "monto_repuestos": 0, "total": 0,
+                "n_lineas": 0, "header_cliente": "", "encontrado": False}
+    monto_base = 0.0
+    monto_rep = 0.0
+    n_l = 0
+    for ln in (lineas or []):
+        sku = (ln.get("sku") or "").strip().upper()
+        if not sku or sku.startswith("ZZ"):
+            continue
+        n_l += 1
+        # Valor de la línea: VATOLI (bruto), VANELI (neto), o el que esté
+        try:
+            valor = float(ln.get("VATOLI") or ln.get("VANELI") or
+                          ln.get("valor") or 0)
+        except Exception:
+            valor = 0
+        if sku.startswith("MANT"):
+            monto_base += valor
+        else:
+            monto_rep += valor
+    total = monto_base + monto_rep
+    # Si no tuvimos líneas con valor, caer al total del header
+    if total == 0:
+        try:
+            total = float(header.get("valor_neto") or header.get("valor_bruto") or 0)
+            # Sin desglose → todo a monto_base como aproximación
+            monto_base = total
+        except Exception:
+            total = 0
+    return {
+        "monto_base": round(monto_base, 0),
+        "monto_repuestos": round(monto_rep, 0),
+        "total": round(total, 0),
+        "n_lineas": n_l,
+        "header_cliente": header.get("cliente_nombre") or "",
+        "encontrado": True,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -29184,6 +30135,824 @@ def mant_visita_historica(cid):
         "mensaje": (f"Mantención del {fecha_real.strftime('%d/%m/%Y')} registrada. "
                     + (sugerencia.get("mensaje","") if sugerencia else "")),
     })
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLAN 2026-05-21 — VISITA RETROACTIVA + AUTO-CALENDAR + FLUJO COMERCIAL
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/visitas/retroactiva",
+           methods=["POST"])
+@_mant_required
+def mant_visita_retroactiva(cid):
+    """Crea una visita histórica con `es_retroactiva=1`, estado 'completada',
+    sin tareas ni firmas. Marca cotizacion/oc/factura si se entregan.
+
+    Body JSON: {
+        fecha:          'YYYY-MM-DD' (obligatoria, no futura)
+        tipo:           'preventiva'|'correctiva'|'garantia'|'inspeccion'|'retroactiva'
+        tecnico_id:     int opcional (FK app_users con role='tecnico')
+        equipos_ids:    [int,...] opcional (informativo — guardado en nota_libre)
+        nota_libre:     string
+        cotizacion_tido: 'COV'|'NVV'
+        cotizacion_nudo: string
+        oc_numero:      string
+        factura_tido:   'FCV'|'BLV'
+        factura_nudo:   string
+    }
+
+    Calcula estado_facturacion:
+      - factura_* presente   → 'facturado'
+      - oc_numero presente   → 'con_oc'
+      - cotizacion_* presente → 'cotizado'
+      - nada                 → 'sin_cotizar'
+
+    Auto-sugerencia: si el contrato vigente tiene frecuencia_meses > 0,
+    devuelve `proxima_sugerida` para que el frontend pregunte si calendarizar.
+    """
+    from datetime import date as _date, datetime as _dtm
+    d = request.get_json(silent=True) or {}
+    fecha_str = (d.get("fecha") or "").strip()
+    if not fecha_str:
+        return jsonify({"ok": False, "error": "Falta 'fecha'"}), 400
+    try:
+        fecha = _dtm.strptime(fecha_str[:10], "%Y-%m-%d").date()
+    except Exception:
+        return jsonify({"ok": False, "error": "Fecha inválida (usa YYYY-MM-DD)"}), 400
+    if fecha > _date.today():
+        return jsonify({"ok": False,
+                        "error": "Fecha no puede ser futura — usa programar visita"}), 400
+
+    cliente = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    tipo = (d.get("tipo") or "retroactiva").strip().lower()
+    if tipo not in ("preventiva", "correctiva", "garantia", "inspeccion", "retroactiva"):
+        tipo = "retroactiva"
+
+    tecnico_id  = d.get("tecnico_id")
+    try:
+        tecnico_id = int(tecnico_id) if tecnico_id else None
+    except Exception:
+        tecnico_id = None
+
+    nota_libre  = (d.get("nota_libre") or "").strip()
+    equipos_ids = d.get("equipos_ids") or []
+    if equipos_ids and isinstance(equipos_ids, list):
+        nota_libre = (nota_libre + f"\n[Equipos: {','.join(str(e) for e in equipos_ids)}]").strip()
+
+    # Comerciales
+    cot_tido = (d.get("cotizacion_tido") or "").strip().upper() or None
+    cot_nudo = (d.get("cotizacion_nudo") or "").strip() or None
+    oc_num   = (d.get("oc_numero") or "").strip() or None
+    fac_tido = (d.get("factura_tido") or "").strip().upper() or None
+    fac_nudo = (d.get("factura_nudo") or "").strip() or None
+
+    # Derivar estado_facturacion
+    if fac_tido and fac_nudo:
+        estado_fact = "facturado"
+        fac_emitida = _dtm.now()
+    elif oc_num:
+        estado_fact = "con_oc"
+        fac_emitida = None
+    elif cot_tido and cot_nudo:
+        estado_fact = "cotizado"
+        fac_emitida = None
+    else:
+        estado_fact = "sin_cotizar"
+        fac_emitida = None
+
+    # Contrato vigente (para auto-sugerencia + linkear contrato_id)
+    contrato = mysql_fetchone(
+        "SELECT id, frecuencia_meses, ai_frecuencia_sug "
+        "FROM mant_contratos WHERE cliente_id=%s "
+        "  AND estado IN ('vigente','indefinido') "
+        "ORDER BY created_at DESC LIMIT 1", (cid,)
+    )
+    contrato_id = contrato.get("id") if contrato else None
+
+    titulo = (f"Mantención {tipo.capitalize()} histórica")[:200]
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_visitas
+                   (cliente_id, contrato_id, titulo, fecha_programada,
+                    fecha_realizada, tipo, estado, es_retroactiva,
+                    nota_libre, tecnico_user_id,
+                    cotizacion_tido, cotizacion_nudo, oc_numero,
+                    factura_tido, factura_nudo, factura_emitida_at,
+                    estado_facturacion, cubierto_por, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,'completada',1,
+                           %s,%s,
+                           %s,%s,%s,
+                           %s,%s,%s,
+                           %s,%s,%s)""",
+                (cid, contrato_id, titulo, fecha, fecha, tipo,
+                 nota_libre, tecnico_id,
+                 cot_tido, cot_nudo, oc_num,
+                 fac_tido, fac_nudo, fac_emitida,
+                 estado_fact,
+                 ("contrato" if tipo == "preventiva" else
+                  ("garantia" if tipo == "garantia" else "cliente")),
+                 current_username())
+            )
+            vid = cur.lastrowid
+        conn.commit()
+        try:
+            _mant_log("visita", vid, "retroactiva_creada",
+                      f"{tipo} {fecha.strftime('%d/%m/%Y')} fact={estado_fact}")
+        except Exception: pass
+    finally:
+        conn.close()
+
+    # Auto-sugerencia próxima visita
+    proxima_sug = None
+    freq = (contrato.get("frecuencia_meses") if contrato else None) or \
+           (contrato.get("ai_frecuencia_sug") if contrato else None)
+    if freq and freq > 0:
+        try:
+            s = _sugerir_proxima_visita(fecha, freq, contrato_id)
+            if s and s.get("fecha_sugerida"):
+                proxima_sug = {
+                    "fecha":   s["fecha_sugerida"],
+                    "mensaje": s.get("mensaje", ""),
+                    "estado":  s.get("estado", "futura"),
+                    "frecuencia_meses": s.get("frecuencia_meses"),
+                }
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": True,
+        "id": vid,
+        "estado_facturacion": estado_fact,
+        "proxima_sugerida": proxima_sug,
+    })
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/auto-calendar",
+           methods=["POST"])
+@_mant_required
+def mant_contrato_auto_calendar(ctid):
+    """Genera todas las visitas preventivas futuras del contrato hasta
+    `fecha_vencimiento` según `frecuencia_meses`. Idempotente: no duplica
+    si ya existe una visita programada en ese mes.
+
+    Body opcional: {desde_fecha: 'YYYY-MM-DD', sobreescribir: bool}
+    """
+    from datetime import date as _date, datetime as _dtm
+    import calendar as _cal
+
+    d = request.get_json(silent=True) or {}
+    sobreescribir = bool(d.get("sobreescribir", False))
+
+    ct = mysql_fetchone(
+        "SELECT id, cliente_id, fecha_inicio, fecha_vencimiento, "
+        "       es_indefinido, frecuencia_meses, ai_frecuencia_sug, "
+        "       auto_calendar_enabled, estado "
+        "FROM mant_contratos WHERE id=%s", (ctid,)
+    )
+    if not ct:
+        return jsonify({"ok": False, "error": "Contrato no encontrado"}), 404
+
+    if ct.get("estado") not in ("vigente", "indefinido"):
+        return jsonify({"ok": False,
+                        "error": f"Contrato en estado '{ct.get('estado')}' — no se calendariza"}), 400
+
+    freq = ct.get("frecuencia_meses") or ct.get("ai_frecuencia_sug") or 0
+    if not freq or freq <= 0:
+        return jsonify({"ok": False,
+                        "error": "Contrato sin frecuencia_meses definida"}), 400
+
+    # Desde fecha
+    desde_str = (d.get("desde_fecha") or "").strip()
+    if desde_str:
+        try:
+            desde = _dtm.strptime(desde_str[:10], "%Y-%m-%d").date()
+        except Exception:
+            return jsonify({"ok": False, "error": "desde_fecha inválida"}), 400
+    else:
+        desde = _date.today()
+
+    # Hasta fecha (fin contrato o +24 meses si indefinido)
+    if ct.get("es_indefinido") or not ct.get("fecha_vencimiento"):
+        hasta = desde + timedelta(days=730)  # 24 meses default para indefinidos
+    else:
+        hasta = ct.get("fecha_vencimiento")
+        if isinstance(hasta, _dtm): hasta = hasta.date()
+        if hasta < desde:
+            return jsonify({"ok": True, "creadas": 0,
+                            "mensaje": "Contrato ya vencido"}), 200
+
+    cid = ct.get("cliente_id")
+    cliente = mysql_fetchone(
+        "SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    razon = cliente.get("razon_social", "") if cliente else ""
+
+    # Generar fechas
+    fechas = []
+    cursor_d = desde
+    while cursor_d <= hasta and len(fechas) < 200:  # cota dura defensiva
+        fechas.append(cursor_d)
+        # Sumar freq meses
+        anio = cursor_d.year
+        mes  = cursor_d.month + int(freq)
+        while mes > 12:
+            mes -= 12
+            anio += 1
+        try:
+            dia = min(cursor_d.day, _cal.monthrange(anio, mes)[1])
+            cursor_d = _date(anio, mes, dia)
+        except ValueError:
+            break
+
+    # Idempotencia: traer set de (año, mes) ya programados/completados para este contrato
+    existentes_meses = set()
+    if not sobreescribir:
+        rows_ex = mysql_fetchall(
+            "SELECT YEAR(fecha_programada) AS y, MONTH(fecha_programada) AS m "
+            "FROM mant_visitas "
+            "WHERE contrato_id=%s AND tipo='preventiva' "
+            "  AND estado NOT IN ('anulada','cancelada') "
+            "  AND fecha_programada >= %s",
+            (ctid, desde)
+        ) or []
+        for r in rows_ex:
+            existentes_meses.add((r["y"], r["m"]))
+
+    batch = []
+    creadas_fechas = []
+    for f in fechas:
+        if (f.year, f.month) in existentes_meses:
+            continue
+        batch.append((
+            cid, ctid,
+            f"Mantención preventiva — {razon}"[:200],
+            f, "preventiva", "programada",
+            current_username() or "auto-calendar",
+        ))
+        creadas_fechas.append(f.isoformat())
+
+    if not batch:
+        return jsonify({"ok": True, "creadas": 0,
+                        "mensaje": "Sin huecos — todas las fechas ya tienen visita"})
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO mant_visitas
+                   (cliente_id, contrato_id, titulo, fecha_programada,
+                    tipo, estado, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                batch
+            )
+            n = cur.rowcount
+        conn.commit()
+        try:
+            _mant_log("contrato", ctid, "auto_calendar",
+                      f"{n} visitas generadas")
+        except Exception: pass
+        return jsonify({"ok": True, "creadas": n,
+                        "fechas": creadas_fechas[:50],
+                        "mensaje": f"{n} visitas calendarizadas hasta {hasta.isoformat()}"})
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# TRAZABILIDAD FINANCIERA — ligar cotización / OC / factura a una visita
+# ─────────────────────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/visitas/<int:vid>/cotizacion", methods=["POST"])
+@_mant_required
+def mant_visita_ligar_cotizacion(vid):
+    """Liga una cotización ERP Random a la visita.
+    Body: {tido: 'COV'|'NVV', nudo: string}. Valida con _cubicador_fetch.
+    """
+    d = request.get_json(silent=True) or {}
+    tido = (d.get("tido") or "").strip().upper()
+    nudo = (d.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"ok": False, "error": "tido y nudo requeridos"}), 400
+    if tido not in ("COV", "NVV"):
+        return jsonify({"ok": False,
+                        "error": f"TIDO '{tido}' no es cotización (usa COV o NVV)"}), 400
+
+    v = mysql_fetchone(
+        "SELECT id, cliente_id, estado_facturacion FROM mant_visitas WHERE id=%s",
+        (vid,)
+    )
+    if not v:
+        return jsonify({"ok": False, "error": "Visita no encontrada"}), 404
+
+    # Validar que el documento existe en Random (cache aware)
+    header, _ = _mant_erp_doc_cached(tido, nudo)
+    if not header:
+        return jsonify({"ok": False,
+                        "error": f"Documento {tido} {nudo} no encontrado en Random ERP"}), 404
+
+    # Si ya hay factura, no degradamos el estado_facturacion a 'cotizado'
+    nuevo_estado = v.get("estado_facturacion") or "sin_cotizar"
+    if nuevo_estado not in ("facturado", "con_oc"):
+        nuevo_estado = "cotizado"
+
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET cotizacion_tido=%s, cotizacion_nudo=%s, "
+            "  estado_facturacion=%s WHERE id=%s",
+            (tido, nudo, nuevo_estado, vid)
+        )
+        _mant_log("visita", vid, "cotizacion_ligada", f"{tido} {nudo}")
+        return jsonify({
+            "ok": True,
+            "tido": tido, "nudo": nudo,
+            "estado_facturacion": nuevo_estado,
+            "monto_neto": header.get("valor_neto"),
+            "monto_bruto": header.get("valor_bruto"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/oc", methods=["POST"])
+@_mant_required
+def mant_visita_ligar_oc(vid):
+    """Registra la OC del cliente.
+    Body: {numero, fecha: 'YYYY-MM-DD', archivo_url}
+    """
+    from datetime import datetime as _dtm
+    d = request.get_json(silent=True) or {}
+    numero = (d.get("numero") or "").strip()
+    if not numero:
+        return jsonify({"ok": False, "error": "numero requerido"}), 400
+    fecha = None
+    if d.get("fecha"):
+        try:
+            fecha = _dtm.strptime(d["fecha"][:10], "%Y-%m-%d").date()
+        except Exception:
+            return jsonify({"ok": False, "error": "fecha inválida"}), 400
+    archivo_url = (d.get("archivo_url") or "").strip()
+
+    v = mysql_fetchone(
+        "SELECT id, estado_facturacion FROM mant_visitas WHERE id=%s", (vid,)
+    )
+    if not v:
+        return jsonify({"ok": False, "error": "Visita no encontrada"}), 404
+
+    nuevo_estado = v.get("estado_facturacion") or "sin_cotizar"
+    if nuevo_estado not in ("facturado",):
+        nuevo_estado = "con_oc"
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET oc_numero=%s, oc_fecha=%s, "
+            "  oc_archivo_url=%s, estado_facturacion=%s WHERE id=%s",
+            (numero[:50], fecha, archivo_url[:600], nuevo_estado, vid)
+        )
+        _mant_log("visita", vid, "oc_ligada", f"{numero}")
+        return jsonify({"ok": True, "estado_facturacion": nuevo_estado})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/factura", methods=["POST"])
+@_mant_required
+def mant_visita_ligar_factura(vid):
+    """Liga la factura final (FCV/BLV) a la visita.
+    Body: {tido, nudo}. Valida con _cubicador_fetch.
+    """
+    d = request.get_json(silent=True) or {}
+    tido = (d.get("tido") or "").strip().upper()
+    nudo = (d.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"ok": False, "error": "tido y nudo requeridos"}), 400
+    if tido not in ("FCV", "BLV"):
+        return jsonify({"ok": False,
+                        "error": f"TIDO '{tido}' no es factura/boleta (FCV o BLV)"}), 400
+
+    v = mysql_fetchone("SELECT id FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "Visita no encontrada"}), 404
+
+    header, _ = _mant_erp_doc_cached(tido, nudo)
+    if not header:
+        return jsonify({"ok": False,
+                        "error": f"Documento {tido} {nudo} no encontrado en Random ERP"}), 404
+
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+            "  factura_emitida_at=NOW(), estado_facturacion='facturado' WHERE id=%s",
+            (tido, nudo, vid)
+        )
+        _mant_log("visita", vid, "factura_ligada", f"{tido} {nudo}")
+        # Limpia notificaciones de factura_pendiente sobre esta visita
+        try:
+            mysql_execute(
+                "UPDATE mant_notificaciones SET archivada_at=NOW() "
+                "WHERE visita_id=%s AND tipo='factura_pendiente' "
+                "  AND archivada_at IS NULL",
+                (vid,)
+            )
+        except Exception:
+            pass
+        return jsonify({
+            "ok": True,
+            "estado_facturacion": "facturado",
+            "monto_neto": header.get("valor_neto"),
+            "monto_bruto": header.get("valor_bruto"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/finanzas-servicios",
+           methods=["GET"])
+@_mant_required
+def mant_finanzas_servicios(cid):
+    """Lista cronológica de visitas con flujo comercial cruzado con ERP Random.
+
+    Para cada visita con cotizacion_tido o factura_tido, consulta Random vía
+    `_mant_erp_doc_cached` (TTL 5 min) y desglosa monto_base vs monto_repuestos.
+
+    Filtros opcionales (?):
+        desde:    'YYYY-MM-DD'
+        hasta:    'YYYY-MM-DD'
+        cubierto: contrato|cliente|garantia|mixto
+        estado:   sin_cotizar|cotizado|con_oc|facturado|no_aplica
+
+    Performance:
+        - <500ms con cache caliente (sin tocar ERP).
+        - <2s primera carga (consulta ERP en paralelo via cache global).
+    """
+    import time as _time
+    _t0 = _time.time()
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social, tipo_cliente FROM mant_clientes WHERE id=%s",
+        (cid,)
+    )
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    desde    = (request.args.get("desde") or "").strip() or None
+    hasta    = (request.args.get("hasta") or "").strip() or None
+    cubierto = (request.args.get("cubierto") or "").strip() or None
+    estadof  = (request.args.get("estado") or "").strip() or None
+
+    sql = (
+        "SELECT v.id, v.fecha_programada, v.fecha_realizada, v.tipo, "
+        "       v.titulo, v.estado, v.es_retroactiva, "
+        "       v.cotizacion_tido, v.cotizacion_nudo, "
+        "       v.oc_numero, v.oc_fecha, "
+        "       v.factura_tido, v.factura_nudo, v.factura_emitida_at, "
+        "       v.estado_facturacion, v.cubierto_por, "
+        "       v.costo, v.nota_libre, v.observaciones "
+        "FROM mant_visitas v "
+        "WHERE v.cliente_id=%s "
+        "  AND v.estado NOT IN ('anulada','cancelada') "
+    )
+    params = [cid]
+    if desde:
+        sql += " AND COALESCE(v.fecha_realizada, v.fecha_programada) >= %s "
+        params.append(desde)
+    if hasta:
+        sql += " AND COALESCE(v.fecha_realizada, v.fecha_programada) <= %s "
+        params.append(hasta)
+    if cubierto and cubierto in ("contrato", "cliente", "garantia", "mixto"):
+        sql += " AND v.cubierto_por=%s "
+        params.append(cubierto)
+    if estadof and estadof in ("sin_cotizar", "cotizado", "con_oc",
+                               "facturado", "no_aplica"):
+        sql += " AND v.estado_facturacion=%s "
+        params.append(estadof)
+    sql += " ORDER BY COALESCE(v.fecha_realizada, v.fecha_programada) DESC, v.id DESC"
+
+    visitas = mysql_fetchall(sql, tuple(params)) or []
+
+    # ── Cruce con ERP — cache 5 min ─────────────────────────────────
+    from datetime import date as _date
+    hoy = _date.today()
+    servicios = []
+    tot_anio = 0.0
+    tot_mes  = 0.0
+    tot_contrato = 0.0
+    tot_garantia = 0.0
+    tot_pendiente = 0.0
+    erp_hits = 0
+    erp_misses = 0
+    for v in visitas:
+        f_ref = v.get("fecha_realizada") or v.get("fecha_programada")
+        if isinstance(f_ref, datetime): f_ref = f_ref.date()
+        dias_sin_facturar = 0
+        if v.get("estado") in ("completada", None) or v.get("estado") == "completada":
+            if v.get("estado_facturacion") not in ("facturado", "no_aplica") and f_ref:
+                dias_sin_facturar = max(0, (hoy - f_ref).days)
+
+        # Cruzar con ERP — prefiere factura > cotización
+        monto_base = 0
+        monto_rep  = 0
+        monto_total = 0
+        cot_total = 0
+        fac_total = 0
+        if v.get("factura_tido") and v.get("factura_nudo"):
+            m = _mant_erp_doc_montos(v["factura_tido"], v["factura_nudo"])
+            if m.get("encontrado"):
+                erp_hits += 1
+                monto_base = m["monto_base"]
+                monto_rep  = m["monto_repuestos"]
+                monto_total = m["total"]
+                fac_total = m["total"]
+            else:
+                erp_misses += 1
+        if v.get("cotizacion_tido") and v.get("cotizacion_nudo"):
+            mc = _mant_erp_doc_montos(v["cotizacion_tido"], v["cotizacion_nudo"])
+            if mc.get("encontrado"):
+                erp_hits += 1
+                cot_total = mc["total"]
+                if monto_total == 0:
+                    # Sin factura — estimar con cotización
+                    monto_base = mc["monto_base"]
+                    monto_rep  = mc["monto_repuestos"]
+                    monto_total = mc["total"]
+            else:
+                erp_misses += 1
+
+        cubierto_por = v.get("cubierto_por") or "contrato"
+        ef = v.get("estado_facturacion") or "sin_cotizar"
+
+        # Sumar a totales
+        if f_ref and f_ref.year == hoy.year:
+            tot_anio += monto_total
+            if f_ref.month == hoy.month:
+                tot_mes += monto_total
+        if cubierto_por == "garantia":
+            tot_garantia += monto_total
+        if cubierto_por == "contrato":
+            tot_contrato += monto_total
+        if ef in ("sin_cotizar", "cotizado", "con_oc") and v.get("estado") == "completada":
+            tot_pendiente += monto_total if monto_total > 0 else (cot_total or 0)
+
+        servicios.append({
+            "id":               v["id"],
+            "fecha":            f_ref.isoformat() if f_ref else None,
+            "tipo_visita":      v.get("tipo"),
+            "titulo":           v.get("titulo"),
+            "es_retroactiva":   bool(v.get("es_retroactiva")),
+            "nota_libre":       v.get("nota_libre") or "",
+            "estado":           v.get("estado"),
+            "cotizacion":       (f"{v.get('cotizacion_tido')} {v.get('cotizacion_nudo')}"
+                                 if v.get("cotizacion_tido") else None),
+            "oc_numero":        v.get("oc_numero"),
+            "oc_fecha":         v.get("oc_fecha").isoformat() if v.get("oc_fecha") else None,
+            "factura":          (f"{v.get('factura_tido')} {v.get('factura_nudo')}"
+                                 if v.get("factura_tido") else None),
+            "monto_base":       monto_base,
+            "monto_repuestos":  monto_rep,
+            "monto_total":      monto_total,
+            "cot_total":        cot_total,
+            "cubierto_por":     cubierto_por,
+            "estado_facturacion": ef,
+            "dias_sin_facturar": dias_sin_facturar,
+        })
+
+    ms = int((_time.time() - _t0) * 1000)
+
+    return jsonify({
+        "ok": True,
+        "cliente": {
+            "id": cliente["id"],
+            "razon_social": cliente["razon_social"],
+            "tipo_cliente": cliente.get("tipo_cliente") or "mantencion",
+        },
+        "servicios": servicios,
+        "totales": {
+            "anio":                  round(tot_anio, 0),
+            "mes":                   round(tot_mes, 0),
+            "total_acumulado_contrato": round(tot_contrato, 0),
+            "cubierto_garantia":     round(tot_garantia, 0),
+            "pendiente_facturar":    round(tot_pendiente, 0),
+        },
+        "diagnostics": {
+            "n_servicios": len(servicios),
+            "erp_hits":    erp_hits,
+            "erp_misses":  erp_misses,
+            "tiempo_ms":   ms,
+        },
+    })
+
+
+@app.route("/mantenciones/api/visitas-sin-facturar", methods=["GET"])
+@_mant_required
+def mant_visitas_sin_facturar():
+    """Lista cross-cliente de visitas completadas hace >3 días sin factura.
+
+    Útil para el dashboard "Pendientes de facturar". Ordenado por
+    días sin facturar desc.
+
+    Filtros opcionales: ?dias_min=3 (default).
+    """
+    import time as _time
+    _t0 = _time.time()
+    dias_min = int(request.args.get("dias_min") or 3)
+    rows = mysql_fetchall(
+        "SELECT v.id, v.cliente_id, v.titulo, v.tipo, "
+        "       v.fecha_realizada, v.fecha_programada, "
+        "       v.cotizacion_tido, v.cotizacion_nudo, "
+        "       v.oc_numero, v.factura_tido, v.factura_nudo, "
+        "       v.estado_facturacion, v.cubierto_por, "
+        "       c.razon_social, c.tipo_cliente, "
+        "       DATEDIFF(CURDATE(), COALESCE(v.fecha_realizada, v.fecha_programada)) AS dias_sin_facturar "
+        "FROM mant_visitas v "
+        "JOIN mant_clientes c ON c.id = v.cliente_id "
+        "WHERE v.estado='completada' "
+        "  AND v.estado_facturacion IN ('sin_cotizar','cotizado','con_oc') "
+        "  AND COALESCE(v.fecha_realizada, v.fecha_programada) < (CURDATE() - INTERVAL %s DAY) "
+        "  AND COALESCE(v.cubierto_por, 'contrato') != 'garantia' "
+        "ORDER BY dias_sin_facturar DESC, v.id DESC "
+        "LIMIT 500",
+        (dias_min,)
+    ) or []
+
+    visitas = []
+    for r in rows:
+        f_ref = r.get("fecha_realizada") or r.get("fecha_programada")
+        if isinstance(f_ref, datetime): f_ref = f_ref.date()
+        visitas.append({
+            "id":           r["id"],
+            "cliente_id":   r["cliente_id"],
+            "cliente":      r.get("razon_social", ""),
+            "tipo_cliente": r.get("tipo_cliente") or "mantencion",
+            "titulo":       r.get("titulo"),
+            "tipo_visita":  r.get("tipo"),
+            "fecha":        f_ref.isoformat() if f_ref else None,
+            "dias_sin_facturar": int(r.get("dias_sin_facturar") or 0),
+            "cotizacion":   (f"{r.get('cotizacion_tido')} {r.get('cotizacion_nudo')}"
+                             if r.get("cotizacion_tido") else None),
+            "oc_numero":    r.get("oc_numero"),
+            "estado_facturacion": r.get("estado_facturacion"),
+            "cubierto_por": r.get("cubierto_por") or "contrato",
+            "url":          f"/mantenciones/clientes/{r['cliente_id']}",
+        })
+
+    ms = int((_time.time() - _t0) * 1000)
+    return jsonify({
+        "ok":     True,
+        "visitas": visitas,
+        "total":  len(visitas),
+        "dias_min": dias_min,
+        "tiempo_ms": ms,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# NOTIFICACIONES INTERNAS — campana en header (sin DNS)
+# ─────────────────────────────────────────────────────────────────────
+
+@app.route("/mantenciones/api/notif-interna", methods=["GET"])
+@_mant_required
+def mant_notif_interna_list():
+    """Lista notificaciones internas del usuario actual.
+
+    Query params:
+        leidas: 0|1 (default 0 = solo no leídas)
+        limit:  int (default 50, max 200)
+        archivadas: 0|1 (default 0)
+
+    Si el usuario es admin/superadmin, ve también las broadcast (destino IS NULL).
+    """
+    perms = g.get("permissions") or {}
+    es_admin = bool(perms.get("admin") or perms.get("superadmin"))
+    user_id = None
+    try:
+        user_id = (g.user or {}).get("id") if hasattr(g, "user") else None
+    except Exception:
+        user_id = None
+
+    leidas      = request.args.get("leidas", "0").strip()
+    archivadas  = request.args.get("archivadas", "0").strip()
+    limit       = min(200, int(request.args.get("limit") or 50))
+
+    sql = (
+        "SELECT n.id, n.tipo, n.prioridad, n.titulo, "
+        "       COALESCE(n.cuerpo, n.mensaje) AS cuerpo, "
+        "       n.url_accion, n.leida_at, n.archivada_at, n.created_at, "
+        "       n.cliente_id, n.visita_id, "
+        "       c.razon_social "
+        "FROM mant_notificaciones n "
+        "LEFT JOIN mant_clientes c ON c.id = n.cliente_id "
+        "WHERE 1=1 "
+    )
+    params = []
+    # Filtro destino
+    if es_admin:
+        # Admin ve todas (las suyas + broadcast + cualquiera)
+        pass
+    elif user_id:
+        sql += " AND (n.destino_user_id=%s OR n.destino_user_id IS NULL) "
+        params.append(user_id)
+    else:
+        sql += " AND n.destino_user_id IS NULL "
+    # Filtro leídas
+    if leidas != "1":
+        sql += " AND n.leida_at IS NULL "
+    # Filtro archivadas
+    if archivadas != "1":
+        sql += " AND n.archivada_at IS NULL "
+
+    sql += (
+        " ORDER BY "
+        "   CASE n.prioridad WHEN 'urgente' THEN 1 WHEN 'alta' THEN 2 "
+        "                    WHEN 'media' THEN 3 ELSE 4 END, "
+        "   n.created_at DESC "
+        " LIMIT %s "
+    )
+    params.append(limit)
+
+    rows = mysql_fetchall(sql, tuple(params)) or []
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("created_at", "leida_at", "archivada_at"):
+            if d.get(k):
+                d[k] = str(d[k])[:19]
+        out.append(d)
+    return jsonify({"ok": True, "notificaciones": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/notif-interna/<int:nid>/leida", methods=["POST"])
+@_mant_required
+def mant_notif_interna_leida(nid):
+    """Marca una notificación como leída."""
+    try:
+        mysql_execute(
+            "UPDATE mant_notificaciones SET leida_at=NOW(), "
+            "  estado=CASE WHEN estado='pendiente' THEN 'leida' ELSE estado END "
+            "WHERE id=%s AND leida_at IS NULL",
+            (nid,)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/notif-interna/<int:nid>/archivar", methods=["POST"])
+@_mant_required
+def mant_notif_interna_archivar(nid):
+    """Archiva una notificación (no aparece más en la campana)."""
+    try:
+        mysql_execute(
+            "UPDATE mant_notificaciones SET archivada_at=NOW(), "
+            "  leida_at=COALESCE(leida_at, NOW()) "
+            "WHERE id=%s",
+            (nid,)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/notif-interna/contador", methods=["GET"])
+@_mant_required
+def mant_notif_interna_contador():
+    """Devuelve {no_leidas, urgentes} para el badge de la campana.
+
+    Endpoint ultra rápido — usa el índice idx_destino_no_leida.
+    Objetivo: <50ms en condiciones normales.
+    """
+    perms = g.get("permissions") or {}
+    es_admin = bool(perms.get("admin") or perms.get("superadmin"))
+    user_id = None
+    try:
+        user_id = (g.user or {}).get("id") if hasattr(g, "user") else None
+    except Exception:
+        user_id = None
+
+    sql = (
+        "SELECT "
+        "  COUNT(*) AS no_leidas, "
+        "  SUM(CASE WHEN prioridad IN ('alta','urgente') THEN 1 ELSE 0 END) AS urgentes "
+        "FROM mant_notificaciones "
+        "WHERE leida_at IS NULL AND archivada_at IS NULL "
+    )
+    params = []
+    if not es_admin and user_id:
+        sql += " AND (destino_user_id=%s OR destino_user_id IS NULL) "
+        params.append(user_id)
+    elif not es_admin and not user_id:
+        sql += " AND destino_user_id IS NULL "
+    try:
+        row = mysql_fetchone(sql, tuple(params)) or {}
+        return jsonify({
+            "ok": True,
+            "no_leidas": int(row.get("no_leidas") or 0),
+            "urgentes":  int(row.get("urgentes") or 0),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "no_leidas": 0, "urgentes": 0,
+                        "error": str(e)}), 200
 
 
 # ─────────────────────────────────────────────────────────────────

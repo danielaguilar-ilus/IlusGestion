@@ -886,6 +886,64 @@ function aplicarKpiFiltro(tipo) {
 }
 </script>
 
+{# ── PILLS DE TIPO DE CLIENTE — contrato comercial (mantención/arriendo/leasing)
+   Recarga la página con ?tipo=X que el backend filtra. Sin tipo → todos.
+   Estilo: pill grande clickeable con el color asociado al tipo.
+   #}
+{%- set tipo_actual = (filtros.tipo if filtros and filtros.tipo else '') -%}
+<div class="tipo-cliente-pills mb-3" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+  <span class="small fw-semibold text-muted me-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.5px">
+    <i class="bi bi-funnel-fill me-1"></i>Tipo de contrato:
+  </span>
+  <a href="?{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}{{ k }}={{ v }}&{% endif %}{% endfor %}"
+     class="tc-pill {% if not tipo_actual %}tc-pill-active{% endif %}"
+     style="background:{% if not tipo_actual %}#0a0a0a{% else %}#f3f4f6{% endif %};
+            color:{% if not tipo_actual %}#fff{% else %}#374151{% endif %}">
+    <i class="bi bi-grid-3x3-gap me-1"></i>Todos
+  </a>
+  <a href="?tipo=mantencion{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
+     class="tc-pill {% if tipo_actual == 'mantencion' %}tc-pill-active{% endif %}"
+     style="background:{% if tipo_actual == 'mantencion' %}#dc2626{% else %}#fef2f2{% endif %};
+            color:{% if tipo_actual == 'mantencion' %}#fff{% else %}#dc2626{% endif %}">
+    <i class="bi bi-wrench-adjustable me-1"></i>Mantención
+  </a>
+  <a href="?tipo=arriendo{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
+     class="tc-pill {% if tipo_actual == 'arriendo' %}tc-pill-active{% endif %}"
+     style="background:{% if tipo_actual == 'arriendo' %}#0891b2{% else %}#ecfeff{% endif %};
+            color:{% if tipo_actual == 'arriendo' %}#fff{% else %}#0891b2{% endif %}">
+    <i class="bi bi-calendar-range me-1"></i>Arriendo
+  </a>
+  <a href="?tipo=leasing{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
+     class="tc-pill {% if tipo_actual == 'leasing' %}tc-pill-active{% endif %}"
+     style="background:{% if tipo_actual == 'leasing' %}#f59e0b{% else %}#fffbeb{% endif %};
+            color:{% if tipo_actual == 'leasing' %}#fff{% else %}#f59e0b{% endif %}">
+    <i class="bi bi-cash-coin me-1"></i>Leasing
+  </a>
+</div>
+<style>
+  .tc-pill{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:7px 16px;border-radius:50px;
+    font-size:.82rem;font-weight:700;letter-spacing:.02em;
+    text-decoration:none;border:1.5px solid transparent;
+    transition:all .18s cubic-bezier(.2,.8,.2,1);
+    box-shadow:0 1px 2px rgba(0,0,0,.04);
+  }
+  .tc-pill:hover{
+    transform:translateY(-1px);
+    box-shadow:0 4px 10px rgba(0,0,0,.08);
+    text-decoration:none;
+  }
+  .tc-pill-active{
+    box-shadow:0 3px 8px rgba(0,0,0,.18);
+    transform:translateY(-1px);
+  }
+  @media (max-width: 575px){
+    .tipo-cliente-pills{padding:0 2px}
+    .tc-pill{padding:6px 12px;font-size:.76rem}
+  }
+</style>
+
 {# ── FILTER BAR ──────────────────────────────────────────────────── #}
 <div class="filter-bar mb-3">
   <div class="row g-2 align-items-center">
@@ -972,9 +1030,20 @@ function aplicarKpiFiltro(tipo) {
                         '#3b82f6', '#06b6d4', '#10b981', '#f97316'] %}
   {% set _hdr_color = _hdr_colors[c.id % 8] %}
 
+  {# Tipo de cliente: badge con color del contrato comercial #}
+  {%- set tipo_c = c.tipo_cliente or 'mantencion' -%}
+  {%- if tipo_c == 'arriendo' -%}
+    {%- set tipo_bg = '#0891b2' -%}{%- set tipo_lbl = 'Arriendo' -%}{%- set tipo_icon = 'calendar-range' -%}
+  {%- elif tipo_c == 'leasing' -%}
+    {%- set tipo_bg = '#f59e0b' -%}{%- set tipo_lbl = 'Leasing' -%}{%- set tipo_icon = 'cash-coin' -%}
+  {%- else -%}
+    {%- set tipo_bg = '#dc2626' -%}{%- set tipo_lbl = 'Mantención' -%}{%- set tipo_icon = 'wrench-adjustable' -%}
+  {%- endif -%}
+
   <div class="col-12 col-md-6 col-lg-4 card-wrapper"
        data-estado="{{ c.estado }}"
        data-contrato="{{ c.contrato_estado }}"
+       data-tipo="{{ tipo_c }}"
        data-equipos="{{ 'con' if (c.maquinas_count or 0) > 0 else 'sin' }}"
        data-search="{{ (c.razon_social ~ ' ' ~ (c.rut or '') ~ ' ' ~ (c.contacto_email or '') ~ ' ' ~ (c.comuna or '') ~ ' ' ~ (c.ciudad or ''))|lower }}">
 
@@ -996,6 +1065,12 @@ function aplicarKpiFiltro(tipo) {
               <span class="cc2-badge {{ bcls }}">
                 {% if c.badge == 'advertencia' %}<i class="bi bi-exclamation-triangle-fill me-1"></i>{% endif %}
                 {{ btxt }}
+              </span>
+              {# Badge tipo de cliente (mantención/arriendo/leasing) — contrato comercial #}
+              <span class="cc2-badge cc2-badge-tipo"
+                    style="background:{{ tipo_bg }};color:#fff"
+                    title="Tipo de contrato comercial">
+                <i class="bi bi-{{ tipo_icon }} me-1"></i>{{ tipo_lbl }}
               </span>
             </div>
           </div>
@@ -1178,6 +1253,7 @@ function aplicarKpiFiltro(tipo) {
     const es = document.getElementById('filterEstado')?.value   || '';
     const co = document.getElementById('filterContrato')?.value || '';
     const eq = document.getElementById('filterEquipos')?.value  || '';
+    // Tipo viene del querystring (pill selection), no de un <select> — el backend ya filtró.
     return wrappers().filter(el => {
       if (es && el.dataset.estado   !== es) return false;
       if (co && el.dataset.contrato !== co) return false;

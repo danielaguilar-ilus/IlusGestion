@@ -235,8 +235,93 @@
   {% else %}
     <span class="mobile-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></span>
   {% endif %}
-  <span class="mobile-user-label ms-auto">{{ current_user.nombre }}</span>
+
+  {# ─── CAMPANA DE NOTIFICACIONES — sección mobile-topbar ───────────
+       En mobile vive aquí (hereda contraste sobre fondo negro).
+       El dropdown se renderiza inline (no se mueve al body). #}
+  <div class="ilus-notif-wrap ilus-notif-mobile ms-auto me-2" style="position:relative">
+    <button class="ilus-notif-bell" id="ilusNotifBellMobile"
+            aria-label="Notificaciones" type="button"
+            style="background:none;border:0;color:#fff;font-size:1.35rem;
+                   padding:6px 10px;cursor:pointer;position:relative;line-height:1">
+      <i class="bi bi-bell-fill"></i>
+      <span class="ilus-notif-badge" id="ilusNotifBadgeMobile"
+            style="display:none;position:absolute;top:2px;right:4px;
+                   background:#dc2626;color:#fff;border-radius:50px;
+                   font-size:.6rem;padding:1px 5px;font-weight:800;
+                   min-width:16px;text-align:center;border:2px solid #0a0a0a;
+                   line-height:1">0</span>
+    </button>
+  </div>
+
+  <span class="mobile-user-label">{{ current_user.nombre }}</span>
 </div>
+{% endif %}
+
+{# ─── CAMPANA DE NOTIFICACIONES — versión desktop (fixed top-right) ───
+     En desktop NO existe topbar; ponemos un botón flotante fijo arriba
+     a la derecha sobre el viewport. En mobile queda oculto (lo reemplaza
+     el de .mobile-topbar). El dropdown se posiciona absoluto debajo. #}
+{% if current_user and not embed_mode %}
+<div class="ilus-notif-wrap ilus-notif-desktop no-print"
+     style="position:fixed;top:14px;right:18px;z-index:1050">
+  <button class="ilus-notif-bell" id="ilusNotifBell"
+          aria-label="Notificaciones" type="button"
+          style="background:#0a0a0a;border:2px solid #dc2626;color:#fff;
+                 font-size:1.05rem;width:42px;height:42px;border-radius:50%;
+                 cursor:pointer;position:relative;
+                 box-shadow:0 4px 12px rgba(0,0,0,.2);
+                 display:flex;align-items:center;justify-content:center;
+                 transition:transform .15s, box-shadow .15s">
+    <i class="bi bi-bell-fill"></i>
+    <span class="ilus-notif-badge" id="ilusNotifBadge"
+          style="display:none;position:absolute;top:-4px;right:-4px;
+                 background:#dc2626;color:#fff;border-radius:50px;
+                 font-size:.62rem;padding:2px 6px;font-weight:800;
+                 min-width:18px;text-align:center;border:2px solid #fff;
+                 line-height:1">0</span>
+  </button>
+  <div class="ilus-notif-dropdown" id="ilusNotifDropdown"
+       style="display:none;position:absolute;top:calc(100% + 8px);right:0;
+              width:380px;max-height:520px;overflow-y:auto;
+              background:#fff;border:2px solid #dc2626;border-radius:12px;
+              box-shadow:0 14px 36px rgba(0,0,0,.28);
+              padding:0;color:#0a0a0a">
+    <!-- Render dinámico desde JS -->
+  </div>
+</div>
+{# Reglas mobile-first del bell #}
+<style>
+  @keyframes ilusNotifPulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.18); }
+  }
+  .ilus-notif-bell:hover{ transform:scale(1.05); }
+  .ilus-notif-desktop .ilus-notif-bell:hover{ box-shadow:0 6px 18px rgba(220,38,38,.32); }
+  /* En mobile (<768px), el botón desktop fixed se oculta — vive el de la topbar */
+  @media (max-width: 767px){
+    .ilus-notif-desktop{ display:none !important; }
+    /* El dropdown del mobile bell ocupa casi todo el ancho */
+    #ilusNotifDropdown.ilus-notif-dropdown-mobile{
+      position:fixed !important;
+      top: calc(var(--topbar-h, 90px) + 4px) !important;
+      left: 8px !important;
+      right: 8px !important;
+      width: auto !important;
+      max-height: calc(100vh - var(--topbar-h, 90px) - 24px) !important;
+    }
+  }
+  /* En desktop el dropdown mobile se oculta */
+  @media (min-width: 768px){
+    .ilus-notif-mobile{ display:none !important; }
+  }
+  /* Item interactivo */
+  .ilus-notif-item:hover{
+    background:#f3f4f6 !important;
+    transform:translateX(2px);
+  }
+  .ilus-notif-item{ transition: background .15s, transform .15s; }
+</style>
 {% endif %}
 
 {# ══════════════════════════════════════════════
@@ -550,7 +635,7 @@
 <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script defer src="{{ url_for('static', filename='app.js') }}?v=20260518"></script>
-<script defer src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260519"></script>
+<script defer src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260521"></script>
 
 {# ══════════════════════════════════════════════════════════
    Google Maps Places API — carga LAZY (on-demand).
@@ -658,6 +743,260 @@ document.addEventListener('DOMContentLoaded', function(){
 })();
 });  /* end DOMContentLoaded */
 </script>
+
+{# ══════════════════════════════════════════════════════════
+   CAMPANA DE NOTIFICACIONES — polling + dropdown
+   Polling /mantenciones/api/notif-interna/contador cada 60s.
+   Si el endpoint backend aún no existe → degrada silencioso
+   (no rompe la página). Click abre el dropdown que llama
+   /mantenciones/api/notif-interna?leidas=0&limit=10.
+══════════════════════════════════════════════════════════ #}
+{% if current_user and not embed_mode %}
+<script>
+(function(){
+  // Selectores para AMBAS instancias (mobile-topbar + desktop fixed)
+  const bellDesktop = document.getElementById('ilusNotifBell');
+  const bellMobile  = document.getElementById('ilusNotifBellMobile');
+  const badgeDesktop = document.getElementById('ilusNotifBadge');
+  const badgeMobile  = document.getElementById('ilusNotifBadgeMobile');
+  const dropdown    = document.getElementById('ilusNotifDropdown');
+  if (!dropdown || (!bellDesktop && !bellMobile)) return;
+
+  let lastUrgentes = 0;
+  let pollTimer = null;
+  let isOpen = false;
+
+  // ── Helpers ──────────────────────────────────────────────────
+  function tiempoRelativo(iso){
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return 'ahora';
+      if (diff < 3600) return Math.floor(diff/60) + ' min';
+      if (diff < 86400) return Math.floor(diff/3600) + ' h';
+      if (diff < 86400 * 7) return Math.floor(diff/86400) + ' d';
+      return d.toLocaleDateString('es-CL', {day:'2-digit', month:'short'});
+    } catch(e) { return ''; }
+  }
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
+
+  function setBadge(n, urgentes){
+    [[badgeDesktop, false], [badgeMobile, true]].forEach(function(pair){
+      const el = pair[0];
+      if (!el) return;
+      if (n > 0) {
+        el.style.display = '';
+        el.textContent = n > 99 ? '99+' : String(n);
+        // Animación pulse si hay urgentes
+        if (urgentes > 0) {
+          el.style.animation = 'ilusNotifPulse 2s infinite';
+        } else {
+          el.style.animation = 'none';
+        }
+      } else {
+        el.style.display = 'none';
+      }
+    });
+  }
+
+  // ── Polling del contador (ultra rápido) ─────────────────────
+  async function actualizarContador(){
+    try {
+      const r = await fetch('/mantenciones/api/notif-interna/contador', {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!r.ok) {
+        // Si el endpoint aún no existe (404) — apagar polling para no spammear
+        if (r.status === 404 && pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        setBadge(0, 0);
+        return;
+      }
+      const d = await r.json();
+      const n        = d.no_leidas || 0;
+      const urgentes = d.urgentes || 0;
+      lastUrgentes = urgentes;
+      setBadge(n, urgentes);
+    } catch(e) {
+      // Error de red — degradar silencioso (no mostrar nada en consola para
+      // no spamear si el usuario está offline)
+      setBadge(0, 0);
+    }
+  }
+
+  // ── Renderizar el dropdown con las notificaciones ──────────
+  async function abrirDropdown(anchor){
+    isOpen = true;
+    // Posicionar dropdown según anchor (mobile-topbar o desktop fixed)
+    if (anchor === 'mobile') {
+      dropdown.classList.add('ilus-notif-dropdown-mobile');
+    } else {
+      dropdown.classList.remove('ilus-notif-dropdown-mobile');
+    }
+    dropdown.style.display = 'block';
+    dropdown.innerHTML = `
+      <div style="padding:14px 16px;border-bottom:1px solid #f3f4f6;
+                  display:flex;justify-content:space-between;align-items:center;
+                  background:linear-gradient(180deg, #fafafa, #fff)">
+        <strong style="color:#0a0a0a;font-size:.9rem">
+          <i class="bi bi-bell-fill me-1" style="color:#dc2626"></i>Notificaciones
+        </strong>
+        <a href="/mantenciones/notificaciones"
+           style="color:#dc2626;font-size:.78rem;font-weight:600;text-decoration:none">
+          Ver todas <i class="bi bi-arrow-right ms-1"></i>
+        </a>
+      </div>
+      <div id="ilusNotifList" style="padding:8px">
+        <div style="padding:30px;text-align:center;color:#6b7280">
+          <span class="spinner-border spinner-border-sm me-2" style="border-color:#dc2626;border-right-color:transparent"></span>
+          Cargando…
+        </div>
+      </div>
+    `;
+
+    try {
+      const r = await fetch('/mantenciones/api/notif-interna?leidas=0&limit=10', {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+      const list = document.getElementById('ilusNotifList');
+      if (!list) return;  // dropdown cerrado mientras cargaba
+      if (!r.ok) {
+        list.innerHTML = `
+          <div style="padding:30px;text-align:center;color:#6b7280">
+            <i class="bi bi-cloud-slash" style="font-size:1.8rem;display:block;margin-bottom:8px;color:#9ca3af"></i>
+            <div style="font-weight:600;color:#0a0a0a">No se pudieron cargar</div>
+            <div style="font-size:.74rem;margin-top:4px">Servicio temporalmente no disponible</div>
+          </div>`;
+        return;
+      }
+      const d = await r.json();
+      if (!d.notificaciones || d.notificaciones.length === 0) {
+        list.innerHTML = `
+          <div style="padding:36px 20px;text-align:center;color:#6b7280">
+            <i class="bi bi-check2-circle" style="font-size:2.4rem;display:block;margin-bottom:10px;color:#16a34a"></i>
+            <div style="font-weight:700;color:#0a0a0a;font-size:.92rem">Sin notificaciones nuevas</div>
+            <div style="font-size:.76rem;margin-top:4px">Te avisaremos cuando algo necesite atención</div>
+          </div>`;
+        return;
+      }
+
+      const prioColor = {
+        urgente: '#dc2626',
+        alta:    '#f59e0b',
+        media:   '#3b82f6',
+        baja:    '#6b7280'
+      };
+      const prioBg = {
+        urgente: '#fee2e2',
+        alta:    '#fff7ed',
+        media:   '#dbeafe',
+        baja:    '#f3f4f6'
+      };
+
+      list.innerHTML = d.notificaciones.map(function(n){
+        const color = prioColor[n.prioridad] || '#6b7280';
+        const bg    = prioBg[n.prioridad]    || '#f3f4f6';
+        return `
+          <div class="ilus-notif-item" data-id="${n.id}" data-url="${escapeHtml(n.url_accion || '')}"
+               style="padding:11px 13px;border-radius:8px;margin-bottom:4px;cursor:pointer;
+                      border-left:3px solid ${color};background:${bg};">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+              <strong style="color:#0a0a0a;font-size:.85rem;line-height:1.3">${escapeHtml(n.titulo || '')}</strong>
+              <small style="color:#9ca3af;font-size:.66rem;white-space:nowrap;flex-shrink:0">${escapeHtml(tiempoRelativo(n.created_at))}</small>
+            </div>
+            ${n.cuerpo ? `<div style="color:#475569;font-size:.76rem;margin-top:4px;line-height:1.4">${escapeHtml(n.cuerpo)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      // Click en notificación: marcar leída + navegar (o solo refrescar contador)
+      list.querySelectorAll('.ilus-notif-item').forEach(function(item){
+        item.addEventListener('click', async function(){
+          const id  = this.dataset.id;
+          const url = this.dataset.url;
+          // Fire-and-forget: marcar leída
+          try {
+            await fetch('/mantenciones/api/notif-interna/' + id + '/leida', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Accept': 'application/json' }
+            });
+          } catch(e) { /* silencioso */ }
+          if (url) {
+            window.location.href = url;
+          } else {
+            // Refrescar contador y cerrar
+            actualizarContador();
+            cerrarDropdown();
+          }
+        });
+      });
+    } catch(e) {
+      const list = document.getElementById('ilusNotifList');
+      if (list) {
+        list.innerHTML = `
+          <div style="padding:30px;text-align:center;color:#dc2626">
+            <i class="bi bi-exclamation-triangle" style="font-size:1.6rem;display:block;margin-bottom:8px"></i>
+            <div style="font-weight:600">Error de conexión</div>
+          </div>`;
+      }
+    }
+  }
+
+  function cerrarDropdown(){
+    isOpen = false;
+    dropdown.style.display = 'none';
+  }
+
+  function toggleDropdown(e, source){
+    if (e) e.stopPropagation();
+    if (isOpen) {
+      cerrarDropdown();
+    } else {
+      abrirDropdown(source || 'desktop');
+    }
+  }
+
+  // Bind events
+  if (bellDesktop) bellDesktop.addEventListener('click', function(e){ toggleDropdown(e, 'desktop'); });
+  if (bellMobile)  bellMobile.addEventListener('click',  function(e){ toggleDropdown(e, 'mobile');  });
+
+  // Click fuera → cerrar
+  document.addEventListener('click', function(e){
+    if (!isOpen) return;
+    if (e.target.closest('.ilus-notif-wrap')) return;
+    if (e.target.closest('#ilusNotifDropdown')) return;
+    cerrarDropdown();
+  });
+
+  // ESC → cerrar
+  document.addEventListener('keydown', function(e){
+    if (isOpen && e.key === 'Escape') cerrarDropdown();
+  });
+
+  // Iniciar polling
+  actualizarContador();
+  pollTimer = setInterval(actualizarContador, 60000);
+
+  // Refrescar al recobrar visibilidad (volver al tab)
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') actualizarContador();
+  });
+})();
+</script>
+{% endif %}
+
 {% block scripts %}{% endblock %}
 </body>
 </html>
