@@ -4911,10 +4911,15 @@ def _get_marca() -> dict:
 
     return {
         "name":          name,
-        "from_name":     (be.get("from_name") or name or "ILUS Fitness").strip(),
+        # FIX 2026-05-21 (Daniel): `name` (campo "Nombre de empresa" editable
+        # en /comunicaciones) tiene prioridad sobre be.get("from_name") que
+        # venía de la env var ILUS_BRAND_FROM_NAME. Daniel quiere que cuando
+        # cambie el nombre de empresa desde la página, eso se refleje en TODOS
+        # los emails sin tocar env vars. Igual para wa_name (WhatsApp si vuelve).
+        "from_name":     (name or be.get("from_name") or "ILUS Fitness").strip(),
         "from_email":    (be.get("from_email") or "no-reply@ilusfitness.com").strip(),
         "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "servicio.tecnico@ilusfitness.com").strip(),
-        "wa_name":       (be.get("wa_name") or name or "ILUS Fitness").strip(),
+        "wa_name":       (name or be.get("wa_name") or "ILUS Fitness").strip(),
         "logo_url":      logo,
         "support_email": (cc.get("support_email") or be.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
         "support_url":   (be.get("support_url") or "https://ilusfitness.com/soporte").strip(),
