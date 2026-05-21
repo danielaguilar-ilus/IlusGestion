@@ -597,7 +597,7 @@
       {% endif %}
     </div>
 
-    {# Botones de acción — Técnico solo lectura: no ve editar/nueva visita/ticket #}
+    {# Botones de acción — Técnico solo lectura: no ve editar/nueva visita #}
     <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
       {% if not is_tecnico %}
       <button class="btn btn-sm btn-outline-secondary" style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)" onclick="abrirEditarCliente()">
@@ -606,12 +606,8 @@
       <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
         <i class="bi bi-calendar-plus me-1"></i>Nueva visita
       </button>
-      <a href="{{ url_for('mant_ticket_nuevo') }}?cliente_id={{ cliente.id }}"
-         class="btn btn-sm fw-bold"
-         style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:0"
-         title="Crear ticket de solicitud (paralelo a OT)">
-        <i class="bi bi-ticket-perforated me-1"></i>Ticket
-      </a>
+      {# Botón "Ticket" eliminado 2026-05-21 (Daniel) — flujo discontinuado.
+         La gestión va por Visita / OT directamente. #}
       {% endif %}
 
       {# ── Dropdown de acciones IA ─────────────────────────────────── #}
@@ -6176,13 +6172,27 @@ async function vhGuardar(){
             <label class="form-label fw-semibold">RUT</label>
             <input type="text" id="ec_rut" class="form-control font-monospace" value="{{ cliente.rut or '' }}">
           </div>
-          <div class="col-6">
+          <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Estado</label>
             <select id="ec_estado" class="form-select">
               {% for e in ['activo','prospecto','inactivo','suspendido'] %}
               <option value="{{ e }}" {% if cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
               {% endfor %}
             </select>
+          </div>
+
+          {# ── Tipo de cliente (mantención / arriendo / leasing) ──
+             Permite cambiar la categoría comercial directamente desde la
+             ficha. El badge del header se actualiza al guardar. #}
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Tipo cliente</label>
+            <select id="ec_tipo_cliente" class="form-select">
+              {% set _tc_cur = (cliente.tipo_cliente or 'mantencion')|lower %}
+              <option value="mantencion" {% if _tc_cur=='mantencion' %}selected{% endif %}>Mantención</option>
+              <option value="arriendo"   {% if _tc_cur=='arriendo'   %}selected{% endif %}>Arriendo</option>
+              <option value="leasing"    {% if _tc_cur=='leasing'    %}selected{% endif %}>Leasing</option>
+            </select>
+            <small class="text-muted" style="font-size:.7rem">Define categoría comercial</small>
           </div>
 
           {# ── Datos de empresa ── #}

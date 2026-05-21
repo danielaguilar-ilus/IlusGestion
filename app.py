@@ -24849,11 +24849,21 @@ def _mant_ficha_impl(cid):
 @_mant_required
 def mant_cliente_update(cid):
     d = request.get_json(silent=True) or {}
+    # Whitelist de campos editables. tipo_cliente agregado 2026-05-21 (Plan
+    # fancy-cuddling-marble) — valida que sea uno de los 3 valores válidos.
     fields = ["razon_social","rut","email_empresa","tel_empresa","giro",
               "contacto_nombre","contacto_cargo","contacto_tel","contacto_email",
               "contacto2_nombre","contacto2_cargo","contacto2_tel","contacto2_email",
               "direccion","comuna","ciudad","region",
-              "notas","notas_confidenciales","estado"]
+              "notas","notas_confidenciales","estado","tipo_cliente"]
+    # Validación dura del ENUM tipo_cliente — si llega valor distinto, lo descartamos
+    # silenciosamente para no romper el UPDATE.
+    if "tipo_cliente" in d:
+        _tc = str(d.get("tipo_cliente") or "").strip().lower()
+        if _tc not in ("mantencion", "arriendo", "leasing"):
+            d.pop("tipo_cliente", None)
+        else:
+            d["tipo_cliente"] = _tc
     sets   = [f"{f}=%s" for f in fields if f in d]
     vals   = [d[f] for f in fields if f in d]
     if not sets:

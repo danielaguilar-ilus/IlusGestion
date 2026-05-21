@@ -1815,6 +1815,7 @@ async function guardarCliente() {
     razon_social:      $v('ec_razon'),
     rut:               $v('ec_rut'),
     estado:            document.getElementById('ec_estado').value,
+    tipo_cliente:      (document.getElementById('ec_tipo_cliente')?.value || 'mantencion'),
     giro:              $v('ec_giro'),
     email_empresa:     $v('ec_email_empresa'),
     tel_empresa:       $v('ec_tel_empresa'),
@@ -1836,14 +1837,19 @@ async function guardarCliente() {
     // Notas
     notas:             $v('ec_notas'),
   };
-  if (!data.razon_social) { alert('Razón social requerida'); return; }
+  if (!data.razon_social) {
+    if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
+    return;
+  }
   const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
     method: 'PUT',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(data)
   });
   if (r.ok) { location.reload(); }
-  else { alert('Error al guardar'); }
+  else {
+    if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Error al guardar'});
+  }
 }
 
 // ─── ERP — tabs ──────────────────────────────────────────────
