@@ -643,10 +643,8 @@
           <i class="bi bi-three-dots-vertical"></i>
         </button>
         <ul class="dropdown-menu dropdown-menu-end">
-          <li><a class="dropdown-item" href="#" onclick="window.print();return false">
-            <i class="bi bi-printer me-2"></i>Imprimir ficha
-          </a></li>
-          <li><hr class="dropdown-divider"></li>
+          {# Botón "Imprimir ficha" eliminado 2026-05-21 (Daniel) — no se usa.
+             Si en el futuro se necesita, agregar export PDF dedicado. #}
           <li><a class="dropdown-item text-danger" href="#" onclick="abrirEliminarCliente();return false">
             <i class="bi bi-trash me-2"></i>Eliminar cliente
             <div class="small text-muted">Solo superadmin · arrastra contratos, visitas y equipos</div>
@@ -1493,9 +1491,7 @@
       <button class="ar-btn" onclick="switchTab('ia')">
         <i class="bi bi-stars"></i> Generar plan IA
       </button>
-      <button class="ar-btn" onclick="window.print()">
-        <i class="bi bi-printer"></i> Imprimir ficha
-      </button>
+      {# Botón "Imprimir ficha" eliminado 2026-05-21 (Daniel) — no es necesario. #}
     </div>
   </div>
   {% endif %}

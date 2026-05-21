@@ -5312,6 +5312,20 @@ def _send_invitation_email(to_addr: str, to_name: str, set_url: str, creator_nam
     )
 
 
+# ── Redirects defensivos para URLs antiguas / links rotos ──
+# Si Daniel o algún usuario tiene un link viejo guardado en favoritos /
+# PWA cache / email anterior con /reset-password o /forgot-password,
+# lo mandamos al endpoint canónico en vez de 404.
+# Reportado por Daniel 2026-05-21: el flujo "olvidaste contraseña"
+# llegaba a /reset-password 404.
+@app.route("/reset-password")
+@app.route("/forgot-password")
+@app.route("/recuperar-clave")
+@app.route("/olvidaste-contrasena")
+def _forgot_legacy_redirect():
+    return redirect(url_for("forgot_password"), code=301)
+
+
 @app.route("/auth/olvidar-contrasena", methods=["GET", "POST"])
 @rate_limited("forgot", max_attempts=5, window_seconds=900)
 def forgot_password():

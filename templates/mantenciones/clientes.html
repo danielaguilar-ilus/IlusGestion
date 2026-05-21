@@ -1199,11 +1199,11 @@ function aplicarKpiFiltro(tipo) {
             </div>
           </div>
         </div>
-        <button class="cc2-arrow-btn" type="button"
-                style="background:{{ _hdr_color }}11;color:{{ _hdr_color }};border:1.5px solid {{ _hdr_color }}33"
-                onclick="event.stopPropagation();window.location.href='{{ url_for('mant_ficha', cid=c.id) }}'">
-          <i class="bi bi-arrow-right"></i>
-        </button>
+        {# Botón "flecha" eliminado 2026-05-21 (Daniel) — toda la card es
+           clickeable (onclick en .client-card-v2). El usuario se confundía
+           pensando que solo la flecha abría la ficha. Ahora se confía en
+           el cursor:pointer y el hover lift (translateY) para indicar
+           que la card entera es un botón. #}
       </div>
 
     </div><!-- /client-card-v2 -->
