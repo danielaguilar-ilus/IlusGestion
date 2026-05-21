@@ -18904,6 +18904,41 @@ def comm_email_preview():
 @_require_superadmin
 def comm_client_save():
     d = request.get_json(silent=True) or {}
+
+    # ── Logo: si llega como data:image/...;base64,xxx, subirlo a Cloudinary ──
+    # 2026-05-21 (Daniel): Gmail bloquea imágenes embebidas como data URL.
+    # Antes guardábamos el base64 directo en BD → el logo no se veía en Gmail
+    # (solo en Outlook). Ahora interceptamos: si llega data URL, lo subimos a
+    # Cloudinary y guardamos la URL pública https://res.cloudinary.com/...
+    # que SÍ funciona en TODOS los clientes (Gmail, Outlook, Yahoo, etc.)
+    logo_input = (d.get("logo_url") or "").strip()
+    if logo_input.startswith("data:image/"):
+        try:
+            import base64 as _b64, cloudinary, cloudinary.uploader
+            cld_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
+            cld_key  = os.environ.get("CLOUDINARY_API_KEY", "").strip()
+            cld_sec  = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
+            if cld_name and cld_key and cld_sec:
+                cloudinary.config(
+                    cloud_name=cld_name, api_key=cld_key, api_secret=cld_sec, secure=True
+                )
+                header, b64 = logo_input.split(",", 1)
+                img_bytes = _b64.b64decode(b64)
+                resp = cloudinary.uploader.upload(
+                    img_bytes, folder="ilus/branding",
+                    public_id="company_logo", overwrite=True,
+                    resource_type="image", format="png",
+                )
+                logo_input = resp.get("secure_url") or resp.get("url") or logo_input
+                print(f"[comm-save-logo] base64 → Cloudinary: {logo_input}", flush=True)
+            else:
+                print("[comm-save-logo][WARN] Cloudinary no configurado — "
+                      "guardando base64 (Gmail no lo verá). Setear CLOUDINARY_* en Railway.",
+                      flush=True)
+        except Exception as _e:
+            print(f"[comm-save-logo][WARN] Falló upload Cloudinary: {_e} — "
+                  "guardando data URL como fallback (no funciona en Gmail)", flush=True)
+
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
@@ -18928,7 +18963,7 @@ def comm_client_save():
                 (d.get("support_email") or "").strip(),
                 (d.get("support_phone") or "").strip(),
                 (d.get("tracking_url") or "").strip(),
-                (d.get("logo_url") or "").strip(),
+                logo_input,
                 (d.get("corp_color") or "#CC0000").strip(),
                 (d.get("email_cc") or "").strip(),
                 (d.get("email_bcc") or "").strip(),
