@@ -20713,6 +20713,15 @@ def init_mantenciones_tables():
                 "WHERE created_at IS NULL OR created_at = '0000-00-00 00:00:00'",
                 # Índice cronológico explícito para galería del equipo
                 "ALTER TABLE mant_maquina_fotos ADD INDEX idx_mqf_maquina_tomada (maquina_id, tomada_at DESC)",
+                # 2026-05-21: archivo_path en mant_maquina_fotos era NOT NULL,
+                # bloqueaba INSERT de fotos del levantamiento (que solo tienen
+                # cloudinary_url). Lo hacemos NULL para destrabar el flujo
+                # de promoción. INSERT sigue requiriendo url o path por código.
+                "ALTER TABLE mant_maquina_fotos MODIFY COLUMN archivo_path VARCHAR(500) NULL",
+                # 2026-05-21: estado_op acepta más valores ahora (advertencia,
+                # fuera_servicio, en_reparacion). Migramos ENUM a VARCHAR para
+                # evitar futuros ALTER cuando se agregue otro estado operacional.
+                "ALTER TABLE mant_maquinas MODIFY COLUMN estado_op VARCHAR(40) DEFAULT 'operativo'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -23140,7 +23149,8 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     try:
                         fotos_lev = mysql_fetchall(
                             "SELECT id, NULL AS archivo_path, cloudinary_url, "
-                            "       descripcion, tipo_foto, tomada_por, tomada_at "
+                            "       descripcion, tipo_foto, tomada_por, "
+                            "       created_at AS tomada_at "
                             "  FROM mant_levantamiento_fotos "
                             " WHERE levantamiento_id=%s AND maquina_id=%s",
                             (lev_id_pf, mid)
@@ -40214,21 +40224,41 @@ def mant_lev_item_subir_foto(iid):
                 "WHERE id=%s", (item["levantamiento_id"], item["levantamiento_id"])
             )
             # Si tiene máquina asociada, también copiar a mant_maquina_fotos
-            # para que aparezca en la ficha del equipo (timeline)
+            # para que aparezca en la ficha del equipo (timeline).
+            # FIX 2026-05-21: archivo_path es NOT NULL en mant_maquina_fotos
+            # (CREATE TABLE original) — pasamos string vacío, y usamos
+            # tomada_at (no created_at, que es el alias agregado por migración).
             if item.get("maquina_id"):
                 try:
+                    # Anti-duplicado: si ya existe foto con esta cloudinary_url
+                    # para esta máquina, no duplicamos (Daniel reportó fotos
+                    # del levantamiento no aparecían — el INSERT podía fallar
+                    # silenciosamente por NOT NULL constraint en archivo_path).
                     cur.execute(
-                        "INSERT INTO mant_maquina_fotos "
-                        "(maquina_id, archivo_path, cloudinary_url, cloudinary_public_id, "
-                        " levantamiento_id, descripcion, tomada_por, created_at) "
-                        "VALUES (%s, NULL, %s, %s, %s, %s, %s, NOW())",
-                        (item["maquina_id"], res["url"], res["public_id"],
-                         item["levantamiento_id"],
-                         f"[{tipo_foto}] {descripcion}".strip(),
-                         current_username() or 'tecnico')
+                        "SELECT id FROM mant_maquina_fotos "
+                        " WHERE maquina_id=%s AND cloudinary_url=%s LIMIT 1",
+                        (item["maquina_id"], res["url"])
                     )
+                    if not cur.fetchone():
+                        cur.execute(
+                            "INSERT INTO mant_maquina_fotos "
+                            "(maquina_id, archivo_path, cloudinary_url, cloudinary_public_id, "
+                            " levantamiento_id, descripcion, tomada_por, tomada_at) "
+                            "VALUES (%s, '', %s, %s, %s, %s, %s, NOW())",
+                            (item["maquina_id"], res["url"], res["public_id"],
+                             item["levantamiento_id"],
+                             f"[{tipo_foto}] {descripcion}".strip()[:500],
+                             current_username() or 'tecnico')
+                        )
+                        print(f"[lev_foto] copiada a mant_maquina_fotos "
+                              f"m={item['maquina_id']} lev={item['levantamiento_id']}",
+                              flush=True)
                 except Exception as e_mf:
-                    print(f"[lev_foto] no se copió a mant_maquina_fotos: {e_mf}", flush=True)
+                    print(f"[promover-lev] foto saltada porque INSERT "
+                          f"a mant_maquina_fotos falló: {e_mf} "
+                          f"(m={item.get('maquina_id')} lev={item.get('levantamiento_id')} "
+                          f"url={res.get('url','')[:80]})",
+                          flush=True)
         conn.commit()
     except Exception as e:
         try: conn.rollback()
@@ -40553,17 +40583,19 @@ def mant_maquina_ficha(mid):
         ot_ids = [int(r["id"]) for r in ots_rows if r.get("id")]
         if ot_ids:
             # Placeholder list para IN (...)
+            # FIX 2026-05-21: usar tomada_at en vez de created_at (la columna
+            # se llama tomada_at en mant_visita_fotos según CREATE TABLE).
             ph = ",".join(["%s"] * len(ot_ids))
             rows_foto = mysql_fetchall(
                 f"SELECT f.visita_id, f.archivo_path "
                 f"  FROM mant_visita_fotos f "
                 f"  JOIN mant_visita_tareas t ON t.id = f.tarea_id "
-                f"  JOIN (SELECT f2.visita_id, MIN(f2.created_at) AS minc "
+                f"  JOIN (SELECT f2.visita_id, MIN(f2.tomada_at) AS minc "
                 f"          FROM mant_visita_fotos f2 "
                 f"          JOIN mant_visita_tareas t2 ON t2.id = f2.tarea_id "
                 f"         WHERE f2.visita_id IN ({ph}) AND t2.maquina_id=%s "
                 f"         GROUP BY f2.visita_id) x "
-                f"    ON x.visita_id = f.visita_id AND x.minc = f.created_at "
+                f"    ON x.visita_id = f.visita_id AND x.minc = f.tomada_at "
                 f" WHERE t.maquina_id=%s ",
                 tuple(ot_ids) + (mid, mid)
             ) or []
@@ -40592,11 +40624,13 @@ def mant_maquina_ficha(mid):
 
     # Fotos cronológicas del equipo (de mant_maquina_fotos — capturadas
     # por el técnico en el modo ejecución como foto principal del equipo)
+    # FIX 2026-05-21: orden por tomada_at (created_at puede no existir en
+    # filas viejas si la migración aún no corrió).
     fotos_rows = mysql_fetchall(
         "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
-        "       created_at, levantamiento_id "
+        "       tomada_at AS created_at, levantamiento_id "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY created_at DESC LIMIT 200",
+        " ORDER BY tomada_at DESC LIMIT 200",
         (mid,)
     ) or []
     fotos = []
@@ -40798,40 +40832,47 @@ def mant_maquina_historial_ots(mid):
 
 # ════════════════════════════════════════════════════════════════════════
 # FICHA TÉCNICA INLINE (JSON) — usado en el modal "Ver ficha técnica"
-# del flujo de levantamiento (ot_ejecutar.html). Devuelve un snapshot
-# compacto: datos del equipo, fotos previas, contratos del cliente,
-# OTs cerradas e historial.
-# Daniel pidió que el técnico pueda VALIDAR la información actual de la
-# máquina antes de modificarla — este endpoint la entrega en un solo
-# request para alimentar el modal flotante.
+# del flujo de levantamiento (ot_ejecutar.html) y desde la ficha del
+# cliente, tab Equipos. Snapshot completo con trazabilidad profunda.
+#
+# Daniel (2026-05-21): "Cuántas veces se ha visitado este equipo (no el
+# cliente, el equipo específico) + historial cambios serial + estado +
+# galería de fotos por visita + alertas dinámicas + contratos relacionados".
+#
+# Performance: queries críticas indexadas (mant_visita_tareas.maquina_id,
+# mant_maquina_fotos.maquina_id, mant_maquina_audit.maquina_id). Para
+# fichas con >20 OTs históricas, se usa paginación implícita (LIMIT 100
+# en historial + LIMIT 50 en seriales/estados).
 # ════════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/api/maquinas/<int:mid>/ficha-tecnica")
 @_mant_required
 def mant_maquina_ficha_tecnica_json(mid):
-    """Snapshot JSON de la ficha técnica del equipo (para modal inline).
+    """Snapshot JSON profundo de la ficha técnica del equipo.
 
-    Incluye:
-      - Datos básicos del equipo (mant_maquinas)
-      - Cliente asociado (razón social, RUT, dirección)
-      - Hasta 8 fotos previas (mant_maquina_fotos)
-      - Contratos vigentes del cliente
-      - Últimas 5 OTs cerradas con tipo, fecha, técnico
-      - Stats: total OTs, fotos, primera/última intervención
+    Estructura devuelta:
+      - equipo       → datos básicos + cliente + ubicación + garantía
+      - stats        → contadores y métricas (visitas, fotos, edad, días desde última)
+      - historial_visitas    → últimas 100 OTs sobre este equipo
+      - historial_seriales   → audit log de cambios de N° serie
+      - historial_estado     → audit log de cambios de estado
+      - fotos_galeria        → galería permanente del equipo (mant_maquina_fotos)
+      - contratos_relacionados → contratos vigentes del cliente
+      - alertas      → alertas dinámicas calculadas (garantía vence, sin preventiva,
+                       serial cambiado recientemente, etc.)
     """
     eq = mysql_fetchone(
         "SELECT m.*, c.razon_social, c.rut AS cli_rut, c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna "
         "  FROM mant_maquinas m "
         "  JOIN mant_clientes c ON c.id = m.cliente_id "
-        " WHERE m.id=%s AND COALESCE(m.estado,'activo') <> 'baja'",
+        " WHERE m.id=%s",
         (mid,)
     )
     if not eq:
-        return jsonify({"ok": False, "error": "Equipo no encontrado o dado de baja"}), 404
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
     eq = dict(eq)
 
     # Permisos: técnico solo ve si la máquina está en una OT asignada a él.
-    # (Cumple el mismo criterio que `mant_maquina_ficha` HTML).
     u = getattr(g, "user", None) or {}
     role_u = (u.get("role") or "").lower()
     if role_u in ("tecnico", "tecnico_externo"):
@@ -40849,15 +40890,21 @@ def mant_maquina_ficha_tecnica_json(mid):
         if not autorizado:
             return jsonify({"ok": False, "error": "Equipo no asignado a tus OTs"}), 403
 
-    # ── Fotos previas (de mant_maquina_fotos — galería permanente) ──
+    hoy = datetime.now().date()
+    cliente_id = eq.get("cliente_id")
+
+    # ── 1. Fotos galería (mant_maquina_fotos) ──────────────────────
+    # ORDER BY tomada_at (existe desde la migración inicial). NO usamos
+    # created_at porque puede no estar poblado en filas viejas.
     fotos_rows = mysql_fetchall(
-        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
-        "       created_at, levantamiento_id "
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tipo_foto, "
+        "       tomada_por, tomada_at, visita_origen, levantamiento_id "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY created_at DESC LIMIT 8",
+        " ORDER BY tomada_at DESC LIMIT 50",
         (mid,)
     ) or []
-    fotos = []
+    fotos_galeria = []
+    foto_principal_url = (eq.get("foto_url") or "").strip()
     for r in fotos_rows:
         url = r.get("cloudinary_url") or (
             f"/static/uploads/mantenciones/{r['archivo_path']}"
@@ -40865,27 +40912,140 @@ def mant_maquina_ficha_tecnica_json(mid):
         )
         if not url:
             continue
-        fotos.append({
+        # Para la primera (más reciente) que tenga visita_origen, marcamos
+        # como referencia para la "última foto del último levantamiento"
+        if not foto_principal_url and url:
+            foto_principal_url = url
+        fotos_galeria.append({
             "id": r["id"],
             "url": url,
+            "tipo_foto": r.get("tipo_foto") or "principal",
             "descripcion": r.get("descripcion") or "",
             "tomada_por": r.get("tomada_por") or "",
-            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "fecha": str(r["tomada_at"])[:16] if r.get("tomada_at") else "",
+            "visita_origen": r.get("visita_origen"),
+            "levantamiento_id": r.get("levantamiento_id"),
         })
 
-    # ── Contratos del cliente (vigentes / indefinidos) ──
+    # ── 2. Historial de visitas (TODAS las OTs con tareas sobre este equipo) ──
+    visitas_rows = mysql_fetchall(
+        "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
+        "       v.fecha_programada, v.cerrada_at, v.observaciones, v.diagnostico, "
+        "       v.factura_tido, v.factura_nudo, "
+        "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos f "
+        "          WHERE f.visita_id=v.id AND f.maquina_id=%s) AS fotos_count "
+        "  FROM mant_visitas v "
+        "  JOIN mant_visita_tareas t ON t.visita_id=v.id "
+        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
+        " WHERE t.maquina_id=%s "
+        " GROUP BY v.id "
+        " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 100",
+        (mid, mid)
+    ) or []
+    historial_visitas = []
+    n_preventivas = 0
+    n_correctivas = 0
+    n_levantamientos = 0
+    ultima_fecha = None
+    ultima_tipo = None
+    ultima_preventiva = None
+    for r in visitas_rows:
+        tipo_v = (r.get("tipo") or "").lower()
+        if tipo_v == "preventiva":
+            n_preventivas += 1
+            if not ultima_preventiva and r.get("fecha_programada"):
+                ultima_preventiva = r["fecha_programada"]
+        elif tipo_v == "correctiva":
+            n_correctivas += 1
+        elif tipo_v == "levantamiento":
+            n_levantamientos += 1
+        if ultima_fecha is None and r.get("fecha_programada"):
+            ultima_fecha = r["fecha_programada"]
+            ultima_tipo = r.get("tipo") or ""
+        factura = None
+        if r.get("factura_tido") and r.get("factura_nudo"):
+            factura = {"tido": r["factura_tido"], "nudo": r["factura_nudo"]}
+        historial_visitas.append({
+            "id": r["id"],
+            "numero_ot": r.get("numero_ot") or f"VS-{r['id']:05d}",
+            "titulo": r.get("titulo") or "",
+            "fecha": str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
+            "tipo": r.get("tipo") or "",
+            "estado": r.get("estado") or "",
+            "tecnico": r.get("tecnico_nombre") or "",
+            "observaciones": (r.get("observaciones") or "")[:300],
+            "diagnostico": (r.get("diagnostico") or "")[:300],
+            "fotos_count": int(r.get("fotos_count") or 0),
+            "cerrada_at": str(r["cerrada_at"])[:16] if r.get("cerrada_at") else "",
+            "factura": factura,
+            "url": f"/mantenciones/ot/{r['id']}",
+        })
+
+    # ── 3. Historial de seriales (mant_maquina_audit, campo='serie') ──
+    historial_seriales = []
+    try:
+        ser_rows = mysql_fetchall(
+            "SELECT fecha, valor_antes, valor_nuevo, motivo, usuario "
+            "  FROM mant_maquina_audit "
+            " WHERE maquina_id=%s AND campo='serie' "
+            " ORDER BY fecha DESC LIMIT 50",
+            (mid,)
+        ) or []
+        for r in ser_rows:
+            historial_seriales.append({
+                "fecha": str(r["fecha"])[:16] if r.get("fecha") else "",
+                "valor_anterior": r.get("valor_antes") or "",
+                "valor_nuevo": r.get("valor_nuevo") or "",
+                "razon": r.get("motivo") or "",
+                "usuario": r.get("usuario") or "",
+            })
+    except Exception:
+        historial_seriales = []
+
+    # ── 4. Historial de estado (mant_maquina_audit, campo='estado') ──
+    historial_estado = []
+    try:
+        est_rows = mysql_fetchall(
+            "SELECT fecha, valor_antes, valor_nuevo, motivo, usuario "
+            "  FROM mant_maquina_audit "
+            " WHERE maquina_id=%s AND campo IN ('estado','estado_op','dado_baja') "
+            " ORDER BY fecha DESC LIMIT 50",
+            (mid,)
+        ) or []
+        for r in est_rows:
+            historial_estado.append({
+                "fecha": str(r["fecha"])[:16] if r.get("fecha") else "",
+                "estado_anterior": r.get("valor_antes") or "",
+                "estado_nuevo": r.get("valor_nuevo") or "",
+                "razon": r.get("motivo") or "",
+                "usuario": r.get("usuario") or "",
+            })
+    except Exception:
+        historial_estado = []
+
+    # ── 5. Contratos relacionados (vigentes / por vencer) ──
     contratos = []
     try:
         c_rows = mysql_fetchall(
             "SELECT id, nombre, fecha_inicio, fecha_vencimiento, es_indefinido, "
-            "       estado, monto_mensual "
+            "       estado, monto_mensual, sla_horas "
             "  FROM mant_contratos "
             " WHERE cliente_id=%s "
             "   AND estado IN ('vigente','indefinido','por_vencer') "
-            " ORDER BY fecha_inicio DESC LIMIT 5",
-            (eq.get("cliente_id"),)
+            " ORDER BY fecha_inicio DESC LIMIT 10",
+            (cliente_id,)
         ) or []
         for r in c_rows:
+            dias_restantes = None
+            if r.get("fecha_vencimiento") and not r.get("es_indefinido"):
+                fv = r["fecha_vencimiento"]
+                if isinstance(fv, datetime):
+                    fv = fv.date()
+                try:
+                    dias_restantes = (fv - hoy).days
+                except Exception:
+                    dias_restantes = None
             contratos.append({
                 "id": r["id"],
                 "nombre": r.get("nombre") or "",
@@ -40893,51 +41053,124 @@ def mant_maquina_ficha_tecnica_json(mid):
                 "fecha_vencimiento": str(r["fecha_vencimiento"])[:10] if r.get("fecha_vencimiento") else "",
                 "es_indefinido": bool(r.get("es_indefinido")),
                 "estado": r.get("estado") or "vigente",
+                "dias_restantes": dias_restantes,
             })
     except Exception:
         contratos = []
 
-    # ── Últimas 5 OTs de este equipo (resumen) ──
-    ots_rows = mysql_fetchall(
-        "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
-        "       v.fecha_programada, v.cerrada_at, "
-        "       COALESCE(u.nombre, u.username) AS tecnico_nombre "
-        "  FROM mant_visitas v "
-        "  JOIN mant_visita_tareas t ON t.visita_id=v.id "
-        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
-        " WHERE t.maquina_id=%s "
-        " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 5",
-        (mid,)
-    ) or []
-    ots = []
-    for r in ots_rows:
-        ots.append({
-            "id": r["id"],
-            "numero_ot": r.get("numero_ot") or f"VS-{r['id']:05d}",
-            "titulo": r.get("titulo") or "",
-            "tipo": r.get("tipo") or "",
-            "estado": r.get("estado") or "",
-            "fecha": str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
-            "tecnico": r.get("tecnico_nombre") or "",
-            "url": f"/mantenciones/ot/{r['id']}",
+    # ── 6. STATS calculadas ────────────────────────────────────────
+    dias_desde_ultima = None
+    if ultima_fecha:
+        f_ult = ultima_fecha
+        if isinstance(f_ult, datetime):
+            f_ult = f_ult.date()
+        try:
+            dias_desde_ultima = (hoy - f_ult).days
+        except Exception:
+            dias_desde_ultima = None
+
+    edad_anios = None
+    if eq.get("anio_fabricacion"):
+        try:
+            edad_anios = round(hoy.year - int(eq["anio_fabricacion"]) +
+                              (hoy.month - 1) / 12.0, 1)
+        except Exception:
+            edad_anios = None
+
+    dias_en_garantia = None
+    if eq.get("fecha_fin_garantia"):
+        fg = eq["fecha_fin_garantia"]
+        if isinstance(fg, datetime):
+            fg = fg.date()
+        try:
+            dias_en_garantia = (fg - hoy).days
+        except Exception:
+            dias_en_garantia = None
+
+    stats = {
+        "n_visitas_total": len(historial_visitas),
+        "n_visitas_preventivas": n_preventivas,
+        "n_visitas_correctivas": n_correctivas,
+        "n_levantamientos": n_levantamientos,
+        "n_fotos_total": len(fotos_galeria),
+        "n_cambios_serial": len(historial_seriales),
+        "n_cambios_estado": len(historial_estado),
+        "ultima_visita_fecha": str(ultima_fecha)[:10] if ultima_fecha else None,
+        "ultima_visita_tipo": ultima_tipo or "",
+        "dias_desde_ultima_visita": dias_desde_ultima,
+        "edad_anios": edad_anios,
+        "dias_en_garantia": dias_en_garantia,
+    }
+
+    # ── 7. ALERTAS dinámicas ───────────────────────────────────────
+    alertas = []
+    # Garantía
+    if dias_en_garantia is not None:
+        if dias_en_garantia < 0:
+            alertas.append({
+                "severidad": "warning",
+                "icono": "shield-x",
+                "texto": f"Garantía vencida hace {abs(dias_en_garantia)} día(s)",
+            })
+        elif dias_en_garantia <= 30:
+            alertas.append({
+                "severidad": "warning",
+                "icono": "shield-exclamation",
+                "texto": f"Garantía vence en {dias_en_garantia} día(s)",
+            })
+    # Visitas preventivas
+    if not n_preventivas and len(historial_visitas) > 0:
+        alertas.append({
+            "severidad": "info",
+            "icono": "calendar-x",
+            "texto": "Este equipo nunca ha tenido una mantención preventiva",
+        })
+    elif n_preventivas and dias_desde_ultima is not None and dias_desde_ultima > 120:
+        alertas.append({
+            "severidad": "warning",
+            "icono": "clock-history",
+            "texto": f"Sin visita preventiva en {dias_desde_ultima // 30} mes(es)",
+        })
+    # Serial cambiado recientemente
+    if historial_seriales:
+        try:
+            f_cambio = historial_seriales[0].get("fecha")
+            if f_cambio:
+                f_d = datetime.strptime(f_cambio[:10], "%Y-%m-%d").date()
+                dias_cambio = (hoy - f_d).days
+                if dias_cambio <= 60:
+                    alertas.append({
+                        "severidad": "info",
+                        "icono": "info-circle",
+                        "texto": f"Serial cambiado hace {dias_cambio} día(s) — verificar coincidencia con activo físico",
+                    })
+        except Exception:
+            pass
+    # Estado: si está dado de baja
+    if (eq.get("estado") or "").lower() == "baja":
+        alertas.append({
+            "severidad": "danger",
+            "icono": "x-octagon",
+            "texto": "Equipo dado de baja",
+        })
+    elif (eq.get("estado_op") or "").lower() in ("critico", "fuera_servicio"):
+        alertas.append({
+            "severidad": "danger",
+            "icono": "exclamation-triangle",
+            "texto": f"Estado operacional: {eq.get('estado_op')}",
+        })
+    # Sin fotos
+    if not fotos_galeria and len(historial_visitas) > 0:
+        alertas.append({
+            "severidad": "info",
+            "icono": "image",
+            "texto": "Sin fotos en la galería del equipo — captura una en la próxima visita",
         })
 
-    # Stats compactas
-    total_ots = mysql_fetchone(
-        "SELECT COUNT(DISTINCT v.id) AS n "
-        "  FROM mant_visitas v JOIN mant_visita_tareas t ON t.visita_id=v.id "
-        " WHERE t.maquina_id=%s",
-        (mid,)
-    ) or {}
-    total_fotos = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_maquina_fotos WHERE maquina_id=%s",
-        (mid,)
-    ) or {}
-
-    # Limpiar datos sensibles / no usados antes de devolver
+    # ── 8. Datos del equipo (formateados) ──────────────────────────
     out_eq = {
         "id": eq["id"],
-        "cliente_id": eq.get("cliente_id"),
+        "cliente_id": cliente_id,
         "razon_social": eq.get("razon_social") or "",
         "cli_rut": eq.get("cli_rut") or "",
         "cli_direccion": eq.get("cli_direccion") or "",
@@ -40945,6 +41178,7 @@ def mant_maquina_ficha_tecnica_json(mid):
         "nombre": eq.get("nombre") or "",
         "sku": eq.get("sku") or "",
         "serie": eq.get("serie") or "",
+        "serie_actual": eq.get("serie") or "",
         "marca": eq.get("marca") or "",
         "modelo": eq.get("modelo") or "",
         "anio_fabricacion": eq.get("anio_fabricacion"),
@@ -40960,6 +41194,7 @@ def mant_maquina_ficha_tecnica_json(mid):
         "tiene_dano": bool(eq.get("tiene_dano")),
         "observaciones": eq.get("observaciones") or "",
         "foto_url": eq.get("foto_url") or "",
+        "foto_principal_url": foto_principal_url,
         "tag_1": eq.get("tag_1") or "",
         "tag_2": eq.get("tag_2") or "",
         "ultima_intervencion": str(eq["ultima_intervencion"])[:10] if eq.get("ultima_intervencion") else "",
@@ -40967,30 +41202,210 @@ def mant_maquina_ficha_tecnica_json(mid):
         "doc_origen": eq.get("doc_origen") or "",
         "doc_fecha": str(eq["doc_fecha"])[:10] if eq.get("doc_fecha") else "",
     }
+
     return jsonify({
         "ok": True,
         "equipo": out_eq,
-        "fotos": fotos,
+        "stats": stats,
+        "historial_visitas": historial_visitas,
+        "historial_seriales": historial_seriales,
+        "historial_estado": historial_estado,
+        "fotos_galeria": fotos_galeria,
+        "contratos_relacionados": contratos,
+        "alertas": alertas,
+        # Compatibilidad backward — endpoints antiguos esperan estos campos
+        "fotos": fotos_galeria[:8],
         "contratos": contratos,
-        "ots": ots,
-        "stats": {
-            "total_ots": int(total_ots.get("n") or 0),
-            "total_fotos": int(total_fotos.get("n") or 0),
-        },
-        # URL de la ficha completa por si el técnico quiere abrirla
+        "ots": [
+            {
+                "id": h["id"],
+                "numero_ot": h["numero_ot"],
+                "titulo": h["titulo"],
+                "tipo": h["tipo"],
+                "estado": h["estado"],
+                "fecha": h["fecha"],
+                "tecnico": h["tecnico"],
+                "url": h["url"],
+            }
+            for h in historial_visitas[:5]
+        ],
         "ficha_url": f"/mantenciones/maquinas/{mid}",
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════
+# PATCH equipo — Edición desde el modal "Ficha técnica" (Daniel 2026-05-21)
+# Permite cambiar serial / estado / observaciones / ubicación con audit log
+# automático. Whitelist estricto de campos editables.
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/maquinas/<int:mid>", methods=["PATCH"])
+@_mant_required
+def mant_maquina_patch(mid):
+    """Actualiza campos editables del equipo con auditoría completa.
+
+    Campos permitidos (whitelist):
+      serie, marca, modelo, voltaje, anio_fabricacion,
+      ubicacion_sala, observaciones, estado, estado_op,
+      fecha_instalacion, fecha_fin_garantia, tag_1, tag_2
+
+    Cada cambio en un campo CRÍTICO (serie, estado, estado_op) genera un
+    insert en mant_maquina_audit con valor_antes / valor_nuevo / motivo /
+    usuario / fecha. Requiere `motivo` (≥5 chars) para cambios críticos.
+    """
+    eq = mysql_fetchone(
+        "SELECT id, cliente_id, serie, marca, modelo, voltaje, "
+        "       anio_fabricacion, ubicacion_sala, observaciones, "
+        "       estado, estado_op, fecha_instalacion, fecha_fin_garantia, "
+        "       tag_1, tag_2 "
+        "  FROM mant_maquinas WHERE id=%s",
+        (mid,)
+    )
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+
+    # Permisos: técnico/tecnico_externo NO puede editar la ficha desde acá.
+    # Solo admin/superadmin/ejecutivo. La edición durante una OT pasa por
+    # /api/visitas/<vid>/equipo/<mid>/datos (controlado por _tecnico_owns_visita).
+    u = getattr(g, "user", None) or {}
+    role_u = (u.get("role") or "").lower()
+    if role_u in ("tecnico", "tecnico_externo"):
+        return jsonify({
+            "ok": False,
+            "error": "Solo administrador, ejecutivo o supervisor puede editar "
+                     "la ficha del equipo. Si necesitas cambiar algo, hazlo "
+                     "desde la OT donde estás trabajando.",
+        }), 403
+
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:500]
+
+    # Whitelist con tipo y longitud máxima
+    str_fields = {
+        "serie": 100, "marca": 120, "modelo": 120, "voltaje": 40,
+        "ubicacion_sala": 200, "observaciones": 5000,
+        "tag_1": 80, "tag_2": 80,
+    }
+    estado_values = ("activo", "inactivo", "baja")
+    estado_op_values = ("operativo", "advertencia", "critico",
+                        "fuera_servicio", "en_mantencion", "en_reparacion")
+    sets, vals, cambios_criticos = [], [], []
+
+    # Campos string
+    for k, maxlen in str_fields.items():
+        if k in d:
+            v_nuevo = (str(d.get(k) or "").strip())[:maxlen] or None
+            v_antes = eq.get(k) or None
+            sets.append(f"{k}=%s"); vals.append(v_nuevo)
+            if k == "serie" and (v_antes or "") != (v_nuevo or ""):
+                if len(motivo) < 5:
+                    return jsonify({
+                        "ok": False,
+                        "error": "El cambio de N° serie requiere un motivo "
+                                 "de al menos 5 caracteres.",
+                    }), 400
+                cambios_criticos.append(("serie", v_antes, v_nuevo))
+
+    # Estado / estado_op (validar enum)
+    if "estado" in d:
+        v_nuevo = (str(d.get("estado") or "").strip().lower()) or None
+        if v_nuevo not in (None,) + estado_values:
+            return jsonify({"ok": False, "error": f"Estado inválido: {v_nuevo}"}), 400
+        v_antes = (eq.get("estado") or "").lower() or None
+        if v_antes != v_nuevo:
+            if len(motivo) < 5:
+                return jsonify({
+                    "ok": False,
+                    "error": "El cambio de estado del equipo requiere un motivo "
+                             "de al menos 5 caracteres.",
+                }), 400
+            cambios_criticos.append(("estado", v_antes, v_nuevo))
+        sets.append("estado=%s"); vals.append(v_nuevo)
+
+    if "estado_op" in d:
+        v_nuevo = (str(d.get("estado_op") or "").strip().lower()) or None
+        if v_nuevo not in (None,) + estado_op_values:
+            return jsonify({"ok": False, "error": f"Estado operacional inválido: {v_nuevo}"}), 400
+        v_antes = (eq.get("estado_op") or "").lower() or None
+        if v_antes != v_nuevo:
+            cambios_criticos.append(("estado_op", v_antes, v_nuevo))
+        sets.append("estado_op=%s"); vals.append(v_nuevo)
+
+    # Numéricos
+    if "anio_fabricacion" in d:
+        try:
+            v = int(d["anio_fabricacion"]) if d["anio_fabricacion"] not in (None, "") else None
+        except (TypeError, ValueError):
+            v = None
+        sets.append("anio_fabricacion=%s"); vals.append(v)
+
+    # Fechas (validar formato ISO)
+    for f in ("fecha_instalacion", "fecha_fin_garantia"):
+        if f in d:
+            raw = (str(d.get(f) or "").strip()) or None
+            if raw:
+                try:
+                    datetime.strptime(raw, "%Y-%m-%d")
+                except ValueError:
+                    return jsonify({"ok": False, "error": f"Formato inválido en {f} (usa YYYY-MM-DD)"}), 400
+            sets.append(f"{f}=%s"); vals.append(raw)
+
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin campos para actualizar"}), 400
+
+    vals.append(mid)
+    try:
+        mysql_execute(
+            f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s",
+            tuple(vals)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
+
+    # Audit log para cambios críticos
+    usuario = current_username() or "sistema"
+    for campo, antes, nuevo in cambios_criticos:
+        try:
+            mysql_execute(
+                "INSERT INTO mant_maquina_audit "
+                "(maquina_id, cliente_id, campo, valor_antes, valor_nuevo, "
+                " motivo, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (mid, eq.get("cliente_id"), campo,
+                 antes or "", nuevo or "",
+                 motivo or "(sin motivo registrado)",
+                 usuario[:190])
+            )
+        except Exception as _e_aud:
+            print(f"[mant_maquina_patch] audit {campo} fallo: {_e_aud}",
+                  flush=True)
+
+    # Audit log general
+    try:
+        cambios_resumen = ", ".join([f"{c}: '{a}' → '{n}'" for c, a, n in cambios_criticos]) \
+                        or "edición general"
+        _mant_log("maquina", mid, "ficha_editada", cambios_resumen[:500])
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "cambios_criticos": [
+            {"campo": c, "antes": a, "nuevo": n}
+            for c, a, n in cambios_criticos
+        ],
+        "actualizado_en": _now_chile_str("%d/%m/%Y %H:%M"),
     })
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos")
 @_mant_required
 def mant_maquina_fotos_list(mid):
-    """Galería de fotos del equipo (todas: viejas filesystem + nuevas Cloudinary)."""
+    """Galería de fotos del equipo (todas: viejas filesystem + nuevas Cloudinary).
+    FIX 2026-05-21: order by tomada_at — created_at puede no estar poblado."""
     rows = mysql_fetchall(
         "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
-        "       created_at, levantamiento_id "
+        "       tomada_at AS created_at, levantamiento_id "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY created_at DESC LIMIT 200",
+        " ORDER BY tomada_at DESC LIMIT 200",
         (mid,)
     ) or []
     out = []

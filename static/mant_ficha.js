@@ -1726,6 +1726,390 @@ async function verAuditSerie(mid) {
 
 
 // ════════════════════════════════════════════════════════════════════
+// FICHA TÉCNICA COMPLETA — Modal con stats + visitas + fotos + alertas
+// Daniel 2026-05-21: trazabilidad profunda por equipo
+// ════════════════════════════════════════════════════════════════════
+let _modalFichaTec = null;
+let _ftCurrentMid = null;
+let _ftCurrentData = null;
+
+async function verFichaTecnicaEquipo(mid, nombre) {
+  _ftCurrentMid = mid;
+  _ftCurrentData = null;
+  if (!_modalFichaTec) {
+    _modalFichaTec = new bootstrap.Modal(document.getElementById('modalFichaTecnica'));
+  }
+  document.getElementById('ft_eq_nombre').textContent = nombre || `Equipo #${mid}`;
+  document.getElementById('ft_loading').style.display = 'block';
+  document.getElementById('ft_content').style.display = 'none';
+  document.getElementById('ft_edit_panel').style.display = 'none';
+  // Resetear tab activo a Visitas
+  try {
+    document.querySelectorAll('#ftTabs .nav-link').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#modalFichaTecnica .tab-pane').forEach(p => p.classList.remove('show','active'));
+    document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabVisitas"]').classList.add('active');
+    document.getElementById('ftTabVisitas').classList.add('show','active');
+  } catch(_){}
+  _modalFichaTec.show();
+
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/ficha-tecnica`);
+    const d = await r.json();
+    if (!d.ok) {
+      document.getElementById('ft_loading').innerHTML =
+        `<div class="alert alert-danger m-4">${escHtml(d.error || 'No se pudo cargar la ficha')}</div>`;
+      return;
+    }
+    _ftCurrentData = d;
+    _ftRender(d);
+    document.getElementById('ft_loading').style.display = 'none';
+    document.getElementById('ft_content').style.display = 'block';
+  } catch(e) {
+    document.getElementById('ft_loading').innerHTML =
+      `<div class="alert alert-danger m-4">Error de red: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _ftRender(d) {
+  const eq = d.equipo || {};
+  const stats = d.stats || {};
+  const alertas = d.alertas || [];
+
+  // ── Header con foto + datos clave ──
+  const fotoEl = document.getElementById('ft_foto_principal');
+  if (eq.foto_principal_url || eq.foto_url) {
+    fotoEl.innerHTML = `<img src="${escAttr(eq.foto_principal_url || eq.foto_url)}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+  } else {
+    fotoEl.innerHTML = `<i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>`;
+  }
+  document.getElementById('ft_eq_titulo').textContent = eq.nombre || '—';
+  const subParts = [];
+  if (eq.marca) subParts.push(eq.marca);
+  if (eq.modelo) subParts.push(eq.modelo);
+  if (eq.sku) subParts.push(`SKU ${eq.sku}`);
+  document.getElementById('ft_eq_subtitulo').textContent = subParts.join(' · ') || 'Sin datos';
+
+  // Chips: serie, estado, ubicación
+  const chipsHtml = [];
+  if (eq.serie_actual || eq.serie) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:6px 10px;font-size:.74rem"><i class="bi bi-upc me-1"></i>Serie: <span style="font-family:monospace;font-weight:700">${escHtml(eq.serie_actual || eq.serie)}</span></span>`);
+  const estadoColor = {activo:'#16a34a', inactivo:'#6b7280', baja:'#dc2626'}[(eq.estado||'').toLowerCase()] || '#6b7280';
+  chipsHtml.push(`<span class="badge" style="background:${estadoColor}15;color:${estadoColor};border:1px solid ${estadoColor}50;padding:6px 10px;font-size:.74rem"><i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>${escHtml((eq.estado||'activo').toUpperCase())}</span>`);
+  if (eq.ubicacion_sala) chipsHtml.push(`<span class="badge" style="background:#dbeafe;color:#1e40af;padding:6px 10px;font-size:.74rem"><i class="bi bi-geo-alt me-1"></i>${escHtml(eq.ubicacion_sala)}</span>`);
+  if (eq.anio_fabricacion) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;padding:6px 10px;font-size:.74rem"><i class="bi bi-calendar3 me-1"></i>${eq.anio_fabricacion}</span>`);
+  document.getElementById('ft_eq_chips').innerHTML = chipsHtml.join('');
+
+  document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
+
+  // ── Alertas ──
+  const alertasEl = document.getElementById('ft_alertas');
+  if (alertas.length) {
+    alertasEl.innerHTML = alertas.map(a => `
+      <span class="ft-alert-chip ft-alert-${escAttr(a.severidad || 'info')}">
+        <i class="bi bi-${escAttr(a.icono || 'info-circle')}"></i>
+        ${escHtml(a.texto)}
+      </span>
+    `).join('');
+    alertasEl.style.display = 'block';
+  } else {
+    alertasEl.innerHTML = '';
+    alertasEl.style.display = 'none';
+  }
+
+  // ── Stats cards ──
+  _ftRenderStat('visitas', stats.n_visitas_total || 0, 'Visitas totales');
+  _ftRenderStat('preventivas', stats.n_visitas_preventivas || 0, 'Preventivas', stats.n_visitas_preventivas ? 'success' : '');
+  _ftRenderStat('correctivas', stats.n_visitas_correctivas || 0, 'Correctivas', stats.n_visitas_correctivas ? 'warn' : '');
+  const diasUlt = stats.dias_desde_ultima_visita;
+  _ftRenderStat('dias_ultima',
+    diasUlt !== null && diasUlt !== undefined ? `${diasUlt}d` : '—',
+    'Desde última visita',
+    diasUlt !== null && diasUlt !== undefined && diasUlt > 120 ? 'warn' : ''
+  );
+  _ftRenderStat('edad',
+    stats.edad_anios !== null && stats.edad_anios !== undefined ? `${stats.edad_anios}a` : '—',
+    'Edad equipo'
+  );
+  const diasGar = stats.dias_en_garantia;
+  let garLabel = '—';
+  let garCls = '';
+  if (diasGar !== null && diasGar !== undefined) {
+    if (diasGar < 0) { garLabel = `Vencida`; garCls = 'danger'; }
+    else if (diasGar <= 30) { garLabel = `${diasGar}d`; garCls = 'warn'; }
+    else { garLabel = `${diasGar}d`; garCls = 'success'; }
+  }
+  _ftRenderStat('garantia', garLabel, 'Garantía', garCls);
+
+  // ── Badges en tabs ──
+  document.getElementById('ft_bdg_visitas').textContent = (d.historial_visitas || []).length;
+  document.getElementById('ft_bdg_fotos').textContent = (d.fotos_galeria || []).length;
+  document.getElementById('ft_bdg_seriales').textContent = (d.historial_seriales || []).length;
+  document.getElementById('ft_bdg_estado').textContent = (d.historial_estado || []).length;
+  document.getElementById('ft_bdg_contratos').textContent = (d.contratos_relacionados || []).length;
+
+  // ── Contenido de tabs ──
+  _ftRenderVisitas(d.historial_visitas || []);
+  _ftRenderFotos(d.fotos_galeria || []);
+  _ftRenderSeriales(d.historial_seriales || []);
+  _ftRenderEstado(d.historial_estado || []);
+  _ftRenderContratos(d.contratos_relacionados || []);
+}
+
+function _ftRenderStat(key, val, label, cls) {
+  const el = document.querySelector(`.ft-stat[data-key="${key}"]`);
+  if (!el) return;
+  el.className = `ft-stat${cls ? ' ft-stat-' + cls : ''}`;
+  el.dataset.key = key;
+  el.innerHTML = `
+    <div class="ft-stat-val">${escHtml(String(val))}</div>
+    <div class="ft-stat-lbl">${escHtml(label)}</div>
+  `;
+}
+
+function _ftRenderVisitas(visitas) {
+  const el = document.getElementById('ftTabVisitas');
+  if (!visitas.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-calendar-x" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin visitas registradas</div>
+      <div class="small mt-1">Cuando este equipo aparezca en una OT, se mostrará aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = visitas.map(v => {
+    const tipoLower = (v.tipo || '').toLowerCase();
+    const estadoBadge = {
+      'cerrada':     '<span class="badge" style="background:#dcfce7;color:#166534">Cerrada</span>',
+      'completada':  '<span class="badge" style="background:#dcfce7;color:#166534">Completada</span>',
+      'en_curso':    '<span class="badge" style="background:#fef3c7;color:#92400e">En curso</span>',
+      'programada':  '<span class="badge" style="background:#dbeafe;color:#1e40af">Pendiente</span>',
+      'cancelada':   '<span class="badge" style="background:#fee2e2;color:#991b1b">Cancelada</span>',
+    }[v.estado] || `<span class="badge bg-secondary">${escHtml(v.estado||'—')}</span>`;
+    const fact = v.factura ? `<span class="badge bg-light text-dark ms-1" title="Factura ERP" style="font-family:monospace">${escHtml(v.factura.tido)} ${escHtml(v.factura.nudo)}</span>` : '';
+    return `
+      <div class="ft-timeline-item ${tipoLower}">
+        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+          <div style="flex:1;min-width:200px">
+            <div class="fw-bold" style="font-size:.92rem">
+              <a href="${escAttr(v.url)}" target="_blank" class="text-decoration-none text-dark" style="font-family:monospace">${escHtml(v.numero_ot)}</a>
+              ${v.titulo ? ` · ${escHtml(v.titulo)}` : ''}
+            </div>
+            <div class="d-flex gap-2 flex-wrap mt-1" style="font-size:.78rem;color:#6b7280">
+              <span><i class="bi bi-calendar3 me-1"></i>${escHtml(v.fecha || '—')}</span>
+              <span><i class="bi bi-tag me-1"></i>${escHtml(v.tipo || '—')}</span>
+              <span><i class="bi bi-person me-1"></i>${escHtml(v.tecnico || '—')}</span>
+              ${v.fotos_count ? `<span style="color:#16a34a"><i class="bi bi-images me-1"></i>${v.fotos_count} foto(s)</span>` : ''}
+              ${fact}
+            </div>
+            ${v.observaciones ? `<div class="small mt-1" style="color:#374151;background:#f9fafb;padding:6px 10px;border-radius:6px;border-left:3px solid #e5e7eb">${escHtml(v.observaciones)}</div>` : ''}
+          </div>
+          <div class="text-end">${estadoBadge}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function _ftRenderFotos(fotos) {
+  const el = document.getElementById('ftTabFotos');
+  if (!fotos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-image" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin fotos</div>
+      <div class="small mt-1">Las fotos del levantamiento y de visitas posteriores aparecerán aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="d-grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
+      ${fotos.map(f => `
+        <div class="ft-photo-card" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
+          <img src="${escAttr(f.url)}" alt="" loading="lazy">
+        </div>
+      `).join('')}
+    </div>
+    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Click en una foto para abrir en pantalla completa.</div>
+  `;
+}
+
+function _ftRenderSeriales(seriales) {
+  const el = document.getElementById('ftTabSeriales');
+  if (!seriales.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-shield-check" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin cambios de N° serie</div>
+      <div class="small mt-1">Cuando se actualice el serial del equipo, los cambios aparecerán aquí con su justificación.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm" style="font-size:.84rem">
+        <thead style="background:#f9fafb"><tr>
+          <th>Fecha</th><th>Antes</th><th>Después</th><th>Usuario</th><th>Razón</th>
+        </tr></thead>
+        <tbody>
+          ${seriales.map(s => `
+            <tr>
+              <td class="text-muted" style="white-space:nowrap">${escHtml(s.fecha)}</td>
+              <td class="font-monospace text-danger small" style="text-decoration:line-through">${escHtml(s.valor_anterior || '(vacío)')}</td>
+              <td class="font-monospace text-success small fw-bold">${escHtml(s.valor_nuevo || '')}</td>
+              <td class="small">${escHtml(s.usuario || '—')}</td>
+              <td class="small text-muted" style="max-width:280px">${escHtml(s.razon || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _ftRenderEstado(estados) {
+  const el = document.getElementById('ftTabEstado');
+  if (!estados.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-clipboard-check" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin cambios de estado</div>
+      <div class="small mt-1">Cuando se cambie el estado del equipo (activo/inactivo/baja), los cambios aparecerán aquí.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm" style="font-size:.84rem">
+        <thead style="background:#f9fafb"><tr>
+          <th>Fecha</th><th>Estado anterior</th><th>Nuevo estado</th><th>Usuario</th><th>Justificación</th>
+        </tr></thead>
+        <tbody>
+          ${estados.map(s => `
+            <tr>
+              <td class="text-muted" style="white-space:nowrap">${escHtml(s.fecha)}</td>
+              <td><span class="badge bg-secondary">${escHtml(s.estado_anterior || '—')}</span></td>
+              <td><span class="badge" style="background:#dc2626;color:#fff">${escHtml(s.estado_nuevo || '—')}</span></td>
+              <td class="small">${escHtml(s.usuario || '—')}</td>
+              <td class="small text-muted" style="max-width:280px">${escHtml(s.razon || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _ftRenderContratos(contratos) {
+  const el = document.getElementById('ftTabContratos');
+  if (!contratos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-file-earmark" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin contratos vigentes</div>
+      <div class="small mt-1">El cliente no tiene contratos activos en este momento.</div>
+    </div>`;
+    return;
+  }
+  el.innerHTML = contratos.map(c => {
+    const dr = c.dias_restantes;
+    let chipColor = '#6b7280', chipText = c.es_indefinido ? 'Indefinido' : 'Vigente';
+    if (!c.es_indefinido && dr !== null && dr !== undefined) {
+      if (dr < 0) { chipColor = '#dc2626'; chipText = 'Vencido'; }
+      else if (dr <= 30) { chipColor = '#f59e0b'; chipText = `Vence en ${dr}d`; }
+      else { chipColor = '#16a34a'; chipText = `Vigente · ${dr}d`; }
+    }
+    return `
+      <div class="border rounded p-3 mb-2 d-flex justify-content-between align-items-start gap-2 flex-wrap" style="background:#fafafa">
+        <div style="flex:1;min-width:200px">
+          <div class="fw-bold">${escHtml(c.nombre || `Contrato #${c.id}`)}</div>
+          <div class="small text-muted mt-1">
+            <i class="bi bi-calendar3 me-1"></i>${escHtml(c.fecha_inicio || '—')} → ${escHtml(c.fecha_vencimiento || (c.es_indefinido ? 'Indefinido' : '—'))}
+          </div>
+        </div>
+        <span class="badge" style="background:${chipColor}15;color:${chipColor};border:1px solid ${chipColor}50;padding:6px 10px">${escHtml(chipText)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Edición inline ────────────────────────────────────────────────────
+function ftAbrirEditar() {
+  const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
+  if (!eq) return;
+  document.getElementById('ft_edit_serie').value = eq.serie_actual || eq.serie || '';
+  document.getElementById('ft_edit_estado').value = (eq.estado || 'activo').toLowerCase();
+  document.getElementById('ft_edit_estado_op').value = (eq.estado_op || 'operativo').toLowerCase();
+  document.getElementById('ft_edit_ubicacion').value = eq.ubicacion_sala || '';
+  document.getElementById('ft_edit_marca').value = eq.marca || '';
+  document.getElementById('ft_edit_modelo').value = eq.modelo || '';
+  document.getElementById('ft_edit_obs').value = eq.observaciones || '';
+  document.getElementById('ft_edit_motivo').value = '';
+  document.getElementById('ft_edit_panel').style.display = 'block';
+  // Scroll al panel
+  setTimeout(() => {
+    document.getElementById('ft_edit_panel').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }, 100);
+}
+
+function ftCancelarEditar() {
+  document.getElementById('ft_edit_panel').style.display = 'none';
+}
+
+async function ftGuardarEditar() {
+  if (!_ftCurrentMid) return;
+  const eq = _ftCurrentData ? _ftCurrentData.equipo : {};
+  const payload = {
+    serie: document.getElementById('ft_edit_serie').value.trim(),
+    estado: document.getElementById('ft_edit_estado').value,
+    estado_op: document.getElementById('ft_edit_estado_op').value,
+    ubicacion_sala: document.getElementById('ft_edit_ubicacion').value.trim(),
+    marca: document.getElementById('ft_edit_marca').value.trim(),
+    modelo: document.getElementById('ft_edit_modelo').value.trim(),
+    observaciones: document.getElementById('ft_edit_obs').value.trim(),
+    motivo: document.getElementById('ft_edit_motivo').value.trim(),
+  };
+  // Validación local: si cambia serial o estado, exigir motivo
+  const cambia_serial = (payload.serie || '') !== (eq.serie_actual || eq.serie || '');
+  const cambia_estado = (payload.estado || '') !== ((eq.estado || 'activo').toLowerCase());
+  if ((cambia_serial || cambia_estado) && payload.motivo.length < 5) {
+    await ilusAlert({
+      title: 'Motivo requerido',
+      message: 'Para cambiar el N° serie o el estado del equipo necesitas ingresar un motivo de al menos 5 caracteres.',
+      type: 'warning',
+    });
+    document.getElementById('ft_edit_motivo').focus();
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${_ftCurrentMid}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({
+        title: 'No se pudo guardar',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
+      return;
+    }
+    ilusToast('Equipo actualizado correctamente', { type: 'success' });
+    // Refrescar el modal con los datos nuevos
+    document.getElementById('ft_edit_panel').style.display = 'none';
+    if (_ftCurrentMid) await verFichaTecnicaEquipo(_ftCurrentMid, eq.nombre);
+    // Actualizar la fila en la tabla (al menos el serial)
+    if (cambia_serial) {
+      const span = document.getElementById('serie-' + _ftCurrentMid);
+      if (span) span.textContent = payload.serie || '—';
+    }
+  } catch(e) {
+    await ilusAlert({
+      title: 'Error de red',
+      message: e.message || 'No se pudo contactar al servidor.',
+      type: 'error',
+    });
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════
 // BUSCADOR ERP en modal "Agregar equipo manual"
 // Autocomplete por nombre o SKU desde catálogo ERP
 // ════════════════════════════════════════════════════════════════════

@@ -1830,6 +1830,14 @@
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
+                {# Ficha técnica completa: stats + historial visitas + galería + alertas
+                   2026-05-21 Daniel: trazabilidad profunda del equipo #}
+                <button class="btn btn-xs"
+                        style="background:#dc2626;color:#fff;font-weight:600;border:0"
+                        onclick="verFichaTecnicaEquipo({{ m.id }}, '{{ (m.nombre or '')|e }}')"
+                        title="Ver ficha técnica completa (historial, fotos, alertas)">
+                  <i class="bi bi-clipboard-data"></i>
+                </button>
                 {# Historial de OTs ejecutadas sobre este equipo (todos los roles pueden verlo) #}
                 <button class="btn btn-xs btn-outline-secondary"
                         onclick="verHistorialOTEquipo({{ m.id }}, '{{ (m.nombre or '')|e }}')"
@@ -7061,6 +7069,232 @@ async function vhGuardar(){
     </div>
   </div>
 </div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: FICHA TÉCNICA COMPLETA del equipo (Daniel 2026-05-21)
+   Trazabilidad profunda: header + stats + alertas + tabs internos.
+══════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalFichaTecnica" tabindex="-1" aria-labelledby="modalFichaTecnicaTitulo">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 60px rgba(0,0,0,.4)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold" id="modalFichaTecnicaTitulo">
+          <i class="bi bi-clipboard-data me-2" style="color:var(--ilus-red)"></i>
+          Ficha técnica · <span id="ft_eq_nombre">—</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:0;background:#f9fafb">
+        <div id="ft_loading" class="text-center text-muted py-5">
+          <span class="spinner-border spinner-border-sm me-2"></span>Cargando ficha…
+        </div>
+        <div id="ft_content" style="display:none">
+          {# Header con foto + datos clave #}
+          <div class="ft-header" style="padding:18px 22px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+            <div id="ft_foto_principal" style="width:120px;height:120px;border-radius:12px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb">
+              <i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>
+            </div>
+            <div style="flex:1;min-width:240px">
+              <div style="font-size:1.1rem;font-weight:700;color:#0f172a" id="ft_eq_titulo">—</div>
+              <div class="text-muted small mb-2" id="ft_eq_subtitulo">—</div>
+              <div class="d-flex gap-2 flex-wrap" id="ft_eq_chips"></div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar campos del equipo">
+                <i class="bi bi-pencil-square me-1"></i>Editar
+              </button>
+              <a class="btn btn-sm btn-ilus" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa">
+                <i class="bi bi-box-arrow-up-right"></i>
+              </a>
+            </div>
+          </div>
+
+          {# Alertas dinámicas #}
+          <div id="ft_alertas" style="padding:0 22px;margin-top:14px"></div>
+
+          {# Stats cards #}
+          <div class="ft-stats" style="padding:14px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">
+            <div class="ft-stat" data-key="visitas"></div>
+            <div class="ft-stat" data-key="preventivas"></div>
+            <div class="ft-stat" data-key="correctivas"></div>
+            <div class="ft-stat" data-key="dias_ultima"></div>
+            <div class="ft-stat" data-key="edad"></div>
+            <div class="ft-stat" data-key="garantia"></div>
+          </div>
+
+          {# Tabs internos #}
+          <ul class="nav nav-pills mb-0 px-3 pt-2 ft-tabs" id="ftTabs" role="tablist" style="background:#fff;border-bottom:1px solid #e5e7eb;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ftTabVisitas" type="button">
+                <i class="bi bi-list-check me-1"></i>Visitas <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabFotos" type="button">
+                <i class="bi bi-images me-1"></i>Fotos <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabSeriales" type="button">
+                <i class="bi bi-upc me-1"></i>Seriales <span class="badge bg-secondary ms-1" id="ft_bdg_seriales">0</span>
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabEstado" type="button">
+                <i class="bi bi-clipboard-check me-1"></i>Estado <span class="badge bg-secondary ms-1" id="ft_bdg_estado">0</span>
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabContratos" type="button">
+                <i class="bi bi-file-earmark-text me-1"></i>Contratos <span class="badge bg-secondary ms-1" id="ft_bdg_contratos">0</span>
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content" style="padding:16px 22px;background:#fff;min-height:280px">
+            <div class="tab-pane fade show active" id="ftTabVisitas" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabFotos" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabSeriales" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabEstado" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabContratos" role="tabpanel"></div>
+          </div>
+
+          {# Sub-modal: Edición del equipo (inline dentro del modal padre) #}
+          <div id="ft_edit_panel" style="display:none;padding:16px 22px;background:#fff7ed;border-top:2px solid #fed7aa">
+            <h6 class="fw-bold mb-3" style="color:#92400e">
+              <i class="bi bi-pencil-square me-1"></i>Editar equipo
+            </h6>
+            <div class="row g-2 small">
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">N° serie</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_serie" maxlength="100">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Estado</label>
+                <select class="form-select form-select-sm" id="ft_edit_estado">
+                  <option value="activo">Activo</option>
+                  <option value="inactivo">Inactivo</option>
+                  <option value="baja">De baja</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Estado operacional</label>
+                <select class="form-select form-select-sm" id="ft_edit_estado_op">
+                  <option value="operativo">Operativo</option>
+                  <option value="advertencia">Advertencia</option>
+                  <option value="critico">Crítico</option>
+                  <option value="fuera_servicio">Fuera de servicio</option>
+                  <option value="en_mantencion">En mantención</option>
+                  <option value="en_reparacion">En reparación</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Ubicación / Sala</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_ubicacion" maxlength="200">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Marca</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_marca" maxlength="120">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Modelo</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_modelo" maxlength="120">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Observaciones (opcional)</label>
+                <textarea class="form-control form-control-sm" id="ft_edit_obs" rows="2" maxlength="5000"></textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">
+                  Motivo del cambio
+                  <span class="text-muted" style="font-size:.7rem">(obligatorio si cambia N° serie o estado, ≥5 chars)</span>
+                </label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_motivo" placeholder="Ej: serial físico difería del registro" maxlength="500">
+              </div>
+              <div class="col-12 d-flex gap-2 justify-content-end mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="ftCancelarEditar()">Cancelar</button>
+                <button class="btn btn-sm btn-ilus" onclick="ftGuardarEditar()">
+                  <i class="bi bi-check2 me-1"></i>Guardar cambios
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# CSS específico del modal de ficha técnica #}
+<style>
+  .ft-stat {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: center;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .ft-stat:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.06) }
+  .ft-stat .ft-stat-val {
+    font-size: 1.4rem; font-weight: 800; color: #0f172a; line-height: 1;
+  }
+  .ft-stat .ft-stat-lbl {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .04em;
+    color: #6b7280; margin-top: 4px; font-weight: 600;
+  }
+  .ft-stat.ft-stat-warn .ft-stat-val { color: #f59e0b }
+  .ft-stat.ft-stat-danger .ft-stat-val { color: #dc2626 }
+  .ft-stat.ft-stat-success .ft-stat-val { color: #16a34a }
+
+  #ftTabs .nav-link {
+    color: #374151; font-size: .82rem; font-weight: 600;
+    border-radius: 6px 6px 0 0; padding: .5rem .85rem;
+    background: transparent;
+  }
+  #ftTabs .nav-link.active {
+    background: #dc2626 !important; color: #fff;
+  }
+  #ftTabs .nav-link.active .badge { background: #fff !important; color: #dc2626 }
+
+  .ft-timeline-item {
+    border-left: 3px solid #e5e7eb; padding: 10px 0 10px 14px;
+    margin-left: 8px; position: relative;
+  }
+  .ft-timeline-item::before {
+    content: ''; width: 11px; height: 11px; border-radius: 50%;
+    background: #dc2626; position: absolute; left: -7px; top: 14px;
+    border: 2px solid #fff; box-shadow: 0 0 0 2px #fee2e2;
+  }
+  .ft-timeline-item.preventiva::before { background: #16a34a; box-shadow: 0 0 0 2px #dcfce7 }
+  .ft-timeline-item.correctiva::before { background: #f59e0b; box-shadow: 0 0 0 2px #fff8e1 }
+  .ft-timeline-item.levantamiento::before { background: #2563eb; box-shadow: 0 0 0 2px #dbeafe }
+
+  .ft-alert-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-radius: 14px; margin: 0 6px 6px 0;
+    font-size: .76rem; font-weight: 600;
+  }
+  .ft-alert-warning { background: #fff8e1; color: #92400e; border: 1px solid #fcd34d }
+  .ft-alert-danger  { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5 }
+  .ft-alert-info    { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd }
+
+  .ft-photo-card {
+    border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb;
+    background: #f3f4f6; aspect-ratio: 1; cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .ft-photo-card:hover { transform: scale(1.03); box-shadow: 0 4px 14px rgba(0,0,0,.12) }
+  .ft-photo-card img { width: 100%; height: 100%; object-fit: cover }
+
+  @media (max-width: 768px) {
+    .ft-header { flex-direction: column; align-items: flex-start !important }
+    .ft-stats { grid-template-columns: repeat(2, 1fr) !important }
+  }
+</style>
 
 {# ── Modal: Sucursal (agregar / editar) — diseño ILUS ── #}
 <div class="modal fade" id="modalSucursal" tabindex="-1">
