@@ -1574,6 +1574,19 @@
 /* Paginador */
 .eq-pager{display:flex;align-items:center;justify-content:space-between;
           padding:10px 14px;border-top:1px solid var(--border);font-size:.78rem;color:#6b7280;}
+
+/* 2026-05-21 (Daniel) — Badges de última revisión en la lista de equipos */
+.rev-chip{display:inline-flex;align-items:center;gap:4px;
+          font-size:.66rem;font-weight:700;letter-spacing:.02em;
+          padding:3px 9px;border-radius:50px;border:1px solid transparent;
+          white-space:nowrap;}
+.rev-chip i{font-size:.76rem}
+.rev-chip-verificado{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.rev-chip-con_cambios{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.rev-chip-saltado{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.rev-chip-falla_detectada{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.rev-chip-empty{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb}
+.rev-meta{display:block;font-size:.62rem;color:#9ca3af;margin-top:2px;line-height:1.2}
 </style>
 
 {# ── Variables de cálculo ─────────────────────────────── #}
@@ -1683,6 +1696,8 @@
               <th>Fecha emisión</th>
               <th>Garantía</th>
               <th>Estado</th>
+              {# 2026-05-21 (Daniel) — Última revisión por equipo #}
+              <th title="Estado en la última visita técnica">Última revisión</th>
               <th style="width:60px"></th>
             </tr>
           </thead>
@@ -1827,6 +1842,33 @@
               <span class="eq-estado-{{ m.estado or 'activo' }}">
                 {{ (m.estado or 'activo').replace('_',' ').title() }}
               </span>
+            </td>
+            {# 2026-05-21 (Daniel) — Última revisión por equipo (badge + meta) #}
+            <td>
+              {% set ur = m.ultima_revision %}
+              {% if ur %}
+                {% set _est = ur.estado_revision or 'verificado' %}
+                <span class="rev-chip rev-chip-{{ _est }}"
+                      title="{{ ur.observacion or '' }}">
+                  {% if _est == 'saltado' %}
+                    <i class="bi bi-skip-forward-fill"></i>Saltado{% if ur.razon_saltado %} · {{ ur.razon_saltado.replace('_',' ') }}{% endif %}
+                  {% elif _est == 'falla_detectada' %}
+                    <i class="bi bi-exclamation-triangle-fill"></i>Falla detectada
+                  {% elif _est == 'con_cambios' %}
+                    <i class="bi bi-pencil-fill"></i>Con cambios
+                  {% else %}
+                    <i class="bi bi-check-circle-fill"></i>Verificado
+                  {% endif %}
+                </span>
+                <small class="rev-meta">
+                  {% if ur.revisado_at %}{{ ur.revisado_at | chile_fmt('%d/%m/%Y') }}{% elif ur.fecha %}{{ ur.fecha.strftime('%d/%m/%Y') }}{% endif %}
+                  {% if ur.revisado_por %} · {{ ur.revisado_por }}{% endif %}
+                </small>
+              {% else %}
+                <span class="rev-chip rev-chip-empty" title="Aún no revisado">
+                  <i class="bi bi-dash-circle"></i>Sin revisar
+                </span>
+              {% endif %}
             </td>
             <td>
               <div class="d-flex gap-1 justify-content-end">
@@ -7129,6 +7171,14 @@ async function vhGuardar(){
                 <i class="bi bi-list-check me-1"></i>Visitas <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
               </button>
             </li>
+            {# 2026-05-21 (Daniel) — Tab "Revisiones": timeline cronológico
+               de cada vez que el equipo apareció en una visita, con estado
+               de revisión + observación + razón si fue saltado. #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabRevisiones" type="button">
+                <i class="bi bi-clipboard-pulse me-1"></i>Revisiones <span class="badge bg-secondary ms-1" id="ft_bdg_revisiones">0</span>
+              </button>
+            </li>
             <li class="nav-item" role="presentation">
               <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabFotos" type="button">
                 <i class="bi bi-images me-1"></i>Fotos <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
@@ -7153,6 +7203,7 @@ async function vhGuardar(){
 
           <div class="tab-content" style="padding:16px 22px;background:#fff;min-height:280px">
             <div class="tab-pane fade show active" id="ftTabVisitas" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabRevisiones" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabFotos" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabSeriales" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabEstado" role="tabpanel"></div>

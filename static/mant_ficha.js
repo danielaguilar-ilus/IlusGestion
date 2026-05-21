@@ -1845,6 +1845,9 @@ function _ftRender(d) {
   document.getElementById('ft_bdg_seriales').textContent = (d.historial_seriales || []).length;
   document.getElementById('ft_bdg_estado').textContent = (d.historial_estado || []).length;
   document.getElementById('ft_bdg_contratos').textContent = (d.contratos_relacionados || []).length;
+  // 2026-05-21 (Daniel) — Revisiones por equipo (trazabilidad profunda)
+  const _bdgRev = document.getElementById('ft_bdg_revisiones');
+  if (_bdgRev) _bdgRev.textContent = (d.revisiones_timeline || []).length;
 
   // ── Contenido de tabs ──
   _ftRenderVisitas(d.historial_visitas || []);
@@ -1852,6 +1855,127 @@ function _ftRender(d) {
   _ftRenderSeriales(d.historial_seriales || []);
   _ftRenderEstado(d.historial_estado || []);
   _ftRenderContratos(d.contratos_relacionados || []);
+  _ftRenderRevisiones(d.revisiones_timeline || [], d.revisiones_counters || {});
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 2026-05-21 (Daniel) — Tab "Revisiones" — timeline de cada vez que
+// este equipo apareció en una visita, con estado de revisión
+// (verificado / con_cambios / saltado / falla_detectada).
+// Da trazabilidad completa: "Revisado 5 veces, 1 saltado, 4 verificado".
+// ════════════════════════════════════════════════════════════════════
+function _ftRenderRevisiones(revisiones, counters) {
+  const el = document.getElementById('ftTabRevisiones');
+  if (!el) return;
+  if (!revisiones.length) {
+    el.innerHTML = `<div class="text-center text-muted py-4">
+      <i class="bi bi-clipboard-pulse" style="font-size:2rem;opacity:.3"></i>
+      <div class="fw-semibold mt-2">Sin revisiones registradas</div>
+      <div class="small mt-1">Cuando un técnico revise este equipo en una OT, se mostrará aquí.</div>
+    </div>`;
+    return;
+  }
+  // ── Header con contadores ──
+  const c = counters || {};
+  const total = c.total || revisiones.length;
+  const _statCard = (cls, icon, n, label) => `
+    <div class="ft-rev-stat ${cls}">
+      <div class="ft-rev-stat-icon"><i class="bi bi-${icon}"></i></div>
+      <div>
+        <div class="ft-rev-stat-num">${n || 0}</div>
+        <div class="ft-rev-stat-lbl">${escHtml(label)}</div>
+      </div>
+    </div>`;
+  const headerHtml = `
+    <div class="ft-rev-counters">
+      ${_statCard('all',           'list-check',              total,                 'Revisiones')}
+      ${_statCard('verificado',    'check-circle-fill',       c.verificado || 0,     'Verificadas')}
+      ${_statCard('con_cambios',   'pencil-fill',             c.con_cambios || 0,    'Con cambios')}
+      ${_statCard('saltado',       'skip-forward-fill',       c.saltado || 0,        'Saltadas')}
+      ${_statCard('falla',         'exclamation-triangle-fill', c.falla_detectada || 0, 'Fallas detectadas')}
+    </div>
+    <style>
+      .ft-rev-counters{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+        gap:8px;margin-bottom:16px;padding:8px 0;}
+      .ft-rev-stat{display:flex;gap:8px;align-items:center;padding:9px 11px;
+        border-radius:10px;border:1px solid #e5e7eb;background:#fafafa;}
+      .ft-rev-stat-icon{width:28px;height:28px;border-radius:7px;display:flex;
+        align-items:center;justify-content:center;color:#fff;font-size:.95rem;flex-shrink:0;}
+      .ft-rev-stat.all       .ft-rev-stat-icon{background:#374151}
+      .ft-rev-stat.verificado .ft-rev-stat-icon{background:#16a34a}
+      .ft-rev-stat.con_cambios .ft-rev-stat-icon{background:#3b82f6}
+      .ft-rev-stat.saltado    .ft-rev-stat-icon{background:#f59e0b}
+      .ft-rev-stat.falla      .ft-rev-stat-icon{background:#dc2626}
+      .ft-rev-stat-num{font-weight:800;font-size:1.1rem;color:#0f172a;line-height:1}
+      .ft-rev-stat-lbl{font-size:.68rem;color:#6b7280;margin-top:2px;text-transform:uppercase;letter-spacing:.03em}
+      .ft-rev-item{display:flex;gap:12px;padding:12px;border:1px solid #e5e7eb;
+        border-radius:11px;margin-bottom:10px;background:#fff;}
+      .ft-rev-item.saltado{border-left:3px solid #f59e0b;background:#fffbeb}
+      .ft-rev-item.falla_detectada{border-left:3px solid #dc2626;background:#fef2f2}
+      .ft-rev-item.con_cambios{border-left:3px solid #3b82f6}
+      .ft-rev-item.verificado{border-left:3px solid #16a34a}
+      .ft-rev-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+        justify-content:center;font-size:1rem;color:#fff;flex-shrink:0;}
+      .ft-rev-info{flex:1;min-width:0}
+      .ft-rev-title{font-weight:700;color:#0f172a;font-size:.92rem;line-height:1.2}
+      .ft-rev-meta{font-size:.72rem;color:#6b7280;margin-top:3px}
+      .ft-rev-obs{margin-top:6px;font-size:.78rem;color:#374151;background:#f9fafb;
+        padding:7px 9px;border-radius:7px;border-left:2px solid #d1d5db;}
+      .ft-rev-link{font-size:.74rem;color:#dc2626;font-weight:600;text-decoration:none;}
+      .ft-rev-link:hover{text-decoration:underline}
+    </style>
+  `;
+
+  // ── Items ──
+  const items = revisiones.map(r => {
+    const estado = (r.estado_revision || 'verificado').toLowerCase();
+    const iconBg = {
+      'verificado':       '#16a34a',
+      'con_cambios':      '#3b82f6',
+      'saltado':          '#f59e0b',
+      'falla_detectada':  '#dc2626',
+    }[estado] || '#6b7280';
+    const iconName = {
+      'verificado':       'check-circle-fill',
+      'con_cambios':      'pencil-fill',
+      'saltado':          'skip-forward-fill',
+      'falla_detectada':  'exclamation-triangle-fill',
+    }[estado] || 'circle';
+    const estadoLabel = {
+      'verificado':       'Verificado',
+      'con_cambios':      'Con cambios',
+      'saltado':          `Saltado${r.razon_saltado ? ' · ' + r.razon_saltado.replace(/_/g,' ') : ''}`,
+      'falla_detectada':  'Falla detectada',
+    }[estado] || estado;
+    const fecha = r.revisado_at || r.fecha || '';
+    const tipoBadge = r.tipo_visita
+      ? `<span class="badge bg-light text-dark me-1" style="font-size:.66rem;font-weight:600">${escHtml(r.tipo_visita)}</span>`
+      : '';
+    return `
+      <div class="ft-rev-item ${estado}">
+        <div class="ft-rev-icon" style="background:${iconBg}">
+          <i class="bi bi-${iconName}"></i>
+        </div>
+        <div class="ft-rev-info">
+          <div class="ft-rev-title">
+            ${escHtml(estadoLabel)}
+            ${r.fotos_count ? `<span class="badge bg-light text-dark ms-1" style="font-size:.66rem"><i class="bi bi-camera"></i> ${r.fotos_count}</span>` : ''}
+          </div>
+          <div class="ft-rev-meta">
+            ${tipoBadge}
+            <i class="bi bi-receipt"></i> ${escHtml(r.numero_ot || '')}
+            ${fecha ? ` · <i class="bi bi-calendar3"></i> ${escHtml(fecha)}` : ''}
+            ${r.revisado_por ? ` · <i class="bi bi-person"></i> ${escHtml(r.revisado_por)}` : ''}
+          </div>
+          ${r.observacion ? `<div class="ft-rev-obs">${escHtml(r.observacion)}</div>` : ''}
+          ${r.url_ot ? `<a href="${escAttr(r.url_ot)}" class="ft-rev-link mt-1 d-inline-block" target="_blank" rel="noopener">
+            <i class="bi bi-box-arrow-up-right"></i> Ver OT
+          </a>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = headerHtml + items;
 }
 
 function _ftRenderStat(key, val, label, cls) {

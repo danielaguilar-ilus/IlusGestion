@@ -22597,6 +22597,74 @@ def init_mantenciones_tables():
                 except Exception:
                     pass  # idempotente
 
+            # ════════════════════════════════════════════════════════════
+            # K. (2026-05-21 Daniel) — mant_visita_equipos: trazabilidad
+            # de la revisión de CADA equipo en una visita. El técnico ya
+            # NO está obligado a completar tareas por equipo; puede:
+            #   - saltarlo (con razón + observación)
+            #   - marcarlo verificado (estado por defecto al cerrar)
+            #   - marcarlo con cambios (cambió serial, agregó foto)
+            #   - marcarlo con falla detectada
+            #
+            # Una fila por (visita_id, maquina_id). Si no existe = no
+            # tocado todavía. Al cerrar la OT, los equipos sin fila se
+            # crean automáticamente como 'verificado'.
+            #
+            # Unique key garantiza idempotencia en upserts (INSERT ...
+            # ON DUPLICATE KEY UPDATE).
+            # ════════════════════════════════════════════════════════════
+            try:
+                # FIX 2026-05-21: FKs removidas porque las PKs de mant_visitas/
+                # mant_maquinas pueden diferir en tipo/charset y el CREATE
+                # entero falla silenciosamente. La integridad referencial se
+                # mantiene a nivel aplicación (ya validamos en cada endpoint).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_visita_equipos (
+                        id                  INT AUTO_INCREMENT PRIMARY KEY,
+                        visita_id           INT NOT NULL,
+                        maquina_id          INT NOT NULL,
+                        estado_revision     ENUM('verificado','con_cambios',
+                                                 'saltado','falla_detectada')
+                                            DEFAULT 'verificado',
+                        razon_saltado       VARCHAR(40) NULL
+                                            COMMENT 'no_encontrado|dado_de_baja|'
+                                                    'dañado_inaccesible|cliente_lo_quito|otro',
+                        observacion_tecnico TEXT NULL
+                                            COMMENT 'Observación libre del técnico sobre '
+                                                    'este equipo en esta visita',
+                        revisado_at         DATETIME NULL,
+                        revisado_por        VARCHAR(190) NULL,
+                        created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                                            ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY uq_visita_maquina (visita_id, maquina_id),
+                        INDEX idx_visita_estado (visita_id, estado_revision),
+                        INDEX idx_maquina_fecha (maquina_id, revisado_at DESC)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception as _e:
+                print(f"[init_mant][mant_visita_equipos] CREATE falló: {_e}", flush=True)
+
+            # Migraciones idempotentes por si la tabla ya existía con un
+            # subset de columnas (envs anteriores).
+            for _mig_vme in [
+                "ALTER TABLE mant_visita_equipos ADD COLUMN razon_saltado VARCHAR(40) NULL",
+                "ALTER TABLE mant_visita_equipos ADD COLUMN observacion_tecnico TEXT NULL",
+                "ALTER TABLE mant_visita_equipos ADD COLUMN estado_revision "
+                "  ENUM('verificado','con_cambios','saltado','falla_detectada') "
+                "  DEFAULT 'verificado'",
+                "ALTER TABLE mant_visita_equipos ADD COLUMN revisado_at DATETIME NULL",
+                "ALTER TABLE mant_visita_equipos ADD COLUMN revisado_por VARCHAR(190) NULL",
+                "ALTER TABLE mant_visita_equipos ADD INDEX idx_visita_estado "
+                "  (visita_id, estado_revision)",
+                "ALTER TABLE mant_visita_equipos ADD INDEX idx_maquina_fecha "
+                "  (maquina_id, revisado_at DESC)",
+            ]:
+                try:
+                    cur.execute(_mig_vme)
+                except Exception:
+                    pass  # idempotente
+
         conn.commit()
     finally:
         conn.close()
@@ -25017,6 +25085,54 @@ def _mant_ficha_impl(cid):
     maquinas     = [_norm_maquina(r)  for r in maquinas_raw]
     contratos    = [_norm_contrato(r) for r in contratos_raw]
     visitas_full = [_norm_visita(r)   for r in visitas_raw]
+
+    # ── 2026-05-21 (Daniel) — Última revisión por equipo ───────────────
+    # Para cada máquina del cliente, traemos la última fila de
+    # mant_visita_equipos. Lo pintamos en la tabla de equipos (badge
+    # con estado: verificado / con cambios / saltado / falla).
+    if maquinas:
+        try:
+            _ids_maq = [int(m["id"]) for m in maquinas]
+            _ph = ",".join(["%s"] * len(_ids_maq))
+            # Subquery: por cada maquina_id, traer la fila más reciente
+            # de mant_visita_equipos (greatest-n-per-group con id como
+            # desempate). Compatible con MySQL 5.7+ sin window functions.
+            _rev_rows = mysql_fetchall(
+                f"""
+                SELECT ve.maquina_id, ve.visita_id, ve.estado_revision,
+                       ve.razon_saltado, ve.observacion_tecnico,
+                       ve.revisado_at, ve.revisado_por,
+                       v.numero_ot, v.tipo AS visita_tipo,
+                       v.fecha_programada
+                  FROM mant_visita_equipos ve
+                  JOIN mant_visitas v ON v.id = ve.visita_id
+                  JOIN (
+                       SELECT maquina_id, MAX(id) AS max_id
+                         FROM mant_visita_equipos
+                        WHERE maquina_id IN ({_ph})
+                        GROUP BY maquina_id
+                  ) lastrev ON lastrev.maquina_id = ve.maquina_id
+                           AND lastrev.max_id = ve.id
+                """,
+                tuple(_ids_maq)
+            ) or []
+            _idx_rev = {}
+            for _r in _rev_rows:
+                _idx_rev[int(_r["maquina_id"])] = {
+                    "estado_revision":     _r.get("estado_revision") or "verificado",
+                    "razon_saltado":       _r.get("razon_saltado") or "",
+                    "observacion":         _r.get("observacion_tecnico") or "",
+                    "revisado_at":         _r.get("revisado_at"),
+                    "revisado_por":        _r.get("revisado_por") or "",
+                    "numero_ot":           _r.get("numero_ot") or "",
+                    "visita_id":           _r.get("visita_id"),
+                    "visita_tipo":         _r.get("visita_tipo") or "",
+                    "fecha":               _r.get("fecha_programada"),
+                }
+            for _m in maquinas:
+                _m["ultima_revision"] = _idx_rev.get(int(_m["id"]))
+        except Exception as _e_ur:
+            print(f"[MANT][ficha] ultima_revision load error: {_e_ur}", flush=True)
 
     # ── ESTADÍSTICAS PARA SIDEBAR / GRÁFICOS ──────────────────────────────
     hoy = datetime.now().date()
@@ -29885,16 +30001,48 @@ def _ot_validar_cierre(vid):
     razones = []
     es_levantamiento = (v.get("tipo") or "").lower() == "levantamiento"
 
-    # R1 — Checklist 100% completado
-    chk_row = mysql_fetchone(
-        "SELECT COUNT(*) AS total, "
-        " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
-        "FROM mant_visita_tareas WHERE visita_id=%s",
-        (vid,)
-    ) or {}
+    # ── 2026-05-21 (Daniel) — Trazabilidad por equipo ──────────────────
+    # Si la OT es tipo 'levantamiento', el técnico puede SALTAR equipos
+    # (con razón + observación). Las tareas de un equipo saltado NO
+    # bloquean el cierre. Tampoco bloquean las del equipo marcado como
+    # 'falla_detectada' (ya quedó registrada la incidencia).
+    # Equipos saltados/con falla por visita: set de maquina_id excluidos
+    # del check de "tareas completas".
+    excluir_maquinas = set()
+    try:
+        rows_excl = mysql_fetchall(
+            "SELECT maquina_id, estado_revision FROM mant_visita_equipos "
+            " WHERE visita_id=%s "
+            "   AND estado_revision IN ('saltado','falla_detectada')",
+            (vid,)
+        ) or []
+        for r in rows_excl:
+            if r.get("maquina_id"):
+                excluir_maquinas.add(int(r["maquina_id"]))
+    except Exception:
+        # Tabla nueva — si aún no se creó, no excluimos nada (comp. atrás).
+        excluir_maquinas = set()
+
+    # R1 — Checklist 100% completado (excluyendo tareas de equipos saltados/con falla)
+    if excluir_maquinas:
+        _ph = ",".join(["%s"] * len(excluir_maquinas))
+        chk_row = mysql_fetchone(
+            "SELECT COUNT(*) AS total, "
+            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+            f"FROM mant_visita_tareas WHERE visita_id=%s "
+            f"  AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph}))",
+            (vid, *list(excluir_maquinas))
+        ) or {}
+    else:
+        chk_row = mysql_fetchone(
+            "SELECT COUNT(*) AS total, "
+            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+            "FROM mant_visita_tareas WHERE visita_id=%s",
+            (vid,)
+        ) or {}
     total = int(chk_row.get("total") or 0)
     done = int(chk_row.get("done") or 0)
-    if total == 0:
+    if total == 0 and not excluir_maquinas:
         razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
     elif done < total:
         razones.append(
@@ -29910,16 +30058,29 @@ def _ot_validar_cierre(vid):
                 "Diagnóstico obligatorio: debe explicar qué se hizo (mínimo 20 caracteres)."
             )
 
-    # R3 — Foto obligatoria por tarea con requiere_foto=1
-    tareas_sin_foto = mysql_fetchall(
-        "SELECT t.id, t.titulo "
-        "FROM mant_visita_tareas t "
-        "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
-        "WHERE t.visita_id=%s AND t.requiere_foto=1 "
-        "GROUP BY t.id, t.titulo "
-        "HAVING COUNT(f.id) = 0",
-        (vid,)
-    ) or []
+    # R3 — Foto obligatoria por tarea con requiere_foto=1 (excluyendo saltados)
+    if excluir_maquinas:
+        _ph = ",".join(["%s"] * len(excluir_maquinas))
+        tareas_sin_foto = mysql_fetchall(
+            "SELECT t.id, t.titulo "
+            "FROM mant_visita_tareas t "
+            "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+            f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
+            f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
+            "GROUP BY t.id, t.titulo "
+            "HAVING COUNT(f.id) = 0",
+            (vid, *list(excluir_maquinas))
+        ) or []
+    else:
+        tareas_sin_foto = mysql_fetchall(
+            "SELECT t.id, t.titulo "
+            "FROM mant_visita_tareas t "
+            "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+            "WHERE t.visita_id=%s AND t.requiere_foto=1 "
+            "GROUP BY t.id, t.titulo "
+            "HAVING COUNT(f.id) = 0",
+            (vid,)
+        ) or []
     if tareas_sin_foto:
         nombres = [t.get("titulo") or f"#{t['id']}" for t in tareas_sin_foto[:5]]
         suf = "" if len(tareas_sin_foto) <= 5 else f" y {len(tareas_sin_foto)-5} más"
@@ -29940,6 +30101,7 @@ def _ot_validar_cierre(vid):
         "tareas_sin_foto": len(tareas_sin_foto),
         "tiene_diagnostico": bool((v.get("diagnostico") or "").strip()),
         "firmas_ok": all([v.get("firma_cliente_url"), v.get("firma_tecnico_url"), v.get("firma_supervisor_url")]),
+        "equipos_excluidos": len(excluir_maquinas),
     }
 
 
@@ -30027,6 +30189,23 @@ def mant_visita_cerrar(vid):
         )
     except Exception:
         pass
+    # ── 2026-05-21 (Daniel) — Trazabilidad por equipo ──────────────────
+    # Al cerrar la OT, todo equipo que esté en mant_visita_tareas pero
+    # que NO tenga fila en mant_visita_equipos se inserta como
+    # 'verificado' (default). Esto deja audit trail aunque el técnico
+    # haya cerrado sin tocar nada en ese equipo.
+    try:
+        mysql_execute(
+            "INSERT IGNORE INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, revisado_at, revisado_por) "
+            "SELECT DISTINCT vt.visita_id, vt.maquina_id, 'verificado', NOW(), %s "
+            "  FROM mant_visita_tareas vt "
+            " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL",
+            (user, vid)
+        )
+    except Exception as _e_vme:
+        print(f"[ot_cerrar] mant_visita_equipos autofill error: {_e_vme}", flush=True)
+
     # ── Promoción levantamiento → ficha de equipo (async, no bloquea) ──
     # Solo aplica si la visita es tipo='levantamiento'. El wrapper interno
     # valida el tipo y descarta silenciosamente si no corresponde.
@@ -30036,6 +30215,341 @@ def mant_visita_cerrar(vid):
         "estado": "cerrada",
         "validacion": validacion,
         "mensaje": "OT cerrada exitosamente con auditoría completa.",
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TRAZABILIDAD POR EQUIPO EN VISITA (2026-05-21 Daniel)
+# Permite que el técnico SALTE un equipo durante el levantamiento sin
+# completar sus tareas, marque "con cambios" o "falla detectada", o
+# deje una observación libre. Cada decisión queda con audit trail.
+# ══════════════════════════════════════════════════════════════════════
+
+# Razones válidas para saltar un equipo. Cualquier otra cae como 'otro'.
+_RAZONES_SALTADO_VALIDAS = (
+    "no_encontrado", "dado_de_baja", "danado_inaccesible",
+    "cliente_lo_quito", "otro"
+)
+
+# Estados válidos para el campo estado_revision.
+_ESTADOS_REVISION_VALIDOS = (
+    "verificado", "con_cambios", "saltado", "falla_detectada"
+)
+
+
+def _ot_visita_equipo_link_ok(vid, mid):
+    """Valida que el equipo `mid` pertenezca realmente a la visita `vid`
+    (ya sea via mant_visita_tareas o mant_visita_equipos previo). Evita
+    que un técnico marque equipos ajenos a su OT (IDOR)."""
+    try:
+        r = mysql_fetchone(
+            "SELECT 1 FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+            (vid, mid)
+        )
+        if r:
+            return True
+        # Fallback: ya estaba registrado en mant_visita_equipos
+        r2 = mysql_fetchone(
+            "SELECT 1 FROM mant_visita_equipos "
+            " WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
+            (vid, mid)
+        )
+        return bool(r2)
+    except Exception:
+        return False
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos/<int:mid>/saltar",
+    methods=["POST"]
+)
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_equipo_saltar(vid, mid):
+    """El técnico salta un equipo durante la OT: registra razón +
+    observación obligatoria (mín 5 chars). Idempotente vía upsert.
+    """
+    if not _ot_visita_equipo_link_ok(vid, mid):
+        return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
+
+    d = request.get_json(silent=True) or {}
+    razon_raw = (d.get("razon") or "").strip().lower()
+    razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else "otro"
+    obs = (d.get("observacion") or "").strip()
+    if len(obs) < 5:
+        return jsonify({
+            "ok": False,
+            "error": "La observación es obligatoria (mínimo 5 caracteres)."
+        }), 400
+    obs = obs[:2000]  # cap razonable
+
+    user = current_username()
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, razon_saltado, "
+            "   observacion_tecnico, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'saltado', %s, %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  estado_revision='saltado', "
+            "  razon_saltado=VALUES(razon_saltado), "
+            "  observacion_tecnico=VALUES(observacion_tecnico), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, razon, obs, user)
+        )
+    except Exception as e:
+        print(f"[visita_equipo_saltar] error vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el saltado"}), 500
+
+    # Audit log
+    try:
+        _mant_log(
+            "visita", vid, "equipo_saltado",
+            f"Equipo #{mid} saltado por {user} — razón: {razon} · {obs[:150]}"
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "estado_revision": "saltado",
+        "razon": razon,
+        "observacion": obs,
+        "revisado_por": user,
+    })
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos/<int:mid>/marcar",
+    methods=["POST"]
+)
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_equipo_marcar(vid, mid):
+    """Cambia el estado de revisión del equipo en la visita sin requerir
+    completar tareas. Estados: verificado | con_cambios | saltado |
+    falla_detectada. Si es 'falla_detectada' o 'saltado', exige
+    observación mín 5 chars.
+    """
+    if not _ot_visita_equipo_link_ok(vid, mid):
+        return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
+
+    d = request.get_json(silent=True) or {}
+    estado = (d.get("estado_revision") or "").strip().lower()
+    if estado not in _ESTADOS_REVISION_VALIDOS:
+        return jsonify({
+            "ok": False,
+            "error": f"estado_revision inválido (debe ser uno de: "
+                     f"{', '.join(_ESTADOS_REVISION_VALIDOS)})"
+        }), 400
+
+    obs = (d.get("observacion") or "").strip()[:2000]
+    razon_raw = (d.get("razon") or "").strip().lower()
+    razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else None
+
+    # Obs obligatoria para estados problemáticos
+    if estado in ("saltado", "falla_detectada") and len(obs) < 5:
+        return jsonify({
+            "ok": False,
+            "error": "La observación es obligatoria para este estado (mín 5 caracteres)."
+        }), 400
+
+    user = current_username()
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, razon_saltado, "
+            "   observacion_tecnico, revisado_at, revisado_por) "
+            "VALUES (%s, %s, %s, %s, %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  estado_revision=VALUES(estado_revision), "
+            "  razon_saltado=VALUES(razon_saltado), "
+            "  observacion_tecnico=COALESCE(VALUES(observacion_tecnico), observacion_tecnico), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, estado, razon, (obs or None), user)
+        )
+    except Exception as e:
+        print(f"[visita_equipo_marcar] error vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el estado"}), 500
+
+    try:
+        _mant_log(
+            "visita", vid, "equipo_estado_revision",
+            f"Equipo #{mid} → {estado} por {user}"
+            + (f" · razón={razon}" if razon else "")
+            + (f" · {obs[:120]}" if obs else "")
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "estado_revision": estado,
+        "razon": razon,
+        "observacion": obs or None,
+        "revisado_por": user,
+    })
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos/<int:mid>/observacion",
+    methods=["POST"]
+)
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_equipo_observacion(vid, mid):
+    """Guarda observación libre del técnico sobre este equipo en esta
+    visita, sin cambiar el estado_revision (queda como esté, default
+    'verificado'). Pensado para el textarea siempre visible en
+    ot_ejecutar.html con auto-save al perder foco.
+    """
+    if not _ot_visita_equipo_link_ok(vid, mid):
+        return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
+
+    d = request.get_json(silent=True) or {}
+    obs = (d.get("observacion") or "").strip()[:2000]
+    user = current_username()
+    try:
+        # Si ya existe, solo actualiza observacion (preserva estado_revision).
+        # Si no, inserta como 'verificado' con la observación.
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, "
+            "   observacion_tecnico, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'verificado', %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  observacion_tecnico=VALUES(observacion_tecnico), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, (obs or None), user)
+        )
+    except Exception as e:
+        print(f"[visita_equipo_observacion] error vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la observación"}), 500
+
+    # No logueamos cada keystroke; solo si la observación es nueva o se vació.
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "observacion": obs or "",
+        "revisado_por": user,
+    })
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos-estado",
+    methods=["GET"]
+)
+@_mant_required
+@_ot_can_view
+def mant_visita_equipos_estado(vid):
+    """Devuelve el estado de revisión de cada equipo en la visita.
+    Usado por ot_ejecutar.html para pintar los badges al cargar.
+    """
+    rows = mysql_fetchall(
+        "SELECT maquina_id, estado_revision, razon_saltado, "
+        "       observacion_tecnico, revisado_at, revisado_por "
+        "  FROM mant_visita_equipos WHERE visita_id=%s",
+        (vid,)
+    ) or []
+    out = {}
+    for r in rows:
+        out[str(r["maquina_id"])] = {
+            "estado_revision":      r.get("estado_revision") or "verificado",
+            "razon_saltado":        r.get("razon_saltado") or "",
+            "observacion_tecnico":  r.get("observacion_tecnico") or "",
+            "revisado_at":          str(r["revisado_at"])[:19] if r.get("revisado_at") else "",
+            "revisado_por":         r.get("revisado_por") or "",
+        }
+    return jsonify({"ok": True, "equipos": out})
+
+
+@app.route(
+    "/mantenciones/api/maquinas/<int:mid>/revisiones",
+    methods=["GET"]
+)
+@_mant_required
+def mant_maquina_revisiones(mid):
+    """Devuelve TODAS las revisiones que ha tenido este equipo en visitas
+    (timeline cronológico). Usado por el modal de ficha técnica del equipo
+    (tab "Revisiones"). Incluye cambios de serial detectados en el
+    audit log para enriquecer el historial.
+    """
+    # Permisos: técnico solo ve si la máquina está en una OT asignada.
+    u = getattr(g, "user", None) or {}
+    role_u = (u.get("role") or "").lower()
+    if role_u in ("tecnico", "tecnico_externo"):
+        uid = u.get("id")
+        autorizado = mysql_fetchone(
+            "SELECT 1 FROM mant_visita_tareas vt "
+            "  JOIN mant_visitas v ON v.id = vt.visita_id "
+            " WHERE vt.maquina_id=%s "
+            "   AND (v.tecnico_user_id=%s "
+            "        OR v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+            "                    WHERE tecnico_user_id=%s)) "
+            " LIMIT 1",
+            (mid, uid, uid)
+        )
+        if not autorizado:
+            return jsonify({"ok": False, "error": "Equipo no asignado a tus OTs"}), 403
+
+    # Datos de cada revisión, joineando con la visita y técnico.
+    rows = mysql_fetchall(
+        "SELECT ve.id, ve.visita_id, ve.estado_revision, ve.razon_saltado, "
+        "       ve.observacion_tecnico, ve.revisado_at, ve.revisado_por, "
+        "       v.numero_ot, v.tipo AS visita_tipo, v.fecha_programada, "
+        "       v.estado AS visita_estado, "
+        "       (SELECT COUNT(*) FROM mant_visita_fotos f "
+        "          WHERE f.visita_id=v.id AND f.maquina_id=%s) AS fotos_count "
+        "  FROM mant_visita_equipos ve "
+        "  JOIN mant_visitas v ON v.id = ve.visita_id "
+        " WHERE ve.maquina_id=%s "
+        " ORDER BY COALESCE(ve.revisado_at, v.fecha_programada) DESC, ve.id DESC "
+        " LIMIT 100",
+        (mid, mid)
+    ) or []
+
+    timeline = []
+    counters = {
+        "total": 0, "verificado": 0, "con_cambios": 0,
+        "saltado": 0, "falla_detectada": 0,
+    }
+    for r in rows:
+        estado = (r.get("estado_revision") or "verificado").lower()
+        counters["total"] += 1
+        counters[estado] = counters.get(estado, 0) + 1
+        timeline.append({
+            "visita_id":     r["visita_id"],
+            "numero_ot":     r.get("numero_ot") or f"VS-{r['visita_id']:05d}",
+            "tipo_visita":   r.get("visita_tipo") or "",
+            "estado_visita": r.get("visita_estado") or "",
+            "fecha":         str(r["fecha_programada"])[:10] if r.get("fecha_programada") else "",
+            "revisado_at":   str(r["revisado_at"])[:16] if r.get("revisado_at") else "",
+            "revisado_por":  r.get("revisado_por") or "",
+            "estado_revision": estado,
+            "razon_saltado": r.get("razon_saltado") or "",
+            "observacion":   r.get("observacion_tecnico") or "",
+            "fotos_count":   int(r.get("fotos_count") or 0),
+            "url_ot":        f"/mantenciones/ot/{r['visita_id']}",
+        })
+
+    # Última revisión = primer elemento del timeline (mayor fecha)
+    ultima = timeline[0] if timeline else None
+
+    return jsonify({
+        "ok": True,
+        "maquina_id": mid,
+        "ultima_revision": ultima,
+        "contadores": counters,
+        "timeline": timeline,
     })
 
 
@@ -33298,6 +33812,29 @@ def mant_ot_ejecutar(vid):
     _perms = g.get("permissions") or {}
     _is_admin_lock = bool(_perms.get("superadmin") or _perms.get("admin"))
 
+    # ── 2026-05-21 (Daniel) — Trazabilidad por equipo ──────────────────
+    # Cargamos el estado de revisión actual de cada equipo en esta visita
+    # para que el técnico vea badges al cargar la página. Keys stringified
+    # para que coincidan con String(eq.id) usado en JS.
+    equipos_estado_revision = {}
+    try:
+        _rows_ve = mysql_fetchall(
+            "SELECT maquina_id, estado_revision, razon_saltado, "
+            "       observacion_tecnico, revisado_at, revisado_por "
+            "  FROM mant_visita_equipos WHERE visita_id=%s",
+            (vid,)
+        ) or []
+        for _r in _rows_ve:
+            equipos_estado_revision[str(_r["maquina_id"])] = {
+                "estado_revision":     _r.get("estado_revision") or "verificado",
+                "razon_saltado":       _r.get("razon_saltado") or "",
+                "observacion_tecnico": _r.get("observacion_tecnico") or "",
+                "revisado_at":         str(_r["revisado_at"])[:19] if _r.get("revisado_at") else "",
+                "revisado_por":        _r.get("revisado_por") or "",
+            }
+    except Exception as _e_ve:
+        print(f"[ot_ejecutar] equipos_estado_revision load error: {_e_ve}", flush=True)
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
@@ -33307,6 +33844,7 @@ def mant_ot_ejecutar(vid):
         grupos=grupos,
         plantillas_por_maquina=plantillas_por_maquina,
         stats_por_maquina=stats_por_maquina,
+        equipos_estado_revision=equipos_estado_revision,
         fotos=fotos,
         current_user_id=_user_id_actual,
         is_admin_lock=_is_admin_lock,
@@ -41203,6 +41741,50 @@ def mant_maquina_ficha_tecnica_json(mid):
         "doc_fecha": str(eq["doc_fecha"])[:10] if eq.get("doc_fecha") else "",
     }
 
+    # ── 9. (2026-05-21 Daniel) — Última revisión + timeline desde
+    #       mant_visita_equipos. Da contexto inmediato al usuario sobre
+    #       el estado real del equipo en la última visita.
+    ultima_revision = None
+    revisiones_counters = {
+        "total": 0, "verificado": 0, "con_cambios": 0,
+        "saltado": 0, "falla_detectada": 0,
+    }
+    revisiones_timeline = []
+    try:
+        rev_rows = mysql_fetchall(
+            "SELECT ve.visita_id, ve.estado_revision, ve.razon_saltado, "
+            "       ve.observacion_tecnico, ve.revisado_at, ve.revisado_por, "
+            "       v.numero_ot, v.tipo AS visita_tipo, v.fecha_programada, "
+            "       v.estado AS visita_estado "
+            "  FROM mant_visita_equipos ve "
+            "  JOIN mant_visitas v ON v.id = ve.visita_id "
+            " WHERE ve.maquina_id=%s "
+            " ORDER BY COALESCE(ve.revisado_at, v.fecha_programada) DESC, ve.id DESC "
+            " LIMIT 50",
+            (mid,)
+        ) or []
+        for _r in rev_rows:
+            _est = (_r.get("estado_revision") or "verificado").lower()
+            revisiones_counters["total"] += 1
+            revisiones_counters[_est] = revisiones_counters.get(_est, 0) + 1
+            revisiones_timeline.append({
+                "visita_id":       _r["visita_id"],
+                "numero_ot":       _r.get("numero_ot") or f"VS-{_r['visita_id']:05d}",
+                "tipo_visita":     _r.get("visita_tipo") or "",
+                "estado_visita":   _r.get("visita_estado") or "",
+                "fecha":           str(_r["fecha_programada"])[:10] if _r.get("fecha_programada") else "",
+                "revisado_at":     str(_r["revisado_at"])[:16] if _r.get("revisado_at") else "",
+                "revisado_por":    _r.get("revisado_por") or "",
+                "estado_revision": _est,
+                "razon_saltado":   _r.get("razon_saltado") or "",
+                "observacion":     _r.get("observacion_tecnico") or "",
+                "url_ot":          f"/mantenciones/ot/{_r['visita_id']}",
+            })
+        if revisiones_timeline:
+            ultima_revision = revisiones_timeline[0]
+    except Exception as _e_rev:
+        print(f"[ficha-tecnica] revisiones load error: {_e_rev}", flush=True)
+
     return jsonify({
         "ok": True,
         "equipo": out_eq,
@@ -41213,6 +41795,10 @@ def mant_maquina_ficha_tecnica_json(mid):
         "fotos_galeria": fotos_galeria,
         "contratos_relacionados": contratos,
         "alertas": alertas,
+        # 2026-05-21 (Daniel) — trazabilidad por equipo
+        "ultima_revision": ultima_revision,
+        "revisiones_timeline": revisiones_timeline,
+        "revisiones_counters": revisiones_counters,
         # Compatibilidad backward — endpoints antiguos esperan estos campos
         "fotos": fotos_galeria[:8],
         "contratos": contratos,
