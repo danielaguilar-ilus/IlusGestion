@@ -22303,6 +22303,39 @@ def init_mantenciones_tables():
                 except Exception:
                     pass  # idempotente
 
+            # ── J. Planes IA (histórico) ─────────────────────────────────
+            # Persiste cada plan generado por Claude para:
+            #   1) controlar gasto de tokens (1 plan cada 6 meses por cliente),
+            #   2) requerir verificación humana de objetivos antes de regenerar,
+            #   3) detectar info nueva relevante (visitas, garantías, contratos)
+            #      que justifique actualizar antes de los 6 meses.
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ia_planes (
+                        id                    INT AUTO_INCREMENT PRIMARY KEY,
+                        cliente_id            INT NOT NULL,
+                        generado_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        generado_por          VARCHAR(190),
+                        plan_json             LONGTEXT NOT NULL,
+                        indice_salud          INT NULL,
+                        indice_sla            INT NULL,
+                        indice_cobranza       INT NULL,
+                        tipo_cliente_inferido VARCHAR(30) NULL,
+                        verificado_at         DATETIME NULL,
+                        verificado_por        VARCHAR(190) NULL,
+                        objetivos_cumplidos   TEXT NULL,
+                        notas_verificacion    TEXT NULL,
+                        snapshot_n_visitas    INT NULL,
+                        snapshot_n_contratos  INT NULL,
+                        snapshot_n_garantias  INT NULL,
+                        snapshot_ultima_visita DATE NULL,
+                        INDEX idx_cliente_fecha  (cliente_id, generado_at DESC),
+                        INDEX idx_no_verificado  (cliente_id, verificado_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
         conn.commit()
     finally:
         conn.close()
@@ -40807,6 +40840,332 @@ else:
 _MANT_PLAN_CACHE = {}          # cid -> {"ts": float, "plan": dict, "cliente": str, "meta": dict}
 _MANT_PLAN_CACHE_TTL = 3600    # 1 hora
 
+# Ventana mínima entre planes IA si el plan anterior está verificado y no hay
+# info nueva relevante. 180 días = 6 meses.
+_MANT_IA_PLAN_VIGENCIA_DIAS = 180
+
+
+def _mant_ia_snapshot_actual(cid):
+    """Construye el snapshot contextual actual de un cliente (visitas /
+    contratos / garantías / última visita). Se usa al persistir un plan
+    nuevo y al comparar contra el plan anterior para detectar info nueva.
+
+    Devuelve dict con las cuatro métricas. Datetime → date para serializar
+    sin issues. Si una query falla, deja el valor en None (no es crítico).
+    """
+    snap = {
+        "n_visitas": None,
+        "n_contratos": None,
+        "n_garantias": None,
+        "ultima_visita": None,
+    }
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_visitas WHERE cliente_id=%s", (cid,)
+        )
+        snap["n_visitas"] = int(row["c"]) if row else 0
+    except Exception:
+        pass
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_contratos WHERE cliente_id=%s", (cid,)
+        )
+        snap["n_contratos"] = int(row["c"]) if row else 0
+    except Exception:
+        pass
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_maquinas "
+            " WHERE cliente_id=%s AND estado!='baja' "
+            "   AND fecha_fin_garantia IS NOT NULL "
+            "   AND fecha_fin_garantia >= CURDATE()",
+            (cid,)
+        )
+        snap["n_garantias"] = int(row["c"]) if row else 0
+    except Exception:
+        pass
+    try:
+        row = mysql_fetchone(
+            "SELECT MAX(COALESCE(fecha_realizada, fecha_programada)) AS f "
+            "  FROM mant_visitas WHERE cliente_id=%s "
+            "   AND estado='completada'",
+            (cid,)
+        )
+        if row and row.get("f"):
+            f = row["f"]
+            snap["ultima_visita"] = f.date() if hasattr(f, "date") else f
+    except Exception:
+        pass
+    return snap
+
+
+def _mant_ia_detectar_info_nueva(cid, ultimo_plan):
+    """Compara el snapshot del último plan con el estado actual del cliente.
+    Devuelve (info_nueva_bool, lista_de_motivos_humanos).
+
+    Heurísticas:
+      - +3 o más visitas nuevas desde el último análisis.
+      - Aparición de un contrato nuevo (n_contratos creció).
+      - Garantía por vencer en <=30 días que NO estaba contabilizada antes.
+      - Última visita es más reciente que la registrada en el snapshot
+        (caso típico: se completó una mantención después del último plan).
+    """
+    if not ultimo_plan:
+        return (True, [])
+    snap_actual = _mant_ia_snapshot_actual(cid)
+    motivos = []
+
+    # Visitas nuevas
+    n_prev   = ultimo_plan.get("snapshot_n_visitas")
+    n_actual = snap_actual.get("n_visitas")
+    if n_prev is not None and n_actual is not None and (n_actual - n_prev) >= 3:
+        motivos.append(f"{n_actual - n_prev} visitas nuevas desde el último análisis")
+    elif n_prev is not None and n_actual is not None and (n_actual - n_prev) >= 1:
+        # Caso menor: al menos una visita pero <3 → solo informativo
+        pass
+
+    # Última visita más reciente (caso típico: mantención completada hace poco)
+    ult_prev   = ultimo_plan.get("snapshot_ultima_visita")
+    ult_actual = snap_actual.get("ultima_visita")
+    if ult_actual and (not ult_prev or ult_actual > ult_prev):
+        # Solo lo registramos como motivo si no es trivial
+        try:
+            dias = (ult_actual - ult_prev).days if ult_prev else None
+            if dias is None or dias >= 30:
+                motivos.append(
+                    f"Última visita registrada el {ult_actual.isoformat()}"
+                    + (f" (sin actividad por {dias} días al generar el plan anterior)" if dias and dias >= 60 else "")
+                )
+        except Exception:
+            motivos.append(f"Última visita registrada el {ult_actual.isoformat()}")
+
+    # Contrato nuevo
+    c_prev   = ultimo_plan.get("snapshot_n_contratos")
+    c_actual = snap_actual.get("n_contratos")
+    if c_prev is not None and c_actual is not None and c_actual > c_prev:
+        motivos.append(f"{c_actual - c_prev} contrato(s) nuevo(s) desde el último análisis")
+
+    # Garantía por vencer en <=30 días
+    try:
+        gar_pronto = mysql_fetchall(
+            "SELECT nombre, fecha_fin_garantia "
+            "  FROM mant_maquinas "
+            " WHERE cliente_id=%s AND estado!='baja' "
+            "   AND fecha_fin_garantia IS NOT NULL "
+            "   AND fecha_fin_garantia >= CURDATE() "
+            "   AND fecha_fin_garantia <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) "
+            " ORDER BY fecha_fin_garantia ASC LIMIT 3", (cid,)
+        ) or []
+        for g in gar_pronto:
+            nombre = g.get("nombre") or "Equipo"
+            ffg = g.get("fecha_fin_garantia")
+            if ffg:
+                d_real = ffg.date() if hasattr(ffg, "date") else ffg
+                from datetime import date as _dt
+                dias = (d_real - _dt.today()).days
+                motivos.append(f"Garantía de '{nombre}' vence en {dias} día(s)")
+    except Exception:
+        pass
+
+    return (len(motivos) > 0, motivos)
+
+
+def _mant_ia_plan_estado(cid):
+    """Núcleo compartido por GET /ia-plan-estado y por POST /plan-mejora
+    (para validar antes de gastar tokens). Devuelve dict listo para jsonify.
+
+    Performance: 2 queries simples sobre mant_ia_planes + snapshot actual
+    (4 queries cortas, todas con índices). Total <100ms en entornos normales.
+    """
+    ultimo = None
+    try:
+        # NOTA: NO seleccionamos plan_json aquí (es LONGTEXT) para mantener
+        # el endpoint en <100ms. El frontend obtiene el JSON solo cuando
+        # corresponde regenerar (POST plan-mejora).
+        ultimo = mysql_fetchone(
+            "SELECT id, generado_at, generado_por, indice_salud, indice_sla, "
+            "       indice_cobranza, tipo_cliente_inferido, "
+            "       verificado_at, verificado_por, "
+            "       snapshot_n_visitas, snapshot_n_contratos, "
+            "       snapshot_n_garantias, snapshot_ultima_visita "
+            "  FROM mant_ia_planes "
+            " WHERE cliente_id=%s "
+            " ORDER BY generado_at DESC LIMIT 1", (cid,)
+        )
+    except Exception:
+        ultimo = None
+
+    # Caso 1: no hay plan previo → siempre se puede generar
+    if not ultimo:
+        return {
+            "ultimo_plan": None,
+            "puede_regenerar": True,
+            "motivo_bloqueo": None,
+            "info_nueva_disponible": False,
+            "info_nueva_resumen": [],
+            "dias_para_proximo": 0,
+        }
+
+    # Edad del plan en días
+    gen_at = ultimo.get("generado_at")
+    edad_dias = 0
+    if gen_at:
+        try:
+            ahora = datetime.utcnow()
+            edad_dias = max(0, (ahora - gen_at).days)
+        except Exception:
+            edad_dias = 0
+
+    verificado = ultimo.get("verificado_at") is not None
+    info_nueva, motivos = _mant_ia_detectar_info_nueva(cid, ultimo)
+    dias_para_proximo = max(0, _MANT_IA_PLAN_VIGENCIA_DIAS - edad_dias)
+
+    # Lógica de bloqueo
+    puede_regenerar = False
+    motivo_bloqueo = None
+
+    if not verificado:
+        motivo_bloqueo = (
+            "Plan anterior no verificado. Marca cumplimiento de "
+            "objetivos primero."
+        )
+    elif edad_dias < _MANT_IA_PLAN_VIGENCIA_DIAS and not info_nueva:
+        motivo_bloqueo = (
+            f"Esperando 6 meses (faltan {dias_para_proximo} días) "
+            "salvo que aparezca información nueva relevante."
+        )
+    else:
+        # Verificado Y (>=6 meses O info nueva)
+        puede_regenerar = True
+
+    # Resumen del plan anterior (para el frontend)
+    ultimo_resumen = {
+        "id":            ultimo.get("id"),
+        "generado_at":   gen_at.isoformat() if gen_at else None,
+        "generado_por":  ultimo.get("generado_por"),
+        "indice_salud":  ultimo.get("indice_salud"),
+        "indice_sla":    ultimo.get("indice_sla"),
+        "indice_cobranza": ultimo.get("indice_cobranza"),
+        "verificado_at": ultimo.get("verificado_at").isoformat()
+                         if ultimo.get("verificado_at") else None,
+        "verificado_por": ultimo.get("verificado_por"),
+        "edad_dias":     edad_dias,
+    }
+
+    return {
+        "ultimo_plan":             ultimo_resumen,
+        "puede_regenerar":         puede_regenerar,
+        "motivo_bloqueo":          motivo_bloqueo,
+        "info_nueva_disponible":   info_nueva,
+        "info_nueva_resumen":      motivos,
+        "dias_para_proximo":       dias_para_proximo,
+    }
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ia-plan-estado", methods=["GET"])
+@_mant_required
+def mant_ia_plan_estado(cid):
+    """Estado del análisis IA del cliente — sin consumir tokens.
+
+    El frontend lo llama al abrir el tab IA para decidir si el botón
+    'Analizar con IA' va habilitado (verde / morado / ámbar) o
+    deshabilitado ('Análisis vigente'). También se llama después de
+    verificar el cumplimiento para refrescar el botón.
+
+    Performance objetivo: <100ms (1 SELECT sobre mant_ia_planes con
+    índice idx_cliente_fecha + un puñado de COUNT(*) sobre el snapshot).
+    """
+    cliente = mysql_fetchone(
+        "SELECT id FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+    return jsonify({"ok": True, **_mant_ia_plan_estado(cid)})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ia-plan-verificar", methods=["POST"])
+@_mant_required
+def mant_ia_plan_verificar(cid):
+    """Marca el plan anterior como verificado por el usuario. Acepta una lista
+    de objetivos con cumplido True/False y evidencia/razón por cada uno.
+
+    Body esperado:
+      {
+        "plan_id": 42,
+        "objetivos_cumplidos": [
+          {"texto": "...", "cumplido": true, "evidencia": "..."},
+          {"texto": "...", "cumplido": false, "razon": "..."}
+        ],
+        "notas": "comentario general"
+      }
+    """
+    cliente = mysql_fetchone(
+        "SELECT id FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+
+    data = request.get_json(silent=True) or {}
+    plan_id = data.get("plan_id")
+    if not plan_id:
+        return jsonify({"error": "plan_id requerido"}), 400
+    try:
+        plan_id = int(plan_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "plan_id inválido"}), 400
+
+    # Verifica que el plan exista, pertenezca al cliente y no esté ya verificado
+    plan = mysql_fetchone(
+        "SELECT id, verificado_at FROM mant_ia_planes "
+        " WHERE id=%s AND cliente_id=%s", (plan_id, cid)
+    )
+    if not plan:
+        return jsonify({"error": "Plan no encontrado"}), 404
+    if plan.get("verificado_at"):
+        return jsonify({"error": "El plan ya fue verificado"}), 409
+
+    objetivos = data.get("objetivos_cumplidos") or []
+    if not isinstance(objetivos, list):
+        objetivos = []
+    notas = (data.get("notas") or "").strip()
+
+    try:
+        objetivos_json = json.dumps(objetivos, ensure_ascii=False)
+    except Exception:
+        objetivos_json = "[]"
+
+    user = current_username()
+    try:
+        mysql_execute(
+            "UPDATE mant_ia_planes "
+            "   SET verificado_at=NOW(), "
+            "       verificado_por=%s, "
+            "       objetivos_cumplidos=%s, "
+            "       notas_verificacion=%s "
+            " WHERE id=%s AND cliente_id=%s",
+            (user, objetivos_json, notas, plan_id, cid)
+        )
+    except Exception as e:
+        print(f"[ILUS][ia-plan-verificar] cid={cid} plan_id={plan_id} ERROR: {e}", flush=True)
+        return jsonify({"error": "No se pudo guardar la verificación"}), 500
+
+    try:
+        _mant_log(
+            "cliente", cid, "ia_plan_verificado",
+            f"plan_id={plan_id} obj_count={len(objetivos)}"
+        )
+    except Exception:
+        pass
+
+    # Después de verificar, vuelve a calcular el estado para indicarle al
+    # frontend si ya puede regenerar (caso típico: info nueva + verificado).
+    estado = _mant_ia_plan_estado(cid)
+    return jsonify({
+        "ok": True,
+        "ya_puede_regenerar": estado.get("puede_regenerar", False),
+        "estado": estado,
+    })
+
 
 @app.route("/mantenciones/api/clientes/<int:cid>/plan-mejora", methods=["POST"])
 @_mant_required
@@ -40844,6 +41203,17 @@ def mant_plan_mejora(cid):
             "cache_age_seconds": int(now_epoch - cached["ts"]),
             "meta": cached.get("meta", {}),
         })
+
+    # ── Validación: ¿puede regenerar? (6 meses + verificación + info nueva) ─
+    # Solo se gasta tokens si el estado lo permite. El frontend ya debería
+    # haber chequeado, pero este es el guard de servidor (no confiar en JS).
+    estado_pre = _mant_ia_plan_estado(cid)
+    if not estado_pre.get("puede_regenerar"):
+        return jsonify({
+            "error":            estado_pre.get("motivo_bloqueo") or "No se permite regenerar el plan en este momento",
+            "estado":           estado_pre,
+            "razon":            "bloqueo_politica_ia",
+        }), 409
 
     ai_key = _get_ai_key()
     if not ai_key:
@@ -41207,6 +41577,63 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
             flush=True
         )
 
+        # ── Persistir en mant_ia_planes ───────────────────────────────────
+        # El registro queda con verificado_at=NULL hasta que el usuario
+        # marque los objetivos como cumplidos vía /ia-plan-verificar.
+        plan_id = None
+        snap = _mant_ia_snapshot_actual(cid)
+        try:
+            plan_json_str = json.dumps(plan, ensure_ascii=False)
+        except Exception:
+            plan_json_str = "{}"
+        try:
+            tipo_cliente_inf = (plan.get("tipo_cliente_inferido") or "")[:30]
+        except Exception:
+            tipo_cliente_inf = ""
+        try:
+            indice_salud_val = plan.get("indice_salud")
+            indice_sla_val   = plan.get("indice_cumplimiento_sla")
+            indice_cob_val   = plan.get("indice_cobranza")
+            # Asegurar int (Claude a veces devuelve floats)
+            indice_salud_val = int(indice_salud_val) if isinstance(indice_salud_val, (int, float)) else None
+            indice_sla_val   = int(indice_sla_val)   if isinstance(indice_sla_val,   (int, float)) else None
+            indice_cob_val   = int(indice_cob_val)   if isinstance(indice_cob_val,   (int, float)) else None
+
+            mysql_execute(
+                "INSERT INTO mant_ia_planes "
+                "  (cliente_id, generado_por, plan_json, "
+                "   indice_salud, indice_sla, indice_cobranza, "
+                "   tipo_cliente_inferido, "
+                "   snapshot_n_visitas, snapshot_n_contratos, "
+                "   snapshot_n_garantias, snapshot_ultima_visita) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (cid, current_username(), plan_json_str,
+                 indice_salud_val, indice_sla_val, indice_cob_val,
+                 tipo_cliente_inf or None,
+                 snap.get("n_visitas"), snap.get("n_contratos"),
+                 snap.get("n_garantias"), snap.get("ultima_visita"))
+            )
+            # mysql_execute no devuelve lastrowid → leer el último por cliente
+            last = mysql_fetchone(
+                "SELECT id FROM mant_ia_planes "
+                " WHERE cliente_id=%s "
+                " ORDER BY id DESC LIMIT 1", (cid,)
+            )
+            plan_id = last.get("id") if last else None
+        except Exception as e:
+            print(f"[ILUS][plan-mejora] cid={cid} WARN persist: {e}", flush=True)
+            plan_id = None
+
+        try:
+            _mant_log(
+                "cliente", cid, "ia_plan_generado",
+                f"plan_id={plan_id} salud={meta.get('context_size', {}).get('maquinas','?')}eq"
+            )
+        except Exception:
+            pass
+
+        meta["plan_id"] = plan_id
+
         # Cache
         _MANT_PLAN_CACHE[cid] = {
             "ts": now_epoch,
@@ -41220,6 +41647,7 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
             "plan": plan,
             "cliente": cliente.get("razon_social", ""),
             "cached": False,
+            "plan_id": plan_id,
             "meta": meta,
         })
     except Exception as e:

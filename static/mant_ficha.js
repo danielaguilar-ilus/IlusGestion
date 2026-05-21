@@ -2954,8 +2954,312 @@ async function eliminarVisita() {
 }
 
 // ─── Plan de Mejora IA ────────────────────────────────────
-// `force=true` → ignora el cache del backend (1h TTL) y regenera.
-async function generarPlanMejora(force) {
+// Estado del análisis (cacheado en memoria de la página) — se rellena
+// al abrir el tab IA y después de cada acción que lo modifique.
+let _PLAN_IA_ESTADO = null;
+
+// Punto de entrada único del botón "Analizar con IA". Su comportamiento
+// depende del estado actual:
+//   - sin plan previo          → genera uno nuevo (no gasta tokens si ya
+//                                 el backend tiene cache de 1h)
+//   - plan no verificado       → abre modal de verificación
+//   - plan vigente sin info nueva → no hace nada (botón debería estar deshabilitado)
+//   - plan verificado >6 meses → genera uno nuevo
+//   - info nueva detectada     → genera uno nuevo
+async function planAccionIA() {
+  if (!_PLAN_IA_ESTADO) {
+    await planActualizarEstadoIA();
+  }
+  const e = _PLAN_IA_ESTADO || {};
+
+  // Si hay un plan anterior y no está verificado → abrir modal
+  if (e.ultimo_plan && !e.ultimo_plan.verificado_at) {
+    planAbrirModalVerificar();
+    return;
+  }
+
+  // Si no puede regenerar (>6 meses + sin info nueva) → toast informativo
+  if (!e.puede_regenerar) {
+    ilusToast(e.motivo_bloqueo || 'El plan anterior aún está vigente.', { type: 'info' });
+    return;
+  }
+
+  // Genera (puede ser primer plan o re-generación legítima)
+  await generarPlanMejora();
+}
+
+// Llama al endpoint de estado y refresca el botón / chips. NO gasta tokens.
+async function planActualizarEstadoIA() {
+  const btn = document.getElementById('btnGenerarPlan');
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ia-plan-estado`);
+    const data = await r.json();
+    if (data && data.ok) {
+      _PLAN_IA_ESTADO = data;
+    } else {
+      _PLAN_IA_ESTADO = null;
+    }
+  } catch(e) {
+    _PLAN_IA_ESTADO = null;
+  }
+  planRenderEstadoIA();
+
+  // Si hay un plan vigente, también lo rehidrata en pantalla sin volver a llamar
+  // al endpoint IA (que sí gastaría tokens si el cache RAM expiró).
+  const e = _PLAN_IA_ESTADO || {};
+  if (e.ultimo_plan && !document.getElementById('planResultado').dataset.rendered) {
+    // Solo intentamos rehidratar leyendo el campo plan_json — si no viene en el
+    // payload, dejamos el área vacía. (El endpoint actual no lo expone para
+    // evitar payloads pesados; la rehidratación visual aparece al regenerar.)
+    // Nada que hacer aquí — el render real ocurre cuando el usuario presiona el botón.
+  }
+}
+
+// Pinta el estado en el botón principal + chips informativos.
+function planRenderEstadoIA() {
+  const btn   = document.getElementById('btnGenerarPlan');
+  const status = document.getElementById('planCtStatus');
+  const chips  = document.getElementById('planEstadoChips');
+  if (!btn || !status) return;
+
+  const e = _PLAN_IA_ESTADO || {};
+  const ult = e.ultimo_plan;
+
+  // Por defecto, botón habilitado morado
+  btn.disabled = false;
+  btn.classList.remove('btn-secondary','btn-warning','btn-ilus','btn-purple','disabled');
+  btn.style.background = '';
+  btn.style.color = '';
+  btn.style.borderColor = '';
+  btn.classList.add('btn-ilus');
+
+  // Reset chips
+  if (chips) { chips.style.display = 'none'; chips.innerHTML = ''; }
+
+  // CASO 1: sin plan previo
+  if (!ult) {
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar análisis IA';
+    status.innerHTML = '<span class="text-muted"><i class="bi bi-info-circle me-1"></i>Aún no se ha generado un análisis IA para este cliente</span>';
+    return;
+  }
+
+  // Datos comunes
+  const verif = !!ult.verificado_at;
+  const edad  = ult.edad_dias ?? 0;
+  const dias  = e.dias_para_proximo ?? 0;
+  const infoNueva = !!e.info_nueva_disponible;
+  const fechaGen = (ult.generado_at || '').slice(0, 10);
+
+  // CASO 2: plan no verificado → botón ámbar
+  if (!verif) {
+    btn.classList.remove('btn-ilus');
+    btn.style.background = '#f59e0b';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#f59e0b';
+    btn.innerHTML = '<i class="bi bi-clipboard-check me-2"></i>Verificar cumplimiento del plan anterior';
+    status.innerHTML = `<span style="color:#92400e"><i class="bi bi-exclamation-triangle me-1"></i>Plan del ${fechaGen} pendiente de verificación</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#fef3c7;color:#92400e;font-size:.7rem">
+          <i class="bi bi-exclamation-triangle me-1"></i>Falta verificar cumplimiento
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Análisis vigente del ${fechaGen}
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 3: plan verificado + info nueva → botón morado con badge
+  if (infoNueva) {
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-2"></i>Actualizar análisis (info nueva)';
+    const motivos = (e.info_nueva_resumen || []).slice(0, 2).join(' · ');
+    status.innerHTML = `<span style="color:#7c3aed"><i class="bi bi-stars me-1"></i>${motivos || 'Hay información nueva relevante'}</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#dcfce7;color:#166534;font-size:.7rem">
+          <i class="bi bi-stars me-1"></i>Info nueva disponible
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Plan vigente del ${fechaGen}
+        </span>
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-check2-circle me-1"></i>Verificado
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 4: plan verificado + >=6 meses (puede regenerar)
+  if (e.puede_regenerar) {
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar nuevo análisis IA';
+    status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Plan anterior verificado · ya pasaron 6 meses</span>`;
+    if (chips) {
+      chips.style.display = '';
+      chips.innerHTML = `
+        <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+          <i class="bi bi-calendar3 me-1"></i>Último plan: ${fechaGen} (${edad} días)
+        </span>
+      `;
+    }
+    return;
+  }
+
+  // CASO 5: plan verificado pero <6 meses sin info nueva → deshabilitado
+  btn.disabled = true;
+  btn.classList.remove('btn-ilus');
+  btn.style.background = '#9ca3af';
+  btn.style.color = '#fff';
+  btn.style.borderColor = '#9ca3af';
+  btn.innerHTML = `<i class="bi bi-hourglass-split me-2"></i>Análisis vigente — próximo en ${dias} días`;
+  status.innerHTML = `<span class="text-muted"><i class="bi bi-info-circle me-1"></i>Plan del ${fechaGen} verificado · siguiente disponible en ${dias} días</span>`;
+  if (chips) {
+    chips.style.display = '';
+    chips.innerHTML = `
+      <span class="badge" style="background:#dcfce7;color:#166534;font-size:.7rem">
+        <i class="bi bi-check2-circle me-1"></i>Verificado
+      </span>
+      <span class="badge" style="background:#f3f4f6;color:#374151;font-size:.7rem">
+        <i class="bi bi-calendar3 me-1"></i>Plan vigente del ${fechaGen}
+      </span>
+    `;
+  }
+}
+
+// Abre el modal de verificación con los objetivos del plan anterior.
+async function planAbrirModalVerificar() {
+  const e = _PLAN_IA_ESTADO || {};
+  const ult = e.ultimo_plan;
+  if (!ult || !ult.id) {
+    ilusToast('No hay plan anterior por verificar', { type: 'info' });
+    return;
+  }
+
+  // Necesitamos el JSON completo del plan anterior para listar los objetivos.
+  // El endpoint /ia-plan-estado no lo devuelve por temas de payload. Pero el
+  // plan ya quedó guardado en mant_ia_planes — para reconstruir objetivos en
+  // la UI, sin gastar tokens, vamos a inferirlos de la última render del plan
+  // (si el usuario lo vio antes). Si no hay render previo en esta sesión,
+  // listamos un objetivo genérico ("Plan IA del DD/MM").
+  let objetivos = [];
+  const rendered = window._PLAN_IA_ULTIMO_RENDER;
+  if (rendered && rendered.plan_id === ult.id) {
+    const p = rendered.plan || {};
+    // 1) Próxima visita sugerida
+    if (p.proxima_visita && p.proxima_visita.razon) {
+      objetivos.push({
+        texto: `Realizar visita ${p.proxima_visita.tipo || ''} sugerida para ${p.proxima_visita.fecha_sugerida || ''}: ${p.proxima_visita.razon}`,
+      });
+    }
+    // 2) Propuestas de mejora
+    (p.propuestas_mejora || []).slice(0, 6).forEach(pm => {
+      objetivos.push({ texto: pm.titulo || pm.descripcion || 'Propuesta de mejora' });
+    });
+    // 3) Recomendaciones equipos (solo las urgentes/atencion)
+    (p.recomendaciones_equipos || []).filter(r => r.estado !== 'ok').slice(0, 4).forEach(r => {
+      objetivos.push({ texto: `${r.equipo}: ${r.accion} (${r.plazo || ''})` });
+    });
+    // 4) Oportunidades comerciales
+    (p.oportunidades_comerciales || []).slice(0, 3).forEach(oc => {
+      objetivos.push({ texto: typeof oc === 'string' ? oc : (oc.titulo || JSON.stringify(oc)) });
+    });
+  }
+
+  // Fallback: si la sesión actual no tiene el render del plan, ofrecer
+  // un objetivo genérico para que el usuario aún pueda verificar.
+  if (objetivos.length === 0) {
+    objetivos = [
+      { texto: `Plan IA del ${(ult.generado_at || '').slice(0,10)} — cumplimiento general` }
+    ];
+  }
+
+  // Render del modal
+  const cont = document.getElementById('vpObjetivos');
+  const info = document.getElementById('vpInfoPlan');
+  info.innerHTML = `
+    <div><strong>Plan #${ult.id}</strong> generado el ${(ult.generado_at || '').slice(0,16).replace('T',' ')}</div>
+    <div>Generado por: ${ult.generado_por || '—'} · Antigüedad: ${ult.edad_dias} días</div>
+  `;
+  cont.innerHTML = objetivos.map((o, idx) => `
+    <div class="vp-obj p-2 rounded mb-2"
+         style="border:1px solid #e5e7eb;background:#fff">
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" id="vp_obj_${idx}" checked>
+        <label class="form-check-label fw-semibold" for="vp_obj_${idx}" style="font-size:.86rem">
+          ${o.texto.replace(/</g,'&lt;')}
+        </label>
+      </div>
+      <textarea class="form-control" id="vp_obj_${idx}_txt" rows="2"
+                placeholder="Evidencia si se cumplió (ej: visita #156 el 15/05) o razón si no se cumplió"
+                style="font-size:.82rem"></textarea>
+    </div>
+  `).join('');
+  document.getElementById('vpNotas').value = '';
+  // Guardar referencia para usar en confirmación
+  window._VP_PLAN_ID = ult.id;
+  window._VP_OBJETIVOS = objetivos;
+  new bootstrap.Modal(document.getElementById('modalVerificarPlan')).show();
+}
+
+// Envía la verificación al backend y refresca el estado.
+async function planConfirmarVerificacion() {
+  const planId = window._VP_PLAN_ID;
+  const objetivos = window._VP_OBJETIVOS || [];
+  if (!planId) {
+    ilusToast('No hay plan a verificar', { type: 'error' });
+    return;
+  }
+  const payload = objetivos.map((o, idx) => {
+    const cumplido = document.getElementById(`vp_obj_${idx}`).checked;
+    const txt = (document.getElementById(`vp_obj_${idx}_txt`).value || '').trim();
+    return cumplido
+      ? { texto: o.texto, cumplido: true, evidencia: txt }
+      : { texto: o.texto, cumplido: false, razon: txt };
+  });
+  const notas = (document.getElementById('vpNotas').value || '').trim();
+
+  const btn = document.getElementById('vpBtnConfirmar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Guardando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ia-plan-verificar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId, objetivos_cumplidos: payload, notas }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      ilusToast(data.error || 'Error al guardar la verificación', { type: 'error' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento';
+      return;
+    }
+    bootstrap.Modal.getInstance(document.getElementById('modalVerificarPlan')).hide();
+    ilusToast('Verificación guardada', { type: 'success' });
+    await planActualizarEstadoIA();
+    // Si tras verificar ya puede regenerar (caso info nueva), avisar al usuario.
+    if (data.ya_puede_regenerar) {
+      const ok = await ilusConfirm({
+        title: '¿Generar análisis nuevo?',
+        message: 'El plan anterior quedó verificado. Hay información nueva relevante.',
+        sub: '¿Quieres generar un análisis IA actualizado ahora?',
+        okLabel: 'Sí, generar', cancelLabel: 'Más tarde',
+      });
+      if (ok) await generarPlanMejora();
+    }
+  } catch(e) {
+    ilusToast('Error de conexión: ' + e.message, { type: 'error' });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento';
+  }
+}
+
+// Llama al endpoint pesado (gasta tokens si no hay cache RAM en backend).
+async function generarPlanMejora() {
   const btn = document.getElementById('btnGenerarPlan');
   const spinner = document.getElementById('planSpinner');
   const resultado = document.getElementById('planResultado');
@@ -2966,31 +3270,66 @@ async function generarPlanMejora(force) {
   resultado.style.display = 'none';
 
   try {
-    const url = `/mantenciones/api/clientes/${CID}/plan-mejora${force ? '?force=1' : ''}`;
+    const url = `/mantenciones/api/clientes/${CID}/plan-mejora`;
     const r = await fetch(url, { method: 'POST' });
     const data = await r.json();
 
     spinner.style.display = 'none';
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Re-generar Plan';
+
+    if (r.status === 409) {
+      // Bloqueo de política (no verificado / dentro de 6 meses)
+      resultado.style.display = '';
+      resultado.innerHTML = `<div class="alert alert-warning"><i class="bi bi-shield-exclamation me-1"></i>${data.error || 'No se puede regenerar ahora'}</div>`;
+      await planActualizarEstadoIA();
+      return;
+    }
 
     if (!data.ok) {
       resultado.style.display = '';
       resultado.innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'Error al generar plan'}</div>`;
+      await planActualizarEstadoIA();
       return;
     }
 
+    // Guardar referencia para que el modal de verificación pueda listar objetivos
+    window._PLAN_IA_ULTIMO_RENDER = { plan_id: data.plan_id, plan: data.plan };
     renderPlan(data.plan, data.cliente, data);
     resultado.style.display = '';
+    document.getElementById('planResultado').dataset.rendered = '1';
+    // Refrescar estado del botón (ahora muestra "vigente" porque hay plan nuevo no verificado)
+    await planActualizarEstadoIA();
 
   } catch(e) {
     spinner.style.display = 'none';
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generar Plan de Mejora';
     resultado.style.display = '';
     resultado.innerHTML = `<div class="alert alert-danger">Error de conexión: ${e.message}</div>`;
+    await planActualizarEstadoIA();
   }
 }
+
+// Al cargar el tab IA por primera vez, cargar el estado.
+// (sin window load — se dispara cuando el usuario abre el tab para no
+//  ralentizar la carga inicial de la ficha).
+(function _planEstadoIniHook() {
+  const btnTab = document.querySelector('.ftab-btn[data-tab="ia"]');
+  if (!btnTab) return;
+  let cargado = false;
+  btnTab.addEventListener('click', () => {
+    if (!cargado) {
+      cargado = true;
+      planActualizarEstadoIA();
+    }
+  });
+  // Si el tab IA es el que quedó guardado en localStorage, cargar al iniciar
+  try {
+    const saved = localStorage.getItem(TAB_KEY);
+    if (saved === 'ia') {
+      cargado = true;
+      // Pequeño defer para que el DOM esté completo
+      setTimeout(() => planActualizarEstadoIA(), 50);
+    }
+  } catch(e) {}
+})();
 
 function renderPlan(p, clienteNombre, envelope) {
   envelope = envelope || {};
@@ -3020,11 +3359,11 @@ function renderPlan(p, clienteNombre, envelope) {
         Plan generado por IA
         ${cacheBadge}
       </div>
-      <button onclick="generarPlanMejora(true)"
+      <button onclick="planAccionIA()"
               class="btn btn-sm btn-outline-secondary"
-              title="Ignorar caché y regenerar con datos actuales"
+              title="Genera un análisis nuevo si la política IA lo permite (verificación + 6 meses o info nueva)"
               style="font-size:.72rem">
-        <i class="bi bi-arrow-clockwise me-1"></i>Refrescar plan
+        <i class="bi bi-arrow-clockwise me-1"></i>Revisar / actualizar
       </button>
     </div>
     <div class="d-flex align-items-center gap-3 flex-wrap">

@@ -4914,26 +4914,28 @@ function abrirEmailManual() {
     <span class="plan-hero-icon">🤖</span>
     <div class="plan-hero-title">Plan de Mejora con IA</div>
     <div class="plan-hero-sub">
-      Genera un análisis profundo con proyecciones a 12 meses, recomendaciones por equipo,
-      alertas críticas y oportunidades comerciales — impulsado por Claude AI.
+      Un solo análisis combina diagnóstico, proyección 12 meses, recomendaciones
+      por equipo y objetivos comerciales. Se genera <strong>una vez cada 6 meses</strong>
+      (o antes si aparece información nueva relevante) y debe verificarse el cumplimiento
+      del plan anterior antes de regenerar — para no desperdiciar tokens ni perder trazabilidad.
     </div>
+
+    {# Botón único — su estado lo gobierna planActualizarBotonIA() en JS #}
     <div class="mt-3 d-flex gap-2 flex-wrap align-items-center">
-      <button class="btn btn-ilus fw-bold px-4" id="btnGenerarPlan" onclick="generarPlanMejora()">
-        <i class="bi bi-stars me-2"></i>Generar Plan de Mejora
+      <button class="btn btn-ilus fw-bold px-4" id="btnGenerarPlan"
+              data-cid="{{ cliente.id }}" onclick="planAccionIA()">
+        <i class="bi bi-stars me-2"></i>Analizar con IA
       </button>
-      {# Estado dinámico — se actualiza vía JS después de analizar sin recargar #}
-      {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
       <span id="planCtStatus" style="font-size:.78rem;align-self:center">
-        {% if ct_analizados %}
-        <span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>{{ ct_analizados|length }} contrato(s) analizado(s)</span>
-        {% else %}
-        <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Sin contratos analizados — analiza uno primero para un plan más detallado</span>
-        {% endif %}
+        <span class="text-muted"><i class="bi bi-hourglass-split me-1"></i>Cargando estado del análisis…</span>
       </span>
       <a href="#" onclick="switchTab('contrato');return false" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-arrow-right me-1"></i>Ir a contratos
       </a>
     </div>
+
+    {# Chip de plan vigente (lo rellena planRenderEstadoIA en JS) #}
+    <div id="planEstadoChips" class="mt-3 d-flex gap-2 flex-wrap" style="display:none"></div>
   </div>
 
   {# Resumen IA de contratos existentes ──────────────── #}
@@ -4976,6 +4978,52 @@ function abrirEmailManual() {
 
 </div>
 {# /ftab-pane ia #}
+
+
+{# ── Modal: Verificar cumplimiento del plan IA anterior ─────────────────
+   Se muestra cuando el plan no está verificado. Lista los objetivos
+   (propuestas_mejora + proxima_visita) extraídos del plan_json anterior y
+   pide check + evidencia/razón por cada uno antes de permitir un análisis
+   nuevo. La lista la rellena planAbrirModalVerificar() en mant_ficha.js. #}
+<div class="modal fade" id="modalVerificarPlan" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #fcd34d">
+        <h5 class="modal-title fw-bold" style="color:#92400e">
+          <i class="bi bi-clipboard-check me-2"></i>Verificar cumplimiento del plan anterior
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="font-size:.85rem">
+          Antes de generar un nuevo análisis IA, marca qué objetivos del plan anterior
+          se cumplieron. Esto previene gasto innecesario de tokens y mantiene la trazabilidad
+          del seguimiento al cliente.
+        </p>
+        <div id="vpInfoPlan" class="mb-3 p-2 rounded"
+             style="background:#f9fafb;border:1px solid #e5e7eb;font-size:.8rem;color:#374151">
+          <!-- Datos del plan a verificar -->
+        </div>
+        <div id="vpObjetivos">
+          <!-- Lista de objetivos generada dinámicamente -->
+        </div>
+        <div class="mt-3">
+          <label class="form-label fw-semibold" style="font-size:.82rem">
+            Notas generales sobre el cumplimiento (opcional)
+          </label>
+          <textarea class="form-control" id="vpNotas" rows="3"
+                    placeholder="Ej: El plan se cumplió parcialmente. Faltó renegociar contrato por agenda del cliente."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-success fw-bold" id="vpBtnConfirmar" onclick="planConfirmarVerificacion()">
+          <i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 
 {# ══════════════════════════════════════════════════════════════════
