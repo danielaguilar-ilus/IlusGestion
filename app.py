@@ -26735,7 +26735,9 @@ def mant_tecnico_externo_invitar(eid):
     email_err = None
     try:
         from markupsafe import escape as _esc
-        subject = f"Invitación ILUS — Activa tu cuenta de técnico externo"
+        # 2026-05-21: usar _brand_subject() para que respete el nombre
+        # de empresa editable desde /comunicaciones (antes hardcode "ILUS")
+        subject = _brand_subject("Activa tu cuenta de técnico externo")
         nombre_corto = (row.get("contacto_nombre") or "").split()[0] or "Hola"
         # FIX 2026-05-17 BLOCKER #3 — escape de todos los strings de DB que
         # van al HTML para prevenir XSS en clientes de email que renderizan HTML.
@@ -33549,9 +33551,10 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
             link_ot = (f"{base}/mantenciones/ot/{vid}/ejecutar"
                        if base else f"/mantenciones/ot/{vid}/ejecutar")
 
-            subject = f"ILUS · {numero_ot} esperando tu firma de aprobación"
+            # 2026-05-21: subject + WA usan marca editable desde /comunicaciones
+            subject = _brand_subject(f"{numero_ot} esperando tu firma de aprobación")
             wa_template = (
-                f"ILUS · {numero_ot} esperando tu firma\n\n"
+                _brand_wa_prefix(f"{numero_ot} esperando tu firma") +
                 f"Hola {{nombre}}, el técnico {tecnico} terminó la OT "
                 f"{numero_ot} para el cliente {razon}.\n\n"
                 f"Firma como aprobador para cerrarla:\n{link_ot}"
