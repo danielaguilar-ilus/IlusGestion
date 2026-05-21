@@ -40786,135 +40786,430 @@ else:
         print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
+#
+# Cache en RAM con TTL 1 hora — evita gastar tokens si Daniel hace click dos
+# veces seguidas. La key es f"plan_mejora_{cid}". Botón "Refrescar plan" en la
+# UI fuerza la regeneración pasando ?force=1 en la query string.
+_MANT_PLAN_CACHE = {}          # cid -> {"ts": float, "plan": dict, "cliente": str, "meta": dict}
+_MANT_PLAN_CACHE_TTL = 3600    # 1 hora
+
 
 @app.route("/mantenciones/api/clientes/<int:cid>/plan-mejora", methods=["POST"])
 @_mant_required
 def mant_plan_mejora(cid):
     """
-    Genera un plan de mejora y proyecciones para el próximo ciclo usando Claude AI.
-    Considera: equipos del cliente, contratos vigentes, análisis IA previos.
+    Genera un plan de mejora ENRIQUECIDO usando Claude AI.
+
+    Mejoras 2026-05-21 (Plan UX ILUS):
+      - Modelo claude-opus-4-7 (era 4-5).
+      - Contexto ampliado: tipo_cliente, frecuencia real vs contractual,
+        garantías por vencer, estado financiero (facturado/pendiente),
+        visitas históricas con outcome, notificaciones pendientes.
+      - JSON response más profundo: índices SLA/cobranza, riesgos
+        financieros, renovación de contrato.
+      - System prompt explícito + instrucción de NO inventar datos.
+      - Logging de elapsed_ms + tokens para auditoría.
+      - Cache RAM TTL 1h (key=plan_mejora_<cid>). `?force=1` lo invalida.
     """
+    import time as _time
+
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"error": "Cliente no encontrado"}), 404
 
-    maquinas  = mysql_fetchall("SELECT * FROM mant_maquinas WHERE cliente_id=%s AND estado!='baja'", (cid,))
-    contratos = mysql_fetchall("SELECT * FROM mant_contratos WHERE cliente_id=%s", (cid,))
-    visitas   = mysql_fetchall(
-        "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 10", (cid,)
-    )
+    # ── Cache hit (salvo force) ───────────────────────────────────────────
+    force_refresh = (request.args.get("force") or "").strip() in ("1", "true", "yes")
+    now_epoch = _time.time()
+    cached = _MANT_PLAN_CACHE.get(cid)
+    if not force_refresh and cached and (now_epoch - cached["ts"]) < _MANT_PLAN_CACHE_TTL:
+        return jsonify({
+            "ok": True,
+            "plan": cached["plan"],
+            "cliente": cached["cliente"],
+            "cached": True,
+            "cache_age_seconds": int(now_epoch - cached["ts"]),
+            "meta": cached.get("meta", {}),
+        })
 
     ai_key = _get_ai_key()
     if not ai_key:
         return jsonify({"error": "API de IA no configurada"}), 503
 
-    # Construir contexto del cliente
+    # ── 1. Datos crudos ───────────────────────────────────────────────────
+    maquinas  = mysql_fetchall(
+        "SELECT * FROM mant_maquinas "
+        "WHERE cliente_id=%s AND estado!='baja' "
+        "ORDER BY nombre", (cid,)
+    ) or []
+    contratos = mysql_fetchall(
+        "SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY id DESC", (cid,)
+    ) or []
+    visitas_all = mysql_fetchall(
+        "SELECT id, fecha_programada, fecha_realizada, tipo, estado, "
+        "       titulo, tecnico, costo, descripcion, observaciones, "
+        "       estado_facturacion, cubierto_por "
+        "  FROM mant_visitas "
+        " WHERE cliente_id=%s "
+        " ORDER BY COALESCE(fecha_realizada, fecha_programada) DESC", (cid,)
+    ) or []
+
+    from datetime import date, timedelta as _td
+    hoy = date.today()
+
+    # ── 2. Partir visitas en pasadas vs futuras ───────────────────────────
+    def _ref_date(v):
+        return v.get("fecha_realizada") or v.get("fecha_programada")
+
+    completadas = [v for v in visitas_all if (v.get("estado") or "").lower() == "completada"]
+    futuras     = [v for v in visitas_all
+                   if _ref_date(v) and _ref_date(v) >= hoy
+                   and (v.get("estado") or "").lower() not in ("completada", "cancelada", "anulada")]
+    pasadas_year = [v for v in completadas
+                    if _ref_date(v) and _ref_date(v) >= (hoy - _td(days=365))]
+
+    # ── 3. Tipo de cliente ────────────────────────────────────────────────
+    tipo_cliente = (cliente.get("tipo_cliente") or "mantencion").lower()
+
+    # ── 4. Estado financiero ──────────────────────────────────────────────
+    total_facturado_anio = sum(
+        float(v.get("costo") or 0) for v in completadas
+        if _ref_date(v) and _ref_date(v) >= (hoy - _td(days=365))
+        and (v.get("estado_facturacion") or "") == "facturado"
+    )
+    visitas_pendientes_factura = [
+        v for v in completadas
+        if (v.get("estado_facturacion") or "sin_cotizar") in ("sin_cotizar", "cotizado", "con_oc")
+        and (v.get("cubierto_por") or "contrato") != "garantia"
+    ]
+    total_pendiente_factura = sum(float(v.get("costo") or 0) for v in visitas_pendientes_factura)
+    n_garantia = sum(1 for v in completadas if (v.get("cubierto_por") or "") == "garantia")
+
+    # ── 5. Garantías por vencer (próximos 60 días) ────────────────────────
+    gar_pronto = []
+    for m in maquinas:
+        ffg = m.get("fecha_fin_garantia")
+        if not ffg:
+            continue
+        try:
+            d_ffg = ffg if hasattr(ffg, "year") else None
+            if d_ffg and (d_ffg.date() if hasattr(d_ffg, "date") else d_ffg) >= hoy:
+                d_real = d_ffg.date() if hasattr(d_ffg, "date") else d_ffg
+                dias = (d_real - hoy).days
+                if dias <= 60:
+                    gar_pronto.append({
+                        "equipo": m.get("nombre") or "Equipo",
+                        "serie":  m.get("serie") or "",
+                        "fecha_fin": d_real.isoformat(),
+                        "dias_restantes": dias,
+                    })
+        except Exception:
+            pass
+
+    # ── 6. Frecuencia real vs contractual ─────────────────────────────────
+    freq_contractual_meses = None
+    ct_vigentes = [c for c in contratos if c.get("estado") in ("vigente", "indefinido")]
+    if ct_vigentes:
+        freq_contractual_meses = ct_vigentes[0].get("frecuencia_meses")
+
+    fechas_preventivas = sorted([
+        _ref_date(v) for v in completadas
+        if (v.get("tipo") or "") == "preventiva" and _ref_date(v)
+    ])
+    freq_real_meses = None
+    if len(fechas_preventivas) >= 2:
+        gaps = []
+        for i in range(1, len(fechas_preventivas)):
+            d1 = fechas_preventivas[i-1]
+            d2 = fechas_preventivas[i]
+            try:
+                gaps.append((d2 - d1).days / 30.4375)
+            except Exception:
+                pass
+        if gaps:
+            freq_real_meses = round(sum(gaps) / len(gaps), 1)
+
+    # ── 7. Contrato por vencer ────────────────────────────────────────────
+    dias_para_vencer_contrato = None
+    if ct_vigentes:
+        fv = ct_vigentes[0].get("fecha_vencimiento")
+        if fv:
+            try:
+                d_fv = fv.date() if hasattr(fv, "date") else fv
+                dias_para_vencer_contrato = (d_fv - hoy).days
+            except Exception:
+                pass
+
+    # ── 8. Notificaciones internas pendientes ────────────────────────────
+    notif_pendientes = []
+    try:
+        notif_pendientes = mysql_fetchall(
+            "SELECT tipo, prioridad, titulo, cuerpo, created_at "
+            "  FROM mant_notificaciones "
+            " WHERE cliente_id=%s "
+            "   AND leida_at IS NULL "
+            "   AND archivada_at IS NULL "
+            " ORDER BY created_at DESC LIMIT 10", (cid,)
+        ) or []
+    except Exception:
+        pass
+
+    # ── 9. Armar texto enriquecido para el prompt ─────────────────────────
     equipos_txt = "\n".join([
-        f"- {m['nombre']} (SKU: {m.get('sku','N/A')}, Cant: {m.get('cantidad',1)}, "
-        f"Doc: {m.get('doc_origen','')}, Fecha: {m.get('doc_fecha','')}, Estado: {m.get('estado_op','operativo')})"
+        f"- {m.get('nombre','?')} (SKU: {m.get('sku','N/A')}, Familia: {m.get('familia_equipo','otros')}, "
+        f"Cant: {m.get('cantidad',1)}, Estado: {m.get('estado_op','operativo')}, "
+        f"Fin garantía: {m.get('fecha_fin_garantia','-') or '-'})"
         for m in maquinas
     ]) or "Sin equipos registrados"
 
-    ct_vigentes = [c for c in contratos if c.get("estado") in ("vigente", "indefinido")]
     contratos_txt = "\n".join([
-        f"- {c['nombre']} | Tipo: {c.get('ai_tipo_contrato','N/A')} | "
-        f"Monto: ${c.get('monto_mensual',0):,.0f}/mes | Frecuencia: cada {c.get('frecuencia_meses','?')} meses | "
-        f"SLA: {c.get('sla_horas','?')}h | Score IA: {c.get('ai_score','N/A')} | "
-        f"Incluye repuestos: {'Sí' if c.get('incluye_repuestos') else 'No'} | "
-        f"Vencimiento: {c.get('fecha_vencimiento','indefinido')}"
+        f"- {c.get('nombre','Contrato')} | Tipo: {c.get('ai_tipo_contrato','N/A')} | "
+        f"Monto: ${(c.get('monto_mensual') or 0):,.0f}/mes | "
+        f"Frecuencia: cada {c.get('frecuencia_meses','?')} meses | "
+        f"SLA: {c.get('sla_horas','?')}h | "
+        f"Repuestos incluidos: {'Sí' if c.get('incluye_repuestos') else 'No'} | "
+        f"Vencimiento: {c.get('fecha_vencimiento','indefinido')} | "
+        f"Estado: {c.get('estado','?')}"
         for c in ct_vigentes
     ]) or "Sin contratos vigentes"
+
+    # Visitas pasadas con outcome (últimas 8 con detalle)
+    visitas_hist_txt = ""
+    for v in completadas[:8]:
+        fr = _ref_date(v)
+        fr_s = fr.isoformat() if hasattr(fr, "isoformat") else str(fr or "?")
+        obs = (v.get("observaciones") or v.get("descripcion") or "").strip()
+        if len(obs) > 120:
+            obs = obs[:117] + "..."
+        cost = v.get("costo")
+        cost_s = f"${cost:,.0f}" if cost else "s/costo"
+        fact = v.get("estado_facturacion") or "sin_cotizar"
+        cub = v.get("cubierto_por") or "contrato"
+        visitas_hist_txt += (
+            f"\n  · {fr_s} — {v.get('tipo','?')} {v.get('estado','?')} "
+            f"| téc: {v.get('tecnico','?')} | {cost_s} ({fact}/{cub})"
+            f"{' | obs: ' + obs if obs else ''}"
+        )
+    visitas_hist_txt = visitas_hist_txt or "  · Sin visitas históricas completadas"
+
+    futuras_txt = ""
+    for v in futuras[:6]:
+        fp = v.get("fecha_programada")
+        fp_s = fp.isoformat() if hasattr(fp, "isoformat") else str(fp or "?")
+        futuras_txt += (
+            f"\n  · {fp_s} — {v.get('tipo','?')} ({v.get('estado','?')}) "
+            f"| téc: {v.get('tecnico','sin asignar')}"
+        )
+    futuras_txt = futuras_txt or "  · No hay visitas futuras programadas"
+
+    gar_txt = ""
+    for g in gar_pronto:
+        gar_txt += f"\n  · {g['equipo']} — vence {g['fecha_fin']} (en {g['dias_restantes']} días)"
+    gar_txt = gar_txt or "  · Sin garantías próximas a vencer (60 días)"
+
+    notif_txt = ""
+    for n in notif_pendientes[:6]:
+        notif_txt += f"\n  · [{n.get('prioridad','?')}] {n.get('tipo','?')}: {n.get('titulo','?')}"
+    notif_txt = notif_txt or "  · Sin notificaciones pendientes"
 
     ai_mejoras_txt = ""
     for c in contratos:
         if c.get("ai_mejoras"):
             try:
                 mejoras = json.loads(c["ai_mejoras"])
-                ai_mejoras_txt += f"\nMejoras del contrato {c['nombre']}: " + "; ".join(mejoras)
+                ai_mejoras_txt += f"\n  · Mejoras contrato {c.get('nombre','?')}: " + "; ".join(mejoras[:3])
             except Exception:
                 pass
         if c.get("ai_puntos_criticos"):
             try:
                 puntos = json.loads(c["ai_puntos_criticos"])
-                ai_mejoras_txt += f"\nPuntos críticos: " + "; ".join(puntos)
+                ai_mejoras_txt += f"\n  · Puntos críticos: " + "; ".join(puntos[:3])
             except Exception:
                 pass
 
-    from datetime import date
-    hoy = date.today()
+    # ── 10. Métricas calculadas (las pasamos como hints, no para que la IA las reinvente)
+    indicador_sla_pct = None
+    if freq_contractual_meses and freq_real_meses and freq_contractual_meses > 0:
+        indicador_sla_pct = max(0, min(100, round(
+            (freq_contractual_meses / max(freq_real_meses, 0.1)) * 100, 0
+        )))
 
-    prompt = f"""Eres un experto en gestión de mantenimiento de equipos fitness para ILUS Fitness Chile.
-Analiza la siguiente información del cliente y genera un PLAN DE MEJORA Y PROYECCIÓN para el próximo ciclo de mantención.
-Responde ÚNICAMENTE con JSON estructurado, sin texto adicional.
+    indicador_cobranza_pct = None
+    if (total_facturado_anio + total_pendiente_factura) > 0:
+        indicador_cobranza_pct = round(
+            100.0 * total_facturado_anio / (total_facturado_anio + total_pendiente_factura), 0
+        )
 
-CLIENTE: {cliente['razon_social']} | RUT: {cliente.get('rut','')} | Ciudad: {cliente.get('ciudad','')}
-FECHA HOY: {hoy}
+    # ── 11. System prompt + user prompt ───────────────────────────────────
+    system_prompt = (
+        "Eres un asesor senior de gestión de servicios técnicos de equipos fitness para "
+        "ILUS Sport & Health (Chile). Tu trabajo es analizar el portafolio operativo y "
+        "comercial de un cliente y producir un plan accionable.\n\n"
+        "REGLAS DURAS:\n"
+        "1. RESPONDE ÚNICAMENTE con JSON válido. Sin texto antes o después. Sin ```json fences.\n"
+        "2. PRIORIZA acciones concretas con fecha y monto explícitos. Evita generalidades "
+        "como 'mejorar comunicación' — di '15/jul: enviar cotización por $X de Y servicio'.\n"
+        "3. NO INVENTES datos. Si falta información (ej: no hay garantías), dilo explícito "
+        "en la sección correspondiente con un texto como 'no disponible en el dataset'.\n"
+        "4. RESPETA el tipo_cliente: si es 'arriendo' o 'leasing', NO sugieras renovar "
+        "contrato de mantención. En esos casos las oportunidades son extensión/devolución "
+        "del equipo, no nuevo contrato.\n"
+        "5. Si la frecuencia real difiere >30% de la contractual, levantar alerta de SLA.\n"
+        "6. Monetiza siempre que puedas: monto estimado en pesos chilenos sin decimales."
+    )
 
-EQUIPOS ({len(maquinas)} en total):
+    user_prompt = f"""ANÁLISIS DE CLIENTE — ILUS Sport & Health
+
+FECHA HOY: {hoy.isoformat()}
+
+CLIENTE
+  Razón social: {cliente.get('razon_social','?')}
+  RUT: {cliente.get('rut','')}
+  Ciudad: {cliente.get('ciudad','')} / Región: {cliente.get('region','')}
+  Tipo de cliente: {tipo_cliente}   ← (mantencion | arriendo | leasing)
+  Estado: {cliente.get('estado','?')}
+  Giro: {cliente.get('giro','') or '-'}
+
+EQUIPOS ({len(maquinas)} activos):
 {equipos_txt}
 
 CONTRATOS VIGENTES:
 {contratos_txt}
+  Días para vencer (contrato principal): {dias_para_vencer_contrato if dias_para_vencer_contrato is not None else 'indefinido / sin fecha'}
 
-ANÁLISIS IA PREVIO:
-{ai_mejoras_txt or 'No disponible'}
+VISITAS — HISTÓRICAS (completadas, últimas 8):
+{visitas_hist_txt}
 
-Estructura JSON requerida:
+VISITAS — FUTURAS PROGRAMADAS (próximas 6):
+{futuras_txt}
+
+FRECUENCIA DE MANTENCIÓN:
+  Contractual: {freq_contractual_meses or 'no definida'} mes(es)
+  Real (promedio entre últimas preventivas): {freq_real_meses or 'no calculable'} mes(es)
+  Índice cumplimiento SLA pre-calculado (hint): {indicador_sla_pct if indicador_sla_pct is not None else 'n/a'}
+
+ESTADO FINANCIERO (últimos 365 días):
+  Total facturado: ${total_facturado_anio:,.0f}
+  Pendiente de facturar: ${total_pendiente_factura:,.0f} ({len(visitas_pendientes_factura)} visita(s))
+  Visitas cubiertas por garantía: {n_garantia}
+  Índice de cobranza pre-calculado (hint, %): {indicador_cobranza_pct if indicador_cobranza_pct is not None else 'n/a'}
+
+GARANTÍAS PRÓXIMAS A VENCER (≤60 días):
+{gar_txt}
+
+NOTIFICACIONES INTERNAS PENDIENTES:
+{notif_txt}
+
+ANÁLISIS IA PREVIO DE CONTRATOS:
+{ai_mejoras_txt or '  · No disponible'}
+
+ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
 {{
-  "resumen_ejecutivo": "2-3 oraciones del estado actual y oportunidades",
+  "resumen_ejecutivo": "2-3 oraciones del estado actual y oportunidades concretas",
   "estado_flota": "bueno|regular|critico",
-  "indice_salud": número_0_a_100,
+  "indice_salud": 0-100,
+  "indice_cumplimiento_sla": 0-100,
+  "indice_cobranza": 0-100,
+  "tipo_cliente_inferido": "mantencion|arriendo|leasing",
   "proxima_visita": {{
     "fecha_sugerida": "YYYY-MM-DD",
     "tipo": "preventiva|correctiva|inspeccion",
     "duracion_horas": número,
     "prioridad": "alta|media|baja",
-    "razon": "por qué urgente"
+    "razon": "por qué"
   }},
   "recomendaciones_equipos": [
-    {{
-      "equipo": "nombre del equipo",
-      "estado": "ok|atencion|urgente",
-      "accion": "acción específica a tomar",
-      "plazo": "inmediato|30 días|60 días|90 días"
-    }}
+    {{"equipo":"...", "estado":"ok|atencion|urgente", "accion":"...", "plazo":"inmediato|30 días|60 días|90 días"}}
   ],
   "proyeccion_12_meses": [
-    {{
-      "mes": "YYYY-MM",
-      "tipo_visita": "preventiva|correctiva",
-      "descripcion": "qué se hará",
-      "costo_estimado": número_o_null
-    }}
+    {{"mes":"YYYY-MM", "tipo_visita":"preventiva|correctiva", "descripcion":"...", "costo_estimado": número_o_null}}
   ],
   "propuestas_mejora": [
-    {{
-      "titulo": "título de la propuesta",
-      "descripcion": "detalle de qué mejorar",
-      "impacto": "alto|medio|bajo",
-      "categoria": "contrato|equipo|proceso|costos"
-    }}
+    {{"titulo":"...", "descripcion":"...", "impacto":"alto|medio|bajo", "categoria":"contrato|equipo|proceso|costos"}}
   ],
   "alertas_criticas": ["alerta 1", "alerta 2"],
-  "oportunidades_comerciales": ["oportunidad 1", "oportunidad 2"]
+  "oportunidades_comerciales": ["oportunidad 1", "oportunidad 2"],
+  "riesgos_financieros": [
+    {{"tipo":"factura_pendiente|garantia_por_vencer|sla_incumplido|contrato_por_vencer", "detalle":"...", "monto_estimado": número_o_null}}
+  ],
+  "renovacion_contrato": {{
+    "aplica": true|false,
+    "dias_para_vencer": número_o_null,
+    "recomendar_renovar": true|false,
+    "argumentos": ["arg 1", "arg 2"]
+  }}
 }}"""
 
     try:
         import anthropic as _anthropic
+        t0 = _time.time()
         ai  = _anthropic.Anthropic(api_key=ai_key)
+        # Modelo actualizado: claude-opus-4-7 (era 4-5 hasta 2026-05-21)
         msg = ai.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}]
+            model="claude-opus-4-7",
+            max_tokens=4000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
         )
+        elapsed_ms = int((_time.time() - t0) * 1000)
+
         raw = msg.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
+            raw = raw.strip("` \n\r\t")
         plan = json.loads(raw)
-        return jsonify({"ok": True, "plan": plan, "cliente": cliente["razon_social"]})
+
+        # Tokens (si el SDK los expone)
+        tokens_in  = None
+        tokens_out = None
+        try:
+            usage = getattr(msg, "usage", None)
+            if usage:
+                tokens_in  = getattr(usage, "input_tokens",  None)
+                tokens_out = getattr(usage, "output_tokens", None)
+        except Exception:
+            pass
+
+        meta = {
+            "elapsed_ms":  elapsed_ms,
+            "tokens_in":   tokens_in,
+            "tokens_out":  tokens_out,
+            "model":       "claude-opus-4-7",
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "context_size": {
+                "maquinas":              len(maquinas),
+                "contratos_vigentes":    len(ct_vigentes),
+                "visitas_completadas":   len(completadas),
+                "visitas_futuras":       len(futuras),
+                "garantias_proximas":    len(gar_pronto),
+                "notif_pendientes":      len(notif_pendientes),
+            },
+        }
+
+        print(
+            f"[ILUS][plan-mejora] cid={cid} elapsed={elapsed_ms}ms "
+            f"tokens_in={tokens_in} tokens_out={tokens_out}",
+            flush=True
+        )
+
+        # Cache
+        _MANT_PLAN_CACHE[cid] = {
+            "ts": now_epoch,
+            "plan": plan,
+            "cliente": cliente.get("razon_social", ""),
+            "meta": meta,
+        }
+
+        return jsonify({
+            "ok": True,
+            "plan": plan,
+            "cliente": cliente.get("razon_social", ""),
+            "cached": False,
+            "meta": meta,
+        })
     except Exception as e:
+        print(f"[ILUS][plan-mejora] cid={cid} ERROR: {e}", flush=True)
         return jsonify({"error": f"Error IA: {e}"}), 500
 
 

@@ -5042,7 +5042,130 @@ function abrirEmailManual() {
   @media (max-width: 768px){
     .vis-timeline-wrap{padding:8px;}
   }
+
+  /* ══════════════════════════════════════════════════════════════════
+     Próximas mantenciones / Últimas / Ritmo (Plan 2026-05-21)
+     Mobile-first: cards full-width en <768px, lado a lado en desktop.
+     ══════════════════════════════════════════════════════════════════ */
+  .vis-resumen-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:16px;}
+  @media (min-width:992px){
+    .vis-resumen-grid{grid-template-columns:1.2fr 1fr;}
+  }
+  .vis-prox-card-pro,.vis-ult-card{background:#fff;border:1px solid var(--border);border-radius:14px;
+    padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .vis-prox-header,.vis-ult-header{display:flex;align-items:center;gap:8px;font-size:.74rem;
+    text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280;
+    padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid #f3f4f6;}
+  .vis-prox-header i,.vis-ult-header i{font-size:.95rem;color:#dc2626;}
+  .vis-prox-next{background:linear-gradient(135deg,#fef2f2,#fff);border:1px solid #fecaca;
+    border-radius:12px;padding:12px 14px;margin-bottom:10px;}
+  .vis-prox-next.urgente{background:linear-gradient(135deg,#fee2e2,#fef2f2);border-color:#fca5a5;}
+  .vis-prox-next.atrasada{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;}
+  .vis-prox-fecha{font-size:1.35rem;font-weight:900;color:#0f172a;line-height:1.1;}
+  .vis-prox-fecha.urgente{color:#991b1b;}
+  .vis-prox-fecha.atrasada{color:#fff;}
+  .vis-prox-rel{font-size:.74rem;color:#6b7280;font-weight:600;}
+  .vis-prox-rel.urgente{color:#991b1b;}
+  .vis-prox-rel.atrasada{color:#fee2e2;}
+  .vis-prox-chip-urg{background:#dc2626;color:#fff;font-size:.62rem;padding:2px 9px;
+    border-radius:50px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;}
+  .vis-prox-chip-warn{background:#f59e0b;color:#fff;font-size:.62rem;padding:2px 9px;
+    border-radius:50px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;}
+  .vis-prox-sig{display:flex;flex-direction:column;gap:6px;}
+  .vis-prox-sig-row{display:flex;align-items:center;gap:10px;font-size:.78rem;color:#374151;
+    padding:6px 8px;border-radius:8px;transition:background .12s;cursor:pointer;}
+  .vis-prox-sig-row:hover{background:#fafbfc;}
+  .vis-prox-sig-dot{width:8px;height:8px;border-radius:50%;background:#9ca3af;flex-shrink:0;}
+  .vis-prox-empty{text-align:center;padding:18px 8px;color:#9ca3af;font-size:.82rem;}
+  .vis-ult-item{display:flex;gap:10px;padding:8px 4px;border-bottom:1px solid #f3f4f6;
+    cursor:pointer;transition:background .12s;border-radius:6px;}
+  .vis-ult-item:hover{background:#fafbfc;}
+  .vis-ult-item:last-child{border-bottom:0;}
+  .vis-ult-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:6px;}
+  .vis-ult-body{flex:1;min-width:0;}
+  .vis-ult-titulo{font-size:.82rem;font-weight:700;color:#0f172a;line-height:1.3;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .vis-ult-meta{font-size:.7rem;color:#6b7280;margin-top:2px;}
+  .vis-ult-fact{font-size:.6rem;padding:1px 7px;border-radius:50px;font-weight:700;}
+  .vis-ult-fact.fact{background:#dcfce7;color:#166534;}
+  .vis-ult-fact.no{background:#fef3c7;color:#92400e;}
+  .vis-ult-fact.gar{background:#dbeafe;color:#1e40af;}
+  /* Ritmo de mantención (12 meses) */
+  .vis-ritmo-card{background:#fff;border:1px solid var(--border);border-radius:14px;
+    padding:14px 16px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .vis-ritmo-header{display:flex;align-items:center;justify-content:space-between;
+    gap:8px;font-size:.74rem;text-transform:uppercase;letter-spacing:.5px;
+    font-weight:800;color:#6b7280;padding-bottom:10px;margin-bottom:12px;
+    border-bottom:1px solid #f3f4f6;flex-wrap:wrap;}
+  .vis-ritmo-header i{font-size:.95rem;color:#dc2626;}
+  .vis-ritmo-track{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;
+    position:relative;padding:6px 0;}
+  .vis-ritmo-month{display:flex;flex-direction:column;align-items:center;gap:4px;
+    cursor:default;position:relative;}
+  .vis-ritmo-dot{width:100%;max-width:28px;height:14px;border-radius:50px;
+    background:#e5e7eb;transition:transform .15s;}
+  .vis-ritmo-dot.preventiva{background:#16a34a;}
+  .vis-ritmo-dot.correctiva{background:#f59e0b;}
+  .vis-ritmo-dot.mixto{background:linear-gradient(90deg,#16a34a 50%,#f59e0b 50%);}
+  .vis-ritmo-dot.current-month{box-shadow:0 0 0 2px #dc2626;}
+  .vis-ritmo-month:hover .vis-ritmo-dot{transform:scaleY(1.4);}
+  .vis-ritmo-lbl{font-size:.6rem;color:#9ca3af;font-weight:700;}
+  .vis-ritmo-lbl.current{color:#dc2626;font-weight:800;}
+  .vis-ritmo-tooltip{position:absolute;bottom:calc(100% + 6px);left:50%;
+    transform:translateX(-50%);background:#0f172a;color:#fff;font-size:.66rem;
+    padding:4px 8px;border-radius:6px;white-space:nowrap;
+    opacity:0;pointer-events:none;transition:opacity .12s;z-index:5;}
+  .vis-ritmo-month:hover .vis-ritmo-tooltip{opacity:.95;}
+  .vis-ritmo-leg{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;
+    font-size:.66rem;color:#6b7280;}
+  .vis-ritmo-leg span{display:inline-flex;align-items:center;gap:4px;}
+  .vis-ritmo-leg-dot{width:10px;height:10px;border-radius:50px;display:inline-block;}
+  @media (max-width:768px){
+    .vis-ritmo-track{gap:3px;}
+    .vis-ritmo-dot{max-width:18px;height:10px;}
+    .vis-ritmo-lbl{font-size:.55rem;}
+  }
   </style>
+
+  {# ══════════════════════════════════════════════════════════════════
+     NUEVO 2026-05-21 — Resumen ejecutivo de visitas (Plan + Últimas + Ritmo)
+     Se renderiza dinámicamente vía JS abajo. No depende de visitas|length
+     porque queremos invitar al usuario a calendarizar si no hay nada.
+     ══════════════════════════════════════════════════════════════════ #}
+  <div class="vis-resumen-grid">
+    <div class="vis-prox-card-pro" id="visProximasCard">
+      <div class="vis-prox-header"><i class="bi bi-calendar-event"></i>Próximas mantenciones</div>
+      <div id="visProximasBody">
+        <div class="text-muted text-center py-3 small">
+          <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+        </div>
+      </div>
+    </div>
+    <div class="vis-ult-card" id="visUltimasCard">
+      <div class="vis-ult-header"><i class="bi bi-clock-history"></i>Últimas realizadas</div>
+      <div id="visUltimasBody">
+        <div class="text-muted text-center py-3 small">
+          <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="vis-ritmo-card" id="visRitmoCard">
+    <div class="vis-ritmo-header">
+      <div><i class="bi bi-activity"></i>Ritmo de mantención · últimos 12 meses</div>
+      <div id="visRitmoCount" class="text-muted" style="font-weight:600;text-transform:none;letter-spacing:0;font-size:.7rem"></div>
+    </div>
+    <div class="vis-ritmo-track" id="visRitmoTrack"></div>
+    <div class="vis-ritmo-leg">
+      <span><span class="vis-ritmo-leg-dot" style="background:#16a34a"></span>Preventiva</span>
+      <span><span class="vis-ritmo-leg-dot" style="background:#f59e0b"></span>Correctiva</span>
+      <span><span class="vis-ritmo-leg-dot" style="background:linear-gradient(90deg,#16a34a 50%,#f59e0b 50%)"></span>Mixto</span>
+      <span><span class="vis-ritmo-leg-dot" style="background:#e5e7eb"></span>Sin visita</span>
+      <span style="margin-left:6px"><span class="vis-ritmo-leg-dot" style="background:#fff;box-shadow:0 0 0 2px #dc2626"></span>Mes actual</span>
+    </div>
+  </div>
+
   {% if visitas %}
   <div class="vis-vista-toggle" id="visVistaToggle">
     <button class="active" data-vista="lista" onclick="visSwitchVista('lista', this)">
@@ -5225,6 +5348,329 @@ function abrirEmailManual() {
     retroactiva:'R', instalacion:'I', levantamiento:'L', inspeccion:'In'
   };
 
+  /* ══════════════════════════════════════════════════════════════════
+     Resumen ejecutivo de visitas — Plan 2026-05-21
+     Carga UNA sola vez la lista completa de visitas del cliente y
+     renderiza tres bloques: próximas, últimas y ritmo de 12 meses.
+     Reusa la misma cache (_visTlVisitas) que la vista Timeline,
+     así si el usuario ya abrió Timeline antes, no se pide de nuevo.
+     ══════════════════════════════════════════════════════════════════ */
+  const CT_VIGENTE_ID = (window.__FICHA_DATA || {}).contrato_vigente_id || null;
+  window._visResumenLoaded = false;
+
+  async function _visEnsureVisitasLoaded(){
+    if (window._visResumenLoaded || window._visTlLoaded) return;
+    try {
+      const r = await fetch(`/mantenciones/api/visitas?cliente_id=${CID}&start=1900-01-01&end=2100-12-31`);
+      const arr = await r.json();
+      window._visTlVisitas = Array.isArray(arr) ? arr : [];
+      window._visResumenLoaded = true;
+    } catch(e){
+      window._visTlVisitas = [];
+    }
+  }
+
+  function _visFechaRel(d){
+    if (!d) return '';
+    const diff = Math.round((d - new Date()) / 86400000);
+    if (diff === 0) return 'hoy';
+    if (diff === 1) return 'mañana';
+    if (diff === -1) return 'ayer';
+    if (diff > 0 && diff <= 30) return `en ${diff} días`;
+    if (diff > 30) return `en ${Math.round(diff/30)} mes${Math.round(diff/30)>1?'es':''}`;
+    if (diff < 0 && diff >= -30) return `hace ${-diff} días`;
+    if (diff < -30) return `hace ${Math.round(-diff/30)} mes${Math.round(-diff/30)>1?'es':''}`;
+    return '';
+  }
+
+  function _visGetDate(v){
+    const s = v.fecha_realizada || v.fecha || v.start || v.fecha_programada || '';
+    if (!s) return null;
+    try {
+      const d = new Date(String(s).substring(0,10) + 'T00:00:00');
+      return isNaN(d) ? null : d;
+    } catch(e){ return null; }
+  }
+
+  function _visEscHtml(s){
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  }
+
+  async function renderVisResumen(){
+    await _visEnsureVisitasLoaded();
+    _renderProximas();
+    _renderUltimas();
+    _renderRitmo();
+  }
+
+  function _renderProximas(){
+    const cont = document.getElementById('visProximasBody');
+    if (!cont) return;
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const visitas = window._visTlVisitas || [];
+    const futurasOActivas = visitas
+      .filter(v => {
+        const d = _visGetDate(v);
+        if (!d) return false;
+        const est = (v.estado || v.status || '').toLowerCase();
+        if (['completada','cancelada','anulada'].includes(est)) return false;
+        return d >= hoy || est === 'programada' || est === 'reagendada' || est === 'en_curso';
+      })
+      .sort((a,b) => {
+        const da = _visGetDate(a), db = _visGetDate(b);
+        return (da?.getTime()||0) - (db?.getTime()||0);
+      });
+
+    if (!futurasOActivas.length){
+      cont.innerHTML = `
+        <div class="vis-prox-empty">
+          <i class="bi bi-calendar-x" style="font-size:1.6rem;opacity:.5;display:block;margin-bottom:8px"></i>
+          <div class="mb-2">No hay mantenciones programadas</div>
+          ${CT_VIGENTE_ID ? `
+            <button class="btn btn-sm btn-ilus" onclick="visCalendarizarProximas()">
+              <i class="bi bi-calendar-plus me-1"></i>Calendarizar próximas
+            </button>` : `
+            <div style="font-size:.7rem;color:#9ca3af">Sin contrato vigente con frecuencia definida</div>
+          `}
+        </div>`;
+      return;
+    }
+
+    const prox = futurasOActivas[0];
+    const proxDate = _visGetDate(prox);
+    const proxDias = Math.round((proxDate - hoy) / 86400000);
+    const atrasada = proxDias < 0;
+    const urgente  = proxDias >= 0 && proxDias < 7;
+    const chip = atrasada
+      ? `<span class="vis-prox-chip-urg">Atrasada ${-proxDias}d</span>`
+      : (urgente ? `<span class="vis-prox-chip-urg">Urgente</span>` :
+         (proxDias <= 30 ? `<span class="vis-prox-chip-warn">Próxima</span>` : ''));
+
+    const fechaStr = proxDate.toLocaleDateString('es-CL', {day:'2-digit', month:'2-digit', year:'numeric'});
+    const tecnico  = prox.tecnico || (prox.tecnicos && prox.tecnicos[0]?.nombre) || 'Sin asignar';
+    const tipo     = (prox.tipo || 'preventiva').replace(/_/g, ' ');
+
+    let html = `
+      <div class="vis-prox-next ${atrasada ? 'atrasada' : urgente ? 'urgente' : ''}">
+        <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+          <div>
+            <div class="vis-prox-fecha ${atrasada ? 'atrasada' : urgente ? 'urgente' : ''}">${fechaStr}</div>
+            <div class="vis-prox-rel ${atrasada ? 'atrasada' : urgente ? 'urgente' : ''}">${_visFechaRel(proxDate)}</div>
+          </div>
+          ${chip}
+        </div>
+        <div style="font-size:.85rem;font-weight:700;text-transform:capitalize;color:${atrasada?'#fff':'#0f172a'}">
+          ${_visEscHtml(prox.title || prox.titulo || tipo)}
+        </div>
+        <div style="font-size:.75rem;color:${atrasada?'#fee2e2':'#6b7280'};margin-top:2px">
+          <i class="bi bi-person-badge me-1"></i>${_visEscHtml(tecnico)}
+          ${prox.numero_ot ? `· <span class="font-monospace" style="font-weight:600">${prox.numero_ot}</span>` : ''}
+        </div>
+        <div class="d-flex gap-2 mt-2 flex-wrap">
+          <a href="/mantenciones/ot/${prox.id}" class="btn btn-sm ${atrasada?'btn-light':'btn-outline-secondary'}" style="font-size:.72rem">
+            <i class="bi bi-arrow-right me-1"></i>Abrir OT
+          </a>
+          ${atrasada ? `
+            <button class="btn btn-sm btn-light" style="font-size:.72rem" onclick="visAbrirReagendar(${prox.id})">
+              <i class="bi bi-calendar2-event me-1"></i>Reagendar
+            </button>` : ''}
+        </div>
+      </div>`;
+
+    // Siguientes 3 (slice 1..4)
+    const siguientes = futurasOActivas.slice(1, 4);
+    if (siguientes.length){
+      html += `<div style="font-size:.66rem;text-transform:uppercase;letter-spacing:.4px;font-weight:800;color:#9ca3af;margin:6px 4px 4px">Siguientes</div>`;
+      html += `<div class="vis-prox-sig">`;
+      siguientes.forEach(s => {
+        const sd = _visGetDate(s);
+        const sStr = sd ? sd.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'}) : '—';
+        const tipoS = (s.tipo || 'preventiva').replace(/_/g, ' ');
+        const colorDot = _VIS_TIPO_COLOR[s.tipo] || '#9ca3af';
+        html += `<div class="vis-prox-sig-row" onclick="window.location.href='/mantenciones/ot/${s.id}'">
+          <span class="vis-prox-sig-dot" style="background:${colorDot}"></span>
+          <span style="font-weight:700;color:#374151;min-width:90px">${sStr}</span>
+          <span style="flex:1;text-transform:capitalize">${_visEscHtml(tipoS)}</span>
+          <i class="bi bi-chevron-right" style="color:#9ca3af"></i>
+        </div>`;
+      });
+      html += `</div>`;
+    } else if (CT_VIGENTE_ID){
+      html += `
+        <div style="font-size:.7rem;color:#9ca3af;text-align:center;padding:8px 4px">
+          <button class="btn btn-xs btn-outline-secondary" onclick="visCalendarizarProximas()" style="font-size:.7rem">
+            <i class="bi bi-calendar-plus me-1"></i>Calendarizar más visitas
+          </button>
+        </div>`;
+    }
+    cont.innerHTML = html;
+  }
+
+  function _renderUltimas(){
+    const cont = document.getElementById('visUltimasBody');
+    if (!cont) return;
+    const hoy = new Date(); hoy.setHours(23,59,59,999);
+    const visitas = window._visTlVisitas || [];
+    const completadas = visitas
+      .filter(v => (v.estado || '').toLowerCase() === 'completada')
+      .sort((a,b) => (_visGetDate(b)?.getTime()||0) - (_visGetDate(a)?.getTime()||0))
+      .slice(0, 5);
+
+    if (!completadas.length){
+      cont.innerHTML = `
+        <div class="vis-prox-empty">
+          <i class="bi bi-calendar-check" style="font-size:1.6rem;opacity:.5;display:block;margin-bottom:8px"></i>
+          <div>Aún no hay mantenciones completadas</div>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+    completadas.forEach(v => {
+      const d = _visGetDate(v);
+      const rel = d ? _visFechaRel(d) : '';
+      const dStr = d ? d.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'}) : '—';
+      const col = _VIS_TIPO_COLOR[v.tipo] || '#475569';
+      const tipo = (v.tipo || '').replace(/_/g, ' ');
+      const fact = (v.estado_facturacion || 'sin_cotizar').toLowerCase();
+      const cub  = (v.cubierto_por || 'contrato').toLowerCase();
+      let factBadge = '';
+      if (cub === 'garantia') factBadge = `<span class="vis-ult-fact gar">Garantía</span>`;
+      else if (fact === 'facturado') factBadge = `<span class="vis-ult-fact fact">Facturado</span>`;
+      else if (cub === 'contrato') factBadge = `<span class="vis-ult-fact gar" style="background:#e0e7ff;color:#3730a3">Contrato</span>`;
+      else factBadge = `<span class="vis-ult-fact no">Sin factura</span>`;
+      html += `<div class="vis-ult-item" onclick="window.location.href='/mantenciones/ot/${v.id}'">
+        <span class="vis-ult-dot" style="background:${col}"></span>
+        <div class="vis-ult-body">
+          <div class="vis-ult-titulo">${_visEscHtml(v.title || v.titulo || tipo)}</div>
+          <div class="vis-ult-meta">
+            <span style="font-weight:700;color:#374151">${dStr}</span>
+            ${rel ? ` · <span>${rel}</span>` : ''}
+            ${v.tecnico ? ` · <i class="bi bi-person-badge"></i> ${_visEscHtml(v.tecnico)}` : ''}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${factBadge}</div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  function _renderRitmo(){
+    const cont = document.getElementById('visRitmoTrack');
+    const lbl  = document.getElementById('visRitmoCount');
+    if (!cont) return;
+    const visitas = window._visTlVisitas || [];
+    const hoy = new Date(); hoy.setDate(1); hoy.setHours(0,0,0,0);
+
+    // 12 meses hacia atrás (incluyendo el mes corriente)
+    const meses = [];
+    for (let i = 11; i >= 0; i--){
+      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+      meses.push({
+        y: d.getFullYear(), m: d.getMonth(),
+        key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
+        nombre: d.toLocaleDateString('es-CL', {month:'short'}).replace('.', ''),
+        es_actual: (d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth()),
+        prev: 0, corr: 0,
+      });
+    }
+    const idx = {};
+    meses.forEach((m,i) => idx[m.key] = i);
+
+    // Solo visitas completadas
+    let totalCompletadas = 0;
+    visitas.forEach(v => {
+      const est = (v.estado || '').toLowerCase();
+      if (est !== 'completada') return;
+      const d = _visGetDate(v);
+      if (!d) return;
+      const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if (!(k in idx)) return;
+      totalCompletadas++;
+      const tipo = (v.tipo || '').toLowerCase();
+      if (tipo === 'correctiva') meses[idx[k]].corr++;
+      else if (tipo === 'preventiva' || tipo === 'garantia') meses[idx[k]].prev++;
+      else meses[idx[k]].prev++; // otras se cuentan como preventiva
+    });
+
+    if (lbl) lbl.textContent = `${totalCompletadas} visita${totalCompletadas !== 1 ? 's' : ''} en 12 meses`;
+
+    let html = '';
+    meses.forEach(m => {
+      let cls = '';
+      let tip = `${m.nombre} ${m.y} — Sin visita`;
+      if (m.prev > 0 && m.corr > 0){
+        cls = 'mixto';
+        tip = `${m.nombre} ${m.y} — ${m.prev} prev. + ${m.corr} corr.`;
+      } else if (m.prev > 0){
+        cls = 'preventiva';
+        tip = `${m.nombre} ${m.y} — ${m.prev} preventiva${m.prev>1?'s':''}`;
+      } else if (m.corr > 0){
+        cls = 'correctiva';
+        tip = `${m.nombre} ${m.y} — ${m.corr} correctiva${m.corr>1?'s':''}`;
+      }
+      if (m.es_actual) cls += ' current-month';
+      html += `<div class="vis-ritmo-month">
+        <div class="vis-ritmo-dot ${cls}"></div>
+        <div class="vis-ritmo-lbl ${m.es_actual ? 'current' : ''}">${m.nombre[0].toUpperCase()}${m.nombre.slice(1,3)}</div>
+        <div class="vis-ritmo-tooltip">${tip}</div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  async function visCalendarizarProximas(){
+    if (!CT_VIGENTE_ID){
+      if (window.ilusAlert) {
+        await ilusAlert({title:'Sin contrato', message:'No hay contrato vigente con frecuencia definida.', type:'warning'});
+      } else {
+        alert('Sin contrato vigente');
+      }
+      return;
+    }
+    if (window.ilusConfirm){
+      const ok = await ilusConfirm({
+        title:'Calendarizar próximas mantenciones',
+        message:'Se generarán visitas preventivas automáticas según la frecuencia del contrato vigente.',
+        sub:'Idempotente — no se duplican visitas en meses ya programados.',
+        okLabel:'Calendarizar', cancelLabel:'Cancelar',
+      });
+      if (!ok) return;
+    }
+    try {
+      const r = await fetch(`/mantenciones/api/contratos/${CT_VIGENTE_ID}/auto-calendar`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+      });
+      const d = await r.json();
+      if (d.ok){
+        if (window.ilusToast) ilusToast(`✓ ${d.creadas || 0} visita(s) generada(s)`, {type:'success'});
+        // Invalidar cache y recargar
+        window._visResumenLoaded = false;
+        window._visTlLoaded = false;
+        await renderVisResumen();
+      } else {
+        if (window.ilusAlert) await ilusAlert({title:'Error', message:d.error || 'No se pudo calendarizar', type:'error'});
+      }
+    } catch(e){
+      if (window.ilusAlert) await ilusAlert({title:'Error', message:e.message, type:'error'});
+    }
+  }
+
+  function visAbrirReagendar(vid){
+    // Reusa el módulo de OT — abre la visita directamente para que el usuario
+    // edite la fecha desde allí (no duplicamos un modal de reagendar).
+    window.location.href = `/mantenciones/ot/${vid}`;
+  }
+
+  // Arranque: cuando el usuario abre el tab Visitas (o si ya está visible)
+  // se cargan los 3 bloques. Se hace de forma diferida con un microtask
+  // para no bloquear el render inicial.
+  document.addEventListener('DOMContentLoaded', () => {
+    // Render diferido — si el tab no está visible no importa, se rinde igual
+    // (los nodos ya existen en el DOM). Cache del browser cubre re-aperturas.
+    setTimeout(() => { renderVisResumen(); }, 50);
+  });
+
   function visSwitchVista(modo, btn){
     document.querySelectorAll('#visVistaToggle button').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -5242,11 +5688,22 @@ function abrirEmailManual() {
     const cont = document.getElementById('visTlContent');
     cont.innerHTML = '<div class="text-muted text-center py-4 small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando timeline…</div>';
     try {
-      // Cargar visitas + mapa visita→máquinas en paralelo
-      const [vRes, mRes] = await Promise.all([
-        fetch(`/mantenciones/api/visitas?cliente_id=${CID}&start=1900-01-01&end=2100-12-31`),
-        fetch(`/mantenciones/api/clientes/${CID}/visitas-maquinas-map`),
-      ]);
+      // Si el resumen ya cargó las visitas, reusamos el cache y solo
+      // pedimos el mapa visita→máquinas (Plan 2026-05-21 — perf <300ms).
+      const yaTengoVisitas = !!(window._visResumenLoaded && Array.isArray(window._visTlVisitas) && window._visTlVisitas.length);
+      let promesas;
+      if (yaTengoVisitas){
+        promesas = [
+          Promise.resolve({ json: () => Promise.resolve(window._visTlVisitas) }),
+          fetch(`/mantenciones/api/clientes/${CID}/visitas-maquinas-map`),
+        ];
+      } else {
+        promesas = [
+          fetch(`/mantenciones/api/visitas?cliente_id=${CID}&start=1900-01-01&end=2100-12-31`),
+          fetch(`/mantenciones/api/clientes/${CID}/visitas-maquinas-map`),
+        ];
+      }
+      const [vRes, mRes] = await Promise.all(promesas);
       const arr = await vRes.json();
       window._visTlVisitas = Array.isArray(arr) ? arr : [];
       try {
@@ -7230,7 +7687,7 @@ window.__FICHA_DATA = {
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260519"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260521"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

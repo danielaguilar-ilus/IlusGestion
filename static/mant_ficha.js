@@ -2954,7 +2954,8 @@ async function eliminarVisita() {
 }
 
 // ─── Plan de Mejora IA ────────────────────────────────────
-async function generarPlanMejora() {
+// `force=true` → ignora el cache del backend (1h TTL) y regenera.
+async function generarPlanMejora(force) {
   const btn = document.getElementById('btnGenerarPlan');
   const spinner = document.getElementById('planSpinner');
   const resultado = document.getElementById('planResultado');
@@ -2965,7 +2966,8 @@ async function generarPlanMejora() {
   resultado.style.display = 'none';
 
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/plan-mejora`, { method: 'POST' });
+    const url = `/mantenciones/api/clientes/${CID}/plan-mejora${force ? '?force=1' : ''}`;
+    const r = await fetch(url, { method: 'POST' });
     const data = await r.json();
 
     spinner.style.display = 'none';
@@ -2978,7 +2980,7 @@ async function generarPlanMejora() {
       return;
     }
 
-    renderPlan(data.plan, data.cliente);
+    renderPlan(data.plan, data.cliente, data);
     resultado.style.display = '';
 
   } catch(e) {
@@ -2990,25 +2992,60 @@ async function generarPlanMejora() {
   }
 }
 
-function renderPlan(p, clienteNombre) {
+function renderPlan(p, clienteNombre, envelope) {
+  envelope = envelope || {};
   const estadoColor = {bueno:'#16a34a', regular:'#ea580c', critico:'#dc2626'}[p.estado_flota] || '#6b7280';
-  const healthBg = p.indice_salud >= 70 ? '#16a34a' : p.indice_salud >= 40 ? '#ea580c' : '#dc2626';
+  const ringColor = (n) => n >= 70 ? '#16a34a' : n >= 40 ? '#ea580c' : '#dc2626';
   const impactoColor = {alto:'#dc2626', medio:'#ea580c', bajo:'#16a34a'};
   const catIcon = {contrato:'bi-file-earmark-text', equipo:'bi-bicycle', proceso:'bi-gear', costos:'bi-currency-dollar'};
+
+  // Banda informativa cache + refresh
+  const cached = !!envelope.cached;
+  const meta = envelope.meta || {};
+  const cacheBadge = cached
+    ? `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:6px"
+              title="Resultado en caché (TTL 1h). Click 'Refrescar' para regenerar.">
+         <i class="bi bi-cloud-check"></i> Cache · ${Math.round((envelope.cache_age_seconds||0)/60)} min
+       </span>`
+    : `<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:6px">
+         <i class="bi bi-stars"></i> Recién generado${meta.elapsed_ms ? ` · ${(meta.elapsed_ms/1000).toFixed(1)}s` : ''}
+       </span>`;
 
   let html = `<div class="plan-result-card">`;
 
   // ── Resumen ejecutivo ──
   html += `<div class="plan-section" style="background:linear-gradient(135deg,#f8faff,#f0fdf4)">
+    <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
+      <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed">
+        Plan generado por IA
+        ${cacheBadge}
+      </div>
+      <button onclick="generarPlanMejora(true)"
+              class="btn btn-sm btn-outline-secondary"
+              title="Ignorar caché y regenerar con datos actuales"
+              style="font-size:.72rem">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refrescar plan
+      </button>
+    </div>
     <div class="d-flex align-items-center gap-3 flex-wrap">
-      <div class="health-ring" style="background:${healthBg}">
-        <span class="health-num">${p.indice_salud}</span>
+      <div class="health-ring" style="background:${ringColor(p.indice_salud)}">
+        <span class="health-num">${p.indice_salud ?? '—'}</span>
         <span class="health-label">Salud</span>
       </div>
-      <div style="flex:1;min-width:0">
+      ${typeof p.indice_cumplimiento_sla === 'number' ? `
+      <div class="health-ring" style="background:${ringColor(p.indice_cumplimiento_sla)}" title="Cumplimiento de frecuencia contractual vs real">
+        <span class="health-num">${p.indice_cumplimiento_sla}</span>
+        <span class="health-label">SLA</span>
+      </div>` : ''}
+      ${typeof p.indice_cobranza === 'number' ? `
+      <div class="health-ring" style="background:${ringColor(p.indice_cobranza)}" title="% facturado vs prestado (últimos 365 días)">
+        <span class="health-num">${p.indice_cobranza}</span>
+        <span class="health-label">Cobranza</span>
+      </div>` : ''}
+      <div style="flex:1;min-width:200px">
         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-          <span style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#7c3aed">Plan generado por IA</span>
           <span style="background:${estadoColor};color:#fff;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">${(p.estado_flota||'').toUpperCase()}</span>
+          ${p.tipo_cliente_inferido ? `<span style="background:#e0e7ff;color:#3730a3;font-size:.6rem;padding:1px 8px;border-radius:50px;font-weight:700">Tipo: ${p.tipo_cliente_inferido}</span>` : ''}
         </div>
         <p style="font-size:.84rem;color:#374151;margin:0;line-height:1.55">${p.resumen_ejecutivo || ''}</p>
       </div>
@@ -3119,6 +3156,71 @@ function renderPlan(p, clienteNombre) {
     html += `<div class="plan-section">
       <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>
       ${p.oportunidades_comerciales.map(o => `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`).join('')}
+    </div>`;
+  }
+
+  // ── Riesgos financieros (NUEVO 2026-05-21) ──
+  if (Array.isArray(p.riesgos_financieros) && p.riesgos_financieros.length) {
+    html += `<div class="plan-section">
+      <div class="plan-section-title" style="color:#dc2626"><i class="bi bi-cash-stack me-1"></i>Riesgos financieros</div>`;
+    p.riesgos_financieros.forEach(r => {
+      const monto = (typeof r.monto_estimado === 'number')
+        ? `<span style="font-weight:800;color:#7c2d12;white-space:nowrap;margin-left:8px">$${Number(r.monto_estimado).toLocaleString('es-CL')}</span>`
+        : '';
+      const tipoLbl = (r.tipo || '').replace(/_/g, ' ');
+      html += `<div class="alerta-item" style="background:#fef2f2;border-color:#fecaca">
+        <i class="bi bi-exclamation-octagon-fill flex-shrink-0" style="color:#dc2626"></i>
+        <div style="flex:1">
+          <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;color:#991b1b;font-weight:800">${tipoLbl}</div>
+          <div style="font-size:.82rem;color:#374151">${r.detalle || ''}</div>
+        </div>
+        ${monto}
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ── Renovación de contrato (NUEVO 2026-05-21) ──
+  if (p.renovacion_contrato && (p.renovacion_contrato.aplica || p.renovacion_contrato.dias_para_vencer != null)) {
+    const rc = p.renovacion_contrato;
+    const rec = !!rc.recomendar_renovar;
+    const dias = rc.dias_para_vencer;
+    const urgente = (typeof dias === 'number' && dias <= 60);
+    const bgGrad = rec
+      ? 'linear-gradient(135deg,#f0fdf4,#dcfce7)'
+      : 'linear-gradient(135deg,#fafafa,#f3f4f6)';
+    html += `<div class="plan-section" style="background:${bgGrad}">
+      <div class="plan-section-title" style="color:${rec ? '#166534' : '#475569'}">
+        <i class="bi bi-file-earmark-medical me-1"></i>Renovación de contrato
+      </div>
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        ${dias != null ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.5rem;font-weight:900;color:${urgente ? '#dc2626' : '#475569'}">${dias}</div>
+            <div style="font-size:.62rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">días para vencer</div>
+          </div>` : ''}
+        <div style="flex:1;min-width:220px">
+          <div class="mb-1">
+            <span style="background:${rec ? '#16a34a' : '#6b7280'};color:#fff;font-size:.62rem;padding:2px 10px;border-radius:50px;font-weight:700">
+              ${rec ? '✓ Recomendar renovar' : '⊘ No recomendar renovar'}
+            </span>
+          </div>
+          ${Array.isArray(rc.argumentos) ? rc.argumentos.map(a => `
+            <div style="font-size:.78rem;color:#374151;margin:3px 0;display:flex;gap:6px;align-items:flex-start">
+              <i class="bi bi-dot" style="font-size:1rem;flex-shrink:0;color:${rec?'#16a34a':'#9ca3af'}"></i>
+              <span>${a}</span>
+            </div>`).join('') : ''}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── Footer técnico (debug/auditoría) ──
+  if (meta && meta.model) {
+    const ct = meta.context_size || {};
+    html += `<div style="margin-top:10px;padding:8px 12px;background:#fafafa;border-radius:8px;font-size:.66rem;color:#9ca3af;text-align:center;line-height:1.5">
+      ${meta.model}${meta.elapsed_ms ? ' · ' + (meta.elapsed_ms/1000).toFixed(1) + 's' : ''}${(meta.tokens_in||meta.tokens_out) ? ` · ${meta.tokens_in||0}↑/${meta.tokens_out||0}↓ tokens` : ''}
+      · ctx: ${ct.maquinas||0} eq · ${ct.contratos_vigentes||0} ct · ${ct.visitas_completadas||0}+${ct.visitas_futuras||0} visitas${ct.garantias_proximas ? ' · ' + ct.garantias_proximas + ' gar.' : ''}
     </div>`;
   }
 
