@@ -18330,7 +18330,18 @@ def _smtp_connection_diagnose(cfg):
 
 
 def _comm_render_email_document(title, body_html, subtitle=""):
-    """Renderiza un fragmento HTML dentro del diseÃ±o corporativo actual."""
+    """Renderiza un fragmento HTML dentro del diseño corporativo actual.
+
+    ANTI-DOUBLE-WRAP (fix 2026-05-21):
+    Si `body_html` ya viene como documento HTML completo (contiene <!DOCTYPE>,
+    <html>, <body>, o ya incluye el header de marca ILUS), NO se vuelve a
+    envolver — se retorna tal cual. Esto evita el "header duplicado" que
+    sufrían los envíos manuales y las pruebas de plantilla que pasaban por
+    `_buildEmailHtml(...)` en el front y luego pegaban en el endpoint.
+    """
+    if _email_html_is_full_document(body_html):
+        return body_html
+
     cc = _get_client_cfg()
     color = cc.get("corp_color") or "#CC0000"
     company = cc.get("company_name") or "ILUS Sport & Health"
@@ -18339,6 +18350,110 @@ def _comm_render_email_document(title, body_html, subtitle=""):
     body = _email_body_section(body_html)
     footer = _email_footer_ilus(company)
     return _email_wrapper(_email_card(header, body, footer), company)
+
+
+def _email_html_is_full_document(html: str) -> bool:
+    """¿El HTML ya viene como documento completo o como fragmento?
+
+    Heurística: si trae <!doctype>, <html>, <head> o <body>, NO se debe
+    envolver de nuevo con la plantilla corporativa porque produciría
+    doble header + doble footer.
+    """
+    if not html:
+        return False
+    h = html.lower()
+    for marker in ("<!doctype", "<html", "<head", "<body"):
+        if marker in h:
+            return True
+    return False
+
+
+# ── Placeholders DEMO para envío manual de prueba ────────────────────────
+# Se usan SÓLO en el endpoint manual (/comunicaciones/email/enviar) para
+# que las plantillas con {{variables}} no salgan al destinatario con los
+# tokens literales, sino con valores demo claros. Los envíos reales (cron,
+# OT, recovery password, etc) NO pasan por este reemplazo: ellos resuelven
+# los placeholders contra el contexto real.
+def _comm_demo_replacements() -> dict:
+    """Diccionario {placeholder: valor_demo} usado en envíos manuales."""
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        fecha_demo = (_dt.now() + _td(days=3)).strftime("%d/%m/%Y")
+    except Exception:
+        fecha_demo = "24/05/2026"
+
+    base = {
+        # Cliente
+        "nombre_cliente":     "Juan Daniel Aguilar",
+        "razon_social":       "Juan Daniel Aguilar Tejera",
+        "rut":                "25.547.065-5",
+        "rut_cliente":        "25.547.065-5",
+        "email_cliente":      "demo.cliente@ilusfitness.com",
+        "telefono_cliente":   "+56 9 1234 5678",
+        # Usuario
+        "nombre_usuario":     "Daniel Aguilar",
+        "email_usuario":      "demo.usuario@ilusfitness.com",
+        "rol":                "Administrador",
+        "creado_por":         "Sistema ILUS",
+        "fecha_hora":         _dt.now().strftime("%d/%m/%Y %H:%M"),
+        "ip_acceso":          "190.21.14.55",
+        "link_acceso":        "https://ilusfitness.com/acceso/demo",
+        # Pedido / despacho
+        "id_pedido":          "DEMO-12345",
+        "numero_pedido":      "DEMO-12345",
+        "courier":            "Starken",
+        "numero_seguimiento": "TRK-DEMO-998877",
+        "fecha_entrega":      fecha_demo,
+        "fecha_envio":        fecha_demo,
+        "fecha":              fecha_demo,
+        "direccion_entrega":  "Av. Demo 123, Las Condes",
+        "direccion":          "Av. Demo 123, Las Condes",
+        "costo_envio":        "$8.990",
+        "motivo_falla":       "Cliente no se encontraba en el domicilio",
+        # OT / mantención
+        "ot":                 "OT-DEMO-2026-001",
+        "tecnico":            "Pedro Pérez",
+        "horario":            "10:00 - 12:00",
+        "tipo_mantencion":    "Preventiva trimestral",
+        "maquina":            "Trotadora ILUS Pro 9000",
+        "link_ot":            "https://ilusfitness.com/ot/demo",
+        # Retiro
+        "code":               "RET-DEMO-7788",
+        "cliente":            "Juan Daniel Aguilar Tejera",
+        "persona_retira":     "María González",
+        "fecha_solicitada":   fecha_demo,
+        "fecha_propuesta":    fecha_demo,
+        "fecha_confirmada":   fecha_demo,
+        "documento":          "Factura #18234",
+        "n_bultos":           "4",
+        "kg":                 "120",
+        "m3":                 "0,85",
+        "warehouse_name":     "Bodega ILUS Quilicura",
+        "warehouse_addr":     "Av. Industrial 4500, Quilicura",
+        "link_seguimiento":   "https://ilusfitness.com/tracking/demo",
+    }
+    return base
+
+
+def _comm_apply_demo_replacements(html: str) -> str:
+    """Reemplaza placeholders {{xxx}} con valores DEMO.
+
+    USO: SOLO para envío manual desde /comunicaciones (no para envíos reales).
+    - Tokens conocidos → valor realista.
+    - Tokens desconocidos → "[xxx demo]" para que sea evidente que es prueba.
+    """
+    if not html or "{{" not in html:
+        return html
+    import re as _re
+    mapa = _comm_demo_replacements()
+
+    def _sub(match):
+        key = (match.group(1) or "").strip()
+        if key in mapa:
+            return mapa[key]
+        return f"[{key} demo]"
+
+    return _re.sub(r"\{\{\s*([\w\.]+)\s*\}\}", _sub, html)
 
 
 def _send_whatsapp(account_sid, auth_token, from_num, to_num, body, *, modulo: str = None):
@@ -18860,20 +18975,39 @@ def _comm_smtp_test_send_legacy():
 @app.route("/comunicaciones/email/enviar", methods=["POST"])
 @_require_superadmin
 def comm_email_enviar():
+    """Envío manual de prueba desde /comunicaciones.
+
+    FIX 2026-05-21 (bug screenshot):
+      1. Header/footer duplicado → `_comm_render_email_document` ahora detecta
+         si `body` ya es documento completo (con <!DOCTYPE/<html/<body) y NO
+         vuelve a envolver. Esto cubre el caso `tplEnviarPruebaConfirm` del
+         front que ya construía el HTML completo con `_buildEmailHtml(...)`.
+      2. Placeholders {{xxx}} literales → en este endpoint (sólo manual) se
+         reemplazan por valores DEMO antes de enviar. Tokens desconocidos
+         caen a "[xxx demo]" para que sea claro que es prueba.
+    """
     d       = request.get_json(silent=True) or {}
     to      = (d.get("to") or "").strip()
     subject = (d.get("subject") or "").strip()
     body    = (d.get("html") or "").strip()
     if not all([to, subject, body]):
         return jsonify({"error": "Faltan campos: to, subject, html"}), 400
-    # SIEMPRE envolver con la plantilla corporativa ILUS (formato del preview)
-    html = _comm_render_email_document(subject, body, "Comunicaciones")
+
+    # 1) Reemplaza placeholders {{xxx}} con valores DEMO (sólo envío manual).
+    #    En el subject también — si la plantilla lleva "Tu pedido {{id_pedido}}…",
+    #    Gmail mostraría el literal "{{id_pedido}}" en la cabecera.
+    subject_demo = _comm_apply_demo_replacements(subject)
+    body_demo    = _comm_apply_demo_replacements(body)
+
+    # 2) Envuelve con la plantilla corporativa ILUS (no vuelve a envolver si
+    #    ya viene como documento completo desde el front).
+    html = _comm_render_email_document(subject_demo, body_demo, "Comunicaciones")
     try:
-        _send_email_dinamico(to, subject, html)
-        _comm_log_entry("email", to, subject, "ok")
+        _send_email_dinamico(to, subject_demo, html)
+        _comm_log_entry("email", to, subject_demo, "ok")
         return jsonify({"ok": True})
     except Exception as exc:
-        _comm_log_entry("email", to, subject, "error", str(exc))
+        _comm_log_entry("email", to, subject_demo, "error", str(exc))
         return jsonify({"error": str(exc)}), 500
 
 
@@ -20560,6 +20694,25 @@ def init_mantenciones_tables():
                 # Composite index para idempotencia en asignación de fotos
                 # del levantamiento a la galería permanente del equipo.
                 "ALTER TABLE mant_maquina_fotos ADD INDEX idx_mqf_visita_origen (maquina_id, visita_origen)",
+                # ════════════════════════════════════════════════════════
+                # 2026-05-21 (Daniel) — Ficha técnica profunda. Daniel reportó
+                # que queries existentes usaban `created_at` en mant_maquina_fotos
+                # / mant_visita_fotos pero las tablas solo tenían `tomada_at`.
+                # Agregamos `created_at` como alias DEFAULT CURRENT_TIMESTAMP
+                # para que queries con `created_at` no fallen y nuevas filas
+                # tengan timestamp aunque el INSERT no lo provea.
+                # ════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquina_fotos ADD COLUMN created_at DATETIME "
+                "DEFAULT CURRENT_TIMESTAMP COMMENT 'Alias de tomada_at — usado por queries de ficha técnica'",
+                "ALTER TABLE mant_visita_fotos ADD COLUMN created_at DATETIME "
+                "DEFAULT CURRENT_TIMESTAMP COMMENT 'Alias de tomada_at — usado por queries de ficha técnica'",
+                # Backfill: copiar tomada_at → created_at en filas existentes
+                "UPDATE mant_maquina_fotos SET created_at = tomada_at "
+                "WHERE created_at IS NULL OR created_at = '0000-00-00 00:00:00'",
+                "UPDATE mant_visita_fotos SET created_at = tomada_at "
+                "WHERE created_at IS NULL OR created_at = '0000-00-00 00:00:00'",
+                # Índice cronológico explícito para galería del equipo
+                "ALTER TABLE mant_maquina_fotos ADD INDEX idx_mqf_maquina_tomada (maquina_id, tomada_at DESC)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -22958,6 +23111,12 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 # (mant_maquina_fotos) más abajo. Esto convierte la foto
                 # del levantamiento en "contenido de la ficha" permanente,
                 # no solo evidencia de la OT.
+                # FIX 2026-05-21 (Daniel reportó fotos del levantamiento NO
+                # aparecen en ficha): además de leer de mant_visita_fotos,
+                # buscamos en mant_levantamiento_fotos. El wizard de
+                # levantamiento sube fotos a esa tabla y NO siempre se
+                # copian a mant_visita_fotos antes de cerrar la OT
+                # (depende del orden de eventos). Lectura unificada.
                 fotos = mysql_fetchall(
                     "SELECT id, archivo_path, cloudinary_url, descripcion, "
                     "       tipo_foto, tomada_por, tomada_at "
@@ -22966,6 +23125,36 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     " ORDER BY tomada_at DESC",
                     (vid, mid)
                 ) or []
+                # ── Fuente secundaria: mant_levantamiento_fotos via lev_id ──
+                lev_id_pf = v.get("levantamiento_id")
+                if lev_id_pf is None:
+                    try:
+                        _r_lvf = mysql_fetchone(
+                            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                            (vid,)
+                        )
+                        lev_id_pf = (_r_lvf or {}).get("levantamiento_id")
+                    except Exception:
+                        lev_id_pf = None
+                if lev_id_pf:
+                    try:
+                        fotos_lev = mysql_fetchall(
+                            "SELECT id, NULL AS archivo_path, cloudinary_url, "
+                            "       descripcion, tipo_foto, tomada_por, tomada_at "
+                            "  FROM mant_levantamiento_fotos "
+                            " WHERE levantamiento_id=%s AND maquina_id=%s",
+                            (lev_id_pf, mid)
+                        ) or []
+                        # Combinar evitando duplicados por cloudinary_url
+                        urls_existentes = {(f.get("cloudinary_url") or f.get("archivo_path") or "") for f in fotos}
+                        for fl in fotos_lev:
+                            url_fl = fl.get("cloudinary_url") or ""
+                            if url_fl and url_fl not in urls_existentes:
+                                fotos.append(fl)
+                                urls_existentes.add(url_fl)
+                    except Exception as _e_flv:
+                        print(f"[promover_lev] no se pudo leer mant_levantamiento_fotos "
+                              f"lev={lev_id_pf} m={mid}: {_e_flv}", flush=True)
                 fotos_count = len(fotos)
                 # Preferir cloudinary (persistente) sobre archivo local
                 primera_foto_url = None
@@ -23078,6 +23267,10 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     _ap = _f.get("archivo_path") or ""
                     _cu = _f.get("cloudinary_url") or ""
                     if not (_ap or _cu):
+                        print(f"[promover-lev] foto saltada porque "
+                              f"no tiene archivo_path ni cloudinary_url "
+                              f"(m={mid} v={vid} foto_id={_f.get('id')})",
+                              flush=True)
                         continue
                     # Anti-duplicado: misma maquina + visita origen + URL
                     try:
@@ -23091,6 +23284,11 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     except Exception:
                         _dup = None
                     if _dup:
+                        print(f"[promover-lev] foto saltada porque "
+                              f"ya existe en galería del equipo "
+                              f"(m={mid} v={vid} dup_id={_dup.get('id')} "
+                              f"url={(_cu or _ap)[:80]})",
+                              flush=True)
                         continue
                     try:
                         # Nombre legible para archivo_nombre: tomamos las

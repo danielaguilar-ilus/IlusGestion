@@ -1285,13 +1285,33 @@ function seleccionarPlantilla() {
 }
 
 function poblarPlantillasManual() {
+  /* Llena el select del Envío manual con TODAS las plantillas de TODOS los
+     módulos agrupadas por <optgroup>. Así Daniel puede mandar prueba de
+     cualquiera (transporte, retiros, mantenciones, comunicación interna)
+     sin tener que cambiar de tab primero.
+     2026-05-21: antes sólo cargaba TPL_ESTADOS (transporte) — quedaban
+     ocultas las plantillas nuevas (visita_proxima, factura_pendiente,
+     garantia_por_vencer, contrato_por_vencer, etc.). */
   const select = document.getElementById('manTemplate');
   if (!select || select.dataset.loaded === '1') return;
-  TPL_ESTADOS.forEach(e => {
-    const opt = document.createElement('option');
-    opt.value = e.key;
-    opt.textContent = e.label;
-    select.appendChild(opt);
+
+  const grupos = [
+    { label:'Transporte',           lista:TPL_ESTADOS_TRANSPORTE },
+    { label:'Retiros',              lista:TPL_ESTADOS_RETIROS },
+    { label:'Mantenciones',         lista:TPL_ESTADOS_MANTENCIONES },
+    { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
+  ];
+  grupos.forEach(g => {
+    if (!g.lista || !g.lista.length) return;
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    g.lista.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.key;
+      opt.textContent = e.label;
+      og.appendChild(opt);
+    });
+    select.appendChild(og);
   });
   select.dataset.loaded = '1';
 }
@@ -1368,14 +1388,22 @@ const TPL_ESTADOS_RETIROS = [
 ];
 
 const TPL_ESTADOS_MANTENCIONES = [
-  { key:'visita_agendada',     label:'Visita agendada',       icon:'bi-calendar-check',  grupo:'mantencion',
+  { key:'visita_agendada',      label:'Visita agendada',        icon:'bi-calendar-check',   grupo:'mantencion',
     color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
-  { key:'ot_asignada',         label:'OT asignada a técnico', icon:'bi-person-check',    grupo:'mantencion',
+  { key:'ot_asignada',          label:'OT asignada a técnico',  icon:'bi-person-check',     grupo:'mantencion',
     color:'#f59e0b', desc:'Cuando se asigna una orden de trabajo a un técnico' },
-  { key:'recordatorio_visita', label:'Recordatorio visita',   icon:'bi-bell',            grupo:'mantencion',
+  { key:'recordatorio_visita',  label:'Recordatorio visita',    icon:'bi-bell',             grupo:'mantencion',
     color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
-  { key:'ot_completada',       label:'OT completada',         icon:'bi-check-circle-fill',grupo:'mantencion',
+  { key:'ot_completada',        label:'OT completada',          icon:'bi-check-circle-fill',grupo:'mantencion',
     color:'#16a34a', desc:'Cuando se completa la visita y se firma la OT' },
+  { key:'visita_proxima',       label:'Visita próxima',         icon:'bi-clock-history',    grupo:'mantencion',
+    color:'#0ea5e9', desc:'Aviso cuando la próxima visita programada está cerca' },
+  { key:'factura_pendiente',    label:'Factura pendiente',      icon:'bi-receipt',          grupo:'mantencion',
+    color:'#f43f5e', desc:'Recordatorio de factura sin pago' },
+  { key:'garantia_por_vencer',  label:'Garantía por vencer',    icon:'bi-shield-exclamation',grupo:'mantencion',
+    color:'#eab308', desc:'Aviso cuando la garantía del equipo se acerca al vencimiento' },
+  { key:'contrato_por_vencer',  label:'Contrato por vencer',    icon:'bi-file-earmark-text',grupo:'mantencion',
+    color:'#7c3aed', desc:'Aviso cuando el contrato de servicio se acerca al término' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [
@@ -1603,6 +1631,54 @@ const TPL_DEFAULTS = {
     whatsapp: {
       asunto: '',
       cuerpo: '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, tu contraseña fue actualizada el *{{fecha_hora}}*.\n\n📧 *Cuenta:* {{email_usuario}}\n\nSi realizaste este cambio, no es necesaria ninguna acción.\nSi *no fuiste tú*, contacta al administrador de inmediato. 🚨'
+    }
+  },
+
+  // ─── VISITA PRÓXIMA ──────────────────────────────────────────────────────
+  visita_proxima: {
+    email: {
+      asunto: 'Visita técnica próxima · {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te recordamos que tienes una <strong>visita técnica próxima</strong> agendada con nuestro equipo de mantenimiento.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #0ea5e9;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° OT:</strong>&nbsp; {{ot}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha:</strong>&nbsp; {{fecha}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Horario:</strong>&nbsp; {{horario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Si necesitas reagendar la visita, responde a este correo o contáctanos por nuestros canales oficiales.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛠️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, te recordamos tu visita técnica próxima:\n\n🔖 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}}\n🕐 *Horario:* {{horario}}\n👤 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\nSi necesitas reagendar, responde este mensaje.'
+    }
+  },
+
+  // ─── FACTURA PENDIENTE ───────────────────────────────────────────────────
+  factura_pendiente: {
+    email: {
+      asunto: 'Factura pendiente de pago — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te informamos que registras una <strong>factura pendiente de pago</strong> en nuestro sistema. Te invitamos a regularizar a la brevedad para mantener activos tus servicios.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #f43f5e;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Documento:</strong>&nbsp; {{documento}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha vencimiento:</strong>&nbsp; <span style="color:#f43f5e;font-weight:700">{{fecha}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Razón social:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Si ya realizaste el pago, ignora este mensaje. Para cualquier consulta puedes responder este correo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '💳 *ILUS Sport & Health*\n\nHola *{{cliente}}*, registras una factura pendiente de pago.\n\n📄 *Documento:* {{documento}}\n📅 *Vencimiento:* {{fecha}}\n🏢 *Razón social:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n\nSi ya pagaste, ignora este mensaje. Cualquier duda, escríbenos.'
+    }
+  },
+
+  // ─── GARANTÍA POR VENCER ─────────────────────────────────────────────────
+  garantia_por_vencer: {
+    email: {
+      asunto: 'Garantía de equipo por vencer — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">La <strong>garantía de uno de tus equipos</strong> está por vencer. Te invitamos a revisar la información a continuación y considerar la renovación o un servicio de mantenimiento preventivo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fffbeb;border-left:4px solid #eab308;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#eab308;font-weight:700">{{fecha}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Ubicación:</strong>&nbsp; {{direccion}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo comercial puede contactarte para ofrecerte alternativas de renovación o un plan de servicio técnico.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛡️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, la garantía de tu equipo *{{maquina}}* está por vencer.\n\n📅 *Vencimiento:* {{fecha}}\n📍 *Ubicación:* {{direccion}}\n\nResponde este mensaje si deseas conocer opciones de renovación o un plan de mantenimiento.'
+    }
+  },
+
+  // ─── CONTRATO POR VENCER ─────────────────────────────────────────────────
+  contrato_por_vencer: {
+    email: {
+      asunto: 'Contrato de servicio por vencer — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu <strong>contrato de servicio</strong> con ILUS Sport &amp; Health está próximo a vencer. Te invitamos a coordinar la renovación para mantener la cobertura continua de tus equipos.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#7c3aed;font-weight:700">{{fecha}}</span></td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo te contactará pronto para revisar las condiciones. Si prefieres adelantar la gestión, responde este correo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '📄 *ILUS Sport & Health*\n\nHola *{{cliente}}*, tu contrato de servicio está próximo a vencer.\n\n🏢 *Cliente:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n📅 *Vence:* {{fecha}}\n\nNuestro equipo te contactará para coordinar la renovación.'
     }
   },
 
