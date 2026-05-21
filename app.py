@@ -4955,25 +4955,43 @@ def _brand_wa_prefix(asunto: str) -> str:
 
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     """
-    Implementación real con fallback inteligente:
-      1) Resend API (HTTPS) — funciona desde cloud hosting (Railway, Heroku)
-      2) SMTP — fallback si Resend no está configurado o falla
+    Implementación real con fallback configurable por env var.
 
-    Esto resuelve el bug "el email funciona en local pero no en Railway":
-    Gmail bloquea/limita conexiones SMTP desde IPs cloud, pero acepta emails
-    enviados vía Resend porque pasan por sus propios MTAs ya whitelisted.
+    PROVIDER (env var ILUS_EMAIL_PROVIDER):
+      - "smtp"   (default): Gmail SMTP primero (sale firmado como
+                  daniel.aguilar@sphs.cl, no necesita DNS propio).
+                  Resend queda como fallback.
+      - "resend" : Resend primero (requiere DNS verificado en Resend
+                  para no caer en spam). SMTP fallback.
+      - "auto"   : Comportamiento legacy — intenta Resend si está
+                  configurado, sino SMTP.
+
+    Decisión 2026-05-21 (Daniel): default = "smtp" porque el DNS de
+    ilusfitness.com aún no está configurado y Resend sin dominio
+    propio sale como onboarding@resend.dev (cae spam). Cuando
+    Joaquín configure los registros DKIM/SPF/DMARC en Resend, basta
+    cambiar ILUS_EMAIL_PROVIDER=resend en Railway.
 
     Branding: el From siempre es genérico (BRAND_CONFIG.from_name +
-    from_email). El Reply-To apunta al buzón de soporte para que las
-    respuestas del destinatario lleguen a un humano y no al no-reply.
+    from_email). El Reply-To apunta al buzón de soporte.
     """
-    # Marca dinámica desde BD (`comm_client_config`) — Daniel puede cambiar
-    # nombre/logo/reply-to en /comunicaciones sin tocar código ni reiniciar.
     marca = _get_marca()
+    provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
+    if provider not in ("smtp", "resend", "auto"):
+        provider = "smtp"
 
-    # ── 1. Intento Resend primero (si está configurado) ─────────────────
     resend_cfg = _get_resend_cfg()
-    if resend_cfg.get("api_key"):
+    resend_disponible = bool(resend_cfg.get("api_key"))
+
+    # ── Ramificación según provider configurado ─────────────────────────
+    intentar_resend_primero = (
+        (provider == "resend" and resend_disponible) or
+        (provider == "auto"   and resend_disponible)
+    )
+    intentar_smtp_primero = (provider == "smtp")
+
+    # ── 1. Intento Resend primero SOLO si provider lo pide ──────────────
+    if intentar_resend_primero:
         # From genérico de marca — SMTP guardado sólo como fallback si el
         # dominio aún no está verificado en Resend.
         from_for_resend = None
@@ -5055,6 +5073,26 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
         except Exception as exc:
             last_exc = exc
             print(f"[ILUS][EMAIL] Intento :{p} falló — {exc}")
+
+    # ── 3. Si arrancamos por SMTP y falló, último intento con Resend ────
+    # Solo cuando provider="smtp" (default): intentamos Resend como red
+    # de respaldo. Esto cubre el caso Railway donde Gmail bloquea SMTP
+    # outbound desde IPs cloud.
+    if intentar_smtp_primero and resend_disponible:
+        print(f"[ILUS][EMAIL] SMTP falló — último intento con Resend como respaldo")
+        from_for_resend = None
+        try:
+            brand_email = marca["from_email"] or cfg.get("from_addr") or resend_cfg.get("from_addr")
+            from_name_r = marca["from_name"]  or cfg.get("from_name") or "ILUS Fitness"
+            if brand_email:
+                from_for_resend = f"{from_name_r} <{brand_email}>"
+        except Exception:
+            pass
+        if _send_via_resend(to_addr, subject, html_body,
+                            from_addr=from_for_resend,
+                            reply_to=marca["reply_to"]):
+            print(f"[ILUS][EMAIL] Enviado a {to_addr} via Resend (fallback de SMTP)")
+            return True
 
     try:
         g._last_email_error = str(last_exc)
@@ -17884,8 +17922,12 @@ def _get_smtp_cfg():
     except Exception:
         pass
     # ── 2. Variables de entorno (respaldo para despliegue) ──────────────
+    # Acepta tanto SMTP_PASS (atajo legacy) como SMTP_PASSWORD (lo que está
+    # en .env.example y lo más natural) — evita el caso silencioso de Daniel
+    # 2026-05-21 donde el .env tenía SMTP_PASSWORD pero el código solo
+    # leía SMTP_PASS, así caía a la BD con creds viejas.
     env_user = os.environ.get("SMTP_USER", "").strip()
-    env_pass = os.environ.get("SMTP_PASS", "").strip()
+    env_pass = (os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASS") or "").strip()
     if env_user and env_pass:
         return {
             "smtp_host": os.environ.get("SMTP_HOST", "smtp.gmail.com").strip(),
