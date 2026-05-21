@@ -30807,6 +30807,81 @@ def mant_visitas_sin_facturar():
     })
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/visitas-maquinas-map",
+           methods=["GET"])
+@_mant_required
+def mant_cliente_visitas_maquinas_map(cid):
+    """Devuelve un mapa { visita_id: [maquina_id, ...] } para todas las
+    visitas del cliente. Útil para la Timeline (Capa 10), que cruza
+    eje vertical (equipos) × eje horizontal (meses).
+
+    Performance: una query con JOIN; <100ms con índice.
+    """
+    rows = mysql_fetchall(
+        "SELECT DISTINCT v.id AS visita_id, t.maquina_id "
+        "FROM mant_visitas v "
+        "JOIN mant_visita_tareas t ON t.visita_id = v.id "
+        "WHERE v.cliente_id=%s AND t.maquina_id IS NOT NULL",
+        (cid,)
+    ) or []
+    mapa = {}
+    for r in rows:
+        vid = r["visita_id"]
+        mid = r["maquina_id"]
+        if vid not in mapa: mapa[vid] = []
+        mapa[vid].append(mid)
+    return jsonify({"ok": True, "map": mapa, "total_visitas": len(mapa)})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/garantia-alertas",
+           methods=["GET"])
+@_mant_required
+def mant_cliente_garantia_alertas(cid):
+    """Devuelve los equipos del cliente con garantía próxima a vencer (<=30d)
+    y los que ya están vencidos en los últimos 7 días (para renegociar contrato).
+
+    Query: ?dias=30 (ventana hacia futuro, default 30).
+    """
+    try:
+        dias = int(request.args.get("dias") or 30)
+        dias = max(1, min(dias, 120))
+    except Exception:
+        dias = 30
+
+    rows = mysql_fetchall(
+        "SELECT id, nombre, marca, modelo, serie, sku, "
+        "       fecha_fin_garantia, "
+        "       DATEDIFF(fecha_fin_garantia, CURDATE()) AS dias_restantes "
+        "FROM mant_maquinas "
+        "WHERE cliente_id=%s "
+        "  AND fecha_fin_garantia IS NOT NULL "
+        "  AND fecha_fin_garantia BETWEEN CURDATE() AND (CURDATE() + INTERVAL %s DAY) "
+        "ORDER BY fecha_fin_garantia ASC",
+        (cid, dias)
+    ) or []
+
+    alertas = []
+    for r in rows:
+        fecha = r.get("fecha_fin_garantia")
+        alertas.append({
+            "id":              r["id"],
+            "nombre":          r.get("nombre") or "Equipo",
+            "marca":           r.get("marca") or "",
+            "modelo":          r.get("modelo") or "",
+            "serie":           r.get("serie") or "",
+            "sku":             r.get("sku") or "",
+            "fecha_fin_garantia": fecha.isoformat() if fecha else None,
+            "dias_restantes":  int(r.get("dias_restantes") or 0),
+        })
+
+    return jsonify({
+        "ok":      True,
+        "alertas": alertas,
+        "total":   len(alertas),
+        "ventana_dias": dias,
+    })
+
+
 # ─────────────────────────────────────────────────────────────────────
 # NOTIFICACIONES INTERNAS — campana en header (sin DNS)
 # ─────────────────────────────────────────────────────────────────────

@@ -558,6 +558,18 @@
           {{ cliente.razon_social }}
         </h4>
         <span class="cli-badge badge-{{ cliente.estado }}" style="font-size:.65rem">{{ cliente.estado.title() }}</span>
+        {# Badge tipo_cliente (Plan 2026-05-21 Capa 8 / regla CLAUDE.md paleta) #}
+        {% set _tc = (cliente.tipo_cliente or 'mantencion')|lower %}
+        {% set _tc_colors = {
+            'mantencion': ('#dc2626','#fff','bi-wrench-adjustable'),
+            'arriendo':   ('#0891b2','#fff','bi-calendar-range'),
+            'leasing':    ('#f59e0b','#fff','bi-bank'),
+        } %}
+        {% set _tc_def = _tc_colors.get(_tc, _tc_colors['mantencion']) %}
+        <span class="cli-badge" title="Tipo de cliente"
+              style="background:{{ _tc_def[0] }};color:{{ _tc_def[1] }};font-size:.65rem;padding:3px 10px;font-weight:800;letter-spacing:.3px">
+          <i class="bi {{ _tc_def[2] }}"></i>{{ _tc.title() }}
+        </span>
       </div>
       {# Info en grid: RUT | ID | Creado #}
       <div style="display:flex;flex-wrap:wrap;gap:0 22px;font-size:.78rem;color:#94a3b8;margin-bottom:8px">
@@ -649,6 +661,57 @@
     </div>
   </div>
 </div>
+
+{# ══════════════════════════════════════════════════════════════════
+   ALERTA GARANTÍA POR VENCER (Plan 2026-05-21 Capa 8) — banner dismissible
+   Carga vía /clientes/<cid>/garantia-alertas. Color ámbar #f59e0b.
+══════════════════════════════════════════════════════════════════ #}
+<div id="garantiaAlertWrap" style="display:none;margin-top:8px;margin-bottom:10px"></div>
+<script>
+(function(){
+  // Carga inline-async: no bloquea el render del resto de la ficha.
+  // CID se define más abajo en mant_ficha.js — usamos cliente.id directo.
+  const _cid = {{ cliente.id }};
+  fetch(`/mantenciones/api/clientes/${_cid}/garantia-alertas?dias=30`)
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d || !d.ok || !d.alertas || !d.alertas.length) return;
+      const wrap = document.getElementById('garantiaAlertWrap');
+      if (!wrap) return;
+      // Si el usuario ya descartó este banner en esta sesión, no mostrar
+      try {
+        if (sessionStorage.getItem('ilus_gar_dismissed_' + _cid) === '1') return;
+      } catch(e){}
+      const items = d.alertas.map(a => {
+        const eq = [a.nombre, a.marca, a.modelo].filter(Boolean).join(' ').trim() || 'Equipo';
+        const ser = a.serie ? ` (serie ${a.serie})` : '';
+        const dt  = a.fecha_fin_garantia
+                    ? new Date(a.fecha_fin_garantia + 'T00:00:00').toLocaleDateString('es-CL')
+                    : '';
+        const dias = a.dias_restantes;
+        const dStr = dias <= 0 ? 'hoy' : (dias === 1 ? 'mañana' : `en ${dias} días`);
+        return `<li style="margin:2px 0"><strong>${eq}</strong>${ser} — sale de garantía <strong>${dStr}</strong>${dt ? ' (' + dt + ')' : ''}.</li>`;
+      }).join('');
+      const titulo = d.alertas.length === 1
+        ? 'Garantía próxima a vencer'
+        : `${d.alertas.length} equipos con garantía próxima a vencer`;
+      wrap.innerHTML = `
+        <div class="alert d-flex align-items-start gap-2 mb-0" role="alert"
+             style="background:#fef9c3;border:1px solid #facc15;color:#713f12;border-radius:10px;padding:12px 16px">
+          <i class="bi bi-shield-exclamation" style="font-size:1.3rem;color:#b45309;margin-top:2px"></i>
+          <div style="flex:1;min-width:0">
+            <div class="fw-bold" style="font-size:.9rem;color:#78350f">${titulo}</div>
+            <ul class="mb-1 mt-1" style="font-size:.82rem;padding-left:1.1rem">${items}</ul>
+            <div class="small" style="color:#92400e">Considera renegociar el contrato antes del vencimiento.</div>
+          </div>
+          <button type="button" class="btn-close ms-2" aria-label="Cerrar"
+                  onclick="(function(){ try{sessionStorage.setItem('ilus_gar_dismissed_${_cid}','1');}catch(e){}; document.getElementById('garantiaAlertWrap').style.display='none'; })()"></button>
+        </div>`;
+      wrap.style.display = '';
+    })
+    .catch(()=>{});
+})();
+</script>
 
 {# ══════════════════════════════════════════════════════════════════
    PIPELINE VISUAL — trayectoria del cliente
@@ -3698,119 +3761,391 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 {# ══════════════════════════════════════════════════════════════════
-   TAB: FINANZAS — ingresos, costos, margen, gráfico mensual
+   TAB: FINANZAS — reescrito (Plan 2026-05-21 Capa 9)
+   Tabla cronológica de servicios prestados con flujo Cotización→OC→Factura,
+   cruzado con ERP Random vía /finanzas-servicios. Sin gráficos, solo
+   acopio + totales + chips clickeables.
 ══════════════════════════════════════════════════════════════════ #}
 <div class="ftab-pane" id="tab-finanzas">
 <style>
-.fin-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px;}
-.fin-kpi{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;
-         box-shadow:0 1px 4px rgba(0,0,0,.04);}
-.fin-kpi-label{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;}
-.fin-kpi-num{font-size:1.5rem;font-weight:900;line-height:1;margin-top:4px;}
-.fin-kpi-sub{font-size:.7rem;color:#6b7280;margin-top:3px;}
-.fin-section-h{font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#475569;margin:18px 0 8px;}
-.fin-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f3f4f6;font-size:.84rem;}
-.fin-row:last-child{border-bottom:none;}
-.fin-bar-chart{display:flex;align-items:flex-end;gap:4px;height:140px;padding:8px 0;}
-.fin-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;}
-.fin-bar{width:100%;border-radius:3px 3px 0 0;background:linear-gradient(180deg,#16a34a,#0f7a35);
-         min-height:3px;transition:height .6s;}
-.fin-bar-lbl{font-size:.6rem;font-weight:700;color:#9ca3af;text-transform:uppercase;}
+.fin-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+             background:#fff;border:1px solid var(--border);border-radius:10px;
+             padding:10px 12px;margin-bottom:12px;}
+.fin-toolbar label{font-size:.7rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;}
+.fin-toolbar select,.fin-toolbar input[type=date]{
+  font-size:.82rem;height:32px;border:1px solid #d1d5db;border-radius:6px;padding:0 8px;
+}
+.fin-tbl{width:100%;border-collapse:collapse;font-size:.82rem;background:#fff;}
+.fin-tbl th{background:#f9fafb;font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;
+            font-weight:800;color:#6b7280;text-align:left;padding:9px 8px;
+            border-bottom:2px solid #e5e7eb;white-space:nowrap;}
+.fin-tbl td{padding:9px 8px;border-bottom:1px solid #f3f4f6;vertical-align:top;}
+.fin-tbl tbody tr:hover{background:#fafbfc;}
+.fin-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:50px;
+          font-size:.7rem;font-weight:700;cursor:pointer;transition:filter .15s;
+          border:1px solid transparent;}
+.fin-chip:hover{filter:brightness(.95);}
+.fin-chip-cov{background:#dbeafe;color:#1e40af;}
+.fin-chip-oc{background:#fef3c7;color:#92400e;}
+.fin-chip-fac{background:#dcfce7;color:#166534;}
+.fin-chip-empty{background:#f3f4f6;color:#9ca3af;font-weight:600;border:1px dashed #d1d5db;cursor:pointer;}
+.fin-chip-empty:hover{background:#eef2ff;color:#4338ca;border-color:#a5b4fc;}
+.fin-est{padding:3px 9px;border-radius:50px;font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;}
+.fin-est-sin{background:#fee2e2;color:#991b1b;}
+.fin-est-cot{background:#fef3c7;color:#92400e;}
+.fin-est-oc{background:#ffedd5;color:#9a3412;}
+.fin-est-fact{background:#dcfce7;color:#166534;}
+.fin-cover{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700;}
+.fin-cover-contrato{background:#dbeafe;color:#1e40af;}
+.fin-cover-cliente{background:#f3f4f6;color:#475569;}
+.fin-cover-garantia{background:#fee2e2;color:#991b1b;}
+.fin-cover-mixto{background:#ede9fe;color:#5b21b6;}
+.fin-tot-foot{background:linear-gradient(135deg,#fafbfc,#eff6ff);border:1px solid var(--border);
+              border-radius:10px;padding:14px 18px;margin-top:14px;
+              display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;}
+.fin-tot-cell{font-size:.85rem;}
+.fin-tot-lbl{font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;font-weight:700;color:#6b7280;}
+.fin-tot-val{font-size:1.2rem;font-weight:900;color:#0f172a;margin-top:2px;}
+.fin-tot-pend{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;}
+.fin-tot-pend .fin-tot-val{color:#991b1b;}
+.fin-skel{background:linear-gradient(90deg,#f3f4f6 0%,#e5e7eb 50%,#f3f4f6 100%);
+          background-size:200% 100%;animation:skel 1.2s ease-in-out infinite;
+          height:14px;border-radius:4px;margin:6px 0;}
+@keyframes skel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.fin-empty{text-align:center;padding:38px 20px;color:#9ca3af;}
+.fin-empty i{font-size:2.4rem;opacity:.5;display:block;margin-bottom:6px;}
+@media (max-width: 768px){
+  .fin-tbl-wrap{overflow-x:auto;}
+  .fin-tbl th, .fin-tbl td{font-size:.74rem;padding:7px 6px;}
+}
 </style>
 
 <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
   <div>
-    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-cash-coin me-2" style="color:var(--ilus-red)"></i>Análisis financiero</span>
-    <span class="text-muted ms-2" style="font-size:.78rem">Ingresos, costos y margen del cliente</span>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-cash-coin me-2" style="color:var(--ilus-red)"></i>Servicios prestados (cronológico)</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Cotización → OC → Factura · cruzado con Random ERP</span>
   </div>
-  <div class="d-flex gap-2 align-items-center">
-    <select id="fin_periodo" class="form-select form-select-sm" style="width:auto"
-            onchange="cargarFinanzas()">
-      <option value="12">Últimos 12 meses</option>
-      <option value="6">Últimos 6 meses</option>
-      <option value="3">Últimos 3 meses</option>
-      <option value="0">Todo el historial</option>
-    </select>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if not is_tecnico %}
+    <button class="btn btn-sm btn-outline-secondary" onclick="abrirVisitaHistorica()" title="Cargar visita histórica para este cliente">
+      <i class="bi bi-clock-history me-1"></i>Visita histórica
+    </button>
+    {% endif %}
+    <button class="btn btn-sm btn-outline-success" onclick="finExportCSV()" title="Descargar CSV con los servicios listados">
+      <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar CSV
+    </button>
   </div>
 </div>
 
-<div class="fin-kpi-grid" id="finKpiGrid">
-  <div class="fin-kpi"><div class="fin-kpi-label">Ingresos brutos</div><div class="fin-kpi-num" id="fin-ingresos" style="color:#16a34a">$0</div><div class="fin-kpi-sub" id="fin-ingresos-sub">Repuestos + visitas + contrato</div></div>
-  <div class="fin-kpi"><div class="fin-kpi-label">Costos</div><div class="fin-kpi-num" id="fin-costos" style="color:#dc2626">$0</div><div class="fin-kpi-sub" id="fin-costos-sub">Repuestos + visitas técnico</div></div>
-  <div class="fin-kpi"><div class="fin-kpi-label">Margen</div><div class="fin-kpi-num" id="fin-margen" style="color:#0f172a">$0</div><div class="fin-kpi-sub" id="fin-margen-sub">% sobre ingresos</div></div>
-  <div class="fin-kpi"><div class="fin-kpi-label">Garantías</div><div class="fin-kpi-num" id="fin-garantia" style="color:#d97706">$0</div><div class="fin-kpi-sub">Costo cubierto</div></div>
-  <div class="fin-kpi"><div class="fin-kpi-label">Visitas facturables</div><div class="fin-kpi-num" id="fin-visitas">0</div><div class="fin-kpi-sub">en período</div></div>
-  <div class="fin-kpi"><div class="fin-kpi-label">Ticket promedio</div><div class="fin-kpi-num" id="fin-ticket" style="color:#7c3aed">$0</div><div class="fin-kpi-sub">por intervención</div></div>
+<div class="fin-toolbar">
+  <label class="mb-0">Desde</label>
+  <input type="date" id="fin_desde" onchange="cargarFinanzas()">
+  <label class="mb-0">Hasta</label>
+  <input type="date" id="fin_hasta" onchange="cargarFinanzas()">
+  <label class="mb-0">Cobertura</label>
+  <select id="fin_cubierto" onchange="cargarFinanzas()">
+    <option value="">Todas</option>
+    <option value="contrato">Contrato</option>
+    <option value="cliente">Cliente</option>
+    <option value="garantia">Garantía</option>
+    <option value="mixto">Mixto</option>
+  </select>
+  <label class="mb-0">Estado factur.</label>
+  <select id="fin_estado" onchange="cargarFinanzas()">
+    <option value="">Todos</option>
+    <option value="sin_cotizar">Sin cotizar</option>
+    <option value="cotizado">Cotizado</option>
+    <option value="con_oc">Con OC</option>
+    <option value="facturado">Facturado</option>
+  </select>
+  <span class="ms-auto small text-muted" id="fin_count">—</span>
 </div>
 
-<div class="row g-3">
-  <div class="col-12 col-xl-7">
-    <div class="f-card">
-      <div class="f-card-header">
-        <span class="f-card-title"><i class="bi bi-graph-up me-1"></i>Ingresos por mes</span>
-      </div>
-      <div class="f-card-body">
-        <div class="fin-bar-chart" id="finBarChart">
-          <div class="text-center w-100 text-muted py-4" style="font-size:.78rem">Cargando…</div>
-        </div>
-      </div>
+<div class="f-card">
+  <div class="f-card-body p-0">
+    <div class="fin-tbl-wrap">
+      <table class="fin-tbl">
+        <thead>
+          <tr>
+            <th style="width:90px">Fecha</th>
+            <th style="width:80px">Tipo</th>
+            <th>Descripción</th>
+            <th style="width:120px">Cotización</th>
+            <th style="width:100px">OC</th>
+            <th style="width:120px">Factura</th>
+            <th class="text-end" style="width:90px">Monto base</th>
+            <th class="text-end" style="width:90px">Repuestos</th>
+            <th style="width:110px">Cubierto</th>
+            <th class="text-end" style="width:90px">Total</th>
+            <th style="width:130px">Estado</th>
+          </tr>
+        </thead>
+        <tbody id="finTblBody">
+          <tr><td colspan="11">
+            <div class="fin-skel" style="width:60%"></div>
+            <div class="fin-skel" style="width:80%"></div>
+            <div class="fin-skel" style="width:70%"></div>
+            <div class="fin-skel" style="width:90%"></div>
+          </td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
-  <div class="col-12 col-xl-5">
-    <div class="f-card">
-      <div class="f-card-header">
-        <span class="f-card-title"><i class="bi bi-list-check me-1"></i>Desglose</span>
-      </div>
-      <div class="f-card-body" id="finDesglose">
-        <div class="text-muted text-center py-3" style="font-size:.78rem">Cargando…</div>
-      </div>
-    </div>
-  </div>
+</div>
+
+<div class="fin-tot-foot" id="finTotFoot">
+  <div class="fin-tot-cell"><div class="fin-tot-lbl">Total año</div><div class="fin-tot-val" id="fin_t_anio">$0</div></div>
+  <div class="fin-tot-cell"><div class="fin-tot-lbl">Total mes</div><div class="fin-tot-val" id="fin_t_mes">$0</div></div>
+  <div class="fin-tot-cell"><div class="fin-tot-lbl">Acumulado contrato</div><div class="fin-tot-val" id="fin_t_contrato">$0</div></div>
+  <div class="fin-tot-cell"><div class="fin-tot-lbl">Cubierto por garantía</div><div class="fin-tot-val" id="fin_t_garantia" style="color:#d97706">$0</div></div>
+  <div class="fin-tot-cell fin-tot-pend"><div class="fin-tot-lbl">🚨 Pendiente de facturar</div><div class="fin-tot-val" id="fin_t_pendiente">$0</div></div>
 </div>
 
 <script>
+// Estado cacheado de la última carga, usado para exportar y para acciones de ligar
+window._finServicios = [];
+window._finTotales = {};
+
 async function cargarFinanzas() {
-  const meses = parseInt(document.getElementById('fin_periodo').value) || 12;
+  const body = document.getElementById('finTblBody');
+  const desde = document.getElementById('fin_desde').value;
+  const hasta = document.getElementById('fin_hasta').value;
+  const cubierto = document.getElementById('fin_cubierto').value;
+  const estado = document.getElementById('fin_estado').value;
+  const qs = new URLSearchParams();
+  if (desde) qs.set('desde', desde);
+  if (hasta) qs.set('hasta', hasta);
+  if (cubierto) qs.set('cubierto', cubierto);
+  if (estado) qs.set('estado', estado);
+
+  body.innerHTML = `<tr><td colspan="11">
+    <div class="fin-skel" style="width:60%"></div>
+    <div class="fin-skel" style="width:80%"></div>
+    <div class="fin-skel" style="width:70%"></div>
+  </td></tr>`;
+
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/finanzas?meses=${meses}`);
-    if (!r.ok) throw new Error('HTTP '+r.status);
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/finanzas-servicios?` + qs.toString());
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
-    const fmt = n => '$' + new Intl.NumberFormat('es-CL').format(Math.round(n||0));
-    document.getElementById('fin-ingresos').textContent = fmt(d.ingresos_total);
-    document.getElementById('fin-costos').textContent   = fmt(d.costos_total);
-    document.getElementById('fin-margen').textContent   = fmt(d.margen);
-    document.getElementById('fin-garantia').textContent = fmt(d.garantia_costo);
-    document.getElementById('fin-visitas').textContent  = d.visitas_count;
-    document.getElementById('fin-ticket').textContent   = fmt(d.ticket_promedio);
-    const pct = d.ingresos_total ? Math.round(d.margen*100/d.ingresos_total) : 0;
-    document.getElementById('fin-margen-sub').textContent = pct + '% sobre ingresos';
-    document.getElementById('fin-margen').style.color = pct>=30 ? '#16a34a' : pct>=10 ? '#d97706' : '#dc2626';
-
-    // Bar chart
-    const max = Math.max(1, ...d.por_mes.map(m => m.ingreso));
-    document.getElementById('finBarChart').innerHTML = d.por_mes.map(m => `
-      <div class="fin-bar-col" title="${m.label}: $${new Intl.NumberFormat('es-CL').format(m.ingreso)}">
-        <div style="flex:1;display:flex;align-items:flex-end;width:100%">
-          <div class="fin-bar" style="height:${(m.ingreso*100/max)}%"></div>
-        </div>
-        <div class="fin-bar-lbl">${m.label}</div>
-      </div>
-    `).join('');
-
-    // Desglose
-    document.getElementById('finDesglose').innerHTML = `
-      <div class="fin-row"><span><i class="bi bi-gear-wide-connected me-2 text-primary"></i>Repuestos vendidos</span><strong>${fmt(d.repuestos_venta)}</strong></div>
-      <div class="fin-row"><span><i class="bi bi-shield-check me-2 text-warning"></i>Garantía (sin cobro)</span><strong>${fmt(d.garantia_costo)}</strong></div>
-      <div class="fin-row"><span><i class="bi bi-tools me-2 text-success"></i>Visitas con costo</span><strong>${fmt(d.visitas_costo)}</strong></div>
-      <div class="fin-row"><span><i class="bi bi-file-earmark-text me-2 text-purple"></i>Contrato (estimado)</span><strong>${fmt(d.contrato_estimado)}</strong></div>
-      <hr class="my-2">
-      <div class="fin-row" style="background:#f0fdf4;padding:10px 12px;border-radius:8px"><span class="fw-bold">TOTAL INGRESOS</span><strong style="color:#16a34a">${fmt(d.ingresos_total)}</strong></div>
-      <div class="fin-row" style="background:#fef2f2;padding:10px 12px;border-radius:8px"><span class="fw-bold">TOTAL COSTOS</span><strong style="color:#dc2626">${fmt(d.costos_total)}</strong></div>
-      <div class="fin-row" style="background:#0f172a;color:#fff;padding:10px 12px;border-radius:8px"><span class="fw-bold">MARGEN NETO</span><strong>${fmt(d.margen)} (${pct}%)</strong></div>
-    `;
+    if (!d.ok) throw new Error(d.error || 'Error desconocido');
+    window._finServicios = d.servicios || [];
+    window._finTotales = d.totales || {};
+    finRender(d);
   } catch (e) {
-    document.getElementById('finDesglose').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    body.innerHTML = `<tr><td colspan="11"><div class="alert alert-danger mb-0" style="font-size:.82rem">
+      <i class="bi bi-x-circle me-1"></i>Error cargando servicios: ${e.message}
+    </div></td></tr>`;
   }
+}
+
+function _fmtMoney(n){ return '$' + new Intl.NumberFormat('es-CL').format(Math.round(n||0)); }
+function _escH(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+function _fmtFecha(iso){
+  if (!iso) return '—';
+  try {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('es-CL', {day:'2-digit',month:'2-digit',year:'2-digit'});
+  } catch(e){ return iso; }
+}
+
+function _tipoBadge(t){
+  const map = {
+    preventiva:['#dcfce7','#166534','Prev'],
+    correctiva:['#fee2e2','#991b1b','Corr'],
+    garantia:['#dbeafe','#1e40af','Gar'],
+    inspeccion:['#fef3c7','#92400e','Insp'],
+    retroactiva:['#f3f4f6','#475569','Ret'],
+    instalacion:['#e0e7ff','#3730a3','Inst'],
+    levantamiento:['#fce7f3','#9f1239','Lev'],
+  };
+  const [bg,fg,lbl] = map[t] || ['#f3f4f6','#475569', (t || '—').substring(0,4)];
+  return `<span style="background:${bg};color:${fg};padding:2px 7px;border-radius:50px;font-size:.65rem;font-weight:700">${lbl}</span>`;
+}
+
+function _estadoBadge(e, dias){
+  if (e === 'facturado') return `<span class="fin-est fin-est-fact">✓ Facturado</span>`;
+  if (e === 'con_oc')    return `<span class="fin-est fin-est-oc">🟠 Con OC${dias>7 ? ' · '+dias+'d' : ''}</span>`;
+  if (e === 'cotizado')  return `<span class="fin-est fin-est-cot">🟡 Cotizado${dias>7 ? ' · '+dias+'d' : ''}</span>`;
+  return `<span class="fin-est fin-est-sin">🚨 Sin cotizar${dias>0 ? ' · '+dias+'d' : ''}</span>`;
+}
+
+function _coverBadge(c, garantiaFlag){
+  const labels = {contrato:'Contrato', cliente:'Cliente', garantia:'🛡 Garantía', mixto:'Mixto'};
+  const cls = `fin-cover fin-cover-${c}`;
+  let extra = '';
+  if (garantiaFlag && c !== 'garantia') {
+    extra = ` <span class="fin-cover fin-cover-garantia" title="Equipo en garantía">🛡</span>`;
+  }
+  return `<span class="${cls}">${labels[c] || c}</span>${extra}`;
+}
+
+function finRender(d){
+  const servicios = d.servicios || [];
+  const cli = d.cliente || {};
+  const cnt = document.getElementById('fin_count');
+  cnt.textContent = `${servicios.length} servicio${servicios.length===1?'':'s'}` +
+                    (d.diagnostics ? ` · ${d.diagnostics.tiempo_ms}ms` : '');
+
+  if (!servicios.length){
+    document.getElementById('finTblBody').innerHTML = `
+      <tr><td colspan="11">
+        <div class="fin-empty">
+          <i class="bi bi-cash-stack"></i>
+          <div class="fw-semibold" style="font-size:.95rem;color:#374151">Sin servicios registrados todavía</div>
+          <div style="margin-top:6px">Carga la primera visita histórica para empezar a poblar el flujo financiero.</div>
+          <button class="btn btn-sm btn-ilus mt-3" onclick="abrirVisitaHistorica()">
+            <i class="bi bi-clock-history me-1"></i>Cargar primera visita histórica
+          </button>
+        </div>
+      </td></tr>`;
+  } else {
+    document.getElementById('finTblBody').innerHTML = servicios.map(s => {
+      const cot = s.cotizacion
+        ? `<span class="fin-chip fin-chip-cov" onclick="finVerDoc('${s.cotizacion.split(' ')[0]}','${s.cotizacion.split(' ')[1]||''}')" title="Ver cotización en Random">${_escH(s.cotizacion)}</span>`
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'cotizacion')">+ ligar</span>`;
+      const oc = s.oc_numero
+        ? `<span class="fin-chip fin-chip-oc" title="OC del cliente">${_escH(s.oc_numero)}</span>`
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'oc')">+ ligar</span>`;
+      const fac = s.factura
+        ? `<span class="fin-chip fin-chip-fac" onclick="finVerDoc('${s.factura.split(' ')[0]}','${s.factura.split(' ')[1]||''}')" title="Ver factura en Random">${_escH(s.factura)}</span>`
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'factura')">+ ligar</span>`;
+      const desc = (s.titulo || '—') + (s.es_retroactiva ? ' <span title="Visita histórica" style="font-size:.7rem">📜</span>' : '');
+      const garFlag = (s.cubierto_por === 'garantia');
+      return `<tr>
+        <td class="font-monospace text-nowrap">${_fmtFecha(s.fecha)}</td>
+        <td>${_tipoBadge(s.tipo_visita)}</td>
+        <td style="max-width:280px">
+          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#0f172a">${_escH(desc)}</div>
+          ${s.nota_libre ? `<div class="small text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">${_escH(s.nota_libre.substring(0,80))}</div>` : ''}
+        </td>
+        <td>${cot}</td>
+        <td>${oc}</td>
+        <td>${fac}</td>
+        <td class="text-end font-monospace">${s.monto_base ? _fmtMoney(s.monto_base) : '<span class="text-muted">—</span>'}</td>
+        <td class="text-end font-monospace">${s.monto_repuestos ? _fmtMoney(s.monto_repuestos) : '<span class="text-muted">—</span>'}</td>
+        <td>${_coverBadge(s.cubierto_por, garFlag)}</td>
+        <td class="text-end font-monospace fw-bold">${s.monto_total ? _fmtMoney(s.monto_total) : '<span class="text-muted">—</span>'}</td>
+        <td>${_estadoBadge(s.estado_facturacion, s.dias_sin_facturar)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Footer totales
+  const t = d.totales || {};
+  document.getElementById('fin_t_anio').textContent = _fmtMoney(t.anio);
+  document.getElementById('fin_t_mes').textContent  = _fmtMoney(t.mes);
+  document.getElementById('fin_t_contrato').textContent = _fmtMoney(t.total_acumulado_contrato);
+  document.getElementById('fin_t_garantia').textContent = _fmtMoney(t.cubierto_garantia);
+  document.getElementById('fin_t_pendiente').textContent = _fmtMoney(t.pendiente_facturar);
+}
+
+async function finVerDoc(tido, nudo){
+  if (!tido || !nudo) return;
+  try {
+    const r = await fetch(`/api/erp/documento?tido=${encodeURIComponent(tido)}&nudo=${encodeURIComponent(nudo)}`);
+    const d = await r.json();
+    if (r.status !== 200 || d.error) throw new Error(d.error || ('HTTP '+r.status));
+    const head = d.hdr || d.header || d.documento || {};
+    const lineas = d.lineas || d.lines || [];
+    let body = '';
+    if (head.nrazon)  body += `<div class="small text-muted">${_escH(head.nrazon)}</div>`;
+    if (head.fecha)   body += `<div class="small">Fecha: ${_escH(head.fecha)}</div>`;
+    if (head.valor_neto)  body += `<div class="small">Neto: ${_fmtMoney(head.valor_neto)}</div>`;
+    if (head.valor_bruto) body += `<div class="small">Bruto: ${_fmtMoney(head.valor_bruto)}</div>`;
+    if (lineas.length){
+      body += `<hr><div class="small fw-bold">${lineas.length} línea(s):</div>`;
+      body += '<ul class="small mb-0" style="max-height:180px;overflow-y:auto;padding-left:18px">';
+      body += lineas.slice(0,30).map(l => `<li>${_escH(l.nombre || l.descripcion || l.glosa || l.sku || '—')}${l.cantidad ? ' × '+l.cantidad : ''}</li>`).join('');
+      body += '</ul>';
+    }
+    await ilusAlert({title:`Documento ${tido} ${nudo}`, message:'Detalle del documento ERP', sub: body, subHtml:true, type:'info'});
+  } catch(e){
+    if (typeof ilusAlert === 'function')
+      await ilusAlert({title:'Error', message:`No se pudo cargar ${tido} ${nudo}: ${e.message}`, type:'error'});
+    else
+      alert(`Error: ${e.message}`);
+  }
+}
+
+async function finLigar(vid, tipo){
+  if (tipo === 'oc'){
+    const numero = await ilusPrompt({title:'Ligar OC', message:'Número de OC del cliente', placeholder:'OC-77821', required:true});
+    if (!numero) return;
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${vid}/oc`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({numero: numero.trim()})
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Error');
+      ilusToast('✓ OC ligada', {type:'success'});
+      cargarFinanzas();
+    } catch(e){ ilusToast('Error: '+e.message, {type:'error'}); }
+    return;
+  }
+  // Cotización o Factura: TIDO + NUDO
+  const isFac = (tipo === 'factura');
+  const opciones = isFac ? ['FCV (factura)','BLV (boleta)'] : ['COV (cotización)','NVV (nota venta)'];
+  const codes    = isFac ? ['FCV','BLV'] : ['COV','NVV'];
+  const tidoStr = await ilusPrompt({
+    title: 'Ligar ' + (isFac ? 'factura' : 'cotización'),
+    message: 'TIDO (' + opciones.join(' / ') + ')',
+    placeholder: codes[0],
+    required: true,
+  });
+  if (!tidoStr) return;
+  const t = tidoStr.trim().toUpperCase();
+  if (!codes.includes(t)){
+    await ilusAlert({title:'TIDO inválido', message:`Debe ser ${codes.join(' o ')}`, type:'warning'});
+    return;
+  }
+  const nudo = await ilusPrompt({title:'N° de documento', message:`Número de ${t}`, placeholder:'10499', required:true});
+  if (!nudo) return;
+  try {
+    const url = isFac
+      ? `/mantenciones/api/visitas/${vid}/factura`
+      : `/mantenciones/api/visitas/${vid}/cotizacion`;
+    const r = await fetch(url, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tido:t, nudo:nudo.trim()})
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error');
+    ilusToast('✓ ' + (isFac?'Factura':'Cotización') + ' ligada', {type:'success'});
+    cargarFinanzas();
+  } catch(e){
+    ilusToast('Error: '+e.message, {type:'error'});
+  }
+}
+
+function finExportCSV(){
+  const rows = window._finServicios || [];
+  if (!rows.length){ ilusToast('Sin servicios para exportar', {type:'warning'}); return; }
+  const headers = ['Fecha','Tipo','Descripción','Cotización','OC','Factura','Monto base','Repuestos','Cubierto por','Total','Estado facturación','Días sin facturar'];
+  const esc = s => '"' + String(s||'').replace(/"/g,'""') + '"';
+  const lines = [headers.map(esc).join(',')];
+  rows.forEach(s => {
+    lines.push([
+      s.fecha || '', s.tipo_visita || '', s.titulo || '',
+      s.cotizacion || '', s.oc_numero || '', s.factura || '',
+      s.monto_base || 0, s.monto_repuestos || 0,
+      s.cubierto_por || '', s.monto_total || 0,
+      s.estado_facturacion || '', s.dias_sin_facturar || 0
+    ].map(esc).join(','));
+  });
+  const t = window._finTotales || {};
+  lines.push('');
+  lines.push([esc('TOTAL AÑO'), '', '', '', '', '', '', '', '', esc(t.anio||0), '', ''].join(','));
+  lines.push([esc('TOTAL MES'), '', '', '', '', '', '', '', '', esc(t.mes||0), '', ''].join(','));
+  lines.push([esc('CUBIERTO POR GARANTÍA'), '', '', '', '', '', '', '', '', esc(t.cubierto_garantia||0), '', ''].join(','));
+  lines.push([esc('PENDIENTE DE FACTURAR'), '', '', '', '', '', '', '', '', esc(t.pendiente_facturar||0), '', ''].join(','));
+  const blob = new Blob(['﻿' + lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `finanzas-cliente-${CID}-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  ilusToast('✓ CSV descargado', {type:'success'});
 }
 </script>
 </div>
@@ -4677,7 +5012,52 @@ function abrirEmailManual() {
     {% endif %}
   </div>
 
+  {# ── Toggle de vista: Lista / Timeline (Plan 2026-05-21 Capa 10) ── #}
+  <style>
+  .vis-vista-toggle{display:inline-flex;background:#f3f4f6;border-radius:10px;padding:3px;gap:2px;margin-bottom:14px;}
+  .vis-vista-toggle button{background:transparent;border:0;font-size:.8rem;font-weight:700;
+                            padding:7px 14px;border-radius:8px;color:#6b7280;cursor:pointer;
+                            transition:background .15s,color .15s;}
+  .vis-vista-toggle button.active{background:#fff;color:#dc2626;box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  /* Timeline grid */
+  .vis-timeline-wrap{background:#fff;border:1px solid var(--border);border-radius:10px;
+                     padding:14px;overflow-x:auto;}
+  .vis-tl-header-row, .vis-tl-row{display:grid;align-items:center;gap:4px;
+                                   border-bottom:1px solid #f3f4f6;}
+  .vis-tl-header-row{font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;
+                     font-weight:800;color:#6b7280;padding:8px 6px;
+                     background:#fafbfc;border-radius:6px 6px 0 0;}
+  .vis-tl-row{padding:10px 6px;min-height:48px;}
+  .vis-tl-row:hover{background:#fafbfc;}
+  .vis-tl-eq{font-size:.78rem;font-weight:600;color:#0f172a;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;}
+  .vis-tl-eq .vis-tl-eq-sub{font-size:.66rem;color:#9ca3af;font-weight:500;}
+  .vis-tl-cell{display:flex;flex-wrap:wrap;gap:3px;align-items:center;justify-content:flex-start;
+               border-left:1px dashed #e5e7eb;padding:0 4px;min-height:24px;}
+  .vis-tl-month-lbl{text-align:center;font-size:.6rem;color:#6b7280;font-weight:700;}
+  .vis-tl-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;
+               justify-content:center;font-size:.62rem;color:#fff;cursor:pointer;
+               transition:transform .15s;}
+  .vis-tl-icon:hover{transform:scale(1.18);}
+  .vis-tl-icon.future{opacity:.45;}
+  .vis-tl-leg{display:flex;flex-wrap:wrap;gap:10px;font-size:.7rem;margin-top:10px;color:#6b7280;}
+  .vis-tl-leg span{display:inline-flex;align-items:center;gap:4px;}
+  .vis-tl-leg-dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
+  @media (max-width: 768px){
+    .vis-timeline-wrap{padding:8px;}
+  }
+  </style>
   {% if visitas %}
+  <div class="vis-vista-toggle" id="visVistaToggle">
+    <button class="active" data-vista="lista" onclick="visSwitchVista('lista', this)">
+      <i class="bi bi-list-ul me-1"></i>Lista
+    </button>
+    <button data-vista="timeline" onclick="visSwitchVista('timeline', this)">
+      <i class="bi bi-bar-chart-steps me-1"></i>Timeline
+    </button>
+  </div>
+
+  <div id="visVistaLista">
   <div class="f-card">
     <div class="f-card-body p-0">
       <table class="table table-sm mb-0" style="font-size:.82rem">
@@ -4777,6 +5157,39 @@ function abrirEmailManual() {
       </table>
     </div>
   </div>
+  </div>{# /visVistaLista #}
+
+  {# ── Vista Timeline (oculta por default) ── #}
+  <div id="visVistaTimeline" style="display:none">
+    <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
+      <div class="text-muted small">
+        <i class="bi bi-info-circle me-1"></i>Visitas por equipo × mes. Click en cualquier ícono para ver detalle.
+      </div>
+      <div>
+        <label class="small text-muted me-2">Rango:</label>
+        <select id="visTlRange" class="form-select form-select-sm d-inline-block" style="width:auto"
+                onchange="renderVisTimeline()">
+          <option value="3">Últimos 3 meses</option>
+          <option value="6" selected>Últimos 6 meses</option>
+          <option value="12">Último año</option>
+          <option value="0">Todo el historial</option>
+        </select>
+      </div>
+    </div>
+    <div class="vis-timeline-wrap" id="visTlContent">
+      <div class="text-muted text-center py-4 small">Cargando…</div>
+    </div>
+    <div class="vis-tl-leg">
+      <span><span class="vis-tl-leg-dot" style="background:#16a34a"></span>Preventiva</span>
+      <span><span class="vis-tl-leg-dot" style="background:#f59e0b"></span>Correctiva</span>
+      <span><span class="vis-tl-leg-dot" style="background:#3b82f6"></span>Garantía</span>
+      <span><span class="vis-tl-leg-dot" style="background:#6b7280"></span>Retroactiva</span>
+      <span><span class="vis-tl-leg-dot" style="background:#7c3aed"></span>Instalación</span>
+      <span><span class="vis-tl-leg-dot" style="background:#9f1239"></span>Levantamiento</span>
+      <span style="margin-left:14px;opacity:.6"><span class="vis-tl-leg-dot" style="background:#16a34a;opacity:.45"></span>Programada (futura)</span>
+    </div>
+  </div>
+
   {% else %}
   <div class="f-card">
     <div class="empty-state">
@@ -4791,6 +5204,241 @@ function abrirEmailManual() {
     </div>
   </div>
   {% endif %}
+
+  <script>
+  /* ──────────────────────────────────────────────────────────────
+     Visitas: toggle Lista / Timeline (Plan 2026-05-21 Capa 10)
+     ────────────────────────────────────────────────────────────── */
+  // Equipos del cliente (inyectados desde Jinja)
+  window._visTlMaquinas = {{ (maquinas|map(attribute='id')|list)|tojson if maquinas else '[]' }};
+  window._visTlMaquinasMap = {
+    {% for m in (maquinas or []) %}
+    {{ m.id }}: { id: {{ m.id }}, nombre: {{ (m.nombre or 'Equipo')|tojson }}, marca: {{ (m.marca or '')|tojson }}, serie: {{ (m.serie or '')|tojson }} }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  };
+  window._visTlVisitas = [];   // cache de visitas (formato API)
+  window._visTlLoaded = false;
+
+  const _VIS_TIPO_COLOR = {
+    preventiva:'#16a34a', correctiva:'#f59e0b', garantia:'#3b82f6',
+    retroactiva:'#6b7280', instalacion:'#7c3aed', levantamiento:'#9f1239',
+    inspeccion:'#0891b2'
+  };
+  const _VIS_TIPO_ICON = {
+    preventiva:'P', correctiva:'C', garantia:'G',
+    retroactiva:'R', instalacion:'I', levantamiento:'L', inspeccion:'In'
+  };
+
+  function visSwitchVista(modo, btn){
+    document.querySelectorAll('#visVistaToggle button').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const lista = document.getElementById('visVistaLista');
+    if (lista) lista.style.display = (modo === 'lista' ? '' : 'none');
+    const tl = document.getElementById('visVistaTimeline');
+    if (tl) tl.style.display = (modo === 'timeline' ? '' : 'none');
+    if (modo === 'timeline'){
+      cargarVisTimeline();
+    }
+  }
+
+  async function cargarVisTimeline(){
+    if (window._visTlLoaded){ renderVisTimeline(); return; }
+    const cont = document.getElementById('visTlContent');
+    cont.innerHTML = '<div class="text-muted text-center py-4 small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando timeline…</div>';
+    try {
+      // Cargar visitas + mapa visita→máquinas en paralelo
+      const [vRes, mRes] = await Promise.all([
+        fetch(`/mantenciones/api/visitas?cliente_id=${CID}&start=1900-01-01&end=2100-12-31`),
+        fetch(`/mantenciones/api/clientes/${CID}/visitas-maquinas-map`),
+      ]);
+      const arr = await vRes.json();
+      window._visTlVisitas = Array.isArray(arr) ? arr : [];
+      try {
+        const mj = await mRes.json();
+        const mapa = (mj && mj.ok) ? (mj.map || {}) : {};
+        // Adjuntar maquina_ids a cada visita
+        window._visTlVisitas.forEach(v => { v.maquina_ids = mapa[v.id] || []; });
+      } catch(e){}
+      window._visTlLoaded = true;
+      renderVisTimeline();
+    } catch(e){
+      cont.innerHTML = `<div class="alert alert-danger" style="font-size:.82rem">Error: ${e.message}</div>`;
+    }
+  }
+
+  function _visIsMobile(){ return (window.innerWidth || 800) < 768; }
+
+  function renderVisTimeline(){
+    const cont = document.getElementById('visTlContent');
+    const rango = parseInt(document.getElementById('visTlRange').value);
+    const maquinas = window._visTlMaquinasMap || {};
+    const maqIds = Object.keys(maquinas).map(k => parseInt(k));
+    if (!maqIds.length){
+      cont.innerHTML = `
+        <div class="text-muted text-center py-4 small">
+          <i class="bi bi-bicycle" style="font-size:1.6rem;opacity:.4;display:block;margin-bottom:6px"></i>
+          Sin equipos registrados — la vista Timeline requiere equipos.
+        </div>`;
+      return;
+    }
+
+    // Determinar ventana temporal (basada en fecha visita más antigua / rango)
+    const hoy = new Date(); hoy.setDate(1); hoy.setHours(0,0,0,0);
+    function _vDate(v){ return v.fecha ? new Date(v.fecha + 'T00:00:00') : (v.start ? new Date(v.start) : null); }
+    let inicio;
+    if (rango === 0){
+      const fechas = (window._visTlVisitas || []).map(v => _vDate(v)).filter(Boolean);
+      if (fechas.length){
+        const min = new Date(Math.min(...fechas.map(d=>d.getTime())));
+        inicio = new Date(min.getFullYear(), min.getMonth(), 1);
+      } else {
+        inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 5, 1);
+      }
+    } else {
+      inicio = new Date(hoy.getFullYear(), hoy.getMonth() - (rango - 1), 1);
+    }
+    // Mostrar también próximos 3 meses (visitas futuras programadas)
+    const fin = new Date(hoy.getFullYear(), hoy.getMonth() + 3, 1);
+
+    // Generar meses
+    const meses = [];
+    const cursor = new Date(inicio);
+    while (cursor <= fin && meses.length < 36){
+      meses.push({ y: cursor.getFullYear(), m: cursor.getMonth() });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    // Bucket: visitas[equipo_id][YYYY-MM] = [visita, ...]
+    const visitas = window._visTlVisitas || [];
+    const bucket = {};
+    visitas.forEach(v => {
+      const ms = v.maquina_ids || [];
+      const fStart = _vDate(v);
+      if (!fStart || isNaN(fStart)) return;
+      const ym = `${fStart.getFullYear()}-${String(fStart.getMonth()+1).padStart(2,'0')}`;
+      const eqs = (ms.length ? ms : ['_sin_eq']);
+      eqs.forEach(eq => {
+        const key = String(eq);
+        if (!bucket[key]) bucket[key] = {};
+        if (!bucket[key][ym]) bucket[key][ym] = [];
+        bucket[key][ym].push(v);
+      });
+    });
+
+    if (_visIsMobile()){
+      // ── Mobile: lista vertical agrupada por equipo ────────────
+      let html = '';
+      maqIds.forEach(eqId => {
+        const eq = maquinas[eqId];
+        const ymKeys = Object.keys(bucket[String(eqId)] || {}).sort().reverse();
+        html += `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+          <div class="fw-semibold" style="font-size:.85rem;color:#0f172a">${_visEsc(eq.nombre)}</div>
+          <div class="small text-muted">${_visEsc(eq.marca||'')}${eq.serie ? ' · serie '+_visEsc(eq.serie) : ''}</div>
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">`;
+        if (!ymKeys.length){
+          html += `<span class="small text-muted">Sin visitas en el rango</span>`;
+        } else {
+          ymKeys.forEach(ym => {
+            (bucket[String(eqId)][ym] || []).forEach(v => {
+              html += _visTlMobileChip(v);
+            });
+          });
+        }
+        html += `</div></div>`;
+      });
+      cont.innerHTML = html || '<div class="text-muted small py-3">Sin datos</div>';
+      return;
+    }
+
+    // ── Desktop: grid CSS (equipos × meses) ──────────────────────
+    const colTpl = `220px repeat(${meses.length}, minmax(36px, 1fr))`;
+    let html = `<div class="vis-tl-header-row" style="grid-template-columns:${colTpl}">
+      <div>Equipo</div>` +
+      meses.map(m => `<div class="vis-tl-month-lbl">${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][m.m]} ${String(m.y).slice(-2)}</div>`).join('') +
+      `</div>`;
+    maqIds.forEach(eqId => {
+      const eq = maquinas[eqId];
+      html += `<div class="vis-tl-row" style="grid-template-columns:${colTpl}">
+        <div class="vis-tl-eq" title="${_visEsc(eq.nombre)}">
+          ${_visEsc(eq.nombre)}
+          <div class="vis-tl-eq-sub">${_visEsc(eq.marca||'')}${eq.serie ? ' · '+_visEsc(eq.serie) : ''}</div>
+        </div>`;
+      const eqBucket = bucket[String(eqId)] || {};
+      const nowYM = `${(new Date()).getFullYear()}-${String((new Date()).getMonth()+1).padStart(2,'0')}`;
+      meses.forEach(m => {
+        const ym = `${m.y}-${String(m.m+1).padStart(2,'0')}`;
+        const arr = eqBucket[ym] || [];
+        const cells = arr.slice(0, 6).map(v => _visTlIcon(v, ym > nowYM)).join('');
+        const extra = arr.length > 6 ? `<span style="font-size:.6rem;color:#9ca3af;font-weight:700">+${arr.length-6}</span>` : '';
+        html += `<div class="vis-tl-cell">${cells}${extra}</div>`;
+      });
+      html += `</div>`;
+    });
+    // "Sin equipo" si hay visitas sin equipo asociado
+    if (bucket['_sin_eq']){
+      const nowYM = `${(new Date()).getFullYear()}-${String((new Date()).getMonth()+1).padStart(2,'0')}`;
+      html += `<div class="vis-tl-row" style="grid-template-columns:${colTpl}">
+        <div class="vis-tl-eq" style="color:#9ca3af;font-style:italic">Sin equipo asociado</div>`;
+      meses.forEach(m => {
+        const ym = `${m.y}-${String(m.m+1).padStart(2,'0')}`;
+        const arr = bucket['_sin_eq'][ym] || [];
+        const cells = arr.slice(0, 6).map(v => _visTlIcon(v, ym > nowYM)).join('');
+        html += `<div class="vis-tl-cell">${cells}</div>`;
+      });
+      html += `</div>`;
+    }
+    cont.innerHTML = html;
+  }
+
+  function _visEsc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+  function _visTlIcon(v, futura){
+    const tipo = (v.tipo || '').toLowerCase();
+    const col = _VIS_TIPO_COLOR[tipo] || '#475569';
+    const lbl = _VIS_TIPO_ICON[tipo] || '?';
+    const esRetro = !!v.es_retroactiva;
+    const realCol = esRetro && tipo !== 'retroactiva' ? '#6b7280' : col;
+    const dStr = v.fecha || v.start || '';
+    const dFmt = dStr ? dStr.substring(0,10) : '';
+    const tit = `${(v.title || v.titulo || tipo).replace(/"/g,'')} · ${dFmt}${v.estado ? ' · '+v.estado : ''}`;
+    return `<span class="vis-tl-icon ${futura ? 'future' : ''}"
+                  style="background:${realCol}"
+                  title="${_visEsc(tit)}"
+                  onclick="visTlAbrirDetalle(${v.id})">${lbl}</span>`;
+  }
+
+  function _visTlMobileChip(v){
+    const tipo = (v.tipo || '').toLowerCase();
+    const col = _VIS_TIPO_COLOR[tipo] || '#475569';
+    const dStr = v.fecha || v.start || '';
+    let dFmt = '—';
+    try { if (dStr) dFmt = new Date(dStr + (dStr.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('es-CL', {month:'short', day:'2-digit', year:'2-digit'}); } catch(e){}
+    const futura = dStr && new Date(dStr) > new Date();
+    return `<span style="background:${col};color:#fff;padding:3px 8px;border-radius:50px;font-size:.7rem;font-weight:700;cursor:pointer;opacity:${futura?.5:1}"
+                  onclick="visTlAbrirDetalle(${v.id})">
+              ${_VIS_TIPO_ICON[tipo] || '?'} ${dFmt}
+            </span>`;
+  }
+
+  function visTlAbrirDetalle(vid){
+    // Abre la OT en la misma pestaña (reusa la página existente).
+    window.location.href = `/mantenciones/ot/${vid}`;
+  }
+
+  // Re-render en resize para alternar mobile/desktop
+  window.addEventListener('resize', (() => {
+    let _to;
+    return () => {
+      clearTimeout(_to);
+      _to = setTimeout(() => {
+        if (document.getElementById('visVistaTimeline')?.style.display !== 'none'
+            && window._visTlLoaded){
+          renderVisTimeline();
+        }
+      }, 250);
+    };
+  })());
+  </script>
 
 </div>
 {# /ftab-pane visitas #}
@@ -5179,9 +5827,11 @@ function abrirEmailManual() {
             </select>
           </div>
           <div class="col-md-6">
-            <label class="form-label small fw-semibold">Técnico</label>
-            <input type="text" id="vh_tecnico" class="form-control"
-                   placeholder="Nombre del técnico (opcional)">
+            <label class="form-label small fw-semibold">Técnico (opcional)</label>
+            <select id="vh_tecnico" class="form-select">
+              <option value="">— Sin asignar —</option>
+              {# Se rellena vía JS desde /api/tecnicos al abrir el modal #}
+            </select>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-semibold">
@@ -5196,9 +5846,73 @@ function abrirEmailManual() {
                    placeholder="Ej: Mantención preventiva trimestral">
           </div>
           <div class="col-12">
-            <label class="form-label small fw-semibold">Observaciones (opcional)</label>
+            <label class="form-label small fw-semibold">Equipos involucrados (opcional)</label>
+            <div id="vh_equipos_wrap"
+                 style="max-height:140px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;background:#fafbfc;font-size:.82rem">
+              {% if maquinas %}
+                {% for m in maquinas %}
+                <div class="form-check py-0">
+                  <input class="form-check-input vh-eq-chk" type="checkbox"
+                         id="vh_eq_{{ m.id }}" value="{{ m.id }}">
+                  <label class="form-check-label small" for="vh_eq_{{ m.id }}">
+                    <strong>{{ m.nombre or 'Equipo' }}</strong>
+                    {% if m.marca %} · {{ m.marca }}{% endif %}
+                    {% if m.modelo %} {{ m.modelo }}{% endif %}
+                    {% if m.serie %}<span class="text-muted ms-1">(serie {{ m.serie }})</span>{% endif %}
+                  </label>
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="text-muted small">Sin equipos registrados para este cliente.</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Nota libre / observaciones</label>
             <textarea id="vh_observaciones" class="form-control" rows="2"
                       placeholder="Qué se hizo, qué se cambió, qué quedó pendiente…"></textarea>
+          </div>
+
+          {# ── Comercial opcional (colapsable, default cerrado) ── #}
+          <div class="col-12">
+            <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
+                    style="color:#dc2626;font-size:.85rem"
+                    onclick="vhToggleComercial()" id="vh_comercial_toggle">
+              <i class="bi bi-chevron-right me-1" id="vh_comercial_caret"></i>
+              <i class="bi bi-cash-coin me-1"></i>Datos comerciales (cotización, OC, factura) — opcional
+            </button>
+            <div id="vh_comercial_box" style="display:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-top:8px">
+              <div class="row g-2">
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold mb-1">Cotización TIDO</label>
+                  <select id="vh_cot_tido" class="form-select form-select-sm">
+                    <option value="">—</option>
+                    <option value="COV">COV (cotización)</option>
+                    <option value="NVV">NVV (nota venta)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold mb-1">Cotización N°</label>
+                  <input type="text" id="vh_cot_nudo" class="form-control form-control-sm font-monospace" placeholder="4521">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold mb-1">OC del cliente (N°)</label>
+                  <input type="text" id="vh_oc_numero" class="form-control form-control-sm font-monospace" placeholder="OC-77821">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold mb-1">Factura TIDO</label>
+                  <select id="vh_fac_tido" class="form-select form-select-sm">
+                    <option value="">—</option>
+                    <option value="FCV">FCV (factura)</option>
+                    <option value="BLV">BLV (boleta)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label small fw-semibold mb-1">Factura N°</label>
+                  <input type="text" id="vh_fac_nudo" class="form-control form-control-sm font-monospace" placeholder="10499">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -5212,14 +5926,6 @@ function abrirEmailManual() {
           </div>
         </div>
 
-        <div class="form-check mt-3">
-          <input class="form-check-input" type="checkbox" id="vh_crear_proxima" checked>
-          <label class="form-check-label small" for="vh_crear_proxima">
-            <strong>Crear automáticamente la próxima visita</strong>
-            en la fecha sugerida (programada, pendiente de asignar técnico)
-          </label>
-        </div>
-
         <div id="vh_result" class="mt-3" style="display:none"></div>
       </div>
       <div class="modal-footer">
@@ -5231,6 +5937,187 @@ function abrirEmailManual() {
     </div>
   </div>
 </div>
+
+<script>
+/* ──────────────────────────────────────────────────────────────
+   Visita histórica — JS (Plan 2026-05-21 Capa 8)
+   Reemplaza la lógica antigua que no estaba conectada.
+   Usa POST /clientes/<cid>/visitas/retroactiva del backend nuevo.
+   ────────────────────────────────────────────────────────────── */
+window._vhTecnicosLoaded = false;
+
+async function abrirVisitaHistorica(){
+  // Reset form
+  document.getElementById('vh_fecha').value = '';
+  document.getElementById('vh_tipo').value = 'preventiva';
+  document.getElementById('vh_titulo').value = '';
+  document.getElementById('vh_observaciones').value = '';
+  document.getElementById('vh_costo').value = '';
+  const cotT = document.getElementById('vh_cot_tido'); if (cotT) cotT.value = '';
+  const cotN = document.getElementById('vh_cot_nudo'); if (cotN) cotN.value = '';
+  const ocN  = document.getElementById('vh_oc_numero'); if (ocN) ocN.value = '';
+  const facT = document.getElementById('vh_fac_tido'); if (facT) facT.value = '';
+  const facN = document.getElementById('vh_fac_nudo'); if (facN) facN.value = '';
+  document.querySelectorAll('.vh-eq-chk').forEach(c => { c.checked = false; });
+  const box = document.getElementById('vh_comercial_box');
+  if (box) box.style.display = 'none';
+  const car = document.getElementById('vh_comercial_caret');
+  if (car){ car.classList.remove('bi-chevron-down'); car.classList.add('bi-chevron-right'); }
+  document.getElementById('vh_preview').style.display = 'none';
+  document.getElementById('vh_result').style.display  = 'none';
+  document.getElementById('vh_btn').disabled = false;
+
+  // Cargar técnicos (1 vez)
+  if (!window._vhTecnicosLoaded){
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos');
+      const arr = await r.json();
+      const sel = document.getElementById('vh_tecnico');
+      if (sel && Array.isArray(arr)){
+        sel.innerHTML = '<option value="">— Sin asignar —</option>' +
+          arr.filter(t => t.activo).map(t => `<option value="${t.id}">${(t.nombre||'(sin nombre)').replace(/</g,'&lt;')}</option>`).join('');
+      }
+      window._vhTecnicosLoaded = true;
+    } catch(e){ /* fallback: input vacío */ }
+  }
+
+  // Default fecha: hace 30 días
+  const f = new Date(); f.setDate(f.getDate() - 30);
+  document.getElementById('vh_fecha').value = f.toISOString().slice(0,10);
+
+  if (!window._modalVisitaHistorica){
+    window._modalVisitaHistorica = new bootstrap.Modal(document.getElementById('modalVisitaHistorica'));
+  }
+  window._modalVisitaHistorica.show();
+}
+
+function vhToggleComercial(){
+  const box = document.getElementById('vh_comercial_box');
+  const car = document.getElementById('vh_comercial_caret');
+  if (!box || !car) return;
+  if (box.style.display === 'none'){
+    box.style.display = '';
+    car.classList.remove('bi-chevron-right');
+    car.classList.add('bi-chevron-down');
+  } else {
+    box.style.display = 'none';
+    car.classList.remove('bi-chevron-down');
+    car.classList.add('bi-chevron-right');
+  }
+}
+
+function vhPreview(){
+  // Heurística sencilla: solo muestra fecha legible. La sugerencia
+  // real de próxima visita la calcula el backend en el response.
+  const fStr = document.getElementById('vh_fecha').value;
+  if (!fStr){ document.getElementById('vh_preview').style.display='none'; return; }
+  try {
+    const dt = new Date(fStr + 'T00:00:00').toLocaleDateString('es-CL');
+    document.getElementById('vh_preview_text').textContent =
+      `Visita histórica con fecha ${dt}. Si el contrato tiene frecuencia configurada, te sugeriré la próxima al guardar.`;
+    document.getElementById('vh_preview').style.display = '';
+  } catch(e){}
+}
+
+async function vhGuardar(){
+  const btn = document.getElementById('vh_btn');
+  const result = document.getElementById('vh_result');
+  result.style.display = 'none';
+
+  const fecha = document.getElementById('vh_fecha').value;
+  if (!fecha){
+    await ilusAlert({title:'Falta fecha', message:'Indica cuándo se realizó la mantención.', type:'warning'});
+    return;
+  }
+  const tipo  = document.getElementById('vh_tipo').value || 'retroactiva';
+  const titulo = (document.getElementById('vh_titulo').value || '').trim();
+  const nota_libre = (document.getElementById('vh_observaciones').value || '').trim();
+  const tecnico_id = document.getElementById('vh_tecnico').value || null;
+  const equipos_ids = Array.from(document.querySelectorAll('.vh-eq-chk:checked')).map(c => parseInt(c.value));
+
+  const cot_tido = document.getElementById('vh_cot_tido')?.value || '';
+  const cot_nudo = (document.getElementById('vh_cot_nudo')?.value || '').trim();
+  const oc_numero = (document.getElementById('vh_oc_numero')?.value || '').trim();
+  const fac_tido = document.getElementById('vh_fac_tido')?.value || '';
+  const fac_nudo = (document.getElementById('vh_fac_nudo')?.value || '').trim();
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+
+  try {
+    const body = {
+      fecha, tipo, tecnico_id, equipos_ids,
+      nota_libre: titulo ? (titulo + (nota_libre ? '\n' + nota_libre : '')) : nota_libre,
+    };
+    if (cot_tido && cot_nudo){ body.cotizacion_tido = cot_tido; body.cotizacion_nudo = cot_nudo; }
+    if (oc_numero){ body.oc_numero = oc_numero; }
+    if (fac_tido && fac_nudo){ body.factura_tido = fac_tido; body.factura_nudo = fac_nudo; }
+
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/visitas/retroactiva`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error al guardar');
+
+    ilusToast('✓ Visita histórica registrada', {type:'success'});
+
+    // ¿Sugerencia de próxima visita?
+    const sug = d.proxima_sugerida;
+    if (sug && sug.fecha){
+      const fStr = new Date(sug.fecha + 'T00:00:00').toLocaleDateString('es-CL');
+      const ok = await ilusConfirm({
+        title: 'Calendarizar próxima visita',
+        message: sug.mensaje || `Sugerimos crear la próxima visita preventiva para el ${fStr}.`,
+        sub: `Frecuencia del contrato: ${sug.frecuencia_meses || '—'} meses`,
+        okLabel: 'Calendarizar',
+        cancelLabel: 'Después',
+        type: 'question',
+      });
+      if (ok){
+        // Usar contrato vigente del template (inyectado en __FICHA_DATA)
+        const ctId = (window.__FICHA_DATA || {}).contrato_vigente_id || null;
+        if (!ctId){
+          ilusToast('No se pudo identificar contrato vigente — agéndala manualmente', {type:'warning'});
+        } else {
+          try {
+            const acR = await fetch(`/mantenciones/api/contratos/${ctId}/auto-calendar`, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({desde_fecha: sug.fecha}),
+            });
+            const acD = await acR.json();
+            if (acD.ok && acD.creadas > 0){
+              ilusToast(`✓ ${acD.creadas} visita(s) calendarizadas`, {type:'success'});
+            } else if (acD.ok){
+              ilusToast('Sin huecos — ya estaba calendarizada', {type:'info'});
+            } else {
+              throw new Error(acD.error || 'Error');
+            }
+          } catch(e){
+            ilusToast('No se pudo calendarizar: ' + e.message, {type:'error'});
+          }
+        }
+      }
+    }
+
+    // Cerrar modal y refrescar
+    if (window._modalVisitaHistorica) window._modalVisitaHistorica.hide();
+    // Refrescar tab Visitas, Finanzas y Timeline (si existen los renders)
+    try {
+      if (typeof cargarFinanzas === 'function') cargarFinanzas();
+    } catch(e){}
+    // Refrescar página completa para ver la nueva visita en el tab Visitas
+    // (recargar solo el tab requeriría re-render server-side). Hacemos
+    // una recarga suave manteniendo el tab actual via hash.
+    setTimeout(() => { window.location.reload(); }, 800);
+  } catch(e){
+    result.innerHTML = `<div class="alert alert-danger" style="font-size:.82rem"><i class="bi bi-x-circle me-1"></i>${e.message}</div>`;
+    result.style.display = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar mantención';
+  }
+}
+</script>
 
 {# ── Modal: Ver contrato (PDF viewer) ── #}
 <div class="modal fade" id="modalVerContrato" tabindex="-1">
@@ -6316,12 +7203,19 @@ function abrirEmailManual() {
    __FICHA_DATA. El resto del JS vive en /static/mant_ficha.js
    (cacheable con TTL 30d). Bumpear ?v= al cambiar el .js.
    ──────────────────────────────────────────────────────────────── */
+{# ID del contrato vigente (si existe) — usado por la auto-calendarización
+   tras una visita histórica. Si no hay contrato vigente, queda null. #}
+{% set _ct_active = contratos|selectattr('estado','equalto','vigente')|list|first if contratos else none %}
+{% if not _ct_active and contratos %}
+  {% set _ct_active = contratos|selectattr('estado','equalto','indefinido')|list|first %}
+{% endif %}
 window.__FICHA_DATA = {
   cid: {{ cliente.id }},
   cliente_direccion: {{ (cliente.direccion or '') | tojson }},
   cliente_comuna: {{ (cliente.comuna or '') | tojson }},
   cliente_rut: {{ (cliente.rut or '') | tojson }},
   cliente_razon_social: {{ (cliente.razon_social or '') | tojson }},
+  contrato_vigente_id: {{ _ct_active.id if _ct_active else 'null' }},
   is_superadmin: {{ 'true' if permissions and permissions.superadmin else 'false' }},
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
