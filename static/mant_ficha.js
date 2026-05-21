@@ -3331,6 +3331,34 @@ async function generarPlanMejora() {
   } catch(e) {}
 })();
 
+// SVG gauge sencillo (sin librerías) — círculo con stroke-dasharray.
+// Mobile-first: 88x88 (44+44, cumple touch target). En desktop crece via flex.
+function _ilusSvgGauge(value, label, color) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const radius = 36;
+  const circ = 2 * Math.PI * radius;
+  const offset = circ * (1 - v / 100);
+  return `<div style="position:relative;width:88px;height:88px;flex-shrink:0">
+    <svg width="88" height="88" viewBox="0 0 88 88" style="transform:rotate(-90deg)">
+      <circle cx="44" cy="44" r="${radius}" fill="none" stroke="#e5e7eb" stroke-width="7"/>
+      <circle cx="44" cy="44" r="${radius}" fill="none" stroke="${color}" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="${circ.toFixed(2)}"
+              stroke-dashoffset="${offset.toFixed(2)}"
+              style="transition:stroke-dashoffset .6s ease"/>
+    </svg>
+    <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+      <div style="font-size:1.35rem;font-weight:900;color:${color};line-height:1">${value ?? '—'}</div>
+      <div style="font-size:.52rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;font-weight:700;margin-top:2px">${label}</div>
+    </div>
+  </div>`;
+}
+
+// Formateo CLP compacto: 850000 → "$850.000"
+function _ilusClp(n) {
+  if (n == null || isNaN(Number(n))) return '';
+  return '$' + Number(n).toLocaleString('es-CL');
+}
+
 function renderPlan(p, clienteNombre, envelope) {
   envelope = envelope || {};
   const estadoColor = {bueno:'#16a34a', regular:'#ea580c', critico:'#dc2626'}[p.estado_flota] || '#6b7280';
@@ -3429,11 +3457,13 @@ function renderPlan(p, clienteNombre, envelope) {
       <div class="plan-section-title" style="color:#2563eb"><i class="bi bi-bicycle me-1"></i>Recomendaciones por equipo</div>`;
     p.recomendaciones_equipos.forEach(rec => {
       const dc = {ok:'rec-ok', atencion:'rec-atencion', urgente:'rec-urgente'}[rec.estado] || 'rec-ok';
+      const monto = (typeof rec.monto_estimado_clp === 'number') ? _ilusClp(rec.monto_estimado_clp) : '';
       html += `<div class="rec-item">
         <div class="rec-dot ${dc}" style="margin-top:4px"></div>
         <div style="flex:1;min-width:0">
           <div class="fw-semibold" style="font-size:.82rem">${rec.equipo}</div>
           <div style="font-size:.78rem;color:#374151;margin-top:2px">${rec.accion}</div>
+          ${monto ? `<div style="font-size:.7rem;color:#7c2d12;font-weight:700;margin-top:3px"><i class="bi bi-cash me-1"></i>${monto}</div>` : ''}
         </div>
         <span style="font-size:.65rem;background:#f3f4f6;color:#374151;padding:1px 7px;border-radius:50px;font-weight:600;white-space:nowrap">${rec.plazo}</span>
       </div>`;
@@ -3473,15 +3503,17 @@ function renderPlan(p, clienteNombre, envelope) {
     p.propuestas_mejora.forEach(prop => {
       const ic = catIcon[prop.categoria] || 'bi-lightbulb';
       const col = impactoColor[prop.impacto] || '#6b7280';
+      const monto = (typeof prop.monto_estimado_clp === 'number') ? _ilusClp(prop.monto_estimado_clp) : '';
       html += `<div class="prop-card prop-impacto-${prop.impacto}">
         <div class="d-flex align-items-start gap-2">
           <i class="bi ${ic}" style="color:${col};font-size:.9rem;flex-shrink:0;margin-top:2px"></i>
           <div style="flex:1">
             <div class="fw-bold" style="font-size:.83rem">${prop.titulo}</div>
             <div style="font-size:.78rem;color:#374151;margin-top:3px">${prop.descripcion}</div>
-            <div class="mt-1">
+            <div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
               <span style="background:${col};color:#fff;font-size:.6rem;padding:1px 7px;border-radius:50px;font-weight:700">Impacto ${prop.impacto}</span>
-              <span style="font-size:.68rem;color:#9ca3af;margin-left:6px">${prop.categoria}</span>
+              <span style="font-size:.68rem;color:#9ca3af">${prop.categoria}</span>
+              ${monto ? `<span style="font-size:.7rem;color:#7c2d12;font-weight:700"><i class="bi bi-cash me-1"></i>${monto}</span>` : ''}
             </div>
           </div>
         </div>
@@ -3491,11 +3523,28 @@ function renderPlan(p, clienteNombre, envelope) {
   }
 
   // ── Oportunidades comerciales ──
+  // Compat: ahora cada item puede ser string (legacy) o {titulo,descripcion,monto_estimado_clp}.
   if (p.oportunidades_comerciales?.length) {
     html += `<div class="plan-section">
-      <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>
-      ${p.oportunidades_comerciales.map(o => `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`).join('')}
-    </div>`;
+      <div class="plan-section-title" style="color:#16a34a"><i class="bi bi-graph-up-arrow me-1"></i>Oportunidades comerciales</div>`;
+    p.oportunidades_comerciales.forEach(o => {
+      if (typeof o === 'string') {
+        html += `<div class="oport-item"><i class="bi bi-check-circle-fill flex-shrink-0"></i>${o}</div>`;
+      } else if (o && typeof o === 'object') {
+        const monto = (typeof o.monto_estimado_clp === 'number') ? _ilusClp(o.monto_estimado_clp) : '';
+        html += `<div class="oport-item" style="flex-direction:column;align-items:stretch">
+          <div class="d-flex align-items-start gap-2 w-100">
+            <i class="bi bi-check-circle-fill flex-shrink-0"></i>
+            <div style="flex:1">
+              <div class="fw-bold" style="font-size:.82rem">${o.titulo || ''}</div>
+              ${o.descripcion ? `<div style="font-size:.76rem;color:#14532d;margin-top:2px">${o.descripcion}</div>` : ''}
+            </div>
+            ${monto ? `<span style="font-size:.72rem;color:#14532d;font-weight:800;white-space:nowrap;margin-left:6px"><i class="bi bi-cash me-1"></i>${monto}</span>` : ''}
+          </div>
+        </div>`;
+      }
+    });
+    html += `</div>`;
   }
 
   // ── Riesgos financieros (NUEVO 2026-05-21) ──
@@ -3554,12 +3603,129 @@ function renderPlan(p, clienteNombre, envelope) {
     </div>`;
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // NUEVAS SECCIONES — Trazabilidad profunda (2026-05-21)
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── Score Global (4 gauges SVG) ──
+  if (p.score_global && typeof p.score_global === 'object') {
+    const sg = p.score_global;
+    const items = [
+      { key: 'salud_operacional', lbl: 'Operacional' },
+      { key: 'cumplimiento_sla',  lbl: 'SLA' },
+      { key: 'salud_financiera',  lbl: 'Financiera' },
+      { key: 'promedio',          lbl: 'Promedio' },
+    ].filter(it => typeof sg[it.key] === 'number');
+    if (items.length) {
+      html += `<div class="plan-section" style="background:linear-gradient(135deg,#fafbff,#f0fdf4)">
+        <div class="plan-section-title" style="color:#7c3aed"><i class="bi bi-speedometer2 me-1"></i>Score global</div>
+        <div class="d-flex align-items-center gap-3 flex-wrap" style="justify-content:center">
+          ${items.map(it => _ilusSvgGauge(sg[it.key], it.lbl, ringColor(sg[it.key]))).join('')}
+        </div>
+      </div>`;
+    }
+  }
+
+  // ── Deuda técnica (NUEVO) ──
+  const dt = p.deuda_tecnica;
+  if (dt && typeof dt === 'object' && (
+        (typeof dt.equipos_sin_intervencion_reciente === 'number' && dt.equipos_sin_intervencion_reciente > 0)
+        || dt.edad_promedio_parque_anios != null
+        || (Array.isArray(dt.componentes_obsoletos_detectados) && dt.componentes_obsoletos_detectados.length)
+        || (typeof dt.monto_estimado_modernizacion_clp === 'number' && dt.monto_estimado_modernizacion_clp > 0)
+      )) {
+    const edad = dt.edad_promedio_parque_anios;
+    const edadColor = (typeof edad === 'number')
+      ? (edad >= 7 ? '#dc2626' : edad >= 4 ? '#ea580c' : '#16a34a')
+      : '#6b7280';
+    const monto = dt.monto_estimado_modernizacion_clp;
+    html += `<div class="plan-section" style="background:#fff7ed">
+      <div class="plan-section-title" style="color:#9a3412"><i class="bi bi-tools me-1"></i>Deuda técnica del parque</div>
+      <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+        ${(typeof edad === 'number') ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.6rem;font-weight:900;color:${edadColor};line-height:1">${edad}</div>
+            <div style="font-size:.6rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">años edad promedio</div>
+          </div>` : ''}
+        ${(typeof dt.equipos_sin_intervencion_reciente === 'number') ? `
+          <div style="text-align:center;min-width:90px">
+            <div style="font-size:1.6rem;font-weight:900;color:#9a3412;line-height:1">${dt.equipos_sin_intervencion_reciente}</div>
+            <div style="font-size:.6rem;text-transform:uppercase;color:#6b7280;letter-spacing:.5px">eq. sin intervención &gt;12m</div>
+          </div>` : ''}
+        ${(typeof monto === 'number' && monto > 0) ? `
+          <div style="flex:1;min-width:160px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px">
+            <div style="font-size:.62rem;text-transform:uppercase;color:#9a3412;font-weight:800;letter-spacing:.4px">Modernización estimada</div>
+            <div style="font-size:1.05rem;font-weight:900;color:#7c2d12">${_ilusClp(monto)}</div>
+          </div>` : ''}
+      </div>
+      ${(Array.isArray(dt.componentes_obsoletos_detectados) && dt.componentes_obsoletos_detectados.length) ? `
+        <div style="margin-top:6px;font-size:.78rem;color:#7c2d12">
+          <span style="font-weight:700">Componentes obsoletos detectados:</span>
+          <ul style="margin:4px 0 0 18px;padding:0;font-size:.76rem;color:#374151">
+            ${dt.componentes_obsoletos_detectados.slice(0,8).map(c => `<li>${c}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+    </div>`;
+  }
+
+  // ── Patrón de fallas (NUEVO) ──
+  const pf = p.patron_fallas;
+  if (pf && typeof pf === 'object'
+      && Array.isArray(pf.equipos_problematicos)
+      && pf.equipos_problematicos.length) {
+    html += `<div class="plan-section" style="background:#fef2f2">
+      <div class="plan-section-title" style="color:#991b1b"><i class="bi bi-graph-down-arrow me-1"></i>Patrón de fallas recurrentes</div>`;
+    pf.equipos_problematicos.slice(0, 8).forEach(eq => {
+      html += `<div class="alerta-item" style="background:#fff;border-color:#fecaca">
+        <i class="bi bi-arrow-repeat flex-shrink-0" style="color:#dc2626"></i>
+        <div style="flex:1">
+          <div style="font-weight:800;font-size:.85rem;color:#7f1d1d">${eq.nombre || 'Equipo'}</div>
+          <div style="font-size:.76rem;color:#991b1b;margin-top:2px">${eq.diagnostico || ''}</div>
+        </div>
+        <span style="background:#dc2626;color:#fff;font-size:.65rem;padding:2px 8px;border-radius:50px;font-weight:700;white-space:nowrap">
+          ${eq.reparaciones_12m || '?'} rep / 12m
+        </span>
+      </div>`;
+    });
+    if (Array.isArray(pf.tipo_fallas_mas_comunes) && pf.tipo_fallas_mas_comunes.length) {
+      html += `<div style="margin-top:6px;font-size:.76rem;color:#7f1d1d">
+        <span style="font-weight:700">Tipos de falla más comunes:</span>
+        ${pf.tipo_fallas_mas_comunes.map(t => `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:50px;font-size:.7rem;font-weight:700;margin-right:4px">${t}</span>`).join('')}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Seguimiento planes anteriores (NUEVO) ──
+  if (Array.isArray(p.seguimiento_planes_anteriores) && p.seguimiento_planes_anteriores.length) {
+    html += `<div class="plan-section" style="background:#fafaff">
+      <div class="plan-section-title" style="color:#6d28d9"><i class="bi bi-clock-history me-1"></i>Seguimiento de planes anteriores</div>`;
+    p.seguimiento_planes_anteriores.slice(0, 10).forEach(sp => {
+      const cumplido = !!sp.cumplido;
+      const bg = cumplido ? '#f0fdf4' : '#fef2f2';
+      const border = cumplido ? '#bbf7d0' : '#fecaca';
+      const ic = cumplido ? 'bi-check-circle-fill' : 'bi-x-circle-fill';
+      const col = cumplido ? '#16a34a' : '#dc2626';
+      html += `<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:10px 12px;margin-bottom:6px">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi ${ic} flex-shrink-0" style="color:${col};font-size:.95rem;margin-top:2px"></i>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.82rem;font-weight:700;color:#374151">${sp.titulo || ''}</div>
+            ${(!cumplido && sp.razon_no_cumplimiento) ? `<div style="font-size:.74rem;color:#991b1b;margin-top:2px"><span style="font-weight:700">Por qué no:</span> ${sp.razon_no_cumplimiento}</div>` : ''}
+            ${sp.accion_actual ? `<div style="font-size:.74rem;color:#1e3a8a;margin-top:3px"><span style="font-weight:700">Acción:</span> ${sp.accion_actual}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
   // ── Footer técnico (debug/auditoría) ──
   if (meta && meta.model) {
     const ct = meta.context_size || {};
     html += `<div style="margin-top:10px;padding:8px 12px;background:#fafafa;border-radius:8px;font-size:.66rem;color:#9ca3af;text-align:center;line-height:1.5">
       ${meta.model}${meta.elapsed_ms ? ' · ' + (meta.elapsed_ms/1000).toFixed(1) + 's' : ''}${(meta.tokens_in||meta.tokens_out) ? ` · ${meta.tokens_in||0}↑/${meta.tokens_out||0}↓ tokens` : ''}
-      · ctx: ${ct.maquinas||0} eq · ${ct.contratos_vigentes||0} ct · ${ct.visitas_completadas||0}+${ct.visitas_futuras||0} visitas${ct.garantias_proximas ? ' · ' + ct.garantias_proximas + ' gar.' : ''}
+      · ctx: ${ct.maquinas||0} eq · ${ct.contratos_vigentes||0} ct · ${ct.visitas_completadas||0}+${ct.visitas_futuras||0} visitas${ct.garantias_proximas ? ' · ' + ct.garantias_proximas + ' gar.' : ''}${ct.lev_items ? ' · ' + ct.lev_items + ' lev' : ''}${ct.eventos_24m ? ' · ' + ct.eventos_24m + ' eventos' : ''}${ct.planes_previos ? ' · ' + ct.planes_previos + ' planes prev.' : ''}
     </div>`;
   }
 

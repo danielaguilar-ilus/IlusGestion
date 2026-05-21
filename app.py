@@ -22418,6 +22418,23 @@ def init_mantenciones_tables():
             except Exception:
                 pass
 
+            # ── J.1 Trazabilidad profunda 2026-05-21 ───────────────────
+            # Agregamos columnas extra para que el index page y los
+            # listados puedan filtrar por deuda técnica / patrón fallas
+            # sin parsear el LONGTEXT plan_json en cada query.
+            # Idempotente: cada ALTER vive en su try/except (la columna ya
+            # puede existir si la migración ya corrió).
+            for _mig_iap in [
+                "ALTER TABLE mant_ia_planes ADD COLUMN edad_parque_anios DECIMAL(4,1) NULL",
+                "ALTER TABLE mant_ia_planes ADD COLUMN n_equipos_problematicos INT NULL",
+                "ALTER TABLE mant_ia_planes ADD COLUMN monto_modernizacion_clp BIGINT NULL",
+                "ALTER TABLE mant_ia_planes ADD COLUMN score_promedio INT NULL",
+            ]:
+                try:
+                    cur.execute(_mig_iap)
+                except Exception:
+                    pass  # idempotente
+
         conn.commit()
     finally:
         conn.close()
@@ -41422,6 +41439,340 @@ def mant_plan_mejora(cid):
     except Exception:
         pass
 
+    # ════════════════════════════════════════════════════════════════════
+    # 8b. TRAZABILIDAD PROFUNDA (2026-05-21) — 5 queries paralelas
+    # ════════════════════════════════════════════════════════════════════
+    # Las queries van en ThreadPoolExecutor para mantener latencia <200ms.
+    # Cada lambda regresa siempre algo (lista vacía / dict vacío) para que
+    # _safe_call no levante.
+    maquina_ids = [m.get("id") for m in maquinas if m.get("id")]
+    maquina_ids_csv = (",".join(str(int(x)) for x in maquina_ids)) if maquina_ids else None
+
+    def _q_lev_items():
+        """Último levantamiento por maquina con anio/intervencion/componentes."""
+        if not maquina_ids_csv:
+            return []
+        try:
+            # ROW_NUMBER no disponible en MySQL <8 → usamos correlated subquery
+            return mysql_fetchall(
+                f"SELECT li.maquina_id, li.anio_fabricacion, li.ultima_intervencion, "
+                f"       li.componentes_json, li.estado_capturado, li.anomalias "
+                f"  FROM mant_levantamiento_items li "
+                f"  JOIN ( "
+                f"    SELECT maquina_id, MAX(id) AS max_id "
+                f"      FROM mant_levantamiento_items "
+                f"     WHERE maquina_id IN ({maquina_ids_csv}) "
+                f"     GROUP BY maquina_id "
+                f"  ) ult ON ult.max_id = li.id"
+            ) or []
+        except Exception:
+            return []
+
+    def _q_eventos():
+        """Eventos de equipo últimos 24 meses (reparacion/cambio_repuesto/garantia)."""
+        if not maquina_ids_csv:
+            return []
+        try:
+            return mysql_fetchall(
+                f"SELECT maquina_id, tipo, descripcion, fecha_evento "
+                f"  FROM mant_maquina_eventos "
+                f" WHERE maquina_id IN ({maquina_ids_csv}) "
+                f"   AND fecha_evento >= DATE_SUB(NOW(), INTERVAL 24 MONTH) "
+                f"   AND tipo IN ('reparacion','cambio_repuesto','garantia','cambio_estado','dado_baja') "
+                f" ORDER BY fecha_evento DESC LIMIT 200"
+            ) or []
+        except Exception:
+            return []
+
+    def _q_logs():
+        """Audit trail últimos 90 días sobre el cliente y sus entidades."""
+        out = []
+        try:
+            # Logs directos del cliente
+            out_c = mysql_fetchall(
+                "SELECT entidad, entidad_id, accion, detalle, usuario, created_at "
+                "  FROM mant_logs "
+                " WHERE entidad='cliente' AND entidad_id=%s "
+                "   AND created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+                " ORDER BY created_at DESC LIMIT 40", (cid,)
+            ) or []
+            out.extend(out_c)
+        except Exception:
+            pass
+        try:
+            # Logs de contratos del cliente
+            ct_ids = [int(c.get("id")) for c in contratos if c.get("id")]
+            if ct_ids:
+                cs = ",".join(str(x) for x in ct_ids)
+                out_x = mysql_fetchall(
+                    f"SELECT entidad, entidad_id, accion, detalle, usuario, created_at "
+                    f"  FROM mant_logs "
+                    f" WHERE entidad='contrato' AND entidad_id IN ({cs}) "
+                    f"   AND created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+                    f" ORDER BY created_at DESC LIMIT 30"
+                ) or []
+                out.extend(out_x)
+        except Exception:
+            pass
+        try:
+            # Logs de máquinas + visitas del cliente
+            if maquina_ids_csv:
+                out_m = mysql_fetchall(
+                    f"SELECT entidad, entidad_id, accion, detalle, usuario, created_at "
+                    f"  FROM mant_logs "
+                    f" WHERE entidad='maquina' AND entidad_id IN ({maquina_ids_csv}) "
+                    f"   AND created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+                    f" ORDER BY created_at DESC LIMIT 30"
+                ) or []
+                out.extend(out_m)
+        except Exception:
+            pass
+        try:
+            vis_ids = [int(v.get("id")) for v in visitas_all if v.get("id")]
+            if vis_ids:
+                vs = ",".join(str(x) for x in vis_ids[:200])  # cap defensivo
+                out_v = mysql_fetchall(
+                    f"SELECT entidad, entidad_id, accion, detalle, usuario, created_at "
+                    f"  FROM mant_logs "
+                    f" WHERE entidad='visita' AND entidad_id IN ({vs}) "
+                    f"   AND created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+                    f" ORDER BY created_at DESC LIMIT 30"
+                ) or []
+                out.extend(out_v)
+        except Exception:
+            pass
+        return out
+
+    def _q_planes_previos():
+        """Historial de planes verificados anteriores (texto + objetivos)."""
+        try:
+            return mysql_fetchall(
+                "SELECT id, generado_at, verificado_at, indice_salud, "
+                "       objetivos_cumplidos, notas_verificacion "
+                "  FROM mant_ia_planes "
+                " WHERE cliente_id=%s AND verificado_at IS NOT NULL "
+                " ORDER BY generado_at DESC LIMIT 3", (cid,)
+            ) or []
+        except Exception:
+            return []
+
+    def _q_fotos_evidencia():
+        """Conteo de fotos por tipo en las visitas del cliente últimos 90 días."""
+        try:
+            return mysql_fetchall(
+                "SELECT vf.tipo_foto, COUNT(*) AS n "
+                "  FROM mant_visita_fotos vf "
+                "  JOIN mant_visitas v ON v.id = vf.visita_id "
+                " WHERE v.cliente_id=%s "
+                "   AND vf.tomada_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
+                " GROUP BY vf.tipo_foto", (cid,)
+            ) or []
+        except Exception:
+            return []
+
+    # Ejecutar en paralelo (4 workers, igual que en _cubicador_fetch).
+    lev_items_raw  = []
+    eventos_raw    = []
+    logs_raw       = []
+    planes_prev    = []
+    fotos_ev_raw   = []
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futs = {
+                pool.submit(_q_lev_items):     "lev",
+                pool.submit(_q_eventos):       "eve",
+                pool.submit(_q_logs):          "log",
+                pool.submit(_q_planes_previos): "pln",
+                pool.submit(_q_fotos_evidencia): "fot",
+            }
+            for fut in as_completed(futs, timeout=4.0):
+                key = futs[fut]
+                try:
+                    res = fut.result()
+                except Exception:
+                    res = []
+                if   key == "lev": lev_items_raw  = res or []
+                elif key == "eve": eventos_raw    = res or []
+                elif key == "log": logs_raw       = res or []
+                elif key == "pln": planes_prev    = res or []
+                elif key == "fot": fotos_ev_raw   = res or []
+    except Exception as _e:
+        # Fallback: ejecución serial. Mejor lento que sin datos.
+        lev_items_raw  = _q_lev_items()
+        eventos_raw    = _q_eventos()
+        logs_raw       = _q_logs()
+        planes_prev    = _q_planes_previos()
+        fotos_ev_raw   = _q_fotos_evidencia()
+
+    # ── 8c. DERIVAR métricas de los datos crudos ─────────────────────────
+    # Mapa rápido maquina_id -> nombre para enriquecer eventos/levantamientos.
+    maq_by_id = {m.get("id"): m for m in maquinas if m.get("id")}
+
+    # 1) Edad y deuda técnica.
+    anios_validos = []
+    componentes_obsoletos = set()
+    equipos_sin_intervencion = []  # ultima_intervencion >12 meses o null
+    lev_by_maq = {li.get("maquina_id"): li for li in lev_items_raw if li.get("maquina_id")}
+    for mid, m in maq_by_id.items():
+        li = lev_by_maq.get(mid) or {}
+        anio_li  = li.get("anio_fabricacion")
+        anio_m   = m.get("anio_fabricacion")
+        anio = anio_li if (anio_li and int(anio_li) > 1980) else anio_m
+        try:
+            if anio and 1980 < int(anio) <= hoy.year:
+                anios_validos.append(int(anio))
+        except Exception:
+            pass
+
+        # componentes_json puede ser texto JSON con array de strings o lista de dicts
+        cj = li.get("componentes_json")
+        if cj:
+            try:
+                comps = json.loads(cj) if isinstance(cj, str) else cj
+                if isinstance(comps, list):
+                    for c in comps[:3]:
+                        if isinstance(c, dict):
+                            nm = c.get("nombre") or c.get("componente") or ""
+                            est = (c.get("estado") or "").lower()
+                            if est in ("obsoleto", "discontinuado", "fin_vida", "critico"):
+                                componentes_obsoletos.add(
+                                    f"{nm} ({m.get('nombre','equipo')})"
+                                )
+                        elif isinstance(c, str) and any(
+                            k in c.lower() for k in ("obsolet", "discontinu", "fin de vida")
+                        ):
+                            componentes_obsoletos.add(f"{c[:60]} ({m.get('nombre','equipo')})")
+            except Exception:
+                pass
+
+        # Última intervención (busca primero levantamiento, luego máquina)
+        ult_int_li = li.get("ultima_intervencion")
+        ult_int_m  = m.get("ultima_intervencion")
+        ult_int = ult_int_li or ult_int_m
+        if not ult_int:
+            equipos_sin_intervencion.append(m.get("nombre") or "Equipo")
+        else:
+            try:
+                d = ult_int if hasattr(ult_int, "year") else None
+                if d:
+                    d_real = d.date() if hasattr(d, "date") else d
+                    if (hoy - d_real).days > 365:
+                        equipos_sin_intervencion.append(m.get("nombre") or "Equipo")
+            except Exception:
+                pass
+
+    edad_promedio = None
+    if anios_validos:
+        edad_promedio = round(sum(hoy.year - a for a in anios_validos) / len(anios_validos), 1)
+
+    # Estimación grosera de monto modernización: $250.000 CLP por componente
+    # obsoleto detectado + $500.000 CLP por equipo sin intervención reciente.
+    # Es solo un hint para Claude — la IA puede refinarlo en deuda_tecnica.
+    monto_modernizacion = (
+        len(componentes_obsoletos) * 250_000
+        + len(equipos_sin_intervencion) * 500_000
+    )
+    if monto_modernizacion == 0:
+        monto_modernizacion = None
+
+    # 2) Patrón de fallas por equipo (eventos últimos 12 meses)
+    from collections import Counter as _Counter, defaultdict as _DefaultDict
+    eventos_12m = []
+    fecha_corte_12m = hoy - _td(days=365)
+    for e in eventos_raw:
+        fe = e.get("fecha_evento")
+        try:
+            d = fe.date() if hasattr(fe, "date") else fe
+            if d and d >= fecha_corte_12m:
+                eventos_12m.append(e)
+        except Exception:
+            pass
+
+    eventos_por_maq = _DefaultDict(list)
+    for e in eventos_12m:
+        eventos_por_maq[e.get("maquina_id")].append(e)
+
+    equipos_problematicos = []
+    for mid, evs in eventos_por_maq.items():
+        reparaciones = [e for e in evs if e.get("tipo") == "reparacion"]
+        if len(reparaciones) >= 3:
+            m_info = maq_by_id.get(mid) or {}
+            equipos_problematicos.append({
+                "id":              mid,
+                "nombre":          m_info.get("nombre") or f"Equipo #{mid}",
+                "reparaciones_12m": len(reparaciones),
+                "diagnostico":     "patrón de falla recurrente",
+            })
+
+    tipo_fallas_counter = _Counter()
+    for e in eventos_12m:
+        desc = (e.get("descripcion") or "").lower()
+        for kw in ("motor", "cinta", "pantalla", "display", "tarjeta",
+                   "polea", "rodamiento", "consola", "cable", "sensor"):
+            if kw in desc:
+                tipo_fallas_counter[kw] += 1
+                break  # un evento → 1 categoría máximo
+    tipo_fallas_mas_comunes = [k for k, _ in tipo_fallas_counter.most_common(3)]
+
+    # 3) Audit trail relevante: filtra a acciones "significativas"
+    acciones_significativas = {
+        "contrato_modificado", "contrato_creado", "contrato_renovado",
+        "maquina_dada_baja", "maquina_creada", "visita_reasignada",
+        "visita_cancelada", "ia_plan_verificado", "garantia_actualizada",
+    }
+    logs_relevantes = [
+        l for l in logs_raw
+        if (l.get("accion") or "") in acciones_significativas
+    ][:15]
+
+    # 4) Historial de planes previos: objetivos cumplidos vs no
+    planes_prev_resumen = []
+    objetivos_no_cumplidos_recurrentes = _Counter()
+    for pp in planes_prev:
+        oc_raw = pp.get("objetivos_cumplidos") or ""
+        cumplidos = 0
+        no_cumplidos = 0
+        objetivos_lista_no_cumplidos = []
+        try:
+            oc = json.loads(oc_raw) if oc_raw else []
+            for o in (oc if isinstance(oc, list) else []):
+                if isinstance(o, dict):
+                    if o.get("cumplido"):
+                        cumplidos += 1
+                    else:
+                        no_cumplidos += 1
+                        txt = (o.get("texto") or "")[:120]
+                        if txt:
+                            objetivos_lista_no_cumplidos.append({
+                                "texto":      txt,
+                                "razon":      (o.get("razon") or "")[:120],
+                            })
+                            # Indexar primeras 4 palabras para detectar recurrencia
+                            sig = " ".join(txt.lower().split()[:4])
+                            if sig:
+                                objetivos_no_cumplidos_recurrentes[sig] += 1
+        except Exception:
+            pass
+        planes_prev_resumen.append({
+            "id":             pp.get("id"),
+            "generado_at":    (pp.get("generado_at").isoformat()[:10]
+                               if pp.get("generado_at") else None),
+            "verificado_at":  (pp.get("verificado_at").isoformat()[:10]
+                               if pp.get("verificado_at") else None),
+            "indice_salud":   pp.get("indice_salud"),
+            "cumplidos":      cumplidos,
+            "no_cumplidos":   no_cumplidos,
+            "objetivos_no_cumplidos": objetivos_lista_no_cumplidos[:5],
+            "notas":          (pp.get("notas_verificacion") or "")[:200],
+        })
+
+    # 5) Evidencia visual
+    fotos_por_tipo = {f.get("tipo_foto") or "general": int(f.get("n") or 0)
+                      for f in fotos_ev_raw}
+    n_fotos_falla = int(fotos_por_tipo.get("falla", 0))
+    flag_fallas_visuales = (n_fotos_falla >= 3)
+
     # ── 9. Armar texto enriquecido para el prompt ─────────────────────────
     equipos_txt = "\n".join([
         f"- {m.get('nombre','?')} (SKU: {m.get('sku','N/A')}, Familia: {m.get('familia_equipo','otros')}, "
@@ -41508,6 +41859,76 @@ def mant_plan_mejora(cid):
             100.0 * total_facturado_anio / (total_facturado_anio + total_pendiente_factura), 0
         )
 
+    # ── 10b. Construir bloques de texto para el prompt (trazabilidad) ─────
+    deuda_tecnica_txt = ""
+    if equipos_sin_intervencion:
+        deuda_tecnica_txt += (
+            f"\n  · {len(equipos_sin_intervencion)} equipo(s) sin intervención reciente "
+            f"(>12 meses o sin registro): "
+            + ", ".join(equipos_sin_intervencion[:5])
+            + ("..." if len(equipos_sin_intervencion) > 5 else "")
+        )
+    if componentes_obsoletos:
+        deuda_tecnica_txt += (
+            f"\n  · Componentes obsoletos/discontinuados: "
+            + "; ".join(list(componentes_obsoletos)[:5])
+        )
+    if edad_promedio is not None:
+        deuda_tecnica_txt += f"\n  · Edad promedio del parque: {edad_promedio} años"
+    deuda_tecnica_txt = deuda_tecnica_txt or "  · Sin deuda técnica detectada en datos disponibles"
+
+    eventos_txt = ""
+    if equipos_problematicos:
+        for ep in equipos_problematicos[:5]:
+            eventos_txt += (
+                f"\n  · {ep['nombre']}: {ep['reparaciones_12m']} reparación(es) en 12 meses "
+                f"({ep['diagnostico']})"
+            )
+    else:
+        eventos_txt = "\n  · Sin patrón claro de fallas recurrentes (umbral: 3+ reparaciones/12m por equipo)"
+
+    n_reparaciones = sum(1 for e in eventos_12m if e.get("tipo") == "reparacion")
+    n_cambios_rep  = sum(1 for e in eventos_12m if e.get("tipo") == "cambio_repuesto")
+    n_garantias_ev = sum(1 for e in eventos_12m if e.get("tipo") == "garantia")
+    if eventos_12m:
+        eventos_txt += (
+            f"\n  · TOTAL últimos 12m: {n_reparaciones} reparaciones, "
+            f"{n_cambios_rep} cambios de repuesto, {n_garantias_ev} eventos de garantía"
+        )
+    if tipo_fallas_mas_comunes:
+        eventos_txt += "\n  · Tipos de falla más frecuentes: " + ", ".join(tipo_fallas_mas_comunes)
+
+    logs_txt = ""
+    for l in logs_relevantes[:8]:
+        ca = l.get("created_at")
+        ca_s = ca.isoformat()[:10] if hasattr(ca, "isoformat") else str(ca or "?")
+        logs_txt += (
+            f"\n  · {ca_s} — {l.get('entidad','?')}#{l.get('entidad_id','?')} "
+            f"{l.get('accion','?')} por {l.get('usuario','?')}"
+        )
+    logs_txt = logs_txt or "  · Sin acciones administrativas significativas en últimos 90 días"
+
+    planes_prev_txt = ""
+    for pp in planes_prev_resumen[:3]:
+        planes_prev_txt += (
+            f"\n  · Plan #{pp['id']} ({pp['generado_at']}, verif {pp['verificado_at']}): "
+            f"{pp['cumplidos']} obj cumplidos / {pp['no_cumplidos']} NO cumplidos"
+        )
+        for oc in pp.get("objetivos_no_cumplidos", [])[:3]:
+            planes_prev_txt += f"\n      ↳ NO cumplido: \"{oc.get('texto','?')}\" — razón: {oc.get('razon','sin razón')}"
+    planes_prev_txt = planes_prev_txt or "  · Sin planes IA anteriores verificados"
+
+    objetivos_recurrentes_txt = ""
+    for sig, cnt in objetivos_no_cumplidos_recurrentes.most_common(3):
+        if cnt >= 2:
+            objetivos_recurrentes_txt += f"\n  · '{sig}...' apareció en {cnt} plan(es) y no se cumplió"
+    objetivos_recurrentes_txt = objetivos_recurrentes_txt or "  · Sin temas recurrentes no resueltos"
+
+    evidencia_visual_txt = (
+        "  · " + ", ".join(f"{k}={v}" for k, v in fotos_por_tipo.items())
+        + (f" — FLAG: ≥3 fotos tipo 'falla' en 90 días" if flag_fallas_visuales else "")
+    ) if fotos_por_tipo else "  · Sin fotos en visitas recientes"
+
     # ── 11. System prompt + user prompt ───────────────────────────────────
     system_prompt = (
         "Eres un asesor senior de gestión de servicios técnicos de equipos fitness para "
@@ -41518,12 +41939,24 @@ def mant_plan_mejora(cid):
         "2. PRIORIZA acciones concretas con fecha y monto explícitos. Evita generalidades "
         "como 'mejorar comunicación' — di '15/jul: enviar cotización por $X de Y servicio'.\n"
         "3. NO INVENTES datos. Si falta información (ej: no hay garantías), dilo explícito "
-        "en la sección correspondiente con un texto como 'no disponible en el dataset'.\n"
+        "en la sección correspondiente. Si un array no aplica, devuelve [] vacío y declara "
+        "en 'resumen_ejecutivo' la razón (ej: 'sin levantamiento técnico previo, deuda técnica no calculable').\n"
         "4. RESPETA el tipo_cliente: si es 'arriendo' o 'leasing', NO sugieras renovar "
         "contrato de mantención. En esos casos las oportunidades son extensión/devolución "
         "del equipo, no nuevo contrato.\n"
         "5. Si la frecuencia real difiere >30% de la contractual, levantar alerta de SLA.\n"
-        "6. Monetiza siempre que puedas: monto estimado en pesos chilenos sin decimales."
+        "6. MONETIZA SIEMPRE que sea posible. Cada item en 'recomendaciones_equipos', "
+        "'propuestas_mejora' y 'oportunidades_comerciales' DEBE incluir 'monto_estimado_clp' "
+        "(entero, sin decimales, en pesos chilenos). Si genuinamente no es monetizable, "
+        "usar null pero NO omitir el campo.\n"
+        "7. APRENDE del pasado. Si hay 'planes_anteriores' con objetivos no cumplidos, "
+        "DEBES referenciarlos en 'seguimiento_planes_anteriores' diciendo si se cumplió, no, "
+        "o si requiere acción nueva — sé explícito y honesto.\n"
+        "8. PRIORIZÁ con criterio. El campo 'impacto' (alto|medio|bajo) de 'propuestas_mejora' "
+        "debe basarse en monto × probabilidad de ocurrencia. Alto = >$500.000 CLP y muy probable. "
+        "Bajo = <$100.000 CLP o muy improbable.\n"
+        "9. El 'score_global' debe reflejar honestamente la realidad: salud_operacional baja si "
+        "hay patrón de fallas, salud_financiera baja si hay >$1M pendiente de facturar, etc."
     )
 
     user_prompt = f"""ANÁLISIS DE CLIENTE — ILUS Sport & Health
@@ -41571,7 +42004,27 @@ NOTIFICACIONES INTERNAS PENDIENTES:
 ANÁLISIS IA PREVIO DE CONTRATOS:
 {ai_mejoras_txt or '  · No disponible'}
 
-ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
+═════ TRAZABILIDAD PROFUNDA (datos enriquecidos 2026-05-21) ═════
+
+DEUDA TÉCNICA Y EDAD DEL PARQUE:
+{deuda_tecnica_txt}
+
+TIMELINE DE EVENTOS DE EQUIPOS (últimos 12 meses):
+{eventos_txt}
+
+AUDIT TRAIL — CAMBIOS ADMINISTRATIVOS RELEVANTES (90 días):
+{logs_txt}
+
+PLANES IA ANTERIORES VERIFICADOS (aprende del pasado):
+{planes_prev_txt}
+
+OBJETIVOS NO CUMPLIDOS RECURRENTES (apareció en >1 plan y no se hizo):
+{objetivos_recurrentes_txt}
+
+EVIDENCIA VISUAL — fotos por tipo (últimos 90 días):
+{evidencia_visual_txt}
+
+═════ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios) ═════
 {{
   "resumen_ejecutivo": "2-3 oraciones del estado actual y oportunidades concretas",
   "estado_flota": "bueno|regular|critico",
@@ -41587,16 +42040,18 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
     "razon": "por qué"
   }},
   "recomendaciones_equipos": [
-    {{"equipo":"...", "estado":"ok|atencion|urgente", "accion":"...", "plazo":"inmediato|30 días|60 días|90 días"}}
+    {{"equipo":"...", "estado":"ok|atencion|urgente", "accion":"...", "plazo":"inmediato|30 días|60 días|90 días", "monto_estimado_clp": número_o_null}}
   ],
   "proyeccion_12_meses": [
     {{"mes":"YYYY-MM", "tipo_visita":"preventiva|correctiva", "descripcion":"...", "costo_estimado": número_o_null}}
   ],
   "propuestas_mejora": [
-    {{"titulo":"...", "descripcion":"...", "impacto":"alto|medio|bajo", "categoria":"contrato|equipo|proceso|costos"}}
+    {{"titulo":"...", "descripcion":"...", "impacto":"alto|medio|bajo", "categoria":"contrato|equipo|proceso|costos", "monto_estimado_clp": número_o_null}}
   ],
   "alertas_criticas": ["alerta 1", "alerta 2"],
-  "oportunidades_comerciales": ["oportunidad 1", "oportunidad 2"],
+  "oportunidades_comerciales": [
+    {{"titulo":"...", "descripcion":"...", "monto_estimado_clp": número_o_null}}
+  ],
   "riesgos_financieros": [
     {{"tipo":"factura_pendiente|garantia_por_vencer|sla_incumplido|contrato_por_vencer", "detalle":"...", "monto_estimado": número_o_null}}
   ],
@@ -41605,6 +42060,27 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
     "dias_para_vencer": número_o_null,
     "recomendar_renovar": true|false,
     "argumentos": ["arg 1", "arg 2"]
+  }},
+  "seguimiento_planes_anteriores": [
+    {{"titulo":"...", "cumplido": true|false, "razon_no_cumplimiento":"...", "accion_actual":"qué hacer ahora"}}
+  ],
+  "deuda_tecnica": {{
+    "equipos_sin_intervencion_reciente": número,
+    "edad_promedio_parque_anios": número_o_null,
+    "componentes_obsoletos_detectados": ["...", "..."],
+    "monto_estimado_modernizacion_clp": número_o_null
+  }},
+  "patron_fallas": {{
+    "equipos_problematicos": [
+      {{"nombre":"...", "reparaciones_12m": número, "diagnostico":"..."}}
+    ],
+    "tipo_fallas_mas_comunes": ["motor", "cinta"]
+  }},
+  "score_global": {{
+    "salud_operacional": 0-100,
+    "cumplimiento_sla": 0-100,
+    "salud_financiera": 0-100,
+    "promedio": 0-100
   }}
 }}"""
 
@@ -41653,6 +42129,11 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
                 "visitas_futuras":       len(futuras),
                 "garantias_proximas":    len(gar_pronto),
                 "notif_pendientes":      len(notif_pendientes),
+                "lev_items":             len(lev_items_raw),
+                "eventos_24m":           len(eventos_raw),
+                "logs_90d":              len(logs_raw),
+                "planes_previos":        len(planes_prev),
+                "fotos_90d_tipos":       len(fotos_ev_raw),
             },
         }
 
@@ -41684,20 +42165,82 @@ ESTRUCTURA JSON REQUERIDA (sin Markdown, sin comentarios):
             indice_sla_val   = int(indice_sla_val)   if isinstance(indice_sla_val,   (int, float)) else None
             indice_cob_val   = int(indice_cob_val)   if isinstance(indice_cob_val,   (int, float)) else None
 
-            mysql_execute(
-                "INSERT INTO mant_ia_planes "
-                "  (cliente_id, generado_por, plan_json, "
-                "   indice_salud, indice_sla, indice_cobranza, "
-                "   tipo_cliente_inferido, "
-                "   snapshot_n_visitas, snapshot_n_contratos, "
-                "   snapshot_n_garantias, snapshot_ultima_visita) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (cid, current_username(), plan_json_str,
-                 indice_salud_val, indice_sla_val, indice_cob_val,
-                 tipo_cliente_inf or None,
-                 snap.get("n_visitas"), snap.get("n_contratos"),
-                 snap.get("n_garantias"), snap.get("ultima_visita"))
-            )
+            # Trazabilidad profunda (2026-05-21) — extraer score y deuda técnica
+            score_promedio_val   = None
+            edad_parque_val      = None
+            n_eq_problem_val     = None
+            monto_modern_val     = None
+            try:
+                sg = plan.get("score_global") or {}
+                if isinstance(sg, dict) and isinstance(sg.get("promedio"), (int, float)):
+                    score_promedio_val = int(sg.get("promedio"))
+                    # Si la IA dio un score más representativo que indice_salud, lo
+                    # promovemos. Esto mantiene retrocompatibilidad (queries existentes
+                    # siguen usando indice_salud) y agrega una columna explícita.
+                    if indice_salud_val is None:
+                        indice_salud_val = score_promedio_val
+
+                dt = plan.get("deuda_tecnica") or {}
+                if isinstance(dt, dict):
+                    if isinstance(dt.get("edad_promedio_parque_anios"), (int, float)):
+                        edad_parque_val = float(dt.get("edad_promedio_parque_anios"))
+                    if isinstance(dt.get("monto_estimado_modernizacion_clp"), (int, float)):
+                        monto_modern_val = int(dt.get("monto_estimado_modernizacion_clp"))
+
+                pf = plan.get("patron_fallas") or {}
+                if isinstance(pf, dict) and isinstance(pf.get("equipos_problematicos"), list):
+                    n_eq_problem_val = len(pf.get("equipos_problematicos"))
+            except Exception:
+                pass
+
+            # Fallback: si la IA omitió score_global / deuda_tecnica, usamos
+            # los valores derivados localmente (no dependemos solo de Claude).
+            if edad_parque_val is None and edad_promedio is not None:
+                edad_parque_val = float(edad_promedio)
+            if n_eq_problem_val is None:
+                n_eq_problem_val = len(equipos_problematicos)
+            if monto_modern_val is None and monto_modernizacion:
+                monto_modern_val = int(monto_modernizacion)
+
+            # Intento 1: INSERT con columnas nuevas. Si falla (columnas no
+            # migradas todavía / ILUS_SKIP_MIGRATIONS=1), fallback al schema
+            # original. La data igual queda en plan_json (LONGTEXT).
+            try:
+                mysql_execute(
+                    "INSERT INTO mant_ia_planes "
+                    "  (cliente_id, generado_por, plan_json, "
+                    "   indice_salud, indice_sla, indice_cobranza, "
+                    "   tipo_cliente_inferido, "
+                    "   snapshot_n_visitas, snapshot_n_contratos, "
+                    "   snapshot_n_garantias, snapshot_ultima_visita, "
+                    "   edad_parque_anios, n_equipos_problematicos, "
+                    "   monto_modernizacion_clp, score_promedio) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (cid, current_username(), plan_json_str,
+                     indice_salud_val, indice_sla_val, indice_cob_val,
+                     tipo_cliente_inf or None,
+                     snap.get("n_visitas"), snap.get("n_contratos"),
+                     snap.get("n_garantias"), snap.get("ultima_visita"),
+                     edad_parque_val, n_eq_problem_val,
+                     monto_modern_val, score_promedio_val)
+                )
+            except Exception as _e_new:
+                # Fallback: schema viejo sin columnas de trazabilidad
+                print(f"[ILUS][plan-mejora] cid={cid} INFO fallback schema viejo: {_e_new}", flush=True)
+                mysql_execute(
+                    "INSERT INTO mant_ia_planes "
+                    "  (cliente_id, generado_por, plan_json, "
+                    "   indice_salud, indice_sla, indice_cobranza, "
+                    "   tipo_cliente_inferido, "
+                    "   snapshot_n_visitas, snapshot_n_contratos, "
+                    "   snapshot_n_garantias, snapshot_ultima_visita) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (cid, current_username(), plan_json_str,
+                     indice_salud_val, indice_sla_val, indice_cob_val,
+                     tipo_cliente_inf or None,
+                     snap.get("n_visitas"), snap.get("n_contratos"),
+                     snap.get("n_garantias"), snap.get("ultima_visita"))
+                )
             # mysql_execute no devuelve lastrowid → leer el último por cliente
             last = mysql_fetchone(
                 "SELECT id FROM mant_ia_planes "

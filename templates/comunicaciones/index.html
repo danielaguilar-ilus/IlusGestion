@@ -9,7 +9,7 @@
   <div class="mod-hero">
     <div>
       <h4><i class="bi bi-chat-dots me-2"></i>Comunicaciones</h4>
-      <div class="mod-sub">Email y WhatsApp — Solo Super Administrador</div>
+      <div class="mod-sub">Email — Solo Super Administrador</div>
     </div>
     <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light">
       <i class="bi bi-list-ul me-1"></i>Log de envíos
@@ -24,11 +24,6 @@
       </button>
     </li>
     <li class="nav-item">
-      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabWA">
-        <i class="bi bi-whatsapp me-1"></i>WhatsApp
-      </button>
-    </li>
-    <li class="nav-item">
       <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabPlantillas"
               onclick="cargarPlantillas(true); ksCargarEstado();">
         <i class="bi bi-layout-text-sidebar me-1"></i>Plantillas
@@ -37,12 +32,6 @@
     <li class="nav-item">
       <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabLog">
         <i class="bi bi-list-ul me-1"></i>Historial
-      </button>
-    </li>
-    <li class="nav-item">
-      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabDiagnostico"
-              onclick="diagCargar()">
-        <i class="bi bi-activity me-1"></i>Diagnóstico
       </button>
     </li>
   </ul>
@@ -305,202 +294,7 @@
     </div>
 
     {# ══════════════════════════════════════════════
-       TAB 2 — WHATSAPP
-    ══════════════════════════════════════════════ #}
-    <div class="tab-pane fade" id="tabWA">
-
-      {# ── Banner explicativo ── #}
-      <div class="alert border-0 mb-4" style="background:#fff3cd;border-left:4px solid #ffc107!important;border-left-width:4px!important">
-        <div class="d-flex gap-2 align-items-start">
-          <i class="bi bi-exclamation-triangle-fill text-warning mt-1 flex-shrink-0" style="font-size:1.1rem"></i>
-          <div class="small">
-            <div class="fw-bold mb-1" style="font-size:.95rem">El Sandbox de Twilio es solo para pruebas internas — NO sirve para clientes reales</div>
-            <div>WhatsApp (Meta) exige que los negocios tengan una <strong>cuenta verificada</strong> antes de enviar mensajes masivos.
-            El Sandbox requiere que cada destinatario envíe un mensaje de "join" primero, lo que es inaceptable en producción.
-            <strong>La solución es activar el modo producción</strong>, que elimina ese requisito completamente.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="row g-4">
-
-        {# ── Columna izquierda: configuración Twilio ── #}
-        <div class="col-12 col-lg-6">
-          <div class="card shadow-sm border-0">
-            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
-              <div class="d-flex align-items-center justify-content-between">
-                <span class="fw-bold"><i class="bi bi-whatsapp me-2 text-success"></i>Twilio — Configuración</span>
-                <span id="waModoBadge" class="badge {% if wa_cfg.from_number and wa_cfg.from_number != 'whatsapp:+14155238886' %}bg-success{% else %}bg-warning text-dark{% endif %} small">
-                  {% if wa_cfg.from_number and wa_cfg.from_number != 'whatsapp:+14155238886' %}Producción{% else %}Sandbox{% endif %}
-                </span>
-              </div>
-            </div>
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-12">
-                  <label class="form-label small fw-semibold">Account SID</label>
-                  <input id="waSid" class="form-control form-control-sm font-monospace"
-                         value="{{ wa_cfg.account_sid or '' }}"
-                         placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                  <div class="form-text">Empieza con "AC".</div>
-                </div>
-                <div class="col-12">
-                  <label class="form-label small fw-semibold">Auth Token</label>
-                  <div class="input-group input-group-sm">
-                    <input id="waToken" type="password" class="form-control form-control-sm font-monospace"
-                           value="{{ wa_cfg.auth_token or '' }}" placeholder="Tu Auth Token">
-                    <button class="btn btn-outline-secondary btn-sm"
-                            onclick="togglePass('waToken',this)"><i class="bi bi-eye"></i></button>
-                  </div>
-                </div>
-                <div class="col-12">
-                  <label class="form-label small fw-semibold">Número From</label>
-                  <input id="waFrom" class="form-control form-control-sm"
-                         value="{{ wa_cfg.from_number or 'whatsapp:+14155238886' }}"
-                         placeholder="whatsapp:+14155238886 (sandbox) o whatsapp:+56XXXXXXXXX (producción)">
-                  <div class="form-text">
-                    Sandbox: <code>whatsapp:+14155238886</code> &nbsp;|&nbsp;
-                    Producción: <code>whatsapp:+TuNúmeroAprobado</code>
-                  </div>
-                </div>
-                <div class="col-12">
-                  <label class="form-label small fw-semibold">Número de negocio (para pruebas)</label>
-                  <input id="waBiz" class="form-control form-control-sm"
-                         value="{{ wa_cfg.biz_number or '' }}" placeholder="+56912345678">
-                  <div class="form-text">Número al que se envían los mensajes de prueba desde esta pantalla.</div>
-                </div>
-              </div>
-              <div class="d-flex gap-2 mt-3 flex-wrap">
-                <button class="btn btn-danger btn-sm fw-bold" onclick="guardarWA()">
-                  <i class="bi bi-floppy me-1"></i>Guardar configuración
-                </button>
-                <button class="btn btn-outline-success btn-sm" onclick="abrirTestWA()">
-                  <i class="bi bi-whatsapp me-1"></i>Enviar mensaje de prueba
-                </button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="sincronizarWAConEnv()"
-                        title="Trae los valores de las env vars de Railway (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM) y los muestra en este formulario. Útil si rotaste credenciales en Railway y la BD tiene valores viejos.">
-                  <i class="bi bi-arrow-clockwise me-1"></i>Sincronizar con env vars
-                </button>
-              </div>
-              <div class="mt-2 small text-muted" style="font-size:.72rem">
-                <i class="bi bi-info-circle me-1"></i>
-                Recuerda: las env vars de Railway tienen prioridad sobre lo que guardes aquí.
-                Si rotaste credenciales en Railway, usa <strong>Sincronizar</strong>.
-              </div>
-              <div id="waMsg" class="small mt-2"></div>
-            </div>
-          </div>
-
-          {# Sandbox: instrucción join (solo si está en modo sandbox) #}
-          {% if not wa_cfg.from_number or wa_cfg.from_number == 'whatsapp:+14155238886' %}
-          <div class="card shadow-sm border-0 mt-3 border-warning" style="border:1px solid #ffc107!important">
-            <div class="card-body small">
-              <div class="fw-bold mb-2"><i class="bi bi-bug me-1 text-warning"></i>Modo Sandbox activo — solo para pruebas internas</div>
-              <div>Para recibir mensajes de prueba en <strong>tu propio teléfono</strong>, envía este WhatsApp a <strong>+1 415 523 8886</strong>:</div>
-              <div class="my-2 p-2 rounded text-center font-monospace" style="background:#fffbea;border:1px dashed #ffc107">
-                join &lt;tu-código-sandbox&gt;
-              </div>
-              <div>Encuéntrate en <a href="https://console.twilio.com" target="_blank">Twilio Console → Messaging → Try it out → WhatsApp</a></div>
-            </div>
-          </div>
-          {% endif %}
-        </div>
-
-        {# ── Columna derecha: guía para producción ── #}
-        <div class="col-12 col-lg-6">
-          <div class="card shadow-sm border-0">
-            <div class="card-header" style="background:#25d366;color:#fff;border-radius:.375rem .375rem 0 0">
-              <span class="fw-bold"><i class="bi bi-rocket-takeoff me-2"></i>Activar WhatsApp de producción — Paso a paso</span>
-            </div>
-            <div class="card-body p-0">
-              <div class="list-group list-group-flush">
-
-                <div class="list-group-item border-0 py-3">
-                  <div class="d-flex gap-3 align-items-start">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 fw-bold text-white"
-                         style="width:28px;height:28px;background:#25d366;font-size:.8rem">1</div>
-                    <div class="small">
-                      <div class="fw-semibold mb-1">Crea una cuenta en Twilio (ya hecho ✓)</div>
-                      <div class="text-muted">Tienes tu Account SID y Auth Token configurados.</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="list-group-item border-0 py-3" style="background:#f8fffe">
-                  <div class="d-flex gap-3 align-items-start">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 fw-bold text-white"
-                         style="width:28px;height:28px;background:#25d366;font-size:.8rem">2</div>
-                    <div class="small">
-                      <div class="fw-semibold mb-1">Solicita un número de WhatsApp Business</div>
-                      <div class="text-muted mb-2">Ve a Twilio Console → Messaging → Senders → WhatsApp Senders → <strong>Add Sender</strong>.</div>
-                      <a href="https://console.twilio.com/us1/develop/sms/whatsapp/senders" target="_blank"
-                         class="btn btn-sm btn-outline-success">
-                        <i class="bi bi-box-arrow-up-right me-1"></i>Ir a Twilio → WhatsApp Senders
-                      </a>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="list-group-item border-0 py-3">
-                  <div class="d-flex gap-3 align-items-start">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 fw-bold text-white"
-                         style="width:28px;height:28px;background:#25d366;font-size:.8rem">3</div>
-                    <div class="small">
-                      <div class="fw-semibold mb-1">Completa el formulario de Meta</div>
-                      <div class="text-muted">Twilio te redirige a Meta (Facebook) para verificar tu negocio. Necesitas:
-                        <ul class="mt-1 mb-0 ps-3">
-                          <li>Nombre de la empresa (ILUS Sport and Health Solution SpA)</li>
-                          <li>Sitio web de la empresa</li>
-                          <li>Un número de teléfono que NO esté en WhatsApp personal</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="list-group-item border-0 py-3" style="background:#f8fffe">
-                  <div class="d-flex gap-3 align-items-start">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 fw-bold text-white"
-                         style="width:28px;height:28px;background:#25d366;font-size:.8rem">4</div>
-                    <div class="small">
-                      <div class="fw-semibold mb-1">Espera la aprobación <span class="badge bg-warning text-dark">1-5 días hábiles</span></div>
-                      <div class="text-muted">Meta revisa la solicitud. Una vez aprobado, recibes un número WhatsApp Business real.</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="list-group-item border-0 py-3">
-                  <div class="d-flex gap-3 align-items-start">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 fw-bold text-white"
-                         style="width:28px;height:28px;background:#25d366;font-size:.8rem">5</div>
-                    <div class="small">
-                      <div class="fw-semibold mb-1">Actualiza el número "From" aquí</div>
-                      <div class="text-muted">Reemplaza <code>whatsapp:+14155238886</code> por <code>whatsapp:+TuNúmeroAprobado</code> y guarda. Listo — tus clientes recibirán mensajes sin hacer nada especial.</div>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-
-          {# Alternativa: WATI #}
-          <div class="card shadow-sm border-0 mt-3">
-            <div class="card-body small p-3">
-              <div class="fw-semibold mb-2"><i class="bi bi-lightning-charge-fill text-warning me-1"></i>Alternativa más rápida: WATI.io</div>
-              <div class="text-muted mb-2">WATI es un partner oficial de WhatsApp que hace el proceso de verificación más simple y rápido (generalmente 1-2 días). Tiene plan desde USD 49/mes con hasta 2.000 conversaciones.</div>
-              <a href="https://www.wati.io" target="_blank" class="btn btn-sm btn-outline-secondary">
-                <i class="bi bi-box-arrow-up-right me-1"></i>Ver WATI.io
-              </a>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </div>
-
-    {# ══════════════════════════════════════════════
-       TAB 3 — PLANTILLAS POR ESTADO
+       TAB 2 — PLANTILLAS POR ESTADO
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabPlantillas">
 
@@ -698,7 +492,7 @@
         <div class="ksw-body">
           <div class="ksw-title">ATENCIÓN: Hay módulos con la llave de paso CERRADA</div>
           <div class="ksw-msg" id="ksWarningMsg">
-            Los emails, WhatsApp y/o SMS de esos módulos NO se están enviando.
+            Los emails de esos módulos NO se están enviando.
             Recuerda abrir la llave cuando termines las pruebas.
           </div>
         </div>
@@ -726,15 +520,13 @@
               <tr>
                 <th>Módulo</th>
                 <th class="ks-th-canal">Email</th>
-                <th class="ks-th-canal">WhatsApp</th>
-                <th class="ks-th-canal">SMS</th>
                 <th class="ks-th-motivo">Motivo</th>
                 <th class="ks-th-meta">Última actualización</th>
                 <th class="text-end">Acciones</th>
               </tr>
             </thead>
             <tbody id="ksTableBody">
-              <tr><td colspan="7" class="text-center text-muted py-4">
+              <tr><td colspan="5" class="text-center text-muted py-4">
                 <div class="spinner-border spinner-border-sm text-danger me-1"></div>
                 Cargando estado de las llaves de paso…
               </td></tr>
@@ -828,16 +620,6 @@
                 <h5 id="tvEstadoTitulo" class="mb-0 fw-bold"></h5>
               </div>
               <div class="d-flex gap-1 flex-wrap">
-                <div class="btn-group btn-group-sm me-2">
-                  <button id="tvBtnEmail" class="btn btn-danger btn-sm fw-semibold"
-                          onclick="tplCambiarCanal('email')">
-                    <i class="bi bi-envelope me-1"></i>Email
-                  </button>
-                  <button id="tvBtnWA" class="btn btn-outline-secondary btn-sm"
-                          onclick="tplCambiarCanal('whatsapp')">
-                    <i class="bi bi-whatsapp me-1"></i>WhatsApp
-                  </button>
-                </div>
                 <button class="btn btn-sm btn-outline-secondary" onclick="tplEnviarPrueba()"
                         title="Enviar mensaje de prueba">
                   <i class="bi bi-send me-1"></i>Prueba
@@ -864,7 +646,7 @@
                    style="color:#333;cursor:default;min-height:34px"></div>
             </div>
 
-            {# Vista: Cuerpo email (HTML fuente) o WhatsApp burbuja #}
+            {# Vista: Cuerpo email (HTML fuente) #}
             <div>
               <div class="d-flex align-items-center justify-content-between mb-1">
                 <div class="small text-muted fw-semibold" id="tvCuerpoLabel">Cuerpo del mensaje</div>
@@ -880,30 +662,6 @@
               <iframe id="tvEmailPreview"
                       title="Vista visual del email"
                       style="display:none;width:100%;height:520px;border:1px solid #dee2e6;border-radius:.5rem;background:#f1f2f4"></iframe>
-
-              {# WhatsApp: muestra burbuja mockup #}
-              <div id="tvCuerpoWA" style="display:none">
-                <div style="background:#e5ddd5;border-radius:10px;overflow:hidden;max-width:440px">
-                  {# Header tipo WhatsApp #}
-                  <div style="background:#075e54;color:#fff;padding:10px 14px;
-                              display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600">
-                    <i class="bi bi-whatsapp" style="font-size:16px"></i>
-                    {{ client_cfg.company_name or 'ILUS Fitness' }}
-                    <span style="margin-left:auto;font-size:10px;opacity:.7">en línea</span>
-                  </div>
-                  {# Chat area #}
-                  <div style="padding:14px 12px">
-                    <div style="background:#fff;border-radius:0 10px 10px 10px;
-                                padding:10px 14px;max-width:330px;
-                                box-shadow:0 1px 2px rgba(0,0,0,.15);font-size:13px;line-height:1.6">
-                      <div id="tvWABubble" style="color:#111"></div>
-                      <div style="text-align:right;color:#8696a0;font-size:10px;margin-top:6px">
-                        14:32 &nbsp;<i class="bi bi-check2-all" style="color:#53bdeb"></i>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
 
             {# Variables disponibles (vista) #}
@@ -987,7 +745,7 @@
     </div>
 
     {# ══════════════════════════════════════════════
-       TAB 4 — HISTORIAL
+       TAB 3 — HISTORIAL
     ══════════════════════════════════════════════ #}
     <div class="tab-pane fade" id="tabLog">
       <div class="card shadow-sm border-0">
@@ -1005,11 +763,10 @@
               <option value="error">Solo Errores</option>
             </select>
             <select id="logFilterCanal" class="form-select form-select-sm"
-                    style="max-width:130px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"
+                    style="max-width:130px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2);display:none"
                     onchange="applyLogFilters()">
               <option value="">Todos los canales</option>
-              <option value="email">Email</option>
-              <option value="whatsapp">WhatsApp</option>
+              <option value="email" selected>Email</option>
             </select>
             <input type="text" id="logFilterText" class="form-control form-control-sm"
                    placeholder="🔍 Buscar destinatario/asunto..."
@@ -1091,214 +848,9 @@
       </div>
     </div>
 
-    {# ══════════════════════════════════════════════
-       TAB 5 — DIAGNÓSTICO COMPLETO
-       Semáforo por canal + lista de problemas detectados + acciones.
-       Pensado para que Daniel sepa QUÉ está roto y QUÉ hacer al respecto.
-    ══════════════════════════════════════════════ #}
-    <div class="tab-pane fade" id="tabDiagnostico">
-      <div class="row g-3">
-
-        {# Cabecera con CTA Refrescar #}
-        <div class="col-12">
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <div>
-              <h5 class="mb-1 fw-bold"><i class="bi bi-activity me-2 text-danger"></i>Estado real de las comunicaciones</h5>
-              <div class="text-muted small">Verifica conexión real con cada canal y muestra qué hay que corregir.</div>
-            </div>
-            <button class="btn btn-sm btn-outline-dark" id="diagBtnRefresh" onclick="diagCargar()">
-              <i class="bi bi-arrow-clockwise me-1"></i>Re-ejecutar diagnóstico
-            </button>
-          </div>
-        </div>
-
-        {# Canales activos por configuración (env var COMM_CANALES_ACTIVOS) #}
-        <div class="col-12">
-          <div class="card shadow-sm border-0" style="border-left:4px solid var(--ilus-red) !important">
-            <div class="card-body">
-              <div class="d-flex align-items-center gap-2 mb-2">
-                <i class="bi bi-toggles2 text-danger"></i>
-                <strong class="me-2">Canales habilitados en este servidor</strong>
-                <span class="badge bg-dark small" id="diagCanalesEnv">cargando…</span>
-              </div>
-              <div class="row g-2" id="diagCanalesActivos">
-                <div class="col-md-4">
-                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
-                    <span class="diag-canal-led" id="diagCanalLedEmail">●</span>
-                    <strong class="small">Email (Resend)</strong>
-                    <span class="ms-auto small fw-bold" id="diagCanalEstadoEmail">—</span>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
-                    <span class="diag-canal-led" id="diagCanalLedWA">●</span>
-                    <strong class="small">WhatsApp</strong>
-                    <span class="ms-auto small fw-bold" id="diagCanalEstadoWA">—</span>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#f9fafb;border:1px solid #e5e7eb">
-                    <span class="diag-canal-led" id="diagCanalLedSMS">●</span>
-                    <strong class="small">SMS</strong>
-                    <span class="ms-auto small fw-bold" id="diagCanalEstadoSMS">—</span>
-                  </div>
-                </div>
-              </div>
-              <div class="small text-muted mt-2" id="diagCanalesHelp">
-                Configurado vía la variable de entorno
-                <code>COMM_CANALES_ACTIVOS</code> en Railway.
-                Para reactivar WhatsApp o SMS:
-                <ol class="mb-0 mt-1 ps-3">
-                  <li>Reactivar Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM o TWILIO_PHONE_FROM).</li>
-                  <li>En Railway → Variables, setear
-                    <code>COMM_CANALES_ACTIVOS=email,whatsapp</code> (o
-                    <code>email,sms,whatsapp</code> para todo).</li>
-                  <li>Reiniciar el servicio. No requiere cambios en el código.</li>
-                </ol>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {# Semáforos por canal #}
-        <div class="col-12">
-          <div class="row g-3" id="diagSemaforos">
-            <div class="col-md-4">
-              <div class="card shadow-sm border-0">
-                <div class="card-body">
-                  <div class="d-flex align-items-center gap-2 mb-2">
-                    <span id="diagLedEmail" class="diag-led pendiente"></span>
-                    <strong><i class="bi bi-envelope me-1"></i>Email</strong>
-                  </div>
-                  <div id="diagDetEmail" class="small text-muted">Cargando…</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="card shadow-sm border-0">
-                <div class="card-body">
-                  <div class="d-flex align-items-center gap-2 mb-2">
-                    <span id="diagLedWA" class="diag-led pendiente"></span>
-                    <strong><i class="bi bi-whatsapp me-1"></i>WhatsApp</strong>
-                  </div>
-                  <div id="diagDetWA" class="small text-muted">Cargando…</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="card shadow-sm border-0">
-                <div class="card-body">
-                  <div class="d-flex align-items-center gap-2 mb-2">
-                    <span id="diagLedSMS" class="diag-led pendiente"></span>
-                    <strong><i class="bi bi-chat-text me-1"></i>SMS</strong>
-                  </div>
-                  <div id="diagDetSMS" class="small text-muted">Cargando…</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {# Acciones pendientes (recomendaciones) #}
-        <div class="col-12">
-          <div class="card shadow-sm border-0">
-            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
-              <strong><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Acciones pendientes</strong>
-            </div>
-            <div class="card-body" id="diagAcciones">
-              <div class="text-muted small">Cargando…</div>
-            </div>
-          </div>
-        </div>
-
-        {# Test rápido por canal #}
-        <div class="col-12">
-          <div class="card shadow-sm border-0">
-            <div class="card-header" style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
-              <strong><i class="bi bi-send-check me-2 text-danger"></i>Test rápido</strong>
-              <span class="ms-2 small text-light opacity-75">Envía un mensaje real para verificar el canal</span>
-            </div>
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <div class="d-flex gap-2 align-items-end">
-                    <div class="flex-grow-1">
-                      <label class="form-label small fw-bold"><i class="bi bi-envelope me-1"></i>Email</label>
-                      <input id="diagTestEmail" type="email" class="form-control form-control-sm" placeholder="tu@correo.cl">
-                    </div>
-                    <button class="btn btn-sm btn-outline-primary" onclick="diagTestEnviar('email')">
-                      <i class="bi bi-send"></i>
-                    </button>
-                  </div>
-                  <div id="diagTestEmailMsg" class="small mt-1"></div>
-                </div>
-                <div class="col-md-4">
-                  <div class="d-flex gap-2 align-items-end">
-                    <div class="flex-grow-1">
-                      <label class="form-label small fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp</label>
-                      <input id="diagTestWA" type="text" class="form-control form-control-sm" placeholder="+56912345678">
-                    </div>
-                    <button class="btn btn-sm btn-outline-success" onclick="diagTestEnviar('whatsapp')">
-                      <i class="bi bi-send"></i>
-                    </button>
-                  </div>
-                  <div id="diagTestWAMsg" class="small mt-1"></div>
-                </div>
-                <div class="col-md-4">
-                  <div class="d-flex gap-2 align-items-end">
-                    <div class="flex-grow-1">
-                      <label class="form-label small fw-bold"><i class="bi bi-chat-text me-1"></i>SMS</label>
-                      <input id="diagTestSMS" type="text" class="form-control form-control-sm" placeholder="+56912345678">
-                    </div>
-                    <button class="btn btn-sm btn-outline-warning" onclick="diagTestEnviar('sms')">
-                      <i class="bi bi-send"></i>
-                    </button>
-                  </div>
-                  <div id="diagTestSMSMsg" class="small mt-1"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {# Detalle técnico desplegable (para devs) #}
-        <div class="col-12">
-          <details class="card shadow-sm border-0">
-            <summary class="card-header" style="cursor:pointer;background:#f3f4f6">
-              <strong><i class="bi bi-code-slash me-2"></i>Detalle técnico (JSON crudo)</strong>
-              <small class="text-muted ms-2">Útil para soporte</small>
-            </summary>
-            <div class="card-body">
-              <pre id="diagJsonRaw" class="small mb-0" style="max-height:400px;overflow:auto;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;font-size:.74rem">Cargando…</pre>
-            </div>
-          </details>
-        </div>
-
-      </div>{# /row #}
-    </div>{# /tab-pane diag #}
-
   </div>{# /tab-content #}
 </div>{# /container #}
 
-<style>
-.diag-led{display:inline-block;width:14px;height:14px;border-radius:50%;flex-shrink:0}
-.diag-led.ok{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.18)}
-.diag-led.warn{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
-.diag-led.error{background:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.18)}
-.diag-led.pendiente{background:#9ca3af;box-shadow:0 0 0 3px rgba(156,163,175,.18)}
-.diag-canal-led{font-size:1.1rem;line-height:1}
-.diag-canal-led.activo{color:#16a34a}
-.diag-canal-led.inactivo{color:#6b7280}
-.diag-accion{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:#fff}
-.diag-accion.alta{border-left:4px solid #dc2626;background:#fef2f2}
-.diag-accion.media{border-left:4px solid #f59e0b;background:#fffbeb}
-.diag-accion.info{border-left:4px solid #16a34a;background:#f0fdf4}
-.diag-accion-titulo{font-weight:700;color:#0f172a;font-size:.95rem;margin-bottom:4px;display:flex;align-items:center;gap:6px}
-.diag-accion-detalle{font-size:.85rem;color:#374151;margin-bottom:6px;line-height:1.45}
-.diag-accion-accion{font-size:.82rem;color:#0c4a6e;background:#e0f2fe;padding:8px 10px;border-radius:6px;line-height:1.45}
-.diag-accion-cta{display:inline-flex;align-items:center;gap:5px;background:var(--ilus-red);color:#fff;padding:4px 12px;border-radius:50px;font-size:.78rem;font-weight:700;text-decoration:none;margin-top:6px}
-.diag-accion-cta:hover{background:#b91c1c;color:#fff}
-</style>
 
 <script>
 // Filtros combinados client-side del tab Historial
@@ -1380,11 +932,6 @@ window.addEventListener('DOMContentLoaded', () => {
           <input id="tplPruebaEmail" type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
                  placeholder="correo@destino.cl">
         </div>
-        <div id="tplPruebaWAWrap" class="mb-3" style="display:none">
-          <label class="form-label small">Número WhatsApp (con código país)</label>
-          <input id="tplPruebaWA" class="form-control form-control-sm bg-dark text-light border-secondary"
-                 placeholder="+56912345678" value="+56">
-        </div>
         <div id="tplPruebaMsg" class="small mt-1"></div>
       </div>
       <div class="modal-footer border-secondary">
@@ -1423,43 +970,15 @@ window.addEventListener('DOMContentLoaded', () => {
   </div>
 </div>
 
-{# ══════════════════════════════════════════════
-   MODAL: Test WhatsApp
-══════════════════════════════════════════════ #}
-<div class="modal fade" id="modalTestWA" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
-    <div class="modal-content bg-dark text-light border-0">
-      <div class="modal-header border-secondary">
-        <h6 class="modal-title"><i class="bi bi-whatsapp me-2 text-success"></i>Enviar WA de prueba</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <label class="form-label small">Número destinatario (con código de país)</label>
-        <input id="testWATo" class="form-control form-control-sm bg-dark text-light border-secondary"
-               placeholder="+56912345678" value="+56">
-        <div class="form-text text-muted small mt-1">El destinatario debe haber enviado el join code previamente.</div>
-        <div id="testWAMsg" class="small mt-2"></div>
-      </div>
-      <div class="modal-footer border-secondary">
-        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-success btn-sm fw-bold" onclick="enviarTestWA()">
-          <i class="bi bi-whatsapp me-1"></i>Enviar prueba
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
 {% endblock %}
 
 
 {% block scripts %}
 <script>
 /* ── modales ── */
-let _modalTestEmail, _modalTestWA;
+let _modalTestEmail;
 document.addEventListener('DOMContentLoaded', () => {
   _modalTestEmail  = new bootstrap.Modal(document.getElementById('modalTestEmail'));
-  _modalTestWA     = new bootstrap.Modal(document.getElementById('modalTestWA'));
   poblarPlantillasManual();
   actualizarPreview();
   cargarEstadoEmail();
@@ -1810,96 +1329,6 @@ async function enviarManual() {
     : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
 }
 
-/* ════════════════════════════════
-   WHATSAPP
-════════════════════════════════ */
-async function guardarWA() {
-  const msg = document.getElementById('waMsg');
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Guardando…';
-  const body = {
-    account_sid: val('waSid').trim(),
-    auth_token : val('waToken').trim(),
-    from_number: val('waFrom').trim(),
-    biz_number : val('waBiz').trim(),
-  };
-  if (!body.account_sid.toUpperCase().startsWith('AC')) {
-    msg.innerHTML = '<span class="text-danger">El Account SID debe empezar con "AC"</span>';
-    return;
-  }
-  const r = await fetch('/comunicaciones/whatsapp/config', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  });
-  const d = await r.json();
-  msg.innerHTML = d.ok
-    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
-    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
-}
-
-function abrirTestWA() {
-  document.getElementById('testWAMsg').innerHTML = '';
-  _modalTestWA.show();
-}
-
-/**
- * Sincroniza el formulario con los valores de las env vars de Railway.
- *
- * Por qué existe: el admin a veces guarda un SID en la BD y luego rota
- * credenciales en Railway. Como `_get_wa_cfg()` ahora da prioridad a env
- * (env > BD), el envío usa el SID de env. Este botón actualiza la UI
- * para que el admin vea los valores ACTIVOS antes de tocar "Guardar".
- *
- * Acción: trae las env vars desde /comunicaciones/whatsapp/env-vars
- * y rellena los inputs. NO guarda en BD automáticamente — el admin
- * decide si presiona "Guardar configuración" después.
- */
-async function sincronizarWAConEnv() {
-  const msg = document.getElementById('waMsg');
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary me-1"></div>Leyendo env vars…';
-  try {
-    const r = await fetch('/comunicaciones/whatsapp/env-vars');
-    const d = await r.json();
-    if (!d.ok) {
-      msg.innerHTML = `<span class="text-warning">${esc(d.error||'No se pudieron leer las env vars')}</span>`;
-      return;
-    }
-    const cambios = [];
-    if (d.account_sid && d.account_sid !== val('waSid')) {
-      document.getElementById('waSid').value = d.account_sid;
-      cambios.push('Account SID');
-    }
-    if (d.auth_token && d.auth_token !== val('waToken')) {
-      document.getElementById('waToken').value = d.auth_token;
-      cambios.push('Auth Token');
-    }
-    if (d.from_number && d.from_number !== val('waFrom')) {
-      document.getElementById('waFrom').value = d.from_number;
-      cambios.push('Número From');
-    }
-    if (cambios.length === 0) {
-      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>La BD ya está sincronizada con las env vars de Railway.</span>';
-    } else {
-      msg.innerHTML = `<span class="text-info"><i class="bi bi-arrow-clockwise me-1"></i>Cargado de env vars: <strong>${cambios.join(', ')}</strong>. Presiona <strong>Guardar configuración</strong> para persistir en BD.</span>`;
-    }
-  } catch(e) {
-    msg.innerHTML = `<span class="text-danger">Error al leer env vars: ${esc(e.message||String(e))}</span>`;
-  }
-}
-
-async function enviarTestWA() {
-  const to  = document.getElementById('testWATo').value.trim();
-  const msg = document.getElementById('testWAMsg');
-  if (!to) { msg.innerHTML='<span class="text-danger">Ingresa el número</span>'; return; }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-success me-1"></div>Enviando…';
-  const r = await fetch('/comunicaciones/whatsapp/test', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({to})
-  });
-  const d = await r.json();
-  const waSuggestions = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
-  msg.innerHTML = d.ok
-    ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado! SID: ${esc(d.msg_sid||'')}</span>`
-    : `<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</div>${waSuggestions ? `<div class="text-warning mt-2">Que revisar:<ul class="mb-0 ps-3">${waSuggestions}</ul></div>` : ''}`;
-}
-
 /* ════════════════════════════════════════════════════
    PLANTILLAS POR ESTADO
 ════════════════════════════════════════════════════ */
@@ -2212,8 +1641,6 @@ const KS_MODULOS_LABELS = {
 };
 const KS_CANAL_LABELS = {
   email:    'Email',
-  whatsapp: 'WhatsApp',
-  sms:      'SMS',
 };
 
 let _ksData = null;
@@ -2221,7 +1648,7 @@ let _ksData = null;
 async function ksCargarEstado(force=false) {
   const tbody = document.getElementById('ksTableBody');
   if (force && tbody) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
       <div class="spinner-border spinner-border-sm text-danger me-1"></div>
       Recargando…</td></tr>`;
   }
@@ -2229,7 +1656,7 @@ async function ksCargarEstado(force=false) {
     const r = await fetch('/api/comunicaciones/killswitch?t=' + Date.now(), { cache:'no-store' });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
         <i class="bi bi-exclamation-triangle me-1"></i>
         No se pudo cargar: ${esc(err.error || ('HTTP ' + r.status))}
       </td></tr>`;
@@ -2242,7 +1669,7 @@ async function ksCargarEstado(force=false) {
   } catch (e) {
     console.error('[ks] cargar estado', e);
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
         Error de red al cargar el estado.</td></tr>`;
     }
   }
@@ -2254,8 +1681,7 @@ function ksRenderTabla() {
 
   tbody.innerHTML = _ksData.modulos.map(m => {
     const lbl     = KS_MODULOS_LABELS[m.modulo] || { label:m.label, icon:'bi-folder' };
-    const hasBlk  = m.email_bloqueado || m.whatsapp_bloqueado || m.sms_bloqueado;
-    const allBlk  = m.email_bloqueado && m.whatsapp_bloqueado && m.sms_bloqueado;
+    const hasBlk  = m.email_bloqueado;
     const motivoHtml = m.motivo
       ? `<span class="ks-motivo-tag" title="${esc(m.motivo)}">${esc(m.motivo)}</span>`
       : `<span class="text-muted">—</span>`;
@@ -2273,16 +1699,17 @@ function ksRenderTabla() {
                 data-canal="${canal}"
                 onclick="ksToggleClick(this)"></button>
       </td>`;
-    const btnTodos = allBlk
+    // Botón único de acción rápida (igual que click en el toggle, pero más visible)
+    const btnTodos = hasBlk
       ? `<button type="button" class="ks-row-btn ks-row-btn-libera"
                  onclick="ksAccionMasiva('${esc(m.modulo)}', false)"
-                 title="Abrir los 3 canales para ${esc(lbl.label)}">
-           <i class="bi bi-unlock-fill"></i> Liberar todo
+                 title="Abrir la llave de email para ${esc(lbl.label)}">
+           <i class="bi bi-unlock-fill"></i> Liberar
          </button>`
       : `<button type="button" class="ks-row-btn"
                  onclick="ksAccionMasiva('${esc(m.modulo)}', true)"
-                 title="Bloquear los 3 canales para ${esc(lbl.label)}">
-           <i class="bi bi-lock-fill"></i> Bloquear todo
+                 title="Bloquear el email de ${esc(lbl.label)}">
+           <i class="bi bi-lock-fill"></i> Bloquear
          </button>`;
 
     return `
@@ -2290,9 +1717,7 @@ function ksRenderTabla() {
         <td>
           <div class="ks-mod"><i class="bi ${lbl.icon}"></i>${esc(lbl.label)}</div>
         </td>
-        ${cell('email',    m.email_bloqueado)}
-        ${cell('whatsapp', m.whatsapp_bloqueado)}
-        ${cell('sms',      m.sms_bloqueado)}
+        ${cell('email', m.email_bloqueado)}
         <td class="ks-td-motivo">${motivoHtml}</td>
         <td class="ks-td-meta">${actHtml}</td>
         <td class="text-end ks-actions">${btnTodos}</td>
@@ -2304,20 +1729,16 @@ function ksRenderBanner() {
   const banner = document.getElementById('ksWarningBanner');
   const msg    = document.getElementById('ksWarningMsg');
   if (!banner || !_ksData) return;
-  if (_ksData.hay_bloqueados) {
-    // Construir lista concreta de qué está bloqueado
-    const bloqs = [];
-    _ksData.modulos.forEach(m => {
-      const canales = [];
-      if (m.email_bloqueado)    canales.push('Email');
-      if (m.whatsapp_bloqueado) canales.push('WhatsApp');
-      if (m.sms_bloqueado)      canales.push('SMS');
-      if (canales.length) {
-        const lbl = (KS_MODULOS_LABELS[m.modulo] || {}).label || m.modulo;
-        bloqs.push(`<strong>${esc(lbl)}</strong> (${canales.join(', ')})`);
-      }
-    });
-    msg.innerHTML = `Los mensajes de estos módulos NO se están enviando: ${bloqs.join(' · ')}.
+  // Sólo email se considera para banner (WhatsApp/SMS retirados de la UI)
+  const bloqs = [];
+  _ksData.modulos.forEach(m => {
+    if (m.email_bloqueado) {
+      const lbl = (KS_MODULOS_LABELS[m.modulo] || {}).label || m.modulo;
+      bloqs.push(`<strong>${esc(lbl)}</strong>`);
+    }
+  });
+  if (bloqs.length) {
+    msg.innerHTML = `Los emails de estos módulos NO se están enviando: ${bloqs.join(' · ')}.
                      Recuerda abrir la llave cuando termines las pruebas.`;
     banner.classList.add('visible');
   } else {
@@ -2331,21 +1752,9 @@ function ksRenderCardIndicadores() {
     const warn = document.getElementById('tmcWarn-' + m.modulo);
     const card = document.querySelector(`.tpl-modulo-card[data-modulo="${m.modulo}"]`);
     if (!warn || !card) return;
-    const canales = [];
-    if (m.email_bloqueado)    canales.push('Email');
-    if (m.whatsapp_bloqueado) canales.push('WhatsApp');
-    if (m.sms_bloqueado)      canales.push('SMS');
-    if (canales.length) {
+    if (m.email_bloqueado) {
       card.classList.add('has-block');
-      let tooltip;
-      if (canales.length === 3) {
-        tooltip = 'Email, WhatsApp y SMS bloqueados';
-      } else if (canales.length === 2) {
-        tooltip = canales.join(' y ') + ' bloqueados';
-      } else {
-        tooltip = canales[0] + ' bloqueado';
-      }
-      warn.setAttribute('title', tooltip);
+      warn.setAttribute('title', 'Email bloqueado');
     } else {
       card.classList.remove('has-block');
       warn.setAttribute('title', '');
@@ -2425,18 +1834,18 @@ async function ksAccionMasiva(modulo, bloquear) {
   let motivo = null;
   if (bloquear) {
     motivo = await ilusPrompt({
-      title: `Bloquear TODO el módulo ${lbl}`,
-      message: 'Esto cerrará la llave de Email, WhatsApp y SMS de este módulo. Ningún mensaje saldrá.',
+      title: `Bloquear el módulo ${lbl}`,
+      message: 'Esto cerrará la llave de email de este módulo. Ningún email saldrá.',
       placeholder: 'Motivo (opcional, ej: "pruebas hasta el viernes")',
       required: false,
-      okLabel: 'Bloquear los 3 canales',
+      okLabel: 'Bloquear email',
     });
     if (motivo === null) return;
   } else {
     const ok = await ilusConfirm({
-      title: `Liberar TODO el módulo ${lbl}`,
-      message: '¿Abrir las 3 llaves de paso de este módulo (Email, WhatsApp y SMS)?',
-      okLabel: 'Sí, liberar todo',
+      title: `Liberar el módulo ${lbl}`,
+      message: '¿Abrir la llave de email de este módulo?',
+      okLabel: 'Sí, liberar',
       cancelLabel: 'Cancelar',
     });
     if (!ok) return;
@@ -2446,15 +1855,15 @@ async function ksAccionMasiva(modulo, bloquear) {
     const r = await fetch('/api/comunicaciones/killswitch/' + encodeURIComponent(modulo), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ canal: 'todos', bloqueado: !!bloquear, motivo: motivo || '' }),
+      body: JSON.stringify({ canal: 'email', bloqueado: !!bloquear, motivo: motivo || '' }),
     });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar');
     if (typeof ilusToast === 'function') {
       ilusToast(
         bloquear
-          ? `Módulo ${lbl}: las 3 llaves quedaron cerradas.`
-          : `Módulo ${lbl}: las 3 llaves quedaron abiertas.`,
+          ? `Módulo ${lbl}: llave de email cerrada.`
+          : `Módulo ${lbl}: llave de email abierta.`,
         { type: bloquear ? 'warning' : 'success' }
       );
     }
@@ -2603,23 +2012,17 @@ function tplMostrarVista() {
   document.getElementById('tvEstadoTitulo').textContent = meta.label;
   document.getElementById('tvMsg').innerHTML = '';
 
-  // Botones canal
-  document.getElementById('tvBtnEmail').className =
-    'btn btn-sm fw-semibold ' + (_tplCanal==='email' ? 'btn-danger' : 'btn-outline-secondary');
-  document.getElementById('tvBtnWA').className =
-    'btn btn-sm ' + (_tplCanal==='whatsapp' ? 'btn-success' : 'btn-outline-secondary');
-  document.getElementById('tvBtnPreview').style.display = _tplCanal==='email' ? '' : 'none';
+  // Solo canal email (WhatsApp y SMS retirados de la UI)
+  _tplCanal = 'email';
+  document.getElementById('tvBtnPreview').style.display = '';
 
   // Asunto
   const asuntoWrap = document.getElementById('tvAsuntoWrap');
-  asuntoWrap.style.display = _tplCanal === 'email' ? '' : 'none';
+  asuntoWrap.style.display = '';
 
   // Cuerpo label / hint
-  document.getElementById('tvCuerpoLabel').textContent =
-    _tplCanal==='email' ? 'Vista visual del email' : 'Vista previa WhatsApp';
-  document.getElementById('tvCuerpoHint').textContent =
-    _tplCanal==='email' ? 'Así verá el cliente la comunicación'
-                       : '*negrita* · _cursiva_ · emojis';
+  document.getElementById('tvCuerpoLabel').textContent = 'Vista visual del email';
+  document.getElementById('tvCuerpoHint').textContent  = 'Así verá el cliente la comunicación';
 
   // Valores — primero DB, si vacío usar defaults de fábrica
   const dbVal   = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
@@ -2627,25 +2030,10 @@ function tplMostrarVista() {
   const saved   = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
   document.getElementById('tvAsunto').textContent = saved.asunto || '';
 
-  if (_tplCanal === 'email') {
-    // Email: muestra código fuente HTML
-    document.getElementById('tvCuerpo').style.display   = 'none';
-    document.getElementById('tvEmailPreview').style.display = '';
-    document.getElementById('tvCuerpoWA').style.display = 'none';
-    document.getElementById('tvEmailPreview').srcdoc = _buildEmailHtml(saved.asunto || meta.label, saved.cuerpo || '');
-  } else {
-    // WhatsApp: muestra burbuja renderizada
-    document.getElementById('tvCuerpo').style.display   = 'none';
-    document.getElementById('tvEmailPreview').style.display = 'none';
-    document.getElementById('tvCuerpoWA').style.display = '';
-    // Convierte formato WhatsApp a HTML básico
-    const waHtml = (saved.cuerpo || '')
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/\n/g,'<br>')
-      .replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>')
-      .replace(/_([^_\n]+)_/g,'<em>$1</em>');
-    document.getElementById('tvWABubble').innerHTML = waHtml;
-  }
+  // Email: muestra código fuente HTML
+  document.getElementById('tvCuerpo').style.display   = 'none';
+  document.getElementById('tvEmailPreview').style.display = '';
+  document.getElementById('tvEmailPreview').srcdoc = _buildEmailHtml(saved.asunto || meta.label, saved.cuerpo || '');
 
   // Variables disponibles — con colores por grupo
   const vars = TPL_VARS[meta.grupo] || [];
@@ -2661,12 +2049,13 @@ function tplMostrarVista() {
 function tplActivarEdicion() {
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
   if (!meta) return;
+  _tplCanal = 'email';
   tplSetVisible('tplEditorPlaceholder', false);
   tplSetVisible('tplViewWrap', false);
   tplSetVisible('tplEditorWrap', true, 'block');
 
   document.getElementById('tplEditorEstadoTitulo').textContent = meta.label;
-  document.getElementById('tplCanalBadge').textContent   = _tplCanal === 'email' ? '📧 Email' : '💬 WhatsApp';
+  document.getElementById('tplCanalBadge').textContent   = '📧 Email';
   document.getElementById('tplMsg').innerHTML = '';
 
   // Variables clicables (con color ILUS)
@@ -2682,25 +2071,18 @@ function tplActivarEdicion() {
   ).join('');
 
   // Asunto
-  document.getElementById('tplAsuntoWrap').style.display = _tplCanal === 'email' ? '' : 'none';
-  document.getElementById('tplCuerpoLabel').textContent =
-    _tplCanal === 'email' ? 'Contenido visual del email' : 'Texto del mensaje WhatsApp';
-  document.getElementById('tplCuerpoHint').textContent =
-    _tplCanal==='email' ? 'Edita el mensaje visual; el HTML se actualiza por detrás.'
-                       : 'Texto plano. *negrita* · _cursiva_ · emoji. Las variables {{var}} se reemplazan al enviar.';
+  document.getElementById('tplAsuntoWrap').style.display = '';
+  document.getElementById('tplCuerpoLabel').textContent  = 'Contenido visual del email';
+  document.getElementById('tplCuerpoHint').textContent   = 'Edita el mensaje visual; el HTML se actualiza por detrás.';
 
   const dbVal2  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
   const defVal2 = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
   const saved2  = (dbVal2 && (dbVal2.asunto || dbVal2.cuerpo)) ? dbVal2 : defVal2;
   document.getElementById('tplAsunto').value = saved2.asunto || '';
-  document.getElementById('tplVisualWrap').style.display = _tplCanal === 'email' ? '' : 'none';
-  document.getElementById('tplTextoWrap').style.display = _tplCanal === 'email' ? 'none' : '';
-  if (_tplCanal === 'email') {
-    document.getElementById('tplCuerpoVisual').innerHTML = saved2.cuerpo || '';
-    document.getElementById('tplCuerpoHtml').value = saved2.cuerpo || '';
-  } else {
-    document.getElementById('tplCuerpo').value = saved2.cuerpo || '';
-  }
+  document.getElementById('tplVisualWrap').style.display = '';
+  document.getElementById('tplTextoWrap').style.display = 'none';
+  document.getElementById('tplCuerpoVisual').innerHTML = saved2.cuerpo || '';
+  document.getElementById('tplCuerpoHtml').value = saved2.cuerpo || '';
 }
 
 function tplCancelarEdicion() {
@@ -2708,28 +2090,10 @@ function tplCancelarEdicion() {
   tplMostrarVista();
 }
 
-function tplCambiarCanal(canal) {
-  _tplCanal = canal;
-  if (!document.getElementById('tplEditorWrap').hidden) {
-    tplActivarEdicion();
-  } else {
-    tplMostrarVista();
-  }
-}
-
 function tplInsertarVar(v) {
-  if (_tplCanal === 'email') {
-    document.getElementById('tplCuerpoVisual').focus();
-    document.execCommand('insertText', false, v);
-    document.getElementById('tplCuerpoHtml').value = document.getElementById('tplCuerpoVisual').innerHTML;
-    return;
-  }
-  const ta = document.getElementById('tplCuerpo');
-  const s  = ta.selectionStart || 0;
-  const e  = ta.selectionEnd   || 0;
-  ta.value = ta.value.substring(0,s) + v + ta.value.substring(e);
-  ta.selectionStart = ta.selectionEnd = s + v.length;
-  ta.focus();
+  document.getElementById('tplCuerpoVisual').focus();
+  document.execCommand('insertText', false, v);
+  document.getElementById('tplCuerpoHtml').value = document.getElementById('tplCuerpoVisual').innerHTML;
 }
 
 async function tplGuardar() {
@@ -2738,12 +2102,10 @@ async function tplGuardar() {
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
   const body = {
     modulo: getCurrentModulo(),
-    asunto: _tplCanal === 'email' ? val('tplAsunto') : '',
-    cuerpo: _tplCanal === 'email'
-      ? document.getElementById('tplCuerpoVisual').innerHTML
-      : val('tplCuerpo'),
+    asunto: val('tplAsunto'),
+    cuerpo: document.getElementById('tplCuerpoVisual').innerHTML,
   };
-  const r = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
+  const r = await fetch(`/comunicaciones/templates/${_tplEstado}/email`, {
     method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   });
   const d = await r.json();
@@ -2832,8 +2194,7 @@ function tplVistaPreviaModal() {
 
 function tplEnviarPrueba() {
   if (!_tplEstado) return;
-  document.getElementById('tplPruebaEmailWrap').style.display = _tplCanal==='email' ? '' : 'none';
-  document.getElementById('tplPruebaWAWrap').style.display    = _tplCanal==='whatsapp' ? '' : 'none';
+  document.getElementById('tplPruebaEmailWrap').style.display = '';
   document.getElementById('tplPruebaMsg').innerHTML = '';
   _modalTplPrueba.show();
 }
@@ -2843,41 +2204,27 @@ async function tplEnviarPruebaConfirm() {
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
 
   // Usa DB si existe, si no el default de fábrica
-  const dbVal  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
-  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const dbVal  = ((_tplData[_tplEstado] || {})['email']) || null;
+  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})['email']) || {};
   const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
 
   msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
 
-  if (_tplCanal === 'email') {
-    const to = document.getElementById('tplPruebaEmail').value.trim();
-    if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el email destinatario</span>'; return; }
+  const to = document.getElementById('tplPruebaEmail').value.trim();
+  if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el email destinatario</span>'; return; }
 
-    // Envuelve el fragmento HTML del cuerpo en el diseño completo ILUS
-    const asunto  = saved.asunto || meta.label;
-    const htmlFull = _buildEmailHtml(asunto, saved.cuerpo || '');
+  // Envuelve el fragmento HTML del cuerpo en el diseño completo ILUS
+  const asunto  = saved.asunto || meta.label;
+  const htmlFull = _buildEmailHtml(asunto, saved.cuerpo || '');
 
-    const r = await fetch('/comunicaciones/email/enviar', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ to, subject: asunto, html: htmlFull })
-    });
-    const d = await r.json();
-    msg.innerHTML = d.ok
-      ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Email enviado con diseño ILUS!</span>'
-      : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
-
-  } else {
-    const to = document.getElementById('tplPruebaWA').value.trim();
-    if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el número con código de país (+56...)</span>'; return; }
-    const r = await fetch('/comunicaciones/whatsapp/test', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ to, body: saved.cuerpo || meta.label })
-    });
-    const d = await r.json();
-    msg.innerHTML = d.ok
-      ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡WhatsApp enviado!</span>'
-      : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
-  }
+  const r = await fetch('/comunicaciones/email/enviar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ to, subject: asunto, html: htmlFull })
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Email enviado con diseño ILUS!</span>'
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
 }
 
 /* ── helpers ── */
@@ -2890,219 +2237,5 @@ function togglePass(id, btn) {
   btn.querySelector('i').className = 'bi bi-eye' + (show ? '-slash' : '');
 }
 
-/* ══════════════════════════════════════════════════════════════
-   TAB DIAGNÓSTICO — Estado real de las comunicaciones
-   Carga GET /api/comm/diagnostico-completo y pinta semáforos +
-   recomendaciones. Incluye test rápido por canal.
-   ══════════════════════════════════════════════════════════════ */
-let _diagData = null;
-
-async function diagCargar(){
-  const btn = document.getElementById('diagBtnRefresh');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Verificando…'; }
-  document.getElementById('diagDetEmail').textContent = 'Verificando…';
-  document.getElementById('diagDetWA').textContent = 'Verificando…';
-  document.getElementById('diagDetSMS').textContent = 'Verificando…';
-  document.getElementById('diagAcciones').innerHTML = '<div class="text-muted small">Verificando…</div>';
-
-  try {
-    const r = await fetch('/api/comm/diagnostico-completo');
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'fallo');
-    _diagData = d;
-    diagPintar(d);
-  } catch (e) {
-    const err = String(e.message || e);
-    document.getElementById('diagDetEmail').innerHTML = '<span class="text-danger">Error: ' + esc(err) + '</span>';
-    document.getElementById('diagAcciones').innerHTML = '<div class="text-danger small">No se pudo cargar el diagnóstico: ' + esc(err) + '</div>';
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Re-ejecutar diagnóstico'; }
-  }
-}
-
-function diagSetLed(id, estado){
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.className = 'diag-led ' + estado;
-}
-
-function diagPintar(d){
-  // ── Canales activos (env var COMM_CANALES_ACTIVOS) ───────
-  // Daniel canceló Twilio en mayo 2026: sólo email queda activo
-  // por default. El código de WhatsApp/SMS sigue en el sistema.
-  const ca = d.canales_activos || { email: true, whatsapp: false, sms: false,
-                                     raw_env: '(no seteada)' };
-  const envBadge = document.getElementById('diagCanalesEnv');
-  if (envBadge){
-    envBadge.textContent = 'COMM_CANALES_ACTIVOS = ' + (ca.raw_env || '?');
-  }
-  const setCanalChip = (key, ledId, txtId, label) => {
-    const activo = !!ca[key];
-    const led = document.getElementById(ledId);
-    const txt = document.getElementById(txtId);
-    if (led){
-      led.classList.remove('activo', 'inactivo');
-      led.classList.add(activo ? 'activo' : 'inactivo');
-      led.textContent = activo ? '●' : '○';
-    }
-    if (txt){
-      txt.innerHTML = activo
-        ? '<span style="color:#16a34a">ACTIVO</span>'
-        : '<span style="color:#6b7280">desactivado por config</span>';
-    }
-  };
-  setCanalChip('email',    'diagCanalLedEmail', 'diagCanalEstadoEmail', 'Email');
-  setCanalChip('whatsapp', 'diagCanalLedWA',    'diagCanalEstadoWA',    'WhatsApp');
-  setCanalChip('sms',      'diagCanalLedSMS',   'diagCanalEstadoSMS',   'SMS');
-
-  // ── Email ─────────────────────────────────────────────────
-  const smtp = d.smtp || {}; const resend = d.resend || {};
-  let emailEstado = 'error';
-  let emailDet = [];
-  if (resend.api_key_configured){
-    if (resend.test_request && resend.test_request.ok){
-      emailEstado = resend.domain_verified ? 'ok' : 'warn';
-      const srcLabel = resend.api_key_source === 'env'
-        ? '<span class="badge bg-success">RESEND_API_KEY ✓ en Railway</span>'
-        : '<span class="badge bg-warning text-dark">key en BD (recomendado moverla a env)</span>';
-      emailDet.push(`<strong>Resend</strong>: ${srcLabel} — ${resend.domain_verified ? '✓ dominio <code>' + esc(resend.domain_verified) + '</code> verificado' : 'sin dominio verificado'}`);
-    } else {
-      emailEstado = 'error';
-      emailDet.push('<strong>Resend</strong>: API key configurada pero rechazada');
-    }
-  } else {
-    if (resend.env_var_present === false){
-      emailDet.push('<strong>Resend</strong>: <span class="text-danger">❌ RESEND_API_KEY NO está en Railway</span> — agrégala en Variables y reinicia el servicio.');
-    } else {
-      emailDet.push('<strong>Resend</strong>: no configurado');
-    }
-  }
-  if (smtp.configurado){
-    const test = smtp.test_connection || {};
-    if (test.ok){
-      if (emailEstado === 'error') emailEstado = 'warn';
-      emailDet.push(`<strong>SMTP</strong>: <span class="text-success">conexión OK</span> (<code>${esc(smtp.host)}:${esc(smtp.port)}</code>, ${test.ms}ms)`);
-    } else {
-      emailDet.push(`<strong>SMTP</strong>: <span class="text-danger">${esc(test.error || 'fallo')}</span> (stage: ${esc(test.stage || '?')})`);
-    }
-    emailDet.push(`<small>User: <code>${esc(smtp.user)}</code> · Password: ${esc(smtp.password_format)} (${smtp.password_length} chars)</small>`);
-    if (smtp.alerta_spf) emailDet.push(`<small class="text-warning">⚠ ${esc(smtp.alerta_spf)}</small>`);
-  } else {
-    emailDet.push('<strong>SMTP</strong>: no configurado');
-  }
-  if (!d.kill_switch_global.email){
-    emailEstado = 'error';
-    emailDet.unshift('<strong class="text-danger">⛔ Kill switch GLOBAL email APAGADO</strong>');
-  }
-  diagSetLed('diagLedEmail', emailEstado);
-  document.getElementById('diagDetEmail').innerHTML = emailDet.join('<br>');
-
-  // ── WhatsApp ──────────────────────────────────────────────
-  const wa = d.twilio?.whatsapp || {};
-  // Si el canal está desactivado por env var, el semáforo va en gris
-  // (no es un error real — es decisión deliberada).
-  let waEstado = ca.whatsapp
-    ? (wa.configurado ? (wa.sandbox ? 'warn' : 'ok') : 'error')
-    : 'pendiente';
-  let waDet = [];
-  if (!ca.whatsapp){
-    waDet.push('<span class="badge bg-secondary me-1">OFF</span><strong>Desactivado por configuración</strong>');
-    waDet.push('<small class="text-muted">El canal no dispara desde el flujo automático. ' +
-               'Reactivar setando <code>COMM_CANALES_ACTIVOS=email,whatsapp</code> en Railway.</small>');
-  } else if (wa.configurado){
-    waDet.push(`<strong>From</strong>: <code>${esc(wa.from_number)}</code>`);
-    waDet.push(`<strong>SID</strong>: <code>${esc(wa.account_sid || '—')}</code>`);
-    if (wa.sandbox){
-      waDet.push('<small class="text-warning">⚠ Sandbox compartido — cada destinatario debe enviar <code>join finger-cry</code> al +1 415 523 8886</small>');
-    }
-  } else {
-    waDet.push('<span class="text-danger">No configurado — falta TWILIO_ACCOUNT_SID / TOKEN / TWILIO_WHATSAPP_FROM</span>');
-  }
-  if (!d.kill_switch_global.whatsapp){
-    waEstado = 'error';
-    waDet.unshift('<strong class="text-danger">⛔ Kill switch GLOBAL WhatsApp APAGADO</strong>');
-  }
-  diagSetLed('diagLedWA', waEstado);
-  document.getElementById('diagDetWA').innerHTML = waDet.join('<br>');
-
-  // ── SMS ───────────────────────────────────────────────────
-  const sms = d.twilio?.sms || {};
-  let smsEstado = ca.sms
-    ? (sms.configurado ? (sms.trial_warning ? 'warn' : 'ok') : 'error')
-    : 'pendiente';
-  let smsDet = [];
-  if (!ca.sms){
-    smsDet.push('<span class="badge bg-secondary me-1">OFF</span><strong>Desactivado por configuración</strong>');
-    smsDet.push('<small class="text-muted">Para reactivar: <code>COMM_CANALES_ACTIVOS=email,sms</code> en Railway.</small>');
-  } else if (sms.configurado){
-    smsDet.push(`<strong>From</strong>: <code>${esc(sms.from_number)}</code>`);
-    smsDet.push(`<strong>SID</strong>: <code>${esc(sms.account_sid || '—')}</code>`);
-    if (sms.trial_warning){
-      smsDet.push('<small class="text-warning">⚠ Cuenta Trial — solo permite enviar a números verificados en console.twilio.com</small>');
-    }
-  } else {
-    smsDet.push('<span class="text-muted">No configurado (opcional — TWILIO_PHONE_FROM)</span>');
-  }
-  diagSetLed('diagLedSMS', smsEstado);
-  document.getElementById('diagDetSMS').innerHTML = smsDet.join('<br>');
-
-  // ── Acciones pendientes ───────────────────────────────────
-  const acc = d.recomendaciones || [];
-  const accDiv = document.getElementById('diagAcciones');
-  if (!acc.length){
-    accDiv.innerHTML = '<div class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Todo OK, no hay acciones pendientes.</div>';
-  } else {
-    // Ordenar: alta → media → info
-    const orden = { alta: 0, media: 1, info: 2 };
-    acc.sort((a,b)=> (orden[a.prioridad]||9) - (orden[b.prioridad]||9));
-    accDiv.innerHTML = acc.map(a => {
-      const icono = { email: 'bi-envelope', whatsapp: 'bi-whatsapp', sms: 'bi-chat-text', todos: 'bi-check-circle' }[a.canal] || 'bi-info-circle';
-      const cta = a.url_externa
-        ? `<a href="${esc(a.url_externa)}" target="_blank" rel="noopener" class="diag-accion-cta"><i class="bi bi-box-arrow-up-right"></i>Abrir</a>`
-        : '';
-      return `<div class="diag-accion ${esc(a.prioridad)}">
-        <div class="diag-accion-titulo">
-          <i class="bi ${icono}"></i>${esc(a.titulo)}
-          <span class="badge ms-auto" style="background:${a.prioridad==='alta'?'#dc2626':(a.prioridad==='media'?'#f59e0b':'#16a34a')};color:#fff;font-size:.62rem">${esc(a.prioridad.toUpperCase())}</span>
-        </div>
-        <div class="diag-accion-detalle">${esc(a.detalle)}</div>
-        <div class="diag-accion-accion"><i class="bi bi-arrow-right me-1"></i><strong>Acción:</strong> ${esc(a.accion)}</div>
-        ${cta}
-      </div>`;
-    }).join('');
-  }
-
-  // ── JSON crudo ────────────────────────────────────────────
-  document.getElementById('diagJsonRaw').textContent = JSON.stringify(d, null, 2);
-}
-
-async function diagTestEnviar(tipo){
-  const inputId = { email: 'diagTestEmail', whatsapp: 'diagTestWA', sms: 'diagTestSMS' }[tipo];
-  const msgId   = { email: 'diagTestEmailMsg', whatsapp: 'diagTestWAMsg', sms: 'diagTestSMSMsg' }[tipo];
-  const dest = (document.getElementById(inputId)?.value || '').trim();
-  const msg  = document.getElementById(msgId);
-  if (!dest){
-    msg.innerHTML = '<span class="text-danger">Ingresa un destinatario.</span>';
-    return;
-  }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm me-1"></div>Enviando…';
-  try {
-    const r = await fetch('/api/comm/test-rapido', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tipo, destinatario: dest }),
-    });
-    const d = await r.json();
-    if (d.ok){
-      msg.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>${esc(d.mensaje || 'Enviado')}</span>`;
-    } else {
-      let html = `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>${esc(d.error || 'Fallo')}</span>`;
-      if (d.hint) html += `<br><span class="text-warning small">💡 ${esc(d.hint)}</span>`;
-      msg.innerHTML = html;
-    }
-  } catch (e) {
-    msg.innerHTML = `<span class="text-danger">Error de red: ${esc(String(e.message||e))}</span>`;
-  }
-}
 </script>
 {% endblock %}
