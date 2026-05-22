@@ -23529,12 +23529,31 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     print(f"[promover_lev] vid={vid} fallback levantamiento_items error: {_e_li}",
                           flush=True)
 
-        # ── FIX 2026-05-18 — Fallback B: si nada de lo anterior dio fruto,
-        # tomar todas las máquinas vinculadas al cliente de la visita. Esto
-        # solo aplica si la visita tiene cliente_id y es el último recurso
-        # para que un cierre de OT no quede sin promoción a ficha. Si el
-        # cliente tiene muchísimas máquinas (>20) NO usamos este fallback
-        # para evitar promover ruido.
+        # ── FIX 2026-05-21 — Fallback C: leer mant_visita_equipos
+        # Esta tabla la usamos para audit trail por equipo en la visita y
+        # se popula automáticamente al crear la OT de levantamiento. Es la
+        # fuente más confiable cuando NO hay tareas explícitas todavía.
+        # Solo cuenta los equipos NO saltados (los saltados no se promueven
+        # porque el técnico decidió que ya no aplican).
+        if not maquinas:
+            try:
+                _ve = mysql_fetchall(
+                    "SELECT DISTINCT maquina_id FROM mant_visita_equipos "
+                    " WHERE visita_id=%s AND maquina_id IS NOT NULL "
+                    "   AND estado_revision <> 'saltado'",
+                    (vid,)
+                ) or []
+                if _ve:
+                    maquinas = _ve
+                    fuente_maquinas = "mant_visita_equipos"
+            except Exception as _e_ve:
+                print(f"[promover_lev] vid={vid} fallback mant_visita_equipos error: {_e_ve}",
+                      flush=True)
+
+        # ── FIX 2026-05-18 — Fallback B (último recurso): si nada anterior
+        # dio fruto, tomar todas las máquinas vinculadas al cliente de la
+        # visita. Antes el límite era 20; lo subimos a 100 para clientes
+        # con catálogos grandes (gimnasios típicos tienen 30-60 equipos).
         if not maquinas:
             try:
                 _cli = mysql_fetchone(
@@ -23546,10 +23565,10 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                         "SELECT id AS maquina_id FROM mant_maquinas "
                         " WHERE cliente_id=%s "
                         "   AND COALESCE(estado,'activo') <> 'baja' "
-                        " LIMIT 25",
+                        " LIMIT 150",
                         (_cid,)
                     ) or []
-                    if 0 < len(_max_cli) <= 20:
+                    if 0 < len(_max_cli) <= 100:
                         maquinas = _max_cli
                         fuente_maquinas = "cliente_maquinas"
             except Exception as _e_cm:
@@ -30472,7 +30491,11 @@ def _ot_validar_cierre(vid):
         ) or {}
     total = int(chk_row.get("total") or 0)
     done = int(chk_row.get("done") or 0)
-    if total == 0 and not excluir_maquinas:
+    # FIX 2026-05-21: si es un levantamiento, NO exigimos tareas explícitas.
+    # El audit trail por equipo lo lleva mant_visita_equipos
+    # (verificado/saltado/con_cambios/falla). Para preventivas/correctivas
+    # sí se sigue exigiendo checklist para no perder control de calidad.
+    if total == 0 and not excluir_maquinas and not es_levantamiento:
         razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
     elif done < total:
         razones.append(
@@ -33098,17 +33121,26 @@ def mant_ots_list():
     where = ["1=1"]
     params = []
 
-    # ── EJECUTIVO (Aaron) — filtrar a sus OTs creadas por DEFAULT ──
+    # ── EJECUTIVO (Aaron) — filtrar a sus OTs (creadas + asignadas) por DEFAULT ──
     # Daniel: "el ejecutivo NO ejecuta — solo crea/supervisa". Por
     # default mostramos las OTs que él mismo creó (created_by =
-    # username). Puede pasar ?todas=1 para ver el resto del módulo
-    # (útil para coordinar con técnicos), pero igualmente no puede
-    # ejecutarlas (las APIs lo bloquean).
+    # username) **O las que tiene asignadas como técnico** (tecnico_user_id).
+    # Puede pasar ?todas=1 para ver el resto del módulo (útil para
+    # coordinar), pero igualmente no puede ejecutarlas si no es responsable.
+    # FIX 2026-05-21 (Aaron Vitacura): antes solo veía las que creaba —
+    # cuando le asignaban una OT no aparecía en su home.
     if es_ejecutivo and not ver_todas and not solo_mias:
         username_actual = (user.get("username") or "").strip()
+        user_id_actual = user.get("id")
+        clauses = []
         if username_actual:
-            where.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
             params.append(username_actual)
+        if user_id_actual:
+            clauses.append("v.tecnico_user_id=%s")
+            params.append(int(user_id_actual))
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
 
     # Filtro "mis OTs": muestra TODAS las OTs donde el usuario aparece como
     # técnico, sea como principal (v.tecnico_user_id) o como colaborador en
