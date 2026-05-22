@@ -1951,9 +1951,13 @@
 {% set _u = current_user %}
 {% set _role = (_u.role if _u else '') | lower %}
 {# Backwards-compat: si el backend no entregó las flags (templates legacy),
-   degradamos al check viejo. #}
+   degradamos al check viejo.
+   🔒 FIX 2026-05-22 (Daniel — brecha Aaron): el fallback YA NO incluye
+   'ejecutivo' — coherente con la matriz nueva (`_puede_ot_accion('aprobar')`).
+   Solo admin/superadmin/supervisor (+ permissions.* respectivos) pueden
+   aprobar; el ejecutivo NO firma cierres ni siquiera de SUS OTs. #}
 {% set _es_creador = es_creador if es_creador is defined else (_u and visita.created_by and visita.created_by == _u.username) %}
-{% set _puede_aprobar = puede_aprobar if puede_aprobar is defined else (_es_creador or permissions.superadmin or permissions.admin or _role in ('supervisor','ejecutivo')) %}
+{% set _puede_aprobar = puede_aprobar if puede_aprobar is defined else (permissions.superadmin or permissions.admin or _role in ('supervisor','supervisor_sstt')) %}
 {% set _es_superadmin = es_superadmin if es_superadmin is defined else (permissions.superadmin) %}
 
 <div class="tx-bottom">

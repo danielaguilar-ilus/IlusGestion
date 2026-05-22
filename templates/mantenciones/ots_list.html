@@ -182,9 +182,11 @@
 .ot-card .oc-stat .l{font-size:.62rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.3px;}
 .ot-card .oc-footer{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:6px;}
 
-/* ═══════════════ CALENDARIO embed ═══════════════ */
-.cal-embed{background:#fff;border:1px solid #eaecf0;border-radius:11px;overflow:hidden;height:75vh;}
-.cal-embed iframe{width:100%;height:100%;border:none;}
+/* ═══════════════ CALENDARIO ═══════════════
+   Antes había un iframe embebido (.cal-embed > iframe), pero generaba
+   un efecto espejo (sidebar duplicado) en algunos navegadores. Ahora
+   la tab "Calendario" muestra un botón hacia /mantenciones/calendario
+   en pantalla completa (sin iframe). */
 </style>
 
 <div class="ots-hero">
@@ -394,13 +396,20 @@
         <i class="bi bi-filetype-pdf"></i>
       </a>
       {% endif %}
-      {% if permissions.superadmin %}
+      {# 🔒 2026-05-22 (Daniel — brecha Aaron):
+         · Editar OT → admin + superadmin (NO ejecutivo).
+         · Eliminar OT → solo superadmin (definitivo, irreversible).
+         El ejecutivo (Aaron) levanta la OT pero NO la edita ni borra.
+         Si necesita corregir algo lo pide al admin. #}
+      {% if permissions.admin or permissions.superadmin %}
       <button type="button"
               class="btn btn-outline-secondary btn-sm"
-              title="Editar OT (solo superadmin)"
+              title="Editar OT (admin/superadmin)"
               onclick="editarOTRapido({{ o.id }}, '{{ (o.titulo or '')|replace("'", "\\'") }}', '{{ o.estado or '' }}', '{{ o.tipo or '' }}', '{{ o.modalidad_cobro or 'pagado' }}', '{{ o.prioridad or 'media' }}')">
         <i class="bi bi-pencil"></i>
       </button>
+      {% endif %}
+      {% if permissions.superadmin %}
       <button type="button"
               class="btn btn-outline-danger btn-sm"
               title="Eliminar OT (solo superadmin, irreversible)"
@@ -494,12 +503,29 @@
 </div>
 
 {# ════════════════════════════════════════════════════════════
-   Vista CALENDARIO — embed del calendario existente
+   Vista CALENDARIO — link directo al calendario completo
+   FIX 2026-05-22 (efecto espejo Aaron): antes había un <iframe>
+   embebido cargando /mantenciones/calendario?embed=1, pero en
+   algunos navegadores (Safari iOS, ciertos estados de localStorage)
+   el iframe terminaba cargando la URL SIN `embed=1`, lo cual
+   renderizaba el sidebar global de ILUS dentro del iframe →
+   efecto "espejo" con el menú duplicado.
+   Reemplazamos el iframe por un mensaje + botón que navega al
+   calendario en pantalla completa. Misma funcionalidad, sin
+   riesgo de cargar el layout dentro del layout.
    ════════════════════════════════════════════════════════════ #}
 <div id="vista-calendario" style="display:none">
-  <div class="cal-embed">
-    <iframe id="cal-iframe" src="about:blank" loading="lazy"
-            title="Calendario de mantenciones"></iframe>
+  <div class="empty-state" style="background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:60px 30px;text-align:center;">
+    <i class="bi bi-calendar3" style="font-size:3.4rem;opacity:.35;display:block;margin-bottom:12px;color:#dc2626;"></i>
+    <div class="fw-bold" style="font-size:1.1rem;color:#0f172a;margin-bottom:6px;">
+      Calendario de mantenciones
+    </div>
+    <div class="small text-muted mb-3" style="max-width:420px;margin:0 auto;">
+      Visualizá todas las visitas programadas, semana/mes/agenda, técnicos y filtros — en pantalla completa.
+    </div>
+    <a href="{{ url_for('mant_calendario') }}" class="btn btn-ilus fw-bold">
+      <i class="bi bi-calendar3 me-1"></i>Abrir calendario completo
+    </a>
   </div>
 </div>
 
@@ -526,10 +552,9 @@ function cambiarVista(v){
   // Lazy render según vista
   if (v === 'kanban') renderKanban();
   else if (v === 'cards') renderCards();
-  else if (v === 'calendario') {
-    const ifr = document.getElementById('cal-iframe');
-    if (ifr && ifr.src === 'about:blank') ifr.src = '{{ url_for("mant_calendario") }}?embed=1';
-  }
+  // Vista calendario: ya NO carga un iframe (eliminado por bug de efecto
+  // espejo). El bloque #vista-calendario solo muestra un botón hacia el
+  // calendario completo (link a /mantenciones/calendario en pantalla full).
 }
 
 // ════════════════════════════════════════════════════════════
@@ -637,7 +662,9 @@ function renderCards(){
     const prog = o.n_tareas > 0 ? Math.round((o.n_completas / o.n_tareas) * 100) : 0;
     const numEsc = _escHtml(o.numero_ot || ('VS-' + o.id));
     const tituloJs = String(o.titulo || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    const editBtn = {{ 'true' if permissions.superadmin else 'false' }} ?
+    // 🔒 2026-05-22 (Daniel — brecha Aaron): admin/superadmin pueden editar.
+    // Ejecutivo NO (antes era solo superadmin; ahora admin también).
+    const editBtn = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }} ?
       `<button class="btn btn-sm btn-outline-secondary" onclick="event.preventDefault();editarOTRapido(${o.id},'${(o.titulo||'').replace(/'/g,"\\'")}','${o.estado||''}','${o.tipo||''}','${o.modalidad_cobro||'pagado'}','${o.prioridad||'media'}')" title="Editar"><i class="bi bi-pencil"></i></button>` : '';
     const showRevisar = !!o.puede_aprobar && o.estado === 'pendiente_aprobacion';
     const revisarBtn = showRevisar

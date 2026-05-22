@@ -600,17 +600,31 @@
         </div>
       </div>
       <div class="modal-footer d-flex justify-content-between">
+        {# 🔒 2026-05-22 (Daniel — brecha Aaron):
+           · Eliminar visita → solo superadmin (DELETE definitivo).
+           · Guardar (editar/crear) → admin/superadmin (PUT general).
+           Ejecutivo solo puede VER la visita en el calendario y abrir
+           la OT — NO editarla ni eliminarla. La creación va por el
+           wizard de levantamiento, no por este modal del calendario. #}
+        {% if permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger" id="btnEliminarVisita" onclick="eliminarVisita()" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar
         </button>
+        {% else %}
+        <span></span>
+        {% endif %}
         <div class="d-flex gap-2">
           <a id="btnAbrirOT" href="#" class="btn btn-dark fw-bold" style="display:none;background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border:0">
             <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
           </a>
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+            {% if permissions.admin or permissions.superadmin %}Cancelar{% else %}Cerrar{% endif %}
+          </button>
+          {% if permissions.admin or permissions.superadmin %}
           <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarVisita()">
             <i class="bi bi-check-circle me-1"></i>Guardar
           </button>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -1108,7 +1122,22 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_costo').value = ev.costo || '';
   document.getElementById('vi_tecnico').value = ev.tecnicos.map(t => t.nombre).join(', ');
   document.getElementById('vi_descripcion').value = ev.descripcion || '';
-  document.getElementById('btnEliminarVisita').style.display = '';
+  // 🔒 2026-05-22 (Daniel — brecha Aaron): Si NO puede editar (ej. ejecutivo),
+  // hacemos los inputs read-only y el modal pasa a modo "vista de detalle".
+  // El botón Guardar ya no se renderiza (Jinja), pero por accesibilidad
+  // visual los campos quedan disabled para que el usuario entienda que es
+  // solo lectura. Igualmente el backend bloquea el PUT con 403.
+  const _puedeEditar = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  const _camposVisita = ['vi_cliente','vi_tipo','vi_titulo','vi_fecha',
+                         'vi_hora_inicio','vi_hora_fin','vi_estado','vi_costo',
+                         'vi_tecnico','vi_descripcion'];
+  _camposVisita.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !_puedeEditar;
+  });
+  // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
+  const _btnDel = document.getElementById('btnEliminarVisita');
+  if (_btnDel) _btnDel.style.display = '';
 
   // Botón "Abrir OT" — apunta a la ficha completa con tabs Tareas/Fotos/Técnicos
   const btnOT = document.getElementById('btnAbrirOT');
@@ -1132,6 +1161,23 @@ function abrirVisitaModal(vid){
 }
 
 function abrirNuevaVisita(){
+  // 🔒 2026-05-22 (Daniel — brecha Aaron): Solo admin/superadmin pueden
+  // crear visita por este modal corto. Los ejecutivos deben usar el
+  // wizard de levantamiento (ficha del cliente) para crear OTs con
+  // toda la trazabilidad. Si llegan acá (ej. doble click en celda),
+  // los redirigimos con un mensaje educativo.
+  const _puedeCrear = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  if (!_puedeCrear) {
+    if (window.ilusAlert) {
+      ilusAlert({
+        title: 'Crear OT desde el wizard',
+        message: 'Para crear una OT nueva usa el wizard de levantamiento desde la ficha del cliente.',
+        sub: 'Este modal del calendario es para edición rápida (solo admin).',
+        type: 'info',
+      });
+    }
+    return;
+  }
   document.getElementById('vi_id').value = '';
   document.getElementById('vi_titulo').value = '';
   document.getElementById('vi_descripcion').value = '';
@@ -1145,7 +1191,16 @@ function abrirNuevaVisita(){
   // Fecha por defecto: hoy + 2 días
   const f = new Date(); f.setDate(f.getDate()+2);
   document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
-  document.getElementById('btnEliminarVisita').style.display = 'none';
+  // Reactivar inputs (en caso de que abrirVisitaModal los haya disabled)
+  ['vi_cliente','vi_tipo','vi_titulo','vi_fecha',
+   'vi_hora_inicio','vi_hora_fin','vi_estado','vi_costo',
+   'vi_tecnico','vi_descripcion'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
+  });
+  // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
+  const _btnDel2 = document.getElementById('btnEliminarVisita');
+  if (_btnDel2) _btnDel2.style.display = 'none';
   document.getElementById('vi_extra_info').style.display = 'none';
   // Ocultar "Abrir OT" en modo nueva visita
   const btnOT = document.getElementById('btnAbrirOT');
