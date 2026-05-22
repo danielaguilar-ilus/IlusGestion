@@ -5221,9 +5221,12 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     passwd    = cfg.get("smtp_pass", "")
     from_addr = from_addr_cfg or user
 
-    def _try_send(p, sec, timeout=30):
-        # Timeout 30s para Railway: Gmail SMTP desde IPs cloud puede tomar
-        # 15-25s en abrir el socket TLS. Antes era 25s y a veces no alcanzaba.
+    def _try_send(p, sec, timeout=10):
+        # Timeout reducido a 10s/intento (antes 30s). Si el endpoint
+        # va a fallback Resend, el peor caso total es: SMTP attempt1
+        # (10s) + SMTP attempt2 (10s) + Resend (~5s) = ~25s, no minutos.
+        # Cuando Gmail rechaza credenciales el LOGIN responde en <1s, así
+        # que 10s solo se gasta cuando el socket TLS pelea por handshake.
         if sec:
             with _open_smtp_client(host, p, True, timeout=timeout) as srv:
                 srv.login(user, passwd)
@@ -17674,6 +17677,36 @@ def init_comunicaciones_tables():
                     INDEX idx_fecha (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── COLA DE JOBS DE EMAIL (envío async + polling) ────────────
+            # Se llena al POST /comunicaciones/email/enviar y el thread
+            # daemon actualiza status. Frontend hace polling al endpoint
+            # /api/comm/email-job/<id>/status hasta sent/failed.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS comm_email_jobs (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    destinatario  VARCHAR(300) NOT NULL,
+                    asunto        VARCHAR(500),
+                    status        ENUM('queued','sending','sent','failed') DEFAULT 'queued',
+                    error_msg     TEXT NULL,
+                    elapsed_ms    INT NULL,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    started_at    DATETIME NULL,
+                    completed_at  DATETIME NULL,
+                    created_by    VARCHAR(190),
+                    INDEX idx_status (status, created_at DESC),
+                    INDEX idx_created_by (created_by, created_at DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Migración idempotente (por si la tabla ya existía sin columnas)
+            for _mig_jobs in [
+                "ALTER TABLE comm_email_jobs ADD COLUMN error_msg TEXT NULL",
+                "ALTER TABLE comm_email_jobs ADD COLUMN elapsed_ms INT NULL",
+                "ALTER TABLE comm_email_jobs ADD COLUMN started_at DATETIME NULL",
+                "ALTER TABLE comm_email_jobs ADD COLUMN completed_at DATETIME NULL",
+                "ALTER TABLE comm_email_jobs ADD INDEX idx_status (status, created_at DESC)",
+            ]:
+                try: cur.execute(_mig_jobs)
+                except Exception: pass
             # Migración idempotente: ampliar ENUMs si la tabla existía
             for _mig_log in [
                 "ALTER TABLE comm_log MODIFY canal ENUM('email','whatsapp','sms') NOT NULL",
@@ -18590,7 +18623,12 @@ def _comm_log_entry(canal, dest, asunto, estado, detalle=""):
 
 
 def _send_email_dinamico(to, subject, html_body, cfg=None):
-    """Envía email usando config SMTP dinámica (DB o config.py)."""
+    """Envía email usando config SMTP dinámica (DB o config.py).
+
+    Timeout reducido a 10s/intento (era 15s) — en Railway un Gmail
+    colgado puede tomar minutos si cada paso del handshake/login
+    espera el default. 10s es suficiente para LAN razonable.
+    """
     import ssl as _ssl
     cfg = cfg or _get_smtp_cfg()
     cc = _get_client_cfg()
@@ -18612,11 +18650,11 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
     secure = cfg.get("secure", False)
     if secure:
         ctx = _ssl.create_default_context()
-        with _open_smtp_client(host, port, True, timeout=15, context=ctx) as srv:
+        with _open_smtp_client(host, port, True, timeout=10, context=ctx) as srv:
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
             srv.sendmail(cfg.get("from_addr", cfg["smtp_user"]), recipients, msg.as_string())
     else:
-        with _open_smtp_client(host, port, False, timeout=15) as srv:
+        with _open_smtp_client(host, port, False, timeout=10) as srv:
             srv.ehlo()
             srv.starttls()
             srv.login(cfg["smtp_user"], cfg["smtp_pass"])
@@ -19407,7 +19445,18 @@ def _comm_smtp_test_send_legacy():
 def comm_email_enviar():
     """Envío manual de prueba desde /comunicaciones.
 
-    FIX 2026-05-21 (bug screenshot):
+    FIX 2026-05-21 (bug "minutos colgado"):
+      - El envío real ahora corre en background thread daemon, NO bloquea
+        el endpoint. Respondemos en <500ms con {ok, job_id, status:'queued'}.
+        El frontend hace polling a /api/comm/email-job/<id>/status hasta
+        sent/failed (o timeout de 60s en UI).
+      - Causa raíz del bug: cuando Gmail rechazaba credenciales / Cloudflare
+        colgaba el handshake TLS, el endpoint quedaba síncrono esperando
+        SMTP×2 puertos × 30s/intento + fallback Resend = minutos. Ahora
+        el peor caso es ~25s en background (timeout=10s/intento) y la UI
+        SIEMPRE responde al instante.
+
+    FIX 2026-05-21 (bug screenshot anterior — sigue aplicando):
       1. Header/footer duplicado → `_comm_render_email_document` ahora detecta
          si `body` ya es documento completo (con <!DOCTYPE/<html/<body) y NO
          vuelve a envolver. Esto cubre el caso `tplEnviarPruebaConfirm` del
@@ -19424,21 +19473,214 @@ def comm_email_enviar():
         return jsonify({"error": "Faltan campos: to, subject, html"}), 400
 
     # 1) Reemplaza placeholders {{xxx}} con valores DEMO (sólo envío manual).
-    #    En el subject también — si la plantilla lleva "Tu pedido {{id_pedido}}…",
-    #    Gmail mostraría el literal "{{id_pedido}}" en la cabecera.
     subject_demo = _comm_apply_demo_replacements(subject)
     body_demo    = _comm_apply_demo_replacements(body)
 
-    # 2) Envuelve con la plantilla corporativa ILUS (no vuelve a envolver si
-    #    ya viene como documento completo desde el front).
+    # 2) Envuelve con la plantilla corporativa ILUS.
     html = _comm_render_email_document(subject_demo, body_demo, "Comunicaciones")
+
+    # 3) Crear job 'queued' en BD para que el frontend pueda hacer polling.
+    creador = current_username() or ""
     try:
-        _send_email_dinamico(to, subject_demo, html)
-        _comm_log_entry("email", to, subject_demo, "ok")
-        return jsonify({"ok": True})
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO comm_email_jobs (destinatario, asunto, status, created_by) "
+                "VALUES (%s, %s, 'queued', %s)",
+                (to[:300], subject_demo[:500], creador[:190]),
+            )
+            job_id = cur.lastrowid
+        conn.commit()
     except Exception as exc:
-        _comm_log_entry("email", to, subject_demo, "error", str(exc))
-        return jsonify({"error": str(exc)}), 500
+        # Si no podemos ni encolar, devolvemos error sincronizado
+        return jsonify({"error": f"No se pudo encolar el envío: {exc}"}), 500
+
+    # 4) Disparar envío en background. Snapshot de variables para
+    #    aislar del request context (g/session no son thread-safe).
+    snap_to       = to
+    snap_subject  = subject_demo
+    snap_html     = html
+    snap_job_id   = job_id
+
+    def _bg_send_email():
+        import time as _t
+        # IMPORTANTE: corremos dentro de app.app_context() para que los
+        # helpers que usan Flask `g` (get_db, mysql_fetchone, _get_smtp_cfg,
+        # _get_client_cfg, _comm_log_entry) funcionen sin RuntimeError.
+        # Patrón espejo del mantenciones_scheduler_loop.
+        with app.app_context():
+            t0 = _t.time()
+            # Marcar 'sending' al arrancar (transición queued → sending → sent/failed).
+            try:
+                _conn = get_mysql()
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        "UPDATE comm_email_jobs SET status='sending', started_at=NOW() WHERE id=%s",
+                        (snap_job_id,),
+                    )
+                _conn.commit()
+            except Exception:
+                pass
+
+            status_final = "failed"
+            err_msg = ""
+            try:
+                _send_email_dinamico(snap_to, snap_subject, snap_html)
+                status_final = "sent"
+            except Exception as _exc:
+                err_msg = str(_exc)[:1900]
+                # _send_email_dinamico no expone fallback Resend. Para
+                # tests reales que requieran fallback, usar el endpoint
+                # /api/comm/diagnostico (que sí va por _send_ilus_email).
+
+            elapsed_ms = int((_t.time() - t0) * 1000)
+            # Persistir resultado
+            try:
+                _conn = get_mysql()
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        "UPDATE comm_email_jobs SET status=%s, error_msg=%s, "
+                        "elapsed_ms=%s, completed_at=NOW() WHERE id=%s",
+                        (status_final, err_msg or None, elapsed_ms, snap_job_id),
+                    )
+                _conn.commit()
+            except Exception as _exc:
+                print(f"[comm-email-job][{snap_job_id}] no se pudo actualizar BD: {_exc}", flush=True)
+
+            # Compat con el log existente (/comunicaciones → tab Log)
+            try:
+                _comm_log_entry(
+                    "email", snap_to, snap_subject,
+                    "ok" if status_final == "sent" else "error",
+                    err_msg or f"job_id={snap_job_id} ({elapsed_ms}ms)",
+                )
+            except Exception:
+                pass
+
+    threading.Thread(target=_bg_send_email, daemon=True,
+                     name=f"comm-email-job-{job_id}").start()
+
+    return jsonify({
+        "ok": True,
+        "job_id": job_id,
+        "status": "queued",
+        "poll_url": f"/api/comm/email-job/{job_id}/status",
+    })
+
+
+@app.route("/api/comm/email-job/<int:job_id>/status", methods=["GET"])
+@_require_superadmin
+def comm_email_job_status(job_id: int):
+    """Estado de un envío de email asíncrono encolado por
+    POST /comunicaciones/email/enviar.
+
+    El frontend hace polling cada 2s hasta status in (sent, failed).
+    Retorna 404 si el job no existe.
+    """
+    try:
+        row = mysql_fetchone(
+            "SELECT id, destinatario, asunto, status, error_msg, elapsed_ms, "
+            "       created_at, started_at, completed_at "
+            "  FROM comm_email_jobs WHERE id=%s LIMIT 1",
+            (job_id,),
+        )
+    except Exception as exc:
+        return jsonify({"error": f"BD: {exc}"}), 500
+    if not row:
+        return jsonify({"error": "Job no encontrado"}), 404
+    return jsonify({
+        "id":         int(row["id"]),
+        "to":         row.get("destinatario") or "",
+        "subject":    row.get("asunto") or "",
+        "status":     row.get("status") or "queued",
+        "error_msg":  row.get("error_msg") or "",
+        "elapsed_ms": int(row["elapsed_ms"] or 0),
+        # Marcas de tiempo (frontend solo las muestra como info)
+        "queued_at":    row.get("created_at").isoformat() if row.get("created_at") else None,
+        "started_at":   row.get("started_at").isoformat() if row.get("started_at") else None,
+        "completed_at": row.get("completed_at").isoformat() if row.get("completed_at") else None,
+    })
+
+
+@app.route("/api/comm/smtp-ping", methods=["GET"])
+@_require_superadmin
+def comm_smtp_ping():
+    """Healthcheck rápido de SMTP — solo abre el socket + STARTTLS + LOGIN,
+    NO envía email. Timeout 4s para que sea instantáneo (el operador hace
+    click en un botón "Test conexión" y espera respuesta inmediata).
+
+    Devuelve:
+      {ok:true,  message:"SMTP OK",            elapsed_ms:N}
+      {ok:false, message:"Credenciales rechazadas (535)",  elapsed_ms:N}
+      {ok:false, message:"Timeout conexión (>4s)",         elapsed_ms:N}
+    """
+    import time as _t
+    import ssl as _ssl
+    import socket as _sock
+
+    t0 = _t.time()
+    try:
+        cfg = _get_smtp_cfg()
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "message": f"No se pudo leer config SMTP: {exc}",
+            "elapsed_ms": int((_t.time()-t0)*1000),
+        }), 200
+
+    host = cfg.get("smtp_host", "")
+    port = int(cfg.get("smtp_port", 587))
+    user = cfg.get("smtp_user", "")
+    passwd = cfg.get("smtp_pass", "")
+    secure = bool(cfg.get("secure"))
+
+    if not (host and user and passwd):
+        return jsonify({
+            "ok": False,
+            "message": "Falta configurar SMTP (host/user/password).",
+            "elapsed_ms": int((_t.time()-t0)*1000),
+            "source": cfg.get("_source", ""),
+        }), 200
+
+    try:
+        if secure:
+            ctx = _ssl.create_default_context()
+            with _open_smtp_client(host, port, True, timeout=4, context=ctx) as srv:
+                srv.login(user, passwd)
+        else:
+            with _open_smtp_client(host, port, False, timeout=4) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.ehlo()
+                srv.login(user, passwd)
+        return jsonify({
+            "ok": True,
+            "message": "SMTP OK",
+            "elapsed_ms": int((_t.time()-t0)*1000),
+            "host": host, "port": port, "user": user,
+            "source": cfg.get("_source", ""),
+        })
+    except smtplib.SMTPAuthenticationError as exc:
+        return jsonify({
+            "ok": False,
+            "message": "Credenciales rechazadas (Gmail App Password vencida o errónea).",
+            "detail": str(exc)[:200],
+            "elapsed_ms": int((_t.time()-t0)*1000),
+            "source": cfg.get("_source", ""),
+        }), 200
+    except (_sock.timeout, TimeoutError):
+        return jsonify({
+            "ok": False,
+            "message": "Timeout >4s — el servidor SMTP no respondió. Probable bloqueo de IP cloud (Railway).",
+            "elapsed_ms": int((_t.time()-t0)*1000),
+            "source": cfg.get("_source", ""),
+        }), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "message": f"Error: {str(exc)[:160]}",
+            "elapsed_ms": int((_t.time()-t0)*1000),
+            "source": cfg.get("_source", ""),
+        }), 200
 
 
 @app.route("/comunicaciones/email/preview", methods=["POST"])

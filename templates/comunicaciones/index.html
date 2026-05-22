@@ -11,9 +11,21 @@
       <h4><i class="bi bi-chat-dots me-2"></i>Comunicaciones</h4>
       <div class="mod-sub">Email — Solo Super Administrador</div>
     </div>
-    <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light">
-      <i class="bi bi-list-ul me-1"></i>Log de envíos
-    </a>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      {# Indicador de salud SMTP — ping rápido (4s) sin enviar email #}
+      <button id="smtpHealthBadge" type="button"
+              class="btn btn-sm btn-outline-light"
+              onclick="testSmtpHealth(this)"
+              title="Test conexión SMTP (sin enviar correo)">
+        <span id="smtpHealthDot"
+              style="display:inline-block;width:8px;height:8px;border-radius:50%;
+                     background:#9ca3af;margin-right:6px;vertical-align:middle"></span>
+        <span id="smtpHealthLabel">SMTP: chequeando…</span>
+      </button>
+      <a href="{{ url_for('comm_email_log') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-list-ul me-1"></i>Log de envíos
+      </a>
+    </div>
   </div>
 
   {# ── TABS PRINCIPALES ── #}
@@ -1324,6 +1336,7 @@ function obtenerPlantilla(estado, canal) {
 
 async function enviarManual() {
   const msg     = document.getElementById('manMsg');
+  const btn     = document.querySelector('button[onclick="enviarManual()"]');
   const to      = val('manTo').trim();
   const subject = val('manSubject').trim();
   const tpl     = val('manTemplate');
@@ -1336,17 +1349,127 @@ async function enviarManual() {
     msg.innerHTML = '<span class="text-danger">Selecciona una plantilla o escribe HTML</span>';
     return;
   }
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
-  let endpoint = '/comunicaciones/email/enviar';
-  let body = {to, subject, html, wrap:true};
-  if (tpl === 'prueba') { endpoint = '/comunicaciones/smtp/test'; body = {to}; }
-  const r = await fetch(endpoint, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-  });
-  const d = await r.json();
-  msg.innerHTML = d.ok
-    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado correctamente!</span>'
-    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+  // Plantilla "prueba" usa el endpoint SMTP test (síncrono y rápido)
+  if (tpl === 'prueba') {
+    msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/comunicaciones/smtp/test', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({to})
+      });
+      const d = await r.json();
+      msg.innerHTML = d.ok
+        ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado correctamente!</span>'
+        : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  // Plantilla custom HTML → envío async + polling
+  await _enviarEmailAsync({to, subject, html, msgEl: msg, btnEl: btn});
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ENVÍO ASYNC + POLLING — usado por "Enviar ahora" y
+   "Enviar prueba" desde el modal de plantillas.
+   El backend devuelve un job_id inmediato; aquí hacemos polling
+   cada 2s al endpoint /api/comm/email-job/<id>/status hasta que
+   el job termine (sent | failed) o se cumpla el timeout de 60s.
+   ────────────────────────────────────────────────────────────── */
+async function _enviarEmailAsync({to, subject, html, msgEl, btnEl, maxWaitMs}) {
+  const max = maxWaitMs || 60000;
+  if (msgEl) msgEl.innerHTML =
+    '<div class="spinner-border spinner-border-sm text-danger me-1"></div>'
+    + '<span class="text-muted">Encolando envío…</span>';
+  if (btnEl) btnEl.disabled = true;
+
+  let pollTimer = null;
+  let cancelado = false;
+
+  const _finish = (htmlMsg) => {
+    if (msgEl) msgEl.innerHTML = htmlMsg;
+    if (btnEl) btnEl.disabled = false;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  };
+
+  try {
+    // 1) POST → encolamos en backend (responde <500ms)
+    const r0 = await fetch('/comunicaciones/email/enviar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({to, subject, html, wrap:true})
+    });
+    const d0 = await r0.json();
+    if (!d0.ok || !d0.job_id) {
+      _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d0.error || 'No se pudo encolar el envío')}</span>`);
+      return;
+    }
+    const jobId = d0.job_id;
+    if (msgEl) msgEl.innerHTML =
+      '<div class="spinner-border spinner-border-sm text-danger me-1"></div>'
+      + `<span class="text-muted">Enviando… <span class="text-secondary small">(job #${jobId})</span></span>`;
+
+    // 2) Polling cada 2s
+    const t0 = Date.now();
+    pollTimer = setInterval(async () => {
+      if (cancelado) return;
+      const tEl = Date.now() - t0;
+      if (tEl > max) {
+        cancelado = true;
+        _finish('<span class="text-warning"><i class="bi bi-clock-history me-1"></i>'
+          + 'Tomando más tiempo de lo normal. Revisa el Log de envíos abajo.</span>');
+        if (typeof ilusAlert === 'function') {
+          try {
+            await ilusAlert({
+              title: 'Envío demorado',
+              message: 'El correo lleva más de 60 segundos procesando. '
+                     + 'Probablemente Gmail está bloqueando el envío o las credenciales SMTP están vencidas.',
+              sub: 'Revisa "Log de envíos" más abajo para ver el resultado final, '
+                 + 'o pulsa "Test conexión SMTP" para diagnosticar.',
+              type: 'warning',
+            });
+          } catch(_e) {}
+        }
+        return;
+      }
+      try {
+        const r = await fetch(`/api/comm/email-job/${jobId}/status`, {cache: 'no-store'});
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j.status === 'sent') {
+          cancelado = true;
+          const secs = ((j.elapsed_ms||0) / 1000).toFixed(1);
+          _finish(`<span class="text-success"><i class="bi bi-check-circle me-1"></i>`
+            + `Enviado en ${secs}s a <strong>${esc(j.to||to)}</strong></span>`);
+          if (typeof ilusToast === 'function') {
+            ilusToast(`✓ Email enviado (${secs}s)`, {type:'success'});
+          }
+          // Refresca el indicador de salud SMTP (acaba de funcionar)
+          if (typeof refreshSmtpHealthBadge === 'function') refreshSmtpHealthBadge();
+        } else if (j.status === 'failed') {
+          cancelado = true;
+          const err = j.error_msg || 'Error desconocido';
+          _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>`
+            + `Falló: <span class="small">${esc(err.slice(0,180))}</span></span>`);
+          if (typeof ilusAlert === 'function') {
+            try {
+              await ilusAlert({
+                title: 'No se pudo enviar el correo',
+                message: err.slice(0, 400),
+                sub: 'Pulsa "Test conexión SMTP" arriba para ver si las credenciales están vivas.',
+                type: 'error',
+              });
+            } catch(_e) {}
+          }
+          if (typeof refreshSmtpHealthBadge === 'function') refreshSmtpHealthBadge();
+        }
+        // si está 'queued' o 'sending', seguimos esperando
+      } catch (_e) {/* network hiccup; el próximo tick retoma */}
+    }, 2000);
+  } catch (exc) {
+    _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Error de red: ${esc(exc.message||exc)}</span>`);
+  }
 }
 
 /* ════════════════════════════════════════════════════
@@ -2320,23 +2443,20 @@ async function tplEnviarPruebaConfirm() {
   const defVal = ((TPL_DEFAULTS[_tplEstado] || {})['email']) || {};
   const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
 
-  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
-
   const to = document.getElementById('tplPruebaEmail').value.trim();
   if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el email destinatario</span>'; return; }
+
+  // Botón submit del modal (para deshabilitarlo durante el envío)
+  const btn = document.querySelector('button[onclick="tplEnviarPruebaConfirm()"]');
 
   // Envuelve el fragmento HTML del cuerpo en el diseño completo ILUS
   const asunto  = saved.asunto || meta.label;
   const htmlFull = _buildEmailHtml(asunto, saved.cuerpo || '');
 
-  const r = await fetch('/comunicaciones/email/enviar', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ to, subject: asunto, html: htmlFull })
+  // Envío async con polling (no bloquea la UI esperando minutos)
+  await _enviarEmailAsync({
+    to, subject: asunto, html: htmlFull, msgEl: msg, btnEl: btn
   });
-  const d = await r.json();
-  msg.innerHTML = d.ok
-    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Email enviado con diseño ILUS!</span>'
-    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error al enviar')}</span>`;
 }
 
 /* ── helpers ── */
@@ -2348,6 +2468,86 @@ function togglePass(id, btn) {
   inp.type = show ? 'text' : 'password';
   btn.querySelector('i').className = 'bi bi-eye' + (show ? '-slash' : '');
 }
+
+/* ──────────────────────────────────────────────────────────────
+   SMTP HEALTH BADGE — indicador en el header del módulo
+   Ping rápido (4s) sin enviar email. Verde si OK, ámbar si lento,
+   rojo si rechazado. Auto-refresca al cargar la página.
+   ────────────────────────────────────────────────────────────── */
+let _smtpLastPing = 0;     // timestamp última verificación OK
+let _smtpPingInflight = false;
+
+async function refreshSmtpHealthBadge() {
+  if (_smtpPingInflight) return;
+  _smtpPingInflight = true;
+  const dot   = document.getElementById('smtpHealthDot');
+  const label = document.getElementById('smtpHealthLabel');
+  if (!dot || !label) { _smtpPingInflight = false; return; }
+  label.textContent = 'SMTP: chequeando…';
+  dot.style.background = '#9ca3af';     // gris
+  try {
+    const r = await fetch('/api/comm/smtp-ping', {cache:'no-store'});
+    const d = await r.json();
+    const secs = ((d.elapsed_ms||0)/1000).toFixed(1);
+    if (d.ok) {
+      dot.style.background = '#16a34a';   // verde
+      label.textContent = `SMTP OK (${secs}s)`;
+      _smtpLastPing = Date.now();
+    } else {
+      dot.style.background = '#dc2626';   // rojo
+      label.textContent = `SMTP error (${secs}s)`;
+    }
+  } catch (_e) {
+    if (dot)   dot.style.background = '#f59e0b';  // ámbar
+    if (label) label.textContent = 'SMTP: sin respuesta';
+  } finally {
+    _smtpPingInflight = false;
+  }
+}
+
+/* "Test conexión SMTP" — click manual desde el badge */
+async function testSmtpHealth(btnEl) {
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const r = await fetch('/api/comm/smtp-ping', {cache:'no-store'});
+    const d = await r.json();
+    const secs = ((d.elapsed_ms||0)/1000).toFixed(1);
+    const dot   = document.getElementById('smtpHealthDot');
+    const label = document.getElementById('smtpHealthLabel');
+    if (d.ok) {
+      if (dot)   dot.style.background = '#16a34a';
+      if (label) label.textContent = `SMTP OK (${secs}s)`;
+      _smtpLastPing = Date.now();
+      if (typeof ilusToast === 'function') {
+        ilusToast(`✓ SMTP OK en ${secs}s`, {type:'success'});
+      }
+    } else {
+      if (dot)   dot.style.background = '#dc2626';
+      if (label) label.textContent = `SMTP error (${secs}s)`;
+      if (typeof ilusAlert === 'function') {
+        await ilusAlert({
+          title: 'SMTP no respondió correctamente',
+          message: d.message || 'Error desconocido',
+          sub: d.detail ? `Detalle: ${d.detail}` : `Fuente config: ${d.source||'?'} (${secs}s)`,
+          subHtml: false,
+          type: 'error',
+        });
+      }
+    }
+  } catch (exc) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('No se pudo conectar con el servidor — ' + (exc.message||exc), {type:'error'});
+    }
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+// Auto-arranca el chequeo de salud al cargar
+document.addEventListener('DOMContentLoaded', () => {
+  // Pequeño retraso para no competir con el render inicial
+  setTimeout(refreshSmtpHealthBadge, 600);
+});
 
 </script>
 {% endblock %}
