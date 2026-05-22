@@ -1942,8 +1942,12 @@
                 {# Las acciones de visita ahora son MÚLTIPLES — selecciona equipos con
                    los checkboxes y usa la barra flotante. El rayito individual se eliminó
                    por ser ineficiente para casos reales (ej: 4 trotadoras a cambiar). #}
-                {% if not is_tecnico %}
-                <button class="btn btn-xs btn-outline-danger" onclick="eliminarMaquina({{ m.id }}, this)" title="Eliminar">
+                {# 2026-05-22 (Daniel): "Eliminar equipo" se restringe a SUPERADMIN.
+                   Aarón y demás ejecutivos NO ven el botón. Backend refuerza 403. #}
+                {% if permissions and permissions.superadmin %}
+                <button class="btn btn-xs btn-outline-danger"
+                        onclick="eliminarMaquina({{ m.id }}, '{{ (m.nombre or '')|e }}', this)"
+                        title="Eliminar equipo (solo superadmin · queda auditado)">
                   <i class="bi bi-trash"></i>
                 </button>
                 {% endif %}
@@ -2725,7 +2729,10 @@ async function confirmarVisitaMulti() {
             </div>
           </div>
           <div class="d-flex gap-1 flex-shrink-0 align-items-center">
-            {% if ct.archivo_path %}
+            {# FIX 2026-05-22: mostrar "Ver PDF" si hay archivo_path O cloudinary_url.
+               Antes solo se condicionaba a archivo_path, lo que ocultaba el botón
+               en contratos que viven solo en Cloudinary (filesystem efímero). #}
+            {% if ct.archivo_path or ct.cloudinary_url %}
             <button class="btn btn-sm btn-outline-primary"
                     onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}', {{ 'true' if ct.cloudinary_url else 'false' }})"
                     title="Ver el contrato en el navegador">
@@ -2740,12 +2747,20 @@ async function confirmarVisitaMulti() {
             </a>
             {% endif %}
             {% endif %}
+            {# Badge "perdido" si NO hay Cloudinary URL pero sí archivo_path en BD —
+               permite a Daniel identificar contratos en riesgo de un vistazo. #}
+            {% if ct.archivo_path and not ct.cloudinary_url %}
+            <span class="badge" style="background:#fef3c7;color:#92400e;font-size:.65rem;"
+                  title="El archivo solo está en disco efímero. Re-súbelo para que quede en Cloudinary.">
+              <i class="bi bi-cloud-slash me-1"></i>Sin Cloudinary
+            </span>
+            {% endif %}
             <button class="btn btn-sm btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Re-analizar con IA">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
             {% if permissions.superadmin %}
             <button class="btn btn-sm btn-outline-warning" onclick="reSubirContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"
-                    title="Re-subir archivo (si se perdió por deploy)">
+                    title="Re-subir contrato (si se perdió por deploy)">
               <i class="bi bi-cloud-upload"></i>
             </button>
             <button class="btn btn-sm btn-outline-danger" onclick="eliminarContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"

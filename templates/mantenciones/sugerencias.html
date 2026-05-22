@@ -1,0 +1,580 @@
+{% extends "base.html" %}
+{% block title %}Sugerencias — Mantenciones{% endblock %}
+{% block content %}
+{# ════════════════════════════════════════════════════════════════════
+   PÁGINA: Sugerencias con evidencia (mant_sugerencias_evidencia)
+   Filosofía: "El sistema NUNCA actúa solo. Sugiere. El usuario decide.
+              Queda evidencia de la sugerencia y de la decisión humana."
+   ──────────────────────────────────────────────────────────────────
+   Consume:
+     GET  /mantenciones/api/sugerencias?estado=...&cliente_id=...
+     POST /mantenciones/api/sugerencias/<sid>/aceptar
+     POST /mantenciones/api/sugerencias/<sid>/rechazar  { motivo? }
+     POST /mantenciones/api/sugerencias/<sid>/ignorar
+     GET  /mantenciones/api/sugerencias/contador
+   ════════════════════════════════════════════════════════════════════ #}
+
+<style>
+:root{
+  --sug-red:    #dc2626;
+  --sug-amber:  #f59e0b;
+  --sug-blue:   #3b82f6;
+  --sug-green:  #16a34a;
+  --sug-gray:   #6b7280;
+  --sug-purple: #7c3aed;
+}
+
+/* ── Hero ──────────────────────────────────────────────────── */
+.sug-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);
+  border-left:5px solid var(--sug-red);
+  border-radius:14px;padding:20px 26px;margin-bottom:20px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  box-shadow:0 4px 16px rgba(0,0,0,.08);
+}
+.sug-hero-icon{
+  width:54px;height:54px;border-radius:14px;
+  background:linear-gradient(135deg,#dc2626,#7c3aed);
+  color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:1.6rem;flex-shrink:0;
+  box-shadow:0 4px 12px rgba(220,38,38,.35);
+}
+.sug-hero h4{color:#fff;font-weight:800;margin:0;font-size:1.25rem;letter-spacing:-.01em}
+.sug-hero .sub{color:#94a3b8;font-size:.84rem;margin-top:2px;line-height:1.4}
+
+/* ── KPIs ─────────────────────────────────────────────────── */
+.sug-kpi-strip{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;margin-bottom:18px;
+}
+.sug-kpi{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:12px 14px;display:flex;align-items:center;gap:10px;
+  transition:transform .15s, box-shadow .15s, border-color .15s;
+}
+.sug-kpi:hover{
+  transform:translateY(-2px);
+  box-shadow:0 6px 14px rgba(0,0,0,.06);
+  border-color:#d1d5db;
+}
+.sug-kpi-icon{
+  width:36px;height:36px;border-radius:9px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.05rem;
+}
+.sug-kpi-num{font-size:1.4rem;font-weight:800;color:#0a0a0a;line-height:1}
+.sug-kpi-lbl{
+  font-size:.6rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.5px;color:#9ca3af;margin-top:2px;line-height:1.1;
+}
+
+/* ── Filtros ──────────────────────────────────────────────── */
+.sug-filters{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:10px 14px;margin-bottom:14px;
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+}
+.sug-filter-group{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.sug-filter-lbl{
+  font-size:.66rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.5px;color:#9ca3af;
+}
+.sug-pill{
+  background:#f3f4f6;color:#374151;border:1px solid transparent;
+  font-size:.74rem;font-weight:700;padding:5px 11px;border-radius:50px;
+  cursor:pointer;transition:all .15s;
+  display:inline-flex;align-items:center;gap:4px;text-decoration:none;
+}
+.sug-pill:hover{background:#e5e7eb;color:#0a0a0a;text-decoration:none}
+.sug-pill-active{background:#0a0a0a;color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.18);}
+.sug-pill-pendiente.sug-pill-active{ background:var(--sug-red); }
+.sug-pill-aceptada.sug-pill-active { background:var(--sug-green); }
+.sug-pill-rechazada.sug-pill-active{ background:var(--sug-amber); }
+.sug-pill-ignorada.sug-pill-active { background:var(--sug-gray); }
+
+/* ── Card ──────────────────────────────────────────────────── */
+.sug-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:11px;
+  padding:14px 16px;margin-bottom:9px;
+  display:flex;gap:14px;align-items:flex-start;
+  transition:border-color .15s, box-shadow .15s, transform .15s;
+  position:relative;
+}
+.sug-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 6px 16px rgba(0,0,0,.07);
+  border-color:#cbd5e1;
+}
+.sug-card.sug-resuelta{ opacity:.78; background:#fafafa; }
+.sug-card-prio-urgente{ border-left:4px solid var(--sug-red); }
+.sug-card-prio-alta   { border-left:4px solid var(--sug-amber); }
+.sug-card-prio-media  { border-left:4px solid var(--sug-blue); }
+.sug-card-prio-baja   { border-left:4px solid var(--sug-gray); }
+
+.sug-card-icon{
+  width:42px;height:42px;border-radius:10px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.1rem;
+}
+.sug-card-body{flex:1;min-width:0}
+.sug-card-titulo{
+  font-weight:700;color:#0a0a0a;font-size:.95rem;line-height:1.3;margin-bottom:3px;
+}
+.sug-card-cuerpo{
+  color:#475569;font-size:.82rem;line-height:1.45;white-space:pre-wrap;word-break:break-word;
+}
+.sug-card-meta{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  font-size:.7rem;color:#9ca3af;margin-top:8px;
+}
+.sug-tipo-badge{
+  display:inline-block;font-size:.62rem;font-weight:700;
+  padding:2px 8px;border-radius:50px;letter-spacing:.04em;text-transform:uppercase;
+}
+.sug-origen-badge{
+  display:inline-block;font-size:.6rem;font-weight:700;
+  padding:2px 6px;border-radius:4px;letter-spacing:.04em;text-transform:uppercase;
+  background:#eef2ff;color:#4338ca;
+}
+.sug-origen-cron   { background:#dbeafe;color:#1e40af; }
+.sug-origen-ia     { background:#fef3c7;color:#92400e; }
+.sug-origen-usuario{ background:#dcfce7;color:#15803d; }
+.sug-origen-sistema{ background:#f3f4f6;color:#374151; }
+
+.sug-resolucion-badge{
+  display:inline-block;font-size:.62rem;font-weight:700;
+  padding:3px 9px;border-radius:50px;letter-spacing:.04em;text-transform:uppercase;
+}
+.sug-resolucion-pendiente { background:#fee2e2;color:#991b1b; }
+.sug-resolucion-aceptada  { background:#dcfce7;color:#166534; }
+.sug-resolucion-rechazada { background:#fef3c7;color:#92400e; }
+.sug-resolucion-ignorada  { background:#f3f4f6;color:#374151; }
+.sug-resolucion-expirada  { background:#ede9fe;color:#5b21b6; }
+
+.sug-card-acciones{flex-shrink:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sug-btn{
+  border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-weight:700;font-size:.74rem;padding:6px 12px;border-radius:9px;
+  cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;
+  text-decoration:none;
+}
+.sug-btn:hover{background:#f3f4f6;color:#0a0a0a;border-color:#cbd5e1;text-decoration:none}
+.sug-btn-aceptar{background:var(--sug-green);color:#fff;border-color:var(--sug-green)}
+.sug-btn-aceptar:hover{background:#15803d;border-color:#15803d;color:#fff}
+.sug-btn-rechazar:hover{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+.sug-btn-ignorar:hover{background:#f3f4f6;color:#374151;border-color:#9ca3af}
+
+.sug-empty{
+  text-align:center;padding:50px 20px;color:#6b7280;
+  background:#fff;border:1px dashed #e5e7eb;border-radius:14px;
+}
+.sug-empty-icon{font-size:3rem;color:#cbd5e1;display:block;margin-bottom:12px}
+
+.sug-resolucion-meta{
+  background:#f9fafb;border-left:3px solid #e5e7eb;
+  padding:8px 12px;margin-top:10px;border-radius:6px;font-size:.78rem;
+}
+
+@media (max-width: 575px){
+  .sug-hero{padding:14px 16px;gap:12px}
+  .sug-hero h4{font-size:1.05rem}
+  .sug-hero-icon{width:42px;height:42px;font-size:1.25rem}
+  .sug-kpi{padding:9px 11px}
+  .sug-kpi-num{font-size:1.15rem}
+  .sug-card{padding:11px 12px;gap:10px;flex-wrap:wrap}
+  .sug-card-icon{width:34px;height:34px}
+  .sug-card-acciones{width:100%;justify-content:flex-end;margin-top:8px}
+  .sug-filters{padding:9px 10px}
+}
+</style>
+
+{# ── HEADER ─────────────────────────────────────────────────── #}
+<div class="sug-hero">
+  <div class="sug-hero-icon">
+    <i class="bi bi-lightbulb-fill"></i>
+  </div>
+  <div style="flex:1;min-width:0">
+    <h4>Sugerencias con evidencia</h4>
+    <div class="sub">
+      El sistema sugiere. Tú decides. Cada decisión queda registrada — incluyendo
+      las sugerencias que <strong>elegiste no tomar</strong>.
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <a href="{{ url_for('mant_clientes') }}"
+       style="border:1.5px solid rgba(255,255,255,.18);background:transparent;color:#fff;
+              font-weight:600;font-size:.78rem;padding:7px 14px;border-radius:9px;
+              display:inline-flex;align-items:center;gap:6px;text-decoration:none">
+      <i class="bi bi-arrow-left"></i>Volver
+    </a>
+  </div>
+</div>
+
+{# ── KPIs ──────────────────────────────────────────────────── #}
+<div class="sug-kpi-strip">
+  <div class="sug-kpi">
+    <div class="sug-kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-bell-fill"></i></div>
+    <div><div class="sug-kpi-num" id="kpiPendientes">—</div><div class="sug-kpi-lbl">Pendientes</div></div>
+  </div>
+  <div class="sug-kpi">
+    <div class="sug-kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+    <div><div class="sug-kpi-num" id="kpiAceptadas">—</div><div class="sug-kpi-lbl">Aceptadas</div></div>
+  </div>
+  <div class="sug-kpi">
+    <div class="sug-kpi-icon" style="background:#fef3c7;color:#f59e0b"><i class="bi bi-x-circle-fill"></i></div>
+    <div><div class="sug-kpi-num" id="kpiRechazadas">—</div><div class="sug-kpi-lbl">Rechazadas</div></div>
+  </div>
+  <div class="sug-kpi">
+    <div class="sug-kpi-icon" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-dash-circle"></i></div>
+    <div><div class="sug-kpi-num" id="kpiIgnoradas">—</div><div class="sug-kpi-lbl">Ignoradas</div></div>
+  </div>
+</div>
+
+{# ── FILTROS ──────────────────────────────────────────────── #}
+<div class="sug-filters">
+  <div class="sug-filter-group">
+    <span class="sug-filter-lbl">Estado</span>
+    <button type="button" class="sug-pill sug-pill-pendiente sug-pill-active" data-filter="estado" data-value="pendiente">
+      <i class="bi bi-bell-fill"></i>Pendientes
+    </button>
+    <button type="button" class="sug-pill sug-pill-aceptada" data-filter="estado" data-value="aceptada">
+      <i class="bi bi-check-circle"></i>Aceptadas
+    </button>
+    <button type="button" class="sug-pill sug-pill-rechazada" data-filter="estado" data-value="rechazada">
+      <i class="bi bi-x-circle"></i>Rechazadas
+    </button>
+    <button type="button" class="sug-pill sug-pill-ignorada" data-filter="estado" data-value="ignorada">
+      <i class="bi bi-dash-circle"></i>Ignoradas
+    </button>
+    <button type="button" class="sug-pill" data-filter="estado" data-value="todas">
+      <i class="bi bi-collection"></i>Todas
+    </button>
+  </div>
+
+  <div class="sug-filter-group">
+    <span class="sug-filter-lbl">Origen</span>
+    <button type="button" class="sug-pill sug-pill-active" data-filter="origen" data-value="">Todos</button>
+    <button type="button" class="sug-pill" data-filter="origen" data-value="cron">Cron</button>
+    <button type="button" class="sug-pill" data-filter="origen" data-value="ia">IA</button>
+    <button type="button" class="sug-pill" data-filter="origen" data-value="usuario">Usuario</button>
+    <button type="button" class="sug-pill" data-filter="origen" data-value="sistema">Sistema</button>
+  </div>
+
+  <div class="sug-filter-group">
+    <span class="sug-filter-lbl">Tipo</span>
+    <button type="button" class="sug-pill sug-pill-active" data-filter="tipo" data-value="">Todos</button>
+    <button type="button" class="sug-pill" data-filter="tipo" data-value="agendar_visita">Agendar visita</button>
+    <button type="button" class="sug-pill" data-filter="tipo" data-value="renovar_contrato">Renovar contrato</button>
+    <button type="button" class="sug-pill" data-filter="tipo" data-value="revisar_garantia">Revisar garantía</button>
+    <button type="button" class="sug-pill" data-filter="tipo" data-value="regularizar_factura">Regularizar factura</button>
+    <button type="button" class="sug-pill" data-filter="tipo" data-value="ia_regenerar">Regenerar IA</button>
+  </div>
+</div>
+
+{# ── LISTA ──────────────────────────────────────────────── #}
+<div id="sugLista">
+  <div class="sug-empty" id="sugLoading">
+    <span class="sug-empty-icon"><i class="bi bi-hourglass-split"></i></span>
+    <div>Cargando sugerencias...</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const lista        = document.getElementById('sugLista');
+  const kpiPendientes= document.getElementById('kpiPendientes');
+  const kpiAceptadas = document.getElementById('kpiAceptadas');
+  const kpiRechazadas= document.getElementById('kpiRechazadas');
+  const kpiIgnoradas = document.getElementById('kpiIgnoradas');
+
+  // Pre-seleccionar sugerencia destacada (?sid=XX en URL)
+  const urlParams = new URLSearchParams(window.location.search);
+  const focoSid   = urlParams.get('sid');
+
+  let filtros = {
+    estado: 'pendiente',
+    origen: '',
+    tipo: '',
+  };
+
+  // ── Helpers ───────────────────────────────────────────
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
+
+  function tiempoRelativo(iso){
+    if (!iso) return '—';
+    try {
+      const d = new Date((iso || '').replace(' ', 'T'));
+      if (isNaN(d.getTime())) return '—';
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return 'ahora';
+      if (diff < 3600) return Math.floor(diff/60) + ' min';
+      if (diff < 86400) return Math.floor(diff/3600) + ' h';
+      if (diff < 86400 * 7) return Math.floor(diff/86400) + ' d';
+      return d.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'});
+    } catch(e) { return '—'; }
+  }
+
+  const TIPO_META = {
+    agendar_visita:      { icon:'calendar-plus',  color:'#0066cc', bg:'#dbeafe', lbl:'Agendar visita' },
+    renovar_contrato:    { icon:'file-earmark-text', color:'#7c3aed', bg:'#ede9fe', lbl:'Renovar contrato' },
+    revisar_garantia:    { icon:'shield-check',   color:'#f59e0b', bg:'#fef3c7', lbl:'Revisar garantía' },
+    regularizar_factura: { icon:'cash-coin',      color:'#dc2626', bg:'#fee2e2', lbl:'Regularizar factura' },
+    ia_regenerar:        { icon:'stars',          color:'#7c3aed', bg:'#ede9fe', lbl:'Regenerar análisis IA' },
+    aprobar_cierre:      { icon:'check2-square',  color:'#16a34a', bg:'#dcfce7', lbl:'Aprobar cierre' },
+    enviar_email_cliente:{ icon:'envelope-paper', color:'#3b82f6', bg:'#dbeafe', lbl:'Enviar email cliente' },
+    contactar_cliente:   { icon:'telephone',      color:'#3b82f6', bg:'#dbeafe', lbl:'Contactar cliente' },
+  };
+  function metaDeTipo(tipo){
+    return TIPO_META[tipo] || { icon:'lightbulb', color:'#6b7280', bg:'#f3f4f6',
+                                lbl:(tipo||'Sugerencia').replace(/_/g,' ') };
+  }
+
+  function metaPrioridad(p){
+    return ({
+      urgente: 'sug-card-prio-urgente',
+      alta:    'sug-card-prio-alta',
+      media:   'sug-card-prio-media',
+      baja:    'sug-card-prio-baja',
+    })[p] || 'sug-card-prio-baja';
+  }
+
+  // ── Cargar ─────────────────────────────────────────────
+  async function cargar(){
+    lista.innerHTML = `<div class="sug-empty"><span class="sug-empty-icon">
+      <i class="bi bi-hourglass-split"></i></span>Cargando sugerencias...</div>`;
+
+    // KPIs separados por estado (en paralelo)
+    cargarKpis().catch(()=>{});
+
+    const params = new URLSearchParams();
+    params.set('estado', filtros.estado);
+    if (filtros.origen) params.set('origen', filtros.origen);
+    if (filtros.tipo)   params.set('tipo',   filtros.tipo);
+    params.set('limit', '200');
+
+    let data;
+    try {
+      const r = await fetch('/mantenciones/api/sugerencias?' + params.toString(), {
+        headers: {'Accept':'application/json'}
+      });
+      data = await r.json();
+    } catch(e) {
+      lista.innerHTML = `<div class="sug-empty">
+        <span class="sug-empty-icon"><i class="bi bi-exclamation-triangle"></i></span>
+        Error cargando sugerencias.<br><small>${escapeHtml(e.message||e)}</small></div>`;
+      return;
+    }
+
+    if (!data || !data.ok) {
+      lista.innerHTML = `<div class="sug-empty">
+        <span class="sug-empty-icon"><i class="bi bi-exclamation-triangle"></i></span>
+        ${escapeHtml((data && data.error) || 'No se pudo cargar')}</div>`;
+      return;
+    }
+
+    const arr = data.sugerencias || [];
+    if (arr.length === 0) {
+      const msg = filtros.estado === 'pendiente'
+        ? 'No hay sugerencias pendientes.<br><small class="text-muted">El sistema te avisará cuando detecte algo que requiera tu atención.</small>'
+        : `No hay sugerencias ${escapeHtml(filtros.estado)}.`;
+      lista.innerHTML = `<div class="sug-empty">
+        <span class="sug-empty-icon"><i class="bi bi-check2-circle"></i></span>${msg}</div>`;
+      return;
+    }
+
+    lista.innerHTML = arr.map(s => renderCard(s)).join('');
+
+    // Hacer foco a sid en URL
+    if (focoSid){
+      const el = document.querySelector(`[data-sid="${focoSid}"]`);
+      if (el) {
+        el.scrollIntoView({behavior:'smooth', block:'center'});
+        el.style.outline = '3px solid #dc2626';
+        setTimeout(()=>{ el.style.outline = ''; }, 2200);
+      }
+    }
+  }
+
+  async function cargarKpis(){
+    const estados = ['pendiente','aceptada','rechazada','ignorada'];
+    const totales = {};
+    await Promise.all(estados.map(async e => {
+      try {
+        const r = await fetch(`/mantenciones/api/sugerencias?estado=${e}&limit=500`);
+        const d = await r.json();
+        totales[e] = (d && d.total) || 0;
+      } catch(_) { totales[e] = 0; }
+    }));
+    if (kpiPendientes) kpiPendientes.textContent = totales.pendiente || 0;
+    if (kpiAceptadas)  kpiAceptadas.textContent  = totales.aceptada  || 0;
+    if (kpiRechazadas) kpiRechazadas.textContent = totales.rechazada || 0;
+    if (kpiIgnoradas)  kpiIgnoradas.textContent  = totales.ignorada  || 0;
+  }
+
+  function renderCard(s){
+    const meta = metaDeTipo(s.tipo_sugerencia);
+    const prioCls = metaPrioridad('media');
+    const isPendiente = s.resolucion === 'pendiente';
+    const cliente = s.razon_social ? escapeHtml(s.razon_social) : '(sin cliente)';
+    const tipoLbl = (TIPO_META[s.tipo_sugerencia] || {}).lbl
+      || (s.tipo_sugerencia || '').replace(/_/g,' ');
+    const origenCls = `sug-origen-badge sug-origen-${s.origen||'sistema'}`;
+
+    const resolBadge = `<span class="sug-resolucion-badge sug-resolucion-${s.resolucion}">${escapeHtml(s.resolucion)}</span>`;
+
+    let resolMeta = '';
+    if (!isPendiente) {
+      const motivo = s.resolucion_motivo
+        ? `<div style="margin-top:4px;color:#6b7280;font-style:italic">"${escapeHtml(s.resolucion_motivo)}"</div>` : '';
+      resolMeta = `<div class="sug-resolucion-meta">
+        <strong>Resuelta:</strong> ${escapeHtml(s.resolucion)}
+        ${s.resolucion_por ? ` · por <strong>${escapeHtml(s.resolucion_por)}</strong>` : ''}
+        ${s.resolucion_at ? ` · ${tiempoRelativo(s.resolucion_at)} (${escapeHtml(s.resolucion_at)})` : ''}
+        ${motivo}
+      </div>`;
+    }
+
+    const acciones = isPendiente ? `
+      <div class="sug-card-acciones">
+        <button type="button" class="sug-btn sug-btn-aceptar" data-act="aceptar" data-sid="${s.id}" title="Aceptar — ejecuta la acción">
+          <i class="bi bi-check2"></i>Aceptar
+        </button>
+        <button type="button" class="sug-btn sug-btn-rechazar" data-act="rechazar" data-sid="${s.id}" title="Rechazar con motivo">
+          <i class="bi bi-x"></i>Rechazar
+        </button>
+        <button type="button" class="sug-btn sug-btn-ignorar" data-act="ignorar" data-sid="${s.id}" title="Ignorar silenciosamente">
+          <i class="bi bi-dash"></i>Ignorar
+        </button>
+      </div>` : `<div class="sug-card-acciones">${resolBadge}</div>`;
+
+    const urlBtn = (s.url_accion && isPendiente)
+      ? `<a class="sug-btn" href="${escapeHtml(s.url_accion)}" target="_blank" rel="noopener" title="Abrir ficha"><i class="bi bi-box-arrow-up-right"></i>Ver</a>`
+      : '';
+
+    return `
+      <div class="sug-card ${prioCls} ${!isPendiente?'sug-resuelta':''}" data-sid="${s.id}">
+        <div class="sug-card-icon" style="background:${meta.bg};color:${meta.color}">
+          <i class="bi bi-${meta.icon}"></i>
+        </div>
+        <div class="sug-card-body">
+          <div class="sug-card-titulo">${escapeHtml(s.titulo||'')}</div>
+          <div class="sug-card-cuerpo">${escapeHtml(s.cuerpo||'')}</div>
+          <div class="sug-card-meta">
+            <span class="sug-tipo-badge" style="background:${meta.bg};color:${meta.color}">${escapeHtml(tipoLbl)}</span>
+            <span class="${origenCls}">${escapeHtml(s.origen||'sistema')}</span>
+            ${s.cliente_id ? `<span><i class="bi bi-building"></i> ${cliente}</span>` : ''}
+            <span title="${escapeHtml(s.sugerida_at||'')}"><i class="bi bi-clock"></i> ${tiempoRelativo(s.sugerida_at)}</span>
+            ${urlBtn}
+          </div>
+          ${resolMeta}
+        </div>
+        ${acciones}
+      </div>`;
+  }
+
+  // ── Acciones ─────────────────────────────────────────
+  lista.addEventListener('click', async function(ev){
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    const sid = btn.getAttribute('data-sid');
+    const act = btn.getAttribute('data-act');
+    if (!sid || !act) return;
+
+    if (act === 'aceptar') {
+      const ok = await ilusConfirm({
+        title: 'Aceptar sugerencia',
+        message: '¿Aceptas esta sugerencia? Se abrirá la acción asociada (si la tiene).',
+        sub: 'La aceptación queda registrada con tu nombre.',
+        okLabel: 'Sí, aceptar',
+        cancelLabel: 'Cancelar',
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch(`/mantenciones/api/sugerencias/${sid}/aceptar`, { method:'POST' });
+        const d = await r.json();
+        if (!d.ok) {
+          await ilusAlert({ title:'No se pudo', message: d.error || 'Error', type:'error' });
+          return;
+        }
+        ilusToast('✓ Sugerencia aceptada — quedó registrada', { type:'success' });
+        if (d.url_accion) window.open(d.url_accion, '_blank', 'noopener');
+        await cargar();
+      } catch(e) {
+        await ilusAlert({ title:'Error', message: String(e.message||e), type:'error' });
+      }
+    }
+
+    else if (act === 'rechazar') {
+      const motivo = await ilusPrompt({
+        title: 'Rechazar sugerencia',
+        message: '¿Por qué rechazas esta sugerencia? (opcional)',
+        sub: 'Si dejas un motivo, ayuda a entender la decisión más adelante. Mínimo 5 caracteres si lo escribes.',
+        placeholder: 'ej: el cliente nos pidió suspender visitas este mes',
+        okLabel: 'Rechazar',
+        cancelLabel: 'Cancelar',
+      });
+      if (motivo === null) return; // canceló
+      if (motivo && motivo.trim() && motivo.trim().length < 5) {
+        await ilusAlert({ title:'Motivo muy corto', message:'Si vas a dejar motivo, mínimo 5 caracteres.', type:'warning' });
+        return;
+      }
+      try {
+        const r = await fetch(`/mantenciones/api/sugerencias/${sid}/rechazar`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ motivo: motivo || '' }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          await ilusAlert({ title:'No se pudo', message: d.error || 'Error', type:'error' });
+          return;
+        }
+        ilusToast('Sugerencia rechazada — quedó registrada con motivo', { type:'info' });
+        await cargar();
+      } catch(e) {
+        await ilusAlert({ title:'Error', message: String(e.message||e), type:'error' });
+      }
+    }
+
+    else if (act === 'ignorar') {
+      const ok = await ilusConfirm({
+        title: 'Ignorar sugerencia',
+        message: '¿Ignorar sin motivo? Quedará archivada y no aparecerá más en pendientes.',
+        okLabel: 'Sí, ignorar',
+        cancelLabel: 'Volver',
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch(`/mantenciones/api/sugerencias/${sid}/ignorar`, { method:'POST' });
+        const d = await r.json();
+        if (!d.ok) {
+          await ilusAlert({ title:'No se pudo', message: d.error || 'Error', type:'error' });
+          return;
+        }
+        ilusToast('Sugerencia ignorada', { type:'info' });
+        await cargar();
+      } catch(e) {
+        await ilusAlert({ title:'Error', message: String(e.message||e), type:'error' });
+      }
+    }
+  });
+
+  // ── Pills filtros ────────────────────────────────────
+  document.querySelectorAll('.sug-pill').forEach(p => {
+    p.addEventListener('click', function(){
+      const filtro = this.getAttribute('data-filter');
+      const valor  = this.getAttribute('data-value');
+      filtros[filtro] = valor || '';
+      document.querySelectorAll(`.sug-pill[data-filter="${filtro}"]`).forEach(o => o.classList.remove('sug-pill-active'));
+      this.classList.add('sug-pill-active');
+      cargar();
+    });
+  });
+
+  // ── Boot ────────────────────────────────────────────
+  cargar();
+})();
+</script>
+{% endblock %}

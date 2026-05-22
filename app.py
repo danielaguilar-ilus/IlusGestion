@@ -15967,8 +15967,9 @@ def _mantenciones_cron_run_once(slot_str=""):
                 except ValueError:
                     break
 
-            # Si en modo "solo-sugerir" hay huecos, mandar UNA notif por contrato
-            # (no por fecha) para no spamear. Mensaje incluye días desde última.
+            # Si en modo "solo-sugerir" hay huecos, dejar UNA sugerencia
+            # auditable por contrato (no por fecha) — el usuario decidirá
+            # si la acepta (crea la OT) o la rechaza con motivo.
             if not auto_calendar_on and sugerencias_de_este_contrato:
                 razon = ct.get("razon_social", "") or f"Contrato #{ctid}"
                 f1 = sugerencias_de_este_contrato[0]
@@ -15984,14 +15985,21 @@ def _mantenciones_cron_run_once(slot_str=""):
                     + ". Considera agendar la OT en el cliente."
                 )
                 sugerencias_notif.append({
-                    "destino_user_id": None,  # broadcast a admin / ejecutivo
-                    "tipo": "ot_sugerida_cron",
+                    "tipo": "agendar_visita",
+                    "origen": "cron",
                     "prioridad": "media",
                     "titulo": f"Sugerencia mantención: {razon}",
                     "cuerpo": cuerpo,
                     "url_accion": f"/mantenciones/clientes/{cid}",
                     "cliente_id": cid,
-                    "visita_id":  None,
+                    "entidad": "contrato",
+                    "entidad_id": ctid,
+                    "metadata": {
+                        "frecuencia_meses": int(freq),
+                        "dias_desde_ultima": dias_desde,
+                        "primera_fecha_sugerida": str(f1),
+                        "huecos_futuros": rest,
+                    },
                 })
 
         # Insertar OTs solo si el flag está ON
@@ -16013,13 +16021,18 @@ def _mantenciones_cron_run_once(slot_str=""):
                 metricas["errores"].append(f"calendarizacion: {e}")
 
         # Insertar sugerencias (modo default — flag OFF)
+        # Va a mant_sugerencias_evidencia (auditable) y además crea notif
+        # interna en la campana que linkea a la sugerencia.
         if sugerencias_notif:
             try:
-                metricas["sugerencias_creadas"] = _mant_notificar_batch(sugerencias_notif)
+                metricas["sugerencias_creadas"] = _sugerencia_batch_crear(
+                    sugerencias_notif
+                )
                 print(
                     f"[mant-cron] AUTO-CALENDAR OFF — generadas "
                     f"{metricas['sugerencias_creadas']} sugerencia(s) "
-                    f"(de {len(sugerencias_notif)} candidatas)",
+                    f"(de {len(sugerencias_notif)} candidatas — "
+                    f"el resto eran duplicadas)",
                     flush=True,
                 )
             except Exception as e:
@@ -16027,11 +16040,18 @@ def _mantenciones_cron_run_once(slot_str=""):
     except Exception as e:
         metricas["errores"].append(f"paso_calendarizacion: {e}")
 
-    # ── Paso 2: Notificaciones internas (batch) ──────────────────────
+    # ── Paso 2: Notificaciones internas + Sugerencias (batch) ──────────
+    # FILOSOFÍA 2026-05-22: el sistema NUNCA toma acciones, solo sugiere.
+    # Los recordatorios sobre OTs YA existentes (visita_proxima /
+    # visita_atrasada) siguen como notif al técnico — no son acciones
+    # nuevas, son alarmas. Los eventos que SÍ implican una acción nueva
+    # (factura pendiente, garantía por vencer, contrato por vencer) ahora
+    # van como SUGERENCIAS auditables que el usuario debe aceptar/rechazar.
     try:
-        notif_batch = []
+        notif_batch = []        # recordatorios al técnico (notif simple)
+        sugerencias_batch = []  # acciones que requieren decisión humana
 
-        # 2a — Visitas próximas (3-7 días)
+        # 2a — Visitas próximas (3-7 días) → notif al técnico (recordatorio)
         rows = mysql_fetchall(
             "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
             "       v.tipo, v.tecnico_user_id, c.razon_social "
@@ -16056,7 +16076,7 @@ def _mantenciones_cron_run_once(slot_str=""):
             })
         metricas["notif_visita_proxima"] = len(rows)
 
-        # 2b — Visitas atrasadas
+        # 2b — Visitas atrasadas → notif al técnico (alarma)
         rows = mysql_fetchall(
             "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
             "       v.tipo, v.tecnico_user_id, c.razon_social, "
@@ -16081,7 +16101,9 @@ def _mantenciones_cron_run_once(slot_str=""):
             })
         metricas["notif_visita_atrasada"] = len(rows)
 
-        # 2c — Facturas pendientes (visitas completadas hace >3d sin factura)
+        # 2c — Facturas pendientes (visitas completadas hace >3d sin
+        # factura) → SUGERENCIA tipo 'regularizar_factura'. El usuario
+        # decide si emite o no la factura (puede haber casos legítimos).
         rows = mysql_fetchall(
             "SELECT v.id, v.cliente_id, v.fecha_realizada, v.fecha_programada, "
             "       v.titulo, v.estado_facturacion, c.razon_social, "
@@ -16094,19 +16116,27 @@ def _mantenciones_cron_run_once(slot_str=""):
             "  AND COALESCE(v.fecha_realizada, v.fecha_programada) < (CURDATE() - INTERVAL 3 DAY)"
         ) or []
         for r in rows:
-            notif_batch.append({
-                "destino_user_id": None,  # broadcast a admin (cobranza)
-                "tipo": "factura_pendiente",
+            sugerencias_batch.append({
+                "tipo": "regularizar_factura",
+                "origen": "cron",
                 "prioridad": "alta",
                 "titulo": f"Factura pendiente: {r.get('razon_social','')} ({r.get('dias')}d)",
-                "cuerpo": f"Visita completada sin factura emitida. Estado: {r.get('estado_facturacion')}",
+                "cuerpo": (f"Visita completada sin factura emitida. "
+                           f"Estado actual: {r.get('estado_facturacion')}. "
+                           f"Considera emitir cotización/factura."),
                 "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#finanzas",
                 "cliente_id": r["cliente_id"],
-                "visita_id":  r["id"],
+                "entidad": "visita",
+                "entidad_id": r["id"],
+                "metadata": {
+                    "dias_pendiente": int(r.get("dias") or 0),
+                    "estado_facturacion": r.get("estado_facturacion"),
+                },
             })
         metricas["notif_factura_pendiente"] = len(rows)
 
-        # 2d — Garantía por vencer (equipos con fecha_fin_garantia en 30 días)
+        # 2d — Garantía por vencer → SUGERENCIA tipo 'revisar_garantia'.
+        # El usuario decide si contacta al cliente para renovar la garantía.
         try:
             rows = mysql_fetchall(
                 "SELECT m.id AS maquina_id, m.cliente_id, m.nombre, "
@@ -16120,20 +16150,26 @@ def _mantenciones_cron_run_once(slot_str=""):
         except Exception:
             rows = []  # tabla puede no tener fecha_fin_garantia
         for r in rows:
-            notif_batch.append({
-                "destino_user_id": None,
-                "tipo": "garantia_por_vencer",
+            sugerencias_batch.append({
+                "tipo": "revisar_garantia",
+                "origen": "cron",
                 "prioridad": "media",
                 "titulo": f"Garantía por vencer: {r.get('razon_social','')}",
                 "cuerpo": (f"Equipo {r.get('nombre','')} — garantía vence en "
-                           f"{r.get('dias_restantes')} días"),
+                           f"{r.get('dias_restantes')} días. Considera "
+                           f"contactar al cliente para renovar."),
                 "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#equipos",
                 "cliente_id": r["cliente_id"],
-                "visita_id":  None,
+                "entidad": "maquina",
+                "entidad_id": r["maquina_id"],
+                "metadata": {
+                    "dias_restantes": int(r.get("dias_restantes") or 0),
+                    "equipo": r.get("nombre"),
+                },
             })
         metricas["notif_garantia_por_vencer"] = len(rows)
 
-        # 2e — Contratos por vencer (60 días)
+        # 2e — Contratos por vencer (60 días) → SUGERENCIA tipo 'renovar_contrato'
         rows = mysql_fetchall(
             "SELECT ct.id, ct.cliente_id, ct.fecha_vencimiento, "
             "       c.razon_social, DATEDIFF(ct.fecha_vencimiento, CURDATE()) AS dias "
@@ -16144,23 +16180,39 @@ def _mantenciones_cron_run_once(slot_str=""):
             "  AND ct.fecha_vencimiento BETWEEN CURDATE() AND (CURDATE() + INTERVAL 60 DAY)"
         ) or []
         for r in rows:
-            notif_batch.append({
-                "destino_user_id": None,
-                "tipo": "contrato_por_vencer",
+            sugerencias_batch.append({
+                "tipo": "renovar_contrato",
+                "origen": "cron",
                 "prioridad": "media",
                 "titulo": f"Contrato por vencer: {r.get('razon_social','')}",
-                "cuerpo": f"Vence en {r.get('dias')} días — preparar renegociación",
+                "cuerpo": (f"Vence en {r.get('dias')} días. Considera "
+                           f"preparar la renegociación con el cliente."),
                 "url_accion": f"/mantenciones/clientes/{r['cliente_id']}#contratos",
                 "cliente_id": r["cliente_id"],
-                "visita_id":  None,
+                "entidad": "contrato",
+                "entidad_id": r["id"],
+                "metadata": {
+                    "dias_restantes": int(r.get("dias") or 0),
+                },
             })
         metricas["notif_contrato_por_vencer"] = len(rows)
 
-        # Insertar batch (idempotente)
+        # Insertar notif técnico (visita próxima/atrasada) — alarma
         if notif_batch:
             insertadas = _mant_notificar_batch(notif_batch)
-            print(f"[mant-cron] notificaciones nuevas insertadas: {insertadas} "
-                  f"(de {len(notif_batch)} candidatas — el resto eran duplicadas)",
+            print(f"[mant-cron] notif recordatorios técnico: {insertadas} "
+                  f"(de {len(notif_batch)} candidatas)",
+                  flush=True)
+
+        # Insertar sugerencias (paso 2c, 2d, 2e) — acciones humanas
+        if sugerencias_batch:
+            n_sug = _sugerencia_batch_crear(sugerencias_batch)
+            metricas["sugerencias_creadas"] = (
+                metricas.get("sugerencias_creadas", 0) + n_sug
+            )
+            print(f"[mant-cron] sugerencias paso 2: {n_sug} "
+                  f"(de {len(sugerencias_batch)} candidatas — "
+                  f"el resto eran duplicadas)",
                   flush=True)
     except Exception as e:
         metricas["errores"].append(f"paso_notificaciones: {e}")
@@ -24785,6 +24837,7 @@ def init_mantenciones_tables():
                 "       'contrato_riesgo','ai_alerta',"
                 "       'ot_asignada','ot_pendiente_aprobacion',"
                 "       'ot_aprobada','ot_rechazada',"
+                "       'sugerencia','ot_sugerida_cron',"
                 "       'otro') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
@@ -24914,6 +24967,80 @@ def init_mantenciones_tables():
                     cur.execute(_mig_vme)
                 except Exception:
                     pass  # idempotente
+
+            # ════════════════════════════════════════════════════════════
+            # L. (2026-05-22 Daniel) — mant_sugerencias_evidencia
+            #
+            # Sistema central de SUGERENCIAS auditables. El sistema NUNCA
+            # toma acciones automáticas: solo SUGIERE. El usuario decide:
+            #   - aceptar → la acción se ejecuta (o se abre la URL)
+            #   - rechazar → queda evidencia con motivo
+            #   - ignorar → silencioso (sin motivo)
+            #   - expirar → vencimiento por timeout (cron)
+            #
+            # Filosofía Daniel: "tiene que haber EVIDENCIA de que en algún
+            # momento la aplicación sugirió y el usuario eligió no actuar".
+            #
+            # Tipos de sugerencia comunes (no enumerado para extensibilidad):
+            #   agendar_visita, renovar_contrato, revisar_garantia,
+            #   ia_regenerar, aprobar_cierre, enviar_email_cliente,
+            #   contactar_cliente, regularizar_factura, etc.
+            #
+            # Origen:
+            #   cron     → generada automáticamente por el scheduler diario
+            #   ia       → derivada del análisis IA (Claude)
+            #   usuario  → un humano la creó manualmente
+            #   sistema  → generada por un endpoint (ej. throttle IA bloqueó
+            #              regen y dejó sugerencia para más tarde)
+            #
+            # Idempotencia: un (cliente_id, tipo, entidad, entidad_id) abierto
+            # NO se duplica (ver _sugerencia_crear).
+            # ════════════════════════════════════════════════════════════
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_sugerencias_evidencia (
+                        id                INT AUTO_INCREMENT PRIMARY KEY,
+                        cliente_id        INT NULL,
+                        entidad           VARCHAR(40) NULL
+                                          COMMENT 'cliente|contrato|maquina|visita|ot|cotizacion|...',
+                        entidad_id        INT NULL,
+                        tipo_sugerencia   VARCHAR(60) NOT NULL
+                                          COMMENT 'agendar_visita|renovar_contrato|'
+                                                  'revisar_garantia|ia_regenerar|...',
+                        origen            ENUM('cron','ia','usuario','sistema')
+                                          DEFAULT 'sistema',
+                        titulo            VARCHAR(200) NOT NULL,
+                        cuerpo            TEXT NULL,
+                        url_accion        VARCHAR(500) NULL,
+                        sugerida_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        resolucion        ENUM('pendiente','aceptada','rechazada',
+                                               'expirada','ignorada')
+                                          DEFAULT 'pendiente',
+                        resolucion_at     DATETIME NULL,
+                        resolucion_por    VARCHAR(190) NULL,
+                        resolucion_motivo TEXT NULL,
+                        metadata_json     TEXT NULL,
+                        INDEX idx_cliente    (cliente_id),
+                        INDEX idx_resolucion (resolucion, sugerida_at),
+                        INDEX idx_tipo       (tipo_sugerencia),
+                        INDEX idx_entidad    (entidad, entidad_id),
+                        INDEX idx_cli_tipo_res (cliente_id, tipo_sugerencia, resolucion)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception as _e:
+                print(f"[init_mant][mant_sugerencias_evidencia] CREATE falló: {_e}", flush=True)
+
+            # Migraciones idempotentes (env con tabla preexistente)
+            for _mig_sev in [
+                "ALTER TABLE mant_sugerencias_evidencia ADD COLUMN metadata_json TEXT NULL",
+                "ALTER TABLE mant_sugerencias_evidencia ADD COLUMN url_accion VARCHAR(500) NULL",
+                "ALTER TABLE mant_sugerencias_evidencia ADD INDEX idx_cli_tipo_res "
+                "  (cliente_id, tipo_sugerencia, resolucion)",
+            ]:
+                try:
+                    cur.execute(_mig_sev)
+                except Exception:
+                    pass
 
         conn.commit()
     finally:
@@ -25145,6 +25272,400 @@ def _mant_notificar_batch(rows):
         except Exception:
             pass
         return 0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLAN 2026-05-22 — SUGERENCIAS CON EVIDENCIA
+# El sistema NO toma acciones, solo sugiere. Cada sugerencia queda
+# auditable con su resolución (aceptada/rechazada/ignorada/expirada).
+# ═════════════════════════════════════════════════════════════════════
+
+def _sugerencia_crear(cliente_id, tipo, titulo, cuerpo='', url_accion='',
+                      origen='sistema', entidad=None, entidad_id=None,
+                      metadata=None, notificar=True, prioridad='media'):
+    """Crea (o reutiliza) una sugerencia en mant_sugerencias_evidencia.
+
+    Idempotencia: si ya existe una sugerencia PENDIENTE del mismo
+    (cliente_id, tipo_sugerencia, entidad, entidad_id), NO crea otra —
+    devuelve el id de la existente. Esto evita spam del cron.
+
+    Args:
+        cliente_id: Cliente asociado (puede ser None).
+        tipo: tipo_sugerencia (string libre — 'agendar_visita',
+              'renovar_contrato', 'ia_regenerar', etc.).
+        titulo: Texto corto que se muestra al usuario.
+        cuerpo: Explicación larga (markdown/texto plano).
+        url_accion: Deep link a la acción ('/mantenciones/clientes/26').
+        origen: 'cron' | 'ia' | 'usuario' | 'sistema'.
+        entidad: 'cliente'|'contrato'|'visita'|... (opcional).
+        entidad_id: id de la entidad concreta (opcional).
+        metadata: dict serializable; se guarda como JSON.
+        notificar: si True, además crea notif interna en la campana.
+        prioridad: prioridad para la notif si notificar=True.
+
+    Returns:
+        int (id de la sugerencia) o None si todo falló.
+    """
+    try:
+        # ── Idempotencia: buscar pendiente equivalente ──
+        sql_match = (
+            "SELECT id FROM mant_sugerencias_evidencia "
+            " WHERE resolucion='pendiente' AND tipo_sugerencia=%s "
+        )
+        params = [tipo]
+        if cliente_id is None:
+            sql_match += " AND cliente_id IS NULL "
+        else:
+            sql_match += " AND cliente_id=%s "
+            params.append(cliente_id)
+        if entidad is None:
+            sql_match += " AND entidad IS NULL "
+        else:
+            sql_match += " AND entidad=%s "
+            params.append(entidad)
+        if entidad_id is None:
+            sql_match += " AND entidad_id IS NULL "
+        else:
+            sql_match += " AND entidad_id=%s "
+            params.append(entidad_id)
+        sql_match += " LIMIT 1"
+        try:
+            existing = mysql_fetchone(sql_match, tuple(params))
+        except Exception:
+            existing = None
+        if existing:
+            return existing.get("id")
+
+        meta_str = None
+        if metadata is not None:
+            try:
+                meta_str = json.dumps(metadata, ensure_ascii=False, default=str)[:30000]
+            except Exception:
+                meta_str = None
+
+        sid = None
+        conn = get_db()
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO mant_sugerencias_evidencia "
+                    "  (cliente_id, entidad, entidad_id, tipo_sugerencia, "
+                    "   origen, titulo, cuerpo, url_accion, metadata_json) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        cliente_id, entidad, entidad_id, tipo,
+                        (origen or 'sistema'),
+                        (titulo or '')[:200],
+                        cuerpo or '',
+                        (url_accion or '')[:500],
+                        meta_str,
+                    )
+                )
+                sid = cur.lastrowid
+            except Exception as _e:
+                print(f"[sugerencia] insert error tipo={tipo}: {_e}", flush=True)
+                sid = None
+        conn.commit()
+
+        # Notif interna en la campana (idempotente)
+        if sid and notificar:
+            try:
+                _mant_notificar(
+                    destino_user_id=None,  # broadcast (admin/ejecutivo)
+                    tipo='sugerencia',
+                    titulo=titulo,
+                    cuerpo=(cuerpo or '')[:1000],
+                    url_accion=f"/mantenciones/sugerencias?sid={sid}",
+                    prioridad=prioridad,
+                    cliente_id=cliente_id,
+                    visita_id=None,
+                )
+            except Exception:
+                pass
+
+        return sid
+    except Exception as e:
+        try:
+            print(f"[sugerencia] error creando tipo={tipo}: {e}", flush=True)
+        except Exception:
+            pass
+        return None
+
+
+def _sugerencia_resolver(sid, resolucion, motivo='', usuario=None):
+    """Marca una sugerencia como aceptada / rechazada / ignorada / expirada.
+
+    Args:
+        sid: id de la sugerencia.
+        resolucion: 'aceptada' | 'rechazada' | 'ignorada' | 'expirada'.
+        motivo: texto opcional (requerido externamente para 'rechazada').
+        usuario: nombre del usuario; si None, usa current_username().
+
+    Returns:
+        True si actualizó, False si no.
+    """
+    if resolucion not in ('aceptada', 'rechazada', 'ignorada', 'expirada'):
+        return False
+    try:
+        mysql_execute(
+            "UPDATE mant_sugerencias_evidencia "
+            "   SET resolucion=%s, resolucion_at=NOW(), "
+            "       resolucion_por=%s, resolucion_motivo=%s "
+            " WHERE id=%s AND resolucion='pendiente'",
+            (
+                resolucion,
+                (usuario if usuario is not None else current_username()),
+                (motivo or '')[:5000],
+                sid,
+            )
+        )
+        return True
+    except Exception as e:
+        try:
+            print(f"[sugerencia] error resolviendo sid={sid}: {e}", flush=True)
+        except Exception:
+            pass
+        return False
+
+
+def _sugerencia_batch_crear(items):
+    """Crea sugerencias en batch reutilizando _sugerencia_crear (que ya
+    es idempotente). Devuelve cuántas se insertaron de verdad."""
+    n = 0
+    for it in (items or []):
+        sid = _sugerencia_crear(
+            cliente_id=it.get('cliente_id'),
+            tipo=it.get('tipo'),
+            titulo=it.get('titulo') or '',
+            cuerpo=it.get('cuerpo') or '',
+            url_accion=it.get('url_accion') or '',
+            origen=it.get('origen', 'cron'),
+            entidad=it.get('entidad'),
+            entidad_id=it.get('entidad_id'),
+            metadata=it.get('metadata'),
+            notificar=it.get('notificar', True),
+            prioridad=it.get('prioridad', 'media'),
+        )
+        if sid:
+            n += 1
+    return n
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PLAN 2026-05-22 — THROTTLE IA cliente
+# Antes de gastar tokens en Claude, verificar:
+#   1) ¿Cuándo se generó el último plan?
+#   2) ¿Hubo cambios reales desde entonces?
+# Si NO hay cambios y han pasado < N días → devolver el plan en caché.
+# ═════════════════════════════════════════════════════════════════════
+
+def _mant_ia_throttle_dias():
+    """Días de validez del cache de análisis IA por cliente.
+    Configurable vía env MANT_IA_CLIENTE_THROTTLE_DIAS (default 30)."""
+    try:
+        v = int((os.environ.get("MANT_IA_CLIENTE_THROTTLE_DIAS") or "30").strip())
+        return max(1, v)
+    except Exception:
+        return 30
+
+
+def _mant_cliente_snapshot_actual(cid):
+    """Calcula el snapshot ACTUAL del cliente para comparar contra el
+    snapshot guardado en el último plan IA.
+
+    Returns dict con n_visitas, n_contratos, n_garantias,
+    ultima_visita (date|None), n_equipos.
+    """
+    snap = {
+        "n_visitas": 0,
+        "n_contratos": 0,
+        "n_garantias": 0,
+        "ultima_visita": None,
+        "n_equipos": 0,
+    }
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_visitas WHERE cliente_id=%s "
+            "  AND COALESCE(estado,'') NOT IN ('anulada','cancelada')",
+            (cid,)
+        )
+        snap["n_visitas"] = int((r or {}).get("c") or 0)
+    except Exception:
+        pass
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_contratos WHERE cliente_id=%s",
+            (cid,)
+        )
+        snap["n_contratos"] = int((r or {}).get("c") or 0)
+    except Exception:
+        pass
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_maquinas "
+            " WHERE cliente_id=%s AND fecha_fin_garantia IS NOT NULL "
+            "   AND fecha_fin_garantia >= CURDATE()",
+            (cid,)
+        )
+        snap["n_garantias"] = int((r or {}).get("c") or 0)
+    except Exception:
+        pass
+    try:
+        r = mysql_fetchone(
+            "SELECT MAX(COALESCE(fecha_realizada, fecha_programada)) AS f "
+            "  FROM mant_visitas WHERE cliente_id=%s "
+            "   AND COALESCE(estado,'') NOT IN ('anulada','cancelada')",
+            (cid,)
+        )
+        f = (r or {}).get("f")
+        if f and hasattr(f, "date"):
+            f = f.date()
+        snap["ultima_visita"] = f
+    except Exception:
+        pass
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS c FROM mant_maquinas WHERE cliente_id=%s "
+            "  AND COALESCE(estado,'activo')='activo'",
+            (cid,)
+        )
+        snap["n_equipos"] = int((r or {}).get("c") or 0)
+    except Exception:
+        pass
+    return snap
+
+
+def _mant_ia_cliente_eligibilidad(cid):
+    """Devuelve dict con la elegibilidad para regenerar análisis IA del cliente.
+
+    Reglas:
+      - Si nunca se analizó → puede_generar=True, motivo='nunca_analizado'.
+      - Si han pasado < THROTTLE días Y no hay cambios → cache vigente,
+        puede_generar=False, motivo='cache_vigente'.
+      - Si han pasado < THROTTLE días pero SÍ hay cambios → puede_generar=True
+        con motivo='cambios_detectados' (mostrar modal al usuario).
+      - Si han pasado >= THROTTLE días → puede_generar=True con
+        motivo='ventana_abierta'.
+    """
+    THROTTLE = _mant_ia_throttle_dias()
+    out = {
+        "puede_generar": True,
+        "motivo": "nunca_analizado",
+        "dias_desde_ultimo": None,
+        "n_cambios": 0,
+        "cambios": [],
+        "plan_actual_id": None,
+        "ultimo_resumen": "",
+        "throttle_dias": THROTTLE,
+        "costo_estimado_tokens": 2500,
+        "snapshot_actual": {},
+        "snapshot_anterior": {},
+    }
+
+    snap_actual = _mant_cliente_snapshot_actual(cid)
+    out["snapshot_actual"] = {
+        **snap_actual,
+        "ultima_visita": (str(snap_actual["ultima_visita"])
+                          if snap_actual.get("ultima_visita") else None),
+    }
+
+    plan = None
+    try:
+        plan = mysql_fetchone(
+            "SELECT id, generado_at, plan_json, "
+            "       snapshot_n_visitas, snapshot_n_contratos, "
+            "       snapshot_n_garantias, snapshot_ultima_visita "
+            "  FROM mant_ia_planes "
+            " WHERE cliente_id=%s "
+            " ORDER BY generado_at DESC LIMIT 1",
+            (cid,)
+        )
+    except Exception:
+        plan = None
+
+    if not plan:
+        return out
+
+    plan = dict(plan)
+    out["plan_actual_id"] = plan.get("id")
+
+    # Días desde último análisis
+    gen_at = plan.get("generado_at")
+    dias = None
+    if gen_at:
+        try:
+            if hasattr(gen_at, "date"):
+                dias = (datetime.now() - gen_at).days
+            else:
+                d = datetime.strptime(str(gen_at)[:19], "%Y-%m-%d %H:%M:%S")
+                dias = (datetime.now() - d).days
+        except Exception:
+            dias = None
+    out["dias_desde_ultimo"] = dias
+
+    # Resumen ejecutivo (si lo hay)
+    try:
+        pj = plan.get("plan_json") or "{}"
+        p_obj = json.loads(pj) if isinstance(pj, str) else (pj or {})
+        out["ultimo_resumen"] = (p_obj.get("resumen_ejecutivo") or "")[:400]
+    except Exception:
+        out["ultimo_resumen"] = ""
+
+    # Comparar snapshots
+    prev = {
+        "n_visitas":   plan.get("snapshot_n_visitas") or 0,
+        "n_contratos": plan.get("snapshot_n_contratos") or 0,
+        "n_garantias": plan.get("snapshot_n_garantias") or 0,
+        "ultima_visita": plan.get("snapshot_ultima_visita"),
+    }
+    if prev["ultima_visita"] and hasattr(prev["ultima_visita"], "date"):
+        prev["ultima_visita"] = prev["ultima_visita"].date()
+    out["snapshot_anterior"] = {
+        **prev,
+        "ultima_visita": (str(prev["ultima_visita"])
+                          if prev.get("ultima_visita") else None),
+    }
+
+    cambios = []
+    delta_v = snap_actual["n_visitas"] - int(prev["n_visitas"] or 0)
+    if delta_v > 0:
+        cambios.append({"campo": "visitas", "delta": delta_v,
+                        "antes": int(prev["n_visitas"] or 0),
+                        "ahora": snap_actual["n_visitas"]})
+    delta_c = snap_actual["n_contratos"] - int(prev["n_contratos"] or 0)
+    if delta_c != 0:
+        cambios.append({"campo": "contratos", "delta": delta_c,
+                        "antes": int(prev["n_contratos"] or 0),
+                        "ahora": snap_actual["n_contratos"]})
+    delta_g = snap_actual["n_garantias"] - int(prev["n_garantias"] or 0)
+    if delta_g != 0:
+        cambios.append({"campo": "garantias", "delta": delta_g,
+                        "antes": int(prev["n_garantias"] or 0),
+                        "ahora": snap_actual["n_garantias"]})
+    uv_actual = snap_actual.get("ultima_visita")
+    uv_prev = prev.get("ultima_visita")
+    if uv_actual and (not uv_prev or uv_actual > uv_prev):
+        cambios.append({"campo": "ultima_visita",
+                        "antes": str(uv_prev) if uv_prev else None,
+                        "ahora": str(uv_actual)})
+    out["cambios"] = cambios
+    out["n_cambios"] = len(cambios)
+
+    # Decisión
+    if dias is None:
+        out["puede_generar"] = True
+        out["motivo"] = "fecha_indeterminada"
+    elif dias < THROTTLE and not cambios:
+        out["puede_generar"] = False
+        out["motivo"] = "cache_vigente"
+    elif dias < THROTTLE and cambios:
+        out["puede_generar"] = True
+        out["motivo"] = "cambios_detectados"
+    else:
+        out["puede_generar"] = True
+        out["motivo"] = "ventana_abierta"
+
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -28641,7 +29162,23 @@ def mant_maquina_del(mid):
 
     Para HARD DELETE (destrucción real) solo superadmin vía endpoint
     dedicado /api/maquinas/<id>/destruir (requiere confirm_text).
+
+    REFUERZO 2026-05-22 (Daniel): la ficha del cliente se trata como
+    información confidencial. Eliminar un equipo (aun soft) sale del
+    permiso de ejecutivo/admin y queda restringido a `superadmin`. Se
+    exige un motivo ≥ 12 chars + confirm_text 'ELIMINAR' que registramos
+    en `mant_logs` para auditoría completa.
     """
+    # Restricción dura: solo superadmin puede eliminar equipos (regla
+    # confidencialidad ficha cliente). Aarón / ejecutivo / técnico → 403.
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": "Acción restringida al superadministrador. "
+                     "Razón: ficha confidencial.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+
     m_info = mysql_fetchone(
         "SELECT cliente_id, nombre, sku, serie, estado FROM mant_maquinas WHERE id=%s", (mid,)
     )
@@ -28651,6 +29188,24 @@ def mant_maquina_del(mid):
     # Si ya está dada de baja, no hay nada que hacer (idempotente)
     if (m_info.get("estado") or "").lower() == "baja":
         return jsonify({"ok": True, "ya_de_baja": True})
+
+    # Motivo + confirm_text obligatorios (auditoría confidencial)
+    body = request.get_json(silent=True) or {}
+    motivo = (body.get("motivo") or "").strip()
+    confirm_text = (body.get("confirm_text") or "").strip().upper()
+    if len(motivo) < 12:
+        return jsonify({
+            "ok": False,
+            "error": "El motivo debe tener al menos 12 caracteres "
+                     "(queda en auditoría para trazabilidad).",
+            "error_codigo": "MOTIVO_INSUFICIENTE",
+        }), 400
+    if confirm_text != "ELIMINAR":
+        return jsonify({
+            "ok": False,
+            "error": "Debes escribir exactamente 'ELIMINAR' para confirmar.",
+            "error_codigo": "CONFIRM_TEXT_INVALIDO",
+        }), 400
 
     user = current_username()
     conn = get_mysql()
@@ -28665,14 +29220,20 @@ def mant_maquina_del(mid):
         detalle = (
             f"{m_info.get('nombre') or ''} "
             f"(SKU {m_info.get('sku') or '—'} · Serie {m_info.get('serie') or '—'}) "
-            f"· estado: {m_info.get('estado')} → baja · por {user}"
+            f"· estado: {m_info.get('estado')} → baja · por {user} "
+            f"· motivo: {motivo[:300]}"
         )
+        # Acción canónica para auditoría: maquina_eliminada_soft / equipo_eliminado_soft
+        _mant_log("maquina", mid, "maquina_eliminada_soft", detalle)
+        _mant_log("cliente", m_info.get("cliente_id"),
+                  "equipo_eliminado_soft", detalle)
+        # Mantengo el log legacy "dada_de_baja" por compatibilidad con
+        # dashboards o queries que ya filtran por ese nombre.
         _mant_log("maquina", mid, "dada_de_baja", detalle)
-        _mant_log("cliente", m_info.get("cliente_id"), "equipo_dado_de_baja", detalle)
         return jsonify({
             "ok": True,
             "soft_delete": True,
-            "mensaje": "Equipo dado de baja. Sus datos se conservan y puede restaurarse desde Equipos dados de baja.",
+            "mensaje": "Equipo eliminado · auditoría registrada.",
         })
     finally:
         conn.close()
@@ -28681,7 +29242,21 @@ def mant_maquina_del(mid):
 @app.route("/mantenciones/api/maquinas/<int:mid>/restaurar", methods=["POST"])
 @_mant_required
 def mant_maquina_restaurar(mid):
-    """Restaura una máquina dada de baja (estado='baja' → 'activo')."""
+    """Restaura una máquina dada de baja (estado='baja' → 'activo').
+
+    Restaurar NO es destructivo: lo permitimos a admin + superadmin
+    (no a ejecutivo/técnico). Si en el futuro Daniel pide abrirlo a
+    ejecutivo, basta con borrar el guard de rol.
+    """
+    _role = (g.user["role"] if g.user else "") or ""
+    _is_super = bool((g.permissions or {}).get("superadmin"))
+    if not (_is_super or _role == "admin"):
+        return jsonify({
+            "ok": False,
+            "error": "Restaurar equipos está reservado a administradores.",
+            "error_codigo": "REQUIERE_ADMIN",
+        }), 403
+
     m_info = mysql_fetchone(
         "SELECT cliente_id, nombre, estado FROM mant_maquinas WHERE id=%s", (mid,)
     )
@@ -28734,11 +29309,17 @@ def mant_maquinas_baja_listar(cid):
 def mant_maquina_destruir(mid):
     """HARD DELETE real de la máquina. Solo superadmin + confirm_text.
     Borra la máquina y sus fotos/eventos en cascada. Acción irreversible.
+
+    REFUERZO 2026-05-22 (Daniel): además del confirm_text 'DESTRUIR' y
+    el motivo (≥ 12 chars), registramos en `mant_logs` con la acción
+    canónica 'maquina_eliminada_hard' + el detalle del equipo destruido.
     """
+    # Guard: solo superadmin
     if not (g.permissions or {}).get("superadmin"):
         return jsonify({
             "ok": False,
-            "error": "Solo superadmin puede destruir una máquina permanentemente.",
+            "error": "Acción restringida al superadministrador. "
+                     "Razón: ficha confidencial.",
             "error_codigo": "REQUIERE_SUPERADMIN",
         }), 403
 
@@ -28749,23 +29330,37 @@ def mant_maquina_destruir(mid):
         return jsonify({"ok": False, "error": "Máquina no encontrada"}), 404
 
     body = request.get_json(silent=True) or {}
-    confirm_text = (body.get("confirm_text") or "").strip()
+    confirm_text = (body.get("confirm_text") or "").strip().upper()
+    motivo = (body.get("motivo") or "").strip()
     nombre_esperado = (m_info.get("nombre") or "").strip()
-    if confirm_text != nombre_esperado:
+
+    if confirm_text != "DESTRUIR":
         return jsonify({
             "ok": False,
-            "error": f"Para confirmar, escribe exactamente el nombre del equipo: '{nombre_esperado}'.",
+            "error": "Debes escribir exactamente 'DESTRUIR' para confirmar.",
             "error_codigo": "CONFIRM_TEXT_INVALIDO",
+        }), 400
+    if len(motivo) < 12:
+        return jsonify({
+            "ok": False,
+            "error": "El motivo debe tener al menos 12 caracteres "
+                     "(queda en auditoría para trazabilidad).",
+            "error_codigo": "MOTIVO_INSUFICIENTE",
         }), 400
 
     user = current_username()
     detalle = (
         f"DESTRUIDA: {nombre_esperado} (SKU {m_info.get('sku') or '—'} · "
-        f"Serie {m_info.get('serie') or '—'}) · por {user}"
+        f"Serie {m_info.get('serie') or '—'}) · por {user} "
+        f"· motivo: {motivo[:300]}"
     )
-    # Log ANTES de borrar (sino se pierde la referencia)
+    # Log ANTES de borrar (sino se pierde la referencia). Acción canónica
+    # `maquina_eliminada_hard` + log legacy `destruida_permanente` por
+    # compatibilidad.
+    _mant_log("maquina", mid, "maquina_eliminada_hard", detalle)
+    _mant_log("cliente", m_info.get("cliente_id"),
+              "equipo_eliminado_hard", detalle)
     _mant_log("maquina", mid, "destruida_permanente", detalle)
-    _mant_log("cliente", m_info.get("cliente_id"), "equipo_destruido", detalle)
     mysql_execute("DELETE FROM mant_maquinas WHERE id=%s", (mid,))
     return jsonify({"ok": True, "destruida": True})
 
@@ -30759,20 +31354,82 @@ def mant_contrato_subir(cid):
 @app.route("/mantenciones/api/contratos/<int:ctid>/check-archivo")
 @_mant_required
 def mant_contrato_check_archivo(ctid):
-    """Verifica si el archivo físico existe. Devuelve {existe, archivo_nombre, path}."""
+    """Verifica disponibilidad del archivo del contrato.
+
+    FIX 2026-05-22 — Filesystem efímero de Railway:
+      Antes solo verificaba existencia en disco. Ahora devuelve flags
+      por canal de almacenamiento para que el frontend pueda mostrar
+      el aviso correcto (re-subir, link a Cloudinary, etc.).
+
+    Respuesta:
+      {
+        "existe":          true|false,            # ¿hay algo servible?
+        "tiene_cloudinary":true|false,            # URL persistente registrada
+        "tiene_disco":     true|false,            # copia local presente
+        "estado": "ok" | "solo_cloudinary"
+                | "solo_disco_efimero" | "perdido" | "sin_archivo",
+        "sugerencia":      "texto operativo",
+        "archivo_nombre":  "...",
+        "razon":           legacy-string para compat con UI vieja
+      }
+    """
     ct = mysql_fetchone(
-        "SELECT archivo_path, archivo_nombre FROM mant_contratos WHERE id=%s", (ctid,)
+        "SELECT archivo_path, archivo_nombre, cloudinary_url "
+        "  FROM mant_contratos WHERE id=%s",
+        (ctid,)
     )
     if not ct:
-        return jsonify({"existe": False, "error": "Contrato no encontrado"}), 404
-    if not ct.get("archivo_path"):
-        return jsonify({"existe": False, "razon": "no_subido"})
-    full = os.path.join(MANT_UPLOADS, ct["archivo_path"])
-    existe = os.path.exists(full)
+        return jsonify({
+            "existe": False, "tiene_cloudinary": False, "tiene_disco": False,
+            "estado": "sin_archivo", "sugerencia": "",
+            "error": "Contrato no encontrado",
+        }), 404
+
+    tiene_cloud = bool(ct.get("cloudinary_url"))
+    archivo_path = ct.get("archivo_path") or ""
+    tiene_disco = False
+    if archivo_path:
+        try:
+            tiene_disco = os.path.exists(os.path.join(MANT_UPLOADS, archivo_path))
+        except Exception:
+            tiene_disco = False
+
+    # Determinar estado y sugerencia para el usuario
+    if tiene_cloud and tiene_disco:
+        estado = "ok"
+        sugerencia = "Archivo disponible (Cloudinary + disco)."
+    elif tiene_cloud and not tiene_disco:
+        estado = "solo_cloudinary"
+        sugerencia = "Archivo disponible en Cloudinary (persistente)."
+    elif (not tiene_cloud) and tiene_disco:
+        estado = "solo_disco_efimero"
+        sugerencia = ("El archivo está SOLO en disco (efímero). Re-súbelo para que "
+                      "quede en Cloudinary y no se pierda en el próximo deploy.")
+    elif (not tiene_cloud) and (not tiene_disco) and archivo_path:
+        estado = "perdido"
+        sugerencia = ("El archivo se perdió tras un deploy. Re-súbelo desde la ficha "
+                      "para recuperarlo (Cloudinary lo guardará persistente).")
+    else:
+        estado = "sin_archivo"
+        sugerencia = "Este contrato nunca tuvo archivo. Sube uno desde la ficha."
+
+    # Compat con UI vieja que usaba razon=ok|borrado_filesystem_efimero|no_subido
+    razon_legacy = {
+        "ok": "ok",
+        "solo_cloudinary": "ok",
+        "solo_disco_efimero": "ok",
+        "perdido": "borrado_filesystem_efimero",
+        "sin_archivo": "no_subido",
+    }[estado]
+
     return jsonify({
-        "existe":         existe,
-        "archivo_nombre": ct.get("archivo_nombre") or "",
-        "razon":          "ok" if existe else "borrado_filesystem_efimero",
+        "existe":          (tiene_cloud or tiene_disco),
+        "tiene_cloudinary": tiene_cloud,
+        "tiene_disco":      tiene_disco,
+        "estado":           estado,
+        "sugerencia":       sugerencia,
+        "archivo_nombre":   ct.get("archivo_nombre") or "",
+        "razon":            razon_legacy,
     })
 
 
@@ -30836,24 +31493,41 @@ def mant_contrato_re_subir(ctid):
 
     fname = secure_filename(f"{ct['cliente_id']}_{int(time.time())}_{f.filename}")
 
-    # ── 1. Cloudinary primero (PERSISTENTE — sobrevive deploys) ──
+    # ── 1. Cloudinary OBLIGATORIO (PERSISTENTE — sobrevive deploys) ──
+    # FIX 2026-05-22: si Cloudinary no se puede usar, FALLAMOS LIMPIO.
+    # Antes guardábamos en filesystem como "fallback" pero ese archivo
+    # se pierde en el próximo deploy → re-subir era inútil. Mejor fallar
+    # con mensaje claro que el admin pueda accionar.
+    if not _CLD_READY:
+        return jsonify({
+            "ok": False,
+            "error": ("El almacenamiento persistente no está disponible. "
+                      "Cloudinary no está configurado — contacta al administrador."),
+            "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE",
+        }), 503
+
     cloud_url = None
     cloud_pid = None
     cloud_uploaded_at = None
-    if _CLD_READY:
-        try:
-            f.stream.seek(0)
-            public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}"
-            cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
-            cloud_url = cloud_result["url"]
-            cloud_pid = cloud_result["public_id"]
-            cloud_uploaded_at = datetime.utcnow()
-            print(f"[re-subir] Cloudinary OK ctid={ctid} url={cloud_url}", flush=True)
-        except Exception as e_cld:
-            print(f"[re-subir] Cloudinary FAIL ctid={ctid}: {e_cld} — fallback filesystem", flush=True)
-            cloud_url = None
+    try:
+        f.stream.seek(0)
+        public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}"
+        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_url = cloud_result["url"]
+        cloud_pid = cloud_result["public_id"]
+        cloud_uploaded_at = datetime.utcnow()
+        print(f"[re-subir] Cloudinary OK ctid={ctid} url={cloud_url}", flush=True)
+    except Exception as e_cld:
+        print(f"[re-subir] Cloudinary FAIL ctid={ctid}: {e_cld}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": ("No se pudo subir el archivo a Cloudinary. "
+                      "Inténtalo de nuevo en unos segundos."),
+            "error_codigo": "CLOUDINARY_FAIL",
+            "detalle": str(e_cld)[:200],
+        }), 502
 
-    # ── 2. Filesystem fallback (también guarda copia local) ──
+    # ── 2. Backup local (no bloqueante) ──
     try:
         f.stream.seek(0)
     except Exception:
@@ -30864,8 +31538,8 @@ def mant_contrato_re_subir(ctid):
         f.save(fpath)
         saved_local = True
     except Exception as e_save:
-        if not cloud_url:
-            return jsonify({"ok": False, "error": f"No se pudo guardar el archivo: {e_save}"}), 500
+        # Cloudinary ya está OK — el archivo está seguro. Backup local fall
+        # solo afecta diagnóstico/analizar IA. No es bloqueante.
         print(f"[re-subir] filesystem save fail (Cloudinary OK): {e_save}", flush=True)
 
     tipo_archivo = "pdf" if ext == "pdf" else ("word" if ext in ("doc","docx") else "otro")
@@ -30891,6 +31565,116 @@ def mant_contrato_re_subir(ctid):
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500
+
+
+# ════════════════════════════════════════════════════════════════════════
+# BACKFILL CLOUDINARY 2026-05-22
+# Recorre todos los contratos con cloudinary_url IS NULL, busca el archivo
+# en disco (si todavía está) y lo sube a Cloudinary. Idempotente: si un
+# contrato ya tiene cloudinary_url, se salta.
+#
+# Útil para recuperar contratos que se subieron antes del fix Cloudinary
+# y todavía tienen el archivo en disco (Railway aún no ha redeployado).
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/contratos/backfill-cloudinary", methods=["POST"])
+@_mant_required
+def mant_contrato_backfill_cloudinary():
+    """Sube a Cloudinary los contratos cuyo archivo está en disco pero
+    cloudinary_url IS NULL. Solo admin/superadmin.
+
+    Body opcional:
+      { "dry_run": true }  → reporta sin subir nada
+      { "limit":   N    }  → procesa solo N (default 200, max 500)
+
+    Respuesta:
+      {
+        "ok": true,
+        "total_candidatos": int,    # con cloudinary_url NULL
+        "procesados": int,
+        "subidos_ok": int,
+        "ids_subidos": [int...],
+        "perdidos": [{id, archivo_path}],   # archivo no en disco tampoco
+        "errores":  [{id, error}],
+        "dry_run": bool
+      }
+    """
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin."}), 403
+
+    if not _CLD_READY:
+        return jsonify({
+            "ok": False,
+            "error": "Cloudinary no configurado — no se puede hacer backfill.",
+        }), 503
+
+    d = request.get_json(silent=True) or {}
+    dry_run = bool(d.get("dry_run", False))
+    try:
+        limit = int(d.get("limit", 200))
+    except Exception:
+        limit = 200
+    limit = max(1, min(500, limit))
+
+    # Candidatos: cloudinary_url vacía pero archivo_path declarado
+    candidatos = mysql_fetchall(
+        "SELECT id, cliente_id, archivo_path, archivo_nombre "
+        "  FROM mant_contratos "
+        " WHERE (cloudinary_url IS NULL OR cloudinary_url='') "
+        "   AND archivo_path IS NOT NULL AND archivo_path != '' "
+        " ORDER BY id ASC LIMIT %s",
+        (limit,)
+    )
+
+    ids_subidos = []
+    perdidos = []
+    errores = []
+    procesados = 0
+
+    for ct in candidatos:
+        procesados += 1
+        ctid = ct["id"]
+        archivo_path = ct["archivo_path"]
+        full = os.path.join(MANT_UPLOADS, archivo_path)
+        if not os.path.exists(full):
+            perdidos.append({"id": ctid, "archivo_path": archivo_path})
+            continue
+
+        if dry_run:
+            ids_subidos.append(ctid)  # potencial — se subiría
+            continue
+
+        try:
+            with open(full, "rb") as fh:
+                public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}_bf"
+                res = _cloud_upload_raw(fh, public_id, folder="ilus/contratos")
+            mysql_execute(
+                "UPDATE mant_contratos "
+                "   SET cloudinary_url=%s, cloudinary_public_id=%s, "
+                "       cloudinary_uploaded_at=%s "
+                " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                (res["url"], res["public_id"], datetime.utcnow(), ctid)
+            )
+            ids_subidos.append(ctid)
+            try:
+                _mant_log("contrato", ctid, "backfill_cloudinary",
+                          f"Subido a Cloudinary por {current_username()}")
+            except Exception:
+                pass
+            print(f"[backfill] ctid={ctid} → Cloudinary OK", flush=True)
+        except Exception as e:
+            errores.append({"id": ctid, "error": str(e)[:200]})
+            print(f"[backfill] ctid={ctid} → ERROR {e}", flush=True)
+
+    return jsonify({
+        "ok": True,
+        "total_candidatos": len(candidatos),
+        "procesados":       procesados,
+        "subidos_ok":       len(ids_subidos),
+        "ids_subidos":      ids_subidos,
+        "perdidos":         perdidos,
+        "errores":          errores,
+        "dry_run":          dry_run,
+    })
 
 
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["PUT"])
@@ -30926,23 +31710,36 @@ def mant_contrato_update(ctid):
 def mant_contrato_archivo(ctid):
     """Sirve el archivo del contrato.
 
-    Comportamiento por rol:
-      - Usuario normal con permiso mantenciones → VE el PDF inline en el
-        navegador (sin botón descargar). NO puede usar ?download=1.
-      - Superadmin → VE y puede DESCARGAR (download=1).
+    REFACTOR 2026-05-22 — Estrategia "Cloudinary-first":
+      Antes el servidor PROXEABA el PDF de Cloudinary (descargaba el binario
+      desde Cloudinary y se lo re-servía al cliente). Eso causaba 3 problemas
+      en producción:
+        - Si Cloudinary respondía con timeout o status != 200, el iframe
+          quedaba en "Archivo no encontrado" y el usuario no podía hacer nada.
+        - Doble ancho de banda en Railway (egress duplicado).
+        - El stream se rompía con conexiones móviles intermitentes.
+      Ahora REDIRECT 302 a Cloudinary y dejamos que el browser pida el PDF
+      directo. Solo proxeamos como fallback de último recurso.
 
-    El visor del navegador puede igual permitir Ctrl+S por su cuenta —
-    eso es limitación inherente de la web. Pero al menos el sistema
-    NO ofrece el archivo como descarga adjunta (Content-Disposition: inline).
+    Comportamiento por canal:
+      1) Cloudinary URL existe → 302 a Cloudinary (con fl_inline/fl_attachment).
+      2) Solo disco + archivo presente → sirve el binario Y dispara upload
+         best-effort a Cloudinary para próxima visita (fire-and-forget).
+      3) Ningún canal sirve → 404 amigable con instrucción de re-subir.
+
+    Comportamiento por rol:
+      - Usuario con permiso mantenciones → ve inline.
+      - Superadmin → puede descargar con ?download=1.
     """
     from flask import send_from_directory, make_response, redirect as _redir
     ct = mysql_fetchone(
-        "SELECT id, archivo_path, archivo_nombre, archivo_tipo, "
+        "SELECT id, cliente_id, archivo_path, archivo_nombre, archivo_tipo, "
         "       cloudinary_url, cloudinary_public_id "
         "  FROM mant_contratos WHERE id=%s",
         (ctid,)
     )
     if not ct or not (ct.get("archivo_path") or ct.get("cloudinary_url")):
+        print(f"[mant_contrato_archivo] ctid={ctid} → SIN canales (ni disco ni cloud)", flush=True)
         return "Archivo no encontrado", 404
 
     as_dl = request.args.get("download") == "1"
@@ -30970,118 +31767,99 @@ def mant_contrato_archivo(ctid):
             "https://view.officeapps.live.com/op/embed.aspx?src="
             + _q(ct["cloudinary_url"], safe="")
         )
+        print(f"[mant_contrato_archivo] ctid={ctid} → Office Viewer redirect", flush=True)
         return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
-    # ESTRATEGIA: SIEMPRE PROXY para PDFs cualquiera sea la URL de
-    # Cloudinary (raw/upload o image/upload). Razones:
-    #
-    # 1) /raw/upload/ → Cloudinary devuelve Content-Disposition: attachment
-    #    forzando descarga. Sin proxy, el iframe del browser muestra
-    #    "Formato no previsualizable".
-    # 2) /image/upload/ → Cloudinary BLOQUEA por seguridad la entrega
-    #    de PDFs como image-resources (política post-enero 2021).
-    #    Devuelve HTTP 401 al iframe.
-    #
-    # El proxy resuelve AMBOS casos:
-    #   - Para /raw/upload/: descarga (200 OK anónimo) y sirve con
-    #     Content-Type: application/pdf + inline.
-    #   - Para /image/upload/: si el GET anónimo da 401, intenta con
-    #     URL FIRMADA generada por el SDK de Cloudinary (autenticada
-    #     con API_KEY+SECRET) que bypassea la restricción de delivery.
+    # Estrategia REDIRECT 302 — el browser pide directo a Cloudinary.
+    # Ventajas vs proxy:
+    #   - No depende del backend de Railway estar despierto durante
+    #     la descarga (bandwidth y latencia van directos al CDN).
+    #   - Si Cloudinary devuelve 401 o 5xx, el browser muestra el error
+    #     nativo en el iframe y al menos sabemos qué falló (vs spinner
+    #     eterno en proxy).
+    #   - Cero egress de Railway.
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
-
+        # fl_attachment fuerza descarga; fl_inline sugiere visualizar inline.
+        # Para PDF inline en iframe queremos que NO baje como attachment.
+        sep = "&" if "?" in cld_url else "?"
         if as_dl:
-            # Descarga explícita: fl_attachment + nombre original
-            sep = "&" if "?" in cld_url else "?"
-            cld_url_dl = f"{cld_url}{sep}fl_attachment=true"
-            return _redir(cld_url_dl, code=302)
+            target = f"{cld_url}{sep}fl_attachment=true"
+        else:
+            # Para PDFs raw/upload, Cloudinary por default agrega
+            # Content-Disposition: attachment. fl_inline lo neutraliza
+            # y el browser renderiza el PDF en el iframe.
+            target = f"{cld_url}{sep}fl_inline=true" if ext == "pdf" else cld_url
+        print(f"[mant_contrato_archivo] ctid={ctid} → REDIRECT Cloudinary "
+              f"(as_dl={as_dl}, ext={ext})", flush=True)
+        return _redir(target, code=302)
 
-        # Inline → proxy con headers correctos
-        try:
-            import requests as _requests
-            r_cld = _requests.get(cld_url, stream=True, timeout=30)
-
-            # Si el GET anónimo falla (401 típico de image/upload PDF
-            # bloqueado), generar URL firmada con el SDK autenticado.
-            if r_cld.status_code != 200 and ct.get("cloudinary_public_id"):
-                try:
-                    import cloudinary.utils as _cu
-                    es_image = "/image/upload/" in cld_url
-                    signed_url, _ = _cu.cloudinary_url(
-                        ct["cloudinary_public_id"],
-                        resource_type=("image" if es_image else "raw"),
-                        type="upload",
-                        sign_url=True,
-                        secure=True,
-                    )
-                    print(f"[mant_contrato_archivo] {r_cld.status_code} anonymous → retry signed url", flush=True)
-                    r_cld = _requests.get(signed_url, stream=True, timeout=30)
-                except Exception as e_sign:
-                    print(f"[mant_contrato_archivo] firma falló: {e_sign}", flush=True)
-
-            if r_cld.status_code != 200:
-                # Última opción: redirect con fl_attachment para forzar
-                # descarga (no es ideal pero al menos no muestra 401).
-                print(f"[mant_contrato_archivo] Cloudinary final status={r_cld.status_code}, fallback descarga", flush=True)
-                sep = "&" if "?" in cld_url else "?"
-                return _redir(f"{cld_url}{sep}fl_attachment=true", code=302)
-
-            # Servir el PDF con headers correctos para iframe inline
-            from flask import Response
-            def _gen():
-                try:
-                    for chunk in r_cld.iter_content(chunk_size=64*1024):
-                        if chunk:
-                            yield chunk
-                finally:
-                    try: r_cld.close()
-                    except Exception: pass
-            resp = Response(_gen(), content_type="application/pdf")
-            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
-            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
-            resp.headers["Cache-Control"] = "private, max-age=300"
-            cl = r_cld.headers.get("Content-Length")
-            if cl: resp.headers["Content-Length"] = cl
-            return resp
-        except Exception as e_proxy:
-            print(f"[mant_contrato_archivo] proxy falló, fallback redirect: {e_proxy}", flush=True)
-            return _redir(cld_url, code=302)
-
-    # ── PRIORIDAD 2: Filesystem local (fallback para archivos viejos) ──
+    # ── PRIORIDAD 2: Filesystem local (sin Cloudinary) ──────────────────
     # Verificar que el archivo existe en disco
     full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
     if not os.path.exists(full_path):
-        # IMPORTANTE: Railway usa filesystem efímero por defecto. Si hubo un
-        # deploy desde la última subida, los archivos físicos se pierden
-        # (aunque la BD aún tenga el archivo_path). El usuario debe re-subir.
+        # IMPORTANTE: Railway usa filesystem efímero. Si hubo un deploy
+        # desde la última subida, los archivos físicos se pierden (aunque
+        # la BD aún tenga el archivo_path). El usuario debe re-subir.
         es_super = bool(g.permissions.get("superadmin"))
         nombre_visible = ct.get("archivo_nombre") or ct["archivo_path"]
+        print(f"[mant_contrato_archivo] ctid={ctid} → PERDIDO "
+              f"(disco={ct['archivo_path']} no existe, sin Cloudinary)", flush=True)
+        accion = ("<p class='mb-2'><strong>Acción recomendada:</strong> "
+                  "vuelve a la ficha del cliente y usa el botón "
+                  "<strong>'Re-subir contrato'</strong>.</p>") if es_super else (
+                 "<p class='mb-2'>Avisa al superadministrador para que "
+                 "vuelva a subir el contrato.</p>")
         html = f"""
         <!doctype html><html><head><meta charset='utf-8'>
-        <title>Archivo no disponible</title>
+        <title>Contrato no disponible</title>
         <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>
         <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css'>
-        </head><body style='padding:40px;font-family:system-ui'>
-          <div class='alert alert-warning'>
-            <h5><i class='bi bi-exclamation-triangle-fill me-2'></i>El archivo físico no está disponible</h5>
-            <p class='mb-2'>El sistema tiene registrado el contrato pero el PDF físico ya no está en el servidor.
-            Esto sucede cuando Railway hace un deploy nuevo: los archivos subidos se borran
-            porque el sistema de archivos es <strong>efímero</strong>.</p>
+        </head><body style='padding:40px;font-family:system-ui;background:#f3f4f6'>
+          <div class='container' style='max-width:640px'>
+          <div class='alert alert-warning' style='border-left:4px solid #dc2626;border-radius:10px'>
+            <h5 style='font-weight:700;color:#0a0a0a'><i class='bi bi-exclamation-triangle-fill me-2' style='color:#dc2626'></i>Contrato no disponible</h5>
+            <p class='mb-2'>El archivo se perdió tras un redeploy de Railway (filesystem efímero).
+            Por eso Cloudinary es importante: persiste entre deploys.</p>
             <hr>
             <div class='small text-muted mb-3'>
               Archivo perdido: <code>{nombre_visible}</code><br>
               ID del contrato: <strong>#{ctid}</strong>
             </div>
-            {"<p class='mb-2'><strong>Acción recomendada:</strong> vuelve a la ficha del cliente y usa el botón <strong>'Re-subir archivo'</strong> en el contrato.</p>" if es_super else "<p class='mb-2'>Avisa al superadministrador para que vuelva a subir el contrato.</p>"}
-            <p class='small text-muted mb-0'>Solución permanente: configurar Cloudinary o Railway Volume para que los
-            archivos persistan entre deploys. Estamos trabajando en eso.</p>
+            {accion}
           </div>
-          <a href='javascript:window.close()' class='btn btn-secondary'>Cerrar</a>
+          <a href='javascript:window.close()' class='btn' style='background:#dc2626;color:#fff'>Cerrar</a>
+          </div>
         </body></html>
         """
         return html, 404
+
+    # Archivo en disco existe → servir + best-effort upload a Cloudinary async
+    # FIX 2026-05-22: aprovechamos que el archivo está aquí AHORA para
+    # subirlo a Cloudinary en background y que la próxima visita ya redirija.
+    # Si Cloudinary falla, simplemente seguimos sirviendo desde disco esta vez.
+    if _CLD_READY and ct.get("cliente_id"):
+        try:
+            import threading as _th
+            def _backfill_async():
+                try:
+                    with open(full_path, "rb") as _fh:
+                        public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}_bf"
+                        res = _cloud_upload_raw(_fh, public_id, folder="ilus/contratos")
+                    mysql_execute(
+                        "UPDATE mant_contratos "
+                        "   SET cloudinary_url=%s, cloudinary_public_id=%s, "
+                        "       cloudinary_uploaded_at=%s "
+                        " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                        (res["url"], res["public_id"], datetime.utcnow(), ctid)
+                    )
+                    print(f"[mant_contrato_archivo] backfill cloud OK ctid={ctid} url={res['url']}", flush=True)
+                except Exception as e_bf:
+                    print(f"[mant_contrato_archivo] backfill cloud FAIL ctid={ctid}: {e_bf}", flush=True)
+            _th.Thread(target=_backfill_async, daemon=True).start()
+        except Exception as e_th:
+            print(f"[mant_contrato_archivo] no se pudo lanzar thread backfill: {e_th}", flush=True)
 
     # Servir el archivo
     resp = make_response(send_from_directory(
@@ -31091,15 +31869,12 @@ def mant_contrato_archivo(ctid):
     ))
 
     # Headers explícitos para garantizar visualización inline en iframe
-    nombre = ct.get("archivo_nombre") or f"contrato_{ctid}.pdf"
     if as_dl:
         resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
     else:
-        # Inline: el browser debe mostrarlo (PDF viewer integrado o plugin)
         resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
 
-    # Tipo MIME explícito según extensión (no fiarse de la auto-detección)
-    ext = (ct.get("archivo_path") or "").rsplit(".", 1)[-1].lower()
+    # Tipo MIME explícito según extensión
     mime_map = {
         "pdf":  "application/pdf",
         "doc":  "application/msword",
@@ -31108,12 +31883,10 @@ def mant_contrato_archivo(ctid):
     if ext in mime_map:
         resp.headers["Content-Type"] = mime_map[ext]
 
-    # Permitir iframe desde nuestro propio dominio (PDF viewer en modal)
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
-
-    # Anti-cache para que cambios al archivo se reflejen al instante
     resp.headers["Cache-Control"] = "private, max-age=60"
+    print(f"[mant_contrato_archivo] ctid={ctid} → DISCO (ext={ext})", flush=True)
     return resp
 
 
@@ -31360,11 +32133,79 @@ Devuelve el JSON completo."""
 @app.route("/mantenciones/api/clientes/<int:cid>/ai-analisis", methods=["POST"])
 @_mant_required
 def mant_cliente_ai_analisis(cid):
-    """Análisis integral del cliente con Claude: economía + ops + recomendaciones."""
+    """Análisis integral del cliente con Claude: economía + ops + recomendaciones.
+
+    Throttle inteligente (2026-05-22):
+      - Si han pasado < THROTTLE días Y no hay cambios significativos →
+        devuelve el plan en caché SIN llamar a Claude (cached=true).
+      - Si ?force=1 (o body {"force":true}) el usuario fuerza regeneración
+        (esto sólo es aceptable si elegibilidad dice puede_generar=True).
+      - El gating "deberías regenerar?" debe ocurrir en el cliente vía
+        GET /api/clientes/<cid>/ia/elegibilidad ANTES de POSTear acá.
+    """
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
     cliente = dict(cliente)
+
+    # ── THROTTLE: si cache vigente y no fuerza → no gastar tokens ──
+    body = request.get_json(silent=True) or {}
+    force_flag = (
+        request.args.get("force", "0") in ("1", "true", "yes")
+        or bool(body.get("force"))
+    )
+    elig = _mant_ia_cliente_eligibilidad(cid)
+
+    if elig.get("motivo") == "cache_vigente" and not force_flag:
+        # Devolver el plan anterior (no llamar a Claude)
+        try:
+            row = mysql_fetchone(
+                "SELECT plan_json, generado_at FROM mant_ia_planes "
+                " WHERE id=%s LIMIT 1",
+                (elig.get("plan_actual_id"),)
+            )
+            pj = (row or {}).get("plan_json") or "{}"
+            data_cache = json.loads(pj) if isinstance(pj, str) else (pj or {})
+        except Exception:
+            data_cache = {}
+        try:
+            _mant_log("cliente", cid, "ai_analisis_cache",
+                      f"Cache vigente ({elig.get('dias_desde_ultimo')}d) — "
+                      f"no se consultó a Claude")
+        except Exception:
+            pass
+        return jsonify({
+            "ok": True,
+            "cached": True,
+            "ai": data_cache,
+            "elegibilidad": elig,
+            "mensaje": (
+                f"Sin cambios relevantes desde hace "
+                f"{elig.get('dias_desde_ultimo')} día(s) — análisis vigente. "
+                f"Esto evita gastar tokens innecesariamente."
+            ),
+            "contexto": {
+                "n_contratos": (elig.get("snapshot_actual") or {}).get("n_contratos", 0),
+                "n_visitas":   (elig.get("snapshot_actual") or {}).get("n_visitas", 0),
+                "n_maquinas":  (elig.get("snapshot_actual") or {}).get("n_equipos", 0),
+            },
+        })
+
+    # Si motivo='cambios_detectados' y NO force → devolver 409 para que el
+    # frontend confirme con el usuario antes de gastar tokens.
+    if (elig.get("motivo") == "cambios_detectados"
+            and not force_flag):
+        return jsonify({
+            "ok": False,
+            "needs_confirmation": True,
+            "elegibilidad": elig,
+            "mensaje": (
+                f"Hay {elig.get('n_cambios')} cambio(s) desde el último "
+                f"análisis ({elig.get('dias_desde_ultimo')}d). Confirma si "
+                f"deseas regenerar (costará ~{elig.get('costo_estimado_tokens')} "
+                f"tokens) o si prefieres dejar la sugerencia para más tarde."
+            ),
+        }), 409
 
     # Recopilar contexto: contratos, visitas, máquinas
     contratos = [dict(r) for r in (mysql_fetchall(
@@ -31476,15 +32317,63 @@ Devuelve SOLO el JSON solicitado."""
     except Exception:
         pass
 
+    # Persistir plan IA en mant_ia_planes con snapshot ACTUAL (para que el
+    # próximo throttle pueda comparar). Idempotente: si falla, no rompe el endpoint.
+    nuevo_plan_id = None
+    try:
+        snap = _mant_cliente_snapshot_actual(cid)
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_ia_planes "
+                "  (cliente_id, generado_por, plan_json, "
+                "   snapshot_n_visitas, snapshot_n_contratos, snapshot_n_garantias, "
+                "   snapshot_ultima_visita) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    cid, current_username(),
+                    json.dumps(data, ensure_ascii=False, default=str),
+                    snap.get("n_visitas"), snap.get("n_contratos"),
+                    snap.get("n_garantias"), snap.get("ultima_visita"),
+                )
+            )
+            nuevo_plan_id = cur.lastrowid
+        conn.commit()
+    except Exception as _e_ia:
+        print(f"[mant-ia] no se pudo guardar plan: {_e_ia}", flush=True)
+
+    # Si había una sugerencia "ia_regenerar" pendiente para este cliente,
+    # resolverla como aceptada (la acción se ejecutó).
+    try:
+        row = mysql_fetchone(
+            "SELECT id FROM mant_sugerencias_evidencia "
+            " WHERE cliente_id=%s AND tipo_sugerencia='ia_regenerar' "
+            "   AND resolucion='pendiente' "
+            " ORDER BY sugerida_at DESC LIMIT 1",
+            (cid,)
+        )
+        if row and row.get("id"):
+            _sugerencia_resolver(
+                row["id"], 'aceptada',
+                motivo=f"Regenerado vía análisis IA (plan #{nuevo_plan_id})",
+            )
+    except Exception:
+        pass
+
     # Log de auditoría
     try:
         _mant_log("cliente", cid, "ai_analisis",
-                  f"Score: {data.get('score_general')} · Salud: {data.get('salud_cuenta')}")
+                  f"Score: {data.get('score_general')} · "
+                  f"Salud: {data.get('salud_cuenta')} · "
+                  f"plan_id={nuevo_plan_id}")
     except Exception: pass
 
     return jsonify({
         "ok": True,
+        "cached": False,
         "ai": data,
+        "plan_id": nuevo_plan_id,
+        "elegibilidad": elig,
         "contexto": {
             "n_contratos": len(contratos),
             "n_visitas": len(visitas),
@@ -31492,6 +32381,112 @@ Devuelve SOLO el JSON solicitado."""
             "mrr_total": mrr_total,
         }
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — ELEGIBILIDAD para regenerar análisis del cliente
+# Devuelve si el cliente puede/debe regenerar el análisis IA SIN gastar
+# tokens. Frontend lo consume antes de POSTear para mostrar modal claro.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ia/elegibilidad",
+           methods=["GET"])
+@_mant_required
+def mant_cliente_ia_elegibilidad(cid):
+    """Verifica si conviene regenerar el análisis IA para este cliente.
+
+    Útil para que el frontend muestre un modal con info ANTES de POST a
+    /ai-analisis (que sí gasta tokens si autoriza).
+
+    Returns JSON con:
+      puede_generar (bool)
+      motivo: 'nunca_analizado'|'cache_vigente'|'cambios_detectados'|
+              'ventana_abierta'|'fecha_indeterminada'
+      dias_desde_ultimo (int|None)
+      n_cambios (int)
+      cambios (list[{campo,delta,antes,ahora}])
+      plan_actual_id (int|None)
+      ultimo_resumen (str)
+      throttle_dias (int)
+      costo_estimado_tokens (int)
+      snapshot_actual, snapshot_anterior
+    """
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    elig = _mant_ia_cliente_eligibilidad(cid)
+    return jsonify({
+        "ok": True,
+        "cliente": {"id": cliente["id"],
+                    "razon_social": cliente.get("razon_social")},
+        **elig
+    })
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ia/diferir",
+           methods=["POST"])
+@_mant_required
+def mant_cliente_ia_diferir(cid):
+    """El usuario decide NO regenerar ahora, pero quiere dejar la
+    evidencia de que se le sugirió. Crea sugerencia tipo='ia_regenerar'
+    para revisión posterior (cumple el principio "queda huella")."""
+    cliente = mysql_fetchone(
+        "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,)
+    )
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    cliente = dict(cliente)
+
+    elig = _mant_ia_cliente_eligibilidad(cid)
+    if elig.get("motivo") == "cache_vigente":
+        return jsonify({
+            "ok": False,
+            "error": "El cache aún está vigente, no es necesario diferir."
+        }), 400
+
+    body = request.get_json(silent=True) or {}
+    nota = (body.get("nota") or "").strip()
+
+    titulo = (f"Regenerar análisis IA: {cliente.get('razon_social','')}"
+              f" ({elig.get('n_cambios')} cambio(s))")
+    cuerpo = (
+        f"Hay cambios desde el último análisis IA "
+        f"({elig.get('dias_desde_ultimo')}d). El usuario eligió diferir."
+        + (f"\n\nNota del usuario: {nota}" if nota else "")
+        + f"\n\nCambios detectados ({elig.get('n_cambios')}):"
+    )
+    for c in elig.get("cambios") or []:
+        cuerpo += f"\n  · {c.get('campo')}: {c.get('antes')} → {c.get('ahora')}"
+
+    sid = _sugerencia_crear(
+        cliente_id=cid,
+        tipo="ia_regenerar",
+        titulo=titulo,
+        cuerpo=cuerpo,
+        url_accion=f"/mantenciones/clientes/{cid}",
+        origen="usuario",
+        entidad="cliente",
+        entidad_id=cid,
+        metadata={
+            "elegibilidad": elig,
+            "nota_usuario": nota,
+        },
+        notificar=True,
+        prioridad='baja',
+    )
+    if not sid:
+        return jsonify({"ok": False,
+                        "error": "No se pudo crear sugerencia"}), 500
+
+    try:
+        _mant_log("cliente", cid, "ia_diferida",
+                  f"sugerencia_id={sid} cambios={elig.get('n_cambios')}")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "sugerencia_id": sid})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -34856,6 +35851,217 @@ def mant_notif_interna_contador():
     except Exception as e:
         return jsonify({"ok": False, "no_leidas": 0, "urgentes": 0,
                         "error": str(e)}), 200
+
+
+# ═════════════════════════════════════════════════════════════════════
+# SUGERENCIAS CON EVIDENCIA — endpoints
+# Lista, contador, aceptar, rechazar, ignorar. El sistema NUNCA actúa
+# solo — cada acción la confirma el usuario. Resoluciones quedan en
+# mant_sugerencias_evidencia para auditoría.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/sugerencias", methods=["GET"])
+@_mant_required
+def mant_sugerencias_list():
+    """Lista sugerencias filtradas.
+
+    Query params:
+        cliente_id (int|None)  - filtro por cliente
+        estado (str|None)      - 'pendiente'|'aceptada'|'rechazada'|
+                                 'ignorada'|'expirada' (default 'pendiente')
+        tipo (str|None)        - filtro por tipo_sugerencia
+        origen (str|None)      - filtro por origen ('cron','ia','usuario','sistema')
+        limit (int)            - default 100, max 500
+    """
+    cliente_id = request.args.get("cliente_id")
+    estado = (request.args.get("estado") or "pendiente").strip().lower()
+    tipo = (request.args.get("tipo") or "").strip()
+    origen = (request.args.get("origen") or "").strip().lower()
+    try:
+        limit = min(500, max(1, int(request.args.get("limit") or 100)))
+    except Exception:
+        limit = 100
+
+    sql = (
+        "SELECT s.id, s.cliente_id, s.entidad, s.entidad_id, "
+        "       s.tipo_sugerencia, s.origen, s.titulo, s.cuerpo, "
+        "       s.url_accion, s.sugerida_at, s.resolucion, "
+        "       s.resolucion_at, s.resolucion_por, s.resolucion_motivo, "
+        "       s.metadata_json, c.razon_social "
+        "  FROM mant_sugerencias_evidencia s "
+        "  LEFT JOIN mant_clientes c ON c.id = s.cliente_id "
+        " WHERE 1=1 "
+    )
+    params = []
+    if estado and estado != "todas":
+        sql += " AND s.resolucion=%s "
+        params.append(estado)
+    if cliente_id:
+        try:
+            sql += " AND s.cliente_id=%s "
+            params.append(int(cliente_id))
+        except Exception:
+            pass
+    if tipo:
+        sql += " AND s.tipo_sugerencia=%s "
+        params.append(tipo)
+    if origen and origen in ('cron', 'ia', 'usuario', 'sistema'):
+        sql += " AND s.origen=%s "
+        params.append(origen)
+
+    sql += (
+        " ORDER BY "
+        "   CASE s.resolucion WHEN 'pendiente' THEN 0 ELSE 1 END, "
+        "   s.sugerida_at DESC "
+        " LIMIT %s"
+    )
+    params.append(limit)
+
+    rows = mysql_fetchall(sql, tuple(params)) or []
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("sugerida_at", "resolucion_at"):
+            if d.get(k):
+                d[k] = str(d[k])[:19]
+        out.append(d)
+    return jsonify({"ok": True, "sugerencias": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/sugerencias/contador", methods=["GET"])
+@_mant_required
+def mant_sugerencias_contador():
+    """Cuenta sugerencias pendientes para el badge en el header.
+    Endpoint barato — usa idx_resolucion."""
+    try:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS pendientes "
+            "  FROM mant_sugerencias_evidencia "
+            " WHERE resolucion='pendiente'"
+        ) or {}
+        return jsonify({
+            "ok": True,
+            "pendientes": int(row.get("pendientes") or 0),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "pendientes": 0,
+                        "error": str(e)}), 200
+
+
+@app.route("/mantenciones/api/sugerencias/<int:sid>/aceptar",
+           methods=["POST"])
+@_mant_required
+def mant_sugerencia_aceptar(sid):
+    """Marca sugerencia como aceptada. Devuelve la url_accion para que
+    el frontend pueda navegar a ella si corresponde."""
+    row = mysql_fetchone(
+        "SELECT id, tipo_sugerencia, cliente_id, url_accion, resolucion "
+        "  FROM mant_sugerencias_evidencia WHERE id=%s", (sid,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Sugerencia no encontrada"}), 404
+    if row.get("resolucion") != "pendiente":
+        return jsonify({"ok": False,
+                        "error": f"Sugerencia ya resuelta: {row.get('resolucion')}"
+                        }), 409
+
+    ok = _sugerencia_resolver(sid, 'aceptada', motivo='')
+    if not ok:
+        return jsonify({"ok": False, "error": "No se pudo actualizar"}), 500
+
+    try:
+        _mant_log("sugerencia", sid, "aceptada",
+                  f"tipo={row.get('tipo_sugerencia')} cliente={row.get('cliente_id')}")
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "url_accion": row.get("url_accion") or "",
+        "tipo": row.get("tipo_sugerencia"),
+        "cliente_id": row.get("cliente_id"),
+    })
+
+
+@app.route("/mantenciones/api/sugerencias/<int:sid>/rechazar",
+           methods=["POST"])
+@_mant_required
+def mant_sugerencia_rechazar(sid):
+    """Rechaza una sugerencia. Motivo opcional pero, si se entrega,
+    debe tener al menos 5 caracteres (evita 'asd' o 'no')."""
+    body = request.get_json(silent=True) or {}
+    motivo = (body.get("motivo") or "").strip()
+    if motivo and len(motivo) < 5:
+        return jsonify({
+            "ok": False,
+            "error": "El motivo debe tener al menos 5 caracteres."
+        }), 400
+
+    row = mysql_fetchone(
+        "SELECT id, tipo_sugerencia, cliente_id, resolucion "
+        "  FROM mant_sugerencias_evidencia WHERE id=%s", (sid,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Sugerencia no encontrada"}), 404
+    if row.get("resolucion") != "pendiente":
+        return jsonify({"ok": False,
+                        "error": f"Sugerencia ya resuelta: {row.get('resolucion')}"
+                        }), 409
+
+    ok = _sugerencia_resolver(sid, 'rechazada', motivo=motivo)
+    if not ok:
+        return jsonify({"ok": False, "error": "No se pudo actualizar"}), 500
+
+    try:
+        _mant_log("sugerencia", sid, "rechazada",
+                  f"tipo={row.get('tipo_sugerencia')} "
+                  f"cliente={row.get('cliente_id')} "
+                  f"motivo={(motivo or '(sin motivo)')[:80]}")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/sugerencias/<int:sid>/ignorar",
+           methods=["POST"])
+@_mant_required
+def mant_sugerencia_ignorar(sid):
+    """Ignora silenciosamente una sugerencia (sin motivo)."""
+    row = mysql_fetchone(
+        "SELECT id, tipo_sugerencia, cliente_id, resolucion "
+        "  FROM mant_sugerencias_evidencia WHERE id=%s", (sid,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Sugerencia no encontrada"}), 404
+    if row.get("resolucion") != "pendiente":
+        return jsonify({"ok": False,
+                        "error": f"Sugerencia ya resuelta: {row.get('resolucion')}"
+                        }), 409
+
+    ok = _sugerencia_resolver(sid, 'ignorada', motivo='')
+    if not ok:
+        return jsonify({"ok": False, "error": "No se pudo actualizar"}), 500
+
+    try:
+        _mant_log("sugerencia", sid, "ignorada",
+                  f"tipo={row.get('tipo_sugerencia')} cliente={row.get('cliente_id')}")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/sugerencias")
+@_mant_required
+def mant_sugerencias_page():
+    """Página de sugerencias con evidencia.
+
+    Esta es la pantalla donde queda demostrado que el sistema sugirió y
+    el usuario decidió. Cumple la filosofía: "el sistema NUNCA actúa
+    solo, sólo sugiere — el usuario decide y queda la huella".
+    """
+    return render_template("mantenciones/sugerencias.html")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -42865,14 +44071,29 @@ ALLOWED_ADJUNTO_TIPOS = {
 @app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["GET"])
 @_mant_required
 def mant_adjuntos_list(ctid):
+    """Lista adjuntos del contrato con URL servible.
+
+    FIX 2026-05-22: antes siempre devolvía /static/uploads/... incluso cuando
+    el adjunto tenía cloudinary_url. En Railway con filesystem efímero, los
+    /static/uploads/ se pierden tras deploy → adjunto aparece pero al click
+    da 404. Ahora preferimos cloudinary_url cuando existe.
+    """
     rows = mysql_fetchall(
-        "SELECT id,tipo,nombre,archivo_nombre,mime_type,tamaño_bytes,descripcion,created_by,created_at "
+        "SELECT id,tipo,nombre,archivo_nombre,mime_type,tamaño_bytes,descripcion,"
+        "       cloudinary_url,created_by,created_at "
         "FROM mant_contrato_adjuntos WHERE contrato_id=%s ORDER BY created_at DESC", (ctid,)
     )
     def _fmt(r):
         d = dict(r)
         d["created_at"] = str(d["created_at"])[:16] if d.get("created_at") else ""
-        d["url"] = f"/static/uploads/mantenciones/{d['archivo_nombre']}"
+        # Cloudinary primero (persistente). Si no hay, filesystem efímero.
+        cld = d.get("cloudinary_url") or ""
+        if cld:
+            d["url"] = cld
+            d["persistente"] = True
+        else:
+            d["url"] = f"/static/uploads/mantenciones/{d['archivo_nombre']}"
+            d["persistente"] = False
         return d
     return jsonify([_fmt(r) for r in rows])
 

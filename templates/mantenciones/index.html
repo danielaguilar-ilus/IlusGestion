@@ -58,6 +58,18 @@
       <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
         <i class="bi bi-calendar3 me-1"></i>Calendario
       </a>
+      {# Sugerencias con evidencia: el sistema sugiere, el usuario decide.
+         Cada decisión (aceptar/rechazar/ignorar) queda registrada. #}
+      <a href="{{ url_for('mant_sugerencias_page') }}" class="btn btn-outline-warning position-relative"
+         style="border-color:#f59e0b;color:#92400e"
+         title="Sugerencias generadas por el sistema para tu revisión">
+        <i class="bi bi-lightbulb me-1"></i>Sugerencias
+        <span id="sugBadgeIndex"
+              class="position-absolute top-0 start-100 translate-middle badge rounded-pill"
+              style="background:#dc2626;display:none">
+          <span id="sugBadgeIndexNum">0</span>
+        </span>
+      </a>
       <a href="{{ url_for('mant_tecnicos_externos_index') }}" class="btn btn-outline-dark"
          title="Contratistas y empresas tercerizadas">
         <i class="bi bi-building-fill-gear me-1"></i>Técnicos externos
@@ -750,5 +762,26 @@ async function vhdGuardar(){
     btn.innerHTML = '<i class="bi bi-save me-1"></i>Registrar visita';
   }
 }
+
+// ── Badge de sugerencias pendientes (poll cada 60s, silencioso) ────
+(function(){
+  const numEl = document.getElementById('sugBadgeIndexNum');
+  const wrap  = document.getElementById('sugBadgeIndex');
+  if (!numEl || !wrap) return;
+  async function refresh(){
+    try {
+      const r = await fetch('/mantenciones/api/sugerencias/contador', {
+        headers:{'Accept':'application/json'}
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const n = (d && d.pendientes) || 0;
+      numEl.textContent = (n > 99) ? '99+' : String(n);
+      wrap.style.display = n > 0 ? '' : 'none';
+    } catch(_){ /* silencioso */ }
+  }
+  refresh();
+  setInterval(refresh, 60000);
+})();
 </script>
 {% endblock %}
