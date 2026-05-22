@@ -1725,24 +1725,197 @@ def init_transporte_tables():
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
-            # ── DEFAULT COURIERS (solo si la tabla está vacía) ─────────
-            cur.execute("SELECT COUNT(*) AS n FROM transport_couriers")
-            row = cur.fetchone()
-            if (row or {}).get('n', 1) == 0:
-                _defaults = [
-                    ('FedEx',                'internacional'),
-                    ('Transportes Melling',  'nacional'),
-                    ('Transporte Felca',     'regional'),
-                    ('Envíame',              'nacional'),
-                ]
-                for _nom, _tipo in _defaults:
+            # ── DEFAULT COURIERS (idempotente — INSERT IGNORE / chequeo por nombre) ─
+            # Lista canónica de couriers que aparecen en la UI y deben estar siempre.
+            # No se sobreescriben los existentes (chequeo por nombre case-insensitive).
+            # Alias: "Transportes Melling" (legacy) == "Transportes Milling" (canónico) —
+            #        si encontramos el legacy, lo dejamos pero NO insertamos el nuevo.
+            _alias_map = {
+                'transportes milling': ['transportes melling'],
+            }
+            _defaults = [
+                ('FedEx',                  'internacional'),
+                ('Starken',                'nacional'),
+                ('Blue Express',           'nacional'),
+                ('Clickex',                'local'),
+                ('Transporte Felca',       'regional'),
+                ('Transportes Milling',    'nacional'),
+                ('Envíame',                'nacional'),
+                ('Chilexpress',            'nacional'),
+            ]
+            for _nom, _tipo in _defaults:
+                try:
+                    _key = _nom.strip().lower()
+                    # Buscar el courier por nombre exacto o por alias
+                    names_to_check = [_nom] + _alias_map.get(_key, [])
+                    placeholders = ','.join(['LOWER(%s)'] * len(names_to_check))
                     cur.execute(
-                        "INSERT INTO transport_couriers (nombre, tipo) VALUES (%s, %s)",
-                        (_nom, _tipo)
+                        f"SELECT id FROM transport_couriers WHERE LOWER(nombre) IN ({placeholders})",
+                        tuple(names_to_check)
                     )
+                    if not cur.fetchone():
+                        cur.execute(
+                            "INSERT INTO transport_couriers (nombre, tipo, activo) VALUES (%s, %s, 1)",
+                            (_nom, _tipo)
+                        )
+                except Exception:
+                    pass
+
+            # ── SEED DEMO de tarifas — sólo para couriers SIN tarifas todavía ─
+            # Si un courier ya tiene comunas cargadas (vía Excel) NO lo tocamos.
+            # Si está en 0, le sembramos un set demo razonable.
+            try:
+                _seed_courier_tarifas_demo(cur)
+            except Exception as _exc:
+                print(f"[init_transporte] seed tarifas demo falló: {_exc}", flush=True)
         conn.commit()
     finally:
         conn.close()
+
+
+def _seed_courier_tarifas_demo(cur):
+    """Siembra tarifas DEMO para los couriers principales × comunas clave.
+
+    Idempotente — sólo corre si transport_courier_comunas está vacía.
+    Cada courier tiene un perfil de pricing distinto:
+        Starken     → barato en RM, más caro lejos
+        FedEx       → caro pero rápido (24h)
+        Blue Express→ express precio medio-alto
+        Clickex     → último km, RM only
+        T. Felca    → económico, transit lento
+        T. Milling  → económico, transit lento
+        Envíame     → mid-tier nacional
+        Chilexpress → tier medio
+    Los precios usan el formato {"1":..., "5":..., "10":..., "25":..., "50":..., "100":..., "100+":...}.
+    """
+    import json as _json
+
+    # Comunas a sembrar — (nombre, región, zona, dias_transito)
+    COMUNAS = [
+        # RM
+        ('Santiago',         'Metropolitana', 'RM',     '1'),
+        ('Las Condes',       'Metropolitana', 'RM',     '1'),
+        ('Providencia',      'Metropolitana', 'RM',     '1'),
+        ('Vitacura',         'Metropolitana', 'RM',     '1'),
+        ('Lo Barnechea',     'Metropolitana', 'RM',     '1'),
+        ('Ñuñoa',            'Metropolitana', 'RM',     '1'),
+        ('Maipú',            'Metropolitana', 'RM',     '1'),
+        ('Puente Alto',      'Metropolitana', 'RM',     '1'),
+        ('La Florida',       'Metropolitana', 'RM',     '1'),
+        ('Recoleta',         'Metropolitana', 'RM',     '1'),
+        ('Independencia',    'Metropolitana', 'RM',     '1'),
+        ('Renca',            'Metropolitana', 'RM',     '1'),
+        ('Quinta Normal',    'Metropolitana', 'RM',     '1'),
+        ('Cerrillos',        'Metropolitana', 'RM',     '1'),
+        ('Pudahuel',         'Metropolitana', 'RM',     '1'),
+        ('San Bernardo',     'Metropolitana', 'RM',     '1'),
+        ('La Pintana',       'Metropolitana', 'RM',     '1'),
+        # Regiones
+        ('Viña del Mar',     'Valparaíso',    'V',      '2'),
+        ('La Serena',        'Coquimbo',      'IV',     '2'),
+        ('Concepción',       'Biobío',        'VIII',   '3'),
+        ('Temuco',           'Araucanía',     'IX',     '3'),
+        ('Puerto Montt',     'Los Lagos',     'X',      '4'),
+        ('Antofagasta',      'Antofagasta',   'II',     '4'),
+        ('Iquique',          'Tarapacá',      'I',      '5'),
+        ('Punta Arenas',     'Magallanes',    'XII',    '5'),
+    ]
+
+    # Multiplicadores de zona — factor que se aplica al precio base RM
+    ZONA_MULT = {'RM':1.00, 'V':1.20, 'IV':1.50, 'VIII':1.40, 'IX':1.55,
+                 'X':1.75, 'II':2.10, 'I':2.30, 'XII':3.20}
+
+    # Perfiles base por courier — precios "RM" (zona 1)
+    # Estructura: {brackets} y multiplicador "RM-only" (None = no RM-only)
+    PERFILES = {
+        'starken': {
+            'base': {'1':3900, '5':5800, '10':8200, '25':12500, '50':19500, '100':30500, '100+':33500},
+            'rm_only': False,
+            'days_rm':'2-3 días', 'days_reg':'3-5 días',
+        },
+        'fedex': {  # no es tabla, va a usarse vía API; igual sembramos fallback
+            'base': {'1':6500, '5':9800, '10':15200, '25':32000, '50':58000, '100':95000, '100+':108000},
+            'rm_only': False,
+            'days_rm':'24h',     'days_reg':'1-2 días',
+        },
+        'blue express': {
+            'base': {'1':5200, '5':7500, '10':10800, '25':17500, '50':28500, '100':42000, '100+':46000},
+            'rm_only': False,
+            'days_rm':'1-2 días','days_reg':'2-4 días',
+        },
+        'clickex': {
+            'base': {'1':4500, '5':6800, '10':9800, '25':14800, '50':22500, '100':34000, '100+':37500},
+            'rm_only': True,  # último km — sólo cobertura RM
+            'days_rm':'24h',     'days_reg':'—',
+        },
+        'transporte felca': {
+            'base': {'1':3200, '5':4500, '10':6800, '25':10200, '50':16500, '100':25000, '100+':28000},
+            'rm_only': False,
+            'days_rm':'2-4 días','days_reg':'3-5 días',
+        },
+        'transportes milling': {
+            'base': {'1':3400, '5':4800, '10':7100, '25':10800, '50':17200, '100':26500, '100+':29500},
+            'rm_only': False,
+            'days_rm':'2-4 días','days_reg':'3-5 días',
+        },
+        'envíame': {
+            'base': {'1':4100, '5':6100, '10':8800, '25':13500, '50':20500, '100':31500, '100+':35000},
+            'rm_only': False,
+            'days_rm':'1-2 días','days_reg':'2-4 días',
+        },
+        'chilexpress': {
+            'base': {'1':4800, '5':7000, '10':10000, '25':15500, '50':24000, '100':36500, '100+':40500},
+            'rm_only': False,
+            'days_rm':'1-2 días','days_reg':'2-4 días',
+        },
+    }
+
+    # Cargar mapa nombre→id (lower) de couriers activos
+    cur.execute("SELECT id, LOWER(nombre) AS k FROM transport_couriers WHERE activo=1")
+    couriers = {r['k']:r['id'] for r in (cur.fetchall() or [])}
+
+    # Sólo sembrar para couriers que NO tienen tarifas todavía (preserva Excel imports).
+    cur.execute("""
+        SELECT c.id, LOWER(c.nombre) AS k, COUNT(cc.id) AS n
+          FROM transport_couriers c
+          LEFT JOIN transport_courier_comunas cc ON cc.courier_id = c.id
+         WHERE c.activo = 1
+         GROUP BY c.id
+    """)
+    tarifa_counts = {r['k']: r['n'] for r in (cur.fetchall() or [])}
+
+    total = 0
+    sembrados = []
+    for c_lower, perfil in PERFILES.items():
+        cid = couriers.get(c_lower)
+        if not cid:
+            continue
+        # Si el courier YA tiene tarifas (de Excel u otra fuente), NO lo tocamos.
+        if (tarifa_counts.get(c_lower) or 0) > 0:
+            continue
+        for nom, region, zona, dias in COMUNAS:
+            es_rm = (zona == 'RM')
+            # Skip si courier es RM-only y la comuna no es RM (sin cobertura)
+            if perfil['rm_only'] and not es_rm:
+                continue
+            mult = ZONA_MULT.get(zona, 1.0)
+            precios = {k: int(round(v * mult, -1)) for k, v in perfil['base'].items()}
+            dias_tr = perfil['days_rm'] if es_rm else perfil['days_reg']
+            try:
+                cur.execute(
+                    """INSERT IGNORE INTO transport_courier_comunas
+                       (courier_id, comuna, zona, region, dias_transito, precios_json)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (cid, nom, zona, region, dias_tr, _json.dumps(precios, ensure_ascii=False))
+                )
+                if cur.rowcount:
+                    total += 1
+            except Exception:
+                pass
+        sembrados.append(c_lower)
+    if total:
+        print(f"[seed courier tarifas demo] {total} filas insertadas para couriers: {sembrados}",
+              flush=True)
 
 
 PICKUP_REQUESTS_TABLE = "pickup_requests"
@@ -13242,6 +13415,263 @@ def api_asignar_tarifa_fedex():
         import traceback
         print(f"[FEDEX ERROR] {ex}\n{traceback.format_exc()}")
         return jsonify({"error": f"Error FedEx API: {str(ex)}"}), 502
+
+
+# ════════════════════════════════════════════════════════════════
+#  COTIZADOR INTEGRAL DE COURIERS — todos los couriers en paralelo
+# ════════════════════════════════════════════════════════════════
+#  POST /api/asignar/cotizar-couriers
+#
+#  Devuelve cotización lado-a-lado de TODOS los couriers activos
+#  para un peso + comuna + valor dado. FedEx vía API (live), el resto
+#  vía tabla transport_courier_comunas. Paralelizado con
+#  ThreadPoolExecutor — objetivo <2s.
+# ────────────────────────────────────────────────────────────────
+
+@app.route("/api/asignar/cotizar-couriers", methods=["POST"])
+@login_required
+def api_asignar_cotizar_couriers():
+    """Cotiza TODOS los couriers activos en paralelo para el envío dado.
+
+    Body JSON:
+      {
+        "peso_kg": 173.89,
+        "peso_pred_kg": 173.89,   # opcional, si difiere del peso real
+        "comuna": "Lo Barnechea",
+        "es_residencial": false,
+        "valor_neto": 1571566
+      }
+
+    Response:
+      {
+        "ok": true,
+        "comuna_resuelta": "Lo Barnechea",
+        "peso_facturable": 174,
+        "cotizaciones": [
+          {
+            "courier_id": 1,
+            "courier_nombre": "FedEx",
+            "tiene_cobertura": true,
+            "fuente": "api"|"tabla"|"no_cobertura",
+            "precio": 126933,
+            "moneda": "CLP",
+            "tiempo_transito": "1-2 días",
+            "servicio": "FedEx Standard",
+            "logo_url": "...",
+            "subtotal": 126933,
+            "mensaje": null
+          },
+          ...
+        ],
+        "recomendado_id": 2   # el más barato con cobertura
+      }
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    import concurrent.futures as _cf
+    import time as _t_start
+
+    t0 = _t_start.time()
+    data       = request.get_json(silent=True) or {}
+    peso_kg    = float(data.get("peso_kg") or 0)
+    peso_pred  = float(data.get("peso_pred_kg") or peso_kg or 0)
+    comuna     = (data.get("comuna") or "").strip()
+    es_resid   = bool(data.get("es_residencial", False))
+    valor_neto = float(data.get("valor_neto", 0) or 0)
+
+    # El peso facturable es max(peso_pred, peso_kg, 0.5)
+    peso_fact = max(peso_pred, peso_kg, 0.5)
+
+    if peso_fact <= 0:
+        return jsonify({"error": "Peso debe ser mayor a 0"}), 400
+    if not comuna:
+        return jsonify({"error": "Comuna requerida para cotizar"}), 400
+
+    # 1) Couriers activos + tarifas de la comuna en UN solo round-trip
+    # Esto evita 9 queries serializadas (200ms cada una = 1.8s ahorrados).
+    try:
+        couriers = mysql_fetchall(
+            "SELECT id, nombre, logo_url, logo_square_url, tipo "
+            "FROM transport_couriers WHERE activo=1 ORDER BY nombre"
+        ) or []
+    except Exception as e:
+        return jsonify({"error": f"Error cargando couriers: {e}"}), 500
+
+    if not couriers:
+        return jsonify({"ok": True, "cotizaciones": [], "recomendado_id": None,
+                        "peso_facturable": round(peso_fact, 1),
+                        "comuna_resuelta": comuna,
+                        "mensaje": "No hay couriers activos configurados."})
+
+    # Pre-cargar tarifas de la comuna para TODOS los couriers en una query
+    # → mapa {courier_id: {precios_json, dias_transito, zona}}
+    try:
+        tarifa_rows = mysql_fetchall(
+            "SELECT courier_id, precios_json, dias_transito, zona "
+            "FROM transport_courier_comunas "
+            "WHERE LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
+            (comuna,)
+        ) or []
+        tarifa_map = {r['courier_id']: r for r in tarifa_rows}
+    except Exception as e:
+        print(f"[cotizar-couriers] error pre-load tarifas: {e}", flush=True)
+        tarifa_map = {}
+
+    # Capturar el app actual para que los hilos pushen su propio app_context (sólo FedEx)
+    _flask_app = app
+
+    # Helper: resolver precio desde precios_json + peso (sin hit MySQL)
+    def _resolve_precio(precios_json_raw, peso_kg):
+        if not precios_json_raw:
+            return None
+        try:
+            precios = json.loads(precios_json_raw)
+        except Exception:
+            return None
+        brackets = []
+        for key, price in precios.items():
+            if price is None:
+                continue
+            upper = _parse_peso_upper(key)
+            try:
+                brackets.append((upper, float(price)))
+            except Exception:
+                pass
+        if not brackets:
+            return None
+        brackets.sort(key=lambda x: x[0])
+        for upper, price in brackets:
+            if peso_kg <= upper:
+                return price
+        return brackets[-1][1]
+
+    # 2) Función worker que cotiza UN courier
+    # FedEx hace I/O (API HTTP) → necesita su propio app_context para el token cache.
+    # Otros couriers leen del tarifa_map pre-cargado → puro CPU, no necesitan MySQL.
+    def _cotizar_uno(c):
+        cid       = c['id']
+        nombre    = c['nombre'] or ''
+        is_fedex  = (nombre.strip().lower() == 'fedex')
+        logo      = c.get('logo_url') or c.get('logo_square_url')
+
+        try:
+            if is_fedex:
+                postal = _comuna_to_postal(comuna)
+                if not postal:
+                    # Sin postal → intentar fallback a tabla si existe
+                    pass
+                else:
+                    try:
+                        with _flask_app.app_context():
+                            result = _fedex_calc_rate(peso_fact, postal, es_residencial=es_resid)
+                    except Exception as _ex_fedex:
+                        # API caída o timeout → fallback a tabla
+                        print(f"[cotizar fedex API] fallback: {_ex_fedex}", flush=True)
+                        result = {"error": "api_down"}
+
+                    if isinstance(result, dict) and not result.get("error"):
+                        costo_base = float(result.get("tarifa", 0))
+                        recargo_resid = 4200 if es_resid else 0
+                        precio_final = costo_base + recargo_resid
+                        return {
+                            "courier_id": cid, "courier_nombre": nombre,
+                            "logo_url": logo,
+                            "tiene_cobertura": True,
+                            "fuente": "api",
+                            "precio":          round(precio_final, 0),
+                            "moneda":          result.get("moneda", "CLP"),
+                            "tiempo_transito": result.get("tiempo_transito", "24h"),
+                            "servicio":        result.get("servicio", "FedEx Standard"),
+                            "subtotal":        round(precio_final, 0),
+                            "recargos":        result.get("recargos", []),
+                            "mensaje":         None,
+                        }
+
+            # Tabla — usa el map pre-cargado, sin hit a MySQL
+            row_meta = tarifa_map.get(cid)
+            if not row_meta:
+                return {
+                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                    "tiene_cobertura": False, "fuente": "no_cobertura",
+                    "mensaje": f"Sin cobertura para {comuna}",
+                }
+            precio = _resolve_precio(row_meta.get('precios_json'), peso_fact)
+            if precio is None:
+                return {
+                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                    "tiene_cobertura": False, "fuente": "no_cobertura",
+                    "mensaje": f"Sin cobertura para {comuna} con peso {peso_fact:.1f}kg",
+                }
+            return {
+                "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                "tiene_cobertura": True,
+                "fuente": "tabla" if not is_fedex else "tabla_fallback",
+                "precio":   round(float(precio), 0),
+                "moneda":   "CLP",
+                "tiempo_transito": row_meta.get('dias_transito') or '2-3 días',
+                "servicio": 'Standard',
+                "subtotal": round(float(precio), 0),
+                "mensaje":  None,
+            }
+        except Exception as ex_each:
+            print(f"[cotizar courier {nombre}] error: {ex_each}", flush=True)
+            return {
+                "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                "tiene_cobertura": False, "fuente": "error",
+                "mensaje": "Error al cotizar",
+            }
+
+    # 3) Ejecutar TODAS las cotizaciones en paralelo
+    cotizaciones = []
+    max_workers = min(len(couriers), 8) or 1
+    with _cf.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_cotizar_uno, c): c for c in couriers}
+        try:
+            for fut in _cf.as_completed(futures, timeout=10):
+                try:
+                    cotizaciones.append(fut.result(timeout=0.5))
+                except Exception as e_fut:
+                    c = futures[fut]
+                    cotizaciones.append({
+                        "courier_id": c['id'],
+                        "courier_nombre": c['nombre'],
+                        "logo_url": c.get('logo_url'),
+                        "tiene_cobertura": False,
+                        "fuente": "error",
+                        "mensaje": f"Timeout o error: {e_fut}",
+                    })
+        except _cf.TimeoutError:
+            # Si superamos el timeout global, marcamos los que no respondieron
+            for fut, c in futures.items():
+                if not fut.done():
+                    cotizaciones.append({
+                        "courier_id": c['id'],
+                        "courier_nombre": c['nombre'],
+                        "logo_url": c.get('logo_url'),
+                        "tiene_cobertura": False,
+                        "fuente": "timeout",
+                        "mensaje": "Tiempo de cotización excedido",
+                    })
+
+    # 4) Ordenar (con cobertura primero, sin cobertura al final) y elegir recomendado
+    con_cobertura = [c for c in cotizaciones if c.get('tiene_cobertura')]
+    sin_cobertura = [c for c in cotizaciones if not c.get('tiene_cobertura')]
+    con_cobertura.sort(key=lambda c: float(c.get('subtotal') or c.get('precio') or 99999999))
+    cotizaciones_ord = con_cobertura + sin_cobertura
+
+    recomendado_id = con_cobertura[0]['courier_id'] if con_cobertura else None
+
+    elapsed = round(_t_start.time() - t0, 3)
+    return jsonify({
+        "ok":               True,
+        "comuna_resuelta":  comuna,
+        "peso_facturable":  round(peso_fact, 1),
+        "cotizaciones":     cotizaciones_ord,
+        "recomendado_id":   recomendado_id,
+        "total_couriers":   len(cotizaciones),
+        "tiempo_seg":       elapsed,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════

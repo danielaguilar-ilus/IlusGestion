@@ -751,10 +751,10 @@
 //  ESTADO GLOBAL
 // ════════════════════════════════════════════════════════════
 let _docData      = null;
-let _courierSel   = null;
-let _precioFedex  = null;
-let _zonaActual   = null;   // '1'..'6'
-let _preciosManuales = { starken:null, blue:null, chilexpress:null, felca:null, milling:null };
+let _courierSel   = null;   // ahora es objeto {id, nombre, precio, transito, ...} o null
+let _precioFedex  = null;   // legacy — el cotizador unificado lo deja en _cotizaciones
+let _zonaActual   = null;   // '1'..'6' — sólo informativo para el badge de zona
+let _preciosManuales = {};  // legacy — ya no se usa (cotización viene del backend)
 
 // ════════════════════════════════════════════════════════════
 //  FORMATO NUMÉRICO CHILENO
@@ -966,21 +966,25 @@ document.addEventListener('click', e=>{
 function onComunaChange(val){
   const zona = getZona(val);
   _zonaActual = zona;
+  // Sincronizar _docData.header.comuna también (lo lee el cotizador)
+  if(_docData && _docData.header) _docData.header.comuna = val || '';
   if(zona){
     document.getElementById('zonaDetectadaWrap').style.display='';
-    document.getElementById('avisoComuna').style.display='none';
     document.getElementById('zonaDetectadaTag').textContent = 'Col. '+zona;
     document.getElementById('zonaDetectadaNombre').textContent = ZONA_NOMBRES[zona]||'';
-    // Desbloquear couriers
-    document.getElementById('courierList').classList.remove('courier-locked');
-    // Calcular automáticamente
-    actualizarTarifas();
   } else {
     document.getElementById('zonaDetectadaWrap').style.display='none';
+  }
+  if((val||'').trim()){
+    document.getElementById('avisoComuna').style.display='none';
+    document.getElementById('courierList').classList.remove('courier-locked');
+    actualizarTarifas();
+  } else {
     document.getElementById('avisoComuna').style.display='';
     document.getElementById('courierList').classList.add('courier-locked');
-    _precioFedex = null;
-    renderCouriers(null);
+    _cotizaciones = [];
+    _recomendadoId = null;
+    renderCouriers();
   }
 }
 
@@ -1470,163 +1474,275 @@ function renderDoc(d, elapsedMs){
 }
 
 // ════════════════════════════════════════════════════════════
-//  COURIERS
+//  COURIERS — Cotización integral (todos en paralelo)
 // ════════════════════════════════════════════════════════════
-const COURIERS_FIJOS = [
-  {id:'fedex',      nombre:'FedEx',          logo:'<b style="color:#4D148C;font-size:.9rem">Fed<span style="color:#FF6200">Ex</span></b>', svc:'Priority Overnight', etd:'24 horas'},
-  {id:'starken',    nombre:'Starken',         logo:'<b style="color:#e53e3e;font-size:.9rem">★ Starken</b>',                               svc:'Regular',            etd:'24 - 48 horas'},
-  {id:'blue',       nombre:'Blue Express',    logo:'<b style="color:#2563eb;font-size:.9rem">blue</b>',                                    svc:'Estándar',           etd:'48 - 72 horas'},
-  {id:'chilexpress',nombre:'Chilexpress',     logo:'<b style="color:#e5a900;font-size:.82rem">//chilexpress</b>',                          svc:'Estándar',           etd:'24 - 72 horas'},
-  {id:'felca',      nombre:'Trans. Felca',    logo:'<b style="color:#888;font-size:.82rem">Trans. Felca</b>',                              svc:'Terrestre',          etd:'48 - 72 horas'},
-  {id:'milling',    nombre:'Trans. Milling',  logo:'<b style="color:#888;font-size:.82rem">Trans. Milling</b>',                            svc:'Terrestre',          etd:'48 - 72 horas'},
-];
+// Estado: _cotizaciones se llena desde /api/asignar/cotizar-couriers
+// _courierSel ahora guarda { id, nombre, precio, ... } del seleccionado.
+// _recomendadoId: id del courier con menor precio (cobertura sí).
 
-// Cache JS de respuestas FedEx — evita re-llamadas con los mismos inputs
-const _fedexCache = new Map();   // key → {costo, ts}
-const _fedexCacheTTL = 90_000;   // 90s
-let _fedexDebounceTimer = null;
+let _cotizaciones    = [];      // Array de {courier_id, courier_nombre, precio, ...}
+let _recomendadoId   = null;
+const _cotCache      = new Map();
+const _cotCacheTTL   = 90_000;
+let _cotDebounceTimer = null;
 
-function actualizarTarifas(){
-  // Debounce 200ms para que clicks rápidos en checkbox no disparen N llamadas
-  clearTimeout(_fedexDebounceTimer);
-  _fedexDebounceTimer = setTimeout(_actualizarTarifasReal, 200);
+// Logos hardcodeados por nombre — se usa si el courier en BD no tiene logo_url
+const _COURIER_LOGOS = {
+  'fedex':                '<b style="color:#4D148C;font-size:.92rem">Fed<span style="color:#FF6200">Ex</span></b>',
+  'starken':              '<b style="color:#e53e3e;font-size:.86rem">★ Starken</b>',
+  'blue express':         '<b style="color:#2563eb;font-size:.86rem">blue</b>',
+  'chilexpress':          '<b style="color:#e5a900;font-size:.78rem">//chilexpress</b>',
+  'clickex':              '<b style="color:#0ea5e9;font-size:.86rem">⚡ Clickex</b>',
+  'transporte felca':     '<b style="color:#6b7280;font-size:.78rem">Trans. Felca</b>',
+  'transportes milling':  '<b style="color:#6b7280;font-size:.78rem">Trans. Milling</b>',
+  'transportes melling':  '<b style="color:#6b7280;font-size:.78rem">Trans. Milling</b>',
+  'envíame':              '<b style="color:#16a34a;font-size:.86rem">Envíame</b>',
+  'enviame':              '<b style="color:#16a34a;font-size:.86rem">Envíame</b>',
+};
+
+function _logoFor(c){
+  if(c.logo_url) return `<img src="${c.logo_url}" alt="" style="max-height:22px;max-width:90px;object-fit:contain">`;
+  const key = (c.courier_nombre||'').trim().toLowerCase();
+  if(_COURIER_LOGOS[key]) return _COURIER_LOGOS[key];
+  return `<b style="color:#374151;font-size:.82rem">${escHtml(c.courier_nombre||'—')}</b>`;
 }
 
-async function _actualizarTarifasReal(){
-  if(!_docData || !_zonaActual) return;
-  const resid  = document.getElementById('chkResid').checked;
-  const remoto = document.getElementById('chkRemoto').checked;
+function actualizarTarifas(){
+  // Debounce 200ms para evitar N llamadas en clicks rápidos
+  clearTimeout(_cotDebounceTimer);
+  _cotDebounceTimer = setTimeout(_actualizarCotizacionesReal, 200);
+}
 
-  // Construir clave de cache con TODOS los inputs
+async function _actualizarCotizacionesReal(){
+  if(!_docData) return;
+  const comuna = (_docData.header.comuna || document.getElementById('cli-comuna')?.value || '').trim();
+  if(!comuna){
+    _cotizaciones = [];
+    renderCouriers();
+    return;
+  }
+  const resid = document.getElementById('chkResid')?.checked || false;
+
   const cacheKey = JSON.stringify({
-    peso: _docData.totales.peso_pred,
-    zona: _zonaActual,
-    resid, remoto,
-    valor: _docData.header.valor_neto,
+    peso:   _docData.totales.peso_pred,
+    pesokg: _docData.totales.peso_kg,
+    comuna, resid,
+    valor:  _docData.header.valor_neto,
   });
-  const cached = _fedexCache.get(cacheKey);
-  if (cached && (Date.now() - cached.ts) < _fedexCacheTTL){
-    _precioFedex = cached.costo;
-    renderCouriers(_precioFedex);
+  const cached = _cotCache.get(cacheKey);
+  if(cached && (Date.now() - cached.ts) < _cotCacheTTL){
+    _cotizaciones  = cached.cot;
+    _recomendadoId = cached.rec;
+    renderCouriers();
     return;
   }
 
-  renderCouriers(null); // loading state
-
+  renderCouriers({loading:true});
   try {
-    const r = await fetch('/api/asignar/tarifa-fedex',{
+    const r = await fetch('/api/asignar/cotizar-couriers', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
-        peso_pred:      _docData.totales.peso_pred,
-        zona_id:        _zonaActual,
+        peso_kg:        _docData.totales.peso_kg,
+        peso_pred_kg:   _docData.totales.peso_pred,
+        comuna:         comuna,
         es_residencial: resid,
-        es_remoto:      remoto,
-        valor_neto:     _docData.header.valor_neto,
+        valor_neto:     _docData.header.valor_neto || 0,
       })
     });
     const d = await r.json();
-    _precioFedex = d.ok ? d.costo_total : null;
-    if (_precioFedex !== null){
-      _fedexCache.set(cacheKey, { costo: _precioFedex, ts: Date.now() });
-      // Limpieza simple: limitar a 50 entradas
-      if (_fedexCache.size > 50){
-        const firstKey = _fedexCache.keys().next().value;
-        _fedexCache.delete(firstKey);
-      }
+    if(!r.ok || d.error) throw new Error(d.error || ('HTTP '+r.status));
+    _cotizaciones  = d.cotizaciones || [];
+    _recomendadoId = d.recomendado_id || null;
+    _cotCache.set(cacheKey, { cot: _cotizaciones, rec: _recomendadoId, ts: Date.now() });
+    if(_cotCache.size > 30){
+      _cotCache.delete(_cotCache.keys().next().value);
     }
   } catch(e){
-    _precioFedex = null;
+    console.warn('[cotizar-couriers] error:', e);
+    _cotizaciones  = [];
+    _recomendadoId = null;
+    if(window.ilusToast) ilusToast('Error al cotizar: '+e.message, {type:'error'});
   }
-  renderCouriers(_precioFedex);
+  renderCouriers();
 }
 
-function renderCouriers(fedexPrice){
+function renderCouriers(opts){
   const list = document.getElementById('courierList');
-  let html = '';
-  for(const c of COURIERS_FIJOS){
-    const isFedex = c.id === 'fedex';
-    const precio  = isFedex ? fedexPrice : _preciosManuales[c.id];
-    let priceHtml;
-    if(isFedex){
-      if(fedexPrice == null){
-        priceHtml = '<span class="courier-price loading">Calculando…</span>';
-      } else {
-        const zzVal = (_docData && _docData.zzenvio_valor) ? _docData.zzenvio_valor : 0;
-        let profitHtml = '';
-        if(zzVal > 0){
-          const diff = zzVal - fedexPrice;
-          const pct  = Math.abs(diff / zzVal * 100).toFixed(1);
-          const color = diff >= 0 ? 'var(--c-green,#22c55e)' : 'var(--c-red,#CC0000)';
-          const icon  = diff >= 0 ? '▲' : '▼';
-          const txt   = diff >= 0 ? `ganando ${fClp(diff)}` : `perdiendo ${fClp(-diff)}`;
-          profitHtml = `<div style="font-size:.67rem;color:${color};font-weight:700;margin-top:4px;letter-spacing:.3px">${icon} ${pct}% ${txt}</div>`;
-        }
-        priceHtml = `<div class="courier-price">${fClp(fedexPrice)}</div>${profitHtml}`;
-      }
-    } else {
-      priceHtml = `
-        <div style="display:flex;align-items:center;gap:4px">
-          <span style="color:#555;font-size:.72rem">$</span>
-          <input type="number" placeholder="—" value="${precio||''}"
-            onmousedown="event.stopPropagation()"
-            onclick="event.stopPropagation()"
-            onchange="_preciosManuales['${c.id}']=this.value?parseFloat(this.value):null;renderCouriers(_precioFedex)"
-            style="width:88px;background:#141414;border:1px solid var(--c-border);
-                   border-radius:6px;color:#fff;padding:5px 8px;font-size:.85rem;
-                   font-weight:700;text-align:right;outline:none">
+  if(!list) return;
+
+  // Loading state
+  if(opts && opts.loading){
+    list.innerHTML = `
+      <div style="text-align:center;padding:24px 12px;color:#9ca3af">
+        <i class="bi bi-arrow-clockwise" style="font-size:1.6rem;animation:spin 1s linear infinite;display:inline-block"></i>
+        <div style="margin-top:8px;font-size:.82rem">Cotizando con todos los couriers…</div>
+      </div>`;
+    return;
+  }
+
+  if(!_cotizaciones || !_cotizaciones.length){
+    list.innerHTML = `
+      <div class="empty-state">
+        <i class="bi bi-truck"></i>
+        <p>Define la comuna destino para cotizar con los couriers disponibles.</p>
+      </div>`;
+    return;
+  }
+
+  const conCob = _cotizaciones.filter(c => c.tiene_cobertura);
+  const sinCob = _cotizaciones.filter(c => !c.tiene_cobertura);
+  const zzVal  = (_docData && _docData.zzenvio_valor) ? _docData.zzenvio_valor : 0;
+
+  // Header: recomendado + ZZ envío comparativa
+  let head = '';
+  if(_recomendadoId){
+    const rec = conCob.find(c => c.courier_id === _recomendadoId);
+    if(rec){
+      head = `
+        <div style="background:linear-gradient(90deg,#fffbeb 0%,#fff 100%);border:1.5px solid #f59e0b;
+                    border-radius:9px;padding:8px 12px;margin-bottom:10px;font-size:.82rem;
+                    display:flex;align-items:center;gap:8px">
+          <span style="font-size:1.1rem">🏆</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;color:#92400e">Recomendado: ${escHtml(rec.courier_nombre)}</div>
+            <div style="font-size:.7rem;color:#9a6411">${fClp(rec.precio)} · ${escHtml(rec.tiempo_transito||'—')}</div>
+          </div>
         </div>`;
     }
-    const sel = _courierSel === c.id;
+  }
+
+  // Render con cobertura
+  let html = head;
+  for(const c of conCob){
+    const sel = (_courierSel && _courierSel.id === c.courier_id);
+    const isRec = (c.courier_id === _recomendadoId);
+
+    let badgeProfit = '';
+    if(zzVal > 0 && c.precio){
+      const diff = zzVal - c.precio;
+      const color = diff >= 0 ? '#16a34a' : '#dc2626';
+      const icon  = diff >= 0 ? '▲' : '▼';
+      const txt   = diff >= 0 ? `+${fClp(diff)}` : `${fClp(diff)}`;
+      const margenLabel = diff >= 0 ? 'margen' : 'pérdida';
+      badgeProfit = `<div style="font-size:.65rem;color:${color};font-weight:700;margin-top:3px;letter-spacing:.3px">
+        ${icon} ${txt} ${margenLabel}
+      </div>`;
+    }
+
+    const recIcon  = isRec ? ' <span title="Más económico" style="font-size:.75rem">🏆</span>' : '';
+    const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
+    const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
+                   c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
+                   '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
+
     html += `
-    <div class="courier-item${sel?' selected':''}" onclick="setCourier('${c.id}')">
+    <div class="courier-item${sel?' selected':''}" onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
       <div class="courier-radio"></div>
-      <div style="min-width:85px">${c.logo}</div>
+      <div style="min-width:96px;display:flex;align-items:center;justify-content:flex-start">${_logoFor(c)}</div>
       <div class="courier-info">
-        <div class="courier-name">${c.nombre}</div>
-        <div class="courier-svc">${c.svc}</div>
-        <div class="courier-etd">${c.etd}</div>
+        <div class="courier-name">${escHtml(c.courier_nombre)}${recIcon}${profitIcon}</div>
+        <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
+        <div class="courier-etd">${escHtml(c.tiempo_transito||'—')} ${fuente}</div>
       </div>
-      <div style="text-align:right;min-width:90px">${priceHtml}</div>
+      <div style="text-align:right;min-width:96px">
+        <div class="courier-price">${fClp(c.precio)}</div>
+        ${badgeProfit}
+      </div>
     </div>`;
   }
+
+  // Render sin cobertura (colapsable)
+  if(sinCob.length){
+    html += `
+      <details style="margin-top:6px">
+        <summary style="cursor:pointer;color:#9ca3af;font-size:.74rem;padding:7px 10px;
+                        background:#f9fafb;border-radius:6px;list-style:none;display:flex;
+                        align-items:center;justify-content:space-between">
+          <span><i class="bi bi-x-circle me-1"></i>Sin cobertura: ${sinCob.length} courier${sinCob.length>1?'s':''}</span>
+          <span style="font-size:.66rem;opacity:.6">click para expandir</span>
+        </summary>
+        <div style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
+          ${sinCob.map(c => `
+            <div style="display:flex;align-items:center;gap:10px;padding:7px 12px;
+                       border:1px dashed #e5e7eb;border-radius:7px;background:#fafafa;opacity:.7">
+              <div style="min-width:96px">${_logoFor(c)}</div>
+              <div style="flex:1;font-size:.74rem;color:#6b7280">
+                <b>${escHtml(c.courier_nombre)}</b><br>
+                <span style="font-size:.66rem">${escHtml(c.mensaje||'Sin cobertura')}</span>
+              </div>
+            </div>`).join('')}
+        </div>
+      </details>`;
+  }
+
   list.innerHTML = html;
 }
 
-function setCourier(id){
-  _courierSel = id;
-  renderCouriers(_precioFedex);
+function setCourier(c){
+  // c es {courier_id, courier_nombre, precio, ...} de _cotizaciones
+  if(typeof c === 'string'){
+    // Compat con llamadas legacy si quedan en algún lado — buscar por nombre
+    const found = _cotizaciones.find(x => (x.courier_nombre||'').toLowerCase() === c.toLowerCase());
+    if(found) c = found;
+    else return;
+  }
+  _courierSel = {
+    id:        c.courier_id,
+    nombre:    c.courier_nombre,
+    precio:    c.precio,
+    transito:  c.tiempo_transito,
+    fuente:    c.fuente,
+    servicio:  c.servicio,
+  };
+  renderCouriers();
 }
 
 // ════════════════════════════════════════════════════════════
 //  VALIDACIÓN MANIFIESTO
 // ════════════════════════════════════════════════════════════
-function validarParaManifiesto(){
-  if(!_docData){ alert('Carga un documento primero.'); return false; }
+async function validarParaManifiesto(){
+  if(!_docData){
+    await ilusAlert({title:'Documento requerido', message:'Carga un documento primero.', type:'warning'});
+    return false;
+  }
 
   const campos = [
-    { id:'cli-email',  nombre:'Email',       tipo:'input' },
-    { id:'cli-tel',    nombre:'Teléfono',     tipo:'input' },
-    { id:'cli-dir',    nombre:'Dirección',    tipo:'input' },
-    { id:'cli-bultos', nombre:'Total Bultos', tipo:'input' },
-    { id:'cli-comuna', nombre:'Comuna',       tipo:'input' },
+    { id:'cli-email',  nombre:'Email' },
+    { id:'cli-tel',    nombre:'Teléfono' },
+    { id:'cli-dir',    nombre:'Dirección' },
+    { id:'cli-bultos', nombre:'Total Bultos' },
+    { id:'cli-comuna', nombre:'Comuna' },
   ];
   const vacios = campos.filter(c => !(document.getElementById(c.id)?.value||'').trim());
   if(vacios.length){
-    alert('⚠ Completa los siguientes campos antes de enviar al manifiesto:\n\n' +
-      vacios.map(c=>'• '+c.nombre).join('\n'));
+    await ilusAlert({
+      title:'Faltan datos',
+      message:'Completa los siguientes campos antes de asignar al manifiesto:',
+      sub: vacios.map(c=>'• '+c.nombre).join('<br>'),
+      subHtml:true,
+      type:'warning',
+    });
     document.getElementById(vacios[0].id)?.focus();
     return false;
   }
   // Validar teléfono
   const tel = document.getElementById('cli-tel').value.replace(/\s/g,'');
   if(!/^\+56\d{9}$/.test(tel)){
-    alert('⚠ El teléfono debe estar en formato +56 9 XXXX XXXX (9 dígitos después del +56).');
+    await ilusAlert({
+      title:'Teléfono inválido',
+      message:'El teléfono debe estar en formato +56 9 XXXX XXXX (9 dígitos después del +56).',
+      type:'warning',
+    });
     document.getElementById('cli-tel').focus();
     return false;
   }
-  if(!_courierSel){
-    alert('⚠ Selecciona un courier antes de enviar al manifiesto.');
+  if(!_courierSel || !_courierSel.id){
+    await ilusAlert({
+      title:'Selecciona un courier',
+      message:'Elige un courier de la lista antes de asignar al manifiesto.',
+      type:'warning',
+    });
     return false;
   }
   return true;
@@ -1635,20 +1751,15 @@ function validarParaManifiesto(){
 // ════════════════════════════════════════════════════════════
 //  ACCIONES
 // ════════════════════════════════════════════════════════════
-const _COURIER_NAMES = {
-  fedex:'FedEx', starken:'Starken', blue:'Blue Express',
-  chilexpress:'Chilexpress', felca:'Trans. Felca', milling:'Trans. Milling'
-};
-
-function enviarManifiesto(){
-  if(!validarParaManifiesto()) return;
+async function enviarManifiesto(){
+  if(!(await validarParaManifiesto())) return;
   abrirEnvioManifiesto();
 }
 
 async function abrirEnvioManifiesto(){
   const h = _docData.header || {};
-  const courierNom = _COURIER_NAMES[_courierSel] || _courierSel;
-  const costo = (_courierSel === 'fedex') ? _precioFedex : (_preciosManuales?.[_courierSel] || 0);
+  const courierNom = _courierSel?.nombre || '—';
+  const costo      = _courierSel?.precio || 0;
 
   // Resumen del envío en el modal
   document.getElementById('mfResumen').innerHTML = `
@@ -1719,8 +1830,8 @@ async function enviarAManifiesto(){
   const modo = modoEl ? modoEl.value : 'existente';
   const tido = document.getElementById('docTipo').value;
   const nudo = (document.getElementById('docNudo').value || '').trim();
-  const courierNom = _COURIER_NAMES[_courierSel] || _courierSel;
-  const costo = (_courierSel === 'fedex') ? _precioFedex : (_preciosManuales?.[_courierSel] || 0);
+  const courierNom = _courierSel?.nombre || '';
+  const costo      = _courierSel?.precio || 0;
 
   const payload = {
     tido, nudo,
