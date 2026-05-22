@@ -1364,10 +1364,6 @@ const TPL_ESTADOS_TRANSPORTE = [
     color:'#20c997', desc:'Se envía cuando el pedido fue entregado exitosamente' },
   { key:'fallido',       label:'Fallido / No entregado',   icon:'bi-x-circle',          grupo:'despacho',
     color:'#dc3545', desc:'Se envía cuando el courier no pudo entregar el pedido' },
-  { key:'inicio_sesion', label:'Inicio de sesión',          icon:'bi-box-arrow-in-right',grupo:'sistema',
-    color:'#6f42c1', desc:'Se envía cuando alguien inicia sesión en la cuenta' },
-  { key:'cambio_pass',   label:'Cambio de contraseña',     icon:'bi-key',               grupo:'sistema',
-    color:'#fd7e14', desc:'Se envía cuando se cambia o crea la contraseña del usuario' },
 ];
 
 const TPL_ESTADOS_RETIROS = [
@@ -1410,9 +1406,13 @@ const TPL_ESTADOS_COMUNICACION_INTERNA = [
   { key:'usuario_nuevo',       label:'Crear usuario nuevo',     icon:'bi-person-plus',  grupo:'interna',
     color:'#dc2626', desc:'Email + WhatsApp de bienvenida al crear cuenta nueva' },
   { key:'cambio_clave',        label:'Cambio de contraseña',    icon:'bi-key',          grupo:'interna',
-    color:'#fd7e14', desc:'Aviso cuando se cambia la contraseña del usuario' },
+    color:'#fd7e14', desc:'Solicitud para cambiar la contraseña del usuario (link de reset)' },
   { key:'olvido_contrasena',   label:'Olvido de contraseña',    icon:'bi-shield-lock',  grupo:'interna',
     color:'#6f42c1', desc:'Link de recuperación cuando el usuario olvidó su clave' },
+  { key:'inicio_sesion',       label:'Inicio de sesión',        icon:'bi-box-arrow-in-right', grupo:'interna',
+    color:'#0ea5e9', desc:'Aviso de seguridad cuando se inicia sesión en la cuenta' },
+  { key:'cambio_pass',         label:'Contraseña actualizada',  icon:'bi-shield-check', grupo:'interna',
+    color:'#16a34a', desc:'Confirmación al usuario de que su contraseña fue actualizada' },
 ];
 
 const TPL_ESTADOS_GENERAL = [];
@@ -1679,6 +1679,42 @@ const TPL_DEFAULTS = {
     whatsapp: {
       asunto: '',
       cuerpo: '📄 *ILUS Sport & Health*\n\nHola *{{cliente}}*, tu contrato de servicio está próximo a vencer.\n\n🏢 *Cliente:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n📅 *Vence:* {{fecha}}\n\nNuestro equipo te contactará para coordinar la renovación.'
+    }
+  },
+
+  // ─── USUARIO NUEVO (BIENVENIDA) ──────────────────────────────────────────
+  usuario_nuevo: {
+    email: {
+      asunto: 'Bienvenido al sistema ILUS — Activa tu cuenta',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu cuenta en el sistema de gestión <strong>ILUS Sport &amp; Health</strong> fue creada por <strong>{{creado_por}}</strong>. Estás a un paso de empezar a usarla.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Usuario:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; <span style="color:#dc2626;font-weight:700">{{rol}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Creado por:</strong>&nbsp; {{creado_por}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Crear mi contraseña →</a>\n</div>\n<p style="margin:0;font-size:12px;color:#888;line-height:1.5">El enlace es válido por 24 horas. Si no creaste esta cuenta, ignora este mensaje o contacta al administrador.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🎉 *ILUS Sport & Health*\n\nHola *{{nombre_usuario}}*, tu cuenta fue creada por *{{creado_por}}*.\n\n📧 *Usuario:* {{email_usuario}}\n🎯 *Rol:* {{rol}}\n\nActiva tu cuenta y crea tu contraseña aquí:\n{{link_acceso}}\n\nEnlace válido por 24 horas.'
+    }
+  },
+
+  // ─── CAMBIO DE CONTRASEÑA (SOLICITUD / RESET) ────────────────────────────
+  cambio_clave: {
+    email: {
+      asunto: 'Cambio seguro de contraseña — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Recibimos una solicitud para <strong>cambiar la contraseña</strong> de tu cuenta en el sistema de gestión ILUS. Si fuiste tú, haz click en el botón para establecer una nueva.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Cambiar contraseña →</a>\n</div>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. Si <strong>no solicitaste</strong> este cambio, ignora este mensaje — tu contraseña actual sigue siendo válida.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, recibimos una solicitud para cambiar tu contraseña.\n\n📧 *Cuenta:* {{email_usuario}}\n🕐 *Fecha:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n\nUsa este enlace (válido por 60 min):\n{{link_acceso}}\n\nSi *no fuiste tú*, ignora este mensaje.'
+    }
+  },
+
+  // ─── OLVIDO DE CONTRASEÑA (RECUPERACIÓN) ─────────────────────────────────
+  olvido_contrasena: {
+    email: {
+      asunto: 'Recupera el acceso a tu cuenta — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Indicaste que <strong>olvidaste tu contraseña</strong>. Para recuperar el acceso al sistema de gestión ILUS, haz click en el botón para crear una nueva.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6f42c1;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Solicitado el:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Recuperar mi contraseña →</a>\n</div>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. Si <strong>no solicitaste</strong> recuperar tu contraseña, ignora este mensaje — tu contraseña actual no fue modificada.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛡️ *ILUS — Recupera tu cuenta*\n\nHola *{{nombre_usuario}}*, indicaste que olvidaste tu contraseña.\n\n📧 *Cuenta:* {{email_usuario}}\n🕐 *Solicitado:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n\nRecupera tu acceso (válido por 60 min):\n{{link_acceso}}\n\nSi *no fuiste tú*, ignora este mensaje.'
     }
   },
 
