@@ -196,6 +196,18 @@
 }
 .kpi-cell-sub{font-size:.66rem;color:#9ca3af;margin-top:2px;font-weight:600;}
 
+/* KPI Tipo cliente — clickable (Daniel 22/05/2026)
+   Hover sube ligeramente la tile y refuerza la sombra para indicar
+   que es editable. La tile completa funciona como botón. */
+.kpi-cell.kpi-tipo-cliente:hover{
+  transform:translateY(-2px);
+  box-shadow:0 4px 12px rgba(0,0,0,.08);
+}
+.kpi-cell.kpi-tipo-cliente:focus-visible{
+  outline:2px solid #dc2626; outline-offset:2px;
+}
+.kpi-cell.kpi-tipo-cliente:active{ transform:translateY(0); }
+
 /* Info principal — grid de filas */
 .info-grid{display:flex;flex-direction:column;gap:6px;}
 .info-row{
@@ -860,8 +872,49 @@
        ───────────────────────────────────────────────────────────── #}
     <div class="col-12 col-xl-8">
 
-      {# ── 6 KPI CARDS — Estado general / Contrato / Mantención / Repuestos / Visita / Cumplimiento ── #}
+      {# ── 7 KPI CARDS — Tipo cliente / Estado / Contrato / Mantención / Equipos / Visita / Cumplimiento ── #}
       <div class="row g-2 mb-3">
+
+        {# 0. TIPO DE CLIENTE — click directo para cambiar (Daniel 22/05/2026)
+           Esta tile reemplaza la queja "dónde cambio el tipo cliente". Un click
+           abre el modal de edición con el select 'ec_tipo_cliente' enfocado.
+           Color por tipo: rojo Mantención · azul Arriendo · ámbar Leasing. #}
+        {% set _tc_kpi = (cliente.tipo_cliente or 'mantencion')|lower %}
+        {% if _tc_kpi == 'arriendo' %}
+          {% set tc_color = '#0891b2' %}{% set tc_bg = '#ecfeff' %}
+          {% set tc_lbl = 'Arriendo' %}{% set tc_icon = 'calendar-range-fill' %}
+        {% elif _tc_kpi == 'leasing' %}
+          {% set tc_color = '#f59e0b' %}{% set tc_bg = '#fffbeb' %}
+          {% set tc_lbl = 'Leasing' %}{% set tc_icon = 'cash-coin' %}
+        {% else %}
+          {% set tc_color = '#dc2626' %}{% set tc_bg = '#fef2f2' %}
+          {% set tc_lbl = 'Mantención' %}{% set tc_icon = 'wrench-adjustable' %}
+        {% endif %}
+        <div class="col-6 col-md-4">
+          {% if not is_tecnico %}
+          <div class="kpi-cell kpi-tipo-cliente" role="button" tabindex="0"
+               onclick="abrirEditarTipoCliente()"
+               onkeyup="if(event.key==='Enter')abrirEditarTipoCliente()"
+               style="background:{{ tc_bg }};border-left:3px solid {{ tc_color }};
+                      cursor:pointer;position:relative;transition:transform .12s ease"
+               title="Click para cambiar el tipo de cliente">
+          {% else %}
+          <div class="kpi-cell kpi-tipo-cliente"
+               style="background:{{ tc_bg }};border-left:3px solid {{ tc_color }}">
+          {% endif %}
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-{{ tc_icon }}" style="color:{{ tc_color }};font-size:1rem"></i>
+              <div class="kpi-cell-label" style="margin:0">Tipo cliente</div>
+              {% if not is_tecnico %}
+              <i class="bi bi-pencil ms-auto" style="color:{{ tc_color }};opacity:.55;font-size:.78rem"></i>
+              {% endif %}
+            </div>
+            <div class="kpi-cell-val" style="color:{{ tc_color }};font-size:1.1rem;font-weight:800">{{ tc_lbl }}</div>
+            <div class="kpi-cell-sub" style="color:{{ tc_color }};opacity:.85">
+              {% if not is_tecnico %}<i class="bi bi-cursor-fill me-1" style="font-size:.7rem"></i>Click para cambiar{% else %}Categoría comercial{% endif %}
+            </div>
+          </div>
+        </div>
 
         {# 1. Estado General #}
         {% set est_color = '#16a34a' if cliente.estado=='activo' else '#d97706' if cliente.estado=='prospecto' else '#6b7280' %}

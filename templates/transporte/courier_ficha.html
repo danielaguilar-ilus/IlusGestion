@@ -1088,9 +1088,10 @@ function renderTarifas(d) {
   // Header
   head.innerHTML = `<th>Código</th><th>Sucursal</th><th>Comuna</th><th>Zona</th>
     <th>Región</th><th>Días</th>
-    ${showKeys.map(k => `<th class="text-end">${esc(k)} kg</th>`).join('')}`;
+    ${showKeys.map(k => `<th class="text-end">${esc(k)} kg</th>`).join('')}
+    <th class="text-center" style="width:90px">Acciones</th>`;
 
-  // Rows
+  // Rows con botones de validar/editar tarifa
   const fmt = n => Math.round(n).toLocaleString('es-CL');
   body.innerHTML = d.rows.map(row => `
     <tr>
@@ -1102,8 +1103,21 @@ function renderTarifas(d) {
       <td class="text-center small">${esc(row.dias_transito||'—')}</td>
       ${showKeys.map(k => {
         const v = row.precios?.[k];
-        return `<td class="text-end fw-semibold small">${v != null ? '$'+fmt(v) : '<span class="text-muted">—</span>'}</td>`;
+        return `<td class="text-end fw-semibold small" data-comuna="${esc(row.comuna)}" data-bracket="${esc(k)}">
+          ${v != null
+            ? `<a href="#" onclick="event.preventDefault();editarPrecio('${esc(row.comuna)}','${esc(k)}',${v})"
+                 style="color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1"
+                 title="Click para editar este precio">$${fmt(v)}</a>`
+            : `<a href="#" onclick="event.preventDefault();editarPrecio('${esc(row.comuna)}','${esc(k)}',0)"
+                 style="color:#9ca3af;text-decoration:none" title="Crear este bracket">+</a>`}
+        </td>`;
       }).join('')}
+      <td class="text-center">
+        <button class="btn btn-outline-success btn-sm py-0 px-2" style="font-size:.66rem"
+                onclick="validarComuna('${esc(row.comuna)}')" title="Marcar tarifa como validada">
+          <i class="bi bi-shield-check"></i>
+        </button>
+      </td>
     </tr>`).join('');
 
   // Stats
@@ -1146,6 +1160,87 @@ async function calcularPrecio() {
       </div>`;
   } else {
     el.innerHTML = `<small class="text-danger">${esc(d.error)}</small>`;
+  }
+}
+
+/* ════════════════════════
+   EDICIÓN/VALIDACIÓN DE TARIFAS (con audit log)
+════════════════════════ */
+async function editarPrecio(comuna, bracket, precioActual) {
+  const raw = await ilusPrompt({
+    title: `Editar tarifa · ${comuna} · bracket ${bracket}`,
+    message: 'Nuevo precio (CLP entero):',
+    placeholder: 'Ej: 105237',
+    defaultValue: String(precioActual || ''),
+    required: true,
+  });
+  if (raw === null) return;
+  const precio = parseInt(String(raw).replace(/[.,$\s]/g,''), 10);
+  if (isNaN(precio) || precio <= 0) {
+    await ilusAlert({title:'Precio inválido', message:'Debe ser un número entero positivo.', type:'warning'});
+    return;
+  }
+  const motivo = await ilusPrompt({
+    title: 'Motivo del cambio',
+    message: '¿Por qué se está editando? (queda en audit log)',
+    placeholder: 'Ej: actualización tarifa nov-2026',
+    required: true,
+  });
+  if (motivo === null) return;
+
+  try {
+    const r = await fetch(`/api/transporte/couriers/${COURIER_ID}/tarifa-editar`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ comuna, bracket, precio_nuevo: precio, motivo }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+    ilusToast(`✓ Tarifa actualizada (audit #${d.audit_id})`, {type:'success'});
+    cargarTarifas(_tarPage);
+  } catch (e) {
+    await ilusAlert({title:'Error', message:e.message, type:'error'});
+  }
+}
+
+async function validarComuna(comuna) {
+  const bracket = await ilusPrompt({
+    title: `Validar tarifa · ${comuna}`,
+    message: 'Bracket a validar (ej: 100+, 50, 25):',
+    placeholder: '100+',
+    required: true,
+  });
+  if (bracket === null) return;
+  const raw = await ilusPrompt({
+    title: `Precio correcto · ${comuna} · ${bracket}`,
+    message: 'Precio validado contra Excel maestro (CLP):',
+    placeholder: 'Ej: 105237',
+    required: true,
+  });
+  if (raw === null) return;
+  const precio = parseInt(String(raw).replace(/[.,$\s]/g,''), 10);
+  if (isNaN(precio) || precio <= 0) {
+    await ilusAlert({title:'Precio inválido', type:'warning', message:'Debe ser un número positivo.'});
+    return;
+  }
+  const notas = await ilusPrompt({
+    title: 'Notas (opcional)',
+    message: 'Fuente o referencia:',
+    placeholder: 'Excel maestro 21/05/2026',
+    required: false,
+  });
+  if (notas === null) return;
+
+  try {
+    const r = await fetch(`/api/transporte/couriers/${COURIER_ID}/tarifa-validar`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ comuna, bracket, precio_correcto: precio, notas: notas || '' })
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+    ilusToast(`✓ Tarifa VALIDADA: ${comuna} · ${bracket} = $${precio.toLocaleString('es-CL')}`, {type:'success'});
+    cargarTarifas(_tarPage);
+  } catch (e) {
+    await ilusAlert({title:'Error', message:e.message, type:'error'});
   }
 }
 

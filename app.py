@@ -1696,6 +1696,58 @@ def init_transporte_tables():
                     UNIQUE KEY uq_courier_comuna (courier_id, comuna(100))
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── AUDIT LOG DE COTIZACIONES DE COURIERS ────────────────
+            # Cada cotización pasa por aquí (INSERT inmediato) más también las
+            # ediciones manuales y los "marcar como validada". Es la fuente
+            # de verdad para auditorías externas (FedEx) y para que Daniel
+            # pueda ver QUÉ bracket se aplicó a QUÉ caso histórico.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS courier_tariff_audit (
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    cotizacion_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    cotizado_por      VARCHAR(190),
+                    documento_tido    VARCHAR(10)  NULL,
+                    documento_nudo    VARCHAR(40)  NULL,
+                    comuna            VARCHAR(120),
+                    peso_kg           DECIMAL(10,2),
+                    peso_pred_kg      DECIMAL(10,2),
+                    courier_id        INT,
+                    courier_nombre    VARCHAR(120),
+                    bracket_aplicado  VARCHAR(40),
+                    precio_calculado  INT,
+                    formula_aplicada  VARCHAR(200),
+                    fuente            VARCHAR(40),
+                    validado          TINYINT(1) DEFAULT 0,
+                    notas             TEXT NULL,
+                    INDEX idx_doc            (documento_tido, documento_nudo),
+                    INDEX idx_courier_fecha  (courier_id, cotizacion_at),
+                    INDEX idx_comuna_fecha   (comuna, cotizacion_at),
+                    INDEX idx_fuente         (fuente)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # ── Migraciones idempotentes 22/05/2026: trazabilidad margen+IVA ──
+            # Daniel: el Excel es COSTO; el precio al cliente = costo × 1.30 × 1.19.
+            # Guardamos los 4 componentes para auditoría exhaustiva (FedEx puede
+            # pedir reconstruir cualquier cotización histórica con su breakdown).
+            for _mig_aud in [
+                "ALTER TABLE courier_tariff_audit ADD COLUMN precio_costo  INT NULL "
+                "  COMMENT 'Costo del Excel (lo que ILUS paga al courier)' AFTER precio_calculado",
+                "ALTER TABLE courier_tariff_audit ADD COLUMN margen_pct    DECIMAL(5,2) NULL "
+                "  COMMENT '% margen comercial aplicado'",
+                "ALTER TABLE courier_tariff_audit ADD COLUMN margen_clp    INT NULL "
+                "  COMMENT 'CLP de margen sobre costo'",
+                "ALTER TABLE courier_tariff_audit ADD COLUMN iva_pct       DECIMAL(5,2) NULL "
+                "  COMMENT '% IVA aplicado (Chile 19%)'",
+                "ALTER TABLE courier_tariff_audit ADD COLUMN iva_clp       INT NULL "
+                "  COMMENT 'CLP de IVA sobre subtotal_neto'",
+                "ALTER TABLE courier_tariff_audit ADD COLUMN precio_venta  INT NULL "
+                "  COMMENT 'Precio final al cliente (costo + margen + IVA)'",
+            ]:
+                try:
+                    cur.execute(_mig_aud)
+                except Exception:
+                    pass  # idempotente
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_courier_contratos (
                     id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -1768,9 +1820,164 @@ def init_transporte_tables():
                 _seed_courier_tarifas_demo(cur)
             except Exception as _exc:
                 print(f"[init_transporte] seed tarifas demo falló: {_exc}", flush=True)
+
+            # ── SEED VALIDADO: Lo Barnechea — caso muestra FCV 10644 (173.89kg) ───
+            # Precios extraídos del Excel maestro (auditoría 21/05/2026).
+            # Esto deja Lo Barnechea como comuna 100% validada para pruebas.
+            # OJO: este seed pisa los precios DEMO para Lo Barnechea — los datos
+            # del Excel son la verdad oficial. NO es idempotente en el sentido
+            # estricto (corre cada vez), pero sólo edita lo que necesita y
+            # genera audit con fuente='validado_excel'.
+            try:
+                _seed_lo_barnechea_excel(cur)
+            except Exception as _exc:
+                print(f"[init_transporte] seed Lo Barnechea Excel falló: {_exc}", flush=True)
+
         conn.commit()
     finally:
         conn.close()
+
+
+def _seed_lo_barnechea_excel(cur):
+    """Carga precios VALIDADOS del Excel maestro para Lo Barnechea (FCV 10644).
+
+    Caso muestra: 173.89 kg → bracket "100+".
+    Idempotente — UPSERT por (courier, comuna), audit insert siempre.
+    """
+    import json as _json
+    COMUNA = "Lo Barnechea"
+    REGION = "Metropolitana"
+    ZONA   = "RM"
+
+    # Precios validados manualmente contra el Excel maestro (21/05/2026).
+    # Estos son los precios CORRECTOS para 173.89 kg → bracket "100+".
+    TARIFAS = [
+        # (courier_name_lower_match,    {"bracket": precio_CLP_total})
+        ('fedex',                       {"100+": 105237}),
+        ('starken',                     {"100+": 116329}),
+        ('clickex',                     {"100+": 158793}),
+        ('transporte felca',            {"100+":  92281}),
+        ('transportes milling',         {"100+":  96599}),
+        ('blue express',                {"100+": 187558}),
+        ('transportes melling',         {"100+":  96599}),  # alias legacy
+        ('envíame',                     {"100+": 133923}),  # Starken vía Envíame
+        # Adicionales para que rangos < 100 kg tengan algo razonable proporcional
+    ]
+
+    # Cargar mapa de couriers
+    cur.execute("SELECT id, LOWER(nombre) AS k FROM transport_couriers WHERE activo=1")
+    couriers = {r['k']: r['id'] for r in (cur.fetchall() or [])}
+
+    inserted = 0
+    audit_inserts = []
+    for c_name, brackets_nuevos in TARIFAS:
+        cid = couriers.get(c_name)
+        if not cid:
+            continue
+        # Cargar precios actuales
+        cur.execute(
+            "SELECT id, precios_json FROM transport_courier_comunas "
+            "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
+            (cid, COMUNA)
+        )
+        row = cur.fetchone()
+        if row:
+            try:
+                precios = _json.loads(row['precios_json'] or '{}') if row['precios_json'] else {}
+            except Exception:
+                precios = {}
+            # ── Limpiar brackets viejos que solapan con el nuevo (criterio 22/05/2026)
+            # El lookup ordena por upper_bound ASC y devuelve el primer match. Si
+            # mantenemos un bracket viejo "100 al 499" (upper=499) junto al
+            # validado "100+" (upper=999999), el peso 173kg cae primero en
+            # "100 al 499" y pierde el validado.
+            #
+            # Solución: para cada bracket NUEVO (ej "100+"), extraer su LOWER
+            # bound (100) y borrar viejos cuyo upper > lower. Esto deja brackets
+            # de pesos chicos (1, 5, 50) intactos pero quita los que solapan.
+            def _peu_local(col_header):
+                s = str(col_header).strip().replace(',', '.').replace(' ', '').lower()
+                if '+' in s or 'mas' in s or 'more' in s:
+                    return 999999.0
+                for sep in ['-', 'al']:
+                    if sep in s:
+                        parts = s.split(sep)
+                        try: return float(parts[-1])
+                        except Exception: pass
+                try: return float(s)
+                except Exception: return 999999.0
+            def _bracket_lower(col_header):
+                """Extrae lower bound. '100+' → 100, '500-1999' → 500, '50' → 0."""
+                s = str(col_header).strip().replace(',', '.').replace(' ', '').lower()
+                # Caso "100+": el lower es el número
+                if '+' in s or 'mas' in s:
+                    try: return float(s.replace('+', '').replace('mas', '').strip())
+                    except Exception: return 0.0
+                # Caso "100al499" o "500-1999"
+                for sep in ['-', 'al']:
+                    if sep in s:
+                        parts = s.split(sep)
+                        try: return float(parts[0])
+                        except Exception: pass
+                # Bracket simple "50": lower = 0 (cubre 0-50)
+                return 0.0
+
+            # Para cada bracket nuevo, borrar viejos que SOLAPEN con su rango.
+            # Solapan = upper_viejo > lower_nuevo.
+            lowers_nuevos = sorted({_bracket_lower(k) for k in brackets_nuevos.keys()})
+            min_lower_nuevo = lowers_nuevos[0] if lowers_nuevos else 0
+            to_delete = [k for k in list(precios.keys())
+                         if _peu_local(k) > min_lower_nuevo and k not in brackets_nuevos]
+            for k in to_delete:
+                precios.pop(k, None)
+            precios.update(brackets_nuevos)
+            cur.execute(
+                "UPDATE transport_courier_comunas SET precios_json=%s WHERE id=%s",
+                (_json.dumps(precios, ensure_ascii=False), row['id'])
+            )
+        else:
+            cur.execute(
+                """INSERT INTO transport_courier_comunas
+                   (courier_id, comuna, zona, region, dias_transito, precios_json)
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   ON DUPLICATE KEY UPDATE precios_json=VALUES(precios_json)""",
+                (cid, COMUNA, ZONA, REGION, '1-2 días',
+                 _json.dumps(brackets_nuevos, ensure_ascii=False))
+            )
+        inserted += 1
+        # Audit insert por cada bracket
+        for bk, pv in brackets_nuevos.items():
+            audit_inserts.append((cid, c_name, bk, int(pv)))
+
+    # Insertar audit (sólo si no había ya un audit validado idéntico)
+    for cid, c_name, bk, pv in audit_inserts:
+        try:
+            cur.execute(
+                "SELECT id FROM courier_tariff_audit "
+                "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s)) "
+                "  AND bracket_aplicado=%s AND precio_calculado=%s "
+                "  AND validado=1 AND fuente='validado_excel' LIMIT 1",
+                (cid, COMUNA, bk, pv)
+            )
+            if cur.fetchone():
+                continue  # ya tenemos el audit
+            cur.execute(
+                """INSERT INTO courier_tariff_audit
+                   (cotizado_por, comuna, peso_kg, peso_pred_kg, courier_id, courier_nombre,
+                    bracket_aplicado, precio_calculado, formula_aplicada, fuente, validado, notas)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    'sistema (seed)', COMUNA, 173.89, 173.89,
+                    cid, c_name, bk, pv,
+                    'Seed Excel maestro 21/05/2026', 'validado_excel', 1,
+                    'Caso muestra FCV 10644 - 173.89kg (A.Y.M Asociados, Lo Barnechea)'
+                )
+            )
+        except Exception as _ex:
+            print(f"[seed_lo_barnechea] audit error c={c_name} bk={bk}: {_ex}", flush=True)
+    if inserted:
+        print(f"[seed_lo_barnechea_excel] {inserted} tarifas actualizadas + audit",
+              flush=True)
 
 
 def _seed_courier_tarifas_demo(cur):
@@ -13482,6 +13689,9 @@ def api_asignar_cotizar_couriers():
     comuna     = (data.get("comuna") or "").strip()
     es_resid   = bool(data.get("es_residencial", False))
     valor_neto = float(data.get("valor_neto", 0) or 0)
+    # Contexto del documento para audit trail (opcional)
+    doc_tido   = (data.get("tido") or "").strip() or None
+    doc_nudo   = (data.get("nudo") or "").strip() or None
 
     # El peso facturable es max(peso_pred, peso_kg, 0.5)
     peso_fact = max(peso_pred, peso_kg, 0.5)
@@ -13524,8 +13734,11 @@ def api_asignar_cotizar_couriers():
     # Capturar el app actual para que los hilos pushen su propio app_context (sólo FedEx)
     _flask_app = app
 
-    # Helper: resolver precio desde precios_json + peso (sin hit MySQL)
-    def _resolve_precio(precios_json_raw, peso_kg):
+    # Helper: resolver precio desde precios_json + peso, devolviendo TRACE completo.
+    # Sin hit MySQL — usa precios_json ya cargado en memoria.
+    def _resolve_precio_con_trace(precios_json_raw, peso_kg):
+        """Devuelve dict { precio, bracket_aplicado, bracket_upper, formula,
+                            json_brackets_disponibles, advertencias } o None."""
         if not precios_json_raw:
             return None
         try:
@@ -13536,18 +13749,51 @@ def api_asignar_cotizar_couriers():
         for key, price in precios.items():
             if price is None:
                 continue
-            upper = _parse_peso_upper(key)
             try:
-                brackets.append((upper, float(price)))
+                upper = _parse_peso_upper(key)
+                brackets.append((upper, float(price), str(key)))
             except Exception:
                 pass
         if not brackets:
             return None
         brackets.sort(key=lambda x: x[0])
-        for upper, price in brackets:
+        match = None
+        formula = ""
+        for upper, price, key_orig in brackets:
             if peso_kg <= upper:
-                return price
-        return brackets[-1][1]
+                match = (upper, price, key_orig)
+                formula = f"Bracket exact match: {peso_kg}kg <= {upper}kg (key='{key_orig}')"
+                break
+        if match is None:
+            upper, price, key_orig = brackets[-1]
+            match = (upper, price, key_orig)
+            formula = f"Sobre bracket máximo: usa último (key='{key_orig}')"
+
+        upper, price, key_orig = match
+        advs = []
+        if peso_kg >= 5 and price < 1000:
+            advs.append(
+                f"Precio sospechosamente bajo: ${int(price)} para {peso_kg}kg "
+                f"(podría ser precio/kg en lugar de total) — verificar tabla"
+            )
+        elif peso_kg >= 50 and price < 5000:
+            advs.append(
+                f"Precio bajo para peso alto: ${int(price)} para {peso_kg}kg "
+                f"(~${price/peso_kg:.0f}/kg) — verificar tabla"
+            )
+        elif peso_kg >= 10 and price > 0 and (price / peso_kg) < 50:
+            advs.append(
+                f"Tarifa <$50/kg: ${int(price)} para {peso_kg}kg → verificar tabla"
+            )
+
+        return {
+            "precio": float(price),
+            "bracket_aplicado": key_orig,
+            "bracket_upper": float(upper),
+            "formula": formula,
+            "json_brackets_disponibles": [b[2] for b in brackets],
+            "advertencias": advs,
+        }
 
     # 2) Función worker que cotiza UN courier
     # FedEx hace I/O (API HTTP) → necesita su propio app_context para el token cache.
@@ -13576,19 +13822,42 @@ def api_asignar_cotizar_couriers():
                     if isinstance(result, dict) and not result.get("error"):
                         costo_base = float(result.get("tarifa", 0))
                         recargo_resid = 4200 if es_resid else 0
-                        precio_final = costo_base + recargo_resid
+                        costo_total = costo_base + recargo_resid
+                        # ── Aplicar margen + IVA (criterio Daniel 22/05/2026) ──
+                        desglose = _courier_aplicar_margen_iva(costo_total)
+                        precio_final = desglose["precio_venta"]
+                        # Trace para FedEx vía API
+                        trace_api = {
+                            "bracket": "API",
+                            "bracket_upper": None,
+                            "formula": f"FedEx API: costo=${int(costo_base)}"
+                                       + (f" + recargo residencial $4.200" if es_resid else "")
+                                       + f" + margen {desglose['margen_pct']:.0f}% (${int(desglose['margen_clp'])})"
+                                       + f" + IVA {desglose['iva_pct']:.0f}% (${int(desglose['iva_clp'])})"
+                                       + f" = venta ${int(precio_final)}",
+                            "fuente": "api",
+                            "validado": False,
+                            "advertencias": [],
+                            "json_brackets_disponibles": [],
+                            "peso_usado": peso_fact,
+                            "comuna_db": comuna,
+                            "desglose": desglose,
+                        }
                         return {
                             "courier_id": cid, "courier_nombre": nombre,
                             "logo_url": logo,
                             "tiene_cobertura": True,
                             "fuente": "api",
-                            "precio":          round(precio_final, 0),
+                            "precio":          round(precio_final, 0),    # PRECIO VENTA (con margen+IVA)
+                            "precio_costo":    desglose["precio_costo"],   # COSTO original
                             "moneda":          result.get("moneda", "CLP"),
                             "tiempo_transito": result.get("tiempo_transito", "24h"),
                             "servicio":        result.get("servicio", "FedEx Standard"),
                             "subtotal":        round(precio_final, 0),
+                            "desglose":        desglose,                   # detalle margen+IVA
                             "recargos":        result.get("recargos", []),
                             "mensaje":         None,
+                            "trace":           trace_api,
                         }
 
             # Tabla — usa el map pre-cargado, sin hit a MySQL
@@ -13598,24 +13867,66 @@ def api_asignar_cotizar_couriers():
                     "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
                     "tiene_cobertura": False, "fuente": "no_cobertura",
                     "mensaje": f"Sin cobertura para {comuna}",
+                    "trace": {
+                        "bracket": None, "bracket_upper": None,
+                        "formula": f"Sin row en transport_courier_comunas para {comuna}",
+                        "fuente": "no_cobertura", "validado": False,
+                        "advertencias": [f"Sin cobertura para {comuna}"],
+                        "json_brackets_disponibles": [],
+                        "peso_usado": peso_fact, "comuna_db": None,
+                    },
                 }
-            precio = _resolve_precio(row_meta.get('precios_json'), peso_fact)
-            if precio is None:
+            tr = _resolve_precio_con_trace(row_meta.get('precios_json'), peso_fact)
+            if tr is None or tr.get('precio') is None:
                 return {
                     "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
                     "tiene_cobertura": False, "fuente": "no_cobertura",
                     "mensaje": f"Sin cobertura para {comuna} con peso {peso_fact:.1f}kg",
+                    "trace": tr or {
+                        "bracket": None, "bracket_upper": None,
+                        "formula": "precios_json sin brackets válidos",
+                        "fuente": "no_cobertura", "validado": False,
+                        "advertencias": ["No hay brackets válidos en JSON"],
+                        "json_brackets_disponibles": [],
+                        "peso_usado": peso_fact, "comuna_db": comuna,
+                    },
                 }
+            fuente_final = "tabla_fallback" if is_fedex else "tabla"
+            costo_tabla = float(tr['precio'])
+            # ── Aplicar margen + IVA al costo del Excel (criterio Daniel 22/05/2026) ──
+            desglose = _courier_aplicar_margen_iva(costo_tabla)
+            precio_venta = desglose["precio_venta"]
+            # Extender fórmula del trace con margen + IVA
+            formula_completa = (
+                f"{tr['formula']} → costo ${int(costo_tabla):,} "
+                f"+ margen {desglose['margen_pct']:.0f}% (${int(desglose['margen_clp']):,}) "
+                f"+ IVA {desglose['iva_pct']:.0f}% (${int(desglose['iva_clp']):,}) "
+                f"= venta ${int(precio_venta):,}"
+            ).replace(',', '.')
             return {
                 "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
                 "tiene_cobertura": True,
-                "fuente": "tabla" if not is_fedex else "tabla_fallback",
-                "precio":   round(float(precio), 0),
-                "moneda":   "CLP",
+                "fuente": fuente_final,
+                "precio":          round(precio_venta, 0),    # PRECIO VENTA (con margen+IVA)
+                "precio_costo":    desglose["precio_costo"],  # COSTO del Excel
+                "moneda":          "CLP",
                 "tiempo_transito": row_meta.get('dias_transito') or '2-3 días',
-                "servicio": 'Standard',
-                "subtotal": round(float(precio), 0),
-                "mensaje":  None,
+                "servicio":        'Standard',
+                "subtotal":        round(precio_venta, 0),
+                "desglose":        desglose,                  # margen+IVA detallado
+                "mensaje":         None,
+                "trace": {
+                    "bracket":           tr['bracket_aplicado'],
+                    "bracket_upper":     tr['bracket_upper'],
+                    "formula":           formula_completa,
+                    "fuente":            fuente_final,
+                    "validado":          False,  # se resuelve abajo con check audit
+                    "advertencias":      tr['advertencias'],
+                    "json_brackets_disponibles": tr['json_brackets_disponibles'],
+                    "peso_usado":        peso_fact,
+                    "comuna_db":         comuna,
+                    "desglose":          desglose,
+                },
             }
         except Exception as ex_each:
             print(f"[cotizar courier {nombre}] error: {ex_each}", flush=True)
@@ -13664,6 +13975,58 @@ def api_asignar_cotizar_couriers():
     cotizaciones_ord = con_cobertura + sin_cobertura
 
     recomendado_id = con_cobertura[0]['courier_id'] if con_cobertura else None
+
+    # 5) Marcar tarifas VALIDADAS (consulta única) + INSERT audit por cada cotización.
+    #    Esto produce el audit trail completo. Si la tabla audit no existe → silencioso.
+    try:
+        # Set de tarifas marcadas como validadas para esta comuna (1 sola query)
+        validated_keys = set()
+        try:
+            rows_val = mysql_fetchall(
+                "SELECT DISTINCT courier_id, bracket_aplicado "
+                "FROM courier_tariff_audit "
+                "WHERE LOWER(TRIM(comuna))=LOWER(TRIM(%s)) AND validado=1",
+                (comuna,)
+            ) or []
+            for rv in rows_val:
+                validated_keys.add((rv['courier_id'], rv['bracket_aplicado']))
+        except Exception:
+            pass
+
+        cotizado_por = current_username() or 'sistema'
+        for c in cotizaciones_ord:
+            trace = c.get('trace') or {}
+            cid = c.get('courier_id')
+            bracket = trace.get('bracket')
+            # Marcar validado si está en el set
+            if cid and bracket and (cid, bracket) in validated_keys:
+                trace['validado'] = True
+                c['trace'] = trace
+            # Insertar audit con desglose costo+margen+IVA completo
+            try:
+                audit_id = _audit_cotizacion(
+                    courier_id=cid,
+                    courier_nombre=c.get('courier_nombre'),
+                    comuna=comuna,
+                    peso_kg=peso_kg,
+                    peso_pred_kg=peso_pred,
+                    bracket_aplicado=bracket or '—',
+                    precio_calculado=c.get('precio'),     # precio venta (con margen+IVA)
+                    formula_aplicada=trace.get('formula', ''),
+                    fuente=c.get('fuente', 'tabla'),
+                    validado=trace.get('validado', False),
+                    notas=(c.get('mensaje') or None),
+                    documento_tido=doc_tido,
+                    documento_nudo=doc_nudo,
+                    cotizado_por=cotizado_por,
+                    desglose=c.get('desglose'),           # ← componentes auditables
+                )
+                if audit_id:
+                    c['audit_id'] = audit_id
+            except Exception as ex_aud:
+                print(f"[cotizar-couriers] audit error courier={cid}: {ex_aud}", flush=True)
+    except Exception as ex_outer:
+        print(f"[cotizar-couriers] error audit pass: {ex_outer}", flush=True)
 
     elapsed = round(_t_start.time() - t0, 3)
     return jsonify({
@@ -16580,35 +16943,297 @@ def _parse_peso_upper(col_header) -> float:
         return 999999.0
 
 
-def _courier_tarifa_lookup(courier_id: int, comuna: str, peso_kg: float):
+# ══════════════════════════════════════════════════════════════════════════
+#  COURIERS — MARGEN + IVA (criterio Daniel 22/05/2026)
+#
+#  El Excel maestro de tarifas representa el COSTO que ILUS paga al courier.
+#  El precio final al cliente es:
+#      subtotal_neto = costo × (1 + margen_pct/100)
+#      precio_venta  = subtotal_neto × (1 + iva_pct/100)
+#
+#  Defaults: margen 30%, IVA 19% (Chile).
+#  Ambos configurables vía env vars:
+#      ILUS_COURIER_MARGEN_PCT (default 30)
+#      ILUS_IVA_PCT            (default 19)
+#  Esto permite ajustar el margen sin redeploy de código si Daniel
+#  decide cambiar la política comercial.
+# ══════════════════════════════════════════════════════════════════════════
+def _courier_margen_iva_cfg() -> dict:
+    """Lee config margen/IVA de env vars o defaults."""
+    try:
+        mpct = float(os.environ.get("ILUS_COURIER_MARGEN_PCT", "30") or 30)
+    except Exception:
+        mpct = 30.0
+    try:
+        ipct = float(os.environ.get("ILUS_IVA_PCT", "19") or 19)
+    except Exception:
+        ipct = 19.0
+    return {"margen_pct": mpct, "iva_pct": ipct}
+
+
+def _courier_aplicar_margen_iva(precio_costo: float, *, margen_pct: float = None,
+                                 iva_pct: float = None) -> dict:
+    """Aplica margen comercial + IVA al precio de costo del courier.
+
+    Returns dict con desglose completo (cada componente redondeado a CLP):
+        {
+            "precio_costo":  36317,    # del Excel (lo que ILUS paga al courier)
+            "margen_pct":    30.0,
+            "margen_clp":    10895,
+            "subtotal_neto": 47212,    # costo + margen (lo que ILUS factura sin IVA)
+            "iva_pct":       19.0,
+            "iva_clp":       8970,
+            "precio_venta":  56182,    # lo que paga el cliente (con IVA)
+        }
     """
-    Returns the price (float) for a given courier+commune+weight, or None.
+    cfg = _courier_margen_iva_cfg()
+    mpct = float(margen_pct if margen_pct is not None else cfg["margen_pct"])
+    ipct = float(iva_pct    if iva_pct    is not None else cfg["iva_pct"])
+    costo = float(precio_costo or 0)
+    margen_clp = costo * (mpct / 100.0)
+    subtotal_neto = costo + margen_clp
+    iva_clp = subtotal_neto * (ipct / 100.0)
+    precio_venta = subtotal_neto + iva_clp
+    return {
+        "precio_costo":  round(costo, 0),
+        "margen_pct":    mpct,
+        "margen_clp":    round(margen_clp, 0),
+        "subtotal_neto": round(subtotal_neto, 0),
+        "iva_pct":       ipct,
+        "iva_clp":       round(iva_clp, 0),
+        "precio_venta":  round(precio_venta, 0),
+    }
+
+
+def _courier_tarifa_lookup(courier_id: int, comuna: str, peso_kg: float,
+                            return_trace: bool = False):
     """
+    Returns the price (float) for a given courier+commune+weight.
+
+    LEGACY: cuando ``return_trace=False`` mantiene la firma antigua (devuelve
+    solo el precio o None). Esto evita romper callers existentes.
+
+    NUEVO: con ``return_trace=True`` devuelve un dict con TODO el detalle del
+    cálculo — bracket aplicado, fórmula, fuente, advertencias. Imprescindible
+    para auditoría (FedEx puede revisar cualquier cotización histórica).
+
+        {
+          "precio": 105237,
+          "bracket_aplicado": "100+",
+          "bracket_upper": 999999.0,
+          "formula": "Bracket exact match",
+          "fuente": "tabla",
+          "validado": True,            # ← si la tarifa fue marcada manualmente
+          "peso_usado": 173.89,
+          "comuna_normalizada": "lo barnechea",
+          "comuna_db": "Lo Barnechea",
+          "json_brackets_disponibles": ["1","5","10","25","50","100","100+"],
+          "advertencias": ["..."],
+        }
+    """
+    comuna_norm = (comuna or '').strip().lower()
     row = mysql_fetchone(
-        "SELECT precios_json FROM transport_courier_comunas "
+        "SELECT comuna, precios_json, dias_transito FROM transport_courier_comunas "
         "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
         (courier_id, comuna)
     )
+
+    def _trace_empty(reason: str, fuente: str = "no_cobertura"):
+        if not return_trace:
+            return None
+        return {
+            "precio": None,
+            "bracket_aplicado": None,
+            "bracket_upper": None,
+            "formula": reason,
+            "fuente": fuente,
+            "validado": False,
+            "peso_usado": float(peso_kg),
+            "comuna_normalizada": comuna_norm,
+            "comuna_db": None,
+            "json_brackets_disponibles": [],
+            "advertencias": [reason],
+        }
+
     if not row or not row.get('precios_json'):
-        return None
+        return _trace_empty(f"Sin tarifa para '{comuna}' (courier_id={courier_id})")
+
     try:
         precios = json.loads(row['precios_json'])
-    except Exception:
-        return None
-    # Build sorted bracket list
-    brackets = []
+    except Exception as ex_json:
+        return _trace_empty(f"precios_json inválido: {ex_json}", fuente="error")
+
+    # Build sorted bracket list — guardamos también la KEY original para trace
+    brackets = []  # [(upper:float, price:float, key_original:str)]
     for key, price in precios.items():
         if price is None:
             continue
-        upper = _parse_peso_upper(key)
-        brackets.append((upper, float(price)))
+        try:
+            upper = _parse_peso_upper(key)
+            brackets.append((upper, float(price), str(key)))
+        except Exception:
+            pass
     brackets.sort(key=lambda x: x[0])
     if not brackets:
-        return None
-    for upper, price in brackets:
+        return _trace_empty("No hay brackets numéricos válidos en precios_json", fuente="error")
+
+    # Buscar el bracket aplicable
+    bracket_match = None
+    formula = ""
+    for upper, price, key_orig in brackets:
         if peso_kg <= upper:
-            return price
-    return brackets[-1][1]  # over max weight → return last price
+            bracket_match = (upper, price, key_orig)
+            formula = f"Bracket exact match: peso {peso_kg}kg <= {upper}kg (key='{key_orig}')"
+            break
+    if bracket_match is None:
+        # Sobre el bracket máximo → usar el último (último precio definido)
+        upper, price, key_orig = brackets[-1]
+        bracket_match = (upper, price, key_orig)
+        formula = f"Sobre bracket máximo: usa último (key='{key_orig}', upper={upper}kg)"
+
+    upper, price, key_orig = bracket_match
+
+    # ── Validación: ¿es validado manualmente? ───────────────────────
+    validado_flag = False
+    fuente_aplicada = "tabla"
+    try:
+        last_audit = mysql_fetchone(
+            "SELECT validado, fuente FROM courier_tariff_audit "
+            "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s)) "
+            "  AND bracket_aplicado=%s AND validado=1 "
+            "ORDER BY cotizacion_at DESC LIMIT 1",
+            (courier_id, comuna, key_orig)
+        )
+        if last_audit:
+            validado_flag = True
+            fuente_aplicada = last_audit.get('fuente') or 'validado_excel'
+    except Exception:
+        # tabla puede no existir aún (primer arranque) — ignorar
+        pass
+
+    # ── Detección de tarifas SOSPECHOSAS ────────────────────────────
+    # Si el precio resultante es muy bajo en relación al peso, alertar.
+    # Reglas defensivas:
+    #   - Precio < $1.000 para peso > 5 kg → muy probablemente está en $/kg en lugar de total
+    #   - Precio < (peso × $50) → ratio absurdo (<$50/kg sospechoso)
+    #   - Precio < $5.000 para peso > 50 kg → sospechoso
+    advertencias = []
+    if peso_kg >= 5 and price < 1000:
+        advertencias.append(
+            f"Precio sospechosamente bajo: ${int(price)} para {peso_kg}kg "
+            f"(podría ser precio/kg en lugar de total) — verificar tabla"
+        )
+    elif peso_kg >= 50 and price < 5000:
+        advertencias.append(
+            f"Precio bajo para peso alto: ${int(price)} para {peso_kg}kg "
+            f"(~${price/peso_kg:.0f}/kg) — verificar tabla"
+        )
+    elif peso_kg >= 10 and price > 0 and (price / peso_kg) < 50:
+        advertencias.append(
+            f"Tarifa <$50/kg: ${int(price)} para {peso_kg}kg → verificar tabla"
+        )
+
+    if not return_trace:
+        return float(price)
+
+    return {
+        "precio": float(price),
+        "bracket_aplicado": key_orig,
+        "bracket_upper": upper,
+        "formula": formula,
+        "fuente": fuente_aplicada,
+        "validado": validado_flag,
+        "peso_usado": float(peso_kg),
+        "comuna_normalizada": comuna_norm,
+        "comuna_db": row.get('comuna'),
+        "json_brackets_disponibles": [b[2] for b in brackets],
+        "advertencias": advertencias,
+    }
+
+
+def _audit_cotizacion(*, courier_id, courier_nombre, comuna, peso_kg, peso_pred_kg,
+                       bracket_aplicado, precio_calculado, formula_aplicada,
+                       fuente, validado=False, notas=None,
+                       documento_tido=None, documento_nudo=None,
+                       cotizado_por=None, desglose=None) -> int:
+    """Inserta una fila en courier_tariff_audit y devuelve el id.
+
+    No-throw: si la tabla todavía no existe (primer arranque) o hay error,
+    silencioso → devuelve None. El audit nunca debe tirar la cotización.
+
+    Args:
+        precio_calculado: histórico — equivale al precio_venta (lo que ve el cliente).
+        desglose: dict de _courier_aplicar_margen_iva() para guardar componentes
+                  costo/margen/iva separados (auditable por FedEx).
+    """
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            # Construir el INSERT con o sin columnas de desglose dependiendo de
+            # si existen (migración idempotente — la primera vez no existirán).
+            d = desglose or {}
+            pcosto = int(d.get("precio_costo")) if d.get("precio_costo") is not None else None
+            pventa = int(d.get("precio_venta")) if d.get("precio_venta") is not None else None
+            mpct   = float(d.get("margen_pct")) if d.get("margen_pct") is not None else None
+            mclp   = int(d.get("margen_clp")) if d.get("margen_clp") is not None else None
+            ipct   = float(d.get("iva_pct")) if d.get("iva_pct") is not None else None
+            iclp   = int(d.get("iva_clp")) if d.get("iva_clp") is not None else None
+            try:
+                cur.execute(
+                    """INSERT INTO courier_tariff_audit
+                       (cotizado_por, documento_tido, documento_nudo, comuna,
+                        peso_kg, peso_pred_kg, courier_id, courier_nombre,
+                        bracket_aplicado, precio_calculado, formula_aplicada,
+                        fuente, validado, notas,
+                        precio_costo, margen_pct, margen_clp,
+                        iva_pct, iva_clp, precio_venta)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                               %s,%s,%s,%s,%s,%s)""",
+                    (
+                        cotizado_por or current_username() or 'sistema',
+                        documento_tido, documento_nudo, (comuna or '')[:120],
+                        float(peso_kg or 0), float(peso_pred_kg or peso_kg or 0),
+                        int(courier_id) if courier_id else None,
+                        (courier_nombre or '')[:120],
+                        (bracket_aplicado or '')[:40],
+                        int(round(precio_calculado)) if precio_calculado is not None else None,
+                        (formula_aplicada or '')[:200],
+                        (fuente or 'tabla')[:40],
+                        1 if validado else 0,
+                        notas,
+                        pcosto, mpct, mclp, ipct, iclp, pventa,
+                    )
+                )
+            except Exception:
+                # Fallback: las columnas nuevas (precio_costo, margen_*, iva_*,
+                # precio_venta) aún no aplicaron — INSERT con schema legacy.
+                cur.execute(
+                    """INSERT INTO courier_tariff_audit
+                       (cotizado_por, documento_tido, documento_nudo, comuna,
+                        peso_kg, peso_pred_kg, courier_id, courier_nombre,
+                        bracket_aplicado, precio_calculado, formula_aplicada,
+                        fuente, validado, notas)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (
+                        cotizado_por or current_username() or 'sistema',
+                        documento_tido, documento_nudo, (comuna or '')[:120],
+                        float(peso_kg or 0), float(peso_pred_kg or peso_kg or 0),
+                        int(courier_id) if courier_id else None,
+                        (courier_nombre or '')[:120],
+                        (bracket_aplicado or '')[:40],
+                        int(round(precio_calculado)) if precio_calculado is not None else None,
+                        (formula_aplicada or '')[:200],
+                        (fuente or 'tabla')[:40],
+                        1 if validado else 0,
+                        notas,
+                    )
+                )
+            audit_id = cur.lastrowid
+        conn.commit()
+        return audit_id
+    except Exception as ex_audit:
+        print(f"[_audit_cotizacion] error: {ex_audit}", flush=True)
+        return None
 
 
 # ── COURIERS ─────────────────────────────────────────────────────────────────
@@ -17319,6 +17944,639 @@ def tr_tarifa_eliminar(cid, tid):
         )
     conn.commit()
     return jsonify({"ok": True})
+
+
+# ── AUDIT TRAIL & EDICIÓN MANUAL DE TARIFAS ───────────────────────────────────
+
+@app.route("/api/transporte/couriers/<int:cid>/tarifa-validar", methods=["POST"])
+@_tr_required
+def api_tarifa_validar(cid):
+    """Marca una tarifa específica como VALIDADA (caso a caso) o la corrige.
+
+    Body JSON:
+      {
+        "comuna":           "Lo Barnechea",
+        "bracket":          "100+",
+        "precio_correcto":  105237,
+        "notas":            "Validado contra Excel maestro 21/05/2026"
+      }
+
+    Efecto:
+      1) Update del bracket en transport_courier_comunas.precios_json
+      2) Inserta fila en courier_tariff_audit con validado=1 + fuente=validado_excel
+      3) El próximo lookup verá el bracket actualizado + flag validado=True
+    """
+    # Solo admin / transporte_admin / superadmin pueden validar
+    if not (g.permissions.get("transporte_admin")
+            or g.permissions.get("superadmin")
+            or g.permissions.get("admin")):
+        return jsonify({"error": "Necesitás permiso de transporte_admin para validar tarifas."}), 403
+
+    d = request.get_json(silent=True) or {}
+    comuna  = (d.get("comuna") or "").strip()
+    bracket = (d.get("bracket") or "").strip()
+    notas   = (d.get("notas") or "").strip() or None
+    try:
+        precio_nuevo = int(round(float(d.get("precio_correcto") or 0)))
+    except Exception:
+        return jsonify({"error": "precio_correcto inválido (debe ser número)"}), 400
+
+    if not comuna or not bracket or precio_nuevo <= 0:
+        return jsonify({"error": "comuna, bracket y precio_correcto son obligatorios"}), 400
+
+    # 1) Cargar el row + parsear JSON
+    row = mysql_fetchone(
+        "SELECT id, comuna, precios_json FROM transport_courier_comunas "
+        "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
+        (cid, comuna)
+    )
+    courier = mysql_fetchone("SELECT nombre FROM transport_couriers WHERE id=%s", (cid,))
+    courier_nombre = (courier or {}).get('nombre') or '—'
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if not row:
+                # No existe la comuna → la creamos con sólo este bracket
+                precios = {bracket: precio_nuevo}
+                cur.execute(
+                    """INSERT INTO transport_courier_comunas
+                       (courier_id, comuna, precios_json)
+                       VALUES (%s,%s,%s)""",
+                    (cid, comuna, json.dumps(precios, ensure_ascii=False))
+                )
+                precio_anterior = None
+            else:
+                try:
+                    precios = json.loads(row['precios_json'] or '{}') if row['precios_json'] else {}
+                except Exception:
+                    precios = {}
+                precio_anterior = precios.get(bracket)
+                precios[bracket] = precio_nuevo
+                cur.execute(
+                    "UPDATE transport_courier_comunas SET precios_json=%s WHERE id=%s",
+                    (json.dumps(precios, ensure_ascii=False), row['id'])
+                )
+        conn.commit()
+    except Exception as ex_db:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": f"Error guardando tarifa: {ex_db}"}), 500
+
+    # 2) Audit
+    nota_audit = f"Validado manualmente. Anterior: ${int(precio_anterior) if precio_anterior is not None else 'sin valor'}. "
+    nota_audit += f"Nuevo: ${precio_nuevo}."
+    if notas:
+        nota_audit += f" | {notas}"
+
+    audit_id = _audit_cotizacion(
+        courier_id=cid,
+        courier_nombre=courier_nombre,
+        comuna=comuna,
+        peso_kg=_parse_peso_upper(bracket) if bracket != '100+' else 100.0,
+        peso_pred_kg=0,
+        bracket_aplicado=bracket,
+        precio_calculado=precio_nuevo,
+        formula_aplicada="Edición manual + validación contra Excel maestro",
+        fuente="validado_excel",
+        validado=True,
+        notas=nota_audit,
+    )
+
+    return jsonify({
+        "ok": True,
+        "audit_id": audit_id,
+        "courier_id": cid,
+        "courier_nombre": courier_nombre,
+        "comuna": comuna,
+        "bracket": bracket,
+        "precio_anterior": precio_anterior,
+        "precio_nuevo": precio_nuevo,
+    })
+
+
+@app.route("/api/transporte/couriers/<int:cid>/tarifa-editar", methods=["POST"])
+@_tr_required
+def api_tarifa_editar(cid):
+    """Editor inline genérico (sin marcar validado).
+
+    Body JSON: { "comuna", "bracket", "precio_nuevo", "motivo" }
+    Genera audit con fuente='manual', validado=0.
+    """
+    if not (g.permissions.get("transporte_admin")
+            or g.permissions.get("superadmin")
+            or g.permissions.get("admin")):
+        return jsonify({"error": "Necesitás permiso de transporte_admin."}), 403
+
+    d = request.get_json(silent=True) or {}
+    comuna  = (d.get("comuna") or "").strip()
+    bracket = (d.get("bracket") or "").strip()
+    motivo  = (d.get("motivo") or "").strip()
+    try:
+        precio_nuevo = int(round(float(d.get("precio_nuevo") or 0)))
+    except Exception:
+        return jsonify({"error": "precio_nuevo inválido"}), 400
+
+    if not comuna or not bracket or precio_nuevo <= 0:
+        return jsonify({"error": "Faltan campos requeridos."}), 400
+    if not motivo:
+        return jsonify({"error": "Motivo obligatorio para edición manual."}), 400
+
+    row = mysql_fetchone(
+        "SELECT id, precios_json FROM transport_courier_comunas "
+        "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s))",
+        (cid, comuna)
+    )
+    courier = mysql_fetchone("SELECT nombre FROM transport_couriers WHERE id=%s", (cid,))
+    courier_nombre = (courier or {}).get('nombre') or '—'
+    if not row:
+        return jsonify({"error": f"No existe tarifa para {comuna}. Usa el endpoint de validar para crearla."}), 404
+
+    try:
+        precios = json.loads(row['precios_json'] or '{}') if row['precios_json'] else {}
+    except Exception:
+        precios = {}
+    precio_anterior = precios.get(bracket)
+    precios[bracket] = precio_nuevo
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE transport_courier_comunas SET precios_json=%s WHERE id=%s",
+                (json.dumps(precios, ensure_ascii=False), row['id'])
+            )
+        conn.commit()
+    except Exception as ex_db:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"error": f"Error guardando: {ex_db}"}), 500
+
+    audit_id = _audit_cotizacion(
+        courier_id=cid,
+        courier_nombre=courier_nombre,
+        comuna=comuna,
+        peso_kg=_parse_peso_upper(bracket) if bracket != '100+' else 100.0,
+        peso_pred_kg=0,
+        bracket_aplicado=bracket,
+        precio_calculado=precio_nuevo,
+        formula_aplicada=f"Edición manual: {motivo}",
+        fuente="manual",
+        validado=False,
+        notas=f"Anterior: ${int(precio_anterior) if precio_anterior is not None else 'sin valor'}. "
+              f"Nuevo: ${precio_nuevo}. Motivo: {motivo}",
+    )
+
+    return jsonify({
+        "ok": True, "audit_id": audit_id,
+        "precio_anterior": precio_anterior,
+        "precio_nuevo": precio_nuevo,
+    })
+
+
+@app.route("/api/transporte/courier-audit", methods=["GET"])
+@login_required
+def api_courier_audit_list():
+    """Lista las últimas N cotizaciones del audit log.
+
+    Query params:
+      - courier_id (opcional)
+      - comuna (opcional)
+      - limit (default 50, max 200)
+      - validado (1|0|all, default all)
+    """
+    if not g.permissions.get("cubicador") and not g.permissions.get("transporte"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    courier_id = request.args.get('courier_id', type=int)
+    comuna     = (request.args.get('comuna') or '').strip()
+    validado   = request.args.get('validado', 'all')
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    where, params = ["1=1"], []
+    if courier_id:
+        where.append("courier_id=%s"); params.append(courier_id)
+    if comuna:
+        where.append("LOWER(TRIM(comuna))=LOWER(TRIM(%s))"); params.append(comuna)
+    if validado in ('1', '0'):
+        where.append("validado=%s"); params.append(int(validado))
+
+    sql = (
+        "SELECT id, cotizacion_at, cotizado_por, documento_tido, documento_nudo, "
+        "       comuna, peso_kg, peso_pred_kg, courier_id, courier_nombre, "
+        "       bracket_aplicado, precio_calculado, formula_aplicada, fuente, "
+        "       validado, notas "
+        "FROM courier_tariff_audit "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY cotizacion_at DESC LIMIT %s"
+    )
+    params.append(limit)
+    try:
+        rows = mysql_fetchall(sql, tuple(params)) or []
+    except Exception as ex:
+        return jsonify({"error": f"Error consultando audit: {ex}"}), 500
+
+    # Normalizar dates a string ISO
+    for r in rows:
+        ts = r.get('cotizacion_at')
+        if ts and hasattr(ts, 'isoformat'):
+            r['cotizacion_at'] = ts.isoformat(sep=' ', timespec='seconds')
+
+    return jsonify({"ok": True, "rows": rows, "total": len(rows)})
+
+
+@app.route("/api/transporte/courier-audit/<int:aid>", methods=["GET"])
+@login_required
+def api_courier_audit_detail(aid):
+    """Detalle de UNA cotización del audit + histórico de la misma comuna+courier."""
+    if not g.permissions.get("cubicador") and not g.permissions.get("transporte"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    row = mysql_fetchone(
+        "SELECT * FROM courier_tariff_audit WHERE id=%s", (aid,)
+    )
+    if not row:
+        return jsonify({"error": "Audit no encontrado"}), 404
+
+    # Normalize date
+    ts = row.get('cotizacion_at')
+    if ts and hasattr(ts, 'isoformat'):
+        row['cotizacion_at'] = ts.isoformat(sep=' ', timespec='seconds')
+
+    # Histórico misma comuna+courier (últimas 10)
+    hist = mysql_fetchall(
+        "SELECT id, cotizacion_at, peso_kg, bracket_aplicado, precio_calculado, "
+        "       fuente, validado, cotizado_por "
+        "FROM courier_tariff_audit "
+        "WHERE courier_id=%s AND LOWER(TRIM(comuna))=LOWER(TRIM(%s)) AND id != %s "
+        "ORDER BY cotizacion_at DESC LIMIT 10",
+        (row['courier_id'], row['comuna'], aid)
+    ) or []
+    for h in hist:
+        t = h.get('cotizacion_at')
+        if t and hasattr(t, 'isoformat'):
+            h['cotizacion_at'] = t.isoformat(sep=' ', timespec='seconds')
+
+    return jsonify({"ok": True, "audit": row, "historico": hist})
+
+
+# ════════════════════════════════════════════════════════════════════
+#  HISTÓRICO DE COTIZACIONES POR DOCUMENTO ERP (TIDO+NUDO)
+#  Daniel cotiza FCV 10644 hoy y dentro de 1 semana → puede comparar
+#  ambas cotizaciones lado a lado. Agrupado por "sesión de cotización"
+#  (ventana de 5 min mismo doc+comuna) para evitar ruido.
+# ════════════════════════════════════════════════════════════════════
+@app.route("/api/transporte/courier-audit/por-documento", methods=["GET"])
+@login_required
+def api_courier_audit_por_documento():
+    """Devuelve historico de cotizaciones para un documento ERP (tido+nudo).
+
+    Query params:
+      - tido (obligatorio)
+      - nudo (obligatorio)
+      - limit (default 60, max 200)
+
+    Response:
+      {
+        "ok": true,
+        "tido": "FCV", "nudo": "10644",
+        "sesiones": [
+          {
+            "session_at": "2026-05-22 14:30",
+            "comuna": "Lo Barnechea",
+            "peso_kg": 173.89,
+            "cotizado_por": "daniel.aguilar",
+            "couriers": [
+              { "courier_nombre": "FedEx", "precio_venta": ..., "precio_costo": ...,
+                "validado": true, "fuente": "api", "bracket": "..." }, ...
+            ]
+          }, ...
+        ],
+        "total_sesiones": 3
+      }
+    """
+    if not g.permissions.get("cubicador") and not g.permissions.get("transporte"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    tido = (request.args.get('tido') or '').strip().upper()
+    nudo = (request.args.get('nudo') or '').strip()
+    try:
+        limit = int(request.args.get('limit', 60))
+    except Exception:
+        limit = 60
+    limit = max(10, min(limit, 200))
+
+    if not tido or not nudo:
+        return jsonify({"error": "tido y nudo son obligatorios"}), 400
+
+    # Pull rows ordered DESC by time. Use comuna+minute as grouping key.
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, cotizacion_at, cotizado_por, comuna, peso_kg, peso_pred_kg, "
+            "       courier_id, courier_nombre, bracket_aplicado, precio_calculado, "
+            "       fuente, validado, notas, "
+            "       precio_costo, margen_pct, margen_clp, iva_pct, iva_clp, precio_venta "
+            "FROM courier_tariff_audit "
+            "WHERE documento_tido=%s AND documento_nudo=%s "
+            "ORDER BY cotizacion_at DESC LIMIT %s",
+            (tido, nudo, limit)
+        ) or []
+    except Exception as ex:
+        # Si las columnas de desglose aún no existen, fallback al schema legacy.
+        try:
+            rows = mysql_fetchall(
+                "SELECT id, cotizacion_at, cotizado_por, comuna, peso_kg, peso_pred_kg, "
+                "       courier_id, courier_nombre, bracket_aplicado, precio_calculado, "
+                "       fuente, validado, notas "
+                "FROM courier_tariff_audit "
+                "WHERE documento_tido=%s AND documento_nudo=%s "
+                "ORDER BY cotizacion_at DESC LIMIT %s",
+                (tido, nudo, limit)
+            ) or []
+        except Exception as ex2:
+            return jsonify({"error": f"Error consultando audit: {ex2}"}), 500
+
+    # Agrupar por (comuna, peso, fecha truncada a 5 min) — eso es UNA "sesión".
+    from collections import OrderedDict
+    sesiones = OrderedDict()
+    for r in rows:
+        ts = r.get('cotizacion_at')
+        if ts and hasattr(ts, 'isoformat'):
+            r['cotizacion_at'] = ts.isoformat(sep=' ', timespec='seconds')
+        # Bucket por 5 minutos para que cotizaciones cercanas se agrupen
+        ts_str = (r.get('cotizacion_at') or '')[:16]  # YYYY-MM-DD HH:MM
+        try:
+            mm = int(ts_str[14:16])
+            ts_bucket = ts_str[:14] + f"{(mm // 5) * 5:02d}"
+        except Exception:
+            ts_bucket = ts_str
+        key = (ts_bucket, r.get('comuna') or '', round(float(r.get('peso_kg') or 0), 1))
+        if key not in sesiones:
+            sesiones[key] = {
+                "session_at":    ts_bucket,
+                "comuna":        r.get('comuna') or '',
+                "peso_kg":       float(r.get('peso_kg') or 0),
+                "peso_pred_kg":  float(r.get('peso_pred_kg') or 0),
+                "cotizado_por":  r.get('cotizado_por') or '',
+                "couriers":      [],
+            }
+        sesiones[key]["couriers"].append({
+            "courier_id":     r.get('courier_id'),
+            "courier_nombre": r.get('courier_nombre') or '',
+            "bracket":        r.get('bracket_aplicado') or '',
+            "fuente":         r.get('fuente') or '',
+            "validado":       bool(r.get('validado')),
+            # Compat: precio_calculado es el venta histórico
+            "precio_venta":   int(r.get('precio_venta') or r.get('precio_calculado') or 0),
+            "precio_costo":   int(r.get('precio_costo') or 0) if r.get('precio_costo') else None,
+            "margen_pct":     float(r.get('margen_pct') or 0) if r.get('margen_pct') is not None else None,
+            "margen_clp":     int(r.get('margen_clp') or 0) if r.get('margen_clp') else None,
+            "iva_pct":        float(r.get('iva_pct') or 0) if r.get('iva_pct') is not None else None,
+            "iva_clp":        int(r.get('iva_clp') or 0) if r.get('iva_clp') else None,
+        })
+
+    sesiones_list = list(sesiones.values())
+    # Ordenar cada courier dentro de la sesión por precio_venta ascendente
+    for s in sesiones_list:
+        s["couriers"].sort(key=lambda c: c["precio_venta"] or 99999999)
+
+    return jsonify({
+        "ok":              True,
+        "tido":            tido,
+        "nudo":            nudo,
+        "sesiones":        sesiones_list,
+        "total_sesiones":  len(sesiones_list),
+    })
+
+
+# ════════════════════════════════════════════════════════════════════
+#  EXPORT EXCEL DEL AUDIT LOG (para reportes externos)
+#  Daniel puede mandar a FedEx o a la gerencia un reporte filtrado por
+#  courier/comuna/rango de fechas — todas las columnas auditables.
+# ════════════════════════════════════════════════════════════════════
+@app.route("/api/transporte/courier-audit.xlsx", methods=["GET"])
+@login_required
+def api_courier_audit_export_xlsx():
+    """Exporta el audit log de cotizaciones de couriers como Excel.
+
+    Mismos filtros que el endpoint JSON:
+      - courier_id, comuna, validado (1|0|all), tido, nudo
+      - desde (YYYY-MM-DD), hasta (YYYY-MM-DD)
+      - limit (default 1000, max 5000)
+    """
+    if not (g.permissions.get("transporte_admin")
+            or g.permissions.get("admin")
+            or g.permissions.get("superadmin")):
+        return jsonify({"error": "Solo admin/transporte_admin pueden exportar el audit."}), 403
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+    except ImportError:
+        return jsonify({"error": "openpyxl no instalado en el servidor."}), 500
+
+    courier_id = request.args.get('courier_id', type=int)
+    comuna     = (request.args.get('comuna') or '').strip()
+    validado   = request.args.get('validado', 'all')
+    tido       = (request.args.get('tido') or '').strip().upper()
+    nudo       = (request.args.get('nudo') or '').strip()
+    desde      = (request.args.get('desde') or '').strip()
+    hasta      = (request.args.get('hasta') or '').strip()
+    try:
+        limit = int(request.args.get('limit', 1000))
+    except Exception:
+        limit = 1000
+    limit = max(10, min(limit, 5000))
+
+    where, params = ["1=1"], []
+    if courier_id:
+        where.append("courier_id=%s"); params.append(courier_id)
+    if comuna:
+        where.append("LOWER(TRIM(comuna))=LOWER(TRIM(%s))"); params.append(comuna)
+    if validado in ('1', '0'):
+        where.append("validado=%s"); params.append(int(validado))
+    if tido:
+        where.append("documento_tido=%s"); params.append(tido)
+    if nudo:
+        where.append("documento_nudo=%s"); params.append(nudo)
+    if desde:
+        where.append("DATE(cotizacion_at) >= %s"); params.append(desde)
+    if hasta:
+        where.append("DATE(cotizacion_at) <= %s"); params.append(hasta)
+
+    sql_base = (
+        "SELECT id, cotizacion_at, cotizado_por, documento_tido, documento_nudo, "
+        "       comuna, peso_kg, peso_pred_kg, courier_id, courier_nombre, "
+        "       bracket_aplicado, precio_calculado, formula_aplicada, fuente, "
+        "       validado, notas, "
+        "       precio_costo, margen_pct, margen_clp, iva_pct, iva_clp, precio_venta "
+        "FROM courier_tariff_audit "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY cotizacion_at DESC LIMIT %s"
+    )
+    sql_legacy = (
+        "SELECT id, cotizacion_at, cotizado_por, documento_tido, documento_nudo, "
+        "       comuna, peso_kg, peso_pred_kg, courier_id, courier_nombre, "
+        "       bracket_aplicado, precio_calculado, formula_aplicada, fuente, "
+        "       validado, notas "
+        "FROM courier_tariff_audit "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY cotizacion_at DESC LIMIT %s"
+    )
+    params_with_limit = tuple(params) + (limit,)
+
+    try:
+        rows = mysql_fetchall(sql_base, params_with_limit) or []
+    except Exception:
+        try:
+            rows = mysql_fetchall(sql_legacy, params_with_limit) or []
+        except Exception as ex2:
+            return jsonify({"error": f"Error consultando audit: {ex2}"}), 500
+
+    # Build the workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Audit Cotizaciones"
+
+    RED_FILL = PatternFill("solid", fgColor="DC2626")
+    WHITE_FONT = Font(color="FFFFFF", bold=True, size=11)
+    HDR_ALIGN = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    NUM_ALIGN = Alignment(horizontal='right')
+
+    headers = [
+        "ID", "Fecha (Chile)", "Cotizado por", "Doc TIDO", "Doc NUDO",
+        "Comuna", "Peso real (kg)", "Peso predominante (kg)",
+        "Courier ID", "Courier", "Bracket aplicado",
+        "Costo (CLP)", "Margen %", "Margen CLP",
+        "IVA %", "IVA CLP", "Precio venta (CLP)",
+        "Fuente", "Validado", "Fórmula", "Notas",
+    ]
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(1, ci, h)
+        cell.font = WHITE_FONT
+        cell.fill = RED_FILL
+        cell.alignment = HDR_ALIGN
+
+    # Try to use chile-time conversion if available; otherwise fall back to raw.
+    try:
+        from zoneinfo import ZoneInfo
+        _TZ_CL = ZoneInfo("America/Santiago")
+    except Exception:
+        _TZ_CL = None
+
+    def _fmt_cl(ts):
+        if ts is None:
+            return ''
+        try:
+            if hasattr(ts, 'tzinfo'):
+                if ts.tzinfo is None:
+                    from datetime import timezone as _tz
+                    ts = ts.replace(tzinfo=_tz.utc)
+                if _TZ_CL:
+                    ts = ts.astimezone(_TZ_CL)
+                return ts.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass
+        return str(ts)
+
+    for ri, r in enumerate(rows, 2):
+        pcosto = r.get('precio_costo')
+        pventa = r.get('precio_venta') or r.get('precio_calculado')
+        mpct   = r.get('margen_pct')
+        mclp   = r.get('margen_clp')
+        ipct   = r.get('iva_pct')
+        iclp   = r.get('iva_clp')
+        row_vals = [
+            r.get('id'),
+            _fmt_cl(r.get('cotizacion_at')),
+            r.get('cotizado_por') or '',
+            r.get('documento_tido') or '',
+            r.get('documento_nudo') or '',
+            r.get('comuna') or '',
+            float(r.get('peso_kg') or 0),
+            float(r.get('peso_pred_kg') or 0),
+            r.get('courier_id'),
+            r.get('courier_nombre') or '',
+            r.get('bracket_aplicado') or '',
+            int(pcosto) if pcosto is not None else '',
+            float(mpct) if mpct is not None else '',
+            int(mclp) if mclp is not None else '',
+            float(ipct) if ipct is not None else '',
+            int(iclp) if iclp is not None else '',
+            int(pventa) if pventa is not None else '',
+            r.get('fuente') or '',
+            'Sí' if r.get('validado') else 'No',
+            (r.get('formula_aplicada') or '')[:200],
+            r.get('notas') or '',
+        ]
+        for ci, v in enumerate(row_vals, 1):
+            cell = ws.cell(ri, ci, v)
+            # Right-align numerics
+            if ci in (1, 7, 8, 9, 12, 13, 14, 15, 16, 17):
+                cell.alignment = NUM_ALIGN
+            # Currency format for CLP columns
+            if ci in (12, 14, 16, 17):
+                cell.number_format = '"$"#,##0'
+
+    # Column widths reasonable defaults
+    widths = [6, 19, 18, 8, 12, 18, 11, 13, 9, 18, 14, 13, 9, 12, 9, 12, 16, 14, 9, 35, 30]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Freeze header row
+    ws.freeze_panes = "A2"
+
+    # Hoja de filtros aplicados (para el destinatario sepa qué pidió)
+    ws2 = wb.create_sheet("Filtros aplicados")
+    ws2.cell(1, 1, "Filtro").font = WHITE_FONT
+    ws2.cell(1, 2, "Valor").font = WHITE_FONT
+    for c in range(1, 3):
+        ws2.cell(1, c).fill = RED_FILL
+        ws2.cell(1, c).alignment = HDR_ALIGN
+    filt_rows = [
+        ("Courier ID", courier_id or "(todos)"),
+        ("Comuna",     comuna or "(todas)"),
+        ("Validado",   validado),
+        ("TIDO doc",   tido or "(todos)"),
+        ("NUDO doc",   nudo or "(todos)"),
+        ("Desde",      desde or "(sin límite)"),
+        ("Hasta",      hasta or "(sin límite)"),
+        ("Limit",      limit),
+        ("Filas devueltas", len(rows)),
+        ("Exportado por", current_username() or 'sistema'),
+        ("Fecha export",  _fmt_cl(datetime.now())),
+    ]
+    for ri, (k, v) in enumerate(filt_rows, 2):
+        ws2.cell(ri, 1, k)
+        ws2.cell(ri, 2, str(v))
+    ws2.column_dimensions['A'].width = 22
+    ws2.column_dimensions['B'].width = 30
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    # Filename con fecha
+    fname_parts = ["ILUS_Audit_Couriers"]
+    if tido and nudo:
+        fname_parts.append(f"{tido}_{nudo}")
+    if desde or hasta:
+        fname_parts.append(f"{desde or 'inicio'}_a_{hasta or 'hoy'}")
+    fname = "_".join(fname_parts).replace(' ', '_') + ".xlsx"
+
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=fname,
+    )
 
 
 # ── COTIZADOR: calcular costo de envío ────────────────────────────────────────
