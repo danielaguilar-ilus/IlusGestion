@@ -26934,19 +26934,10 @@ def admin_mantenciones_clean_orphans():
 @app.route("/mantenciones")
 @_mant_required
 def mant_index():
-    # FIX 2026-05-22 (Daniel — caso Lenin "no veo las OTs"): si el usuario
-    # es técnico y entra al dashboard global, lo mandamos directo a "Mi día"
-    # para que vea SOLO sus OTs (hoy + semana + atrasadas + por revisar).
-    # El dashboard global tiene KPIs (MRR, contratos vencen) que no le
-    # aplican a un técnico — solo lo confundían al ver "Próximas OTs"
-    # con visitas de clientes que NO son suyos.
-    try:
-        _u_idx = getattr(g, "user", None) or {}
-        if _rol_familia((_u_idx.get("role") or "")) == "tecnico":
-            return redirect(url_for("mant_mi_dia"))
-    except Exception as _e_redir:
-        print(f"[mant_index] redirect técnico falló: {_e_redir}", flush=True)
-
+    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos
+    # (módulo Mi día removido por decisión del producto). Los técnicos
+    # usan /mantenciones/ots que aplica filtro solo_mias=True automático
+    # según rol (ver mant_ots_list).
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
     pronto = hoy + timedelta(days=60)
@@ -28141,6 +28132,32 @@ def _mant_ficha_impl(cid):
         "SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC",
         (cid,)
     ) or []
+    # 2026-05-22 (Daniel — caso Vitacura/JDA): marcar contratos que tienen
+    # algún adjunto válido en Cloudinary para que el botón "Ver PDF" del
+    # template aparezca incluso cuando el contrato principal tiene
+    # archivo_path/cloudinary_url en NULL (caso SEED de demo). El endpoint
+    # mant_contrato_archivo hace fallback automático a estos adjuntos.
+    try:
+        _ct_ids = [int(r["id"]) for r in contratos_raw if r.get("id")]
+        if _ct_ids:
+            placeholders = ",".join(["%s"] * len(_ct_ids))
+            _adj_disponibles = mysql_fetchall(
+                f"SELECT DISTINCT contrato_id FROM mant_contrato_adjuntos "
+                f"WHERE contrato_id IN ({placeholders}) "
+                f"  AND cloudinary_url IS NOT NULL AND cloudinary_url <> '' "
+                f"  AND tipo IN ('contrato','anexo','externo','otro')",
+                tuple(_ct_ids)
+            ) or []
+            _ct_con_adj = {int(r["contrato_id"]) for r in _adj_disponibles}
+            for _ct in contratos_raw:
+                _ct["tiene_adjunto_visible"] = int(_ct.get("id") or 0) in _ct_con_adj
+        else:
+            for _ct in contratos_raw:
+                _ct["tiene_adjunto_visible"] = False
+    except Exception as _e_adj:
+        print(f"[ficha contratos] tiene_adjunto_visible flag failed: {_e_adj}", flush=True)
+        for _ct in contratos_raw:
+            _ct["tiene_adjunto_visible"] = False
     # PERF: LIMIT 200 en visitas (stats 12m + tab visitas no requieren más)
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
@@ -31738,9 +31755,51 @@ def mant_contrato_archivo(ctid):
         "  FROM mant_contratos WHERE id=%s",
         (ctid,)
     )
-    if not ct or not (ct.get("archivo_path") or ct.get("cloudinary_url")):
-        print(f"[mant_contrato_archivo] ctid={ctid} → SIN canales (ni disco ni cloud)", flush=True)
-        return "Archivo no encontrado", 404
+    if not ct:
+        return "Contrato no encontrado", 404
+
+    # ── FALLBACK 2026-05-22 (Daniel — caso Vitacura/JDA) ──────────────
+    # Contratos SEED del 21/05 vienen con archivo_path=NULL y cloudinary_url=NULL
+    # PORQUE el archivo real está en mant_contrato_adjuntos (Cloudinary OK).
+    # Si el contrato principal no tiene archivo propio, buscamos el primer
+    # adjunto válido de tipo 'contrato' o 'anexo' con Cloudinary URL y lo
+    # redirigimos directamente. Esto destraba todos los contratos huérfanos
+    # sin tener que re-subir manualmente.
+    if not (ct.get("archivo_path") or ct.get("cloudinary_url")):
+        adj_fallback = mysql_fetchone(
+            "SELECT cloudinary_url, archivo_nombre, mime_type "
+            "  FROM mant_contrato_adjuntos "
+            " WHERE contrato_id=%s "
+            "   AND cloudinary_url IS NOT NULL AND cloudinary_url <> '' "
+            "   AND tipo IN ('contrato','anexo','externo','otro') "
+            " ORDER BY CASE tipo "
+            "          WHEN 'contrato' THEN 1 WHEN 'anexo' THEN 2 "
+            "          WHEN 'externo'  THEN 3 ELSE 4 END, id ASC "
+            " LIMIT 1",
+            (ctid,)
+        )
+        if adj_fallback and adj_fallback.get("cloudinary_url"):
+            print(f"[mant_contrato_archivo] ctid={ctid} → FALLBACK adjunto "
+                  f"({adj_fallback.get('archivo_nombre')})", flush=True)
+            # Promovemos el adjunto al contrato principal para que el próximo
+            # acceso sea directo (mejor performance + UI consistente).
+            try:
+                mysql_execute(
+                    "UPDATE mant_contratos "
+                    "   SET cloudinary_url=%s, archivo_nombre=%s "
+                    " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                    (adj_fallback["cloudinary_url"],
+                     adj_fallback.get("archivo_nombre") or f"contrato_{ctid}.pdf",
+                     ctid)
+                )
+            except Exception:
+                pass
+            # Cargar el ct con el dato fresco para que la lógica siguiente lo use
+            ct["cloudinary_url"] = adj_fallback["cloudinary_url"]
+            ct["archivo_nombre"] = adj_fallback.get("archivo_nombre") or ct.get("archivo_nombre")
+        else:
+            print(f"[mant_contrato_archivo] ctid={ctid} → SIN canales (ni disco ni cloud ni adjuntos)", flush=True)
+            return "Archivo no encontrado", 404
 
     as_dl = request.args.get("download") == "1"
     use_office_viewer = request.args.get("viewer") == "office"
@@ -36890,125 +36949,22 @@ def mant_cliente_maquinas_list(cid):
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 2026-05-22 (Daniel) — MI DÍA (vista del técnico Lenin)
-# Dashboard mobile-first agrupado por:
-#   - OTs de HOY (programadas para fecha=hoy)
-#   - OTs de la SEMANA (próximos 7 días)
-#   - OTs por aprobar (que firmó pero quedaron pendientes_aprobacion)
-#   - OTs atrasadas (vencidas — Lenin debe ponerse al día)
-# Otros roles (admin, ejecutivo, superadmin) también pueden entrar, pero
-# en su caso se muestran las OTs que tienen ASIGNADAS o que ellos CREARON.
+# 2026-05-22 (Daniel) — MI DÍA ELIMINADO POR DECISIÓN DEL PRODUCTO
+# El módulo "Mi día" fue removido. El técnico ve sus OTs directamente
+# en /mantenciones/ots gracias al filtro solo_mias=True automático que
+# aplica mant_ots_list según rol del usuario.
+# (Endpoint /mantenciones/mi-dia eliminado — devuelve 404.)
 # ═════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/mi-dia")
 @_mant_required
 def mant_mi_dia():
-    """Vista 'Mi día' del técnico: OTs de hoy + semana + por aprobar.
+    """Endpoint deprecado — redirige al listado de OTs.
 
-    Para Lenin (rol=tecnico): muestra SOLO sus OTs asignadas, agrupadas
-    por urgencia. Para Aaron (rol=ejecutivo_sstt): muestra las que él
-    creó. Para admin/superadmin: ve todas las OTs ACTIVAS del sistema.
+    El módulo Mi día fue removido (Daniel 22/05/2026). El listado de OTs
+    aplica filtro solo_mias=True automático para técnicos, mostrando el
+    mismo subconjunto sin necesidad de una vista dedicada.
     """
-    user = getattr(g, "user", None) or {}
-    uid = user.get("id")
-    username = (user.get("username") or "").strip()
-    role_fam = _rol_familia(user.get("role") or "")
-    es_tecnico = (role_fam == "tecnico")
-    es_ejecutivo = (role_fam == "ejecutivo")
-    hoy = datetime.now().date()
-    semana_fin = hoy + timedelta(days=7)
-
-    # Construir cláusulas según rol
-    where_base = []
-    params_base = []
-    if es_tecnico and uid:
-        where_base.append(
-            "(v.tecnico_user_id=%s OR "
-            " v.id IN (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_user_id=%s))"
-        )
-        params_base.extend([int(uid), int(uid)])
-    elif es_ejecutivo:
-        clauses_e = []
-        if username:
-            clauses_e.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-            params_base.append(username)
-        if uid:
-            clauses_e.append("v.tecnico_user_id=%s")
-            params_base.append(int(uid))
-        if clauses_e:
-            where_base.append("(" + " OR ".join(clauses_e) + ")")
-    # admin/superadmin: sin filtro de usuario (ve todo)
-
-    sql_base = (
-        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
-        "       v.fecha_programada, v.hora_inicio, v.prioridad, "
-        "       v.tecnico_user_id, v.firma_tecnico_at, v.firma_supervisor_at, "
-        "       c.razon_social, c.direccion AS cli_direccion, "
-        "       c.comuna AS cli_comuna, c.contacto_tel AS cli_tel, "
-        "       COALESCE(u.nombre, u.username, v.tecnico) AS tecnico_nombre "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
-        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
-    )
-
-    def _do_query(extra_where, extra_params, order_by="v.fecha_programada, v.hora_inicio, v.id"):
-        clauses = list(where_base) + list(extra_where or [])
-        params = list(params_base) + list(extra_params or [])
-        wstr = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        try:
-            rows = mysql_fetchall(
-                sql_base + wstr + f" ORDER BY {order_by} LIMIT 100",
-                tuple(params)
-            ) or []
-        except Exception as e:
-            print(f"[mi-dia] query fail: {e}", flush=True)
-            rows = []
-        return [dict(r) for r in rows]
-
-    # 1) OTs de HOY (programadas o en_curso, fecha=hoy)
-    ots_hoy = _do_query(
-        ["v.fecha_programada = %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy],
-        order_by="v.hora_inicio, v.id"
-    )
-
-    # 2) OTs de la SEMANA (próximos 7 días, excluyendo hoy)
-    ots_semana = _do_query(
-        ["v.fecha_programada > %s",
-         "v.fecha_programada <= %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy, semana_fin],
-    )
-
-    # 3) OTs ATRASADAS (fecha < hoy y aún no cerradas)
-    ots_atrasadas = _do_query(
-        ["v.fecha_programada < %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy],
-        order_by="v.fecha_programada DESC, v.id"
-    )
-
-    # 4) OTs POR APROBAR (firmó técnico — espera supervisor)
-    # Para ejecutivo y admin: las que están pendientes_aprobacion (los van a firmar).
-    # Para técnico: las suyas firmadas para que vea cuándo se cerraron.
-    ots_por_aprobar = _do_query(
-        ["v.estado='pendiente_aprobacion'"],
-        [],
-        order_by="v.firma_tecnico_at DESC, v.id DESC"
-    )
-
-    return render_template(
-        "mantenciones/mi_dia.html",
-        ots_hoy=ots_hoy,
-        ots_semana=ots_semana,
-        ots_atrasadas=ots_atrasadas,
-        ots_por_aprobar=ots_por_aprobar,
-        hoy=hoy,
-        role_fam=role_fam,
-        es_tecnico=es_tecnico,
-        es_ejecutivo=es_ejecutivo,
-        nombre_user=(user.get("nombre") or username or "técnico"),
-    )
+    return redirect(url_for("mant_ots_list"))
 
 
 # ═════════════════════════════════════════════════════════════════════
