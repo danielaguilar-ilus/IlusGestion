@@ -28132,6 +28132,32 @@ def _mant_ficha_impl(cid):
         "SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC",
         (cid,)
     ) or []
+    # 2026-05-22 (Daniel — caso Vitacura/JDA): marcar contratos que tienen
+    # algún adjunto válido en Cloudinary para que el botón "Ver PDF" del
+    # template aparezca incluso cuando el contrato principal tiene
+    # archivo_path/cloudinary_url en NULL (caso SEED de demo). El endpoint
+    # mant_contrato_archivo hace fallback automático a estos adjuntos.
+    try:
+        _ct_ids = [int(r["id"]) for r in contratos_raw if r.get("id")]
+        if _ct_ids:
+            placeholders = ",".join(["%s"] * len(_ct_ids))
+            _adj_disponibles = mysql_fetchall(
+                f"SELECT DISTINCT contrato_id FROM mant_contrato_adjuntos "
+                f"WHERE contrato_id IN ({placeholders}) "
+                f"  AND cloudinary_url IS NOT NULL AND cloudinary_url <> '' "
+                f"  AND tipo IN ('contrato','anexo','externo','otro')",
+                tuple(_ct_ids)
+            ) or []
+            _ct_con_adj = {int(r["contrato_id"]) for r in _adj_disponibles}
+            for _ct in contratos_raw:
+                _ct["tiene_adjunto_visible"] = int(_ct.get("id") or 0) in _ct_con_adj
+        else:
+            for _ct in contratos_raw:
+                _ct["tiene_adjunto_visible"] = False
+    except Exception as _e_adj:
+        print(f"[ficha contratos] tiene_adjunto_visible flag failed: {_e_adj}", flush=True)
+        for _ct in contratos_raw:
+            _ct["tiene_adjunto_visible"] = False
     # PERF: LIMIT 200 en visitas (stats 12m + tab visitas no requieren más)
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
@@ -31729,9 +31755,51 @@ def mant_contrato_archivo(ctid):
         "  FROM mant_contratos WHERE id=%s",
         (ctid,)
     )
-    if not ct or not (ct.get("archivo_path") or ct.get("cloudinary_url")):
-        print(f"[mant_contrato_archivo] ctid={ctid} → SIN canales (ni disco ni cloud)", flush=True)
-        return "Archivo no encontrado", 404
+    if not ct:
+        return "Contrato no encontrado", 404
+
+    # ── FALLBACK 2026-05-22 (Daniel — caso Vitacura/JDA) ──────────────
+    # Contratos SEED del 21/05 vienen con archivo_path=NULL y cloudinary_url=NULL
+    # PORQUE el archivo real está en mant_contrato_adjuntos (Cloudinary OK).
+    # Si el contrato principal no tiene archivo propio, buscamos el primer
+    # adjunto válido de tipo 'contrato' o 'anexo' con Cloudinary URL y lo
+    # redirigimos directamente. Esto destraba todos los contratos huérfanos
+    # sin tener que re-subir manualmente.
+    if not (ct.get("archivo_path") or ct.get("cloudinary_url")):
+        adj_fallback = mysql_fetchone(
+            "SELECT cloudinary_url, archivo_nombre, mime_type "
+            "  FROM mant_contrato_adjuntos "
+            " WHERE contrato_id=%s "
+            "   AND cloudinary_url IS NOT NULL AND cloudinary_url <> '' "
+            "   AND tipo IN ('contrato','anexo','externo','otro') "
+            " ORDER BY CASE tipo "
+            "          WHEN 'contrato' THEN 1 WHEN 'anexo' THEN 2 "
+            "          WHEN 'externo'  THEN 3 ELSE 4 END, id ASC "
+            " LIMIT 1",
+            (ctid,)
+        )
+        if adj_fallback and adj_fallback.get("cloudinary_url"):
+            print(f"[mant_contrato_archivo] ctid={ctid} → FALLBACK adjunto "
+                  f"({adj_fallback.get('archivo_nombre')})", flush=True)
+            # Promovemos el adjunto al contrato principal para que el próximo
+            # acceso sea directo (mejor performance + UI consistente).
+            try:
+                mysql_execute(
+                    "UPDATE mant_contratos "
+                    "   SET cloudinary_url=%s, archivo_nombre=%s "
+                    " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                    (adj_fallback["cloudinary_url"],
+                     adj_fallback.get("archivo_nombre") or f"contrato_{ctid}.pdf",
+                     ctid)
+                )
+            except Exception:
+                pass
+            # Cargar el ct con el dato fresco para que la lógica siguiente lo use
+            ct["cloudinary_url"] = adj_fallback["cloudinary_url"]
+            ct["archivo_nombre"] = adj_fallback.get("archivo_nombre") or ct.get("archivo_nombre")
+        else:
+            print(f"[mant_contrato_archivo] ctid={ctid} → SIN canales (ni disco ni cloud ni adjuntos)", flush=True)
+            return "Archivo no encontrado", 404
 
     as_dl = request.args.get("download") == "1"
     use_office_viewer = request.args.get("viewer") == "office"

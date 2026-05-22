@@ -2729,10 +2729,13 @@ async function confirmarVisitaMulti() {
             </div>
           </div>
           <div class="d-flex gap-1 flex-shrink-0 align-items-center">
-            {# FIX 2026-05-22: mostrar "Ver PDF" si hay archivo_path O cloudinary_url.
-               Antes solo se condicionaba a archivo_path, lo que ocultaba el botón
-               en contratos que viven solo en Cloudinary (filesystem efímero). #}
-            {% if ct.archivo_path or ct.cloudinary_url %}
+            {# FIX 2026-05-22 (Daniel — Vitacura/JDA): mostrar "Ver PDF" si hay
+               archivo_path, cloudinary_url, O al menos un adjunto válido con
+               cloudinary_url (tiene_adjunto_visible — computado en backend).
+               Esto destraba contratos SEED del 21/05 cuyo archivo real vive
+               solo en mant_contrato_adjuntos. El endpoint mant_contrato_archivo
+               hace fallback automático a esos adjuntos. #}
+            {% if ct.archivo_path or ct.cloudinary_url or ct.tiene_adjunto_visible %}
             <button class="btn btn-sm btn-outline-primary"
                     onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}', {{ 'true' if ct.cloudinary_url else 'false' }})"
                     title="Ver el contrato en el navegador">
