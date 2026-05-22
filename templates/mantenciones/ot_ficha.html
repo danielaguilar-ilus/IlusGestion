@@ -953,11 +953,14 @@
 {% set _firma_sup = visita.firma_supervisor_url %}
 {# 2026-05-18 (Aaron Urbina fix) — Usamos el flag del backend evaluado por
    `_puede_ot_accion('aprobar')` que normaliza variantes dinámicas del rol
-   (ejecutivo_sstt, supervisor_sstt, etc.). El check viejo basado en string
-   literal _role_low in ['supervisor','ejecutivo'] bloqueaba a Aaron. #}
+   (ejecutivo_sstt, supervisor_sstt, etc.).
+   🔒 FIX 2026-05-22 (Daniel — brecha Aaron): el fallback ya NO incluye
+   'ejecutivo' (ni siquiera creador). Solo admin/superadmin/supervisor
+   pueden firmar como aprobador — coherente con `_puede_ot_accion('aprobar')`.
+   El ejecutivo NO es supervisor formal de su propia OT. #}
 {% set _es_creador = es_creador if es_creador is defined else (current_user and visita.created_by and visita.created_by == current_user.username) %}
 {% set _role_low = (current_user.role if current_user else '') | lower %}
-{% set _puede_firmar_sup = puede_aprobar if puede_aprobar is defined else (_es_creador or permissions.admin or permissions.superadmin or (_role_low in ['supervisor','ejecutivo'])) %}
+{% set _puede_firmar_sup = puede_aprobar if puede_aprobar is defined else (permissions.admin or permissions.superadmin or (_role_low in ['supervisor','supervisor_sstt'])) %}
 
 <div class="ot-firmas-panel" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;
      padding:18px 22px;margin:18px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)">

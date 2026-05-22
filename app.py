@@ -21949,12 +21949,37 @@ def _puede_ot_accion(vid, accion, user=None):
     Args:
       vid:    int o str ID de mant_visitas
       accion: 'ejecutar' | 'aprobar' | 'firmar_creador' | 'ver' | 'metadata'
+              | 'configurar' | 'editar' | 'eliminar'
       user:   dict de g.user o None (en cuyo caso usa g.user actual)
 
     Returns:
       bool — True si pasa, False si denegado.
 
     Fail-closed: en cualquier error de BD devuelve False (denegar).
+
+    ═══════════════════════════════════════════════════════════════════
+    MATRIZ DE PERMISOS POR ROL (2026-05-22, Daniel — brecha Aaron):
+    ─────────────┬──────────┬────────┬─────────┬─────────┬───────────┬───────
+    Acción       │ superadm │ admin  │ supervi │ ejecuti │ tecnico   │ otro
+    ─────────────┼──────────┼────────┼─────────┼─────────┼───────────┼───────
+    ver          │   ✓      │   ✓    │   ✓     │ ✓ (sus) │ ✓ (asign) │  ✗
+    crear OT     │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗
+    configurar   │   ✓      │   ✓    │   ✓     │ ✓(cre)  │ ✓(asign)  │  ✗
+    ejecutar     │   ✓      │   ✗    │   ✗     │   ✗     │ ✓(asign)  │  ✗
+    metadata     │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
+    editar       │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
+    eliminar     │   ✓      │   ✗    │   ✗     │   ✗     │   ✗       │  ✗
+    aprobar      │   ✓      │   ✓    │   ✓     │   ✗     │   ✗       │  ✗
+    firmar_creador│  ✓      │   ✓    │   ✓     │   ✗     │   ✗       │  ✗
+    ─────────────┴──────────┴────────┴─────────┴─────────┴───────────┴───────
+
+    Cambio crítico 2026-05-22 vs versión previa:
+      - ejecutivo YA NO puede aprobar/rechazar cierre, ni editar metadata,
+        ni eliminar (antes el ejecutivo creador podía hacer todo eso). Daniel:
+        "el ejecutivo levanta y supervisa — NO ejecuta, NO firma, NO borra".
+      - Antes 'aprobar' incluía a `ejecutivo` por familia → ahora solo
+        supervisor/admin/superadmin (esa es la "supervisión" formal).
+    ═══════════════════════════════════════════════════════════════════
     """
     if user is None:
         user = getattr(g, "user", None) or {}
@@ -21973,14 +21998,26 @@ def _puede_ot_accion(vid, accion, user=None):
         print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (sin uid)", flush=True)
         return False
 
-    # Cargar campos clave de la OT una vez
+    # Cargar campos clave de la OT una vez.
+    # 2026-05-22 (Aaron Urbina): traemos también `created_by_user_id` (FK
+    # estable) si la columna existe — es la fuente de verdad nueva. El
+    # string `created_by` queda como fallback para compat con OTs viejas.
     try:
-        v = mysql_fetchone(
-            "SELECT tecnico_user_id, created_by, firma_supervisor_user_id, "
-            "       estado, tipo "
-            "  FROM mant_visitas WHERE id=%s",
-            (vid,)
-        )
+        # Intentamos con la columna nueva; si falla (DB pre-migración), reintento.
+        try:
+            v = mysql_fetchone(
+                "SELECT tecnico_user_id, created_by, created_by_user_id, "
+                "       firma_supervisor_user_id, estado, tipo "
+                "  FROM mant_visitas WHERE id=%s",
+                (vid,)
+            )
+        except Exception:
+            v = mysql_fetchone(
+                "SELECT tecnico_user_id, created_by, "
+                "       firma_supervisor_user_id, estado, tipo "
+                "  FROM mant_visitas WHERE id=%s",
+                (vid,)
+            )
     except Exception as e:
         print(f"[SECURITY] _puede_ot_accion BD error vid={vid}: {e}", flush=True)
         return False
@@ -21990,7 +22027,30 @@ def _puede_ot_accion(vid, accion, user=None):
 
     tecnico_uid = v.get("tecnico_user_id")
     creador_username = (v.get("created_by") or "").strip().lower()
-    es_creador = bool(creador_username) and creador_username == username.strip().lower()
+    creador_uid = v.get("created_by_user_id")  # puede ser None
+
+    # 🔒 FIX 2026-05-22 (brecha Aaron OT-2026-00008):
+    # ANTES `es_creador` solo comparaba `created_by` (varchar) contra
+    # `user.username`. Eso fallaba si created_by guardó el nombre legible
+    # (ej. 'Aaron Urbina') y username es el email
+    # (ej. 'urbinaaaron65@gmail.com').
+    # AHORA: 3 chequeos en cascada (cualquiera vale):
+    #   1. created_by_user_id == user.id  (FK estable, post-migración)
+    #   2. created_by ILIKE user.username  (legacy email-style)
+    #   3. created_by ILIKE user.nombre    (legacy nombre-style — caso Aaron)
+    user_nombre = (user.get("nombre") or "").strip().lower()
+    user_username = username.strip().lower()
+    es_creador = False
+    try:
+        if creador_uid and int(creador_uid) == int(uid):
+            es_creador = True
+    except (TypeError, ValueError):
+        pass
+    if not es_creador and creador_username:
+        if creador_username == user_username:
+            es_creador = True
+        elif user_nombre and creador_username == user_nombre:
+            es_creador = True
 
     # ¿Es técnico asignado (principal o colaborador)?
     es_tecnico_asignado = False
@@ -22011,7 +22071,16 @@ def _puede_ot_accion(vid, accion, user=None):
     # ── EJECUTAR ─────────────────────────────────────────────────
     # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT.
     # SOLO técnico asignado/colaborador + superadmin (ya retornado arriba).
+    # 🔒 FIX 2026-05-22 (Daniel — brecha Aaron): aunque por error administrativo
+    # el ejecutivo quede asignado como técnico (caso edge: alguien lo selecciona
+    # en el dropdown sin filtrar), NO le permitimos ejecutar. El rol manda.
+    # Solo familia 'tecnico' (tecnico, tecnico_externo, etc.) + superadmin
+    # pueden ejecutar OTs físicamente. Defense in depth.
     if accion == "ejecutar":
+        if role != "tecnico":
+            print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                  f"-> DENIED (solo familia 'tecnico' puede ejecutar; este rol levanta/supervisa)", flush=True)
+            return False
         result = es_tecnico_asignado
         print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
               f"tecnico_uid={tecnico_uid} es_asignado={es_tecnico_asignado} -> "
@@ -22046,60 +22115,84 @@ def _puede_ot_accion(vid, accion, user=None):
               f"es_tec_asignado={es_tecnico_asignado} -> DENIED", flush=True)
         return False
 
-    # ── METADATA ────────────────────────────────────────────────
-    # editar campos generales (titulo, fecha, tipo, descripcion, etc.) y
-    # eliminar OT. Solo admin + creador (no técnico).
-    if accion == "metadata":
+    # ── METADATA / EDITAR ───────────────────────────────────────
+    # Editar campos generales (título, fecha, tipo, descripción, técnico,
+    # estado, modalidad, prioridad, etc.). SOLO admin + superadmin.
+    # 🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    # Antes `ejecutivo+creador` también podía editar. Daniel definió:
+    #   "el ejecutivo NO edita NUNCA. Solo crea y supervisa visualmente.
+    #    Si necesita corregir algo lo pide al admin."
+    # 'editar' es alias semántico de 'metadata' (mismo permiso).
+    if accion in ("metadata", "editar"):
         if role == "admin":
-            print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} -> ALLOWED (admin)", flush=True)
+            print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (admin)", flush=True)
             return True
-        if role == "ejecutivo" and es_creador:
-            print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} -> ALLOWED (ejecutivo+creador)", flush=True)
-            return True
-        print(f"[PERM] vid={vid} action=metadata role={role_raw}->{role} user={username} "
+        print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} "
               f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
         return False
 
+    # ── ELIMINAR ────────────────────────────────────────────────
+    # 🔒 Solo superadmin. Ni siquiera admin (que sí puede editar) puede
+    # borrar definitivamente. Para "cancelar" una OT mal creada, el admin
+    # debe usar PUT estado='cancelada' (conserva historial). Esto matchea
+    # la regla actual de `mant_visita_del` (línea 36422).
+    if accion == "eliminar":
+        # superadmin ya pasó por la regla absoluta arriba; aquí solo
+        # llegamos si role != superadmin → DENIED.
+        print(f"[PERM] vid={vid} action=eliminar role={role_raw}->{role} user={username} -> DENIED (solo superadmin)", flush=True)
+        return False
+
+    # ── CREAR (chequeo sin vid, ver `_puede_crear_ot()`) ───────
+    # Esta rama existe para compat semántica si alguien llama con
+    # accion='crear' sobre una OT ya existente; permitimos a admin,
+    # supervisor y ejecutivo. NO valida vid (la OT ya existe).
+    if accion == "crear":
+        if role in ("admin", "supervisor", "ejecutivo"):
+            return True
+        return False
+
     # ── APROBAR ─────────────────────────────────────────────────
-    # aprobar/rechazar cierre. admin/ejecutivo/supervisor + creador.
-    # 'supervisor' y 'ejecutivo' (incluyendo variantes _sstt, _servicio,
-    # _servicio_tecnico) pueden aprobar cualquier OT; el creador de la OT
-    # solo SUS OTs.
-    # FIX 2026-05-18 (Aaron Urbina): role 'ejecutivo_sstt' antes no
-    # matcheaba con 'ejecutivo' literal. `_rol_familia` ahora lo normaliza.
+    # Aprobar/rechazar cierre = "supervisión formal". Solo admin/supervisor
+    # (+ superadmin que ya pasó arriba).
+    # 🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    # Antes ejecutivo también podía aprobar (familia 'ejecutivo' estaba
+    # en la lista), y el creador podía aprobar SU OT. Daniel definió:
+    #   "el ejecutivo NO firma cierres ni rechaza. Esa es responsabilidad
+    #    del admin o del supervisor — NO del ejecutivo que levantó la OT,
+    #    porque sería juez y parte."
+    # Ahora: ejecutivo NUNCA aprueba ni rechaza, ni siquiera sus OTs.
     if accion == "aprobar":
-        if role in ("admin", "ejecutivo", "supervisor"):
+        if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
             return True
-        # El creador siempre puede aprobar SU OT (regla del flujo de 3 firmas)
-        result = es_creador
         print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} "
-              f"created_by={creador_username} es_creador={es_creador} -> "
-              f"{'ALLOWED (creador)' if result else 'DENIED'}", flush=True)
-        return result
+              f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
+        return False
 
     # ── FIRMAR_CREADOR ──────────────────────────────────────────
-    # Firmar como aprobador en el flujo de 3 firmas:
-    #   - admin / supervisor / ejecutivo (rol con permiso global, incluye
-    #     variantes _sstt, _servicio_tecnico, etc.) → siempre
-    #   - el creador específico de ESTA OT → siempre
-    #   - resto → 403
+    # Firmar como aprobador en el flujo de 3 firmas.
+    # 🔒 FIX 2026-05-22: ejecutivo YA NO puede firmar (mismo motivo que
+    # 'aprobar'). Solo admin/supervisor + superadmin.
     if accion == "firmar_creador":
-        if role in ("admin", "supervisor", "ejecutivo"):
+        if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
             return True
-        result = es_creador
         print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} "
-              f"created_by={creador_username} es_creador={es_creador} -> "
-              f"{'ALLOWED (creador)' if result else 'DENIED'}", flush=True)
-        return result
+              f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
+        return False
 
     # ── VER ────────────────────────────────────────────────────
-    # Lectura: admin/ejecutivo/supervisor/creador/asignado/colaborador.
-    # Bloquea solo a tecnico/tecnico_externo que NO la tienen asignada.
+    # Lectura: admin/supervisor (siempre), ejecutivo (SUS OTs: creó +
+    # asignado), creador, técnico asignado/colaborador.
+    # 🔒 FIX 2026-05-22 (Daniel): el ejecutivo NO ve TODAS las OTs (antes
+    # sí podía). Ahora solo ve las que él creó o tiene asignadas, igual
+    # que el filtro del listado.
     if accion == "ver":
-        if role in ("admin", "ejecutivo", "supervisor"):
+        if role in ("admin", "supervisor"):
             return True
+        if role == "ejecutivo":
+            # Solo SUS OTs (creó + asignado)
+            return es_creador or es_tecnico_asignado
         if es_creador:
             return True
         if es_tecnico_asignado:
@@ -22126,13 +22219,20 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
     if is_api:
         if accion == "ejecutar":
             msg = "Solo el técnico asignado puede gestionar esta OT."
-        elif accion == "metadata":
-            msg = "Solo administradores pueden editar/eliminar esta OT."
+        elif accion in ("metadata", "editar"):
+            msg = ("Solo admin/superadmin pueden editar esta OT. Como "
+                   "ejecutivo puedes crear OTs pero no modificarlas — pide "
+                   "el cambio al administrador.")
+        elif accion == "eliminar":
+            msg = ("Solo el superadministrador puede eliminar definitivamente "
+                   "una OT. Para anularla usa estado='cancelada' (PUT).")
         elif accion == "configurar":
             msg = ("Solo el creador, administrador o técnico asignado "
                    "puede aplicar plantilla o agregar tareas a esta OT.")
         elif accion in ("aprobar", "firmar_creador"):
-            msg = "Solo el supervisor/creador puede aprobar o firmar esta OT."
+            msg = ("Solo el supervisor o administrador puede aprobar/firmar "
+                   "el cierre de esta OT. El ejecutivo NO firma (sería juez "
+                   "y parte del trabajo que él mismo levantó).")
         else:
             msg = "No tienes acceso a esa orden de trabajo."
         return jsonify({
@@ -22247,11 +22347,14 @@ def _ot_can_view(view_func):
 
 
 def _ot_can_metadata(view_func):
-    """Decorador para PUT/DELETE de visita (editar metadata, eliminar).
+    """Decorador para PUT de visita (editar título, fecha, técnico, tipo,
+    estado, etc.).
 
-    Solo superadmin + admin + ejecutivo creador pasan. Técnico NO puede
-    borrar ni editar metadata aunque sea la asignada (eso lo decide el
-    admin que la creó).
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    Solo superadmin + admin pasan. Ejecutivo creador YA NO puede editar
+    (antes podía y modificaba OTs que él mismo levantó: cambiaba técnico,
+    movía fecha, etc.). Daniel: "el ejecutivo solo levanta — si necesita
+    corregir algo, lo pide al admin".
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -22268,11 +22371,44 @@ def _ot_can_metadata(view_func):
     return wrapped
 
 
+# Alias semántico para PUT: la acción se llama "editar" en la UI/docs y
+# semánticamente es lo mismo que "metadata" (cambiar campos del registro).
+_ot_can_editar = _ot_can_metadata
+
+
+def _ot_can_eliminar(view_func):
+    """Decorador para DELETE de visita.
+
+    🔒 Solo superadmin. Para cancelar una OT mal creada, usar PUT
+    estado='cancelada' (conserva el historial). Esta regla es la misma
+    que ya aplicaba `mant_visita_del` inline; ahora está centralizada
+    en `_puede_ot_accion(vid, 'eliminar', u)` para que la matriz sea
+    coherente y testeable.
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "eliminar", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="eliminar",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
 def _ot_can_approve(view_func):
     """Decorador para aprobar/rechazar cierre.
 
-    Permite a admin/ejecutivo/superadmin + creador de la OT. Bloquea
-    al técnico (no aprueba su propio trabajo).
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    Solo superadmin + admin + supervisor pasan. Ejecutivo YA NO firma
+    cierres (antes la familia 'ejecutivo' estaba en la lista). Motivo:
+    el ejecutivo levanta/supervisa visualmente — la aprobación formal
+    (juez del trabajo del técnico) es del admin o supervisor, no del
+    ejecutivo que sería juez y parte.
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -23696,6 +23832,22 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tareas ADD COLUMN valor_gps_lng DECIMAL(10,7) NULL",
                 "ALTER TABLE mant_visita_tareas ADD COLUMN valor_gps_accuracy DECIMAL(8,2) NULL"
                 " COMMENT 'Accuracy en metros del fix GPS'",
+                # ════════════════════════════════════════════════════════════
+                # 2026-05-22 — created_by_user_id en mant_visitas (Aaron fix).
+                # `created_by` es VARCHAR que guarda lo que devuelve
+                # current_username() — a veces es el email (`username`), a
+                # veces el nombre legible. Esto rompía el filtro del listado
+                # de OTs para `ejecutivo_sstt`: si created_by='Aaron Urbina'
+                # (nombre) y user.username='urbinaaaron65@gmail.com', el match
+                # LOWER(TRIM(...)) fallaba y el listado quedaba vacío aunque
+                # el calendario sí mostraba la OT. Agregamos `created_by_user_id`
+                # como FUENTE DE VERDAD (FK a app_users.id) y mantenemos
+                # `created_by` para compat. Las queries nuevas usan el id;
+                # el texto queda como display.
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN created_by_user_id INT NULL "
+                "COMMENT 'FK a app_users.id del creador de la OT (fuente de verdad). created_by queda solo como display.'",
+                "CREATE INDEX idx_v_created_by_user ON mant_visitas (created_by_user_id)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -25766,10 +25918,44 @@ def _mant_erp_doc_montos(tido, nudo):
 # etc.) solo generan historial en mant_maquina_eventos.
 # ═════════════════════════════════════════════════════════════════════
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║ ❄ FROZEN — 2026-05-22 — FLUJO LEVANTAMIENTO DE FICHA              ║
+# ║                                                                    ║
+# ║ Este bloque está SELLADO por decisión de Daniel (super-admin).     ║
+# ║ NO MODIFICAR sin autorización explícita escrita en el chat.        ║
+# ║                                                                    ║
+# ║ Procedimiento normado (procedimiento interno ILUS):                ║
+# ║   1. Aarón (ejecutivo_sstt) → crea OT desde wizard ficha cliente  ║
+# ║      con tipo='levantamiento' o 'preventiva'+levantamiento_id     ║
+# ║   2. Lenin (técnico) → abre OT → modal CAPTURA por equipo:        ║
+# ║      estado, marca, modelo, año, voltaje, ubicación, fotos,       ║
+# ║      observaciones, toggle daño, "marcar completado"              ║
+# ║   3. Lenin firma técnico → cliente firma → pendiente_aprobacion   ║
+# ║   4. Aarón firma cierre → _promover_levantamiento_async →         ║
+# ║      datos heredan a mant_maquinas + mant_maquina_fotos +         ║
+# ║      mant_maquina_eventos + mant_maquina_levantamientos           ║
+# ║                                                                    ║
+# ║ Funciones del flujo (todas FROZEN):                                ║
+# ║   - _promover_levantamiento_a_maquina (este bloque)               ║
+# ║   - _promover_levantamiento_async                                  ║
+# ║   - _ensure_levantamiento_para_visita                              ║
+# ║   - _mirror_ot_equipo_a_levantamiento                              ║
+# ║   - mant_lev_crear_o_listar (wizard Aaron)                         ║
+# ║   - mant_ot_equipo_datos / _foto / _fotos_list (UI captura)        ║
+# ║   - sync mant_levantamiento_items→mant_visita_equipos en          ║
+# ║     mant_ot_ejecutar (safety-net)                                  ║
+# ║                                                                    ║
+# ║ Caso validado: OT-2026-00006 (cliente JDA, máquina Kairos Row).    ║
+# ║ Cualquier cambio futuro requiere: nueva autorización, audit en     ║
+# ║ mant_logs accion='flujo_levantamiento_modificado'.                 ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
 def _promover_levantamiento_a_maquina(vid, usuario=None):
     """Promueve datos capturados en una OT de levantamiento a la ficha
     de cada equipo (mant_maquinas). Idempotente: si ya se promovió, no
     duplica filas (UNIQUE KEY uq_maquina_visita lo evita).
+
+    ❄ FROZEN 2026-05-22 — Ver banner arriba. NO modificar sin autorización.
 
     Estrategia:
       1. Verifica que la visita es tipo='levantamiento' Y estado='cerrada'.
@@ -29642,16 +29828,36 @@ def mant_visita_multi(cid):
     try:
         with conn.cursor() as cur:
             # 1. Crear la visita única (con número de OT correlativo)
-            cur.execute(
-                """INSERT INTO mant_visitas
-                   (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                    tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
-                    costo,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
-                (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
-                 tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
-                 costo, current_username())
-            )
+            # 2026-05-22 (Aaron Urbina): incluir created_by_user_id (FK).
+            _u_mv = getattr(g, "user", None) or {}
+            _cre_uid_mv = _u_mv.get("id")
+            try:
+                _cre_uid_mv = int(_cre_uid_mv) if _cre_uid_mv else None
+            except (TypeError, ValueError):
+                _cre_uid_mv = None
+            try:
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                        tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
+                        costo,created_by,created_by_user_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s)""",
+                    (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
+                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
+                     costo, current_username(), _cre_uid_mv)
+                )
+            except Exception as _e_ins_mv:
+                print(f"[visita-multi] INSERT con created_by_user_id falló ({_e_ins_mv}); reintentando legacy", flush=True)
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                        tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
+                        costo,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
+                    (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
+                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
+                     costo, current_username())
+                )
             vid = cur.lastrowid
 
             # 1.b Insertar técnicos asignados (N:N) si hay
@@ -32950,6 +33156,67 @@ def mant_calendario_dia_drill(fecha):
         return jsonify({"ok": False, "error": "Formato fecha inválido (use YYYY-MM-DD)"}), 400
 
     try:
+        # 🔐 SEGURIDAD 2026-05-22 (Aaron Urbina — brecha calendario-listado):
+        # Aplicar filtro por rol coherente con `mant_ots_list` y
+        # `mant_visitas_api`. Si el rol no puede ver la OT en el listado,
+        # tampoco debe verla como visita del día.
+        _u = getattr(g, "user", None) or {}
+        _role_raw = (_u.get("role") or "").lower()
+        _role_fam = _rol_familia(_role_raw)
+        _uid = _u.get("id")
+        _extra_where = ""
+        _extra_params = []
+        if _role_fam in ("admin", "superadmin", "supervisor"):
+            pass
+        elif _role_fam == "ejecutivo":
+            username_actual = (_u.get("username") or "").strip()
+            nombre_actual = (_u.get("nombre") or "").strip()
+            _has_cbu = False
+            try:
+                _col_check = mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS "
+                    " WHERE TABLE_SCHEMA = DATABASE() "
+                    "   AND TABLE_NAME = 'mant_visitas' "
+                    "   AND COLUMN_NAME = 'created_by_user_id'"
+                )
+                _has_cbu = bool((_col_check or {}).get("n"))
+            except Exception:
+                _has_cbu = False
+            clauses = []
+            if _has_cbu and _uid:
+                clauses.append("v.created_by_user_id=%s")
+                _extra_params.append(int(_uid))
+            if username_actual:
+                clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+                _extra_params.append(username_actual)
+            if nombre_actual and nombre_actual.lower() != username_actual.lower():
+                clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+                _extra_params.append(nombre_actual)
+            if _uid:
+                clauses.append("v.tecnico_user_id=%s")
+                _extra_params.append(int(_uid))
+                clauses.append(
+                    "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                    "         WHERE tecnico_user_id=%s)"
+                )
+                _extra_params.append(int(_uid))
+            if clauses:
+                _extra_where = " AND (" + " OR ".join(clauses) + ") "
+            else:
+                _extra_where = " AND 1=0 "
+        elif _role_fam == "tecnico":
+            if _uid:
+                _extra_where = (
+                    " AND (v.tecnico_user_id=%s OR EXISTS("
+                    "  SELECT 1 FROM mant_visita_tecnicos vt "
+                    "   WHERE vt.visita_id=v.id AND vt.tecnico_user_id=%s)) "
+                )
+                _extra_params.extend([int(_uid), int(_uid)])
+            else:
+                _extra_where = " AND 1=0 "
+        else:
+            _extra_where = " AND 1=0 "
+
         # Visitas del día con sus técnicos
         visitas = mysql_fetchall(
             "SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.tipo, v.estado, "
@@ -32965,9 +33232,9 @@ def mant_calendario_dia_drill(fecha):
             "  FROM mant_visitas v "
             "  JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
-            " WHERE v.fecha_programada=%s "
+            f" WHERE v.fecha_programada=%s {_extra_where} "
             " ORDER BY v.hora_inicio, v.id",
-            (fecha,)
+            (fecha, *_extra_params)
         ) or []
         visitas = [dict(v) for v in visitas]
 
@@ -34250,14 +34517,69 @@ def mant_visitas_api():
     tipo_f = (request.args.get("tipo") or "").strip().lower()
     estado_f = (request.args.get("estado") or "").strip().lower()
     where, params = [], []
-    # 🔐 SEGURIDAD (2026-05-17): si el usuario es técnico/tecnico_externo,
-    # filtrar el calendario para que solo vea SUS OTs (las que tiene
-    # asignadas como principal o como colaborador). Antes este endpoint
-    # devolvía TODAS las visitas, lo que era IDOR de lectura.
+    # 🔐 SEGURIDAD (2026-05-17 / refuerzo 2026-05-22 Aaron Urbina):
+    # Filtramos el calendario por rol con el MISMO criterio que el listado
+    # (`mant_ots_list`). Si el rol no puede ver una OT en el listado,
+    # tampoco debe verla como evento en el calendario.
+    #
+    # BRECHA detectada 2026-05-22 (Daniel): el calendario mostraba TODAS
+    # las OTs incluso a ejecutivos, mientras el listado las filtraba. Aaron
+    # entraba a OTs ajenas vía calendario aunque no aparecían en su lista.
+    # Esto era un IDOR de lectura.
+    #
+    # Reglas (coherentes con _puede_ot_accion('ver') y mant_ots_list):
+    #  - admin / supervisor / superadmin → ven TODO (sin filtro)
+    #  - ejecutivo → solo creadas por él (created_by_user_id, created_by
+    #    por username y por nombre) O asignadas a él (tecnico_user_id,
+    #    colaborador en mant_visita_tecnicos)
+    #  - tecnico / tecnico_externo → solo asignadas (principal o colab.)
+    #  - resto (lector/editor/etc.) → nada (1=0) — el decorador
+    #    @_mant_required ya las debería bloquear; cinturón + tirantes.
     u = getattr(g, "user", None) or {}
-    role = (u.get("role") or "").lower()
-    if role in ("tecnico", "tecnico_externo"):
-        uid = u.get("id")
+    role_raw = (u.get("role") or "").lower()
+    role_fam = _rol_familia(role_raw)
+    uid = u.get("id")
+    if role_fam in ("admin", "superadmin", "supervisor"):
+        pass  # Sin filtro de rol — ven todo
+    elif role_fam == "ejecutivo":
+        # Mismo criterio que el listado en mant_ots_list
+        username_actual = (u.get("username") or "").strip()
+        nombre_actual = (u.get("nombre") or "").strip()
+        # Detectar columna `created_by_user_id` (post-migración)
+        _has_cbu = False
+        try:
+            _col_check = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS "
+                " WHERE TABLE_SCHEMA = DATABASE() "
+                "   AND TABLE_NAME = 'mant_visitas' "
+                "   AND COLUMN_NAME = 'created_by_user_id'"
+            )
+            _has_cbu = bool((_col_check or {}).get("n"))
+        except Exception:
+            _has_cbu = False
+        clauses = []
+        if _has_cbu and uid:
+            clauses.append("v.created_by_user_id=%s")
+            params.append(int(uid))
+        if username_actual:
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            params.append(username_actual)
+        if nombre_actual and nombre_actual.lower() != username_actual.lower():
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            params.append(nombre_actual)
+        if uid:
+            clauses.append("v.tecnico_user_id=%s")
+            params.append(int(uid))
+            clauses.append(
+                "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                "         WHERE tecnico_user_id=%s)"
+            )
+            params.append(int(uid))
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
+        else:
+            where.append("1=0")
+    elif role_fam == "tecnico":
         if uid:
             where.append(
                 "(v.tecnico_user_id=%s OR EXISTS("
@@ -34268,6 +34590,9 @@ def mant_visitas_api():
         else:
             # Sin uid no puede ver nada
             where.append("1=0")
+    else:
+        # Rol desconocido — denegar lectura (defense in depth)
+        where.append("1=0")
     if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
     if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
     if cid:   where.append("v.cliente_id=%s"); params.append(int(cid))
@@ -36204,24 +36529,57 @@ def mant_visita_crear():
     if prioridad not in _OT_PRIORIDADES:
         prioridad = "media"
 
+    # 2026-05-22 (Aaron Urbina) — capturamos el user_id del creador como
+    # FUENTE DE VERDAD para el filtro del listado. `created_by` queda como
+    # texto display (puede ser email o nombre, según current_username()),
+    # pero `created_by_user_id` es FK estable a app_users.id que NO depende
+    # del formato del string.
+    _u_creator = getattr(g, "user", None) or {}
+    creador_user_id = _u_creator.get("id")
+    try:
+        creador_user_id = int(creador_user_id) if creador_user_id else None
+    except (TypeError, ValueError):
+        creador_user_id = None
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO mant_visitas
-                   (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                    tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
-                    modalidad_cobro,prioridad,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (d["cliente_id"], d.get("contrato_id") or None,
-                 d.get("titulo","Mantención"), d["fecha_programada"],
-                 d.get("hora_inicio") or None, d.get("hora_fin") or None,
-                 tecnico_txt, tecnico_user_id,
-                 tipo_ot,
-                 d.get("estado","programada"), d.get("descripcion",""),
-                 float(d.get("costo",0) or 0),
-                 modalidad, prioridad, current_username())
-            )
+            # INSERT con created_by_user_id. Si la migración aún no corrió en
+            # esta instancia, hacemos fallback al INSERT legacy sin la columna.
+            try:
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                        tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
+                        modalidad_cobro,prioridad,created_by,created_by_user_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (d["cliente_id"], d.get("contrato_id") or None,
+                     d.get("titulo","Mantención"), d["fecha_programada"],
+                     d.get("hora_inicio") or None, d.get("hora_fin") or None,
+                     tecnico_txt, tecnico_user_id,
+                     tipo_ot,
+                     d.get("estado","programada"), d.get("descripcion",""),
+                     float(d.get("costo",0) or 0),
+                     modalidad, prioridad, current_username(), creador_user_id)
+                )
+            except Exception as _e_ins_full:
+                # Fallback (DB sin la migración nueva todavía)
+                print(f"[crear-ot] INSERT con created_by_user_id falló ({_e_ins_full}); reintentando sin la columna", flush=True)
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
+                        tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
+                        modalidad_cobro,prioridad,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (d["cliente_id"], d.get("contrato_id") or None,
+                     d.get("titulo","Mantención"), d["fecha_programada"],
+                     d.get("hora_inicio") or None, d.get("hora_fin") or None,
+                     tecnico_txt, tecnico_user_id,
+                     tipo_ot,
+                     d.get("estado","programada"), d.get("descripcion",""),
+                     float(d.get("costo",0) or 0),
+                     modalidad, prioridad, current_username())
+                )
             vid = cur.lastrowid
         conn.commit()
         _mant_log("visita", vid, "creada",
@@ -36418,12 +36776,15 @@ def mant_visita_update(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>", methods=["DELETE"])
 @_mant_required
-@_ot_can_metadata
+@_ot_can_eliminar
 def mant_visita_del(vid):
-    # 🔐 SEGURIDAD 2026-05-18 (Daniel): el DELETE de OT es STRICT.
-    # Solo superadmin puede eliminar definitivamente. admin/ejecutivo
-    # creador pueden EDITAR (PUT) pero NO eliminar. Si quieren cancelar
-    # una OT mal creada, deben usar PUT estado='cancelada'.
+    # 🔐 SEGURIDAD 2026-05-22 (Daniel): el DELETE de OT es STRICT.
+    # Solo superadmin puede eliminar definitivamente (validado por
+    # @_ot_can_eliminar → matriz `_puede_ot_accion('eliminar')`).
+    # Admin puede EDITAR (PUT) pero NO eliminar; ejecutivo no puede
+    # ninguna de las dos. Si quieren cancelar una OT mal creada, deben
+    # usar PUT estado='cancelada' (conserva historial).
+    # Mantenemos chequeo defensivo redundante (defense in depth):
     _u = getattr(g, "user", None) or {}
     _role = (_u.get("role") or "").lower()
     if _role != "superadmin":
@@ -36819,20 +37180,40 @@ def mant_ticket_convertir_ot(tid):
     tipo_visita = "correctiva" if t.get("tipo") in ("falla","cambio","garantia") else "preventiva"
 
     # Crear la visita
+    # 2026-05-22 (Aaron Urbina): incluir created_by_user_id (FK).
+    _u_tv = getattr(g, "user", None) or {}
+    _cre_uid_tv = _u_tv.get("id")
+    try:
+        _cre_uid_tv = int(_cre_uid_tv) if _cre_uid_tv else None
+    except (TypeError, ValueError):
+        _cre_uid_tv = None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             numero_ot = _next_ot_number()
-            cur.execute(
-                """INSERT INTO mant_visitas
-                   (numero_ot, cliente_id, titulo, fecha_programada, tipo,
-                    estado, descripcion, tecnico_id, created_by)
-                   VALUES (%s,%s,%s,%s,%s,'programada',%s,%s,%s)""",
-                (numero_ot, t["cliente_id"], f"[{tipo_visita.upper()}] {t['titulo']}"[:200],
-                 fecha, tipo_visita,
-                 f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}",
-                 t.get("tecnico_id"), current_username())
-            )
+            try:
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (numero_ot, cliente_id, titulo, fecha_programada, tipo,
+                        estado, descripcion, tecnico_id, created_by, created_by_user_id)
+                       VALUES (%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s)""",
+                    (numero_ot, t["cliente_id"], f"[{tipo_visita.upper()}] {t['titulo']}"[:200],
+                     fecha, tipo_visita,
+                     f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}",
+                     t.get("tecnico_id"), current_username(), _cre_uid_tv)
+                )
+            except Exception as _e_ins_tv:
+                print(f"[ticket→OT] INSERT con created_by_user_id falló ({_e_ins_tv}); reintentando legacy", flush=True)
+                cur.execute(
+                    """INSERT INTO mant_visitas
+                       (numero_ot, cliente_id, titulo, fecha_programada, tipo,
+                        estado, descripcion, tecnico_id, created_by)
+                       VALUES (%s,%s,%s,%s,%s,'programada',%s,%s,%s)""",
+                    (numero_ot, t["cliente_id"], f"[{tipo_visita.upper()}] {t['titulo']}"[:200],
+                     fecha, tipo_visita,
+                     f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}",
+                     t.get("tecnico_id"), current_username())
+                )
             vid = cur.lastrowid
 
             # Vincular ticket → visita
@@ -37016,20 +37397,63 @@ def mant_ots_list():
     # ── EJECUTIVO (Aaron) — filtrar a sus OTs (creadas + asignadas) por DEFAULT ──
     # Daniel: "el ejecutivo NO ejecuta — solo crea/supervisa". Por
     # default mostramos las OTs que él mismo creó (created_by =
-    # username) **O las que tiene asignadas como técnico** (tecnico_user_id).
+    # username/nombre) **O las que tiene asignadas como técnico**.
     # Puede pasar ?todas=1 para ver el resto del módulo (útil para
     # coordinar), pero igualmente no puede ejecutarlas si no es responsable.
-    # FIX 2026-05-21 (Aaron Vitacura): antes solo veía las que creaba —
-    # cuando le asignaban una OT no aparecía en su home.
+    #
+    # FIX 2026-05-22 (Aaron Urbina ejecutivo_sstt — brecha listado vacío):
+    # `created_by` es un VARCHAR que históricamente guardó lo que devolvió
+    # `current_username()` — a veces el email (`username`), a veces el
+    # nombre legible. Si los formatos no coinciden, el match LOWER(TRIM())
+    # falla y el listado queda VACÍO aunque el calendario sí muestre la OT
+    # (ya pasó con Aaron: created_by='Aaron Urbina' (nombre)
+    # vs username='urbinaaaron65@gmail.com').
+    # Solución defensiva: comparamos contra TODAS las identidades posibles
+    # (username, nombre legible) Y además contra el nuevo `created_by_user_id`
+    # (FK estable). Si la columna nueva existe → match exacto por id.
     if es_ejecutivo and not ver_todas and not solo_mias:
         username_actual = (user.get("username") or "").strip()
+        nombre_actual = (user.get("nombre") or "").strip()
         user_id_actual = user.get("id")
+        # Detectar si la columna `created_by_user_id` ya fue migrada.
+        # Hacemos un SELECT cheap a INFORMATION_SCHEMA — si falla por
+        # cualquier motivo, caemos al match legacy (solo string).
+        _has_created_by_user_id = False
+        try:
+            _col_check = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS "
+                " WHERE TABLE_SCHEMA = DATABASE() "
+                "   AND TABLE_NAME = 'mant_visitas' "
+                "   AND COLUMN_NAME = 'created_by_user_id'"
+            )
+            _has_created_by_user_id = bool((_col_check or {}).get("n"))
+        except Exception:
+            _has_created_by_user_id = False
+
         clauses = []
+        # Match por FK estable (preferido — no depende del formato del string).
+        if _has_created_by_user_id and user_id_actual:
+            clauses.append("v.created_by_user_id=%s")
+            params.append(int(user_id_actual))
+        # Match legacy contra `created_by` por username (email) — compat con
+        # OTs creadas antes de la migración del FK.
         if username_actual:
             clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
             params.append(username_actual)
+        # Match legacy contra `created_by` por nombre legible — para OTs donde
+        # el string guardó el nombre en vez del email (caso Aaron OT-2026-00008,
+        # created_by='Aaron Urbina' vs username='urbinaaaron65@gmail.com').
+        if nombre_actual and nombre_actual.lower() != username_actual.lower():
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            params.append(nombre_actual)
+        # Match como técnico asignado (principal o colaborador).
         if user_id_actual:
             clauses.append("v.tecnico_user_id=%s")
+            params.append(int(user_id_actual))
+            clauses.append(
+                "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                "         WHERE tecnico_user_id=%s)"
+            )
             params.append(int(user_id_actual))
         if clauses:
             where.append("(" + " OR ".join(clauses) + ")")
@@ -38037,12 +38461,18 @@ def mant_ot_ejecutar(vid):
         return redirect(url_for("mant_ots_list"))
     visita = dict(visita)
 
-    # 🔐 SEGURIDAD 2026-05-18 (Daniel) — matriz unificada de permisos.
-    # Permite VER la página a: superadmin, admin, ejecutivo, creador de
-    # la OT y técnico asignado/colaborador. Bloquea a técnico/tecnico_externo
-    # que NO la tienen asignada (no espiar OTs ajenas). Las acciones de
-    # ejecución (botones que llaman a /api/visitas/.../tareas, etc.) están
-    # protegidas a nivel API con `_tecnico_owns_visita` strict.
+    # 🔐 SEGURIDAD 2026-05-18 / refuerzo 2026-05-22 (Daniel — brecha Aaron):
+    # Matriz unificada de permisos. Permite VER la página a:
+    #   - superadmin / admin / supervisor (siempre)
+    #   - ejecutivo (SOLO SUS OTs: creó O asignado/colaborador)
+    #   - creador de la OT (cualquier rol)
+    #   - técnico asignado/colaborador
+    # Bloquea a:
+    #   - técnico/tecnico_externo que NO la tienen asignada
+    #   - ejecutivo en OTs ajenas (no creadas ni asignadas a él)
+    #   - cualquier otro rol
+    # Las acciones de ejecución (botones que llaman a /api/visitas/.../tareas)
+    # están protegidas a nivel API con `_tecnico_owns_visita` strict.
     u = getattr(g, "user", None) or {}
     if not _puede_ot_accion(vid, "ver", u):
         print(
@@ -39497,20 +39927,21 @@ def mant_ot_iniciar_ruta(vid):
 # ═════════════════════════════════════════════════════════════════════
 
 def _is_supervisor_user():
-    """True si el usuario actual puede aprobar OTs (admin/superadmin/ejecutivo/supervisor).
+    """True si el usuario actual puede aprobar OTs (admin/superadmin/supervisor).
 
-    2026-05-18 (Aaron Urbina fix): normaliza el rol vía `_rol_familia`
-    para que variantes dinámicas como `ejecutivo_sstt`, `supervisor_sstt`,
-    `ejecutivo_servicio_tecnico`, etc. también pasen.
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    ANTES incluía 'ejecutivo' (Aaron podía aprobar como ejecutivo_sstt).
+    AHORA solo superadmin/admin/supervisor. El ejecutivo levanta y
+    supervisa visualmente, NO aprueba cierres (sería juez y parte).
     """
     try:
         perms = g.get("permissions") or {}
         if perms.get("superadmin") or perms.get("admin"):
             return True
-        # Ejecutivo / supervisor de mantenciones también puede aprobar
+        # Solo supervisor de mantenciones puede aprobar (NO ejecutivo)
         u = getattr(g, "user", None) or {}
         fam = _rol_familia(u.get("role") or "")
-        if fam in ("ejecutivo", "supervisor", "admin", "superadmin"):
+        if fam in ("supervisor", "admin", "superadmin"):
             return True
     except Exception:
         pass
@@ -39519,21 +39950,20 @@ def _is_supervisor_user():
 
 def _is_aprobador(user=None):
     """True si el usuario puede aprobar/firmar OTs (familia: superadmin,
-    admin, supervisor, ejecutivo, incluyendo variantes dinámicas).
+    admin, supervisor — NO ejecutivo).
 
     Wrapper canónico para chequeos de "¿puede ver botón Revisar?" en
     contextos donde NO tenemos vid (ej. listado global). Para chequeos
     por OT específica usar `_puede_ot_accion(vid, "aprobar", user)`.
 
-    2026-05-18 (Aaron Urbina fix): centraliza la comparación de rol vía
-    `_rol_familia` para que `ejecutivo_sstt`, `supervisor_servicio_tecnico`,
-    etc. caigan en su familia correctamente. Antes había comparaciones
-    `role == 'ejecutivo'` literal repartidas por el código que bloqueaban
-    a roles dinámicos creados por el admin.
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
+    ANTES incluía 'ejecutivo' (en la familia normalizada). AHORA solo
+    superadmin/admin/supervisor. Coherente con `_puede_ot_accion('aprobar')`
+    y con `_is_supervisor_user()`.
     """
     u = user or getattr(g, "user", None) or {}
     fam = _rol_familia((u.get("role") or "").lower())
-    return fam in ("superadmin", "admin", "supervisor", "ejecutivo")
+    return fam in ("superadmin", "admin", "supervisor")
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/aprobar-cierre", methods=["POST"])
@@ -39542,8 +39972,10 @@ def mant_ot_aprobar_cierre(vid):
     """Supervisor aprueba la OT firmada por el técnico → estado 'cerrada'.
     Guarda firma_supervisor + comentario + timestamp + user_id.
 
-    🔐 SEGURIDAD 2026-05-18: solo superadmin/admin/ejecutivo + creador
-    de la OT pueden aprobar (matriz `_puede_ot_accion('aprobar')`).
+    🔐 SEGURIDAD 2026-05-22 (Daniel — brecha Aaron):
+    Solo superadmin/admin/supervisor pueden aprobar. Ejecutivo (incluso
+    el creador) YA NO puede — sería juez y parte del trabajo que él
+    mismo levantó.
     """
     if not _puede_ot_accion(vid, "aprobar"):
         _u = getattr(g, "user", None) or {}
@@ -39554,8 +39986,9 @@ def mant_ot_aprobar_cierre(vid):
         )
         return jsonify({
             "ok": False,
-            "error": "Solo el supervisor (admin/ejecutivo) o el creador "
-                     "de la OT puede aprobar el cierre.",
+            "error": "Solo el supervisor o administrador puede aprobar el "
+                     "cierre. El ejecutivo que levantó la OT NO puede ser "
+                     "quien la firma como aprobada.",
         }), 403
     d = request.get_json(silent=True) or {}
     firma_sup = (d.get("firma_supervisor") or "").strip()
@@ -39619,8 +40052,9 @@ def mant_ot_rechazar_cierre(vid):
     """Supervisor rechaza la OT → vuelve a 'programada' para que técnico
     corrija. Limpia firma_tecnico (debe firmar de nuevo).
 
-    🔐 SEGURIDAD 2026-05-18: solo superadmin/admin/ejecutivo + creador
-    de la OT pueden rechazar (matriz `_puede_ot_accion('aprobar')`).
+    🔐 SEGURIDAD 2026-05-22 (Daniel — brecha Aaron):
+    Solo superadmin/admin/supervisor pueden rechazar. Mismo criterio que
+    aprobar — el ejecutivo NO firma rechazos.
     """
     if not _puede_ot_accion(vid, "aprobar"):
         _u = getattr(g, "user", None) or {}
@@ -39631,8 +40065,8 @@ def mant_ot_rechazar_cierre(vid):
         )
         return jsonify({
             "ok": False,
-            "error": "Solo el supervisor (admin/ejecutivo) o el creador "
-                     "de la OT puede rechazar el cierre.",
+            "error": "Solo el supervisor o administrador puede rechazar el "
+                     "cierre de una OT. El ejecutivo no tiene esa facultad.",
         }), 403
     d = request.get_json(silent=True) or {}
     motivo = (d.get("motivo") or "").strip()[:1000]
@@ -45253,31 +45687,68 @@ def mant_lev_crear_o_listar(cid):
                     modalidad = 'garantia'
                 else:
                     modalidad = 'pagado'
-                cur.execute(
-                    "INSERT INTO mant_visitas "
-                    "(numero_ot, cliente_id, titulo, fecha_programada, "
-                    " fecha_realizada, hora_inicio, hora_fin, "
-                    " tipo, estado, modalidad_cobro, prioridad, "
-                    " descripcion, tecnico_user_id, levantamiento_id, created_by, "
-                    " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
-                    " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
-                    " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,"
-                    " %s,'programada',%s,'media',"
-                    " %s,%s,%s,%s,"
-                    " %s,%s,%s,%s,"
-                    " %s,%s,%s,%s,%s,"
-                    " %s,%s,%s,%s)",
-                    (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
-                     fecha_prog, fecha_fin, hora_ini, hora_fin,
-                     tipo_ot, modalidad,
-                     f"OT tipo {tipo_ot} con {n_items} equipo(s). "
-                     f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
-                     tecnico_principal, lev_id, current_username(),
-                     direccion_visita, direccion_lat, direccion_lng, direccion_place_id,
-                     contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen,
-                     acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
-                )
+                # 2026-05-22 (Aaron Urbina): created_by_user_id FK estable a
+                # app_users.id como fuente de verdad del creador. Si la
+                # migración no corrió aún, fallback al INSERT legacy.
+                _u_cre_lev = getattr(g, "user", None) or {}
+                _cre_uid_lev = _u_cre_lev.get("id")
+                try:
+                    _cre_uid_lev = int(_cre_uid_lev) if _cre_uid_lev else None
+                except (TypeError, ValueError):
+                    _cre_uid_lev = None
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_visitas "
+                        "(numero_ot, cliente_id, titulo, fecha_programada, "
+                        " fecha_realizada, hora_inicio, hora_fin, "
+                        " tipo, estado, modalidad_cobro, prioridad, "
+                        " descripcion, tecnico_user_id, levantamiento_id, created_by, created_by_user_id, "
+                        " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
+                        " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
+                        " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,"
+                        " %s,'programada',%s,'media',"
+                        " %s,%s,%s,%s,%s,"
+                        " %s,%s,%s,%s,"
+                        " %s,%s,%s,%s,%s,"
+                        " %s,%s,%s,%s)",
+                        (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
+                         fecha_prog, fecha_fin, hora_ini, hora_fin,
+                         tipo_ot, modalidad,
+                         f"OT tipo {tipo_ot} con {n_items} equipo(s). "
+                         f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
+                         tecnico_principal, lev_id, current_username(), _cre_uid_lev,
+                         direccion_visita, direccion_lat, direccion_lng, direccion_place_id,
+                         contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen,
+                         acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
+                    )
+                except Exception as _e_ins_lev:
+                    print(f"[lev_crear] INSERT con created_by_user_id falló ({_e_ins_lev}); reintentando sin la columna", flush=True)
+                    cur.execute(
+                        "INSERT INTO mant_visitas "
+                        "(numero_ot, cliente_id, titulo, fecha_programada, "
+                        " fecha_realizada, hora_inicio, hora_fin, "
+                        " tipo, estado, modalidad_cobro, prioridad, "
+                        " descripcion, tecnico_user_id, levantamiento_id, created_by, "
+                        " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
+                        " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
+                        " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,"
+                        " %s,'programada',%s,'media',"
+                        " %s,%s,%s,%s,"
+                        " %s,%s,%s,%s,"
+                        " %s,%s,%s,%s,%s,"
+                        " %s,%s,%s,%s)",
+                        (numero_ot, cid, f"{tipo_prefix} {titulo}"[:200],
+                         fecha_prog, fecha_fin, hora_ini, hora_fin,
+                         tipo_ot, modalidad,
+                         f"OT tipo {tipo_ot} con {n_items} equipo(s). "
+                         f"{'Multi-técnico (' + str(len(tecnico_ids)) + ' asignados)' if len(tecnico_ids) > 1 else ''}",
+                         tecnico_principal, lev_id, current_username(),
+                         direccion_visita, direccion_lat, direccion_lng, direccion_place_id,
+                         contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen,
+                         acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
+                    )
                 visita_id = cur.lastrowid
                 cur.execute(
                     "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
