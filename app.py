@@ -11405,6 +11405,170 @@ def _notificar_ot_asignada(visita_id):
     _th_n.Thread(target=_bg, daemon=True, name=f"notif-ot-{visita_id}").start()
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 2026-05-22 (Daniel) — NOTIFICACIÓN INTERNA cuando se asigna técnico a OT.
+# A diferencia de `_notificar_ot_asignada` (WhatsApp/SMS, casi siempre OFF),
+# esta SIEMPRE deja una fila en mant_notificaciones para que Lenin la vea en
+# su campana del header con deep link a /mantenciones/ot/<vid>/ejecutar.
+# Best-effort: nunca rompe el endpoint que la invocó.
+# ══════════════════════════════════════════════════════════════════════
+def _notificar_ot_asignada_interna(visita_id, tecnico_user_id, *, motivo="asignada"):
+    """Crea una notificación interna para el técnico recién asignado a una OT.
+
+    Args:
+        visita_id: id de mant_visitas
+        tecnico_user_id: id de app_users (rol técnico)
+        motivo: 'asignada' (default) | 'reasignada'
+
+    Idempotente vía `_mant_notificar` (no duplica si ya hay una abierta de
+    tipo='ot_asignada' para la misma (visita_id, destino_user_id)).
+    """
+    try:
+        if not visita_id or not tecnico_user_id:
+            return None
+        v = mysql_fetchone(
+            "SELECT v.numero_ot, v.fecha_programada, v.hora_inicio, v.titulo, "
+            "       c.razon_social, c.id AS cliente_id "
+            "  FROM mant_visitas v "
+            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE v.id=%s",
+            (visita_id,)
+        )
+        if not v:
+            return None
+        numero = v.get("numero_ot") or f"OT #{visita_id}"
+        razon = v.get("razon_social") or "el cliente"
+        # Fecha + hora amigable
+        try:
+            fp = v.get("fecha_programada")
+            fecha_txt = fp.strftime("%d/%m") if hasattr(fp, "strftime") else str(fp or "")
+        except Exception:
+            fecha_txt = str(v.get("fecha_programada") or "")
+        try:
+            hi = v.get("hora_inicio")
+            hora_txt = str(hi)[:5] if hi else ""
+        except Exception:
+            hora_txt = ""
+        cuando = (fecha_txt + (" " + hora_txt if hora_txt else "")).strip() or "fecha por confirmar"
+        verbo = "Tienes una OT asignada" if motivo == "asignada" else "Te re-asignaron una OT"
+        titulo = f"{verbo} — {numero}"
+        cuerpo = (
+            f"{verbo} para {cuando} en {razon}.\n"
+            f"{(v.get('titulo') or '').strip()[:160]}"
+        ).strip()
+        return _mant_notificar(
+            destino_user_id=int(tecnico_user_id),
+            tipo="ot_asignada",
+            titulo=titulo,
+            cuerpo=cuerpo,
+            url_accion=f"/mantenciones/ot/{visita_id}/ejecutar",
+            prioridad="alta",
+            cliente_id=v.get("cliente_id"),
+            visita_id=visita_id,
+        )
+    except Exception as e:
+        try: print(f"[notif-ot-interna] vid={visita_id} tec={tecnico_user_id}: {e}", flush=True)
+        except Exception: pass
+        return None
+
+
+def _notificar_cierre_ot_async(vid, resultado="aprobada", motivo=None, host_url=""):
+    """Notifica al TÉCNICO (notif interna + email opcional) que su OT fue
+    aprobada o rechazada por el supervisor. Si está habilitado el envío al
+    cliente (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED=1), también le envía email
+    al cliente. Best-effort, en hilo daemon.
+
+    resultado: 'aprobada' | 'rechazada'
+    motivo:    texto opcional con el comentario/motivo del supervisor.
+    """
+    import threading as _th_c
+    def _bg():
+        try:
+            v = mysql_fetchone(
+                "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.tecnico_user_id, "
+                "       v.cliente_id, c.razon_social, c.email_empresa AS cli_email, "
+                "       c.contacto_email AS cli_contacto_email, c.contacto_nombre, "
+                "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
+                "       u.username AS tecnico_username "
+                "  FROM mant_visitas v "
+                "  JOIN mant_clientes c ON c.id=v.cliente_id "
+                "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
+                " WHERE v.id=%s",
+                (vid,)
+            )
+            if not v: return
+            numero = v.get("numero_ot") or f"OT #{vid}"
+            razon = v.get("razon_social") or "Cliente"
+            tec_uid = v.get("tecnico_user_id")
+            es_aprobada = (resultado == "aprobada")
+            tipo_notif = "ot_aprobada" if es_aprobada else "ot_rechazada"
+            titulo = (f"{numero} aprobada" if es_aprobada
+                      else f"{numero} rechazada — debes corregir")
+            cuerpo_base = (
+                f"El supervisor aprobó el cierre de la OT en {razon}."
+                if es_aprobada else
+                f"El supervisor rechazó la OT en {razon}. Revisa y firma de nuevo."
+            )
+            if motivo:
+                cuerpo_base += f"\nMotivo: {motivo[:300]}"
+
+            # 1) Notificación interna al técnico (campana)
+            if tec_uid:
+                try:
+                    _mant_notificar(
+                        destino_user_id=int(tec_uid),
+                        tipo=tipo_notif,
+                        titulo=titulo,
+                        cuerpo=cuerpo_base,
+                        url_accion=f"/mantenciones/ot/{vid}/ejecutar",
+                        prioridad="alta" if not es_aprobada else "media",
+                        cliente_id=v.get("cliente_id"),
+                        visita_id=vid,
+                    )
+                except Exception as e_n:
+                    print(f"[notif-cierre-ot] interna fail vid={vid}: {e_n}", flush=True)
+
+            # 2) Email opcional al cliente (controlado por env var)
+            #    Default: OFF hasta que el DNS esté listo en producción.
+            cliente_email_enabled = os.environ.get(
+                "MANT_NOTIF_CLIENTE_EMAIL_ENABLED", "0").strip() in ("1", "true", "True", "yes")
+            if es_aprobada and cliente_email_enabled:
+                # Preferimos contacto_email; fallback al email_empresa
+                to = (v.get("cli_contacto_email") or v.get("cli_email") or "").strip()
+                if to and "@" in to:
+                    try:
+                        subject = _brand_subject(f"{numero} — Mantención completada en {razon}")
+                        cuerpo_html = _ilus_email_html(
+                            titulo="Mantención completada",
+                            subtitulo=f"{numero} · {razon}",
+                            saludo=(v.get("contacto_nombre") or "Equipo"),
+                            parrafos=[
+                                f"Te informamos que la orden de trabajo <strong>{numero}</strong> "
+                                f"fue completada y aprobada por nuestro supervisor.",
+                                "Si tienes alguna observación, responde este correo.",
+                            ],
+                            info_lineas=[
+                                ("", "OT", numero),
+                                ("", "Técnico", v.get("tecnico_nombre") or "—"),
+                                ("", "Cliente", razon),
+                            ],
+                        )
+                        _send_ilus_email(
+                            to, subject, cuerpo_html,
+                            evento="ot_aprobada",
+                            modulo="mantenciones",
+                        )
+                    except Exception as e_e:
+                        print(f"[notif-cierre-ot] email-cliente fail vid={vid}: {e_e}", flush=True)
+        except Exception as e_outer:
+            print(f"[notif-cierre-ot] outer vid={vid} {resultado}: {e_outer}", flush=True)
+
+    try:
+        _th_c.Thread(target=_bg, daemon=True, name=f"notif-cierre-ot-{vid}").start()
+    except Exception as e:
+        print(f"[notif-cierre-ot] no se pudo iniciar hilo vid={vid}: {e}", flush=True)
+
+
 @app.route("/api/erp/health", methods=["GET"])
 def erp_engine_health():
     """Health-check del motor ERP. Útil para verificar en producción si:
@@ -15697,6 +15861,20 @@ def _mantenciones_cron_run_once(slot_str=""):
     email_flag = os.environ.get("MANT_RECORDATORIOS_EMAIL_ENABLED", "0").strip().lower()
     email_on = email_flag in ("1", "true", "yes", "on")
 
+    # ── Feature flag global: ¿el cron PUEDE crear OTs automáticamente? ──
+    # 2026-05-22 — Daniel reportó OTs auto-creadas que él NO pidió. Por
+    # default este flag queda en "0" (OFF) y el cron solo genera
+    # NOTIFICACIONES sugerentes para Aarón Urbina (ejecutivo SSTT). La
+    # creación real de la OT queda como acción manual.
+    # Para reactivar el comportamiento anterior: setear
+    # MANT_AUTO_CALENDAR_ENABLED=1 en Railway (NO RECOMENDADO).
+    auto_calendar_flag = os.environ.get(
+        "MANT_AUTO_CALENDAR_ENABLED", "0"
+    ).strip().lower()
+    auto_calendar_on = auto_calendar_flag in ("1", "true", "yes", "on")
+    metricas["auto_calendar_on"] = auto_calendar_on
+    metricas["sugerencias_creadas"] = 0
+
     # ── Paso 1: Auto-calendarización de contratos ────────────────────
     try:
         contratos = mysql_fetchall(
@@ -15712,6 +15890,9 @@ def _mantenciones_cron_run_once(slot_str=""):
 
         hoy = _date.today()
         batch_visitas = []
+        # Sugerencias para Aarón cuando el flag esté OFF (modo default)
+        sugerencias_notif = []
+
         for ct in contratos:
             freq = ct.get("frecuencia_meses") or ct.get("ai_frecuencia_sug") or 0
             if freq <= 0:
@@ -15740,18 +15921,40 @@ def _mantenciones_cron_run_once(slot_str=""):
                 existentes = []
             existentes_set = {(r["y"], r["m"]) for r in existentes}
 
+            # Última visita realizada (para calcular días desde última)
+            try:
+                ult = mysql_fetchone(
+                    "SELECT MAX(COALESCE(fecha_realizada, fecha_programada)) AS f "
+                    "FROM mant_visitas "
+                    "WHERE contrato_id=%s AND tipo='preventiva' "
+                    "  AND estado NOT IN ('anulada','cancelada')",
+                    (ctid,)
+                ) or {}
+                ult_fecha = ult.get("f")
+                if isinstance(ult_fecha, _dtm):
+                    ult_fecha = ult_fecha.date()
+            except Exception:
+                ult_fecha = None
+            dias_desde = (hoy - ult_fecha).days if ult_fecha else None
+
             # Generar fechas a partir de hoy + freq
             cursor_d = hoy + timedelta(days=int(freq) * 30)
             limite = 0
+            sugerencias_de_este_contrato = []
             while cursor_d <= hasta and limite < 24:  # cap 24 visitas/contrato/corrida
                 limite += 1
                 if (cursor_d.year, cursor_d.month) not in existentes_set:
-                    batch_visitas.append((
-                        cid, ctid,
-                        f"Mantención preventiva — {ct.get('razon_social','')}"[:200],
-                        cursor_d, "preventiva", "programada",
-                        "mant-cron",
-                    ))
+                    if auto_calendar_on:
+                        # Modo legacy: crear la OT automáticamente
+                        batch_visitas.append((
+                            cid, ctid,
+                            f"Mantención preventiva — {ct.get('razon_social','')}"[:200],
+                            cursor_d, "preventiva", "programada",
+                            "mant-cron",
+                        ))
+                    else:
+                        # Modo nuevo (default): guardar la sugerencia
+                        sugerencias_de_este_contrato.append(cursor_d)
                     existentes_set.add((cursor_d.year, cursor_d.month))
                 anio = cursor_d.year
                 mes  = cursor_d.month + int(freq)
@@ -15764,6 +15967,34 @@ def _mantenciones_cron_run_once(slot_str=""):
                 except ValueError:
                     break
 
+            # Si en modo "solo-sugerir" hay huecos, mandar UNA notif por contrato
+            # (no por fecha) para no spamear. Mensaje incluye días desde última.
+            if not auto_calendar_on and sugerencias_de_este_contrato:
+                razon = ct.get("razon_social", "") or f"Contrato #{ctid}"
+                f1 = sugerencias_de_este_contrato[0]
+                rest = len(sugerencias_de_este_contrato) - 1
+                cuerpo = (
+                    f"Cliente con contrato preventivo cada {int(freq)} mes(es). "
+                )
+                if dias_desde is not None:
+                    cuerpo += f"Han pasado {dias_desde} días desde la última visita. "
+                cuerpo += (
+                    f"Próxima sugerida: {f1.strftime('%d/%m/%Y')}"
+                    + (f" (+{rest} más a futuro)" if rest > 0 else "")
+                    + ". Considera agendar la OT en el cliente."
+                )
+                sugerencias_notif.append({
+                    "destino_user_id": None,  # broadcast a admin / ejecutivo
+                    "tipo": "ot_sugerida_cron",
+                    "prioridad": "media",
+                    "titulo": f"Sugerencia mantención: {razon}",
+                    "cuerpo": cuerpo,
+                    "url_accion": f"/mantenciones/clientes/{cid}",
+                    "cliente_id": cid,
+                    "visita_id":  None,
+                })
+
+        # Insertar OTs solo si el flag está ON
         if batch_visitas:
             try:
                 conn = get_mysql()
@@ -15780,6 +16011,19 @@ def _mantenciones_cron_run_once(slot_str=""):
                 conn.close()
             except Exception as e:
                 metricas["errores"].append(f"calendarizacion: {e}")
+
+        # Insertar sugerencias (modo default — flag OFF)
+        if sugerencias_notif:
+            try:
+                metricas["sugerencias_creadas"] = _mant_notificar_batch(sugerencias_notif)
+                print(
+                    f"[mant-cron] AUTO-CALENDAR OFF — generadas "
+                    f"{metricas['sugerencias_creadas']} sugerencia(s) "
+                    f"(de {len(sugerencias_notif)} candidatas)",
+                    flush=True,
+                )
+            except Exception as e:
+                metricas["errores"].append(f"sugerencias: {e}")
     except Exception as e:
         metricas["errores"].append(f"paso_calendarizacion: {e}")
 
@@ -16000,7 +16244,9 @@ def _mantenciones_cron_run_once(slot_str=""):
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
         f"[mant-cron] OK slot={slot_str or 'manual'} "
+        f"auto_cal={'ON' if metricas.get('auto_calendar_on') else 'OFF'} "
         f"calendarizadas={metricas['calendarizadas']} "
+        f"sugerencias={metricas.get('sugerencias_creadas', 0)} "
         f"notif_visita={metricas['notif_visita_proxima']}+{metricas['notif_visita_atrasada']} "
         f"notif_factura={metricas['notif_factura_pendiente']} "
         f"notif_garantia={metricas['notif_garantia_por_vencer']} "
@@ -21720,6 +21966,34 @@ def _puede_ot_accion(vid, accion, user=None):
               f"{'ALLOWED' if result else 'DENIED'}", flush=True)
         return result
 
+    # ── CONFIGURAR ──────────────────────────────────────────────
+    # FIX 2026-05-22 (OT 2026-00004 Vitacura): aplicar plantilla, agregar
+    # tareas, asociar equipos, aplicar protocolo. Antes estas operaciones
+    # estaban bajo `ejecutar` (solo técnico asignado), lo que dejaba al
+    # ejecutivo/admin creador sin forma de "armar" la OT que él mismo
+    # creó. Bug observable: Aaron creó OT preventiva, asignó a Lenin,
+    # pero al no poder aplicar plantilla, la OT quedó vacía. Lenin la
+    # abrió y vio "Sin máquinas en esta OT".
+    #
+    # Política nueva: pueden CONFIGURAR la OT (NO ejecutar tareas):
+    #   - admin / supervisor (rol global con permiso de gestión)
+    #   - ejecutivo creador de la OT
+    #   - técnico asignado (compat: técnico siempre podía hacerlo)
+    if accion == "configurar":
+        if role in ("admin", "supervisor"):
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
+            return True
+        if role == "ejecutivo" and es_creador:
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ejecutivo creador)", flush=True)
+            return True
+        if es_tecnico_asignado:
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (técnico asignado)", flush=True)
+            return True
+        print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} "
+              f"created_by={creador_username} es_creador={es_creador} "
+              f"es_tec_asignado={es_tecnico_asignado} -> DENIED", flush=True)
+        return False
+
     # ── METADATA ────────────────────────────────────────────────
     # editar campos generales (titulo, fecha, tipo, descripcion, etc.) y
     # eliminar OT. Solo admin + creador (no técnico).
@@ -21802,6 +22076,9 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
             msg = "Solo el técnico asignado puede gestionar esta OT."
         elif accion == "metadata":
             msg = "Solo administradores pueden editar/eliminar esta OT."
+        elif accion == "configurar":
+            msg = ("Solo el creador, administrador o técnico asignado "
+                   "puede aplicar plantilla o agregar tareas a esta OT.")
         elif accion in ("aprobar", "firmar_creador"):
             msg = "Solo el supervisor/creador puede aprobar o firmar esta OT."
         else:
@@ -21813,6 +22090,41 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
         }), 403
     flash("No tienes acceso a esa orden de trabajo.", "warning")
     return redirect(url_for("mant_ots_list"))
+
+
+def _ot_can_configurar(view_func):
+    """Decorador para endpoints que ARMAN la OT antes/durante de la
+    ejecución: aplicar plantilla, aplicar protocolo, agregar tareas
+    manuales, asociar equipos.
+
+    🔧 FIX 2026-05-22 (OT 2026-00004 Vitacura, Daniel):
+    Antes estos endpoints usaban `@_tecnico_owns_visita` (solo técnico
+    asignado + superadmin). Eso dejaba al ejecutivo creador SIN forma
+    de armar la OT que él mismo creó.
+
+    Política nueva (delegada a `_puede_ot_accion(vid, 'configurar', u)`):
+      - superadmin: siempre
+      - admin / supervisor: cualquier OT
+      - ejecutivo creador: SU OT
+      - técnico asignado/colaborador: SU OT (compat)
+      - resto: 403
+
+    Espera `vid` como primer parámetro de URL.
+    Aplicar SIEMPRE después de @_mant_required.
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "configurar", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="configurar",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
 
 
 def _tecnico_owns_visita(view_func):
@@ -24461,11 +24773,19 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_notificaciones ADD COLUMN leida_at DATETIME NULL",
                 "ALTER TABLE mant_notificaciones ADD COLUMN archivada_at DATETIME NULL",
                 # Ampliar el ENUM tipo para los nuevos casos del cron
+                # 2026-05-22 (Daniel): añadimos los 4 tipos del flujo OT
+                # (ot_asignada, ot_pendiente_aprobacion, ot_aprobada,
+                # ot_rechazada) para que la campana del header los liste con
+                # icono propio. Es idempotente: si el enum ya existe con esos
+                # valores, MySQL acepta el MODIFY sin error.
                 "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
                 "  ENUM('vencimiento','sla','visita_proxima','visita_atrasada',"
                 "       'factura_pendiente','garantia','garantia_por_vencer',"
                 "       'contrato_por_vencer','cobranza','sin_mantencion',"
-                "       'contrato_riesgo','ai_alerta','otro') DEFAULT 'otro'",
+                "       'contrato_riesgo','ai_alerta',"
+                "       'ot_asignada','ot_pendiente_aprobacion',"
+                "       'ot_aprobada','ot_rechazada',"
+                "       'otro') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -24959,15 +25279,29 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
            "fotos_asignadas": 0}
     try:
         v = mysql_fetchone(
-            "SELECT id, tipo, estado, fecha_programada, tecnico_user_id, tecnico "
+            "SELECT id, tipo, estado, fecha_programada, tecnico_user_id, tecnico, "
+            "       levantamiento_id "
             "  FROM mant_visitas WHERE id=%s",
             (vid,)
         )
         if not v:
             out["skipped"] = True
             return out
-        # Solo levantamientos cerrados afectan la ficha
-        if (v.get("tipo") or "").lower() != "levantamiento":
+        # FIX 2026-05-22 (Daniel — caso Vitacura OT 161/162/163):
+        # Aaron selecciona "Mantención preventiva" en el modal del cliente
+        # (templates/mantenciones/ficha.html #otTipo), pero el endpoint
+        # `mant_lev_crear_o_listar` igual crea la OT VINCULADA a un
+        # levantamiento (mant_visitas.levantamiento_id NOT NULL). En ese
+        # caso la OT es "preventiva con levantamiento inicial" — los datos
+        # capturados (fotos, marca/modelo/serie/estado) DEBEN heredarse a
+        # la ficha del equipo igual que en una OT puramente 'levantamiento'.
+        #
+        # Política nueva: promover SI tipo='levantamiento' O hay
+        # levantamiento_id poblado. Esto cubre los dos flujos sin tocar la
+        # UI del modal.
+        _tipo = (v.get("tipo") or "").lower()
+        _lev_id = v.get("levantamiento_id")
+        if _tipo != "levantamiento" and not _lev_id:
             out["skipped"] = True
             return out
         if (v.get("estado") or "").lower() != "cerrada":
@@ -25092,6 +25426,25 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
             except Exception:
                 pass
 
+        # ── Pre-cargas globales para reutilizar dentro del loop ─────
+        # lev_id_global: identifica la sesión de levantamiento padre. Lo
+        # leemos una sola vez aquí (no por máquina) y lo usamos para:
+        #   - buscar el item correspondiente a cada máquina en
+        #     mant_levantamiento_items (fuente de verdad de marca/modelo/
+        #     serie/voltaje/ubicación/anomalías/observaciones)
+        #   - buscar fotos en mant_levantamiento_fotos (cuando aún no se
+        #     copiaron a mant_visita_fotos)
+        #   - poblar mant_maquina_fotos.levantamiento_id (trazabilidad)
+        lev_id_global = v.get("levantamiento_id")
+        if lev_id_global is None:
+            try:
+                _row_lev_g = mysql_fetchone(
+                    "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
+                )
+                lev_id_global = (_row_lev_g or {}).get("levantamiento_id")
+            except Exception:
+                lev_id_global = None
+
         for row in maquinas:
             mid = row.get("maquina_id")
             if not mid:
@@ -25099,13 +25452,46 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
             out["procesados"] += 1
             try:
                 # ── Idempotencia: si ya fue aplicada, saltamos ──
+                # NOTA: la idempotencia real está en mant_maquina_levantamientos.
+                # Si ya hay fila con aplicado_a_ficha=1 → no repetimos NADA
+                # (UPDATE mant_maquinas, INSERT eventos, INSERT fotos, ni audit).
                 existente = mysql_fetchone(
                     "SELECT aplicado_a_ficha FROM mant_maquina_levantamientos "
                     " WHERE maquina_id=%s AND visita_id=%s",
                     (mid, vid)
                 )
                 if existente and existente.get("aplicado_a_ficha"):
+                    print(f"[promover_lev] m={mid} v={vid} ya aplicado, skip",
+                          flush=True)
                     continue
+
+                # ── Item del levantamiento (FUENTE PRINCIPAL DE DATOS) ──
+                # 2026-05-22 (Daniel): el wizard de levantamiento puebla
+                # mant_levantamiento_items con marca/modelo/serie/voltaje/
+                # ubicacion/anomalias/observaciones/etc del técnico. Esta
+                # es la fuente de verdad. Lo que esté ahí promovemos a
+                # mant_maquinas (con reglas por campo: LLENAR_VACIO vs
+                # SOBREESCRIBIR — ver bloque de UPDATE más abajo).
+                item = None
+                if lev_id_global:
+                    try:
+                        item = mysql_fetchone(
+                            "SELECT id, nombre_snap, sku_snap, serie_snap, "
+                            "       estado_capturado, ubicacion, horas_uso, "
+                            "       anomalias, observaciones, completado, "
+                            "       marca, modelo, anio_fabricacion, voltaje, "
+                            "       fecha_documento, ultima_intervencion, "
+                            "       componentes_json, n_fotos "
+                            "  FROM mant_levantamiento_items "
+                            " WHERE levantamiento_id=%s AND maquina_id=%s "
+                            " ORDER BY id DESC LIMIT 1",
+                            (lev_id_global, mid)
+                        )
+                    except Exception as _e_it:
+                        print(f"[promover_lev] no se pudo leer item lev={lev_id_global} "
+                              f"m={mid}: {_e_it}", flush=True)
+                        item = None
+                item = item or {}
 
                 # ── Snapshot de respuestas de tareas del equipo ──
                 tareas = mysql_fetchall(
@@ -25144,28 +25530,21 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 # copian a mant_visita_fotos antes de cerrar la OT
                 # (depende del orden de eventos). Lectura unificada.
                 fotos = mysql_fetchall(
-                    "SELECT id, archivo_path, cloudinary_url, descripcion, "
-                    "       tipo_foto, tomada_por, tomada_at "
+                    "SELECT id, archivo_path, cloudinary_url, "
+                    "       NULL AS cloudinary_public_id, "
+                    "       descripcion, tipo_foto, tomada_por, tomada_at "
                     "  FROM mant_visita_fotos "
                     " WHERE visita_id=%s AND maquina_id=%s "
                     " ORDER BY tomada_at DESC",
                     (vid, mid)
                 ) or []
                 # ── Fuente secundaria: mant_levantamiento_fotos via lev_id ──
-                lev_id_pf = v.get("levantamiento_id")
-                if lev_id_pf is None:
-                    try:
-                        _r_lvf = mysql_fetchone(
-                            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
-                            (vid,)
-                        )
-                        lev_id_pf = (_r_lvf or {}).get("levantamiento_id")
-                    except Exception:
-                        lev_id_pf = None
+                lev_id_pf = lev_id_global
                 if lev_id_pf:
                     try:
                         fotos_lev = mysql_fetchall(
                             "SELECT id, NULL AS archivo_path, cloudinary_url, "
+                            "       cloudinary_public_id, "
                             "       descripcion, tipo_foto, tomada_por, "
                             "       created_at AS tomada_at "
                             "  FROM mant_levantamiento_fotos "
@@ -25189,8 +25568,18 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     primera_foto_url = (fotos[0].get("cloudinary_url")
                                         or fotos[0].get("archivo_path"))
 
-                # ── Observaciones agregadas (visita + tareas) ──
+                # ── Observaciones agregadas (item + visita + tareas) ──
+                # Orden: primero la observación del técnico para el equipo
+                # (mant_levantamiento_items.observaciones), luego anomalías,
+                # luego observaciones/diagnostico de la visita global,
+                # finalmente respuestas de tareas con texto.
                 obs_partes = []
+                _it_obs = (item.get("observaciones") or "").strip()
+                _it_ano = (item.get("anomalias") or "").strip()
+                if _it_obs:
+                    obs_partes.append(_it_obs)
+                if _it_ano:
+                    obs_partes.append(f"Anomalías: {_it_ano}")
                 try:
                     v_obs = mysql_fetchone(
                         "SELECT observaciones, diagnostico FROM mant_visitas WHERE id=%s",
@@ -25227,9 +25616,17 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     out["errores"] += 1
                     continue
 
-                # ── Aplicar a ficha principal (conservador) ──
+                # ── Aplicar a ficha principal (conservador + heredar campos) ──
+                # 2026-05-22 (Daniel) — Antes este UPDATE solo tocaba contadores
+                # y observaciones. Ahora también COPIA los datos del item de
+                # levantamiento al `mant_maquinas` (marca, modelo, año,
+                # voltaje, ubicación, estado_capturado) — usando COALESCE
+                # implícito: solo escribe si el item trae valor real.
                 eq = mysql_fetchone(
-                    "SELECT foto_url, observaciones, visitas_count, ultima_intervencion "
+                    "SELECT foto_url, observaciones, visitas_count, ultima_intervencion, "
+                    "       marca, modelo, anio_fabricacion, voltaje, ubicacion_sala, "
+                    "       estado_capturado, nombre, serie, fecha_instalacion, "
+                    "       estado, estado_op, tiene_dano, cliente_id "
                     "  FROM mant_maquinas WHERE id=%s",
                     (mid,)
                 ) or {}
@@ -25248,6 +25645,137 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     bloque_nuevo = cabecera + obs_text
                 obs_final = (obs_existente + bloque_nuevo)[:8000] if bloque_nuevo else obs_existente
 
+                # ── Leer item del levantamiento (captura del técnico) ────
+                # mant_ot_equipo_datos lo espeja a esta tabla, así que aquí
+                # encontramos los valores más recientes que Lenin escribió.
+                lev_id_eq = v.get("levantamiento_id")
+                if lev_id_eq is None:
+                    try:
+                        _r_lev = mysql_fetchone(
+                            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                            (vid,)
+                        )
+                        lev_id_eq = (_r_lev or {}).get("levantamiento_id")
+                    except Exception:
+                        lev_id_eq = None
+                item_lev = None
+                if lev_id_eq:
+                    try:
+                        item_lev = mysql_fetchone(
+                            "SELECT estado_capturado, marca, modelo, "
+                            "       anio_fabricacion, voltaje, ubicacion, "
+                            "       ultima_intervencion, nombre_snap, "
+                            "       serie_snap, anomalias, observaciones, "
+                            "       fecha_documento, componentes_json "
+                            "  FROM mant_levantamiento_items "
+                            " WHERE levantamiento_id=%s AND maquina_id=%s "
+                            " ORDER BY id DESC LIMIT 1",
+                            (lev_id_eq, mid)
+                        )
+                    except Exception as _e_il:
+                        print(f"[promover_lev] item_lev fetch m={mid}: {_e_il}",
+                              flush=True)
+                        item_lev = None
+
+                # SETs adicionales — reglas por campo:
+                #   LLENAR_VACIO: marca/modelo/voltaje/anio/nombre/serie/
+                #                 fecha_instalacion (no pisan historial)
+                #   SOBREESCRIBIR: ubicacion_sala/estado_capturado/estado_op/
+                #                  tiene_dano (estado actual del equipo HOY)
+                extra_sets = []
+                extra_vals = []
+                if item_lev:
+                    # LLENAR_VACIO — solo si el destino está vacío. Esto
+                    # preserva data curada por el admin / data más antigua.
+                    pares_llenar = [
+                        ("marca", "marca", 120),
+                        ("modelo", "modelo", 120),
+                        ("voltaje", "voltaje", 40),
+                    ]
+                    for col_eq, col_item, maxlen in pares_llenar:
+                        v_item = item_lev.get(col_item)
+                        if v_item is None:
+                            continue
+                        if isinstance(v_item, str):
+                            v_item = v_item.strip()
+                            if not v_item:
+                                continue
+                            v_item = v_item[:maxlen]
+                        # Solo si destino está vacío — string vacío o None
+                        _dest = eq.get(col_eq)
+                        if isinstance(_dest, str):
+                            if _dest.strip():
+                                continue   # destino ya tiene valor
+                        elif _dest:
+                            continue       # destino numérico/date no nulo
+                        extra_sets.append(f"{col_eq}=%s")
+                        extra_vals.append(v_item)
+
+                    # SOBREESCRIBIR — la realidad de HOY pisa lo viejo.
+                    pares_pisar = [
+                        ("ubicacion_sala", "ubicacion", 200),
+                        ("estado_capturado", "estado_capturado", 40),
+                    ]
+                    for col_eq, col_item, maxlen in pares_pisar:
+                        v_item = item_lev.get(col_item)
+                        if v_item is None:
+                            continue
+                        if isinstance(v_item, str):
+                            v_item = v_item.strip()
+                            if not v_item:
+                                continue
+                            v_item = v_item[:maxlen]
+                        extra_sets.append(f"{col_eq}=%s")
+                        extra_vals.append(v_item)
+
+                    # anio_fabricacion — LLENAR_VACIO
+                    if item_lev.get("anio_fabricacion") and not eq.get("anio_fabricacion"):
+                        try:
+                            extra_sets.append("anio_fabricacion=%s")
+                            extra_vals.append(int(item_lev["anio_fabricacion"]))
+                        except Exception:
+                            pass
+
+                    # nombre — LLENAR_VACIO (audit si difiere — más abajo)
+                    _it_nombre = (item_lev.get("nombre_snap") or "").strip()
+                    if _it_nombre and not (eq.get("nombre") or "").strip():
+                        extra_sets.append("nombre=%s")
+                        extra_vals.append(_it_nombre[:400])
+
+                    # serie — LLENAR_VACIO (audit si difiere — más abajo)
+                    _it_serie = (item_lev.get("serie_snap") or "").strip()
+                    if _it_serie and not (eq.get("serie") or "").strip():
+                        extra_sets.append("serie=%s")
+                        extra_vals.append(_it_serie[:120])
+
+                    # fecha_instalacion ← fecha_documento (LLENAR_VACIO)
+                    _it_fdoc = item_lev.get("fecha_documento")
+                    if _it_fdoc and not eq.get("fecha_instalacion"):
+                        extra_sets.append("fecha_instalacion=%s")
+                        extra_vals.append(_it_fdoc)
+
+                    # estado_op + tiene_dano derivados de estado_capturado
+                    # (SOBREESCRIBIR, son índices de salud actual)
+                    _ec = (item_lev.get("estado_capturado") or "").strip().lower()
+                    if _ec:
+                        if _ec in ("operativo", "advertencia", "fuera_servicio",
+                                   "en_reparacion", "dado_baja", "no_encontrado"):
+                            estado_op_new = _ec
+                        else:
+                            estado_op_new = "operativo"
+                        extra_sets.append("estado_op=%s")
+                        extra_vals.append(estado_op_new)
+                        tiene_dano_new = 1 if _ec in ("advertencia", "fuera_servicio",
+                                                      "en_reparacion") else 0
+                        extra_sets.append("tiene_dano=%s")
+                        extra_vals.append(tiene_dano_new)
+                        # estado legacy ENUM ('activo'|'baja'|'garantia') —
+                        # solo pasa a 'baja' si el técnico marcó 'dado_baja'
+                        # (decisión fuerte; la firma del ejecutivo aprueba).
+                        if _ec == "dado_baja" and (eq.get("estado") or "") != "baja":
+                            extra_sets.append("estado=%s")
+                            extra_vals.append("baja")
+
                 params_upd = []
                 sql_upd = (
                     "UPDATE mant_maquinas SET "
@@ -25257,6 +25785,9 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     "  ultimo_levantamiento_vid = %s"
                 )
                 params_upd.extend([fecha_lev, fecha_lev, vid, vid])
+                if extra_sets:
+                    sql_upd += ", " + ", ".join(extra_sets)
+                    params_upd.extend(extra_vals)
                 if bloque_nuevo:
                     sql_upd += ", observaciones=%s"
                     params_upd.append(obs_final)
@@ -25271,13 +25802,58 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                     print(f"[promover_lev] UPDATE mant_maquinas m={mid}: {_e_upd}",
                           flush=True)
 
-                # Marcar aplicado
+                # ── Audit trail de cambios sensibles (nombre, serie) ───────
+                # Solo registra cambios EFECTIVOS (destino ya tenía valor Y
+                # el técnico capturó uno DIFERENTE). Idempotencia natural:
+                # solo entramos aquí cuando existente.aplicado_a_ficha=0.
+                _usuario_audit = (tec_nombre or usuario or 'sistema')[:190]
+                _motivo_audit = f"levantamiento OT #{vid}"
+                _it_nombre_aud = ""
+                _it_serie_aud = ""
+                if item_lev:
+                    _it_nombre_aud = (item_lev.get("nombre_snap") or "").strip()
+                    _it_serie_aud = (item_lev.get("serie_snap") or "").strip()
+                _eq_nombre_aud = (eq.get("nombre") or "").strip()
+                _eq_serie_aud = (eq.get("serie") or "").strip()
+                if _it_nombre_aud and _eq_nombre_aud and _it_nombre_aud != _eq_nombre_aud:
+                    try:
+                        mysql_execute(
+                            "INSERT INTO mant_maquina_audit "
+                            "(maquina_id, cliente_id, campo, valor_antes, "
+                            " valor_nuevo, motivo, usuario) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (mid, eq.get("cliente_id"), "nombre",
+                             _eq_nombre_aud, _it_nombre_aud,
+                             _motivo_audit, _usuario_audit)
+                        )
+                    except Exception as _e_aud:
+                        print(f"[promover_lev] audit nombre m={mid} v={vid}: {_e_aud}",
+                              flush=True)
+                if _it_serie_aud and _eq_serie_aud and _it_serie_aud != _eq_serie_aud:
+                    try:
+                        mysql_execute(
+                            "INSERT INTO mant_maquina_audit "
+                            "(maquina_id, cliente_id, campo, valor_antes, "
+                            " valor_nuevo, motivo, usuario) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (mid, eq.get("cliente_id"), "serie",
+                             _eq_serie_aud, _it_serie_aud,
+                             _motivo_audit, _usuario_audit)
+                        )
+                    except Exception as _e_aud:
+                        print(f"[promover_lev] audit serie m={mid} v={vid}: {_e_aud}",
+                              flush=True)
+
+                # Marcar aplicado ANTES del trabajo costoso (fotos/eventos).
+                # Si fotos/eventos fallan a mitad, aplicado=1 igual queda.
+                # Ambos pasos tienen anti-duplicado (URL en fotos, (mid,vid)
+                # en eventos) → un retry NO duplicaría filas, solo loguearía.
                 try:
                     mysql_execute(
                         "UPDATE mant_maquina_levantamientos SET "
                         "  aplicado_a_ficha=1, aplicado_at=NOW(), aplicado_por=%s "
                         " WHERE maquina_id=%s AND visita_id=%s",
-                        ((tec_nombre or usuario or 'sistema')[:190], mid, vid)
+                        (_usuario_audit, mid, vid)
                     )
                 except Exception:
                     pass
@@ -25285,7 +25861,9 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 # ── Asignación formal de fotos a la ficha del equipo ──
                 # 2026-05-19 (Daniel): cada foto del levantamiento se inserta
                 # en mant_maquina_fotos (galería PERMANENTE de la ficha) con
-                # vínculo a la OT origen (visita_origen) para trazabilidad.
+                # vínculo a la OT origen (visita_origen) Y al levantamiento
+                # origen (levantamiento_id) + cloudinary_public_id (cuando
+                # disponible) para trazabilidad y gestión de assets.
                 # Idempotente: si ya hay una foto con el mismo
                 # archivo_path/cloudinary_url para esta máquina y visita
                 # origen, no se duplica.
@@ -25293,6 +25871,7 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                 for _f in fotos:
                     _ap = _f.get("archivo_path") or ""
                     _cu = _f.get("cloudinary_url") or ""
+                    _cpi = _f.get("cloudinary_public_id") or None
                     if not (_ap or _cu):
                         print(f"[promover-lev] foto saltada porque "
                               f"no tiene archivo_path ni cloudinary_url "
@@ -25326,11 +25905,12 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                         mysql_execute(
                             "INSERT INTO mant_maquina_fotos "
                             "(maquina_id, archivo_path, cloudinary_url, "
-                            " archivo_nombre, tipo_foto, descripcion, "
-                            " visita_origen, levantamiento_id, tomada_por) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            " cloudinary_public_id, archivo_nombre, tipo_foto, "
+                            " descripcion, visita_origen, levantamiento_id, "
+                            " tomada_por) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (mid, _ap or "",
-                             _cu or None,
+                             _cu or None, _cpi,
                              _f_nombre,
                              # tipo_foto del levantamiento → 'instalada' si es la
                              # primera vez para una ficha, sino 'detalle'.
@@ -25338,7 +25918,7 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                                              and fotos_asignadas == 0)
                              else "detalle",
                              _f_desc[:500] or None,
-                             vid, None,
+                             vid, lev_id_global,
                              (_f.get("tomada_por") or tec_nombre or "")[:190]
                              or None)
                         )
@@ -25347,23 +25927,63 @@ def _promover_levantamiento_a_maquina(vid, usuario=None):
                         print(f"[promover_lev] foto m={mid} v={vid} url={_ap or _cu}: {_e_pic}",
                               flush=True)
 
-                # Evento en timeline del equipo
+                # ── Evento en timeline del equipo ──────────────────────────
+                # Idempotente: si ya existe evento (tipo='levantamiento',
+                # referencia_tabla='mant_visitas', referencia_id=vid) para
+                # esta máquina, no se duplica. metadata_json guarda el
+                # snapshot enriquecido para reconstruir el cambio.
                 try:
-                    mysql_execute(
-                        "INSERT INTO mant_maquina_eventos "
-                        "(maquina_id, tipo, descripcion, referencia_tabla, "
-                        " referencia_id, created_by) "
-                        "VALUES (%s,'levantamiento',%s,'mant_visitas',%s,%s)",
-                        (mid,
-                         f"Ficha actualizada por levantamiento OT #{vid}: "
-                         f"{fotos_count} foto(s) en OT · "
-                         f"{fotos_asignadas} asignada(s) a ficha · "
-                         f"{len(snapshot)} tarea(s) capturadas",
-                         vid,
-                         (tec_nombre or usuario or 'sistema')[:190])
+                    _ev_dup = mysql_fetchone(
+                        "SELECT id FROM mant_maquina_eventos "
+                        " WHERE maquina_id=%s AND tipo='levantamiento' "
+                        "   AND referencia_tabla='mant_visitas' "
+                        "   AND referencia_id=%s LIMIT 1",
+                        (mid, vid)
                     )
                 except Exception:
-                    pass
+                    _ev_dup = None
+                if _ev_dup:
+                    print(f"[promover_lev] evento timeline m={mid} v={vid} "
+                          f"ya existía (id={_ev_dup.get('id')}), skip",
+                          flush=True)
+                else:
+                    try:
+                        _src = item_lev or item or {}
+                        _ec_label_ev = (_src.get("estado_capturado") or "").strip()
+                        _ec_pretty = (f" · estado: {_ec_label_ev}" if _ec_label_ev else "")
+                        meta_ev = {
+                            "vid": vid,
+                            "lev_id": lev_id_global,
+                            "marca": _src.get("marca") or None,
+                            "modelo": _src.get("modelo") or None,
+                            "serie_capturada": _src.get("serie_snap") or None,
+                            "voltaje": _src.get("voltaje") or None,
+                            "ubicacion": _src.get("ubicacion") or None,
+                            "estado_capturado": _ec_label_ev or None,
+                            "tareas_capturadas": len(snapshot),
+                            "fotos_en_ot": fotos_count,
+                            "fotos_asignadas": fotos_asignadas,
+                            "tecnico": tec_nombre or None,
+                        }
+                        meta_str = json.dumps(meta_ev, ensure_ascii=False,
+                                              default=str)[:5000]
+                        mysql_execute(
+                            "INSERT INTO mant_maquina_eventos "
+                            "(maquina_id, cliente_id, tipo, descripcion, "
+                            " referencia_tabla, referencia_id, metadata_json, "
+                            " created_by) "
+                            "VALUES (%s,%s,'levantamiento',%s,'mant_visitas',%s,%s,%s)",
+                            (mid, eq.get("cliente_id"),
+                             (f"Ficha actualizada por levantamiento OT #{vid}: "
+                              f"{fotos_count} foto(s) en OT · "
+                              f"{fotos_asignadas} asignada(s) a ficha · "
+                              f"{len(snapshot)} tarea(s) capturadas"
+                              f"{_ec_pretty}")[:400],
+                             vid, meta_str, _usuario_audit)
+                        )
+                    except Exception as _e_ev:
+                        print(f"[promover_lev] evento m={mid} v={vid}: {_e_ev}",
+                              flush=True)
 
                 # Acumular fotos asignadas en el out para el log global
                 out["fotos_asignadas"] = out.get("fotos_asignadas", 0) + fotos_asignadas
@@ -25793,6 +26413,19 @@ def admin_mantenciones_clean_orphans():
 @app.route("/mantenciones")
 @_mant_required
 def mant_index():
+    # FIX 2026-05-22 (Daniel — caso Lenin "no veo las OTs"): si el usuario
+    # es técnico y entra al dashboard global, lo mandamos directo a "Mi día"
+    # para que vea SOLO sus OTs (hoy + semana + atrasadas + por revisar).
+    # El dashboard global tiene KPIs (MRR, contratos vencen) que no le
+    # aplican a un técnico — solo lo confundían al ver "Próximas OTs"
+    # con visitas de clientes que NO son suyos.
+    try:
+        _u_idx = getattr(g, "user", None) or {}
+        if _rol_familia((_u_idx.get("role") or "")) == "tecnico":
+            return redirect(url_for("mant_mi_dia"))
+    except Exception as _e_redir:
+        print(f"[mant_index] redirect técnico falló: {_e_redir}", flush=True)
+
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
     pronto = hoy + timedelta(days=60)
@@ -26456,9 +27089,18 @@ def mant_generar_calendario(cid):
     """
     Genera visitas de mantención automáticas basadas en el contrato activo del cliente.
     Devuelve preview (dry_run=true) o guarda en DB.
+
+    2026-05-22 — Daniel: la creación masiva debe ser EXPLICITA. Si el body
+    no trae `confirm: true` Y dry_run=false, forzamos dry_run igual para
+    proteger contra clicks accidentales o agentes IA. La única forma de
+    crear es: {dry_run: false, confirm: true}.
     """
     d        = request.get_json(silent=True) or {}
     dry_run  = d.get("dry_run", True)
+    confirm  = bool(d.get("confirm", False))
+    # Si el caller quiere crear pero no confirmó, forzamos preview
+    if not dry_run and not confirm:
+        dry_run = True
     desde_str= d.get("desde")     # YYYY-MM-DD
     meses    = int(d.get("meses", 12))
     tipo     = d.get("tipo", "preventiva")
@@ -26500,9 +27142,18 @@ def mant_generar_calendario(cid):
             fecha_actual = fecha_actual.replace(year=anio, month=mes, day=28)
 
     if dry_run:
-        return jsonify({"ok": True, "preview": visitas_preview, "frecuencia": frecuencia})
+        return jsonify({
+            "ok": True,
+            "dry_run": True,
+            "preview": visitas_preview,
+            "preview_count": len(visitas_preview),
+            "frecuencia": frecuencia,
+            "requires_confirm": True,
+            "mensaje": ("Vista previa. Para crear las OTs envía de nuevo "
+                        "con dry_run=false y confirm=true."),
+        })
 
-    # Guardar visitas
+    # Guardar visitas — solo si llegó confirm=true (validado arriba)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -26514,7 +27165,8 @@ def mant_generar_calendario(cid):
                     (cid, v["contrato_id"], v["titulo"], v["fecha"], v["tipo"], current_username())
                 )
         conn.commit()
-        _mant_log("cliente", cid, "calendario_generado", f"{len(visitas_preview)} visitas")
+        _mant_log("cliente", cid, "calendario_generado",
+                  f"{len(visitas_preview)} visitas (confirm=true por {current_username()})")
         return jsonify({"ok": True, "creadas": len(visitas_preview)})
     finally:
         conn.close()
@@ -31939,7 +32591,7 @@ def _ot_validar_cierre(vid):
     Las OT tipo 'levantamiento' eximen R2 (diagnóstico autogenerado al cerrar).
     """
     v = mysql_fetchone(
-        "SELECT id, tipo, estado, diagnostico, "
+        "SELECT id, tipo, estado, diagnostico, levantamiento_id, "
         "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
         "  FROM mant_visitas WHERE id=%s",
         (vid,)
@@ -31948,7 +32600,17 @@ def _ot_validar_cierre(vid):
         return {"puede_cerrar": False, "razones": ["OT no encontrada"]}
 
     razones = []
-    es_levantamiento = (v.get("tipo") or "").lower() == "levantamiento"
+    # FIX 2026-05-22 (Daniel — caso Vitacura OT 161/162/163): tratamos como
+    # "levantamiento" (reglas de cierre más laxas: sin diagnóstico, sin
+    # checklist obligatorio) TANTO las OT tipo='levantamiento' COMO las
+    # que tienen levantamiento_id poblado (creadas desde el modal del
+    # cliente con dropdown distinto a 'levantamiento'). En ambos casos el
+    # foco es capturar datos del equipo (fotos, marca/modelo/serie), no
+    # ejecutar un checklist clínico.
+    es_levantamiento = (
+        (v.get("tipo") or "").lower() == "levantamiento"
+        or bool(v.get("levantamiento_id"))
+    )
 
     # ── 2026-05-21 (Daniel) — Trazabilidad por equipo ──────────────────
     # Si la OT es tipo 'levantamiento', el técnico puede SALTAR equipos
@@ -32160,8 +32822,10 @@ def mant_visita_cerrar(vid):
         print(f"[ot_cerrar] mant_visita_equipos autofill error: {_e_vme}", flush=True)
 
     # ── Promoción levantamiento → ficha de equipo (async, no bloquea) ──
-    # Solo aplica si la visita es tipo='levantamiento'. El wrapper interno
-    # valida el tipo y descarta silenciosamente si no corresponde.
+    # Aplica cuando la visita es tipo='levantamiento' O tiene levantamiento_id
+    # poblado (caso Vitacura — preventiva creada desde modal del cliente).
+    # El wrapper interno (_promover_levantamiento_a_maquina) hace el filtro
+    # fino y descarta silenciosamente si no corresponde.
     _promover_levantamiento_async(vid, usuario=user)
     return jsonify({
         "ok": True,
@@ -33133,13 +33797,20 @@ def mant_contrato_auto_calendar(ctid):
     `fecha_vencimiento` según `frecuencia_meses`. Idempotente: no duplica
     si ya existe una visita programada en ese mes.
 
-    Body opcional: {desde_fecha: 'YYYY-MM-DD', sobreescribir: bool}
+    Body opcional: {desde_fecha: 'YYYY-MM-DD', sobreescribir: bool,
+                    confirm: bool}
+
+    2026-05-22 — Daniel: la creación masiva debe ser EXPLICITA. Si el
+    body no trae `confirm: true`, devolvemos `dry_run` con la cantidad
+    de OTs que se crearían SIN insertar nada. El frontend debe pedir
+    confirmación al usuario y reenviar con confirm=true.
     """
     from datetime import date as _date, datetime as _dtm
     import calendar as _cal
 
     d = request.get_json(silent=True) or {}
     sobreescribir = bool(d.get("sobreescribir", False))
+    confirm = bool(d.get("confirm", False))
 
     ct = mysql_fetchone(
         "SELECT id, cliente_id, fecha_inicio, fecha_vencimiento, "
@@ -33233,6 +33904,20 @@ def mant_contrato_auto_calendar(ctid):
         return jsonify({"ok": True, "creadas": 0,
                         "mensaje": "Sin huecos — todas las fechas ya tienen visita"})
 
+    # 2026-05-22 — Si no llega confirm=true, devolvemos dry_run con preview.
+    # Esto evita que el frontend (o un agente IA) llame al endpoint y
+    # cree OTs masivamente sin que el usuario lo haya confirmado.
+    if not confirm:
+        return jsonify({
+            "ok": True,
+            "dry_run": True,
+            "creadas": 0,
+            "preview_count": len(batch),
+            "fechas": creadas_fechas[:50],
+            "mensaje": (f"Se crearían {len(batch)} OTs hasta {hasta.isoformat()}. "
+                        f"Llama de nuevo con confirm=true para aplicar."),
+        })
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -33247,13 +33932,323 @@ def mant_contrato_auto_calendar(ctid):
         conn.commit()
         try:
             _mant_log("contrato", ctid, "auto_calendar",
-                      f"{n} visitas generadas")
+                      f"{n} visitas generadas (confirm=true por {current_username()})")
         except Exception: pass
         return jsonify({"ok": True, "creadas": n,
                         "fechas": creadas_fechas[:50],
                         "mensaje": f"{n} visitas calendarizadas hasta {hasta.isoformat()}"})
     finally:
         conn.close()
+
+
+# ═════════════════════════════════════════════════════════════════════
+# AUDITORÍA OTs AUTO-CREADAS — Plan 2026-05-22 (Daniel)
+# ─────────────────────────────────────────────────────────────────────
+# Daniel reportó OTs apareciendo en el sistema que él no creó. Esta
+# sección expone:
+#   1) Endpoint JSON con la lista de OTs sospechosas para revisión.
+#   2) Página HTML (tabla + checkboxes) para revisar y borrar en batch.
+#   3) Endpoint POST de borrado batch con doble confirmación.
+# Heurística de "auto-creada":
+#   - created_by IN ('mant-cron','cron','sistema','auto-calendar','')
+#     OR created_by IS NULL.
+# Borrar solo se permite cuando la OT está 'programada' y NO tiene
+# fotos / firmas / tareas completadas (sin actividad real).
+# ═════════════════════════════════════════════════════════════════════
+
+# Lista de valores de created_by que consideramos "auto" (no humano).
+_AUTO_CREATED_BY_TOKENS = (
+    "mant-cron", "cron", "sistema", "system",
+    "auto-calendar", "auto_calendar", "scheduler",
+)
+
+
+def _es_creator_humano(val):
+    """Devuelve True si `val` parece un username de persona (no cron/sistema)."""
+    if not val:
+        return False
+    v = str(val).strip().lower()
+    if not v:
+        return False
+    return v not in _AUTO_CREATED_BY_TOKENS
+
+
+@app.route("/mantenciones/api/ots/auto-creadas", methods=["GET"])
+@_mant_required
+def mant_ots_auto_creadas():
+    """Devuelve OTs candidatas a haberse creado por proceso automático.
+
+    Query params:
+        dias: ventana de "creadas recientemente" (default 14)
+        incluir_recientes: 1|0 — si 1, también incluye OTs con created_by
+            humano pero sin log de creación manual (default 0)
+    """
+    try:
+        dias = int(request.args.get("dias", 14) or 14)
+    except (TypeError, ValueError):
+        dias = 14
+    dias = max(1, min(dias, 365))
+    incluir_recientes = (request.args.get("incluir_recientes", "0") == "1")
+
+    tokens_auto = ",".join(["%s"] * len(_AUTO_CREATED_BY_TOKENS))
+    where_auto = (
+        f"(LOWER(TRIM(COALESCE(v.created_by, ''))) IN ({tokens_auto}) "
+        f" OR v.created_by IS NULL OR TRIM(v.created_by) = '')"
+    )
+    params = list(_AUTO_CREATED_BY_TOKENS)
+
+    where_extra = ""
+    if incluir_recientes:
+        where_extra = (
+            " OR (v.created_at >= (NOW() - INTERVAL %s DAY) "
+            "     AND NOT EXISTS ("
+            "         SELECT 1 FROM mant_logs lg "
+            "         WHERE lg.entidad='visita' AND lg.entidad_id=v.id "
+            "           AND (lg.accion='creada' "
+            "                OR lg.accion LIKE 'creada\\_%%' ESCAPE '\\\\') "
+            "     ))"
+        )
+        params.append(dias)
+
+    sql = (
+        "SELECT v.id, v.numero_ot, v.cliente_id, v.contrato_id, "
+        "       v.titulo, v.tipo, v.estado, v.fecha_programada, "
+        "       v.created_by, v.created_at, "
+        "       v.levantamiento_id, v.es_retroactiva, "
+        "       v.fecha_realizada, v.firma_tecnico_url, "
+        "       v.firma_supervisor_url, "
+        "       c.razon_social AS cliente_razon_social, "
+        "       c.rut          AS cliente_rut, "
+        "       DATEDIFF(NOW(), v.created_at) AS dias_desde_creacion, "
+        "       COALESCE(tar.n, 0)             AS tareas_count, "
+        "       COALESCE(tar.completadas, 0)   AS tareas_completadas, "
+        "       COALESCE(fot.n, 0)             AS fotos_count, "
+        "       COALESCE(eq.n, 0)              AS equipos_count "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN ( "
+        "      SELECT visita_id, COUNT(*) AS n, "
+        "             SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS completadas "
+        "      FROM mant_visita_tareas GROUP BY visita_id "
+        "  ) tar ON tar.visita_id = v.id "
+        "  LEFT JOIN ( "
+        "      SELECT visita_id, COUNT(*) AS n "
+        "      FROM mant_visita_fotos GROUP BY visita_id "
+        "  ) fot ON fot.visita_id = v.id "
+        "  LEFT JOIN ( "
+        "      SELECT visita_id, COUNT(*) AS n "
+        "      FROM mant_visita_tecnicos GROUP BY visita_id "
+        "  ) eq ON eq.visita_id = v.id "
+        f" WHERE ({where_auto}{where_extra}) "
+        "   AND v.estado NOT IN ('anulada','cancelada') "
+        " ORDER BY v.created_at DESC, v.id DESC "
+        " LIMIT 500"
+    )
+    try:
+        rows = mysql_fetchall(sql, tuple(params)) or []
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    out = []
+    for r in rows:
+        r = dict(r)
+        tareas_completadas = int(r.get("tareas_completadas") or 0)
+        fotos = int(r.get("fotos_count") or 0)
+        firmada = bool(r.get("firma_tecnico_url") or r.get("firma_supervisor_url"))
+        completada = (r.get("estado") == "completada")
+        realizada = bool(r.get("fecha_realizada"))
+        tiene_actividad = bool(
+            tareas_completadas > 0 or fotos > 0 or firmada
+            or completada or realizada
+        )
+        r["tiene_actividad"] = tiene_actividad
+        r["puede_borrarse"] = (
+            (r.get("estado") == "programada") and not tiene_actividad
+        )
+        cb = (r.get("created_by") or "").strip().lower()
+        if not cb:
+            r["motivo_sospecha"] = "Sin created_by"
+        elif cb in _AUTO_CREATED_BY_TOKENS:
+            r["motivo_sospecha"] = f"Creada por proceso automático ({cb})"
+        else:
+            r["motivo_sospecha"] = (
+                f"Creada por {r.get('created_by')} sin log de creación manual"
+            )
+        for k in ("fecha_programada", "fecha_realizada", "created_at"):
+            if r.get(k) is not None:
+                r[k] = str(r[k])
+        out.append(r)
+
+    return jsonify({
+        "ok": True,
+        "total": len(out),
+        "dias_ventana": dias,
+        "incluir_recientes": incluir_recientes,
+        "ots": out,
+    })
+
+
+@app.route("/mantenciones/api/ots/auto-creadas/count", methods=["GET"])
+@_mant_required
+def mant_ots_auto_creadas_count():
+    """Contador ligero para el badge del dashboard."""
+    tokens_auto = ",".join(["%s"] * len(_AUTO_CREATED_BY_TOKENS))
+    sql = (
+        f"SELECT COUNT(*) AS n FROM mant_visitas v "
+        f"WHERE (LOWER(TRIM(COALESCE(v.created_by, ''))) IN ({tokens_auto}) "
+        f"       OR v.created_by IS NULL OR TRIM(v.created_by) = '') "
+        f"  AND v.estado='programada' "
+        f"  AND v.fecha_realizada IS NULL "
+        f"  AND v.firma_tecnico_url IS NULL "
+        f"  AND v.firma_supervisor_url IS NULL"
+    )
+    try:
+        row = mysql_fetchone(sql, tuple(_AUTO_CREATED_BY_TOKENS)) or {}
+        n = int(row.get("n") or 0)
+    except Exception:
+        n = 0
+    return jsonify({"ok": True, "count": n})
+
+
+@app.route("/mantenciones/ots/auto-creadas")
+@_mant_required
+@_no_tecnico
+def mant_ots_auto_creadas_page():
+    """Página HTML — solo admin/superadmin pueden ver el listado."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        flash("Solo administradores pueden ver OTs auto-creadas.", "warning")
+        return redirect(url_for("mant_index"))
+    return render_template("mantenciones/ots_auto_creadas.html")
+
+
+@app.route("/mantenciones/api/ots/borrar-batch", methods=["POST"])
+@_mant_required
+def mant_ots_borrar_batch():
+    """Borra en batch una lista de OTs auto-creadas.
+
+    Reglas:
+      - Requiere admin/superadmin.
+      - Body: {ids: [int,...], confirm: 'BORRAR'}
+      - Solo borra OTs 'programada' sin actividad real.
+    """
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({
+            "ok": False,
+            "error": "Solo administradores pueden borrar OTs en batch.",
+        }), 403
+
+    d = request.get_json(silent=True) or {}
+    confirm = (d.get("confirm") or "").strip()
+    if confirm != "BORRAR":
+        return jsonify({
+            "ok": False,
+            "error": "Falta confirmación. Envía confirm='BORRAR' (mayúsculas)."
+        }), 400
+
+    ids_raw = d.get("ids") or []
+    if not isinstance(ids_raw, list) or not ids_raw:
+        return jsonify({"ok": False, "error": "ids debe ser una lista no vacía"}), 400
+
+    ids = []
+    for v in ids_raw[:500]:
+        try:
+            ids.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return jsonify({"ok": False, "error": "ids vacíos tras parseo"}), 400
+
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.estado, "
+        f"       v.fecha_realizada, v.firma_tecnico_url, v.firma_supervisor_url, "
+        f"       COALESCE((SELECT SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) "
+        f"                 FROM mant_visita_tareas WHERE visita_id=v.id), 0) "
+        f"           AS tareas_completadas, "
+        f"       COALESCE((SELECT COUNT(*) FROM mant_visita_fotos "
+        f"                 WHERE visita_id=v.id), 0) AS fotos_count "
+        f"  FROM mant_visitas v "
+        f" WHERE v.id IN ({ph})",
+        tuple(ids)
+    ) or []
+
+    rows_by_id = {r["id"]: dict(r) for r in rows}
+    resultados = []
+    ids_a_borrar = []
+    for vid in ids:
+        r = rows_by_id.get(vid)
+        if not r:
+            resultados.append({"id": vid, "ok": False, "motivo": "no_existe"})
+            continue
+        if r.get("estado") != "programada":
+            resultados.append({
+                "id": vid, "ok": False,
+                "motivo": f"estado={r.get('estado')} (solo se borra 'programada')",
+            })
+            continue
+        if r.get("fecha_realizada"):
+            resultados.append({"id": vid, "ok": False, "motivo": "tiene fecha_realizada"})
+            continue
+        if r.get("firma_tecnico_url") or r.get("firma_supervisor_url"):
+            resultados.append({"id": vid, "ok": False, "motivo": "tiene firma"})
+            continue
+        if int(r.get("tareas_completadas") or 0) > 0:
+            resultados.append({"id": vid, "ok": False, "motivo": "tiene tareas completadas"})
+            continue
+        if int(r.get("fotos_count") or 0) > 0:
+            resultados.append({"id": vid, "ok": False, "motivo": "tiene fotos"})
+            continue
+        ids_a_borrar.append(vid)
+
+    if not ids_a_borrar:
+        return jsonify({
+            "ok": True, "borradas": 0,
+            "saltadas": len(resultados),
+            "detalle": resultados,
+            "mensaje": "Ninguna OT cumplía los requisitos para borrarse.",
+        })
+
+    # Audit log ANTES de borrar
+    user = current_username() or "?"
+    try:
+        for vid in ids_a_borrar:
+            r = rows_by_id.get(vid) or {}
+            _mant_log(
+                "visita", vid, "borrada_batch_auto",
+                f"OT {r.get('numero_ot') or vid} — "
+                f"{(r.get('titulo') or '')[:140]} — borrada por {user} "
+                f"(limpieza auto-creadas)"
+            )
+    except Exception:
+        pass
+
+    ph2 = ",".join(["%s"] * len(ids_a_borrar))
+    try:
+        # Desligar levantamientos (si la OT venía espejada)
+        try:
+            mysql_execute(
+                f"UPDATE mant_levantamientos SET visita_id=NULL "
+                f"WHERE visita_id IN ({ph2})",
+                tuple(ids_a_borrar)
+            )
+        except Exception:
+            pass
+        mysql_execute(
+            f"DELETE FROM mant_visitas WHERE id IN ({ph2})",
+            tuple(ids_a_borrar)
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al borrar: {e}"}), 500
+
+    for vid in ids_a_borrar:
+        resultados.append({"id": vid, "ok": True, "motivo": "borrada"})
+
+    return jsonify({
+        "ok": True,
+        "borradas": len(ids_a_borrar),
+        "saltadas": len(resultados) - len(ids_a_borrar),
+        "detalle": resultados,
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -33967,9 +34962,100 @@ def mant_visita_crear():
         _mant_log("visita", vid, "creada",
                   f"{d.get('titulo','')} · tipo={tipo_ot} · modalidad={modalidad}"
                   + (f" · ⚠ {warn_mod}" if warn_mod else ""))
+        # 2026-05-22 (Daniel) — si la OT se creó CON técnico ya asignado,
+        # disparamos la notificación interna (campana) + el helper WA/SMS
+        # legacy (silencioso si Twilio off). Best-effort, no bloquea.
+        if tecnico_user_id:
+            try: _notificar_ot_asignada_interna(vid, tecnico_user_id, motivo="asignada")
+            except Exception as _e_nai: print(f"[crear-ot notif] {_e_nai}", flush=True)
+            try: _notificar_ot_asignada(vid)
+            except Exception as _e_naw: print(f"[crear-ot wa] {_e_naw}", flush=True)
+        # 2026-05-22 (OT 2026-00004 Vitacura) — Opcionalmente acepta
+        # maquina_ids y plantilla_id en el mismo POST para que el
+        # ejecutivo no tenga que aplicar plantilla en un segundo paso
+        # (y olvidarlo, dejando la OT huérfana al técnico). Best-effort:
+        # si la asociación falla, la OT igual queda creada y el creador
+        # puede ir al panel "Configurar OT" después.
+        maq_ids_inicial = []
+        for m in (d.get("maquina_ids") or []):
+            try: maq_ids_inicial.append(int(m))
+            except (TypeError, ValueError): continue
+        plant_id_inicial = None
+        try:
+            if d.get("plantilla_id"):
+                plant_id_inicial = int(d["plantilla_id"])
+        except (TypeError, ValueError):
+            plant_id_inicial = None
+        n_tareas_creadas = 0
+        if maq_ids_inicial and plant_id_inicial:
+            try:
+                items_p = mysql_fetchall(
+                    "SELECT * FROM mant_tarea_plantilla_items "
+                    " WHERE plantilla_id=%s ORDER BY orden, id",
+                    (plant_id_inicial,)
+                ) or []
+                if items_p:
+                    conn2 = get_mysql()
+                    try:
+                        with conn2.cursor() as cur2:
+                            ph = ",".join(["%s"] * len(maq_ids_inicial))
+                            cur2.execute(
+                                f"SELECT id, nombre, serie FROM mant_maquinas "
+                                f"WHERE id IN ({ph}) AND cliente_id=%s",
+                                tuple(maq_ids_inicial) + (d["cliente_id"],)
+                            )
+                            m_rows = cur2.fetchall() or []
+                            m_idx = {r["id"]: r for r in m_rows}
+                            orden = 0
+                            for mid in maq_ids_inicial:
+                                if mid not in m_idx:
+                                    continue
+                                m_row = m_idx[mid]
+                                for it in items_p:
+                                    orden += 1
+                                    sufijo = m_row["nombre"]
+                                    if m_row.get("serie"):
+                                        sufijo += f" (S/N: {m_row['serie']})"
+                                    titulo = f"{it['titulo']} — {sufijo}"[:300]
+                                    tr = it.get("tipo_respuesta") or "check"
+                                    cur2.execute(
+                                        "INSERT INTO mant_visita_tareas "
+                                        "(visita_id, plantilla_id, orden, titulo, "
+                                        " descripcion, tipo, maquina_id, tipo_respuesta, "
+                                        " obligatoria, requiere_foto, unidad, rango_min, "
+                                        " rango_max, opciones_lista_json, estado_trabajo, "
+                                        " created_by) "
+                                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,"
+                                        "        %s,%s,%s,%s,'pendiente',%s)",
+                                        (vid, plant_id_inicial, orden, titulo,
+                                         it.get("descripcion"), mid, tr,
+                                         it.get("obligatoria") or 0,
+                                         it.get("requiere_foto") or 0,
+                                         it.get("unidad"), it.get("rango_min"),
+                                         it.get("rango_max"),
+                                         it.get("opciones_lista_json"),
+                                         current_username())
+                                    )
+                                    n_tareas_creadas += 1
+                        conn2.commit()
+                        try:
+                            _mant_log(
+                                "visita", vid, "plantilla_inicial",
+                                f"{n_tareas_creadas} tarea(s) creadas al crear OT "
+                                f"(plantilla_id={plant_id_inicial}, "
+                                f"máquinas={len(maq_ids_inicial)})"
+                            )
+                        except Exception: pass
+                    finally:
+                        conn2.close()
+            except Exception as _e_plant:
+                print(f"[crear-ot] aplicar plantilla inicial falló: {_e_plant}",
+                      flush=True)
         resp = {"ok": True, "id": vid, "modalidad_cobro": modalidad}
         if warn_mod:
             resp["warning"] = warn_mod
+        if n_tareas_creadas:
+            resp["tareas_creadas"] = n_tareas_creadas
         return jsonify(resp)
     finally:
         conn.close()
@@ -34027,6 +35113,17 @@ def mant_visita_update(vid):
     vals = [d[f] for f in allowed if f in d]
     if not sets:
         return jsonify({"error": "Sin campos"}), 400
+    # 2026-05-22 (Daniel) — capturamos el técnico ANTES del UPDATE para
+    # saber si cambió y notificar al nuevo técnico vía campana interna.
+    tecnico_prev = None
+    if "tecnico_user_id" in d:
+        try:
+            _prev = mysql_fetchone(
+                "SELECT tecnico_user_id FROM mant_visitas WHERE id=%s", (vid,)
+            )
+            tecnico_prev = (_prev or {}).get("tecnico_user_id")
+        except Exception:
+            tecnico_prev = None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -34035,6 +35132,17 @@ def mant_visita_update(vid):
         conn.commit()
         _mant_log("visita", vid, "actualizada",
                   f"⚠ {warn_mod_upd}" if warn_mod_upd else "")
+        # Si el técnico cambió (o se asignó por primera vez), notificar.
+        tecnico_nuevo = d.get("tecnico_user_id")
+        try:
+            if tecnico_nuevo and (not tecnico_prev or int(tecnico_prev) != int(tecnico_nuevo)):
+                motivo = "reasignada" if tecnico_prev else "asignada"
+                try: _notificar_ot_asignada_interna(vid, tecnico_nuevo, motivo=motivo)
+                except Exception as _e_nai: print(f"[upd-ot notif] {_e_nai}", flush=True)
+                try: _notificar_ot_asignada(vid)
+                except Exception as _e_naw: print(f"[upd-ot wa] {_e_naw}", flush=True)
+        except Exception as _e_chk:
+            print(f"[upd-ot check tecnico] {_e_chk}", flush=True)
         resp = {"ok": True}
         if warn_mod_upd:
             resp["warning"] = warn_mod_upd
@@ -34573,6 +35681,128 @@ def mant_cliente_maquinas_list(cid):
         "  FROM mant_maquinas WHERE cliente_id=%s ORDER BY nombre", (cid,)
     ) or []
     return jsonify([dict(r) for r in rows])
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2026-05-22 (Daniel) — MI DÍA (vista del técnico Lenin)
+# Dashboard mobile-first agrupado por:
+#   - OTs de HOY (programadas para fecha=hoy)
+#   - OTs de la SEMANA (próximos 7 días)
+#   - OTs por aprobar (que firmó pero quedaron pendientes_aprobacion)
+#   - OTs atrasadas (vencidas — Lenin debe ponerse al día)
+# Otros roles (admin, ejecutivo, superadmin) también pueden entrar, pero
+# en su caso se muestran las OTs que tienen ASIGNADAS o que ellos CREARON.
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/mi-dia")
+@_mant_required
+def mant_mi_dia():
+    """Vista 'Mi día' del técnico: OTs de hoy + semana + por aprobar.
+
+    Para Lenin (rol=tecnico): muestra SOLO sus OTs asignadas, agrupadas
+    por urgencia. Para Aaron (rol=ejecutivo_sstt): muestra las que él
+    creó. Para admin/superadmin: ve todas las OTs ACTIVAS del sistema.
+    """
+    user = getattr(g, "user", None) or {}
+    uid = user.get("id")
+    username = (user.get("username") or "").strip()
+    role_fam = _rol_familia(user.get("role") or "")
+    es_tecnico = (role_fam == "tecnico")
+    es_ejecutivo = (role_fam == "ejecutivo")
+    hoy = datetime.now().date()
+    semana_fin = hoy + timedelta(days=7)
+
+    # Construir cláusulas según rol
+    where_base = []
+    params_base = []
+    if es_tecnico and uid:
+        where_base.append(
+            "(v.tecnico_user_id=%s OR "
+            " v.id IN (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_user_id=%s))"
+        )
+        params_base.extend([int(uid), int(uid)])
+    elif es_ejecutivo:
+        clauses_e = []
+        if username:
+            clauses_e.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            params_base.append(username)
+        if uid:
+            clauses_e.append("v.tecnico_user_id=%s")
+            params_base.append(int(uid))
+        if clauses_e:
+            where_base.append("(" + " OR ".join(clauses_e) + ")")
+    # admin/superadmin: sin filtro de usuario (ve todo)
+
+    sql_base = (
+        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
+        "       v.fecha_programada, v.hora_inicio, v.prioridad, "
+        "       v.tecnico_user_id, v.firma_tecnico_at, v.firma_supervisor_at, "
+        "       c.razon_social, c.direccion AS cli_direccion, "
+        "       c.comuna AS cli_comuna, c.contacto_tel AS cli_tel, "
+        "       COALESCE(u.nombre, u.username, v.tecnico) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
+    )
+
+    def _do_query(extra_where, extra_params, order_by="v.fecha_programada, v.hora_inicio, v.id"):
+        clauses = list(where_base) + list(extra_where or [])
+        params = list(params_base) + list(extra_params or [])
+        wstr = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        try:
+            rows = mysql_fetchall(
+                sql_base + wstr + f" ORDER BY {order_by} LIMIT 100",
+                tuple(params)
+            ) or []
+        except Exception as e:
+            print(f"[mi-dia] query fail: {e}", flush=True)
+            rows = []
+        return [dict(r) for r in rows]
+
+    # 1) OTs de HOY (programadas o en_curso, fecha=hoy)
+    ots_hoy = _do_query(
+        ["v.fecha_programada = %s",
+         "v.estado IN ('programada','en_curso','reagendada')"],
+        [hoy],
+        order_by="v.hora_inicio, v.id"
+    )
+
+    # 2) OTs de la SEMANA (próximos 7 días, excluyendo hoy)
+    ots_semana = _do_query(
+        ["v.fecha_programada > %s",
+         "v.fecha_programada <= %s",
+         "v.estado IN ('programada','en_curso','reagendada')"],
+        [hoy, semana_fin],
+    )
+
+    # 3) OTs ATRASADAS (fecha < hoy y aún no cerradas)
+    ots_atrasadas = _do_query(
+        ["v.fecha_programada < %s",
+         "v.estado IN ('programada','en_curso','reagendada')"],
+        [hoy],
+        order_by="v.fecha_programada DESC, v.id"
+    )
+
+    # 4) OTs POR APROBAR (firmó técnico — espera supervisor)
+    # Para ejecutivo y admin: las que están pendientes_aprobacion (los van a firmar).
+    # Para técnico: las suyas firmadas para que vea cuándo se cerraron.
+    ots_por_aprobar = _do_query(
+        ["v.estado='pendiente_aprobacion'"],
+        [],
+        order_by="v.firma_tecnico_at DESC, v.id DESC"
+    )
+
+    return render_template(
+        "mantenciones/mi_dia.html",
+        ots_hoy=ots_hoy,
+        ots_semana=ots_semana,
+        ots_atrasadas=ots_atrasadas,
+        ots_por_aprobar=ots_por_aprobar,
+        hoy=hoy,
+        role_fam=role_fam,
+        es_tecnico=es_tecnico,
+        es_ejecutivo=es_ejecutivo,
+        nombre_user=(user.get("nombre") or username or "técnico"),
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -35202,14 +36432,16 @@ def mant_plantilla_eliminar(pid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/aplicar-plantilla", methods=["POST"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_configurar
 def mant_visita_aplicar_plantilla(vid):
     """Aplica una plantilla a una OT: clona sus items como mant_visita_tareas.
     Body: { plantilla_id, maquina_ids?: [int,...]  // opcional: si viene,
             crea una copia de las tareas por cada máquina (útil para
             levantamiento fotográfico de N equipos) }
     """
-    v = mysql_fetchone("SELECT id, estado FROM mant_visitas WHERE id=%s", (vid,))
+    v = mysql_fetchone(
+        "SELECT id, estado, cliente_id FROM mant_visitas WHERE id=%s", (vid,)
+    )
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     d = request.get_json(silent=True) or {}
@@ -35237,6 +36469,42 @@ def mant_visita_aplicar_plantilla(vid):
         try: maquina_ids = [int(m) for m in maquina_ids]
         except Exception:
             return jsonify({"ok": False, "error": "maquina_ids inválido"}), 400
+
+    # ── FIX 2026-05-22 (OT 2026-00004 Vitacura) — autoexpansión ─────
+    # Bug observable: Aaron aplicaba plantilla SIN marcar máquinas →
+    # tareas se insertaban con maquina_id=NULL → la vista del técnico
+    # (mant_ot_ejecutar) filtra `vt.maquina_id IS NOT NULL` → Lenin
+    # veía "Sin máquinas en esta OT" aunque la plantilla SÍ se aplicó.
+    #
+    # Política nueva: si el usuario no marca máquinas, autoexpandir a
+    # TODAS las activas del cliente. Esto matchea el comportamiento
+    # esperado del wizard `lev_crear` (que sí aplica plantilla por
+    # equipo). El caller puede pasar explícitamente maquina_ids=[]
+    # ¿imposible? — si es lista vacía, llegamos acá igual. Para conservar
+    # el modo "tareas sueltas sin máquina" (uso anterior), aceptamos un
+    # flag explícito `sin_maquina=True` en el body.
+    sin_maquina = bool(d.get("sin_maquina"))
+    if not maquina_ids and not sin_maquina:
+        try:
+            cliente_id_ot = v.get("cliente_id")
+            if cliente_id_ot:
+                rows_m = mysql_fetchall(
+                    "SELECT id FROM mant_maquinas "
+                    " WHERE cliente_id=%s "
+                    "   AND COALESCE(estado,'activo') != 'baja' "
+                    " ORDER BY nombre",
+                    (cliente_id_ot,)
+                ) or []
+                maquina_ids = [int(r["id"]) for r in rows_m]
+                if maquina_ids:
+                    print(
+                        f"[aplicar-plantilla] autoexpand vid={vid} sin maquina_ids → "
+                        f"{len(maquina_ids)} máquina(s) del cliente {cliente_id_ot}",
+                        flush=True,
+                    )
+        except Exception as _e_auto:
+            print(f"[aplicar-plantilla] autoexpand error: {_e_auto}", flush=True)
+            maquina_ids = []
 
     # Calcular orden inicial (siguiente al último existente)
     last_row = mysql_fetchone(
@@ -35631,6 +36899,11 @@ def mant_ot_ejecutar(vid):
     # etc.). El template usa estos booleans directos en vez de re-evaluar
     # con strings literales que no soportan variantes dinámicas.
     puede_aprobar_flag = _puede_ot_accion(vid, "aprobar", u)
+    # 2026-05-22 (OT 2026-00004 Vitacura) — Flag para mostrar el panel
+    # "Configurar OT" cuando la OT está vacía. Permite al ejecutivo
+    # creador / admin arreglar OTs huérfanas (sin equipos/plantilla)
+    # sin tener que ir a la vista legacy a mano.
+    puede_configurar_flag = _puede_ot_accion(vid, "configurar", u)
     # Comparar created_by (varchar username) con el username del user actual,
     # case insensitive y trim, igual que en `_puede_ot_accion`.
     _creator_username = (visita.get("created_by") or "").strip().lower()
@@ -35639,8 +36912,116 @@ def mant_ot_ejecutar(vid):
     )
     es_superadmin_flag = (_rol_familia(role_u) == "superadmin")
 
+    # ════════════════════════════════════════════════════════════════
+    # FIX 2026-05-22 22:00 (caso OT 2026-00004 Vitacura — Daniel):
+    # Si la OT viene desde un levantamiento (levantamiento_id NOT NULL)
+    # y mant_visita_equipos está vacío, sincronizamos los items del
+    # levantamiento → mant_visita_equipos con INSERT IGNORE (idempotente
+    # vía UNIQUE KEY uq_visita_maquina). Esto reconstruye la asociación
+    # equipo↔OT para OTs creadas por el wizard de levantamiento que NO
+    # populó la tabla intermedia. Es seguro correr cada vez que se abre
+    # la OT: si ya están sincronizados, no hace nada.
+    # ════════════════════════════════════════════════════════════════
+    _lev_id = visita.get("levantamiento_id")
+    if _lev_id:
+        try:
+            _lev_items = mysql_fetchall(
+                "SELECT maquina_id FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
+                (_lev_id,)
+            ) or []
+            if _lev_items:
+                # INSERT IGNORE por UNIQUE KEY uq_visita_maquina (visita_id, maquina_id)
+                _rows = [(vid, int(it["maquina_id"]),
+                          "verificado", current_username() or "sistema")
+                         for it in _lev_items]
+                conn_li = get_mysql()
+                try:
+                    with conn_li.cursor() as cur_li:
+                        cur_li.executemany(
+                            "INSERT IGNORE INTO mant_visita_equipos "
+                            "  (visita_id, maquina_id, estado_revision, revisado_por) "
+                            "VALUES (%s,%s,%s,%s)",
+                            _rows
+                        )
+                    conn_li.commit()
+                finally:
+                    conn_li.close()
+        except Exception as _e_lev_sync:
+            print(f"[ot_ejecutar] sync levantamiento→equipos vid={vid} "
+                  f"lev_id={_lev_id} error: {_e_lev_sync}", flush=True)
+
+    # ════════════════════════════════════════════════════════════════
+    # FIX 2026-05-22 (Daniel — caso Vitacura OT 161/162/163):
+    # SAFETY-NET para OTs EXISTENTES huérfanas creadas antes del fix
+    # en `lev_crear_o_listar`. Si la OT viene de un levantamiento
+    # (levantamiento_id NOT NULL) y NO tiene ninguna tarea en
+    # mant_visita_tareas, generamos UN fallback "📷 Documentar" por
+    # cada equipo del levantamiento. Esto desbloquea al técnico
+    # (Lenin) que abre la OT y la encuentra sin checklist: AHORA verá
+    # 4 cards (una por equipo) con su tarea base de captura de fotos.
+    # Idempotente: solo inserta si COUNT==0.
+    # ════════════════════════════════════════════════════════════════
+    if _lev_id:
+        try:
+            _has_tareas = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s",
+                (vid,)
+            ) or {}
+            if int(_has_tareas.get("n") or 0) == 0:
+                _maqs_lev = mysql_fetchall(
+                    "SELECT li.maquina_id, m.nombre "
+                    "  FROM mant_levantamiento_items li "
+                    "  LEFT JOIN mant_maquinas m ON m.id=li.maquina_id "
+                    " WHERE li.levantamiento_id=%s AND li.maquina_id IS NOT NULL "
+                    " ORDER BY li.id",
+                    (_lev_id,)
+                ) or []
+                if _maqs_lev:
+                    _conn_tfb = get_mysql()
+                    try:
+                        with _conn_tfb.cursor() as _cur_tfb:
+                            for _idx_t, _m in enumerate(_maqs_lev, 1):
+                                _cur_tfb.execute(
+                                    "INSERT INTO mant_visita_tareas "
+                                    "(visita_id, orden, titulo, descripcion, "
+                                    " maquina_id, tipo, tipo_respuesta, "
+                                    " obligatoria, requiere_foto, estado_trabajo, "
+                                    " created_by) "
+                                    "VALUES (%s,%s,%s,%s,%s,"
+                                    "        'levantamiento','foto',1,1,'pendiente',%s)",
+                                    (vid, _idx_t,
+                                     f"📷 Documentar: {(_m.get('nombre') or 'equipo')[:240]}",
+                                     "Capturar fotos generales del equipo + N° serie + "
+                                     "placa + datos técnicos.",
+                                     _m["maquina_id"],
+                                     current_username() or 'sistema')
+                                )
+                        _conn_tfb.commit()
+                        print(f"[ot_ejecutar] safety-net tareas vid={vid} "
+                              f"lev_id={_lev_id}: {len(_maqs_lev)} tarea(s) "
+                              f"📷 Documentar creadas (OT huérfana).", flush=True)
+                        try:
+                            _mant_log(
+                                "visita", vid, "tareas_safety_net",
+                                f"{len(_maqs_lev)} tarea(s) 📷 Documentar creadas "
+                                f"automáticamente para destrabar OT huérfana "
+                                f"(lev_id={_lev_id})"
+                            )
+                        except Exception:
+                            pass
+                    finally:
+                        _conn_tfb.close()
+        except Exception as _e_tsn:
+            print(f"[ot_ejecutar] safety-net tareas vid={vid} error: {_e_tsn}",
+                  flush=True)
+
     # Equipos involucrados en la OT — vienen de mant_visita_tareas distintas máquinas
     # FIX 2026-05-16: filtrar equipos dados de baja (soft-delete).
+    # FIX 2026-05-22 (Daniel): si la plantilla todavía no se aplicó (Aaron creó
+    # la OT con equipos pero el técnico aún no tiene tareas), agregamos también
+    # los equipos listados en mant_visita_equipos (audit trail). Esto evita que
+    # Lenin vea pantalla en blanco cuando la OT está armada pero sin checklist.
     equipos = mysql_fetchall(
         "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
         "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
@@ -35650,10 +37031,36 @@ def mant_ot_ejecutar(vid):
         "  JOIN mant_maquinas m ON m.id=vt.maquina_id "
         " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
         "   AND COALESCE(m.estado,'activo') != 'baja' "
-        " ORDER BY m.nombre",
-        (vid,)
+        " UNION "
+        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
+        "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
+        "       m.observaciones, m.ultima_intervencion, m.visitas_count "
+        "  FROM mant_visita_equipos ve "
+        "  JOIN mant_maquinas m ON m.id=ve.maquina_id "
+        " WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL "
+        "   AND COALESCE(m.estado,'activo') != 'baja' "
+        " ORDER BY nombre",
+        (vid, vid)
     ) or []
     equipos = [dict(e) for e in equipos]
+
+    # 2026-05-22 (OT 2026-00004 Vitacura) — Detección de OT vacía /
+    # huérfana. Si hay tareas pero todas tienen maquina_id NULL, no
+    # aparecen equipos en la vista. Pasamos un flag al template para
+    # que ofrezca al creador/admin un banner para arreglarla.
+    _huerf_info = mysql_fetchone(
+        "SELECT "
+        "  COUNT(*) AS n_total, "
+        "  SUM(CASE WHEN maquina_id IS NULL THEN 1 ELSE 0 END) AS n_huerfanas "
+        "  FROM mant_visita_tareas WHERE visita_id=%s",
+        (vid,)
+    ) or {"n_total": 0, "n_huerfanas": 0}
+    _tareas_total_v = int(_huerf_info.get("n_total") or 0)
+    _tareas_huerf_v = int(_huerf_info.get("n_huerfanas") or 0)
+    ot_necesita_config = (
+        len(equipos) == 0 and (_tareas_total_v == 0 or _tareas_huerf_v > 0)
+    )
 
     # Tareas con info de plantilla origen + valor_json para tipos avanzados.
     # Incluye `version` y datos del lock para sincronizar concurrencia
@@ -35821,6 +37228,12 @@ def mant_ot_ejecutar(vid):
         puede_aprobar=puede_aprobar_flag,
         es_creador=es_creador_flag,
         es_superadmin=es_superadmin_flag,
+        # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
+        # "Configurar OT": solo aparece al creador/admin/supervisor y
+        # cuando la OT no tiene equipos asociados (huérfana).
+        puede_configurar=puede_configurar_flag,
+        ot_necesita_config=ot_necesita_config,
+        tareas_huerfanas=_tareas_huerf_v,
     )
 
 
@@ -35828,26 +37241,45 @@ def mant_ot_ejecutar(vid):
 @_mant_required
 @_tecnico_owns_visita
 def mant_ot_equipo_datos(vid, mid):
-    """Actualiza los datos del equipo (mant_maquinas) en el contexto de la OT.
-    Aplica cuando el técnico edita serie, marca, modelo, año, voltaje,
-    estado, observaciones, etc.
+    """Actualiza los datos del equipo en el contexto de la OT.
 
-    2026-05-19 (Daniel) — Si cambia el SERIAL durante un levantamiento, se
-    registra en mant_maquina_audit con el valor antes/después + usuario +
-    referencia a la OT levantamiento. Esto cumple la regla de trazabilidad
-    para datos críticos del equipo.
+    Comportamiento (2026-05-22 Daniel — captura de ficha desde ot_ejecutar):
+      1) Actualiza `mant_maquinas` con los campos editables (estrategia:
+         escribir solo lo que viene en el payload — NO pisa con NULL).
+      2) ESPEJA los mismos valores en `mant_levantamiento_items` (si la OT
+         tiene levantamiento_id; si no, lo CREA en modo borrador para que
+         Lenin pueda capturar incluso en OT preventiva sin levantamiento).
+         Esto permite que `_promover_levantamiento_a_maquina` los vuelva a
+         leer al cerrar la OT y los reaplique idempotente.
+      3) Si cambia serie/marca/modelo (datos críticos), registra en
+         `mant_maquina_audit` con valor antes/después + usuario + motivo.
+      4) Si `completado=true`, también marca `mant_visita_equipos`
+         estado_revision='con_cambios' (queda registrado quién capturó).
+
+    Performance: <500ms (UPDATE simple + INSERT mant_levantamiento_items
+    si no existe, opcional). Idempotente: vuelve a llamarse y solo aplica
+    delta.
     """
     d = request.get_json(silent=True) or {}
-    permitidos = {
-        "serie": (str, 100), "marca": (str, 120), "modelo": (str, 120),
-        "voltaje": (str, 40), "ubicacion_sala": (str, 200),
-        "estado_capturado": (str, 40), "observaciones": (str, 5000),
+
+    # Campos string permitidos en mant_maquinas (clave → max_length).
+    # 2026-05-22 — agregamos varios campos que antes solo vivían en
+    # mant_levantamiento_items. El espejo asegura coherencia.
+    permitidos_str = {
+        "serie": 100, "marca": 120, "modelo": 120,
+        "voltaje": 40, "ubicacion_sala": 200,
+        "estado_capturado": 40, "observaciones": 5000,
     }
+    estados_validos = (
+        "operativo", "advertencia", "fuera_servicio",
+        "en_reparacion", "dado_baja", "no_encontrado"
+    )
+
     # ── Capturar valores ANTES del update para auditoría de campos críticos ──
     valores_antes = {}
     try:
         _antes = mysql_fetchone(
-            "SELECT serie, marca, modelo FROM mant_maquinas WHERE id=%s",
+            "SELECT serie, marca, modelo, cliente_id FROM mant_maquinas WHERE id=%s",
             (mid,)
         )
         if _antes:
@@ -35856,9 +37288,12 @@ def mant_ot_equipo_datos(vid, mid):
         valores_antes = {}
 
     sets, vals = [], []
-    for k, (typ, maxlen) in permitidos.items():
+    for k, maxlen in permitidos_str.items():
         if k in d:
             v = (str(d.get(k) or "").strip())[:maxlen] or None
+            # estado_capturado se valida contra ENUM (ignoramos valores inválidos)
+            if k == "estado_capturado" and v and v not in estados_validos:
+                continue
             sets.append(f"{k}=%s"); vals.append(v)
     # Numéricos / booleanos
     if "anio_fabricacion" in d:
@@ -35868,7 +37303,10 @@ def mant_ot_equipo_datos(vid, mid):
     if "tiene_dano" in d:
         sets.append("tiene_dano=%s"); vals.append(1 if d["tiene_dano"] else 0)
     if "ultima_intervencion" in d:
-        sets.append("ultima_intervencion=%s"); vals.append(d["ultima_intervencion"] or None)
+        v = d["ultima_intervencion"]
+        sets.append("ultima_intervencion=%s"); vals.append(v if v else None)
+    # 2026-05-22 — campo que también vive en mant_levantamiento_items.
+    # En mant_maquinas no existe `fecha_documento` — solo espejamos al item.
     if not sets:
         return jsonify({"ok": False, "error": "Sin campos"}), 400
     # Siempre actualizamos last_visita_id para trazabilidad
@@ -35876,14 +37314,54 @@ def mant_ot_equipo_datos(vid, mid):
     vals.append(mid)
     try:
         mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
+
+        # ── ESPEJO en mant_levantamiento_items (2026-05-22 Daniel) ────
+        # Esto es lo que `_promover_levantamiento_a_maquina` vuelve a leer
+        # al cerrar la OT. Sin este espejo, los datos solo vivirían en
+        # mant_maquinas y se perdería trazabilidad por OT.
+        try:
+            _mirror_ot_equipo_a_levantamiento(vid, mid, d)
+        except Exception as _e_mir:
+            print(f"[mant_ot_equipo_datos] espejo levantamiento_items vid={vid} "
+                  f"mid={mid}: {_e_mir}", flush=True)
+
+        # ── Si el técnico marca como "completado" o cambia datos, marcamos
+        #    también el estado_revision del equipo en la visita para que
+        #    sea visible en la lista de equipos. ────────────────────────
+        try:
+            user_for_rev = current_username() or "técnico"
+            estado_rev = "con_cambios" if d.get("completado") else None
+            if estado_rev:
+                mysql_execute(
+                    "INSERT INTO mant_visita_equipos "
+                    "  (visita_id, maquina_id, estado_revision, revisado_at, revisado_por) "
+                    "VALUES (%s, %s, %s, NOW(), %s) "
+                    "ON DUPLICATE KEY UPDATE "
+                    "  estado_revision=VALUES(estado_revision), "
+                    "  revisado_at=NOW(), "
+                    "  revisado_por=VALUES(revisado_por)",
+                    (vid, mid, estado_rev, user_for_rev[:190])
+                )
+        except Exception as _e_rev:
+            print(f"[mant_ot_equipo_datos] mant_visita_equipos vid={vid} "
+                  f"mid={mid}: {_e_rev}", flush=True)
+
         # ── Audit log de cambios sensibles ──
         # Solo escribimos en mant_maquina_audit cuando cambia un campo CRÍTICO
         # (serie / marca / modelo). Para no inflar la tabla con cada edición.
         try:
             v_obs = mysql_fetchone(
-                "SELECT cliente_id, tipo FROM mant_visitas WHERE id=%s", (vid,)
+                "SELECT cliente_id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
             ) or {}
-            es_lev = (v_obs.get("tipo") or "").lower() == "levantamiento"
+            # FIX 2026-05-22 (Daniel): el motivo "Levantamiento OT #X" también
+            # aplica cuando la OT es de otro tipo pero está vinculada a un
+            # levantamiento (mant_visitas.levantamiento_id NOT NULL). Permite
+            # trazabilidad consistente en mant_maquina_audit para los 2 flujos
+            # que generan herencia a la ficha.
+            es_lev = (
+                (v_obs.get("tipo") or "").lower() == "levantamiento"
+                or bool(v_obs.get("levantamiento_id"))
+            )
             user = current_username()
             motivo_base = (f"Levantamiento OT #{vid}" if es_lev
                            else f"Edición desde OT #{vid}")
@@ -35900,7 +37378,7 @@ def mant_ot_equipo_datos(vid, mid):
                         "(maquina_id, cliente_id, campo, valor_antes, valor_nuevo, "
                         " motivo, usuario) "
                         "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                        (mid, v_obs.get("cliente_id"),
+                        (mid, valores_antes.get("cliente_id") or v_obs.get("cliente_id"),
                          campo, antes, nuevo, motivo_base, (user or "")[:190])
                     )
                 except Exception as _e_aud:
@@ -35913,74 +37391,459 @@ def mant_ot_equipo_datos(vid, mid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _ensure_levantamiento_para_visita(vid):
+    """Garantiza que la visita `vid` tenga `levantamiento_id`. Idempotente.
+
+    2026-05-22 (Daniel) — Caso edge: Aaron crea una OT preventiva SIN
+    levantamiento, pero Lenin necesita capturar ficha de los equipos
+    (porque vienen vacíos). Este helper crea el levantamiento bajo demanda
+    para que `_promover_levantamiento_a_maquina` pueda leerlo al cerrar.
+
+    Solo crea levantamiento para tipos que tienen sentido (preventiva,
+    levantamiento, instalacion, inspeccion). Para correctivas o garantías
+    devuelve None — el técnico no está "levantando ficha", solo reparando.
+
+    Returns: int → levantamiento_id (o None si no aplica / no se pudo crear).
+    """
+    v = mysql_fetchone(
+        "SELECT id, cliente_id, levantamiento_id, tipo, fecha_programada, "
+        "       tecnico_user_id, tecnico, numero_ot "
+        "  FROM mant_visitas WHERE id=%s",
+        (vid,)
+    )
+    if not v:
+        return None
+    lev_id = v.get("levantamiento_id")
+    if lev_id:
+        return lev_id
+    # Solo crear para tipos que capturan ficha. Correctiva/garantía NO.
+    tipo_v = (v.get("tipo") or "").lower()
+    if tipo_v not in ("preventiva", "levantamiento", "instalacion", "inspeccion"):
+        return None
+    cid = v.get("cliente_id")
+    if not cid:
+        return None
+    try:
+        titulo = f"Ficha técnica OT {v.get('numero_ot') or vid}"
+        mysql_execute(
+            "INSERT INTO mant_levantamientos "
+            "  (cliente_id, tecnico, fecha_inicio, estado, titulo, created_by, visita_id) "
+            "VALUES (%s, %s, NOW(), 'en_curso', %s, %s, %s)",
+            (cid, (v.get("tecnico") or current_username() or "técnico")[:190],
+             titulo[:200],
+             (current_username() or "sistema")[:190],
+             vid)
+        )
+        row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
+        lev_id = (row or {}).get("id")
+        if not lev_id:
+            return None
+        mysql_execute(
+            "UPDATE mant_visitas SET levantamiento_id=%s WHERE id=%s",
+            (lev_id, vid)
+        )
+        try:
+            _mant_log("visita", vid, "levantamiento_creado_auto",
+                      f"Levantamiento #{lev_id} creado al capturar ficha de equipos")
+        except Exception:
+            pass
+        return lev_id
+    except Exception as e:
+        print(f"[_ensure_levantamiento_para_visita] vid={vid}: {e}", flush=True)
+        return None
+
+
+def _mirror_ot_equipo_a_levantamiento(vid, mid, payload):
+    """Refleja en `mant_levantamiento_items` los campos editables que el
+    técnico cambia desde la vista de ejecución (mant_ot_equipo_datos).
+
+    Idempotente: si ya existe el item, hace UPDATE solo de las claves que
+    vienen en el payload. Si no existe, INSERTA con snapshots básicos
+    (nombre_snap/sku_snap/serie_snap) tomados de mant_maquinas.
+
+    Crea el levantamiento si la OT no lo tenía (ver
+    `_ensure_levantamiento_para_visita`).
+    """
+    lev_id = _ensure_levantamiento_para_visita(vid)
+    if not lev_id:
+        return
+    # ¿Ya existe item para esta máquina en este levantamiento?
+    row = mysql_fetchone(
+        "SELECT id FROM mant_levantamiento_items "
+        " WHERE levantamiento_id=%s AND maquina_id=%s LIMIT 1",
+        (lev_id, mid)
+    )
+    estados_validos = (
+        "operativo", "advertencia", "fuera_servicio",
+        "en_reparacion", "dado_baja", "no_encontrado"
+    )
+    # Construir SET map con solo lo que viene en el payload
+    set_map = {}
+    for k in ("estado_capturado", "marca", "modelo", "voltaje",
+              "observaciones"):
+        if k in payload:
+            v = (str(payload.get(k) or "").strip()) or None
+            if k == "estado_capturado" and v and v not in estados_validos:
+                continue
+            # Truncar para columnas con maxlen
+            if k == "marca": v = (v or "")[:120] or None
+            if k == "modelo": v = (v or "")[:120] or None
+            if k == "voltaje": v = (v or "")[:20] or None
+            set_map[k] = v
+    if "anio_fabricacion" in payload:
+        try:
+            set_map["anio_fabricacion"] = int(payload["anio_fabricacion"]) \
+                if payload["anio_fabricacion"] not in (None, "") else None
+        except Exception:
+            pass
+    if "ubicacion_sala" in payload:
+        # En mant_levantamiento_items la columna se llama `ubicacion`
+        set_map["ubicacion"] = (str(payload["ubicacion_sala"] or "").strip())[:200] or None
+    if "ultima_intervencion" in payload:
+        v = payload["ultima_intervencion"]
+        set_map["ultima_intervencion"] = v if v else None
+    if "fecha_documento" in payload:
+        v = payload["fecha_documento"]
+        set_map["fecha_documento"] = v if v else None
+    if "completado" in payload:
+        set_map["completado"] = 1 if payload["completado"] else 0
+    if "anomalias" in payload:
+        set_map["anomalias"] = (str(payload["anomalias"] or "").strip()) or None
+    if not set_map:
+        return
+    if row and row.get("id"):
+        # UPDATE existente
+        sets = []
+        vals = []
+        for k, v in set_map.items():
+            sets.append(f"{k}=%s"); vals.append(v)
+        vals.append(row["id"])
+        mysql_execute(
+            f"UPDATE mant_levantamiento_items SET {','.join(sets)} WHERE id=%s",
+            tuple(vals)
+        )
+    else:
+        # INSERT nuevo — snapshot inicial desde mant_maquinas
+        snap = mysql_fetchone(
+            "SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s",
+            (mid,)
+        ) or {}
+        cols = ["levantamiento_id", "maquina_id",
+                "nombre_snap", "sku_snap", "serie_snap"]
+        vals = [lev_id, mid,
+                (snap.get("nombre") or "")[:300] or None,
+                (snap.get("sku") or "")[:120] or None,
+                (snap.get("serie") or "")[:120] or None]
+        for k, v in set_map.items():
+            cols.append(k); vals.append(v)
+        placeholders = ",".join(["%s"] * len(vals))
+        mysql_execute(
+            f"INSERT INTO mant_levantamiento_items ({','.join(cols)}) "
+            f"VALUES ({placeholders})",
+            tuple(vals)
+        )
+        # Recalcular total_equipos del levantamiento
+        try:
+            mysql_execute(
+                "UPDATE mant_levantamientos SET total_equipos = "
+                "(SELECT COUNT(*) FROM mant_levantamiento_items WHERE levantamiento_id=%s) "
+                "WHERE id=%s",
+                (lev_id, lev_id)
+            )
+        except Exception:
+            pass
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/foto", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
 def mant_ot_equipo_foto(vid, mid):
-    """Sube la FOTO PRINCIPAL del equipo (campo mant_maquinas.foto_url).
-    Esta foto es la que aparecerá en la ficha del equipo del cliente.
+    """Sube una foto del equipo en el contexto de una OT.
 
-    POLÍTICA 2026-05-17 (Daniel): el técnico SOLO puede subir si la
-    máquina NO tenía foto previa. Esto preserva fotos buenas anteriores.
-    Si quiere reemplazarla, debe pedirle al admin/superadmin desde la
-    ficha del equipo (endpoint /api/maquinas/<mid>/foto admin-only).
+    2026-05-22 (Daniel) — Refactor para soportar GALERÍA por equipo:
+
+      Modo 'principal' (default si no había foto previa):
+        - Sube a Cloudinary con public_id estable maquina_<mid>.
+        - Actualiza `mant_maquinas.foto_url` (ficha permanente).
+        - Si la máquina ya tenía foto y NO es admin con force=1, degradamos
+          silenciosamente a modo 'detalle' (no rechazamos el upload).
+
+      Modo 'detalle' (siempre permitido al técnico):
+        - Public_id ÚNICO (timestamp) → no pisa fotos anteriores.
+        - NO toca `mant_maquinas.foto_url`.
+
+    En AMBOS modos:
+      - INSERT en `mant_visita_fotos` (evidencia de la OT).
+      - Si la OT tiene levantamiento_id (o se crea al vuelo vía
+        `_ensure_levantamiento_para_visita`), también INSERTA en
+        `mant_levantamiento_fotos` → promoción a `mant_maquina_fotos`
+        al cerrar la OT.
+
+    Body multipart:
+      - foto / file:  archivo (jpg/png/webp, máx 8MB)
+      - tipo_foto:    'principal'|'detalle'|'serie'|'placa'|'dano'|'general'
+      - descripcion:  str opcional (≤300)
+      - force:        '1' → solo admin → reemplaza foto principal
     """
     f = request.files.get("foto") or request.files.get("file")
-    if not f:
+    if not f or not f.filename:
         return jsonify({"ok": False, "error": "Sin archivo"}), 400
-    # Tamaño máx 8MB
+
+    # Tamaño 8MB
     f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
     if size > 8 * 1024 * 1024:
         return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 8MB)"}), 400
-    # ── Preservar foto previa: solo subir si está vacía ──
-    # El admin/superadmin tiene endpoint separado que sí puede reemplazar.
+    # Validar tipo MIME — helper compartido
+    try:
+        _ext_ok, _err_val = _validate_uploaded_image(f, label=f.filename or "foto")
+        if _err_val:
+            return jsonify({"ok": False, "error": _err_val}), 400
+    except Exception:
+        pass
+
+    tipos_validos = ("principal", "detalle", "serie", "placa",
+                     "dano", "general", "antes", "despues")
+    tipo_foto_solicitado = (request.form.get("tipo_foto") or "principal").strip().lower()
+    if tipo_foto_solicitado not in tipos_validos:
+        tipo_foto_solicitado = "principal"
+    descripcion = (request.form.get("descripcion") or "").strip()[:300]
+    force = (request.form.get("force") or "").strip() == "1"
+
+    # Permisos
     es_admin = False
     try:
         perms = g.get("permissions") or {}
         es_admin = bool(perms.get("superadmin") or perms.get("admin"))
     except Exception:
         es_admin = False
-    if not es_admin:
-        eq_existente = mysql_fetchone(
-            "SELECT foto_url FROM mant_maquinas WHERE id=%s", (mid,)
-        )
-        if eq_existente and (eq_existente.get("foto_url") or "").strip():
-            return jsonify({
-                "ok": False,
-                "error": "Este equipo ya tiene una foto principal. Pide al "
-                         "administrador que la reemplace desde la ficha del equipo.",
-                "error_codigo": "FOTO_YA_EXISTE",
-            }), 409
+
+    eq_existente = mysql_fetchone(
+        "SELECT foto_url, cliente_id FROM mant_maquinas WHERE id=%s", (mid,)
+    ) or {}
+    foto_actual = (eq_existente.get("foto_url") or "").strip()
+
+    # ¿Es principal? Depende de si ya hay foto y de permisos.
+    es_principal = (tipo_foto_solicitado == "principal")
+    if es_principal and foto_actual and not (es_admin and force):
+        # Hay foto previa y no es admin con force → degradar a 'detalle'
+        es_principal = False
+    tipo_foto_final = "principal" if es_principal else (
+        "detalle" if tipo_foto_solicitado == "principal" else tipo_foto_solicitado
+    )
+
     try:
         import cloudinary, cloudinary.uploader
+        if es_principal:
+            public_id = f"maquina_{mid}"
+            overwrite = True
+            folder = "ilus/maquinas"
+        else:
+            public_id = f"maquina_{mid}_v{vid}_{int(time.time())}"
+            overwrite = False
+            folder = f"ilus/visitas/v{vid}"
+        f.stream.seek(0)
         result = cloudinary.uploader.upload(
             f,
-            folder="ilus/maquinas",
-            public_id=f"maquina_{mid}",
-            overwrite=True,
+            folder=folder,
+            public_id=public_id,
+            overwrite=overwrite,
             resource_type="image",
             transformation=[
-                {"width": 1200, "height": 1200, "crop": "limit"},
-                {"quality": "auto", "fetch_format": "auto"},
+                {"width": 1600, "height": 1600, "crop": "limit"},
+                {"quality": "auto:good", "fetch_format": "auto"},
             ],
         )
         url = result.get("secure_url")
+        cld_public_id = result.get("public_id")
+        bytes_size = result.get("bytes") or 0
         if not url:
             return jsonify({"ok": False, "error": "Cloudinary no devolvió URL"}), 500
-        mysql_execute(
-            "UPDATE mant_maquinas SET foto_url=%s, last_visita_id=%s WHERE id=%s",
-            (url, vid, mid)
-        )
-        # Audit log
+
+        user = current_username() or "técnico"
+
+        # 1) Si principal → actualizar mant_maquinas.foto_url
+        if es_principal:
+            mysql_execute(
+                "UPDATE mant_maquinas SET foto_url=%s, last_visita_id=%s WHERE id=%s",
+                (url, vid, mid)
+            )
+
+        # 2) Registrar evidencia en mant_visita_fotos
         try:
-            _mant_log("maquina", mid,
-                      "foto_subida" if not es_admin else "foto_admin_subida_ot",
-                      f"OT #{vid} · {current_username() or 'sistema'}")
+            mysql_execute(
+                "INSERT INTO mant_visita_fotos "
+                "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+                " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, None, mid, "", url,
+                 (f.filename or "")[:300],
+                 ("levantamiento" if tipo_foto_final == "principal" else tipo_foto_final),
+                 descripcion or None,
+                 user[:190], (bytes_size // 1024))
+            )
+        except Exception as _e_vf:
+            print(f"[mant_ot_equipo_foto] INSERT mant_visita_fotos vid={vid} "
+                  f"mid={mid}: {_e_vf}", flush=True)
+
+        # 3) Si la OT tiene/puede tener levantamiento → guardar en
+        #    mant_levantamiento_fotos para promoción al cerrar.
+        lev_id = _ensure_levantamiento_para_visita(vid)
+        if lev_id:
+            try:
+                item_row = mysql_fetchone(
+                    "SELECT id FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND maquina_id=%s LIMIT 1",
+                    (lev_id, mid)
+                )
+                if not item_row:
+                    snap = mysql_fetchone(
+                        "SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s",
+                        (mid,)
+                    ) or {}
+                    mysql_execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "  (levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (lev_id, mid,
+                         (snap.get("nombre") or "")[:300] or None,
+                         (snap.get("sku") or "")[:120] or None,
+                         (snap.get("serie") or "")[:120] or None)
+                    )
+                    item_row = mysql_fetchone(
+                        "SELECT id FROM mant_levantamiento_items "
+                        " WHERE levantamiento_id=%s AND maquina_id=%s LIMIT 1",
+                        (lev_id, mid)
+                    )
+                if item_row and item_row.get("id"):
+                    mysql_execute(
+                        "INSERT INTO mant_levantamiento_fotos "
+                        "(item_id, levantamiento_id, maquina_id, cloudinary_url, "
+                        " cloudinary_public_id, tipo_foto, descripcion, bytes, "
+                        " tomada_por) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (item_row["id"], lev_id, mid, url, cld_public_id,
+                         (tipo_foto_final if tipo_foto_final != "principal" else "general")[:60],
+                         (descripcion or "")[:300] or None,
+                         int(bytes_size), user[:190])
+                    )
+                    try:
+                        mysql_execute(
+                            "UPDATE mant_levantamiento_items SET n_fotos = "
+                            "  (SELECT COUNT(*) FROM mant_levantamiento_fotos "
+                            "    WHERE item_id=%s) "
+                            "WHERE id=%s",
+                            (item_row["id"], item_row["id"])
+                        )
+                    except Exception:
+                        pass
+            except Exception as _e_lf:
+                print(f"[mant_ot_equipo_foto] mant_levantamiento_fotos lev={lev_id} "
+                      f"mid={mid}: {_e_lf}", flush=True)
+
+        # 4) Audit log
+        try:
+            accion = ("foto_principal_subida" if es_principal
+                      else f"foto_{tipo_foto_final}_subida")
+            _mant_log("maquina", mid, accion,
+                      f"OT #{vid} · {user} · {tipo_foto_final}")
         except Exception:
             pass
-        return jsonify({"ok": True, "url": url})
+
+        return jsonify({
+            "ok": True, "url": url,
+            "tipo_foto": tipo_foto_final, "es_principal": es_principal,
+            "degradado": (tipo_foto_solicitado == "principal" and not es_principal),
+        })
     except Exception as e:
+        print(f"[mant_ot_equipo_foto] err vid={vid} mid={mid}: {e}", flush=True)
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/fotos", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def mant_ot_equipo_fotos_list(vid, mid):
+    """Devuelve las fotos del equipo `mid` en el contexto de la OT `vid`,
+    combinando mant_visita_fotos (de la OT) + mant_maquina_fotos (galería
+    permanente previa). Útil para que el técnico vea histórico + las que
+    está capturando ahora.
+
+    2026-05-22 (Daniel) — UI de captura muestra miniaturas + galería.
+    """
+    out_fotos = []
+    # Fotos de esta OT (recientes primero)
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, cloudinary_url, archivo_path, tipo_foto, descripcion, "
+            "       tomada_por, tomada_at "
+            "  FROM mant_visita_fotos "
+            " WHERE visita_id=%s AND maquina_id=%s "
+            " ORDER BY tomada_at DESC, id DESC",
+            (vid, mid)
+        ) or []
+        for r in rows:
+            url = r.get("cloudinary_url") or (
+                f"/static/uploads/mantenciones/{r['archivo_path']}"
+                if r.get("archivo_path") else ""
+            )
+            if not url:
+                continue
+            out_fotos.append({
+                "id": r["id"],
+                "url": url,
+                "tipo_foto": r.get("tipo_foto") or "general",
+                "descripcion": r.get("descripcion") or "",
+                "tomada_por": r.get("tomada_por") or "",
+                "fecha": str(r["tomada_at"])[:16] if r.get("tomada_at") else "",
+                "fuente": "ot",
+            })
+    except Exception as _e_vf:
+        print(f"[mant_ot_equipo_fotos_list] mant_visita_fotos: {_e_vf}", flush=True)
+
+    # Fotos previas de la ficha del equipo (galería permanente, limit 30)
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, cloudinary_url, archivo_path, tipo_foto, descripcion, "
+            "       tomada_por, tomada_at, visita_origen "
+            "  FROM mant_maquina_fotos "
+            " WHERE maquina_id=%s "
+            " ORDER BY tomada_at DESC LIMIT 30",
+            (mid,)
+        ) or []
+        for r in rows:
+            url = r.get("cloudinary_url") or (
+                f"/static/uploads/mantenciones/{r['archivo_path']}"
+                if r.get("archivo_path") else ""
+            )
+            if not url:
+                continue
+            out_fotos.append({
+                "id": r["id"],
+                "url": url,
+                "tipo_foto": r.get("tipo_foto") or "general",
+                "descripcion": r.get("descripcion") or "",
+                "tomada_por": r.get("tomada_por") or "",
+                "fecha": str(r["tomada_at"])[:16] if r.get("tomada_at") else "",
+                "fuente": "ficha",
+                "visita_origen": r.get("visita_origen"),
+            })
+    except Exception as _e_mf:
+        print(f"[mant_ot_equipo_fotos_list] mant_maquina_fotos: {_e_mf}", flush=True)
+
+    foto_principal = ""
+    try:
+        r = mysql_fetchone("SELECT foto_url FROM mant_maquinas WHERE id=%s", (mid,))
+        foto_principal = (r or {}).get("foto_url") or ""
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "foto_principal": foto_principal,
+        "fotos": out_fotos,
+    })
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -36311,6 +38174,35 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
             link_ot = (f"{base}/mantenciones/ot/{vid}/ejecutar"
                        if base else f"/mantenciones/ot/{vid}/ejecutar")
 
+            # 2026-05-22 (Daniel) — NOTIFICACIÓN INTERNA (campana del header)
+            # Para cada destino con user_id, dejamos fila en mant_notificaciones.
+            # Idempotente: si ya hay una abierta de tipo='ot_pendiente_aprobacion'
+            # con la misma (visita_id, destino_user_id), no inserta otra.
+            try:
+                titulo_interno = f"{numero_ot} esperando tu firma de aprobación"
+                cuerpo_interno = (
+                    f"El técnico {tecnico} firmó la OT y la dejó lista. "
+                    f"Cliente: {razon}. Entra a firmar como aprobador."
+                )
+                for d_dest in destinos:
+                    if not d_dest.get("id"):
+                        continue
+                    try:
+                        _mant_notificar(
+                            destino_user_id=int(d_dest["id"]),
+                            tipo="ot_pendiente_aprobacion",
+                            titulo=titulo_interno,
+                            cuerpo=cuerpo_interno,
+                            url_accion=f"/mantenciones/ot/{vid}/ejecutar",
+                            prioridad="alta",
+                            visita_id=vid,
+                        )
+                    except Exception as _e_ni:
+                        print(f"[notif-pend][interna] vid={vid} dest={d_dest.get('id')}: {_e_ni}",
+                              flush=True)
+            except Exception as _e_ni_outer:
+                print(f"[notif-pend][interna] vid={vid} outer: {_e_ni_outer}", flush=True)
+
             # 2026-05-21: subject + WA usan marca editable desde /comunicaciones
             subject = _brand_subject(f"{numero_ot} esperando tu firma de aprobación")
             wa_template = (
@@ -36539,11 +38431,21 @@ def mant_ot_aprobar_cierre(vid):
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
         except Exception: pass
         # ── Promoción levantamiento → ficha de equipo (async, no bloquea) ──
-        # Si la OT era tipo='levantamiento', los datos capturados por el
-        # técnico (fotos, observaciones, valores de tareas) se promueven a
-        # mant_maquinas para cada equipo involucrado. Otras OTs solo
-        # generan historial — el wrapper interno valida el tipo.
+        # Aplica si la OT es tipo='levantamiento' O si tiene levantamiento_id
+        # poblado (caso Vitacura 2026-05-22 — Aaron creó preventiva desde el
+        # modal del cliente, que igual genera levantamiento_id). Los datos
+        # capturados (fotos, marca/modelo/serie/estado) se promueven a la
+        # ficha del equipo (mant_maquinas) + historial cronológico. El
+        # wrapper interno (_promover_levantamiento_a_maquina) hace el filtro
+        # fino: solo promueve si tipo='levantamiento' o levantamiento_id NOT NULL.
         _promover_levantamiento_async(vid, usuario=current_username())
+        # 2026-05-22 (Daniel) — Notificar al técnico (campana) y opcionalmente
+        # al cliente por email (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED).
+        try:
+            _notificar_cierre_ot_async(vid, resultado="aprobada",
+                                       motivo=comentario, host_url=request.host_url)
+        except Exception as _e_nca:
+            print(f"[aprobar-cierre notif] {_e_nca}", flush=True)
         return jsonify({"ok": True, "estado": "cerrada"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -36593,6 +38495,13 @@ def mant_ot_rechazar_cierre(vid):
         try: _mant_log("visita", vid, "rechazada_supervisor",
                        f"{current_username()} · motivo: {motivo}")
         except Exception: pass
+        # 2026-05-22 (Daniel) — Notificar al técnico (campana) que la OT
+        # fue rechazada y debe corregir + refirmar.
+        try:
+            _notificar_cierre_ot_async(vid, resultado="rechazada",
+                                       motivo=motivo, host_url=request.host_url)
+        except Exception as _e_ncr:
+            print(f"[rechazar-cierre notif] {_e_ncr}", flush=True)
         return jsonify({"ok": True, "estado": "programada", "motivo": motivo})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -37648,7 +39557,7 @@ def mant_visita_tareas_get(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/nueva", methods=["POST"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_configurar
 def mant_visita_tarea_nueva(vid):
     """Crea una tarea dentro de la OT. Acepta JSON o form-data."""
     d = request.get_json(silent=True) or request.form
@@ -37793,7 +39702,7 @@ def mant_visita_tarea_update(vid, tid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/protocolo/<protocolo>", methods=["POST"])
 @_mant_required
-@_tecnico_owns_visita
+@_ot_can_configurar
 def mant_visita_protocolo(vid, protocolo):
     """Aplica un protocolo a la OT: genera N tareas estándar.
 
@@ -42424,6 +44333,63 @@ def mant_lev_crear_o_listar(cid):
                             print(f"[lev_crear] plantilla extra {pid} para mid {mid} falló: {_ep}", flush=True)
             except Exception as e_pl2:
                 print(f"[lev_crear] plantillas extra fallaron: {e_pl2}", flush=True)
+
+        # ══════════════════════════════════════════════════════════════
+        # FIX 2026-05-22 (Daniel — caso Vitacura OT 161/162/163):
+        # Si el chequeo previo `_tiene_plantillas` dio True porque existe
+        # una plantilla con el `nombre` o `tipo_visita` esperado, pero esa
+        # plantilla tiene 0 items en `mant_tarea_plantilla_items`, el
+        # técnico se queda con UNA OT con 4 equipos y 0 tareas → no puede
+        # documentar nada y al cerrar la ficha NO se hereda info.
+        #
+        # Si tras aplicar plantillas no se creó NINGÚN ítem (items_plantilla
+        # quedó en 0) y NO hay tareas legacy creadas dentro del cursor
+        # (fallback "📷 Documentar"), insertamos AHORA el fallback como
+        # safety net. Idempotente: DEDUP via COUNT, no duplica si ya hay
+        # tareas para esta visita.
+        # ══════════════════════════════════════════════════════════════
+        if visita_id and items_plantilla == 0:
+            try:
+                _existing = mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s",
+                    (visita_id,)
+                ) or {}
+                _n_existing = int(_existing.get("n") or 0)
+                if _n_existing == 0:
+                    # Cargar máquinas otra vez (cur ya cerrado tras commit)
+                    _ph = ",".join(["%s"] * len(equipo_ids))
+                    _maqs = mysql_fetchall(
+                        f"SELECT id, nombre FROM mant_maquinas "
+                        f" WHERE id IN ({_ph}) AND cliente_id=%s "
+                        f" ORDER BY id",
+                        tuple(list(equipo_ids) + [cid])
+                    ) or []
+                    _conn_fb = get_mysql()
+                    try:
+                        with _conn_fb.cursor() as _cur_fb:
+                            for _idx, _m in enumerate(_maqs, 1):
+                                _cur_fb.execute(
+                                    "INSERT INTO mant_visita_tareas "
+                                    "(visita_id, orden, titulo, descripcion, maquina_id, "
+                                    " tipo, tipo_respuesta, obligatoria, requiere_foto, "
+                                    " estado_trabajo, created_by) "
+                                    "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,"
+                                    "        'pendiente',%s)",
+                                    (visita_id, _idx,
+                                     f"📷 Documentar: {(_m.get('nombre') or 'equipo')[:240]}",
+                                     "Capturar fotos generales del equipo + N° serie + placa "
+                                     "+ datos técnicos.",
+                                     _m["id"], current_username() or 'sistema')
+                                )
+                                items_plantilla += 1
+                        _conn_fb.commit()
+                        print(f"[lev_crear] fallback aplicado vid={visita_id} "
+                              f"({len(_maqs)} tarea(s) 📷 Documentar) — plantilla del "
+                              f"tipo '{tipo_ot}' sin items.", flush=True)
+                    finally:
+                        _conn_fb.close()
+            except Exception as _e_fb:
+                print(f"[lev_crear] fallback safety-net falló: {_e_fb}", flush=True)
 
         try: _mant_log("levantamiento", lev_id, "creado",
                        f"{n_items} equipo(s) · OT {numero_ot or '—'} · "

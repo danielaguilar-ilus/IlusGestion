@@ -35,6 +35,13 @@
       <div class="sub">Dashboard operacional — ILUS Fitness</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      {# 2026-05-22 — "Mi día" para Lenin (técnico) y Aaron (ejecutivo). Visible
+         para todos los roles que entren a mantenciones; cada uno ve solo lo suyo. #}
+      <a href="{{ url_for('mant_mi_dia') }}" class="btn btn-ilus fw-bold px-3"
+         style="background:linear-gradient(135deg,#dc2626,#7f1d1d);border:0"
+         title="Tus OTs de hoy + semana + por aprobar">
+        <i class="bi bi-sun-fill me-1"></i>Mi día
+      </a>
       <a href="{{ url_for('mant_ots_list') }}" class="btn btn-dark fw-bold px-3"
          style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border:0">
         <i class="bi bi-clipboard2-pulse me-1"></i>Órdenes de Trabajo
@@ -172,6 +179,52 @@ async function ejecutarResetMantenciones(){
     btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Borrar todo permanentemente';
   }
 }
+</script>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
+   Widget: OTs auto-creadas (solo admin/superadmin). Lazy-loads contador.
+   Visible solo si hay candidatas. Daniel verá un banner rojo con link a
+   /mantenciones/ots/auto-creadas para revisarlas y borrarlas.
+══════════════════════════════════════════════════════════════════ #}
+{% if permissions.admin or permissions.superadmin %}
+<div id="autoCreadasBanner" class="mb-3" style="display:none">
+  <div class="ilus-card"
+       style="background:linear-gradient(135deg,#fef2f2,#fee2e2);
+              border-left:5px solid #dc2626">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <div class="d-flex align-items-center gap-3">
+        <i class="bi bi-exclamation-octagon-fill"
+           style="font-size:2rem;color:#dc2626"></i>
+        <div>
+          <div class="fw-bold" style="color:#7f1d1d;font-size:1rem">
+            <span id="autoCreadasN">—</span> OT(s) auto-creadas para revisar
+          </div>
+          <div class="small" style="color:#7c2d12">
+            Detectadas OTs creadas por proceso automático (cron / sistema)
+            sin acción manual de un ejecutivo. Revísalas y borra las que no
+            correspondan.
+          </div>
+        </div>
+      </div>
+      <a href="{{ url_for('mant_ots_auto_creadas_page') }}"
+         class="btn btn-danger fw-bold">
+        <i class="bi bi-shield-check me-1"></i>Revisar y limpiar
+      </a>
+    </div>
+  </div>
+</div>
+<script>
+(async function cargarAutoCreadasBanner(){
+  try {
+    const r = await fetch('/mantenciones/api/ots/auto-creadas/count');
+    const d = await r.json();
+    if (d.ok && (d.count || 0) > 0) {
+      document.getElementById('autoCreadasN').textContent = d.count;
+      document.getElementById('autoCreadasBanner').style.display = '';
+    }
+  } catch(e) { /* silencioso — el dashboard sigue funcionando */ }
+})();
 </script>
 {% endif %}
 

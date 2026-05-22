@@ -457,6 +457,14 @@
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
     <div class="sg-items" id="sg-mant">
+      {# 2026-05-22 (Daniel) — "Mi día" como primer link, visible para todos
+         los roles. Para técnico es su home natural; para ejecutivo/admin
+         también es útil ("qué pasa hoy"). El Dashboard global queda como
+         vista secundaria para admin/ejecutivo. #}
+      <a href="{{ url_for('mant_mi_dia') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_mi_dia' %} active{% endif %}">
+        <i class="bi bi-sun-fill"></i><span>Mi día</span>
+      </a>
       <a href="{{ url_for('mant_index') }}"
          class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
         <i class="bi bi-speedometer2"></i><span>Dashboard</span>

@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Mi día — ILUS Mantenciones{% endblock %}
+
+{% block content %}
+<style>
+/* ════════════════════════════════════════════════════════
+   "Mi día" 2026-05-22 — vista mobile-first para Lenin (técnico).
+   Paleta ILUS: rojo #dc2626 / negro #0a0a0a / blanco #fff.
+   ════════════════════════════════════════════════════════ */
+.md-wrap{max-width:820px;margin:0 auto;padding:10px 12px 100px}
+.md-hdr{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 30%,#7c1d1d 65%,#dc2626 100%);
+  color:#fff;border-radius:14px;padding:18px 18px 14px;margin-bottom:14px;
+  box-shadow:0 6px 20px rgba(0,0,0,.22),0 0 0 1px rgba(220,38,38,.12);
+  position:relative;overflow:hidden;
+}
+.md-hdr::before{
+  content:'';position:absolute;top:-15px;right:-15px;width:130px;height:130px;
+  background:url('/static/favicon_192.png?v=20260522') center/contain no-repeat;
+  opacity:.10;transform:rotate(8deg);pointer-events:none;
+}
+.md-hdr h2{font-size:1.25rem;font-weight:900;margin:0 0 4px;letter-spacing:-.5px;
+  display:flex;align-items:center;gap:10px}
+.md-hdr .md-sub{font-size:.82rem;opacity:.92;margin:0}
+.md-hdr .md-fecha{font-size:.72rem;opacity:.78;margin-top:6px;text-transform:uppercase;letter-spacing:.6px}
+
+/* KPIs en grid 4 columnas (2 en mobile) */
+.md-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+@media (max-width:600px){.md-kpis{grid-template-columns:repeat(2,1fr)}}
+.md-kpi{
+  background:#fff;border:1px solid #ececec;border-radius:12px;padding:11px 12px;
+  box-shadow:0 2px 6px rgba(0,0,0,.05);text-align:left;cursor:pointer;
+  transition:transform .15s,box-shadow .15s;
+}
+.md-kpi:hover{transform:translateY(-2px);box-shadow:0 4px 10px rgba(0,0,0,.08)}
+.md-kpi.red{border-left:4px solid #dc2626}
+.md-kpi.amb{border-left:4px solid #f59e0b}
+.md-kpi.blu{border-left:4px solid #3b82f6}
+.md-kpi.grn{border-left:4px solid #16a34a}
+.md-kpi .md-kpi-num{font-size:1.65rem;font-weight:900;line-height:1;color:#0a0a0a}
+.md-kpi .md-kpi-lbl{font-size:.65rem;color:#666;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-top:4px}
+
+/* Sección colapsable */
+.md-section{margin-bottom:18px}
+.md-sec-hdr{
+  display:flex;align-items:center;gap:8px;
+  font-size:.92rem;font-weight:900;color:#0a0a0a;margin-bottom:8px;
+  padding:6px 0;border-bottom:2px solid #f3f3f3;
+}
+.md-sec-hdr i{font-size:1.05rem}
+.md-sec-hdr .md-sec-count{
+  margin-left:auto;background:#f3f4f6;color:#444;
+  padding:2px 9px;border-radius:9999px;font-size:.7rem;font-weight:800
+}
+.md-sec-hdr.red i{color:#dc2626}
+.md-sec-hdr.amb i{color:#f59e0b}
+.md-sec-hdr.blu i{color:#3b82f6}
+.md-sec-hdr.grn i{color:#16a34a}
+
+/* Card de OT */
+.md-ot-card{
+  background:#fff;border:1px solid #ececec;border-radius:10px;
+  padding:10px 12px;margin-bottom:8px;
+  display:flex;align-items:center;gap:10px;
+  text-decoration:none;color:inherit;
+  transition:transform .12s,box-shadow .12s,border-color .12s;
+}
+.md-ot-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.07);border-color:#dc2626;color:inherit;text-decoration:none}
+.md-ot-numero{font-weight:900;color:#dc2626;font-size:.86rem;min-width:88px;flex-shrink:0}
+.md-ot-info{flex:1;min-width:0}
+.md-ot-titulo{font-weight:700;font-size:.88rem;color:#0a0a0a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.md-ot-cliente{font-size:.76rem;color:#555;display:flex;align-items:center;gap:4px;margin-top:1px}
+.md-ot-cliente i{font-size:.78rem;opacity:.7}
+.md-ot-meta{font-size:.72rem;color:#888;margin-top:3px;display:flex;flex-wrap:wrap;gap:8px}
+.md-ot-meta span{display:inline-flex;align-items:center;gap:3px}
+.md-ot-hora{
+  text-align:right;font-size:.78rem;font-weight:800;color:#0a0a0a;
+  flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:2px
+}
+.md-ot-prio{
+  display:inline-block;padding:1px 7px;border-radius:9999px;
+  font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.5px
+}
+.md-ot-prio.urgente{background:#fee2e2;color:#991b1b}
+.md-ot-prio.alta{background:#fff7ed;color:#c2410c}
+.md-ot-prio.media{background:#dbeafe;color:#1e40af}
+.md-ot-prio.baja{background:#f3f4f6;color:#555}
+
+/* Estado vacío */
+.md-empty{
+  background:#fafafa;border:1px dashed #e0e0e0;border-radius:10px;
+  padding:18px 14px;text-align:center;color:#888;font-size:.84rem
+}
+.md-empty i{font-size:1.8rem;color:#d0d0d0;display:block;margin-bottom:6px}
+
+/* Refresh button */
+.md-refresh{
+  background:rgba(255,255,255,.18);color:#fff;
+  border:1px solid rgba(255,255,255,.35);
+  padding:6px 14px;border-radius:9999px;
+  font-size:.74rem;font-weight:700;cursor:pointer;
+  transition:background .12s
+}
+.md-refresh:hover{background:rgba(255,255,255,.28)}
+</style>
+
+<div class="md-wrap">
+  <div class="md-hdr">
+    <h2>
+      <i class="bi bi-sun-fill"></i>
+      Mi día
+    </h2>
+    <p class="md-sub">
+      Hola <strong>{{ nombre_user }}</strong>{% if es_tecnico %} — aquí están tus OTs asignadas{% elif es_ejecutivo %} — aquí están las OTs que creaste o tienes asignadas{% else %} — todas las OTs activas del sistema{% endif %}.
+    </p>
+    <div class="md-fecha">
+      {{ hoy | chile_fmt('%d/%m/%Y') }}
+      <button class="md-refresh ms-2" onclick="window.location.reload()">
+        <i class="bi bi-arrow-clockwise"></i> Actualizar
+      </button>
+    </div>
+  </div>
+
+  {# ── KPIs principales ── #}
+  <div class="md-kpis">
+    <a class="md-kpi red" href="#sec-hoy" style="text-decoration:none">
+      <div class="md-kpi-num">{{ ots_hoy|length }}</div>
+      <div class="md-kpi-lbl">Hoy</div>
+    </a>
+    <a class="md-kpi amb" href="#sec-atrasadas" style="text-decoration:none">
+      <div class="md-kpi-num">{{ ots_atrasadas|length }}</div>
+      <div class="md-kpi-lbl">Atrasadas</div>
+    </a>
+    <a class="md-kpi blu" href="#sec-semana" style="text-decoration:none">
+      <div class="md-kpi-num">{{ ots_semana|length }}</div>
+      <div class="md-kpi-lbl">Esta semana</div>
+    </a>
+    <a class="md-kpi grn" href="#sec-aprobar" style="text-decoration:none">
+      <div class="md-kpi-num">{{ ots_por_aprobar|length }}</div>
+      <div class="md-kpi-lbl">{% if es_tecnico %}En revisión{% else %}Por aprobar{% endif %}</div>
+    </a>
+  </div>
+
+  {# Helper macro: renderiza una card de OT #}
+  {% macro ot_card(ot) %}
+    <a class="md-ot-card" href="{{ url_for('mant_ot_ejecutar', vid=ot.id) }}">
+      <div class="md-ot-numero">{{ ot.numero_ot or ('OT-' ~ ot.id) }}</div>
+      <div class="md-ot-info">
+        <div class="md-ot-titulo">{{ ot.titulo or '(sin título)' }}</div>
+        <div class="md-ot-cliente">
+          <i class="bi bi-building"></i>
+          {{ ot.razon_social }}
+          {% if ot.cli_comuna %} · {{ ot.cli_comuna }}{% endif %}
+        </div>
+        <div class="md-ot-meta">
+          <span><i class="bi bi-tag-fill"></i> {{ (ot.tipo or 'otro')|capitalize }}</span>
+          {% if ot.tecnico_nombre %}
+          <span><i class="bi bi-person-fill"></i> {{ ot.tecnico_nombre }}</span>
+          {% endif %}
+          {% if ot.fecha_programada %}
+          <span><i class="bi bi-calendar-event"></i> {{ ot.fecha_programada | chile_fmt('%d/%m') }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="md-ot-hora">
+        {% if ot.hora_inicio %}{{ ot.hora_inicio|string|truncate(5, true, '') }}{% endif %}
+        {% if ot.prioridad %}<span class="md-ot-prio {{ ot.prioridad }}">{{ ot.prioridad }}</span>{% endif %}
+      </div>
+    </a>
+  {% endmacro %}
+
+  {# ── Sección: OTs ATRASADAS (siempre arriba si hay) ── #}
+  {% if ots_atrasadas %}
+  <div class="md-section" id="sec-atrasadas">
+    <div class="md-sec-hdr amb">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      Atrasadas — ponerse al día
+      <span class="md-sec-count">{{ ots_atrasadas|length }}</span>
+    </div>
+    {% for ot in ots_atrasadas %}
+      {{ ot_card(ot) }}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Sección: HOY ── #}
+  <div class="md-section" id="sec-hoy">
+    <div class="md-sec-hdr red">
+      <i class="bi bi-calendar-day-fill"></i>
+      Hoy
+      <span class="md-sec-count">{{ ots_hoy|length }}</span>
+    </div>
+    {% if ots_hoy %}
+      {% for ot in ots_hoy %}
+        {{ ot_card(ot) }}
+      {% endfor %}
+    {% else %}
+      <div class="md-empty">
+        <i class="bi bi-cup-hot"></i>
+        Sin OTs programadas para hoy. ¡Disfruta!
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── Sección: SEMANA ── #}
+  <div class="md-section" id="sec-semana">
+    <div class="md-sec-hdr blu">
+      <i class="bi bi-calendar-week-fill"></i>
+      Esta semana (próximos 7 días)
+      <span class="md-sec-count">{{ ots_semana|length }}</span>
+    </div>
+    {% if ots_semana %}
+      {% for ot in ots_semana %}
+        {{ ot_card(ot) }}
+      {% endfor %}
+    {% else %}
+      <div class="md-empty">
+        <i class="bi bi-calendar2-check"></i>
+        Sin OTs en los próximos 7 días.
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── Sección: POR APROBAR ── #}
+  <div class="md-section" id="sec-aprobar">
+    <div class="md-sec-hdr grn">
+      <i class="bi bi-pen-fill"></i>
+      {% if es_tecnico %}En revisión por el supervisor{% else %}Por aprobar — esperando tu firma{% endif %}
+      <span class="md-sec-count">{{ ots_por_aprobar|length }}</span>
+    </div>
+    {% if ots_por_aprobar %}
+      {% for ot in ots_por_aprobar %}
+        {{ ot_card(ot) }}
+      {% endfor %}
+    {% else %}
+      <div class="md-empty">
+        <i class="bi bi-check2-circle"></i>
+        Nada pendiente de aprobación.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="text-center mt-3" style="font-size:.78rem;color:#888">
+    <a href="{{ url_for('mant_ots_list') }}" class="text-muted">
+      <i class="bi bi-arrow-right"></i> Ver el listado completo de OTs
+    </a>
+  </div>
+</div>
+{% endblock %}
