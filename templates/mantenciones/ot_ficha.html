@@ -701,7 +701,10 @@
               </div>
               {% endfor %}
             </div>
-            <div class="form-text small">Si no marcas ninguna, las tareas se crean sin máquina específica.</div>
+            <div class="form-text small">
+              Si no marcas ninguna, la plantilla se aplica a <strong>TODAS</strong> las máquinas del cliente.
+              (Antes quedaban como tareas huérfanas sin equipo — invisibles al técnico.)
+            </div>
           </div>
           {% endif %}
         </div>
@@ -2056,10 +2059,36 @@ function apToggleAllMaquinas(check){
 
 async function aplicarPlantillaAOT(){
   const pid = document.getElementById('apPlantillaId').value;
-  if (!pid){ alert('Selecciona una plantilla'); return; }
+  if (!pid){
+    if (typeof ilusToast === 'function') ilusToast('Selecciona una plantilla', { type:'warning' });
+    return;
+  }
   const maq = Array.from(document.querySelectorAll('.ap-maq-chk:checked')).map(c => parseInt(c.value));
+  const totalChk = document.querySelectorAll('.ap-maq-chk').length;
   const body = { plantilla_id: parseInt(pid) };
-  if (maq.length) body.maquina_ids = maq;
+  if (maq.length){
+    body.maquina_ids = maq;
+  } else if (totalChk > 0 && typeof ilusConfirm === 'function') {
+    // FIX 2026-05-22 (Daniel) — Si hay máquinas disponibles pero el
+    // usuario no marcó ninguna, advertirle ANTES que la plantilla se
+    // aplicará a TODAS automáticamente (anti-bug Vitacura). Si dice
+    // que NO quiere así, le permitimos forzar `sin_maquina=true` para
+    // crear tareas globales (uso avanzado: tareas administrativas no
+    // ligadas a un equipo).
+    const ok = await ilusConfirm({
+      title: 'Aplicar a todas las máquinas',
+      message: `No marcaste ninguna máquina. ¿Aplicar la plantilla a las ${totalChk} máquinas del cliente?`,
+      sub: 'Esto crea las tareas por cada equipo. Si quieres tareas SIN equipo (administrativas), cancela y marca al menos una opción.',
+      okLabel: 'Aplicar a todas',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    // body.maquina_ids queda undefined → el backend autoexpande
+  } else if (totalChk === 0) {
+    // El cliente no tiene máquinas registradas. Permitimos aplicar
+    // sin máquina explícitamente para no romper casos legacy.
+    body.sin_maquina = true;
+  }
   try {
     const r = await fetch(`${API_BASE}/aplicar-plantilla`, {
       method: 'POST',
@@ -2067,12 +2096,19 @@ async function aplicarPlantillaAOT(){
       body: JSON.stringify(body)
     });
     const d = await r.json();
-    if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
+    if (!d.ok){
+      if (typeof ilusToast === 'function')
+        ilusToast(d.error || 'No se pudo aplicar la plantilla', { type:'error' });
+      return;
+    }
     if (_apModal) _apModal.hide();
     if (typeof ilusToast === 'function')
       ilusToast(`✓ ${d.creadas} tarea(s) creadas desde "${d.plantilla}"`, {type:'success'});
     setTimeout(() => location.reload(), 700);
-  } catch(e){ alert('Error de red: '+e.message); }
+  } catch(e){
+    if (typeof ilusToast === 'function')
+      ilusToast('Error de red: ' + e.message, { type:'error' });
+  }
 }
 </script>
 {% endblock %}

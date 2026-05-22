@@ -874,6 +874,185 @@
 #modalSaltarEquipo .skip-radio-content{flex:1}
 #modalSaltarEquipo .skip-radio-content strong{display:block;font-size:.88rem;color:#0f172a}
 #modalSaltarEquipo .skip-radio-content span{display:block;font-size:.72rem;color:#6b7280;margin-top:2px}
+
+/* ════════════════════════════════════════════════════════
+   2026-05-22 (Daniel) — Modo CAPTURA en modal ficha técnica
+   ════════════════════════════════════════════════════════ */
+#modalFichaTecnica .captura-section{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:14px;margin-bottom:14px;
+}
+#modalFichaTecnica .captura-section .ttl{
+  font-size:.78rem;font-weight:800;color:#0a0a0a;
+  text-transform:uppercase;letter-spacing:.4px;
+  margin:0 0 10px;display:flex;align-items:center;gap:7px;
+}
+#modalFichaTecnica .captura-section .ttl i{color:#dc2626;font-size:.95rem}
+#modalFichaTecnica .captura-section .hint{
+  font-size:.7rem;color:#6b7280;margin-top:4px;line-height:1.35;
+}
+#modalFichaTecnica .cap-form-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;
+}
+@media(max-width:600px){
+  #modalFichaTecnica .cap-form-grid{grid-template-columns:1fr}
+}
+#modalFichaTecnica .cap-field label{
+  display:block;font-size:.7rem;font-weight:700;color:#374151;
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;
+}
+#modalFichaTecnica .cap-field input,
+#modalFichaTecnica .cap-field select,
+#modalFichaTecnica .cap-field textarea{
+  width:100%;padding:9px 11px;font-size:16px; /* 16px anti zoom iOS */
+  border:1.5px solid #e5e7eb;border-radius:9px;background:#fff;
+  color:#0a0a0a;font-weight:600;transition:border-color .15s, box-shadow .15s;
+  font-family:inherit;
+}
+#modalFichaTecnica .cap-field input:focus,
+#modalFichaTecnica .cap-field select:focus,
+#modalFichaTecnica .cap-field textarea:focus{
+  outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+#modalFichaTecnica .cap-field textarea{
+  resize:vertical;min-height:70px;font-weight:500;
+}
+#modalFichaTecnica .cap-field.full{grid-column:1/-1}
+#modalFichaTecnica .cap-field .save-status{
+  font-size:.68rem;margin-top:3px;height:14px;line-height:14px;
+}
+#modalFichaTecnica .cap-field .save-status.saving{color:#3b82f6}
+#modalFichaTecnica .cap-field .save-status.saved{color:#16a34a}
+#modalFichaTecnica .cap-field .save-status.error{color:#dc2626}
+
+/* Estado capturado: chips clickeables */
+#modalFichaTecnica .cap-estado-chips{
+  display:flex;gap:6px;flex-wrap:wrap;
+}
+#modalFichaTecnica .cap-estado-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:7px 12px;border-radius:9999px;
+  border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-size:.78rem;font-weight:700;cursor:pointer;transition:all .15s;
+  min-height:36px;
+}
+#modalFichaTecnica .cap-estado-chip:hover{transform:translateY(-1px)}
+#modalFichaTecnica .cap-estado-chip i{font-size:.85rem}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="operativo"]{
+  background:#dcfce7;border-color:#16a34a;color:#15803d;
+}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="advertencia"]{
+  background:#fef3c7;border-color:#f59e0b;color:#92400e;
+}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="fuera_servicio"]{
+  background:#fee2e2;border-color:#dc2626;color:#b91c1c;
+}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="en_reparacion"]{
+  background:#dbeafe;border-color:#3b82f6;color:#1e40af;
+}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="dado_baja"]{
+  background:#f3f4f6;border-color:#6b7280;color:#1f2937;
+}
+#modalFichaTecnica .cap-estado-chip[data-active="1"][data-estado="no_encontrado"]{
+  background:#fef3c7;border-color:#f59e0b;color:#92400e;
+}
+
+/* Switch "Daño visible" */
+#modalFichaTecnica .cap-toggle{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;background:#fafafa;border:1px solid #e5e7eb;
+  border-radius:10px;cursor:pointer;user-select:none;
+  transition:all .15s;
+}
+#modalFichaTecnica .cap-toggle:hover{border-color:#dc2626}
+#modalFichaTecnica .cap-toggle[data-active="1"]{
+  background:#fee2e2;border-color:#dc2626;
+}
+#modalFichaTecnica .cap-toggle .sw{
+  width:38px;height:22px;background:#cbd5e1;border-radius:9999px;
+  position:relative;transition:background .15s;flex-shrink:0;
+}
+#modalFichaTecnica .cap-toggle .sw::after{
+  content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;
+  background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.2);
+  transition:transform .15s;
+}
+#modalFichaTecnica .cap-toggle[data-active="1"] .sw{background:#dc2626}
+#modalFichaTecnica .cap-toggle[data-active="1"] .sw::after{transform:translateX(16px)}
+#modalFichaTecnica .cap-toggle .lbl{font-size:.83rem;font-weight:700;color:#0a0a0a;flex:1}
+#modalFichaTecnica .cap-toggle .lbl small{display:block;font-weight:400;font-size:.7rem;color:#6b7280;margin-top:1px}
+
+/* Galería con uploader */
+#modalFichaTecnica .cap-fotos-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+}
+@media(max-width:600px){
+  #modalFichaTecnica .cap-fotos-grid{grid-template-columns:repeat(3,1fr)}
+}
+#modalFichaTecnica .cap-foto-tile{
+  position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;
+  background:#f3f4f6;border:1px solid #e5e7eb;
+}
+#modalFichaTecnica .cap-foto-tile img{
+  width:100%;height:100%;object-fit:cover;display:block;
+}
+#modalFichaTecnica .cap-foto-tile .badge-fuente{
+  position:absolute;bottom:4px;left:4px;
+  background:rgba(10,10,10,.78);color:#fff;
+  font-size:.6rem;font-weight:800;letter-spacing:.04em;
+  padding:2px 7px;border-radius:9999px;text-transform:uppercase;
+}
+#modalFichaTecnica .cap-foto-tile.fuente-ot .badge-fuente{background:#dc2626}
+#modalFichaTecnica .cap-foto-uploader{
+  aspect-ratio:1/1;border:2px dashed #cbd5e1;border-radius:10px;
+  background:#fafafa;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:4px;
+  color:#6b7280;font-size:.72rem;font-weight:700;
+  cursor:pointer;transition:all .15s;text-align:center;padding:4px;
+}
+#modalFichaTecnica .cap-foto-uploader:hover{
+  border-color:#dc2626;background:#fef2f2;color:#dc2626;
+}
+#modalFichaTecnica .cap-foto-uploader i{font-size:1.6rem;line-height:1}
+#modalFichaTecnica .cap-foto-uploader.uploading{
+  border-color:#dc2626;background:#fef2f2;color:#dc2626;
+  pointer-events:none;
+}
+
+/* Botón "Marcar equipo completado" — sticky bottom del modal */
+#modalFichaTecnica .cap-completado-wrap{
+  position:sticky;bottom:0;background:#fff;padding-top:10px;margin-top:6px;
+  border-top:1px solid #e5e7eb;
+}
+#modalFichaTecnica .cap-completado-btn{
+  width:100%;padding:13px 16px;border-radius:11px;border:none;
+  font-size:.95rem;font-weight:800;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;
+  transition:transform .1s, box-shadow .15s;
+  min-height:48px;
+}
+#modalFichaTecnica .cap-completado-btn:hover{
+  box-shadow:0 6px 18px rgba(22,163,74,.32);transform:translateY(-1px);
+}
+#modalFichaTecnica .cap-completado-btn:active{transform:scale(.98)}
+#modalFichaTecnica .cap-completado-btn[data-completado="1"]{
+  background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#15803d;
+  border:1.5px solid #16a34a;
+}
+#modalFichaTecnica .cap-completado-btn:disabled{opacity:.55;cursor:not-allowed}
+
+/* Banner read-only (cuando OT cerrada/aprobacion) */
+#modalFichaTecnica .cap-readonly-banner{
+  background:linear-gradient(135deg,#dbeafe,#bfdbfe);
+  border:1px solid #93c5fd;border-left:4px solid #3b82f6;
+  border-radius:10px;padding:10px 12px;margin-bottom:14px;
+  font-size:.78rem;color:#1e3a8a;line-height:1.4;
+  display:flex;gap:8px;align-items:flex-start;
+}
+#modalFichaTecnica .cap-readonly-banner i{
+  color:#3b82f6;font-size:1rem;flex-shrink:0;margin-top:1px;
+}
 </style>
 
 <div class="tx-wrap">
@@ -1619,7 +1798,31 @@
     <div class="tx-empty">
       <i class="bi bi-exclamation-triangle"></i>
       <div class="fw-bold" style="color:#0f172a">Sin máquinas en esta OT</div>
-      <div class="small mt-1">Pide al administrador que revise el levantamiento.</div>
+      {% if puede_configurar %}
+        {# 2026-05-22 (OT 2026-00004 Vitacura) — Banner accionable para
+           creador/admin: panel "Configurar OT" cuando está huérfana. #}
+        <div class="small mt-2" style="color:#374151">
+          {% if tareas_huerfanas and tareas_huerfanas > 0 %}
+            Esta OT tiene <strong>{{ tareas_huerfanas }}</strong> tarea(s)
+            sin equipo asociado. El técnico no las verá hasta que asignes máquinas.
+          {% else %}
+            La OT no tiene equipos ni checklist asignados. Aplica una plantilla
+            o un protocolo para que el técnico pueda trabajar.
+          {% endif %}
+        </div>
+        <div class="d-flex gap-2 justify-content-center flex-wrap mt-3">
+          <a href="{{ url_for('mant_ot_ficha', vid=visita.id) }}?legacy=1"
+             class="btn btn-sm btn-dark fw-bold">
+            <i class="bi bi-magic me-1"></i>Configurar OT (plantilla + equipos)
+          </a>
+          <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}"
+             class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-building me-1"></i>Ver ficha del cliente
+          </a>
+        </div>
+      {% else %}
+        <div class="small mt-1">Pide al administrador que revise el levantamiento.</div>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -1676,10 +1879,11 @@
       </div>
       <div class="eq-actions" onclick="event.stopPropagation()">
         <button type="button" class="eq-action-btn"
-                title="Ver ficha técnica"
-                aria-label="Ver ficha técnica del equipo {{ eq.nombre or eq.id }}"
+                title="Capturar / ver ficha del equipo"
+                aria-label="Capturar ficha del equipo {{ eq.nombre or eq.id }}"
+                style="background:#fef2f2;border-color:#fecaca;color:#dc2626"
                 onclick="event.stopPropagation(); abrirModalFichaTecnica({{ eq.id }})">
-          <i class="bi bi-clipboard-data"></i>
+          <i class="bi bi-clipboard-check-fill"></i>
         </button>
         {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar %}
         <button type="button" class="eq-action-btn"
@@ -2154,12 +2358,14 @@
 {% endif %}
 
 {# ════════════════════════════════════════════════════════════
-   MODAL: VER FICHA TÉCNICA (2026-05-19 Daniel)
-   Se abre desde el hero del equipo en vista 2 (plantillas).
-   Muestra los datos ACTUALES de la máquina + fotos previas +
-   contratos + últimas OTs. El técnico puede validar y, si tiene
-   permisos, editar serial/marca/modelo (que pisa la ficha al
-   guardar y queda logueado en mant_maquina_audit).
+   MODAL: CAPTURA / FICHA TÉCNICA (2026-05-22 Daniel)
+   Se abre desde la tarjeta del equipo en vista 1 (lista de máquinas).
+   En OTs ABIERTAS: modo CAPTURA (editable) — el técnico edita
+     estado_capturado/marca/modelo/año/voltaje/ubicación/daño/obs
+     + sube N fotos al equipo. Cada cambio guarda al perder foco.
+   En OTs CERRADAS / pendientes_aprobacion: modo SOLO-LECTURA.
+   Al cerrar la OT, _promover_levantamiento_a_maquina copia todo
+   al mant_maquinas + mant_maquina_eventos.
    ════════════════════════════════════════════════════════════ #}
 <div class="modal fade firma-modal" id="modalFichaTecnica" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
@@ -2167,12 +2373,12 @@
       <div class="modal-header"
            style="background:linear-gradient(135deg,#0a0a0a,#1f2937);color:#fff;border:0">
         <h5 class="modal-title fw-bold">
-          <i class="bi bi-file-earmark-medical-fill me-2"></i>Ficha técnica del equipo
+          <i class="bi bi-clipboard-check-fill me-2"></i>Captura del equipo
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
                 aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body" id="modalFichaBody" style="max-height:75vh;overflow-y:auto">
+      <div class="modal-body" id="modalFichaBody" style="max-height:80vh;overflow-y:auto">
         <div class="text-center text-muted py-5">
           <div class="spinner-border" role="status" style="color:#dc2626"></div>
           <div class="mt-2 small">Cargando ficha técnica…</div>
@@ -2202,7 +2408,17 @@ const VISITA_ESTADO = "{{ visita.estado }}";
 // 2026-05-19 (Daniel) — VISITA_TIPO se usa para mostrar el banner
 // "esta foto va a la ficha técnica" cuando la OT es un levantamiento.
 const VISITA_TIPO = "{{ visita.tipo or '' }}";
-const ES_LEVANTAMIENTO = (VISITA_TIPO === 'levantamiento');
+// FIX 2026-05-22 (Daniel — caso Vitacura OT 161-163):
+// Aaron puede crear desde el modal del cliente OTs tipo 'preventiva',
+// 'instalacion', etc. con `levantamiento_id` poblado. En esos casos las
+// fotos/datos capturados también heredan a la ficha del equipo (ver
+// `_promover_levantamiento_a_maquina`). El banner debe mostrarse para
+// que Lenin sepa que sus fotos van a la ficha permanente, no solo en
+// OTs con tipo='levantamiento'.
+const VISITA_LEVANTAMIENTO_ID = {{ (visita.levantamiento_id or 0) | tojson }};
+const ES_LEVANTAMIENTO = (
+  VISITA_TIPO === 'levantamiento' || !!VISITA_LEVANTAMIENTO_ID
+);
 const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
 const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
@@ -3039,25 +3255,33 @@ async function sugerirSerialRegistrado(tid, serieReg, mid, pid){
   ilusToast('✓ Serial sugerido aplicado', { type: 'success' });
 }
 
-// Abre modal con la ficha técnica del equipo. Carga datos en vivo
-// vía /mantenciones/api/maquinas/<mid>/ficha-tecnica. Read-only por
-// default: el técnico VALIDA. Si necesita editar la ficha completa,
-// usa el link "Ver ficha completa" del footer.
+// ════════════════════════════════════════════════════════════
+// 2026-05-22 (Daniel) — Modal de CAPTURA / FICHA TÉCNICA editable
+//
+// Antes: read-only. El técnico solo VALIDABA.
+// Ahora: en OTs tipo levantamiento Y preventiva-con-equipos, el
+// técnico EDITA estado/marca/modelo/año/voltaje/ubicación/daño/obs
+// + sube N fotos al equipo. Cada cambio guarda al perder foco
+// (auto-save). Al cerrar la OT, _promover_levantamiento_a_maquina
+// reaplica TODO al mant_maquinas + mant_maquina_eventos.
+//
+// Read-only se activa si VISITA_ESTADO ∈ {cerrada, pendiente_aprobacion}
+// o si el usuario NO puede ejecutar (PUEDE_EJECUTAR_FLAG=false).
+// ════════════════════════════════════════════════════════════
 async function abrirModalFichaTecnica(mid){
   const modalEl = document.getElementById('modalFichaTecnica');
   if (!modalEl){ ilusToast('Modal no disponible', { type: 'error' }); return; }
   const body = document.getElementById('modalFichaBody');
   const linkFull = document.getElementById('modalFichaAbrirFull');
-  // Estado loading
   body.innerHTML = `<div class="text-center text-muted py-5">
       <div class="spinner-border" role="status" style="color:#dc2626"></div>
       <div class="mt-2 small">Cargando ficha técnica…</div>
     </div>`;
   if (linkFull) linkFull.href = '/mantenciones/maquinas/' + mid;
-  // Abrir Bootstrap modal
   const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
   modal.show();
   try {
+    // 1) Carga ficha técnica (datos del equipo)
     const r = await fetch('/mantenciones/api/maquinas/' + mid + '/ficha-tecnica', {
       headers: { 'Accept': 'application/json' },
     });
@@ -3068,7 +3292,21 @@ async function abrirModalFichaTecnica(mid){
       </div>`;
       return;
     }
-    body.innerHTML = _renderFichaTecnicaModalBody(data);
+    // 2) Carga fotos OT+ficha en paralelo (no bloquea render principal)
+    let fotosData = { fotos: [], foto_principal: '' };
+    try {
+      const r2 = await fetch(
+        `/mantenciones/api/visitas/${VID}/equipo/${mid}/fotos`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (r2.ok){
+        const j2 = await r2.json();
+        if (j2.ok){ fotosData = j2; }
+      }
+    } catch(_) { /* sin fotos no bloquea */ }
+    body.innerHTML = _renderFichaTecnicaModalBody(data, fotosData, mid);
+    // 3) Init auto-save listeners (solo en modo captura editable)
+    _initCapturaListeners(mid);
   } catch(err){
     console.error('[abrirModalFichaTecnica]', err);
     body.innerHTML = `<div class="alert alert-danger" style="margin:0">
@@ -3077,21 +3315,236 @@ async function abrirModalFichaTecnica(mid){
   }
 }
 
-function _renderFichaTecnicaModalBody(data){
-  const e = data.equipo || {};
-  const fotos = data.fotos || [];
-  const contratos = data.contratos || [];
-  const ots = data.ots || [];
-  const stats = data.stats || {};
+// ── Estado en memoria de la captura activa ───────────────────
+// Permite a los handlers de save saber qué máquina/estado están tocando
+// y no re-leer el DOM cada vez.
+let _capturaActiva = { mid: null, estadoCapturado: 'operativo', tieneDano: 0, completado: 0 };
 
-  // Helper: campo de la ficha (label + value, o "—" si vacío)
-  const row = (lbl, val) => {
-    const v = (val === null || val === undefined || val === '') ? null : val;
-    return `<div class="ficha-row">
-      <div class="lbl">${_escapeHtml(lbl)}</div>
-      <div class="val ${v ? '' : 'muted'}">${v ? _escapeHtml(String(v)) : '—'}</div>
+// PATCH del equipo (debounced en eventos blur/change)
+async function _capturaSave(mid, payload){
+  const r = await fetch(
+    `/mantenciones/api/visitas/${VID}/equipo/${mid}/datos`,
+    {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!r.ok){
+    const txt = await r.text().catch(() => '');
+    throw new Error(txt || ('HTTP ' + r.status));
+  }
+  return r.json();
+}
+
+// Helper: marca status del campo (saving/saved/error)
+function _setCapStatus(fieldId, cls, txt){
+  const st = document.getElementById('cap-st-' + fieldId);
+  if (!st) return;
+  st.className = 'save-status ' + cls;
+  st.textContent = txt || '';
+  if (cls === 'saved'){
+    clearTimeout(st._t);
+    st._t = setTimeout(() => { st.textContent = ''; }, 1800);
+  }
+}
+
+// Auto-save de un campo de texto/number/select. Solo si el valor cambió.
+async function _capFieldBlur(mid, field, valor){
+  // Validación rápida cliente para anio_fabricacion
+  if (field === 'anio_fabricacion' && valor){
+    const n = parseInt(valor, 10);
+    if (isNaN(n) || n < 1950 || n > (new Date().getFullYear() + 2)){
+      _setCapStatus(field, 'error', 'Año inválido');
+      return;
+    }
+  }
+  _setCapStatus(field, 'saving', 'Guardando…');
+  try {
+    const payload = {};
+    payload[field] = valor;
+    await _capturaSave(mid, payload);
+    _setCapStatus(field, 'saved', '✓ Guardado');
+    // Actualizar caché local del equipo (para no perder el dato al cerrar modal)
+    if (EQUIPOS_IDX[String(mid)]){
+      EQUIPOS_IDX[String(mid)][field] = valor || '';
+    }
+  } catch(e){
+    console.error('[_capFieldBlur]', field, e);
+    _setCapStatus(field, 'error', 'Error al guardar');
+  }
+}
+
+// Estado capturado: chip click
+async function _capChipEstado(mid, estado){
+  document.querySelectorAll('#modalFichaTecnica .cap-estado-chip')
+    .forEach(c => c.setAttribute('data-active', c.dataset.estado === estado ? '1' : '0'));
+  _capturaActiva.estadoCapturado = estado;
+  _setCapStatus('estado_capturado', 'saving', 'Guardando…');
+  try {
+    await _capturaSave(mid, { estado_capturado: estado });
+    _setCapStatus('estado_capturado', 'saved', '✓ Guardado');
+  } catch(e){
+    _setCapStatus('estado_capturado', 'error', 'Error al guardar');
+  }
+}
+
+// Toggle daño
+async function _capToggleDano(mid){
+  const el = document.getElementById('cap-dano-toggle');
+  if (!el) return;
+  const next = el.getAttribute('data-active') === '1' ? 0 : 1;
+  el.setAttribute('data-active', String(next));
+  _capturaActiva.tieneDano = next;
+  _setCapStatus('tiene_dano', 'saving', 'Guardando…');
+  try {
+    await _capturaSave(mid, { tiene_dano: !!next });
+    _setCapStatus('tiene_dano', 'saved', next ? '⚠️ Daño marcado' : '✓ Sin daño');
+  } catch(e){
+    _setCapStatus('tiene_dano', 'error', 'Error');
+  }
+}
+
+// Marcar equipo como completado (toggle)
+async function _capMarcarCompletado(mid){
+  const btn = document.getElementById('cap-completado-btn');
+  if (!btn) return;
+  const next = btn.getAttribute('data-completado') === '1' ? 0 : 1;
+  btn.disabled = true;
+  try {
+    await _capturaSave(mid, { completado: !!next });
+    btn.setAttribute('data-completado', String(next));
+    btn.innerHTML = next
+      ? '<i class="bi bi-check-circle-fill"></i>Equipo marcado como completado — toca para revertir'
+      : '<i class="bi bi-check2-square"></i>Marcar equipo como completado';
+    _capturaActiva.completado = next;
+    if (next){
+      // Reflejar en la tarjeta y badge de la lista
+      EQUIPOS_ESTADO_REVISION[String(mid)] = {
+        ...(EQUIPOS_ESTADO_REVISION[String(mid)] || {}),
+        estado_revision: 'con_cambios',
+        revisado_at: (new Date()).toISOString().slice(0,19).replace('T',' '),
+      };
+      _refreshEqCardBadge(mid);
+      ilusToast('✓ Equipo marcado como completado', { type: 'success' });
+    } else {
+      ilusToast('Marca de completado removida', { type: 'info' });
+    }
+  } catch(e){
+    console.error('[_capMarcarCompletado]', e);
+    ilusToast('No se pudo marcar el equipo', { type: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Subir foto (uploader o reemplazo)
+async function _capSubirFoto(mid, fileInput){
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+  const uploader = document.getElementById('cap-foto-uploader');
+  if (uploader){ uploader.classList.add('uploading'); uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Subiendo…</span>'; }
+  const fd = new FormData();
+  fd.append('foto', file);
+  // Si el equipo NO tiene foto principal, esta primera es la principal.
+  // Si ya tiene, el backend degrada a 'detalle' automáticamente.
+  fd.append('tipo_foto', 'principal');
+  try {
+    const r = await fetch(
+      `/mantenciones/api/visitas/${VID}/equipo/${mid}/foto`,
+      { method: 'POST', body: fd }
+    );
+    const d = await r.json();
+    if (!d.ok){ throw new Error(d.error || 'No se pudo subir'); }
+    ilusToast(d.degradado
+      ? '✓ Foto agregada a la galería del equipo'
+      : '✓ Foto principal guardada', { type: 'success' });
+    // Refrescar galería
+    await _capRefreshFotos(mid);
+    // Si fue principal, actualizar hero y card del equipo
+    if (d.es_principal){
+      if (EQUIPOS_IDX[String(mid)]) EQUIPOS_IDX[String(mid)].foto_url = d.url;
+      // refrescar lista de equipos
+      const cardImg = document.querySelector(`#tx-eq-card-${mid} .eq-foto-img`);
+      if (cardImg){ cardImg.src = d.url; }
+    }
+  } catch(e){
+    console.error('[_capSubirFoto]', e);
+    ilusToast(e.message || 'No se pudo subir la foto', { type: 'error' });
+  } finally {
+    if (uploader){
+      uploader.classList.remove('uploading');
+      uploader.innerHTML = '<i class="bi bi-camera-fill"></i><span>Subir foto</span>';
+    }
+    fileInput.value = '';
+  }
+}
+
+// Refresca solo la grilla de fotos del modal (sin recargar todo)
+async function _capRefreshFotos(mid){
+  try {
+    const r = await fetch(
+      `/mantenciones/api/visitas/${VID}/equipo/${mid}/fotos`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.ok) return;
+    const cont = document.getElementById('cap-fotos-grid');
+    if (cont){
+      cont.innerHTML = _renderFotosTiles(j.fotos, mid);
+    }
+  } catch(_) { /* silencioso */ }
+}
+
+function _renderFotosTiles(fotos, mid){
+  const readonly = (VISITA_ESTADO === 'cerrada' ||
+                    VISITA_ESTADO === 'pendiente_aprobacion' ||
+                    !PUEDE_EJECUTAR_FLAG);
+  let html = '';
+  if (!readonly){
+    html += `<label class="cap-foto-uploader" id="cap-foto-uploader" for="cap-foto-input">
+      <i class="bi bi-camera-fill"></i><span>Subir foto</span>
+      <input type="file" id="cap-foto-input" accept="image/*" capture="environment"
+             style="display:none" onchange="_capSubirFoto(${mid}, this)">
+    </label>`;
+  }
+  (fotos || []).forEach(f => {
+    const cls = f.fuente === 'ot' ? 'fuente-ot' : 'fuente-ficha';
+    const lbl = f.fuente === 'ot' ? 'NUEVA' : 'FICHA';
+    html += `<div class="cap-foto-tile ${cls}" title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
+      <img src="${_escapeAttr(f.url)}" alt="${_escapeAttr(f.descripcion || '')}" loading="lazy">
+      <span class="badge-fuente">${lbl}</span>
     </div>`;
-  };
+  });
+  if (!fotos || !fotos.length){
+    html += `<div class="text-muted small" style="grid-column:span 3;padding:10px;
+        background:#fff8e1;border:1px solid #fde68a;border-radius:8px;color:#7c2d12">
+      Sin fotos aún. Sube la primera para que aparezca en la ficha del equipo.
+    </div>`;
+  }
+  return html;
+}
+
+// Inicializa listeners después de inyectar el HTML del body
+function _initCapturaListeners(mid){
+  // No hay magia adicional — los onchange/onblur ya vienen inline en el HTML.
+  // Reseteamos estado local
+  _capturaActiva = { mid: mid, estadoCapturado: 'operativo', tieneDano: 0, completado: 0 };
+}
+
+function _renderFichaTecnicaModalBody(data, fotosData, midParam){
+  const e = data.equipo || {};
+  const contratos = data.contratos_relacionados || data.contratos || [];
+  const ots = data.historial_visitas || data.ots || [];
+  const stats = data.stats || {};
+  const mid = midParam || e.id;
+  fotosData = fotosData || { fotos: [], foto_principal: e.foto_url || '' };
+
+  // Modo: editable solo si OT en ejecución Y el usuario puede ejecutar
+  const readonly = (VISITA_ESTADO === 'cerrada' ||
+                    VISITA_ESTADO === 'pendiente_aprobacion' ||
+                    !PUEDE_EJECUTAR_FLAG);
 
   // Datos del cliente (header)
   const clienteHtml = `
@@ -3105,77 +3558,207 @@ function _renderFichaTecnicaModalBody(data){
       </div>
     </div>`;
 
-  // Foto principal + datos esenciales
-  const fotoUrl = e.foto_url || '';
+  // Banner: read-only OR "modo captura"
+  const bannerHtml = readonly
+    ? `<div class="cap-readonly-banner">
+         <i class="bi bi-info-circle-fill"></i>
+         <div>
+           <strong>Modo solo-lectura.</strong>
+           La OT ya está ${VISITA_ESTADO === 'cerrada' ? 'cerrada' : 'pendiente de aprobación'}.
+           Los datos del equipo no se pueden modificar desde aquí.
+         </div>
+       </div>`
+    : (ES_LEVANTAMIENTO
+        ? `<div class="lev-banner-ficha" role="status">
+             <i class="bi bi-clipboard-check-fill"></i>
+             <div>
+               <strong>Captura de ficha técnica</strong>
+               <div>Cada cambio se guarda automáticamente. Al cerrar la OT,
+                 estos datos se aplican a la <strong>ficha permanente del equipo</strong>.</div>
+             </div>
+           </div>`
+        : `<div class="lev-banner-ficha" role="status"
+                style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);border-color:#93c5fd;color:#1e3a8a">
+             <i class="bi bi-pencil-square" style="color:#3b82f6"></i>
+             <div>
+               <strong>Edición rápida del equipo</strong>
+               <div>Puedes actualizar marca/modelo/datos si los conoces.
+                 Los cambios quedan registrados en el historial del equipo.</div>
+             </div>
+           </div>`);
+
+  // Foto principal actual + nombre del equipo (header del equipo)
+  const fotoUrl = fotosData.foto_principal || e.foto_url || '';
   const fotoHtml = fotoUrl
     ? `<img src="${_escapeAttr(fotoUrl)}" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">`
     : `<div style="width:100%;height:120px;background:#f3f4f6;border:1px dashed #cbd5e1;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#94a3b8"><i class="bi bi-image" style="font-size:2rem"></i></div>`;
 
-  const dataHtml = `
+  const headerEquipoHtml = `
     <div style="margin-bottom:14px">
       ${fotoHtml}
       <div style="margin-top:10px;font-weight:800;font-size:1.05rem;color:#0a0a0a">${_escapeHtml(e.nombre || ('Equipo #' + e.id))}</div>
-      ${e.sku ? `<div style="font-size:.78rem;color:#6b7280">SKU: ${_escapeHtml(e.sku)}</div>` : ''}
-    </div>
-    <div class="ficha-grid">
-      ${row('Serial / N° Serie', e.serie)}
-      ${row('Marca', e.marca)}
-      ${row('Modelo', e.modelo)}
-      ${row('Año fabricación', e.anio_fabricacion)}
-      ${row('Voltaje', e.voltaje)}
-      ${row('Ubicación', e.ubicacion_sala || e.ubicacion_cliente)}
-      ${row('Familia', e.familia_equipo)}
-      ${row('Fecha instalación', e.fecha_instalacion)}
-      ${row('Fin garantía', e.fecha_fin_garantia)}
-      ${row('Última intervención', e.ultima_intervencion)}
-      ${row('Estado equipo', e.estado)}
-      ${row('Estado operativo', e.estado_op)}
-      ${row('Doc origen', e.doc_origen)}
-      ${row('Visitas totales', stats.total_ots)}
+      <div style="font-size:.78rem;color:#6b7280">
+        ${e.sku ? 'SKU: ' + _escapeHtml(e.sku) : ''}
+        ${e.serie ? ' · S/N: ' + _escapeHtml(e.serie) : ''}
+      </div>
     </div>`;
 
-  // Observaciones (puede ser largo)
-  const obsHtml = e.observaciones && e.observaciones.trim()
-    ? `<div class="ficha-section-title"><i class="bi bi-chat-square-text-fill"></i>Observaciones acumuladas</div>
-       <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;padding:10px;font-size:.78rem;color:#374151;white-space:pre-wrap;max-height:140px;overflow:auto">${_escapeHtml(e.observaciones)}</div>`
-    : '';
+  // ── SECCIÓN 1: Estado capturado (chips) ────────────────────
+  const estadoActual = (e.estado_capturado || '').toLowerCase() || 'operativo';
+  const estadosChips = [
+    {k:'operativo',      icon:'bi-check-circle-fill', label:'Operativo'},
+    {k:'advertencia',    icon:'bi-exclamation-triangle-fill', label:'Advertencia'},
+    {k:'fuera_servicio', icon:'bi-x-circle-fill', label:'Fuera de servicio'},
+    {k:'en_reparacion',  icon:'bi-tools', label:'En reparación'},
+    {k:'dado_baja',      icon:'bi-archive-fill', label:'Dado de baja'},
+    {k:'no_encontrado',  icon:'bi-question-circle-fill', label:'No encontrado'},
+  ];
+  const chipsHtml = estadosChips.map(s => `
+    <button type="button" class="cap-estado-chip"
+            data-estado="${s.k}"
+            data-active="${estadoActual === s.k ? '1' : '0'}"
+            ${readonly ? 'disabled' : ''}
+            onclick="_capChipEstado(${mid}, '${s.k}')">
+      <i class="bi ${s.icon}"></i>${_escapeHtml(s.label)}
+    </button>`).join('');
+  const seccionEstadoHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-activity"></i>Estado capturado</h6>
+      <div class="cap-estado-chips">${chipsHtml}</div>
+      <div class="save-status" id="cap-st-estado_capturado"></div>
+      <div class="hint">¿Cómo encuentras este equipo ahora?</div>
+    </div>`;
 
-  // Fotos previas (galería compacta)
-  const fotosHtml = fotos.length
-    ? `<div class="ficha-section-title"><i class="bi bi-images"></i>Fotos previas en ficha (${fotos.length})</div>
-       <div class="ficha-fotos">
-         ${fotos.map(f => `<img src="${_escapeAttr(f.url)}" alt="" title="${_escapeAttr(f.descripcion || '')}" loading="lazy">`).join('')}
-       </div>`
-    : `<div class="ficha-section-title"><i class="bi bi-images"></i>Fotos previas en ficha</div>
-       <div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:.78rem;color:#7c2d12">
-         Sin fotos previas. Las que tomes aquí serán las primeras de la ficha.
-       </div>`;
+  // ── SECCIÓN 2: Datos técnicos (form editable) ──────────────
+  const inp = (k, lbl, val, opts) => {
+    opts = opts || {};
+    const valAttr = (val === null || val === undefined) ? '' : String(val);
+    const type = opts.type || 'text';
+    const placeholder = opts.placeholder || '';
+    return `<div class="cap-field${opts.full ? ' full' : ''}">
+      <label for="cap-${k}">${_escapeHtml(lbl)}</label>
+      <input id="cap-${k}" type="${type}" name="${k}"
+        value="${_escapeAttr(valAttr)}"
+        placeholder="${_escapeAttr(placeholder)}"
+        ${opts.maxlength ? `maxlength="${opts.maxlength}"` : ''}
+        ${opts.min ? `min="${opts.min}"` : ''}
+        ${opts.max ? `max="${opts.max}"` : ''}
+        ${readonly ? 'readonly' : ''}
+        onblur="_capFieldBlur(${mid}, '${k}', this.value)">
+      <div class="save-status" id="cap-st-${k}"></div>
+    </div>`;
+  };
+  const txtArea = (k, lbl, val, opts) => {
+    opts = opts || {};
+    return `<div class="cap-field full">
+      <label for="cap-${k}">${_escapeHtml(lbl)}</label>
+      <textarea id="cap-${k}" name="${k}"
+        placeholder="${_escapeAttr(opts.placeholder || '')}"
+        ${opts.maxlength ? `maxlength="${opts.maxlength}"` : ''}
+        ${readonly ? 'readonly' : ''}
+        onblur="_capFieldBlur(${mid}, '${k}', this.value)">${_escapeHtml(val || '')}</textarea>
+      <div class="save-status" id="cap-st-${k}"></div>
+    </div>`;
+  };
+  const seccionDatosHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-pencil-fill"></i>Datos del equipo</h6>
+      <div class="cap-form-grid">
+        ${inp('serie', 'Serial / N° Serie', e.serie, {maxlength:100, placeholder:'Ej: SN-12345'})}
+        ${inp('marca', 'Marca', e.marca, {maxlength:120, placeholder:'Ej: Life Fitness'})}
+        ${inp('modelo', 'Modelo', e.modelo, {maxlength:120, placeholder:'Ej: 95Ti'})}
+        ${inp('anio_fabricacion', 'Año fabricación', e.anio_fabricacion,
+              {type:'number', min:'1950', max:String(new Date().getFullYear()+2),
+               placeholder:'Ej: 2022'})}
+        ${inp('voltaje', 'Voltaje', e.voltaje, {maxlength:40, placeholder:'Ej: 220V / 50Hz'})}
+        ${inp('ubicacion_sala', 'Ubicación en sala', e.ubicacion_sala,
+              {maxlength:200, full:true, placeholder:'Ej: Sala cardio, pared norte'})}
+      </div>
+    </div>`;
 
-  // Contratos
+  // ── SECCIÓN 3: Daño visible (toggle) ───────────────────────
+  const tieneDano = !!(e.tiene_dano);
+  const seccionDanoHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-exclamation-triangle-fill"></i>¿Encuentras daño visible?</h6>
+      <div class="cap-toggle"
+           id="cap-dano-toggle"
+           data-active="${tieneDano ? '1' : '0'}"
+           ${readonly ? '' : `onclick="_capToggleDano(${mid})"`}
+           role="button" tabindex="0">
+        <span class="sw"></span>
+        <span class="lbl">${tieneDano ? 'Sí, el equipo tiene daño visible' : 'No, el equipo se ve sin daño'}
+          <small>Tocá para cambiar</small>
+        </span>
+      </div>
+      <div class="save-status" id="cap-st-tiene_dano"></div>
+    </div>`;
+
+  // ── SECCIÓN 4: Observaciones del técnico ───────────────────
+  const seccionObsHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-chat-square-text-fill"></i>Observaciones del técnico</h6>
+      ${txtArea('observaciones', '', e.observaciones,
+                {maxlength:5000,
+                 placeholder:'Anota lo que encontraste: estado de uso, ruidos, partes faltantes, sugerencias, etc.'})}
+      <div class="hint">Se guarda automáticamente al salir del campo.</div>
+    </div>`;
+
+  // ── SECCIÓN 5: Galería + uploader de fotos ─────────────────
+  const tilesHtml = _renderFotosTiles(fotosData.fotos, mid);
+  const seccionFotosHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-camera-fill"></i>Fotos del equipo</h6>
+      <div class="cap-fotos-grid" id="cap-fotos-grid">
+        ${tilesHtml}
+      </div>
+      <div class="hint">
+        ${readonly
+          ? 'Galería de fotos del equipo.'
+          : (fotosData.foto_principal
+              ? 'La primera foto del equipo ya está en la ficha. Las nuevas se agregan a la galería.'
+              : 'La primera foto que subas se guardará como la foto principal de la ficha.')}
+      </div>
+    </div>`;
+
+  // ── SECCIÓN 6: Marcar como completado (sticky bottom) ──────
+  const seccionCompletadoHtml = readonly ? '' : `
+    <div class="cap-completado-wrap">
+      <button id="cap-completado-btn" type="button"
+              class="cap-completado-btn"
+              data-completado="0"
+              onclick="_capMarcarCompletado(${mid})">
+        <i class="bi bi-check2-square"></i>Marcar equipo como completado
+      </button>
+    </div>`;
+
+  // ── SECCIÓN HISTÓRICA (read-only): contratos + OTs ─────────
   const contratosHtml = contratos.length
     ? `<div class="ficha-section-title"><i class="bi bi-file-earmark-text-fill"></i>Contratos del cliente</div>
-       ${contratos.map(c => `<div class="ficha-row" style="margin-bottom:5px">
+       ${contratos.slice(0,5).map(c => `<div class="ficha-row" style="margin-bottom:5px">
           <div class="lbl">${_escapeHtml(c.estado || 'vigente')}${c.es_indefinido ? ' · indefinido' : ''}</div>
           <div class="val">${_escapeHtml(c.nombre || ('Contrato #' + c.id))}</div>
-          ${c.fecha_inicio ? `<div style="font-size:.7rem;color:#6b7280">Desde ${_escapeHtml(c.fecha_inicio)}${c.fecha_vencimiento ? ' hasta ' + _escapeHtml(c.fecha_vencimiento) : ''}</div>` : ''}
         </div>`).join('')}`
     : '';
 
-  // Últimas OTs
   const otsHtml = ots.length
-    ? `<div class="ficha-section-title"><i class="bi bi-clock-history"></i>Últimas OTs (${ots.length})</div>
+    ? `<div class="ficha-section-title"><i class="bi bi-clock-history"></i>Últimas OTs (${Math.min(ots.length, 5)})</div>
        <div class="ficha-ots">
-         ${ots.map(o => `<a class="ot-row" href="${_escapeAttr(o.url)}" target="_blank" rel="noopener">
+         ${ots.slice(0,5).map(o => `<a class="ot-row" href="/mantenciones/ot/${o.id}" target="_blank" rel="noopener">
             <div>
-              <strong>${_escapeHtml(o.numero_ot)}</strong>
-              <span class="ot-meta">· ${_escapeHtml(o.tipo)} · ${_escapeHtml(o.estado)}</span>
+              <strong>${_escapeHtml(o.numero_ot || ('OT #' + o.id))}</strong>
+              <span class="ot-meta">· ${_escapeHtml(o.tipo || '')} · ${_escapeHtml(o.estado || '')}</span>
             </div>
-            <div class="ot-meta">${_escapeHtml(o.fecha)} ${o.tecnico ? '· ' + _escapeHtml(o.tecnico) : ''}</div>
+            <div class="ot-meta">${_escapeHtml(String(o.fecha_programada || o.fecha || ''))}${o.tecnico_nombre || o.tecnico ? ' · ' + _escapeHtml(o.tecnico_nombre || o.tecnico) : ''}</div>
           </a>`).join('')}
        </div>`
     : '';
 
-  return clienteHtml + dataHtml + obsHtml + fotosHtml + contratosHtml + otsHtml;
+  return clienteHtml + bannerHtml + headerEquipoHtml +
+         seccionEstadoHtml + seccionDatosHtml + seccionDanoHtml +
+         seccionObsHtml + seccionFotosHtml +
+         contratosHtml + otsHtml +
+         seccionCompletadoHtml;
 }
 
 // ════════════════════════════════════════════════════════

@@ -39,14 +39,168 @@ function _aiRenderError(err){
     </div>`;
 }
 
+// 2026-05-22 — Marca el sub-texto del item "Análisis económico" del dropdown IA
+// con la elegibilidad actual (cache vigente / cambios detectados / etc.) para
+// que el usuario sepa si va a gastar tokens ANTES de hacer click.
+(function _aiHintEligibilidad(){
+  function paintHint(elig){
+    const item = document.querySelector('[onclick*="aiAnalisisCliente"]');
+    if (!item) return;
+    const sub = item.querySelector('.small.text-muted');
+    if (!sub) return;
+    const m = (elig && elig.motivo) || 'nunca_analizado';
+    const map = {
+      cache_vigente: {
+        text: `Caché vigente (${elig.dias_desde_ultimo}d / ${elig.throttle_dias}d) — no gasta tokens`,
+        color: '#16a34a', icon: 'bi-snow',
+      },
+      cambios_detectados: {
+        text: `Hay ${elig.n_cambios} cambio(s) desde hace ${elig.dias_desde_ultimo}d — preguntará si regenerar`,
+        color: '#f59e0b', icon: 'bi-exclamation-circle',
+      },
+      ventana_abierta: {
+        text: `Han pasado ${elig.dias_desde_ultimo}d — recomendable regenerar`,
+        color: '#3b82f6', icon: 'bi-arrow-clockwise',
+      },
+      nunca_analizado: {
+        text: 'Aún sin análisis — generará uno nuevo',
+        color: '#6b7280', icon: 'bi-stars',
+      },
+      fecha_indeterminada: {
+        text: 'Score, MRR, riesgos, oportunidades',
+        color: '#6b7280', icon: 'bi-stars',
+      },
+    };
+    const cfg = map[m] || map.fecha_indeterminada;
+    sub.innerHTML = `<i class="bi ${cfg.icon} me-1" style="color:${cfg.color}"></i><span style="color:${cfg.color}">${cfg.text}</span>`;
+  }
+  // Cargar una sola vez al boot
+  if (window.__FICHA_DATA && window.__FICHA_DATA.cid) {
+    fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
+      .then(r => r.json())
+      .then(d => { if (d && d.ok) paintHint(d); })
+      .catch(()=>{});
+  }
+})();
+
 // ── Análisis económico y operativo del cliente ─────────────────────
+// 2026-05-22 — throttle inteligente: chequear elegibilidad ANTES de gastar
+// tokens. Si hay cache vigente, se devuelve el plan anterior sin llamar a
+// Claude. Si hay cambios pero la ventana sigue abierta, preguntamos al
+// usuario si quiere regenerar (modal claro con el costo estimado).
+async function _aiPreguntarRegenerar(elig){
+  // Construir lista de cambios para el modal
+  const cambiosList = (elig.cambios || []).map(c => {
+    const t = (c.delta != null && c.delta !== 0)
+      ? ` (${c.delta > 0 ? '+' : ''}${c.delta})` : '';
+    return `<li><strong>${c.campo}</strong>: ${c.antes ?? '—'} → ${c.ahora ?? '—'}${t}</li>`;
+  }).join('') || '<li class="text-muted">Sin cambios listados.</li>';
+
+  const html = `
+    <div style="font-size:.86rem">
+      Han pasado <strong>${elig.dias_desde_ultimo ?? '?'}</strong> día(s) desde el último análisis IA.
+      Se detectaron <strong>${elig.n_cambios}</strong> cambio(s):
+      <ul style="margin:6px 0 6px 18px;padding:0">${cambiosList}</ul>
+      <div style="margin-top:8px;color:#6b7280">
+        Costo estimado: <strong>~${elig.costo_estimado_tokens}</strong> tokens.
+      </div>
+    </div>`;
+  return await ilusConfirm({
+    title: 'Hay cambios desde el último análisis',
+    message: '¿Regenerar el análisis IA?',
+    sub: html, subHtml: true,
+    okLabel: 'Sí, regenerar', cancelLabel: 'Más tarde',
+  });
+}
+
 async function aiAnalisisCliente(){
+  // ── Paso 1: chequear elegibilidad (sin gastar tokens) ──
+  let elig = null;
+  try {
+    const re = await fetch(`/mantenciones/api/clientes/${CID}/ia/elegibilidad`);
+    elig = await re.json();
+    if (!elig || !elig.ok) elig = null;
+  } catch(_) { elig = null; }
+
+  let force = false;
+  if (elig && elig.motivo === 'cache_vigente') {
+    // Mostrar el plan en caché — no preguntar nada (no se gasta nada)
+  } else if (elig && elig.motivo === 'cambios_detectados') {
+    const yes = await _aiPreguntarRegenerar(elig);
+    if (!yes) {
+      // El usuario decidió no regenerar — dejamos sugerencia auditable
+      try {
+        await fetch(`/mantenciones/api/clientes/${CID}/ia/diferir`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({nota: ''}),
+        });
+        ilusToast('Sugerencia "regenerar IA" guardada en evidencia', { type:'info' });
+      } catch(_){}
+      return;
+    }
+    force = true;
+  } else if (elig && elig.motivo === 'ventana_abierta') {
+    // > THROTTLE días: confirmar igual con resumen breve
+    const yes = await ilusConfirm({
+      title: 'Han pasado varios días',
+      message: `Han pasado ${elig.dias_desde_ultimo} día(s) desde el último análisis. ¿Regenerar ahora?`,
+      sub: `Costo estimado: ~${elig.costo_estimado_tokens} tokens.`,
+      okLabel: 'Sí, regenerar', cancelLabel: 'Más tarde',
+    });
+    if (!yes) {
+      try {
+        await fetch(`/mantenciones/api/clientes/${CID}/ia/diferir`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({nota: ''}),
+        });
+        ilusToast('Sugerencia "regenerar IA" guardada en evidencia', { type:'info' });
+      } catch(_){}
+      return;
+    }
+    force = true;
+  }
+  // else: 'nunca_analizado' o fallback → seguir directo
+
   _aiOpenModal('Análisis económico y operativo · Claude');
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/ai-analisis`, {method:'POST'});
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/ai-analisis`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({force}),
+    });
     const d = await r.json();
-    if (!d.ok){ _aiRenderError(d.error || 'Error desconocido'); return; }
-    const a = d.ai;
+    if (!d.ok){
+      // Si el backend pide confirmación (no veníamos con force=true), re-pedir
+      if (d.needs_confirmation && d.elegibilidad) {
+        const yes = await _aiPreguntarRegenerar(d.elegibilidad);
+        if (!yes) {
+          bootstrap.Modal.getInstance(document.getElementById('modalAIResult'))?.hide();
+          return;
+        }
+        const r2 = await fetch(`/mantenciones/api/clientes/${CID}/ai-analisis`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({force:true}),
+        });
+        const d2 = await r2.json();
+        if (!d2.ok){ _aiRenderError(d2.error || 'Error'); return; }
+        return _aiRenderAnalisis(d2);
+      }
+      _aiRenderError(d.error || 'Error desconocido'); return;
+    }
+    _aiRenderAnalisis(d);
+  } catch(e){ _aiRenderError(e.message || e); }
+}
+
+function _aiRenderAnalisis(d){
+    const a = d.ai || {};
+    // Banner cuando vino de cache (no se gastaron tokens)
+    const cacheBanner = d.cached ? `
+      <div class="alert py-2 mb-2" style="background:#fff7ed;border-left:4px solid #f59e0b;color:#92400e">
+        <i class="bi bi-snow me-1"></i>
+        <strong>Análisis en caché.</strong> No se llamó a Claude — sin gasto de tokens.
+        ${d.elegibilidad ? `<small class="d-block mt-1">Generado hace ${d.elegibilidad.dias_desde_ultimo ?? '?'} día(s). Throttle: ${d.elegibilidad.throttle_dias} días.</small>` : ''}
+      </div>` : '';
     const saludColor = {
       'excelente':'#16a34a', 'buena':'#22c55e', 'regular':'#f59e0b',
       'riesgo':'#dc2626', 'critica':'#7f1d1d'
@@ -61,7 +215,7 @@ async function aiAnalisisCliente(){
         ${x.accion} <small class="text-muted">(${x.plazo_dias}d)</small></li>
     `).join('') || '<li class="text-muted">Sin acciones</li>';
 
-    document.getElementById('aiResultBody').innerHTML = `
+    document.getElementById('aiResultBody').innerHTML = cacheBanner + `
       <div class="row g-3">
         <div class="col-md-4 text-center">
           <div style="font-size:.7rem;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">Salud de cuenta</div>
@@ -101,7 +255,6 @@ async function aiAnalisisCliente(){
           <div class="alert alert-warning py-2 mb-0"><i class="bi bi-bell me-1"></i><strong>Contrato:</strong> ${a.alerta_contrato||'—'}</div>
         </div>
       </div>`;
-  } catch(e){ _aiRenderError(e.message || e); }
 }
 
 // ── Completar ficha del cliente con sugerencias IA ────────────────
@@ -2957,18 +3110,94 @@ async function guardarMaquinaManual() {
   } else { alert('Error al guardar'); }
 }
 
-async function eliminarMaquina(mid, btn) {
-  const ok = await ilusConfirm({
-    title: 'Eliminar equipo', message: '¿Eliminar este equipo?',
-    okLabel: 'Eliminar', danger: true,
+// 2026-05-22 (Daniel): "Eliminar equipo" pasa a ser flujo confidencial.
+// Solo superadmin ve el botón (el template ya lo oculta a los demás roles),
+// pero igual exigimos motivo (≥ 12 chars) + confirm text "ELIMINAR" para
+// que quede en mant_logs con trazabilidad clara. El backend devuelve 403
+// si por alguna razón llega un no-superadmin (defensa en profundidad).
+async function eliminarMaquina(mid, nombre, btn) {
+  // Paso 1 — Motivo obligatorio (≥ 12 chars). Reemplaza al simple Yes/No.
+  // ilusPrompt escapa `message` por defecto; el HTML va en `sub` con subHtml:true.
+  const nombreSafe = (nombre || ('Equipo #' + mid))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const motivo = await ilusPrompt({
+    title: 'Eliminar equipo',
+    message: 'Indica el motivo (mínimo 12 caracteres). Queda en auditoría para trazabilidad.',
+    sub: `Vas a dar de baja: <strong style="color:#dc2626">${nombreSafe}</strong>`,
+    subHtml: true,
+    placeholder: 'Ej: equipo retirado del cliente por término de contrato',
+    multiline: true,
+    required: true,
+    okLabel: 'Continuar',
+    cancelLabel: 'Cancelar',
   });
-  if (!ok) return;
-  btn.disabled = true;
-  const r = await fetch(`/mantenciones/api/maquinas/${mid}`, { method: 'DELETE' });
-  if (r.ok) {
+  if (motivo === null) return;                       // canceló
+  const motivoLimpio = (motivo || '').trim();
+  if (motivoLimpio.length < 12) {
+    await ilusAlert({
+      title: 'Motivo insuficiente',
+      message: 'El motivo debe tener al menos 12 caracteres.',
+      type: 'warning',
+    });
+    return;
+  }
+
+  // Paso 2 — Confirm text "ELIMINAR" (defensa contra clicks accidentales)
+  const confirmTxt = await ilusPrompt({
+    title: 'Confirmación final',
+    message: 'Esta acción quedará registrada en la auditoría del cliente.',
+    sub: 'Escribe <strong style="color:#dc2626">ELIMINAR</strong> para confirmar.',
+    subHtml: true,
+    placeholder: 'ELIMINAR',
+    required: true,
+    okLabel: 'Eliminar definitivamente',
+    cancelLabel: 'Cancelar',
+  });
+  if (confirmTxt === null) return;
+  if ((confirmTxt || '').trim().toUpperCase() !== 'ELIMINAR') {
+    await ilusAlert({
+      title: 'Cancelado',
+      message: 'No escribiste exactamente "ELIMINAR". La acción fue cancelada.',
+      type: 'info',
+    });
+    return;
+  }
+
+  // Paso 3 — Disparar la baja
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo: motivoLimpio, confirm_text: 'ELIMINAR' }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      if (btn) btn.disabled = false;
+      const msg = (d && d.error) ? d.error : 'No se pudo eliminar el equipo.';
+      await ilusAlert({
+        title: 'No se pudo eliminar',
+        message: msg,
+        type: r.status === 403 ? 'danger' : 'error',
+      });
+      return;
+    }
+    // Animación + toast (no recargo, evito perder filtros y scroll)
     const row = document.getElementById(`maq-${mid}`);
-    if (row) { row.style.transition='opacity .3s'; row.style.opacity='0'; setTimeout(()=>row.remove(),300); }
-  } else { btn.disabled = false; alert('Error al eliminar'); }
+    if (row) {
+      row.style.transition = 'opacity .3s';
+      row.style.opacity = '0';
+      setTimeout(() => row.remove(), 300);
+    }
+    ilusToast('Equipo eliminado · auditoría registrada', { type: 'success' });
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    await ilusAlert({
+      title: 'Error de red',
+      message: 'No se pudo contactar al servidor: ' + (e.message || e),
+      type: 'error',
+    });
+  }
 }
 
 // ─── Eliminar cliente (con doble confirmación) ─────────────────

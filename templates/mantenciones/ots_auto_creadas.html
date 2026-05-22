@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}OTs auto-creadas — Revisión{% endblock %}
+
+{% block content %}
+<style>
+.aoc-table { font-size:.83rem; }
+.aoc-table thead th {
+  background:#fef2f2; font-weight:700; font-size:.72rem;
+  text-transform:uppercase; letter-spacing:.5px; color:#7c2d12;
+  position:sticky; top:0; z-index:1;
+}
+.aoc-row.actividad   { background:#f9fafb; opacity:.7; }
+.aoc-row.borrable    { background:#fff; }
+.aoc-row:hover       { background:#fef3c7 !important; }
+.aoc-pill {
+  display:inline-block; padding:2px 8px; border-radius:50px;
+  font-size:.68rem; font-weight:700; line-height:1.2;
+}
+.aoc-pill.warn   { background:#fee2e2; color:#7f1d1d; }
+.aoc-pill.muted  { background:#f3f4f6; color:#4b5563; }
+.aoc-pill.act    { background:#dcfce7; color:#166534; }
+.aoc-pill.cron   { background:#fef3c7; color:#92400e; }
+.aoc-sticky-bar  {
+  position:sticky; bottom:0; background:#fff; border-top:2px solid #dc2626;
+  padding:12px 16px; z-index:10;
+  box-shadow:0 -4px 12px rgba(0,0,0,.06);
+}
+</style>
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4>
+        <i class="bi bi-exclamation-octagon-fill me-2" style="color:#dc2626"></i>
+        OTs auto-creadas para revisión
+      </h4>
+      <div class="sub">
+        Listado de OTs cuya creación pareciera no haber sido manual
+        (cron / sistema / sin <code>created_by</code>).
+      </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('mant_index') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left me-1"></i>Volver al dashboard
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="ilus-card mb-3"
+     style="background:linear-gradient(135deg,#fffaf0,#fef2f2);border-left:5px solid #dc2626">
+  <div class="d-flex align-items-start gap-3">
+    <i class="bi bi-shield-exclamation"
+       style="font-size:2rem;color:#dc2626;flex-shrink:0"></i>
+    <div style="flex:1">
+      <div class="fw-bold mb-1" style="color:#7c2d12">
+        Borrado seguro — solo OTs sin actividad
+      </div>
+      <div class="small" style="color:#7c2d12;line-height:1.5">
+        Solo se pueden borrar OTs en estado <strong>programada</strong> que NO
+        tengan: fotos, firmas, tareas completadas ni fecha realizada.
+        OTs con actividad real aparecen <span class="aoc-pill act">verdes</span>
+        y NO se pueden seleccionar.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex align-items-center gap-3 flex-wrap mb-3">
+  <button id="btnRecargar" class="btn btn-outline-secondary btn-sm" onclick="cargar()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Recargar
+  </button>
+
+  <div class="d-flex align-items-center gap-2">
+    <label class="small text-muted">Ventana</label>
+    <select id="filtroDias" class="form-select form-select-sm" style="width:auto" onchange="cargar()">
+      <option value="7">7 días</option>
+      <option value="14" selected>14 días</option>
+      <option value="30">30 días</option>
+      <option value="60">60 días</option>
+      <option value="180">180 días</option>
+      <option value="365">365 días</option>
+    </select>
+  </div>
+
+  <div class="form-check form-switch">
+    <input class="form-check-input" type="checkbox" id="incluirRecientes" onchange="cargar()">
+    <label class="form-check-label small" for="incluirRecientes">
+      Incluir OTs recientes sin log de creación
+    </label>
+  </div>
+
+  <div class="ms-auto small text-muted">
+    <span id="aocTotal">—</span> OTs candidatas ·
+    <span id="aocBorrables">—</span> borrables ·
+    <span id="aocConActividad">—</span> con actividad (no se borran)
+  </div>
+</div>
+
+<div class="ilus-card p-0">
+  <div class="table-responsive" style="max-height:65vh">
+    <table class="table aoc-table mb-0">
+      <thead>
+        <tr>
+          <th style="width:36px">
+            <input type="checkbox" id="chkTodos" onchange="toggleTodos()">
+          </th>
+          <th>OT / N°</th>
+          <th>Cliente</th>
+          <th>Título</th>
+          <th>Tipo</th>
+          <th>Fecha prog.</th>
+          <th>Creada</th>
+          <th><code>created_by</code></th>
+          <th>Motivo sospecha</th>
+          <th class="text-end pe-2">Estado</th>
+        </tr>
+      </thead>
+      <tbody id="aocBody">
+        <tr><td colspan="10" class="text-center py-5 text-muted">
+          <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="aoc-sticky-bar d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div class="small text-muted">
+      Seleccionadas: <strong id="contSeleccion">0</strong>
+      <span class="text-muted">/ <span id="contBorrables">0</span> borrables</span>
+    </div>
+    <button id="btnBorrar" class="btn btn-danger fw-bold"
+            onclick="confirmarYBorrar()" disabled>
+      <i class="bi bi-trash3 me-1"></i>
+      Borrar seleccionadas (<span id="contSeleccion2">0</span>)
+    </button>
+  </div>
+</div>
+
+<script>
+const cache = { ots: [] };
+
+function fmt(s){ return s ? String(s).replace('T', ' ').slice(0, 16) : '—'; }
+function esc(s){
+  return String(s ?? '').replace(/[&<>"]/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',
+  })[c]);
+}
+
+async function cargar(){
+  const tbody = document.getElementById('aocBody');
+  tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
+  </td></tr>`;
+  const dias = document.getElementById('filtroDias').value;
+  const incRec = document.getElementById('incluirRecientes').checked ? '1' : '0';
+  try {
+    const r = await fetch(`/mantenciones/api/ots/auto-creadas?dias=${dias}&incluir_recientes=${incRec}`);
+    const d = await r.json();
+    if (!d.ok) {
+      tbody.innerHTML = `<tr><td colspan="10" class="text-danger py-4 text-center">
+        Error: ${esc(d.error || 'desconocido')}
+      </td></tr>`;
+      return;
+    }
+    cache.ots = d.ots || [];
+    render();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="10" class="text-danger py-4 text-center">
+      Error de red: ${esc(String(e))}
+    </td></tr>`;
+  }
+}
+
+function render(){
+  const tbody = document.getElementById('aocBody');
+  if (!cache.ots.length){
+    tbody.innerHTML = `<tr><td colspan="10" class="py-5 text-center text-muted">
+      <i class="bi bi-check-circle" style="font-size:2rem;color:#16a34a"></i><br>
+      Sin OTs auto-creadas en esta ventana. Todo limpio.
+    </td></tr>`;
+    document.getElementById('aocTotal').textContent = '0';
+    document.getElementById('aocBorrables').textContent = '0';
+    document.getElementById('aocConActividad').textContent = '0';
+    actualizarContador();
+    return;
+  }
+  const filas = cache.ots.map(ot => {
+    const rowCls = ot.tiene_actividad ? 'aoc-row actividad' : 'aoc-row borrable';
+    const chk = ot.puede_borrarse
+      ? `<input type="checkbox" class="aoc-chk" data-id="${ot.id}" onchange="actualizarContador()">`
+      : `<i class="bi bi-shield-lock" title="No borrable: tiene actividad"
+            style="color:#6b7280"></i>`;
+    const estadoPill = ot.tiene_actividad
+      ? `<span class="aoc-pill act">con actividad</span>`
+      : `<span class="aoc-pill warn">${esc(ot.estado)}</span>`;
+    const cbPill = (ot.created_by || '').toLowerCase().includes('cron')
+      ? `<span class="aoc-pill cron">${esc(ot.created_by || '?')}</span>`
+      : `<span class="aoc-pill muted">${esc(ot.created_by || 'NULL')}</span>`;
+    const ind = [];
+    if (ot.tareas_completadas > 0) ind.push(`<span class="aoc-pill act">✓ ${ot.tareas_completadas} tareas</span>`);
+    if (ot.fotos_count > 0)         ind.push(`<span class="aoc-pill act">📷 ${ot.fotos_count}</span>`);
+    if (ot.equipos_count > 0)       ind.push(`<span class="aoc-pill muted">👥 ${ot.equipos_count}</span>`);
+
+    return `
+      <tr class="${rowCls}">
+        <td>${chk}</td>
+        <td class="fw-semibold">
+          <a href="/mantenciones/ot/${ot.id}" target="_blank" class="text-decoration-none">
+            ${esc(ot.numero_ot || ('#' + ot.id))}
+          </a>
+        </td>
+        <td>
+          <a href="/mantenciones/clientes/${ot.cliente_id}" target="_blank"
+             class="text-decoration-none fw-semibold">
+            ${esc(ot.cliente_razon_social || '—')}
+          </a>
+          <div class="small text-muted">${esc(ot.cliente_rut || '')}</div>
+        </td>
+        <td class="small">${esc(ot.titulo || '—')}
+          <div class="small">${ind.join(' ')}</div>
+        </td>
+        <td><span class="badge bg-light text-dark" style="font-size:.65rem">${esc(ot.tipo || '?')}</span></td>
+        <td class="text-nowrap small">${esc(ot.fecha_programada || '—')}</td>
+        <td class="text-nowrap small">
+          ${esc(fmt(ot.created_at))}
+          <div class="small text-muted">${ot.dias_desde_creacion ?? 0}d</div>
+        </td>
+        <td>${cbPill}</td>
+        <td class="small text-muted" style="max-width:260px">${esc(ot.motivo_sospecha || '')}</td>
+        <td class="text-end pe-2">${estadoPill}</td>
+      </tr>
+    `;
+  }).join('');
+  tbody.innerHTML = filas;
+  document.getElementById('aocTotal').textContent = cache.ots.length;
+  const borrables = cache.ots.filter(o => o.puede_borrarse).length;
+  const conAct = cache.ots.filter(o => o.tiene_actividad).length;
+  document.getElementById('aocBorrables').textContent = borrables;
+  document.getElementById('aocConActividad').textContent = conAct;
+  document.getElementById('contBorrables').textContent = borrables;
+  document.getElementById('chkTodos').checked = false;
+  actualizarContador();
+}
+
+function toggleTodos(){
+  const on = document.getElementById('chkTodos').checked;
+  document.querySelectorAll('.aoc-chk').forEach(el => { el.checked = on; });
+  actualizarContador();
+}
+
+function actualizarContador(){
+  const n = document.querySelectorAll('.aoc-chk:checked').length;
+  document.getElementById('contSeleccion').textContent = n;
+  document.getElementById('contSeleccion2').textContent = n;
+  document.getElementById('btnBorrar').disabled = (n === 0);
+}
+
+async function confirmarYBorrar(){
+  const sel = Array.from(document.querySelectorAll('.aoc-chk:checked'))
+                   .map(el => parseInt(el.dataset.id));
+  if (!sel.length) return;
+
+  // Paso 1: prompt ILUS — texto BORRAR
+  const txt = await ilusPrompt({
+    title: `Confirmar borrado de ${sel.length} OT(s)`,
+    message: 'Esta acción es IRREVERSIBLE. Escribe BORRAR (mayúsculas) para confirmar.',
+    sub: 'Solo se borrarán OTs sin firmas, fotos ni tareas completadas. ' +
+         'Las que tengan actividad se saltarán automáticamente.',
+    placeholder: 'BORRAR',
+    required: true,
+    okLabel: 'Continuar',
+    cancelLabel: 'Cancelar',
+  });
+  if (!txt || txt.trim().toUpperCase() !== 'BORRAR'){
+    ilusToast('Confirmación inválida — debe escribirse BORRAR exactamente.',
+              { type: 'warning' });
+    return;
+  }
+
+  // Paso 2: confirm explícito
+  const ok = await ilusConfirm({
+    title: 'Última confirmación',
+    message: `¿Borrar ${sel.length} OT(s) ahora?`,
+    sub: 'Esta acción quedará registrada en el log de auditoría.',
+    okLabel: 'Sí, borrar ahora',
+    cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+
+  // Paso 3: POST al endpoint batch
+  const btn = document.getElementById('btnBorrar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Borrando…';
+
+  try {
+    const r = await fetch('/mantenciones/api/ots/borrar-batch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ids: sel, confirm: 'BORRAR' }),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      await ilusAlert({
+        title: 'Error',
+        message: d.error || 'Error desconocido al borrar.',
+        type: 'error',
+      });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Borrar seleccionadas';
+      return;
+    }
+    const resumen = `${d.borradas} borrada(s), ${d.saltadas} saltada(s).`;
+    await ilusAlert({
+      title: 'Borrado completado',
+      message: resumen,
+      sub: d.mensaje || '',
+      type: 'success',
+    });
+    cargar();
+  } catch(e) {
+    await ilusAlert({
+      title: 'Error de red',
+      message: String(e),
+      type: 'error',
+    });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3 me-1"></i>Borrar seleccionadas';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', cargar);
+</script>
+{% endblock %}
