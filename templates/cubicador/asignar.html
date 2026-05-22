@@ -681,11 +681,42 @@
     <div class="ac-card" id="cardCouriers" style="display:none">
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">4</span>Cotización de Couriers</div>
-        <button class="btn-refresh" onclick="actualizarTarifas()" id="btnRefresh">
-          <i class="bi bi-arrow-clockwise"></i>Actualizar
-        </button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn-refresh" onclick="abrirHistoricoDoc()" id="btnHistorico"
+                  title="Ver cotizaciones previas para este mismo documento"
+                  style="background:#0f172a;color:#fff;border-color:#0f172a">
+            <i class="bi bi-clock-history"></i>Histórico
+          </button>
+          <button class="btn-refresh" onclick="actualizarTarifas()" id="btnRefresh">
+            <i class="bi bi-arrow-clockwise"></i>Actualizar
+          </button>
+        </div>
       </div>
       <div class="ac-card-body">
+
+        {# Toggle: ver precio VENTA (default) o COSTO ILUS (auditoría) #}
+        <div id="toggleCostoVentaWrap" style="display:none;margin-bottom:12px">
+          <div style="display:inline-flex;background:#f3f4f6;border-radius:8px;padding:3px;gap:2px">
+            <button type="button" class="seg-btn active" data-vista="venta"
+                    onclick="setVistaPrecio('venta')"
+                    style="background:#dc2626;color:#fff;border:none;border-radius:6px;
+                           padding:5px 12px;font-size:.74rem;font-weight:700;cursor:pointer">
+              💰 Precio venta
+            </button>
+            <button type="button" class="seg-btn" data-vista="costo"
+                    onclick="setVistaPrecio('costo')"
+                    style="background:transparent;color:#6b7280;border:none;border-radius:6px;
+                           padding:5px 12px;font-size:.74rem;font-weight:700;cursor:pointer">
+              📊 Costo ILUS
+            </button>
+          </div>
+          <span id="vistaPrecioHint" style="font-size:.66rem;color:#9ca3af;margin-left:10px">
+            Lo que paga el cliente (costo + margen + IVA)
+          </span>
+        </div>
+
+        {# Mini-tabla comparativa Top 3 (más barato / validado / recomendado) #}
+        <div id="comparadorTop" style="display:none;margin-bottom:12px"></div>
 
         {# Aviso cuando no hay comuna #}
         <div class="aviso-calcular" id="avisoComuna" style="display:none">
@@ -1548,6 +1579,9 @@ async function _actualizarCotizacionesReal(){
         comuna:         comuna,
         es_residencial: resid,
         valor_neto:     _docData.header.valor_neto || 0,
+        // Contexto del documento para audit trail
+        tido:           _docData.header.tido || '',
+        nudo:           _docData.header.nudo || '',
       })
     });
     const d = await r.json();
@@ -1571,6 +1605,10 @@ function renderCouriers(opts){
   const list = document.getElementById('courierList');
   if(!list) return;
 
+  // Mostrar/ocultar toggle costo/venta + comparador top según haya cotizaciones
+  const toggleWrap = document.getElementById('toggleCostoVentaWrap');
+  const compTop    = document.getElementById('comparadorTop');
+
   // Loading state
   if(opts && opts.loading){
     list.innerHTML = `
@@ -1578,6 +1616,8 @@ function renderCouriers(opts){
         <i class="bi bi-arrow-clockwise" style="font-size:1.6rem;animation:spin 1s linear infinite;display:inline-block"></i>
         <div style="margin-top:8px;font-size:.82rem">Cotizando con todos los couriers…</div>
       </div>`;
+    if(toggleWrap) toggleWrap.style.display = 'none';
+    if(compTop)    compTop.style.display    = 'none';
     return;
   }
 
@@ -1587,12 +1627,22 @@ function renderCouriers(opts){
         <i class="bi bi-truck"></i>
         <p>Define la comuna destino para cotizar con los couriers disponibles.</p>
       </div>`;
+    if(toggleWrap) toggleWrap.style.display = 'none';
+    if(compTop)    compTop.style.display    = 'none';
     return;
   }
 
   const conCob = _cotizaciones.filter(c => c.tiene_cobertura);
   const sinCob = _cotizaciones.filter(c => !c.tiene_cobertura);
   const zzVal  = (_docData && _docData.zzenvio_valor) ? _docData.zzenvio_valor : 0;
+
+  // Si hay al menos una cotización con desglose costo/venta → mostrar toggle
+  const hayDesglose = conCob.some(c => c.desglose && c.desglose.precio_costo != null);
+  if(toggleWrap){
+    toggleWrap.style.display = hayDesglose ? '' : 'none';
+  }
+  // Comparador top 3 (más barato + validado)
+  renderComparadorTop(conCob);
 
   // Header: recomendado + ZZ envío comparativa
   let head = '';
@@ -1636,17 +1686,59 @@ function renderCouriers(opts){
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 
+    // ── AUDIT/TRACE indicators ─────────────────────────────────
+    const trace = c.trace || {};
+    const advs  = Array.isArray(trace.advertencias) ? trace.advertencias : [];
+    const hasWarn = advs.length > 0;
+    const isValidado = !!trace.validado;
+    // Tooltip resumen (atributo title del span info)
+    const tipBracket = trace.bracket ? `Bracket: ${trace.bracket}` : '';
+    const tipFormula = trace.formula ? trace.formula : '';
+    const tipTooltip = [tipBracket, tipFormula].filter(Boolean).join(' · ');
+    // Chip de validación
+    const chipValid = isValidado
+      ? `<span title="Tarifa validada manualmente contra Excel maestro"
+              style="background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:50px;
+                     font-size:.6rem;font-weight:700;margin-left:4px">✓ VALIDADA</span>`
+      : '';
+    // Chip de advertencia
+    const chipWarn = hasWarn
+      ? `<span title="${escHtml(advs.join(' | '))}"
+              style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;
+                     font-size:.6rem;font-weight:700;margin-left:4px;cursor:help">⚠ Revisar</span>`
+      : '';
+    // Botón "i" → modal auditoría
+    const auditId = c.audit_id || '';
+    const btnAudit = `<button type="button"
+        onclick="event.stopPropagation();abrirAuditoriaCourier(${auditId||'null'},${JSON.stringify(c).replace(/"/g,'&quot;').replace(/'/g,'&#39;')})"
+        title="Ver detalle de auditoría del cálculo"
+        style="background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:2px 7px;
+               font-size:.66rem;color:#374151;cursor:pointer;line-height:1;margin-left:4px;
+               font-weight:600">
+        <i class="bi bi-info-circle"></i> Auditar
+      </button>`;
+
+    // ── Precio según vista activa (costo / venta) ────────────────
+    const precioVisible = _precioMostrar(c);
+    const vistaEsCosto  = (_vistaPrecio === 'costo');
+    const subLineaPrecio = (c.desglose && c.desglose.precio_costo != null)
+      ? (vistaEsCosto
+          ? `<div style="font-size:.62rem;color:#dc2626;margin-top:1px;font-weight:600" title="Precio venta al cliente">venta ${fClp(c.precio)}</div>`
+          : `<div style="font-size:.62rem;color:#9ca3af;margin-top:1px;font-weight:500" title="Costo ILUS (Excel)">costo ${fClp(c.desglose.precio_costo)}</div>`)
+      : '';
+
     html += `
     <div class="courier-item${sel?' selected':''}" onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
       <div class="courier-radio"></div>
       <div style="min-width:96px;display:flex;align-items:center;justify-content:flex-start">${_logoFor(c)}</div>
       <div class="courier-info">
-        <div class="courier-name">${escHtml(c.courier_nombre)}${recIcon}${profitIcon}</div>
+        <div class="courier-name">${escHtml(c.courier_nombre)}${recIcon}${profitIcon}${chipValid}${chipWarn}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
-        <div class="courier-etd">${escHtml(c.tiempo_transito||'—')} ${fuente}</div>
+        <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
       </div>
       <div style="text-align:right;min-width:96px">
-        <div class="courier-price">${fClp(c.precio)}</div>
+        <div class="courier-price" style="${vistaEsCosto?'color:#475569':''}" title="${c.desglose ? 'Costo $'+Math.round(c.desglose.precio_costo).toLocaleString('es-CL')+' + margen '+(c.desglose.margen_pct||0).toFixed(0)+'% + IVA '+(c.desglose.iva_pct||0).toFixed(0)+'%' : 'Precio cliente'}">${fClp(precioVisible)}</div>
+        ${subLineaPrecio}
         ${badgeProfit}
       </div>
     </div>`;
@@ -1696,6 +1788,529 @@ function setCourier(c){
     servicio:  c.servicio,
   };
   renderCouriers();
+}
+
+// ════════════════════════════════════════════════════════════
+//  AUDITORÍA DE COTIZACIÓN (TRACE + HISTÓRICO)
+// ════════════════════════════════════════════════════════════
+let _auditCtx = null; // { courier_id, courier_nombre, comuna, bracket, precio }
+
+function abrirAuditoriaCourier(auditId, cotizacion){
+  // Guardar contexto para el botón "Validar"
+  const trace = cotizacion.trace || {};
+  _auditCtx = {
+    courier_id:     cotizacion.courier_id,
+    courier_nombre: cotizacion.courier_nombre,
+    comuna:         (_docData?.header?.comuna || ''),
+    bracket:        trace.bracket,
+    precio:         cotizacion.precio,
+  };
+
+  const modal = document.getElementById('modalAudit');
+  modal.style.display = 'flex';
+  document.getElementById('audTitle').textContent =
+    `Auditoría · ${cotizacion.courier_nombre || 'Courier'}`;
+
+  const body = document.getElementById('audBody');
+  body.innerHTML = `<div class="text-center text-muted" style="padding:32px">
+    <div class="spinner-border spinner-border-sm text-danger"></div>
+    <div style="margin-top:8px">Cargando histórico…</div>
+  </div>`;
+
+  // Render con datos del trace inmediato + fetch del histórico
+  const fmt = n => n != null ? '$'+Math.round(n).toLocaleString('es-CL') : '—';
+
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">';
+  html += `<div style="background:#f8fafc;padding:10px 12px;border-radius:8px;border:1px solid #e2e8f0">
+    <div style="font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Precio al cliente</div>
+    <div style="font-size:1.45rem;font-weight:900;color:#dc2626;margin-top:2px">${fmt(cotizacion.precio)}</div>
+    <div style="font-size:.72rem;color:#64748b">Peso usado: ${(trace.peso_usado||0).toFixed(2)} kg</div>
+  </div>`;
+  html += `<div style="background:#f8fafc;padding:10px 12px;border-radius:8px;border:1px solid #e2e8f0">
+    <div style="font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Bracket aplicado</div>
+    <div style="font-size:1.45rem;font-weight:900;color:#0f172a;margin-top:2px">${escHtml(trace.bracket||'—')}</div>
+    <div style="font-size:.72rem;color:#64748b">Comuna: ${escHtml(trace.comuna_db||_auditCtx.comuna)}</div>
+  </div>`;
+  html += '</div>';
+
+  // ── Desglose comercial Costo → Margen → IVA → Venta (Daniel 22/05/2026) ──
+  // Si la cotización viene del backend con desglose, lo mostramos. Es la
+  // pieza clave para auditoría FedEx: muestra cómo se llegó al precio final.
+  const dsg = cotizacion.desglose || trace.desglose;
+  if(dsg && dsg.precio_costo != null){
+    html += `<div style="background:linear-gradient(135deg,#fef2f2 0%,#fff 100%);border:1.5px solid #dc2626;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <b style="color:#0f172a;font-size:.88rem"><i class="bi bi-calculator me-1" style="color:#dc2626"></i>Desglose del cálculo (auditable)</b>
+        <span style="font-size:.66rem;color:#64748b;font-weight:600">Fuente Excel + política ILUS</span>
+      </div>
+      <table style="width:100%;font-size:.82rem;border-collapse:collapse">
+        <tbody>
+          <tr style="border-bottom:1px solid #fde2e2">
+            <td style="padding:6px 0;color:#64748b">Costo del Excel</td>
+            <td style="padding:6px 0;text-align:right;font-weight:700;color:#0f172a">${fmt(dsg.precio_costo)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #fde2e2">
+            <td style="padding:6px 0;color:#64748b">+ Margen ${(dsg.margen_pct||0).toFixed(0)}%</td>
+            <td style="padding:6px 0;text-align:right;color:#16a34a;font-weight:600">+ ${fmt(dsg.margen_clp)}</td>
+          </tr>
+          <tr style="border-bottom:1.5px solid #cbd5e1;background:#f8fafc">
+            <td style="padding:6px 0;color:#475569;font-weight:600;padding-left:8px">= Subtotal neto</td>
+            <td style="padding:6px 0;text-align:right;font-weight:700;color:#0f172a">${fmt(dsg.subtotal_neto)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #fde2e2">
+            <td style="padding:6px 0;color:#64748b">+ IVA ${(dsg.iva_pct||0).toFixed(0)}%</td>
+            <td style="padding:6px 0;text-align:right;color:#16a34a;font-weight:600">+ ${fmt(dsg.iva_clp)}</td>
+          </tr>
+          <tr style="background:#fff;border-top:2px solid #dc2626">
+            <td style="padding:8px 0 4px;color:#dc2626;font-weight:800;text-transform:uppercase;font-size:.78rem">Precio venta cliente</td>
+            <td style="padding:8px 0 4px;text-align:right;font-weight:900;color:#dc2626;font-size:1.05rem">${fmt(dsg.precio_venta)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  // Validación / fuente
+  const fuenteLabel = {
+    'api': 'API en vivo (FedEx)',
+    'tabla': 'Tabla de tarifas',
+    'tabla_fallback': 'Tabla (API caída)',
+    'validado_excel': 'Validado contra Excel',
+    'manual': 'Edición manual',
+    'no_cobertura': 'Sin cobertura',
+    'error': 'Error',
+  }[cotizacion.fuente] || cotizacion.fuente || '—';
+  const validadoChip = trace.validado
+    ? '<span style="background:#dcfce7;color:#15803d;padding:3px 8px;border-radius:50px;font-size:.7rem;font-weight:700">✓ VALIDADA</span>'
+    : '<span style="background:#fff8e1;color:#92400e;padding:3px 8px;border-radius:50px;font-size:.7rem;font-weight:700">Sin validar</span>';
+
+  html += `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:.82rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px">
+      <b style="color:#0f172a">Trazabilidad del cálculo</b>${validadoChip}
+    </div>
+    <div style="font-size:.78rem;color:#374151;line-height:1.55">
+      <div><b>Fuente:</b> ${escHtml(fuenteLabel)}</div>
+      <div><b>Fórmula:</b> <code style="font-size:.74rem;background:#f3f4f6;padding:1px 5px;border-radius:3px">${escHtml(trace.formula||'—')}</code></div>
+      <div><b>Brackets disponibles:</b> ${(trace.json_brackets_disponibles||[]).map(b=>`<code style="background:#f3f4f6;padding:0 4px;border-radius:3px;margin-right:3px">${escHtml(b)}</code>`).join(' ') || '—'}</div>
+      ${cotizacion.audit_id ? `<div style="font-size:.7rem;color:#9ca3af;margin-top:4px">Audit ID #${cotizacion.audit_id}</div>` : ''}
+    </div>
+  </div>`;
+
+  // Advertencias
+  const advs = trace.advertencias || [];
+  if(advs.length){
+    html += `<div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:.8rem;color:#92400e">
+      <b><i class="bi bi-exclamation-triangle me-1"></i>Advertencias:</b>
+      <ul style="margin:6px 0 0 22px;padding:0">
+        ${advs.map(a => `<li style="margin-bottom:3px">${escHtml(a)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  // Placeholder histórico (se rellena con fetch)
+  html += `<div id="audHistorico">
+    <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:.82rem">
+      <div class="spinner-border spinner-border-sm" style="opacity:.5"></div>
+      <div style="margin-top:4px">Cargando histórico…</div>
+    </div>
+  </div>`;
+
+  body.innerHTML = html;
+
+  // Habilitar botón "Marcar como validada" solo si hay bracket válido
+  const btnVal = document.getElementById('audBtnValidar');
+  if(trace.bracket && cotizacion.tiene_cobertura && !trace.validado){
+    btnVal.style.display = '';
+  } else {
+    btnVal.style.display = 'none';
+  }
+
+  // Cargar histórico
+  cargarAuditHistorico(auditId, cotizacion);
+}
+
+async function cargarAuditHistorico(auditId, cotizacion){
+  const el = document.getElementById('audHistorico');
+  if(!el) return;
+  try {
+    let url;
+    if(auditId){
+      url = `/api/transporte/courier-audit/${auditId}`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if(!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+      _renderAuditHistorico(el, d.historico || [], 'misma comuna + courier');
+    } else {
+      url = `/api/transporte/courier-audit?courier_id=${cotizacion.courier_id}&comuna=${encodeURIComponent(_auditCtx.comuna)}&limit=10`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if(!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+      _renderAuditHistorico(el, d.rows || [], 'misma comuna + courier');
+    }
+  } catch(e){
+    el.innerHTML = `<div style="color:#dc2626;font-size:.78rem;text-align:center;padding:12px">
+      Error cargando histórico: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _renderAuditHistorico(el, rows, contextLabel){
+  if(!rows.length){
+    el.innerHTML = `<div style="text-align:center;color:#9ca3af;padding:14px;font-size:.78rem;
+      background:#f9fafb;border-radius:6px">
+      Sin cotizaciones previas para ${escHtml(contextLabel)}.
+    </div>`;
+    return;
+  }
+  const fmt = n => n != null ? '$'+Math.round(n).toLocaleString('es-CL') : '—';
+  let html = `<div style="margin-top:4px"><b style="font-size:.82rem;color:#374151">
+    Últimas ${rows.length} cotizaciones (${escHtml(contextLabel)})
+  </b></div>`;
+  html += `<div style="margin-top:6px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+    <table style="width:100%;font-size:.74rem;border-collapse:collapse">
+    <thead style="background:#f9fafb"><tr>
+      <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Fecha</th>
+      <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Peso</th>
+      <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Bracket</th>
+      <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e7eb">Precio</th>
+      <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Fuente</th>
+      <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Por</th>
+    </tr></thead><tbody>`;
+  for(const h of rows){
+    const validIcon = h.validado ? ' <span style="color:#16a34a" title="Validada">✓</span>' : '';
+    html += `<tr style="border-bottom:1px solid #f3f4f6">
+      <td style="padding:5px 8px;color:#6b7280">${escHtml((h.cotizacion_at||'').slice(0,16))}</td>
+      <td style="padding:5px 8px">${(h.peso_kg||0).toFixed(1)} kg</td>
+      <td style="padding:5px 8px"><code style="background:#f3f4f6;padding:0 4px;border-radius:3px;font-size:.72rem">${escHtml(h.bracket_aplicado||'—')}</code></td>
+      <td style="padding:5px 8px;text-align:right;font-weight:600">${fmt(h.precio_calculado)}${validIcon}</td>
+      <td style="padding:5px 8px;color:#6b7280;font-size:.7rem">${escHtml(h.fuente||'—')}</td>
+      <td style="padding:5px 8px;color:#6b7280;font-size:.7rem">${escHtml(h.cotizado_por||'—')}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+function cerrarAuditoriaCourier(){
+  document.getElementById('modalAudit').style.display = 'none';
+  _auditCtx = null;
+}
+
+async function validarTarifaActual(){
+  if(!_auditCtx || !_auditCtx.courier_id) return;
+  const precioRaw = await ilusPrompt({
+    title: 'Validar tarifa contra Excel',
+    message: `Confirma el precio CORRECTO para ${_auditCtx.courier_nombre} en ${_auditCtx.comuna} bracket "${_auditCtx.bracket}":`,
+    placeholder: 'Ej: 105237',
+    defaultValue: String(_auditCtx.precio || ''),
+    required: true,
+  });
+  if(precioRaw === null) return;
+  const precio = parseInt(precioRaw.replace(/[.,$\s]/g,''), 10);
+  if(isNaN(precio) || precio <= 0){
+    await ilusAlert({title:'Precio inválido', message:'Debe ser un número entero positivo.', type:'warning'});
+    return;
+  }
+  const notas = await ilusPrompt({
+    title: 'Notas de validación',
+    message: 'Fuente o referencia (ej: Excel maestro 21/05/2026)',
+    placeholder: 'Excel maestro 21/05/2026',
+    required: false,
+  });
+  if(notas === null) return;
+
+  try {
+    const r = await fetch(`/api/transporte/couriers/${_auditCtx.courier_id}/tarifa-validar`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        comuna:  _auditCtx.comuna,
+        bracket: _auditCtx.bracket,
+        precio_correcto: precio,
+        notas: notas || '',
+      })
+    });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+    ilusToast(`✓ Tarifa validada: ${_auditCtx.courier_nombre} ${_auditCtx.comuna} = $${precio.toLocaleString('es-CL')}`, {type:'success'});
+    cerrarAuditoriaCourier();
+    // Refrescar cotizaciones
+    _cotCache.clear?.();
+    actualizarTarifas();
+  } catch(e){
+    await ilusAlert({title:'Error al validar', message:e.message, type:'error'});
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOGGLE COSTO / VENTA + COMPARADOR TOP 3
+//  Daniel quiere ver de un vistazo: el más barato, el validado y
+//  el recomendado. Y en cuotas (sin re-fetch) puede cambiar entre
+//  "ver precio venta cliente" vs "ver costo ILUS" para analizar margen.
+// ════════════════════════════════════════════════════════════
+let _vistaPrecio = 'venta';   // 'venta' (default) | 'costo'
+
+function setVistaPrecio(modo){
+  if(modo !== 'venta' && modo !== 'costo') modo = 'venta';
+  _vistaPrecio = modo;
+  // Actualizar estilos de los segmentos
+  document.querySelectorAll('#toggleCostoVentaWrap .seg-btn').forEach(b => {
+    const active = (b.dataset.vista === modo);
+    b.style.background = active ? '#dc2626' : 'transparent';
+    b.style.color      = active ? '#fff'    : '#6b7280';
+  });
+  const hint = document.getElementById('vistaPrecioHint');
+  if(hint){
+    hint.textContent = modo === 'costo'
+      ? 'Lo que ILUS paga al courier (sin margen ni IVA)'
+      : 'Lo que paga el cliente (costo + margen + IVA)';
+  }
+  renderCouriers();
+}
+
+function _precioMostrar(c){
+  // Devuelve el precio según vista activa. Si no hay desglose, usa precio.
+  if(_vistaPrecio === 'costo' && c.desglose && c.desglose.precio_costo != null){
+    return c.desglose.precio_costo;
+  }
+  return c.precio;
+}
+
+function renderComparadorTop(conCob){
+  const wrap = document.getElementById('comparadorTop');
+  if(!wrap) return;
+  if(!conCob || conCob.length === 0){
+    wrap.style.display = 'none';
+    return;
+  }
+
+  // Identificar 3 categorías clave (puede haber solape)
+  // - cheapest: el más barato (por precio venta)
+  // - validated: el más barato con trace.validado === true
+  // - fastest: en futuro podríamos rankear por tiempo, ahora solo "recomendado"
+  const sorted = [...conCob].sort((a,b) => (a.precio||0) - (b.precio||0));
+  const cheapest  = sorted[0] || null;
+  const validated = sorted.find(c => c.trace && c.trace.validado) || null;
+  // El "validado distinto al más barato" — si coinciden no lo mostramos 2 veces
+  const validatedDistinct = (validated && validated.courier_id !== (cheapest?.courier_id)) ? validated : null;
+
+  // Si solo tenemos un courier o todos coinciden → no mostramos comparador
+  if(conCob.length < 2 && !validatedDistinct){
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const fmt = n => n != null ? '$'+Math.round(n).toLocaleString('es-CL') : '—';
+  const cell = (c, label, color, icon) => {
+    if(!c) return '';
+    const p = _precioMostrar(c);
+    const isVenta = (_vistaPrecio === 'venta');
+    const subPrice = (c.desglose && c.desglose.precio_costo != null && isVenta)
+      ? `<div style="font-size:.6rem;color:#9ca3af;margin-top:1px">costo ${fmt(c.desglose.precio_costo)}</div>`
+      : '';
+    return `
+      <div onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'
+           style="background:#fff;border:1.5px solid ${color};border-radius:9px;
+                  padding:9px 11px;cursor:pointer;flex:1;min-width:0;
+                  transition:transform .12s,box-shadow .12s"
+           onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,.08)'"
+           onmouseout="this.style.transform='';this.style.boxShadow=''">
+        <div style="font-size:.62rem;color:${color};font-weight:800;text-transform:uppercase;letter-spacing:.4px">
+          ${icon} ${label}
+        </div>
+        <div style="font-weight:700;color:#0f172a;font-size:.82rem;margin-top:2px;
+                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${escHtml(c.courier_nombre || '—')}
+        </div>
+        <div style="color:${color};font-weight:900;font-size:1.08rem;margin-top:1px">
+          ${fmt(p)}
+        </div>
+        ${subPrice}
+      </div>`;
+  };
+
+  const cells = [
+    cell(cheapest,           'Más barato',  '#16a34a', '🏆'),
+    cell(validatedDistinct,  'Validada',    '#0ea5e9', '✓'),
+  ].filter(Boolean);
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:stretch">
+      ${cells.join('')}
+    </div>`;
+  wrap.style.display = '';
+}
+
+// ════════════════════════════════════════════════════════════
+//  HISTÓRICO DE COTIZACIONES POR DOCUMENTO
+//  Daniel cotiza FCV 10644 hoy y la próxima semana → puede comparar
+//  ambas sesiones lado a lado en este modal.
+// ════════════════════════════════════════════════════════════
+async function abrirHistoricoDoc(){
+  if(!_docData || !_docData.header){
+    if(window.ilusAlert) await ilusAlert({
+      title: 'Carga un documento primero',
+      message: 'Para ver el histórico necesito un TIDO+NUDO cargado.',
+      type: 'info',
+    });
+    return;
+  }
+  const tido = _docData.header.tido || document.getElementById('docTipo')?.value || '';
+  const nudo = _docData.header.nudo || (document.getElementById('docNudo')?.value || '').trim();
+  if(!tido || !nudo){
+    if(window.ilusToast) ilusToast('Falta TIDO o NUDO en el documento.', {type:'warning'});
+    return;
+  }
+
+  // Asegurar que existe el modal
+  let modal = document.getElementById('modalHistDoc');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'modalHistDoc';
+    modal.className = 'modal-mf';
+    modal.style.display = 'none';
+    modal.innerHTML = `
+      <div class="modal-mf-backdrop" onclick="cerrarHistoricoDoc()"></div>
+      <div class="modal-mf-box" style="width:min(880px,96vw)">
+        <div class="modal-mf-hdr">
+          <i class="bi bi-clock-history" style="color:#fff;font-size:1.2rem"></i>
+          <h3 id="hdTitle">Histórico de cotizaciones</h3>
+          <button class="modal-mf-x" onclick="cerrarHistoricoDoc()" aria-label="Cerrar">&times;</button>
+        </div>
+        <div class="modal-mf-body" id="hdBody">
+          <div class="text-center text-muted" style="padding:32px">
+            <div class="spinner-border spinner-border-sm text-danger"></div>
+            <div style="margin-top:8px">Cargando histórico…</div>
+          </div>
+        </div>
+        <div class="modal-mf-foot">
+          <button class="btn btn-light" onclick="cerrarHistoricoDoc()">Cerrar</button>
+          <button class="btn btn-dark" id="hdBtnExport" onclick="exportarAuditDoc()">
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar a Excel
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+
+  modal.style.display = 'flex';
+  document.getElementById('hdTitle').textContent =
+    `Histórico · ${tido} ${nudo}`;
+  const body = document.getElementById('hdBody');
+  body.innerHTML = `<div class="text-center text-muted" style="padding:32px">
+    <div class="spinner-border spinner-border-sm text-danger"></div>
+    <div style="margin-top:8px">Cargando histórico…</div>
+  </div>`;
+
+  try {
+    const r = await fetch(`/api/transporte/courier-audit/por-documento?tido=${encodeURIComponent(tido)}&nudo=${encodeURIComponent(nudo)}`);
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error || 'HTTP '+r.status);
+    _renderHistoricoDoc(body, d);
+  } catch(e){
+    body.innerHTML = `<div style="color:#dc2626;font-size:.86rem;text-align:center;padding:18px">
+      Error cargando histórico: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _renderHistoricoDoc(el, data){
+  const sesiones = data.sesiones || [];
+  const fmt = n => n != null ? '$'+Math.round(n).toLocaleString('es-CL') : '—';
+  if(!sesiones.length){
+    el.innerHTML = `<div style="text-align:center;color:#9ca3af;padding:30px;font-size:.88rem;
+                                background:#f9fafb;border-radius:8px">
+      <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:6px;color:#cbd5e1"></i>
+      Sin cotizaciones previas para este documento.<br>
+      <span style="font-size:.74rem">La primera cotización quedará registrada aquí.</span>
+    </div>`;
+    return;
+  }
+
+  let html = `<div style="font-size:.82rem;color:#64748b;margin-bottom:12px">
+    <b>${sesiones.length}</b> sesión${sesiones.length>1?'es':''} de cotización
+    encontrada${sesiones.length>1?'s':''} para <b>${escHtml(data.tido)} ${escHtml(data.nudo)}</b>.
+    Cada sesión agrupa cotizaciones cercanas en tiempo.
+  </div>`;
+
+  for(let i=0; i<sesiones.length; i++){
+    const s = sesiones[i];
+    const couriersCount = s.couriers.length;
+    const minPrecio = s.couriers.reduce((m, c) => (c.precio_venta && (!m || c.precio_venta < m)) ? c.precio_venta : m, null);
+    const isOpenByDefault = (i === 0); // primera sesión expandida
+
+    html += `<details ${isOpenByDefault?'open':''}
+      style="border:1px solid #e5e7eb;border-radius:9px;margin-bottom:8px;background:#fff">
+      <summary style="padding:10px 14px;cursor:pointer;list-style:none;
+                      display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <i class="bi bi-chevron-right" style="font-size:.74rem;color:#6b7280"></i>
+          <div>
+            <div style="font-weight:700;color:#0f172a;font-size:.86rem">
+              <i class="bi bi-calendar3 me-1" style="color:#dc2626"></i>
+              ${escHtml(s.session_at)} · ${escHtml(s.comuna || 'Sin comuna')}
+            </div>
+            <div style="font-size:.7rem;color:#6b7280;margin-top:2px">
+              Peso: ${(s.peso_kg||0).toFixed(1)} kg
+              · Por: ${escHtml(s.cotizado_por || '—')}
+              · ${couriersCount} courier${couriersCount>1?'s':''}
+              · desde ${fmt(minPrecio)}
+            </div>
+          </div>
+        </div>
+      </summary>
+      <div style="padding:0 14px 12px">
+        <table style="width:100%;font-size:.76rem;border-collapse:collapse">
+          <thead style="background:#f9fafb">
+            <tr>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Courier</th>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb">Bracket</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e7eb">Costo</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e7eb">Margen</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e7eb">IVA</th>
+              <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e7eb">Venta</th>
+              <th style="text-align:center;padding:6px 8px;border-bottom:1px solid #e5e7eb">Fuente</th>
+            </tr>
+          </thead>
+          <tbody>`;
+    for(const c of s.couriers){
+      const cheap = (c.precio_venta === minPrecio) ? ' 🏆' : '';
+      const validIcon = c.validado ? ' <span title="Validada" style="color:#16a34a">✓</span>' : '';
+      html += `<tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:5px 8px;font-weight:600;color:#0f172a">${escHtml(c.courier_nombre)}${cheap}${validIcon}</td>
+        <td style="padding:5px 8px">
+          <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:.7rem">${escHtml(c.bracket || '—')}</code>
+        </td>
+        <td style="padding:5px 8px;text-align:right;color:#6b7280">${c.precio_costo ? fmt(c.precio_costo) : '—'}</td>
+        <td style="padding:5px 8px;text-align:right;color:#16a34a">${c.margen_clp ? '+'+fmt(c.margen_clp) : '—'}</td>
+        <td style="padding:5px 8px;text-align:right;color:#16a34a">${c.iva_clp ? '+'+fmt(c.iva_clp) : '—'}</td>
+        <td style="padding:5px 8px;text-align:right;font-weight:800;color:#dc2626">${fmt(c.precio_venta)}</td>
+        <td style="padding:5px 8px;text-align:center;font-size:.66rem;color:#6b7280">${escHtml(c.fuente || '—')}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div></details>`;
+  }
+  el.innerHTML = html;
+}
+
+function cerrarHistoricoDoc(){
+  const m = document.getElementById('modalHistDoc');
+  if(m) m.style.display = 'none';
+}
+
+function exportarAuditDoc(){
+  // Descarga el Excel filtrado por tido+nudo del documento actual.
+  if(!_docData || !_docData.header){
+    if(window.ilusToast) ilusToast('Carga un documento primero.', {type:'warning'});
+    return;
+  }
+  const tido = _docData.header.tido || document.getElementById('docTipo')?.value || '';
+  const nudo = _docData.header.nudo || (document.getElementById('docNudo')?.value || '').trim();
+  if(!tido || !nudo){
+    if(window.ilusToast) ilusToast('Falta TIDO o NUDO.', {type:'warning'});
+    return;
+  }
+  const url = `/api/transporte/courier-audit.xlsx?tido=${encodeURIComponent(tido)}&nudo=${encodeURIComponent(nudo)}&limit=5000`;
+  // Trigger download
+  window.location.href = url;
+  if(window.ilusToast) ilusToast('Descargando Excel…', {type:'info'});
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1979,6 +2594,35 @@ function setBuscarLoading(on){
       <button class="btn btn-light" onclick="cerrarModalManifiesto()">Cancelar</button>
       <button class="btn btn-primary" id="mfBtnEnviar" onclick="enviarAManifiesto()">
         <i class="bi bi-send me-1"></i>Enviar al manifiesto
+      </button>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════
+   MODAL: AUDITORÍA DE COTIZACIÓN DE COURIER
+   Muestra el TRACE completo del cálculo: bracket, fórmula, fuente,
+   advertencias, histórico de cotizaciones a la misma comuna+courier.
+   Crítico para auditorías de FedEx u otros couriers.
+═════════════════════════════════════════════════════════════════ #}
+<div id="modalAudit" class="modal-mf" style="display:none">
+  <div class="modal-mf-backdrop" onclick="cerrarAuditoriaCourier()"></div>
+  <div class="modal-mf-box" style="width:min(720px,96vw)">
+    <div class="modal-mf-hdr">
+      <i class="bi bi-shield-check" style="color:#CC0000;font-size:1.2rem"></i>
+      <h3 id="audTitle">Auditoría de cotización</h3>
+      <button class="modal-mf-x" onclick="cerrarAuditoriaCourier()" aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="modal-mf-body" id="audBody">
+      <div class="text-center text-muted" style="padding:32px">
+        <div class="spinner-border spinner-border-sm text-danger"></div>
+        <div style="margin-top:8px">Cargando auditoría…</div>
+      </div>
+    </div>
+    <div class="modal-mf-foot">
+      <button class="btn btn-light" onclick="cerrarAuditoriaCourier()">Cerrar</button>
+      <button class="btn btn-success" id="audBtnValidar" onclick="validarTarifaActual()" style="display:none">
+        <i class="bi bi-check2-circle me-1"></i>Marcar como VALIDADA
       </button>
     </div>
   </div>

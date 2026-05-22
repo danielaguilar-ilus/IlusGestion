@@ -205,6 +205,37 @@ function filtrarEquipos(q) {
 function abrirEditarCliente() {
   new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
 }
+
+// Atajo directo desde la KPI "Tipo cliente" del tab Resumen (Daniel 22/05/2026).
+// Abre el modal, hace scroll al campo tipo_cliente y lo resalta brevemente
+// para que sea obvio dónde cambiar. Si el usuario es técnico no debería poder
+// llegar aquí (botón oculto en el template).
+function abrirEditarTipoCliente() {
+  const modalEl = document.getElementById('modalEditarCliente');
+  if (!modalEl) return;
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  // Esperar a que termine la animación de apertura de Bootstrap (~250 ms)
+  // antes de hacer scroll + focus, sino el select aún no está renderizado.
+  modalEl.addEventListener('shown.bs.modal', function onShown() {
+    modalEl.removeEventListener('shown.bs.modal', onShown);
+    const sel = document.getElementById('ec_tipo_cliente');
+    if (!sel) return;
+    try { sel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_e) {}
+    setTimeout(() => {
+      try { sel.focus(); } catch(_e) {}
+      // Resaltar brevemente con un anillo rojo ILUS para guiar el ojo
+      const wrap = sel.parentElement;
+      if (wrap) {
+        const prev = wrap.style.boxShadow;
+        wrap.style.transition = 'box-shadow .25s ease';
+        wrap.style.boxShadow = '0 0 0 4px rgba(220,38,38,.18), 0 0 0 1px #dc2626';
+        setTimeout(() => { wrap.style.boxShadow = prev || ''; }, 1800);
+      }
+    }, 150);
+  }, { once: true });
+}
+window.abrirEditarTipoCliente = abrirEditarTipoCliente;
 function abrirErpModal() {
   new bootstrap.Modal(document.getElementById('modalErp')).show();
 }
