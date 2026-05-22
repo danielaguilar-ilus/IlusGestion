@@ -26934,19 +26934,10 @@ def admin_mantenciones_clean_orphans():
 @app.route("/mantenciones")
 @_mant_required
 def mant_index():
-    # FIX 2026-05-22 (Daniel — caso Lenin "no veo las OTs"): si el usuario
-    # es técnico y entra al dashboard global, lo mandamos directo a "Mi día"
-    # para que vea SOLO sus OTs (hoy + semana + atrasadas + por revisar).
-    # El dashboard global tiene KPIs (MRR, contratos vencen) que no le
-    # aplican a un técnico — solo lo confundían al ver "Próximas OTs"
-    # con visitas de clientes que NO son suyos.
-    try:
-        _u_idx = getattr(g, "user", None) or {}
-        if _rol_familia((_u_idx.get("role") or "")) == "tecnico":
-            return redirect(url_for("mant_mi_dia"))
-    except Exception as _e_redir:
-        print(f"[mant_index] redirect técnico falló: {_e_redir}", flush=True)
-
+    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos
+    # (módulo Mi día removido por decisión del producto). Los técnicos
+    # usan /mantenciones/ots que aplica filtro solo_mias=True automático
+    # según rol (ver mant_ots_list).
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
     pronto = hoy + timedelta(days=60)
@@ -36890,125 +36881,22 @@ def mant_cliente_maquinas_list(cid):
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 2026-05-22 (Daniel) — MI DÍA (vista del técnico Lenin)
-# Dashboard mobile-first agrupado por:
-#   - OTs de HOY (programadas para fecha=hoy)
-#   - OTs de la SEMANA (próximos 7 días)
-#   - OTs por aprobar (que firmó pero quedaron pendientes_aprobacion)
-#   - OTs atrasadas (vencidas — Lenin debe ponerse al día)
-# Otros roles (admin, ejecutivo, superadmin) también pueden entrar, pero
-# en su caso se muestran las OTs que tienen ASIGNADAS o que ellos CREARON.
+# 2026-05-22 (Daniel) — MI DÍA ELIMINADO POR DECISIÓN DEL PRODUCTO
+# El módulo "Mi día" fue removido. El técnico ve sus OTs directamente
+# en /mantenciones/ots gracias al filtro solo_mias=True automático que
+# aplica mant_ots_list según rol del usuario.
+# (Endpoint /mantenciones/mi-dia eliminado — devuelve 404.)
 # ═════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/mi-dia")
 @_mant_required
 def mant_mi_dia():
-    """Vista 'Mi día' del técnico: OTs de hoy + semana + por aprobar.
+    """Endpoint deprecado — redirige al listado de OTs.
 
-    Para Lenin (rol=tecnico): muestra SOLO sus OTs asignadas, agrupadas
-    por urgencia. Para Aaron (rol=ejecutivo_sstt): muestra las que él
-    creó. Para admin/superadmin: ve todas las OTs ACTIVAS del sistema.
+    El módulo Mi día fue removido (Daniel 22/05/2026). El listado de OTs
+    aplica filtro solo_mias=True automático para técnicos, mostrando el
+    mismo subconjunto sin necesidad de una vista dedicada.
     """
-    user = getattr(g, "user", None) or {}
-    uid = user.get("id")
-    username = (user.get("username") or "").strip()
-    role_fam = _rol_familia(user.get("role") or "")
-    es_tecnico = (role_fam == "tecnico")
-    es_ejecutivo = (role_fam == "ejecutivo")
-    hoy = datetime.now().date()
-    semana_fin = hoy + timedelta(days=7)
-
-    # Construir cláusulas según rol
-    where_base = []
-    params_base = []
-    if es_tecnico and uid:
-        where_base.append(
-            "(v.tecnico_user_id=%s OR "
-            " v.id IN (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_user_id=%s))"
-        )
-        params_base.extend([int(uid), int(uid)])
-    elif es_ejecutivo:
-        clauses_e = []
-        if username:
-            clauses_e.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-            params_base.append(username)
-        if uid:
-            clauses_e.append("v.tecnico_user_id=%s")
-            params_base.append(int(uid))
-        if clauses_e:
-            where_base.append("(" + " OR ".join(clauses_e) + ")")
-    # admin/superadmin: sin filtro de usuario (ve todo)
-
-    sql_base = (
-        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
-        "       v.fecha_programada, v.hora_inicio, v.prioridad, "
-        "       v.tecnico_user_id, v.firma_tecnico_at, v.firma_supervisor_at, "
-        "       c.razon_social, c.direccion AS cli_direccion, "
-        "       c.comuna AS cli_comuna, c.contacto_tel AS cli_tel, "
-        "       COALESCE(u.nombre, u.username, v.tecnico) AS tecnico_nombre "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
-        "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
-    )
-
-    def _do_query(extra_where, extra_params, order_by="v.fecha_programada, v.hora_inicio, v.id"):
-        clauses = list(where_base) + list(extra_where or [])
-        params = list(params_base) + list(extra_params or [])
-        wstr = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        try:
-            rows = mysql_fetchall(
-                sql_base + wstr + f" ORDER BY {order_by} LIMIT 100",
-                tuple(params)
-            ) or []
-        except Exception as e:
-            print(f"[mi-dia] query fail: {e}", flush=True)
-            rows = []
-        return [dict(r) for r in rows]
-
-    # 1) OTs de HOY (programadas o en_curso, fecha=hoy)
-    ots_hoy = _do_query(
-        ["v.fecha_programada = %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy],
-        order_by="v.hora_inicio, v.id"
-    )
-
-    # 2) OTs de la SEMANA (próximos 7 días, excluyendo hoy)
-    ots_semana = _do_query(
-        ["v.fecha_programada > %s",
-         "v.fecha_programada <= %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy, semana_fin],
-    )
-
-    # 3) OTs ATRASADAS (fecha < hoy y aún no cerradas)
-    ots_atrasadas = _do_query(
-        ["v.fecha_programada < %s",
-         "v.estado IN ('programada','en_curso','reagendada')"],
-        [hoy],
-        order_by="v.fecha_programada DESC, v.id"
-    )
-
-    # 4) OTs POR APROBAR (firmó técnico — espera supervisor)
-    # Para ejecutivo y admin: las que están pendientes_aprobacion (los van a firmar).
-    # Para técnico: las suyas firmadas para que vea cuándo se cerraron.
-    ots_por_aprobar = _do_query(
-        ["v.estado='pendiente_aprobacion'"],
-        [],
-        order_by="v.firma_tecnico_at DESC, v.id DESC"
-    )
-
-    return render_template(
-        "mantenciones/mi_dia.html",
-        ots_hoy=ots_hoy,
-        ots_semana=ots_semana,
-        ots_atrasadas=ots_atrasadas,
-        ots_por_aprobar=ots_por_aprobar,
-        hoy=hoy,
-        role_fam=role_fam,
-        es_tecnico=es_tecnico,
-        es_ejecutivo=es_ejecutivo,
-        nombre_user=(user.get("nombre") or username or "técnico"),
-    )
+    return redirect(url_for("mant_ots_list"))
 
 
 # ═════════════════════════════════════════════════════════════════════
