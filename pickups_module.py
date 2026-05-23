@@ -3105,6 +3105,13 @@ def register_pickup_routes(app, ctx):
 
         Args (query string):
             dias: int — ventana hacia atrás (default 30, max 180)
+            solo_con_saldo: '1'/'0' — si '1' (default) solo devuelve docs con
+                            saldo de despacho pendiente > 0. Si '0' devuelve
+                            todos los emitidos en la ventana de tiempo.
+                            Daniel 2026-05-23: "es mejor no asignarlo, porque
+                            vamos a enfocarnos en algo que no tiene salida, ya
+                            se entregó". El wizard interno usa solo_con_saldo=1
+                            para enfocar al operador en lo accionable.
 
         Estrategia:
           - Query a MAEEDO + MAEDDO + MAEEN filtrando por RUT y fechas.
@@ -3125,6 +3132,12 @@ def register_pickup_routes(app, ctx):
         except Exception:
             dias = 30
         dias = max(1, min(dias, 180))
+
+        # Daniel 2026-05-23: filtrar docs SIN saldo por default. El operador se
+        # enfoca solo en lo accionable (lo que el cliente puede REALMENTE retirar).
+        # Los docs ya despachados completos se ocultan a menos que pase solo_con_saldo=0.
+        solo_con_saldo_param = (request.args.get("solo_con_saldo") or "1").strip().lower()
+        solo_con_saldo = solo_con_saldo_param in ("1", "true", "yes", "y")
 
         try:
             from app import _random_sql_query, _random_sql_pool
@@ -3227,6 +3240,8 @@ def register_pickup_routes(app, ctx):
 
         # Construir lista de respuesta
         out = []
+        n_con_saldo = 0
+        n_sin_saldo = 0
         for r in rows:
             nudo_raw = (r.get("NUDO") or "").strip()
             tido_raw = (r.get("TIDO") or "").strip()
@@ -3249,6 +3264,16 @@ def register_pickup_routes(app, ctx):
             n_lineas = int(r.get("n_lineas") or 0)
             key = f"{tido_display}|{nudo_display}"
             ya_tiene_retiro = key in ya_asociados
+
+            tiene_saldo = saldo_zz > 0
+            if tiene_saldo: n_con_saldo += 1
+            else:           n_sin_saldo += 1
+
+            # Filtro Daniel 2026-05-23: si el operador pidió solo_con_saldo=1,
+            # saltamos los docs ya despachados (no retirables).
+            if solo_con_saldo and not tiene_saldo:
+                continue
+
             out.append({
                 "tido":           tido_raw,
                 "nudo":           nudo_raw,
@@ -3261,12 +3286,42 @@ def register_pickup_routes(app, ctx):
                 "total":          float(r.get("VABRDO") or 0),
                 "neto":           float(r.get("VANEDO") or 0),
                 "saldo_zz":       saldo_zz,
+                "tiene_saldo":    tiene_saldo,
                 "estado_pago":    (r.get("ESPGDO") or "").strip(),
                 "n_lineas":       n_lineas,
                 "ya_tiene_retiro": ya_tiene_retiro,
             })
 
-        return jsonify({"ok": True, "docs": out, "total": len(out)})
+        # Hint inteligente para el operador (Daniel: "tiene que enseñar")
+        hint = None
+        if not out and not n_con_saldo and not n_sin_saldo:
+            hint = (
+                "Este cliente no tiene documentos emitidos en los últimos "
+                f"{dias} días. Verifica que el RUT sea correcto o amplía la ventana."
+            )
+        elif solo_con_saldo and not n_con_saldo and n_sin_saldo > 0:
+            hint = (
+                f"El cliente tiene {n_sin_saldo} documento(s) emitido(s) pero "
+                "todos están ya despachados (sin saldo). Verifica con el cliente "
+                "qué viene a retirar — quizás ingresó mal el documento."
+            )
+        elif solo_con_saldo and n_con_saldo == 1:
+            hint = (
+                "Solo hay 1 documento con saldo pendiente. Asócialo y avanza al paso siguiente."
+            )
+
+        return jsonify({
+            "ok": True,
+            "docs": out,
+            "total": len(out),
+            "solo_con_saldo": solo_con_saldo,
+            "resumen": {
+                "con_saldo": n_con_saldo,
+                "sin_saldo": n_sin_saldo,
+                "total":     n_con_saldo + n_sin_saldo,
+            },
+            "hint": hint,
+        })
 
     # ══════════════════════════════════════════════════════════════════
     #  INFORME MENSUAL XLSX — Daniel pidió 22/05/2026
