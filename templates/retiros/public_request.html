@@ -123,21 +123,93 @@
     .step-icon{width:42px;height:42px;border-radius:10px;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.15rem;margin-bottom:14px}
 
     /* ════════════════════════════════════════════════════════════
-       FORM CARD
+       FORM CARD — premium, mismo nivel Linear/Stripe
        ════════════════════════════════════════════════════════════ */
-    .form-card{background:#fff;border:1px solid var(--gray-2);border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.06);overflow:hidden}
-    .form-head{background:#0a0a0a;color:#fff;padding:18px 24px;border-bottom:4px solid var(--ilus-red);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
-    .form-head h3{margin:0;font-family:'Bebas Neue';font-size:1.7rem;letter-spacing:.01em}
-    .form-head .form-sub{color:#9ca3af;font-size:.84rem;margin-top:3px}
-    .form-body{padding:28px}
+    .form-card{background:#fff;border:1px solid var(--gray-2);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.08), 0 4px 12px rgba(0,0,0,.04);overflow:hidden}
+    .form-head{
+      background:linear-gradient(135deg,#0a0a0a 0%, #1c1c1c 100%);
+      color:#fff;padding:32px 36px 28px;border-bottom:4px solid var(--ilus-red);
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+      position:relative;overflow:hidden;
+    }
+    .form-head::after{
+      content:'';position:absolute;right:-80px;top:-80px;width:260px;height:260px;
+      background:radial-gradient(circle, rgba(220,38,38,.16) 0%, transparent 70%);
+      pointer-events:none;
+    }
+    .form-head h3{
+      margin:0;font-family:'Bebas Neue';font-size:2.6rem;letter-spacing:.01em;line-height:.95;
+      position:relative;z-index:1;
+    }
+    .form-head .form-sub{color:#cbd5e1;font-size:.92rem;margin-top:6px;position:relative;z-index:1;font-weight:500}
+    .form-head .form-pill{background:rgba(220,38,38,.14);color:#fca5a5;border:1px solid rgba(220,38,38,.3);border-radius:50px;padding:8px 14px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:6px;position:relative;z-index:1;flex-shrink:0}
+    .form-body{padding:36px}
+    /* ── Step card grande — número rojo + título + subtítulo ── */
+    .step-section{
+      margin:0 0 28px;padding:24px 26px;background:#fff;
+      border:1.5px solid var(--gray-2);border-radius:14px;
+      transition:all .35s cubic-bezier(.4,0,.2,1);
+      opacity:0;transform:translateY(12px);
+      will-change:transform,opacity;
+    }
+    .step-section.in-view{opacity:1;transform:none}
+    .step-section.is-complete{border-color:#16a34a;background:linear-gradient(180deg,#f0fdf4 0%, #fff 50%)}
+    .step-section.is-comments{background:#fafafa;border-style:dashed;border-color:#d1d5db}
+    .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px}
+    .step-circle{
+      width:46px;height:46px;border-radius:50%;background:var(--ilus-red);color:#fff;
+      display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue';
+      font-size:1.5rem;letter-spacing:.02em;flex-shrink:0;
+      box-shadow:0 8px 18px rgba(220,38,38,.32);
+      transition:all .3s cubic-bezier(.4,0,.2,1);
+      position:relative;
+    }
+    .step-section.is-complete .step-circle{
+      background:#16a34a;box-shadow:0 8px 18px rgba(22,163,74,.32);
+      transform:scale(1.04);
+    }
+    .step-section.is-complete .step-circle::after{
+      content:'';position:absolute;inset:-4px;border-radius:50%;
+      border:2px solid #16a34a;opacity:.35;animation:circlePulseGreen 1.6s ease-in-out 1;
+    }
+    @keyframes circlePulseGreen{
+      0%{transform:scale(.85);opacity:.7}
+      100%{transform:scale(1.25);opacity:0}
+    }
+    .step-circle .step-check{display:none;font-family:'Inter';font-size:1.35rem;font-weight:900}
+    .step-section.is-complete .step-circle .step-num-text{display:none}
+    .step-section.is-complete .step-circle .step-check{display:block}
+    .step-titles{flex:1;min-width:0}
+    .step-titles h5{
+      margin:0;font-size:1.25rem;font-weight:900;color:#0a0a0a;letter-spacing:-.015em;
+      line-height:1.2;
+    }
+    .step-titles .step-sub{
+      margin:4px 0 0;font-size:.86rem;color:#6b7280;line-height:1.45;
+      max-width:560px;
+    }
+    .step-section.is-comments .step-titles h5{color:#374151}
+    /* Legacy section-mark — conservado por si algún include lo usa */
     .section-mark{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding-bottom:8px;border-bottom:1px solid #f3f4f6}
     .section-mark .sm-num{background:var(--ilus-red);color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex-shrink:0}
     .section-mark h5{margin:0;font-size:1rem;font-weight:900;letter-spacing:-.01em}
     .section-mark .sm-help{font-size:.78rem;color:#6b7280;margin-left:auto}
     .req{color:var(--ilus-red);font-weight:900}
-    .input-help{font-size:.7rem;color:#6b7280;margin-top:3px}
+    .input-help{font-size:.72rem;color:#6b7280;margin-top:4px;line-height:1.4}
+    .input-help.with-example{display:flex;align-items:center;gap:6px}
+    .input-help.with-example::before{content:'';width:3px;height:12px;background:#d1d5db;border-radius:2px;flex-shrink:0}
     .input-error{font-size:.74rem;color:var(--ilus-red);margin-top:3px;font-weight:600;display:none}
     .input-ok{font-size:.74rem;color:#16a34a;margin-top:3px;font-weight:600;display:none}
+    /* Focus ring premium rojo ILUS */
+    .form-control:focus, .form-select:focus{
+      border-color:var(--ilus-red) !important;
+      box-shadow:0 0 0 4px rgba(220,38,38,.15) !important;
+      outline:none;
+    }
+    .form-control, .form-select{
+      transition:border-color .15s cubic-bezier(.4,0,.2,1), box-shadow .15s cubic-bezier(.4,0,.2,1);
+    }
+    .form-label.small.fw-bold{color:#0a0a0a;font-weight:700 !important;letter-spacing:-.005em;margin-bottom:5px}
     .field-valid{border-color:#16a34a !important;background:#f0fdf4;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2316a34a'%3E%3Cpath d='M13.485 1.929a.75.75 0 0 1 0 1.06l-7.5 7.5a.75.75 0 0 1-1.06 0L1.515 7.078a.75.75 0 1 1 1.06-1.06l3.388 3.388 6.97-6.97a.75.75 0 0 1 1.061 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:32px !important}
     .field-invalid{border-color:#dc2626 !important;background:#fef2f2;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23dc2626'%3E%3Cpath d='M4.646 4.646a.75.75 0 0 1 1.06 0L8 6.94l2.293-2.293a.75.75 0 1 1 1.06 1.06L9.06 8l2.293 2.293a.75.75 0 0 1-1.06 1.06L8 9.06l-2.293 2.293a.75.75 0 0 1-1.06-1.06L6.94 8 4.646 5.706a.75.75 0 0 1 0-1.06z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:32px !important}
     .form-control,.form-select{font-size:.92rem;padding:10px 12px}
@@ -312,14 +384,43 @@
     .slot-quick.slot-clear{background:transparent;border-color:#d1d5db;color:#6b7280}
     .slot-quick.slot-clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 
-    /* Submit */
+    /* Submit — premium con pulso al click */
     .submit-btn{
-      background:var(--ilus-red);color:#fff;font-weight:900;font-size:1.05rem;padding:15px 30px;
-      border:none;border-radius:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-      box-shadow:0 14px 28px rgba(230,0,0,.32);transition:all .2s;cursor:pointer;letter-spacing:.02em;margin-top:16px;
+      background:linear-gradient(180deg,var(--ilus-red) 0%, #c10000 100%);
+      color:#fff;font-weight:900;font-size:1.1rem;padding:17px 30px;
+      border:none;border-radius:12px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+      box-shadow:0 14px 28px rgba(230,0,0,.32), inset 0 1px 0 rgba(255,255,255,.18);
+      transition:all .2s cubic-bezier(.4,0,.2,1);cursor:pointer;letter-spacing:.03em;margin-top:18px;
+      position:relative;overflow:hidden;
     }
-    .submit-btn:hover{background:var(--ilus-red-dk);transform:translateY(-2px);box-shadow:0 20px 36px rgba(230,0,0,.45)}
+    .submit-btn::before{
+      content:'';position:absolute;inset:0;
+      background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,.25) 50%, transparent 70%);
+      transform:translateX(-100%);transition:transform .6s cubic-bezier(.4,0,.2,1);
+    }
+    .submit-btn:hover{
+      background:linear-gradient(180deg, var(--ilus-red-dk) 0%, #960000 100%);
+      transform:translateY(-2px);
+      box-shadow:0 22px 40px rgba(230,0,0,.45), inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    .submit-btn:hover::before{transform:translateX(100%)}
+    .submit-btn:active{transform:translateY(0);box-shadow:0 8px 18px rgba(230,0,0,.3)}
+    .submit-btn.is-loading{pointer-events:none;opacity:.85}
+    .submit-btn.is-loading::after{
+      content:'';width:18px;height:18px;border-radius:50%;
+      border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;
+      animation:spinBtn .7s linear infinite;
+    }
+    .submit-btn.is-loading i.bi-send-check{display:none}
+    @keyframes spinBtn{to{transform:rotate(360deg)}}
     .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+    /* Pulse animation al hacer click en el submit */
+    @keyframes submitPulse{
+      0%{box-shadow:0 0 0 0 rgba(230,0,0,.6)}
+      100%{box-shadow:0 0 0 24px rgba(230,0,0,0)}
+    }
+    .submit-btn.pulse{animation:submitPulse .7s ease-out}
 
     /* Declaración de responsabilidad — card atractiva */
     .declaracion-box{
@@ -624,10 +725,10 @@
     <form id="form-solicitud" method="post" class="form-card" novalidate>
       <div class="form-head">
         <div>
-          <h3>SOLICITA TU RETIRO</h3>
-          <div class="form-sub">Completa el formulario · Recibirás el seguimiento en tu email</div>
+          <h3>AGENDAR TU RETIRO</h3>
+          <div class="form-sub">Te toma 2 minutos. Lo importante primero, los comentarios al final.</div>
         </div>
-        <span class="hero-pill red"><i class="bi bi-clock me-1"></i>3 minutos</span>
+        <span class="form-pill"><i class="bi bi-clock-fill"></i>2 minutos</span>
       </div>
       <div class="form-body">
         {% if errors %}
@@ -639,72 +740,114 @@
         </div>
         {% endif %}
 
-        {# ── 1. Documento + datos del cliente ──────────────────── #}
-        <div class="section-mark">
-          <span class="sm-num">1</span>
-          <h5>Documento del retiro</h5>
-          <span class="sm-help">Datos para validar y avisarte</span>
-        </div>
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">Tipo <span class="req">*</span></label>
-            <select name="document_type" class="form-select" required>
-              <option value="factura">Factura</option>
-              <option value="boleta">Boleta</option>
-              <option value="nota_venta">Nota de venta</option>
-              <option value="pedido">N° pedido</option>
-            </select>
+        {# ════════════════════════════════════════════════════════
+           PASO 1 — ¿QUÉ RETIRAS?
+           Documento de retiro (factura/boleta/NV) + número
+           ════════════════════════════════════════════════════════ #}
+        <section class="step-section" data-step="1" id="step-1">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">1</span>
+              <span class="step-check"><i class="bi bi-check-lg"></i></span>
+            </div>
+            <div class="step-titles">
+              <h5>¿Qué vienes a retirar?</h5>
+              <p class="step-sub">Cuéntanos qué documento vas a presentar. Lo usamos para encontrar tu compra en el sistema.</p>
+            </div>
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-bold">N° documento <span class="req">*</span></label>
-            <input name="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required placeholder="12345">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-bold">Tipo de documento <span class="req">*</span></label>
+              <select name="document_type" id="document_type" class="form-select" required>
+                <option value="factura">Factura electrónica</option>
+                <option value="boleta">Boleta electrónica</option>
+                <option value="nota_venta">Nota de venta</option>
+                <option value="pedido">N° de pedido</option>
+              </select>
+              <div class="input-help with-example">Elige según el documento que recibiste al comprar.</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small fw-bold">N° del documento <span class="req">*</span></label>
+              <input name="document_number" id="document_number" class="form-control" value="{{ fd.get('document_number','') }}" required placeholder="Ej: 10683" inputmode="numeric">
+              <div class="input-help with-example">El número aparece en la parte superior de tu factura, boleta o NV.</div>
+              <input type="hidden" name="invoice_total_amount" value="0">
+            </div>
           </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-bold">Comentarios <span class="text-muted fw-normal">(opcional)</span></label>
-            <input class="form-control" name="observations" value="{{ fd.get('observations','') }}" placeholder="Algo que debamos saber">
-            <input type="hidden" name="invoice_total_amount" value="0">
-          </div>
-          <div class="col-md-8">
-            <label class="form-label small fw-bold">Razón social o nombre <span class="req">*</span></label>
-            <input name="customer_name" id="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required placeholder="Mi Empresa S.A. / Juan Pérez" oninput="checkTerceroPanel()">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small fw-bold">RUT del cliente <span class="req">*</span></label>
-            <input name="customer_rut" id="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}"
-                   placeholder="12.345.678-9" required autocomplete="off"
-                   oninput="onRutInput(this)" onblur="validateRUT(this); checkTerceroPanel()">
-            <div class="input-help">Con dígito verificador</div>
-            <div class="input-error" id="customer_rut_err">RUT inválido — verifica el dígito verificador</div>
-            <div class="input-ok" id="customer_rut_ok">RUT válido</div>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-bold">Email <span class="req">*</span></label>
-            <input name="contact_email" id="contact_email" type="email" class="form-control"
-                   value="{{ fd.get('contact_email','') }}" required placeholder="tucorreo@email.com"
-                   autocomplete="email" oninput="onEmailInput(this)" onblur="validateEmail(this)">
-            <div class="input-help">Aquí recibirás el link de seguimiento</div>
-            <div class="input-error" id="contact_email_err">Email inválido — revisa el formato</div>
-            <div class="input-ok" id="contact_email_ok">Email válido</div>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-bold">Teléfono <span class="req">*</span></label>
-            <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
-                   value="{{ fd.get('contact_phone','') }}"
-                   placeholder="+56 9 1234 5678" required autocomplete="tel"
-                   oninput="formatPhone(this)" onblur="validatePhone(this)">
-            <div class="input-help">Móvil chileno: +56 9 XXXX XXXX</div>
-            <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
-            <div class="input-ok" id="contact_phone_ok">Teléfono válido</div>
-          </div>
-        </div>
+        </section>
 
-        {# ── Toggle OPCIONAL: ¿Autorizo a otra persona? ──────── #}
-        <div class="mb-4">
+        {# ════════════════════════════════════════════════════════
+           PASO 2 — ¿QUIÉN ES EL CLIENTE?
+           Razón social + RUT + Email + Teléfono
+           ════════════════════════════════════════════════════════ #}
+        <section class="step-section" data-step="2" id="step-2">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">2</span>
+              <span class="step-check"><i class="bi bi-check-lg"></i></span>
+            </div>
+            <div class="step-titles">
+              <h5>¿Quién es el cliente?</h5>
+              <p class="step-sub">Los datos de la empresa o persona a nombre de quien está el documento. Aquí también te llegarán las notificaciones.</p>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-7">
+              <label class="form-label small fw-bold">Razón social o nombre completo <span class="req">*</span></label>
+              <input name="customer_name" id="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required placeholder="Ej: Gimnasio Vital SpA" oninput="checkTerceroPanel()">
+              <div class="input-help with-example">Tal como aparece en la factura. Si es persona natural, escribe nombre + apellidos.</div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small fw-bold">RUT del cliente <span class="req">*</span></label>
+              <input name="customer_rut" id="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}"
+                     placeholder="Ej: 76.123.456-7" required autocomplete="off"
+                     oninput="onRutInput(this)" onblur="validateRUT(this); checkTerceroPanel()">
+              <div class="input-help with-example">Con puntos y guión. Ej: 25.547.065-2</div>
+              <div class="input-error" id="customer_rut_err">RUT inválido — verifica el dígito verificador</div>
+              <div class="input-ok" id="customer_rut_ok">RUT válido</div>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small fw-bold">Email de contacto <span class="req">*</span></label>
+              <input name="contact_email" id="contact_email" type="email" class="form-control"
+                     value="{{ fd.get('contact_email','') }}" required placeholder="Ej: tu@empresa.cl"
+                     autocomplete="email" oninput="onEmailInput(this)" onblur="validateEmail(this)">
+              <div class="input-help with-example">Aquí te enviaremos la confirmación y el enlace privado de seguimiento.</div>
+              <div class="input-error" id="contact_email_err">Email inválido — revisa el formato (ej: tu@empresa.cl)</div>
+              <div class="input-ok" id="contact_email_ok">Email válido</div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small fw-bold">Teléfono de contacto <span class="req">*</span></label>
+              <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
+                     value="{{ fd.get('contact_phone','') }}"
+                     placeholder="Ej: +56 9 1234 5678" required autocomplete="tel"
+                     oninput="formatPhone(this)" onblur="validatePhone(this)">
+              <div class="input-help with-example">Por si necesitamos llamarte el día del retiro. Móvil chileno.</div>
+              <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
+              <div class="input-ok" id="contact_phone_ok">Teléfono válido</div>
+            </div>
+          </div>
+        </section>
+
+        {# ════════════════════════════════════════════════════════
+           PASO 3 — ¿QUIÉN RETIRA?
+           Toggle opcional para autorizar a tercero
+           ════════════════════════════════════════════════════════ #}
+        <section class="step-section" data-step="3" id="step-3">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">3</span>
+              <span class="step-check"><i class="bi bi-check-lg"></i></span>
+            </div>
+            <div class="step-titles">
+              <h5>¿Quién va a venir a retirar?</h5>
+              <p class="step-sub">Por defecto asumimos que retiras tú. Si va a venir otra persona (chofer, transportista, familiar), márcalo aquí.</p>
+            </div>
+          </div>
+
           <div class="auth-toggle" onclick="toggleAutorizado()" id="authToggle">
             <input type="checkbox" id="authCheckbox" class="form-check-input me-2" onclick="event.stopPropagation();toggleAutorizado()">
             <span class="auth-toggle-text">
-              <strong>¿Quieres autorizar a otra persona para que retire?</strong>
-              <span class="auth-toggle-sub">Marca esta casilla solo si <u>no</u> retiras tú mismo.</span>
+              <strong>Sí, autorizo a otra persona a retirar en mi nombre</strong>
+              <span class="auth-toggle-sub">Marca solo si <u>no</u> retiras tú directamente. Pediremos su RUT y un teléfono.</span>
             </span>
             <i class="bi bi-chevron-down auth-toggle-icon" id="authToggleIcon"></i>
           </div>
@@ -713,24 +856,26 @@
             <div class="row g-3 mt-1 p-3 rounded-3" style="background:#fff8f8;border:1px solid #fecaca">
               <div class="col-md-5">
                 <label class="form-label small fw-bold">Nombre completo del autorizado</label>
-                <input name="pickup_person_name" id="auth_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" placeholder="Juan Pérez González" oninput="checkTerceroPanel()">
-                <div class="input-help">Mismo que aparece en el carnet</div>
+                <input name="pickup_person_name" id="auth_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" placeholder="Ej: Juan Pérez González" oninput="checkTerceroPanel()">
+                <div class="input-help with-example">Tal como aparece en su cédula de identidad.</div>
               </div>
               <div class="col-md-3">
-                <label class="form-label small fw-bold">RUT</label>
+                <label class="form-label small fw-bold">RUT del autorizado</label>
                 <input name="pickup_person_rut" id="pickup_person_rut" class="form-control"
                        value="{{ fd.get('pickup_person_rut','') }}"
-                       placeholder="11.111.111-1" autocomplete="off"
+                       placeholder="Ej: 11.111.111-1" autocomplete="off"
                        oninput="onRutInput(this)" onblur="validateRUT(this); checkTerceroPanel()">
+                <div class="input-help with-example">Con dígito verificador.</div>
                 <div class="input-error" id="pickup_person_rut_err">RUT inválido — verifica el dígito</div>
                 <div class="input-ok" id="pickup_person_rut_ok">RUT válido</div>
               </div>
               <div class="col-md-4">
-                <label class="form-label small fw-bold">Teléfono</label>
+                <label class="form-label small fw-bold">Teléfono del autorizado</label>
                 <input name="pickup_person_phone" id="auth_phone" type="tel" class="form-control"
                        value="{{ fd.get('pickup_person_phone','') }}"
-                       placeholder="+56 9 1234 5678" autocomplete="tel"
+                       placeholder="Ej: +56 9 8765 4321" autocomplete="tel"
                        oninput="formatPhone(this)" onblur="validatePhone(this)">
+                <div class="input-help with-example">Por si necesitamos llamarlo el día del retiro.</div>
                 <div class="input-error" id="auth_phone_err">Teléfono inválido</div>
                 <div class="input-ok" id="auth_phone_ok">Teléfono válido</div>
               </div>
@@ -739,15 +884,11 @@
                 <select name="pickup_person_relation" class="form-select">
                   {% for v,l in relations %}<option value="{{ v }}">{{ l }}</option>{% endfor %}
                 </select>
-                <div class="input-help">Ej: chofer, transporte externo, familiar autorizado…</div>
+                <div class="input-help with-example">Ej: chofer, transporte externo, familiar autorizado, despachador.</div>
               </div>
             </div>
 
-            {# ── PANEL DE DECLARACIÓN AUTORIZACIÓN TERCERO ─────────────────
-               Aparece cuando customer_rut y pickup_person_rut son distintos
-               y ambos válidos. Bloquea el submit hasta que el cliente
-               marque explícitamente la casilla. Se guarda en observations.
-            #}
+            {# ── PANEL DE DECLARACIÓN AUTORIZACIÓN TERCERO ───── #}
             <div class="decl-tercero" id="declTercero">
               <div class="decl-title">
                 <i class="bi bi-exclamation-triangle-fill"></i>
@@ -774,62 +915,94 @@
           </div>
           <input type="hidden" name="contact_name" id="contact_name">
           <input type="hidden" id="auth_active" name="auth_active" value="0">
-        </div>
+        </section>
 
-        {# ── 2. Fecha y horario INTELIGENTE ─────────────────── #}
-        <div class="section-mark">
-          <span class="sm-num">2</span>
-          <h5>Fecha y horario</h5>
-          <span class="sm-help">Mínimo +24h · Selecciona rango</span>
-        </div>
-        <div class="row g-3 mb-4">
-          <div class="col-md-5">
-            <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
-            <input type="date" id="cal_fecha" class="form-control" required>
-            <small id="cal_fecha_msg" class="input-help"></small>
-          </div>
-          <div class="col-md-7">
-            <label class="form-label small fw-bold">Bloque horario <span class="req">*</span></label>
-            <div class="slot-picker" id="slotPicker">
-              <div class="slot-picker-head">
-                <strong style="font-size:.84rem">Selecciona uno o más bloques contiguos</strong>
-                <div class="legend">
-                  <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
-                  <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
-                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial 1/2</span>
-                  <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
-                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colacion</span>
-                </div>
-              </div>
-              <div class="slot-grid" id="slotGrid">
-                <div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">
-                  <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
-                </div>
-              </div>
-              <div class="slot-actions" id="slotQuickWrap" style="display:none">
-                <span class="text-muted small me-2">Rapido:</span>
-                <span class="slot-quick" onclick="setQuickRange(1)">1 hora</span>
-                <span class="slot-quick" onclick="setQuickRange(2)">2 horas</span>
-                <span class="slot-quick" onclick="setQuickRange(3)">3 horas</span>
-                <span class="slot-quick slot-clear" onclick="clearSlots()">Limpiar</span>
-              </div>
-              <div class="slot-summary" id="slotSummary">
-                <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aun</div>
-                <button type="button" class="btn btn-sm btn-outline-light" id="clearSlotBtn" onclick="clearSlots()" style="display:none">
-                  <i class="bi bi-x-lg me-1"></i>Limpiar
-                </button>
-              </div>
+        {# ════════════════════════════════════════════════════════
+           PASO 4 — ¿CUÁNDO?
+           Fecha + bloque horario inteligente
+           ════════════════════════════════════════════════════════ #}
+        <section class="step-section" data-step="4" id="step-4">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">4</span>
+              <span class="step-check"><i class="bi bi-check-lg"></i></span>
             </div>
-            <input type="hidden" name="requested_date">
-            <input type="hidden" name="requested_time_from">
-            <input type="hidden" name="requested_time_to">
+            <div class="step-titles">
+              <h5>¿Cuándo quieres venir?</h5>
+              <p class="step-sub">Elige día y bloque horario contiguo. Si no hay disponibilidad, prueba otro día. La colación (13:00-14:00) no se puede agendar.</p>
+            </div>
           </div>
-        </div>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
+              <input type="date" id="cal_fecha" class="form-control" required>
+              <div class="input-help with-example">Necesitamos mínimo 24 horas de anticipación para preparar tu pedido.</div>
+              <small id="cal_fecha_msg" class="input-help"></small>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small fw-bold">Bloque horario <span class="req">*</span></label>
+              <div class="slot-picker" id="slotPicker">
+                <div class="slot-picker-head">
+                  <strong style="font-size:.84rem">Toca uno o más bloques contiguos</strong>
+                  <div class="legend">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
+                    <span><span class="dot" style="background:var(--ilus-red)"></span>Tu selección</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial 1/2</span>
+                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+                  </div>
+                </div>
+                <div class="slot-grid" id="slotGrid">
+                  <div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">
+                    <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
+                  </div>
+                </div>
+                <div class="slot-actions" id="slotQuickWrap" style="display:none">
+                  <span class="text-muted small me-2">Atajo:</span>
+                  <span class="slot-quick" onclick="setQuickRange(1)">1 hora</span>
+                  <span class="slot-quick" onclick="setQuickRange(2)">2 horas</span>
+                  <span class="slot-quick" onclick="setQuickRange(3)">3 horas</span>
+                  <span class="slot-quick slot-clear" onclick="clearSlots()">Limpiar</span>
+                </div>
+                <div class="slot-summary" id="slotSummary">
+                  <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aún</div>
+                  <button type="button" class="btn btn-sm btn-outline-light" id="clearSlotBtn" onclick="clearSlots()" style="display:none">
+                    <i class="bi bi-x-lg me-1"></i>Limpiar
+                  </button>
+                </div>
+              </div>
+              <input type="hidden" name="requested_date">
+              <input type="hidden" name="requested_time_from">
+              <input type="hidden" name="requested_time_to">
+            </div>
+          </div>
+        </section>
 
         {# Bultos a retirar — ELIMINADO (a pedido). Backend usará 0 bultos. #}
         <input type="hidden" name="total_packages" id="total_packages" value="0">
 
-        {# ── 3. Aceptar y enviar — Declaración con diseño atractivo ──── #}
+        {# ════════════════════════════════════════════════════════
+           PASO 5 — COMENTARIOS (OPCIONAL)
+           Al final, en card menos prominente — como pidió Daniel.
+           ════════════════════════════════════════════════════════ #}
+        <section class="step-section is-comments" data-step="5" id="step-5">
+          <div class="step-header">
+            <div class="step-circle" style="background:#6b7280;box-shadow:0 6px 14px rgba(107,114,128,.25)">
+              <span class="step-num-text">5</span>
+              <span class="step-check"><i class="bi bi-check-lg"></i></span>
+            </div>
+            <div class="step-titles">
+              <h5>¿Algo más que debamos saber? <span class="text-muted fw-normal" style="font-size:.85rem">(opcional)</span></h5>
+              <p class="step-sub">Vehículo en el que vienes, instrucciones especiales, productos delicados, horario flexible... Lo que nos ayude a tenerlo todo listo cuando llegues.</p>
+            </div>
+          </div>
+          <textarea class="form-control" name="observations" rows="3"
+                    placeholder="Ej: Voy en camión 3/4. Necesito grúa horquilla. Prefiero después de las 15h si se puede."
+                    style="resize:vertical;min-height:80px">{{ fd.get('observations','') }}</textarea>
+          <div class="input-help with-example">Este campo es opcional. Si no escribes nada, no pasa nada.</div>
+        </section>
+
+        {# ── Declaración de responsabilidad ── #}
         <div class="declaracion-box">
           <label class="declaracion-label" for="acceptTerms">
             <span class="dec-check">
@@ -842,8 +1015,8 @@
             </span>
           </label>
         </div>
-        <button class="submit-btn" id="submitBtn">
-          <i class="bi bi-send-check"></i>Enviar solicitud
+        <button class="submit-btn" id="submitBtn" type="submit">
+          <i class="bi bi-send-check"></i><span class="submit-btn-text">Enviar solicitud de retiro</span>
         </button>
         <div class="text-center mt-3 small text-muted" style="display:flex;align-items:center;justify-content:center;gap:6px">
           <i class="bi bi-shield-lock"></i>
@@ -1412,11 +1585,13 @@ function updateSlotSummary(){
   }
 
   txt.className = '';
-  txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#16a34a"></i><span class="sum-range">${startStr} - ${endStr}</span><span class="sum-dur"><i class="bi bi-stopwatch me-1"></i>duracion ${durTxt}</span>`;
+  txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#16a34a"></i><span class="sum-range">${startStr} - ${endStr}</span><span class="sum-dur"><i class="bi bi-stopwatch me-1"></i>duración ${durTxt}</span>`;
   clearBtn.style.display = '';
   if (summaryBox) summaryBox.classList.add('is-active');
   document.querySelector('input[name=requested_time_from]').value = startStr;
   document.querySelector('input[name=requested_time_to]').value = endStr;
+  // Refresca estado del step 4 (cuándo) — se vuelve verde si todo OK.
+  if (typeof _refreshStepStates === 'function') _refreshStepStates();
 }
 
 // ════════════════════════════════════════════════════════
@@ -1568,6 +1743,151 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
   }
 });
 
+// ════════════════════════════════════════════════════════
+//  MICRO-INTERACTIONS PREMIUM
+//  - IntersectionObserver: fade in cada step al entrar al viewport
+//  - Watcher: marca step como completo cuando sus campos requeridos están válidos
+//  - Submit con loading state + pulso
+// ════════════════════════════════════════════════════════
+function _initStepReveal(){
+  const steps = document.querySelectorAll('.step-section');
+  // Fallback: si no hay IntersectionObserver, mostrar todo
+  if (!('IntersectionObserver' in window)){
+    steps.forEach(s => s.classList.add('in-view'));
+    return;
+  }
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting){
+        entry.target.classList.add('in-view');
+        obs.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.08, rootMargin: '0px 0px -20px 0px' });
+  steps.forEach((s, i) => {
+    s.style.transitionDelay = (i * 60) + 'ms';
+    obs.observe(s);
+  });
+  // Defensa: si por alguna razón el observer no marca los primeros pasos
+  // en 800 ms (ej. browser viejo, scroll restoration), forzamos in-view.
+  setTimeout(() => {
+    steps.forEach(s => {
+      if (!s.classList.contains('in-view')){
+        const r = s.getBoundingClientRect();
+        if (r.top < window.innerHeight) s.classList.add('in-view');
+      }
+    });
+  }, 800);
+}
+
+// Marca un step como "completo" (círculo verde + check + pulso) si todos
+// sus campos requeridos están válidos. Llamado en cada blur/change relevante.
+function _isStepComplete(stepNum){
+  switch (stepNum){
+    case 1:{
+      const dt = document.getElementById('document_type');
+      const dn = document.getElementById('document_number');
+      return !!(dt && dt.value && dn && dn.value.trim().length > 0);
+    }
+    case 2:{
+      const name = document.getElementById('customer_name');
+      const rut  = document.getElementById('customer_rut');
+      const em   = document.getElementById('contact_email');
+      const ph   = document.getElementById('contact_phone');
+      if (!name || !name.value.trim()) return false;
+      if (!rut || !isValidRUT(rut.value)) return false;
+      if (!em  || !isValidEmail(em.value)) return false;
+      if (!ph  || !isValidCLPhone(ph.value)) return false;
+      return true;
+    }
+    case 3:{
+      // Step 3 = autorizar tercero. Considerado "completo" cuando:
+      //   (a) NO autorizó a otra persona (default — retiras tú) → siempre OK
+      //   (b) SÍ autorizó: nombre + RUT válido + checkbox declaración (si aplica) marcado
+      const flag = document.getElementById('auth_active');
+      const auth = flag && flag.value === '1';
+      if (!auth) return true;
+      const an = document.getElementById('auth_name');
+      const ar = document.getElementById('pickup_person_rut');
+      if (!an || !an.value.trim()) return false;
+      if (!ar || !isValidRUT(ar.value)) return false;
+      // Si RUT cliente != RUT autorizado, exige checkbox de declaración
+      const cRut = document.getElementById('customer_rut');
+      if (cRut && isValidRUT(cRut.value) && cleanRUT(cRut.value) !== cleanRUT(ar.value)){
+        const cb = document.getElementById('acepta_tercero');
+        if (!cb || !cb.checked) return false;
+      }
+      return true;
+    }
+    case 4:{
+      const fecha = document.getElementById('cal_fecha');
+      const tf = document.querySelector('input[name=requested_time_from]');
+      const tt = document.querySelector('input[name=requested_time_to]');
+      return !!(fecha && fecha.value && tf && tf.value && tt && tt.value);
+    }
+    case 5:{
+      // Comentarios = opcional, nunca bloquea. No marcamos como completo (sigue gris).
+      return false;
+    }
+  }
+  return false;
+}
+
+function _refreshStepStates(){
+  document.querySelectorAll('.step-section').forEach(sec => {
+    const n = parseInt(sec.dataset.step, 10);
+    if (!n || n === 5) return;
+    const wasComplete = sec.classList.contains('is-complete');
+    const isComplete = _isStepComplete(n);
+    if (isComplete && !wasComplete){
+      sec.classList.add('is-complete');
+    } else if (!isComplete && wasComplete){
+      sec.classList.remove('is-complete');
+    }
+  });
+}
+
+// Re-evaluamos estados cada vez que algo relevante cambia.
+function _wireStepWatchers(){
+  const watchedIds = [
+    'document_type', 'document_number',
+    'customer_name', 'customer_rut',
+    'contact_email', 'contact_phone',
+    'auth_name', 'pickup_person_rut', 'auth_phone', 'acepta_tercero',
+    'cal_fecha',
+  ];
+  watchedIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('blur', _refreshStepStates);
+    el.addEventListener('change', _refreshStepStates);
+    el.addEventListener('input', () => { setTimeout(_refreshStepStates, 50); });
+  });
+  // El bloque horario se actualiza via inputs hidden (requested_time_from/to)
+  // — los toca updateSlotSummary, así que invocamos al final también.
+  const slotPick = document.getElementById('slotPicker');
+  if (slotPick){
+    slotPick.addEventListener('click', () => { setTimeout(_refreshStepStates, 60); });
+  }
+  // Toggle autorizar
+  const at = document.getElementById('authToggle');
+  if (at) at.addEventListener('click', () => { setTimeout(_refreshStepStates, 80); });
+}
+
+// Submit: loading state + pulse + previene doble click.
+// El listener de validación más arriba se ejecuta ANTES (orden de adición).
+// Si la validación pasa, este listener entra en loading.
+document.getElementById('form-solicitud').addEventListener('submit', function(e){
+  if (e.defaultPrevented) return; // Validación falló — no entrar en loading
+  const btn = document.getElementById('submitBtn');
+  if (!btn) return;
+  btn.classList.add('is-loading', 'pulse');
+  const txt = btn.querySelector('.submit-btn-text');
+  if (txt) txt.textContent = 'Enviando…';
+  btn.disabled = true;
+  setTimeout(() => btn.classList.remove('pulse'), 700);
+});
+
 document.addEventListener('DOMContentLoaded', () => {
   cargarDisponibilidad();
   // Si el formulario se re-renderizó con datos previos (fd), validar los campos
@@ -1594,6 +1914,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   checkTerceroPanel();
+  _initStepReveal();
+  _wireStepWatchers();
+  _refreshStepStates();
 });
 </script>
 </body>

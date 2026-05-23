@@ -476,6 +476,121 @@
     /* Modales — heredan Bootstrap pero refinamos un poco */
     .modal-content{border-radius:14px;border:none;box-shadow:0 22px 48px rgba(0,0,0,.3)}
     .modal-header{border-bottom:1px solid var(--ilus-border)}
+
+    /* ─── BOTÓN DESCARGA EXCEL (cliente) ────────────────────────── */
+    .btn-xlsx{
+      display:inline-flex;align-items:center;gap:6px;
+      background:#fff;color:#16a34a;border:1.5px solid #16a34a;
+      padding:9px 14px;border-radius:10px;font-weight:800;font-size:.84rem;
+      text-decoration:none;min-height:40px;transition:all .15s;
+      letter-spacing:.01em;
+    }
+    .btn-xlsx:hover{background:#dcfce7;color:#14532d;border-color:#16a34a;transform:translateY(-1px);box-shadow:0 6px 14px rgba(22,163,74,.22)}
+    .btn-xlsx i{font-size:1rem}
+
+    /* ─── MARKETING ILUS — propuesta de valor / tips / redes ─────── */
+    .mkt-card{
+      position:relative;overflow:hidden;
+    }
+    .mkt-why{
+      background:linear-gradient(135deg,#fff 0%,#fafafa 100%);
+      border:1px solid var(--ilus-border);
+    }
+    .mkt-list{
+      list-style:none;padding:0;margin:0;
+      display:flex;flex-direction:column;gap:10px;
+    }
+    .mkt-list li{
+      display:flex;align-items:center;gap:12px;
+      font-size:.92rem;font-weight:600;color:var(--ilus-ink);
+      padding:8px 10px;border-radius:10px;
+      background:#fafafa;border:1px solid #f3f4f6;
+      transition:all .25s cubic-bezier(.16,1,.3,1);
+    }
+    .mkt-list li:hover{background:#fff;border-color:#fee2e2;transform:translateX(3px);box-shadow:0 4px 10px rgba(220,38,38,.06)}
+    .mkt-list .mkt-ico{
+      flex-shrink:0;width:34px;height:34px;border-radius:9px;
+      background:linear-gradient(135deg,#fee2e2 0%,#fecaca 100%);
+      color:var(--ilus-red);
+      display:grid;place-items:center;font-size:1.05rem;
+    }
+
+    .mkt-tips{
+      background:linear-gradient(135deg,#fffdf6 0%,#fff7ed 100%);
+      border:1px solid #fde68a;
+    }
+    .mkt-tips h6 i{color:#b45309}
+    .tips-grid{display:flex;flex-direction:column;gap:10px}
+    .tip{
+      display:flex;align-items:flex-start;gap:12px;
+      padding:11px 12px;background:#fff;border-radius:10px;
+      border:1px solid #fef3c7;
+      transition:all .25s cubic-bezier(.16,1,.3,1);
+    }
+    .tip:hover{border-color:#fcd34d;transform:translateY(-1px);box-shadow:0 6px 14px rgba(180,83,9,.10)}
+    .tip-ico{
+      flex-shrink:0;width:38px;height:38px;border-radius:10px;
+      background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);
+      color:#b45309;
+      display:grid;place-items:center;font-size:1.1rem;
+    }
+    .tip-title{font-weight:800;color:var(--ilus-black);font-size:.9rem;margin-bottom:2px}
+    .tip-msg{font-size:.8rem;color:#6b7280;line-height:1.4}
+
+    /* Card oscura — CTA + redes sociales */
+    .mkt-card-dark{
+      background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 60%,#0a0a0a 100%);
+      color:#fff;border-radius:14px;padding:22px 22px 18px;margin-bottom:16px;
+      box-shadow:0 14px 28px rgba(0,0,0,.18);
+      position:relative;overflow:hidden;
+    }
+    .mkt-card-dark::before{
+      content:'';position:absolute;inset:0;
+      background:radial-gradient(500px 200px at 100% 0%, rgba(220,38,38,.18), transparent 60%);
+      pointer-events:none;
+    }
+    .mkt-card-dark > *{position:relative;z-index:1}
+    .mkt-dark-eyebrow{
+      font-size:.66rem;text-transform:uppercase;letter-spacing:.16em;
+      color:var(--ilus-red);font-weight:900;margin-bottom:8px;
+    }
+    .mkt-dark-title{font-weight:900;font-size:1.18rem;line-height:1.25;color:#fff;margin-bottom:6px}
+    .mkt-dark-msg{font-size:.9rem;color:#cbd5e1;margin-bottom:14px;line-height:1.45}
+
+    .mkt-cta-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+    .mkt-cta{
+      flex:1 1 0;min-width:140px;
+      padding:11px 14px;border-radius:10px;font-weight:800;text-decoration:none;font-size:.84rem;
+      display:inline-flex;align-items:center;justify-content:center;gap:6px;
+      transition:all .18s;min-height:44px;letter-spacing:.01em;
+    }
+    .mkt-cta-wa{background:#25D366;color:#fff}
+    .mkt-cta-wa:hover{background:#1da851;color:#fff;transform:translateY(-1px);box-shadow:0 8px 18px rgba(37,211,102,.32)}
+    .mkt-cta-mail{background:var(--ilus-red);color:#fff}
+    .mkt-cta-mail:hover{background:var(--ilus-red-dk);color:#fff;transform:translateY(-1px);box-shadow:0 8px 18px rgba(220,38,38,.30)}
+
+    .mkt-dark-social-label{
+      font-size:.7rem;text-transform:uppercase;letter-spacing:.10em;
+      color:#9ca3af;font-weight:700;margin-bottom:8px;
+    }
+    .mkt-social-row{display:flex;gap:10px}
+    .mkt-social-row a{
+      width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+      background:rgba(255,255,255,.06);color:#fff;text-decoration:none;
+      font-size:1.05rem;transition:all .2s;
+      border:1px solid rgba(255,255,255,.10);
+    }
+    .mkt-social-row a:hover{background:var(--ilus-red);border-color:var(--ilus-red);transform:translateY(-2px) scale(1.05);color:#fff}
+
+    /* Animación reveal-on-scroll (IntersectionObserver) */
+    .reveal-on-scroll{
+      opacity:0;transform:translateY(18px);
+      transition:opacity .65s cubic-bezier(.16,1,.3,1), transform .65s cubic-bezier(.16,1,.3,1);
+    }
+    .reveal-on-scroll.is-visible{opacity:1;transform:translateY(0)}
+    @media(prefers-reduced-motion:reduce){
+      .reveal-on-scroll{opacity:1;transform:none;transition:none}
+    }
   </style>
 </head>
 <body>
@@ -548,6 +663,15 @@
           La cita queda <strong style="color:#fff">confirmada</strong> solo cuando aparece como tal abajo.
         </div>
       </div>
+    </div>
+
+    {# ──────── ACCIONES SECUNDARIAS (descarga resumen) ──────── #}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
+      <a href="{{ url_for('pickup_public_xlsx', token=req.public_token) }}"
+         class="btn-xlsx" download
+         title="Descarga un Excel con los datos completos de tu retiro">
+        <i class="bi bi-file-earmark-excel-fill"></i>Descargar resumen (Excel)
+      </a>
     </div>
 
     {# ──────── STATUS HERO CONTEXTUAL ──────── #}
@@ -722,16 +846,25 @@
           </div>
         </div>
 
-        {# ──────── CARGA DECLARADA ──────── #}
+        {# ──────── CARGA DECLARADA ────────
+           FALLBACK ROBUSTO (mayo 2026): el operador ILUS guarda peso/vol en
+           peso_real_kg/peso_vol_kg (columnas nuevas). Las columnas originales
+           total_weight_kg/total_volumetric_weight quedan como respaldo legacy.
+           Si el operador cargó datos ERP, esos campos NUEVOS son los reales.
+        #}
+        {%- set _bultos_show = req.total_packages or (packages|length if packages else 0) or 0 -%}
+        {%- set _kg_show     = (req.peso_real_kg or req.total_weight_kg or 0)|float -%}
+        {%- set _pvol_show   = (req.peso_vol_kg  or req.total_volumetric_weight or 0)|float -%}
+        {%- set _m3_show     = (req.total_volume_m3 or req.volumen_m3 or 0)|float -%}
         <div class="ilus-card">
           <h6><i class="bi bi-box-seam"></i>Carga declarada</h6>
           <div class="carga-grid mb-3">
-            <div class="carga-cell"><div class="c-num">{{ req.total_packages }}</div><div class="c-lbl">Bultos</div></div>
-            <div class="carga-cell"><div class="c-num">{{ req.total_weight_kg }}</div><div class="c-lbl">Kg</div></div>
-            <div class="carga-cell"><div class="c-num">{{ req.total_volumetric_weight }}</div><div class="c-lbl">P. vol</div></div>
-            <div class="carga-cell"><div class="c-num">{{ req.total_volume_m3 }}</div><div class="c-lbl">m³</div></div>
+            <div class="carga-cell"><div class="c-num">{{ _bultos_show }}</div><div class="c-lbl">Bultos</div></div>
+            <div class="carga-cell"><div class="c-num">{{ "%.2f"|format(_kg_show) }}</div><div class="c-lbl">Kg reales</div></div>
+            <div class="carga-cell"><div class="c-num">{{ "%.2f"|format(_pvol_show) }}</div><div class="c-lbl">P. vol</div></div>
+            <div class="carga-cell"><div class="c-num">{{ "%.4f"|format(_m3_show) }}</div><div class="c-lbl">m³</div></div>
           </div>
-          {% if packages and req.total_packages > 0 %}
+          {% if packages and (req.total_packages or 0) > 0 %}
           <div class="table-responsive">
             <table class="pkg-table">
               <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
@@ -775,24 +908,81 @@
         </div>
         {% endif %}
 
-        {# Historial — siempre visible #}
-        <div class="ilus-card">
-          <h6><i class="bi bi-clock-history"></i>Historial de actividad</h6>
-          {% if logs %}
-          <div class="timeline-wrap" id="timelineWrap">
-            {% for l in logs %}
-            <div class="timeline-item">
-              <div class="ti-action">{{ l.action.replace('_',' ').title() }}</div>
-              <div class="ti-meta">{{ l.created_at }} · {{ l.actor_name }}</div>
-              {% if l.notes %}<div class="ti-notes">{{ l.notes }}</div>{% endif %}
+        {# ───────────────────────────────────────────────────────────────
+           MARKETING ILUS — reemplaza el historial interno (mayo 2026)
+           El cliente NO necesita ver eventos internos del operador.
+           En su lugar: propuesta de valor + recomendaciones + redes.
+           Cards animadas con IntersectionObserver (scroll-triggered).
+           ─────────────────────────────────────────────────────────────── #}
+
+        {# Card: ¿Por qué ILUS? #}
+        <div class="ilus-card mkt-card mkt-why reveal-on-scroll">
+          <h6><i class="bi bi-shield-check"></i>¿Por qué ILUS?</h6>
+          <ul class="mkt-list">
+            <li><span class="mkt-ico"><i class="bi bi-patch-check-fill"></i></span>Servicio garantizado de bodega</li>
+            <li><span class="mkt-ico"><i class="bi bi-broadcast"></i></span>Tracking en vivo de tu retiro</li>
+            <li><span class="mkt-ico"><i class="bi bi-person-badge"></i></span>Personal capacitado y verificación de identidad</li>
+            <li><span class="mkt-ico"><i class="bi bi-shield-lock-fill"></i></span>Seguridad e integridad de tu carga</li>
+          </ul>
+        </div>
+
+        {# Card: Recomendaciones para el día del retiro #}
+        <div class="ilus-card mkt-card mkt-tips reveal-on-scroll">
+          <h6><i class="bi bi-lightbulb"></i>Recomendaciones para tu retiro</h6>
+          <div class="tips-grid">
+            <div class="tip">
+              <div class="tip-ico"><i class="bi bi-person-vcard"></i></div>
+              <div class="tip-body">
+                <div class="tip-title">Cédula vigente</div>
+                <div class="tip-msg">Trae tu carnet de identidad chileno o pasaporte.</div>
+              </div>
             </div>
-            {% endfor %}
+            <div class="tip">
+              <div class="tip-ico"><i class="bi bi-alarm"></i></div>
+              <div class="tip-body">
+                <div class="tip-title">Llega 5 min antes</div>
+                <div class="tip-msg">Respetamos el horario confirmado por tu eficiencia.</div>
+              </div>
+            </div>
+            <div class="tip">
+              <div class="tip-ico"><i class="bi bi-box2-heart"></i></div>
+              <div class="tip-body">
+                <div class="tip-title">Embalaje propio</div>
+                <div class="tip-msg">Si tu carga es delicada, recomendamos traer embalaje extra.</div>
+              </div>
+            </div>
+            <div class="tip">
+              <div class="tip-ico"><i class="bi bi-calendar-x"></i></div>
+              <div class="tip-body">
+                <div class="tip-title">Sin cambios el día</div>
+                <div class="tip-msg">Los cambios de fecha deben coordinarse con anticipación.</div>
+              </div>
+            </div>
           </div>
-          {% else %}
-          <div class="text-center text-muted small py-3">
-            <i class="bi bi-info-circle"></i>Sin actividad aún
+        </div>
+
+        {# Card: Conecta con ILUS — fondo negro #}
+        <div class="mkt-card-dark reveal-on-scroll">
+          <div class="mkt-dark-eyebrow">Conecta con ILUS</div>
+          <div class="mkt-dark-title">¿Dudas con tu retiro?</div>
+          <div class="mkt-dark-msg">Nuestro equipo de soporte responde en horario hábil.</div>
+          <div class="mkt-cta-row">
+            <a href="https://wa.me/56986405100?text=Hola%20ILUS%2C%20tengo%20una%20consulta%20sobre%20mi%20retiro%20{{ req.code }}"
+               target="_blank" rel="noopener" class="mkt-cta mkt-cta-wa">
+              <i class="bi bi-whatsapp"></i>WhatsApp directo
+            </a>
+            <a href="mailto:servicio.tecnico@ilusfitness.com?subject=Consulta%20retiro%20{{ req.code }}"
+               class="mkt-cta mkt-cta-mail">
+              <i class="bi bi-envelope"></i>Email soporte
+            </a>
           </div>
-          {% endif %}
+          <div class="mkt-dark-social-label">Síguenos en redes</div>
+          <div class="mkt-social-row">
+            <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
+            <a href="https://www.facebook.com/ilusfitness" target="_blank" rel="noopener" aria-label="Facebook"><i class="bi bi-facebook"></i></a>
+            <a href="https://www.linkedin.com/company/ilus-sport-health" target="_blank" rel="noopener" aria-label="LinkedIn"><i class="bi bi-linkedin"></i></a>
+            <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Sitio web"><i class="bi bi-globe2"></i></a>
+          </div>
         </div>
       </div>
     </div>
@@ -993,10 +1183,31 @@
       });
     }
 
-    // ── 5) BOOT ──────────────────────────────────────────────────
+    // ── 5) Animación reveal-on-scroll (marketing cards) ──────────
+    function initRevealOnScroll() {
+      const items = document.querySelectorAll('.reveal-on-scroll');
+      if (!items.length) return;
+      // Sin IntersectionObserver: muestra todo de una (degradación elegante)
+      if (!('IntersectionObserver' in window)) {
+        items.forEach(el => el.classList.add('is-visible'));
+        return;
+      }
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add('is-visible');
+            io.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+      items.forEach(el => io.observe(el));
+    }
+
+    // ── 6) BOOT ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
       animateStepperFill();
       initRating();
+      initRevealOnScroll();
       // Iniciar polling después de 8s (no martillar al cargar)
       setTimeout(startPolling, 8000);
     });
