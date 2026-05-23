@@ -1607,6 +1607,27 @@ def register_pickup_routes(app, ctx):
                 print(f"[pickup_tracking] POST req_id={req['id']} code={req.get('code')} action={action} status_before={old}", flush=True)
             except Exception:
                 pass
+            # ── Detección AJAX (stepper modal de confirmación) ──
+            # Daniel mayo 2026: cuando el cliente confirma vía stepper,
+            # el modal hace fetch() con X-Requested-With y necesita JSON
+            # en vez de redirect. Si NO es AJAX, mantenemos el flujo legacy
+            # con redirect+flash (form submit normal).
+            _is_ajax = (
+                request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+            )
+            def _ajax_ok(payload=None):
+                p = {"ok": True}
+                if payload: p.update(payload)
+                try: _POLL_CACHE.pop(token, None)
+                except Exception: pass
+                try: _DISPO_CACHE["payload"] = None
+                except Exception: pass
+                return jsonify(p)
+            def _ajax_err(msg, code=409, payload=None):
+                p = {"ok": False, "error": str(msg)[:300]}
+                if payload: p.update(payload)
+                return jsonify(p), code
             # wrapper defensivo: cualquier excepción NO capturada por handlers
             # internos devuelve flash legible al cliente en vez de 500. El
             # tracking público NO debe mostrar stacktraces ni errores
@@ -1621,6 +1642,12 @@ def register_pickup_routes(app, ctx):
                     try:
                         print(f"[pickup_tracking] CONFIRM sin propuesta pendiente req_id={req['id']}", flush=True)
                     except Exception: pass
+                    if _is_ajax:
+                        return _ajax_err(
+                            "Esa propuesta ya no está vigente. Si tu retiro sigue pendiente, ILUS te enviará una nueva fecha en breve.",
+                            code=410,
+                            payload={"reason": "no_pending_proposal"},
+                        )
                     flash(
                         "Esa propuesta ya no está vigente. Si tu retiro sigue pendiente, ILUS te enviará una nueva fecha en breve.",
                         "warning",
@@ -1663,6 +1690,13 @@ def register_pickup_routes(app, ctx):
                             f"Cliente intentó confirmar pero slot ya no disponible: {motivo}",
                             "sistema", "Validación capacidad",
                         )
+                        if _is_ajax:
+                            return _ajax_err(
+                                "Lo sentimos, este horario ya no está disponible. "
+                                "Te enviamos una nueva propuesta a la brevedad.",
+                                code=409,
+                                payload={"reason": "slot_unavailable", "detail": motivo},
+                            )
                         flash(
                             "Lo sentimos, este horario ya no está disponible. "
                             "Te enviamos una nueva propuesta a la brevedad.",
@@ -1770,6 +1804,12 @@ def register_pickup_routes(app, ctx):
                             f"Cliente intentó confirmar pero falló (race): {confirm_motivo}",
                             "sistema", "Validación bajo lock",
                         )
+                        if _is_ajax:
+                            return _ajax_err(
+                                "Lo sentimos, este horario ya no está disponible.",
+                                code=409,
+                                payload={"reason": "race_lost", "detail": confirm_motivo},
+                            )
                         flash(
                             f"Lo sentimos, este horario ya no está disponible. {confirm_motivo} "
                             "Te enviamos una nueva propuesta a la brevedad.",
@@ -1786,6 +1826,14 @@ def register_pickup_routes(app, ctx):
                         req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
                         notify_async(req_after, "confirmed")
                     except Exception as _e: print(f"[pickups][notify confirm] {_e}")
+                    if _is_ajax:
+                        return _ajax_ok({
+                            "message": "Retiro confirmado",
+                            "fecha":    str(proposal["date"])[:10],
+                            "hora_desde": str(proposal["time_from"])[:5],
+                            "hora_hasta": str(proposal["time_to"])[:5],
+                            "redirect_url": url_for("pickup_public_tracking", token=token),
+                        })
                     flash(
                         f"¡Retiro confirmado para {proposal['date']} a las {str(proposal['time_from'])[:5]}! "
                         "Te enviamos un correo con todos los detalles.",
@@ -3741,7 +3789,24 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/api/disponibilidad-publica")
     @_rate_limited("pickup_disponibilidad_publica", max_attempts=120, window_seconds=60, methods=("GET",))
     def pickup_disponibilidad_publica():
-        """Devuelve disponibilidad de slots para los próximos 30 días (público).
+        """Devuelve disponibilidad de slots para los próximos 30 días.
+
+        FUENTE DE VERDAD MULTI-ROL (Daniel mayo 2026):
+        - Cliente externo (sin sesión) recibe shape pública: slots con estado
+          + ocupación numérica, SIN nombres ni IDs de clientes.
+        - Operador autenticado puede pedir `?include_owners=1` para ver quién
+          ocupa cada slot (RET-XXXXXX, customer_name, detail_url). Esto es el
+          mismo calendario que ve el cliente, pero enriquecido con info
+          interna para que el equipo confirme "quién tiene ese horario".
+
+        Parámetros opcionales:
+          - `?include_owners=1` (solo aplica si el caller tiene `g.user` con
+            permiso `retiros`, `admin` o `superadmin`. Si no, se ignora
+            silenciosamente — no devolvemos 403 para preservar el contrato
+            público).
+          - `?date=YYYY-MM-DD` (rango de un solo día: útil para la vista
+            interna del retiro o cuando un operador hace foco en una fecha).
+            Por defecto: mañana + 30 días.
 
         Modelo de slots (mayo 2026):
         - Cada bloque visible dura 30 min (slot_minutes).
@@ -3760,20 +3825,50 @@ def register_pickup_routes(app, ctx):
                     "fuera_horario" | "bloqueado"
             puede_iniciar / puede_finalizar: bool
             ocupacion_actual, capacidad_max, time_from, time_to
+            owners: [{request_id, code, customer_name, status, status_label,
+                      detail_url}]  # solo si include_owners autorizado
         """
-        # Cache hit: el grid de los próximos 30 días es global (no varía por
-        # cliente). Si lo armamos hace menos de _DISPO_TTL, lo devolvemos
-        # directo. Daniel: reduce el peak de queries cuando muchos clientes
-        # abren el form al mismo tiempo (campañas / horas peak).
+        from datetime import datetime as _dt, timedelta as _td, date as _date_cls
+
+        # ── Detectar contexto: ¿operador autenticado pidió owners? ─────
+        # Defense in depth: validamos sesión + permiso ANTES de tocar nada.
+        # Si el parámetro viene pero el usuario no califica, lo ignoramos
+        # silenciosamente (no 403, para no romper el contrato público).
+        wants_owners = request.args.get("include_owners") in ("1", "true", "True", "yes")
+        u = getattr(g, "user", None)
+        perms = getattr(g, "permissions", {}) or {}
+        is_operator = bool(u) and (
+            perms.get("retiros") or perms.get("admin") or perms.get("superadmin")
+        )
+        include_owners = bool(wants_owners and is_operator)
+
+        # ── Rango de fechas: opcionalmente acotar a un solo día ───────
+        single_date_req = (request.args.get("date") or "").strip()
+        single_date_obj = None
+        if single_date_req:
+            try:
+                single_date_obj = _date_cls.fromisoformat(single_date_req[:10])
+            except Exception:
+                single_date_obj = None
+
+        # Cache hit: SOLO sirve para la shape pública sin filtro de fecha
+        # (el grid de 30 días es global y no cambia por cliente). Las
+        # llamadas internas con owners o con date= bypasean cache para no
+        # mezclar shapes — la frecuencia es mucho menor (un solo operador
+        # mirando un día).
         import time as _time_local
-        if (_DISPO_CACHE["payload"] is not None and
-                (_time_local.time() - _DISPO_CACHE["ts"]) < _DISPO_TTL):
+        use_cache = (not include_owners) and (single_date_obj is None)
+        if use_cache and _DISPO_CACHE["payload"] is not None and \
+                (_time_local.time() - _DISPO_CACHE["ts"]) < _DISPO_TTL:
             return jsonify(_DISPO_CACHE["payload"])
 
-        from datetime import datetime as _dt, timedelta as _td
         cfg = settings()
-        d_from = _dt.now().date() + _td(days=1)  # Mañana en adelante
-        d_to   = d_from + _td(days=30)
+        if single_date_obj is not None:
+            d_from = single_date_obj
+            d_to   = single_date_obj
+        else:
+            d_from = _dt.now().date() + _td(days=1)  # Mañana en adelante
+            d_to   = d_from + _td(days=30)
 
         # Capacidades: parallel_capacity (default 2) sustituye a
         # max_picks_per_slot para el calendario público. max_picks_per_slot
@@ -3844,21 +3939,39 @@ def register_pickup_routes(app, ctx):
                 if not primer_inicio_post_colacion and s["start_min"] >= lunch_end_min:
                     primer_inicio_post_colacion = s["time_from"]
 
-        # Calcular ocupación: 1 sola query a pickup_requests
-        rows = mysql_fetchall(
-            f"""SELECT requested_date, requested_time_from,
-                       confirmed_date, confirmed_time_from,
-                       proposed_date, proposed_time_from,
-                       total_weight_kg, total_volume_m3, status
-                FROM `{REQ}`
-                WHERE (requested_date BETWEEN %s AND %s
-                       OR confirmed_date BETWEEN %s AND %s
-                       OR proposed_date  BETWEEN %s AND %s)
-                  AND status NOT IN ('rechazada','cerrada','fallida')""",
-            (d_from, d_to, d_from, d_to, d_from, d_to)
-        ) or []
+        # Calcular ocupación: 1 sola query a pickup_requests.
+        # Para vista interna seleccionamos id+code+customer_name para que el
+        # operador vea quién ocupa cada slot. Para shape pública omitimos esos
+        # campos (privacidad + payload más liviano para clientes externos).
+        if include_owners:
+            rows = mysql_fetchall(
+                f"""SELECT id, code, customer_name, contact_name,
+                           requested_date, requested_time_from,
+                           confirmed_date, confirmed_time_from,
+                           proposed_date, proposed_time_from,
+                           total_weight_kg, total_volume_m3, status
+                    FROM `{REQ}`
+                    WHERE (requested_date BETWEEN %s AND %s
+                           OR confirmed_date BETWEEN %s AND %s
+                           OR proposed_date  BETWEEN %s AND %s)
+                      AND status NOT IN ('rechazada','cerrada','fallida')""",
+                (d_from, d_to, d_from, d_to, d_from, d_to)
+            ) or []
+        else:
+            rows = mysql_fetchall(
+                f"""SELECT requested_date, requested_time_from,
+                           confirmed_date, confirmed_time_from,
+                           proposed_date, proposed_time_from,
+                           total_weight_kg, total_volume_m3, status
+                    FROM `{REQ}`
+                    WHERE (requested_date BETWEEN %s AND %s
+                           OR confirmed_date BETWEEN %s AND %s
+                           OR proposed_date  BETWEEN %s AND %s)
+                      AND status NOT IN ('rechazada','cerrada','fallida')""",
+                (d_from, d_to, d_from, d_to, d_from, d_to)
+            ) or []
 
-        ocupacion = {}  # {fecha_str: {slot_from: {ocupados, kg, m3}}}
+        ocupacion = {}  # {fecha_str: {slot_from: {ocupados, kg, m3, owners[]}}}
         for r in rows:
             fecha = r.get("confirmed_date") or r.get("proposed_date") or r.get("requested_date")
             if not fecha: continue
@@ -3868,10 +3981,21 @@ def register_pickup_routes(app, ctx):
             slot = str(tf)[:5]
             if fecha_str not in ocupacion: ocupacion[fecha_str] = {}
             if slot not in ocupacion[fecha_str]:
-                ocupacion[fecha_str][slot] = {"ocupados":0,"kg":0,"m3":0}
+                ocupacion[fecha_str][slot] = {"ocupados":0,"kg":0,"m3":0,"owners":[]}
             ocupacion[fecha_str][slot]["ocupados"] += 1
             ocupacion[fecha_str][slot]["kg"]       += float(r.get("total_weight_kg") or 0)
             ocupacion[fecha_str][slot]["m3"]       += float(r.get("total_volume_m3") or 0)
+            if include_owners and r.get("id"):
+                st = r.get("status") or ""
+                ocupacion[fecha_str][slot]["owners"].append({
+                    "request_id":   int(r["id"]),
+                    "code":         r.get("code") or f"RET-{int(r['id']):06d}",
+                    "customer_name": (r.get("customer_name") or r.get("contact_name") or "Cliente")[:80],
+                    "status":       st,
+                    "status_label": PICKUP_STATUS.get(st, st),
+                    "status_color": PICKUP_STATUS_COLORS.get(st, "secondary"),
+                    "detail_url":   url_for("pickup_detail", rid=int(r["id"])),
+                })
 
         # Bloqueos manuales (tabla pickup_blocks)
         blocks_by_date = {}
@@ -3893,9 +4017,12 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-        # Generar disponibilidad por día
+        # Generar disponibilidad por día.
+        # Si pidieron un día específico (?date=) iteramos solo ese; si no,
+        # generamos los 31 días desde d_from hasta d_to inclusive.
         dias = {}
-        for offset in range(30):
+        total_dias = (d_to - d_from).days + 1
+        for offset in range(total_dias):
             d = d_from + _td(days=offset)
             iso = d.isoformat()
             disp_dia = (d.isoweekday() in work_days) and (iso not in holidays)
@@ -3926,7 +4053,7 @@ def register_pickup_routes(app, ctx):
                 is_lunch       = slot_info["is_lunch"]
                 slot_start_min = slot_info["start_min"]
                 slot_end_min   = slot_info["end_min"]
-                ocup = ocupacion.get(iso,{}).get(slot_hora, {"ocupados":0,"kg":0,"m3":0})
+                ocup = ocupacion.get(iso,{}).get(slot_hora, {"ocupados":0,"kg":0,"m3":0,"owners":[]})
 
                 # Bloqueo manual por franja
                 manual_block = None
@@ -3971,7 +4098,7 @@ def register_pickup_routes(app, ctx):
                 puede_iniciar   = puede
                 puede_finalizar = puede
 
-                dias[iso]["slots"].append({
+                slot_payload = {
                     "time_from":        slot_hora,
                     "time_to":          slot_to,
                     "estado":           estado,
@@ -3986,7 +4113,13 @@ def register_pickup_routes(app, ctx):
                     "ocupados":   ocupacion_actual,
                     "max":        parallel_capacity,
                     "lunch":      is_lunch,
-                })
+                }
+                # Solo incluimos owners en shape interna (operador autenticado
+                # + permiso). En shape pública NUNCA exponemos quién está en
+                # cada slot — eso sería filtración de info de clientes.
+                if include_owners:
+                    slot_payload["owners"] = list(ocup.get("owners") or [])
+                dias[iso]["slots"].append(slot_payload)
 
         _payload = {
             "from": d_from.isoformat(),
@@ -4013,9 +4146,12 @@ def register_pickup_routes(app, ctx):
             },
             "dias": dias,
         }
-        # Guardar en cache para próximos requests dentro del TTL
-        _DISPO_CACHE["payload"] = _payload
-        _DISPO_CACHE["ts"]      = _time_local.time()
+        # Guardar en cache SOLO la shape pública 30-días sin owners ni date=.
+        # Las llamadas internas son siempre frescas (operador puede confirmar
+        # un retiro en otro tab y al refrescar el calendario debe verlo).
+        if use_cache:
+            _DISPO_CACHE["payload"] = _payload
+            _DISPO_CACHE["ts"]      = _time_local.time()
         return jsonify(_payload)
 
     @app.route("/retiros/api/<int:rid>/full")

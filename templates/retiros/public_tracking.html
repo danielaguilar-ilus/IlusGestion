@@ -1029,15 +1029,24 @@
           </p>
           {% endif %}
           <div class="btns">
-            {# Form de confirmación — onsubmit dispara loading visible. Esto evita
-               el "no pasa nada" que reportaba Daniel: ahora el cliente VE el
-               botón cambiar al hacer click, y al recargar aparece el toast verde. #}
-            <form method="post" id="confirmForm" style="display:inline">
-              <input type="hidden" name="action" value="confirm">
-              <button class="btn-act btn-confirm" type="submit" id="confirmBtn">
-                <i class="bi bi-check2-circle"></i>Confirmar esta fecha
-              </button>
-            </form>
+            {# Confirmar — abre stepper modal (3 pasos visuales con AJAX).
+               Daniel mayo 2026: antes era un form submit que recargaba la
+               página sin feedback intermedio; ahora cada paso muestra su
+               propio progreso. Si algo falla, el cliente VE EN QUÉ PASO falló. #}
+            <button class="btn-act btn-confirm" type="button" id="openConfirmStepper">
+              <i class="bi bi-check2-circle"></i>Confirmar esta fecha
+            </button>
+            {# Fallback no-JS: si por alguna razón el JS no carga (cliente con
+               adblock raro, navegador antiguo), preservamos el form clásico
+               escondido para que el cliente NO quede bloqueado. #}
+            <noscript>
+              <form method="post" style="display:inline">
+                <input type="hidden" name="action" value="confirm">
+                <button class="btn-act btn-confirm" type="submit">
+                  <i class="bi bi-check2-circle"></i>Confirmar esta fecha
+                </button>
+              </form>
+            </noscript>
             <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
               <i class="bi bi-calendar-plus"></i>Proponer otra fecha
             </button>
@@ -1045,15 +1054,346 @@
               <i class="bi bi-x-circle"></i>No puedo
             </button>
           </div>
+
+          {# ════════════════════════════════════════════════════════════
+             MODAL STEPPER: confirmar fecha en 3 pasos visuales
+             Daniel mayo 2026 — "paso a paso, no un botón solitario que
+             falle en silencio". Cada paso tiene su propio spinner, su
+             check verde al completarse, o su mensaje de error con botón
+             "Reintentar". UX premium ILUS.
+
+             Pasos:
+              1) Re-verificamos disponibilidad (GET disponibilidad-publica)
+              2) Reservamos tu slot (POST seguimiento, action=confirm, AJAX)
+              3) Listo — redirect al tracking actualizado
+             ════════════════════════════════════════════════════════════ #}
+          <div class="modal fade" id="confirmStepperModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-sm">
+              <div class="modal-content cs-modal">
+                <div class="modal-header cs-header">
+                  <h5 class="modal-title">
+                    <i class="bi bi-check2-circle me-2" style="color:#16a34a"></i>
+                    Confirmar tu cita
+                  </h5>
+                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" id="csCloseBtn"></button>
+                </div>
+                <div class="modal-body cs-body">
+                  <div class="cs-target">
+                    <i class="bi bi-calendar-event"></i>
+                    <div>
+                      <strong id="csTargetDate">{{ pending[0].date if pending else '' }}</strong>
+                      <span class="text-muted">·</span>
+                      <span id="csTargetTime">{{ pending[0].time_from|hm if pending else '' }} – {{ pending[0].time_to|hm if pending else '' }}</span>
+                    </div>
+                  </div>
+
+                  <ol class="cs-steps" id="csSteps">
+                    <li class="cs-step" data-step="1">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">1</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Verificamos disponibilidad</div>
+                        <div class="cs-step-sub">Comprobando que tu horario sigue libre…</div>
+                      </div>
+                    </li>
+                    <li class="cs-step" data-step="2">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">2</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Reservamos tu slot</div>
+                        <div class="cs-step-sub">Avisando a la bodega y bloqueando tu bloque…</div>
+                      </div>
+                    </li>
+                    <li class="cs-step" data-step="3">
+                      <span class="cs-step-icon">
+                        <span class="cs-step-num">3</span>
+                        <span class="cs-step-spin"><span class="spinner-border spinner-border-sm"></span></span>
+                        <span class="cs-step-check"><i class="bi bi-check-lg"></i></span>
+                        <span class="cs-step-err"><i class="bi bi-x-lg"></i></span>
+                      </span>
+                      <div class="cs-step-body">
+                        <div class="cs-step-title">Listo</div>
+                        <div class="cs-step-sub">Te enviamos un correo con todos los detalles.</div>
+                      </div>
+                    </li>
+                  </ol>
+
+                  <div class="cs-summary cs-summary-success" id="csSummarySuccess" style="display:none">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <div>
+                      <strong>¡Cita confirmada!</strong>
+                      <div class="small">Redirigiendo a tu seguimiento…</div>
+                    </div>
+                  </div>
+                  <div class="cs-summary cs-summary-error" id="csSummaryError" style="display:none">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <div>
+                      <strong>No pudimos confirmar.</strong>
+                      <div class="small" id="csErrorDetail">Intenta nuevamente o elige otro horario.</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="modal-footer cs-footer">
+                  <button type="button" class="btn btn-link text-muted" data-bs-dismiss="modal" id="csCancelBtn">Cancelar</button>
+                  <button type="button" class="btn btn-outline-danger" id="csRetryBtn" style="display:none">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
+                  </button>
+                  <button type="button" class="btn btn-success fw-bold" id="csDoneBtn" style="display:none" disabled>
+                    <i class="bi bi-check-lg me-1"></i>Listo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <style>
+            /* Stepper modal — diseño compacto, claro, premium */
+            .cs-modal{border:0;border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.25)}
+            .cs-header{background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);color:#fff;padding:14px 18px;border:0}
+            .cs-header .modal-title{font-weight:900;font-size:1.02rem}
+            .cs-body{padding:18px 20px;background:#fafafa}
+            .cs-target{
+              display:flex;align-items:center;gap:10px;background:#fff;border:1.5px dashed #d1d5db;
+              border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:.92rem;
+            }
+            .cs-target i{color:var(--ilus-red,#dc2626);font-size:1.2rem}
+            .cs-target strong{font-weight:900;color:#0a0a0a}
+            .cs-steps{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+            .cs-step{display:flex;align-items:flex-start;gap:12px;background:#fff;border:1px solid #e5e7eb;
+              border-radius:10px;padding:12px 14px;transition:border-color .2s, background .2s, transform .2s}
+            .cs-step.is-active{border-color:#0a0a0a;background:#fff;transform:scale(1.01);box-shadow:0 4px 12px rgba(0,0,0,.06)}
+            .cs-step.is-done{border-color:#16a34a;background:#f0fdf4}
+            .cs-step.is-error{border-color:#dc2626;background:#fef2f2}
+            .cs-step-icon{
+              width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+              background:#e5e7eb;color:#6b7280;font-weight:900;font-size:.82rem;flex-shrink:0;position:relative;
+              transition:background .2s, color .2s;
+            }
+            .cs-step.is-active .cs-step-icon{background:#0a0a0a;color:#fff}
+            .cs-step.is-done .cs-step-icon{background:#16a34a;color:#fff}
+            .cs-step.is-error .cs-step-icon{background:#dc2626;color:#fff}
+            .cs-step-icon .cs-step-num,
+            .cs-step-icon .cs-step-spin,
+            .cs-step-icon .cs-step-check,
+            .cs-step-icon .cs-step-err{
+              position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+              opacity:0;transition:opacity .15s;
+            }
+            .cs-step:not(.is-active):not(.is-done):not(.is-error) .cs-step-num{opacity:1}
+            .cs-step.is-active .cs-step-spin{opacity:1}
+            .cs-step.is-done .cs-step-check{opacity:1;font-size:1rem}
+            .cs-step.is-error .cs-step-err{opacity:1;font-size:.9rem}
+            .cs-step-body{flex:1;min-width:0}
+            .cs-step-title{font-weight:800;color:#0a0a0a;font-size:.92rem;line-height:1.2}
+            .cs-step-sub{color:#6b7280;font-size:.78rem;margin-top:3px;line-height:1.3}
+            .cs-step.is-done .cs-step-sub{color:#166534}
+            .cs-step.is-error .cs-step-sub{color:#991b1b}
+
+            .cs-summary{
+              display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:10px;
+              margin-top:12px;font-size:.88rem;
+            }
+            .cs-summary-success{background:#f0fdf4;border:1px solid #86efac;color:#166534}
+            .cs-summary-success i{color:#16a34a;font-size:1.4rem}
+            .cs-summary-error{background:#fef2f2;border:1px solid #fca5a5;color:#7f1d1d}
+            .cs-summary-error i{color:#dc2626;font-size:1.4rem}
+
+            .cs-footer{padding:12px 18px;background:#f9fafb;border:0;display:flex;justify-content:space-between;gap:8px}
+            .cs-footer .btn{font-weight:700}
+          </style>
+
           <script>
-            // Loading visible al confirmar — feedback instantáneo (Bug #1).
+            // ═══════════════════════════════════════════════════════════
+            //  STEPPER DE CONFIRMACIÓN — paso a paso con AJAX
+            //  Daniel mayo 2026
+            //  - Paso 1: GET disponibilidad-publica para re-verificar
+            //  - Paso 2: POST seguimiento con action=confirm (AJAX, JSON)
+            //  - Paso 3: éxito → redirect al tracking actualizado
+            //  - Cualquier error: muestra el detalle EN EL PASO que falló
+            //    + botón "Reintentar" (vuelve a ejecutar todo).
+            // ═══════════════════════════════════════════════════════════
             (function(){
-              const f = document.getElementById('confirmForm');
-              const b = document.getElementById('confirmBtn');
-              if (!f || !b) return;
-              f.addEventListener('submit', () => {
-                b.disabled = true;
-                b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Confirmando…';
+              'use strict';
+              const openBtn = document.getElementById('openConfirmStepper');
+              const modalEl = document.getElementById('confirmStepperModal');
+              if (!openBtn || !modalEl) return;
+
+              const TARGET_DATE = '{{ pending[0].date if pending else "" }}';
+              const TARGET_TF   = '{{ pending[0].time_from|hm if pending else "" }}';
+              const TARGET_TT   = '{{ pending[0].time_to|hm if pending else "" }}';
+              const POST_URL    = '{{ url_for("pickup_public_tracking", token=req.public_token) }}';
+              const TRACK_URL   = '{{ url_for("pickup_public_tracking", token=req.public_token) }}';
+              const DISP_URL    = '{{ url_for("pickup_disponibilidad_publica") }}';
+
+              const steps = Array.from(modalEl.querySelectorAll('.cs-step'));
+              const summaryOk = document.getElementById('csSummarySuccess');
+              const summaryErr = document.getElementById('csSummaryError');
+              const errorDetail = document.getElementById('csErrorDetail');
+              const cancelBtn = document.getElementById('csCancelBtn');
+              const retryBtn  = document.getElementById('csRetryBtn');
+              const doneBtn   = document.getElementById('csDoneBtn');
+              const closeBtn  = document.getElementById('csCloseBtn');
+
+              let _modalInst = null;
+              let _running = false;
+
+              function _step(n){ return steps.find(s => parseInt(s.dataset.step,10) === n); }
+              function _resetVisual(){
+                steps.forEach(s => s.classList.remove('is-active','is-done','is-error'));
+                summaryOk.style.display = 'none';
+                summaryErr.style.display = 'none';
+                retryBtn.style.display = 'none';
+                doneBtn.style.display = 'none';
+                cancelBtn.disabled = false;
+                closeBtn.disabled  = false;
+                _setSub(1, 'Comprobando que tu horario sigue libre…');
+                _setSub(2, 'Avisando a la bodega y bloqueando tu bloque…');
+                _setSub(3, 'Te enviamos un correo con todos los detalles.');
+              }
+              function _setSub(n, txt){
+                const el = _step(n);
+                if (!el) return;
+                const sub = el.querySelector('.cs-step-sub');
+                if (sub) sub.textContent = txt;
+              }
+              function _activate(n){
+                steps.forEach(s => s.classList.remove('is-active'));
+                const el = _step(n);
+                if (el) el.classList.add('is-active');
+              }
+              function _done(n){
+                const el = _step(n);
+                if (!el) return;
+                el.classList.remove('is-active','is-error');
+                el.classList.add('is-done');
+              }
+              function _fail(n, msg){
+                const el = _step(n);
+                if (!el) return;
+                el.classList.remove('is-active','is-done');
+                el.classList.add('is-error');
+                _setSub(n, msg || 'Ocurrió un problema en este paso.');
+                summaryErr.style.display = 'flex';
+                errorDetail.textContent = msg || 'Intenta nuevamente o elige otro horario.';
+                retryBtn.style.display  = 'inline-flex';
+                cancelBtn.disabled = false;
+                closeBtn.disabled  = false;
+              }
+
+              async function _runFlow(){
+                if (_running) return;
+                _running = true;
+                _resetVisual();
+                cancelBtn.disabled = true;
+                closeBtn.disabled  = true;
+
+                // ── PASO 1: re-verificar disponibilidad ───────────
+                _activate(1);
+                try {
+                  const r = await fetch(DISP_URL + '?date=' + encodeURIComponent(TARGET_DATE), {
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    cache: 'no-store',
+                    credentials: 'same-origin',
+                  });
+                  if (!r.ok) throw new Error('HTTP ' + r.status);
+                  const payload = await r.json();
+                  const dia = (payload.dias || {})[TARGET_DATE];
+                  if (!dia || !dia.disponible){
+                    _running = false;
+                    _fail(1, (dia && dia.razon) || 'El día ya no está disponible.');
+                    return;
+                  }
+                  const slot = (dia.slots || []).find(s =>
+                    (s.time_from || s.hora) === TARGET_TF
+                  );
+                  if (!slot){
+                    _running = false;
+                    _fail(1, 'No encontramos tu bloque en el calendario del día.');
+                    return;
+                  }
+                  // Permitimos ocupado/disponible (puede haber 1/2 y aún caber yo)
+                  if (slot.estado === 'completo' || slot.estado === 'colacion' || slot.estado === 'bloqueado'){
+                    _running = false;
+                    _fail(1, 'Tu horario ya no está libre: ' + (slot.razon || slot.estado));
+                    return;
+                  }
+                  _setSub(1, 'Horario disponible. Reservando…');
+                  _done(1);
+                } catch (e){
+                  _running = false;
+                  _fail(1, 'No pudimos comprobar disponibilidad. Verifica tu conexión.');
+                  return;
+                }
+
+                // ── PASO 2: POST AJAX confirm ─────────────────────
+                _activate(2);
+                try {
+                  const fd = new FormData();
+                  fd.append('action', 'confirm');
+                  const r2 = await fetch(POST_URL, {
+                    method: 'POST',
+                    body: fd,
+                    headers: {
+                      'X-Requested-With': 'XMLHttpRequest',
+                      'Accept': 'application/json',
+                    },
+                    credentials: 'same-origin',
+                  });
+                  let data = null;
+                  try { data = await r2.json(); } catch(_){}
+                  if (!r2.ok || !data || data.ok === false){
+                    const msg = (data && data.error) || ('HTTP ' + r2.status);
+                    _running = false;
+                    _fail(2, msg);
+                    return;
+                  }
+                  _setSub(2, 'Slot reservado para ' + (data.fecha || TARGET_DATE) + ' · ' + (data.hora_desde || TARGET_TF));
+                  _done(2);
+                } catch (e){
+                  _running = false;
+                  _fail(2, 'No pudimos reservar el slot. Intenta nuevamente.');
+                  return;
+                }
+
+                // ── PASO 3: éxito + redirect ─────────────────────
+                _activate(3);
+                _setSub(3, 'Cita confirmada. Redirigiendo…');
+                _done(3);
+                summaryOk.style.display = 'flex';
+                doneBtn.style.display   = 'inline-flex';
+                doneBtn.disabled        = false;
+                closeBtn.disabled       = false;
+                cancelBtn.style.display = 'none';
+                _running = false;
+
+                // Auto-redirect tras 1.2s — el cliente alcanza a ver el ✓
+                setTimeout(() => { window.location.href = TRACK_URL; }, 1200);
+              }
+
+              openBtn.addEventListener('click', () => {
+                if (!_modalInst && window.bootstrap){
+                  _modalInst = new bootstrap.Modal(modalEl);
+                }
+                if (_modalInst){
+                  _modalInst.show();
+                  _runFlow();
+                }
+              });
+
+              retryBtn.addEventListener('click', () => { _runFlow(); });
+              doneBtn.addEventListener('click',  () => { window.location.href = TRACK_URL; });
+
+              // Reset al cerrar (por si vuelve a abrir)
+              modalEl.addEventListener('hidden.bs.modal', () => {
+                _resetVisual();
               });
             })();
           </script>

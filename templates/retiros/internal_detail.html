@@ -274,7 +274,8 @@ async function abrirDescargaInforme(rutCliente){
         </div>
 
         {# Paso 5: Confirmada (cliente acepta) #}
-        <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}">
+        <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}"
+             onclick="document.getElementById('sec-calendario').scrollIntoView({behavior:'smooth',block:'center'})">
           <span class="pipe-step-num">Paso 5</span>
           <div class="pipe-circle">5</div>
           <div class="pipe-label">Confirmada</div>
@@ -296,6 +297,437 @@ async function abrirDescargaInforme(rutCliente){
         </div>
       </div>
     </div>
+
+    {# ═══════════════════════════════════════════════════════════════
+       WIDGET: CALENDARIO DEL DÍA (multi-rol)
+       Daniel 2026-05-23 — El MISMO calendario que ve el cliente, pero
+       enriquecido con owners (RET-XXXXXX + cliente + link al detail).
+       Es la fuente única de verdad de disponibilidad. Si aquí dice que
+       un slot está ocupado, también lo dice en el formulario público
+       y en el modal "Proponer otra fecha" del tracking.
+
+       Fecha inicial: confirmed_date || proposed_date || requested_date
+       Cambio con el date picker → recarga el mismo grid sin salir de
+       la página.
+    ═══════════════════════════════════════════════════════════════ #}
+    {% set _cal_init_date = (
+        (req.confirmed_date|string)[:10] if req.confirmed_date
+        else (req.proposed_date|string)[:10] if req.proposed_date
+        else (req.requested_date|string)[:10] if req.requested_date
+        else ''
+    ) %}
+    <style>
+      .icd-cal-card{
+        background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px 20px;
+        margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.04);
+      }
+      .icd-cal-head{
+        display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+        margin-bottom:14px;
+      }
+      .icd-cal-head h6{margin:0;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+      .icd-cal-head h6 .ico{color:var(--ilus-red,#dc2626)}
+      .icd-cal-head .badge-cap{font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+        background:#0a0a0a;color:#fff;border-radius:50px;padding:4px 10px}
+      .icd-cal-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+      .icd-cal-toolbar input[type="date"]{
+        max-width:200px;font-size:.85rem;font-weight:700;border:1.5px solid #e5e7eb;
+        padding:8px 10px;border-radius:8px;color:#0a0a0a;
+      }
+      .icd-cal-toolbar input[type="date"]:focus{outline:none;border-color:var(--ilus-red,#dc2626);box-shadow:0 0 0 3px rgba(220,38,38,.10)}
+      .icd-cal-toolbar .btn-mini{
+        padding:7px 12px;border:1.5px solid #e5e7eb;border-radius:8px;background:#fff;
+        font-size:.78rem;font-weight:700;color:#374151;cursor:pointer;
+        display:inline-flex;align-items:center;gap:6px;transition:all .15s;
+      }
+      .icd-cal-toolbar .btn-mini:hover{background:#f9fafb;border-color:#9ca3af}
+      .icd-cal-toolbar .btn-mini.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+      .icd-cal-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:.7rem;color:#6b7280;margin-bottom:10px}
+      .icd-cal-legend span{display:inline-flex;align-items:center;gap:5px}
+      .icd-cal-legend .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+      /* Sub-grilla por sección (Mañana / Tarde) */
+      .icd-slot-grid{display:flex;flex-direction:column;gap:8px}
+      .icd-slot-section-title{
+        font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+        color:#6b7280;padding:4px 0 2px;border-bottom:1px dashed #e5e7eb;margin:4px 0 2px;
+      }
+      .icd-slot-grid-inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+      @media(max-width:600px){.icd-slot-grid-inner{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}}
+
+      .icd-slot{
+        background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;
+        padding:10px 6px;text-align:center;font-size:.82rem;font-weight:800;color:#0a0a0a;
+        position:relative;min-height:54px;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+        transition:transform .15s, box-shadow .15s, border-color .15s, background .15s;
+      }
+      .icd-slot.has-owners{cursor:pointer}
+      .icd-slot.has-owners:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.10);border-color:#9ca3af}
+      .icd-slot .icd-slot-hora{font-variant-numeric:tabular-nums;font-size:.86rem;font-weight:900;letter-spacing:.02em}
+      .icd-slot .icd-slot-meta{font-size:.62rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}
+      .icd-slot .icd-slot-owners{font-size:.6rem;font-weight:700;color:#0a0a0a;line-height:1.15;max-width:100%;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+
+      .icd-slot.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
+      .icd-slot.is-lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem;opacity:.85}
+      .icd-slot.is-full{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5}
+      .icd-slot.is-busy{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+      .icd-slot.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;text-decoration:line-through}
+      .icd-slot.is-current{outline:3px solid var(--ilus-red,#dc2626);outline-offset:2px;box-shadow:0 4px 12px rgba(220,38,38,.20)}
+      .icd-slot.is-current::before{
+        content:'ESTE RETIRO';position:absolute;top:-9px;left:50%;transform:translateX(-50%);
+        background:var(--ilus-red,#dc2626);color:#fff;font-size:.5rem;font-weight:900;
+        padding:2px 7px;border-radius:50px;letter-spacing:.06em;white-space:nowrap;
+        box-shadow:0 2px 5px rgba(220,38,38,.25);
+      }
+
+      .icd-cal-empty{padding:32px 14px;text-align:center;color:#9ca3af;font-size:.85rem}
+      .icd-cal-empty i{font-size:1.6rem;display:block;margin-bottom:6px;opacity:.6}
+      .icd-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+      .icd-cal-skel div{height:54px;background:linear-gradient(90deg,#f3f4f6 0%,#e5e7eb 50%,#f3f4f6 100%);
+        background-size:200% 100%;animation:icdSkel 1.2s linear infinite;border-radius:8px}
+      @keyframes icdSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+      /* Modal de detalles de un slot (lista de owners) */
+      .icd-owners-modal .modal-content{border-radius:14px;overflow:hidden}
+      .icd-owners-modal .modal-header{background:#0a0a0a;color:#fff;padding:14px 18px;border:0}
+      .icd-owners-modal .modal-header .btn-close{filter:invert(1)}
+      .icd-owners-modal .modal-body{padding:14px 18px}
+      .icd-owner-row{
+        display:flex;align-items:center;justify-content:space-between;gap:10px;
+        padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px;
+        background:#fff;transition:background .12s, border-color .12s;
+      }
+      .icd-owner-row:hover{background:#fafafa;border-color:#d1d5db}
+      .icd-owner-row.is-current{border-color:var(--ilus-red,#dc2626);background:#fff5f5}
+      .icd-owner-info{min-width:0;flex:1}
+      .icd-owner-code{font-weight:900;color:var(--ilus-red,#dc2626);font-size:.86rem}
+      .icd-owner-name{font-weight:700;color:#0a0a0a;font-size:.84rem;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .icd-owner-status{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280}
+      .icd-owner-row a.icd-owner-go{
+        font-size:.74rem;font-weight:800;color:#fff;background:#0a0a0a;border:0;
+        padding:7px 12px;border-radius:8px;text-decoration:none;
+        display:inline-flex;align-items:center;gap:5px;flex-shrink:0;
+      }
+      .icd-owner-row a.icd-owner-go:hover{background:var(--ilus-red,#dc2626);color:#fff}
+    </style>
+
+    <div id="sec-calendario" class="icd-cal-card">
+      <div class="icd-cal-head">
+        <h6>
+          <i class="bi bi-calendar-week ico"></i>Calendario del día — fuente única de verdad
+          <span class="badge-cap">vista interna</span>
+        </h6>
+      </div>
+      <p class="small text-muted mb-2" style="font-size:.78rem">
+        Este es el MISMO calendario que ve el cliente al solicitar o reprogramar.
+        Si aquí está ocupado, también lo está allá. Click en un bloque ocupado para
+        ver qué retiros lo tienen.
+      </p>
+      <div class="icd-cal-toolbar">
+        <label class="form-label small fw-bold mb-0" for="icdCalDate" style="font-size:.78rem">Día:</label>
+        <input type="date" id="icdCalDate" value="{{ _cal_init_date }}">
+        <button type="button" class="btn-mini" id="icdCalPrev" title="Día anterior"><i class="bi bi-chevron-left"></i></button>
+        <button type="button" class="btn-mini" id="icdCalNext" title="Día siguiente"><i class="bi bi-chevron-right"></i></button>
+        <button type="button" class="btn-mini" id="icdCalToday">Hoy</button>
+        <button type="button" class="btn-mini" id="icdCalRefresh" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+        <span class="ms-auto small text-muted" id="icdCalSummary" style="font-size:.78rem"></span>
+      </div>
+      <div class="icd-cal-legend">
+        <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+        <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+        <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+        <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+        <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Bloqueado</span>
+        <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Este retiro</span>
+      </div>
+      <div class="icd-slot-grid" id="icdSlotGrid">
+        <div class="icd-cal-skel" aria-hidden="true">
+          {% for _ in range(10) %}<div></div>{% endfor %}
+        </div>
+      </div>
+    </div>
+
+    {# Modal detalle de slot ocupado — lista de owners + link al detail #}
+    <div class="modal fade icd-owners-modal" id="icdOwnersModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="icdOwnersModalTitle">
+              <i class="bi bi-people-fill me-1"></i>Retiros en este bloque
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body" id="icdOwnersModalBody">
+            <!-- lo puebla el JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    // ═══════════════════════════════════════════════════════════════
+    //  CALENDARIO INTERNO — fuente única de verdad
+    //  - Mismo endpoint /retiros/api/disponibilidad-publica?include_owners=1
+    //  - Refleja owners (RET-XXXXXX + cliente + detail_url)
+    //  - Click en slot ocupado → modal con lista clickeable
+    //  - Filtro de fecha + atajos Prev/Today/Next + Refrescar
+    //  - Skeleton mientras carga
+    // ═══════════════════════════════════════════════════════════════
+    (function(){
+      'use strict';
+      const REQ_ID  = {{ req.id|int }};
+      const DATE_IN = document.getElementById('icdCalDate');
+      const GRID    = document.getElementById('icdSlotGrid');
+      const SUMMARY = document.getElementById('icdCalSummary');
+      const MODAL_EL = document.getElementById('icdOwnersModal');
+      const MODAL_BODY = document.getElementById('icdOwnersModalBody');
+      const MODAL_TITLE = document.getElementById('icdOwnersModalTitle');
+      let _lastPayload = null;
+      let _modalInstance = null;
+
+      function _hmToMin(s){
+        const p = String(s||'').split(':').map(Number);
+        return (p[0]||0)*60 + (p[1]||0);
+      }
+      function _esc(s){
+        return String(s||'').replace(/[&<>"']/g, c => ({
+          '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[c]));
+      }
+      function _addDays(iso, n){
+        const d = new Date(iso + 'T00:00:00');
+        d.setDate(d.getDate() + n);
+        return d.toISOString().slice(0,10);
+      }
+      function _todayISO(){
+        const d = new Date(); d.setHours(0,0,0,0);
+        return d.toISOString().slice(0,10);
+      }
+
+      function _renderSkel(){
+        let html = '<div class="icd-cal-skel" aria-hidden="true">';
+        for (let i=0;i<10;i++) html += '<div></div>';
+        html += '</div>';
+        GRID.innerHTML = html;
+        SUMMARY.textContent = 'Cargando…';
+      }
+
+      function _renderEmpty(msg){
+        GRID.innerHTML = '<div class="icd-cal-empty"><i class="bi bi-calendar-x"></i>' + _esc(msg) + '</div>';
+        SUMMARY.textContent = '';
+      }
+
+      function _slotKey(s){
+        return (s.time_from || s.hora || '') + '|' + (s.time_to || '');
+      }
+
+      function _isThisRequestSlot(payload, fecha, slot){
+        // ¿Este slot corresponde al retiro actual? Lo deducimos del payload:
+        // si alguno de los owners del slot.owners.request_id === REQ_ID
+        const owners = Array.isArray(slot.owners) ? slot.owners : [];
+        return owners.some(o => Number(o.request_id) === REQ_ID);
+      }
+
+      function _slotClass(slot){
+        const cls = ['icd-slot'];
+        const estado = slot.estado || (slot.lunch ? 'colacion' : (!slot.disponible ? 'completo' : 'disponible'));
+        if (estado === 'colacion') cls.push('is-lunch');
+        else if (estado === 'completo') cls.push('is-full');
+        else if (estado === 'ocupado') cls.push('is-busy');
+        else if (estado === 'bloqueado') cls.push('is-blocked');
+        return { cls, estado };
+      }
+
+      function _renderDia(payload, fecha){
+        const dia = (payload.dias || {})[fecha];
+        if (!dia){
+          _renderEmpty('Sin datos para ' + fecha + '. Puede estar fuera del rango de 30 días.');
+          return;
+        }
+        if (!dia.disponible){
+          _renderEmpty((dia.razon || 'Día no operativo') + ' — ' + fecha);
+          return;
+        }
+        const slots = dia.slots || [];
+        if (!slots.length){
+          _renderEmpty('Sin bloques configurados para este día.');
+          return;
+        }
+
+        // Separar Mañana / Tarde por colación
+        const lunchStart = (payload.lunch_start) || '12:30';
+        const lunchStartMin = _hmToMin(lunchStart);
+        let postLunchIdx = -1;
+        for (let i = 0; i < slots.length; i++){
+          const s = slots[i];
+          const startMin = _hmToMin(s.time_from || s.hora || '00:00');
+          const isLunch = (s.estado === 'colacion') || s.lunch;
+          if (!isLunch && startMin >= lunchStartMin){
+            postLunchIdx = i; break;
+          }
+        }
+        const hasMorning = slots.some((s, i) => postLunchIdx === -1 ? true : i < postLunchIdx);
+        const hasAfternoon = postLunchIdx !== -1;
+
+        const slotHtml = (s, i) => {
+          const { cls, estado } = _slotClass(s);
+          const owners = Array.isArray(s.owners) ? s.owners : [];
+          const isCurrent = _isThisRequestSlot(payload, fecha, s);
+          if (isCurrent) cls.push('is-current');
+          if (owners.length) cls.push('has-owners');
+
+          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
+          const mx = s.capacidad_max    != null ? s.capacidad_max    : (s.max || 2);
+
+          let label = '';
+          if (estado === 'colacion') label = 'Colación';
+          else if (estado === 'bloqueado') label = 'Bloqueado';
+          else label = oc + '/' + mx;
+
+          // Mostrar nombres truncados si hay owners
+          let ownersLine = '';
+          if (owners.length === 1){
+            ownersLine = `<div class="icd-slot-owners" title="${_esc(owners[0].code)} · ${_esc(owners[0].customer_name)}">${_esc(owners[0].code)}</div>`;
+          } else if (owners.length > 1){
+            ownersLine = `<div class="icd-slot-owners" title="${owners.length} retiros en este bloque">${owners.length} retiros</div>`;
+          }
+
+          const hora = s.time_from || s.hora || '';
+          const dataIdx = `data-idx="${i}"`;
+          return `<div class="${cls.join(' ')}" ${dataIdx} role="button" tabindex="${owners.length ? 0 : -1}">
+            <div class="icd-slot-hora">${_esc(hora)}</div>
+            <div class="icd-slot-meta">${_esc(label)}</div>
+            ${ownersLine}
+          </div>`;
+        };
+
+        let html = '';
+        if (hasMorning && hasAfternoon){
+          html += '<div class="icd-slot-section-title">☀️ Mañana</div>';
+          html += '<div class="icd-slot-grid-inner">' + slots.slice(0, postLunchIdx).map((s, i) => slotHtml(s, i)).join('') + '</div>';
+          html += '<div class="icd-slot-section-title">🌤 Tarde</div>';
+          html += '<div class="icd-slot-grid-inner">' + slots.slice(postLunchIdx).map((s, j) => slotHtml(s, postLunchIdx + j)).join('') + '</div>';
+        } else {
+          html = '<div class="icd-slot-grid-inner">' + slots.map((s, i) => slotHtml(s, i)).join('') + '</div>';
+        }
+        GRID.innerHTML = html;
+
+        // Sumario: cuántos libres / parciales / llenos / lunch
+        let lib=0, par=0, lle=0, lun=0, blk=0;
+        slots.forEach(s => {
+          const e = s.estado;
+          if (e === 'disponible') lib++;
+          else if (e === 'ocupado') par++;
+          else if (e === 'completo') lle++;
+          else if (e === 'colacion') lun++;
+          else if (e === 'bloqueado') blk++;
+        });
+        const parts = [];
+        if (lib) parts.push(`<span style="color:#16a34a"><strong>${lib}</strong> libres</span>`);
+        if (par) parts.push(`<span style="color:#c2410c"><strong>${par}</strong> parciales</span>`);
+        if (lle) parts.push(`<span style="color:#7f1d1d"><strong>${lle}</strong> llenos</span>`);
+        if (blk) parts.push(`<span style="color:#6b7280"><strong>${blk}</strong> bloqueados</span>`);
+        SUMMARY.innerHTML = parts.join(' · ');
+
+        // Bind click en slots con owners
+        GRID.querySelectorAll('.icd-slot.has-owners').forEach(el => {
+          el.addEventListener('click', () => {
+            const i = parseInt(el.dataset.idx, 10);
+            const slot = slots[i];
+            if (!slot) return;
+            _openOwnersModal(fecha, slot);
+          });
+          el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); el.click(); }
+          });
+        });
+      }
+
+      function _openOwnersModal(fecha, slot){
+        const owners = Array.isArray(slot.owners) ? slot.owners : [];
+        const hora = (slot.time_from || slot.hora || '') + (slot.time_to ? ' – ' + slot.time_to : '');
+        MODAL_TITLE.innerHTML = `<i class="bi bi-people-fill me-1"></i>${_esc(fecha)} · ${_esc(hora)}`;
+        if (!owners.length){
+          MODAL_BODY.innerHTML = '<div class="text-center text-muted py-3"><i class="bi bi-info-circle me-1"></i>Este bloque no tiene retiros asignados.</div>';
+        } else {
+          MODAL_BODY.innerHTML = owners.map(o => {
+            const isCur = Number(o.request_id) === REQ_ID;
+            return `<div class="icd-owner-row ${isCur ? 'is-current' : ''}">
+              <div class="icd-owner-info">
+                <div class="icd-owner-code">${_esc(o.code)}${isCur ? ' <span class="badge bg-danger ms-1" style="font-size:.6rem">ESTE</span>' : ''}</div>
+                <div class="icd-owner-name">${_esc(o.customer_name)}</div>
+                <div class="icd-owner-status">${_esc(o.status_label || o.status || '—')}</div>
+              </div>
+              ${isCur
+                ? '<span class="icd-owner-go" style="background:#9ca3af;cursor:default">Estás aquí</span>'
+                : `<a class="icd-owner-go" href="${_esc(o.detail_url)}"><i class="bi bi-box-arrow-up-right"></i>Abrir</a>`}
+            </div>`;
+          }).join('');
+        }
+        if (!_modalInstance && window.bootstrap){
+          _modalInstance = new bootstrap.Modal(MODAL_EL);
+        }
+        if (_modalInstance) _modalInstance.show();
+      }
+
+      async function _loadDia(fecha){
+        if (!fecha){ _renderEmpty('Elige una fecha para ver el calendario.'); return; }
+        _renderSkel();
+        try {
+          const r = await fetch('/retiros/api/disponibilidad-publica?include_owners=1&date=' + encodeURIComponent(fecha), {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const payload = await r.json();
+          _lastPayload = payload;
+          _renderDia(payload, fecha);
+        } catch (e){
+          _renderEmpty('No se pudo cargar el calendario. ' + (e.message || ''));
+        }
+      }
+
+      // Min/Max del input date: mañana + 30 días
+      function _setDateBounds(){
+        const tomorrow = new Date(Date.now() + 24*3600*1000);
+        const tomorrowStr = tomorrow.toISOString().slice(0,10);
+        const max = new Date(Date.now() + 31*24*3600*1000).toISOString().slice(0,10);
+        // No forzamos min — el operador puede ver retroactivos también.
+        DATE_IN.max = max;
+      }
+
+      // Bindings
+      DATE_IN.addEventListener('change', () => _loadDia(DATE_IN.value));
+      document.getElementById('icdCalPrev').addEventListener('click', () => {
+        if (!DATE_IN.value) return;
+        DATE_IN.value = _addDays(DATE_IN.value, -1);
+        _loadDia(DATE_IN.value);
+      });
+      document.getElementById('icdCalNext').addEventListener('click', () => {
+        if (!DATE_IN.value) return;
+        DATE_IN.value = _addDays(DATE_IN.value, 1);
+        _loadDia(DATE_IN.value);
+      });
+      document.getElementById('icdCalToday').addEventListener('click', () => {
+        const tomorrow = new Date(Date.now() + 24*3600*1000).toISOString().slice(0,10);
+        DATE_IN.value = tomorrow;
+        _loadDia(tomorrow);
+      });
+      document.getElementById('icdCalRefresh').addEventListener('click', () => {
+        if (DATE_IN.value) _loadDia(DATE_IN.value);
+      });
+
+      // Init
+      _setDateBounds();
+      const initial = DATE_IN.value || (new Date(Date.now() + 24*3600*1000)).toISOString().slice(0,10);
+      DATE_IN.value = initial;
+      _loadDia(initial);
+    })();
+    </script>
 
     {# ═══════════════════════════════════════════════════════════
        SECCIÓN: VALIDACIÓN DE DOCUMENTACIÓN
