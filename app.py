@@ -2442,15 +2442,75 @@ def init_pickup_tables():
             # ── ÍNDICES SECUNDARIOS (idempotentes, agregados después de auditoría) ──
             # Migran tablas ya creadas sin estos índices. Si ya existen, MySQL falla
             # con duplicate key — capturamos y seguimos.
+            #
+            # AUDITORÍA SEGURIDAD/PERFORMANCE (mayo 2026 — Daniel pidió cero brechas):
+            # - idx_pickup_token UNIQUE: garantiza que dos solicitudes JAMÁS compartan
+            #   el mismo public_token (tokens son secretos por solicitud).
+            # - idx_pickup_status_date: acelera el dashboard interno con filtros
+            #   combinados (status + fecha confirmada/solicitada).
+            # - idx_pickup_doc: ya existía (document_type, document_number).
+            # - idx_pickup_confirmed_date: usado por bandeja-hoy y calendar.
+            # - idx_pickup_proposed_date: usado por _validar_disponibilidad_slot.
+            # - idx_pickup_email: lookups de cliente por email (cron recordatorios).
             for _idx_mig in [
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_rut (customer_rut)",
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_created (created_at)",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_status_date (status, requested_date)",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_confirmed_date (confirmed_date)",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_proposed_date (proposed_date)",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_email (contact_email)",
+                # UNIQUE en public_token: garantiza unicidad. Si hay duplicados, falla
+                # silenciosamente (los habrá que limpiar manualmente) — no rompemos boot.
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD UNIQUE INDEX uq_pickup_token (public_token)",
                 "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_rut (cliente_rut)",
                 "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_agenda (fecha_agenda)",
                 f"ALTER TABLE `{PICKUP_LOGS_TABLE}` ADD INDEX idx_plog_req (request_id, created_at)",
+                # Propuestas: lookup por request_id + status_pending (lo más frecuente)
+                f"ALTER TABLE `{PICKUP_PROPOSALS_TABLE}` ADD INDEX idx_pprop_req_status (request_id, status)",
+                # Adjuntos: lookup por request_id
+                f"ALTER TABLE `{PICKUP_ATTACHMENTS_TABLE}` ADD INDEX idx_patt_req (request_id)",
+                # Firmas: lookup por request_id (bandeja-hoy 'sin_firma')
+                f"ALTER TABLE `{PICKUP_SIGNATURES_TABLE}` ADD INDEX idx_psig_req (request_id)",
+                # Multi-doc (Daniel 2026-05-22): cubre cliente_rut + lookups por doc
+                "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_cliente_rut (cliente_rut)",
+                "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_doc (document_type, document_number)",
+                # Bloqueos: lookup por fecha
+                "ALTER TABLE pickup_blocks ADD INDEX idx_pblk_fecha_hora (fecha, hora_inicio)",
             ]:
                 try: cur.execute(_idx_mig)
                 except Exception: pass
+
+            # ── INTEGRIDAD REFERENCIAL: limpieza de huérfanos ──
+            # Daniel auditoría mayo 2026: si una OT pickup_request fue borrada y por
+            # algún motivo NO se aplicó el ON DELETE CASCADE (raro, pero posible si
+            # alguien hizo un DELETE sin la FK activa en tiempos antiguos), pueden
+            # quedar filas hijas huérfanas. Las borramos en cada boot con audit log.
+            for _orphan_table in (
+                PICKUP_PACKAGES_TABLE,
+                PICKUP_PROPOSALS_TABLE,
+                PICKUP_LOGS_TABLE,
+                PICKUP_ATTACHMENTS_TABLE,
+                PICKUP_SIGNATURES_TABLE,
+                "pickup_request_docs",
+            ):
+                try:
+                    cur.execute(
+                        f"SELECT COUNT(*) AS n FROM `{_orphan_table}` "
+                        f"WHERE request_id NOT IN (SELECT id FROM `{PICKUP_REQUESTS_TABLE}`)"
+                    )
+                    _row = cur.fetchone() or {}
+                    _n_orphans = int((_row.get("n") if isinstance(_row, dict) else _row[0]) or 0)
+                    if _n_orphans > 0:
+                        cur.execute(
+                            f"DELETE FROM `{_orphan_table}` "
+                            f"WHERE request_id NOT IN (SELECT id FROM `{PICKUP_REQUESTS_TABLE}`)"
+                        )
+                        print(f"[init_pickup_tables] CLEANUP {_orphan_table}: "
+                              f"{_n_orphans} huérfanos borrados", flush=True)
+                except Exception as _e_orphan:
+                    # Si la tabla no existe aún o falla, no rompemos boot
+                    print(f"[init_pickup_tables] cleanup {_orphan_table} skipped: {_e_orphan}",
+                          flush=True)
             # Migración: capacidad por franja (peso/volumen/cupos) + colación + step
             for _mig in [
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN slot_minutes INT DEFAULT 60 COMMENT 'Duración de cada franja en minutos'",

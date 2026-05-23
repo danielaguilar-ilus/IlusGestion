@@ -142,6 +142,11 @@ def register_pickup_routes(app, ctx):
     _send_ilus_email = ctx["_send_ilus_email"]
     _get_wa_cfg = ctx["_get_wa_cfg"]
     _send_whatsapp = ctx["_send_whatsapp"]
+    # Rate limiter de app.py (persistido en BD, cross-worker). Si no está
+    # disponible (entorno de tests), creamos un no-op para no romper.
+    _rate_limited = ctx.get("rate_limited") or (
+        lambda *a, **kw: (lambda fn: fn)
+    )
     # Daniel dio de baja Twilio (mayo 2026). El canal WhatsApp sólo dispara
     # si la env var COMM_CANALES_ACTIVOS lo incluye. Email vía Resend va
     # siempre — eso es lo importante para el flujo de retiros.
@@ -725,6 +730,110 @@ def register_pickup_routes(app, ctx):
             print(f"[ILUS][PICKUP NOTIFY_ASYNC SPAWN] {exc}")
 
     # ══════════════════════════════════════════════════════════════════
+    #  SANITIZACIÓN — elimina campos internos antes de enviar al cliente
+    # ══════════════════════════════════════════════════════════════════
+    # Daniel pidió seguridad sin brechas (mayo 2026). El tracking público
+    # debe recibir un dict SIN datos que solo deba ver el operador interno.
+    # Los campos `internal_notes`, `doc_validation_notes`, `doc_erp_data`,
+    # `created_ip`, `created_user_agent`, `doc_validated_by` son del flujo
+    # interno y no se exponen al cliente.
+    #
+    # IMPORTANTE: hacemos pop() sobre una copia del dict — NO mutamos la
+    # fila original (mysql_fetchone devuelve un dict mutable).
+    _PICKUP_INTERNAL_FIELDS = frozenset((
+        "internal_notes",
+        "doc_validation_notes",
+        "doc_erp_data",
+        "doc_validated_by",
+        "doc_validated_at",
+        "doc_validation_status",
+        "created_ip",
+        "created_user_agent",
+        "risk_score",
+        "information_quality_score",
+        "reminder_24h_sent",
+    ))
+
+    def _strip_internal(row):
+        """Devuelve una copia del dict sin campos internos. Idempotente: si
+        el campo no existe, no falla. Defensa en profundidad: igual el template
+        público no debería usarlos, pero el dict completo viaja por la red
+        si se serializa a JSON."""
+        if not row:
+            return row
+        try:
+            out = dict(row)
+        except Exception:
+            return row
+        for k in _PICKUP_INTERNAL_FIELDS:
+            out.pop(k, None)
+        return out
+
+    def _mask_email(email):
+        """Enmascara email para logs: 'daniel.aguilar@sphs.cl' → 'd***@sphs.cl'."""
+        try:
+            if not email or "@" not in str(email):
+                return "***"
+            local, dom = str(email).split("@", 1)
+            return f"{local[:1]}***@{dom}" if local else f"***@{dom}"
+        except Exception:
+            return "***"
+
+    def _mask_phone(phone):
+        """Enmascara teléfono: '+56 9 1234 5678' → '+56 9 **** 5678'."""
+        try:
+            s = re.sub(r"[^\d]", "", str(phone or ""))
+            if len(s) < 4:
+                return "***"
+            return f"***{s[-4:]}"
+        except Exception:
+            return "***"
+
+    def _mask_rut(rut):
+        """Enmascara RUT: '12.345.678-9' → '12.***.***-9'."""
+        try:
+            s = str(rut or "")
+            if len(s) < 3:
+                return "***"
+            return f"{s[:2]}***{s[-2:]}"
+        except Exception:
+            return "***"
+
+    # ══════════════════════════════════════════════════════════════════
+    #  RATE LIMITING POR TOKEN — polling público
+    # ══════════════════════════════════════════════════════════════════
+    # El endpoint /status hace polling cada 30s desde el navegador del cliente.
+    # Para evitar abuse (un cliente con un script que martille la URL), aplicamos
+    # un rate limit POR TOKEN en memoria del worker (60 req/min por token).
+    # NO usamos el rate_limited de app.py porque ese es por IP/user, no por
+    # token público — varios clientes detrás de un NAT compartirían IP.
+    _TOKEN_RL: dict = {}        # token → [timestamps]
+    _TOKEN_RL_MAX = 60          # max requests / window por token
+    _TOKEN_RL_WINDOW = 60.0     # ventana en segundos
+
+    def _token_rate_ok(token):
+        """Devuelve True si el token aún tiene cupo en su ventana, False si lo
+        excedió. Limpia entradas viejas con probabilidad 1/100 para mantener
+        el dict compacto sin agregar costo en cada request."""
+        import time as _time
+        now = _time.time()
+        cutoff = now - _TOKEN_RL_WINDOW
+        bucket = _TOKEN_RL.get(token) or []
+        # Filtrar timestamps fuera de ventana
+        bucket = [t for t in bucket if t >= cutoff]
+        if len(bucket) >= _TOKEN_RL_MAX:
+            _TOKEN_RL[token] = bucket
+            return False
+        bucket.append(now)
+        _TOKEN_RL[token] = bucket
+        # Limpieza probabilística (cheap)
+        if len(_TOKEN_RL) > 1000 and (now * 100) % 100 < 1:
+            for k in list(_TOKEN_RL.keys()):
+                if all(t < cutoff for t in (_TOKEN_RL[k] or [])):
+                    _TOKEN_RL.pop(k, None)
+        return True
+
+    # ══════════════════════════════════════════════════════════════════
     #  CACHE DE POLLING — evita martillar la BD desde el tracking público
     # ══════════════════════════════════════════════════════════════════
     # El tracking público hace polling cada 30s. Con muchos clientes mirando
@@ -737,6 +846,17 @@ def register_pickup_routes(app, ctx):
     # baja el peak en cada worker.
     _POLL_CACHE = {}             # token → {payload, fetched_at}
     _POLL_CACHE_TTL = 10.0       # segundos
+
+    # Cache global del endpoint público de disponibilidad. Los datos son los
+    # MISMOS para todos los visitantes (no dependen de sesión), por eso una
+    # cache de 30s en memoria del worker reduce drásticamente el costo de
+    # generar el grid de 30 días × ~17 slots con queries de ocupación/bloqueos.
+    # TTL corto para que las nuevas reservas se reflejen rápido. Definido aquí
+    # arriba (no dentro del endpoint) para que las invalidaciones de otras
+    # rutas puedan referenciarlo aunque se ejecuten antes de que el endpoint
+    # `pickup_disponibilidad_publica` se haya ejecutado por primera vez.
+    _DISPO_CACHE: dict = {"payload": None, "ts": 0.0}
+    _DISPO_TTL = 30.0  # segundos
 
     def _polling_cached(token):
         import time as _time
@@ -763,21 +883,42 @@ def register_pickup_routes(app, ctx):
         """Devuelve estado actual del retiro en JSON ligero — usado por el
         polling del tracking público (cada 30s).
 
-        Cacheado 10s en memoria para no martillar la BD si muchos clientes
-        están mirando su tracking al mismo tiempo.
+        Seguridad (Daniel mayo 2026):
+        - Rate limit por TOKEN: max 60 req/min — evita scripts que martillen
+          la URL pública (varios clientes detrás del mismo NAT comparten IP,
+          por eso el rate limit va por token, no por IP).
+        - Cacheado 10s en memoria: aunque 100 navegadores polleen al mismo
+          retiro, solo se hace 1 SELECT cada 10s.
+        - Payload mínimo: no exponemos campos internos (validation notes,
+          IPs, datos personales) — solo lo que necesita el stepper visual.
 
         Response shape:
           { ok, status, status_label, status_color, has_pending_proposal,
             updated_at, confirmed_date, confirmed_time_from, confirmed_time_to }
         """
+        # Validación del token mismo (anti-typo de URL): debe lucir como un
+        # token URL-safe razonable. Esto evita queries innecesarias por
+        # tokens claramente inválidos (bots probando paths).
+        if not token or len(token) < 16 or len(token) > 200 \
+                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+            return jsonify({"ok": False, "error": "invalid_token"}), 400
+
+        # Rate limit por token (60 req/min)
+        if not _token_rate_ok(token):
+            return jsonify({
+                "ok": False,
+                "error": "rate_limited",
+                "retry_after": int(_TOKEN_RL_WINDOW),
+            }), 429
+
         cached = _polling_cached(token)
         if cached is not None:
             return jsonify(cached)
 
         req = mysql_fetchone(
-            f"SELECT id, code, status, confirmed_date, confirmed_time_from, "
+            f"SELECT id, status, confirmed_date, confirmed_time_from, "
             f"       confirmed_time_to, updated_at "
-            f"FROM `{REQ}` WHERE public_token=%s",
+            f"FROM `{REQ}` WHERE public_token=%s LIMIT 1",
             (token,)
         )
         if not req:
@@ -806,7 +947,12 @@ def register_pickup_routes(app, ctx):
         return jsonify(payload)
 
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
+    @_rate_limited("pickup_public_request", max_attempts=8, window_seconds=3600)
     def pickup_public_request():
+        # Rate limit: 8 envíos / hora por IP. Daniel pidió "sin brechas" —
+        # antes era ilimitado, lo que permitía a un atacante crear cientos
+        # de retiros basura para llenar BD/disk. 8 es generoso para un
+        # cliente legítimo que se equivoca y reintenta varias veces.
         cfg = settings()
         if request.method == "POST":
             form = request.form
@@ -991,7 +1137,8 @@ def register_pickup_routes(app, ctx):
                     # (defensa en profundidad: ya validamos lo básico arriba).
                     print(f"[pickup_public_request] validar_slot exc: {_slot_exc}", flush=True)
 
-            total_pkg = 1
+            # Cliente público no detalla bultos en el form: creamos 1 bulto
+            # placeholder. El operador interno cubicará después con datos reales.
             packages = [calc_package(0, 0, 0, 0)]
             if not form.get("accept_terms"):
                 errors.append("Debes aceptar la declaracion de responsabilidad y autorizacion.")
@@ -1046,16 +1193,41 @@ def register_pickup_routes(app, ctx):
                     (rid, data["contact_name"], data["customer_rut"], request.remote_addr, (request.user_agent.string or "")[:300]),
                 )
             conn.commit()
-            for f in files:
+            # ── HARDENING UPLOAD (Daniel mayo 2026) ──────────────────────
+            # 1) Whitelist estricto de extensiones
+            # 2) Max 5 archivos por solicitud (defense vs abuse)
+            # 3) Max 10 MB cada uno (Flask MAX_CONTENT_LENGTH cubre el total,
+            #    pero quedamos blindados explícitamente acá)
+            # 4) Nombre saneado con `secure_filename` y prefijo determinístico
+            _allowed_ext = {"png", "jpg", "jpeg", "webp", "pdf", "doc", "docx"}
+            _max_files = 5
+            _max_bytes = 10 * 1024 * 1024   # 10 MB
+            for f in files[:_max_files]:
                 ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
-                if ext not in {"png", "jpg", "jpeg", "webp", "pdf", "doc", "docx"}:
+                if ext not in _allowed_ext:
                     continue
-                fname = f"ret_{rid}_{int(time.time())}_{secure_filename(f.filename)}"
+                # Verificar tamaño leyendo el stream (sin cargar todo en RAM)
+                try:
+                    f.stream.seek(0, 2)  # ir al final
+                    size_bytes = f.stream.tell()
+                    f.stream.seek(0)
+                except Exception:
+                    size_bytes = 0
+                if size_bytes > _max_bytes:
+                    print(f"[pickup_public_request] adjunto rechazado por tamaño "
+                          f"rid={rid} bytes={size_bytes}", flush=True)
+                    continue
+                safe_name = secure_filename(f.filename)
+                # secure_filename puede devolver "" si el filename es 100% no-ASCII.
+                # En ese caso usamos un fallback genérico.
+                if not safe_name:
+                    safe_name = f"upload.{ext}"
+                fname = f"ret_{rid}_{int(time.time())}_{safe_name}"
                 f.save(os.path.join(upload_dir, fname))
                 mysql_execute(
                     f"""INSERT INTO `{ATT}` (request_id,filename,original_name,mime_type,uploaded_by)
                         VALUES (%s,%s,%s,%s,'cliente')""",
-                    (rid, fname, f.filename, f.mimetype),
+                    (rid, fname, safe_name[:240], (f.mimetype or "")[:120]),
                 )
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             log_event(rid, "creada", None, "solicitud_recibida", "Solicitud creada desde pagina publica", "cliente", data["contact_name"])
@@ -1076,11 +1248,19 @@ def register_pickup_routes(app, ctx):
                     )
             except Exception as _e_decl_log:
                 print(f"[pickup_public_request] decl-log error: {_e_decl_log}", flush=True)
+            # Invalidar cache del calendario público — el nuevo retiro
+            # ocupa un slot, los demás clientes deben verlo al instante.
+            try: _DISPO_CACHE["payload"] = None
+            except Exception: pass
             sent_mail, sent_wa = notify(req, "created")
+            # Auditoría: enmascaramos PII en el campo `notes` del log
+            # (Daniel pidió que el log no exponga email/teléfono literal
+            # cuando se exporta o se lee por staff sin permisos finos).
+            _masked_email = _mask_email(req.get('contact_email'))
             if sent_mail:
-                log_event(rid, "email_enviado", "solicitud_recibida", "solicitud_recibida", f"Correo enviado a {req['contact_email']}", "sistema", "Comunicaciones")
+                log_event(rid, "email_enviado", "solicitud_recibida", "solicitud_recibida", f"Correo enviado a {_masked_email}", "sistema", "Comunicaciones")
             else:
-                log_event(rid, "email_pendiente", "solicitud_recibida", "solicitud_recibida", f"No se pudo enviar correo a {req['contact_email']}. Revisar Comunicaciones.", "sistema", "Comunicaciones")
+                log_event(rid, "email_pendiente", "solicitud_recibida", "solicitud_recibida", f"No se pudo enviar correo a {_masked_email}. Revisar Comunicaciones.", "sistema", "Comunicaciones")
             if sent_wa:
                 log_event(rid, "whatsapp_enviado", "solicitud_recibida", "solicitud_recibida", "WhatsApp de solicitud enviado.", "sistema", "Comunicaciones")
             return redirect(url_for("pickup_public_tracking", token=token, created=1))
@@ -1146,35 +1326,62 @@ def register_pickup_routes(app, ctx):
         return resp
 
     @app.route("/retiros/buscar")
+    @_rate_limited("pickup_buscar_publico", max_attempts=30, window_seconds=300, methods=("GET",))
     def pickup_buscar_publico():
         """Lookup público por código de retiro (RET-XXXXXX).
         El form público de seguimiento referencia esta ruta.
         Si encuentra el retiro, redirige a /retiros/seguimiento/<token>.
+
+        Seguridad (Daniel mayo 2026):
+        - Rate limit: 30 búsquedas / 5 min por IP. Antes era ilimitado,
+          permitiendo enumerar códigos RET-XXXXXX por fuerza bruta (los
+          códigos son secuenciales, por eso luego de confirmar siempre
+          redirigimos al token público — no al código).
+        - Validación estricta del formato del código antes de tocar BD:
+          solo acepta RET-NNNNNN o NNNNNN (anti-injection y anti-noise).
+        - Sanitiza el code en el flash (evita XSS si flash renderiza HTML).
         """
-        code = (request.args.get("code") or "").strip().upper()
-        if not code:
+        code_raw = (request.args.get("code") or "").strip().upper()
+        if not code_raw:
             return redirect(url_for("pickup_public_request"))
-        # Buscar por código exacto o LIKE (con/sin prefijo RET-)
+        # Validar formato: 6-12 chars alfanuméricos + guion. Si no calza,
+        # rechazamos sin tocar BD (evita LIKE costoso con basura).
+        if not re.match(r"^(RET[-_]?)?\d{1,12}$", code_raw):
+            flash("Código inválido. Usa el formato RET-XXXXXX.", "warning")
+            return redirect(url_for("pickup_public_request"))
+        # Buscar por código exacto primero (más rápido)
         row = mysql_fetchone(
             f"SELECT public_token FROM `{REQ}` WHERE UPPER(code)=%s LIMIT 1",
-            (code,)
+            (code_raw,)
         )
         if not row:
-            # Probar quitando "RET-" si lo trae
-            code_alt = code.replace("RET-", "").lstrip("0") or code
+            # Probar quitando "RET-" si lo trae (sigue con LIKE acotado al final)
+            code_alt = code_raw.replace("RET-", "").replace("RET_", "").lstrip("0") or code_raw
             row = mysql_fetchone(
-                f"SELECT public_token FROM `{REQ}` WHERE code LIKE %s OR code LIKE %s LIMIT 1",
-                (f"%{code_alt}%", f"%{code}%")
+                f"SELECT public_token FROM `{REQ}` "
+                f"WHERE code LIKE %s ORDER BY id DESC LIMIT 1",
+                (f"%{code_alt}",)
             )
         if not row or not row.get("public_token"):
-            flash(f"No encontramos un retiro con el código '{code}'. Verifica e intenta nuevamente.", "warning")
+            # IMPORTANTE: NO loguear el código intentado en stdout (un atacante
+            # podría llenar logs con códigos basura). El flash sí lo muestra
+            # al usuario que lo escribió.
+            # Sanitizar antes de inyectar al flash (defensa anti-XSS)
+            safe_code = re.sub(r"[^A-Z0-9\-_]", "", code_raw)[:20]
+            flash(f"No encontramos un retiro con el código '{safe_code}'. Verifica e intenta nuevamente.", "warning")
             return redirect(url_for("pickup_public_request"))
         return redirect(url_for("pickup_public_tracking", token=row["public_token"]))
 
 
     @app.route("/retiros/seguimiento/<token>", methods=["GET", "POST"])
+    @_rate_limited("pickup_public_tracking_post", max_attempts=20, window_seconds=600, methods=("POST",))
     def pickup_public_tracking(token):
-        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s", (token,))
+        # Validar formato del token antes de tocar BD (evita enumeración de
+        # paths inválidos por bots). Tokens son URL-safe-base64 de >= 16 chars.
+        if not token or len(token) < 16 or len(token) > 200 \
+                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+            return "Solicitud no encontrada", 404
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s LIMIT 1", (token,))
         if not req:
             return "Solicitud no encontrada", 404
         cfg = settings()
@@ -1365,12 +1572,20 @@ def register_pickup_routes(app, ctx):
             # Invalidar cache de polling — el cliente verá su nuevo estado al instante
             try: _POLL_CACHE.pop(token, None)
             except Exception: pass
+            # Invalidar cache global del calendario público (ocupación cambia)
+            try: _DISPO_CACHE["payload"] = None
+            except Exception: pass
             return redirect(url_for("pickup_public_tracking", token=token))
         packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (req["id"],))
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
         logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 20", (req["id"],))
         attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
-        return render_template("retiros/public_tracking.html", req=req, packages=packages, proposals=proposals, logs=logs, attachments=attachments, settings=cfg, status_badge=status_badge, created=request.args.get("created"))
+        # Sanitizar: eliminar campos internos antes de pasar al template público.
+        # Defensa en profundidad — el template actual no expone estos campos,
+        # pero si algún día se inyecta `req | tojson` o similar, no filtrará
+        # internal_notes/IPs/datos de validación al cliente.
+        req_safe = _strip_internal(req)
+        return render_template("retiros/public_tracking.html", req=req_safe, packages=packages, proposals=proposals, logs=logs, attachments=attachments, settings=cfg, status_badge=status_badge, created=request.args.get("created"))
 
     # ══════════════════════════════════════════════════════════════════════
     #  XLSX RESUMEN PÚBLICO — descarga del cliente desde el tracking
@@ -1384,8 +1599,18 @@ def register_pickup_routes(app, ctx):
     #   · No expone IPs ni user-agents
     #   · No expone observaciones de fraude / validaciones doc
     @app.route("/retiros/seguimiento/<token>/resumen.xlsx", methods=["GET"])
+    @_rate_limited("pickup_public_xlsx", max_attempts=10, window_seconds=300, methods=("GET",))
     def pickup_public_xlsx(token):
-        """Excel resumen para el cliente — accesible solo con el token público."""
+        """Excel resumen para el cliente — accesible solo con el token público.
+
+        Seguridad (Daniel mayo 2026):
+        - Validamos formato del token antes de tocar BD.
+        - Rate limit: 10 descargas / 5 min por IP (evita scraping masivo).
+        - NO incluye campos internos (lo verifica `_strip_internal`).
+        """
+        if not token or len(token) < 16 or len(token) > 200 \
+                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+            return "Solicitud no encontrada", 404
         try:
             import openpyxl
             from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -1397,6 +1622,8 @@ def register_pickup_routes(app, ctx):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s LIMIT 1", (token,))
         if not req:
             return "Solicitud no encontrada", 404
+        # Sanitizar antes de pasar al builder XLSX (defensa en profundidad).
+        req = _strip_internal(req)
 
         cfg = settings()
         packages = mysql_fetchall(
@@ -1635,15 +1862,37 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros")
     @require_permission("retiros")
     def pickup_dashboard():
-        filtros = {"q": request.args.get("q", "").strip(), "status": request.args.get("status", "").strip(), "date": request.args.get("date", "").strip(), "view": request.args.get("view", "monitor").strip()}
+        filtros = {"q": request.args.get("q", "").strip()[:80],
+                   "status": request.args.get("status", "").strip()[:40],
+                   "date": request.args.get("date", "").strip()[:12],
+                   "view": request.args.get("view", "monitor").strip()[:20]}
         where, params = ["1=1"], []
         if filtros["q"]:
             like = f"%{filtros['q']}%"; where.append("(code LIKE %s OR document_number LIKE %s OR customer_name LIKE %s OR contact_phone LIKE %s)"); params.extend([like, like, like, like])
-        if filtros["status"]:
+        if filtros["status"] and filtros["status"] in PICKUP_STATUS:
             where.append("status=%s"); params.append(filtros["status"])
-        if filtros["date"]:
+        if filtros["date"] and re.match(r"^\d{4}-\d{2}-\d{2}$", filtros["date"]):
             where.append("(requested_date=%s OR confirmed_date=%s OR proposed_date=%s)"); params.extend([filtros["date"], filtros["date"], filtros["date"]])
-        rows = mysql_fetchall(f"SELECT * FROM `{REQ}` WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 250", tuple(params))
+        # SELECT explícito: solo columnas que usa el dashboard (evita serializar
+        # campos pesados como doc_erp_data MEDIUMTEXT a la red).
+        rows = mysql_fetchall(
+            f"""SELECT id, code, status, document_type, document_number,
+                       customer_name, customer_rut, contact_name, contact_email,
+                       contact_phone, pickup_person_name, pickup_person_rut,
+                       pickup_person_phone, pickup_person_relation,
+                       requested_date, requested_time_from, requested_time_to,
+                       proposed_date, proposed_time_from, proposed_time_to,
+                       confirmed_date, confirmed_time_from, confirmed_time_to,
+                       total_packages, total_weight_kg, total_volumetric_weight,
+                       total_volume_m3, peso_real_kg, peso_vol_kg,
+                       tiempo_estimado_min, doc_validation_status,
+                       information_quality_score, risk_score,
+                       created_at, updated_at
+                FROM `{REQ}`
+                WHERE {' AND '.join(where)}
+                ORDER BY created_at DESC LIMIT 250""",
+            tuple(params)
+        )
         counts = mysql_fetchall(f"SELECT status, COUNT(*) AS n FROM `{REQ}` GROUP BY status")
         stats = {r["status"]: int(r["n"]) for r in counts}
         today = datetime.now().date().isoformat()
@@ -1654,7 +1903,7 @@ def register_pickup_routes(app, ctx):
                 FROM `{REQ}` WHERE requested_date=%s OR confirmed_date=%s""",
             (today, today),
         ) or {}
-        templates = mysql_fetchall(f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title")
+        templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
         return render_template("retiros/internal_dashboard.html", rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats, day=day, settings=settings(), templates=templates, status_badge=status_badge)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1919,6 +2168,9 @@ def register_pickup_routes(app, ctx):
             if tok:
                 _POLL_CACHE.pop(tok, None)
         except Exception: pass
+        # Invalidar cache global del calendario (cambio de status puede liberar/ocupar slot)
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
 
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
@@ -1946,12 +2198,14 @@ def register_pickup_routes(app, ctx):
             # calculaba. Ahora el operador puede sobrescribirlo y se guarda OK.
             vol_m3    = request.form.get("total_volume_m3") or req.get("total_volume_m3") or 0
             try:
-                peso_real = float(peso_real or 0)
-                peso_vol  = float(peso_vol or 0)
-                tiempo    = int(tiempo or 0)
-                vol_m3    = float(vol_m3 or 0)
+                # Clamp a rangos razonables (defensa anti-input absurdo):
+                # peso 0-10000 kg, vol 0-1000 m³, tiempo 0-720 min (12h)
+                peso_real = max(0.0, min(float(peso_real or 0), 10000.0))
+                peso_vol  = max(0.0, min(float(peso_vol or 0),  10000.0))
+                tiempo    = max(0,   min(int(tiempo or 0),      720))
+                vol_m3    = max(0.0, min(float(vol_m3 or 0),    1000.0))
             except Exception:
-                pass
+                peso_real, peso_vol, tiempo, vol_m3 = 0.0, 0.0, 0, 0.0
             mysql_execute(
                 f"""UPDATE `{REQ}`
                     SET doc_validation_status='ok',
@@ -2696,6 +2950,9 @@ def register_pickup_routes(app, ctx):
             tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
             if tok_p: _POLL_CACHE.pop(tok_p, None)
         except Exception: pass
+        # Invalidar cache del calendario público (la propuesta marca slot)
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
         flash("Propuesta enviada al cliente.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
@@ -2901,10 +3158,26 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/adjuntos/<int:aid>")
     @require_permission("view")
     def pickup_attachment(aid):
-        row = mysql_fetchone(f"SELECT * FROM `{ATT}` WHERE id=%s", (aid,))
+        row = mysql_fetchone(
+            f"SELECT id, filename, original_name FROM `{ATT}` WHERE id=%s LIMIT 1",
+            (aid,)
+        )
         if not row:
             return "No encontrado", 404
-        return send_from_directory(upload_dir, row["filename"], as_attachment=False, download_name=row["original_name"])
+        # Defensa anti path-traversal: si por alguna razón el filename
+        # en BD viene con `..` o `/`, rechazamos el download. Los uploads
+        # son saneados con `secure_filename` al guardar, así que esto
+        # solo dispara en caso de manipulación directa de la BD.
+        fname = row.get("filename") or ""
+        if not fname or ".." in fname or "/" in fname or "\\" in fname:
+            return "Archivo no válido", 400
+        # Sanitizar también el download_name (lo que ve el cliente al
+        # descargar): si el original_name tiene caracteres peligrosos,
+        # caemos al filename normalizado.
+        orig = row.get("original_name") or fname
+        if any(c in orig for c in ("..", "/", "\\", "\x00")):
+            orig = fname
+        return send_from_directory(upload_dir, fname, as_attachment=False, download_name=orig)
 
     # ══════════════════════════════════════════════════════════════════
     #  CALENDARIO OPERATIVO — vista por día/franja con capacidad
@@ -2914,10 +3187,6 @@ def register_pickup_routes(app, ctx):
         """Devuelve etiqueta legible de la franja (HH:MM)."""
         try: return str(time_from)[:5]
         except Exception: return "00:00"
-
-    def _slot_key(date_str, time_from):
-        """Clave única día+franja para agrupar."""
-        return f"{date_str}_{_slot_label(time_from)}"
 
     @app.route("/retiros/calendario")
     @require_permission("retiros")
@@ -3082,6 +3351,7 @@ def register_pickup_routes(app, ctx):
         })
 
     @app.route("/retiros/api/disponibilidad-publica")
+    @_rate_limited("pickup_disponibilidad_publica", max_attempts=120, window_seconds=60, methods=("GET",))
     def pickup_disponibilidad_publica():
         """Devuelve disponibilidad de slots para los próximos 30 días (público).
 
@@ -3103,6 +3373,15 @@ def register_pickup_routes(app, ctx):
             puede_iniciar / puede_finalizar: bool
             ocupacion_actual, capacidad_max, time_from, time_to
         """
+        # Cache hit: el grid de los próximos 30 días es global (no varía por
+        # cliente). Si lo armamos hace menos de _DISPO_TTL, lo devolvemos
+        # directo. Daniel: reduce el peak de queries cuando muchos clientes
+        # abren el form al mismo tiempo (campañas / horas peak).
+        import time as _time_local
+        if (_DISPO_CACHE["payload"] is not None and
+                (_time_local.time() - _DISPO_CACHE["ts"]) < _DISPO_TTL):
+            return jsonify(_DISPO_CACHE["payload"])
+
         from datetime import datetime as _dt, timedelta as _td
         cfg = settings()
         d_from = _dt.now().date() + _td(days=1)  # Mañana en adelante
@@ -3321,7 +3600,7 @@ def register_pickup_routes(app, ctx):
                     "lunch":      is_lunch,
                 })
 
-        return jsonify({
+        _payload = {
             "from": d_from.isoformat(),
             "to":   d_to.isoformat(),
             "warehouse_name": cfg.get("warehouse_name"),
@@ -3345,13 +3624,39 @@ def register_pickup_routes(app, ctx):
                 "buffer_cierre_min": buffer_cierre_min,
             },
             "dias": dias,
-        })
+        }
+        # Guardar en cache para próximos requests dentro del TTL
+        _DISPO_CACHE["payload"] = _payload
+        _DISPO_CACHE["ts"]      = _time_local.time()
+        return jsonify(_payload)
 
     @app.route("/retiros/api/<int:rid>/full")
     @require_permission("view")
     def pickup_full_info(rid):
-        """Ficha completa de un retiro: datos + bultos + adjuntos + logs + ERP."""
-        r = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        """Ficha completa de un retiro: datos + bultos + adjuntos + logs + ERP.
+
+        Perf (Daniel mayo 2026): SELECT explícito — antes hacía SELECT *
+        que serializaba `doc_erp_data` MEDIUMTEXT (puede ser ~200KB) sobre
+        la red sin razón. El endpoint enriquece con ERP por su cuenta.
+        """
+        r = mysql_fetchone(
+            f"""SELECT id, code, status, document_type, document_number,
+                       customer_name, customer_rut, contact_name, contact_email,
+                       contact_phone, pickup_person_name, pickup_person_rut,
+                       pickup_person_phone, pickup_person_relation,
+                       requested_date, requested_time_from, requested_time_to,
+                       proposed_date, proposed_time_from, proposed_time_to,
+                       confirmed_date, confirmed_time_from, confirmed_time_to,
+                       total_packages, total_weight_kg, total_volumetric_weight,
+                       total_volume_m3, invoice_total_amount, observations,
+                       internal_notes, public_token, signature_status,
+                       created_at, updated_at, closed_at,
+                       doc_validation_status, doc_validated_at, doc_validated_by,
+                       doc_validation_notes, peso_real_kg, peso_vol_kg,
+                       tiempo_estimado_min, information_quality_score, risk_score
+                FROM `{REQ}` WHERE id=%s LIMIT 1""",
+            (rid,)
+        )
         if not r: return jsonify({"error":"No encontrado"}), 404
         d = dict(r)
         # Convertir tipos
