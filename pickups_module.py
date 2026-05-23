@@ -180,7 +180,16 @@ def register_pickup_routes(app, ctx):
 
     ensure_reminder_columns()
 
+    # Cache de settings — el tracking público y polling lo invocan a menudo.
+    # TTL 30s: cualquier cambio de horario/bodega impacta en máx 30s.
+    _SETTINGS_CACHE = {"row": None, "fetched_at": 0.0}
+    _SETTINGS_TTL = 30.0
+
     def settings():
+        import time as _time
+        now = _time.time()
+        if _SETTINGS_CACHE["row"] is not None and (now - _SETTINGS_CACHE["fetched_at"]) < _SETTINGS_TTL:
+            return _SETTINGS_CACHE["row"]
         row = mysql_fetchone(f"SELECT * FROM `{SET}` WHERE id=1") or {}
         # Migración: subir close_time a 17:30 (bodega trabaja hasta 17:00, recibe
         # clientes hasta 16:30 — el último slot 16:30+60min termina a 17:30).
@@ -188,9 +197,11 @@ def register_pickup_routes(app, ctx):
             try:
                 mysql_execute(f"UPDATE `{SET}` SET close_time='17:30:00' WHERE id=1")
                 row["close_time"] = "17:30:00"
+                # invalidar cache porque acabamos de mutar BD
+                _SETTINGS_CACHE["row"] = None
             except Exception:
                 pass
-        return row or {
+        result = row or {
             "warehouse_name": "Bodega ILUS Quilicura",
             "warehouse_addr": "Av. Presidente Eduardo Frei Montalva 9770, Bod 30, Quilicura.",
             "maps_url": "https://www.google.com/maps/search/?api=1&query=Av.%20Presidente%20Eduardo%20Frei%20Montalva%209770%20Bod%2030%20Quilicura",
@@ -205,6 +216,14 @@ def register_pickup_routes(app, ctx):
             "hero_image_2": "",
             "hero_image_3": "",
         }
+        _SETTINGS_CACHE["row"] = result
+        _SETTINGS_CACHE["fetched_at"] = now
+        return result
+
+    def _invalidate_settings_cache():
+        """Llamar tras cualquier UPDATE de pickup_settings (admin guarda config)."""
+        _SETTINGS_CACHE["row"] = None
+        _SETTINGS_CACHE["fetched_at"] = 0.0
 
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
@@ -1352,6 +1371,266 @@ def register_pickup_routes(app, ctx):
         logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 20", (req["id"],))
         attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
         return render_template("retiros/public_tracking.html", req=req, packages=packages, proposals=proposals, logs=logs, attachments=attachments, settings=cfg, status_badge=status_badge, created=request.args.get("created"))
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  XLSX RESUMEN PÚBLICO — descarga del cliente desde el tracking
+    # ══════════════════════════════════════════════════════════════════════
+    #  Solo requiere el token público del retiro. NO requiere login.
+    #  Genera un XLSX con todos los datos relevantes que el cliente
+    #  podría querer guardar/imprimir para su propio archivo.
+    #
+    #  NO incluye datos internos del operador:
+    #   · No expone internal_notes / doc_validation_notes
+    #   · No expone IPs ni user-agents
+    #   · No expone observaciones de fraude / validaciones doc
+    @app.route("/retiros/seguimiento/<token>/resumen.xlsx", methods=["GET"])
+    def pickup_public_xlsx(token):
+        """Excel resumen para el cliente — accesible solo con el token público."""
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+            from io import BytesIO
+        except ImportError:
+            return "Servicio de descarga temporalmente no disponible.", 500
+
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE public_token=%s LIMIT 1", (token,))
+        if not req:
+            return "Solicitud no encontrada", 404
+
+        cfg = settings()
+        packages = mysql_fetchall(
+            f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number",
+            (req["id"],)
+        ) or []
+
+        # ── Helpers de formato fecha
+        def _fmt_date(d):
+            if not d: return ""
+            try: return d.strftime("%d-%m-%Y") if hasattr(d, "strftime") else str(d)[:10]
+            except Exception: return str(d)[:10]
+        def _fmt_time(t):
+            if not t: return ""
+            try: return t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)[:5]
+            except Exception: return str(t)[:5]
+        def _fmt_dt(d):
+            if not d: return ""
+            try: return d.strftime("%d-%m-%Y %H:%M") if hasattr(d, "strftime") else str(d)[:16]
+            except Exception: return str(d)[:16]
+
+        # ── Estilos
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Resumen retiro"
+
+        ILUS_RED = "DC2626"
+        ILUS_BLACK = "0A0A0A"
+        SOFT_GRAY = "F3F4F6"
+        TXT_DARK = "111827"
+
+        red_fill = PatternFill("solid", fgColor=ILUS_RED)
+        black_fill = PatternFill("solid", fgColor=ILUS_BLACK)
+        gray_fill = PatternFill("solid", fgColor=SOFT_GRAY)
+        white_bold = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+        red_bold = Font(name="Calibri", size=11, bold=True, color=ILUS_RED)
+        label_bold = Font(name="Calibri", size=10, bold=True, color=TXT_DARK)
+        value_font = Font(name="Calibri", size=11, color=TXT_DARK)
+        title_font = Font(name="Calibri", size=18, bold=True, color="FFFFFF")
+        small_gray = Font(name="Calibri", size=9, color="6B7280", italic=True)
+        thin_border = Border(
+            left=Side(style="thin", color="E5E7EB"),
+            right=Side(style="thin", color="E5E7EB"),
+            top=Side(style="thin", color="E5E7EB"),
+            bottom=Side(style="thin", color="E5E7EB"),
+        )
+
+        # ── Encabezado rojo grande
+        ws.merge_cells("A1:B1")
+        c = ws.cell(1, 1, "ILUS Sport & Health")
+        c.font = title_font
+        c.fill = red_fill
+        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[1].height = 34
+
+        ws.merge_cells("A2:B2")
+        c = ws.cell(2, 1, f"Resumen de Retiro · {req.get('code','')}")
+        c.font = white_bold
+        c.fill = black_fill
+        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[2].height = 24
+
+        # ── Status (línea grande)
+        status_lbl = PICKUP_STATUS.get(req.get("status") or "", req.get("status") or "")
+        ws.merge_cells("A3:B3")
+        c = ws.cell(3, 1, f"Estado actual: {status_lbl}")
+        c.font = red_bold
+        c.fill = gray_fill
+        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[3].height = 22
+
+        # ── Sección con cabecera
+        def add_section(row_start, title):
+            ws.merge_cells(start_row=row_start, start_column=1, end_row=row_start, end_column=2)
+            cc = ws.cell(row_start, 1, title)
+            cc.font = white_bold
+            cc.fill = black_fill
+            cc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            ws.row_dimensions[row_start].height = 22
+            return row_start + 1
+
+        def add_row(row, label, value):
+            l = ws.cell(row, 1, label)
+            l.font = label_bold
+            l.fill = gray_fill
+            l.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            l.border = thin_border
+            v = ws.cell(row, 2, value if value not in (None, "") else "—")
+            v.font = value_font
+            v.alignment = Alignment(horizontal="left", vertical="center", indent=1, wrap_text=True)
+            v.border = thin_border
+            return row + 1
+
+        # Fallback bultos/peso/vol/m3
+        n_bultos = int(req.get("total_packages") or len(packages) or 0)
+        peso_kg = float(req.get("peso_real_kg") or req.get("total_weight_kg") or 0)
+        peso_vol = float(req.get("peso_vol_kg") or req.get("total_volumetric_weight") or 0)
+        volumen_m3 = float(req.get("total_volume_m3") or req.get("volumen_m3") or 0)
+
+        # Bodega
+        bodega_nombre = cfg.get("warehouse_name") or "ILUS Bodega"
+        bodega_addr = cfg.get("warehouse_addr") or ""
+
+        # Horarios formateados
+        def _slot(date, tf, tt):
+            d = _fmt_date(date)
+            if tf and tt:
+                return f"{d}   {_fmt_time(tf)} – {_fmt_time(tt)}"
+            return d
+
+        r = 5
+        # Solicitud
+        r = add_section(r, "Datos de la solicitud")
+        r = add_row(r, "Código de retiro", req.get("code") or "")
+        r = add_row(r, "Documento", f"{(req.get('document_type') or '').upper()} {req.get('document_number') or ''}".strip())
+        r = add_row(r, "Estado", status_lbl)
+        r = add_row(r, "Fecha de solicitud", _fmt_dt(req.get("created_at")))
+
+        r += 1
+        # Cliente
+        r = add_section(r, "Cliente")
+        r = add_row(r, "Razón social / Nombre", req.get("customer_name") or "")
+        r = add_row(r, "RUT", req.get("customer_rut") or "")
+        r = add_row(r, "Contacto", req.get("contact_name") or "")
+        r = add_row(r, "Email contacto", req.get("contact_email") or "")
+        r = add_row(r, "Teléfono contacto", req.get("contact_phone") or "")
+
+        r += 1
+        # Persona que retira
+        r = add_section(r, "Persona que retira")
+        r = add_row(r, "Nombre", req.get("pickup_person_name") or "")
+        r = add_row(r, "RUT", req.get("pickup_person_rut") or "")
+        r = add_row(r, "Teléfono", req.get("pickup_person_phone") or "")
+        relation_lbl = dict(PICKUP_RELATIONS).get(req.get("pickup_person_relation") or "", req.get("pickup_person_relation") or "")
+        r = add_row(r, "Relación", relation_lbl)
+
+        r += 1
+        # Agenda
+        r = add_section(r, "Agenda")
+        if req.get("requested_date"):
+            r = add_row(r, "Fecha solicitada", _slot(req.get("requested_date"), req.get("requested_time_from"), req.get("requested_time_to")))
+        if req.get("proposed_date"):
+            r = add_row(r, "Propuesta de ILUS", _slot(req.get("proposed_date"), req.get("proposed_time_from"), req.get("proposed_time_to")))
+        if req.get("confirmed_date"):
+            r = add_row(r, "Fecha confirmada", _slot(req.get("confirmed_date"), req.get("confirmed_time_from"), req.get("confirmed_time_to")))
+
+        r += 1
+        # Bodega
+        r = add_section(r, "Bodega de retiro")
+        r = add_row(r, "Nombre", bodega_nombre)
+        r = add_row(r, "Dirección", bodega_addr)
+        if cfg.get("maps_url"):
+            r = add_row(r, "Ver en mapa", cfg.get("maps_url"))
+
+        r += 1
+        # Carga
+        r = add_section(r, "Carga declarada")
+        r = add_row(r, "Bultos", n_bultos)
+        r = add_row(r, "Peso real (kg)", f"{peso_kg:.2f}")
+        r = add_row(r, "Peso volumétrico (kg)", f"{peso_vol:.2f}")
+        r = add_row(r, "Volumen (m³)", f"{volumen_m3:.4f}")
+
+        # Detalle paquetes (si hay)
+        if packages:
+            r += 1
+            r = add_section(r, "Detalle de bultos")
+            # Header tabla
+            hdrs = ["#", "Largo (cm)", "Alto (cm)", "Ancho (cm)", "Kg", "P. vol"]
+            # Adaptar: lo embebemos en 2 cols mergeando: para mantener layout 2col, mejor expandimos a 6
+            # Mejor: descomprimimos a 6 columnas SOLO en esta sección
+            for ci, h in enumerate(hdrs, 1):
+                cc = ws.cell(r, ci, h)
+                cc.font = white_bold
+                cc.fill = red_fill
+                cc.alignment = Alignment(horizontal="center", vertical="center")
+                cc.border = thin_border
+            r += 1
+            for p in packages:
+                row_vals = [
+                    p.get("package_number") or "",
+                    float(p.get("length_cm") or 0),
+                    float(p.get("height_cm") or 0),
+                    float(p.get("width_cm") or 0),
+                    float(p.get("weight_kg") or 0),
+                    float(p.get("volumetric_weight") or 0),
+                ]
+                for ci, v in enumerate(row_vals, 1):
+                    cc = ws.cell(r, ci, v)
+                    cc.font = value_font
+                    cc.alignment = Alignment(horizontal="center", vertical="center")
+                    cc.border = thin_border
+                r += 1
+
+        # Observaciones públicas del cliente (no internas)
+        if req.get("observations"):
+            r += 1
+            r = add_section(r, "Observaciones")
+            r = add_row(r, "Tus comentarios", req.get("observations") or "")
+
+        # Footer
+        r += 2
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            now_cl = datetime.now(_ZI("America/Santiago")).strftime("%d-%m-%Y %H:%M")
+        except Exception:
+            now_cl = datetime.now().strftime("%d-%m-%Y %H:%M")
+        cc = ws.cell(r, 1, f"Documento generado el {now_cl} · ILUS Sport & Health · sistema interno de retiros")
+        cc.font = small_gray
+        cc.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[r].height = 20
+
+        # Anchos columnas
+        ws.column_dimensions[get_column_letter(1)].width = 28
+        ws.column_dimensions[get_column_letter(2)].width = 48
+        if packages:
+            # Cuando hubo tabla de bultos extendimos a 6, ajustar
+            ws.column_dimensions[get_column_letter(3)].width = 14
+            ws.column_dimensions[get_column_letter(4)].width = 14
+            ws.column_dimensions[get_column_letter(5)].width = 12
+            ws.column_dimensions[get_column_letter(6)].width = 12
+
+        # Guardar
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        fname = f"ILUS_Retiro_{req.get('code','retiro')}.xlsx"
+        from flask import send_file
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=fname,
+        )
 
     @app.route("/retiros")
     @require_permission("retiros")
