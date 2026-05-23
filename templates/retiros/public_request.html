@@ -1115,15 +1115,37 @@ function onDeclTerceroChange(){
 }
 
 // ════════════════════════════════════════════════════════
-//  SELECTOR DE SLOTS INTELIGENTE
-//  - Permite seleccionar UN bloque inicial o RANGO contiguo
-//  - Muestra ocupados visualmente (no clickeables)
-//  - Quick: 1h / 2h / 3h
+//  SELECTOR DE SLOTS INTELIGENTE (v2 — mayo 2026)
+//  - Cada bloque dura 30 min (slot_minutes del backend).
+//  - Cliente selecciona N bloques contiguos.
+//  - Duración = N x 30 min (NO se suma media hora extra).
+//  - Bloques de colación NO clickeables.
+//  - Bloques 'completo' (2/2) NO clickeables.
+//  - Bloques 'ocupado' (1/2) SÍ clickeables con badge.
+//  - Botones 1h/2h/3h preseleccionan desde primer disponible.
 // ════════════════════════════════════════════════════════
 let _disponibilidad = null;
-let _slotsDelDia = [];     // [{hora, disponible, ocupados, max}]
-let _slotStartIdx = null;
-let _slotEndIdx = null;
+let _slotsDelDia    = [];   // [{time_from,time_to,estado,puede_iniciar,...}]
+let _slotStartIdx   = null;
+let _slotEndIdx     = null;
+
+// Helper: toast (con fallback)
+function _showToast(msg, type){
+  if (typeof ilusToast === 'function'){
+    ilusToast(msg, { type: type || 'warning' });
+  } else {
+    console.warn('[ILUS] toast:', msg);
+  }
+}
+
+// Helpers HH:MM ↔ minutos
+function _hmToMin(hm){
+  const parts = String(hm || '').split(':').map(Number);
+  return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+function _minToHM(min){
+  return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
+}
 
 async function cargarDisponibilidad() {
   try {
@@ -1136,7 +1158,7 @@ async function cargarDisponibilidad() {
     fechaInput.max = _disponibilidad.to;
     fechaInput.addEventListener('change', onFechaChange);
   } catch (e) {
-    document.getElementById('cal_fecha_msg').textContent = '⚠ No se pudo cargar disponibilidad';
+    document.getElementById('cal_fecha_msg').textContent = 'No se pudo cargar disponibilidad';
   }
 }
 
@@ -1157,79 +1179,148 @@ function onFechaChange() {
 
   const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
   if (new Date(fecha + 'T00:00:00') < minDate){
-    msg.textContent = '⚠ Necesitamos mínimo 24 horas de anticipación';
+    msg.textContent = 'Necesitamos minimo 24 horas de anticipacion';
     msg.style.color = '#dc2626';
-    grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde mañana</div>';
+    grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde manana</div>';
     quick.style.display = 'none';
     return;
   }
 
   const dia = _disponibilidad.dias[fecha];
   if (!dia || !dia.disponible){
-    msg.textContent = '✕ ' + ((dia && dia.razon) || 'Día sin cupos');
+    msg.textContent = (dia && dia.razon) || 'Dia sin cupos';
     msg.style.color = '#dc2626';
-    grid.innerHTML = `<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-x-circle me-1"></i>${(dia && dia.razon) || 'Día sin cupos disponibles'}</div>`;
+    grid.innerHTML = `<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-x-circle me-1"></i>${(dia && dia.razon) || 'Dia sin cupos disponibles'}</div>`;
     quick.style.display = 'none';
     return;
   }
 
-  _slotsDelDia = dia.slots;
-  const libres = _slotsDelDia.filter(s => s.disponible).length;
-  msg.textContent = `✓ ${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
-  msg.style.color = '#16a34a';
+  _slotsDelDia = dia.slots || [];
+  // Contar bloques que puedan INICIAR un rango
+  const libres = _slotsDelDia.filter(s => s.puede_iniciar).length;
+  msg.textContent = `${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este dia`;
+  msg.style.color = libres > 0 ? '#16a34a' : '#dc2626';
 
   renderSlotGrid();
-  quick.style.display = 'flex';
+  quick.style.display = libres > 0 ? 'flex' : 'none';
 }
 
 function renderSlotGrid(){
   const grid = document.getElementById('slotGrid');
+  if (!_slotsDelDia.length){
+    grid.innerHTML = '<div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">Sin bloques disponibles</div>';
+    return;
+  }
   grid.innerHTML = _slotsDelDia.map((s, i) => {
     const cls = ['slot-item'];
-    if (s.lunch) cls.push('lunch');
-    else if (s.razon && !s.disponible) cls.push('blocked');
-    else if (!s.disponible) cls.push('taken');
-    if (_slotStartIdx !== null && _slotEndIdx !== null){
-      if (i === _slotStartIdx) cls.push('selected', 'is-start');
-      else if (i === _slotEndIdx && _slotStartIdx !== _slotEndIdx) cls.push('selected', 'is-end');
-      else if (i > _slotStartIdx && i < _slotEndIdx) cls.push('in-range');
+    let badge = '';
+    let title = '';
+    // Inferir estado si viene del backend legacy
+    let estado = s.estado;
+    if (!estado){
+      if (s.lunch) estado = 'colacion';
+      else if (s.razon && !s.disponible) estado = 'bloqueado';
+      else if (!s.disponible) estado = 'completo';
+      else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) estado = 'ocupado';
+      else estado = 'disponible';
     }
-    let title;
-    if (s.lunch) title = 'Horario de colación (no se realizan retiros)';
-    else if (s.razon && !s.disponible) title = s.razon;
-    else if (!s.disponible) title = 'Ocupado (' + s.ocupados + '/' + s.max + ')';
-    else title = 'Click para seleccionar';
-    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${title}">${s.hora}</div>`;
+
+    if (estado === 'colacion'){
+      cls.push('is-lunch', 'is-disabled');
+      title = 'Horario de colacion (no agendable)';
+    } else if (estado === 'completo'){
+      cls.push('is-full', 'is-disabled');
+      const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
+      const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+      title = `Cupo lleno (${oc}/${mx})`;
+    } else if (estado === 'bloqueado'){
+      cls.push('is-blocked', 'is-disabled');
+      title = s.razon || 'Franja bloqueada';
+    } else if (estado === 'ocupado'){
+      cls.push('is-busy');
+      const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 1);
+      const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+      badge = `<span class="slot-badge">${oc}/${mx}</span>`;
+      title = `Parcialmente ocupado (${oc}/${mx}) - aun puedes agendar`;
+    } else {
+      title = `Disponible (${s.time_from || s.hora || ''} - ${s.time_to || ''})`;
+    }
+
+    if (_slotStartIdx !== null && _slotEndIdx !== null){
+      if (i === _slotStartIdx && i === _slotEndIdx){
+        cls.push('is-selected', 'is-start', 'is-end');
+      } else if (i === _slotStartIdx){
+        cls.push('is-selected', 'is-start');
+      } else if (i === _slotEndIdx){
+        cls.push('is-selected', 'is-end');
+      } else if (i > _slotStartIdx && i < _slotEndIdx){
+        cls.push('is-in-range');
+      }
+    }
+
+    const hora = s.time_from || s.hora || '';
+    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${title}">${badge}${hora}</div>`;
   }).join('');
 }
 
 function onSlotClick(i){
   const s = _slotsDelDia[i];
-  if (!s.disponible) return;
+  if (!s) return;
+  let estado = s.estado;
+  if (!estado){
+    if (s.lunch) estado = 'colacion';
+    else if (s.razon && !s.disponible) estado = 'bloqueado';
+    else if (!s.disponible) estado = 'completo';
+    else estado = 'disponible';
+  }
 
-  // 1° click: marca inicio
-  // 2° click: marca fin (si es válido)
-  // 3° click (mismo inicio): limpia
+  if (estado === 'colacion'){
+    _showToast('Ese horario es de colacion (13:00-14:00). Elige un bloque antes o despues.', 'warning');
+    return;
+  }
+  if (estado === 'completo'){
+    _showToast('Ese bloque esta lleno (2 retiros en paralelo). Elige otro horario.', 'warning');
+    return;
+  }
+  if (estado === 'bloqueado'){
+    _showToast(s.razon || 'Esa franja esta bloqueada por administrador.', 'warning');
+    return;
+  }
+  // Solo 'disponible' u 'ocupado' (parcial) son clickeables
+
   if (_slotStartIdx === null){
     _slotStartIdx = _slotEndIdx = i;
   } else if (_slotStartIdx === i && _slotEndIdx === i){
-    // mismo bloque otra vez → limpiar
     _slotStartIdx = _slotEndIdx = null;
   } else {
-    // segundo click: definir rango
-    let from = Math.min(_slotStartIdx, i);
-    let to = Math.max(_slotStartIdx, i);
-    // verificar que NINGUNO en el rango esté ocupado
-    let valid = true;
+    const from = Math.min(_slotStartIdx, i);
+    const to   = Math.max(_slotStartIdx, i);
+    let invalido = null;
     for (let k = from; k <= to; k++){
-      if (!_slotsDelDia[k].disponible){ valid = false; break; }
+      const sk = _slotsDelDia[k];
+      let ek = sk.estado;
+      if (!ek){
+        if (sk.lunch) ek = 'colacion';
+        else if (sk.razon && !sk.disponible) ek = 'bloqueado';
+        else if (!sk.disponible) ek = 'completo';
+        else ek = 'disponible';
+      }
+      if (ek === 'colacion'){ invalido = 'colacion'; break; }
+      if (ek === 'completo'){ invalido = 'completo'; break; }
+      if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
     }
-    if (!valid){
-      // si el rango cruza un ocupado, mantenemos solo el nuevo click
+    if (invalido === 'colacion'){
+      _showToast('El horario no puede cruzar la colacion (13:00-14:00). Termina antes o empieza despues.', 'warning');
+      _slotStartIdx = _slotEndIdx = i;
+    } else if (invalido === 'completo'){
+      _showToast('El rango cruza un bloque lleno. Acortalo o elige otra hora.', 'warning');
+      _slotStartIdx = _slotEndIdx = i;
+    } else if (invalido === 'bloqueado'){
+      _showToast('El rango cruza una franja bloqueada.', 'warning');
       _slotStartIdx = _slotEndIdx = i;
     } else {
       _slotStartIdx = from;
-      _slotEndIdx = to;
+      _slotEndIdx   = to;
     }
   }
   updateSlotSummary();
@@ -1237,28 +1328,44 @@ function onSlotClick(i){
 }
 
 function setQuickRange(hours){
-  if (hours === 0){ clearSlots(); return; }
-  if (_slotStartIdx === null){
-    // Buscar primer slot disponible
-    const firstFree = _slotsDelDia.findIndex(s => s.disponible);
-    if (firstFree < 0) return;
-    _slotStartIdx = firstFree;
-  }
-  // El slot dura "slot_minutes" (típicamente 60). N horas = N slots si son de 60min
-  const slotMin = _disponibilidad.slot_minutes || 60;
+  if (!hours || hours <= 0){ clearSlots(); return; }
+  const slotMin = (_disponibilidad && _disponibilidad.slot_minutes) ? _disponibilidad.slot_minutes : 30;
   const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
-  let end = _slotStartIdx + slotsNeeded - 1;
-  if (end >= _slotsDelDia.length) end = _slotsDelDia.length - 1;
-  // Verificar que NINGUNO en el rango esté ocupado
-  for (let k = _slotStartIdx; k <= end; k++){
-    if (!_slotsDelDia[k].disponible){
-      // truncar al último libre antes del ocupado
-      end = k - 1;
-      break;
+
+  // Buscar primer slot que pueda iniciar y permita N bloques contiguos
+  // sin cruzar colación / completo / bloqueado
+  let foundStart = -1;
+  let foundEnd   = -1;
+  for (let i = 0; i < _slotsDelDia.length; i++){
+    const s0 = _slotsDelDia[i];
+    const puedeIni = (s0.puede_iniciar !== undefined) ? s0.puede_iniciar
+      : (s0.disponible && !s0.lunch);
+    if (!puedeIni) continue;
+    const endIdx = i + slotsNeeded - 1;
+    if (endIdx >= _slotsDelDia.length) continue;
+    let ok = true;
+    for (let k = i; k <= endIdx; k++){
+      const sk = _slotsDelDia[k];
+      let ek = sk.estado;
+      if (!ek){
+        if (sk.lunch) ek = 'colacion';
+        else if (sk.razon && !sk.disponible) ek = 'bloqueado';
+        else if (!sk.disponible) ek = 'completo';
+        else ek = 'disponible';
+      }
+      if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado'){
+        ok = false; break;
+      }
     }
+    if (ok){ foundStart = i; foundEnd = endIdx; break; }
   }
-  if (end < _slotStartIdx) end = _slotStartIdx;
-  _slotEndIdx = end;
+
+  if (foundStart < 0){
+    _showToast(`No hay ${hours} hora${hours===1?'':'s'} contiguas libres este dia. Prueba otra fecha o menos tiempo.`, 'warning');
+    return;
+  }
+  _slotStartIdx = foundStart;
+  _slotEndIdx   = foundEnd;
   updateSlotSummary();
   renderSlotGrid();
 }
@@ -1272,24 +1379,42 @@ function clearSlots(){
 function updateSlotSummary(){
   const txt = document.getElementById('slotSummaryText');
   const clearBtn = document.getElementById('clearSlotBtn');
+  const summaryBox = document.getElementById('slotSummary');
   if (_slotStartIdx === null){
     txt.className = 'sum-empty';
-    txt.textContent = 'No has seleccionado bloque aún';
+    txt.textContent = 'No has seleccionado bloque aun';
     clearBtn.style.display = 'none';
+    if (summaryBox) summaryBox.classList.remove('is-active');
     document.querySelector('input[name=requested_time_from]').value = '';
     document.querySelector('input[name=requested_time_to]').value = '';
     return;
   }
-  const slotMin = _disponibilidad.slot_minutes || 60;
-  const startStr = _slotsDelDia[_slotStartIdx].hora;
-  const [h,m] = _slotsDelDia[_slotEndIdx].hora.split(':').map(Number);
-  const endMin = h * 60 + m + slotMin;
-  const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
-  const dur = (_slotEndIdx - _slotStartIdx + 1) * slotMin;
-  const durTxt = dur >= 60 ? `${(dur/60).toFixed(dur%60===0?0:1)}h` : `${dur}min`;
+  const slotMin = (_disponibilidad && _disponibilidad.slot_minutes) ? _disponibilidad.slot_minutes : 30;
+  const startSlot = _slotsDelDia[_slotStartIdx];
+  const endSlot   = _slotsDelDia[_slotEndIdx];
+  // time_from del INICIO, time_to del FIN (backend lo calcula).
+  // Fallback (legacy): si no viene time_to, hora_del_slot + slotMin
+  const startStr = startSlot.time_from || startSlot.hora;
+  let endStr = endSlot.time_to;
+  if (!endStr){
+    const baseMin = _hmToMin(endSlot.time_from || endSlot.hora);
+    endStr = _minToHM(baseMin + slotMin);
+  }
+  const nBlocks = _slotEndIdx - _slotStartIdx + 1;
+  const totalMin = nBlocks * slotMin;
+  let durTxt;
+  if (totalMin < 60){
+    durTxt = `${totalMin} min`;
+  } else if (totalMin % 60 === 0){
+    durTxt = `${totalMin/60} h`;
+  } else {
+    durTxt = `${(totalMin/60).toFixed(1)} h`;
+  }
+
   txt.className = '';
-  txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#22c55e"></i><strong>${startStr} – ${endStr}</strong> · duración ${durTxt}`;
+  txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#16a34a"></i><span class="sum-range">${startStr} - ${endStr}</span><span class="sum-dur"><i class="bi bi-stopwatch me-1"></i>duracion ${durTxt}</span>`;
   clearBtn.style.display = '';
+  if (summaryBox) summaryBox.classList.add('is-active');
   document.querySelector('input[name=requested_time_from]').value = startStr;
   document.querySelector('input[name=requested_time_to]').value = endStr;
 }
