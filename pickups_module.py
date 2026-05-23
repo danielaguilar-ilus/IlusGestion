@@ -1718,8 +1718,8 @@ def register_pickup_routes(app, ctx):
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
         logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 20", (req["id"],))
         attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
-        # 2026-05-23 (Daniel): pasar docs_asociados para que el template pueda
-        # sumar el m³ desde pickup_request_docs cuando total_volume_m3 está en 0.
+        # 2026-05-23 (Daniel): cálculo robusto de m³ en backend (evita Jinja
+        # `namespace` que falla en algunas versiones).
         try:
             docs_asociados = mysql_fetchall(
                 "SELECT id, document_type, document_number, peso_real_kg, peso_vol_kg, volumen_m3, n_lineas "
@@ -1728,8 +1728,19 @@ def register_pickup_routes(app, ctx):
             ) or []
         except Exception:
             docs_asociados = []
+        # Fallback cascada m³: req → docs_asociados → packages
+        _m3 = float(req.get("total_volume_m3") or req.get("volumen_m3") or 0)
+        if _m3 == 0 and docs_asociados:
+            _m3 = float(sum((d.get("volumen_m3") or 0) for d in docs_asociados))
+        if _m3 == 0 and packages:
+            _m3 = float(sum(
+                ((p.get("length_cm") or 0) * (p.get("width_cm") or 0) * (p.get("height_cm") or 0)) / 1000000.0
+                for p in packages
+                if p.get("length_cm") and p.get("width_cm") and p.get("height_cm")
+            ))
         # Sanitizar: eliminar campos internos antes de pasar al template público.
-        req_safe = _strip_internal(req)
+        req_safe = dict(_strip_internal(req))
+        req_safe["m3_calculado"] = _m3
         return render_template("retiros/public_tracking.html",
                                req=req_safe, packages=packages, proposals=proposals,
                                logs=logs, attachments=attachments,

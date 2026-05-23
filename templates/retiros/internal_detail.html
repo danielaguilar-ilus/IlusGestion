@@ -79,16 +79,29 @@ async function abrirDescargaInforme(rutCliente){
       .pipe-step.active::before{background:#22c55e}
       .pipe-step.active::after{background:linear-gradient(90deg,var(--ilus-red,#e60000),rgba(255,255,255,.1))}
       .pipe-step.fail::before,.pipe-step.fail::after{background:#dc2626}
-      .pipe-circle{position:relative;z-index:2;width:48px;height:48px;border-radius:50%;background:#1c1c1c;border:3px solid rgba(255,255,255,.15);color:#9ca3af;display:flex;align-items:center;justify-content:center;font-size:1.15rem;margin:0 auto 8px;transition:all .25s}
+      .pipe-circle{position:relative;z-index:2;width:54px;height:54px;border-radius:50%;background:#1c1c1c;border:3px solid rgba(255,255,255,.15);color:#9ca3af;display:flex;align-items:center;justify-content:center;font-size:1.45rem;font-weight:900;margin:0 auto 8px;transition:all .25s;font-family:'Bebas Neue','Inter',sans-serif;letter-spacing:0}
       .pipe-step.done .pipe-circle{background:#22c55e;border-color:#22c55e;color:#fff}
       .pipe-step.active .pipe-circle{background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;box-shadow:0 0 0 5px rgba(230,0,0,.18);animation:pipe-pulse 2s ease-in-out infinite}
       .pipe-step.fail .pipe-circle{background:#dc2626;border-color:#dc2626;color:#fff}
       @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 5px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 10px rgba(230,0,0,.06)}}
-      .pipe-label{font-size:.74rem;font-weight:800;color:#cbd5e1;line-height:1.2;text-transform:uppercase;letter-spacing:.04em}
+      /* Etiqueta numerada "PASO N" arriba del nodo */
+      .pipe-step-num{display:block;font-size:.58rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:6px;text-transform:uppercase}
+      .pipe-step.done .pipe-step-num{color:#22c55e}
+      .pipe-step.active .pipe-step-num{color:var(--ilus-red,#e60000)}
+      .pipe-label{font-size:.74rem;font-weight:800;color:#cbd5e1;line-height:1.2;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
       .pipe-step.done .pipe-label{color:#86efac}
       .pipe-step.active .pipe-label{color:#fff;font-size:.78rem}
       .pipe-step.fail .pipe-label{color:#fca5a5}
       .pipe-sub{font-size:.65rem;color:#9ca3af;margin-top:2px;font-weight:500}
+      /* Mobile responsive: 6 nodos no caben en celular - colapsar a vertical */
+      @media (max-width:768px){
+        .pipe-row{grid-template-columns:1fr;gap:8px}
+        .pipe-step{display:grid;grid-template-columns:60px 1fr;gap:12px;text-align:left;padding:8px;background:rgba(255,255,255,.03);border-radius:8px}
+        .pipe-step::before,.pipe-step::after{display:none}
+        .pipe-circle{margin:0}
+        .pipe-step-num{margin-bottom:0;font-size:.62rem}
+        .pipe-label{font-size:.85rem}
+      }
 
       /* ── PANEL DE VALIDACIÓN ─────────────────────────────────── */
       .val-card{background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border:2px solid #fdba74;border-radius:12px;padding:18px 22px;margin-bottom:14px}
@@ -120,7 +133,8 @@ async function abrirDescargaInforme(rutCliente){
       <div class="pipe-row">
         {# Paso 1: Recibida #}
         <div class="pipe-step done" onclick="document.getElementById('sec-ficha').scrollIntoView({behavior:'smooth',block:'center'})">
-          <div class="pipe-circle"><i class="bi bi-inbox"></i></div>
+          <span class="pipe-step-num">Paso 1</span>
+          <div class="pipe-circle">1</div>
           <div class="pipe-label">Recibida</div>
           <div class="pipe-sub">{{ req.created_at|string|truncate(10,True,'') if req.created_at else '—' }}</div>
         </div>
@@ -128,7 +142,8 @@ async function abrirDescargaInforme(rutCliente){
         {# Paso 2: Documento (validación interna) #}
         <div class="pipe-step {% if _doc_ok %}done{% elif _doc_incomp %}fail{% else %}active{% endif %}"
              onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth',block:'center'})">
-          <div class="pipe-circle"><i class="bi bi-shield-check"></i></div>
+          <span class="pipe-step-num">Paso 2</span>
+          <div class="pipe-circle">2</div>
           <div class="pipe-label">Documento</div>
           <div class="pipe-sub">
             {% if _doc_ok %}✓ Validado{% elif _doc_incomp %}⚠ Incompleto{% else %}Por validar{% endif %}
@@ -139,7 +154,8 @@ async function abrirDescargaInforme(rutCliente){
         {% set _cubic_ok = req.peso_real_kg and req.peso_vol_kg and req.tiempo_estimado_min %}
         <div class="pipe-step {% if _cubic_ok %}done{% elif _doc_ok %}active{% endif %}"
              onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth',block:'center'})">
-          <div class="pipe-circle"><i class="bi bi-rulers"></i></div>
+          <span class="pipe-step-num">Paso 3</span>
+          <div class="pipe-circle">3</div>
           <div class="pipe-label">Cubicaje</div>
           <div class="pipe-sub">
             {% if _cubic_ok %}{{ req.peso_real_kg }}kg · {{ req.tiempo_estimado_min }}min{% else %}Pendiente{% endif %}
@@ -149,7 +165,8 @@ async function abrirDescargaInforme(rutCliente){
         {# Paso 4: Propuesta #}
         <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% elif _doc_ok %}active{% endif %}"
              onclick="document.getElementById('sec-propuesta').scrollIntoView({behavior:'smooth',block:'center'})">
-          <div class="pipe-circle"><i class="bi bi-calendar-event"></i></div>
+          <span class="pipe-step-num">Paso 4</span>
+          <div class="pipe-circle">4</div>
           <div class="pipe-label">Propuesta</div>
           <div class="pipe-sub">
             {% if req.proposed_date %}{{ req.proposed_date }}{% else %}Sin proponer{% endif %}
@@ -158,7 +175,8 @@ async function abrirDescargaInforme(rutCliente){
 
         {# Paso 5: Confirmada (cliente acepta) #}
         <div class="pipe-step {% if req.confirmed_date %}done{% elif req.proposed_date %}active{% endif %}">
-          <div class="pipe-circle"><i class="bi bi-check2-circle"></i></div>
+          <span class="pipe-step-num">Paso 5</span>
+          <div class="pipe-circle">5</div>
           <div class="pipe-label">Confirmada</div>
           <div class="pipe-sub">
             {% if req.confirmed_date %}{{ req.confirmed_date }}{% elif req.proposed_date %}Esperando cliente{% else %}—{% endif %}
@@ -167,7 +185,8 @@ async function abrirDescargaInforme(rutCliente){
 
         {# Paso 6: Preparación / Retirada #}
         <div class="pipe-step {% if req.status == 'retirada' %}done{% elif req.status == 'en_preparacion' %}active{% endif %}">
-          <div class="pipe-circle"><i class="bi bi-truck"></i></div>
+          <span class="pipe-step-num">Paso 6</span>
+          <div class="pipe-circle">6</div>
           <div class="pipe-label">Retiro</div>
           <div class="pipe-sub">
             {% if req.status == 'retirada' %}✓ Completado
