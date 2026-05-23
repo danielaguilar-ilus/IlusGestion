@@ -397,14 +397,14 @@
             <span class="badge bg-dark">${totalKg.toFixed(2)} kg reales</span>
             <span class="badge bg-info">${totalPesoVol.toFixed(2)} kg vol.</span>
             <span class="badge bg-secondary">${totalM3.toFixed(3)} m³</span>
-            <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="aplicarTotales(${totalKg.toFixed(2)}, ${totalPesoVol.toFixed(2)}, ${itemsOK.length})">
+            <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="aplicarTotales(${totalKg.toFixed(2)}, ${totalPesoVol.toFixed(2)}, ${itemsOK.length}, ${totalM3.toFixed(3)})">
               <i class="bi bi-arrow-down-circle me-1"></i>Usar estos valores
             </button>
           </div>
         `;
 
-        // Auto-aplicar totales
-        aplicarTotales(totalKg.toFixed(2), totalPesoVol.toFixed(2), _erpLineas.length);
+        // Auto-aplicar totales (Daniel 22/05: incluir m³ que faltaba)
+        aplicarTotales(totalKg.toFixed(2), totalPesoVol.toFixed(2), _erpLineas.length, totalM3.toFixed(3));
 
         // Guardar snapshot ERP en BD silenciosamente
         const fd = new FormData();
@@ -419,9 +419,12 @@
       }
     }
 
-    function aplicarTotales(kg, pv, nLineas){
+    function aplicarTotales(kg, pv, nLineas, m3){
       document.getElementById('val_peso_real').value = kg;
       document.getElementById('val_peso_vol').value = pv;
+      // FIX 2026-05-22 (Daniel): m³ no se llenaba (volvía 0 abajo). Ahora SÍ.
+      const elM3 = document.getElementById('val_m3');
+      if (elM3 && m3 !== undefined && m3 !== null) elM3.value = m3;
       // Tiempo: 5min base + 2min × línea
       document.getElementById('val_tiempo').value = Math.max(15, 5 + nLineas * 2);
     }
