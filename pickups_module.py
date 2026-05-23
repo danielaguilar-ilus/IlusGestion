@@ -142,6 +142,12 @@ def register_pickup_routes(app, ctx):
     _send_ilus_email = ctx["_send_ilus_email"]
     _get_wa_cfg = ctx["_get_wa_cfg"]
     _send_whatsapp = ctx["_send_whatsapp"]
+    # Brand config (Daniel 2026-05-23): para notificación al operador en
+    # caso de que el cliente rechace la propuesta. Opcional — si no viene,
+    # caemos al default fijo "servicio.tecnico@ilusfitness.com".
+    _get_brand_cfg = ctx.get("_get_brand_cfg") or (
+        lambda: {"support_email": "servicio.tecnico@ilusfitness.com"}
+    )
     # Rate limiter de app.py (persistido en BD, cross-worker). Si no está
     # disponible (entorno de tests), creamos un no-op para no romper.
     _rate_limited = ctx.get("rate_limited") or (
@@ -861,6 +867,79 @@ def register_pickup_routes(app, ctx):
             print(f"[ILUS][PICKUP NOTIFY_ASYNC SPAWN] {exc}")
 
     # ══════════════════════════════════════════════════════════════════
+    #  NOTIFICACIÓN INTERNA — cliente rechazó la propuesta
+    # ══════════════════════════════════════════════════════════════════
+    # Daniel 2026-05-23 — Bug #3: cuando el cliente le da "No puedo asistir",
+    # el operador necesita enterarse para reagendar o cerrar la solicitud.
+    # Antes solo se notificaba al CLIENTE — el operador no se enteraba salvo
+    # mirando el dashboard. Ahora también se manda email al buzón soporte.
+    def _notificar_operador_rechazo(req, reason):
+        """Notifica al buzón soporte ILUS que un cliente rechazó la propuesta.
+        Envío en background (no bloquea response). Tolerante a fallos: si el
+        envío falla, solo loguea — el cliente no debe verse afectado."""
+        try:
+            import threading
+            req_snap = dict(req) if req else {}
+            reason_snap = str(reason or "")[:500]
+
+            def _runner(_req, _reason):
+                try:
+                    with app.app_context():
+                        brand_cfg = _get_brand_cfg() or {}
+                        dest = brand_cfg.get("support_email") or "servicio.tecnico@ilusfitness.com"
+                        if not dest:
+                            return
+                        code = _req.get("code") or "?"
+                        cli  = _req.get("customer_name") or "?"
+                        doc  = f"{_req.get('document_type','')} {_req.get('document_number','')}".strip()
+                        cont = _req.get("contact_name") or "?"
+                        mail = _req.get("contact_email") or "—"
+                        phone= _req.get("contact_phone") or "—"
+                        # `pickup_detail` es el nombre real de la vista interna
+                        # (no `pickup_internal_detail`). Si por algún motivo no
+                        # existe el endpoint, fallback al tracking público.
+                        try:
+                            link = url_for("pickup_detail", rid=_req["id"], _external=True)
+                        except Exception:
+                            try:
+                                link = url_for("pickup_public_tracking", token=_req.get("public_token"), _external=True)
+                            except Exception:
+                                link = "—"
+                        subject = f"ILUS - Cliente rechazo retiro {code}"
+                        html = _ilus_email_html(
+                            titulo="Cliente rechazo la propuesta de retiro",
+                            subtitulo=f"{code} - {doc}",
+                            saludo="Equipo ILUS",
+                            parrafos=[
+                                f"El cliente <strong>{cli}</strong> rechazo la propuesta de fecha y horario.",
+                                f"Motivo declarado: <em>{(_reason or 'No indico motivo').strip()}</em>",
+                                "Sugerencia: revisa la solicitud y contacta al cliente para reagendar o cerrarla.",
+                            ],
+                            btn_primario_txt="Abrir solicitud",
+                            btn_primario_url=link,
+                            info_lineas=[
+                                ("", "Contacto", cont),
+                                ("", "Email",    mail),
+                                ("", "Telefono", phone),
+                            ],
+                        )
+                        _send_ilus_email(dest, subject, html)
+                except Exception as exc:
+                    try:
+                        print(f"[ILUS][PICKUP REJECT NOTIFY OPERADOR] {exc}")
+                    except Exception: pass
+
+            t = threading.Thread(
+                target=_runner,
+                args=(req_snap, reason_snap),
+                daemon=True,
+                name=f"pickup-reject-notify-{req_snap.get('code','?')}",
+            )
+            t.start()
+        except Exception as exc:
+            print(f"[ILUS][PICKUP REJECT NOTIFY SPAWN] {exc}")
+
+    # ══════════════════════════════════════════════════════════════════
     #  SANITIZACIÓN — elimina campos internos antes de enviar al cliente
     # ══════════════════════════════════════════════════════════════════
     # Daniel pidió seguridad sin brechas (mayo 2026). El tracking público
@@ -1521,13 +1600,34 @@ def register_pickup_routes(app, ctx):
         if request.method == "POST":
             action = request.form.get("action")
             old = req["status"]
-            # 2026-05-23 (Daniel) — wrapper defensivo: cualquier excepción NO
-            # capturada por handlers internos devuelve flash legible al
-            # cliente en vez de 500. El tracking público NO debe mostrar
-            # stacktraces ni errores técnicos al cliente.
+            # 2026-05-23 (Daniel) — logging quirúrgico para diagnosticar
+            # "el botón Confirmar no avanza". Logueamos cada POST con
+            # request_id, action y status entrante. Nada de datos personales.
+            try:
+                print(f"[pickup_tracking] POST req_id={req['id']} code={req.get('code')} action={action} status_before={old}", flush=True)
+            except Exception:
+                pass
+            # wrapper defensivo: cualquier excepción NO capturada por handlers
+            # internos devuelve flash legible al cliente en vez de 500. El
+            # tracking público NO debe mostrar stacktraces ni errores
+            # técnicos al cliente.
             _post_failed = False
             if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
+                if not proposal:
+                    # No hay propuesta pendiente — el cliente vio el botón
+                    # pero el operador ya la canceló / cambió de estado.
+                    # Antes el código simplemente recargaba sin feedback.
+                    try:
+                        print(f"[pickup_tracking] CONFIRM sin propuesta pendiente req_id={req['id']}", flush=True)
+                    except Exception: pass
+                    flash(
+                        "Esa propuesta ya no está vigente. Si tu retiro sigue pendiente, ILUS te enviará una nueva fecha en breve.",
+                        "warning",
+                    )
+                    try: _POLL_CACHE.pop(token, None)
+                    except Exception: pass
+                    return redirect(url_for("pickup_public_tracking", token=token))
                 if proposal:
                     # ═══════════════════════════════════════════════════════════
                     # FIX RACE CONDITION (2026-05-12):
@@ -1678,35 +1778,106 @@ def register_pickup_routes(app, ctx):
                         return redirect(url_for("pickup_public_tracking", token=token))
 
                     log_event(req["id"], "cliente_confirmo", old, "agenda_confirmada", "Cliente acepto propuesta", "cliente", req["contact_name"])
+                    try:
+                        print(f"[pickup_tracking] CONFIRM OK req_id={req['id']} fecha={proposal['date']} {proposal['time_from']}-{proposal['time_to']}", flush=True)
+                    except Exception: pass
                     # Email "agenda confirmada" al cliente (con detalles finales)
                     try:
                         req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
                         notify_async(req_after, "confirmed")
                     except Exception as _e: print(f"[pickups][notify confirm] {_e}")
-                    flash("¡Tu retiro fue confirmado! Te enviamos un correo con todos los detalles.", "success")
+                    flash(
+                        f"¡Retiro confirmado para {proposal['date']} a las {str(proposal['time_from'])[:5]}! "
+                        "Te enviamos un correo con todos los detalles.",
+                        "success",
+                    )
             elif action == "reject":
-                reason = request.form.get("reason", "")
+                # Si la solicitud ya está cerrada/rechazada, no hacer nada
+                # (defensa contra doble-submit / refresh con resend POST).
+                if old in ("rechazada", "cerrada"):
+                    flash("Esta solicitud ya fue cancelada anteriormente.", "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                reason = (request.form.get("reason") or "").strip()[:500]
                 mysql_execute(f"UPDATE `{REQ}` SET status='rechazada' WHERE id=%s", (req["id"],))
-                log_event(req["id"], "cliente_rechazo", old, "rechazada", reason, "cliente", req["contact_name"])
+                # También marcar la propuesta pendiente (si hay) como declined
+                try:
+                    mysql_execute(
+                        f"UPDATE `{PROP}` SET status='declined', answered_at=NOW() "
+                        f"WHERE request_id=%s AND status='pending'",
+                        (req["id"],)
+                    )
+                except Exception: pass
+                log_event(req["id"], "cliente_rechazo", old, "rechazada", reason or "(sin motivo)", "cliente", req["contact_name"])
+                try:
+                    print(f"[pickup_tracking] REJECT req_id={req['id']} reason_len={len(reason)}", flush=True)
+                except Exception: pass
+                # Notificación al cliente (confirmación de cancelación)
                 try:
                     req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
-                    notify_async(req_after, "rejected")
-                except Exception as _e: print(f"[pickups][notify reject] {_e}")
-                flash("Tu solicitud fue cancelada. Te enviamos un correo de confirmación.", "info")
+                    notify_async(req_after, "rejected", custom_message=(
+                        "Recibimos tu cancelación. Si fue un error o quieres reagendar, "
+                        "puedes hacer una nueva solicitud cuando estés listo."
+                    ))
+                except Exception as _e: print(f"[pickups][notify reject cliente] {_e}")
+                # Notificación al operador interno (avisa que el cliente rechazó)
+                try:
+                    _notificar_operador_rechazo(req, reason)
+                except Exception as _e: print(f"[pickups][notify reject operador] {_e}")
+                flash(
+                    "Tu solicitud fue cancelada. Te enviamos un correo de confirmación y avisamos al equipo ILUS.",
+                    "info",
+                )
             elif action == "counter":
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
+                # Validaciones backend (defense in depth — el frontend ya valida pero
+                # nunca confiamos en el cliente). El nuevo modal con calendario
+                # inteligente envía slot ya validado, pero alguien podría hacer
+                # POST manual con fecha en pasado o slot ocupado.
                 okd, md = date_allowed(date, cfg); okt, mt = time_allowed(tf, tt, cfg)
+                # Anti-pasado adicional: nunca aceptar fecha < hoy
+                try:
+                    from datetime import date as _d
+                    _hoy = _d.today()
+                    _propuesta_d = _d.fromisoformat(str(date)[:10])
+                    if _propuesta_d <= _hoy:
+                        okd, md = False, "No puedes proponer una fecha del pasado o de hoy. Mínimo: mañana."
+                except Exception:
+                    okd, md = False, "Fecha inválida. Usa el formato YYYY-MM-DD."
+                # Anti-slot-ocupado: validar capacidad del slot propuesto
+                if okd and okt:
+                    try:
+                        ok_slot, motivo_slot = _validar_disponibilidad_slot(
+                            date, tf, tt,
+                            exclude_request_id=req["id"],
+                            extra_kg=float(req.get("total_weight_kg") or 0),
+                            extra_m3=float(req.get("total_volume_m3") or 0),
+                        )
+                        if not ok_slot:
+                            okt = False
+                            mt = f"Ese horario ya no está disponible: {motivo_slot}"
+                    except Exception as _e:
+                        print(f"[pickup_tracking] counter validar slot err: {_e}", flush=True)
                 if okd and okt:
                     mysql_execute(
                         f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token)
                             VALUES (%s,'cliente',%s,%s,%s,%s,'Contrapropuesta cliente','pending',%s)""",
-                        (req["id"], date, tf, tt, request.form.get("counter_message", ""), secrets.token_urlsafe(24)),
+                        (req["id"], date, tf, tt, (request.form.get("counter_message", "") or "")[:1000], secrets.token_urlsafe(24)),
                     )
                     mysql_execute(f"UPDATE `{REQ}` SET status='en_revision' WHERE id=%s", (req["id"],))
                     log_event(req["id"], "cliente_contrapropuso", old, "en_revision", f"{date} {tf}-{tt}", "cliente", req["contact_name"])
-                    flash("Tu contrapropuesta fue registrada. Te confirmaremos en breve.", "success")
+                    try:
+                        print(f"[pickup_tracking] COUNTER OK req_id={req['id']} fecha={date} {tf}-{tt}", flush=True)
+                    except Exception: pass
+                    flash(
+                        f"¡Listo! Registramos tu contrapropuesta para {date} a las {tf}. "
+                        "Te confirmaremos en breve por correo.",
+                        "success",
+                    )
                 else:
-                    flash(md or mt, "warning")
+                    try:
+                        print(f"[pickup_tracking] COUNTER rechazada req_id={req['id']} okd={okd} okt={okt} motivo={md or mt}", flush=True)
+                    except Exception: pass
+                    flash(md or mt or "No se pudo registrar la propuesta. Intenta con otro horario.", "warning")
             # Invalidar cache de polling — el cliente verá su nuevo estado al instante
             try: _POLL_CACHE.pop(token, None)
             except Exception: pass

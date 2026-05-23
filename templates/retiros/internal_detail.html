@@ -65,27 +65,109 @@ async function abrirDescargaInforme(rutCliente){
     {% set _doc_ok = _doc_status == 'ok' %}
     {% set _doc_incomp = _doc_status == 'incompleto' %}
     <style>
-      /* ── PIPELINE INTERACTIVO 6 PASOS ─────────────────────────── */
+      /* ════════════════════════════════════════════════════════════
+         PIPELINE INTERACTIVO 6 PASOS — UNIFICADO con tracking público
+         Daniel 2026-05-23 (Bug #4): replicamos el patrón visual del
+         tracking público — la línea de conexión pasa EXACTAMENTE por
+         el centro vertical del círculo y termina en su borde (no lo
+         atraviesa). Mismas variables, mismas animaciones.
+
+         Estructura por step:
+           [pipe-step-num "PASO N"]
+           [pipe-circle  con número]   ← la línea horizontal pasa por su centro
+           [pipe-label   "Recibida"]
+           [pipe-sub     "fecha o subtítulo"]
+         La línea está sobre TODA la fila (pseudo-elemento del .pipe-row),
+         no por step → así es robusta al cambio de cantidad de columnas.
+         ════════════════════════════════════════════════════════════ */
       .pipe-wrap{padding:18px 22px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);border-radius:14px;margin-bottom:16px;color:#fff;border-bottom:4px solid var(--ilus-red,#e60000)}
       .pipe-wrap-title{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:14px}
-      .pipe-row{display:grid;grid-template-columns:repeat(6,1fr);gap:0;align-items:flex-start;position:relative}
-      .pipe-step{position:relative;text-align:center;padding:6px 4px;cursor:pointer;transition:transform .15s}
+
+      /* Constantes del stepper (mantener sincronizadas con offset de línea) */
+      .pipe-row{
+        --pipe-circle-size:54px;
+        --pipe-num-row:18px;   /* alto aproximado de "PASO N" + su margin-bottom */
+        --pipe-pad-top:6px;
+        /* Centro vertical del círculo, contado desde el top del step:
+           pad + num + (circle/2) = 6 + 18 + 27 = 51px → la línea horizontal
+           se posiciona en ese eje. Restamos la mitad de su grosor (3/2≈2)
+           para que el centro de la línea coincida con el centro del círculo. */
+        --pipe-line-top:calc(var(--pipe-pad-top) + var(--pipe-num-row) + (var(--pipe-circle-size) / 2) - 2px);
+        display:grid;grid-template-columns:repeat(6,1fr);gap:0;
+        align-items:flex-start;position:relative;
+      }
+      .pipe-step{
+        position:relative;text-align:center;padding:var(--pipe-pad-top) 4px 4px;
+        cursor:pointer;transition:transform .15s;
+      }
       .pipe-step:hover{transform:translateY(-2px)}
-      .pipe-step::before,.pipe-step::after{content:'';position:absolute;top:24px;height:3px;background:rgba(255,255,255,.1);z-index:0}
-      .pipe-step::before{left:0;right:50%}
-      .pipe-step::after{left:50%;right:0}
-      .pipe-step:first-child::before,.pipe-step:last-child::after{display:none}
+
+      /* Línea de conexión: dos pseudo-elementos (before=izq, after=der)
+         que TERMINAN en el borde del círculo (no lo atraviesan). El círculo
+         tiene z-index:2 y la línea z-index:0, así que el círculo siempre
+         se ve por encima — y al hacer hover/animaciones la línea no
+         sobresale por dentro. */
+      .pipe-step::before,
+      .pipe-step::after{
+        content:'';position:absolute;
+        top:var(--pipe-line-top);height:3px;
+        background:rgba(255,255,255,.10);
+        z-index:0;border-radius:50px;
+      }
+      /* Mitad izquierda: del borde del step hasta el inicio del círculo */
+      .pipe-step::before{
+        left:0;
+        right:calc(50% + (var(--pipe-circle-size) / 2) - 2px);
+      }
+      /* Mitad derecha: del fin del círculo hasta el borde del step */
+      .pipe-step::after{
+        left:calc(50% + (var(--pipe-circle-size) / 2) - 2px);
+        right:0;
+      }
+      /* Primer/último step: no dibujan la mitad que apunta "hacia afuera" */
+      .pipe-step:first-child::before{display:none}
+      .pipe-step:last-child::after{display:none}
+
+      /* Coloración de la línea según estado */
       .pipe-step.done::before,.pipe-step.done::after{background:#22c55e}
       .pipe-step.active::before{background:#22c55e}
-      .pipe-step.active::after{background:linear-gradient(90deg,var(--ilus-red,#e60000),rgba(255,255,255,.1))}
+      .pipe-step.active::after{background:linear-gradient(90deg,var(--ilus-red,#e60000),rgba(255,255,255,.10))}
       .pipe-step.fail::before,.pipe-step.fail::after{background:#dc2626}
-      .pipe-circle{position:relative;z-index:2;width:54px;height:54px;border-radius:50%;background:#1c1c1c;border:3px solid rgba(255,255,255,.15);color:#9ca3af;display:flex;align-items:center;justify-content:center;font-size:1.45rem;font-weight:900;margin:0 auto 8px;transition:all .25s;font-family:'Bebas Neue','Inter',sans-serif;letter-spacing:0}
-      .pipe-step.done .pipe-circle{background:#22c55e;border-color:#22c55e;color:#fff}
-      .pipe-step.active .pipe-circle{background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;box-shadow:0 0 0 5px rgba(230,0,0,.18);animation:pipe-pulse 2s ease-in-out infinite}
-      .pipe-step.fail .pipe-circle{background:#dc2626;border-color:#dc2626;color:#fff}
-      @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 5px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 10px rgba(230,0,0,.06)}}
+
+      .pipe-circle{
+        position:relative;z-index:2;
+        width:var(--pipe-circle-size);height:var(--pipe-circle-size);
+        border-radius:50%;background:#1c1c1c;
+        border:3px solid rgba(255,255,255,.15);color:#9ca3af;
+        display:flex;align-items:center;justify-content:center;
+        font-size:1.45rem;font-weight:900;margin:0 auto 8px;
+        transition:all .25s;font-family:'Bebas Neue','Inter',sans-serif;letter-spacing:0;
+        /* Sombra base sutil para "cerrar" la línea visualmente */
+        box-shadow:0 0 0 4px #0a0a0a;
+      }
+      .pipe-step.done .pipe-circle{
+        background:#22c55e;border-color:#22c55e;color:#fff;
+        box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(34,197,94,.30);
+      }
+      .pipe-step.active .pipe-circle{
+        background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;
+        box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18);
+        animation:pipe-pulse 2s ease-in-out infinite;
+      }
+      .pipe-step.fail .pipe-circle{
+        background:#dc2626;border-color:#dc2626;color:#fff;
+        box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(220,38,38,.30);
+      }
+      @keyframes pipe-pulse{
+        0%,100%{box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18)}
+        50%   {box-shadow:0 0 0 4px #0a0a0a, 0 0 0 14px rgba(230,0,0,.04)}
+      }
+      @media(prefers-reduced-motion:reduce){
+        .pipe-step.active .pipe-circle{animation:none}
+      }
+
       /* Etiqueta numerada "PASO N" arriba del nodo */
-      .pipe-step-num{display:block;font-size:.58rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:6px;text-transform:uppercase}
+      .pipe-step-num{display:block;font-size:.58rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:6px;text-transform:uppercase;line-height:1}
       .pipe-step.done .pipe-step-num{color:#22c55e}
       .pipe-step.active .pipe-step-num{color:var(--ilus-red,#e60000)}
       .pipe-label{font-size:.74rem;font-weight:800;color:#cbd5e1;line-height:1.2;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
@@ -93,12 +175,30 @@ async function abrirDescargaInforme(rutCliente){
       .pipe-step.active .pipe-label{color:#fff;font-size:.78rem}
       .pipe-step.fail .pipe-label{color:#fca5a5}
       .pipe-sub{font-size:.65rem;color:#9ca3af;margin-top:2px;font-weight:500}
-      /* Mobile responsive: 6 nodos no caben en celular - colapsar a vertical */
+
+      /* Mobile responsive: 6 nodos no caben en celular - colapsar a vertical.
+         Daniel: "cuando colapsa vertical, no debe verse la línea horizontal —
+         debe ser una línea vertical entre los círculos". Aquí ocultamos las
+         líneas horizontales y dejamos cada step como tarjeta independiente. */
       @media (max-width:768px){
-        .pipe-row{grid-template-columns:1fr;gap:8px}
-        .pipe-step{display:grid;grid-template-columns:60px 1fr;gap:12px;text-align:left;padding:8px;background:rgba(255,255,255,.03);border-radius:8px}
+        .pipe-row{grid-template-columns:1fr;gap:8px;--pipe-line-top:0px}
+        .pipe-step{display:grid;grid-template-columns:60px 1fr;gap:12px;text-align:left;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;position:relative}
         .pipe-step::before,.pipe-step::after{display:none}
-        .pipe-circle{margin:0}
+        /* Línea vertical conectora entre círculos (replica del look público mobile) */
+        .pipe-step:not(:last-child)::after{
+          content:'';display:block;position:absolute;
+          left:36px;top:60px;bottom:-8px;width:3px;height:auto;
+          background:rgba(255,255,255,.10);border-radius:50px;
+          z-index:0;
+        }
+        .pipe-step.done:not(:last-child)::after{background:#22c55e}
+        .pipe-step.active:not(:last-child)::after{background:linear-gradient(180deg,#22c55e,var(--ilus-red,#e60000))}
+        .pipe-step.fail:not(:last-child)::after{background:#dc2626}
+        .pipe-circle{margin:0;box-shadow:none}
+        .pipe-step.done .pipe-circle{box-shadow:0 6px 14px rgba(34,197,94,.30)}
+        .pipe-step.active .pipe-circle{box-shadow:0 0 0 6px rgba(230,0,0,.18)}
+        .pipe-step.fail .pipe-circle{box-shadow:0 6px 14px rgba(220,38,38,.30)}
+        @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 5px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 10px rgba(230,0,0,.06)}}
         .pipe-step-num{margin-bottom:0;font-size:.62rem}
         .pipe-label{font-size:.85rem}
       }

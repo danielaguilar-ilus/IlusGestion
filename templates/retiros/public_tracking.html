@@ -514,6 +514,109 @@
     .modal-content{border-radius:14px;border:none;box-shadow:0 22px 48px rgba(0,0,0,.3)}
     .modal-header{border-bottom:1px solid var(--ilus-border)}
 
+    /* ════════════════════════════════════════════════════════════════
+       SLOT PICKER DENTRO DEL MODAL "Proponer otra fecha" (Daniel 2026-05-23)
+       Réplica visual del calendario del formulario público. Usa el mismo
+       endpoint `/retiros/api/disponibilidad-publica` y la misma UX.
+       ════════════════════════════════════════════════════════════════ */
+    #counterModal .modal-dialog{max-width:760px}
+    #counterModal .modal-body{padding:18px 22px}
+    .cnt-slot-picker{
+      background:#fafafa;border:1px solid var(--ilus-border);border-radius:12px;
+      padding:14px;
+    }
+    .cnt-slot-head{
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
+      gap:8px;margin-bottom:10px;
+    }
+    .cnt-slot-head strong{font-size:.82rem;color:var(--ilus-black)}
+    .cnt-slot-legend{display:flex;flex-wrap:wrap;gap:8px;font-size:.7rem;color:#6b7280}
+    .cnt-slot-legend span{display:inline-flex;align-items:center;gap:4px}
+    .cnt-slot-legend .ldot{width:11px;height:11px;border-radius:3px;display:inline-block;flex-shrink:0}
+    .cnt-slot-section-title{
+      font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+      color:#6b7280;padding:6px 0 2px;border-bottom:1px dashed #e5e7eb;margin:8px 0 4px;
+    }
+    .cnt-slot-grid-inner{
+      display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 6px;
+    }
+    @media(max-width:600px){
+      .cnt-slot-grid-inner{grid-template-columns:repeat(3,minmax(0,1fr))}
+    }
+    .cnt-slot-item{
+      position:relative;padding:11px 4px;border-radius:8px;background:#fff;
+      border:1.5px solid #e5e7eb;font-size:.84rem;font-weight:700;
+      color:var(--ilus-black);text-align:center;cursor:pointer;
+      transition:transform .12s cubic-bezier(.4,0,.2,1), box-shadow .12s, background .12s, border-color .12s;
+      font-variant-numeric:tabular-nums;user-select:none;
+      min-height:42px;display:flex;align-items:center;justify-content:center;
+    }
+    .cnt-slot-item:hover:not(.is-disabled){
+      border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);
+      box-shadow:0 4px 10px rgba(220,38,38,.10);
+    }
+    .cnt-slot-item.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;opacity:.6}
+    .cnt-slot-item.is-lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem;opacity:.85}
+    .cnt-slot-item.is-busy{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+    .cnt-slot-item.is-busy:hover{background:#ffedd5;border-color:#fb923c}
+    .cnt-slot-item .cnt-slot-badge{
+      position:absolute;top:-7px;right:-3px;background:#f97316;color:#fff;
+      font-size:.55rem;padding:1px 5px;border-radius:50px;font-weight:800;
+      box-shadow:0 2px 4px rgba(0,0,0,.15);
+    }
+    .cnt-slot-item.is-full{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;cursor:not-allowed;opacity:.78}
+    .cnt-slot-item.is-full::after{content:'🔒';position:absolute;top:2px;right:4px;font-size:.65rem}
+    .cnt-slot-item.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;cursor:not-allowed;opacity:.6;text-decoration:line-through}
+    .cnt-slot-item.is-disabled{cursor:not-allowed;opacity:.4;background:#f9fafb}
+    .cnt-slot-item.is-selected{
+      background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
+      box-shadow:0 4px 12px rgba(220,38,38,.30);transform:translateY(-1px);opacity:1;
+    }
+    .cnt-slot-item.is-in-range{
+      background:linear-gradient(180deg,rgba(220,38,38,.18) 0%,rgba(220,38,38,.06) 100%);
+      color:var(--ilus-red);border-color:#fecaca;font-weight:800;
+    }
+    .cnt-slot-item.is-start::before{
+      content:'INICIO';position:absolute;top:-8px;left:50%;transform:translateX(-50%);
+      background:#0a0a0a;color:#fff;font-size:.52rem;padding:1px 6px;border-radius:50px;
+      letter-spacing:.06em;font-weight:800;white-space:nowrap;
+    }
+    .cnt-slot-item.is-end:not(.is-start)::before{
+      content:'FIN';position:absolute;bottom:-8px;top:auto;left:50%;transform:translateX(-50%);
+      background:#0a0a0a;color:#fff;font-size:.52rem;padding:1px 6px;border-radius:50px;
+      letter-spacing:.06em;font-weight:800;white-space:nowrap;
+    }
+    .cnt-slot-item.is-start.is-end::before{content:'INICIO · FIN';font-size:.48rem;padding:1px 5px}
+
+    .cnt-slot-summary{
+      margin-top:12px;padding:12px 16px;background:#0a0a0a;color:#fff;border-radius:10px;
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+      font-size:.88rem;border-left:4px solid var(--ilus-red);transition:background .2s, border-color .2s;
+    }
+    .cnt-slot-summary.is-active{background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);border-left-color:#16a34a}
+    .cnt-slot-summary .sum-empty{color:#9ca3af;font-style:italic}
+    .cnt-slot-summary .sum-range{font-weight:800;font-size:.96rem}
+    .cnt-slot-summary .sum-dur{
+      display:inline-flex;align-items:center;gap:4px;background:rgba(220,38,38,.25);color:#fff;
+      padding:3px 9px;border-radius:50px;font-size:.72rem;font-weight:700;margin-left:6px;
+    }
+    .cnt-slot-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center}
+    .cnt-slot-quick{
+      padding:5px 12px;background:#fff;border:1.5px solid #e5e7eb;border-radius:50px;
+      font-size:.72rem;font-weight:700;cursor:pointer;color:#374151;transition:all .12s;
+    }
+    .cnt-slot-quick:hover{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red)}
+    .cnt-slot-quick.cnt-slot-clear{background:transparent;border-color:#d1d5db;color:#6b7280}
+    .cnt-slot-quick.cnt-slot-clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+
+    .cnt-fecha-msg{font-size:.78rem;margin-top:4px;display:block}
+    .cnt-cal-prev-prop{
+      background:#fff7ed;border:1px dashed #fdba74;color:#9a3412;
+      border-radius:10px;padding:10px 14px;font-size:.84rem;margin-bottom:12px;
+      display:flex;align-items:center;gap:8px;
+    }
+    .cnt-cal-prev-prop i{color:#fb923c;font-size:1.1rem;flex-shrink:0}
+
     /* ─── BOTÓN DESCARGA EXCEL (cliente) ────────────────────────── */
     .btn-xlsx{
       display:inline-flex;align-items:center;gap:6px;
@@ -628,9 +731,85 @@
     @media(prefers-reduced-motion:reduce){
       .reveal-on-scroll{opacity:1;transform:none;transition:none}
     }
+
+    /* ════════════════════════════════════════════════════════════════
+       FLASH TOASTS — feedback visible al cliente tras POST (Daniel 2026-05-23)
+       Bug #1: cuando el cliente apretaba "Confirmar esta fecha", el backend
+       hacía flash() pero el template NO renderizaba los mensajes. Por eso
+       "no pasaba nada" visualmente. Ahora cada flash sale como toast grande
+       en la parte superior, auto-dismiss a los 6s.
+       ════════════════════════════════════════════════════════════════ */
+    .flash-toasts-wrap{
+      position:fixed;top:14px;left:50%;transform:translateX(-50%);
+      z-index:10500;display:flex;flex-direction:column;gap:10px;
+      max-width:560px;width:calc(100vw - 28px);pointer-events:none;
+    }
+    .flash-toast{
+      pointer-events:auto;
+      display:flex;align-items:center;gap:12px;
+      padding:16px 20px;border-radius:14px;font-weight:700;font-size:.95rem;
+      box-shadow:0 22px 48px rgba(0,0,0,.18),0 0 0 1px rgba(0,0,0,.04);
+      animation:flashIn .45s cubic-bezier(.16,1,.3,1);
+      line-height:1.4;backdrop-filter:blur(6px);
+    }
+    .flash-toast .ico{
+      font-size:1.7rem;flex-shrink:0;display:grid;place-items:center;
+      width:42px;height:42px;border-radius:12px;
+    }
+    .flash-toast .msg{flex:1;color:inherit}
+    .flash-toast .close{
+      background:transparent;border:none;color:inherit;opacity:.55;font-size:1.25rem;
+      cursor:pointer;padding:4px 8px;border-radius:6px;line-height:1;
+    }
+    .flash-toast .close:hover{opacity:1;background:rgba(0,0,0,.06)}
+    .flash-toast.success{background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);color:#14532d;border:1px solid #86efac}
+    .flash-toast.success .ico{background:#16a34a;color:#fff}
+    .flash-toast.warning{background:linear-gradient(135deg,#fff8ec 0%,#fef3c7 100%);color:#78350f;border:1px solid #fcd34d}
+    .flash-toast.warning .ico{background:#f59e0b;color:#fff}
+    .flash-toast.error,.flash-toast.danger{background:linear-gradient(135deg,#fee2e2 0%,#fecaca 100%);color:#7f1d1d;border:1px solid #fca5a5}
+    .flash-toast.error .ico,.flash-toast.danger .ico{background:#dc2626;color:#fff}
+    .flash-toast.info{background:linear-gradient(135deg,#dbeafe 0%,#bfdbfe 100%);color:#1e3a8a;border:1px solid #93c5fd}
+    .flash-toast.info .ico{background:#3b82f6;color:#fff}
+    .flash-toast.is-leaving{animation:flashOut .35s cubic-bezier(.4,0,.2,1) forwards}
+    @keyframes flashIn{
+      from{opacity:0;transform:translateY(-22px) scale(.96)}
+      to{opacity:1;transform:translateY(0) scale(1)}
+    }
+    @keyframes flashOut{
+      to{opacity:0;transform:translateY(-22px) scale(.96)}
+    }
+    @media(prefers-reduced-motion:reduce){
+      .flash-toast{animation:none}
+    }
+    @media(max-width:600px){
+      .flash-toasts-wrap{top:8px;width:calc(100vw - 16px)}
+      .flash-toast{padding:14px 16px;font-size:.9rem}
+      .flash-toast .ico{width:36px;height:36px;font-size:1.45rem}
+    }
   </style>
 </head>
 <body>
+
+  {# ════════════════════════════════════════════════════════════════
+     FLASH TOASTS — feedback al cliente tras confirmar / proponer / rechazar.
+     Bug #1 (Daniel mayo 2026): el endpoint POST hacía flash() pero el
+     template no renderizaba mensajes, así que el cliente NO veía nada
+     después de hacer click. Ahora cada mensaje sale como toast grande.
+     ════════════════════════════════════════════════════════════════ #}
+  {%- set _flashed = get_flashed_messages(with_categories=true) -%}
+  {%- if _flashed -%}
+  <div class="flash-toasts-wrap" id="flashToastsWrap" role="status" aria-live="polite">
+    {%- for cat, msg in _flashed -%}
+      {%- set _cat = (cat or 'info')|lower -%}
+      {%- set _ico = {'success':'check-circle-fill','warning':'exclamation-triangle-fill','error':'x-octagon-fill','danger':'x-octagon-fill','info':'info-circle-fill'}.get(_cat,'info-circle-fill') -%}
+      <div class="flash-toast {{ _cat }}" data-flash-toast>
+        <span class="ico"><i class="bi bi-{{ _ico }}"></i></span>
+        <div class="msg">{{ msg }}</div>
+        <button type="button" class="close" aria-label="Cerrar" onclick="this.parentElement.classList.add('is-leaving');setTimeout(()=>this.parentElement.remove(),350)">×</button>
+      </div>
+    {%- endfor -%}
+  </div>
+  {%- endif -%}
 
   {# ──────── HEADER ──────── #}
   <header class="pub-top">
@@ -850,9 +1029,12 @@
           </p>
           {% endif %}
           <div class="btns">
-            <form method="post" style="display:inline">
+            {# Form de confirmación — onsubmit dispara loading visible. Esto evita
+               el "no pasa nada" que reportaba Daniel: ahora el cliente VE el
+               botón cambiar al hacer click, y al recargar aparece el toast verde. #}
+            <form method="post" id="confirmForm" style="display:inline">
               <input type="hidden" name="action" value="confirm">
-              <button class="btn-act btn-confirm" type="submit">
+              <button class="btn-act btn-confirm" type="submit" id="confirmBtn">
                 <i class="bi bi-check2-circle"></i>Confirmar esta fecha
               </button>
             </form>
@@ -863,6 +1045,18 @@
               <i class="bi bi-x-circle"></i>No puedo
             </button>
           </div>
+          <script>
+            // Loading visible al confirmar — feedback instantáneo (Bug #1).
+            (function(){
+              const f = document.getElementById('confirmForm');
+              const b = document.getElementById('confirmBtn');
+              if (!f || !b) return;
+              f.addEventListener('submit', () => {
+                b.disabled = true;
+                b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Confirmando…';
+              });
+            })();
+          </script>
         </div>
         {% endif %}
 
@@ -1091,57 +1285,147 @@
     <div class="small mt-3" style="color:#4b5563">© 2026 ILUS Sport &amp; Health · Página pública de seguimiento</div>
   </footer>
 
-  {# ──────── MODAL: contraproposición ──────── #}
+  {# ════════════════════════════════════════════════════════════════
+     MODAL: Proponer otra fecha — con calendario inteligente embebido
+     Daniel 2026-05-23: misma seguridad y UX del formulario público.
+     - Carga slots reales desde /retiros/api/disponibilidad-publica
+     - Bloquea colación, ocupados, completos, bloqueados manuales
+     - Anti-pasado (date min = mañana)
+     - Selección INICIO + FIN con rango contiguo (sin cruzar colación)
+     - Atajos 1h / 2h / 3h
+     - Comentario opcional al final
+     - El submit envía counter_date / counter_time_from / counter_time_to
+       al MISMO endpoint que existía (action=counter) — backend ya valida
+       defense in depth.
+     ════════════════════════════════════════════════════════════════ #}
   <div class="modal fade" id="counterModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <form method="post" class="modal-content">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <form method="post" class="modal-content" id="counterForm" novalidate>
         <input type="hidden" name="action" value="counter">
+        {# Inputs reales que se envían al backend (ocultos — los puebla el JS) #}
+        <input type="hidden" name="counter_date"      id="cnt_date_input">
+        <input type="hidden" name="counter_time_from" id="cnt_tf_input">
+        <input type="hidden" name="counter_time_to"   id="cnt_tt_input">
+
         <div class="modal-header bg-dark text-white">
-          <h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Proponer otra fecha</h5>
+          <h5 class="modal-title">
+            <i class="bi bi-calendar-plus me-2" style="color:#ef4444"></i>Proponer otra fecha
+          </h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
-        <div class="modal-body row g-2">
-          <div class="col-12">
-            <label class="form-label small fw-bold">Nueva fecha</label>
-            <input type="date" name="counter_date" class="form-control" required>
+
+        <div class="modal-body">
+          {# Recordatorio de la propuesta actual de ILUS #}
+          {% if pending %}
+          <div class="cnt-cal-prev-prop">
+            <i class="bi bi-info-circle-fill"></i>
+            <div>
+              <strong>ILUS te propuso:</strong>
+              {{ pending[0].date }} de {{ pending[0].time_from|hm }} a {{ pending[0].time_to|hm }}.
+              Si no te acomoda, elige otra fecha y horario aquí abajo.
+            </div>
           </div>
-          <div class="col-6">
-            <label class="form-label small fw-bold">Desde</label>
-            <input type="time" name="counter_time_from" class="form-control" required>
+          {% endif %}
+
+          {# Fecha #}
+          <div class="mb-3">
+            <label class="form-label small fw-bold mb-1" for="cnt_fecha_picker">
+              Nueva fecha del retiro <span class="text-danger">*</span>
+            </label>
+            <input type="date" id="cnt_fecha_picker" class="form-control" required>
+            <small class="cnt-fecha-msg text-muted" id="cnt_fecha_msg">
+              <i class="bi bi-calendar3 me-1"></i>Selecciona un día desde mañana.
+            </small>
           </div>
-          <div class="col-6">
-            <label class="form-label small fw-bold">Hasta</label>
-            <input type="time" name="counter_time_to" class="form-control" required>
+
+          {# Bloque horario inteligente #}
+          <div class="mb-2">
+            <label class="form-label small fw-bold mb-1">
+              Bloque horario <span class="text-danger">*</span>
+            </label>
+            <div class="cnt-slot-picker">
+              <div class="cnt-slot-head">
+                <strong>Toca uno o más bloques contiguos</strong>
+                <div class="cnt-slot-legend">
+                  <span><span class="ldot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                  <span><span class="ldot" style="background:#dc2626"></span>Tu selección</span>
+                  <span><span class="ldot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+                  <span><span class="ldot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  <span><span class="ldot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+                </div>
+              </div>
+              <div id="cnt_slot_grid">
+                <div class="text-center text-muted small py-3">
+                  <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
+                </div>
+              </div>
+              <div class="cnt-slot-actions" id="cnt_slot_quick_wrap" style="display:none">
+                <span class="text-muted small me-2">Atajo:</span>
+                <span class="cnt-slot-quick" data-cnt-quick="1">1 hora</span>
+                <span class="cnt-slot-quick" data-cnt-quick="2">2 horas</span>
+                <span class="cnt-slot-quick" data-cnt-quick="3">3 horas</span>
+                <span class="cnt-slot-quick cnt-slot-clear" id="cnt_slot_clear_btn">Limpiar</span>
+              </div>
+              <div class="cnt-slot-summary" id="cnt_slot_summary">
+                <div id="cnt_slot_summary_text" class="sum-empty">No has seleccionado bloque aún</div>
+              </div>
+            </div>
           </div>
-          <div class="col-12">
-            <label class="form-label small fw-bold">Comentario</label>
-            <textarea name="counter_message" class="form-control" rows="3" placeholder="Opcional — algo que debamos saber"></textarea>
+
+          {# Comentario opcional #}
+          <div class="mb-1 mt-3">
+            <label class="form-label small fw-bold mb-1" for="cnt_msg_input">
+              Comentario <span class="text-muted fw-normal">(opcional)</span>
+            </label>
+            <textarea name="counter_message" id="cnt_msg_input" class="form-control" rows="2"
+                      maxlength="500"
+                      placeholder="Ej: prefiero horario flexible, voy en camión 3/4..."></textarea>
+            <small class="text-muted">Máximo 500 caracteres.</small>
           </div>
         </div>
+
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button class="btn btn-danger fw-bold">Enviar propuesta</button>
+          <button type="submit" class="btn btn-danger fw-bold" id="cnt_submit_btn" disabled>
+            <i class="bi bi-send-check me-1"></i>Enviar propuesta
+          </button>
         </div>
       </form>
     </div>
   </div>
 
-  {# ──────── MODAL: rechazo ──────── #}
+  {# ════════════════════════════════════════════════════════════════
+     MODAL: "No puedo asistir" — rechazo definitivo del retiro
+     Daniel 2026-05-23 (Bug #3): el cliente reportaba que no sabía si
+     avanzaba. Ahora muestra un aviso claro de qué pasará, y al enviar
+     dispara loading + el toast verde de confirmación al recargar.
+     ════════════════════════════════════════════════════════════════ #}
   <div class="modal fade" id="rejectModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-      <form method="post" class="modal-content">
+      <form method="post" class="modal-content" id="rejectForm">
         <input type="hidden" name="action" value="reject">
         <div class="modal-header bg-dark text-white">
-          <h5 class="modal-title"><i class="bi bi-x-circle me-2"></i>No puedo asistir</h5>
+          <h5 class="modal-title"><i class="bi bi-x-circle me-2" style="color:#ef4444"></i>No puedo asistir</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body">
-          <label class="form-label small fw-bold">Motivo</label>
-          <textarea name="reason" class="form-control" rows="3" placeholder="Cuéntanos qué pasó"></textarea>
+          <div style="background:#fff8ec;border:1px dashed #fcd34d;color:#7c2d12;border-radius:10px;padding:12px 14px;font-size:.86rem;margin-bottom:14px;display:flex;align-items:flex-start;gap:8px">
+            <i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b;font-size:1.2rem;flex-shrink:0;margin-top:1px"></i>
+            <div>
+              Tu solicitud quedará <strong>cancelada</strong> y avisaremos al equipo ILUS.
+              Si después quieres volver a coordinar, deberás hacer una <strong>nueva solicitud</strong>.
+            </div>
+          </div>
+          <label class="form-label small fw-bold mb-1" for="rejectReason">Motivo (opcional)</label>
+          <textarea name="reason" id="rejectReason" class="form-control" rows="3" maxlength="500"
+                    placeholder="Cuéntanos qué pasó (no es obligatorio, pero nos ayuda a mejorar)"></textarea>
+          <small class="text-muted">Máximo 500 caracteres.</small>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button class="btn btn-outline-danger fw-bold">Rechazar definitivamente</button>
+          <button type="submit" class="btn btn-outline-danger fw-bold" id="rejectSubmitBtn">
+            <i class="bi bi-x-circle me-1"></i>Cancelar el retiro
+          </button>
         </div>
       </form>
     </div>
@@ -1281,11 +1565,30 @@
       items.forEach(el => io.observe(el));
     }
 
+    // ── 5b) Auto-dismiss de flash toasts (Daniel 2026-05-23) ─────
+    function initFlashToasts() {
+      const toasts = document.querySelectorAll('[data-flash-toast]');
+      toasts.forEach((t, i) => {
+        // Stagger ligero entre toasts
+        t.style.animationDelay = (i * 0.08) + 's';
+        // Auto-dismiss a los 6.5s (excepto warning/error que duran más)
+        const cat = t.className.match(/flash-toast\s+(\w+)/);
+        const ttl = (cat && (cat[1] === 'warning' || cat[1] === 'error' || cat[1] === 'danger')) ? 9000 : 6500;
+        setTimeout(() => {
+          if (t && t.isConnected) {
+            t.classList.add('is-leaving');
+            setTimeout(() => { try { t.remove(); } catch(_){} }, 350);
+          }
+        }, ttl);
+      });
+    }
+
     // ── 6) BOOT ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
       animateStepperFill();
       initRating();
       initRevealOnScroll();
+      initFlashToasts();
       // Iniciar polling después de 8s (no martillar al cargar)
       setTimeout(startPolling, 8000);
     });
@@ -1299,6 +1602,389 @@
     const kf = document.createElement('style');
     kf.textContent = '@keyframes fadeIn{from{opacity:0}to{opacity:1}}';
     document.head.appendChild(kf);
+  })();
+
+  // ════════════════════════════════════════════════════════════════
+  //  MODAL "Proponer otra fecha" — CALENDARIO INTELIGENTE
+  //  Daniel 2026-05-23 (Bug #2): replica el calendario del formulario
+  //  público dentro del modal. Misma seguridad: no permite pasado,
+  //  ni slot ocupado, ni colación. Fuente única de verdad:
+  //  endpoint /retiros/api/disponibilidad-publica.
+  // ════════════════════════════════════════════════════════════════
+  (function(){
+    'use strict';
+
+    const API_URL = '/retiros/api/disponibilidad-publica';
+    let _cntDisponibilidad = null;   // payload completo del endpoint
+    let _cntSlotsDelDia    = [];     // slots del día seleccionado
+    let _cntStartIdx       = null;
+    let _cntEndIdx         = null;
+    let _cntLoaded         = false;  // lazy load: solo cargamos al abrir modal
+
+    function _hmToMin(hm){
+      const p = String(hm || '').split(':').map(Number);
+      return (p[0] || 0) * 60 + (p[1] || 0);
+    }
+    function _minToHM(min){
+      return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
+    }
+
+    function _toast(msg, type){
+      // Usar helper ILUS si existe, fallback a alert nativo (que en ILUS
+      // también está shimmeado vía ilus_ui.js, así que igual sale bonito)
+      if (typeof window.ilusToast === 'function') {
+        try { return window.ilusToast(msg, { type: type || 'info', duration: 4500 }); } catch(_){}
+      }
+      try { window.alert(msg); } catch(_){}
+    }
+
+    async function _loadDisponibilidad(){
+      if (_cntLoaded && _cntDisponibilidad) return _cntDisponibilidad;
+      try {
+        const r = await fetch(API_URL, { credentials:'same-origin', cache:'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        _cntDisponibilidad = await r.json();
+        _cntLoaded = true;
+        return _cntDisponibilidad;
+      } catch (e){
+        const msgEl = document.getElementById('cnt_fecha_msg');
+        if (msgEl){
+          msgEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1 text-danger"></i>No se pudo cargar disponibilidad. Reintenta en unos segundos.';
+          msgEl.style.color = '#dc2626';
+        }
+        return null;
+      }
+    }
+
+    function _setMinMax(){
+      const inp = document.getElementById('cnt_fecha_picker');
+      if (!inp || !_cntDisponibilidad) return;
+      const tomorrow = new Date(Date.now() + 24*3600*1000);
+      const tomorrowStr = tomorrow.toISOString().slice(0,10);
+      inp.min = (_cntDisponibilidad.from < tomorrowStr) ? tomorrowStr : _cntDisponibilidad.from;
+      inp.max = _cntDisponibilidad.to;
+    }
+
+    function _onFechaChange(){
+      const inp  = document.getElementById('cnt_fecha_picker');
+      const msg  = document.getElementById('cnt_fecha_msg');
+      const grid = document.getElementById('cnt_slot_grid');
+      const quick= document.getElementById('cnt_slot_quick_wrap');
+      const fecha = inp.value;
+      _cntClearSelection();
+
+      if (!fecha || !_cntDisponibilidad){
+        grid.innerHTML = '<div class="text-center text-muted small py-3"><i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero</div>';
+        quick.style.display = 'none';
+        return;
+      }
+      // Defense in depth: nunca aceptar fecha de hoy/pasado
+      const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
+      if (new Date(fecha + 'T00:00:00') < minDate){
+        msg.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Necesitamos mínimo 24 horas de anticipación';
+        msg.style.color = '#dc2626';
+        grid.innerHTML = '<div class="text-center py-3" style="color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde mañana</div>';
+        quick.style.display = 'none';
+        return;
+      }
+      const dia = (_cntDisponibilidad.dias || {})[fecha];
+      if (!dia || !dia.disponible){
+        const razon = (dia && dia.razon) || 'Día sin cupos';
+        msg.innerHTML = '<i class="bi bi-x-circle me-1"></i>' + razon;
+        msg.style.color = '#dc2626';
+        grid.innerHTML = `<div class="text-center py-3" style="color:#dc2626"><i class="bi bi-x-circle me-1"></i>${razon}</div>`;
+        quick.style.display = 'none';
+        return;
+      }
+      _cntSlotsDelDia = dia.slots || [];
+      const libres = _cntSlotsDelDia.filter(s => s.puede_iniciar).length;
+      msg.innerHTML = `<i class="bi bi-check-circle me-1" style="color:${libres>0?'#16a34a':'#dc2626'}"></i>${libres} bloque${libres===1?'':'s'} libre${libres===1?'':'s'} este día`;
+      msg.style.color = libres > 0 ? '#16a34a' : '#dc2626';
+      _renderGrid();
+      quick.style.display = libres > 0 ? 'flex' : 'none';
+    }
+
+    function _renderGrid(){
+      const grid = document.getElementById('cnt_slot_grid');
+      if (!_cntSlotsDelDia.length){
+        grid.innerHTML = '<div class="text-center text-muted small py-3">Sin bloques disponibles</div>';
+        return;
+      }
+      const lunchStart = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) ? _cntDisponibilidad.lunch_start : '13:00';
+      const lunchStartMin = _hmToMin(lunchStart);
+
+      const slotHtml = (s, i) => {
+        const cls = ['cnt-slot-item'];
+        let badge = '';
+        let title = '';
+        let estado = s.estado;
+        if (!estado){
+          if (s.lunch) estado = 'colacion';
+          else if (s.razon && !s.disponible) estado = 'bloqueado';
+          else if (!s.disponible) estado = 'completo';
+          else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) estado = 'ocupado';
+          else estado = 'disponible';
+        }
+        if (estado === 'colacion'){
+          cls.push('is-lunch', 'is-disabled');
+          title = 'Horario de colación (no agendable)';
+        } else if (estado === 'completo'){
+          cls.push('is-full', 'is-disabled');
+          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
+          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+          title = `Cupo lleno (${oc}/${mx})`;
+        } else if (estado === 'bloqueado'){
+          cls.push('is-blocked', 'is-disabled');
+          title = s.razon || 'Franja bloqueada';
+        } else if (estado === 'ocupado'){
+          cls.push('is-busy');
+          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 1);
+          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+          badge = `<span class="cnt-slot-badge">${oc}/${mx}</span>`;
+          title = `Parcial (${oc}/${mx}) — aún puedes agendar`;
+        } else {
+          title = `Disponible (${s.time_from || s.hora || ''} – ${s.time_to || ''})`;
+        }
+        if (_cntStartIdx !== null && _cntEndIdx !== null){
+          if (i === _cntStartIdx && i === _cntEndIdx){
+            cls.push('is-selected', 'is-start', 'is-end');
+          } else if (i === _cntStartIdx){
+            cls.push('is-selected', 'is-start');
+          } else if (i === _cntEndIdx){
+            cls.push('is-selected', 'is-end');
+          } else if (i > _cntStartIdx && i < _cntEndIdx){
+            cls.push('is-in-range');
+          }
+        }
+        const hora = s.time_from || s.hora || '';
+        return `<div class="${cls.join(' ')}" data-cnt-idx="${i}" title="${title}">${badge}${hora}</div>`;
+      };
+
+      let postLunchIdx = -1;
+      for (let i = 0; i < _cntSlotsDelDia.length; i++){
+        const s = _cntSlotsDelDia[i];
+        const startMin = _hmToMin(s.time_from || s.hora || '00:00');
+        const isLunch = (s.estado === 'colacion') || s.lunch;
+        if (!isLunch && startMin >= lunchStartMin){ postLunchIdx = i; break; }
+      }
+      const hasMorning   = _cntSlotsDelDia.some((s, i) => postLunchIdx === -1 ? true : i < postLunchIdx);
+      const hasAfternoon = postLunchIdx !== -1;
+
+      let html = '';
+      if (hasMorning && hasAfternoon){
+        html += '<div class="cnt-slot-section-title">☀️ Mañana</div>';
+        html += '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.slice(0, postLunchIdx).map((s, i) => slotHtml(s, i)).join('') + '</div>';
+        html += '<div class="cnt-slot-section-title">🌤 Tarde</div>';
+        html += '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.slice(postLunchIdx).map((s, j) => slotHtml(s, postLunchIdx + j)).join('') + '</div>';
+      } else {
+        html = '<div class="cnt-slot-grid-inner">' + _cntSlotsDelDia.map((s, i) => slotHtml(s, i)).join('') + '</div>';
+      }
+      grid.innerHTML = html;
+
+      // Event delegation
+      grid.querySelectorAll('[data-cnt-idx]').forEach(el => {
+        el.addEventListener('click', () => _onSlotClick(parseInt(el.dataset.cntIdx, 10)));
+      });
+    }
+
+    function _estadoDeSlot(s){
+      let e = s.estado;
+      if (!e){
+        if (s.lunch) e = 'colacion';
+        else if (s.razon && !s.disponible) e = 'bloqueado';
+        else if (!s.disponible) e = 'completo';
+        else e = 'disponible';
+      }
+      return e;
+    }
+
+    function _onSlotClick(i){
+      const s = _cntSlotsDelDia[i];
+      if (!s) return;
+      const estado = _estadoDeSlot(s);
+      if (estado === 'colacion'){
+        const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '13:00';
+        const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
+        _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
+        return;
+      }
+      if (estado === 'completo'){ _toast('Ese bloque está lleno. Elige otro horario.', 'warning'); return; }
+      if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
+
+      if (_cntStartIdx === null){
+        _cntStartIdx = _cntEndIdx = i;
+      } else if (_cntStartIdx === i && _cntEndIdx === i){
+        _cntStartIdx = _cntEndIdx = null;
+      } else {
+        const from = Math.min(_cntStartIdx, i);
+        const to   = Math.max(_cntStartIdx, i);
+        let invalido = null;
+        for (let k = from; k <= to; k++){
+          const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
+          if (ek === 'colacion'){ invalido = 'colacion'; break; }
+          if (ek === 'completo'){ invalido = 'completo'; break; }
+          if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
+        }
+        if (invalido === 'colacion'){
+          const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '13:00';
+          const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
+          _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
+          _cntStartIdx = _cntEndIdx = i;
+        } else if (invalido === 'completo'){
+          _toast('El rango cruza un bloque lleno. Acórtalo o elige otro horario.', 'warning');
+          _cntStartIdx = _cntEndIdx = i;
+        } else if (invalido === 'bloqueado'){
+          _toast('El rango cruza una franja bloqueada.', 'warning');
+          _cntStartIdx = _cntEndIdx = i;
+        } else {
+          _cntStartIdx = from; _cntEndIdx = to;
+        }
+      }
+      _updateSummary();
+      _renderGrid();
+    }
+
+    function _setQuickRange(hours){
+      if (!hours || hours <= 0) { _cntClearSelection(); return; }
+      const slotMin = (_cntDisponibilidad && _cntDisponibilidad.slot_minutes) ? _cntDisponibilidad.slot_minutes : 30;
+      const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
+      let foundStart = -1, foundEnd = -1;
+      for (let i = 0; i < _cntSlotsDelDia.length; i++){
+        const s0 = _cntSlotsDelDia[i];
+        const puedeIni = (s0.puede_iniciar !== undefined) ? s0.puede_iniciar
+          : (s0.disponible && !s0.lunch);
+        if (!puedeIni) continue;
+        const endIdx = i + slotsNeeded - 1;
+        if (endIdx >= _cntSlotsDelDia.length) continue;
+        let ok = true;
+        for (let k = i; k <= endIdx; k++){
+          const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
+          if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado'){ ok = false; break; }
+        }
+        if (ok){ foundStart = i; foundEnd = endIdx; break; }
+      }
+      if (foundStart < 0){
+        _toast(`No hay ${hours} hora${hours===1?'':'s'} contiguas libres este día. Prueba otra fecha o menos tiempo.`, 'warning');
+        return;
+      }
+      _cntStartIdx = foundStart; _cntEndIdx = foundEnd;
+      _updateSummary(); _renderGrid();
+    }
+
+    function _cntClearSelection(){
+      _cntStartIdx = _cntEndIdx = null;
+      _updateSummary();
+      _renderGrid();
+    }
+
+    function _updateSummary(){
+      const txt = document.getElementById('cnt_slot_summary_text');
+      const sumBox = document.getElementById('cnt_slot_summary');
+      const subBtn = document.getElementById('cnt_submit_btn');
+      const inpTf  = document.getElementById('cnt_tf_input');
+      const inpTt  = document.getElementById('cnt_tt_input');
+      const inpD   = document.getElementById('cnt_date_input');
+      const fecha  = document.getElementById('cnt_fecha_picker').value;
+
+      if (_cntStartIdx === null){
+        txt.className = 'sum-empty';
+        txt.textContent = 'No has seleccionado bloque aún';
+        if (sumBox) sumBox.classList.remove('is-active');
+        if (subBtn) subBtn.disabled = true;
+        if (inpTf) inpTf.value = '';
+        if (inpTt) inpTt.value = '';
+        if (inpD)  inpD.value  = fecha || '';
+        return;
+      }
+      const slotMin = (_cntDisponibilidad && _cntDisponibilidad.slot_minutes) ? _cntDisponibilidad.slot_minutes : 30;
+      const sS = _cntSlotsDelDia[_cntStartIdx];
+      const sE = _cntSlotsDelDia[_cntEndIdx];
+      const startStr = sS.time_from || sS.hora;
+      let endStr = sE.time_to;
+      if (!endStr){
+        const baseMin = _hmToMin(sE.time_from || sE.hora);
+        endStr = _minToHM(baseMin + slotMin);
+      }
+      const nBlocks = _cntEndIdx - _cntStartIdx + 1;
+      const totalMin = nBlocks * slotMin;
+      let durTxt;
+      if (totalMin < 60) durTxt = `${totalMin} min`;
+      else if (totalMin % 60 === 0) durTxt = `${totalMin/60} h`;
+      else durTxt = `${(totalMin/60).toFixed(1)} h`;
+
+      txt.className = '';
+      txt.innerHTML = `<i class="bi bi-clock-fill me-2" style="color:#16a34a"></i><span class="sum-range">${startStr} – ${endStr}</span><span class="sum-dur"><i class="bi bi-stopwatch me-1"></i>${durTxt}</span>`;
+      if (sumBox) sumBox.classList.add('is-active');
+      if (subBtn) subBtn.disabled = !fecha;
+      if (inpTf) inpTf.value = startStr;
+      if (inpTt) inpTt.value = endStr;
+      if (inpD)  inpD.value  = fecha || '';
+    }
+
+    function _initModal(){
+      const modalEl = document.getElementById('counterModal');
+      if (!modalEl) return;
+      const formEl  = document.getElementById('counterForm');
+      const inpFecha= document.getElementById('cnt_fecha_picker');
+      const clearBtn= document.getElementById('cnt_slot_clear_btn');
+      const quicks  = document.querySelectorAll('[data-cnt-quick]');
+
+      modalEl.addEventListener('shown.bs.modal', async () => {
+        // Lazy load: pedimos disponibilidad solo cuando el cliente abre el modal
+        await _loadDisponibilidad();
+        _setMinMax();
+        // Reset visual
+        _cntClearSelection();
+        if (inpFecha) inpFecha.value = '';
+        const msg = document.getElementById('cnt_fecha_msg');
+        if (msg){
+          msg.innerHTML = '<i class="bi bi-calendar3 me-1"></i>Selecciona un día desde mañana.';
+          msg.style.color = '';
+        }
+      });
+      modalEl.addEventListener('hidden.bs.modal', () => {
+        // Limpiamos selección y submit al cerrar para evitar resubmit accidental
+        _cntClearSelection();
+      });
+
+      if (inpFecha) inpFecha.addEventListener('change', _onFechaChange);
+      if (clearBtn) clearBtn.addEventListener('click', _cntClearSelection);
+      quicks.forEach(b => b.addEventListener('click', () => _setQuickRange(parseInt(b.dataset.cntQuick, 10))));
+
+      // Validación al enviar — defense in depth
+      if (formEl) formEl.addEventListener('submit', (e) => {
+        const fecha = (inpFecha && inpFecha.value) || '';
+        const tf    = document.getElementById('cnt_tf_input').value;
+        const tt    = document.getElementById('cnt_tt_input').value;
+        if (!fecha){ e.preventDefault(); _toast('Elige una fecha primero.', 'warning'); return false; }
+        if (!tf || !tt){ e.preventDefault(); _toast('Selecciona uno o más bloques horarios.', 'warning'); return false; }
+        // Anti-pasado redundante
+        const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
+        if (new Date(fecha + 'T00:00:00') < minDate){
+          e.preventDefault();
+          _toast('La fecha debe ser desde mañana en adelante.', 'warning');
+          return false;
+        }
+        const btn = document.getElementById('cnt_submit_btn');
+        if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…'; }
+      });
+    }
+
+    // ── Reject modal: feedback de loading al enviar ──
+    function _initRejectModal(){
+      const f = document.getElementById('rejectForm');
+      const b = document.getElementById('rejectSubmitBtn');
+      if (!f || !b) return;
+      f.addEventListener('submit', () => {
+        b.disabled = true;
+        b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cancelando…';
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      _initModal();
+      _initRejectModal();
+    });
   })();
   </script>
 </body>
