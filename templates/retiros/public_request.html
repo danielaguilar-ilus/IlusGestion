@@ -278,9 +278,16 @@
     .slot-picker-head .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.72rem;color:#6b7280}
     .slot-picker-head .legend span{display:inline-flex;align-items:center;gap:4px}
     .slot-picker-head .legend .dot{width:11px;height:11px;border-radius:3px;display:inline-block;vertical-align:middle;flex-shrink:0}
-    .slot-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 8px}
+    .slot-grid{display:flex;flex-direction:column;gap:6px}
+    /* Sub-grilla por sección (Mañana / Tarde) */
+    .slot-grid-inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 8px}
+    /* Header de sección Mañana/Tarde */
+    .slot-section-title{
+      font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+      color:#6b7280;padding:6px 0 2px;border-bottom:1px dashed #e5e7eb;margin:6px 0 2px;
+    }
     @media(max-width:600px){
-      .slot-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 6px}
+      .slot-grid-inner{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 6px}
     }
     .slot-item{
       padding:13px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
@@ -492,14 +499,43 @@
     @media(max-width:600px){
       .hero-bullets{grid-template-columns:1fr}
       .steps-grid{grid-template-columns:1fr}
-      .form-body{padding:18px}
-      .form-head{padding:22px 22px 20px}
+      .form-body{padding:18px 14px}
+      .form-head{padding:22px 18px 20px}
       .form-head h3{font-size:1.9rem}
       .form-head .form-sub{font-size:.84rem}
-      .step-section{padding:18px 16px;margin-bottom:18px}
+      .step-section{padding:18px 14px;margin-bottom:18px}
       .step-circle{width:38px;height:38px;font-size:1.2rem}
       .step-titles h5{font-size:1.05rem}
       .step-titles .step-sub{font-size:.78rem}
+
+      /* ── Inputs anti-zoom iOS (font-size 16px obligatorio) ── */
+      .form-control,.form-select,input[type="text"],input[type="email"],
+      input[type="tel"],input[type="date"],input[type="time"],input[type="number"],
+      textarea,select{font-size:16px !important}
+
+      /* ── Botones full-width en mobile ── */
+      .submit-btn,.btn-ilus,button[type="submit"]{width:100%;min-height:48px}
+
+      /* ── Touch targets >= 44x44 ── */
+      .slot-item{min-height:48px}
+      .auth-toggle{min-height:56px;padding:14px}
+
+      /* ── Cards sin overflow lateral ── */
+      .form-wrapper{padding-left:12px;padding-right:12px}
+
+      /* ── Hero más compacto en mobile ── */
+      .hero-grid{padding:30px 18px 36px;gap:24px}
+      .hero-title{font-size:clamp(2.2rem,8vw,3.4rem)}
+      .hero-copy{font-size:.96rem;margin-top:14px}
+
+      /* ── Bandeja de propuestas y trackers ── */
+      .next-action{padding:18px 16px}
+      .next-action h5{font-size:1rem}
+    }
+    /* ── Pantallas muy pequeñas (≤360px) — modo ultra compacto ── */
+    @media(max-width:360px){
+      .slot-grid-inner{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .form-head h3{font-size:1.6rem}
     }
     /* Respect prefers-reduced-motion: deshabilita animaciones de entrada */
     @media (prefers-reduced-motion: reduce){
@@ -870,16 +906,16 @@
               <span class="step-check"><i class="bi bi-check-lg"></i></span>
             </div>
             <div class="step-titles">
-              <h5>¿Quién va a venir a retirar?</h5>
-              <p class="step-sub">Por defecto asumimos que retiras tú. Si va a venir otra persona (chofer, transportista, familiar), márcalo aquí.</p>
+              <h5>¿Quién va a venir a retirar? <span class="badge bg-secondary" style="font-size:.6rem;vertical-align:middle">Opcional</span></h5>
+              <p class="step-sub">Esta sección es <strong>opcional</strong>. Si la dejas sin marcar, asumimos que tú mismo vienes a retirar (usamos tus datos del paso anterior). Marca el switch solo si va a venir <em>otra persona</em> en tu nombre (chofer, transportista, familiar).</p>
             </div>
           </div>
 
           <div class="auth-toggle" onclick="toggleAutorizado()" id="authToggle">
             <input type="checkbox" id="authCheckbox" class="form-check-input me-2" onclick="event.stopPropagation();toggleAutorizado()">
             <span class="auth-toggle-text">
-              <strong>Sí, autorizo a otra persona a retirar en mi nombre</strong>
-              <span class="auth-toggle-sub">Marca solo si <u>no</u> retiras tú directamente. Pediremos su RUT y un teléfono.</span>
+              <strong>Sí, otra persona va a venir a retirar en mi nombre</strong>
+              <span class="auth-toggle-sub">Marca solo si <u>no</u> retiras tú directamente. Te pediremos su nombre, RUT y teléfono.</span>
             </span>
             <i class="bi bi-chevron-down auth-toggle-icon" id="authToggleIcon"></i>
           </div>
@@ -1416,11 +1452,15 @@ function renderSlotGrid(){
     grid.innerHTML = '<div class="text-center text-muted small w-100 py-3" style="grid-column:1/-1">Sin bloques disponibles</div>';
     return;
   }
-  grid.innerHTML = _slotsDelDia.map((s, i) => {
+  // ── Daniel mayo 2026: separar visualmente Mañana (antes colación) y Tarde
+  //    (después colación). Si hay slots en ambos lados, insertamos un header.
+  const lunchStart = (_disponibilidad && _disponibilidad.lunch_start) ? _disponibilidad.lunch_start : '12:30';
+  const lunchStartMin = _hmToMin(lunchStart);
+
+  const slotHtml = (s, i) => {
     const cls = ['slot-item'];
     let badge = '';
     let title = '';
-    // Inferir estado si viene del backend legacy
     let estado = s.estado;
     if (!estado){
       if (s.lunch) estado = 'colacion';
@@ -1465,7 +1505,31 @@ function renderSlotGrid(){
 
     const hora = s.time_from || s.hora || '';
     return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${title}">${badge}${hora}</div>`;
-  }).join('');
+  };
+
+  // Buscar el índice del primer slot post-colación
+  let postLunchIdx = -1;
+  for (let i = 0; i < _slotsDelDia.length; i++){
+    const s = _slotsDelDia[i];
+    const startMin = _hmToMin(s.time_from || s.hora || '00:00');
+    const isLunch = (s.estado === 'colacion') || s.lunch;
+    if (!isLunch && startMin >= lunchStartMin){
+      postLunchIdx = i; break;
+    }
+  }
+  const hasMorning = _slotsDelDia.some((s, i) => postLunchIdx === -1 ? true : i < postLunchIdx);
+  const hasAfternoon = postLunchIdx !== -1;
+
+  let html = '';
+  if (hasMorning && hasAfternoon){
+    html += '<div class="slot-section-title">☀️ Mañana</div>';
+    html += '<div class="slot-grid-inner">' + _slotsDelDia.slice(0, postLunchIdx).map((s, i) => slotHtml(s, i)).join('') + '</div>';
+    html += '<div class="slot-section-title">🌤 Tarde</div>';
+    html += '<div class="slot-grid-inner">' + _slotsDelDia.slice(postLunchIdx).map((s, j) => slotHtml(s, postLunchIdx + j)).join('') + '</div>';
+  } else {
+    html = '<div class="slot-grid-inner">' + _slotsDelDia.map((s, i) => slotHtml(s, i)).join('') + '</div>';
+  }
+  grid.innerHTML = html;
 }
 
 function onSlotClick(i){
@@ -1480,7 +1544,9 @@ function onSlotClick(i){
   }
 
   if (estado === 'colacion'){
-    _showToast('Ese horario es de colacion (13:00-14:00). Elige un bloque antes o despues.', 'warning');
+    const ls = (_disponibilidad && _disponibilidad.lunch_start) || '12:30';
+    const le = (_disponibilidad && _disponibilidad.lunch_end) || '14:00';
+    _showToast(`Ese horario es de colacion (${ls}-${le}). Elige un bloque antes o despues.`, 'warning');
     return;
   }
   if (estado === 'completo'){
@@ -1515,7 +1581,9 @@ function onSlotClick(i){
       if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
     }
     if (invalido === 'colacion'){
-      _showToast('El horario no puede cruzar la colacion (13:00-14:00). Termina antes o empieza despues.', 'warning');
+      const ls = (_disponibilidad && _disponibilidad.lunch_start) || '12:30';
+      const le = (_disponibilidad && _disponibilidad.lunch_end) || '14:00';
+      _showToast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
       _slotStartIdx = _slotEndIdx = i;
     } else if (invalido === 'completo'){
       _showToast('El rango cruza un bloque lleno. Acortalo o elige otra hora.', 'warning');

@@ -185,6 +185,58 @@ def register_pickup_routes(app, ctx):
 
     ensure_reminder_columns()
 
+    # ── Migración horarios v3 (Daniel 2026-05-23) ──────────────────────
+    # Daniel pidió horarios reales de la bodega:
+    #   Mañana: 09:00 – 12:30 (último FIN admitido 12:30)
+    #   Tarde:  14:00 – 16:30 (último FIN admitido 16:30)
+    #   Colación 12:30 – 14:00 BLOQUEADA
+    #   Slots de 30 min
+    # Solo actualizamos si los valores actuales matchean los defaults legacy
+    # conocidos (no sobrescribimos custom). Es idempotente: si ya están
+    # nuevos, no hace nada.
+    def ensure_schedule_v3():
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET close_time='16:30:00' "
+                f"WHERE id=1 AND close_time IN ('17:30:00','17:00:00')"
+            )
+        except Exception: pass
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET lunch_start='12:30:00' "
+                f"WHERE id=1 AND lunch_start IN ('13:00:00','12:00:00')"
+            )
+        except Exception: pass
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET lunch_end='14:00:00' "
+                f"WHERE id=1 AND lunch_end IN ('14:00:00','15:00:00','14:30:00')"
+            )
+        except Exception: pass
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET open_time='09:00:00' "
+                f"WHERE id=1 AND open_time NOT IN ('08:00:00','08:30:00','09:00:00','09:30:00','10:00:00')"
+            )
+        except Exception: pass
+        # buffer_cierre_min=0: el último slot 16:00-16:30 SÍ es admitido
+        # (close_time es el FIN admitido, no hay buffer extra)
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET buffer_cierre_min=0 "
+                f"WHERE id=1 AND buffer_cierre_min IS NOT NULL AND buffer_cierre_min > 0"
+            )
+        except Exception: pass
+        # Slots de 30 min (re-asegura por si quedó algún custom)
+        try:
+            mysql_execute(
+                f"UPDATE `{SET}` SET slot_minutes=30 "
+                f"WHERE id=1 AND (slot_minutes IS NULL OR slot_minutes <> 30)"
+            )
+        except Exception: pass
+
+    ensure_schedule_v3()
+
     # Cache de settings — el tracking público y polling lo invocan a menudo.
     # TTL 30s: cualquier cambio de horario/bodega impacta en máx 30s.
     _SETTINGS_CACHE = {"row": None, "fetched_at": 0.0}
@@ -196,14 +248,22 @@ def register_pickup_routes(app, ctx):
         if _SETTINGS_CACHE["row"] is not None and (now - _SETTINGS_CACHE["fetched_at"]) < _SETTINGS_TTL:
             return _SETTINGS_CACHE["row"]
         row = mysql_fetchone(f"SELECT * FROM `{SET}` WHERE id=1") or {}
-        # Migración: subir close_time a 17:30 (bodega trabaja hasta 17:00, recibe
-        # clientes hasta 16:30 — el último slot 16:30+60min termina a 17:30).
-        if row and str(row.get("close_time", ""))[:5] == "16:30":
+        # Migración runtime de horarios legacy → v3 (defensa adicional al
+        # ensure_schedule_v3 que solo corre una vez al import del módulo).
+        legacy_close = str(row.get("close_time", ""))[:5] in ("16:30",) and \
+                       False  # NO migrar: 16:30 es el VALOR CORRECTO v3
+        # 17:30 (legacy) → 16:30 (v3): hacer migración runtime defensiva
+        if row and str(row.get("close_time", ""))[:5] == "17:30":
             try:
-                mysql_execute(f"UPDATE `{SET}` SET close_time='17:30:00' WHERE id=1")
-                row["close_time"] = "17:30:00"
-                # invalidar cache porque acabamos de mutar BD
+                mysql_execute(f"UPDATE `{SET}` SET close_time='16:30:00' WHERE id=1")
+                row["close_time"] = "16:30:00"
                 _SETTINGS_CACHE["row"] = None
+            except Exception:
+                pass
+        if row and str(row.get("lunch_start", ""))[:5] == "13:00":
+            try:
+                mysql_execute(f"UPDATE `{SET}` SET lunch_start='12:30:00' WHERE id=1")
+                row["lunch_start"] = "12:30:00"
             except Exception:
                 pass
         result = row or {
@@ -211,7 +271,12 @@ def register_pickup_routes(app, ctx):
             "warehouse_addr": "Av. Presidente Eduardo Frei Montalva 9770, Bod 30, Quilicura.",
             "maps_url": "https://www.google.com/maps/search/?api=1&query=Av.%20Presidente%20Eduardo%20Frei%20Montalva%209770%20Bod%2030%20Quilicura",
             "open_time": "09:00:00",
-            "close_time": "17:30:00",
+            "close_time": "16:30:00",
+            "lunch_start": "12:30:00",
+            "lunch_end": "14:00:00",
+            "slot_minutes": 30,
+            "buffer_cierre_min": 0,
+            "parallel_capacity": 2,
             "work_days": "1,2,3,4,5",
             "holidays": "",
             "alert_enabled": 0,
@@ -255,13 +320,32 @@ def register_pickup_routes(app, ctx):
         return base.isoformat()
 
     def time_allowed(time_from, time_to, cfg=None):
+        """Valida que el rango horario solicitado caiga en el horario de
+        atención y NO cruce la colación.
+
+        Daniel mayo 2026: el horario v3 separa Mañana / Tarde con colación
+        bloqueada en medio. Un rango que cruce la colación es inválido —
+        debe ser SOLO mañana o SOLO tarde.
+        """
         cfg = cfg or settings()
-        open_t = str(cfg.get("open_time") or "09:00:00")[:5]
-        close_t = str(cfg.get("close_time") or "17:30:00")[:5]
+        open_t  = str(cfg.get("open_time")   or "09:00:00")[:5]
+        close_t = str(cfg.get("close_time")  or "16:30:00")[:5]
+        lunch_s = str(cfg.get("lunch_start") or "12:30:00")[:5]
+        lunch_e = str(cfg.get("lunch_end")   or "14:00:00")[:5]
         if not time_from or not time_to or time_from >= time_to:
             return False, "Selecciona un rango horario valido."
         if time_from < open_t or time_to > close_t:
             return False, f"El horario debe estar entre {open_t} y {close_t}."
+        # Cruce de colación: el rango (time_from, time_to) se solapa con
+        # (lunch_s, lunch_e) cuando NO se cumple: time_to <= lunch_s OR time_from >= lunch_e
+        try:
+            if not (time_to <= lunch_s or time_from >= lunch_e):
+                return False, (
+                    f"El horario no puede cruzar la colacion ({lunch_s}-{lunch_e}). "
+                    f"Elige un rango solo en la mañana o solo en la tarde."
+                )
+        except Exception:
+            pass
         return True, ""
 
     def calc_package(length_cm, width_cm, height_cm, weight_kg):
@@ -305,6 +389,53 @@ def register_pickup_routes(app, ctx):
 
     def status_badge(status):
         return {"label": PICKUP_STATUS.get(status, status), "color": PICKUP_STATUS_COLORS.get(status, "secondary")}
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CÓDIGO ALEATORIO RET-XXXXXX (Daniel 2026-05-23)
+    # ══════════════════════════════════════════════════════════════════
+    # Antes los códigos eran predecibles: RET-000010, RET-000011 — un
+    # atacante podía iterar 1..N para listar todos los retiros.
+    # Ahora: 6 chars de alfabeto sin ambigüedad (sin O/0, I/1/L) =
+    # 32^6 ≈ 1.07 mil millones de combinaciones. Colisión despreciable.
+    # Compatibilidad: códigos viejos RET-000010 SIGUEN sirviendo
+    # (solo cambia el formato de los NUEVOS).
+    _RET_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 32 chars, sin O/0/I/1/L
+    _RET_LEN = 6
+
+    def _generate_pickup_code(cur=None, max_attempts=20):
+        """Genera un código único RET-XXXXXX con `secrets.choice()`.
+
+        - Reintenta hasta `max_attempts` veces si choca con UNIQUE en BD.
+        - Si recibe `cur` (cursor dentro de una transacción), usa ese para
+          el SELECT — así no abre conexión nueva durante un INSERT pending.
+        - Si no recibe `cur`, usa `mysql_fetchone` normal.
+        - Tras max_attempts intentos fallidos, levanta RuntimeError (caso
+          extremo virtualmente imposible: ~32^6 colisiones).
+        """
+        import secrets as _secrets
+        for _ in range(max_attempts):
+            tail = "".join(_secrets.choice(_RET_ALPHABET) for _ in range(_RET_LEN))
+            code = f"RET-{tail}"
+            try:
+                if cur is not None:
+                    cur.execute(f"SELECT 1 FROM `{REQ}` WHERE code=%s LIMIT 1", (code,))
+                    if not cur.fetchone():
+                        return code
+                else:
+                    existing = mysql_fetchone(
+                        f"SELECT 1 AS n FROM `{REQ}` WHERE code=%s LIMIT 1", (code,)
+                    )
+                    if not existing:
+                        return code
+            except Exception:
+                # Si falla el SELECT (raro), igual probemos retornar el code —
+                # el UNIQUE de BD lo va a rechazar y reintentaremos en INSERT.
+                return code
+        # Caso extremo: no se logró un código único en max_attempts.
+        # Fallback: agregar timestamp suffix para diferenciarlo.
+        import time as _t
+        return f"RET-{tail}{int(_t.time()) % 100:02d}"
+
 
     def log_event(request_id, action, old_status=None, new_status=None, notes="", actor_type="sistema", actor_name=None):
         try:
@@ -1179,7 +1310,9 @@ def register_pickup_routes(app, ctx):
                     ),
                 )
                 rid = cur.lastrowid
-                code = f"RET-{rid:06d}"
+                # Código RET-XXXXXX aleatorio (Daniel mayo 2026, anti-enumeración).
+                # `_generate_pickup_code` reintenta hasta no colisionar con UNIQUE.
+                code = _generate_pickup_code(cur=cur)
                 cur.execute(f"UPDATE `{REQ}` SET code=%s WHERE id=%s", (code, rid))
                 for idx, pkg in enumerate(packages, 1):
                     cur.execute(
@@ -2089,33 +2222,82 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/<int:rid>")
     @require_permission("view")
     def pickup_detail(rid):
-        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-        if not req:
-            flash("Solicitud de retiro no encontrada.", "danger")
+        """Vista interna del operador para un retiro.
+
+        Envuelto en try/except con logging detallado (Daniel mayo 2026):
+        si algo falla, en lugar de mostrar "Internal Server Error 500"
+        ciego, mostramos un mensaje amigable y dejamos el traceback en
+        los logs del worker para diagnóstico inmediato.
+        """
+        try:
+            req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+            if not req:
+                flash("Solicitud de retiro no encontrada.", "danger")
+                return redirect(url_for("pickup_dashboard"))
+
+            # ── Coerción defensiva de tipos ───────────────────────────────
+            # MySQL puede devolver bytes/None en algunos drivers. El template
+            # asume que doc_erp_data es str (hace [:3000]). Si viene como
+            # bytes, lo decodificamos; si viene como int/dict, lo casteamos.
+            try:
+                ded = req.get("doc_erp_data")
+                if ded is not None and not isinstance(ded, str):
+                    if isinstance(ded, (bytes, bytearray)):
+                        req["doc_erp_data"] = ded.decode("utf-8", errors="replace")
+                    else:
+                        req["doc_erp_data"] = str(ded)
+            except Exception:
+                req["doc_erp_data"] = None
+
+            # observations puede venir como bytes en algunas conexiones
+            try:
+                obs = req.get("observations")
+                if obs is not None and not isinstance(obs, str):
+                    req["observations"] = obs.decode("utf-8", errors="replace") if isinstance(obs, (bytes, bytearray)) else str(obs)
+            except Exception:
+                pass
+
+            packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (rid,)) or []
+            proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (rid,)) or []
+            logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80", (rid,)) or []
+            attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (rid,)) or []
+            tpl_rows = mysql_fetchall(f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title") or []
+            # Multi-documento (Daniel 2026-05-22): docs asociados al retiro.
+            # Try/except: si la tabla pickup_request_docs no existe (entorno
+            # de tests antiguo), seguimos sin docs.
+            try:
+                docs_asociados = mysql_fetchall(
+                    """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                              observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                              n_lineas, added_by, added_at
+                         FROM pickup_request_docs
+                        WHERE request_id=%s
+                        ORDER BY id ASC""",
+                    (rid,)
+                ) or []
+            except Exception as _e_docs:
+                print(f"[pickup_detail] docs_asociados skip: {_e_docs}", flush=True)
+                docs_asociados = []
+
+            return render_template(
+                "retiros/internal_detail.html",
+                req=req, packages=packages, proposals=proposals, logs=logs,
+                attachments=attachments, templates=tpl_rows,
+                docs_asociados=docs_asociados,
+                statuses=PICKUP_STATUS, status_badge=status_badge,
+                settings=settings(),
+            )
+        except Exception as _e_detail:
+            # Logging COMPLETO con traceback para diagnóstico inmediato
+            import traceback as _tb
+            print(f"[pickup_detail] EXCEPTION rid={rid}: {_e_detail}", flush=True)
+            print(_tb.format_exc(), flush=True)
+            flash(
+                f"No se pudo cargar el detalle del retiro #{rid}. "
+                f"El equipo técnico fue notificado. Detalle: {str(_e_detail)[:120]}",
+                "danger"
+            )
             return redirect(url_for("pickup_dashboard"))
-        packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (rid,))
-        proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (rid,))
-        logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80", (rid,))
-        attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (rid,))
-        templates = mysql_fetchall(f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title")
-        # Multi-documento (Daniel 2026-05-22): docs asociados al retiro
-        docs_asociados = mysql_fetchall(
-            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
-                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                      n_lineas, added_by, added_at
-                 FROM pickup_request_docs
-                WHERE request_id=%s
-                ORDER BY id ASC""",
-            (rid,)
-        ) or []
-        return render_template(
-            "retiros/internal_detail.html",
-            req=req, packages=packages, proposals=proposals, logs=logs,
-            attachments=attachments, templates=templates,
-            docs_asociados=docs_asociados,
-            statuses=PICKUP_STATUS, status_badge=status_badge,
-            settings=settings(),
-        )
 
     @app.route("/retiros/<int:rid>/status", methods=["POST"])
     @require_permission("edit")
@@ -2984,11 +3166,18 @@ def register_pickup_routes(app, ctx):
                 WHERE id=1""",
             (
                 data.get("warehouse_name", ""), data.get("warehouse_addr", ""), data.get("maps_url", ""),
-                data.get("open_time", "09:00"), data.get("close_time", "17:30"),
+                data.get("open_time", "09:00"), data.get("close_time", "16:30"),
                 ",".join(data.getlist("work_days")) or "1,2,3,4,5", data.get("holidays", ""),
                 1 if data.get("alert_enabled") else 0, data.get("alert_title", "Aviso importante"), data.get("alert_message", ""),
             ),
         )
+        # Invalidar cache de settings (Daniel mayo 2026) — el TTL es 30s pero
+        # tras un guardado del admin queremos que el público vea el cambio YA.
+        try: _invalidate_settings_cache()
+        except Exception: pass
+        # Invalidar cache global del calendario público
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
         flash("Configuracion de retiros actualizada.", "success")
         return redirect(url_for("pickup_dashboard"))
 

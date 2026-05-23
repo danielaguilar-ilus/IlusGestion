@@ -174,6 +174,10 @@
     .stepper{
       position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:0;
     }
+    /* Stepper de 4 nodos (versión compacta) — Daniel mayo 2026 */
+    .stepper.stepper-4{
+      grid-template-columns:repeat(4,1fr);
+    }
     /* línea base */
     .stepper::before{
       content:'';position:absolute;left:8%;right:8%;top:32px;height:5px;
@@ -365,6 +369,39 @@
       color:#9ca3af;font-weight:700;
     }
     @media(max-width:600px){.carga-grid{grid-template-columns:1fr 1fr}}
+
+    /* ════════════════════════════════════════════════════════════════
+       RESPONSIVE PREMIUM — Daniel mayo 2026
+       Cubre 95% celulares (≤600px)
+       ════════════════════════════════════════════════════════════════ */
+    @media(max-width:600px){
+      /* Inputs anti-zoom iOS */
+      .form-control,input[type="text"],input[type="tel"],input[type="email"],
+      input[type="date"],input[type="time"],input[type="number"],
+      textarea,select{font-size:16px !important}
+
+      /* Touch targets >= 44x44 */
+      .btn,.btn-act,.map-btn,.btn-volver{min-height:44px}
+
+      /* Cards sin overflow lateral */
+      .progress-card,.ilus-card,.hero-status,.next-action,.warehouse-card,.rating-card{
+        margin-left:0;margin-right:0;
+      }
+
+      /* Botones full width en mobile */
+      .btns .btn-act{width:100%}
+
+      /* Pub-top reorganizado */
+      .pub-top{padding:12px 14px}
+      .pub-top-inner{gap:8px}
+
+      /* Historial colapsable: padding más ajustado */
+      details summary{padding:6px 0}
+    }
+    @media(max-width:360px){
+      .stepper{grid-template-columns:1fr}
+      .carga-grid{grid-template-columns:1fr}
+    }
 
     /* BODEGA */
     .warehouse-card .map-btn{
@@ -697,27 +734,27 @@
       </div>
     </div>
 
-    {# ──────── STEPPER ANIMADO (5 nodos clave) ──────── #}
+    {# ──────── STEPPER COMPACTO (4 nodos clave) — Daniel mayo 2026 ──────── #}
+    {# Compacto = no scroll lateral en mobile + más legible #}
     {%- set _flow = [
       ('solicitud_recibida','Solicitada',  'envelope-paper', 'Enviada'),
-      ('en_revision',       'Validando',   'shield-check',   'ILUS revisa'),
       ('agenda_confirmada', 'Confirmada',  'calendar-check', 'Cita acordada'),
-      ('en_preparacion',    'Preparando',  'box-seam',       'Bodega armando'),
+      ('en_preparacion',    'Preparada',   'box-seam',       'Bodega lista'),
       ('retirada',          'Retirada',    'check2-circle',  'Completado'),
     ] -%}
 
-    {# Calcular índice del paso actual #}
+    {# Calcular índice del paso actual — colapsa estados intermedios #}
     {%- set _status_to_idx = {
       'solicitud_recibida': 0,
-      'en_revision': 1,
-      'informacion_incompleta': 1,
-      'propuesta_enviada': 1,
-      'esperando_cliente': 1,
-      'reagendada': 1,
-      'agenda_confirmada': 2,
-      'en_preparacion': 3,
-      'retirada': 4,
-      'cerrada': 4,
+      'en_revision': 0,
+      'informacion_incompleta': 0,
+      'propuesta_enviada': 0,
+      'esperando_cliente': 0,
+      'reagendada': 0,
+      'agenda_confirmada': 1,
+      'en_preparacion': 2,
+      'retirada': 3,
+      'cerrada': 3,
       'rechazada': -1,
       'fallida': -1,
     } -%}
@@ -725,7 +762,7 @@
 
     <div class="progress-card">
       <h6><i class="bi bi-graph-up-arrow"></i>Avance de tu retiro · paso a paso</h6>
-      <div class="stepper" id="stepperRoot" data-idx="{{ _idx_actual }}">
+      <div class="stepper stepper-4" id="stepperRoot" data-idx="{{ _idx_actual }}">
         {# stepper-fill: ancho dinámico calculado por JS #}
         <div class="stepper-fill" id="stepperFill"></div>
 
@@ -748,6 +785,47 @@
         {% endfor %}
       </div>
     </div>
+
+    {# ──────── HISTORIAL DE PROPUESTAS — colapsable (Daniel mayo 2026) ────────
+       Útil para quejas: "el cliente reclama pero rechazó 3 fechas que le propusimos".
+       Muestra las propuestas con estado 'rejected' (o 'rechazada') con fecha
+       y motivo (si el cliente dejó nota al rechazar). #}
+    {% set _rejected_props = proposals|selectattr('status','in',['rejected','rechazada'])|list %}
+    {% if _rejected_props and _rejected_props|length > 0 %}
+    <div class="ilus-card" style="background:linear-gradient(135deg,#fafafa 0%,#fff 100%);border-left:4px solid #f59e0b">
+      <details style="cursor:pointer">
+        <summary style="font-weight:800;color:#7c2d12;list-style:none;display:flex;align-items:center;gap:8px">
+          <i class="bi bi-clock-history" style="color:#f59e0b"></i>
+          <span>Historial de propuestas anteriores</span>
+          <span class="badge bg-warning text-dark">{{ _rejected_props|length }}</span>
+          <i class="bi bi-chevron-down ms-auto" style="font-size:.85rem"></i>
+        </summary>
+        <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
+          {% for p in _rejected_props %}
+          <div style="padding:10px 14px;background:#fff8ec;border:1px solid #fcd34d;border-radius:8px;font-size:.86rem">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="font-weight:700;color:#7c2d12">
+                <i class="bi bi-calendar-x me-1"></i>
+                {{ p.date }} · {{ p.time_from|hm }}–{{ p.time_to|hm }}
+              </div>
+              <span class="badge bg-danger" style="font-size:.68rem">Rechazada</span>
+            </div>
+            {% if p.message %}
+            <div class="small mt-2" style="color:#9a3412;font-style:italic">
+              <i class="bi bi-chat-square-quote me-1"></i>{{ p.message }}
+            </div>
+            {% endif %}
+            {% if p.answered_at %}
+            <div class="small mt-1" style="color:#9ca3af;font-size:.72rem">
+              Respondida: {{ p.answered_at }}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    {% endif %}
 
     <div class="row g-3 mt-1">
       <div class="col-lg-8">
@@ -1089,15 +1167,11 @@
       const fill    = document.getElementById('stepperFill');
       if (!stepper || !fill) return;
       const idx = parseInt(stepper.dataset.idx, 10);
-      // 5 nodos → 4 segmentos. ancho relativo al área entre nodos.
-      // Mapeo: idx 0=0%, 1=25%, 2=50%, 3=75%, 4=100%, -1=15% (estados especiales)
+      // 4 nodos → 3 segmentos. Mapeo: idx 0=0%, 1=33%, 2=66%, 3=100%, -1=20%
       let pct = 0;
-      if (idx === -1)      pct = 18;
-      else if (idx >= 4)   pct = 100;
-      else                 pct = (idx / 4) * 100;
-      // Si idx === activo (no done), llegamos justo a su nodo, pero la mitad
-      // del segmento corre con rojo: lo hacemos con el gradiente del fill.
-      // El ancho real entre nodos: usamos width relativo al "espacio entre primero y último nodo"
+      if (idx === -1)      pct = 20;
+      else if (idx >= 3)   pct = 100;
+      else                 pct = (idx / 3) * 100;
       requestAnimationFrame(() => {
         fill.style.width = `calc(${pct}% * 0.84)`;  // 84% del ancho para alinear con los círculos
       });

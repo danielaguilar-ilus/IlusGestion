@@ -252,7 +252,7 @@ async function abrirDescargaInforme(rutCliente){
         {% if req.doc_erp_data %}
         <div id="erp-snapshot" class="d-none mt-2">
           <small class="text-muted">Snapshot ERP guardado:</small>
-          <pre class="small bg-light p-2 rounded mt-1" style="max-height:200px;overflow:auto;font-size:.7rem">{{ req.doc_erp_data[:3000] }}</pre>
+          <pre class="small bg-light p-2 rounded mt-1" style="max-height:200px;overflow:auto;font-size:.7rem">{{ (req.doc_erp_data|string)[:3000] }}</pre>
         </div>
         {% endif %}
 
