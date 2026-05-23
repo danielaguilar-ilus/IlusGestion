@@ -2,172 +2,485 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Seguimiento {{ req.code }} — ILUS</title>
-  <meta name="description" content="Seguimiento de tu solicitud de retiro ILUS.">
+  <meta name="description" content="Seguimiento en vivo de tu retiro ILUS.">
   <meta name="theme-color" content="#0a0a0a">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
-  <style>
-    :root{--ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a}
-    *{box-sizing:border-box}
-    body{margin:0;background:#fafafa;color:#111827;font-family:'Inter','Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
 
-    /* HEADER PÚBLICO */
-    .pub-top{background:#0a0a0a;color:#fff;border-bottom:5px solid var(--ilus-red);padding:14px 22px;overflow:hidden}
-    .pub-top-inner{max-width:1180px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  <style>
+    /* ════════════════════════════════════════════════════════════════
+       TRACKING PREMIUM ILUS — Daniel mayo 2026
+       Paleta: rojo #dc2626 / negro #0a0a0a / blanco #ffffff
+       Mobile-first · animaciones con prefers-reduced-motion respect
+       ════════════════════════════════════════════════════════════════ */
+    :root {
+      --ilus-red:    #dc2626;
+      --ilus-red-dk: #991b1b;
+      --ilus-red-2:  #ef4444;
+      --ilus-black:  #0a0a0a;
+      --ilus-ink:    #111827;
+      --ilus-muted:  #6b7280;
+      --ilus-border: #e5e7eb;
+      --ilus-bg:     #f7f7f8;
+      --ok-green:    #16a34a;
+      --ok-green-2:  #22c55e;
+      --warn-amber:  #f59e0b;
+      --warn-bg:     #fff7ed;
+      --info-blue:   #3b82f6;
+      --info-bg:     #dbeafe;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      background:var(--ilus-bg);color:var(--ilus-ink);
+      font-family:'Inter','Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+      -webkit-font-smoothing:antialiased;
+      -webkit-text-size-adjust:100%;
+      padding-bottom:env(safe-area-inset-bottom,0);
+    }
+
+    /* ─── HEADER NEGRO ──────────────────────────────────────────── */
+    .pub-top{
+      background:linear-gradient(180deg,#0a0a0a 0%,#000 100%);
+      color:#fff;border-bottom:4px solid var(--ilus-red);
+      padding:14px 22px;
+      position:sticky;top:0;z-index:50;
+      box-shadow:0 6px 24px rgba(0,0,0,.18);
+    }
+    .pub-top-inner{
+      max-width:1180px;margin:auto;
+      display:flex;align-items:center;justify-content:space-between;
+      gap:14px;flex-wrap:wrap;
+    }
     .pub-top-inner .logo-wrap{
-      width:340px;height:90px;overflow:hidden;
-      filter:drop-shadow(0 4px 14px rgba(230,0,0,.15));
+      width:300px;height:74px;overflow:hidden;
+      filter:drop-shadow(0 4px 14px rgba(220,38,38,.18));
       flex-shrink:0;
     }
     .pub-top-inner .logo-wrap img{
       height:100%;width:auto;object-fit:cover;object-position:center center;
-      transform:scale(1.85);transform-origin:left center;display:block;
+      transform:scale(1.75);transform-origin:left center;display:block;
     }
     @media (max-width:600px){
-      .pub-top-inner .logo-wrap{width:230px;height:62px}
-      .pub-top-inner .logo-wrap img{transform:scale(1.7)}
+      .pub-top-inner .logo-wrap{width:220px;height:58px}
+      .pub-top-inner .logo-wrap img{transform:scale(1.6)}
     }
-    .pub-top-inner .actions{display:flex;gap:10px;flex-wrap:wrap}
-    .pub-top-inner .actions a{font-weight:700;letter-spacing:.02em}
+    .btn-volver{
+      background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.18);
+      padding:8px 14px;border-radius:10px;font-weight:700;text-decoration:none;font-size:.86rem;
+      display:inline-flex;align-items:center;gap:6px;transition:all .15s;
+      min-height:44px;
+    }
+    .btn-volver:hover{background:#fff;color:#0a0a0a;border-color:#fff;transform:translateY(-1px)}
+    .btn-volver.primary{background:var(--ilus-red);border-color:var(--ilus-red)}
+    .btn-volver.primary:hover{background:#fff;color:var(--ilus-red);border-color:#fff}
 
-    /* HERO RESUMEN del retiro */
+    /* ─── LIVE BADGE (polling activo) ───────────────────────────── */
+    .live-badge{
+      display:inline-flex;align-items:center;gap:6px;
+      background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);
+      color:#86efac;font-size:.74rem;font-weight:700;
+      padding:5px 10px;border-radius:50px;letter-spacing:.04em;
+    }
+    .live-badge .dot{
+      width:7px;height:7px;border-radius:50%;background:#22c55e;
+      box-shadow:0 0 0 0 rgba(34,197,94,.6);animation:liveBeat 2s ease-out infinite;
+    }
+    @keyframes liveBeat{
+      0%   {box-shadow:0 0 0 0 rgba(34,197,94,.6)}
+      70%  {box-shadow:0 0 0 8px rgba(34,197,94,0)}
+      100% {box-shadow:0 0 0 0 rgba(34,197,94,0)}
+    }
+
+    /* ─── HERO RESUMEN ──────────────────────────────────────────── */
     .track-hero{
-      background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;
-      border-radius:14px;border-bottom:4px solid var(--ilus-red);
-      padding:28px 30px;margin-top:22px;
-      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;
-      box-shadow:0 14px 30px rgba(0,0,0,.12);
+      position:relative;overflow:hidden;
+      background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 70%,#0a0a0a 100%);
+      color:#fff;border-radius:18px;
+      padding:30px 32px;margin-top:22px;
+      display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;
+      box-shadow:0 18px 38px rgba(0,0,0,.18);
+      border:1px solid #1f1f1f;
+    }
+    .track-hero::before{
+      content:'';position:absolute;inset:0;
+      background:radial-gradient(800px 200px at 0% 0%, rgba(220,38,38,.15), transparent 60%),
+                 radial-gradient(600px 180px at 100% 100%, rgba(220,38,38,.10), transparent 60%);
+      pointer-events:none;
+    }
+    .track-hero > *{position:relative;z-index:1}
+    .track-hero .eyebrow{
+      font-size:.66rem;text-transform:uppercase;letter-spacing:.18em;
+      color:#9ca3af;font-weight:800;margin-bottom:6px;
     }
     .track-hero .code{
-      font-family:'Bebas Neue';font-size:2.4rem;letter-spacing:.01em;line-height:1;margin:0;
+      font-family:'Bebas Neue';font-size:2.7rem;letter-spacing:.012em;line-height:1;
+      margin:0 0 6px;color:#fff;
     }
-    .track-hero .doc-line{color:#cbd5e1;font-size:.9rem;margin-top:6px}
-    .track-hero .status-pill{
-      padding:8px 18px;border-radius:50px;font-weight:800;font-size:.86rem;letter-spacing:.04em;
-      box-shadow:0 4px 14px rgba(0,0,0,.25);
-    }
-    .track-hero .status-help{color:#9ca3af;font-size:.78rem;margin-top:8px;max-width:280px;text-align:right}
+    .track-hero .doc-line{color:#cbd5e1;font-size:.92rem}
+    .track-hero .doc-line i{color:var(--ilus-red);margin-right:5px}
+    .track-hero .doc-line .sep{margin:0 8px;color:#374151}
 
-    /* PIPELINE / TRACKING VISUAL */
-    .pipeline{
-      background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:24px 22px;
-      margin-top:18px;box-shadow:0 6px 18px rgba(15,23,42,.06);
+    .status-pill-big{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:10px 18px;border-radius:50px;
+      font-weight:800;font-size:.84rem;letter-spacing:.04em;
+      box-shadow:0 8px 18px rgba(0,0,0,.30);
+      text-transform:uppercase;
     }
-    .pipeline-title{font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.1em;color:#9ca3af;margin:0 0 18px}
-    .pipeline-row{display:grid;grid-template-columns:repeat(6,1fr);gap:0;align-items:flex-start;position:relative}
-    .pipeline-step{position:relative;text-align:center;padding:10px 4px}
-    .pipeline-step::before,.pipeline-step::after{
-      content:'';position:absolute;top:30px;height:4px;background:#e5e7eb;z-index:0;
-    }
-    .pipeline-step::before{left:0;right:50%}
-    .pipeline-step::after{left:50%;right:0}
-    .pipeline-step:first-child::before,.pipeline-step:last-child::after{display:none}
-    .pipeline-step.done::before,.pipeline-step.done::after{background:#22c55e}
-    .pipeline-step.active::before{background:#22c55e}
-    .pipeline-step.active::after{background:linear-gradient(90deg,var(--ilus-red),#e5e7eb)}
-    .pipeline-circle{
-      position:relative;z-index:2;width:64px;height:64px;border-radius:50%;
-      background:#fff;border:4px solid #e5e7eb;color:#9ca3af;
-      display:flex;align-items:center;justify-content:center;font-size:1.6rem;
-      margin:0 auto 12px;transition:all .3s;
-    }
-    .pipeline-step.done .pipeline-circle{background:#22c55e;border-color:#22c55e;color:#fff;transform:scale(1)}
-    .pipeline-step.active .pipeline-circle{
-      background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
-      box-shadow:0 0 0 6px rgba(230,0,0,.15);animation:pulseRing 2s ease-in-out infinite;
-    }
-    @keyframes pulseRing{
-      0%,100%{box-shadow:0 0 0 6px rgba(230,0,0,.15)}
-      50%{box-shadow:0 0 0 12px rgba(230,0,0,.05)}
-    }
-    .pipeline-label{font-size:.78rem;font-weight:800;color:#6b7280;line-height:1.2;text-transform:uppercase;letter-spacing:.04em}
-    .pipeline-step.done .pipeline-label{color:#16a34a}
-    .pipeline-step.active .pipeline-label{color:var(--ilus-red);font-size:.84rem}
-    .pipeline-step .substep{font-size:.7rem;color:#9ca3af;margin-top:3px}
+    .status-pill-big .ico{font-size:1.05rem}
 
-    /* AGENDA Cards */
-    .track-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 22px;box-shadow:0 4px 14px rgba(15,23,42,.05);margin-bottom:14px}
-    .track-card h6{font-weight:900;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin:0 0 14px}
-    .track-card h6 i{color:var(--ilus-red)}
-    .agenda-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-    .agenda-cell{padding:14px 16px;border-radius:10px;border:1.5px solid #e5e7eb;background:#fafafa}
-    .agenda-cell .ag-lbl{font-size:.65rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-    .agenda-cell .ag-val{font-weight:900;font-size:.95rem;color:#0a0a0a;line-height:1.25}
-    .agenda-cell.proposed{background:#fff7ed;border-color:#fed7aa}
-    .agenda-cell.confirmed{background:#dcfce7;border-color:#86efac}
-    .agenda-cell.confirmed .ag-val{color:#166534}
-    .agenda-cell.proposed .ag-val{color:#9a3412}
+    /* Color por estado del hero pill */
+    .pill-solicitud_recibida   {background:#dbeafe;color:#1e3a8a}
+    .pill-en_revision          {background:#fef3c7;color:#78350f}
+    .pill-informacion_incompleta{background:#fef3c7;color:#78350f}
+    .pill-propuesta_enviada    {background:#fed7aa;color:#9a3412}
+    .pill-esperando_cliente    {background:#e5e7eb;color:#374151}
+    .pill-agenda_confirmada    {background:#dcfce7;color:#14532d}
+    .pill-en_preparacion       {background:#e0e7ff;color:#312e81}
+    .pill-reagendada           {background:#fef3c7;color:#78350f}
+    .pill-retirada             {background:#dcfce7;color:#14532d}
+    .pill-cerrada              {background:#dcfce7;color:#14532d}
+    .pill-rechazada            {background:#fee2e2;color:#7f1d1d}
+    .pill-fallida              {background:#fee2e2;color:#7f1d1d}
 
-    /* PROPUESTA pendiente */
-    .alert-propuesta{
+    .hero-help{color:#9ca3af;font-size:.78rem;margin-top:10px;max-width:280px;text-align:right;line-height:1.4}
+
+    @media(max-width:780px){
+      .track-hero{grid-template-columns:1fr;text-align:left;padding:22px 20px}
+      .track-hero .code{font-size:2.1rem}
+      .status-pill-big{font-size:.78rem;padding:8px 14px}
+      .hero-help{text-align:left;margin-top:8px;max-width:none}
+    }
+
+    /* ─── PROGRESO ANIMADO (estado en pasos) ────────────────────── */
+    .progress-card{
+      background:#fff;border:1px solid var(--ilus-border);border-radius:18px;
+      padding:28px 26px 22px;margin-top:18px;
+      box-shadow:0 8px 22px rgba(15,23,42,.06);
+    }
+    .progress-card h6{
+      font-weight:900;font-size:.74rem;text-transform:uppercase;letter-spacing:.12em;
+      color:var(--ilus-muted);margin:0 0 20px;display:flex;align-items:center;gap:8px;
+    }
+    .progress-card h6 i{color:var(--ilus-red);font-size:1rem}
+
+    .stepper{
+      position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:0;
+    }
+    /* línea base */
+    .stepper::before{
+      content:'';position:absolute;left:8%;right:8%;top:32px;height:5px;
+      background:#e5e7eb;border-radius:50px;z-index:0;
+    }
+    /* línea progreso (se llena con gradiente rojo) */
+    .stepper-fill{
+      position:absolute;left:8%;top:32px;height:5px;border-radius:50px;
+      background:linear-gradient(90deg,var(--ok-green-2) 0%, var(--ok-green-2) 70%, var(--ilus-red) 100%);
+      box-shadow:0 0 12px rgba(34,197,94,.30);
+      z-index:1;
+      transition:width 1.2s cubic-bezier(.16,1,.3,1);
+    }
+
+    .step{
+      position:relative;z-index:2;text-align:center;padding:0 4px;
+    }
+    .step .circle{
+      position:relative;width:68px;height:68px;border-radius:50%;
+      margin:0 auto 12px;display:flex;align-items:center;justify-content:center;
+      font-size:1.7rem;color:#9ca3af;background:#fff;
+      border:4px solid #e5e7eb;
+      transition:all .4s cubic-bezier(.16,1,.3,1);
+    }
+    .step .circle .ico-default,.step .circle .ico-done{transition:opacity .3s}
+    .step .circle .ico-done{position:absolute;opacity:0;color:#fff}
+    .step .label{
+      font-size:.78rem;font-weight:800;color:#9ca3af;line-height:1.25;
+      text-transform:uppercase;letter-spacing:.04em;
+    }
+    .step .sub{font-size:.7rem;color:#9ca3af;margin-top:4px;line-height:1.3}
+
+    /* DONE: verde con check */
+    .step.done .circle{
+      background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);
+      border-color:#16a34a;color:#fff;
+      box-shadow:0 6px 14px rgba(22,163,74,.30);
+      transform:scale(1);
+    }
+    .step.done .circle .ico-default{opacity:0}
+    .step.done .circle .ico-done{opacity:1}
+    .step.done .label{color:#16a34a}
+    .step.done .sub{color:#16a34a}
+    .step.done .sub::before{content:'✓ ';font-weight:900}
+
+    /* ACTIVE: rojo con halo pulsante */
+    .step.active .circle{
+      background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);
+      border-color:#dc2626;color:#fff;
+      box-shadow:0 0 0 6px rgba(220,38,38,.18), 0 8px 18px rgba(220,38,38,.28);
+      animation:stepPulse 2s ease-in-out infinite;
+      transform:scale(1.05);
+    }
+    .step.active .circle .ico-default{opacity:1}
+    .step.active .label{color:var(--ilus-red);font-size:.84rem}
+    .step.active .sub{color:var(--ilus-red);font-weight:700}
+    @keyframes stepPulse{
+      0%,100%{box-shadow:0 0 0 6px rgba(220,38,38,.18), 0 8px 18px rgba(220,38,38,.28)}
+      50%    {box-shadow:0 0 0 14px rgba(220,38,38,.04), 0 10px 22px rgba(220,38,38,.32)}
+    }
+    @media(prefers-reduced-motion:reduce){
+      .step.active .circle{animation:none}
+      .stepper-fill{transition:width 0s}
+    }
+
+    @media(max-width:600px){
+      .stepper{grid-template-columns:1fr;gap:14px}
+      .stepper::before,.stepper-fill{display:none}
+      .step{display:grid;grid-template-columns:auto 1fr;gap:16px;text-align:left;align-items:center}
+      .step .circle{width:54px;height:54px;font-size:1.3rem;margin:0}
+      .step .label{font-size:.86rem}
+      .step .sub{font-size:.74rem}
+    }
+
+    /* ─── HERO STATUS contextual (banner según estado) ──────────── */
+    .hero-status{
+      background:#fff;border-radius:14px;border:1px solid var(--ilus-border);
+      padding:22px 26px;margin-top:18px;
+      display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center;
+      box-shadow:0 4px 14px rgba(15,23,42,.05);
+      animation:fadeUp .6s cubic-bezier(.16,1,.3,1);
+    }
+    .hero-status .ico-wrap{
+      width:64px;height:64px;border-radius:18px;display:grid;place-items:center;
+      font-size:1.9rem;flex-shrink:0;
+    }
+    .hero-status .title{font-size:1.05rem;font-weight:900;color:var(--ilus-black);margin:0 0 4px}
+    .hero-status .msg{font-size:.92rem;color:var(--ilus-muted);margin:0;line-height:1.45}
+    .hero-status.accent-blue   .ico-wrap{background:var(--info-bg);color:#1e3a8a}
+    .hero-status.accent-amber  .ico-wrap{background:#fff7ed;color:#9a3412}
+    .hero-status.accent-green  .ico-wrap{background:#dcfce7;color:#14532d}
+    .hero-status.accent-red    .ico-wrap{background:#fee2e2;color:#7f1d1d}
+    .hero-status.accent-purple .ico-wrap{background:#e0e7ff;color:#312e81}
+
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+    /* ─── PROPUESTA destacada (acción pendiente) ────────────────── */
+    .next-action{
       background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);
-      border:2px solid #fb923c;border-radius:12px;padding:20px 22px;margin-bottom:14px;
-      box-shadow:0 8px 18px rgba(251,146,60,.18);
+      border:2px solid #fb923c;border-radius:16px;
+      padding:22px 24px;margin-top:18px;
+      box-shadow:0 12px 24px rgba(251,146,60,.20);
       animation:bellShake .6s ease-in-out;
     }
     @keyframes bellShake{
-      0%,100%{transform:none}25%{transform:translateY(-2px)}50%{transform:translateY(0)}75%{transform:translateY(-1px)}
+      0%,100%{transform:none}
+      25%{transform:translateX(-2px)}50%{transform:translateX(2px)}75%{transform:translateX(-1px)}
     }
-    .alert-propuesta h5{margin:0 0 8px;font-weight:900;color:#9a3412}
-    .alert-propuesta h5 i{margin-right:6px;animation:bellRing 1.5s ease-in-out infinite}
+    .next-action h5{
+      margin:0 0 8px;font-weight:900;color:#9a3412;font-size:1.05rem;
+      display:flex;align-items:center;gap:8px;
+    }
+    .next-action h5 i{
+      color:#fb923c;font-size:1.2rem;
+      animation:bellRing 1.5s ease-in-out infinite;
+    }
     @keyframes bellRing{0%,100%{transform:none}30%{transform:rotate(15deg)}60%{transform:rotate(-15deg)}}
-    .alert-propuesta .prop-fecha{
-      background:#fff;border-radius:10px;padding:14px;margin:12px 0;
-      font-size:1.05rem;text-align:center;font-weight:800;color:#0a0a0a;
+    .next-action .prop-fecha{
+      background:#fff;border-radius:12px;padding:18px 20px;margin:14px 0;
+      font-size:1.1rem;text-align:center;font-weight:800;color:var(--ilus-black);
       border:2px dashed #fb923c;
     }
-    .alert-propuesta .btn-prop{padding:12px 22px;font-weight:800;border-radius:8px;letter-spacing:.02em}
+    .next-action .prop-fecha .ico-cal{color:var(--ilus-red);font-size:1.4rem;margin-right:8px;vertical-align:middle}
+    .next-action .btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+    .next-action .btn-act{
+      padding:13px 22px;font-weight:800;border-radius:10px;letter-spacing:.02em;
+      font-size:.92rem;border:none;cursor:pointer;
+      min-height:44px;display:inline-flex;align-items:center;gap:6px;
+      transition:all .15s;
+    }
+    .next-action .btn-act:active{transform:translateY(1px)}
+    .next-action .btn-confirm{background:#16a34a;color:#fff;box-shadow:0 6px 14px rgba(22,163,74,.30)}
+    .next-action .btn-confirm:hover{background:#15803d}
+    .next-action .btn-counter{background:#0a0a0a;color:#fff}
+    .next-action .btn-counter:hover{background:#1f2937}
+    .next-action .btn-reject{background:#fff;color:#dc2626;border:2px solid #dc2626}
+    .next-action .btn-reject:hover{background:#fee2e2}
+
+    /* ─── CARDS GENÉRICAS ───────────────────────────────────────── */
+    .ilus-card{
+      background:#fff;border:1px solid var(--ilus-border);border-radius:14px;
+      padding:22px 24px;margin-bottom:16px;
+      box-shadow:0 4px 14px rgba(15,23,42,.05);
+    }
+    .ilus-card h6{
+      font-weight:900;font-size:.74rem;text-transform:uppercase;letter-spacing:.10em;
+      color:var(--ilus-muted);margin:0 0 16px;
+      display:flex;align-items:center;gap:8px;
+    }
+    .ilus-card h6 i{color:var(--ilus-red);font-size:.95rem}
+
+    /* AGENDA grid */
+    .agenda-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .agenda-cell{
+      padding:16px 18px;border-radius:12px;border:1.5px solid var(--ilus-border);
+      background:#fafafa;transition:all .25s;
+    }
+    .agenda-cell .ag-lbl{
+      font-size:.68rem;font-weight:800;color:var(--ilus-muted);
+      text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;
+      display:flex;align-items:center;gap:6px;
+    }
+    .agenda-cell .ag-lbl i{font-size:.85rem}
+    .agenda-cell .ag-val{font-weight:900;font-size:1rem;color:var(--ilus-black);line-height:1.3}
+    .agenda-cell.proposed{background:#fff7ed;border-color:#fed7aa}
+    .agenda-cell.proposed .ag-val{color:#9a3412}
+    .agenda-cell.confirmed{background:#dcfce7;border-color:#86efac;transform:scale(1.02)}
+    .agenda-cell.confirmed .ag-val{color:#166534}
+    .agenda-cell.confirmed .ag-lbl{color:#166534}
+
+    @media(max-width:600px){
+      .agenda-grid{grid-template-columns:1fr}
+      .agenda-cell.confirmed{transform:none}
+    }
 
     /* CARGA */
     .carga-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-    .carga-cell{background:#0a0a0a;color:#fff;border-radius:10px;padding:14px 12px;text-align:center}
-    .carga-cell .c-num{font-family:'Bebas Neue';font-size:1.9rem;color:var(--ilus-red);line-height:1}
-    .carga-cell .c-lbl{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;margin-top:4px;color:#9ca3af;font-weight:700}
-
-    /* HISTORIAL */
-    .timeline-wrap{position:relative;padding-left:24px}
-    .timeline-wrap::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:2px;background:#e5e7eb}
-    .timeline-item{position:relative;padding:0 0 14px 16px}
-    .timeline-item::before{content:'';position:absolute;left:-22px;top:5px;width:14px;height:14px;border-radius:50%;background:var(--ilus-red);border:3px solid #fff;box-shadow:0 0 0 1px var(--ilus-red)}
-    .timeline-item:last-child::before{background:#22c55e;box-shadow:0 0 0 1px #22c55e}
-    .timeline-item .ti-action{font-weight:800;font-size:.86rem;color:#0a0a0a}
-    .timeline-item .ti-meta{font-size:.72rem;color:#6b7280;margin-top:2px}
-    .timeline-item .ti-notes{font-size:.78rem;color:#374151;margin-top:4px;padding:6px 10px;background:#f9fafb;border-radius:6px;border-left:3px solid var(--ilus-red)}
-
-    /* Botones generales */
-    .btn-volver{
-      background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.2);
-      padding:8px 16px;border-radius:8px;font-weight:700;text-decoration:none;font-size:.86rem;
-      display:inline-flex;align-items:center;gap:6px;transition:all .15s;
+    .carga-cell{
+      background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);
+      color:#fff;border-radius:12px;padding:16px 12px;text-align:center;
+      border:1px solid #1f2937;
     }
-    .btn-volver:hover{background:#fff;color:#0a0a0a;border-color:#fff}
-
-    /* Footer */
-    .footer{background:#0a0a0a;color:#9ca3af;padding:30px 22px;text-align:center;margin-top:30px}
-    .footer img{width:100px;margin-bottom:8px}
-
-    @media(max-width:991px){
-      .pipeline-row{grid-template-columns:repeat(3,1fr);gap:14px;row-gap:24px}
-      .pipeline-step::before,.pipeline-step::after{display:none}
-      .agenda-grid,.carga-grid{grid-template-columns:1fr 1fr}
+    .carga-cell .c-num{
+      font-family:'Bebas Neue';font-size:2rem;color:var(--ilus-red);line-height:1;
+      letter-spacing:.01em;
     }
-    @media(max-width:600px){
-      .pub-top-inner img.logo{height:46px}
-      .agenda-grid,.carga-grid{grid-template-columns:1fr}
-      .track-hero{padding:22px 18px}
-      .track-hero .code{font-size:1.8rem}
+    .carga-cell .c-lbl{
+      font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;margin-top:6px;
+      color:#9ca3af;font-weight:700;
     }
+    @media(max-width:600px){.carga-grid{grid-template-columns:1fr 1fr}}
+
+    /* BODEGA */
+    .warehouse-card .map-btn{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      background:var(--ilus-red);color:#fff;border:none;
+      padding:13px 18px;border-radius:10px;font-weight:800;
+      width:100%;margin-top:12px;text-decoration:none;font-size:.92rem;
+      box-shadow:0 6px 14px rgba(220,38,38,.25);
+      transition:all .2s;min-height:44px;
+    }
+    .warehouse-card .map-btn:hover{
+      background:var(--ilus-red-dk);transform:translateY(-1px);
+      box-shadow:0 8px 18px rgba(220,38,38,.32);
+    }
+
+    /* RATING (post retirada) */
+    .rating-card{
+      background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);
+      color:#fff;border-radius:14px;padding:24px 22px;text-align:center;margin-bottom:16px;
+      box-shadow:0 14px 28px rgba(0,0,0,.18);
+    }
+    .rating-card .eyebrow{
+      color:var(--ilus-red);font-size:.72rem;font-weight:900;text-transform:uppercase;
+      letter-spacing:.12em;margin-bottom:8px;
+    }
+    .rating-card h4{font-size:1.15rem;font-weight:800;margin:0 0 14px}
+    .rating-card .stars{display:flex;justify-content:center;gap:6px;margin-bottom:12px}
+    .rating-card .star{
+      font-size:2.1rem;color:#374151;cursor:pointer;transition:all .15s;
+      background:none;border:none;padding:4px;
+    }
+    .rating-card .star:hover,.rating-card .star.on{color:#fbbf24;transform:scale(1.1)}
+
+    /* TIMELINE */
+    .timeline-wrap{position:relative;padding-left:24px;max-height:380px;overflow-y:auto}
+    .timeline-wrap::before{
+      content:'';position:absolute;left:7px;top:4px;bottom:4px;width:3px;
+      background:linear-gradient(180deg,var(--ilus-red) 0%,#e5e7eb 100%);border-radius:50px;
+    }
+    .timeline-item{
+      position:relative;padding:0 0 16px 18px;
+      animation:slideInLeft .5s cubic-bezier(.16,1,.3,1) backwards;
+    }
+    .timeline-item::before{
+      content:'';position:absolute;left:-22px;top:4px;
+      width:17px;height:17px;border-radius:50%;
+      background:var(--ilus-red);border:3px solid #fff;
+      box-shadow:0 0 0 2px var(--ilus-red);
+    }
+    .timeline-item:first-child::before{
+      background:#22c55e;box-shadow:0 0 0 2px #22c55e, 0 0 14px rgba(34,197,94,.4);
+    }
+    .timeline-item .ti-action{font-weight:800;font-size:.88rem;color:var(--ilus-black);text-transform:capitalize}
+    .timeline-item .ti-meta{font-size:.72rem;color:var(--ilus-muted);margin-top:2px}
+    .timeline-item .ti-notes{
+      font-size:.8rem;color:#374151;margin-top:6px;padding:8px 12px;
+      background:#f9fafb;border-radius:8px;border-left:3px solid var(--ilus-red);line-height:1.5;
+    }
+    @keyframes slideInLeft{
+      from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}
+    }
+    .timeline-item:nth-child(1){animation-delay:0.0s}
+    .timeline-item:nth-child(2){animation-delay:0.08s}
+    .timeline-item:nth-child(3){animation-delay:0.16s}
+    .timeline-item:nth-child(4){animation-delay:0.24s}
+    .timeline-item:nth-child(5){animation-delay:0.32s}
+    .timeline-item:nth-child(6){animation-delay:0.40s}
+    .timeline-item:nth-child(7){animation-delay:0.48s}
+    .timeline-item:nth-child(8){animation-delay:0.56s}
+
+    /* TABLA bultos compacta */
+    .pkg-table{font-size:.84rem;width:100%}
+    .pkg-table thead{background:#f9fafb}
+    .pkg-table th,.pkg-table td{padding:8px 10px;border-bottom:1px solid var(--ilus-border)}
+    .pkg-table th{font-weight:800;font-size:.72rem;color:var(--ilus-muted);text-transform:uppercase;letter-spacing:.04em}
+
+    /* ─── FOOTER NEGRO ──────────────────────────────────────────── */
+    .footer{
+      background:linear-gradient(180deg,#0a0a0a 0%,#000 100%);
+      color:#9ca3af;padding:30px 22px 36px;text-align:center;margin-top:36px;
+      border-top:4px solid var(--ilus-red);
+    }
+    .footer .logo-foot{width:130px;margin-bottom:10px;opacity:.95}
+    .footer .name{color:#fff;font-weight:800;font-size:.95rem;margin-bottom:4px}
+    .footer .social{display:flex;justify-content:center;gap:14px;margin:14px 0}
+    .footer .social a{
+      width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+      background:rgba(255,255,255,.06);color:#fff;text-decoration:none;
+      font-size:1.05rem;transition:all .18s;
+    }
+    .footer .social a:hover{background:var(--ilus-red);transform:translateY(-2px)}
+    .footer .links{font-size:.78rem;color:#6b7280}
+    .footer .links a{color:#9ca3af;text-decoration:none;margin:0 8px}
+    .footer .links a:hover{color:#fff}
+
+    /* alerta inicial creada */
+    .alert-created{
+      background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);
+      color:#14532d;border-radius:12px;border:none;padding:16px 20px;
+      box-shadow:0 8px 18px rgba(22,163,74,.18);
+    }
+    .alert-created i{font-size:1.3rem;color:#16a34a}
+
+    /* utilidades pequeñas */
+    .mono{font-feature-settings:"tnum"}
+    .text-ilus-red{color:var(--ilus-red)}
+    .container-ilus{max-width:1180px;margin:auto;padding:0 22px 30px}
+
+    /* Modales — heredan Bootstrap pero refinamos un poco */
+    .modal-content{border-radius:14px;border:none;box-shadow:0 22px 48px rgba(0,0,0,.3)}
+    .modal-header{border-bottom:1px solid var(--ilus-border)}
   </style>
 </head>
 <body>
 
-  {# ── HEADER PÚBLICO con LOGO GRANDE + botón Volver ─────────────── #}
+  {# ──────── HEADER ──────── #}
   <header class="pub-top">
     <div class="pub-top-inner">
       <div class="logo-wrap">
@@ -176,74 +489,137 @@
           <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" decoding="async" fetchpriority="high">
         </picture>
       </div>
-      <div class="actions">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <span class="live-badge" id="liveBadge" title="Esta pagina se actualiza sola cada 30 segundos">
+          <span class="dot"></span>EN VIVO
+        </span>
         <a href="{{ url_for('pickup_public_request') }}" class="btn-volver">
-          <i class="bi bi-arrow-left"></i>Volver al inicio
+          <i class="bi bi-arrow-left"></i><span class="d-none d-sm-inline">Volver al inicio</span>
         </a>
-        <a href="{{ url_for('pickup_public_request') }}" class="btn-volver" style="background:var(--ilus-red);border-color:var(--ilus-red)">
-          <i class="bi bi-plus-lg"></i>Nueva solicitud
+        <a href="{{ url_for('pickup_public_request') }}" class="btn-volver primary">
+          <i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline">Nueva solicitud</span>
         </a>
       </div>
     </div>
   </header>
 
-  <div style="max-width:1180px;margin:auto;padding:0 22px 30px">
+  <div class="container-ilus">
 
+    {# ──────── ALERTA recién creado ──────── #}
     {% if created %}
-    <div class="alert alert-success mt-3" role="alert" style="border-radius:10px;border:none;background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);color:#14532d;padding:16px 20px">
-      <i class="bi bi-check-circle-fill me-2" style="font-size:1.3rem"></i>
+    <div class="alert alert-created mt-3" role="alert">
+      <i class="bi bi-check-circle-fill me-2"></i>
       <strong>¡Listo! Solicitud {{ req.code }} creada correctamente.</strong>
       Guarda este enlace o búscalo en tu correo. Te avisaremos por email cuando ILUS confirme.
     </div>
     {% endif %}
 
-    {# ── HERO RESUMEN ─────────────────────────────────────── #}
+    {# ──────── HERO RESUMEN ──────── #}
     {% set b = status_badge(req.status) %}
     <div class="track-hero">
       <div>
-        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:#9ca3af;font-weight:700;margin-bottom:6px">Orden de retiro</div>
-        <h2 class="code">{{ req.code }}</h2>
+        <div class="eyebrow">Orden de retiro</div>
+        <h2 class="code mono">{{ req.code }}</h2>
         <div class="doc-line">
-          <i class="bi bi-file-earmark-text me-1"></i>{{ req.document_type|upper }} {{ req.document_number }}
-          <span class="mx-2">·</span>
-          <i class="bi bi-person me-1"></i>{{ req.customer_name }}
+          <i class="bi bi-file-earmark-text"></i>{{ req.document_type|upper }} {{ req.document_number }}
+          <span class="sep">·</span>
+          <i class="bi bi-person"></i>{{ req.customer_name }}
         </div>
       </div>
       <div style="text-align:right">
-        <span class="status-pill bg-{{ b.color }}">{{ b.label }}</span>
-        <div class="status-help">
+        <span class="status-pill-big pill-{{ req.status }}" id="statusPill">
+          {% set _icon = {
+            'solicitud_recibida':'envelope-paper',
+            'en_revision':'search',
+            'informacion_incompleta':'exclamation-triangle',
+            'propuesta_enviada':'calendar-event',
+            'esperando_cliente':'hourglass-split',
+            'agenda_confirmada':'calendar-check',
+            'en_preparacion':'box-seam',
+            'reagendada':'arrow-clockwise',
+            'retirada':'check-circle-fill',
+            'cerrada':'check-circle',
+            'rechazada':'x-circle',
+            'fallida':'exclamation-octagon',
+          }.get(req.status,'circle') %}
+          <i class="bi bi-{{ _icon }} ico"></i><span id="statusLbl">{{ b.label }}</span>
+        </span>
+        <div class="hero-help">
           La cita queda <strong style="color:#fff">confirmada</strong> solo cuando aparece como tal abajo.
         </div>
       </div>
     </div>
 
-    {# ── PIPELINE / TRACKING VISUAL ───────────────────────── #}
-    {% set _flow = [
-      ('solicitud_recibida','Solicitud',     'send-check',           'Enviada'),
-      ('en_revision',       'Validación',    'shield-check',         'ILUS revisa'),
-      ('propuesta_enviada', 'Propuesta',     'envelope-paper',       'Esperando tu OK'),
-      ('agenda_confirmada', 'Confirmada',    'calendar-check',       'Cita acordada'),
-      ('en_preparacion',    'En preparación','box-seam',             'Bodega listo'),
-      ('retirada',          'Retirada',      'check-circle-fill',    'Completado'),
-    ] %}
-    {%- set _idx_actual = -1 -%}
-    {%- for _s, _l, _i, _sub in _flow -%}{% if _s == req.status %}{% set _idx_actual = loop.index0 %}{% endif %}{%- endfor -%}
-    {# Para estados terminales no-éxito (rechazada, cancelada, fallida) marcamos hasta donde llegó #}
-    {% if req.status in ['rechazada','fallida','cerrada','reagendada','informacion_incompleta','esperando_cliente'] %}
-      {% set _idx_actual = 1 %}
-    {% endif %}
-
-    <div class="pipeline">
-      <div class="pipeline-title">
-        <i class="bi bi-arrow-right me-1" style="color:var(--ilus-red)"></i>Estado de tu retiro · paso a paso
+    {# ──────── STATUS HERO CONTEXTUAL ──────── #}
+    {% set _hero_msg = {
+      'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'En menos de 2 horas hábiles te confirmamos disponibilidad y persona autorizada.'},
+      'en_revision':        {'ico':'search-heart',    'accent':'accent-amber','title':'ILUS está revisando tu retiro','msg':'Validamos documento, identidad y disponibilidad. Te avisamos por email.'},
+      'informacion_incompleta':{'ico':'exclamation-triangle','accent':'accent-amber','title':'Necesitamos completar datos','msg':'Te contactaremos para confirmar lo que falta. También puedes responder tu correo de confirmación.'},
+      'propuesta_enviada':  {'ico':'calendar-plus',   'accent':'accent-amber','title':'Hay una fecha esperándote','msg':'Confírmala abajo, propón otra o rechaza. Mientras no respondas, el cupo no está reservado.'},
+      'esperando_cliente':  {'ico':'hourglass-split', 'accent':'accent-amber','title':'Esperando tu respuesta','msg':'Necesitamos tu confirmación para avanzar con el retiro.'},
+      'agenda_confirmada':  {'ico':'calendar-check-fill','accent':'accent-green','title':'Tu retiro está confirmado','msg':'Te esperamos puntual. Trae cédula y un vehículo apto para los bultos declarados.'},
+      'en_preparacion':     {'ico':'box-seam-fill',   'accent':'accent-purple','title':'Bodega está preparando tu pedido','msg':'Estamos armando todo para que retires sin esperas. Llega dentro del horario confirmado.'},
+      'reagendada':         {'ico':'arrow-clockwise','accent':'accent-amber','title':'Tu retiro fue reagendado','msg':'Revisa abajo la nueva propuesta y respóndela para asegurar el nuevo cupo.'},
+      'retirada':           {'ico':'check-circle-fill','accent':'accent-green','title':'Retiro completado, gracias','msg':'Esperamos que disfrutes tu equipo ILUS. Si necesitas service post-venta, escríbenos.'},
+      'cerrada':            {'ico':'archive-fill',   'accent':'accent-green','title':'Solicitud cerrada','msg':'Este retiro ya fue completado. Si tienes dudas, escríbenos.'},
+      'rechazada':          {'ico':'x-octagon-fill', 'accent':'accent-red','title':'Solicitud cancelada','msg':'Si fue un error o quieres reagendar, escríbenos respondiendo el correo o haz una nueva solicitud.'},
+      'fallida':            {'ico':'exclamation-octagon-fill','accent':'accent-red','title':'Retiro no completado','msg':'No pudimos completar tu retiro. Nos pondremos en contacto para reagendar.'},
+    }.get(req.status, {'ico':'circle','accent':'accent-blue','title':b.label,'msg':'Estado actualizado por nuestro equipo.'}) %}
+    <div class="hero-status {{ _hero_msg.accent }}" id="heroStatusCard">
+      <div class="ico-wrap"><i class="bi bi-{{ _hero_msg.ico }}"></i></div>
+      <div>
+        <h3 class="title" id="heroStatusTitle">{{ _hero_msg.title }}</h3>
+        <p class="msg" id="heroStatusMsg">{{ _hero_msg.msg }}</p>
       </div>
-      <div class="pipeline-row">
+    </div>
+
+    {# ──────── STEPPER ANIMADO (5 nodos clave) ──────── #}
+    {%- set _flow = [
+      ('solicitud_recibida','Solicitada',  'envelope-paper', 'Enviada'),
+      ('en_revision',       'Validando',   'shield-check',   'ILUS revisa'),
+      ('agenda_confirmada', 'Confirmada',  'calendar-check', 'Cita acordada'),
+      ('en_preparacion',    'Preparando',  'box-seam',       'Bodega armando'),
+      ('retirada',          'Retirada',    'check2-circle',  'Completado'),
+    ] -%}
+
+    {# Calcular índice del paso actual #}
+    {%- set _status_to_idx = {
+      'solicitud_recibida': 0,
+      'en_revision': 1,
+      'informacion_incompleta': 1,
+      'propuesta_enviada': 1,
+      'esperando_cliente': 1,
+      'reagendada': 1,
+      'agenda_confirmada': 2,
+      'en_preparacion': 3,
+      'retirada': 4,
+      'cerrada': 4,
+      'rechazada': -1,
+      'fallida': -1,
+    } -%}
+    {%- set _idx_actual = _status_to_idx.get(req.status, 0) -%}
+
+    <div class="progress-card">
+      <h6><i class="bi bi-graph-up-arrow"></i>Avance de tu retiro · paso a paso</h6>
+      <div class="stepper" id="stepperRoot" data-idx="{{ _idx_actual }}">
+        {# stepper-fill: ancho dinámico calculado por JS #}
+        <div class="stepper-fill" id="stepperFill"></div>
+
         {% for s, l, i, sub in _flow %}
-          {%- set _cls = 'done' if loop.index0 < _idx_actual else ('active' if loop.index0 == _idx_actual else '') -%}
-          <div class="pipeline-step {{ _cls }}">
-            <div class="pipeline-circle"><i class="bi bi-{{ i }}"></i></div>
-            <div class="pipeline-label">{{ l }}</div>
-            <div class="substep">{% if loop.index0 == _idx_actual %}{{ sub }}{% elif loop.index0 < _idx_actual %}✓ {{ sub }}{% else %}{{ sub }}{% endif %}</div>
+          {%- if _idx_actual == -1 -%}
+            {%- set _cls = 'done' if loop.index0 == 0 else '' -%}
+          {%- else -%}
+            {%- set _cls = 'done' if loop.index0 < _idx_actual else ('active' if loop.index0 == _idx_actual else '') -%}
+          {%- endif -%}
+          <div class="step {{ _cls }}">
+            <div class="circle">
+              <i class="bi bi-{{ i }} ico-default"></i>
+              <i class="bi bi-check-lg ico-done"></i>
+            </div>
+            <div>
+              <div class="label">{{ l }}</div>
+              <div class="sub">{{ sub }}</div>
+            </div>
           </div>
         {% endfor %}
       </div>
@@ -252,84 +628,122 @@
     <div class="row g-3 mt-1">
       <div class="col-lg-8">
 
-        {# ── PROPUESTA PENDIENTE (destacada) ──────────────── #}
+        {# ──────── PROPUESTA PENDIENTE — bloque destacado ──────── #}
         {% set pending = proposals|selectattr('status','equalto','pending')|list %}
         {% if pending %}
-        <div class="alert-propuesta">
-          <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una nueva fecha — responde por favor</h5>
-          <p class="mb-0 small text-muted">Tienes 3 opciones: confirmar, proponer otra fecha o rechazar definitivamente.</p>
+        <div class="next-action">
+          <h5><i class="bi bi-bell-fill"></i>ILUS te propuso una fecha — responde por favor</h5>
+          <p class="small text-muted mb-0">
+            Tienes tres opciones: confirmar, proponer otra fecha o rechazar definitivamente.
+          </p>
           <div class="prop-fecha">
-            <i class="bi bi-calendar-event me-2" style="color:var(--ilus-red)"></i>
-            {{ pending[0].date }} · {{ pending[0].time_from|hm }} – {{ pending[0].time_to|hm }}
+            <i class="bi bi-calendar-event ico-cal"></i>
+            <strong>{{ pending[0].date }}</strong>
+            <span style="color:#9ca3af">·</span>
+            {{ pending[0].time_from|hm }} – {{ pending[0].time_to|hm }}
           </div>
           {% if pending[0].message %}
           <p class="small mb-3" style="color:#9a3412;background:rgba(255,255,255,.6);padding:10px 14px;border-radius:8px">
             <i class="bi bi-chat-dots me-1"></i><strong>Mensaje:</strong> {{ pending[0].message }}
           </p>
           {% endif %}
-          <div class="d-flex flex-wrap gap-2 mt-2">
+          <div class="btns">
             <form method="post" style="display:inline">
               <input type="hidden" name="action" value="confirm">
-              <button class="btn btn-success btn-prop fw-bold">
-                <i class="bi bi-check-circle me-1"></i>Confirmar esta fecha
+              <button class="btn-act btn-confirm" type="submit">
+                <i class="bi bi-check2-circle"></i>Confirmar esta fecha
               </button>
             </form>
-            <button class="btn btn-outline-dark btn-prop" data-bs-toggle="modal" data-bs-target="#counterModal">
-              <i class="bi bi-calendar-plus me-1"></i>Proponer otra fecha
+            <button class="btn-act btn-counter" data-bs-toggle="modal" data-bs-target="#counterModal" type="button">
+              <i class="bi bi-calendar-plus"></i>Proponer otra fecha
             </button>
-            <button class="btn btn-outline-danger btn-prop" data-bs-toggle="modal" data-bs-target="#rejectModal">
-              <i class="bi bi-x-circle me-1"></i>No puedo
+            <button class="btn-act btn-reject" data-bs-toggle="modal" data-bs-target="#rejectModal" type="button">
+              <i class="bi bi-x-circle"></i>No puedo
             </button>
           </div>
         </div>
         {% endif %}
 
-        {# ── AGENDA (3 fechas: solicitada / propuesta / confirmada) ── #}
-        <div class="track-card">
-          <h6><i class="bi bi-calendar-event me-1"></i>Agenda del retiro</h6>
+        {# ──────── PRÓXIMO PASO según estado ──────── #}
+        {% if req.status == 'agenda_confirmada' and req.confirmed_date %}
+        <div class="ilus-card" style="background:linear-gradient(135deg,#fff 0%,#fafafa 100%)">
+          <h6><i class="bi bi-geo-alt-fill"></i>Cómo llegar a la bodega</h6>
+          <div style="font-weight:800;color:var(--ilus-black);font-size:1rem">{{ settings.warehouse_name }}</div>
+          <div class="text-muted small mt-1">{{ settings.warehouse_addr }}</div>
+          <a href="{{ settings.maps_url }}" target="_blank" class="map-btn">
+            <i class="bi bi-google"></i>Abrir en Google Maps
+          </a>
+        </div>
+        {% endif %}
+
+        {# ──────── RATING — solo si ya retirado ──────── #}
+        {% if req.status == 'retirada' %}
+        <div class="rating-card">
+          <div class="eyebrow">¿Cómo estuvo la atención?</div>
+          <h4>Tu feedback nos ayuda a mejorar</h4>
+          <div class="stars" id="ratingStars">
+            {% for i in range(5) %}
+            <button type="button" class="star" data-rating="{{ i+1 }}" title="{{ i+1 }} estrella(s)">★</button>
+            {% endfor %}
+          </div>
+          <div id="ratingFeedback" class="small" style="color:#9ca3af;min-height:1.2em">Toca las estrellas para puntuar</div>
+        </div>
+        {% endif %}
+
+        {# ──────── AGENDA (3 fechas) ──────── #}
+        <div class="ilus-card">
+          <h6><i class="bi bi-calendar-event"></i>Agenda del retiro</h6>
           <div class="agenda-grid">
             <div class="agenda-cell">
-              <div class="ag-lbl">📩 Solicitada por ti</div>
+              <div class="ag-lbl"><i class="bi bi-envelope"></i>Solicitada por ti</div>
               <div class="ag-val">
                 {{ req.requested_date }}
-                {% if req.requested_time_from %}<br>{{ req.requested_time_from|hm }} – {{ req.requested_time_to|hm }}{% endif %}
+                {% if req.requested_time_from %}<br><small>{{ req.requested_time_from|hm }} – {{ req.requested_time_to|hm }}</small>{% endif %}
               </div>
             </div>
-            <div class="agenda-cell {% if req.proposed_date %}proposed{% endif %}">
-              <div class="ag-lbl">📨 Propuesta de ILUS</div>
+            <div class="agenda-cell {% if req.proposed_date and not req.confirmed_date %}proposed{% endif %}">
+              <div class="ag-lbl"><i class="bi bi-send"></i>Propuesta de ILUS</div>
               <div class="ag-val">
                 {% if req.proposed_date %}
                   {{ req.proposed_date }}
-                  {% if req.proposed_time_from %}<br>{{ req.proposed_time_from|hm }} – {{ req.proposed_time_to|hm }}{% endif %}
+                  {% if req.proposed_time_from %}<br><small>{{ req.proposed_time_from|hm }} – {{ req.proposed_time_to|hm }}</small>{% endif %}
                 {% else %}—{% endif %}
               </div>
             </div>
             <div class="agenda-cell {% if req.confirmed_date %}confirmed{% endif %}">
-              <div class="ag-lbl">✅ Confirmada</div>
+              <div class="ag-lbl"><i class="bi bi-check2-circle"></i>Confirmada</div>
               <div class="ag-val">
                 {% if req.confirmed_date %}
                   {{ req.confirmed_date }}
-                  {% if req.confirmed_time_from %}<br>{{ req.confirmed_time_from|hm }} – {{ req.confirmed_time_to|hm }}{% endif %}
+                  {% if req.confirmed_time_from %}<br><small>{{ req.confirmed_time_from|hm }} – {{ req.confirmed_time_to|hm }}</small>{% endif %}
                 {% else %}—{% endif %}
               </div>
             </div>
           </div>
         </div>
 
-        {# ── CARGA DECLARADA ────────────────────────────── #}
-        <div class="track-card">
-          <h6><i class="bi bi-box-seam me-1"></i>Carga declarada</h6>
+        {# ──────── CARGA DECLARADA ──────── #}
+        <div class="ilus-card">
+          <h6><i class="bi bi-box-seam"></i>Carga declarada</h6>
           <div class="carga-grid mb-3">
             <div class="carga-cell"><div class="c-num">{{ req.total_packages }}</div><div class="c-lbl">Bultos</div></div>
             <div class="carga-cell"><div class="c-num">{{ req.total_weight_kg }}</div><div class="c-lbl">Kg</div></div>
-            <div class="carga-cell"><div class="c-num">{{ req.total_volumetric_weight }}</div><div class="c-lbl">Peso vol.</div></div>
+            <div class="carga-cell"><div class="c-num">{{ req.total_volumetric_weight }}</div><div class="c-lbl">P. vol</div></div>
             <div class="carga-cell"><div class="c-num">{{ req.total_volume_m3 }}</div><div class="c-lbl">m³</div></div>
           </div>
           {% if packages and req.total_packages > 0 %}
           <div class="table-responsive">
-            <table class="table table-sm" style="font-size:.84rem">
-              <thead style="background:#f9fafb"><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
-              <tbody>{% for p in packages %}<tr><td><strong>{{ p.package_number }}</strong></td><td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td><td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td></tr>{% endfor %}</tbody>
+            <table class="pkg-table">
+              <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Kg</th><th>P. vol</th></tr></thead>
+              <tbody>
+                {% for p in packages %}
+                <tr>
+                  <td><strong>{{ p.package_number }}</strong></td>
+                  <td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td>
+                  <td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
             </table>
           </div>
           {% else %}
@@ -340,28 +754,32 @@
         </div>
       </div>
 
-      {# ── SIDEBAR: instrucciones + historial ──────────── #}
+      {# ──────── SIDEBAR ──────── #}
       <div class="col-lg-4">
-        <div class="track-card">
-          <h6><i class="bi bi-geo-alt-fill me-1"></i>Bodega de retiro</h6>
-          <strong style="font-size:.96rem">{{ settings.warehouse_name }}</strong><br>
-          <span class="small text-muted">{{ settings.warehouse_addr }}</span>
-          <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-outline-danger w-100 mt-3 fw-bold">
-            <i class="bi bi-map me-1"></i>Abrir en mapa
+        {# Bodega — solo si no es post-retirada ya cerrada #}
+        {% if req.status not in ['retirada','cerrada'] %}
+        <div class="ilus-card warehouse-card">
+          <h6><i class="bi bi-geo-alt-fill"></i>Bodega de retiro</h6>
+          <div style="font-weight:800;color:var(--ilus-black);font-size:.98rem">{{ settings.warehouse_name }}</div>
+          <div class="text-muted small mt-1" style="line-height:1.5">{{ settings.warehouse_addr }}</div>
+          <a href="{{ settings.maps_url }}" target="_blank" class="map-btn">
+            <i class="bi bi-map"></i>Abrir en mapa
           </a>
-          <hr>
-          <ul class="small mb-0 ps-3" style="line-height:1.7">
-            <li>Presenta tu carnet al llegar.</li>
+          <hr style="margin:14px 0;border-color:var(--ilus-border)">
+          <ul class="small mb-0 ps-3" style="line-height:1.75;color:#374151">
+            <li>Presenta tu cédula al llegar.</li>
             <li>Si retira un tercero, debe coincidir con la persona autorizada.</li>
-            <li>La agenda solo es válida cuando figura como <strong>confirmada</strong>.</li>
+            <li>La cita es válida sólo cuando aparece como <strong>confirmada</strong>.</li>
             <li>Firmarás digitalmente al recibir.</li>
           </ul>
         </div>
+        {% endif %}
 
-        <div class="track-card">
-          <h6><i class="bi bi-clock-history me-1"></i>Historial de actividad</h6>
+        {# Historial — siempre visible #}
+        <div class="ilus-card">
+          <h6><i class="bi bi-clock-history"></i>Historial de actividad</h6>
           {% if logs %}
-          <div class="timeline-wrap">
+          <div class="timeline-wrap" id="timelineWrap">
             {% for l in logs %}
             <div class="timeline-item">
               <div class="ti-action">{{ l.action.replace('_',' ').title() }}</div>
@@ -380,23 +798,35 @@
     </div>
   </div>
 
+  {# ──────── FOOTER ──────── #}
   <footer class="footer">
     <picture>
       <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
-      <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+      <img class="logo-foot" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
     </picture>
-    <div class="fw-bold text-white mb-1">ILUS Fitness</div>
-    <div class="small">© Todos los derechos reservados · Página pública de seguimiento</div>
+    <div class="name">ILUS Sport &amp; Health</div>
+    <div class="small">Equipamiento profesional para alto rendimiento</div>
+    <div class="social" aria-label="Redes sociales">
+      <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
+      <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></a>
+      <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email"><i class="bi bi-envelope"></i></a>
+      <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web"><i class="bi bi-globe2"></i></a>
+    </div>
+    <div class="links">
+      <a href="{{ url_for('pickup_public_request') }}">Nueva solicitud</a> ·
+      <a href="https://ilusfitness.com/soporte" target="_blank" rel="noopener">Soporte</a>
+    </div>
+    <div class="small mt-3" style="color:#4b5563">© {{ "now"|chile_fmt('%Y') if 'chile_fmt' in (config.filters or {}) else '2026' }} ILUS Sport &amp; Health · Página pública de seguimiento</div>
   </footer>
 
-  {# ── Modales: contraproposición / rechazo ─────── #}
-  <div class="modal fade" id="counterModal" tabindex="-1">
-    <div class="modal-dialog">
+  {# ──────── MODAL: contraproposición ──────── #}
+  <div class="modal fade" id="counterModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
       <form method="post" class="modal-content">
         <input type="hidden" name="action" value="counter">
         <div class="modal-header bg-dark text-white">
           <h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Proponer otra fecha</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body row g-2">
           <div class="col-12">
@@ -424,13 +854,14 @@
     </div>
   </div>
 
-  <div class="modal fade" id="rejectModal" tabindex="-1">
-    <div class="modal-dialog">
+  {# ──────── MODAL: rechazo ──────── #}
+  <div class="modal fade" id="rejectModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
       <form method="post" class="modal-content">
         <input type="hidden" name="action" value="reject">
         <div class="modal-header bg-dark text-white">
           <h5 class="modal-title"><i class="bi bi-x-circle me-2"></i>No puedo asistir</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body">
           <label class="form-label small fw-bold">Motivo</label>
@@ -445,5 +876,141 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+  // ════════════════════════════════════════════════════════════════
+  //  TRACKING LIVE — Daniel mayo 2026
+  //  - Anima el progreso del stepper al cargar.
+  //  - Polling cada 30s al endpoint /retiros/api/seguimiento/<token>
+  //  - Si cambia el estado: refresca la página (sin parpadeo brusco).
+  //  - Rating en post-retirada (UI only — no persiste todavía).
+  // ════════════════════════════════════════════════════════════════
+  (function(){
+    'use strict';
+
+    const PUBLIC_TOKEN = "{{ req.public_token }}";
+    const POLL_URL    = "{{ url_for('pickup_public_tracking_status', token=req.public_token) }}";
+    const POLL_INTERVAL = 30000; // 30s
+    const CURRENT_STATUS = "{{ req.status }}";
+
+    // ── 1) Animar stepper-fill al cargar ────────────────────────
+    function animateStepperFill() {
+      const stepper = document.getElementById('stepperRoot');
+      const fill    = document.getElementById('stepperFill');
+      if (!stepper || !fill) return;
+      const idx = parseInt(stepper.dataset.idx, 10);
+      // 5 nodos → 4 segmentos. ancho relativo al área entre nodos.
+      // Mapeo: idx 0=0%, 1=25%, 2=50%, 3=75%, 4=100%, -1=15% (estados especiales)
+      let pct = 0;
+      if (idx === -1)      pct = 18;
+      else if (idx >= 4)   pct = 100;
+      else                 pct = (idx / 4) * 100;
+      // Si idx === activo (no done), llegamos justo a su nodo, pero la mitad
+      // del segmento corre con rojo: lo hacemos con el gradiente del fill.
+      // El ancho real entre nodos: usamos width relativo al "espacio entre primero y último nodo"
+      requestAnimationFrame(() => {
+        fill.style.width = `calc(${pct}% * 0.84)`;  // 84% del ancho para alinear con los círculos
+      });
+    }
+
+    // ── 2) Polling silencioso del estado ────────────────────────
+    let pollTimer = null;
+    let pollFailures = 0;
+
+    function startPolling() {
+      // Si el estado es terminal, no polleamos
+      const terminales = ['retirada','cerrada','rechazada','fallida'];
+      if (terminales.indexOf(CURRENT_STATUS) !== -1) {
+        const lb = document.getElementById('liveBadge');
+        if (lb) { lb.innerHTML = '<i class="bi bi-archive"></i> ARCHIVADO'; lb.style.background='rgba(156,163,175,.15)'; lb.style.borderColor='rgba(156,163,175,.3)'; lb.style.color='#9ca3af'; }
+        return;
+      }
+      pollTimer = setInterval(checkStatus, POLL_INTERVAL);
+    }
+
+    async function checkStatus() {
+      if (document.hidden) return; // No malgastar si la pestaña está oculta
+      try {
+        const resp = await fetch(POLL_URL, { credentials: 'same-origin', cache: 'no-store' });
+        if (!resp.ok) { pollFailures++; return; }
+        const data = await resp.json();
+        pollFailures = 0;
+        if (data && data.status && data.status !== CURRENT_STATUS) {
+          // El estado cambió — recargar con un fade-out suave
+          showStatusChangeAlert(data.status_label || data.status);
+          setTimeout(() => { window.location.reload(); }, 1400);
+        }
+      } catch (e) {
+        pollFailures++;
+        // Tras 5 fallos seguidos, callar el polling para no martillar
+        if (pollFailures >= 5 && pollTimer) {
+          clearInterval(pollTimer); pollTimer = null;
+          const lb = document.getElementById('liveBadge');
+          if (lb) lb.innerHTML = '<i class="bi bi-wifi-off"></i> SIN CONEXIÓN';
+        }
+      }
+    }
+
+    // ── 3) Banner "estado cambió" antes de recargar ─────────────
+    function showStatusChangeAlert(newLabel) {
+      const overlay = document.createElement('div');
+      overlay.innerHTML = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:9999;backdrop-filter:blur(6px);animation:fadeIn .25s ease-out">
+          <div style="background:#fff;border-radius:16px;padding:28px 32px;text-align:center;max-width:340px;box-shadow:0 22px 48px rgba(0,0,0,.3)">
+            <div style="font-size:2.6rem;color:#dc2626;margin-bottom:8px"><i class="bi bi-arrow-clockwise"></i></div>
+            <div style="font-weight:900;font-size:1.05rem;color:#0a0a0a;margin-bottom:6px">Hay novedades</div>
+            <div style="color:#6b7280;font-size:.92rem">Tu retiro pasó a: <strong style="color:#dc2626">${newLabel}</strong></div>
+            <div style="margin-top:10px;color:#9ca3af;font-size:.78rem">Actualizando…</div>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+    }
+
+    // ── 4) Rating UI (post-retirada) ────────────────────────────
+    function initRating() {
+      const wrap = document.getElementById('ratingStars');
+      if (!wrap) return;
+      const fb = document.getElementById('ratingFeedback');
+      let chosen = 0;
+      const stars = wrap.querySelectorAll('.star');
+      const labels = ['', 'Mala', 'Regular', 'Buena', 'Muy buena', '¡Excelente!'];
+      stars.forEach((s, idx) => {
+        s.addEventListener('mouseenter', () => {
+          stars.forEach((s2, i) => s2.classList.toggle('on', i <= idx));
+          if (fb) fb.textContent = labels[idx+1];
+        });
+        s.addEventListener('mouseleave', () => {
+          stars.forEach((s2, i) => s2.classList.toggle('on', i < chosen));
+          if (fb) fb.textContent = chosen ? `Gracias por tu ${chosen} ★` : 'Toca las estrellas para puntuar';
+        });
+        s.addEventListener('click', () => {
+          chosen = idx + 1;
+          stars.forEach((s2, i) => s2.classList.toggle('on', i < chosen));
+          if (fb) fb.innerHTML = `Gracias por tu ${chosen} ★ <small style="display:block;margin-top:4px;color:#9ca3af">Tu valoración nos ayuda a mejorar</small>`;
+          // Persistencia futura: POST a /retiros/seguimiento/<token>/rating
+          // Por ahora se queda en UI (sin BD) — Daniel decide si quiere persistir.
+        });
+      });
+    }
+
+    // ── 5) BOOT ──────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      animateStepperFill();
+      initRating();
+      // Iniciar polling después de 8s (no martillar al cargar)
+      setTimeout(startPolling, 8000);
+    });
+
+    // Si la pestaña vuelve a foco, pedir status inmediato (UX más fluido)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && pollTimer) checkStatus();
+    });
+
+    // Inyectar @keyframes para el overlay del banner (no está en CSS para no contaminar)
+    const kf = document.createElement('style');
+    kf.textContent = '@keyframes fadeIn{from{opacity:0}to{opacity:1}}';
+    document.head.appendChild(kf);
+  })();
+  </script>
 </body>
 </html>

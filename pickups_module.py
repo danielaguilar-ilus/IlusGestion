@@ -954,6 +954,24 @@ def register_pickup_routes(app, ctx):
                 errors.append(msg_date)
             if not ok_time:
                 errors.append(msg_time)
+
+            # Validación dura del slot: colación, bloqueos manuales, capacidad
+            # paralela. Evita que un usuario bypaseando JS mande un horario
+            # inválido (colación, bloque lleno, fuera de horario, etc).
+            if ok_date and ok_time and data["requested_date"]:
+                try:
+                    ok_slot, motivo_slot = _validar_disponibilidad_slot(
+                        data["requested_date"],
+                        data["requested_time_from"],
+                        data["requested_time_to"],
+                    )
+                    if not ok_slot:
+                        errors.append(motivo_slot or "El horario seleccionado no está disponible.")
+                except Exception as _slot_exc:
+                    # Si la validación falla por error técnico, no bloqueamos
+                    # (defensa en profundidad: ya validamos lo básico arriba).
+                    print(f"[pickup_public_request] validar_slot exc: {_slot_exc}", flush=True)
+
             total_pkg = 1
             packages = [calc_package(0, 0, 0, 0)]
             if not form.get("accept_terms"):
@@ -1296,10 +1314,21 @@ def register_pickup_routes(app, ctx):
                         return redirect(url_for("pickup_public_tracking", token=token))
 
                     log_event(req["id"], "cliente_confirmo", old, "agenda_confirmada", "Cliente acepto propuesta", "cliente", req["contact_name"])
+                    # Email "agenda confirmada" al cliente (con detalles finales)
+                    try:
+                        req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
+                        notify_async(req_after, "confirmed")
+                    except Exception as _e: print(f"[pickups][notify confirm] {_e}")
+                    flash("¡Tu retiro fue confirmado! Te enviamos un correo con todos los detalles.", "success")
             elif action == "reject":
                 reason = request.form.get("reason", "")
                 mysql_execute(f"UPDATE `{REQ}` SET status='rechazada' WHERE id=%s", (req["id"],))
                 log_event(req["id"], "cliente_rechazo", old, "rechazada", reason, "cliente", req["contact_name"])
+                try:
+                    req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
+                    notify_async(req_after, "rejected")
+                except Exception as _e: print(f"[pickups][notify reject] {_e}")
+                flash("Tu solicitud fue cancelada. Te enviamos un correo de confirmación.", "info")
             elif action == "counter":
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
                 okd, md = date_allowed(date, cfg); okt, mt = time_allowed(tf, tt, cfg)
@@ -1311,8 +1340,12 @@ def register_pickup_routes(app, ctx):
                     )
                     mysql_execute(f"UPDATE `{REQ}` SET status='en_revision' WHERE id=%s", (req["id"],))
                     log_event(req["id"], "cliente_contrapropuso", old, "en_revision", f"{date} {tf}-{tt}", "cliente", req["contact_name"])
+                    flash("Tu contrapropuesta fue registrada. Te confirmaremos en breve.", "success")
                 else:
                     flash(md or mt, "warning")
+            # Invalidar cache de polling — el cliente verá su nuevo estado al instante
+            try: _POLL_CACHE.pop(token, None)
+            except Exception: pass
             return redirect(url_for("pickup_public_tracking", token=token))
         packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (req["id"],))
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
@@ -1573,25 +1606,40 @@ def register_pickup_routes(app, ctx):
         # ─── Notificar al cliente cuando ILUS cambia estado desde el calendario ─
         # Antes este endpoint NO mandaba email/WA, dejando al cliente sin saber
         # que su retiro fue confirmado/rechazado/preparado.
+        # Daniel pidió que cada estado dispare email al cliente para que vea
+        # el avance del retiro. La tabla refleja TODOS los estados que disparan
+        # mensaje al cliente (no solo los terminales).
         kind_map = {
-            "agenda_confirmada":   "confirmed",
-            "rechazada":           "rejected",
-            "en_preparacion":      "preparing",
-            "retirada":            "done",
-            "fallida":             "failed",
-            "reagendada":          "rescheduled",
-            "cerrada":             "closed",
+            "agenda_confirmada":      "confirmed",
+            "rechazada":              "rejected",
+            "en_preparacion":         "preparing",
+            "retirada":               "done",
+            "fallida":                "failed",
+            "reagendada":             "rescheduled",
+            "cerrada":                "closed",
             "informacion_incompleta": "info_incompleta",
+            # Nuevos: cuando un operador cambia manualmente a estos también
+            # mandamos email (antes se quedaban en silencio).
+            "en_revision":            "created",   # reusa plantilla de "estamos revisando"
+            "esperando_cliente":      "info_incompleta",
         }
         kind = kind_map.get(new_status)
         if kind and old_status != new_status:
             try:
-                # Re-leer la solicitud actualizada
+                # Re-leer la solicitud actualizada (estado/fechas pueden haber cambiado)
                 req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
-                notify(req_after, kind)
+                # Async: no bloquear la respuesta del operador
+                notify_async(req_after, kind)
             except Exception as _e:
                 # Si falla notificación, no rompemos el cambio de estado
                 print(f"[pickups][notify] error notificando {kind} a retiro #{rid}: {_e}")
+
+        # Invalidar cache de polling para que el cliente vea el cambio en su próximo poll
+        try:
+            tok = req.get("public_token") if isinstance(req, dict) else None
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+        except Exception: pass
 
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
@@ -2362,7 +2410,13 @@ def register_pickup_routes(app, ctx):
         mysql_execute(f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, proposed_time_from=%s, proposed_time_to=%s WHERE id=%s", (date, tf, tt, rid))
         log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada", f"{date} {tf}-{tt}", "interno")
         fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-        notify(fresh, "proposal", proposal={"date": date, "time_from": tf, "time_to": tt, "message": request.form.get("message", "")})
+        # Async: no bloquear el redirect a la ficha mientras se envía email
+        notify_async(fresh, "proposal", proposal={"date": date, "time_from": tf, "time_to": tt, "message": request.form.get("message", "")})
+        # Invalidar cache de polling para que el cliente vea la propuesta al instante
+        try:
+            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
+            if tok_p: _POLL_CACHE.pop(tok_p, None)
+        except Exception: pass
         flash("Propuesta enviada al cliente.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
@@ -2378,7 +2432,7 @@ def register_pickup_routes(app, ctx):
         if not message:
             flash("Selecciona o escribe un mensaje.", "warning")
             return redirect(url_for("pickup_detail", rid=rid))
-        notify(req, "message", custom_message=message)
+        notify_async(req, "message", custom_message=message)
         log_event(rid, "mensaje_enviado", req["status"], req["status"], message, "interno")
         flash("Mensaje enviado por los canales disponibles.", "success")
         return redirect(url_for("pickup_detail", rid=rid))

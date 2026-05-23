@@ -2461,9 +2461,38 @@ def init_pickup_tables():
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_kg_per_slot DECIMAL(10,2) DEFAULT 500.00",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_m3_per_slot DECIMAL(10,3) DEFAULT 5.000",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN max_picks_per_day INT DEFAULT 30",
+                # Nuevos (mayo 2026): capacidad paralela + buffer cierre
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN parallel_capacity INT DEFAULT 2 COMMENT 'Retiros simultaneos por bloque'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN buffer_cierre_min INT DEFAULT 30 COMMENT 'Minutos buffer antes de close_time'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
+            # Re-baseline (idempotente): los registros viejos podían tener
+            # slot_minutes=60 (modelo legacy). El calendario público nuevo
+            # asume bloques de 30 min. Solo actualizamos si está en 60
+            # (no tocamos valores custom no-estándar).
+            try:
+                cur.execute(
+                    f"UPDATE `{PICKUP_SETTINGS_TABLE}` SET slot_minutes=30 "
+                    f"WHERE slot_minutes=60 OR slot_minutes IS NULL"
+                )
+            except Exception:
+                pass
+            # parallel_capacity NULL → 2 (default), buffer_cierre NULL → 30
+            try:
+                cur.execute(
+                    f"UPDATE `{PICKUP_SETTINGS_TABLE}` SET parallel_capacity=2 "
+                    f"WHERE parallel_capacity IS NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    f"UPDATE `{PICKUP_SETTINGS_TABLE}` SET buffer_cierre_min=30 "
+                    f"WHERE buffer_cierre_min IS NULL"
+                )
+            except Exception:
+                pass
 
             # Migración: workflow de validación de documentación (proceso interno)
             # Permite que ILUS valide los datos del cliente antes de proponer fecha.
@@ -16426,6 +16455,105 @@ def _mantenciones_cron_run_once(slot_str=""):
     except Exception as e:
         metricas["errores"].append(f"paso_email: {e}")
 
+    # ── Paso 4: RECORDATORIOS 24h DE RETIROS ──────────────────────────────
+    # Daniel pidió que el cron de mantenciones también dispare los
+    # recordatorios de retiros confirmados para mañana. Reusamos esta
+    # corrida diaria (06:00 CL) para que no haya un cron extra.
+    metricas["pickup_reminders_sent"]    = 0
+    metricas["pickup_reminders_omitted"] = 0
+    try:
+        from datetime import date as _date_p
+        from pymysql.err import Error as _PyMyErr  # noqa: F401  (importable check)
+    except Exception:
+        pass
+    try:
+        pick_rows = mysql_fetchall(
+            """SELECT * FROM pickup_requests
+               WHERE status='agenda_confirmada'
+                 AND DATE(confirmed_date) = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+                 AND reminder_24h_sent IS NULL"""
+        ) or []
+        print(f"[mant-cron] retiros con recordatorio 24h pendientes: {len(pick_rows)}",
+              flush=True)
+        # Importamos notify desde el módulo retiros (registrado en app_context)
+        # de forma robusta: si el módulo no exportó el helper, hacemos el
+        # send mínimo aquí mismo usando _ilus_email_html.
+        from pickups_module import PICKUP_STATUS  # no rompe nada
+        for r in pick_rows:
+            try:
+                rd = dict(r)
+                # Inline notify minimalista — reusa la plantilla recordatorio_24h
+                tpl = mysql_fetchone(
+                    "SELECT asunto, cuerpo FROM comm_templates "
+                    "WHERE modulo='retiros' AND estado='recordatorio_24h' "
+                    "  AND canal='email' LIMIT 1"
+                )
+                if not tpl:
+                    metricas["pickup_reminders_omitted"] += 1
+                    continue
+                # Construir variables locales (mismo set que _render_pickup_vars)
+                follow_url = ""
+                try:
+                    follow_url = url_for("pickup_public_tracking",
+                                         token=rd["public_token"], _external=True)
+                except Exception: pass
+                tf = str(rd.get("confirmed_time_from") or "")[:5]
+                tt = str(rd.get("confirmed_time_to") or "")[:5]
+                # Settings de bodega (defaults sensatos para evitar romper)
+                wcfg = mysql_fetchone("SELECT * FROM pickup_settings WHERE id=1") or {}
+                vars_ = {
+                    "code":              rd.get("code") or "",
+                    "cliente":           rd.get("customer_name") or "",
+                    "persona_retira":    rd.get("pickup_person_name") or rd.get("contact_name") or "",
+                    "documento":         f"{(rd.get('document_type') or '').upper()} {rd.get('document_number') or ''}".strip(),
+                    "fecha_solicitada":  str(rd.get("requested_date") or ""),
+                    "fecha_propuesta":   str(rd.get("proposed_date") or ""),
+                    "fecha_confirmada":  str(rd.get("confirmed_date") or ""),
+                    "horario":           f"{tf} - {tt}" if tf else "",
+                    "n_bultos":          str(rd.get("total_packages") or 0),
+                    "kg":                str(rd.get("total_weight_kg") or 0),
+                    "m3":                str(rd.get("total_volume_m3") or 0),
+                    "warehouse_name":    wcfg.get("warehouse_name") or "Bodega ILUS Quilicura",
+                    "warehouse_addr":    wcfg.get("warehouse_addr") or "",
+                    "link_seguimiento":  follow_url,
+                }
+                asunto = tpl.get("asunto") or "Recordatorio: tu retiro es mañana"
+                cuerpo = tpl.get("cuerpo") or ""
+                for k, v in vars_.items():
+                    asunto = asunto.replace("{{" + k + "}}", str(v)).replace("{{ " + k + " }}", str(v))
+                    cuerpo = cuerpo.replace("{{" + k + "}}", str(v)).replace("{{ " + k + " }}", str(v))
+                # Envoltorio HTML ILUS
+                html = _ilus_email_html(
+                    titulo=asunto,
+                    subtitulo=f"{rd.get('code') or ''} - {vars_['documento']}",
+                    saludo=vars_["persona_retira"],
+                    parrafos=[cuerpo],
+                    btn_primario_txt="Ver detalle del retiro",
+                    btn_primario_url=follow_url,
+                    btn_secundario_txt="Cómo llegar",
+                    btn_secundario_url=(wcfg.get("maps_url") or ""),
+                )
+                sent = _send_ilus_email(
+                    rd.get("contact_email"),
+                    _brand_subject(asunto),
+                    html,
+                    evento="pickup_reminder_24h",
+                    modulo="retiros",
+                )
+                if sent:
+                    mysql_execute(
+                        "UPDATE pickup_requests SET reminder_24h_sent=NOW() WHERE id=%s",
+                        (rd["id"],),
+                    )
+                    metricas["pickup_reminders_sent"] += 1
+                else:
+                    metricas["pickup_reminders_omitted"] += 1
+            except Exception as _e_pr:
+                metricas["pickup_reminders_omitted"] += 1
+                metricas["errores"].append(f"pickup_recordatorio {dict(r).get('code','?')}: {_e_pr}")
+    except Exception as e:
+        metricas["errores"].append(f"paso_pickup_reminders: {e}")
+
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
         f"[mant-cron] OK slot={slot_str or 'manual'} "
@@ -16437,6 +16565,7 @@ def _mantenciones_cron_run_once(slot_str=""):
         f"notif_garantia={metricas['notif_garantia_por_vencer']} "
         f"notif_contrato={metricas['notif_contrato_por_vencer']} "
         f"emails={metricas['emails_enviados']} dry_run={metricas['emails_dry_run']} "
+        f"pickup_24h={metricas.get('pickup_reminders_sent',0)}+{metricas.get('pickup_reminders_omitted',0)} "
         f"tiempo={metricas['tiempo_ms']}ms "
         f"errores={len(metricas['errores'])}",
         flush=True
@@ -19480,108 +19609,404 @@ def init_comunicaciones_tables():
                         (estado_key, '', wa_body)
                     )
 
-            # ── PLANTILLAS DE RETIROS (siembra idempotente: solo si no existen) ──
+            # ══════════════════════════════════════════════════════════════
+            # PLANTILLAS DE RETIROS — diseño premium ILUS (2026-05-23)
+            # ══════════════════════════════════════════════════════════════
+            # Daniel pidió un look premium tipo SaaS B2B. Cada plantilla:
+            #  - Hero visual con el código de retiro y badge de estado
+            #  - Card de datos clave (cliente, doc, persona retira, fecha, hora)
+            #  - Estado visual con icono y color contextual
+            #  - CTA grande rojo ILUS → link al tracking público
+            #  - Línea de pasos para que sepan dónde están en el flujo
+            #
+            # Estrategia de upgrade: UPSERT (ON DUPLICATE KEY UPDATE). Cada
+            # despliegue refresca el contenido de las plantillas oficiales
+            # de retiros con el diseño más reciente. Daniel sigue pudiendo
+            # editar a mano en /comunicaciones — el upsert solo corre en
+            # arranque si la versión guardada es la "legacy v0".
+            #
             # Variables disponibles: {{code}}, {{cliente}}, {{persona_retira}},
             # {{fecha_solicitada}}, {{fecha_propuesta}}, {{fecha_confirmada}},
             # {{horario}}, {{documento}}, {{n_bultos}}, {{kg}}, {{m3}},
             # {{link_seguimiento}}, {{warehouse_name}}, {{warehouse_addr}}
+            # ══════════════════════════════════════════════════════════════
+
+            def _ret_hero_block(badge_txt, badge_color, badge_bg, titulo, subt):
+                """Hero visual del email retiros: banda colorada con icono + título."""
+                return (
+                    f'<table cellpadding="0" cellspacing="0" width="100%" '
+                    f'style="background:#0a0a0a;border-radius:10px;overflow:hidden;margin:0 0 20px">'
+                    f'<tr><td style="padding:24px 26px;text-align:center">'
+                    f'<div style="display:inline-block;background:{badge_bg};color:{badge_color};'
+                    f'font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;'
+                    f'padding:6px 14px;border-radius:50px;margin-bottom:14px">{badge_txt}</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:13px;'
+                    f'letter-spacing:.06em;text-transform:uppercase;font-weight:700;opacity:.6;margin-bottom:4px">Orden de retiro</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:32px;'
+                    f'font-weight:900;letter-spacing:.02em;margin-bottom:6px">{{{{code}}}}</div>'
+                    f'<div style="color:#cbd5e1;font-size:14px;font-weight:600;line-height:1.45">{titulo}</div>'
+                    f'<div style="color:#9ca3af;font-size:12px;margin-top:6px">{subt}</div>'
+                    f'</td></tr></table>'
+                )
+
+            def _ret_info_card(rows_html):
+                """Card blanca con datos clave."""
+                return (
+                    '<table cellpadding="0" cellspacing="0" width="100%" '
+                    'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;'
+                    'margin:0 0 18px">'
+                    f'<tr><td style="padding:18px 22px">{rows_html}</td></tr>'
+                    '</table>'
+                )
+
+            def _ret_field(lbl, val, accent=False):
+                """Fila lbl + val dentro del info card."""
+                val_style = "color:#dc2626;font-weight:900" if accent else "color:#0a0a0a;font-weight:700"
+                return (
+                    f'<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:10px">'
+                    f'<tr>'
+                    f'<td style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.07em;font-weight:700;width:40%;padding:4px 0">{lbl}</td>'
+                    f'<td style="font-size:14px;{val_style};padding:4px 0">{val}</td>'
+                    f'</tr></table>'
+                )
+
+            def _ret_cta(url_var, label):
+                """Botón rojo CTA hacia el tracking."""
+                return (
+                    f'<table cellpadding="0" cellspacing="0" width="100%" style="margin:24px 0 8px">'
+                    f'<tr><td align="center">'
+                    f'<a href="{{{{{url_var}}}}}" '
+                    f'style="display:inline-block;background:#dc2626;color:#ffffff;'
+                    f'padding:14px 32px;text-decoration:none;font-size:14px;font-weight:800;'
+                    f'letter-spacing:.04em;border-radius:8px;box-shadow:0 4px 14px rgba(220,38,38,.30)">'
+                    f'{label} →</a>'
+                    f'</td></tr></table>'
+                )
+
+            def _ret_stepper(active_idx):
+                """Mini-stepper visual de 5 nodos (email-safe, tabla)."""
+                pasos = [
+                    ("📩", "Solicitada"),
+                    ("🔎", "Revisada"),
+                    ("📅", "Confirmada"),
+                    ("📦", "Preparando"),
+                    ("✓", "Retirada"),
+                ]
+                tds = []
+                for i, (icon, label) in enumerate(pasos):
+                    if i < active_idx:
+                        bg, fg, ring = "#16a34a", "#ffffff", "#16a34a"
+                    elif i == active_idx:
+                        bg, fg, ring = "#dc2626", "#ffffff", "#dc2626"
+                    else:
+                        bg, fg, ring = "#f3f4f6", "#9ca3af", "#e5e7eb"
+                    color_lbl = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
+                    weight_lbl = "800" if i == active_idx else "600"
+                    tds.append(
+                        f'<td align="center" valign="top" style="width:20%;padding:0 4px">'
+                        f'<div style="display:inline-block;width:36px;height:36px;line-height:36px;'
+                        f'border-radius:18px;background:{bg};color:{fg};font-size:15px;font-weight:900;'
+                        f'border:2px solid {ring}">{icon}</div>'
+                        f'<div style="font-size:10px;color:{color_lbl};text-transform:uppercase;'
+                        f'font-weight:{weight_lbl};letter-spacing:.05em;margin-top:6px">{label}</div>'
+                        f'</td>'
+                    )
+                return (
+                    '<table cellpadding="0" cellspacing="0" width="100%" '
+                    'style="background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;'
+                    'padding:14px 8px;margin:0 0 18px"><tr>'
+                    f'{"".join(tds)}'
+                    '</tr></table>'
+                )
+
+            # Datos clave reutilizables (siempre presentes en el email)
+            _DATOS_BASE = (
+                _ret_field("Cliente",      "{{cliente}}") +
+                _ret_field("Documento",    "{{documento}}") +
+                _ret_field("Quien retira", "{{persona_retira}}")
+            )
+
+            _DATOS_AGENDA_CONF = (
+                _DATOS_BASE +
+                _ret_field("Fecha",        "{{fecha_confirmada}}", accent=True) +
+                _ret_field("Horario",      "{{horario}}", accent=True) +
+                _ret_field("Bodega",       "{{warehouse_name}}") +
+                _ret_field("Dirección",    "{{warehouse_addr}}")
+            )
+
+            _DATOS_AGENDA_PROP = (
+                _DATOS_BASE +
+                _ret_field("Fecha propuesta", "{{fecha_propuesta}}", accent=True) +
+                _ret_field("Horario propuesto","{{horario}}", accent=True) +
+                _ret_field("Bodega",       "{{warehouse_name}}")
+            )
+
+            _DATOS_AGENDA_SOLIC = (
+                _DATOS_BASE +
+                _ret_field("Fecha solicitada", "{{fecha_solicitada}}") +
+                _ret_field("Horario",      "{{horario}}") +
+                _ret_field("Bodega",       "{{warehouse_name}}")
+            )
+
             _RETIRO_TPL = [
-                # (estado, canal, asunto, cuerpo)
+                # ─── 1) Solicitud recibida ─────────────────────────────
                 ('solicitud_recibida', 'email',
-                 '✓ Recibimos tu solicitud de retiro {{code}}',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Recibimos tu solicitud de retiro <strong>{{code}}</strong> para el {{fecha_solicitada}} entre {{horario}}.</p>'
-                 '<p>Estamos validando la disponibilidad y te confirmaremos en menos de 2 horas hábiles.</p>'
-                 '<p>Puedes revisar el estado en cualquier momento aquí: <a href="{{link_seguimiento}}">Ver mi retiro</a></p>'
-                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                 'Recibimos tu solicitud de retiro {{code}}',
+                 _ret_hero_block(
+                     "Solicitud recibida", "#dbeafe", "#1e3a8a",
+                     "Estamos validando tu retiro",
+                     "Hola {{persona_retira}}, te avisaremos cuando esté confirmado"
+                 ) +
+                 _ret_stepper(0) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Recibimos tu solicitud y nuestro equipo está validando documentación e identidad. '
+                 'Te avisaremos por email apenas tengamos novedades — generalmente, en menos de '
+                 '<strong>2 horas hábiles</strong>.</p>' +
+                 _ret_info_card(_DATOS_AGENDA_SOLIC) +
+                 _ret_cta("link_seguimiento", "Ver mi retiro en vivo") +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.5;margin:18px 0 0;text-align:center">'
+                 'Guarda este enlace o este correo. Te servirá para seguir el avance en tiempo real.</p>'),
                 ('solicitud_recibida', 'whatsapp',
                  '',
-                 '🟢 *ILUS* — Recibimos tu solicitud de retiro *{{code}}* para el {{fecha_solicitada}} ({{horario}}). '
+                 '🟢 *ILUS* — Recibimos tu retiro *{{code}}* para el {{fecha_solicitada}} ({{horario}}). '
                  'Te confirmaremos pronto. Seguimiento: {{link_seguimiento}}'),
 
+                # ─── 2) Propuesta enviada (esperando OK del cliente) ────
                 ('propuesta_enviada', 'email',
-                 '📅 ILUS te propone una fecha para el retiro {{code}}',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Para tu retiro <strong>{{code}}</strong> ({{documento}} de {{cliente}}), '
-                 'ILUS propone la siguiente fecha:</p>'
-                 '<p style="background:#fff7ed;padding:14px;border-left:4px solid #fb923c;border-radius:6px">'
-                 '<strong>📆 {{fecha_propuesta}}</strong> · ⏰ {{horario}}</p>'
-                 '<p>Por favor confirma o propone otra fecha en este enlace:<br>'
-                 '<a href="{{link_seguimiento}}" style="background:#e60000;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold">Responder propuesta</a></p>'
-                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                 'ILUS propone fecha para tu retiro {{code}}',
+                 _ret_hero_block(
+                     "Propuesta de fecha", "#fed7aa", "#9a3412",
+                     "Acción requerida: confirma tu fecha",
+                     "Tienes tres opciones: aceptar, proponer otra o rechazar"
+                 ) +
+                 _ret_stepper(1) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, tu retiro fue validado. '
+                 'Te proponemos la siguiente fecha y horario:</p>' +
+                 _ret_info_card(_DATOS_AGENDA_PROP) +
+                 '<table cellpadding="0" cellspacing="0" width="100%" '
+                 'style="background:#fff7ed;border:2px solid #fb923c;border-radius:10px;'
+                 'margin:18px 0;padding:14px 18px">'
+                 '<tr><td style="font-size:13px;color:#9a3412;line-height:1.55">'
+                 '⏱ <strong>Importante:</strong> tu retiro queda <em>reservado</em> sólo cuando confirmes. '
+                 'Otros clientes pueden tomar este horario si demoras.</td></tr></table>' +
+                 _ret_cta("link_seguimiento", "Responder la propuesta") +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.55;margin:16px 0 0">'
+                 'En el enlace verás 3 botones: <strong style="color:#16a34a">Confirmar</strong>, '
+                 '<strong style="color:#0a0a0a">Proponer otra fecha</strong> o '
+                 '<strong style="color:#dc2626">No puedo</strong>.</p>'),
                 ('propuesta_enviada', 'whatsapp',
                  '',
-                 '📅 *ILUS* — Para tu retiro *{{code}}* proponemos: {{fecha_propuesta}} ({{horario}}). '
+                 '📅 *ILUS* — Para *{{code}}* proponemos: {{fecha_propuesta}} ({{horario}}). '
                  'Confirma aquí: {{link_seguimiento}}'),
 
+                # ─── 3) Agenda confirmada ──────────────────────────────
                 ('agenda_confirmada', 'email',
-                 '✅ Retiro {{code}} confirmado para el {{fecha_confirmada}}',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Tu retiro <strong>{{code}}</strong> está confirmado:</p>'
-                 '<p style="background:#dcfce7;padding:14px;border-left:4px solid #22c55e;border-radius:6px">'
-                 '<strong>📆 {{fecha_confirmada}}</strong> · ⏰ {{horario}}<br>'
-                 '<i>📍 {{warehouse_name}}</i><br>'
-                 '<small>{{warehouse_addr}}</small></p>'
-                 '<p><strong>Recuerda llevar:</strong></p>'
-                 '<ul><li>Tu cédula de identidad (debe coincidir con la persona autorizada)</li>'
-                 '<li>Vehículo apto para {{n_bultos}} bulto(s) ({{kg}} kg / {{m3}} m³)</li></ul>'
-                 '<p>Seguimiento: <a href="{{link_seguimiento}}">{{link_seguimiento}}</a></p>'
-                 '<p>Te esperamos.<br>Equipo ILUS</p>'),
+                 'Retiro {{code}} confirmado para {{fecha_confirmada}}',
+                 _ret_hero_block(
+                     "Cita confirmada", "#dcfce7", "#14532d",
+                     "Tu retiro está listo · {{fecha_confirmada}}",
+                     "Guarda este correo — sirve como comprobante"
+                 ) +
+                 _ret_stepper(2) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, tu cita quedó <strong style="color:#16a34a">CONFIRMADA</strong>. '
+                 'Te esperamos puntual en bodega.</p>' +
+                 _ret_info_card(_DATOS_AGENDA_CONF) +
+                 '<table cellpadding="0" cellspacing="0" width="100%" '
+                 'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
+                 'margin:18px 0;padding:14px 18px">'
+                 '<tr><td style="font-size:13px;color:#78350f;line-height:1.6">'
+                 '<strong>Trae contigo:</strong><br>'
+                 '✓ Cédula de identidad (debe coincidir con quien retira)<br>'
+                 '✓ Vehículo apto para {{n_bultos}} bulto(s) — {{kg}} kg / {{m3}} m³<br>'
+                 '✓ Este correo o el código <strong>{{code}}</strong></td></tr></table>' +
+                 _ret_cta("link_seguimiento", "Ver detalle del retiro") +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
+                 '¿Necesitas reagendar o tienes una duda? Responde este correo y te ayudamos.</p>'),
                 ('agenda_confirmada', 'whatsapp',
                  '',
-                 '✅ *ILUS* — Retiro *{{code}}* confirmado: {{fecha_confirmada}} ({{horario}}). '
-                 'Lugar: {{warehouse_name}}. Lleva tu carnet. Seguimiento: {{link_seguimiento}}'),
+                 '✅ *ILUS* — Retiro *{{code}}* CONFIRMADO: {{fecha_confirmada}} ({{horario}}). '
+                 'Lugar: {{warehouse_name}}. Lleva carnet. Seguimiento: {{link_seguimiento}}'),
 
+                # ─── 4) En preparación (bodega armando) ─────────────────
                 ('en_preparacion', 'email',
-                 '📦 Tu retiro {{code}} está siendo preparado',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Bodega ya está preparando tu retiro <strong>{{code}}</strong> para el {{fecha_confirmada}} ({{horario}}).</p>'
-                 '<p>Cuando llegues, presenta tu cédula al ingreso. Te esperamos a tiempo.</p>'
-                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                 'Tu retiro {{code}} está siendo preparado',
+                 _ret_hero_block(
+                     "Bodega trabajando", "#e0e7ff", "#312e81",
+                     "Preparando tus productos · {{fecha_confirmada}}",
+                     "Faltan pocas horas para que vengas a retirar"
+                 ) +
+                 _ret_stepper(3) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, nuestro equipo de bodega ya está '
+                 'preparando tu retiro <strong>{{code}}</strong>. Cuando llegues, '
+                 'todo estará listo para que te lleves los productos sin esperas.</p>' +
+                 _ret_info_card(_DATOS_AGENDA_CONF) +
+                 _ret_cta("link_seguimiento", "Ver estado en vivo") +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
+                 'Recuerda llegar dentro del horario confirmado y presentar tu cédula al ingreso.</p>'),
                 ('en_preparacion', 'whatsapp',
                  '',
-                 '📦 *ILUS* — Bodega ya está preparando tu retiro *{{code}}* para mañana ({{horario}}). Trae tu carnet.'),
+                 '📦 *ILUS* — Bodega está preparando tu retiro *{{code}}* ({{horario}}). Te esperamos.'),
 
+                # ─── 5) Retirada (completo) ────────────────────────────
                 ('retirada', 'email',
-                 '✅ Retiro {{code}} completado — gracias',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Confirmamos la entrega de tu retiro <strong>{{code}}</strong>. '
-                 'Esperamos que disfrutes tu equipo ILUS.</p>'
-                 '<p>Si necesitas asesoría o un service post-venta, escríbenos. Estamos para ayudarte.</p>'
-                 '<p>¡Gracias por confiar en ILUS!<br>Equipo ILUS</p>'),
+                 'Retiro {{code}} completado · Gracias por confiar en ILUS',
+                 _ret_hero_block(
+                     "Retiro completado", "#dcfce7", "#14532d",
+                     "Gracias {{persona_retira}}",
+                     "Esperamos que disfrutes tu equipo ILUS"
+                 ) +
+                 _ret_stepper(4) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Confirmamos la entrega exitosa de tu retiro <strong>{{code}}</strong>. '
+                 'Todo el equipo ILUS te agradece la confianza.</p>' +
+                 _ret_info_card(
+                     _DATOS_BASE +
+                     _ret_field("Documento",        "{{documento}}") +
+                     _ret_field("Retirado el",      "{{fecha_confirmada}}") +
+                     _ret_field("Bodega",           "{{warehouse_name}}")
+                 ) +
+                 '<table cellpadding="0" cellspacing="0" width="100%" '
+                 'style="background:#0a0a0a;border-radius:10px;margin:20px 0;padding:22px;text-align:center">'
+                 '<tr><td>'
+                 '<div style="color:#dc2626;font-size:11px;font-weight:800;text-transform:uppercase;'
+                 'letter-spacing:.1em;margin-bottom:8px">¿Cómo fue la atención?</div>'
+                 '<div style="color:#ffffff;font-size:16px;font-weight:700;margin-bottom:14px">'
+                 'Tu feedback nos ayuda a mejorar</div>'
+                 '<a href="{{link_seguimiento}}" '
+                 'style="display:inline-block;background:#dc2626;color:#ffffff;padding:12px 28px;'
+                 'text-decoration:none;font-size:13px;font-weight:800;letter-spacing:.04em;border-radius:8px">'
+                 'Calificar mi experiencia ★</a>'
+                 '</td></tr></table>' +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.55;text-align:center;margin:18px 0 0">'
+                 '¿Necesitas asesoría o un service post-venta? Responde este correo y te ayudamos.</p>'),
                 ('retirada', 'whatsapp',
                  '',
-                 '✅ *ILUS* — Retiro *{{code}}* completado. ¡Gracias por confiar en nosotros! 💪'),
+                 '✅ *ILUS* — Retiro *{{code}}* completado. ¡Gracias por confiar en nosotros!'),
 
+                # ─── 6) Información incompleta ─────────────────────────
+                ('informacion_incompleta', 'email',
+                 'Faltan datos para tu retiro {{code}}',
+                 _ret_hero_block(
+                     "Información incompleta", "#fef3c7", "#78350f",
+                     "Necesitamos completar algunos datos",
+                     "Revisa el detalle adentro y vuelve a enviarnos"
+                 ) +
+                 _ret_stepper(1) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, para avanzar con tu retiro '
+                 '<strong>{{code}}</strong> necesitamos completar información del documento, '
+                 'contacto o persona autorizada.</p>' +
+                 _ret_info_card(_DATOS_AGENDA_SOLIC) +
+                 '<table cellpadding="0" cellspacing="0" width="100%" '
+                 'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
+                 'margin:18px 0;padding:14px 18px">'
+                 '<tr><td style="font-size:13px;color:#78350f;line-height:1.6">'
+                 'Te contactaremos a la brevedad para confirmar qué falta. También puedes '
+                 'responder este correo con cualquier dato que te haya faltado.</td></tr></table>' +
+                 _ret_cta("link_seguimiento", "Ver mi solicitud")),
+                ('informacion_incompleta', 'whatsapp',
+                 '',
+                 '⚠ *ILUS* — Para tu retiro *{{code}}* necesitamos completar datos. '
+                 'Detalle: {{link_seguimiento}}'),
+
+                # ─── 7) Rechazada ───────────────────────────────────────
                 ('rechazada', 'email',
                  'Solicitud de retiro {{code}} cancelada',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Tu solicitud de retiro <strong>{{code}}</strong> fue cancelada. '
-                 'Si fue un error o quieres reagendar, escríbenos respondiendo este correo.</p>'
-                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                 _ret_hero_block(
+                     "Solicitud cancelada", "#fee2e2", "#7f1d1d",
+                     "Tu retiro {{code}} fue cancelado",
+                     "Si fue un error, escríbenos respondiendo este correo"
+                 ) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, tu solicitud de retiro '
+                 '<strong>{{code}}</strong> fue cancelada. Si fue un error o quieres reagendar, '
+                 'escríbenos respondiendo este correo y te ayudamos a la brevedad.</p>' +
+                 _ret_info_card(_DATOS_BASE) +
+                 _ret_cta("link_seguimiento", "Ver detalle")),
                 ('rechazada', 'whatsapp',
                  '',
-                 '⚠ *ILUS* — Tu solicitud de retiro *{{code}}* fue cancelada. Si fue error, escríbenos.'),
+                 '⚠ *ILUS* — Tu retiro *{{code}}* fue cancelado. Si fue error, escríbenos.'),
 
+                # ─── 8) Reagendada ──────────────────────────────────────
                 ('reagendada', 'email',
-                 '🔄 Retiro {{code}} reagendado',
-                 '<p>Hola <strong>{{persona_retira}}</strong>,</p>'
-                 '<p>Tu retiro <strong>{{code}}</strong> ha sido reagendado.</p>'
-                 '<p>Nueva fecha propuesta: <strong>{{fecha_propuesta}}</strong> · {{horario}}</p>'
-                 '<p>Confirma aquí: <a href="{{link_seguimiento}}">{{link_seguimiento}}</a></p>'
-                 '<p>Saludos,<br>Equipo ILUS</p>'),
+                 'Tu retiro {{code}} fue reagendado',
+                 _ret_hero_block(
+                     "Reagendado", "#fef3c7", "#78350f",
+                     "Te enviamos una nueva fecha · revisa abajo",
+                     "Confirma la nueva propuesta para asegurar tu cupo"
+                 ) +
+                 _ret_stepper(1) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, tu retiro <strong>{{code}}</strong> '
+                 'fue reagendado. Estos son los nuevos datos:</p>' +
+                 _ret_info_card(_DATOS_AGENDA_PROP) +
+                 _ret_cta("link_seguimiento", "Responder al reagendamiento")),
                 ('reagendada', 'whatsapp',
                  '',
-                 '🔄 *ILUS* — Retiro *{{code}}* reagendado para {{fecha_propuesta}} ({{horario}}). Confirma: {{link_seguimiento}}'),
+                 '🔄 *ILUS* — Retiro *{{code}}* reagendado para {{fecha_propuesta}} ({{horario}}). '
+                 'Confirma: {{link_seguimiento}}'),
+
+                # ─── 9) Recordatorio 24h antes ─────────────────────────
+                ('recordatorio_24h', 'email',
+                 'Mañana retiras tus productos · {{code}}',
+                 _ret_hero_block(
+                     "Mañana es tu retiro", "#fed7aa", "#9a3412",
+                     "Te esperamos en {{warehouse_name}}",
+                     "{{fecha_confirmada}} · {{horario}}"
+                 ) +
+                 _ret_stepper(2) +
+                 '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                 'Hola <strong>{{persona_retira}}</strong>, te recordamos que '
+                 '<strong>mañana</strong> retiras tus productos en ILUS. '
+                 'Aquí van los datos finales para que llegues sin problemas:</p>' +
+                 _ret_info_card(_DATOS_AGENDA_CONF) +
+                 '<table cellpadding="0" cellspacing="0" width="100%" '
+                 'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
+                 'margin:18px 0;padding:14px 18px">'
+                 '<tr><td style="font-size:13px;color:#78350f;line-height:1.6">'
+                 '<strong>Antes de salir:</strong><br>'
+                 '✓ Lleva tu cédula de identidad<br>'
+                 '✓ Confirma vehículo apto para {{n_bultos}} bulto(s) · {{kg}} kg / {{m3}} m³<br>'
+                 '✓ Llega dentro del horario confirmado</td></tr></table>' +
+                 _ret_cta("link_seguimiento", "Ver detalle del retiro") +
+                 '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
+                 '¿Imprevistos? Responde este correo o llámanos. Es mejor avisar a no llegar.</p>'),
+                ('recordatorio_24h', 'whatsapp',
+                 '',
+                 '⏰ *ILUS* — MAÑANA retiras *{{code}}* a las {{horario}}. '
+                 'Bodega: {{warehouse_name}}. Lleva carnet. Detalle: {{link_seguimiento}}'),
             ]
+            # UPSERT: crea si no existe; si ya existe, refresca el contenido
+            # con el último diseño. Daniel sigue pudiendo editar desde
+            # /comunicaciones — sólo sobreescribimos en arranque, no en runtime.
+            #
+            # Para no pisar plantillas custom que Daniel haya escrito a mano,
+            # respetamos las que tengan `updated_by` ≠ NULL Y ≠ 'sistema'.
             for _est, _can, _asu, _cue in _RETIRO_TPL:
                 try:
                     cur.execute(
-                        "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
-                        "VALUES ('retiros', %s, %s, %s, %s)",
+                        "INSERT INTO comm_templates (modulo, estado, canal, asunto, cuerpo, updated_by) "
+                        "VALUES ('retiros', %s, %s, %s, %s, 'sistema') "
+                        "ON DUPLICATE KEY UPDATE "
+                        "  asunto = IF(updated_by IS NULL OR updated_by IN ('','sistema'), VALUES(asunto), asunto), "
+                        "  cuerpo = IF(updated_by IS NULL OR updated_by IN ('','sistema'), VALUES(cuerpo), cuerpo), "
+                        "  updated_by = IF(updated_by IS NULL OR updated_by IN ('','sistema'), 'sistema', updated_by)",
                         (_est, _can, _asu, _cue)
                     )
-                except Exception: pass
+                except Exception as _e_upsert:
+                    # Fallback: si la versión MySQL no soporta VALUES() del lado IF,
+                    # caemos al INSERT IGNORE simple para al menos sembrar.
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO comm_templates "
+                            "(modulo, estado, canal, asunto, cuerpo, updated_by) "
+                            "VALUES ('retiros', %s, %s, %s, %s, 'sistema')",
+                            (_est, _can, _asu, _cue)
+                        )
+                    except Exception: pass
 
             # ── PLANTILLAS DE MANTENCIONES (siembra idempotente) ────────────
             # Variables: {{ot}}, {{cliente}}, {{tecnico}}, {{fecha}}, {{horario}},
