@@ -137,9 +137,48 @@
     .req{color:var(--ilus-red);font-weight:900}
     .input-help{font-size:.7rem;color:#6b7280;margin-top:3px}
     .input-error{font-size:.74rem;color:var(--ilus-red);margin-top:3px;font-weight:600;display:none}
-    .field-valid{border-color:#22c55e !important;background:#f0fdf4}
-    .field-invalid{border-color:#dc2626 !important;background:#fef2f2}
+    .input-ok{font-size:.74rem;color:#16a34a;margin-top:3px;font-weight:600;display:none}
+    .field-valid{border-color:#16a34a !important;background:#f0fdf4;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2316a34a'%3E%3Cpath d='M13.485 1.929a.75.75 0 0 1 0 1.06l-7.5 7.5a.75.75 0 0 1-1.06 0L1.515 7.078a.75.75 0 1 1 1.06-1.06l3.388 3.388 6.97-6.97a.75.75 0 0 1 1.061 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:32px !important}
+    .field-invalid{border-color:#dc2626 !important;background:#fef2f2;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23dc2626'%3E%3Cpath d='M4.646 4.646a.75.75 0 0 1 1.06 0L8 6.94l2.293-2.293a.75.75 0 1 1 1.06 1.06L9.06 8l2.293 2.293a.75.75 0 0 1-1.06 1.06L8 9.06l-2.293 2.293a.75.75 0 0 1-1.06-1.06L6.94 8 4.646 5.706a.75.75 0 0 1 0-1.06z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:32px !important}
     .form-control,.form-select{font-size:.92rem;padding:10px 12px}
+
+    /* ────────────────────────────────────────────────────────────────
+       DECLARACIÓN AUTORIZACIÓN TERCERO
+       Panel ámbar que aparece sólo si el RUT del cliente y el RUT
+       de quien retira son distintos. El submit se bloquea hasta que
+       el cliente marque la casilla declarando que autoriza.
+       ──────────────────────────────────────────────────────────────── */
+    .decl-tercero{
+      display:none;
+      background:linear-gradient(135deg,#fff8e1 0%,#fde68a 100%);
+      border:2px solid #f59e0b;border-radius:12px;padding:16px 18px;
+      margin:14px 0 0;position:relative;overflow:hidden;
+      animation:fadeInUp .4s both;
+    }
+    .decl-tercero::before{
+      content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:#f59e0b;
+    }
+    .decl-tercero.show{display:block}
+    .decl-tercero .decl-title{
+      display:flex;align-items:center;gap:8px;font-weight:900;color:#78350f;
+      font-size:.96rem;margin-bottom:6px;
+    }
+    .decl-tercero .decl-body{font-size:.85rem;color:#78350f;line-height:1.55;margin-bottom:10px}
+    .decl-tercero .decl-body strong{color:#7f1d1d}
+    .decl-tercero label{
+      display:flex;align-items:flex-start;gap:10px;cursor:pointer;
+      background:rgba(255,255,255,.65);border:1.5px dashed #b45309;
+      border-radius:8px;padding:10px 12px;margin:0;
+      transition:all .15s;
+    }
+    .decl-tercero label:hover{background:#fff;border-style:solid}
+    .decl-tercero label input[type=checkbox]{
+      flex-shrink:0;width:20px;height:20px;cursor:pointer;margin-top:1px;
+      accent-color:#16a34a;
+    }
+    .decl-tercero label.checked{background:#dcfce7;border-color:#16a34a;border-style:solid}
+    .decl-tercero label.checked .decl-check-text{color:#166534}
+    .decl-check-text{font-size:.87rem;color:#7f1d1d;font-weight:700;line-height:1.45}
 
     /* Toggle "Autorizar a otra persona" */
     .auth-toggle{
@@ -157,33 +196,121 @@
 
     /* ════════════════════════════════════════════════════════════
        SELECTOR DE BLOQUE HORARIO INTELIGENTE — grid de slots
+       Cada slot = 30min. El cliente selecciona N bloques contiguos.
        ════════════════════════════════════════════════════════════ */
-    .slot-picker{background:#fafafa;border:1px solid var(--gray-2);border-radius:10px;padding:14px}
-    .slot-picker-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:.82rem}
+    .slot-picker{background:#fafafa;border:1px solid var(--gray-2);border-radius:12px;padding:16px}
+    .slot-picker-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:.82rem;flex-wrap:wrap;gap:10px}
     .slot-picker-head .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.72rem;color:#6b7280}
-    .slot-picker-head .legend .dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:middle}
-    .slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(102px,1fr));gap:6px}
-    .slot-item{
-      padding:10px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
-      font-size:.84rem;font-weight:700;color:#0a0a0a;text-align:center;cursor:pointer;
-      transition:all .12s;font-variant-numeric:tabular-nums;user-select:none;position:relative;
+    .slot-picker-head .legend span{display:inline-flex;align-items:center;gap:4px}
+    .slot-picker-head .legend .dot{width:11px;height:11px;border-radius:3px;display:inline-block;vertical-align:middle;flex-shrink:0}
+    .slot-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 8px}
+    @media(max-width:600px){
+      .slot-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 6px}
     }
-    .slot-item:hover{border-color:#0a0a0a;background:#f9fafb}
-    .slot-item.taken{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;text-decoration:line-through}
-    .slot-item.taken:hover{border-color:#e5e7eb;background:#f3f4f6}
-    .slot-item.lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;text-decoration:none;position:relative}
-    .slot-item.lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem}
-    .slot-item.blocked{background:#fee2e2;color:#991b1b;border-color:#fecaca;cursor:not-allowed;text-decoration:none}
-    .slot-item.blocked::after{content:'🔒';position:absolute;top:2px;right:4px;font-size:.65rem}
-    .slot-item.selected{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);box-shadow:0 6px 14px rgba(230,0,0,.3)}
-    .slot-item.in-range{background:#fee2e2;color:var(--ilus-red);border-color:#fecaca}
-    .slot-item.is-start::before{content:'INICIO';position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:var(--ilus-red);color:#fff;font-size:.55rem;padding:1px 6px;border-radius:50px;letter-spacing:.05em}
-    .slot-item.is-end::before{content:'FIN';position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:1px 6px;border-radius:50px;letter-spacing:.05em}
-    .slot-summary{margin-top:12px;padding:12px 14px;background:#0a0a0a;color:#fff;border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:.86rem}
+    .slot-item{
+      padding:13px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
+      font-size:.88rem;font-weight:700;color:#0a0a0a;text-align:center;cursor:pointer;
+      transition:transform .15s cubic-bezier(.4,0,.2,1), box-shadow .15s cubic-bezier(.4,0,.2,1),
+                 background .15s cubic-bezier(.4,0,.2,1), border-color .15s cubic-bezier(.4,0,.2,1);
+      font-variant-numeric:tabular-nums;user-select:none;position:relative;
+      min-height:46px;display:flex;align-items:center;justify-content:center;
+    }
+    .slot-item:hover:not(.is-disabled){border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.12)}
+
+    /* Estado: colación — NO clickeable */
+    .slot-item.is-lunch{
+      background:#fff7ed;color:#9a3412;border-color:#fed7aa;
+      cursor:not-allowed;opacity:.6;
+    }
+    .slot-item.is-lunch::after{content:'☕';position:absolute;top:3px;right:5px;font-size:.78rem;opacity:.85}
+    .slot-item.is-lunch:hover{transform:none;box-shadow:none;background:#fff7ed;border-color:#fed7aa}
+
+    /* Estado: ocupado parcialmente (1/2) — naranja, sí clickeable */
+    .slot-item.is-busy{
+      background:#fff7ed;color:#c2410c;border-color:#fdba74;
+    }
+    .slot-item.is-busy:hover{background:#ffedd5;border-color:#fb923c}
+    .slot-item .slot-badge{
+      position:absolute;top:-8px;right:-4px;background:#f97316;color:#fff;
+      font-size:.58rem;padding:2px 6px;border-radius:50px;font-weight:800;letter-spacing:.04em;
+      box-shadow:0 2px 4px rgba(0,0,0,.15);
+    }
+
+    /* Estado: completo (2/2) — rojo, NO clickeable */
+    .slot-item.is-full{
+      background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;
+      cursor:not-allowed;opacity:.78;
+    }
+    .slot-item.is-full::after{content:'🔒';position:absolute;top:3px;right:5px;font-size:.7rem}
+    .slot-item.is-full:hover{transform:none;box-shadow:none;background:#fee2e2;border-color:#fca5a5}
+
+    /* Estado: bloqueado manual */
+    .slot-item.is-blocked{
+      background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;
+      cursor:not-allowed;opacity:.6;text-decoration:line-through;
+    }
+    .slot-item.is-blocked:hover{transform:none;box-shadow:none}
+
+    /* Estado: fuera de horario (no aparece normalmente, pero por defensa) */
+    .slot-item.is-disabled{cursor:not-allowed;opacity:.4;background:#f9fafb}
+
+    /* Estado: seleccionado (INICIO o FIN del rango) */
+    .slot-item.is-selected{
+      background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
+      box-shadow:0 4px 12px rgba(220,38,38,.3);transform:translateY(-1px);
+      opacity:1;
+    }
+    .slot-item.is-selected:hover{background:var(--ilus-red-dk);border-color:var(--ilus-red-dk);transform:translateY(-1px)}
+
+    /* Slots intermedios del rango (entre INICIO y FIN) */
+    .slot-item.is-in-range{
+      background:linear-gradient(180deg,rgba(220,38,38,.18) 0%,rgba(220,38,38,.06) 100%);
+      color:var(--ilus-red);border-color:#fecaca;font-weight:800;
+    }
+    .slot-item.is-in-range:hover{background:rgba(220,38,38,.22);border-color:#fca5a5}
+
+    /* Badges INICIO / FIN encima del bloque */
+    .slot-item.is-start::before{
+      content:'INICIO';position:absolute;top:-9px;left:50%;transform:translateX(-50%);
+      background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;
+      letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;
+    }
+    .slot-item.is-end:not(.is-start)::before{
+      content:'FIN';position:absolute;bottom:-9px;top:auto;left:50%;transform:translateX(-50%);
+      background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;
+      letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;
+    }
+    /* Si INICIO == FIN (1 solo bloque), texto compacto */
+    .slot-item.is-start.is-end::before{content:'INICIO · FIN';font-size:.5rem;padding:2px 6px}
+
+    /* Resumen inferior (barra negra con rango + duración) */
+    .slot-summary{
+      margin-top:14px;padding:14px 18px;background:#0a0a0a;color:#fff;border-radius:10px;
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:.92rem;
+      border-left:4px solid var(--ilus-red);
+      transition:background .25s cubic-bezier(.4,0,.2,1), border-color .25s;
+    }
+    .slot-summary.is-active{background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);border-left-color:#16a34a}
     .slot-summary .sum-empty{color:#9ca3af;font-style:italic}
-    .slot-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-    .slot-quick{padding:5px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:50px;font-size:.74rem;font-weight:600;cursor:pointer;color:#374151}
-    .slot-quick:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+    .slot-summary .sum-range{font-weight:800;font-size:1.02rem;animation:slotPulse .35s ease}
+    .slot-summary .sum-dur{
+      display:inline-flex;align-items:center;gap:6px;background:rgba(220,38,38,.25);color:#fff;
+      padding:4px 11px;border-radius:50px;font-size:.78rem;font-weight:700;margin-left:8px;
+    }
+    @keyframes slotPulse{
+      0%{transform:scale(.94);opacity:.5}
+      100%{transform:scale(1);opacity:1}
+    }
+
+    .slot-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+    .slot-quick{
+      padding:6px 14px;background:#fff;border:1.5px solid #e5e7eb;border-radius:50px;
+      font-size:.76rem;font-weight:700;cursor:pointer;color:#374151;
+      transition:all .15s cubic-bezier(.4,0,.2,1);
+    }
+    .slot-quick:hover{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.2)}
+    .slot-quick.slot-clear{background:transparent;border-color:#d1d5db;color:#6b7280}
+    .slot-quick.slot-clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 
     /* Submit */
     .submit-btn{
@@ -539,28 +666,35 @@
           </div>
           <div class="col-md-8">
             <label class="form-label small fw-bold">Razón social o nombre <span class="req">*</span></label>
-            <input name="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required placeholder="Mi Empresa S.A. / Juan Pérez">
+            <input name="customer_name" id="customer_name" class="form-control" value="{{ fd.get('customer_name','') }}" required placeholder="Mi Empresa S.A. / Juan Pérez" oninput="checkTerceroPanel()">
           </div>
           <div class="col-md-4">
             <label class="form-label small fw-bold">RUT del cliente <span class="req">*</span></label>
             <input name="customer_rut" id="customer_rut" class="form-control" value="{{ fd.get('customer_rut','') }}"
-                   placeholder="12.345.678-9" required oninput="formatRUT(this)" onblur="validateRUT(this)">
+                   placeholder="12.345.678-9" required autocomplete="off"
+                   oninput="onRutInput(this)" onblur="validateRUT(this); checkTerceroPanel()">
             <div class="input-help">Con dígito verificador</div>
-            <div class="input-error" id="customer_rut_err">RUT inválido — revisa el dígito</div>
+            <div class="input-error" id="customer_rut_err">RUT inválido — verifica el dígito verificador</div>
+            <div class="input-ok" id="customer_rut_ok">RUT válido</div>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-bold">Email <span class="req">*</span></label>
             <input name="contact_email" id="contact_email" type="email" class="form-control"
-                   value="{{ fd.get('contact_email','') }}" required placeholder="tucorreo@email.com">
+                   value="{{ fd.get('contact_email','') }}" required placeholder="tucorreo@email.com"
+                   autocomplete="email" oninput="onEmailInput(this)" onblur="validateEmail(this)">
             <div class="input-help">Aquí recibirás el link de seguimiento</div>
+            <div class="input-error" id="contact_email_err">Email inválido — revisa el formato</div>
+            <div class="input-ok" id="contact_email_ok">Email válido</div>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-bold">Teléfono <span class="req">*</span></label>
             <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
                    value="{{ fd.get('contact_phone','') }}"
-                   placeholder="+56 9 1234 5678" required oninput="formatPhone(this)" onblur="validatePhone(this)">
+                   placeholder="+56 9 1234 5678" required autocomplete="tel"
+                   oninput="formatPhone(this)" onblur="validatePhone(this)">
             <div class="input-help">Móvil chileno: +56 9 XXXX XXXX</div>
             <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
+            <div class="input-ok" id="contact_phone_ok">Teléfono válido</div>
           </div>
         </div>
 
@@ -579,21 +713,26 @@
             <div class="row g-3 mt-1 p-3 rounded-3" style="background:#fff8f8;border:1px solid #fecaca">
               <div class="col-md-5">
                 <label class="form-label small fw-bold">Nombre completo del autorizado</label>
-                <input name="pickup_person_name" id="auth_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" placeholder="Juan Pérez González">
+                <input name="pickup_person_name" id="auth_name" class="form-control" value="{{ fd.get('pickup_person_name','') }}" placeholder="Juan Pérez González" oninput="checkTerceroPanel()">
                 <div class="input-help">Mismo que aparece en el carnet</div>
               </div>
               <div class="col-md-3">
                 <label class="form-label small fw-bold">RUT</label>
                 <input name="pickup_person_rut" id="pickup_person_rut" class="form-control"
                        value="{{ fd.get('pickup_person_rut','') }}"
-                       placeholder="11.111.111-1" oninput="formatRUT(this)" onblur="validateRUT(this)">
-                <div class="input-error" id="pickup_person_rut_err">RUT inválido</div>
+                       placeholder="11.111.111-1" autocomplete="off"
+                       oninput="onRutInput(this)" onblur="validateRUT(this); checkTerceroPanel()">
+                <div class="input-error" id="pickup_person_rut_err">RUT inválido — verifica el dígito</div>
+                <div class="input-ok" id="pickup_person_rut_ok">RUT válido</div>
               </div>
               <div class="col-md-4">
                 <label class="form-label small fw-bold">Teléfono</label>
                 <input name="pickup_person_phone" id="auth_phone" type="tel" class="form-control"
                        value="{{ fd.get('pickup_person_phone','') }}"
-                       placeholder="+56 9 1234 5678" oninput="formatPhone(this)" onblur="validatePhone(this)">
+                       placeholder="+56 9 1234 5678" autocomplete="tel"
+                       oninput="formatPhone(this)" onblur="validatePhone(this)">
+                <div class="input-error" id="auth_phone_err">Teléfono inválido</div>
+                <div class="input-ok" id="auth_phone_ok">Teléfono válido</div>
               </div>
               <div class="col-md-12">
                 <label class="form-label small fw-bold">Relación con el cliente</label>
@@ -602,6 +741,35 @@
                 </select>
                 <div class="input-help">Ej: chofer, transporte externo, familiar autorizado…</div>
               </div>
+            </div>
+
+            {# ── PANEL DE DECLARACIÓN AUTORIZACIÓN TERCERO ─────────────────
+               Aparece cuando customer_rut y pickup_person_rut son distintos
+               y ambos válidos. Bloquea el submit hasta que el cliente
+               marque explícitamente la casilla. Se guarda en observations.
+            #}
+            <div class="decl-tercero" id="declTercero">
+              <div class="decl-title">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                Declaración de autorización
+              </div>
+              <div class="decl-body">
+                El documento está a nombre de
+                <strong id="declClienteName">—</strong>
+                <span id="declClienteRut" class="text-muted"></span><br>
+                y quien retira es
+                <strong id="declTerceroName">—</strong>
+                <span id="declTerceroRut" class="text-muted"></span>.<br>
+                Confirma que el cliente <strong>autoriza explícitamente</strong>
+                a esta persona para retirar los productos en su nombre.
+              </div>
+              <label id="declTerceroLabel">
+                <input type="checkbox" name="acepta_tercero" id="acepta_tercero" value="1" onchange="onDeclTerceroChange()">
+                <span class="decl-check-text">
+                  Confirmo que el cliente autoriza a esta persona para retirar este documento.
+                  Esta declaración quedará registrada con fecha y hora.
+                </span>
+              </label>
             </div>
           </div>
           <input type="hidden" name="contact_name" id="contact_name">
@@ -628,8 +796,9 @@
                 <div class="legend">
                   <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
                   <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
-                  <span><span class="dot" style="background:#f3f4f6;border:1.5px solid #e5e7eb"></span>Ocupado</span>
-                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>☕ Colación</span>
+                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial 1/2</span>
+                  <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colacion</span>
                 </div>
               </div>
               <div class="slot-grid" id="slotGrid">
@@ -638,14 +807,14 @@
                 </div>
               </div>
               <div class="slot-actions" id="slotQuickWrap" style="display:none">
-                <span class="text-muted small me-2">Rápido:</span>
+                <span class="text-muted small me-2">Rapido:</span>
                 <span class="slot-quick" onclick="setQuickRange(1)">1 hora</span>
                 <span class="slot-quick" onclick="setQuickRange(2)">2 horas</span>
                 <span class="slot-quick" onclick="setQuickRange(3)">3 horas</span>
-                <span class="slot-quick" onclick="setQuickRange(0)">Limpiar</span>
+                <span class="slot-quick slot-clear" onclick="clearSlots()">Limpiar</span>
               </div>
-              <div class="slot-summary">
-                <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aún</div>
+              <div class="slot-summary" id="slotSummary">
+                <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aun</div>
                 <button type="button" class="btn btn-sm btn-outline-light" id="clearSlotBtn" onclick="clearSlots()" style="display:none">
                   <i class="bi bi-x-lg me-1"></i>Limpiar
                 </button>
@@ -710,6 +879,8 @@
   {% endif %}
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {# Helpers ILUS (ilusToast/ilusAlert/ilusConfirm) — regla #1 del CLAUDE.md #}
+  <script src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260521"></script>
   {% if settings.alert_enabled and settings.alert_message %}<script>window.addEventListener('load',()=>new bootstrap.Modal(document.getElementById('pickupAlertModal')).show());</script>{% endif %}
 
 <script>
@@ -732,7 +903,14 @@ setInterval(() => setHero(_heroIdx + 1), 4500);
 // ════════════════════════════════════════════════════════
 function irASeguimiento(){
   const v = document.getElementById('trackingLink').value.trim();
-  if (!v){ alert('Pega el enlace o el código RET-XXXXXX que recibiste por email'); return; }
+  if (!v){
+    if (typeof ilusToast === 'function'){
+      ilusToast('Pega el enlace o código RET-XXXXXX que recibiste por email', { type: 'info' });
+    } else {
+      alert('Pega el enlace o el código RET-XXXXXX que recibiste por email');
+    }
+    return;
+  }
   // Si es URL completa, redirige tal cual; si es código, redirige a búsqueda
   if (v.startsWith('http') || v.includes('/retiros/seguimiento/')){
     location.href = v;
@@ -775,12 +953,80 @@ function formatRUT(input){
   }
   input.value = f + '-' + dv;
 }
-function validateRUT(input){
-  const ok = isValidRUT(input.value);
+// onRutInput: formatea + actualiza panel declaración mientras el usuario tipea
+function onRutInput(input){
+  formatRUT(input);
+  // No mostrar errores mientras tipea — solo limpiar estados rojos
   const errEl = document.getElementById(input.id + '_err');
-  input.classList.toggle('field-valid', ok && input.value.length > 0);
-  input.classList.toggle('field-invalid', !ok && input.value.length > 0);
-  if (errEl) errEl.style.display = (!ok && input.value.length > 0) ? 'block' : 'none';
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.remove('field-valid', 'field-invalid');
+  if (errEl) errEl.style.display = 'none';
+  if (okEl) okEl.style.display = 'none';
+  // Si los dos RUTs ya están válidos, refrescamos panel de declaración
+  checkTerceroPanel();
+}
+function validateRUT(input){
+  const has = input.value.length > 0;
+  const ok = has && isValidRUT(input.value);
+  const errEl = document.getElementById(input.id + '_err');
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.toggle('field-valid', ok);
+  input.classList.toggle('field-invalid', has && !ok);
+  if (errEl) errEl.style.display = (has && !ok) ? 'block' : 'none';
+  if (okEl){
+    if (ok){
+      okEl.textContent = '✓ RUT ' + input.value;
+      okEl.style.display = 'block';
+    } else {
+      okEl.style.display = 'none';
+    }
+  }
+  return ok;
+}
+
+// ════════════════════════════════════════════════════════
+//  VALIDACIÓN EMAIL (robusto: regex + chequeos extra)
+// ════════════════════════════════════════════════════════
+// Regex alineado con backend (_PICKUP_EMAIL_RE en pickups_module.py):
+//   user@dominio.tld con TLD de 2+ letras.
+// Rechaza: doble @, espacios, sin TLD, más de 200 chars.
+const _EMAIL_RX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+function isValidEmail(email){
+  if (!email) return false;
+  const e = String(email).trim().toLowerCase();
+  if (!e || e.length > 200) return false;
+  if (e.indexOf(' ') !== -1) return false;
+  // Exactamente un @
+  if ((e.match(/@/g) || []).length !== 1) return false;
+  if (!_EMAIL_RX.test(e)) return false;
+  return true;
+}
+function onEmailInput(input){
+  // Limpiar estados visuales mientras tipea (sin marcar rojo prematuramente)
+  const errEl = document.getElementById(input.id + '_err');
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.remove('field-valid', 'field-invalid');
+  if (errEl) errEl.style.display = 'none';
+  if (okEl) okEl.style.display = 'none';
+}
+function validateEmail(input){
+  const has = input.value.length > 0;
+  const ok = has && isValidEmail(input.value);
+  const errEl = document.getElementById(input.id + '_err');
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.toggle('field-valid', ok);
+  input.classList.toggle('field-invalid', has && !ok);
+  if (errEl) errEl.style.display = (has && !ok) ? 'block' : 'none';
+  if (okEl){
+    if (ok){
+      // Normalizar a lowercase
+      input.value = input.value.trim().toLowerCase();
+      okEl.textContent = '✓ Email válido';
+      okEl.style.display = 'block';
+    } else {
+      okEl.style.display = 'none';
+    }
+  }
   return ok;
 }
 
@@ -802,14 +1048,70 @@ function formatPhone(input){
   if (c.length >= 2) out += ' ' + c.slice(1, 5);
   if (c.length >= 6) out += ' ' + c.slice(5, 9);
   input.value = out;
+  // Limpiar estados visuales mientras tipea
+  const errEl = document.getElementById(input.id + '_err');
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.remove('field-valid', 'field-invalid');
+  if (errEl) errEl.style.display = 'none';
+  if (okEl) okEl.style.display = 'none';
 }
 function validatePhone(input){
-  const ok = isValidCLPhone(input.value);
+  const has = input.value.length > 0;
+  const ok = has && isValidCLPhone(input.value);
   const errEl = document.getElementById(input.id + '_err');
-  input.classList.toggle('field-valid', ok && input.value.length > 0);
-  input.classList.toggle('field-invalid', !ok && input.value.length > 0);
-  if (errEl) errEl.style.display = (!ok && input.value.length > 0) ? 'block' : 'none';
+  const okEl  = document.getElementById(input.id + '_ok');
+  input.classList.toggle('field-valid', ok);
+  input.classList.toggle('field-invalid', has && !ok);
+  if (errEl) errEl.style.display = (has && !ok) ? 'block' : 'none';
+  if (okEl){
+    if (ok){
+      okEl.textContent = '✓ ' + input.value;
+      okEl.style.display = 'block';
+    } else {
+      okEl.style.display = 'none';
+    }
+  }
   return ok;
+}
+
+// ════════════════════════════════════════════════════════
+//  PANEL DECLARACIÓN AUTORIZACIÓN TERCERO
+//  Aparece si RUT cliente != RUT quien retira, ambos válidos.
+//  Bloquea submit hasta que el checkbox esté marcado.
+// ════════════════════════════════════════════════════════
+function checkTerceroPanel(){
+  const panel = document.getElementById('declTercero');
+  if (!panel) return;
+  const authActive = document.getElementById('auth_active').value === '1';
+  const cliRut = document.getElementById('customer_rut').value;
+  const retRut = document.getElementById('pickup_person_rut').value;
+  const cliName = document.querySelector('input[name=customer_name]').value.trim();
+  const retName = document.getElementById('auth_name').value.trim();
+
+  // Sólo mostramos panel si: toggle activo + ambos RUTs válidos + son distintos
+  const muestraPanel = authActive
+                    && isValidRUT(cliRut) && isValidRUT(retRut)
+                    && cleanRUT(cliRut) !== cleanRUT(retRut);
+
+  if (muestraPanel){
+    document.getElementById('declClienteName').textContent = cliName || '(sin nombre)';
+    document.getElementById('declClienteRut').textContent  = cliRut ? '· RUT ' + cliRut : '';
+    document.getElementById('declTerceroName').textContent = retName || '(sin nombre)';
+    document.getElementById('declTerceroRut').textContent  = retRut ? '· RUT ' + retRut : '';
+    panel.classList.add('show');
+  } else {
+    panel.classList.remove('show');
+    // Si el panel se oculta, desmarcamos por seguridad para forzar nueva confirmación
+    const cb = document.getElementById('acepta_tercero');
+    if (cb) cb.checked = false;
+    const lbl = document.getElementById('declTerceroLabel');
+    if (lbl) lbl.classList.remove('checked');
+  }
+}
+function onDeclTerceroChange(){
+  const cb = document.getElementById('acepta_tercero');
+  const lbl = document.getElementById('declTerceroLabel');
+  if (cb && lbl) lbl.classList.toggle('checked', cb.checked);
 }
 
 // ════════════════════════════════════════════════════════
@@ -1016,11 +1318,19 @@ function toggleAutorizado(){
     document.getElementById('auth_name').value = '';
     document.getElementById('pickup_person_rut').value = '';
     document.getElementById('auth_phone').value = '';
+    // Resetear estados visuales y panel de declaración
+    ['pickup_person_rut', 'auth_phone'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('field-valid', 'field-invalid');
+    });
+    const cbDecl = document.getElementById('acepta_tercero');
+    if (cbDecl) cbDecl.checked = false;
   }
+  checkTerceroPanel();
 }
 
 // ════════════════════════════════════════════════════════
-//  VALIDACIÓN AL ENVIAR
+//  VALIDACIÓN AL ENVIAR (con scroll + ilusToast)
 // ════════════════════════════════════════════════════════
 document.getElementById('form-solicitud').addEventListener('submit', function(e){
   // Si NO autorizó a otra persona, copiar datos del cliente al "autorizado"
@@ -1034,33 +1344,131 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
     document.getElementById('contact_name').value = document.getElementById('auth_name').value;
   }
 
+  // ── Recolecta inválidos (con ID para scroll/foco) ──
   const errores = [];
-  if (!isValidRUT(document.getElementById('customer_rut').value))
-    errores.push('RUT del cliente inválido');
+  const invalidIds = [];
 
-  // Validar autorizado SOLO si está activo el toggle
-  if (authActive){
-    const authRut = document.getElementById('pickup_person_rut').value;
-    const authName = document.getElementById('auth_name').value.trim();
-    if (!authName) errores.push('Nombre del autorizado obligatorio');
-    if (authRut && !isValidRUT(authRut))
-      errores.push('RUT del autorizado inválido');
+  // RUT del cliente
+  const elCliRut = document.getElementById('customer_rut');
+  if (!isValidRUT(elCliRut.value)){
+    errores.push('RUT del cliente inválido — revisa el dígito verificador');
+    invalidIds.push('customer_rut');
+    elCliRut.classList.add('field-invalid');
+    elCliRut.classList.remove('field-valid');
   }
 
-  if (!isValidCLPhone(document.getElementById('contact_phone').value))
-    errores.push('Teléfono debe ser chileno (+56 9 XXXX XXXX)');
-  if (!document.querySelector('input[name=requested_time_from]').value)
+  // Email del contacto
+  const elEmail = document.getElementById('contact_email');
+  if (!isValidEmail(elEmail.value)){
+    errores.push('Email inválido — usa el formato nombre@dominio.cl');
+    invalidIds.push('contact_email');
+    elEmail.classList.add('field-invalid');
+    elEmail.classList.remove('field-valid');
+  }
+
+  // Teléfono del contacto
+  const elPhone = document.getElementById('contact_phone');
+  if (!isValidCLPhone(elPhone.value)){
+    errores.push('Teléfono inválido — debe ser móvil chileno (+56 9 XXXX XXXX)');
+    invalidIds.push('contact_phone');
+    elPhone.classList.add('field-invalid');
+    elPhone.classList.remove('field-valid');
+  }
+
+  // Si autorizó a otra persona — validamos sus campos
+  if (authActive){
+    const elAuthName = document.getElementById('auth_name');
+    if (!elAuthName.value.trim()){
+      errores.push('Nombre del autorizado obligatorio');
+      invalidIds.push('auth_name');
+    }
+    const elAuthRut = document.getElementById('pickup_person_rut');
+    if (!isValidRUT(elAuthRut.value)){
+      errores.push('RUT del autorizado inválido');
+      invalidIds.push('pickup_person_rut');
+      elAuthRut.classList.add('field-invalid');
+      elAuthRut.classList.remove('field-valid');
+    }
+    const elAuthPhone = document.getElementById('auth_phone');
+    if (elAuthPhone.value && !isValidCLPhone(elAuthPhone.value)){
+      errores.push('Teléfono del autorizado inválido');
+      invalidIds.push('auth_phone');
+      elAuthPhone.classList.add('field-invalid');
+      elAuthPhone.classList.remove('field-valid');
+    }
+
+    // Si los RUTs son distintos, exigir checkbox de declaración
+    if (isValidRUT(elCliRut.value) && isValidRUT(elAuthRut.value)
+        && cleanRUT(elCliRut.value) !== cleanRUT(elAuthRut.value)){
+      const cbDecl = document.getElementById('acepta_tercero');
+      if (!cbDecl || !cbDecl.checked){
+        errores.push('Debes marcar la declaración de autorización (el cliente autoriza a este tercero a retirar)');
+        invalidIds.push('declTercero');
+      }
+    }
+  }
+
+  // Bloque horario
+  if (!document.querySelector('input[name=requested_time_from]').value){
     errores.push('Selecciona al menos un bloque horario');
+    invalidIds.push('slotPicker');
+  }
 
   if (errores.length){
     e.preventDefault();
-    alert('Revisa estos errores:\n• ' + errores.join('\n• '));
+
+    // Scroll al primer inválido
+    const firstId = invalidIds[0];
+    const firstEl = firstId ? document.getElementById(firstId) : null;
+    if (firstEl){
+      firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      try { firstEl.focus({ preventScroll: true }); } catch(_){}
+    }
+
+    // Usar ilusToast (regla #1 ILUS). Fallback a alert si helper no cargó.
+    if (typeof ilusToast === 'function'){
+      ilusToast('Revisa los campos marcados en rojo (' + errores.length + ')',
+                { type: 'warning', duration: 4500 });
+    } else if (typeof ilusAlert === 'function'){
+      ilusAlert({
+        title: 'Revisa el formulario',
+        message: 'Hay ' + errores.length + ' campo(s) con error',
+        sub: errores.join(' · '),
+        type: 'warning',
+      });
+    } else {
+      alert('Revisa estos errores:\n• ' + errores.join('\n• '));
+    }
     return false;
   }
 });
 
 document.addEventListener('DOMContentLoaded', () => {
   cargarDisponibilidad();
+  // Si el formulario se re-renderizó con datos previos (fd), validar los campos
+  // ya cargados para que el usuario vea el estado verde/rojo de inmediato.
+  ['customer_rut', 'pickup_person_rut'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.value) validateRUT(el);
+  });
+  const _em = document.getElementById('contact_email');
+  if (_em && _em.value) validateEmail(_em);
+  ['contact_phone', 'auth_phone'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.value) validatePhone(el);
+  });
+  // Si fd trae datos del autorizado, abrimos el toggle automáticamente
+  const _authName = document.getElementById('auth_name');
+  if (_authName && _authName.value && _authName.value.trim().length > 0){
+    const cb = document.getElementById('authCheckbox');
+    if (cb && !cb.checked){
+      cb.checked = true;
+      document.getElementById('authFields').style.display = 'block';
+      document.getElementById('authToggle').classList.add('active');
+      document.getElementById('auth_active').value = '1';
+    }
+  }
+  checkTerceroPanel();
 });
 </script>
 </body>
