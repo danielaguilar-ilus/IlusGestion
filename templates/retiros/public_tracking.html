@@ -933,7 +933,23 @@
         {%- set _bultos_show = req.total_packages or (packages|length if packages else 0) or 0 -%}
         {%- set _kg_show     = (req.peso_real_kg or req.total_weight_kg or 0)|float -%}
         {%- set _pvol_show   = (req.peso_vol_kg  or req.total_volumetric_weight or 0)|float -%}
-        {%- set _m3_show     = (req.total_volume_m3 or req.volumen_m3 or 0)|float -%}
+        {# FIX 2026-05-23 (Daniel): m³ seguía en 0 porque ni total_volume_m3 ni
+           volumen_m3 estaban poblados. Fallback adicional: sumar volumen_m3 de
+           pickup_request_docs (multi-doc) o calcular de packages (L×W×H/1000000). #}
+        {%- set _m3_raw      = (req.total_volume_m3 or req.volumen_m3 or 0)|float -%}
+        {%- if _m3_raw == 0 and docs_asociados is defined and docs_asociados -%}
+          {%- set _m3_raw = docs_asociados|sum(attribute='volumen_m3', start=0)|float -%}
+        {%- endif -%}
+        {%- if _m3_raw == 0 and packages -%}
+          {%- set _m3_pkg = namespace(s=0.0) -%}
+          {%- for p in packages -%}
+            {%- if p.length_cm and p.width_cm and p.height_cm -%}
+              {%- set _m3_pkg.s = _m3_pkg.s + ((p.length_cm|float) * (p.width_cm|float) * (p.height_cm|float) / 1000000.0) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set _m3_raw = _m3_pkg.s -%}
+        {%- endif -%}
+        {%- set _m3_show = _m3_raw -%}
         <div class="ilus-card">
           <h6><i class="bi bi-box-seam"></i>Carga declarada</h6>
           <div class="carga-grid mb-3">

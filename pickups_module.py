@@ -1521,6 +1521,11 @@ def register_pickup_routes(app, ctx):
         if request.method == "POST":
             action = request.form.get("action")
             old = req["status"]
+            # 2026-05-23 (Daniel) — wrapper defensivo: cualquier excepción NO
+            # capturada por handlers internos devuelve flash legible al
+            # cliente en vez de 500. El tracking público NO debe mostrar
+            # stacktraces ni errores técnicos al cliente.
+            _post_failed = False
             if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
                 if proposal:
@@ -1713,12 +1718,24 @@ def register_pickup_routes(app, ctx):
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
         logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 20", (req["id"],))
         attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
+        # 2026-05-23 (Daniel): pasar docs_asociados para que el template pueda
+        # sumar el m³ desde pickup_request_docs cuando total_volume_m3 está en 0.
+        try:
+            docs_asociados = mysql_fetchall(
+                "SELECT id, document_type, document_number, peso_real_kg, peso_vol_kg, volumen_m3, n_lineas "
+                "  FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+                (req["id"],)
+            ) or []
+        except Exception:
+            docs_asociados = []
         # Sanitizar: eliminar campos internos antes de pasar al template público.
-        # Defensa en profundidad — el template actual no expone estos campos,
-        # pero si algún día se inyecta `req | tojson` o similar, no filtrará
-        # internal_notes/IPs/datos de validación al cliente.
         req_safe = _strip_internal(req)
-        return render_template("retiros/public_tracking.html", req=req_safe, packages=packages, proposals=proposals, logs=logs, attachments=attachments, settings=cfg, status_badge=status_badge, created=request.args.get("created"))
+        return render_template("retiros/public_tracking.html",
+                               req=req_safe, packages=packages, proposals=proposals,
+                               logs=logs, attachments=attachments,
+                               docs_asociados=docs_asociados,
+                               settings=cfg, status_badge=status_badge,
+                               created=request.args.get("created"))
 
     # ══════════════════════════════════════════════════════════════════════
     #  XLSX RESUMEN PÚBLICO — descarga del cliente desde el tracking
