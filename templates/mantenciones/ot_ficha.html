@@ -1219,6 +1219,24 @@
 const VID = {{ visita.id }};
 const API_BASE = '/mantenciones/api/visitas/' + VID;
 
+// PERF 2026-05-22 — Helper Cloudinary transforms (mismo perfil que app.py).
+const _OT_CLOUD_PROFILES = {
+  thumb:   'f_auto,q_auto:eco,w_120,c_limit,dpr_auto',
+  card:    'f_auto,q_auto,w_400,c_limit,dpr_auto',
+  gallery: 'f_auto,q_auto,w_800,c_limit,dpr_auto',
+  full:    'f_auto,q_auto'
+};
+const _OT_CLOUD_RE = /^(https?:\/\/res\.cloudinary\.com\/[^/]+\/(?:image|video|raw)\/upload\/)(.+)$/i;
+const _OT_CLOUD_TX_TOKEN_RE = /(?:^|,)[a-z]_[^,/]+/;
+function _otCloudTx(url, kind){
+  if (!url || typeof url !== 'string') return url || '';
+  const m = url.match(_OT_CLOUD_RE);
+  if (!m) return url;
+  const firstSeg = m[2].split('/')[0];
+  if (firstSeg && _OT_CLOUD_TX_TOKEN_RE.test(',' + firstSeg)) return url;
+  return m[1] + (_OT_CLOUD_PROFILES[kind] || _OT_CLOUD_PROFILES.card) + '/' + m[2];
+}
+
 // ── Tabs ──
 function otTab(tab, btn){
   document.querySelectorAll('.ot-tab').forEach(t => t.classList.remove('active'));
@@ -1433,9 +1451,16 @@ async function cargarFotos(){
 function renderFoto(f){
   const div = document.createElement('div');
   div.className = 'foto-card';
-  const url = '/static/' + f.archivo_path;
+  // PERF 2026-05-22: si la foto tiene cloudinary_url, usarla con transforms
+  // 'card' (≤400px) — para galería de fotos ot_ficha. Si solo hay /static/,
+  // al menos aplicar lazy + async decoding.
+  const cloud = f.cloudinary_url || f.url || '';
+  const local = '/static/' + f.archivo_path;
+  const fullUrl = cloud || local;
+  const thumbUrl = cloud ? _otCloudTx(cloud, 'card') : local;
   div.innerHTML = `
-    <img class="foto-thumb" src="${url}" onclick="verFoto('${url}')" alt="${escHtml(f.descripcion||'')}">
+    <img class="foto-thumb" src="${thumbUrl}" onclick="verFoto('${fullUrl}')" alt="${escHtml(f.descripcion||'')}"
+         loading="lazy" decoding="async">
     <button class="foto-delete-btn" onclick="eliminarFoto(${f.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
     <div class="foto-meta">
       <span class="tipo-badge tipo-${f.tipo_foto}">${escHtml(f.tipo_foto)}</span>

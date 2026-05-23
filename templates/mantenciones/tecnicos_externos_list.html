@@ -231,7 +231,10 @@
          para que Jinja autoescape sanitize el atributo src (no aplica para CSS). #}
       <div class="tx-avatar{% if t.foto_url %} has-img{% endif %}">
         {% if t.foto_url and t.foto_url.startswith('https://res.cloudinary.com/') %}
-          <img src="{{ t.foto_url }}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
+          {# PERF 2026-05-22: avatares pequeños (≤120px) — thumb profile. #}
+          <img src="{{ t.foto_url|cloud_tx('thumb') }}" alt=""
+               loading="lazy" decoding="async"
+               style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
         {% else %}{{ initial }}{% endif %}
       </div>
       <div class="tx-info">

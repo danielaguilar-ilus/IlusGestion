@@ -4,6 +4,425 @@
 ══════════════════════════════════════════════════════════════ */
 
 /* ══════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — TOKENS (2026-05-22, UI premium pass)
+   --------------------------------------------------------------
+   Variables base reutilizables en TODO el proyecto. NO eliminan
+   las variables legacy (--ilus-red, --ilus-black, etc.) que se
+   definen más abajo: ambas conviven. Las nuevas tienen prefijo
+   más explícito (--gray-XXX, --shadow-XX, --r-XX, --t-XX, --ease).
+
+   Reglas:
+   - Animaciones GPU-only (transform + opacity). NUNCA width/height.
+   - Duraciones 150-300ms (nunca >400ms para feedback de UI).
+   - Cubic-bezier(.16,1,.3,1) = smooth-out premium (Linear, Vercel).
+   - Sombras de 2 capas (ambient + key light) — no flat, no exagerado.
+   ══════════════════════════════════════════════════════════════ */
+:root{
+  /* — Paleta ILUS oficial (alias modernos del legado) — */
+  --ilus-red-500: #dc2626;
+  --ilus-red-600: #b91c1c;
+  --ilus-red-50:  #fef2f2;
+  --ilus-red-100: #fee2e2;
+  --ilus-black-900: #0a0a0a;
+  --ilus-black-800: #1f1f1f;
+  --ilus-white: #ffffff;
+
+  /* — Escala de grises consistente (Tailwind-aligned) — */
+  --gray-50:  #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+  --gray-800: #1f2937;
+  --gray-900: #111827;
+
+  /* — Acentos de soporte — */
+  --green-500: #16a34a;
+  --green-50:  #dcfce7;
+  --amber-500: #f59e0b;
+  --amber-50:  #fff8e1;
+  --blue-500:  #3b82f6;
+  --blue-50:   #dbeafe;
+
+  /* — Sombras refinadas (2 capas: ambient + key light) — */
+  --shadow-xs: 0 1px 2px rgba(15,23,42,.04);
+  --shadow-sm: 0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
+  --shadow-md: 0 4px 8px rgba(15,23,42,.06), 0 2px 4px rgba(15,23,42,.04);
+  --shadow-lg: 0 10px 20px rgba(15,23,42,.08), 0 4px 8px rgba(15,23,42,.06);
+  --shadow-xl: 0 20px 40px rgba(15,23,42,.10), 0 8px 16px rgba(15,23,42,.06);
+  --shadow-red: 0 6px 18px rgba(220,38,38,.22), 0 2px 6px rgba(220,38,38,.10);
+
+  /* — Transiciones (cubic-bezier smooth-out, NUNCA linear) — */
+  --ease: cubic-bezier(.16,1,.3,1);
+  --ease-in-out: cubic-bezier(.4,0,.2,1);
+  --t-fast: 150ms var(--ease);
+  --t-base: 250ms var(--ease);
+  --t-slow: 400ms var(--ease);
+
+  /* — Border radius escala — */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 9999px;
+
+  /* — Espaciado (multiples de 4px) — */
+  --gap-1: 4px;
+  --gap-2: 8px;
+  --gap-3: 12px;
+  --gap-4: 16px;
+  --gap-5: 24px;
+  --gap-6: 32px;
+  --gap-7: 48px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   FOCUS-VISIBLE — accesibilidad keyboard (Tab navigation)
+   Solo aparece cuando el usuario navega con teclado, no en click.
+   ══════════════════════════════════════════════════════════════ */
+*:focus-visible{
+  outline: 2px solid var(--ilus-red-500, #dc2626);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Inputs y selects mantienen su propio focus (con box-shadow rojo) */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible{
+  outline-offset: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TYPOGRAPHY POLISH — tracking refinado y tabular-nums en datos
+   ══════════════════════════════════════════════════════════════ */
+h1, h2, h3, h4, h5,
+.page-header h4,
+.mod-hero h4,
+.ots-hero h4,
+.kpi-num,
+.ots-kpi .num,
+.kpi-cell-val{
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+/* Tabular nums para que columnas numéricas no salten al cambiar dígitos.
+   Aplica a KPIs, fechas, contadores, conteos de OT — NO a body normal. */
+.kpi-num,
+.kpi-cell-val,
+.ots-kpi .num,
+.ot-stat .n,
+.ot-fecha,
+.kban-card .kc-num,
+.ot-card .oc-stat .n,
+.health-num,
+.stat-card .stat-num,
+.ot-num,
+.kc-num,
+.oc-num,
+time,
+[data-tnum]{
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ANIMATIONS — shimmer (skeleton) + reveal modal + chip-press
+   ══════════════════════════════════════════════════════════════ */
+@keyframes ilus-shimmer{
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes ilus-spin-circ{
+  0%   { transform: rotate(0deg); stroke-dasharray: 1, 200; stroke-dashoffset: 0; }
+  50%  { stroke-dasharray: 90, 200; stroke-dashoffset: -35; }
+  100% { transform: rotate(360deg); stroke-dasharray: 90, 200; stroke-dashoffset: -125; }
+}
+@keyframes ilus-fade-up{
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes ilus-pop-in{
+  0%   { opacity: 0; transform: scale(.95); }
+  60%  { opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+/* — Skeleton (loading state premium) — */
+.ilus-skel,
+.skeleton{
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--gray-100) 0%,
+    var(--gray-200) 50%,
+    var(--gray-100) 100%
+  );
+  background-size: 200% 100%;
+  animation: ilus-shimmer 1.4s var(--ease-in-out) infinite;
+  border-radius: var(--r-md);
+  color: transparent !important;   /* oculta texto fallback */
+  pointer-events: none;
+}
+.ilus-skel.skel-line{ height: 12px; border-radius: var(--r-sm); }
+.ilus-skel.skel-line.lg{ height: 16px; }
+.ilus-skel.skel-line.xs{ height: 9px; }
+.ilus-skel.skel-circle{ border-radius: 50%; }
+.ilus-skel.skel-card{ height: 110px; border-radius: var(--r-lg); }
+
+/* — Spinner SVG circular (premium, GPU-friendly) — */
+.ilus-spinner{
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  vertical-align: middle;
+  animation: ilus-spin-circ 1.4s linear infinite;
+  transform-origin: center;
+}
+.ilus-spinner circle{
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+/* — Botón con loading state (mantiene ancho original) — */
+.btn.is-loading{
+  position: relative;
+  pointer-events: none;
+  color: transparent !important;
+}
+.btn.is-loading::after{
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 50 50'><circle cx='25' cy='25' r='20' fill='none' stroke='%23fff' stroke-width='4' stroke-linecap='round' stroke-dasharray='90 200' stroke-dashoffset='-35'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  animation: ilus-spin-circ 1.4s linear infinite;
+  transform-origin: center;
+}
+.btn.is-loading.btn-outline-secondary::after,
+.btn.is-loading.btn-light::after,
+.btn.is-loading.btn-outline-light::after,
+.btn.is-loading.btn-outline-dark::after{
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 50 50'><circle cx='25' cy='25' r='20' fill='none' stroke='%23374151' stroke-width='4' stroke-linecap='round' stroke-dasharray='90 200' stroke-dashoffset='-35'/></svg>");
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PREMIUM POLISH — Mantenciones (OTs, ficha, ejecutar)
+   Refinamientos visuales NO destructivos sobre clases ya
+   existentes (.ot-row, .ot-card, .kban-card, .kpi-item, etc).
+   ══════════════════════════════════════════════════════════════ */
+
+/* Botones: hover lift + sombra creciente (GPU-only) */
+.btn-ilus,
+.btn-ilus-outline,
+.btn-dark-ilus,
+.btn-aprobar,
+.vista-tab,
+.tx-tab-btn,
+.ftab-btn{
+  transition: background-color var(--t-fast),
+              color var(--t-fast),
+              border-color var(--t-fast),
+              box-shadow var(--t-fast),
+              transform var(--t-fast) !important;
+}
+.btn-ilus:hover,
+.btn-aprobar:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-red);
+}
+.btn-ilus:active,
+.btn-aprobar:active{
+  transform: translateY(0) scale(.98);
+}
+
+.btn-ilus-outline:hover,
+.btn-dark-ilus:hover,
+.btn.btn-light:hover,
+.btn.btn-outline-secondary:hover,
+.btn.btn-outline-dark:hover,
+.btn.btn-outline-light:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.btn.btn-light:active,
+.btn.btn-outline-secondary:active,
+.btn.btn-outline-dark:active,
+.btn.btn-outline-light:active{
+  transform: translateY(0) scale(.98);
+}
+
+/* — Cards/Rows con hover lift premium — */
+.ot-row,
+.ot-card,
+.kban-card,
+.ct-card,
+.kpi-item,
+.kpi-cell,
+.ots-kpi,
+.stat-card{
+  transition: transform var(--t-fast),
+              box-shadow var(--t-fast),
+              border-color var(--t-fast) !important;
+}
+/* will-change solo en hover (no permanente) — evita memoria innecesaria */
+.ot-row:hover,
+.ot-card:hover,
+.kban-card:hover,
+.kpi-item:hover,
+.kpi-cell:hover,
+.ots-kpi:hover{
+  will-change: transform;
+}
+.ots-kpi:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.kpi-item:hover,
+.kpi-cell:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.ot-row:hover{
+  /* refina la sombra ya definida en ots_list.html */
+  box-shadow: var(--shadow-lg);
+}
+
+/* — Chips/badges micro-press en click (estado activo) — */
+.vista-tab:active,
+.tx-tab-btn:active,
+.ftab-btn:active,
+.ot-pill:active,
+.ai-chip:active,
+.adj-pill:active,
+.ilus-badge:active,
+.cli-badge:active,
+.badge-estado:active{
+  transform: scale(.95);
+  transition: transform 90ms var(--ease);
+}
+
+/* — Inputs/selects: focus refinado con halo rojo ILUS — */
+.form-control:focus,
+.form-select:focus,
+.form-control-sm:focus,
+.form-select-sm:focus{
+  border-color: var(--ilus-red-500) !important;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.14) !important;
+  outline: none !important;
+}
+
+/* — Hover de las cards de cliente (.ficha) — */
+.f-card{
+  transition: box-shadow var(--t-fast), transform var(--t-fast);
+}
+.f-card:hover{
+  box-shadow: var(--shadow-lg);
+}
+
+/* — Empty states: contenedor premium consistente — */
+.ilus-empty,
+.empty-state{
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--r-lg);
+  padding: 56px 28px;
+  text-align: center;
+  box-shadow: var(--shadow-xs);
+  animation: ilus-fade-up 320ms var(--ease) both;
+}
+.ilus-empty .e-icon,
+.empty-state .e-icon{
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: var(--r-lg);
+  background: linear-gradient(135deg, var(--ilus-red-50) 0%, #fff 100%);
+  border: 1px solid var(--ilus-red-100);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.7rem;
+  color: var(--ilus-red-500);
+  box-shadow: var(--shadow-sm);
+}
+.ilus-empty .e-title,
+.empty-state .e-title{
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--gray-900);
+  margin-bottom: 4px;
+}
+.ilus-empty .e-sub,
+.empty-state .e-sub{
+  font-size: .85rem;
+  color: var(--gray-500);
+  max-width: 440px;
+  margin: 0 auto;
+  line-height: 1.55;
+}
+.ilus-empty .e-actions,
+.empty-state .e-actions{
+  margin-top: 18px;
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* — Separador suave (dashed, no border duro) — */
+.ilus-divider-soft{
+  border: none;
+  border-top: 1px dashed var(--gray-200);
+  margin: 16px 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REDUCED MOTION — respeta preferencia del sistema
+   Apple HIG / WCAG: usuarios con vestibular disorders.
+   ══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce){
+  *,
+  *::before,
+  *::after{
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ilus-skel,
+  .skeleton{
+    animation: none !important;
+    background: var(--gray-100) !important;
+  }
+  .btn-aprobar{ animation: none !important; }
+  /* Mantener transforms estáticos para no romper layout, solo
+     anular el movimiento del hover */
+  .ot-row:hover,
+  .ot-card:hover,
+  .kban-card:hover,
+  .kpi-item:hover,
+  .kpi-cell:hover,
+  .ots-kpi:hover,
+  .btn-ilus:hover,
+  .btn-aprobar:hover,
+  .btn-ilus-outline:hover,
+  .btn-dark-ilus:hover{
+    transform: none !important;
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════
    Google Places Autocomplete (.pac-container) — fix z-index modal
    2026-05-17: el dropdown del autocomplete quedaba OCULTO detrás
    del modal Bootstrap (z-index 1055). Forzamos z-index 9999 para

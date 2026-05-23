@@ -151,7 +151,10 @@
   <div class="tf-avatar{% if tec.foto_url %} has-img{% endif %}"
        onclick="subirFoto()" title="Cambiar foto" style="overflow:hidden">
     {% if tec.foto_url and tec.foto_url.startswith('https://res.cloudinary.com/') %}
-      <img src="{{ tec.foto_url }}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
+      {# PERF 2026-05-22: avatar grande (≤400px) en ficha del técnico. #}
+      <img src="{{ tec.foto_url|cloud_tx('card') }}" alt=""
+           loading="lazy" decoding="async"
+           style="width:100%;height:100%;object-fit:cover;border-radius:inherit">
     {% else %}{{ initial }}{% endif %}
     <span class="tf-avatar-edit"><i class="bi bi-camera-fill"></i></span>
   </div>

@@ -23,9 +23,14 @@
            letter-spacing:.5px;margin-top:3px;}
 .kpi-sub{font-size:.72rem;color:#6b7280;margin-top:2px;}
 /* ── Cliente header ──────────────────────────────── */
-.cli-header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);
+.cli-header{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a2e 45%,#16213e 100%);
             border-radius:var(--rad);padding:22px 24px;margin-bottom:0;
-            box-shadow:0 4px 20px rgba(0,0,0,.15);}
+            border-left:5px solid #dc2626;
+            box-shadow:0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(220,38,38,.06);
+            position:relative;overflow:hidden;}
+.cli-header::after{content:'';position:absolute;top:-30px;right:-30px;width:160px;height:160px;
+            border-radius:50%;background:radial-gradient(circle,rgba(220,38,38,.16) 0%,transparent 70%);
+            pointer-events:none;}
 .cli-avatar{width:52px;height:52px;border-radius:50%;background:var(--ilus-red);
             display:flex;align-items:center;justify-content:center;
             font-size:1.2rem;font-weight:900;color:#fff;flex-shrink:0;}
@@ -1966,18 +1971,16 @@
       </div>
 
       {% else %}
-      <div class="empty-state" id="eqEmptyState">
-        <i class="bi bi-bicycle"></i>
-        <div class="fw-semibold mb-1" style="font-size:.92rem;color:#374151">Sin equipos registrados</div>
-        <div style="font-size:.8rem;margin-bottom:14px">
-          Importa desde una boleta/factura del ERP, o agrega uno manualmente por SKU
-        </div>
+      <div class="ilus-empty" id="eqEmptyState">
+        <div class="e-icon"><i class="bi bi-bicycle"></i></div>
+        <div class="e-title">Aún no se han registrado equipos</div>
+        <div class="e-sub">Importa desde una boleta o factura del ERP, o agrega manualmente por SKU para empezar el levantamiento.</div>
         {% if not is_tecnico %}
-        <div class="d-flex gap-2 justify-content-center flex-wrap">
+        <div class="e-actions">
           <button class="btn btn-sm btn-outline-secondary" onclick="abrirErpModal()">
             <i class="bi bi-cloud-download me-1"></i>Importar desde ERP
           </button>
-          <button class="btn btn-sm btn-ilus" onclick="abrirMaquinaManual()">
+          <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirMaquinaManual()">
             <i class="bi bi-plus-lg me-1"></i>Agregar equipo
           </button>
         </div>
@@ -3142,15 +3145,15 @@ async function confirmarVisitaMulti() {
     </div>{# /contrato-pro #}
     {% endfor %}
   {% else %}
-    <div class="empty-state" style="background:#fff;border:2px dashed #e5e7eb;border-radius:12px;padding:40px 20px">
-      <i class="bi bi-file-earmark-x" style="font-size:3rem;opacity:.3"></i>
-      <div class="fw-bold mt-2 mb-1" style="font-size:1rem;color:#374151">Sin contratos subidos</div>
-      <div style="font-size:.84rem;color:#6b7280;max-width:400px;margin:0 auto">
-        Sube el PDF del contrato y la IA extraerá automáticamente cláusulas, riesgos, costos y proyecciones.
+    <div class="ilus-empty">
+      <div class="e-icon"><i class="bi bi-file-earmark-text"></i></div>
+      <div class="e-title">Sin contratos subidos</div>
+      <div class="e-sub">Sube el PDF del contrato y la IA extraerá automáticamente cláusulas, riesgos, costos y proyecciones.</div>
+      <div class="e-actions">
+        <button class="btn btn-ilus fw-bold" onclick="abrirContratoModal()">
+          <i class="bi bi-upload me-1"></i>Subir primer contrato
+        </button>
       </div>
-      <button class="btn btn-ilus mt-3 fw-bold" onclick="abrirContratoModal()">
-        <i class="bi bi-upload me-1"></i>Subir primer contrato
-      </button>
     </div>
   {% endif %}
   </div>
@@ -4737,6 +4740,30 @@ async function docPreview(item){
 .ev-chip.active{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red)}
 .ev-empty{text-align:center;padding:60px 20px;color:#9ca3af}
 .ev-empty i{font-size:3rem;color:#cbd5e1;display:block;margin-bottom:8px}
+
+/* PERF 2026-05-22 — Skeleton screens shimmer mientras carga la galería.
+   Mejora la percepción de velocidad: el usuario ve la estructura final
+   inmediatamente, en vez de un spinner vacío. */
+@keyframes ev-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.ev-skeleton-img {
+  width: 100%; height: 160px;
+  background: linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%);
+  background-size: 200% 100%;
+  animation: ev-shimmer 1.4s ease-in-out infinite;
+}
+.ev-skeleton-line {
+  height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%);
+  background-size: 200% 100%;
+  animation: ev-shimmer 1.4s ease-in-out infinite;
+  margin: 6px 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ev-skeleton-img, .ev-skeleton-line { animation: none; }
+}
 </style>
 
 <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
@@ -4784,12 +4811,41 @@ async function docPreview(item){
 </div>
 
 <script>
+// PERF 2026-05-22 — Helper Cloudinary transforms (mismo perfil que app.py).
+// Reduce 80-95% el peso de las fotos: original 4-8MB iPhone → ~50-300KB.
+const _EV_CLOUD_PROFILES = {
+  thumb:   'f_auto,q_auto:eco,w_120,c_limit,dpr_auto',
+  card:    'f_auto,q_auto,w_400,c_limit,dpr_auto',
+  gallery: 'f_auto,q_auto,w_800,c_limit,dpr_auto',
+  full:    'f_auto,q_auto'
+};
+const _EV_CLOUD_RE = /^(https?:\/\/res\.cloudinary\.com\/[^/]+\/(?:image|video|raw)\/upload\/)(.+)$/i;
+const _EV_CLOUD_TX_TOKEN_RE = /(?:^|,)[a-z]_[^,/]+/;
+function cloudTx(url, kind){
+  if (!url || typeof url !== 'string') return url || '';
+  const m = url.match(_EV_CLOUD_RE);
+  if (!m) return url;
+  const firstSeg = m[2].split('/')[0];
+  if (firstSeg && _EV_CLOUD_TX_TOKEN_RE.test(',' + firstSeg)) return url;
+  return m[1] + (_EV_CLOUD_PROFILES[kind] || _EV_CLOUD_PROFILES.card) + '/' + m[2];
+}
+
 let _evFotos = [];
 let _evFiltroActual = '';
 
 async function cargarEvidencias() {
   const cont = document.getElementById('evGrid');
-  cont.innerHTML = '<div class="text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando evidencias…</div>';
+  // PERF 2026-05-22 — Skeleton shimmer (8 placeholders) en vez de spinner.
+  // Mejor percepción de carga + evita layout shift cuando llegan las imgs.
+  cont.innerHTML = Array(8).fill(0).map(() => `
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+      <div class="ev-skeleton-img"></div>
+      <div style="padding:10px">
+        <div class="ev-skeleton-line" style="width:75%"></div>
+        <div class="ev-skeleton-line" style="width:50%"></div>
+      </div>
+    </div>
+  `).join('');
   try {
     const r = await fetch(`/mantenciones/api/clientes/${CID}/evidencias`);
     const d = await r.json();
@@ -4837,8 +4893,8 @@ function renderEvidencias() {
   const ico = { ot:'bi-clipboard2-pulse', levantamiento:'bi-camera-fill', galeria:'bi-images' };
   cont.innerHTML = fotos.map((f, idx) => `
     <div class="ev-card" onclick="abrirEvLightbox(${idx})">
-      <img class="ev-img" src="${_evEsc(f.url)}" alt="${_evEsc(f.descripcion||'')}"
-           loading="lazy" onerror="this.style.display='none'">
+      <img class="ev-img" src="${_evEsc(cloudTx(f.url, 'card'))}" alt="${_evEsc(f.descripcion||'')}"
+           loading="lazy" decoding="async" onerror="this.style.display='none'">
       <div class="ev-meta">
         <div class="tt" title="${_evEsc(f.maquina_nombre||f.descripcion||'')}">
           ${_evEsc(f.maquina_nombre || f.descripcion || 'Sin descripción')}
@@ -4863,7 +4919,11 @@ function abrirEvLightbox(idx) {
   const fotos = _evFiltroActual ? _evFotos.filter(f => f.origen === _evFiltroActual) : _evFotos;
   const f = fotos[idx];
   if (!f) return;
-  document.getElementById('evLightboxImg').src = f.url;
+  // PERF 2026-05-22: lightbox = 'full' (f_auto + q_auto, sin resize) —
+  // sirve la mejor calidad en formato moderno (WebP/AVIF) pero respetando
+  // el tamaño original. Reduce 30-50% vs el JPG original sin perdidas
+  // perceptibles.
+  document.getElementById('evLightboxImg').src = cloudTx(f.url, 'full');
   document.getElementById('evLightboxMeta').innerHTML =
     `<div class="fw-bold">${_evEsc(f.maquina_nombre || 'Sin equipo asociado')}</div>
      <div class="small mt-1">${_evEsc(f.descripcion || '')}</div>
@@ -5475,17 +5535,17 @@ function abrirEmailManual() {
   </div>
 
   {% else %}
-  <div class="f-card">
-    <div class="empty-state">
-      <i class="bi bi-calendar-x"></i>
-      <div class="fw-semibold" style="font-size:.9rem;color:#374151">Sin visitas registradas</div>
-      <div style="font-size:.8rem;margin-bottom:12px">Agenda la primera mantención para este cliente</div>
-      {% if not is_tecnico %}
-      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
-        <i class="bi bi-calendar-plus me-1"></i>Agendar visita
+  <div class="ilus-empty">
+    <div class="e-icon"><i class="bi bi-calendar-plus"></i></div>
+    <div class="e-title">Sin visitas registradas</div>
+    <div class="e-sub">Agenda la primera mantención para este cliente y comienza el historial de servicio.</div>
+    {% if not is_tecnico %}
+    <div class="e-actions">
+      <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1"></i>Agendar primera visita
       </button>
-      {% endif %}
     </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -6174,12 +6234,10 @@ function abrirEmailManual() {
     <i class="bi bi-funnel"></i> Sin coincidencias para los filtros
   </div>
   {% else %}
-  <div class="f-card">
-    <div class="empty-state">
-      <i class="bi bi-clock-history"></i>
-      <div class="fw-semibold" style="font-size:.9rem;color:#374151">Sin historial de actividad</div>
-      <div style="font-size:.8rem">Las acciones realizadas sobre este cliente aparecerán aquí</div>
-    </div>
+  <div class="ilus-empty">
+    <div class="e-icon"><i class="bi bi-clock-history"></i></div>
+    <div class="e-title">Sin historial de actividad</div>
+    <div class="e-sub">Las acciones realizadas sobre este cliente quedarán registradas aquí — visitas, equipos, contratos, contactos.</div>
   </div>
   {% endif %}
 
