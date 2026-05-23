@@ -855,6 +855,114 @@ def _cloud_delete_raw(public_id: str) -> None:
 
 
 # ─────────────────────────────────────────────
+#  Cloudinary URL transformations (PERF 2026-05-22)
+# ─────────────────────────────────────────────
+# Daniel pidió "rápida y óptima como SaaS de primera mano". El módulo de
+# mantenciones maneja muchas fotos de equipos (técnicos suben fotos en
+# cada visita) — sin transformaciones, el navegador descarga la imagen
+# ORIGINAL (3-8MB JPG de iPhone) aunque la muestre en una card de 120px.
+# Con `f_auto,q_auto,w_400` Cloudinary devuelve WebP/AVIF ~50-80KB.
+#
+# Estos perfiles aplican on-the-fly (no re-suben la imagen) y aprovechan
+# el CDN global de Cloudinary. El cliente recibe el formato moderno
+# soportado por su browser (AVIF en Chrome 105+, WebP en todo lo demás).
+#
+# Tabla de perfiles:
+#   thumb              — listados, avatares (≤120px)
+#   card               — cards de equipo, OT (≤400px)
+#   gallery            — galería en modal CAPTURA (≤800px)
+#   full               — vista detalle/pantalla completa (auto)
+#   blur_placeholder   — LQIP (40px borroso, base de progressive load)
+# ─────────────────────────────────────────────
+
+_CLOUD_TX_PROFILES = {
+    "thumb":            "f_auto,q_auto:eco,w_120,c_limit,dpr_auto",
+    "card":             "f_auto,q_auto,w_400,c_limit,dpr_auto",
+    "gallery":          "f_auto,q_auto,w_800,c_limit,dpr_auto",
+    "full":             "f_auto,q_auto",
+    "blur_placeholder": "f_auto,q_30,w_40,e_blur:200,c_limit",
+}
+
+# Pattern para detectar URL de Cloudinary y separar prefijo/transforms/public_id.
+# Forma canónica: https://res.cloudinary.com/{cloud}/image/upload/{transforms}/{vXXX/}{public_id}.{ext}
+# Ya con transforms:    .../image/upload/c_fill,w_500/v1234/folder/file.jpg
+# Sin transforms:       .../image/upload/v1234/folder/file.jpg
+_CLOUD_URL_RE = re.compile(
+    r"^(https?://res\.cloudinary\.com/[^/]+/(?:image|video|raw)/upload/)(.+)$",
+    re.IGNORECASE,
+)
+
+# Detector de "segmento de transformaciones" — segmento donde aparecen
+# tokens conocidos (f_, q_, w_, h_, c_, dpr_, e_, ar_, g_, b_, l_, r_, x_, y_).
+_CLOUD_TX_TOKEN_RE = re.compile(
+    r"(?:^|,)(?:[a-z]_[^,/]+)"
+)
+
+
+def _cloud_url_tx(url: str, kind: str = "card", retina: bool = True) -> str:
+    """Aplica transformaciones Cloudinary inline a una URL de imagen.
+
+    Si la URL NO es de Cloudinary (ej. /static/uploads/...) o no se reconoce,
+    devuelve la URL tal cual (zero-cost: no rompe templates).
+
+    Si la URL ya trae transformaciones (segment con f_/q_/w_/etc.), se
+    PRESERVAN las existentes y NO se duplican.
+
+    Args:
+        url:    URL completa (o vacía).
+        kind:   thumb | card | gallery | full | blur_placeholder.
+        retina: si False, omite `dpr_auto` (ya viene en los perfiles
+                pero podrías querer desactivarlo para PDFs/exports).
+
+    Returns:
+        URL transformada (o la original si no aplica).
+    """
+    if not url or not isinstance(url, str):
+        return url or ""
+
+    # Solo procesamos URLs Cloudinary HTTP(S). Local files /static/* o
+    # data: URLs pasan sin tocar.
+    m = _CLOUD_URL_RE.match(url)
+    if not m:
+        return url
+
+    prefix = m.group(1)   # https://res.cloudinary.com/.../upload/
+    rest   = m.group(2)   # transforms?/vXXX?/public_id.ext
+
+    transforms = _CLOUD_TX_PROFILES.get(kind, _CLOUD_TX_PROFILES["card"])
+    if not retina:
+        # Quita dpr_auto si está presente (algunas exportaciones lo prefieren).
+        transforms = ",".join(t for t in transforms.split(",") if t != "dpr_auto")
+
+    # Detectar si el primer segmento de `rest` YA es un bloque de transforms.
+    # Ej: "c_fill,w_500/v1234/file.jpg" → primer seg "c_fill,w_500" es tx.
+    first_seg, _, _tail = rest.partition("/")
+    if first_seg and _CLOUD_TX_TOKEN_RE.search("," + first_seg):
+        # Ya tiene transforms — no duplicamos. Devolvemos la URL original
+        # (el caller ya sabía lo que hacía al construir esa URL).
+        return url
+
+    return f"{prefix}{transforms}/{rest}"
+
+
+# Registrar filtro Jinja `{{ url|cloud_tx('card') }}` para uso directo en templates.
+@app.template_filter("cloud_tx")
+def _jinja_cloud_tx(url, kind="card"):
+    """Filtro Jinja: aplica transformaciones Cloudinary según `kind`.
+
+    Uso en templates:
+        <img src="{{ eq.foto_url|cloud_tx('card') }}" loading="lazy">
+        <img src="{{ f.url|cloud_tx('thumb') }}">
+
+    Nunca rompe — si la URL no es Cloudinary o es None, devuelve tal cual.
+    """
+    try:
+        return _cloud_url_tx(url or "", kind)
+    except Exception:
+        return url or ""
+
+
+# ─────────────────────────────────────────────
 #  DB helpers
 # ─────────────────────────────────────────────
 
@@ -21958,7 +22066,7 @@ def _puede_ot_accion(vid, accion, user=None):
     Fail-closed: en cualquier error de BD devuelve False (denegar).
 
     ═══════════════════════════════════════════════════════════════════
-    MATRIZ DE PERMISOS POR ROL (2026-05-22, Daniel — brecha Aaron):
+    MATRIZ DE PERMISOS POR ROL (2026-05-22, Daniel — clarificación final):
     ─────────────┬──────────┬────────┬─────────┬─────────┬───────────┬───────
     Acción       │ superadm │ admin  │ supervi │ ejecuti │ tecnico   │ otro
     ─────────────┼──────────┼────────┼─────────┼─────────┼───────────┼───────
@@ -21969,16 +22077,20 @@ def _puede_ot_accion(vid, accion, user=None):
     metadata     │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
     editar       │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
     eliminar     │   ✓      │   ✗    │   ✗     │   ✗     │   ✗       │  ✗
-    aprobar      │   ✓      │   ✓    │   ✓     │   ✗     │   ✗       │  ✗
-    firmar_creador│  ✓      │   ✓    │   ✓     │   ✗     │   ✗       │  ✗
+    aprobar      │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← ejecutivo firma
+    firmar_creador│  ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← como supervisor
     ─────────────┴──────────┴────────┴─────────┴─────────┴───────────┴───────
 
-    Cambio crítico 2026-05-22 vs versión previa:
-      - ejecutivo YA NO puede aprobar/rechazar cierre, ni editar metadata,
-        ni eliminar (antes el ejecutivo creador podía hacer todo eso). Daniel:
-        "el ejecutivo levanta y supervisa — NO ejecuta, NO firma, NO borra".
-      - Antes 'aprobar' incluía a `ejecutivo` por familia → ahora solo
-        supervisor/admin/superadmin (esa es la "supervisión" formal).
+    Decisión final 2026-05-22 (Daniel):
+      - El ejecutivo SSTT (Aaron) ES el supervisor en el flujo de 3 firmas
+        (cliente + técnico + supervisor). Sin su firma la OT no cierra.
+      - Sigue SIN poder editar metadata ni eliminar OTs. La firma es su
+        compromiso de revisión, no de modificación.
+
+    Responsabilidades por firma (procedimiento interno ILUS):
+      Técnico        → "Presté el servicio sin detalles ni problemas."
+      Cliente        → "Recibo conforme el trabajo realizado."
+      Ejecutivo SSTT → "Reviso y certifico que la OT quedó bien gestionada."
     ═══════════════════════════════════════════════════════════════════
     """
     if user is None:
@@ -21998,31 +22110,57 @@ def _puede_ot_accion(vid, accion, user=None):
         print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (sin uid)", flush=True)
         return False
 
-    # Cargar campos clave de la OT una vez.
-    # 2026-05-22 (Aaron Urbina): traemos también `created_by_user_id` (FK
-    # estable) si la columna existe — es la fuente de verdad nueva. El
-    # string `created_by` queda como fallback para compat con OTs viejas.
+    # PERF 2026-05-22: cache request-scoped del fetch de mant_visitas.
+    # ANTES: mant_ot_ejecutar llama `_puede_ot_accion(vid, ver/ejecutar/
+    # aprobar/configurar)` = 4 queries idénticas al `mant_visitas` por
+    # cada page-load. AHORA: la primera ejecución guarda en `g._perm_visita_cache`
+    # y las siguientes 3 reusan el dict. Reduce 3 queries × cada acción extra.
+    # `g` se limpia automáticamente al fin del request (Flask teardown).
     try:
-        # Intentamos con la columna nueva; si falla (DB pre-migración), reintento.
+        _perm_cache = getattr(g, "_perm_visita_cache", None)
+        if _perm_cache is None:
+            _perm_cache = {}
+            try:
+                g._perm_visita_cache = _perm_cache
+            except Exception:
+                pass
+        _cache_key = ("v", int(vid)) if vid is not None else ("v", None)
+    except Exception:
+        _perm_cache = {}
+        _cache_key = ("v", vid)
+
+    v = _perm_cache.get(_cache_key)
+    if v is None:
+        # Cargar campos clave de la OT una vez.
+        # 2026-05-22 (Aaron Urbina): traemos también `created_by_user_id` (FK
+        # estable) si la columna existe — es la fuente de verdad nueva. El
+        # string `created_by` queda como fallback para compat con OTs viejas.
         try:
-            v = mysql_fetchone(
-                "SELECT tecnico_user_id, created_by, created_by_user_id, "
-                "       firma_supervisor_user_id, estado, tipo "
-                "  FROM mant_visitas WHERE id=%s",
-                (vid,)
-            )
-        except Exception:
-            v = mysql_fetchone(
-                "SELECT tecnico_user_id, created_by, "
-                "       firma_supervisor_user_id, estado, tipo "
-                "  FROM mant_visitas WHERE id=%s",
-                (vid,)
-            )
-    except Exception as e:
-        print(f"[SECURITY] _puede_ot_accion BD error vid={vid}: {e}", flush=True)
-        return False
-    if not v:
-        print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (OT inexistente)", flush=True)
+            # Intentamos con la columna nueva; si falla (DB pre-migración), reintento.
+            try:
+                v = mysql_fetchone(
+                    "SELECT tecnico_user_id, created_by, created_by_user_id, "
+                    "       firma_supervisor_user_id, estado, tipo "
+                    "  FROM mant_visitas WHERE id=%s",
+                    (vid,)
+                )
+            except Exception:
+                v = mysql_fetchone(
+                    "SELECT tecnico_user_id, created_by, "
+                    "       firma_supervisor_user_id, estado, tipo "
+                    "  FROM mant_visitas WHERE id=%s",
+                    (vid,)
+                )
+        except Exception as e:
+            print(f"[SECURITY] _puede_ot_accion BD error vid={vid}: {e}", flush=True)
+            return False
+        if not v:
+            print(f"[PERM] vid={vid} action={accion} role={role_raw} user={username} -> DENIED (OT inexistente)", flush=True)
+            _perm_cache[_cache_key] = False  # cachear "no existe" también
+            return False
+        _perm_cache[_cache_key] = v
+    elif v is False:
+        # Cachée previa indicó que la OT no existe.
         return False
 
     tecnico_uid = v.get("tecnico_user_id")
@@ -22057,16 +22195,22 @@ def _puede_ot_accion(vid, accion, user=None):
     if tecnico_uid and int(tecnico_uid) == int(uid):
         es_tecnico_asignado = True
     else:
-        try:
-            colab = mysql_fetchone(
-                "SELECT 1 FROM mant_visita_tecnicos "
-                " WHERE visita_id=%s AND tecnico_user_id=%s LIMIT 1",
-                (vid, uid)
-            )
-            es_tecnico_asignado = bool(colab)
-        except Exception as e:
-            print(f"[SECURITY] error consultando colaboradores vid={vid}: {e}",
-                  flush=True)
+        # PERF 2026-05-22: cache request-scoped del colab check (mismo motivo).
+        _colab_key = ("colab", int(vid), int(uid))
+        if _colab_key in _perm_cache:
+            es_tecnico_asignado = _perm_cache[_colab_key]
+        else:
+            try:
+                colab = mysql_fetchone(
+                    "SELECT 1 FROM mant_visita_tecnicos "
+                    " WHERE visita_id=%s AND tecnico_user_id=%s LIMIT 1",
+                    (vid, uid)
+                )
+                es_tecnico_asignado = bool(colab)
+                _perm_cache[_colab_key] = es_tecnico_asignado
+            except Exception as e:
+                print(f"[SECURITY] error consultando colaboradores vid={vid}: {e}",
+                      flush=True)
 
     # ── EJECUTAR ─────────────────────────────────────────────────
     # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT.
@@ -22152,30 +22296,40 @@ def _puede_ot_accion(vid, accion, user=None):
         return False
 
     # ── APROBAR ─────────────────────────────────────────────────
-    # Aprobar/rechazar cierre = "supervisión formal". Solo admin/supervisor
-    # (+ superadmin que ya pasó arriba).
-    # 🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    # Antes ejecutivo también podía aprobar (familia 'ejecutivo' estaba
-    # en la lista), y el creador podía aprobar SU OT. Daniel definió:
-    #   "el ejecutivo NO firma cierres ni rechaza. Esa es responsabilidad
-    #    del admin o del supervisor — NO del ejecutivo que levantó la OT,
-    #    porque sería juez y parte."
-    # Ahora: ejecutivo NUNCA aprueba ni rechaza, ni siquiera sus OTs.
+    # Aprobar/rechazar cierre = "tercera firma de supervisión formal".
+    #
+    # ✅ Daniel 22/05/2026 (clarificación post-deploy):
+    #   El EJECUTIVO SSTT (Aaron) ES el supervisor en el flujo de 3 firmas.
+    #   Él levanta la OT, asigna al técnico y FIRMA como tercer responsable
+    #   cuando Lenin termina. Sin esa firma, la OT no cierra.
+    #
+    #   Responsabilidades por firma (procedimiento interno ILUS):
+    #     - Técnico → "Declaro haber prestado el servicio sin detalles
+    #                  ni problemas pendientes."
+    #     - Cliente → "Recibo conforme el trabajo realizado y dejo
+    #                  registro para evitar reclamos posteriores."
+    #     - Ejecutivo SSTT → "Reviso y certifico que la orden de trabajo
+    #                  quedó gestionada como corresponde."
+    #
+    #   Si hay 2+ ejecutivos SSTT, comparten esta atribución.
+    #
+    # Familia autorizada: admin · supervisor · ejecutivo (+ superadmin
+    # ya pasó por la regla absoluta arriba).
     if accion == "aprobar":
-        if role in ("admin", "supervisor"):
-            print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
+        if role in ("admin", "supervisor", "ejecutivo"):
+            print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} -> ALLOWED (supervisor formal)", flush=True)
             return True
         print(f"[PERM] vid={vid} action=aprobar role={role_raw}->{role} user={username} "
               f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
         return False
 
     # ── FIRMAR_CREADOR ──────────────────────────────────────────
-    # Firmar como aprobador en el flujo de 3 firmas.
-    # 🔒 FIX 2026-05-22: ejecutivo YA NO puede firmar (mismo motivo que
-    # 'aprobar'). Solo admin/supervisor + superadmin.
+    # Firmar como supervisor en el flujo de 3 firmas (cliente + técnico +
+    # supervisor). Misma política que 'aprobar': el ejecutivo SSTT SÍ firma
+    # — es su rol gestionar y certificar la OT.
     if accion == "firmar_creador":
-        if role in ("admin", "supervisor"):
-            print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
+        if role in ("admin", "supervisor", "ejecutivo"):
+            print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} -> ALLOWED (supervisor formal)", flush=True)
             return True
         print(f"[PERM] vid={vid} action=firmar_creador role={role_raw}->{role} user={username} "
               f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
@@ -22230,9 +22384,9 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
             msg = ("Solo el creador, administrador o técnico asignado "
                    "puede aplicar plantilla o agregar tareas a esta OT.")
         elif accion in ("aprobar", "firmar_creador"):
-            msg = ("Solo el supervisor o administrador puede aprobar/firmar "
-                   "el cierre de esta OT. El ejecutivo NO firma (sería juez "
-                   "y parte del trabajo que él mismo levantó).")
+            msg = ("No tienes permiso para firmar el cierre de esta OT. "
+                   "La firma como supervisor le corresponde al ejecutivo SSTT, "
+                   "supervisor o administrador.")
         else:
             msg = "No tienes acceso a esa orden de trabajo."
         return jsonify({
@@ -22403,12 +22557,11 @@ def _ot_can_eliminar(view_func):
 def _ot_can_approve(view_func):
     """Decorador para aprobar/rechazar cierre.
 
-    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    Solo superadmin + admin + supervisor pasan. Ejecutivo YA NO firma
-    cierres (antes la familia 'ejecutivo' estaba en la lista). Motivo:
-    el ejecutivo levanta/supervisa visualmente — la aprobación formal
-    (juez del trabajo del técnico) es del admin o supervisor, no del
-    ejecutivo que sería juez y parte.
+    ✅ FIX 2026-05-22 (Daniel — clarificación final rol ejecutivo SSTT):
+    Familia autorizada: superadmin · admin · supervisor · ejecutivo.
+    El ejecutivo SSTT (Aaron) ES el supervisor formal de la OT en el flujo
+    de 3 firmas (cliente + técnico + supervisor). Sin esa firma la OT no
+    cierra. Es parte de su rol gestionar y certificar el trabajo.
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -22777,6 +22930,36 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_logs MODIFY COLUMN entidad VARCHAR(40) NOT NULL",
                 # Re-crear índice (si ALTER lo recreó implícitamente lo ignora)
                 "CREATE INDEX idx_entidad_v2 ON mant_logs (entidad, entidad_id)",
+
+                # ════════════════════════════════════════════════════════════
+                # PERF 2026-05-22 — Índices composite críticos para módulo
+                # mantenciones (Daniel: "rápida y óptima como SaaS top-tier").
+                # Estos índices cubren las queries más frecuentes en
+                # mant_ot_ejecutar, ficha del cliente, galería de equipo y
+                # listados — donde antes se hacía table scan o se usaba un
+                # índice de 1 columna y luego se filtraba en memoria.
+                # ════════════════════════════════════════════════════════════
+                # mant_visita_fotos: lookup por OT y por equipo, orden cronológico DESC
+                #   ─ usado en ot_ejecutar.html (galería del modal CAPTURA)
+                #   ─ usado en ficha.html (evidencias agrupadas por equipo)
+                "CREATE INDEX idx_vf_visita_maquina_tomada ON mant_visita_fotos "
+                "    (visita_id, maquina_id, tomada_at DESC)",
+                # mant_maquina_fotos: galería del equipo (lo más reciente arriba) +
+                # filtro por levantamiento si proviene de uno.
+                "CREATE INDEX idx_mf_maquina_tomada ON mant_maquina_fotos "
+                "    (maquina_id, tomada_at DESC)",
+                # mant_levantamiento_fotos: agrupar por levantamiento + item.
+                "CREATE INDEX idx_lf_lev_item ON mant_levantamiento_fotos "
+                "    (levantamiento_id, item_id)",
+                # mant_visita_tareas: el ORDER BY de mant_ot_ejecutar es
+                # (maquina_id, plantilla_id, orden, id). Este index cubre
+                # ese ordenamiento sin filesort para OTs con muchas tareas.
+                "CREATE INDEX idx_vt_v_maq_plan_orden ON mant_visita_tareas "
+                "    (visita_id, maquina_id, plantilla_id, orden)",
+                # mant_visita_equipos: filtro de equipos de la OT (UNION en
+                # mant_ot_ejecutar). El UNIQUE KEY ya cubre PK lookup, pero
+                # explicitar el index por visita_id ayuda al optimizer.
+                "CREATE INDEX idx_ve_visita ON mant_visita_equipos (visita_id)",
             ]:
                 try:
                     cur.execute(idx_sql)
@@ -39927,21 +40110,28 @@ def mant_ot_iniciar_ruta(vid):
 # ═════════════════════════════════════════════════════════════════════
 
 def _is_supervisor_user():
-    """True si el usuario actual puede aprobar OTs (admin/superadmin/supervisor).
+    """True si el usuario actual puede aprobar OTs como supervisor.
 
-    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    ANTES incluía 'ejecutivo' (Aaron podía aprobar como ejecutivo_sstt).
-    AHORA solo superadmin/admin/supervisor. El ejecutivo levanta y
-    supervisa visualmente, NO aprueba cierres (sería juez y parte).
+    🔒 FIX 2026-05-22 (Daniel — clarificación rol ejecutivo SSTT):
+    El EJECUTIVO de servicio técnico (rol ejecutivo_sstt — ej. Aaron Urbina)
+    SÍ es supervisor en el flujo de cierre. Es quien gestiona la OT, la
+    levanta, la asigna al técnico Y firma como tercer responsable cuando
+    Lenin termina el trabajo. Sin la firma del ejecutivo la OT no cierra.
+
+    Responsabilidades en la firma (procedimiento interno ILUS):
+      - Técnico: declara haber prestado el servicio sin detalles.
+      - Cliente: recibe conforme el trabajo realizado.
+      - Ejecutivo SSTT: revisa y certifica que la OT quedó bien gestionada.
+
+    Si hay 2+ ejecutivos SSTT (caso futuro), ambos comparten esta atribución.
     """
     try:
         perms = g.get("permissions") or {}
         if perms.get("superadmin") or perms.get("admin"):
             return True
-        # Solo supervisor de mantenciones puede aprobar (NO ejecutivo)
         u = getattr(g, "user", None) or {}
         fam = _rol_familia(u.get("role") or "")
-        if fam in ("supervisor", "admin", "superadmin"):
+        if fam in ("supervisor", "admin", "superadmin", "ejecutivo"):
             return True
     except Exception:
         pass
@@ -39949,21 +40139,23 @@ def _is_supervisor_user():
 
 
 def _is_aprobador(user=None):
-    """True si el usuario puede aprobar/firmar OTs (familia: superadmin,
-    admin, supervisor — NO ejecutivo).
+    """True si el usuario puede aprobar/firmar OTs como tercer responsable.
+
+    Familia autorizada: superadmin · admin · supervisor · ejecutivo.
 
     Wrapper canónico para chequeos de "¿puede ver botón Revisar?" en
     contextos donde NO tenemos vid (ej. listado global). Para chequeos
     por OT específica usar `_puede_ot_accion(vid, "aprobar", user)`.
 
-    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    ANTES incluía 'ejecutivo' (en la familia normalizada). AHORA solo
-    superadmin/admin/supervisor. Coherente con `_puede_ot_accion('aprobar')`
-    y con `_is_supervisor_user()`.
+    🔒 FIX 2026-05-22 (Daniel — clarificación):
+    El EJECUTIVO SSTT (Aaron) SÍ firma como supervisor de la OT. Eso forma
+    parte del compromiso de su rol: gestiona la OT y certifica que el
+    trabajo del técnico quedó bien hecho. Coherente con
+    `_puede_ot_accion('aprobar')` y `_is_supervisor_user()`.
     """
     u = user or getattr(g, "user", None) or {}
     fam = _rol_familia((u.get("role") or "").lower())
-    return fam in ("superadmin", "admin", "supervisor")
+    return fam in ("superadmin", "admin", "supervisor", "ejecutivo")
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/aprobar-cierre", methods=["POST"])
@@ -39972,10 +40164,12 @@ def mant_ot_aprobar_cierre(vid):
     """Supervisor aprueba la OT firmada por el técnico → estado 'cerrada'.
     Guarda firma_supervisor + comentario + timestamp + user_id.
 
-    🔐 SEGURIDAD 2026-05-22 (Daniel — brecha Aaron):
-    Solo superadmin/admin/supervisor pueden aprobar. Ejecutivo (incluso
-    el creador) YA NO puede — sería juez y parte del trabajo que él
-    mismo levantó.
+    🔐 SEGURIDAD 2026-05-22 (Daniel — clarificación rol ejecutivo):
+    El ejecutivo SSTT (Aaron) SÍ firma como supervisor de la OT. Es parte
+    del compromiso de su rol gestor — revisar y certificar que el trabajo
+    del técnico quedó bien hecho. Familia autorizada: superadmin · admin ·
+    supervisor · ejecutivo. Esa firma cierra el flujo: cliente recibe
+    conforme + técnico declara servicio prestado + ejecutivo certifica.
     """
     if not _puede_ot_accion(vid, "aprobar"):
         _u = getattr(g, "user", None) or {}
@@ -39986,9 +40180,9 @@ def mant_ot_aprobar_cierre(vid):
         )
         return jsonify({
             "ok": False,
-            "error": "Solo el supervisor o administrador puede aprobar el "
-                     "cierre. El ejecutivo que levantó la OT NO puede ser "
-                     "quien la firma como aprobada.",
+            "error": "No tienes permiso para firmar el cierre de esta OT. "
+                     "Solo el ejecutivo SSTT, supervisor o administrador "
+                     "pueden aprobar.",
         }), 403
     d = request.get_json(silent=True) or {}
     firma_sup = (d.get("firma_supervisor") or "").strip()
@@ -40052,9 +40246,11 @@ def mant_ot_rechazar_cierre(vid):
     """Supervisor rechaza la OT → vuelve a 'programada' para que técnico
     corrija. Limpia firma_tecnico (debe firmar de nuevo).
 
-    🔐 SEGURIDAD 2026-05-22 (Daniel — brecha Aaron):
-    Solo superadmin/admin/supervisor pueden rechazar. Mismo criterio que
-    aprobar — el ejecutivo NO firma rechazos.
+    🔐 SEGURIDAD 2026-05-22 (Daniel — clarificación final):
+    El supervisor formal de la OT incluye al ejecutivo SSTT (Aaron). Si
+    revisa el trabajo del técnico y detecta algo que corregir, también
+    puede rechazar — es parte de su rol gestor. Familia autorizada:
+    superadmin · admin · supervisor · ejecutivo.
     """
     if not _puede_ot_accion(vid, "aprobar"):
         _u = getattr(g, "user", None) or {}
@@ -40065,8 +40261,9 @@ def mant_ot_rechazar_cierre(vid):
         )
         return jsonify({
             "ok": False,
-            "error": "Solo el supervisor o administrador puede rechazar el "
-                     "cierre de una OT. El ejecutivo no tiene esa facultad.",
+            "error": "No tienes permiso para rechazar el cierre de esta OT. "
+                     "El rechazo le corresponde al ejecutivo SSTT, "
+                     "supervisor o administrador.",
         }), 403
     d = request.get_json(silent=True) or {}
     motivo = (d.get("motivo") or "").strip()[:1000]

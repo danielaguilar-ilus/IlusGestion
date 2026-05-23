@@ -460,6 +460,48 @@
   background:#dbeafe;color:#1e40af;font-weight:700;font-size:.66rem}
 
 /* ════════════════════════════════════════════════════════
+   SKELETON SCREENS (PERF 2026-05-22 — Daniel)
+   ──────────────────────────────────────────────────────
+   Mientras la galería del modal CAPTURA carga vía AJAX,
+   mostramos placeholders shimmer en lugar de un texto
+   "Cargando...". Reduce el percibido CLS y da feedback
+   visual instantáneo. Vanilla CSS — sin librerías.
+   ════════════════════════════════════════════════════════ */
+@keyframes ilus-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.skeleton-tile {
+  position: relative;
+  border-radius: 10px;
+  background: #e5e7eb;
+  background-image: linear-gradient(90deg,
+    #e5e7eb 0%,
+    #f3f4f6 50%,
+    #e5e7eb 100%);
+  background-size: 200% 100%;
+  animation: ilus-shimmer 1.4s ease-in-out infinite;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+}
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+    #e5e7eb 0%,
+    #f3f4f6 50%,
+    #e5e7eb 100%);
+  background-size: 200% 100%;
+  animation: ilus-shimmer 1.4s ease-in-out infinite;
+  margin: 6px 0;
+}
+.cap-fotos-grid.is-loading .skeleton-tile { display: block; }
+/* prefers-reduced-motion: desactivar la animación shimmer */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-tile, .skeleton-line { animation: none; }
+}
+
+/* ════════════════════════════════════════════════════════
    VISTA 2: PLANTILLAS DE UNA MÁQUINA
    ════════════════════════════════════════════════════════ */
 .tx-eq-hero{
@@ -663,10 +705,16 @@
 .tx-view{display:none}
 .tx-view.active{display:block}
 
-/* Empty / sin tareas */
-.tx-empty{background:#fff;border:1px dashed #e5e7eb;border-radius:11px;
-  padding:40px 16px;text-align:center;color:#6b7280}
-.tx-empty i{font-size:2.4rem;opacity:.3;display:block;margin-bottom:8px}
+/* Empty / sin tareas — upgrade visual 2026-05-22 */
+.tx-empty{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  padding:48px 20px;text-align:center;color:#6b7280;
+  box-shadow:0 1px 2px rgba(15,23,42,.04);
+  animation:ilus-fade-up 320ms cubic-bezier(.16,1,.3,1) both;}
+.tx-empty i{font-size:1.7rem;display:inline-flex;align-items:center;justify-content:center;
+  width:60px;height:60px;border-radius:14px;margin:0 auto 12px;
+  background:linear-gradient(135deg,#fef2f2 0%,#fff 100%);
+  border:1px solid #fee2e2;color:#dc2626;opacity:1;
+  box-shadow:0 1px 3px rgba(15,23,42,.06);}
 
 /* Bottom bar firmar */
 .tx-bottom{position:fixed;bottom:0;left:0;right:0;z-index:90;background:#fff;
@@ -746,6 +794,48 @@
 }
 .firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
 .firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
+
+/* ─── Compromisos al firmar (Daniel 22/05/2026) ───
+   Tarjeta premium con los compromisos formales de cada parte que firma
+   la OT. Mobile-first: en mobile las 3 responsabilidades quedan en
+   columna; en desktop en grid de 3. */
+.resp-firma-card{
+  border:1px solid #e5e7eb;
+  background:linear-gradient(135deg,#fafafa 0%,#fff 100%);
+  border-radius:14px;
+  padding:14px 16px;
+  margin-bottom:18px;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
+}
+.resp-firma-head{
+  font-size:.78rem;font-weight:700;color:#0f172a;
+  letter-spacing:.02em;text-transform:uppercase;
+  margin-bottom:10px;display:flex;align-items:center;gap:8px;
+}
+.resp-firma-head i{color:#dc2626;font-size:1rem}
+.resp-firma-grid{display:grid;grid-template-columns:1fr;gap:10px}
+@media (min-width:680px){
+  .resp-firma-grid{grid-template-columns:repeat(3,1fr);gap:12px}
+}
+.resp-firma-item{
+  background:#fff;border:1px solid #f3f4f6;border-radius:10px;
+  padding:10px 12px;
+  transition:transform 150ms cubic-bezier(.16,1,.3,1),
+             box-shadow 150ms cubic-bezier(.16,1,.3,1);
+}
+.resp-firma-item:hover{
+  transform:translateY(-1px);
+  box-shadow:0 4px 8px rgba(0,0,0,.04);
+}
+.resp-firma-rol{
+  font-size:.72rem;font-weight:700;color:#dc2626;
+  margin-bottom:4px;display:flex;align-items:center;gap:6px;
+  text-transform:uppercase;letter-spacing:.04em;
+}
+.resp-firma-rol i{font-size:.85rem}
+.resp-firma-txt{
+  font-size:.78rem;line-height:1.45;color:#374151;font-weight:500;
+}
 
 /* ─── Concurrencia multitécnico: badge cuando otro tiene la tarea ─── */
 .tx-tarea.is-locked-other {
@@ -1838,10 +1928,16 @@
          onclick="goToPlantillas('{{ eq.id }}')">
       <div class="eq-foto-wrap">
         {% if eq.foto_url %}
+          {# PERF 2026-05-22: Cloudinary transforms 'card' (≤400px) en vez
+             de la imagen original (3-8MB de iPhone). Reduce 80-95% el peso.
+             `decoding=async` libera el main thread durante decodificación.
+             `fetchpriority=low` da prioridad al hero (foto cliente) primero. #}
           <img class="eq-foto-img"
-               src="{{ eq.foto_url }}"
+               src="{{ eq.foto_url|cloud_tx('card') }}"
                alt="Foto de {{ eq.nombre or 'equipo' }}"
                loading="lazy"
+               decoding="async"
+               fetchpriority="low"
                onerror="(function(el){const w=el.parentNode;w.innerHTML='<div class=\'eq-foto-empty\'><i class=\'bi bi-camera\'></i></div>';})(this);">
         {% else %}
           <div class="eq-foto-empty"><i class="bi bi-camera"></i></div>
@@ -2143,6 +2239,31 @@
           Al firmar, la OT pasa a <strong>"Pendiente de aprobación"</strong>. El supervisor revisará y cerrará.
         </div>
 
+        {# ─── RESPONSABILIDADES DE LA FIRMA (Daniel 22/05/2026)
+             Procedimiento interno ILUS. Cada parte que firma asume un
+             compromiso explícito. Mostrarlo aquí evita malentendidos
+             y reclamos futuros — la firma queda con evidencia escrita. #}
+        <div class="resp-firma-card">
+          <div class="resp-firma-head">
+            <i class="bi bi-file-earmark-check"></i>
+            Compromisos al firmar esta orden de trabajo
+          </div>
+          <div class="resp-firma-grid">
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-tools"></i> Técnico</div>
+              <div class="resp-firma-txt">Declaro haber prestado el servicio sin detalles ni problemas pendientes.</div>
+            </div>
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-person-badge"></i> Cliente</div>
+              <div class="resp-firma-txt">Recibo conforme el trabajo realizado y dejo registro para evitar reclamos posteriores.</div>
+            </div>
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-shield-check"></i> Supervisor</div>
+              <div class="resp-firma-txt">Reviso y certifico que la orden de trabajo quedó gestionada como corresponde.</div>
+            </div>
+          </div>
+        </div>
+
         {# ─── FIRMA DEL TÉCNICO ─── #}
         <div class="mb-4">
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
@@ -2235,6 +2356,31 @@
           <i class="bi bi-info-circle me-1"></i>
           Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
           y el PDF quedará disponible para descarga.
+        </div>
+
+        {# ─── RESPONSABILIDADES DE LA FIRMA DEL SUPERVISOR (Daniel 22/05/2026)
+             Procedimiento interno ILUS. La firma como supervisor implica
+             un compromiso explícito de revisión. Mostrarlo aquí refuerza
+             el sentido de responsabilidad antes de capturar el trazo. #}
+        <div class="resp-firma-card">
+          <div class="resp-firma-head">
+            <i class="bi bi-shield-check"></i>
+            Tu firma como supervisor — compromiso formal
+          </div>
+          <div class="resp-firma-grid">
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-check2-circle"></i> Revisión</div>
+              <div class="resp-firma-txt">Verifiqué que el trabajo del técnico está completo y sin observaciones pendientes.</div>
+            </div>
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-file-earmark-check"></i> Certificación</div>
+              <div class="resp-firma-txt">Certifico que la orden de trabajo quedó gestionada como corresponde al estándar ILUS.</div>
+            </div>
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-clipboard-check"></i> Cierre</div>
+              <div class="resp-firma-txt">Al firmar autorizo el cierre del flujo: cliente conforme + técnico declara + supervisor certifica.</div>
+            </div>
+          </div>
         </div>
 
         {# ─── RESUMEN DE LA OT ─── #}
@@ -2446,6 +2592,123 @@ const IS_ADMIN_LOCK = {{ 'true' if is_admin_lock else 'false' }};
 const LOCK_TTL_MIN = 10;
 // Map de locks vivos: { tareaId: { locked_by_user_id, locked_by_nombre, locked_at } }
 let TAREAS_LOCKS = {};
+
+// ════════════════════════════════════════════════════════
+//  PERF 2026-05-22 — Helpers Cloudinary + compresión
+//  (Daniel: módulo de mantenciones maneja MUCHAS fotos)
+// ════════════════════════════════════════════════════════
+
+// Perfiles equivalentes al backend (_CLOUD_TX_PROFILES en app.py).
+const _CLOUD_TX_PROFILES = {
+  thumb:            'f_auto,q_auto:eco,w_120,c_limit,dpr_auto',
+  card:             'f_auto,q_auto,w_400,c_limit,dpr_auto',
+  gallery:          'f_auto,q_auto,w_800,c_limit,dpr_auto',
+  full:             'f_auto,q_auto',
+  blur_placeholder: 'f_auto,q_30,w_40,e_blur:200,c_limit'
+};
+const _CLOUD_TX_RE = /^(https?:\/\/res\.cloudinary\.com\/[^/]+\/(?:image|video|raw)\/upload\/)(.+)$/i;
+const _CLOUD_TX_TOKEN_RE = /(?:^|,)[a-z]_[^,/]+/;
+
+/**
+ * Aplica transformaciones Cloudinary inline a una URL.
+ * - URLs no-Cloudinary: pasan sin tocar.
+ * - URLs con transformaciones existentes: se preservan (no se duplican).
+ * @param {string} url
+ * @param {'thumb'|'card'|'gallery'|'full'|'blur_placeholder'} kind
+ * @returns {string}
+ */
+function cloudTx(url, kind){
+  if (!url || typeof url !== 'string') return url || '';
+  const m = url.match(_CLOUD_TX_RE);
+  if (!m) return url;
+  const prefix = m[1];
+  const rest = m[2];
+  const tx = _CLOUD_TX_PROFILES[kind] || _CLOUD_TX_PROFILES.card;
+  // Detectar transforms ya presentes en el primer segmento.
+  const firstSeg = rest.split('/')[0];
+  if (firstSeg && _CLOUD_TX_TOKEN_RE.test(',' + firstSeg)) return url;
+  return prefix + tx + '/' + rest;
+}
+
+/**
+ * Comprime una imagen en cliente antes de subirla a Cloudinary.
+ * - Si pesa <500KB o ya es WebP/AVIF/HEIC: skip.
+ * - Si no: redibuja a max 1920px de ancho, JPG quality=0.85.
+ * - Reduce ~70-90% el peso (iPhone 4032×3024 ≈ 4.5MB → ~400KB).
+ *
+ * @param {File} file  archivo input (image/*)
+ * @returns {Promise<Blob>} blob listo para FormData
+ */
+async function _compressImageBeforeUpload(file){
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  // Skip si pesa poco — ya está aceptable.
+  if (file.size && file.size < 500 * 1024) return file;
+  // Skip si ya es WebP/AVIF/HEIC (formatos modernos ya optimizados).
+  const t = (file.type || '').toLowerCase();
+  if (t.includes('webp') || t.includes('avif') || t.includes('heic') || t.includes('heif')){
+    return file;
+  }
+  try {
+    const bitmap = await (window.createImageBitmap
+      ? createImageBitmap(file).catch(() => null)
+      : Promise.resolve(null));
+    const w0 = bitmap ? bitmap.width  : 0;
+    const h0 = bitmap ? bitmap.height : 0;
+    if (!w0 || !h0){
+      // createImageBitmap no soportado → fallback con <img>.
+      return await _compressImageViaImgFallback(file);
+    }
+    const MAX_W = 1920;
+    let w = w0, h = h0;
+    if (w > MAX_W){
+      h = Math.round(h * (MAX_W / w));
+      w = MAX_W;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    if (bitmap.close) bitmap.close();
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (!blob) return file;
+    // Si el resultado es MAYOR que el original (caso raro: PNG pequeño con
+    // mucha transparencia que JPG no comprime bien), devolvemos el original.
+    if (blob.size >= file.size) return file;
+    // Anotamos un name para que el backend tenga un filename razonable.
+    try {
+      const newName = (file.name || 'foto').replace(/\.[^.]+$/, '') + '.jpg';
+      return new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() });
+    } catch(_e){
+      return blob;
+    }
+  } catch(err){
+    console.warn('[compress] fallback (error)', err);
+    return file;
+  }
+}
+
+// Fallback para navegadores muy viejos sin createImageBitmap (rare).
+async function _compressImageViaImgFallback(file){
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_W = 1920;
+        let w = img.width, h = img.height;
+        if (w > MAX_W){ h = Math.round(h * (MAX_W / w)); w = MAX_W; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(b => resolve(b || file), 'image/jpeg', 0.85);
+      };
+      img.onerror = () => resolve(file);
+      img.src = reader.result;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
 
 // Estado de navegación
 let _state = { mid: null, pid: null, view: 'maquinas' };
@@ -3444,12 +3707,15 @@ async function _capMarcarCompletado(mid){
 
 // Subir foto (uploader o reemplazo)
 async function _capSubirFoto(mid, fileInput){
-  const file = fileInput.files && fileInput.files[0];
-  if (!file) return;
+  const rawFile = fileInput.files && fileInput.files[0];
+  if (!rawFile) return;
   const uploader = document.getElementById('cap-foto-uploader');
-  if (uploader){ uploader.classList.add('uploading'); uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Subiendo…</span>'; }
+  if (uploader){ uploader.classList.add('uploading'); uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Comprimiendo…</span>'; }
+  // PERF 2026-05-22: comprimir en cliente antes de subir (iPhone 4-8MB → ~400KB).
+  const file = await _compressImageBeforeUpload(rawFile);
+  if (uploader){ uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Subiendo…</span>'; }
   const fd = new FormData();
-  fd.append('foto', file);
+  fd.append('foto', file, file.name || rawFile.name || 'foto.jpg');
   // Si el equipo NO tiene foto principal, esta primera es la principal.
   // Si ya tiene, el backend degrada a 'detalle' automáticamente.
   fd.append('tipo_foto', 'principal');
@@ -3486,19 +3752,32 @@ async function _capSubirFoto(mid, fileInput){
 
 // Refresca solo la grilla de fotos del modal (sin recargar todo)
 async function _capRefreshFotos(mid){
+  // PERF 2026-05-22 — Skeleton mientras carga (mejora percepción de
+  // velocidad en redes lentas / 4G de técnico en sala).
+  const cont = document.getElementById('cap-fotos-grid');
+  if (cont){
+    cont.innerHTML = Array(6).fill(0).map(() => '<div class="skeleton-tile"></div>').join('');
+  }
   try {
     const r = await fetch(
       `/mantenciones/api/visitas/${VID}/equipo/${mid}/fotos`,
       { headers: { 'Accept': 'application/json' } }
     );
-    if (!r.ok) return;
+    if (!r.ok) {
+      if (cont) cont.innerHTML = '<div class="text-muted small" style="grid-column:span 3">No se pudo cargar la galería.</div>';
+      return;
+    }
     const j = await r.json();
-    if (!j.ok) return;
-    const cont = document.getElementById('cap-fotos-grid');
+    if (!j.ok) {
+      if (cont) cont.innerHTML = '<div class="text-muted small" style="grid-column:span 3">No se pudo cargar la galería.</div>';
+      return;
+    }
     if (cont){
       cont.innerHTML = _renderFotosTiles(j.fotos, mid);
     }
-  } catch(_) { /* silencioso */ }
+  } catch(_) {
+    if (cont) cont.innerHTML = '<div class="text-muted small" style="grid-column:span 3">Error de red al cargar fotos.</div>';
+  }
 }
 
 function _renderFotosTiles(fotos, mid){
@@ -3516,15 +3795,25 @@ function _renderFotosTiles(fotos, mid){
   (fotos || []).forEach(f => {
     const cls = f.fuente === 'ot' ? 'fuente-ot' : 'fuente-ficha';
     const lbl = f.fuente === 'ot' ? 'NUEVA' : 'FICHA';
+    // PERF 2026-05-22: 'card' (≤400px) para grid; el lightbox usa 'gallery'.
+    const thumbUrl = cloudTx(f.url, 'card');
     html += `<div class="cap-foto-tile ${cls}" title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
-      <img src="${_escapeAttr(f.url)}" alt="${_escapeAttr(f.descripcion || '')}" loading="lazy">
+      <img src="${_escapeAttr(thumbUrl)}" alt="${_escapeAttr(f.descripcion || '')}"
+           loading="lazy" decoding="async">
       <span class="badge-fuente">${lbl}</span>
     </div>`;
   });
   if (!fotos || !fotos.length){
-    html += `<div class="text-muted small" style="grid-column:span 3;padding:10px;
-        background:#fff8e1;border:1px solid #fde68a;border-radius:8px;color:#7c2d12">
-      Sin fotos aún. Sube la primera para que aparezca en la ficha del equipo.
+    html += `<div style="grid-column:span 3;padding:18px 16px;text-align:center;
+        background:linear-gradient(135deg,#fff8e1 0%,#fffaf2 100%);
+        border:1px dashed #fcd34d;border-radius:12px;color:#7c2d12;
+        font-size:.82rem;font-weight:600;line-height:1.5;
+        animation:ilus-fade-up 320ms cubic-bezier(.16,1,.3,1) both;">
+      <i class="bi bi-camera" style="font-size:1.4rem;display:block;margin-bottom:6px;opacity:.7"></i>
+      <div style="font-weight:700;color:#92400e">Sin fotos capturadas</div>
+      <div style="font-size:.74rem;font-weight:500;color:#a16207;margin-top:2px">
+        Sube la primera para que quede registrada en la ficha del equipo.
+      </div>
     </div>`;
   }
   return html;
@@ -3593,8 +3882,12 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
 
   // Foto principal actual + nombre del equipo (header del equipo)
   const fotoUrl = fotosData.foto_principal || e.foto_url || '';
+  // PERF 2026-05-22: 'gallery' (≤800px) — la foto principal del header es
+  // un poco más grande que las cards en grid.
   const fotoHtml = fotoUrl
-    ? `<img src="${_escapeAttr(fotoUrl)}" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">`
+    ? `<img src="${_escapeAttr(cloudTx(fotoUrl, 'gallery'))}" alt=""
+            loading="lazy" decoding="async"
+            style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">`
     : `<div style="width:100%;height:120px;background:#f3f4f6;border:1px dashed #cbd5e1;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#94a3b8"><i class="bi bi-image" style="font-size:2rem"></i></div>`;
 
   const headerEquipoHtml = `
@@ -4603,7 +4896,10 @@ async function subirFotoTarea(tid, input, mid, pid){
     const url = (res.data && (res.data.url || res.data.cloudinary_url)) || '';
     if (url){
       const cont = document.getElementById('t-fotos-' + tid);
-      if (cont) cont.innerHTML += `<img src="${_escapeAttr(url)}" alt="" style="max-width:100%;border-radius:8px;margin-top:6px">`;
+      // PERF 2026-05-22: 'card' (≤400px) — preview inline después de subir.
+      if (cont) cont.innerHTML += `<img src="${_escapeAttr(cloudTx(url, 'card'))}" alt=""
+            loading="lazy" decoding="async"
+            style="max-width:100%;border-radius:8px;margin-top:6px">`;
     }
     return;
   }
@@ -5054,7 +5350,9 @@ function renderAdjuntoItem(a){
     if (m) tagTxt = m[1];
   }
   const previewSlot = isImg
-    ? `<img class="adj-item-icon" src="${_escapeAttr(url)}" style="object-fit:cover" alt="">`
+    ? `<img class="adj-item-icon" src="${_escapeAttr(cloudTx(url, 'thumb'))}"
+            loading="lazy" decoding="async"
+            style="object-fit:cover" alt="">`
     : (isVid && vidThumb
         ? `<div class="adj-item-icon" style="position:relative;background:#000;background-image:url('${_escapeAttr(vidThumb)}');background-size:cover;background-position:center;cursor:pointer" onclick="abrirVideoModal('${_escapeAttr(url)}','${_escapeAttr(nombre)}')">
              <i class="bi bi-play-circle-fill" style="color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.7);font-size:1.6rem;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"></i>

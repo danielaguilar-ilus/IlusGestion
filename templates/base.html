@@ -564,7 +564,8 @@
        style="color:inherit;cursor:pointer;border-radius:8px;transition:background .15s"
        title="Administrar mi cuenta">
       {% if current_user.foto_url %}
-      <img src="{{ current_user.foto_url }}" class="sidebar-user-avatar"
+      {# PERF 2026-05-22: avatar 36px → thumb profile (≤120px), AVIF/WebP. #}
+      <img src="{{ current_user.foto_url|cloud_tx('thumb') }}" class="sidebar-user-avatar"
            style="object-fit:cover" alt="Foto"
            width="36" height="36" loading="lazy" decoding="async">
       {% else %}

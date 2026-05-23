@@ -7,10 +7,16 @@
   background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-  box-shadow:0 4px 18px rgba(0,0,0,.14);
+  box-shadow:0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(220,38,38,.08);
+  border-left:5px solid #dc2626;
+  position:relative;overflow:hidden;
 }
-.ots-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
-.ots-hero .sub{font-size:.86rem;color:#cfd3da;}
+.ots-hero::after{content:'';position:absolute;top:-40px;right:-40px;width:200px;height:200px;
+  border-radius:50%;background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 65%);
+  pointer-events:none;}
+.ots-hero > *{position:relative;z-index:1;}
+.ots-hero h4{margin:0;font-weight:900;letter-spacing:-.02em;font-size:1.4rem;}
+.ots-hero .sub{font-size:.86rem;color:#cfd3da;letter-spacing:.01em;}
 
 .ots-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
   gap:10px;margin-bottom:18px;}
@@ -421,31 +427,35 @@
   </div>
   {% endfor %}
 {% else %}
-  <div class="empty-state">
-    <i class="bi bi-clipboard2"></i>
-    <div class="fw-bold" style="font-size:1.05rem;color:#374151">
+  <div class="ilus-empty">
+    <div class="e-icon">
+      <i class="bi bi-clipboard2-pulse"></i>
+    </div>
+    <div class="e-title">
       {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
         Sin resultados con los filtros aplicados
       {% else %}
-        Aún no hay Órdenes de Trabajo creadas
+        Sin órdenes de trabajo todavía
       {% endif %}
     </div>
-    <div class="small text-muted mt-1">
+    <div class="e-sub">
       {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
         Probá limpiar los filtros para ver todas las OTs.
       {% else %}
         Las OTs se crean automáticamente al programar una visita desde la ficha del cliente.
       {% endif %}
     </div>
+    <div class="e-actions">
     {% if filtros.q or filtros.estado or filtros.tipo or filtros.tecnico_id %}
-    <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary mt-3">
+    <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-x-circle me-1"></i>Limpiar filtros
     </a>
     {% else %}
-    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-ilus mt-3">
-      <i class="bi bi-building-add me-1"></i>Ir a clientes para programar la primera
+    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-ilus fw-bold">
+      <i class="bi bi-building-add me-1"></i>Generar primera OT
     </a>
     {% endif %}
+    </div>
   </div>
 {% endif %}
 </div> {# /vista-lista #}
@@ -495,9 +505,10 @@
     {# se rellena por JS #}
   </div>
   <div id="cards-empty" style="display:none">
-    <div class="empty-state">
-      <i class="bi bi-grid-3x3-gap"></i>
-      <div class="fw-bold" style="font-size:1.05rem;color:#374151">No hay OTs para mostrar</div>
+    <div class="ilus-empty">
+      <div class="e-icon"><i class="bi bi-grid-3x3-gap"></i></div>
+      <div class="e-title">Sin OTs en esta vista</div>
+      <div class="e-sub">Cambia los filtros o crea una nueva OT desde la ficha del cliente.</div>
     </div>
   </div>
 </div>
@@ -515,17 +526,15 @@
    riesgo de cargar el layout dentro del layout.
    ════════════════════════════════════════════════════════════ #}
 <div id="vista-calendario" style="display:none">
-  <div class="empty-state" style="background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:60px 30px;text-align:center;">
-    <i class="bi bi-calendar3" style="font-size:3.4rem;opacity:.35;display:block;margin-bottom:12px;color:#dc2626;"></i>
-    <div class="fw-bold" style="font-size:1.1rem;color:#0f172a;margin-bottom:6px;">
-      Calendario de mantenciones
+  <div class="ilus-empty">
+    <div class="e-icon"><i class="bi bi-calendar3"></i></div>
+    <div class="e-title">Calendario de mantenciones</div>
+    <div class="e-sub">Visualizá todas las visitas programadas — semana, mes o agenda — junto con técnicos y filtros en pantalla completa.</div>
+    <div class="e-actions">
+      <a href="{{ url_for('mant_calendario') }}" class="btn btn-ilus fw-bold">
+        <i class="bi bi-calendar3 me-1"></i>Abrir calendario completo
+      </a>
     </div>
-    <div class="small text-muted mb-3" style="max-width:420px;margin:0 auto;">
-      Visualizá todas las visitas programadas, semana/mes/agenda, técnicos y filtros — en pantalla completa.
-    </div>
-    <a href="{{ url_for('mant_calendario') }}" class="btn btn-ilus fw-bold">
-      <i class="bi bi-calendar3 me-1"></i>Abrir calendario completo
-    </a>
   </div>
 </div>
 

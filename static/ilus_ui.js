@@ -102,6 +102,17 @@
       .ilus-toast.warning .ico{color:#f59e0b}
       .ilus-toast.info   {border-left-color:#3b82f6}
       .ilus-toast.info    .ico{color:#3b82f6}
+
+      /* Reduced motion: anula entrada animada, sólo opacity */
+      @media (prefers-reduced-motion: reduce){
+        .ilus-overlay,
+        .ilus-modal,
+        .ilus-toast{
+          transition-duration: .01ms !important;
+        }
+        .ilus-overlay.show .ilus-modal{ transform: none !important; }
+        .ilus-toast.show{ transform: none !important; }
+      }
     `;
     document.head.appendChild(s);
   }
