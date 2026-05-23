@@ -8,6 +8,9 @@
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
+    <button type="button" class="btn btn-sm btn-outline-light" onclick="abrirDescargaInformeDash()" title="Excel con todos los retiros del mes">
+      <i class="bi bi-file-earmark-excel me-1"></i>Informe mes
+    </button>
     {% if permissions.admin %}
     <button id="btn-recordatorios-24h" type="button" class="btn btn-sm btn-outline-warning" title="Avisar por email/WA a clientes con retiro mañana">
       <i class="bi bi-bell me-1"></i>Enviar recordatorios 24h
@@ -16,6 +19,34 @@
     {% endif %}
   </div>
 </div>
+
+<script>
+async function abrirDescargaInformeDash(){
+  const mesDefault = new Date().toISOString().slice(0,7);
+  const mes = await ilusPrompt({
+    title: 'Informe mensual de retiros',
+    message: 'Selecciona el mes a exportar (formato YYYY-MM):',
+    sub: 'Excel con todos los retiros — solicitados, confirmados y completados — del mes.',
+    placeholder: mesDefault,
+    defaultValue: mesDefault,
+    required: true,
+  });
+  if (!mes) return;
+  if (!/^\d{4}-\d{2}$/.test(mes)){
+    ilusToast('Formato inválido. Usa YYYY-MM.', { type:'warning' });
+    return;
+  }
+  const soloPend = await ilusConfirm({
+    title: '¿Filtrar?',
+    message: '¿Solo retiros aún pendientes (sin completar)?',
+    sub: 'Cancela para incluir TODOS los retiros del mes.',
+    okLabel: 'Solo pendientes', cancelLabel: 'Todos',
+  });
+  let url = `/retiros/api/informe-mes.xlsx?mes=${encodeURIComponent(mes)}`;
+  if (soloPend) url += `&solo_pendientes=1`;
+  window.location.href = url;
+}
+</script>
 
 {# ════════════════════════════════════════════════════════════════════
    BANDEJA "HACER HOY" — 4 secciones colapsables con tareas prioritarias
