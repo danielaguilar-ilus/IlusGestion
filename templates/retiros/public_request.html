@@ -144,15 +144,18 @@
     .form-head .form-sub{color:#cbd5e1;font-size:.92rem;margin-top:6px;position:relative;z-index:1;font-weight:500}
     .form-head .form-pill{background:rgba(220,38,38,.14);color:#fca5a5;border:1px solid rgba(220,38,38,.3);border-radius:50px;padding:8px 14px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:6px;position:relative;z-index:1;flex-shrink:0}
     .form-body{padding:36px}
-    /* ── Step card grande — número rojo + título + subtítulo ── */
+    /* ── Step card grande — número rojo + título + subtítulo ──
+       Por defecto VISIBLE (no JS / browser viejo).
+       Si JS detecta IntersectionObserver, agrega .js-reveal al body
+       y ahí sí se oculta hasta que entra en viewport. Evita flicker. */
     .step-section{
       margin:0 0 28px;padding:24px 26px;background:#fff;
       border:1.5px solid var(--gray-2);border-radius:14px;
-      transition:all .35s cubic-bezier(.4,0,.2,1);
-      opacity:0;transform:translateY(12px);
+      transition:opacity .4s cubic-bezier(.4,0,.2,1), transform .4s cubic-bezier(.4,0,.2,1), border-color .25s, background .25s;
       will-change:transform,opacity;
     }
-    .step-section.in-view{opacity:1;transform:none}
+    body.js-reveal .step-section{opacity:0;transform:translateY(12px)}
+    body.js-reveal .step-section.in-view{opacity:1;transform:none}
     .step-section.is-complete{border-color:#16a34a;background:linear-gradient(180deg,#f0fdf4 0%, #fff 50%)}
     .step-section.is-comments{background:#fafafa;border-style:dashed;border-color:#d1d5db}
     .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px}
@@ -489,11 +492,40 @@
     @media(max-width:600px){
       .hero-bullets{grid-template-columns:1fr}
       .steps-grid{grid-template-columns:1fr}
-      .form-body{padding:20px}
+      .form-body{padding:18px}
+      .form-head{padding:22px 22px 20px}
+      .form-head h3{font-size:1.9rem}
+      .form-head .form-sub{font-size:.84rem}
+      .step-section{padding:18px 16px;margin-bottom:18px}
+      .step-circle{width:38px;height:38px;font-size:1.2rem}
+      .step-titles h5{font-size:1.05rem}
+      .step-titles .step-sub{font-size:.78rem}
+    }
+    /* Respect prefers-reduced-motion: deshabilita animaciones de entrada */
+    @media (prefers-reduced-motion: reduce){
+      body.js-reveal .step-section{opacity:1;transform:none;transition:none}
+      .step-section.is-complete .step-circle::after{animation:none}
+      .submit-btn::before{display:none}
     }
   </style>
+  {# Script inline mínimo: añade class js-reveal ANTES de pintar.
+     Esto evita FOUC (Flash Of Unstyled Content) en el fade-in de los steps. #}
+  <script>
+    (function(){
+      if ('IntersectionObserver' in window){
+        document.documentElement.className += ' has-io';
+      }
+    })();
+  </script>
 </head>
 <body>
+  <script>
+    // Agrega class js-reveal al body solo si el browser soporta IntersectionObserver.
+    // De esta forma, browsers sin IO muestran los pasos visibles desde el inicio.
+    if (document.documentElement.classList.contains('has-io')){
+      document.body.classList.add('js-reveal');
+    }
+  </script>
 
   {# ── BANNER DE AVISOS (cierre anticipado, inventario, feriado, etc.) ── #}
   {% if announcements %}
