@@ -2399,6 +2399,31 @@ def init_pickup_tables():
                     active      TINYINT(1) DEFAULT 1
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Multi-documento (Daniel 2026-05-22): un retiro puede asociar varias
+            # facturas/boletas del ERP. Cada doc guarda snapshot + peso/vol/m³ que
+            # contribuyó al total del retiro. Permite "+ Agregar otra factura".
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pickup_request_docs (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id      INT NOT NULL,
+                    document_type   VARCHAR(30) NOT NULL,
+                    document_number VARCHAR(60) NOT NULL,
+                    cliente_rut     VARCHAR(30),
+                    cliente_nombre  VARCHAR(200),
+                    observaciones_erp TEXT,
+                    peso_real_kg    DECIMAL(12,3) DEFAULT 0,
+                    peso_vol_kg     DECIMAL(12,3) DEFAULT 0,
+                    volumen_m3      DECIMAL(12,4) DEFAULT 0,
+                    n_lineas        INT DEFAULT 0,
+                    erp_snapshot    LONGTEXT,
+                    added_by        VARCHAR(190),
+                    added_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_request_doc (request_id, document_type, document_number),
+                    INDEX idx_request (request_id),
+                    INDEX idx_cliente (cliente_rut),
+                    FOREIGN KEY (request_id) REFERENCES `pickup_requests`(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
             # Tabla de bloqueos de retiros: días u horas no disponibles
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS pickup_blocks (

@@ -1300,7 +1300,24 @@ def register_pickup_routes(app, ctx):
         logs = mysql_fetchall(f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80", (rid,))
         attachments = mysql_fetchall(f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC", (rid,))
         templates = mysql_fetchall(f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title")
-        return render_template("retiros/internal_detail.html", req=req, packages=packages, proposals=proposals, logs=logs, attachments=attachments, templates=templates, statuses=PICKUP_STATUS, status_badge=status_badge, settings=settings())
+        # Multi-documento (Daniel 2026-05-22): docs asociados al retiro
+        docs_asociados = mysql_fetchall(
+            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                      n_lineas, added_by, added_at
+                 FROM pickup_request_docs
+                WHERE request_id=%s
+                ORDER BY id ASC""",
+            (rid,)
+        ) or []
+        return render_template(
+            "retiros/internal_detail.html",
+            req=req, packages=packages, proposals=proposals, logs=logs,
+            attachments=attachments, templates=templates,
+            docs_asociados=docs_asociados,
+            statuses=PICKUP_STATUS, status_badge=status_badge,
+            settings=settings(),
+        )
 
     @app.route("/retiros/<int:rid>/status", methods=["POST"])
     @require_permission("edit")
@@ -1361,10 +1378,14 @@ def register_pickup_routes(app, ctx):
             peso_real = request.form.get("peso_real_kg") or req.get("peso_real_kg") or req.get("total_weight_kg") or 0
             peso_vol  = request.form.get("peso_vol_kg")  or req.get("peso_vol_kg")  or req.get("total_volumetric_weight") or 0
             tiempo    = request.form.get("tiempo_estimado_min") or req.get("tiempo_estimado_min") or 0
+            # FIX 2026-05-22 (Daniel): m³ no se persistía aunque el frontend ya lo
+            # calculaba. Ahora el operador puede sobrescribirlo y se guarda OK.
+            vol_m3    = request.form.get("total_volume_m3") or req.get("total_volume_m3") or 0
             try:
                 peso_real = float(peso_real or 0)
                 peso_vol  = float(peso_vol or 0)
                 tiempo    = int(tiempo or 0)
+                vol_m3    = float(vol_m3 or 0)
             except Exception:
                 pass
             mysql_execute(
@@ -1375,14 +1396,15 @@ def register_pickup_routes(app, ctx):
                         doc_validation_notes=%s,
                         peso_real_kg=%s,
                         peso_vol_kg=%s,
+                        total_volume_m3=%s,
                         tiempo_estimado_min=%s,
                         status=CASE WHEN status='solicitud_recibida' THEN 'en_revision' ELSE status END
                     WHERE id=%s""",
                 (g.user["nombre"] if getattr(g,"user",None) else "interno",
-                 notes, peso_real, peso_vol, tiempo, rid)
+                 notes, peso_real, peso_vol, vol_m3, tiempo, rid)
             )
             log_event(rid, "doc_validada", req["status"], "en_revision",
-                      f"Documentación validada · peso={peso_real}kg vol={peso_vol}kg tiempo={tiempo}min",
+                      f"Documentación validada · peso={peso_real}kg vol={peso_vol}kg m3={vol_m3} tiempo={tiempo}min",
                       "interno")
             flash("Documentación validada. Ya puedes proponer fecha al cliente.", "success")
 
@@ -1400,26 +1422,666 @@ def register_pickup_routes(app, ctx):
             flash("Marcado como información incompleta. Notifica al cliente para completar.", "warning")
 
         elif action == "guardar_erp":
-            # Guardar snapshot ERP + auto-rellenar peso/vol
+            # Guardar snapshot ERP + auto-rellenar peso/vol/m³
             erp_json = request.form.get("erp_data_json") or "{}"
             peso_real = request.form.get("peso_real_kg") or 0
             peso_vol  = request.form.get("peso_vol_kg") or 0
             tiempo    = request.form.get("tiempo_estimado_min") or 0
+            # FIX 2026-05-22 (Daniel): el m³ que calcula el JS desde el ERP ahora
+            # se persiste para que la pantalla muestre el dato correcto al recargar.
+            vol_m3    = request.form.get("total_volume_m3") or 0
             mysql_execute(
                 f"""UPDATE `{REQ}`
                     SET doc_erp_data=%s,
                         peso_real_kg=%s,
                         peso_vol_kg=%s,
+                        total_volume_m3=%s,
                         tiempo_estimado_min=%s
                     WHERE id=%s""",
-                (erp_json[:60000], peso_real or 0, peso_vol or 0, tiempo or 0, rid)
+                (erp_json[:60000], peso_real or 0, peso_vol or 0, vol_m3 or 0, tiempo or 0, rid)
             )
             log_event(rid, "erp_actualizado", req["status"], req["status"],
-                      f"Datos ERP cargados · peso={peso_real}kg vol={peso_vol}kg",
+                      f"Datos ERP cargados · peso={peso_real}kg vol={peso_vol}kg m3={vol_m3}",
                       "interno")
             flash("Datos del ERP cargados al retiro.", "success")
 
         return redirect(url_for("pickup_detail", rid=rid))
+
+
+    # ══════════════════════════════════════════════════════════════════
+    #  MULTI-DOCUMENTO (Daniel 2026-05-22)
+    #  Un retiro puede asociar 1..N facturas/boletas del ERP. Cada doc
+    #  contribuye con su peso/vol/m³ al total del retiro.
+    # ══════════════════════════════════════════════════════════════════
+
+    def _pickup_recalc_totales(rid):
+        """Suma peso/vol/m³ de todos los docs asociados y actualiza pickup_requests.
+        Si no quedan docs asociados, restablece los totales a 0 (Daniel pidió que
+        sea coherente con la realidad — si quitas todo, el retiro no tiene carga).
+        Devuelve dict con los totales actualizados.
+        """
+        agg = mysql_fetchone(
+            """SELECT COALESCE(SUM(peso_real_kg),0)   AS peso_real,
+                      COALESCE(SUM(peso_vol_kg),0)    AS peso_vol,
+                      COALESCE(SUM(volumen_m3),0)     AS m3,
+                      COALESCE(SUM(n_lineas),0)       AS lineas_total,
+                      COUNT(*)                        AS n_docs
+                 FROM pickup_request_docs WHERE request_id=%s""",
+            (rid,)
+        ) or {"peso_real": 0, "peso_vol": 0, "m3": 0, "lineas_total": 0, "n_docs": 0}
+        peso_real = float(agg.get("peso_real") or 0)
+        peso_vol  = float(agg.get("peso_vol") or 0)
+        vol_m3    = float(agg.get("m3") or 0)
+        lineas_total = int(agg.get("lineas_total") or 0)
+        n_docs    = int(agg.get("n_docs") or 0)
+        # Si hay docs: estimar tiempo basado en líneas. Si no: 0 (sin sobreescribir
+        # tiempo manual del operador — solo se autocalcula con docs presentes).
+        tiempo = None
+        if n_docs > 0:
+            tiempo = max(15, 5 + lineas_total * 2)
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                    SET peso_real_kg=%s, peso_vol_kg=%s, total_volume_m3=%s,
+                        tiempo_estimado_min=%s
+                    WHERE id=%s""",
+                (peso_real, peso_vol, vol_m3, tiempo, rid)
+            )
+        else:
+            # Sin docs: dejamos los totales en 0 pero NO tocamos tiempo (el operador
+            # puede haber estimado manualmente — respetar su decisión).
+            mysql_execute(
+                f"""UPDATE `{REQ}`
+                    SET peso_real_kg=0, peso_vol_kg=0, total_volume_m3=0
+                    WHERE id=%s""",
+                (rid,)
+            )
+        return {
+            "peso_real_kg": peso_real,
+            "peso_vol_kg":  peso_vol,
+            "volumen_m3":   vol_m3,
+            "n_docs":       n_docs,
+            "lineas_total": lineas_total,
+            "tiempo_estimado_min": tiempo or 0,
+        }
+
+    def _doc_already_used_by_other_request(tipo, numero, exclude_rid):
+        """Devuelve {request_id, code} si OTRO retiro ya usa este doc, o None."""
+        row = mysql_fetchone(
+            f"""SELECT prd.request_id, pr.code
+                  FROM pickup_request_docs prd
+                  JOIN `{REQ}` pr ON pr.id = prd.request_id
+                 WHERE prd.document_type=%s
+                   AND prd.document_number=%s
+                   AND prd.request_id<>%s
+                 LIMIT 1""",
+            (tipo, numero, exclude_rid)
+        )
+        return row or None
+
+    @app.route("/retiros/<int:rid>/docs", methods=["GET"])
+    @require_permission("view")
+    def pickup_docs_list(rid):
+        """Lista todos los documentos asociados al retiro."""
+        rows = mysql_fetchall(
+            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                      n_lineas, added_by, added_at
+                 FROM pickup_request_docs
+                WHERE request_id=%s
+                ORDER BY id ASC""",
+            (rid,)
+        ) or []
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("peso_real_kg", "peso_vol_kg", "volumen_m3"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            if d.get("added_at"):
+                d["added_at"] = str(d["added_at"])[:19]
+            out.append(d)
+        totales = _pickup_recalc_totales(rid)
+        return jsonify({"ok": True, "docs": out, "totales": totales})
+
+    @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
+    @require_permission("edit")
+    def pickup_doc_agregar(rid):
+        """Agrega un documento del ERP al retiro. Valida que exista, calcula
+        peso/vol/m³ desde las líneas, guarda snapshot y recalcula totales.
+
+        Body JSON: {document_type, document_number}
+        Response:  {ok:true, doc:{...}, totales:{...}}  o 4xx/5xx con error.
+        """
+        req = mysql_fetchone(f"SELECT id, code FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no existe"}), 404
+        body = request.get_json(silent=True) or {}
+        tipo = (body.get("document_type") or "").strip().upper()
+        numero = (body.get("document_number") or "").strip()
+        if not tipo or not numero:
+            return jsonify({"ok": False, "error": "Falta document_type o document_number"}), 400
+
+        # Idempotente: si ya está en este retiro, devolver 409 amistoso
+        dup = mysql_fetchone(
+            "SELECT id FROM pickup_request_docs "
+            "WHERE request_id=%s AND document_type=%s AND document_number=%s",
+            (rid, tipo, numero)
+        )
+        if dup:
+            totales = _pickup_recalc_totales(rid)
+            return jsonify({
+                "ok": False,
+                "error": f"El documento {tipo} {numero} ya está asociado a este retiro.",
+                "code": "DUPLICATE",
+                "doc_id": dup["id"],
+                "totales": totales,
+            }), 409
+
+        # Verificar que no esté en OTRO retiro (warning, no bloqueo — Daniel decide)
+        otro = _doc_already_used_by_other_request(tipo, numero, rid)
+
+        # Buscar en ERP
+        try:
+            from app import _cubicador_fetch
+        except ImportError:
+            return jsonify({"ok": False, "error": "Motor ERP no disponible"}), 503
+        try:
+            hdr, lineas = _cubicador_fetch(tipo, numero)
+        except Exception as exc:
+            err = str(exc)[:200]
+            return jsonify({"ok": False, "error": f"Error consultando ERP: {err}"}), 502
+        if not hdr:
+            return jsonify({"ok": False, "error": f"Documento {tipo} {numero} no encontrado en ERP"}), 404
+
+        # Calcular peso/vol/m³ desde las líneas (mismo criterio que el JS frontend)
+        total_kg = 0.0
+        total_vol_kg = 0.0
+        total_m3 = 0.0
+        n_lineas_ok = 0
+        for ln in (lineas or []):
+            if ln.get("es_zz"):
+                continue
+            if ln.get("tiene_ficha") and ln.get("tiene_bultos"):
+                try:
+                    total_kg     += float(ln.get("peso_kg_tot") or 0)
+                    total_vol_kg += float(ln.get("peso_vol_tot") or 0)
+                    # vol_tot viene en cm³ — convertir a m³
+                    total_m3     += float(ln.get("vol_tot") or 0) / 1_000_000.0
+                    n_lineas_ok += 1
+                except Exception:
+                    pass
+
+        snapshot = {"hdr": dict(hdr), "lineas": [dict(ln) for ln in (lineas or [])]}
+        try:
+            import json as _json_serial
+            snapshot_json = _json_serial.dumps(snapshot, default=str)[:200000]
+        except Exception:
+            snapshot_json = "{}"
+
+        cliente_rut = (hdr.get("cliente_rut") or hdr.get("rut") or "").strip()[:30]
+        cliente_nombre = (hdr.get("cliente_nombre") or hdr.get("razon_social") or "").strip()[:200]
+        obs = (hdr.get("observaciones") or hdr.get("obs") or "").strip()[:5000]
+        added_by = g.user["nombre"] if getattr(g, "user", None) else "interno"
+
+        try:
+            mysql_execute(
+                """INSERT INTO pickup_request_docs
+                     (request_id, document_type, document_number,
+                      cliente_rut, cliente_nombre, observaciones_erp,
+                      peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
+                      erp_snapshot, added_by)
+                   VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s)""",
+                (rid, tipo, numero,
+                 cliente_rut, cliente_nombre, obs,
+                 total_kg, total_vol_kg, total_m3, len(lineas or []),
+                 snapshot_json, added_by)
+            )
+        except Exception as exc:
+            err = str(exc)[:200]
+            return jsonify({"ok": False, "error": f"Error al guardar: {err}"}), 500
+
+        # Log audit
+        log_event(rid, "doc_agregado", None, None,
+                  f"Doc {tipo} {numero} agregado · cliente={cliente_nombre} · "
+                  f"peso={total_kg:.2f}kg vol={total_vol_kg:.2f}kg m3={total_m3:.3f}",
+                  "interno")
+
+        totales = _pickup_recalc_totales(rid)
+        # Devolver la fila recién creada
+        new_row = mysql_fetchone(
+            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                      n_lineas, added_by, added_at
+                 FROM pickup_request_docs
+                WHERE request_id=%s AND document_type=%s AND document_number=%s
+                ORDER BY id DESC LIMIT 1""",
+            (rid, tipo, numero)
+        )
+        if new_row:
+            new_row = dict(new_row)
+            for k in ("peso_real_kg", "peso_vol_kg", "volumen_m3"):
+                if new_row.get(k) is not None:
+                    new_row[k] = float(new_row[k])
+            if new_row.get("added_at"):
+                new_row["added_at"] = str(new_row["added_at"])[:19]
+
+        resp = {
+            "ok": True,
+            "doc": new_row,
+            "totales": totales,
+        }
+        if otro:
+            resp["warning_otro_retiro"] = {
+                "request_id": otro["request_id"],
+                "code": otro["code"],
+            }
+        return jsonify(resp)
+
+    @app.route("/retiros/<int:rid>/docs/<int:doc_id>", methods=["DELETE", "POST"])
+    @require_permission("edit")
+    def pickup_doc_quitar(rid, doc_id):
+        """Quita un documento del retiro y recalcula totales.
+        Acepta DELETE o POST (POST con _method=DELETE para clientes que no soporten DELETE).
+        """
+        if request.method == "POST" and (request.form.get("_method") or "").upper() != "DELETE":
+            return jsonify({"ok": False, "error": "Método inválido"}), 405
+        row = mysql_fetchone(
+            "SELECT id, document_type, document_number "
+            "FROM pickup_request_docs WHERE id=%s AND request_id=%s",
+            (doc_id, rid)
+        )
+        if not row:
+            return jsonify({"ok": False, "error": "Documento no asociado a este retiro"}), 404
+        try:
+            mysql_execute(
+                "DELETE FROM pickup_request_docs WHERE id=%s AND request_id=%s",
+                (doc_id, rid)
+            )
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Error al borrar: {str(exc)[:200]}"}), 500
+        log_event(rid, "doc_quitado", None, None,
+                  f"Doc {row['document_type']} {row['document_number']} removido del retiro",
+                  "interno")
+        totales = _pickup_recalc_totales(rid)
+        return jsonify({"ok": True, "totales": totales})
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SALDO ERP — Documentos pendientes de despacho del cliente
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/api/cliente/<rut>/saldo-pendiente", methods=["GET"])
+    @require_permission("view")
+    def pickup_cliente_saldo_erp(rut):
+        """Lista documentos del cliente (por RUT) que aún tienen saldo en ZZ
+        (producto Despacho/Retiro) o que no han sido marcados como despachados.
+
+        Args (query string):
+            dias: int — ventana hacia atrás (default 30, max 180)
+
+        Estrategia:
+          - Query a MAEEDO + MAEDDO + MAEEN filtrando por RUT y fechas.
+          - Detectar "no despachado" usando saldo de ZZ (CAPRCO1-CAPRAD1) > 0
+            cuando hay líneas ZZ en el doc — mismo criterio que Transporte.
+          - Marcar `tiene_retiro_asociado=True` si el doc ya está en pickup_requests
+            o pickup_request_docs (no es definitivo "despachado" pero sí ya en flujo).
+
+        Si la consulta SQL al ERP falla → devolver lista vacía con error legible
+        (no 500). Esto permite que la UI nunca rompa por caídas del ERP.
+        """
+        rut_clean = re.sub(r"[^0-9kK]", "", str(rut or "")).upper()
+        if not rut_clean or len(rut_clean) < 7:
+            return jsonify({"ok": False, "error": "RUT inválido", "docs": []}), 400
+
+        try:
+            dias = int(request.args.get("dias", 30))
+        except Exception:
+            dias = 30
+        dias = max(1, min(dias, 180))
+
+        try:
+            from app import _random_sql_query, _random_sql_pool
+        except ImportError:
+            return jsonify({"ok": True, "docs": [], "error": "Motor ERP no disponible"})
+
+        pool = _random_sql_pool()
+        if pool is None:
+            return jsonify({
+                "ok": True, "docs": [],
+                "error": "ERP Random no está configurado en este entorno."
+            })
+
+        # RUT sin DV — formato ENDO en MAEEDO es "12345678-9", buscamos por prefijo
+        rut_base = rut_clean[:-1] if len(rut_clean) >= 8 else rut_clean
+        # Fecha desde
+        from datetime import datetime as _dt, timedelta as _td
+        fecha_desde = (_dt.now().date() - _td(days=dias)).isoformat()
+
+        # TIDOs relevantes para "saldo pendiente de retiro":
+        # FCV, BLV, NVI, NVV, GDV, GDP — todos los que pueden generar retiros
+        tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
+
+        # ZZ SKUs típicos de despacho/retiro (ver erp_engine / transporte)
+        # Para no duplicar lógica, usamos el patrón LIKE 'ZZ%' que cubre todos.
+        sql = f"""
+            SELECT TOP 100
+                e.IDMAEEDO,
+                LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                e.FEEMDO,
+                e.VANEDO,
+                e.VABRDO,
+                LTRIM(RTRIM(COALESCE(e.ESPGDO, ''))) AS ESPGDO,
+                LTRIM(RTRIM(COALESCE(e.ESDO,   ''))) AS ESDO,
+                LTRIM(RTRIM(COALESCE(
+                    NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
+                    NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
+                    NULLIF(LTRIM(RTRIM(e.SUENDO)),     ''),
+                    'Consumidor final'
+                ))) AS NOMBRE,
+                (SELECT COALESCE(SUM(
+                           CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0) > 0
+                                THEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)
+                                ELSE 0 END), 0)
+                   FROM MAEDDO d
+                  WHERE d.IDMAEEDO = e.IDMAEEDO
+                    AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
+                (SELECT COUNT(*) FROM MAEDDO d2
+                  WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+            FROM MAEEDO e
+            LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                  CASE
+                    WHEN CHARINDEX('-', e.ENDO) > 0
+                      THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
+                    ELSE LTRIM(RTRIM(COALESCE(e.ENDO, '')))
+                  END
+            WHERE e.ENDO LIKE %s
+              AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+              AND e.FEEMDO >= %s
+              AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+            ORDER BY e.FEEMDO DESC
+        """
+        try:
+            rows = _random_sql_query(sql, (f"{rut_base}%", fecha_desde), max_rows=100) or []
+        except Exception as exc:
+            print(f"[pickup-saldo-erp] error: {exc}", flush=True)
+            return jsonify({"ok": True, "docs": [], "error": "No se pudo consultar el ERP"})
+
+        if not rows:
+            return jsonify({"ok": True, "docs": [], "total": 0})
+
+        # Cruzar con retiros ya asociados (en pickup_requests por document_number
+        # o en pickup_request_docs)
+        nudos_raw = [str(r.get("NUDO") or "").strip() for r in rows]
+        nudos_raw = [n for n in nudos_raw if n]
+        ya_asociados = set()
+        if nudos_raw:
+            # Buscamos también las variantes "limpias" (sin ceros a la izquierda y sin VD/WEB prefix)
+            placeholders = ",".join(["%s"] * len(nudos_raw))
+            try:
+                rows_pr = mysql_fetchall(
+                    f"SELECT document_type, document_number FROM `{REQ}` "
+                    f"WHERE document_number IN ({placeholders}) "
+                    f"  AND status NOT IN ('rechazada','cerrada','fallida')",
+                    tuple(nudos_raw)
+                ) or []
+                for r in rows_pr:
+                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|{r.get('document_number')}")
+                rows_prd = mysql_fetchall(
+                    f"SELECT document_type, document_number FROM pickup_request_docs "
+                    f"WHERE document_number IN ({placeholders})",
+                    tuple(nudos_raw)
+                ) or []
+                for r in rows_prd:
+                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|{r.get('document_number')}")
+            except Exception as _e2:
+                pass
+
+        # Construir lista de respuesta
+        out = []
+        for r in rows:
+            nudo_raw = (r.get("NUDO") or "").strip()
+            tido_raw = (r.get("TIDO") or "").strip()
+            # Convertir NUDO con prefijo VD/WEB a su tipo display
+            tido_display = tido_raw
+            if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+                tido_display = "VD"
+                nudo_display = nudo_raw[2:].lstrip("0") or "0"
+            elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+                tido_display = "WEB"
+                nudo_display = nudo_raw[3:].lstrip("0") or "0"
+            else:
+                nudo_display = nudo_raw.lstrip("0") or "0"
+
+            fe = r.get("FEEMDO")
+            saldo_zz = float(r.get("saldo_zz") or 0)
+            # Considerar "pendiente" si saldo_zz > 0 OR ESDO no marca cerrado.
+            # En la práctica si saldo_zz=0 y ya hay ZZ, doc cerrado. Si NO hay
+            # ZZ, no podemos saber con certeza → asumimos pendiente.
+            n_lineas = int(r.get("n_lineas") or 0)
+            key = f"{tido_display}|{nudo_display}"
+            ya_tiene_retiro = key in ya_asociados
+            out.append({
+                "tido":           tido_raw,
+                "nudo":           nudo_raw,
+                "tido_display":   tido_display,
+                "nudo_display":   nudo_display,
+                "fecha":          fe.strftime("%d/%m/%Y") if fe else "",
+                "fecha_iso":      fe.strftime("%Y-%m-%d") if fe else "",
+                "cliente":        (r.get("NOMBRE") or "").strip().title(),
+                "rut":            rut_clean,
+                "total":          float(r.get("VABRDO") or 0),
+                "neto":           float(r.get("VANEDO") or 0),
+                "saldo_zz":       saldo_zz,
+                "estado_pago":    (r.get("ESPGDO") or "").strip(),
+                "n_lineas":       n_lineas,
+                "ya_tiene_retiro": ya_tiene_retiro,
+            })
+
+        return jsonify({"ok": True, "docs": out, "total": len(out)})
+
+    # ══════════════════════════════════════════════════════════════════
+    #  INFORME MENSUAL XLSX — Daniel pidió 22/05/2026
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/api/informe-mes.xlsx", methods=["GET"])
+    @require_permission("view")
+    def pickup_informe_mes_xlsx():
+        """Excel con todos los retiros del mes solicitado (filtrable por RUT).
+
+        Query params:
+            mes: YYYY-MM (default: mes actual Chile)
+            cliente_rut: opcional — filtra solo ese cliente
+            status: opcional — filtra por status (e.g. 'agenda_confirmada')
+            solo_pendientes: '1' → solo los que NO están en estado retirada/cerrada/rechazada
+        """
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+            from io import BytesIO
+        except ImportError:
+            return jsonify({"error": "openpyxl no instalado en el servidor."}), 500
+
+        mes = (request.args.get("mes") or "").strip()
+        cliente_rut = (request.args.get("cliente_rut") or "").strip()
+        status_filter = (request.args.get("status") or "").strip()
+        solo_pendientes = (request.args.get("solo_pendientes") or "").strip() in ("1", "true", "yes")
+
+        # Resolver mes — default actual Chile
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            _TZ = _ZI("America/Santiago")
+        except Exception:
+            _TZ = None
+        if not mes:
+            now = datetime.now(_TZ) if _TZ else datetime.now()
+            mes = now.strftime("%Y-%m")
+        try:
+            yy, mm = mes.split("-")
+            yy = int(yy); mm = int(mm)
+            if not (2020 <= yy <= 2100) or not (1 <= mm <= 12):
+                raise ValueError
+        except Exception:
+            return jsonify({"error": "Parámetro 'mes' inválido. Formato YYYY-MM."}), 400
+
+        # Construir filtros SQL
+        where = ["DATE_FORMAT(COALESCE(confirmed_date, requested_date, DATE(created_at)), '%%Y-%%m') = %s"]
+        params = [mes]
+        if cliente_rut:
+            rut_clean = re.sub(r"[^0-9kK]", "", cliente_rut).upper()
+            where.append("REPLACE(REPLACE(REPLACE(UPPER(customer_rut),'.',''),'-',''),' ','') = %s")
+            params.append(rut_clean)
+        if status_filter and status_filter in PICKUP_STATUS:
+            where.append("status = %s")
+            params.append(status_filter)
+        if solo_pendientes:
+            where.append("status NOT IN ('retirada','cerrada','rechazada','fallida')")
+
+        sql = (
+            f"SELECT id, code, document_type, document_number, customer_name, customer_rut, "
+            f"       contact_name, contact_email, contact_phone, "
+            f"       pickup_person_name, pickup_person_rut, pickup_person_phone, pickup_person_relation, "
+            f"       requested_date, requested_time_from, requested_time_to, "
+            f"       proposed_date, confirmed_date, confirmed_time_from, confirmed_time_to, "
+            f"       status, total_weight_kg, total_volumetric_weight, total_volume_m3, "
+            f"       peso_real_kg, peso_vol_kg, tiempo_estimado_min, doc_validation_status, "
+            f"       created_at, closed_at "
+            f"FROM `{REQ}` "
+            f"WHERE {' AND '.join(where)} "
+            f"ORDER BY COALESCE(confirmed_date, requested_date, DATE(created_at)) ASC, code ASC"
+        )
+        try:
+            rows = mysql_fetchall(sql, tuple(params)) or []
+        except Exception as exc:
+            return jsonify({"error": f"Error consultando retiros: {str(exc)[:200]}"}), 500
+
+        # Para cada retiro, traer docs asociados (concatenados)
+        rid_list = [r["id"] for r in rows]
+        docs_by_rid = {}
+        if rid_list:
+            ph = ",".join(["%s"] * len(rid_list))
+            docs_rows = mysql_fetchall(
+                f"SELECT request_id, document_type, document_number, cliente_nombre, cliente_rut "
+                f"FROM pickup_request_docs WHERE request_id IN ({ph}) "
+                f"ORDER BY request_id, id",
+                tuple(rid_list)
+            ) or []
+            for d in docs_rows:
+                docs_by_rid.setdefault(d["request_id"], []).append(
+                    f"{d['document_type']} {d['document_number']}"
+                )
+
+        # Crear workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Retiros {mes}"
+
+        RED_FILL = PatternFill("solid", fgColor="DC2626")
+        WHITE_FONT = Font(color="FFFFFF", bold=True, size=11)
+        HDR_ALIGN = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        NUM_ALIGN = Alignment(horizontal='right')
+
+        headers = [
+            "Código", "Fecha solicitud", "Fecha confirmada",
+            "Cliente", "RUT cliente",
+            "Doc principal", "Docs asociados (extra)",
+            "Persona retira", "RUT retira", "Teléfono retira", "Relación",
+            "Status", "Validación doc",
+            "Peso real (kg)", "Peso vol. (kg)", "Volumen (m³)",
+            "Tiempo estimado (min)",
+            "Email contacto", "Teléfono contacto",
+            "Creado", "Cerrado",
+        ]
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(1, ci, h)
+            c.font = WHITE_FONT
+            c.fill = RED_FILL
+            c.alignment = HDR_ALIGN
+
+        def _fmt_date(d):
+            if not d: return ""
+            try: return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+            except Exception: return str(d)[:10]
+
+        def _fmt_dt(d):
+            if not d: return ""
+            try: return d.strftime("%Y-%m-%d %H:%M") if hasattr(d, "strftime") else str(d)[:16]
+            except Exception: return str(d)[:16]
+
+        for ri, r in enumerate(rows, 2):
+            doc_principal = f"{(r.get('document_type') or '').upper()} {r.get('document_number') or ''}".strip()
+            extras = docs_by_rid.get(r["id"], [])
+            extras_str = " · ".join([e for e in extras if e and e != doc_principal])
+            status_lbl = PICKUP_STATUS.get(r.get("status") or "", r.get("status") or "")
+            row_vals = [
+                r.get("code") or "",
+                _fmt_date(r.get("requested_date")),
+                _fmt_date(r.get("confirmed_date") or r.get("proposed_date")),
+                r.get("customer_name") or "",
+                r.get("customer_rut") or "",
+                doc_principal,
+                extras_str,
+                r.get("pickup_person_name") or "",
+                r.get("pickup_person_rut") or "",
+                r.get("pickup_person_phone") or "",
+                r.get("pickup_person_relation") or "",
+                status_lbl,
+                r.get("doc_validation_status") or "",
+                float(r.get("peso_real_kg") or r.get("total_weight_kg") or 0),
+                float(r.get("peso_vol_kg") or r.get("total_volumetric_weight") or 0),
+                float(r.get("total_volume_m3") or 0),
+                int(r.get("tiempo_estimado_min") or 0),
+                r.get("contact_email") or "",
+                r.get("contact_phone") or "",
+                _fmt_dt(r.get("created_at")),
+                _fmt_dt(r.get("closed_at")),
+            ]
+            for ci, v in enumerate(row_vals, 1):
+                cell = ws.cell(ri, ci, v)
+                if ci in (14, 15, 16, 17):
+                    cell.alignment = NUM_ALIGN
+
+        # Ancho columnas razonable
+        widths = [11, 13, 14, 28, 14, 16, 28, 22, 14, 16, 14, 18, 14, 13, 13, 12, 14, 26, 16, 17, 17]
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+        # Hoja de filtros
+        ws2 = wb.create_sheet("Filtros")
+        ws2.cell(1, 1, "Filtro").font = WHITE_FONT
+        ws2.cell(1, 2, "Valor").font = WHITE_FONT
+        for c in range(1, 3):
+            ws2.cell(1, c).fill = RED_FILL
+        filt_rows = [
+            ("Mes", mes),
+            ("Cliente RUT", cliente_rut or "(todos)"),
+            ("Status", status_filter or "(todos)"),
+            ("Solo pendientes", "Sí" if solo_pendientes else "No"),
+            ("Total retiros", len(rows)),
+            ("Generado por", g.user["nombre"] if getattr(g, "user", None) else "sistema"),
+            ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ]
+        for ri, (k, v) in enumerate(filt_rows, 2):
+            ws2.cell(ri, 1, k)
+            ws2.cell(ri, 2, str(v))
+        ws2.column_dimensions['A'].width = 22
+        ws2.column_dimensions['B'].width = 36
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        fname = f"ILUS_Retiros_{mes}"
+        if cliente_rut:
+            fname += f"_{re.sub(r'[^0-9kK]', '', cliente_rut)}"
+        fname += ".xlsx"
+
+        from flask import send_file
+        return send_file(
+            buf,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=fname,
+        )
 
 
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])

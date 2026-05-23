@@ -10,8 +10,42 @@
       <div class="sub">{{ req.customer_name }} · {{ req.document_type|upper }} {{ req.document_number }}</div>
     </div>
   </div>
-  <a href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-link-45deg me-1"></i>Link cliente</a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('pickup_public_tracking', token=req.public_token) }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-link-45deg me-1"></i>Link cliente</a>
+    <button type="button" class="btn btn-sm btn-outline-light" onclick="abrirDescargaInforme('{{ req.customer_rut }}')" title="Excel con todos los retiros del mes">
+      <i class="bi bi-file-earmark-excel me-1"></i>Informe mes
+    </button>
+  </div>
 </div>
+
+<script>
+async function abrirDescargaInforme(rutCliente){
+  const mesDefault = new Date().toISOString().slice(0,7);
+  // Modal sencillo con prompts ILUS
+  const mes = await ilusPrompt({
+    title: 'Informe mensual de retiros',
+    message: 'Selecciona el mes a exportar (formato YYYY-MM):',
+    sub: 'Genera Excel con todos los retiros del mes.',
+    placeholder: 'Ej: ' + mesDefault,
+    defaultValue: mesDefault,
+    required: true,
+  });
+  if (!mes) return;
+  if (!/^\d{4}-\d{2}$/.test(mes)){
+    ilusToast('Formato inválido. Usa YYYY-MM.', { type:'warning' });
+    return;
+  }
+  const soloCliente = await ilusConfirm({
+    title: 'Filtrar por este cliente',
+    message: `¿Quieres limitar el informe SOLO al RUT ${rutCliente || ''} (este cliente)?`,
+    sub: 'Cancela para descargar TODOS los retiros del mes.',
+    okLabel: 'Sí, solo este cliente', cancelLabel: 'No, todos',
+  });
+  let url = `/retiros/api/informe-mes.xlsx?mes=${encodeURIComponent(mes)}`;
+  if (soloCliente && rutCliente) url += `&cliente_rut=${encodeURIComponent(rutCliente)}`;
+  window.location.href = url;
+}
+</script>
 
 <div class="row g-3 mb-3">
   <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Calidad info</div><div class="fs-3 fw-black">{{ req.information_quality_score }}%</div></div></div>
@@ -221,6 +255,123 @@
           <pre class="small bg-light p-2 rounded mt-1" style="max-height:200px;overflow:auto;font-size:.7rem">{{ req.doc_erp_data[:3000] }}</pre>
         </div>
         {% endif %}
+
+        {# ── Botón para agregar al retiro (visible después de buscar OK) ── #}
+        <div id="btnAgregarDocWrap" class="mt-2 d-none">
+          <button type="button" id="btnAgregarDoc" class="btn btn-sm btn-success fw-bold w-100"
+                  onclick="agregarDocAlRetiro({{ req.id }})">
+            <i class="bi bi-plus-circle me-1"></i>Agregar este documento al retiro
+          </button>
+          <div class="form-text small mt-1">
+            <i class="bi bi-info-circle me-1"></i>
+            Puedes asociar varias facturas/boletas al mismo retiro si el cliente
+            viene a buscar pedidos de distintos documentos el mismo día.
+          </div>
+        </div>
+      </div>
+
+      {# ═══════════════════════════════════════════════════════════
+         DOCUMENTOS ASOCIADOS A ESTE RETIRO (Daniel 2026-05-22)
+         Multi-doc — un retiro puede agrupar varias facturas/boletas.
+      ═══════════════════════════════════════════════════════════ #}
+      <style>
+        .docs-list{display:flex;flex-direction:column;gap:8px}
+        .doc-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+        .doc-card.first{border-left:4px solid #dc2626}
+        .doc-card .doc-num{font-family:monospace;font-weight:700;color:#0a0a0a;font-size:.95rem;flex-shrink:0;min-width:130px}
+        .doc-card .doc-cli{flex:1;min-width:180px}
+        .doc-card .doc-cli .nom{font-weight:600;font-size:.85rem;color:#0a0a0a}
+        .doc-card .doc-cli .rut{font-size:.72rem;color:#6b7280;font-family:monospace}
+        .doc-card .doc-totales{display:flex;gap:6px;flex-wrap:wrap;font-size:.7rem}
+        .doc-card .doc-totales .badge{font-size:.65rem;font-weight:600}
+        .doc-card .btn-quitar{background:transparent;border:1px solid #fca5a5;color:#dc2626;font-size:.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;flex-shrink:0}
+        .doc-card .btn-quitar:hover{background:#dc2626;color:#fff}
+        .docs-totales{background:linear-gradient(135deg,#0a0a0a,#1c1c1c);color:#fff;padding:12px 16px;border-radius:10px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-top:10px}
+        .docs-totales .lbl{font-size:.7rem;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+        .docs-totales .val{font-size:1.1rem;font-weight:800}
+        .docs-empty{padding:18px;text-align:center;color:#9ca3af;background:#f9fafb;border:1px dashed #d1d5db;border-radius:10px;font-size:.85rem}
+      </style>
+      <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #fdba74">
+        <div class="val-section-title">
+          <i class="bi bi-files"></i>Documentos asociados a este retiro
+          <span class="badge bg-secondary ms-2" id="badgeNDocs">{{ docs_asociados|length if docs_asociados else 0 }}</span>
+        </div>
+        <div id="docsAsociadosLista" class="docs-list">
+          {# Render inicial server-side; luego JS lo refresca tras agregar/quitar #}
+          {% if docs_asociados %}
+            {% for d in docs_asociados %}
+            <div class="doc-card {% if loop.first %}first{% endif %}" data-doc-id="{{ d.id }}">
+              <div class="doc-num">
+                {{ d.document_type|upper }} {{ d.document_number }}
+              </div>
+              <div class="doc-cli">
+                <div class="nom">{{ d.cliente_nombre or '—' }}</div>
+                <div class="rut">{{ d.cliente_rut or '—' }}</div>
+              </div>
+              <div class="doc-totales">
+                <span class="badge bg-dark">{{ "%.2f"|format(d.peso_real_kg|float) }} kg</span>
+                <span class="badge bg-info">{{ "%.2f"|format(d.peso_vol_kg|float) }} kg vol</span>
+                <span class="badge bg-secondary">{{ "%.3f"|format(d.volumen_m3|float) }} m³</span>
+                <span class="badge bg-light text-dark">{{ d.n_lineas }} líneas</span>
+              </div>
+              <button type="button" class="btn-quitar" onclick="quitarDoc({{ req.id }}, {{ d.id }}, '{{ d.document_type|upper }} {{ d.document_number }}')">
+                <i class="bi bi-x"></i> Quitar
+              </button>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="docs-empty" id="docsEmpty">
+              <i class="bi bi-inbox me-1"></i>Aún no hay documentos asociados.
+              Busca arriba un documento del ERP y agrégalo con el botón verde.
+            </div>
+          {% endif %}
+        </div>
+        {% if docs_asociados and docs_asociados|length > 0 %}
+        <div class="docs-totales" id="docsTotales">
+          <div>
+            <div class="lbl">Peso real</div>
+            <div class="val" id="totalKgUI">{{ "%.2f"|format(req.peso_real_kg|float) }} kg</div>
+          </div>
+          <div>
+            <div class="lbl">Peso vol.</div>
+            <div class="val" id="totalVolUI">{{ "%.2f"|format(req.peso_vol_kg|float) }} kg</div>
+          </div>
+          <div>
+            <div class="lbl">Volumen</div>
+            <div class="val" id="totalM3UI">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
+          </div>
+          <div>
+            <div class="lbl">Documentos</div>
+            <div class="val"><span id="totalDocsUI">{{ docs_asociados|length }}</span></div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      {# ═══════════════════════════════════════════════════════════
+         SALDO ERP DEL CLIENTE (Daniel 2026-05-22)
+         Lista documentos del RUT con saldo de despacho > 0 últimos 30 días.
+      ═══════════════════════════════════════════════════════════ #}
+      <div class="bg-white p-3 rounded-3 mb-3" style="border:1px solid #93c5fd">
+        <div class="val-section-title" style="color:#1e3a8a">
+          <i class="bi bi-clipboard-data"></i>Saldo del cliente en ERP
+          <span class="text-muted small ms-2" style="font-weight:500;text-transform:none">
+            (últimos <select id="saldoDias" class="form-select form-select-sm d-inline-block" style="width:auto;padding:1px 18px 1px 6px;font-size:.75rem"
+                            onchange="cargarSaldoCliente({{ req.id }})">
+              <option value="15">15 días</option>
+              <option value="30" selected>30 días</option>
+              <option value="60">60 días</option>
+              <option value="90">90 días</option>
+            </select>)
+          </span>
+          <button type="button" class="btn btn-sm btn-outline-primary ms-auto"
+                  onclick="cargarSaldoCliente({{ req.id }})" style="font-size:.7rem">
+            <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+          </button>
+        </div>
+        <div id="saldoClienteContenido">
+          <div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando saldo del cliente...</div>
+        </div>
       </div>
 
       {# ── 2) PESO / VOLUMEN / TIEMPO ── #}
@@ -248,8 +399,8 @@
             </div>
             <div class="col-md-3">
               <label class="form-label small fw-bold mb-1">Volumen total (m³)</label>
-              <input type="number" id="val_m3" class="form-control form-control-sm"
-                     step="0.001" value="{{ req.total_volume_m3 or '' }}" disabled>
+              <input type="number" name="total_volume_m3" id="val_m3" class="form-control form-control-sm"
+                     step="0.001" value="{{ req.total_volume_m3 or '' }}">
             </div>
           </div>
           <div class="form-text mt-2 small">
@@ -412,6 +563,8 @@
         fd.append('erp_data_json', JSON.stringify(d));
         fd.append('peso_real_kg', totalKg.toFixed(2));
         fd.append('peso_vol_kg', totalPesoVol.toFixed(2));
+        // FIX 2026-05-22 (Daniel): persistir m³ que faltaba — antes quedaba 0 abajo
+        fd.append('total_volume_m3', totalM3.toFixed(3));
         fd.append('tiempo_estimado_min', Math.max(15, 5 + _erpLineas.length * 2));
         await fetch(`/retiros/${rid}/validar-doc`, { method:'POST', body: fd });
       } catch(e){
@@ -440,6 +593,254 @@
         window.open(`/products/new?sku=${encodeURIComponent(sku)}${nombre}`, '_blank');
       }
     }
+
+    // ─── MULTI-DOC: agregar documento al retiro (Daniel 2026-05-22) ────
+    const _RID = {{ req.id }};
+    let _docBuscado = null; // { tido, nudo, hdr } — set en buscarERP
+
+    async function agregarDocAlRetiro(rid){
+      const tido = document.getElementById('val_tido').value;
+      const nudo = document.getElementById('val_nudo').value.trim();
+      if (!tido || !nudo){
+        ilusToast('Primero busca un documento en ERP', { type:'warning' });
+        return;
+      }
+      const btn = document.getElementById('btnAgregarDoc');
+      if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agregando...'; }
+      try {
+        const r = await fetch(`/retiros/${rid}/docs/agregar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ document_type: tido, document_number: nudo }),
+        });
+        const d = await r.json();
+        if (r.status === 409){
+          await ilusAlert({
+            title: 'Doc ya asociado',
+            message: `El documento ${tido} ${nudo} ya está asociado a este retiro.`,
+            type: 'warning',
+          });
+          return;
+        }
+        if (!d.ok){
+          ilusToast('Error: ' + (d.error || 'No se pudo agregar'), { type:'error' });
+          return;
+        }
+        if (d.warning_otro_retiro){
+          ilusToast(`⚠ El doc también figura en otro retiro: ${d.warning_otro_retiro.code}`, { type:'warning' });
+        } else {
+          ilusToast(`✓ ${tido} ${nudo} agregado al retiro`, { type:'success' });
+        }
+        await refrescarDocsAsociados(rid);
+      } catch(e){
+        ilusToast('Error de red: ' + e.message, { type:'error' });
+      } finally {
+        if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Agregar este documento al retiro'; }
+      }
+    }
+
+    async function quitarDoc(rid, docId, labelDoc){
+      const ok = await ilusConfirm({
+        title: 'Quitar documento',
+        message: `¿Quitar ${labelDoc} de este retiro?`,
+        sub: 'Esto NO elimina el documento del ERP, solo lo saca de este retiro.',
+        okLabel: 'Sí, quitar', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch(`/retiros/${rid}/docs/${docId}`, { method: 'DELETE' });
+        const d = await r.json();
+        if (!d.ok){
+          ilusToast('Error: ' + (d.error || 'No se pudo quitar'), { type:'error' });
+          return;
+        }
+        ilusToast('✓ Documento quitado', { type:'success' });
+        await refrescarDocsAsociados(rid);
+      } catch(e){
+        ilusToast('Error de red: ' + e.message, { type:'error' });
+      }
+    }
+
+    function _esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    function _renderDocCard(d, isFirst){
+      return `<div class="doc-card ${isFirst?'first':''}" data-doc-id="${d.id}">
+        <div class="doc-num">${_esc(d.document_type)} ${_esc(d.document_number)}</div>
+        <div class="doc-cli">
+          <div class="nom">${_esc(d.cliente_nombre || '—')}</div>
+          <div class="rut">${_esc(d.cliente_rut || '—')}</div>
+        </div>
+        <div class="doc-totales">
+          <span class="badge bg-dark">${parseFloat(d.peso_real_kg||0).toFixed(2)} kg</span>
+          <span class="badge bg-info">${parseFloat(d.peso_vol_kg||0).toFixed(2)} kg vol</span>
+          <span class="badge bg-secondary">${parseFloat(d.volumen_m3||0).toFixed(3)} m³</span>
+          <span class="badge bg-light text-dark">${d.n_lineas || 0} líneas</span>
+        </div>
+        <button type="button" class="btn-quitar" onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(d.document_type)} ${_esc(d.document_number)}')">
+          <i class="bi bi-x"></i> Quitar
+        </button>
+      </div>`;
+    }
+
+    async function refrescarDocsAsociados(rid){
+      try {
+        const r = await fetch(`/retiros/${rid}/docs`);
+        const d = await r.json();
+        if (!d.ok) return;
+        const lista = document.getElementById('docsAsociadosLista');
+        const badge = document.getElementById('badgeNDocs');
+        if (badge) badge.textContent = (d.docs || []).length;
+        if (!d.docs || d.docs.length === 0){
+          lista.innerHTML = `<div class="docs-empty"><i class="bi bi-inbox me-1"></i>Aún no hay documentos asociados.</div>`;
+          // Quitar totales si existían
+          const tot = document.getElementById('docsTotales');
+          if (tot) tot.remove();
+          return;
+        }
+        lista.innerHTML = d.docs.map((doc, i) => _renderDocCard(doc, i===0)).join('');
+        // Render totales
+        let totDiv = document.getElementById('docsTotales');
+        const t = d.totales || {};
+        const totalesHtml = `
+          <div><div class="lbl">Peso real</div><div class="val">${parseFloat(t.peso_real_kg||0).toFixed(2)} kg</div></div>
+          <div><div class="lbl">Peso vol.</div><div class="val">${parseFloat(t.peso_vol_kg||0).toFixed(2)} kg</div></div>
+          <div><div class="lbl">Volumen</div><div class="val">${parseFloat(t.volumen_m3||0).toFixed(3)} m³</div></div>
+          <div><div class="lbl">Documentos</div><div class="val">${t.n_docs || 0}</div></div>
+        `;
+        if (!totDiv){
+          totDiv = document.createElement('div');
+          totDiv.className = 'docs-totales';
+          totDiv.id = 'docsTotales';
+          totDiv.innerHTML = totalesHtml;
+          lista.parentElement.appendChild(totDiv);
+        } else {
+          totDiv.innerHTML = totalesHtml;
+        }
+        // Reflejar en los inputs de validación (para que al hacer "Marcar OK" guarde los totales correctos)
+        const elKg = document.getElementById('val_peso_real');
+        const elPv = document.getElementById('val_peso_vol');
+        const elM3 = document.getElementById('val_m3');
+        const elTm = document.getElementById('val_tiempo');
+        if (elKg) elKg.value = parseFloat(t.peso_real_kg||0).toFixed(2);
+        if (elPv) elPv.value = parseFloat(t.peso_vol_kg||0).toFixed(2);
+        if (elM3) elM3.value = parseFloat(t.volumen_m3||0).toFixed(3);
+        if (elTm && t.tiempo_estimado_min) elTm.value = t.tiempo_estimado_min;
+      } catch(e){
+        console.error('refrescarDocsAsociados', e);
+      }
+    }
+
+    // ─── SALDO ERP DEL CLIENTE ────────────────────────────────────────
+    async function cargarSaldoCliente(rid){
+      const cont = document.getElementById('saldoClienteContenido');
+      const rut = '{{ req.customer_rut }}';
+      if (!rut){
+        cont.innerHTML = '<div class="text-muted small">Sin RUT de cliente.</div>';
+        return;
+      }
+      const dias = document.getElementById('saldoDias').value || '30';
+      cont.innerHTML = '<div class="text-muted small py-2"><span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP...</div>';
+      try {
+        const r = await fetch(`/retiros/api/cliente/${encodeURIComponent(rut)}/saldo-pendiente?dias=${dias}`);
+        const d = await r.json();
+        if (d.error && (!d.docs || d.docs.length === 0)){
+          cont.innerHTML = `<div class="alert alert-secondary py-2 small mb-0">
+            <i class="bi bi-info-circle me-1"></i>${_esc(d.error)}
+          </div>`;
+          return;
+        }
+        if (!d.docs || d.docs.length === 0){
+          cont.innerHTML = `<div class="alert alert-light py-2 small mb-0 border">
+            <i class="bi bi-check2-circle text-success me-1"></i>
+            Sin documentos pendientes en ERP (últimos ${dias} días).
+          </div>`;
+          return;
+        }
+        const rows = d.docs.map(doc => {
+          const yaAso = doc.ya_tiene_retiro;
+          const saldo = parseFloat(doc.saldo_zz || 0);
+          const tieneSaldo = saldo > 0;
+          return `<tr class="${yaAso?'table-secondary':''}" style="font-size:.82rem">
+            <td class="font-monospace fw-bold">${_esc(doc.tido_display)} ${_esc(doc.nudo_display)}</td>
+            <td>${_esc(doc.fecha)}</td>
+            <td>${_esc(doc.cliente).substr(0, 30)}</td>
+            <td class="text-end">$${Math.round(doc.total||0).toLocaleString('es-CL')}</td>
+            <td>
+              ${tieneSaldo ? `<span class="badge bg-warning text-dark">Pendiente</span>` :
+                              `<span class="badge bg-light text-muted">—</span>`}
+              ${yaAso ? `<span class="badge bg-secondary ms-1">En retiro</span>` : ''}
+            </td>
+            <td>
+              ${yaAso ? `<span class="text-muted small">Ya asociado</span>` :
+                       `<button class="btn btn-sm btn-outline-success" style="font-size:.7rem;padding:2px 8px"
+                                onclick="agregarSaldoDoc(${rid}, '${_esc(doc.tido_display)}', '${_esc(doc.nudo_display)}')">
+                          <i class="bi bi-plus"></i> Asociar
+                        </button>`}
+            </td>
+          </tr>`;
+        }).join('');
+        const cntPend = d.docs.filter(x => parseFloat(x.saldo_zz||0) > 0).length;
+        cont.innerHTML = `
+          <div class="alert alert-info py-2 small mb-2">
+            <i class="bi bi-info-circle me-1"></i>
+            El cliente tiene <strong>${d.docs.length}</strong> documento(s) emitido(s) en los últimos ${dias} días.
+            ${cntPend > 0 ? `<strong class="text-warning ms-1">${cntPend} con saldo de despacho pendiente.</strong>` : ''}
+          </div>
+          <div class="table-responsive" style="max-height:360px;overflow-y:auto">
+            <table class="table table-sm table-hover mb-0">
+              <thead style="position:sticky;top:0;background:#0a0a0a;color:#fff;font-size:.7rem">
+                <tr><th>Doc</th><th>Fecha</th><th>Cliente</th><th class="text-end">Total</th><th>Estado</th><th></th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      } catch(e){
+        cont.innerHTML = `<div class="alert alert-warning py-2 small mb-0">
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          No se pudo consultar el ERP (${_esc(e.message)}).
+        </div>`;
+      }
+    }
+
+    async function agregarSaldoDoc(rid, tido, nudo){
+      // Poblar campos arriba y reutilizar agregarDocAlRetiro
+      const t = (tido || '').toUpperCase();
+      const sel = document.getElementById('val_tido');
+      const num = document.getElementById('val_nudo');
+      if (sel){
+        // Buscar opción exacta; si no existe, agregar dinámicamente
+        let found = false;
+        for (const opt of sel.options){ if (opt.value === t){ found = true; break; } }
+        if (!found){
+          const o = document.createElement('option');
+          o.value = t; o.textContent = t; sel.appendChild(o);
+        }
+        sel.value = t;
+      }
+      if (num) num.value = nudo;
+      // Si quiere, primero busca para validar el doc en ERP. Más fluido directo asociar.
+      await agregarDocAlRetiro(rid);
+      // Refrescar saldo después
+      setTimeout(() => cargarSaldoCliente(rid), 500);
+    }
+
+    // ─── Cargar saldo al abrir la página ───────────────────────────────
+    document.addEventListener('DOMContentLoaded', function(){
+      cargarSaldoCliente(_RID);
+    });
+
+    // ─── Hook al buscar ERP: mostrar botón "agregar al retiro" ──────────
+    // Patcheamos la función original para mostrar el botón al final.
+    const _origBuscarERP = buscarERP;
+    buscarERP = async function(rid){
+      await _origBuscarERP(rid);
+      // Mostrar botón si la búsqueda tuvo éxito (hay _erpLineas o resultado en pantalla)
+      const wrap = document.getElementById('btnAgregarDocWrap');
+      const res = document.getElementById('erpResult');
+      if (wrap && res && res.querySelector('.alert-success')){
+        wrap.classList.remove('d-none');
+      }
+    };
 
     // ─── Importar masivo: SKUs sin ficha → crear en BD local con datos del ERP ──
     async function importarSkusErp(skus){
@@ -480,18 +881,104 @@
     }
     </script>
 
-    <div id="sec-ficha" class="ilus-card mb-3">
-      <div class="ilus-card-header"><span><i class="bi bi-person-vcard me-2"></i>Ficha del retiro</span></div>
+    {# ═══════════════════════════════════════════════════════════
+       FICHA: Cliente (ERP) ↔ Quien retira  (Daniel 2026-05-22)
+       — Card "Cliente (ERP)" muestra razón social + RUT + dirección
+       — Card "Quien retira" muestra persona autorizada
+       — Datos privados (email/teléfono cliente) ocultos por default,
+         se muestran solo con click admin.
+    ═══════════════════════════════════════════════════════════ #}
+    <style>
+      .ficha-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:14px}
+      @media (min-width:768px){.ficha-grid{grid-template-columns:1fr 1fr}}
+      .ficha-card{border-radius:12px;padding:18px;border:1px solid #e5e7eb;background:#fff}
+      .ficha-card.cli{background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border-color:#fdba74}
+      .ficha-card.ret{background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);border-color:#93c5fd}
+      .ficha-title{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+      .ficha-title.cli{color:#7c2d12}
+      .ficha-title.ret{color:#1e3a8a}
+      .ficha-row{margin-bottom:8px}
+      .ficha-row .lbl{font-size:.7rem;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+      .ficha-row .val{font-size:.95rem;color:#0a0a0a;font-weight:600}
+      .ficha-row .val.mono{font-family:monospace}
+      .ficha-priv{filter:blur(4px);transition:filter .2s;cursor:pointer;user-select:none}
+      .ficha-priv.show{filter:none;cursor:default}
+      .ficha-priv-toggle{font-size:.7rem;color:#6b7280;cursor:pointer;text-decoration:underline}
+      .ficha-priv-toggle:hover{color:#0a0a0a}
+    </style>
+
+    <div id="sec-ficha" class="ficha-grid">
+      {# ── CLIENTE (ERP / titular del documento) ── #}
+      <div class="ficha-card cli">
+        <div class="ficha-title cli">
+          <i class="bi bi-building"></i>Cliente (ERP)
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">Razón social</div>
+          <div class="val">{{ req.customer_name }}</div>
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">RUT</div>
+          <div class="val mono">{{ req.customer_rut }}</div>
+        </div>
+        {% if req.observations %}
+        <div class="ficha-row">
+          <div class="lbl">Observaciones del cliente</div>
+          <div class="val small" style="font-weight:400;white-space:pre-wrap">{{ req.observations }}</div>
+        </div>
+        {% endif %}
+        {# Datos privados — toggle admin (default oculto) #}
+        <div class="ficha-row mt-3" style="border-top:1px dashed #fdba74;padding-top:10px">
+          <div class="lbl d-flex align-items-center gap-2">
+            <i class="bi bi-shield-lock"></i>Datos privados de contacto
+            <span class="ficha-priv-toggle ms-auto" onclick="this.parentElement.parentElement.querySelectorAll('.ficha-priv').forEach(e=>e.classList.toggle('show'))">
+              Mostrar / ocultar
+            </span>
+          </div>
+          <div class="val small ficha-priv" style="font-weight:400">
+            <i class="bi bi-person me-1"></i>{{ req.contact_name }}<br>
+            <i class="bi bi-envelope me-1"></i>{{ req.contact_email }}<br>
+            <i class="bi bi-telephone me-1"></i>{{ req.contact_phone }}
+          </div>
+        </div>
+      </div>
+
+      {# ── QUIEN RETIRA (persona autorizada) ── #}
+      <div class="ficha-card ret">
+        <div class="ficha-title ret">
+          <i class="bi bi-person-badge"></i>Quien retira
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">Nombre</div>
+          <div class="val">{{ req.pickup_person_name }}</div>
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">RUT</div>
+          <div class="val mono">{{ req.pickup_person_rut }}</div>
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">Teléfono</div>
+          <div class="val">{{ req.pickup_person_phone }}</div>
+        </div>
+        <div class="ficha-row">
+          <div class="lbl">Relación con el cliente</div>
+          <div class="val small text-capitalize" style="font-weight:500">{{ req.pickup_person_relation }}</div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Bodega + fechas (compacto en una sola card) ── #}
+    <div class="ilus-card mb-3">
       <div class="card-body p-3">
         <div class="row g-3">
-          <div class="col-md-6"><small class="text-muted">Cliente</small><div class="fw-bold">{{ req.customer_name }}</div><div class="font-monospace small">{{ req.customer_rut }}</div></div>
-          <div class="col-md-6"><small class="text-muted">Contacto</small><div class="fw-bold">{{ req.contact_name }}</div><div class="small">{{ req.contact_email }} · {{ req.contact_phone }}</div></div>
-          <div class="col-md-6"><small class="text-muted">Persona que retira</small><div class="fw-bold">{{ req.pickup_person_name }}</div><div class="small">{{ req.pickup_person_rut }} · {{ req.pickup_person_phone }} · {{ req.pickup_person_relation }}</div></div>
-          <div class="col-md-6"><small class="text-muted">Bodega</small><div class="fw-bold">{{ settings.warehouse_name }}</div><a href="{{ settings.maps_url }}" target="_blank" class="small">Abrir mapa</a></div>
-          <div class="col-md-4"><small class="text-muted">Solicitada</small><div class="fw-bold">{{ req.requested_date }} {{ req.requested_time_from|hm }}-{{ req.requested_time_to|hm }}</div></div>
-          <div class="col-md-4"><small class="text-muted">Propuesta</small><div class="fw-bold">{{ req.proposed_date or '-' }} {% if req.proposed_time_from %}{{ req.proposed_time_from|hm }}-{{ req.proposed_time_to|hm }}{% endif %}</div></div>
-          <div class="col-md-4"><small class="text-muted">Confirmada</small><div class="fw-bold">{{ req.confirmed_date or '-' }} {% if req.confirmed_time_from %}{{ req.confirmed_time_from|hm }}-{{ req.confirmed_time_to|hm }}{% endif %}</div></div>
-          {% if req.observations %}<div class="col-12"><small class="text-muted">Observaciones cliente</small><div class="p-2 bg-light rounded">{{ req.observations }}</div></div>{% endif %}
+          <div class="col-md-6">
+            <small class="text-muted">Bodega</small>
+            <div class="fw-bold">{{ settings.warehouse_name }}</div>
+            <a href="{{ settings.maps_url }}" target="_blank" class="small">Abrir mapa</a>
+          </div>
+          <div class="col-md-2"><small class="text-muted">Solicitada</small><div class="fw-bold small">{{ req.requested_date }} {{ req.requested_time_from|hm }}-{{ req.requested_time_to|hm }}</div></div>
+          <div class="col-md-2"><small class="text-muted">Propuesta</small><div class="fw-bold small">{{ req.proposed_date or '-' }} {% if req.proposed_time_from %}{{ req.proposed_time_from|hm }}-{{ req.proposed_time_to|hm }}{% endif %}</div></div>
+          <div class="col-md-2"><small class="text-muted">Confirmada</small><div class="fw-bold small">{{ req.confirmed_date or '-' }} {% if req.confirmed_time_from %}{{ req.confirmed_time_from|hm }}-{{ req.confirmed_time_to|hm }}{% endif %}</div></div>
         </div>
       </div>
     </div>
