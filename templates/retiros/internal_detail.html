@@ -2,7 +2,22 @@
 {% block title %}{{ req.code }} - Retiro ILUS{% endblock %}
 {% block content %}
 {% set b = status_badge(req.status) %}
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+
+{# ════════════════════════════════════════════════════════════════════
+   HEADER PREMIUM con animación de entrada (Daniel "click espectacular")
+══════════════════════════════════════════════════════════════════════ #}
+<style>
+  @keyframes idHeroIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  @keyframes idCodeIn{from{opacity:0;letter-spacing:.5em}to{opacity:1;letter-spacing:0}}
+  @keyframes idBadgeIn{from{opacity:0;transform:scale(.5)}to{opacity:1;transform:none}}
+  .id-hero{animation:idHeroIn .55s cubic-bezier(.4,0,.2,1) both}
+  .id-hero h4{animation:idCodeIn .7s cubic-bezier(.4,0,.2,1) both .12s}
+  .id-hero .badge{animation:idBadgeIn .5s cubic-bezier(.34,1.56,.64,1) both .35s}
+  @media(prefers-reduced-motion:reduce){
+    .id-hero, .id-hero h4, .id-hero .badge{animation:none}
+  }
+</style>
+<div class="page-header id-hero d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div class="d-flex align-items-center gap-2">
     <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
     <div>
@@ -47,15 +62,25 @@ async function abrirDescargaInforme(rutCliente){
 }
 </script>
 
-<div class="row g-3 mb-3">
-  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Calidad info</div><div class="fs-3 fw-black">{{ req.information_quality_score }}%</div></div></div>
-  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Riesgo</div><div class="fs-3 fw-black">{{ req.risk_score }}%</div></div></div>
-  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Peso / PV</div><div class="fs-5 fw-black">{{ req.total_weight_kg }} / {{ req.total_volumetric_weight }}</div></div></div>
-  <div class="col-md-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Volumen</div><div class="fs-5 fw-black">{{ req.total_volume_m3 }} m3</div></div></div>
+{# ════════════════════════════════════════════════════════════════════
+   KPIs COMPACTOS - una sola fila tipo chip
+══════════════════════════════════════════════════════════════════════ #}
+<style>
+  .id-kpis{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .id-kpi{background:#0a0a0a;color:#fff;padding:6px 14px;border-radius:50px;font-size:.78rem;font-weight:700;display:inline-flex;align-items:center;gap:8px;border-left:3px solid var(--ilus-red,#dc2626)}
+  .id-kpi i{color:var(--ilus-red,#dc2626);font-size:.96rem}
+  .id-kpi strong{font-weight:900}
+  .id-kpi .lbl{color:#cbd5e1;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+</style>
+<div class="id-kpis">
+  <div class="id-kpi"><i class="bi bi-stars"></i><span class="lbl">Calidad info</span><strong>{{ req.information_quality_score }}%</strong></div>
+  <div class="id-kpi"><i class="bi bi-shield-exclamation"></i><span class="lbl">Riesgo</span><strong>{{ req.risk_score }}%</strong></div>
+  <div class="id-kpi"><i class="bi bi-box-seam"></i><span class="lbl">Peso/PV</span><strong>{{ req.total_weight_kg }} / {{ req.total_volumetric_weight }} kg</strong></div>
+  <div class="id-kpi"><i class="bi bi-bounding-box"></i><span class="lbl">Volumen</span><strong>{{ req.total_volume_m3 }} m³</strong></div>
 </div>
 
 <div class="row g-3">
-  <div class="col-xl-8">
+  <div class="col-xl-8 order-1 order-xl-2">
 
     {# ═══════════════════════════════════════════════════════════════
        PROCESO INTERNO ILUS — Workflow de validación de documentación
@@ -730,6 +755,105 @@ async function abrirDescargaInforme(rutCliente){
     </script>
 
     {# ═══════════════════════════════════════════════════════════
+       WIZARD GUIADO PASO A PASO (Daniel 2026-05-23)
+       Reemplaza el contenido monolítico anterior con 5 sub-pasos
+       guiados:
+         1. Buscar documentos del cliente (RUT → ERP)
+         2. Agregar más documentos (multi-doc opcional)
+         3. Documentos asociados (con saldo verificado)
+         4. Proponer fecha y hora (calendario inteligente único)
+         5. Esperar respuesta del cliente
+
+       Reglas de bloqueo entre pasos:
+         - Paso 4 bloqueado hasta ≥1 doc CON SALDO en Paso 3
+         - Paso 5 solo activo cuando se envía propuesta
+         - Validación frontend + backend (defense in depth)
+
+       Estilo: misma estética del flujo público (verde al completar,
+       rojo en activo, gris bloqueado) — Daniel "me encanta así".
+    ═══════════════════════════════════════════════════════════ #}
+    {# Pre-cálculo de estado de pasos (server-side, refrescado por JS al cambiar docs) #}
+    {% set _n_docs_inicial = (docs_asociados|length) if docs_asociados else 0 %}
+    {% set _n_docs_con_saldo_inicial = (docs_asociados | selectattr('con_saldo', 'equalto', 1) | list | length) if docs_asociados else 0 %}
+    {% set _step1_done = _n_docs_inicial > 0 %}
+    {% set _step3_done = _n_docs_con_saldo_inicial > 0 %}
+    {% set _step4_done = (req.proposed_date|string|trim) not in ('', 'None') %}
+    {% set _step5_done = (req.confirmed_date|string|trim) not in ('', 'None') %}
+
+    <div class="iw-wrap" id="iwWrap"
+         data-rid="{{ req.id }}"
+         data-n-docs="{{ _n_docs_inicial }}"
+         data-n-con-saldo="{{ _n_docs_con_saldo_inicial }}"
+         data-step4-done="{{ '1' if _step4_done else '0' }}"
+         data-step5-done="{{ '1' if _step5_done else '0' }}">
+
+      {# ════════ PASO 1 — Buscar documentos del cliente ════════ #}
+      <div class="iw-step {% if _step1_done %}is-done{% else %}is-active{% endif %}" id="iwStep1" data-step="1">
+        <div class="iw-step-head">
+          <div class="iw-step-num"><span>1</span></div>
+          <div class="iw-step-titles">
+            <h5>Buscar documentos del cliente</h5>
+            <p class="iw-step-sub">RUT del cliente: <strong class="text-monospace">{{ req.customer_rut }}</strong> — busca pendientes en el ERP y asocia los que correspondan al retiro.</p>
+          </div>
+          <span class="iw-step-badge">{% if _step1_done %}{{ _n_docs_inicial }} doc{{ '' if _n_docs_inicial==1 else 's' }} asociado{{ '' if _n_docs_inicial==1 else 's' }}{% else %}Por iniciar{% endif %}</span>
+        </div>
+        <div class="iw-step-body">
+          <p class="small text-muted mb-2">
+            <i class="bi bi-info-circle me-1"></i>
+            Mira la lista de "Saldo del cliente" más abajo. Usa los botones
+            <span class="badge bg-success" style="font-size:.62rem">+ Asociar</span>
+            para vincular los documentos al retiro.
+          </p>
+        </div>
+      </div>
+
+      {# ════════ PASO 2 — Agregar documentos manualmente ════════ #}
+      <div class="iw-step {% if _step1_done %}is-done{% endif %}" id="iwStep2" data-step="2">
+        <div class="iw-step-head">
+          <div class="iw-step-num"><span>2</span></div>
+          <div class="iw-step-titles">
+            <h5>Agregar más documentos (opcional)</h5>
+            <p class="iw-step-sub">Si el cliente trae una factura/boleta específica que no aparece en el listado, búscala manualmente por tipo + número.</p>
+          </div>
+          <span class="iw-step-badge">Multi-doc</span>
+        </div>
+        <div class="iw-step-body">
+          <p class="small text-muted mb-2">
+            <i class="bi bi-search me-1"></i>
+            Usa el buscador manual de la tarjeta inferior (Tipo + N° documento) y haz "Buscar en ERP".
+            Una vez encontrado, agrégalo con el botón verde.
+          </p>
+        </div>
+      </div>
+
+      {# ════════ PASO 3 — Documentos del retiro (saldo verificado) ════════ #}
+      <div class="iw-step {% if _step3_done %}is-done{% elif _step1_done %}is-active{% endif %}" id="iwStep3" data-step="3">
+        <div class="iw-step-head">
+          <div class="iw-step-num"><span>3</span></div>
+          <div class="iw-step-titles">
+            <h5>Documentos del retiro <span id="iwStep3Counter" class="text-muted fw-normal" style="font-size:.78rem">({{ _n_docs_inicial }} asociado{{ '' if _n_docs_inicial==1 else 's' }} · {{ _n_docs_con_saldo_inicial }} con saldo)</span></h5>
+            <p class="iw-step-sub">Verificamos el saldo de despacho en el ERP. Sin saldo = ya se entregó vía guía → bloqueado para retirar.</p>
+          </div>
+          <span class="iw-step-badge" id="iwStep3Badge">
+            {% if _step3_done %}{{ _n_docs_con_saldo_inicial }} OK{% elif _n_docs_inicial > 0 %}Revisar saldos{% else %}Sin docs{% endif %}
+          </span>
+        </div>
+        <div class="iw-step-body">
+          <p class="small text-muted mb-0">
+            <i class="bi bi-shield-check me-1"></i>
+            La lista detallada de documentos está en la tarjeta "Documentos asociados a este retiro" más abajo.
+            Cada doc muestra
+            <span class="badge bg-success" style="font-size:.6rem">✓ Con saldo</span>
+            o
+            <span class="badge bg-warning text-dark" style="font-size:.6rem">⚠ Sin saldo</span>.
+            Solo los con saldo cuentan para habilitar el Paso 4.
+          </p>
+        </div>
+      </div>
+
+    </div>{# /iw-wrap (sigue PASO 4 y 5 después del val-card) #}
+
+    {# ═══════════════════════════════════════════════════════════
        SECCIÓN: VALIDACIÓN DE DOCUMENTACIÓN
        Buscador manual + items + cubicaje + peso/vol + estado
     ═══════════════════════════════════════════════════════════ #}
@@ -829,6 +953,10 @@ async function abrirDescargaInforme(rutCliente){
         .docs-list{display:flex;flex-direction:column;gap:8px}
         .doc-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
         .doc-card.first{border-left:4px solid #dc2626}
+        .doc-card.con-saldo{background:linear-gradient(180deg,#f0fdf4 0%, #ffffff 60%);border-color:#86efac}
+        .doc-card.sin-saldo{background:linear-gradient(180deg,#fefce8 0%, #ffffff 60%);border-color:#fde68a;opacity:.85}
+        .doc-card.sin-saldo .doc-num{text-decoration:line-through;color:#92400e}
+        .doc-card.saldo-nv{background:linear-gradient(180deg,#f9fafb 0%, #ffffff 60%);border-color:#e5e7eb}
         .doc-card .doc-num{font-family:monospace;font-weight:700;color:#0a0a0a;font-size:.95rem;flex-shrink:0;min-width:130px}
         .doc-card .doc-cli{flex:1;min-width:180px}
         .doc-card .doc-cli .nom{font-weight:600;font-size:.85rem;color:#0a0a0a}
@@ -851,7 +979,7 @@ async function abrirDescargaInforme(rutCliente){
           {# Render inicial server-side; luego JS lo refresca tras agregar/quitar #}
           {% if docs_asociados %}
             {% for d in docs_asociados %}
-            <div class="doc-card {% if loop.first %}first{% endif %}" data-doc-id="{{ d.id }}">
+            <div class="doc-card {% if loop.first %}first{% endif %} {% if d.con_saldo == 0 %}sin-saldo{% elif d.con_saldo == 1 %}con-saldo{% else %}saldo-nv{% endif %}" data-doc-id="{{ d.id }}">
               <div class="doc-num">
                 {{ d.document_type|upper }} {{ d.document_number }}
               </div>
@@ -860,6 +988,13 @@ async function abrirDescargaInforme(rutCliente){
                 <div class="rut">{{ d.cliente_rut or '—' }}</div>
               </div>
               <div class="doc-totales">
+                {% if d.con_saldo == 1 %}
+                  <span class="badge bg-success" title="Con saldo disponible para retiro"><i class="bi bi-check-circle me-1"></i>Con saldo</span>
+                {% elif d.con_saldo == 0 %}
+                  <span class="badge bg-warning text-dark" title="Sin saldo - ya despachado vía guía"><i class="bi bi-exclamation-triangle me-1"></i>Sin saldo</span>
+                {% else %}
+                  <span class="badge bg-secondary" title="Saldo no verificado - revisar manualmente"><i class="bi bi-question-circle me-1"></i>Sin verificar</span>
+                {% endif %}
                 <span class="badge bg-dark">{{ "%.2f"|format(d.peso_real_kg|float) }} kg</span>
                 <span class="badge bg-info">{{ "%.2f"|format(d.peso_vol_kg|float) }} kg vol</span>
                 <span class="badge bg-secondary">{{ "%.3f"|format(d.volumen_m3|float) }} m³</span>
@@ -980,6 +1115,157 @@ async function abrirDescargaInforme(rutCliente){
         </div>
       </form>
     </div>
+
+    {# ════════════════════════════════════════════════════════════
+       WIZARD: PASOS 4 y 5 — Proponer fecha + Esperar respuesta
+       Daniel 2026-05-23 — el operador propone DESDE AQUÍ con el
+       calendario inteligente único (mismo del flujo público).
+    ════════════════════════════════════════════════════════════ #}
+    <div class="iw-wrap mt-3" id="iwWrap2">
+
+      {# ════════ PASO 4 — Proponer fecha y hora ════════ #}
+      <a id="sec-propuesta" tabindex="-1" style="position:relative;top:-12px"></a>
+      <div class="iw-step {% if _step4_done %}is-done{% elif _step3_done and _doc_ok %}is-active{% else %}is-blocked{% endif %}" id="iwStep4" data-step="4">
+        <div class="iw-step-head">
+          <div class="iw-step-num"><span>4</span></div>
+          <div class="iw-step-titles">
+            <h5>Proponer fecha y hora al cliente</h5>
+            <p class="iw-step-sub">Elige día y rango horario en el calendario inteligente. El cliente recibirá email para aceptar/contrapropuesta.</p>
+          </div>
+          <span class="iw-step-badge">
+            {% if _step4_done %}{{ req.proposed_date }} {{ req.proposed_time_from|hm }}{% elif _step3_done and _doc_ok %}Listo para proponer{% else %}Bloqueado{% endif %}
+          </span>
+        </div>
+        <div class="iw-step-body">
+          {% if not _doc_ok or not _step3_done %}
+          <div class="iw-step-block-msg">
+            <i class="bi bi-shield-exclamation"></i>
+            <div>
+              <strong>Antes de proponer fecha:</strong>
+              <ul class="mb-0 mt-1 small" style="padding-left:20px">
+                {% if not _step3_done %}<li>Asocia al menos <strong>1 documento con saldo disponible</strong> (paso 1 o 2).</li>{% endif %}
+                {% if not _doc_ok %}<li>Valida la documentación (botón verde "Validar y habilitar paso siguiente" en la tarjeta de arriba).</li>{% endif %}
+              </ul>
+            </div>
+          </div>
+          {% endif %}
+
+          {# Si ya hay propuesta enviada: mostrar resumen + botón "Re-proponer" #}
+          {% if _step4_done %}
+          <div class="alert alert-success py-3 mb-3" id="iwStep4Summary">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <i class="bi bi-check-circle-fill" style="font-size:1.2rem"></i>
+              <div class="flex-grow-1">
+                <strong>Propuesta enviada</strong> al cliente para
+                <strong>{{ req.proposed_date }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>.
+                <div class="small text-muted">El cliente la verá en su email y podrá aceptar, contraproponer o cancelar.</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-dark" id="iwShowReproposeBtn">
+                <i class="bi bi-arrow-repeat me-1"></i>Re-proponer
+              </button>
+            </div>
+          </div>
+          {% endif %}
+
+          {# ── Calendario inteligente único + form de propuesta ── #}
+          <div id="iwProposeForm" {% if _step4_done or not _doc_ok or not _step3_done %}style="display:none"{% endif %}>
+            <form id="iwProposeFormEl" novalidate>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                  <label class="form-label small fw-bold mb-1">Día del retiro</label>
+                  <input type="date" id="iwProposeDate" class="form-control form-control-sm" required>
+                  <small class="text-muted">Mínimo 24h de anticipación.</small>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-bold mb-1">Motivo (opcional)</label>
+                  <input type="text" id="iwProposeReason" class="form-control form-control-sm"
+                         placeholder="Disponibilidad, flujo, cierre…" maxlength="200">
+                </div>
+              </div>
+
+              {# Calendario reusable (extrae de retiros_calendar.js) #}
+              <div class="ilus-cal-wrap mb-2">
+                <div class="ilus-cal-head">
+                  <strong style="font-size:.82rem">Bloque horario</strong>
+                  <div class="legend">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:var(--ilus-red)"></span>Propuesto</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  </div>
+                </div>
+                <div id="iwProposeGrid">
+                  <div class="ilus-cal-skel" aria-hidden="true">
+                    {% for _ in range(10) %}<div></div>{% endfor %}
+                  </div>
+                </div>
+                <div class="ilus-cal-quick-actions" id="iwProposeQuick" style="display:none">
+                  <span class="text-muted small me-1">Sugerido por tiempo estimado:</span>
+                  <span class="ilus-cal-quick-chip" data-ilus-cal-quick="0.5">30 min</span>
+                  <span class="ilus-cal-quick-chip" data-ilus-cal-quick="1">1 h</span>
+                  <span class="ilus-cal-quick-chip" data-ilus-cal-quick="2">2 h</span>
+                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="iwProposeSummary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                </div>
+              </div>
+
+              <input type="hidden" name="date" id="iwProposeHidDate">
+              <input type="hidden" name="time_from" id="iwProposeHidTf">
+              <input type="hidden" name="time_to" id="iwProposeHidTt">
+
+              <label class="form-label small fw-bold mb-1 mt-2">Mensaje para el cliente (opcional)</label>
+              <textarea id="iwProposeMessage" class="form-control form-control-sm mb-2" rows="2"
+                        placeholder="Ej: Te confirmamos disponibilidad para mañana en la mañana. Trae tu vehículo a la bodega de Quilicura."></textarea>
+
+              <button type="submit" id="iwProposeBtn" class="btn btn-ilus w-100 fw-bold">
+                <i class="bi bi-send-check me-1"></i>Enviar propuesta al cliente
+              </button>
+              <div id="iwProposeFeedback" class="small mt-2"></div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {# ════════ PASO 5 — Esperar respuesta del cliente ════════ #}
+      <div class="iw-step {% if _step5_done %}is-done{% elif _step4_done %}is-active{% else %}is-blocked{% endif %}" id="iwStep5" data-step="5">
+        <div class="iw-step-head">
+          <div class="iw-step-num"><span>5</span></div>
+          <div class="iw-step-titles">
+            <h5>Esperar respuesta del cliente</h5>
+            <p class="iw-step-sub">
+              {% if _step5_done %}
+                ¡Confirmada! El cliente aceptó el <strong>{{ req.confirmed_date }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong>.
+              {% elif _step4_done %}
+                Propuesta enviada el <strong>{{ req.proposed_date }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>. Esperando que el cliente acepte, contraproponga o cancele.
+              {% else %}
+                Aún no se envía propuesta. Completa el Paso 4 primero.
+              {% endif %}
+            </p>
+          </div>
+          <span class="iw-step-badge">
+            {% if _step5_done %}✓ Confirmada{% elif _step4_done %}⏳ En espera{% else %}—{% endif %}
+          </span>
+        </div>
+        {% if _step4_done and not _step5_done %}
+        <div class="iw-step-body">
+          <div class="d-flex gap-2 flex-wrap">
+            <a href="#secComunicacion" class="btn btn-sm btn-outline-dark" onclick="(document.getElementById('secComunicacion')||{}).scrollIntoView&&document.getElementById('secComunicacion').scrollIntoView({behavior:'smooth'})">
+              <i class="bi bi-chat-dots me-1"></i>Reenviar email / llamar al cliente
+            </a>
+            {% if req.contact_phone %}
+            <a href="tel:{{ req.contact_phone }}" class="btn btn-sm btn-outline-success">
+              <i class="bi bi-telephone me-1"></i>{{ req.contact_phone }}
+            </a>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+    </div>{# /iw-wrap2 #}
 
     <script>
     let _erpLineas = [];
@@ -1215,13 +1501,23 @@ async function abrirDescargaInforme(rutCliente){
     function _esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     function _renderDocCard(d, isFirst){
-      return `<div class="doc-card ${isFirst?'first':''}" data-doc-id="${d.id}">
+      let saldoCls = 'saldo-nv';
+      let saldoBadge = '<span class="badge bg-secondary" title="Saldo no verificado — revisar manualmente"><i class="bi bi-question-circle me-1"></i>Sin verificar</span>';
+      if (d.con_saldo === 1){
+        saldoCls = 'con-saldo';
+        saldoBadge = '<span class="badge bg-success" title="Con saldo disponible para retiro"><i class="bi bi-check-circle me-1"></i>Con saldo</span>';
+      } else if (d.con_saldo === 0){
+        saldoCls = 'sin-saldo';
+        saldoBadge = '<span class="badge bg-warning text-dark" title="Sin saldo — ya despachado vía guía"><i class="bi bi-exclamation-triangle me-1"></i>Sin saldo</span>';
+      }
+      return `<div class="doc-card ${isFirst?'first':''} ${saldoCls}" data-doc-id="${d.id}">
         <div class="doc-num">${_esc(d.document_type)} ${_esc(d.document_number)}</div>
         <div class="doc-cli">
           <div class="nom">${_esc(d.cliente_nombre || '—')}</div>
           <div class="rut">${_esc(d.cliente_rut || '—')}</div>
         </div>
         <div class="doc-totales">
+          ${saldoBadge}
           <span class="badge bg-dark">${parseFloat(d.peso_real_kg||0).toFixed(2)} kg</span>
           <span class="badge bg-info">${parseFloat(d.peso_vol_kg||0).toFixed(2)} kg vol</span>
           <span class="badge bg-secondary">${parseFloat(d.volumen_m3||0).toFixed(3)} m³</span>
@@ -1650,75 +1946,345 @@ los productos en su nombre. Ver bloque DECLARACIÓN en observaciones.</pre>
     </div>
   </div>
 
-  <div class="col-xl-4">
-    <div class="ilus-card mb-3">
-      <div class="ilus-card-header"><span><i class="bi bi-lightning-charge me-2"></i>Acciones</span></div>
-      <div class="card-body p-3">
-        <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" class="mb-3">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label class="form-label small fw-bold">Cambiar estado</label>
-          <select name="status" class="form-select mb-2">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
-          <textarea name="notes" class="form-control mb-2" rows="2" placeholder="Nota interna"></textarea>
-          <button class="btn btn-dark w-100">Actualizar estado</button>
-        </form>
-        <hr>
-        <form id="sec-propuesta" method="post" action="{{ url_for('pickup_create_proposal', rid=req.id) }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label class="form-label small fw-bold">Proponer agenda</label>
-          {% if not _doc_ok %}
-          <div class="alert alert-warning py-2 small mb-2">
-            <i class="bi bi-shield-exclamation me-1"></i>
-            <strong>Falta validar la documentación primero.</strong>
-            <a href="#sec-validacion" onclick="document.getElementById('sec-validacion').scrollIntoView({behavior:'smooth'})">Ir a validar →</a>
-          </div>
-          {% endif %}
-          <input type="date" name="date" class="form-control mb-2" required {% if not _doc_ok %}disabled{% endif %}>
-          <div class="row g-2 mb-2">
-            <div class="col"><input type="time" name="time_from" class="form-control" required {% if not _doc_ok %}disabled{% endif %}></div>
-            <div class="col"><input type="time" name="time_to" class="form-control" required {% if not _doc_ok %}disabled{% endif %}></div>
-          </div>
-          <input name="reason" class="form-control mb-2" placeholder="Motivo: disponibilidad, flujo, cierre..." {% if not _doc_ok %}disabled{% endif %}>
-          <textarea name="message" class="form-control mb-2" rows="2" placeholder="Mensaje para el cliente" {% if not _doc_ok %}disabled{% endif %}></textarea>
-          <button class="btn btn-ilus w-100 fw-bold" {% if not _doc_ok %}disabled title="Valida la documentación primero"{% endif %}>
-            <i class="bi bi-send-check me-1"></i>Enviar propuesta
-          </button>
-        </form>
-      </div>
-    </div>
+  {# ════════════════════════════════════════════════════════════════════
+     ASIDE — Daniel pidió "sliders a la izquierda". En desktop XL+ esta
+     columna queda visualmente a la izquierda (order-xl-1); el wizard
+     principal queda a la derecha. En mobile/tablet se apila debajo
+     (order-2) para que el operador vea primero el wizard.
+  ══════════════════════════════════════════════════════════════════════ #}
+  <div class="col-xl-4 order-2 order-xl-1">
+    <div style="position:sticky;top:14px;display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 28px);overflow-y:auto">
 
-    <div class="ilus-card mb-3">
-      <div class="ilus-card-header"><span><i class="bi bi-chat-dots me-2"></i>Comunicacion rapida</span></div>
-      <div class="card-body p-3">
-        <form method="post" action="{{ url_for('pickup_send_message', rid=req.id) }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <select name="template_id" class="form-select mb-2"><option value="">Mensaje manual</option>{% for t in templates %}<option value="{{ t.id }}">{{ t.title }}</option>{% endfor %}</select>
-          <textarea name="message" class="form-control mb-2" rows="3" placeholder="Puedes escribir un mensaje o usar una plantilla"></textarea>
-          <button class="btn btn-outline-danger w-100"><i class="bi bi-envelope-paper me-1"></i>Enviar al cliente</button>
-        </form>
-      </div>
-    </div>
-
-    <div class="ilus-card mb-3">
-      <div class="ilus-card-header"><span><i class="bi bi-paperclip me-2"></i>Adjuntos</span></div>
-      <div class="card-body p-3 small">
-        {% for a in attachments %}
-        <a href="{{ url_for('pickup_attachment', aid=a.id) }}" target="_blank" class="d-block mb-2"><i class="bi bi-file-earmark me-1"></i>{{ a.original_name }}</a>
-        {% else %}<span class="text-muted">Sin adjuntos.</span>{% endfor %}
-      </div>
-    </div>
-
-    <div class="ilus-card">
-      <div class="ilus-card-header"><span><i class="bi bi-arrow-left-right me-2"></i>Propuestas</span></div>
-      <div class="card-body p-3 small">
-        {% for p in proposals %}
-        <div class="mb-2 p-2 bg-light rounded">
-          <strong>{{ p.date }} {{ p.time_from|hm }}-{{ p.time_to|hm }}</strong>
-          <div class="text-muted">{{ p.proposed_by }} · {{ p.status }}</div>
-          {% if p.message %}<div>{{ p.message }}</div>{% endif %}
+      {# ── Acciones (cambiar estado) ── #}
+      <div class="ilus-card">
+        <div class="ilus-card-header"><span><i class="bi bi-lightning-charge me-2"></i>Acciones rápidas</span></div>
+        <div class="card-body p-3">
+          <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label small fw-bold mb-1">Cambiar estado</label>
+            <select name="status" class="form-select form-select-sm mb-2">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+            <textarea name="notes" class="form-control form-control-sm mb-2" rows="2" placeholder="Nota interna (opcional)"></textarea>
+            <button class="btn btn-dark btn-sm w-100"><i class="bi bi-arrow-repeat me-1"></i>Actualizar estado</button>
+          </form>
         </div>
-        {% else %}<span class="text-muted">Sin propuestas.</span>{% endfor %}
       </div>
+
+      {# ── Calendario del día (administrable, fuente única de verdad) ── #}
+      {# Daniel pidió moverlo a la izquierda Y que sea administrable.    #}
+      {# Mantenemos el widget actual (#sec-calendario) en col-xl-8 más    #}
+      {# arriba para no romper la lógica JS — aquí ponemos un atajo.     #}
+      <div class="ilus-card">
+        <div class="ilus-card-header">
+          <span><i class="bi bi-calendar-week me-2"></i>Calendario del día</span>
+          <button type="button" class="btn btn-sm btn-outline-dark border-0" style="padding:2px 8px"
+                  onclick="document.getElementById('sec-calendario').scrollIntoView({behavior:'smooth',block:'start'})"
+                  title="Ver calendario completo del día">
+            <i class="bi bi-arrows-fullscreen"></i>
+          </button>
+        </div>
+        <div class="card-body p-3">
+          <p class="small text-muted mb-2">
+            <i class="bi bi-info-circle me-1"></i>
+            La grilla de slots con dueños está en el wizard.
+            Cambia de día, refresca y administra propuestas desde el bloque principal.
+          </p>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="button" class="btn btn-sm btn-outline-dark flex-grow-1"
+                    onclick="document.getElementById('sec-calendario').scrollIntoView({behavior:'smooth',block:'start'})">
+              <i class="bi bi-calendar-event me-1"></i>Ver / Administrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {# ── Comunicación rápida ── #}
+      <div class="ilus-card" id="secComunicacion">
+        <div class="ilus-card-header"><span><i class="bi bi-chat-dots me-2"></i>Comunicación rápida</span></div>
+        <div class="card-body p-3">
+          <form method="post" action="{{ url_for('pickup_send_message', rid=req.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label small fw-bold mb-1">Plantilla</label>
+            <select name="template_id" class="form-select form-select-sm mb-2">
+              <option value="">Mensaje manual</option>
+              {% for t in templates %}<option value="{{ t.id }}">{{ t.title }}</option>{% endfor %}
+            </select>
+            <textarea name="message" class="form-control form-control-sm mb-2" rows="3" placeholder="Mensaje o plantilla…"></textarea>
+            <button class="btn btn-outline-danger btn-sm w-100"><i class="bi bi-envelope-paper me-1"></i>Enviar al cliente</button>
+          </form>
+        </div>
+      </div>
+
+      {# ── Adjuntos ── #}
+      <div class="ilus-card">
+        <div class="ilus-card-header"><span><i class="bi bi-paperclip me-2"></i>Adjuntos <span class="badge bg-secondary ms-1">{{ attachments|length }}</span></span></div>
+        <div class="card-body p-3 small">
+          {% for a in attachments %}
+          <a href="{{ url_for('pickup_attachment', aid=a.id) }}" target="_blank" class="d-block mb-2 text-decoration-none">
+            <i class="bi bi-file-earmark me-1"></i>{{ a.original_name }}
+          </a>
+          {% else %}<span class="text-muted">Sin adjuntos.</span>{% endfor %}
+        </div>
+      </div>
+
+      {# ── Historial de propuestas ── #}
+      <div class="ilus-card">
+        <div class="ilus-card-header"><span><i class="bi bi-arrow-left-right me-2"></i>Propuestas <span class="badge bg-secondary ms-1">{{ proposals|length }}</span></span></div>
+        <div class="card-body p-3 small" style="max-height:240px;overflow-y:auto">
+          {% for p in proposals %}
+          <div class="mb-2 p-2 bg-light rounded">
+            <strong>{{ p.date }} {{ p.time_from|hm }}-{{ p.time_to|hm }}</strong>
+            <div class="text-muted">{{ p.proposed_by }} · {{ p.status }}</div>
+            {% if p.message %}<div>{{ p.message }}</div>{% endif %}
+          </div>
+          {% else %}<span class="text-muted">Sin propuestas.</span>{% endfor %}
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
+
+{# ════════════════════════════════════════════════════════════════════
+   FOOTER GLOBAL — link al portal de soporte técnico ILUS
+   Daniel pidió: "si requiere levantar un ticket, le pasamos ese link"
+══════════════════════════════════════════════════════════════════════ #}
+<div class="ilus-help-footer">
+  <div class="ilus-help-msg">
+    <i class="bi bi-headset"></i>
+    <div>
+      <strong>¿Necesitas ayuda con este retiro o el sistema?</strong>
+      <small>El equipo de soporte técnico ILUS responde en menos de 1 hábil.</small>
+    </div>
+  </div>
+  <a href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener" class="ilus-help-cta">
+    <i class="bi bi-life-preserver"></i>Levantar un ticket
+  </a>
+</div>
+
+{# Calendario reusable (JS) #}
+<script src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+
+{# ════════════════════════════════════════════════════════════════════
+   WIZARD JS — control de pasos + propuesta async + calendario único
+══════════════════════════════════════════════════════════════════════ #}
+<script>
+(function(){
+  'use strict';
+  const RID   = {{ req.id|int }};
+  const WRAP  = document.getElementById('iwWrap');
+  if (!WRAP) return;
+  const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // ── Estado pasos (server-side initial + refresh tras agregar/quitar docs) ──
+  const state = {
+    n_docs:      parseInt(WRAP.dataset.nDocs || '0', 10),
+    n_con_saldo: parseInt(WRAP.dataset.nConSaldo || '0', 10),
+    step4_done:  WRAP.dataset.step4Done === '1',
+    step5_done:  WRAP.dataset.step5Done === '1',
+    doc_ok:      {% if _doc_ok %}true{% else %}false{% endif %},
+    cal_instance: null,
+    tiempo_estimado_min: {{ (req.tiempo_estimado_min or 30)|int }},
+  };
+
+  function _setStepClass(stepId, cls){
+    const el = document.getElementById(stepId);
+    if (!el) return;
+    el.classList.remove('is-active', 'is-done', 'is-blocked');
+    if (cls) el.classList.add(cls);
+  }
+
+  function _refreshStepStates(){
+    // Step 1 — done si hay docs
+    _setStepClass('iwStep1', state.n_docs > 0 ? 'is-done' : 'is-active');
+    // Step 2 — done si hay docs (es opcional, marcar como done si Step 1 ok)
+    _setStepClass('iwStep2', state.n_docs > 0 ? 'is-done' : '');
+    // Step 3 — done si hay con_saldo, active si hay docs sin saldo aún, blocked si nada
+    const step3Cls = state.n_con_saldo > 0 ? 'is-done' :
+                     (state.n_docs > 0 ? 'is-active' : '');
+    _setStepClass('iwStep3', step3Cls);
+    const c = document.getElementById('iwStep3Counter');
+    if (c) c.textContent = `(${state.n_docs} asociado${state.n_docs===1?'':'s'} · ${state.n_con_saldo} con saldo)`;
+    const b = document.getElementById('iwStep3Badge');
+    if (b) b.textContent = state.n_con_saldo > 0 ? `${state.n_con_saldo} OK` :
+                            (state.n_docs > 0 ? 'Revisar saldos' : 'Sin docs');
+    // Step 4 — active si doc_ok && n_con_saldo > 0 && !step4_done
+    const canPropose = state.doc_ok && state.n_con_saldo > 0;
+    let step4Cls = 'is-blocked';
+    if (state.step4_done) step4Cls = 'is-done';
+    else if (canPropose) step4Cls = 'is-active';
+    _setStepClass('iwStep4', step4Cls);
+    const proposeForm = document.getElementById('iwProposeForm');
+    if (proposeForm){
+      proposeForm.style.display = canPropose ? '' : 'none';
+      // Lazy mount del calendario cuando el form se hace visible
+      if (canPropose && !state.cal_instance){
+        _mountProposeCalendar();
+      }
+    }
+    // Step 5 — done si confirmed, active si proposed_date, sino blocked
+    let step5Cls = 'is-blocked';
+    if (state.step5_done) step5Cls = 'is-done';
+    else if (state.step4_done) step5Cls = 'is-active';
+    _setStepClass('iwStep5', step5Cls);
+  }
+
+  // ── Patch: cada vez que el frontend refresca docs (refrescarDocsAsociados),
+  //         re-evaluamos los estados de los pasos. Usamos un hook simple.
+  if (typeof window.refrescarDocsAsociados === 'function'){
+    const _orig = window.refrescarDocsAsociados;
+    window.refrescarDocsAsociados = async function(rid){
+      const out = await _orig.apply(this, arguments);
+      try {
+        const r = await fetch(`/retiros/${rid}/docs`, { headers:{'X-Requested-With':'XMLHttpRequest'}, cache:'no-store' });
+        const d = await r.json();
+        if (d && d.ok){
+          const docs = d.docs || [];
+          state.n_docs = docs.length;
+          state.n_con_saldo = (d.saldo_summary && d.saldo_summary.con_saldo) || 0;
+          // Sincronizar estado del retiro (auto-validación, propuesta, confirmada)
+          const rs = d.request_state || {};
+          if (typeof rs.doc_ok === 'boolean') state.doc_ok = rs.doc_ok;
+          if (typeof rs.step4_done === 'boolean') state.step4_done = rs.step4_done;
+          if (typeof rs.step5_done === 'boolean') state.step5_done = rs.step5_done;
+          if (d.totales && d.totales.tiempo_estimado_min){
+            state.tiempo_estimado_min = d.totales.tiempo_estimado_min;
+            // Si el calendario está montado, actualizar duración sugerida
+            if (state.cal_instance){
+              state.cal_instance.suggestDurationMinutes(state.tiempo_estimado_min);
+            }
+          }
+          _refreshStepStates();
+        }
+      } catch(_){}
+      return out;
+    };
+  }
+
+  // ── PASO 4: montar calendario inteligente único ──
+  function _mountProposeCalendar(){
+    if (state.cal_instance) return;
+    if (typeof window.IlusRetirosCalendar === 'undefined') return;
+    // Pre-seleccionar mañana como fecha default (operador puede cambiar)
+    const dateInp = document.getElementById('iwProposeDate');
+    if (dateInp && !dateInp.value){
+      const tomorrow = new Date(Date.now() + 24*3600*1000);
+      dateInp.value = tomorrow.toISOString().slice(0,10);
+    }
+    state.cal_instance = window.IlusRetirosCalendar.mount({
+      container:      '#iwProposeGrid',
+      dateInput:      '#iwProposeDate',
+      summaryEl:      '#iwProposeSummary',
+      quickActionsEl: '#iwProposeQuick',
+      hiddenDate:     '#iwProposeHidDate',
+      hiddenTimeFrom: '#iwProposeHidTf',
+      hiddenTimeTo:   '#iwProposeHidTt',
+      includeOwners:  true,
+      suggestedDurationMin: state.tiempo_estimado_min,
+      onChange: (sel) => {
+        // Mostrar quick actions cuando hay un día válido
+        const quick = document.getElementById('iwProposeQuick');
+        if (quick) quick.style.display = sel || (document.getElementById('iwProposeDate') || {}).value ? 'flex' : 'none';
+      },
+    });
+  }
+  // Mount cuando el form esté visible (no step4_done aún)
+  if (state.doc_ok && state.n_con_saldo > 0 && !state.step4_done){
+    _mountProposeCalendar();
+  }
+  // Botón "Re-proponer": muestra el form de nuevo (operator quiere cambiar la propuesta)
+  const reproBtn = document.getElementById('iwShowReproposeBtn');
+  if (reproBtn){
+    reproBtn.addEventListener('click', async () => {
+      const ok = await ilusConfirm({
+        title: 'Re-proponer fecha',
+        message: '¿Enviar una nueva propuesta? La anterior quedará registrada en el historial.',
+        sub: 'El cliente recibirá otro email con la nueva fecha.',
+        okLabel: 'Sí, re-proponer',
+      });
+      if (!ok) return;
+      const form = document.getElementById('iwProposeForm');
+      if (form) form.style.display = '';
+      const summary = document.getElementById('iwStep4Summary');
+      if (summary) summary.style.display = 'none';
+      _mountProposeCalendar();
+      // Scroll suave hasta el form
+      if (form && form.scrollIntoView){
+        form.scrollIntoView({behavior:'smooth', block:'center'});
+      }
+    });
+  }
+
+  // ── PASO 4: submit via fetch (AJAX, <500ms response) ──
+  const formEl = document.getElementById('iwProposeFormEl');
+  if (formEl){
+    formEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fb = document.getElementById('iwProposeFeedback');
+      const btn = document.getElementById('iwProposeBtn');
+      const date = (document.getElementById('iwProposeHidDate') || {}).value || '';
+      const tf   = (document.getElementById('iwProposeHidTf')   || {}).value || '';
+      const tt   = (document.getElementById('iwProposeHidTt')   || {}).value || '';
+      const reason  = (document.getElementById('iwProposeReason') || {}).value || '';
+      const message = (document.getElementById('iwProposeMessage') || {}).value || '';
+      if (!date || !tf || !tt){
+        ilusToast('Selecciona día y bloque horario antes de enviar la propuesta.', { type:'warning' });
+        return;
+      }
+      if (state.n_con_saldo === 0){
+        ilusToast('No puedes proponer fecha sin al menos un documento con saldo.', { type:'warning' });
+        return;
+      }
+      if (!state.doc_ok){
+        ilusToast('Primero valida la documentación (botón verde en la tarjeta de arriba).', { type:'warning' });
+        return;
+      }
+      // UI loading
+      btn.disabled = true;
+      const _origLabel = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+      if (fb) fb.innerHTML = '';
+      const t0 = performance.now();
+      try {
+        const fd = new FormData();
+        fd.append('csrf_token', formEl.querySelector('input[name=csrf_token]').value);
+        fd.append('date', date);
+        fd.append('time_from', tf);
+        fd.append('time_to', tt);
+        fd.append('reason', reason);
+        fd.append('message', message);
+        const r = await fetch(`/retiros/${RID}/proposal`, {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+          body: fd,
+          credentials: 'same-origin',
+        });
+        const d = await r.json();
+        const ms = Math.round(performance.now() - t0);
+        if (!r.ok || !d.ok){
+          const msg = (d && d.error) || ('Error HTTP ' + r.status);
+          if (fb) fb.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="bi bi-x-circle me-1"></i>${_esc(msg)}</div>`;
+          ilusToast(msg, { type:'error' });
+          return;
+        }
+        if (fb) fb.innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle me-1"></i>Propuesta enviada en ${ms} ms · ${_esc(d.proposal.date)} ${_esc(d.proposal.time_from)}–${_esc(d.proposal.time_to)}. El cliente recibirá email en breve.</div>`;
+        ilusToast(`✓ Propuesta enviada (${ms} ms)`, { type:'success' });
+        // Avanzar al paso 5
+        state.step4_done = true;
+        _refreshStepStates();
+        // Recargar página tras 1.5s para refrescar pipeline + logs + propuestas
+        setTimeout(() => { window.location.reload(); }, 1500);
+      } catch(err){
+        if (fb) fb.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="bi bi-x-circle me-1"></i>Error de red: ${_esc(err.message)}</div>`;
+        ilusToast('Error de red: ' + err.message, { type:'error' });
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = _origLabel;
+      }
+    });
+  }
+
+  // ── Init: refrescar estados con datos del servidor (live) ──
+  _refreshStepStates();
+})();
+</script>
 {% endblock %}

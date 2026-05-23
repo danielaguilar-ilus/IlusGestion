@@ -2516,15 +2516,27 @@ def register_pickup_routes(app, ctx):
                 docs_asociados = mysql_fetchall(
                     """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                               observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                              n_lineas, added_by, added_at
+                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
                          FROM pickup_request_docs
                         WHERE request_id=%s
                         ORDER BY id ASC""",
                     (rid,)
                 ) or []
             except Exception as _e_docs:
-                print(f"[pickup_detail] docs_asociados skip: {_e_docs}", flush=True)
-                docs_asociados = []
+                # Fallback sin columnas de saldo (entornos viejos)
+                try:
+                    docs_asociados = mysql_fetchall(
+                        """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                                  observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                                  n_lineas, added_by, added_at
+                             FROM pickup_request_docs
+                            WHERE request_id=%s
+                            ORDER BY id ASC""",
+                        (rid,)
+                    ) or []
+                except Exception as _e_docs2:
+                    print(f"[pickup_detail] docs_asociados skip: {_e_docs2}", flush=True)
+                    docs_asociados = []
 
             return render_template(
                 "retiros/internal_detail.html",
@@ -2768,27 +2780,72 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/<int:rid>/docs", methods=["GET"])
     @require_permission("view")
     def pickup_docs_list(rid):
-        """Lista todos los documentos asociados al retiro."""
-        rows = mysql_fetchall(
-            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
-                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                      n_lineas, added_by, added_at
-                 FROM pickup_request_docs
-                WHERE request_id=%s
-                ORDER BY id ASC""",
-            (rid,)
-        ) or []
+        """Lista todos los documentos asociados al retiro.
+        Daniel 2026-05-23 — incluye con_saldo/saldo_zz para el wizard interno:
+        permite que el frontend sepa si el doc tiene saldo disponible para
+        habilitar el paso "Proponer fecha". Si la columna no existe (migración
+        no aplicada aún), reintentamos sin esos campos para no romper la UI.
+        """
+        try:
+            rows = mysql_fetchall(
+                """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                          observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                          n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                     FROM pickup_request_docs
+                    WHERE request_id=%s
+                    ORDER BY id ASC""",
+                (rid,)
+            ) or []
+        except Exception:
+            # Fallback sin las columnas nuevas (compat retroactiva)
+            rows = mysql_fetchall(
+                """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                          observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                          n_lineas, added_by, added_at
+                     FROM pickup_request_docs
+                    WHERE request_id=%s
+                    ORDER BY id ASC""",
+                (rid,)
+            ) or []
         out = []
         for r in rows:
             d = dict(r)
-            for k in ("peso_real_kg", "peso_vol_kg", "volumen_m3"):
+            for k in ("peso_real_kg", "peso_vol_kg", "volumen_m3", "saldo_zz"):
                 if d.get(k) is not None:
-                    d[k] = float(d[k])
+                    try: d[k] = float(d[k])
+                    except Exception: pass
             if d.get("added_at"):
                 d["added_at"] = str(d["added_at"])[:19]
+            if d.get("saldo_checked_at"):
+                d["saldo_checked_at"] = str(d["saldo_checked_at"])[:19]
             out.append(d)
         totales = _pickup_recalc_totales(rid)
-        return jsonify({"ok": True, "docs": out, "totales": totales})
+        # Conteo de docs con saldo (para habilitar el paso 4 del wizard)
+        docs_con_saldo = sum(1 for d in out if d.get("con_saldo") == 1)
+        docs_sin_saldo = sum(1 for d in out if d.get("con_saldo") == 0)
+        docs_no_verif  = sum(1 for d in out if d.get("con_saldo") is None)
+        # Estado del retiro para refrescar el wizard sin recargar página
+        req_state = mysql_fetchone(
+            f"SELECT doc_validation_status, status, proposed_date, confirmed_date "
+            f"FROM `{REQ}` WHERE id=%s", (rid,)
+        ) or {}
+        return jsonify({
+            "ok": True,
+            "docs": out,
+            "totales": totales,
+            "saldo_summary": {
+                "con_saldo": docs_con_saldo,
+                "sin_saldo": docs_sin_saldo,
+                "no_verificado": docs_no_verif,
+                "puede_agendar": docs_con_saldo > 0,
+            },
+            "request_state": {
+                "doc_ok":      (req_state.get("doc_validation_status") or "") == "ok",
+                "status":      req_state.get("status") or "",
+                "step4_done":  bool(req_state.get("proposed_date")),
+                "step5_done":  bool(req_state.get("confirmed_date")),
+            },
+        })
 
     @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
     @require_permission("edit")
@@ -2870,28 +2927,113 @@ def register_pickup_routes(app, ctx):
         obs = (hdr.get("observaciones") or hdr.get("obs") or "").strip()[:5000]
         added_by = g.user["nombre"] if getattr(g, "user", None) else "interno"
 
+        # ── Calcular saldo ZZ del documento (Daniel 2026-05-23 wizard) ──
+        # Sumamos saldo de las líneas ZZ (despacho/retiro): CAPRCO1 - CAPRAD1.
+        # Si > 0: el doc tiene saldo disponible → con_saldo=1
+        # Si = 0 y hay líneas ZZ: doc ya despachado → con_saldo=0 (bloqueado)
+        # Si NO hay líneas ZZ: asumimos con_saldo=1 (no es bloqueante).
+        # Tolerante a fallos: si no se puede calcular, queda NULL → UI advierte.
+        con_saldo_val = None      # NULL = no se pudo verificar
+        saldo_zz_val  = None
+        try:
+            saldo_total = 0.0
+            tiene_zz = False
+            for ln in (lineas or []):
+                if not ln.get("es_zz"):
+                    continue
+                tiene_zz = True
+                # Algunas implementaciones guardan saldo_zz; otras calculamos
+                # de CAPRCO1 - CAPRAD1 si están disponibles en la línea.
+                ln_saldo = ln.get("saldo_zz")
+                if ln_saldo is None:
+                    cc = float(ln.get("CAPRCO1") or ln.get("cantidad_total") or 0)
+                    ca = float(ln.get("CAPRAD1") or ln.get("cantidad_despachada") or 0)
+                    ln_saldo = max(0.0, cc - ca)
+                try:
+                    saldo_total += float(ln_saldo or 0)
+                except Exception:
+                    pass
+            if tiene_zz:
+                saldo_zz_val = saldo_total
+                con_saldo_val = 1 if saldo_total > 0 else 0
+            else:
+                # Sin líneas ZZ → asumimos OK (no podemos detectar bloqueo)
+                saldo_zz_val = None
+                con_saldo_val = 1
+        except Exception:
+            con_saldo_val = None
+            saldo_zz_val  = None
+
         try:
             mysql_execute(
                 """INSERT INTO pickup_request_docs
                      (request_id, document_type, document_number,
                       cliente_rut, cliente_nombre, observaciones_erp,
                       peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
-                      erp_snapshot, added_by)
-                   VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s)""",
+                      erp_snapshot, added_by, con_saldo, saldo_zz, saldo_checked_at)
+                   VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW())""",
                 (rid, tipo, numero,
                  cliente_rut, cliente_nombre, obs,
                  total_kg, total_vol_kg, total_m3, len(lineas or []),
-                 snapshot_json, added_by)
+                 snapshot_json, added_by, con_saldo_val, saldo_zz_val)
             )
         except Exception as exc:
-            err = str(exc)[:200]
-            return jsonify({"ok": False, "error": f"Error al guardar: {err}"}), 500
+            # Fallback si la columna con_saldo aún no se migró (entornos viejos):
+            # reintentamos sin esos campos.
+            try:
+                mysql_execute(
+                    """INSERT INTO pickup_request_docs
+                         (request_id, document_type, document_number,
+                          cliente_rut, cliente_nombre, observaciones_erp,
+                          peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
+                          erp_snapshot, added_by)
+                       VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s)""",
+                    (rid, tipo, numero,
+                     cliente_rut, cliente_nombre, obs,
+                     total_kg, total_vol_kg, total_m3, len(lineas or []),
+                     snapshot_json, added_by)
+                )
+            except Exception as exc2:
+                err = str(exc2)[:200]
+                return jsonify({"ok": False, "error": f"Error al guardar: {err}"}), 500
 
         # Log audit
         log_event(rid, "doc_agregado", None, None,
                   f"Doc {tipo} {numero} agregado · cliente={cliente_nombre} · "
-                  f"peso={total_kg:.2f}kg vol={total_vol_kg:.2f}kg m3={total_m3:.3f}",
+                  f"peso={total_kg:.2f}kg vol={total_vol_kg:.2f}kg m3={total_m3:.3f} · "
+                  f"con_saldo={con_saldo_val}",
                   "interno")
+
+        # ── Wizard (Daniel 2026-05-23): auto-marcar validación OK cuando el
+        # operador asoció al menos un doc CON SALDO desde el ERP. Esto evita
+        # el paso manual extra "Validar documentación" — si el doc existe en
+        # ERP y tiene saldo, ya está validado. Solo aplica si el estado
+        # actual no estaba ya OK (para no perder timestamp de validación).
+        try:
+            if con_saldo_val == 1:
+                cur_status = mysql_fetchone(
+                    f"SELECT doc_validation_status FROM `{REQ}` WHERE id=%s",
+                    (rid,)
+                ) or {}
+                if (cur_status.get("doc_validation_status") or "") != "ok":
+                    mysql_execute(
+                        f"""UPDATE `{REQ}`
+                            SET doc_validation_status='ok',
+                                doc_validated_at=NOW(),
+                                doc_validated_by=%s,
+                                doc_validation_notes=CONCAT(
+                                  COALESCE(doc_validation_notes,''),
+                                  IF(doc_validation_notes IS NULL OR doc_validation_notes='','','\\n'),
+                                  'Auto-validado: doc ', %s, ' ', %s, ' con saldo disponible'
+                                )
+                            WHERE id=%s""",
+                        (added_by[:120], tipo, numero, rid)
+                    )
+                    log_event(rid, "doc_validacion_auto", None, "ok",
+                              f"Auto-validado al asociar {tipo} {numero} con saldo",
+                              "sistema")
+        except Exception as _e_auto:
+            print(f"[pickup_doc_agregar auto-validate] {_e_auto}", flush=True)
 
         totales = _pickup_recalc_totales(rid)
         # Devolver la fila recién creada
@@ -3334,24 +3476,79 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])
     @require_permission("edit")
     def pickup_create_proposal(rid):
+        """Crea/envía propuesta al cliente. Soporta dos modos:
+          - HTML form (legacy): redirect a pickup_detail
+          - AJAX (cabecera X-Requested-With='XMLHttpRequest' o Accept='application/json'):
+            devuelve JSON {ok, message, redirect_url} sin recargar página.
+
+        Optimización Daniel 2026-05-23 (wizard): el envío de email/SMS/WhatsApp
+        ya estaba async, pero el redirect HTML completo es lento (full page
+        reload). El frontend nuevo del wizard usa fetch + JSON para feedback
+        instantáneo (<500ms).
+
+        Bloqueo de seguridad wizard: si ningún doc asociado tiene saldo (todos
+        son con_saldo=0), rechazamos con mensaje claro. Esto evita el caso
+        "ya entregamos vía guía → no se puede volver a entregar".
+        """
+        # Detectar si es AJAX (sin acoplar a un único framework)
+        is_ajax = (
+            (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
+            or "application/json" in (request.headers.get("Accept") or "").lower()
+            or request.is_json
+        )
+
+        def _resp_err(msg, status=400):
+            if is_ajax:
+                return jsonify({"ok": False, "error": msg}), status
+            flash(msg, "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
+
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
+            if is_ajax: return jsonify({"ok": False, "error": "Retiro no encontrado"}), 404
             return redirect(url_for("pickup_dashboard"))
 
         # WORKFLOW: bloquear propuesta si la documentación no fue validada
         if req.get("doc_validation_status") not in ("ok",):
-            flash("Antes de proponer fecha, valida la documentación del cliente (paso 1).", "warning")
-            return redirect(url_for("pickup_detail", rid=rid))
+            return _resp_err("Antes de proponer fecha, valida la documentación del cliente (paso 1).")
+
+        # WIZARD (Daniel 2026-05-23): bloquear si NINGÚN doc asociado tiene
+        # saldo disponible. Permitimos pasar si no hay docs todavía o si
+        # al menos uno tiene saldo (los sin saldo son visualizables pero
+        # no cuentan). Si la columna no existe (entorno viejo), saltamos
+        # esta validación — el flujo legacy sigue funcionando.
+        try:
+            saldo_row = mysql_fetchone(
+                """SELECT
+                       SUM(CASE WHEN con_saldo=1 THEN 1 ELSE 0 END) AS con_saldo,
+                       SUM(CASE WHEN con_saldo=0 THEN 1 ELSE 0 END) AS sin_saldo,
+                       COUNT(*) AS total
+                     FROM pickup_request_docs
+                    WHERE request_id=%s""",
+                (rid,)
+            ) or {}
+            n_total     = int(saldo_row.get("total")     or 0)
+            n_con_saldo = int(saldo_row.get("con_saldo") or 0)
+            n_sin_saldo = int(saldo_row.get("sin_saldo") or 0)
+            # Solo bloqueamos si HAY docs y NINGUNO tiene saldo confirmado.
+            # Si están todos como NULL (no verificados), permitimos seguir
+            # con warning — operador asume responsabilidad.
+            if n_total > 0 and n_con_saldo == 0 and n_sin_saldo > 0:
+                return _resp_err(
+                    "No puedes proponer fecha: todos los documentos asociados "
+                    "están sin saldo (ya fueron despachados vía guía). "
+                    "Asocia al menos un documento con saldo disponible."
+                )
+        except Exception:
+            # Columna con_saldo no existe → no bloqueamos
+            pass
 
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
         okd, md = date_allowed(date); okt, mt = time_allowed(tf, tt)
         if not okd or not okt:
-            flash(md or mt, "warning")
-            return redirect(url_for("pickup_detail", rid=rid))
+            return _resp_err(md or mt)
 
         # Validar capacidad real del slot (cupos, kg, m³, bloqueos, colación)
-        # Excluimos esta misma solicitud porque podría tener una propuesta previa
-        # ocupando el slot que estamos por reemplazar.
         ok_slot, motivo = _validar_disponibilidad_slot(
             date, tf, tt,
             exclude_request_id=rid,
@@ -3359,29 +3556,62 @@ def register_pickup_routes(app, ctx):
             extra_m3=float(req.get("total_volume_m3") or 0),
         )
         if not ok_slot:
-            flash(f"Slot no disponible: {motivo}", "danger")
             log_event(rid, "propuesta_bloqueada", req["status"], req["status"],
                       f"Intento de proponer {date} {tf}-{tt}: {motivo}", "interno")
-            return redirect(url_for("pickup_detail", rid=rid))
+            return _resp_err(f"Slot no disponible: {motivo}", status=409)
 
+        # ── INSERT propuesta y UPDATE estado (lo crítico, debe completarse) ──
         mysql_execute(
             f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token)
                 VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s)""",
             (rid, date, tf, tt, request.form.get("message", ""), request.form.get("reason", ""), secrets.token_urlsafe(24)),
         )
-        mysql_execute(f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, proposed_time_from=%s, proposed_time_to=%s WHERE id=%s", (date, tf, tt, rid))
-        log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada", f"{date} {tf}-{tt}", "interno")
-        fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-        # Async: no bloquear el redirect a la ficha mientras se envía email
-        notify_async(fresh, "proposal", proposal={"date": date, "time_from": tf, "time_to": tt, "message": request.form.get("message", "")})
-        # Invalidar cache de polling para que el cliente vea la propuesta al instante
-        try:
-            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
-            if tok_p: _POLL_CACHE.pop(tok_p, None)
-        except Exception: pass
-        # Invalidar cache del calendario público (la propuesta marca slot)
-        try: _DISPO_CACHE["payload"] = None
-        except Exception: pass
+        mysql_execute(
+            f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, "
+            f"proposed_time_from=%s, proposed_time_to=%s WHERE id=%s",
+            (date, tf, tt, rid)
+        )
+        log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada",
+                  f"{date} {tf}-{tt}", "interno")
+
+        # ── Todo lo no-crítico va a un BACKGROUND THREAD ──
+        # Daniel 2026-05-23 (perf): el operador recibe respuesta inmediata
+        # (<500ms) sin esperar al envío de email/SMS/WhatsApp del notify ni
+        # al re-fetch del retiro completo ni al invalidado de caches.
+        # IMPORTANTE: capturamos los valores ANTES de spawn (request.* no
+        # vive en el thread daemon una vez retornada la response).
+        import threading
+        _msg = request.form.get("message", "")
+        def _bg_post_proposal():
+            try:
+                with app.app_context():
+                    fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+                    try:
+                        notify(fresh, "proposal", proposal={
+                            "date": date, "time_from": tf, "time_to": tt, "message": _msg,
+                        })
+                    except Exception as _e:
+                        print(f"[pickup_create_proposal bg notify] {_e}", flush=True)
+                    try:
+                        tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
+                        if tok_p: _POLL_CACHE.pop(tok_p, None)
+                    except Exception: pass
+                    try: _DISPO_CACHE["payload"] = None
+                    except Exception: pass
+            except Exception as _eg:
+                print(f"[pickup_create_proposal bg] {_eg}", flush=True)
+
+        t = threading.Thread(target=_bg_post_proposal, daemon=True,
+                             name=f"pickup-proposal-bg-{rid}")
+        t.start()
+
+        if is_ajax:
+            return jsonify({
+                "ok": True,
+                "message": "Propuesta enviada al cliente.",
+                "proposal": {"date": date, "time_from": tf, "time_to": tt},
+                "redirect_url": url_for("pickup_detail", rid=rid),
+            })
         flash("Propuesta enviada al cliente.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 

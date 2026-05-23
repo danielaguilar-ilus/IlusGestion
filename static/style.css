@@ -1494,3 +1494,188 @@ input[type="password"]::-ms-clear { display: none !important; width: 0 !importan
   .page-header  { margin: 0 -16px 18px; padding: 16px 16px 14px; }
   .photos-grid  { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   ILUS · RETIROS — CALENDARIO REUSABLE (retiros_calendar.js)
+   Estilos de la widget única de selección de slots. Mismo aspecto
+   en formulario público, modal de proponer-otra-fecha del tracking
+   y wizard interno del operador.
+══════════════════════════════════════════════════════════════ */
+.ilus-cal-wrap{background:#fafafa;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px}
+.ilus-cal-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:.82rem}
+.ilus-cal-head .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.7rem;color:#6b7280}
+.ilus-cal-head .legend span{display:inline-flex;align-items:center;gap:4px}
+.ilus-cal-head .legend .dot{width:11px;height:11px;border-radius:3px;display:inline-block;vertical-align:middle;flex-shrink:0}
+
+.ilus-cal-grid{display:flex;flex-direction:column;gap:8px}
+.ilus-cal-section{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;padding:6px 0 2px;border-bottom:1px dashed #e5e7eb;margin:6px 0 2px}
+.ilus-cal-slots-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 8px}
+@media(max-width:600px){.ilus-cal-slots-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px}}
+@media(max-width:380px){.ilus-cal-slots-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.ilus-cal-slot{
+  padding:13px 6px;border-radius:8px;background:#fff;border:1.5px solid #e5e7eb;
+  font-size:.88rem;font-weight:700;color:#0a0a0a;text-align:center;cursor:pointer;
+  transition:transform .15s cubic-bezier(.4,0,.2,1), box-shadow .15s cubic-bezier(.4,0,.2,1),
+             background .15s cubic-bezier(.4,0,.2,1), border-color .15s cubic-bezier(.4,0,.2,1);
+  font-variant-numeric:tabular-nums;user-select:none;position:relative;
+  min-height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+}
+.ilus-cal-slot:hover:not(.is-disabled){border-color:var(--ilus-red,#dc2626);background:#fff5f5;transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.12)}
+.ilus-cal-slot:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(220,38,38,.30)}
+
+.ilus-cal-slot .ilus-cal-hora{font-size:.88rem;font-weight:800;letter-spacing:.02em;line-height:1.1}
+.ilus-cal-slot .ilus-cal-owner-line{font-size:.58rem;font-weight:700;color:#6b7280;line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;text-transform:uppercase;letter-spacing:.04em}
+.ilus-cal-slot.is-selected .ilus-cal-owner-line{color:rgba(255,255,255,.92)}
+
+.ilus-cal-slot.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;opacity:.6}
+.ilus-cal-slot.is-lunch::after{content:'☕';position:absolute;top:3px;right:5px;font-size:.78rem;opacity:.85}
+.ilus-cal-slot.is-lunch:hover{transform:none;box-shadow:none;background:#fff7ed;border-color:#fed7aa}
+.ilus-cal-slot.is-busy{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+.ilus-cal-slot.is-busy:hover{background:#ffedd5;border-color:#fb923c}
+.ilus-cal-badge{position:absolute;top:-8px;right:-4px;background:#f97316;color:#fff;font-size:.58rem;padding:2px 6px;border-radius:50px;font-weight:800;letter-spacing:.04em;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.ilus-cal-slot.is-full{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;cursor:not-allowed;opacity:.78}
+.ilus-cal-slot.is-full::after{content:'🔒';position:absolute;top:3px;right:5px;font-size:.7rem}
+.ilus-cal-slot.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;cursor:not-allowed;opacity:.6;text-decoration:line-through}
+.ilus-cal-slot.is-disabled{cursor:not-allowed}
+
+.ilus-cal-slot.is-selected{background:var(--ilus-red,#dc2626);color:#fff;border-color:var(--ilus-red,#dc2626);box-shadow:0 4px 12px rgba(220,38,38,.3);transform:translateY(-1px);opacity:1}
+.ilus-cal-slot.is-selected:hover{background:#b91c1c;border-color:#b91c1c}
+.ilus-cal-slot.is-in-range{background:linear-gradient(180deg,rgba(220,38,38,.18) 0%,rgba(220,38,38,.06) 100%);color:var(--ilus-red,#dc2626);border-color:#fecaca;font-weight:800}
+.ilus-cal-slot.is-in-range:hover{background:rgba(220,38,38,.22);border-color:#fca5a5}
+.ilus-cal-slot.is-start::before{content:'INICIO';position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;z-index:2}
+.ilus-cal-slot.is-end:not(.is-start)::before{content:'FIN';position:absolute;bottom:-9px;top:auto;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fff;font-size:.55rem;padding:2px 7px;border-radius:50px;letter-spacing:.06em;font-weight:800;box-shadow:0 2px 4px rgba(0,0,0,.18);white-space:nowrap;z-index:2}
+.ilus-cal-slot.is-start.is-end::before{content:'INICIO · FIN';font-size:.5rem;padding:2px 6px}
+
+.ilus-cal-empty{padding:32px 14px;text-align:center;color:#9ca3af;font-size:.85rem}
+.ilus-cal-empty i{font-size:1.6rem;display:block;margin-bottom:6px;opacity:.6}
+.ilus-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.ilus-cal-skel div{height:50px;background:linear-gradient(90deg,#f3f4f6 0%,#e5e7eb 50%,#f3f4f6 100%);background-size:200% 100%;animation:ilusCalSkel 1.2s linear infinite;border-radius:8px}
+@keyframes ilusCalSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+.ilus-cal-summary{margin-top:14px;padding:14px 18px;background:#0a0a0a;color:#fff;border-radius:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:.92rem;border-left:4px solid var(--ilus-red,#dc2626);transition:background .25s,border-color .25s}
+.ilus-cal-summary.is-active{background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 100%);border-left-color:#16a34a}
+.ilus-cal-summary .ilus-cal-sum-empty{color:#9ca3af;font-style:italic}
+.ilus-cal-summary .ilus-cal-sum-range{font-weight:800;font-size:1.02rem}
+.ilus-cal-summary .ilus-cal-sum-dur{display:inline-flex;align-items:center;gap:6px;background:rgba(220,38,38,.25);color:#fff;padding:4px 11px;border-radius:50px;font-size:.78rem;font-weight:700;margin-left:8px}
+
+.ilus-cal-quick-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.ilus-cal-quick-chip{padding:6px 14px;background:#fff;border:1.5px solid #e5e7eb;border-radius:50px;font-size:.76rem;font-weight:700;cursor:pointer;color:#374151;transition:all .15s cubic-bezier(.4,0,.2,1);user-select:none}
+.ilus-cal-quick-chip:hover{background:var(--ilus-red,#dc2626);color:#fff;border-color:var(--ilus-red,#dc2626);transform:translateY(-1px);box-shadow:0 4px 10px rgba(220,38,38,.2)}
+.ilus-cal-quick-chip.clear{background:transparent;border-color:#d1d5db;color:#6b7280}
+.ilus-cal-quick-chip.clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+
+@media(prefers-reduced-motion: reduce){
+  .ilus-cal-slot{transition:none}
+  .ilus-cal-slot:hover:not(.is-disabled){transform:none}
+  .ilus-cal-slot.is-selected{transform:none}
+  .ilus-cal-skel div{animation:none;background:#f3f4f6}
+  .ilus-cal-summary{transition:none}
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ILUS · RETIROS — WIZARD INTERNO PASO A PASO
+   Estilo de las cards-paso del flujo interno del operador.
+   Daniel 2026-05-23 — espejo del look del público que le encantó.
+══════════════════════════════════════════════════════════════ */
+.iw-wrap{display:flex;flex-direction:column;gap:18px}
+.iw-step{
+  background:#fff;border:2px solid #e5e7eb;border-radius:14px;
+  padding:18px 22px;position:relative;transition:all .25s cubic-bezier(.4,0,.2,1);
+  opacity:0;transform:translateY(8px);animation:iwIn .45s cubic-bezier(.4,0,.2,1) forwards;
+}
+.iw-step:nth-child(1){animation-delay:.05s}
+.iw-step:nth-child(2){animation-delay:.12s}
+.iw-step:nth-child(3){animation-delay:.19s}
+.iw-step:nth-child(4){animation-delay:.26s}
+.iw-step:nth-child(5){animation-delay:.33s}
+@keyframes iwIn{to{opacity:1;transform:none}}
+
+.iw-step.is-active{border-color:var(--ilus-red,#dc2626);box-shadow:0 8px 22px rgba(220,38,38,.10), 0 1px 0 rgba(220,38,38,.05)}
+.iw-step.is-done{border-color:#86efac;background:linear-gradient(135deg,#f0fdf4 0%, #ffffff 60%)}
+.iw-step.is-blocked{opacity:.55;background:#f9fafb;pointer-events:none}
+.iw-step.is-blocked .iw-step-body{filter:grayscale(.35)}
+
+.iw-step-head{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.iw-step-num{
+  flex-shrink:0;width:44px;height:44px;border-radius:50%;
+  background:#e5e7eb;color:#6b7280;font-weight:900;font-size:1.2rem;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Bebas Neue','Inter',sans-serif;letter-spacing:0;
+  position:relative;transition:all .3s cubic-bezier(.4,0,.2,1);
+}
+.iw-step.is-active .iw-step-num{
+  background:var(--ilus-red,#dc2626);color:#fff;
+  box-shadow:0 0 0 4px rgba(220,38,38,.18);
+  animation:iwPulseActive 2.2s ease-in-out infinite;
+}
+.iw-step.is-done .iw-step-num{
+  background:#22c55e;color:#fff;
+  box-shadow:0 0 0 4px rgba(34,197,94,.18), 0 6px 14px rgba(34,197,94,.25);
+}
+.iw-step.is-done .iw-step-num::after{
+  content:'';position:absolute;inset:0;border-radius:50%;
+  background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='white'><path d='M13.485 1.929a1.5 1.5 0 0 1 2.121 2.121l-8 8a1.5 1.5 0 0 1-2.121 0l-4-4a1.5 1.5 0 1 1 2.121-2.121L6.5 8.879l6.985-6.95z'/></svg>") center/22px no-repeat;
+}
+.iw-step.is-done .iw-step-num span{visibility:hidden}
+@keyframes iwPulseActive{
+  0%,100%{box-shadow:0 0 0 4px rgba(220,38,38,.18)}
+  50%   {box-shadow:0 0 0 10px rgba(220,38,38,.04)}
+}
+@media(prefers-reduced-motion: reduce){
+  .iw-step{animation:none;opacity:1;transform:none}
+  .iw-step.is-active .iw-step-num{animation:none}
+}
+
+.iw-step-titles{flex:1;min-width:0}
+.iw-step-titles h5{margin:0 0 2px;font-weight:800;color:#0a0a0a;font-size:1.04rem;line-height:1.2}
+.iw-step-titles .iw-step-sub{margin:0;font-size:.83rem;color:#6b7280;line-height:1.3}
+.iw-step.is-active .iw-step-titles h5{color:var(--ilus-red,#dc2626)}
+.iw-step.is-done .iw-step-titles h5{color:#166534}
+
+.iw-step-badge{
+  flex-shrink:0;font-size:.66rem;font-weight:800;padding:4px 9px;
+  border-radius:50px;letter-spacing:.06em;text-transform:uppercase;
+}
+.iw-step.is-active .iw-step-badge{background:rgba(220,38,38,.10);color:var(--ilus-red,#dc2626);border:1px solid rgba(220,38,38,.20)}
+.iw-step.is-done .iw-step-badge{background:rgba(34,197,94,.12);color:#166534;border:1px solid rgba(34,197,94,.25)}
+.iw-step.is-blocked .iw-step-badge{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb}
+
+.iw-step-body{font-size:.92rem;color:#0a0a0a}
+.iw-step-block-msg{
+  display:flex;align-items:center;gap:10px;padding:14px 16px;
+  background:#fefce8;border:1.5px dashed #fde68a;border-radius:10px;
+  color:#92400e;font-size:.85rem;font-weight:600;
+}
+.iw-step-block-msg i{font-size:1.3rem;color:#d97706;flex-shrink:0}
+
+/* Footer global ayuda/soporte */
+.ilus-help-footer{
+  margin-top:36px;padding:18px 20px;border-radius:12px;
+  background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);
+  color:#fff;display:flex;flex-wrap:wrap;align-items:center;
+  justify-content:space-between;gap:14px;
+  border-bottom:4px solid var(--ilus-red,#dc2626);
+}
+.ilus-help-footer .ilus-help-msg{display:flex;align-items:center;gap:10px;font-size:.9rem;font-weight:600}
+.ilus-help-footer .ilus-help-msg i{font-size:1.25rem;color:var(--ilus-red,#dc2626)}
+.ilus-help-footer .ilus-help-msg small{display:block;color:#9ca3af;font-weight:500;font-size:.74rem;margin-top:1px}
+.ilus-help-footer a.ilus-help-cta{
+  display:inline-flex;align-items:center;gap:8px;padding:9px 16px;
+  background:var(--ilus-red,#dc2626);color:#fff;border-radius:50px;
+  font-size:.82rem;font-weight:800;text-decoration:none;letter-spacing:.02em;
+  transition:transform .15s, box-shadow .15s, background .15s;
+  white-space:nowrap;
+}
+.ilus-help-footer a.ilus-help-cta:hover{
+  background:#b91c1c;color:#fff;transform:translateY(-1px);
+  box-shadow:0 8px 18px rgba(220,38,38,.30);
+}
+@media(prefers-reduced-motion: reduce){
+  .ilus-help-footer a.ilus-help-cta{transition:none}
+  .ilus-help-footer a.ilus-help-cta:hover{transform:none}
+}
+@media(max-width:480px){
+  .ilus-help-footer{flex-direction:column;text-align:center}
+  .ilus-help-footer .ilus-help-msg{justify-content:center}
+}

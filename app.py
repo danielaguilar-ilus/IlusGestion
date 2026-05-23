@@ -2474,6 +2474,14 @@ def init_pickup_tables():
                 # Multi-doc (Daniel 2026-05-22): cubre cliente_rut + lookups por doc
                 "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_cliente_rut (cliente_rut)",
                 "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_doc (document_type, document_number)",
+                # Wizard interno (Daniel 2026-05-23): con_saldo persistido por doc.
+                # NULL = no se pudo verificar, 0 = sin saldo (bloqueado), 1 = con saldo.
+                # Permite que el wizard sepa si el doc se puede usar para habilitar
+                # el paso "Proponer fecha". Si el ERP no responde, queda NULL y la
+                # UI muestra warning para verificar manualmente.
+                "ALTER TABLE pickup_request_docs ADD COLUMN con_saldo TINYINT NULL DEFAULT NULL COMMENT 'NULL=no verificado, 0=sin saldo (bloqueado), 1=con saldo'",
+                "ALTER TABLE pickup_request_docs ADD COLUMN saldo_zz DECIMAL(12,2) NULL DEFAULT NULL COMMENT 'Saldo monetario ZZ al momento de asociar'",
+                "ALTER TABLE pickup_request_docs ADD COLUMN saldo_checked_at DATETIME NULL DEFAULT NULL COMMENT 'Cuándo se verificó el saldo por última vez'",
                 # Bloqueos: lookup por fecha
                 "ALTER TABLE pickup_blocks ADD INDEX idx_pblk_fecha_hora (fecha, hora_inicio)",
             ]:
