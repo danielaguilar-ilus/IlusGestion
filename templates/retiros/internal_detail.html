@@ -905,7 +905,57 @@ async function abrirDescargaInforme(rutCliente){
       .ficha-priv.show{filter:none;cursor:default}
       .ficha-priv-toggle{font-size:.7rem;color:#6b7280;cursor:pointer;text-decoration:underline}
       .ficha-priv-toggle:hover{color:#0a0a0a}
+      /* Badge validez RUT/email/teléfono (verde válido, rojo inválido) */
+      .val-badge{display:inline-flex;align-items:center;gap:4px;font-size:.65rem;font-weight:800;padding:2px 7px;border-radius:50px;margin-left:6px;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}
+      .val-badge.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
+      .val-badge.bad{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+      /* Alerta visible cuando RUT cliente != RUT retirador (con declaración) */
+      .rut-mismatch-alert{
+        background:linear-gradient(135deg,#fff8e1 0%,#fde68a 100%);
+        border:2px solid #f59e0b;border-radius:10px;padding:12px 14px;
+        margin-bottom:14px;font-size:.86rem;color:#78350f;
+        display:flex;align-items:flex-start;gap:10px;position:relative;
+      }
+      .rut-mismatch-alert::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:#f59e0b;border-radius:10px 0 0 10px}
+      .rut-mismatch-alert i{font-size:1.4rem;color:#b45309;margin-top:1px;flex-shrink:0}
+      .rut-mismatch-alert strong{color:#7c2d12}
+      .declaracion-tercero-card{
+        background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);
+        border:2px solid #f59e0b;border-radius:10px;padding:12px 14px;
+        margin-top:10px;font-size:.83rem;color:#78350f;
+        position:relative;overflow:hidden;
+      }
+      .declaracion-tercero-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:#f59e0b}
+      .declaracion-tercero-card .decl-cab{font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#7c2d12;font-size:.72rem;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+      .declaracion-tercero-card pre{font-family:'Inter',sans-serif;white-space:pre-wrap;margin:0;font-size:.82rem;line-height:1.5;color:#7c2d12}
     </style>
+
+    {# ── Pre-cálculo: RUTs distintos? ──
+       Comparamos las versiones "limpias" (sin puntos/guión) — más robusto frente
+       a formatos heterogéneos. Si la observación contiene la declaración, la
+       extraemos también para mostrarla destacada.
+    #}
+    {% set _cli_rut_clean = (req.customer_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+    {% set _ret_rut_clean = (req.pickup_person_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+    {% set _rut_mismatch = (_cli_rut_clean and _ret_rut_clean and _cli_rut_clean != _ret_rut_clean) %}
+    {% set _has_decl_tercero = (req.observations and 'DECLARACIÓN AUTORIZACIÓN TERCERO' in req.observations) %}
+
+    {% if _rut_mismatch %}
+    <div class="rut-mismatch-alert" id="rutMismatchAlert">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      <div>
+        <strong>Atención · RUT del documento ≠ RUT de quien retira.</strong><br>
+        El documento está a nombre de <strong>{{ req.customer_name }}</strong>
+        ({{ req.customer_rut }}) pero retira <strong>{{ req.pickup_person_name }}</strong>
+        ({{ req.pickup_person_rut }}).
+        {% if _has_decl_tercero %}
+          El cliente firmó la declaración de autorización al solicitar (ver detalle abajo).
+        {% else %}
+          <span style="color:#991b1b">Verifica autorización antes de entregar.</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
 
     <div id="sec-ficha" class="ficha-grid">
       {# ── CLIENTE (ERP / titular del documento) ── #}
@@ -919,13 +969,29 @@ async function abrirDescargaInforme(rutCliente){
         </div>
         <div class="ficha-row">
           <div class="lbl">RUT</div>
-          <div class="val mono">{{ req.customer_rut }}</div>
+          <div class="val mono">
+            {{ req.customer_rut }}
+            <span class="val-badge {% if _cli_rut_clean and _cli_rut_clean|length >= 8 %}ok{% else %}bad{% endif %}" title="Validez del RUT">
+              <i class="bi bi-{% if _cli_rut_clean and _cli_rut_clean|length >= 8 %}check-lg{% else %}x-lg{% endif %}"></i>
+              {% if _cli_rut_clean and _cli_rut_clean|length >= 8 %}OK{% else %}Falta{% endif %}
+            </span>
+          </div>
         </div>
         {% if req.observations %}
         <div class="ficha-row">
           <div class="lbl">Observaciones del cliente</div>
           <div class="val small" style="font-weight:400;white-space:pre-wrap">{{ req.observations }}</div>
         </div>
+        {% if _has_decl_tercero %}
+        <div class="declaracion-tercero-card">
+          <div class="decl-cab">
+            <i class="bi bi-shield-check"></i>Declaración firmada por el cliente
+          </div>
+          <pre>El cliente confirmó explícitamente al solicitar el retiro que la
+persona indicada en "Quien retira" está autorizada para retirar
+los productos en su nombre. Ver bloque DECLARACIÓN en observaciones.</pre>
+        </div>
+        {% endif %}
         {% endif %}
         {# Datos privados — toggle admin (default oculto) #}
         <div class="ficha-row mt-3" style="border-top:1px dashed #fdba74;padding-top:10px">
@@ -937,8 +1003,19 @@ async function abrirDescargaInforme(rutCliente){
           </div>
           <div class="val small ficha-priv" style="font-weight:400">
             <i class="bi bi-person me-1"></i>{{ req.contact_name }}<br>
-            <i class="bi bi-envelope me-1"></i>{{ req.contact_email }}<br>
+            <i class="bi bi-envelope me-1"></i>{{ req.contact_email }}
+            {% if req.contact_email and '@' in req.contact_email and '.' in req.contact_email.split('@')[-1] %}
+              <span class="val-badge ok"><i class="bi bi-check-lg"></i>OK</span>
+            {% else %}
+              <span class="val-badge bad"><i class="bi bi-x-lg"></i>Revisa</span>
+            {% endif %}
+            <br>
             <i class="bi bi-telephone me-1"></i>{{ req.contact_phone }}
+            {% if req.contact_phone and ('+56' in (req.contact_phone or '') or (req.contact_phone or '')|length >= 9) %}
+              <span class="val-badge ok"><i class="bi bi-check-lg"></i>OK</span>
+            {% else %}
+              <span class="val-badge bad"><i class="bi bi-x-lg"></i>Revisa</span>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -954,11 +1031,23 @@ async function abrirDescargaInforme(rutCliente){
         </div>
         <div class="ficha-row">
           <div class="lbl">RUT</div>
-          <div class="val mono">{{ req.pickup_person_rut }}</div>
+          <div class="val mono">
+            {{ req.pickup_person_rut }}
+            <span class="val-badge {% if _ret_rut_clean and _ret_rut_clean|length >= 8 %}ok{% else %}bad{% endif %}">
+              <i class="bi bi-{% if _ret_rut_clean and _ret_rut_clean|length >= 8 %}check-lg{% else %}x-lg{% endif %}"></i>
+              {% if _ret_rut_clean and _ret_rut_clean|length >= 8 %}OK{% else %}Falta{% endif %}
+            </span>
+          </div>
         </div>
         <div class="ficha-row">
           <div class="lbl">Teléfono</div>
-          <div class="val">{{ req.pickup_person_phone }}</div>
+          <div class="val">{{ req.pickup_person_phone }}
+            {% if req.pickup_person_phone and ('+56' in (req.pickup_person_phone or '') or (req.pickup_person_phone or '')|length >= 9) %}
+              <span class="val-badge ok"><i class="bi bi-check-lg"></i>OK</span>
+            {% else %}
+              <span class="val-badge bad"><i class="bi bi-x-lg"></i>Revisa</span>
+            {% endif %}
+          </div>
         </div>
         <div class="ficha-row">
           <div class="lbl">Relación con el cliente</div>

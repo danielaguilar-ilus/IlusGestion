@@ -93,13 +93,36 @@ def is_valid_cl_phone(phone: str) -> bool:
 
 
 def format_cl_phone(phone: str) -> str:
-    """Devuelve teléfono normalizado a formato +569XXXXXXXX (sin espacios)."""
+    """Devuelve teléfono normalizado a formato '+56 9 XXXX XXXX' (legible).
+    Si no se puede formatear, devuelve el input original."""
     c = re.sub(r"[^\d+]", "", str(phone or "")).lstrip("+")
     if c.startswith("56"):
         c = c[2:]
     if c.startswith("9") and len(c) == 9:
-        return "+56" + c
+        # Formato legible: +56 9 1234 5678
+        return f"+56 {c[0]} {c[1:5]} {c[5:9]}"
     return phone
+
+
+# Regex robusto de email (alineado con app.py _EMAIL_RE).
+# - permite letras/numeros/._%+-
+# - dominio con letras/numeros/.-
+# - TLD de 2+ caracteres (alfabético)
+# Rechaza: doble @, espacios, sin TLD válido.
+_PICKUP_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def is_valid_email(email: str) -> bool:
+    """Valida email con regex robusto. Limita longitud a 200 chars."""
+    if not email:
+        return False
+    e = str(email).strip().lower()
+    if not e or len(e) > 200:
+        return False
+    # Rechaza espacios internos, doble @ y otros casos edge
+    if " " in e or e.count("@") != 1:
+        return False
+    return bool(_PICKUP_EMAIL_RE.match(e))
 
 
 def register_pickup_routes(app, ctx):
@@ -372,7 +395,14 @@ def register_pickup_routes(app, ctx):
             pass  # tabla puede no existir aún
 
         # 4) Capacidad del slot (picks + kg + m3)
-        max_picks_slot = int(cfg.get("max_picks_per_slot") or 5)
+        # parallel_capacity = límite de retiros simultáneos (default 2).
+        # Si no está configurado, caemos al legacy max_picks_per_slot (5)
+        # para mantener compatibilidad con instalaciones viejas.
+        parallel_capacity_cfg = cfg.get("parallel_capacity")
+        if parallel_capacity_cfg is not None and str(parallel_capacity_cfg).strip():
+            max_picks_slot = int(parallel_capacity_cfg)
+        else:
+            max_picks_slot = int(cfg.get("max_picks_per_slot") or 2)
         max_kg_slot = float(cfg.get("max_kg_per_slot") or 500)
         max_m3_slot = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day = int(cfg.get("max_picks_per_day") or 30)
@@ -484,16 +514,21 @@ def register_pickup_routes(app, ctx):
 
 
     # Mapeo: kind del notify() → estado en comm_templates
+    # Cada kind dispara una plantilla del módulo 'retiros'. Si la plantilla
+    # no existe, notify() cae al template hardcoded del wrapper ILUS.
     _KIND_TO_ESTADO = {
-        "created":   "solicitud_recibida",
-        "proposal":  "propuesta_enviada",
-        "confirmed": "agenda_confirmada",
-        "preparing": "en_preparacion",
-        "done":      "retirada",
-        "rejected":  "rechazada",
-        "rescheduled": "reagendada",
-        "reminder_24h": "recordatorio_24h",  # nuevo kind para recordatorio del día previo
-        "message":   None,    # custom — sin plantilla
+        "created":           "solicitud_recibida",
+        "proposal":          "propuesta_enviada",
+        "confirmed":         "agenda_confirmada",
+        "preparing":         "en_preparacion",
+        "done":              "retirada",
+        "rejected":          "rechazada",
+        "rescheduled":       "reagendada",
+        "reminder_24h":      "recordatorio_24h",
+        "info_incompleta":   "informacion_incompleta",
+        "failed":            "rechazada",     # reusamos plantilla de cancelación
+        "closed":            "retirada",      # reusamos plantilla de retirada
+        "message":           None,            # custom — sin plantilla
     }
 
 
@@ -634,6 +669,123 @@ def register_pickup_routes(app, ctx):
             print(f"[ILUS][PICKUP WA] {exc}")
         return sent_mail, sent_wa
 
+    def notify_async(req, kind="created", proposal=None, custom_message=""):
+        """Versión asíncrona de notify(): dispara el envío en un hilo daemon
+        para que el operador (o el cliente) reciban su respuesta HTTP de
+        inmediato — el email/WA se envía en background.
+
+        Daniel pidió esto explícitamente: que el cambio de estado no
+        bloquee el cierre del modal del calendario.
+
+        IMPORTANTE: pasamos un snapshot dict (no la fila viva) por seguridad
+        — la conexión MySQL del request termina cuando vuelve la response.
+        Dentro del thread abrimos app_context() para que url_for() funcione.
+        """
+        try:
+            import threading
+            # snapshot inmutable — evita race conditions con la conexión MySQL
+            req_snapshot = dict(req) if req else {}
+
+            def _runner(_req, _kind, _proposal, _msg):
+                try:
+                    with app.app_context():
+                        notify(_req, _kind, proposal=_proposal, custom_message=_msg)
+                except Exception as exc:
+                    try:
+                        print(f"[ILUS][PICKUP NOTIFY_ASYNC] {exc}")
+                    except Exception: pass
+
+            t = threading.Thread(
+                target=_runner,
+                args=(req_snapshot, kind, proposal, custom_message),
+                daemon=True,
+                name=f"pickup-notify-{req_snapshot.get('code','?')}-{kind}",
+            )
+            t.start()
+        except Exception as exc:
+            print(f"[ILUS][PICKUP NOTIFY_ASYNC SPAWN] {exc}")
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CACHE DE POLLING — evita martillar la BD desde el tracking público
+    # ══════════════════════════════════════════════════════════════════
+    # El tracking público hace polling cada 30s. Con muchos clientes mirando
+    # su retiro al mismo tiempo, podría generar un peak de SELECTs. Esta
+    # cache en memoria invalida-por-tiempo (10s) garantiza que aunque 100
+    # navegadores polleen al mismo retiro, solo se hace 1 SELECT cada 10s.
+    #
+    # Diseño minimalista: dict en memoria del proceso. Si hay múltiples
+    # workers (gunicorn), cada uno tiene su cache → eso está bien: igual
+    # baja el peak en cada worker.
+    _POLL_CACHE = {}             # token → {payload, fetched_at}
+    _POLL_CACHE_TTL = 10.0       # segundos
+
+    def _polling_cached(token):
+        import time as _time
+        ent = _POLL_CACHE.get(token)
+        if ent and (_time.time() - ent["fetched_at"]) < _POLL_CACHE_TTL:
+            return ent["payload"]
+        return None
+
+    def _polling_store(token, payload):
+        import time as _time
+        _POLL_CACHE[token] = {
+            "payload":    payload,
+            "fetched_at": _time.time(),
+        }
+        # Limpia entradas viejas si la cache crece mucho
+        if len(_POLL_CACHE) > 500:
+            cutoff = _time.time() - _POLL_CACHE_TTL * 3
+            for k in list(_POLL_CACHE.keys()):
+                if _POLL_CACHE[k]["fetched_at"] < cutoff:
+                    _POLL_CACHE.pop(k, None)
+
+    @app.route("/retiros/seguimiento/<token>/status", methods=["GET"])
+    def pickup_public_tracking_status(token):
+        """Devuelve estado actual del retiro en JSON ligero — usado por el
+        polling del tracking público (cada 30s).
+
+        Cacheado 10s en memoria para no martillar la BD si muchos clientes
+        están mirando su tracking al mismo tiempo.
+
+        Response shape:
+          { ok, status, status_label, status_color, has_pending_proposal,
+            updated_at, confirmed_date, confirmed_time_from, confirmed_time_to }
+        """
+        cached = _polling_cached(token)
+        if cached is not None:
+            return jsonify(cached)
+
+        req = mysql_fetchone(
+            f"SELECT id, code, status, confirmed_date, confirmed_time_from, "
+            f"       confirmed_time_to, updated_at "
+            f"FROM `{REQ}` WHERE public_token=%s",
+            (token,)
+        )
+        if not req:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+
+        # ¿Hay propuesta pendiente?
+        pend = mysql_fetchone(
+            f"SELECT id FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+            f"ORDER BY id DESC LIMIT 1",
+            (req["id"],)
+        )
+
+        status = req.get("status") or ""
+        payload = {
+            "ok":                   True,
+            "status":               status,
+            "status_label":         PICKUP_STATUS.get(status, status),
+            "status_color":         PICKUP_STATUS_COLORS.get(status, "secondary"),
+            "has_pending_proposal": bool(pend),
+            "updated_at":           str(req.get("updated_at") or "")[:19],
+            "confirmed_date":       str(req.get("confirmed_date") or ""),
+            "confirmed_time_from":  str(req.get("confirmed_time_from") or "")[:5],
+            "confirmed_time_to":    str(req.get("confirmed_time_to") or "")[:5],
+        }
+        _polling_store(token, payload)
+        return jsonify(payload)
+
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
     def pickup_public_request():
         cfg = settings()
@@ -692,29 +844,97 @@ def register_pickup_routes(app, ctx):
             if any(not data.get(k) for k in required):
                 errors.append("Completa todos los campos obligatorios.")
 
-            # Validación email
-            if data["contact_email"] and not EMAIL_RE.match(data["contact_email"]):
-                errors.append("El email no tiene formato válido.")
+            # ── VALIDACIÓN EMAIL (robusta: regex + doble@ + espacios) ──
+            if data["contact_email"]:
+                if not is_valid_email(data["contact_email"]):
+                    errors.append(
+                        "El email no es válido. Usa el formato nombre@dominio.cl"
+                    )
+                else:
+                    data["contact_email"] = data["contact_email"].strip().lower()
 
-            # Validación teléfono chileno (+56 9)
+            # ── VALIDACIÓN TELÉFONO CHILENO (+56 9 XXXX XXXX) ──
             if data["contact_phone"] and not is_valid_cl_phone(data["contact_phone"]):
-                errors.append("El teléfono debe ser un móvil chileno (+56 9 XXXX XXXX).")
-            else:
+                errors.append(
+                    "El teléfono del contacto debe ser un móvil chileno "
+                    "(+56 9 XXXX XXXX)."
+                )
+            elif data["contact_phone"]:
                 data["contact_phone"] = format_cl_phone(data["contact_phone"])
-                data["pickup_person_phone"] = format_cl_phone(data["pickup_person_phone"] or data["contact_phone"])
 
-            # Validación RUT chileno (cliente y persona autorizada)
-            if data["customer_rut"] and not is_valid_rut(data["customer_rut"]):
-                errors.append("El RUT del cliente no es válido (revisa el dígito verificador).")
+            # ── VALIDACIÓN TELÉFONO DE QUIEN RETIRA ──
+            if data["pickup_person_phone"] and not is_valid_cl_phone(data["pickup_person_phone"]):
+                # Si el toggle de autorizado está activo, este error es bloqueante.
+                # Si no está activo, simplemente copiamos el del contacto.
+                if auth_active:
+                    errors.append(
+                        "El teléfono de quien retira debe ser un móvil chileno válido."
+                    )
+                else:
+                    data["pickup_person_phone"] = data["contact_phone"]
+            elif data["pickup_person_phone"]:
+                data["pickup_person_phone"] = format_cl_phone(data["pickup_person_phone"])
             else:
+                # Sin teléfono de pickup_person → usar el contact_phone (ya formateado)
+                data["pickup_person_phone"] = data["contact_phone"]
+
+            # ── VALIDACIÓN RUT DEL CLIENTE (módulo 11) ──
+            if data["customer_rut"] and not is_valid_rut(data["customer_rut"]):
+                errors.append(
+                    "El RUT del cliente no es válido. "
+                    "Revisa el dígito verificador."
+                )
+            elif data["customer_rut"]:
                 data["customer_rut"] = format_rut(data["customer_rut"])
 
-            # El RUT del autorizado se valida solo si el cliente activó el toggle
-            # y lo escribió. Si no lo escribió, usamos el del cliente como respaldo.
-            if auth_active and data["pickup_person_rut"] and not is_valid_rut(data["pickup_person_rut"]):
-                errors.append("El RUT de la persona que retira no es válido.")
+            # ── VALIDACIÓN RUT DE QUIEN RETIRA (solo si auth_active) ──
+            if auth_active:
+                if not data.get("pickup_person_rut") or data["pickup_person_rut"] == "PENDIENTE":
+                    errors.append(
+                        "Si autorizas a otra persona debes ingresar su RUT."
+                    )
+                elif not is_valid_rut(data["pickup_person_rut"]):
+                    errors.append(
+                        "El RUT de quien retira no es válido. "
+                        "Revisa el dígito verificador."
+                    )
+                else:
+                    data["pickup_person_rut"] = format_rut(data["pickup_person_rut"])
             elif data["pickup_person_rut"] and is_valid_rut(data["pickup_person_rut"]):
                 data["pickup_person_rut"] = format_rut(data["pickup_person_rut"])
+
+            # ── DECLARACIÓN DE TERCERO (RUT cliente != RUT quien retira) ──
+            # Si el cliente activó el toggle y los RUTs son DIFERENTES,
+            # registramos una declaración explícita en observations.
+            # Esto da trazabilidad legal: el operador en bodega verá la nota.
+            try:
+                _rut_cli = _clean_rut(data.get("customer_rut") or "")
+                _rut_ret = _clean_rut(data.get("pickup_person_rut") or "")
+                _decl_acepta = (form.get("acepta_tercero") or "") in ("1", "on", "true")
+                if (auth_active and _rut_cli and _rut_ret
+                        and _rut_cli != _rut_ret and is_valid_rut(_rut_cli) and is_valid_rut(_rut_ret)):
+                    if not _decl_acepta:
+                        errors.append(
+                            "Debes confirmar que el cliente autoriza a este tercero "
+                            "para retirar (marca la casilla de declaración)."
+                        )
+                    else:
+                        _decl_text = (
+                            f"\n[DECLARACIÓN AUTORIZACIÓN TERCERO · "
+                            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n"
+                            f"El documento está a nombre de {data.get('customer_name','')} "
+                            f"(RUT {data.get('customer_rut','')}). "
+                            f"Quien retira es {data.get('pickup_person_name','')} "
+                            f"(RUT {data.get('pickup_person_rut','')}). "
+                            f"El cliente declaró explícitamente que esta persona está "
+                            f"autorizada para retirar los productos en su nombre."
+                        )
+                        data["observations"] = (
+                            (data.get("observations") or "").strip() + _decl_text
+                        ).strip()
+            except Exception as _decl_exc:
+                # No bloqueamos por error de logueo de declaración; pero lo registramos
+                print(f"[pickup_public_request] declaración tercero error: {_decl_exc}", flush=True)
 
             # Validación fecha mínima +24 horas
             if data["requested_date"]:
@@ -734,6 +954,24 @@ def register_pickup_routes(app, ctx):
                 errors.append(msg_date)
             if not ok_time:
                 errors.append(msg_time)
+
+            # Validación dura del slot: colación, bloqueos manuales, capacidad
+            # paralela. Evita que un usuario bypaseando JS mande un horario
+            # inválido (colación, bloque lleno, fuera de horario, etc).
+            if ok_date and ok_time and data["requested_date"]:
+                try:
+                    ok_slot, motivo_slot = _validar_disponibilidad_slot(
+                        data["requested_date"],
+                        data["requested_time_from"],
+                        data["requested_time_to"],
+                    )
+                    if not ok_slot:
+                        errors.append(motivo_slot or "El horario seleccionado no está disponible.")
+                except Exception as _slot_exc:
+                    # Si la validación falla por error técnico, no bloqueamos
+                    # (defensa en profundidad: ya validamos lo básico arriba).
+                    print(f"[pickup_public_request] validar_slot exc: {_slot_exc}", flush=True)
+
             total_pkg = 1
             packages = [calc_package(0, 0, 0, 0)]
             if not form.get("accept_terms"):
@@ -802,6 +1040,23 @@ def register_pickup_routes(app, ctx):
                 )
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             log_event(rid, "creada", None, "solicitud_recibida", "Solicitud creada desde pagina publica", "cliente", data["contact_name"])
+            # ── Log explícito si hubo declaración de tercero (auditoría) ──
+            try:
+                _cli_rut_c = _clean_rut(data.get("customer_rut") or "")
+                _ret_rut_c = _clean_rut(data.get("pickup_person_rut") or "")
+                if (auth_active and _cli_rut_c and _ret_rut_c
+                        and _cli_rut_c != _ret_rut_c
+                        and is_valid_rut(_cli_rut_c) and is_valid_rut(_ret_rut_c)):
+                    log_event(
+                        rid, "declaracion_tercero",
+                        "solicitud_recibida", "solicitud_recibida",
+                        f"Cliente {data.get('customer_name','')} ({data.get('customer_rut','')}) "
+                        f"declaró que {data.get('pickup_person_name','')} "
+                        f"({data.get('pickup_person_rut','')}) está autorizado para retirar.",
+                        "cliente", data.get("contact_name") or data.get("customer_name") or "Cliente"
+                    )
+            except Exception as _e_decl_log:
+                print(f"[pickup_public_request] decl-log error: {_e_decl_log}", flush=True)
             sent_mail, sent_wa = notify(req, "created")
             if sent_mail:
                 log_event(rid, "email_enviado", "solicitud_recibida", "solicitud_recibida", f"Correo enviado a {req['contact_email']}", "sistema", "Comunicaciones")
@@ -1059,10 +1314,21 @@ def register_pickup_routes(app, ctx):
                         return redirect(url_for("pickup_public_tracking", token=token))
 
                     log_event(req["id"], "cliente_confirmo", old, "agenda_confirmada", "Cliente acepto propuesta", "cliente", req["contact_name"])
+                    # Email "agenda confirmada" al cliente (con detalles finales)
+                    try:
+                        req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
+                        notify_async(req_after, "confirmed")
+                    except Exception as _e: print(f"[pickups][notify confirm] {_e}")
+                    flash("¡Tu retiro fue confirmado! Te enviamos un correo con todos los detalles.", "success")
             elif action == "reject":
                 reason = request.form.get("reason", "")
                 mysql_execute(f"UPDATE `{REQ}` SET status='rechazada' WHERE id=%s", (req["id"],))
                 log_event(req["id"], "cliente_rechazo", old, "rechazada", reason, "cliente", req["contact_name"])
+                try:
+                    req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
+                    notify_async(req_after, "rejected")
+                except Exception as _e: print(f"[pickups][notify reject] {_e}")
+                flash("Tu solicitud fue cancelada. Te enviamos un correo de confirmación.", "info")
             elif action == "counter":
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
                 okd, md = date_allowed(date, cfg); okt, mt = time_allowed(tf, tt, cfg)
@@ -1074,8 +1340,12 @@ def register_pickup_routes(app, ctx):
                     )
                     mysql_execute(f"UPDATE `{REQ}` SET status='en_revision' WHERE id=%s", (req["id"],))
                     log_event(req["id"], "cliente_contrapropuso", old, "en_revision", f"{date} {tf}-{tt}", "cliente", req["contact_name"])
+                    flash("Tu contrapropuesta fue registrada. Te confirmaremos en breve.", "success")
                 else:
                     flash(md or mt, "warning")
+            # Invalidar cache de polling — el cliente verá su nuevo estado al instante
+            try: _POLL_CACHE.pop(token, None)
+            except Exception: pass
             return redirect(url_for("pickup_public_tracking", token=token))
         packages = mysql_fetchall(f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number", (req["id"],))
         proposals = mysql_fetchall(f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC", (req["id"],))
@@ -1336,25 +1606,40 @@ def register_pickup_routes(app, ctx):
         # ─── Notificar al cliente cuando ILUS cambia estado desde el calendario ─
         # Antes este endpoint NO mandaba email/WA, dejando al cliente sin saber
         # que su retiro fue confirmado/rechazado/preparado.
+        # Daniel pidió que cada estado dispare email al cliente para que vea
+        # el avance del retiro. La tabla refleja TODOS los estados que disparan
+        # mensaje al cliente (no solo los terminales).
         kind_map = {
-            "agenda_confirmada":   "confirmed",
-            "rechazada":           "rejected",
-            "en_preparacion":      "preparing",
-            "retirada":            "done",
-            "fallida":             "failed",
-            "reagendada":          "rescheduled",
-            "cerrada":             "closed",
+            "agenda_confirmada":      "confirmed",
+            "rechazada":              "rejected",
+            "en_preparacion":         "preparing",
+            "retirada":               "done",
+            "fallida":                "failed",
+            "reagendada":             "rescheduled",
+            "cerrada":                "closed",
             "informacion_incompleta": "info_incompleta",
+            # Nuevos: cuando un operador cambia manualmente a estos también
+            # mandamos email (antes se quedaban en silencio).
+            "en_revision":            "created",   # reusa plantilla de "estamos revisando"
+            "esperando_cliente":      "info_incompleta",
         }
         kind = kind_map.get(new_status)
         if kind and old_status != new_status:
             try:
-                # Re-leer la solicitud actualizada
+                # Re-leer la solicitud actualizada (estado/fechas pueden haber cambiado)
                 req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
-                notify(req_after, kind)
+                # Async: no bloquear la respuesta del operador
+                notify_async(req_after, kind)
             except Exception as _e:
                 # Si falla notificación, no rompemos el cambio de estado
                 print(f"[pickups][notify] error notificando {kind} a retiro #{rid}: {_e}")
+
+        # Invalidar cache de polling para que el cliente vea el cambio en su próximo poll
+        try:
+            tok = req.get("public_token") if isinstance(req, dict) else None
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+        except Exception: pass
 
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
@@ -2125,7 +2410,13 @@ def register_pickup_routes(app, ctx):
         mysql_execute(f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, proposed_time_from=%s, proposed_time_to=%s WHERE id=%s", (date, tf, tt, rid))
         log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada", f"{date} {tf}-{tt}", "interno")
         fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-        notify(fresh, "proposal", proposal={"date": date, "time_from": tf, "time_to": tt, "message": request.form.get("message", "")})
+        # Async: no bloquear el redirect a la ficha mientras se envía email
+        notify_async(fresh, "proposal", proposal={"date": date, "time_from": tf, "time_to": tt, "message": request.form.get("message", "")})
+        # Invalidar cache de polling para que el cliente vea la propuesta al instante
+        try:
+            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
+            if tok_p: _POLL_CACHE.pop(tok_p, None)
+        except Exception: pass
         flash("Propuesta enviada al cliente.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
@@ -2141,7 +2432,7 @@ def register_pickup_routes(app, ctx):
         if not message:
             flash("Selecciona o escribe un mensaje.", "warning")
             return redirect(url_for("pickup_detail", rid=rid))
-        notify(req, "message", custom_message=message)
+        notify_async(req, "message", custom_message=message)
         log_event(rid, "mensaje_enviado", req["status"], req["status"], message, "interno")
         flash("Mensaje enviado por los canales disponibles.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
@@ -2515,35 +2806,44 @@ def register_pickup_routes(app, ctx):
     def pickup_disponibilidad_publica():
         """Devuelve disponibilidad de slots para los próximos 30 días (público).
 
-        Usado por el form de solicitud para mostrar al cliente qué fechas/franjas
-        tiene cupo según capacidad configurada.
+        Modelo de slots (mayo 2026):
+        - Cada bloque visible dura 30 min (slot_minutes).
+        - El cliente puede seleccionar N bloques contiguos como rango.
+        - Duración real del retiro = N × 30 min (NO se suma media hora extra).
+        - Bloques de colación (13:00, 13:30) NO son agendables.
+        - El último bloque debe terminar antes de `close_time - buffer_cierre`
+          (default 30 min) para permitir que la bodega cierre tranquila.
+        - `parallel_capacity` (default 2): cuántos retiros caben SIMULTÁNEAMENTE
+          en el mismo bloque. Si ya hay 2 confirmados, queda "completo".
+        - Si hay 1 retiro confirmado en un bloque con capacidad 2, queda como
+          "ocupado" (clickeable, mostrando 1/2).
+
+        Respuesta por slot:
+            estado: "disponible" | "colacion" | "ocupado" | "completo" |
+                    "fuera_horario" | "bloqueado"
+            puede_iniciar / puede_finalizar: bool
+            ocupacion_actual, capacidad_max, time_from, time_to
         """
         from datetime import datetime as _dt, timedelta as _td
         cfg = settings()
         d_from = _dt.now().date() + _td(days=1)  # Mañana en adelante
         d_to   = d_from + _td(days=30)
 
-        # Obtener retiros existentes en el rango
-        rows = mysql_fetchall(
-            f"""SELECT requested_date, requested_time_from,
-                       confirmed_date, confirmed_time_from,
-                       proposed_date, proposed_time_from,
-                       total_weight_kg, total_volume_m3, status
-                FROM `{REQ}`
-                WHERE (requested_date BETWEEN %s AND %s
-                       OR confirmed_date BETWEEN %s AND %s)
-                  AND status NOT IN ('rechazada','cerrada','fallida')""",
-            (d_from, d_to, d_from, d_to)
-        )
-
-        max_picks_slot = int(cfg.get("max_picks_per_slot") or 5)
+        # Capacidades: parallel_capacity (default 2) sustituye a
+        # max_picks_per_slot para el calendario público. max_picks_per_slot
+        # legacy se conserva para el admin interno.
+        parallel_capacity = int(cfg.get("parallel_capacity") or 2)
         max_kg_slot    = float(cfg.get("max_kg_per_slot") or 500)
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
-        slot_dur       = int(cfg.get("slot_minutes") or 60)
-        # Step entre inicios: si está configurado, lo usamos; si no, half-step
-        # (30min) para que el último slot termine exactamente al close_time.
-        slot_step      = int(cfg.get("slot_step_minutes") or 30)
+
+        # Bloques de 30 min cada uno
+        slot_dur  = int(cfg.get("slot_minutes") or 30)
+        # En el modelo nuevo cada bloque es independiente: step == duración
+        slot_step = slot_dur
+        # Buffer de cierre (mínimo entre el fin del último bloque y close_time)
+        buffer_cierre_min = int(cfg.get("buffer_cierre_min") or 30)
+
         # Colación (default 13:00 - 14:00)
         lunch_s_str = str(cfg.get("lunch_start") or "13:00")[:5]
         lunch_e_str = str(cfg.get("lunch_end")   or "14:00")[:5]
@@ -2559,28 +2859,60 @@ def register_pickup_routes(app, ctx):
         work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays  = {h.strip() for h in (cfg.get("holidays") or "").replace(";",",").split(",") if h.strip()}
 
-        # Slots horarios — el ÚLTIMO bloque debe TERMINAR ≤ close_time
-        # Step de 30min para que con duración 60min el último slot llegue a 16:30
-        # (15:30 + 60min = 16:30).
+        # Slots horarios: cada bloque cubre [t, t+slot_dur).
+        # El último bloque debe terminar ≤ close_time - buffer_cierre.
         oH,oM = [int(x) for x in str(cfg.get("open_time") or "09:00:00")[:5].split(":")]
         cH,cM = [int(x) for x in str(cfg.get("close_time") or "17:30:00")[:5].split(":")]
-        # slots ahora es lista de dicts con metadata (lunch flag)
-        slots = []
+        open_min  = oH*60 + oM
+        close_min = cH*60 + cM
+        # ultimo_fin_admitido = close_min - buffer_cierre (ej: 17:30 - 30 = 17:00)
+        ultimo_fin_admitido = close_min - buffer_cierre_min
+
+        # Generar slots base del día (mismos para todas las fechas)
+        slots_base = []
         m = 0
-        while (oH*60+oM + m + slot_dur) <= (cH*60+cM):
-            t = oH*60+oM + m
+        while (open_min + m + slot_dur) <= ultimo_fin_admitido:
+            t = open_min + m
             t_end = t + slot_dur
             # Detectar solapamiento con bloque de colación
             is_lunch = (lunch_start_min < lunch_end_min and
                         not (t_end <= lunch_start_min or t >= lunch_end_min))
-            slots.append({
-                "hora": f"{t//60:02d}:{t%60:02d}",
-                "lunch": is_lunch,
+            slots_base.append({
+                "time_from":  f"{t//60:02d}:{t%60:02d}",
+                "time_to":    f"{t_end//60:02d}:{t_end%60:02d}",
+                "start_min":  t,
+                "end_min":    t_end,
+                "is_lunch":   is_lunch,
             })
             m += slot_step
 
-        # Calcular ocupación por slot
-        ocupacion = {}  # {fecha_str: {slot: {ocupados, kg, m3}}}
+        # Marcadores derivados (para el resumen del frontend)
+        ultimo_inicio = slots_base[-1]["time_from"] if slots_base else ""
+        ultimo_fin    = slots_base[-1]["time_to"]   if slots_base else ""
+        ultimo_inicio_antes_colacion = ""
+        primer_inicio_post_colacion  = ""
+        if lunch_start_min < lunch_end_min:
+            for s in slots_base:
+                if s["end_min"] <= lunch_start_min:
+                    ultimo_inicio_antes_colacion = s["time_from"]
+                if not primer_inicio_post_colacion and s["start_min"] >= lunch_end_min:
+                    primer_inicio_post_colacion = s["time_from"]
+
+        # Calcular ocupación: 1 sola query a pickup_requests
+        rows = mysql_fetchall(
+            f"""SELECT requested_date, requested_time_from,
+                       confirmed_date, confirmed_time_from,
+                       proposed_date, proposed_time_from,
+                       total_weight_kg, total_volume_m3, status
+                FROM `{REQ}`
+                WHERE (requested_date BETWEEN %s AND %s
+                       OR confirmed_date BETWEEN %s AND %s
+                       OR proposed_date  BETWEEN %s AND %s)
+                  AND status NOT IN ('rechazada','cerrada','fallida')""",
+            (d_from, d_to, d_from, d_to, d_from, d_to)
+        ) or []
+
+        ocupacion = {}  # {fecha_str: {slot_from: {ocupados, kg, m3}}}
         for r in rows:
             fecha = r.get("confirmed_date") or r.get("proposed_date") or r.get("requested_date")
             if not fecha: continue
@@ -2595,8 +2927,7 @@ def register_pickup_routes(app, ctx):
             ocupacion[fecha_str][slot]["kg"]       += float(r.get("total_weight_kg") or 0)
             ocupacion[fecha_str][slot]["m3"]       += float(r.get("total_volume_m3") or 0)
 
-        # Bloqueos manuales (tabla pickup_blocks): días u horas bloqueadas
-        # por el administrador desde Marketing.
+        # Bloqueos manuales (tabla pickup_blocks)
         blocks_by_date = {}
         try:
             blk_rows = mysql_fetchall(
@@ -2614,7 +2945,7 @@ def register_pickup_routes(app, ctx):
                     "motivo":      b.get("motivo") or "",
                 })
         except Exception:
-            pass  # tabla puede no existir aún
+            pass
 
         # Generar disponibilidad por día
         dias = {}
@@ -2623,7 +2954,6 @@ def register_pickup_routes(app, ctx):
             iso = d.isoformat()
             disp_dia = (d.isoweekday() in work_days) and (iso not in holidays)
 
-            # Bloqueo de día completo (registro sin horas en pickup_blocks)
             day_blocks = blocks_by_date.get(iso, [])
             full_day_block = any(not b["hora_inicio"] for b in day_blocks)
             full_day_motivo = next((b["motivo"] for b in day_blocks if not b["hora_inicio"]), "")
@@ -2640,21 +2970,22 @@ def register_pickup_routes(app, ctx):
                                 "No laborable" if not disp_dia else "Día completo"
                               ),
                 "slots":      [],
+                "ocupacion_pct": min(100, round((day_picks * 100) / max(1, max_picks_day))),
             }
             if not dia_disponible: continue
 
-            for slot_info in slots:
-                slot_hora = slot_info["hora"]
-                is_lunch = slot_info["lunch"]
+            for slot_info in slots_base:
+                slot_hora      = slot_info["time_from"]
+                slot_to        = slot_info["time_to"]
+                is_lunch       = slot_info["is_lunch"]
+                slot_start_min = slot_info["start_min"]
+                slot_end_min   = slot_info["end_min"]
                 ocup = ocupacion.get(iso,{}).get(slot_hora, {"ocupados":0,"kg":0,"m3":0})
 
-                # Verificar bloqueos manuales por hora
-                slot_h, slot_m = [int(x) for x in slot_hora.split(":")]
-                slot_start_min = slot_h*60 + slot_m
-                slot_end_min   = slot_start_min + slot_dur
+                # Bloqueo manual por franja
                 manual_block = None
                 for b in day_blocks:
-                    if not b["hora_inicio"]: continue  # ya manejado arriba
+                    if not b["hora_inicio"]: continue
                     try:
                         bH, bM = [int(x) for x in b["hora_inicio"].split(":")]
                         bEH, bEM = [int(x) for x in (b["hora_fin"] or "23:59").split(":")]
@@ -2665,25 +2996,50 @@ def register_pickup_routes(app, ctx):
                     except Exception:
                         continue
 
+                ocupacion_actual = int(ocup["ocupados"])
+                kg_actual = float(ocup["kg"])
+                m3_actual = float(ocup["m3"])
+
+                # Determinar estado
                 if is_lunch:
-                    razon = "Colación"
-                    disponible_slot = False
+                    estado = "colacion"
+                    razon  = "Horario de colación"
                 elif manual_block:
-                    razon = manual_block
-                    disponible_slot = False
+                    estado = "bloqueado"
+                    razon  = manual_block
+                elif ocupacion_actual >= parallel_capacity or kg_actual >= max_kg_slot or m3_actual >= max_m3_slot:
+                    estado = "completo"
+                    razon  = f"Cupo lleno ({ocupacion_actual}/{parallel_capacity})"
+                elif ocupacion_actual > 0:
+                    estado = "ocupado"
+                    razon  = f"Parcial ({ocupacion_actual}/{parallel_capacity})"
                 else:
-                    razon = ""
-                    disponible_slot = (ocup["ocupados"] < max_picks_slot
-                                       and ocup["kg"]   < max_kg_slot
-                                       and ocup["m3"]   < max_m3_slot)
+                    estado = "disponible"
+                    razon  = ""
+
+                # puede_iniciar / puede_finalizar: lo mismo en este modelo
+                puede = (
+                    estado in ("disponible", "ocupado")
+                    and (slot_end_min <= ultimo_fin_admitido)
+                )
+                puede_iniciar   = puede
+                puede_finalizar = puede
 
                 dias[iso]["slots"].append({
-                    "hora":        slot_hora,
-                    "disponible":  disponible_slot,
-                    "ocupados":    ocup["ocupados"],
-                    "max":         max_picks_slot,
-                    "razon":       razon,
-                    "lunch":       is_lunch,
+                    "time_from":        slot_hora,
+                    "time_to":          slot_to,
+                    "estado":           estado,
+                    "razon":            razon,
+                    "ocupacion_actual": ocupacion_actual,
+                    "capacidad_max":    parallel_capacity,
+                    "puede_iniciar":    puede_iniciar,
+                    "puede_finalizar":  puede_finalizar,
+                    # ── compat con frontend legacy ──
+                    "hora":       slot_hora,
+                    "disponible": (estado == "disponible" or estado == "ocupado"),
+                    "ocupados":   ocupacion_actual,
+                    "max":        parallel_capacity,
+                    "lunch":      is_lunch,
                 })
 
         return jsonify({
@@ -2696,6 +3052,19 @@ def register_pickup_routes(app, ctx):
             "slot_step":    slot_step,
             "lunch_start":  lunch_s_str,
             "lunch_end":    lunch_e_str,
+            "operacion": {
+                "open_time":  str(cfg.get("open_time") or "09:00")[:5],
+                "close_time": str(cfg.get("close_time") or "17:30")[:5],
+                "ultimo_inicio": ultimo_inicio,
+                "ultimo_fin":    ultimo_fin,
+                "lunch_start":   lunch_s_str,
+                "lunch_end":     lunch_e_str,
+                "ultimo_inicio_antes_colacion": ultimo_inicio_antes_colacion,
+                "primer_inicio_post_colacion":  primer_inicio_post_colacion,
+                "slot_minutes":      slot_dur,
+                "parallel_capacity": parallel_capacity,
+                "buffer_cierre_min": buffer_cierre_min,
+            },
             "dias": dias,
         })
 
