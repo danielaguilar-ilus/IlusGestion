@@ -4093,14 +4093,18 @@ function rbaRenderDocLineas(lineas, fetchMs){
       <span class="rba-chk" id="rbaMasterChkDoc"><input type="checkbox" onchange="rbaToggleAllDoc(this.checked)"><span class="rba-chk-mark">✓</span></span>
       Seleccionar todas las líneas con saldo
     </label>
-    <span class="rba-master-info">${lineas.filter(l => (parseFloat(l.cantidad)||0) > 0).length} con saldo · ${lineas.filter(l => (parseFloat(l.cantidad)||0) === 0).length} sin saldo</span>
+    <span class="rba-master-info">${lineas.filter(l => _rbaSaldoLinea(l) > 0).length} con saldo · ${lineas.filter(l => _rbaSaldoLinea(l) === 0).length} sin saldo</span>
   </div>`;
   html += '<div>';
   lineas.forEach((l, i) => {
     const sku = (l.sku || '').toUpperCase();
     const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
     const qty = parseFloat(l.cantidad) || 0;
-    const saldo = qty;   // simplificación: cantidad = saldo (mismo criterio que ya usa la UI)
+    // Daniel 2026-05-24 FIX: usar el saldo REAL del backend (CAPRCO1-CAPRAD1).
+    // Antes asumíamos saldo = cantidad → mostraba "saldo 1" en líneas ya
+    // despachadas vía guía (BLV 20828 ej: kettlebells 16kg y 12kg estaban
+    // entregadas pero el modal decía "saldo 1" en todas).
+    const saldo = _rbaSaldoLinea(l);
     const isZero = saldo <= 0;
     const lineKey = `DOC|${sku}|${i}`;
     html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
@@ -4120,6 +4124,21 @@ function rbaRenderDocLineas(lineas, fetchMs){
   html += '</div>';
   cont.innerHTML = html;
 }
+
+// Helper: extrae el saldo REAL de una línea del ERP.
+// El backend ya calcula saldo = CAPRCO1 - CAPRAD1 y lo expone como
+// `l.saldo`. Si por algún motivo no viene (motor REST viejo, etc.)
+// caemos a cantidad - cantidad_despachada, y como última opción
+// asumimos saldo = cantidad (compat con docs sin guía asociada).
+function _rbaSaldoLinea(l){
+  if (l == null) return 0;
+  const saldoBackend = parseFloat(l.saldo);
+  if (!isNaN(saldoBackend)) return Math.max(0, saldoBackend);
+  const qty   = parseFloat(l.cantidad) || 0;
+  const desp  = parseFloat(l.cantidad_despachada) || 0;
+  return Math.max(0, qty - desp);
+}
+
 function rbaToggleAllDoc(checked){
   const inputs = document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]');
   inputs.forEach(inp => {
@@ -4315,7 +4334,8 @@ async function rbaToggleDocCli(idx){
       const sku = (l.sku || '').toUpperCase();
       const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
       const qty = parseFloat(l.cantidad) || 0;
-      const saldo = qty;   // mismo criterio
+      // Daniel 2026-05-24 FIX: usar saldo REAL del backend (no asumir = cantidad)
+      const saldo = _rbaSaldoLinea(l);
       const isZero = saldo <= 0;
       const lineKey = `CLI|${idx}|${sku}|${j}`;
       html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}">

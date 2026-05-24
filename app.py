@@ -12313,11 +12313,17 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     # si en el futuro queremos paralelizarlo con más cosas. Por ahora simple.
     lineas_raw = []
     try:
+        # Daniel 2026-05-24: AGREGADO CAPRAD1 (cantidad despachada via guía).
+        # Antes faltaba → saldo siempre = CAPRCO1 → modal mostraba "saldo 1"
+        # en líneas YA despachadas. Ahora saldo = CAPRCO1 - CAPRAD1 correcto.
+        # Ej: BLV 20828 → kettlebells 16kg y 12kg ya fueron despachadas via
+        # GDV 30570 (CAPRAD1=1), solo 8kg queda pendiente (CAPRAD1=0).
         lineas_rows = _random_sql_query(
             "SELECT NULIDO, "
             "       LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT, "
             "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
             "       COALESCE(CAPRCO1, 0) AS CAPRCO1, "
+            "       COALESCE(CAPRAD1, 0) AS CAPRAD1, "
             "       COALESCE(PPPRNE,  0) AS PPPRNE, "
             "       COALESCE(VANELI,  0) AS VANELI, "
             "       COALESCE(VABRLI,  0) AS VABRLI "
