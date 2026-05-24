@@ -3108,6 +3108,88 @@ def register_pickup_routes(app, ctx):
             "tiempo_estimado_min": tiempo or 0,
         }
 
+    def _apply_lineas_seleccion_inline(rid, doc_id, lineas_in):
+        """Aplica selección granular a un doc ya asociado. Usado en flujo
+        DUPLICATE+lineas del endpoint /docs/agregar. Reusa el snapshot
+        guardado (no llama al ERP). Idempotente.
+
+        Daniel 2026-05-24 — extracted desde pickup_doc_lineas_guardar para
+        permitir reuso en el flujo combinado agregar+lineas.
+        """
+        import json as _json_inl
+        doc = mysql_fetchone(
+            "SELECT erp_snapshot FROM pickup_request_docs WHERE id=%s AND request_id=%s",
+            (doc_id, rid)
+        )
+        if not doc:
+            raise RuntimeError("Doc no asociado")
+        try:
+            snap = _json_inl.loads(doc.get("erp_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        snap_lineas = {(ln.get("sku") or "").upper(): ln for ln in (snap.get("lineas") or [])}
+
+        upsert_rows = []
+        for li in lineas_in:
+            sku = (li.get("sku") or "").strip()[:80]
+            if not sku:
+                continue
+            ln_snap = snap_lineas.get(sku.upper()) or {}
+            cantidad_doc = float(ln_snap.get("cantidad") or 0)
+            peso_unit    = float(ln_snap.get("peso_kg_u") or 0)
+            peso_vol_unit= float(ln_snap.get("peso_vol_u") or 0)
+            vol_unit_cm3 = float(ln_snap.get("vol_u") or 0)
+            vol_unit_m3  = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0
+            try:
+                qty_sel = float(li.get("cantidad_seleccionada") or 0)
+            except Exception:
+                qty_sel = 0
+            qty_sel = max(0.0, min(qty_sel, cantidad_doc or qty_sel))
+            incluida = 1 if (li.get("incluida", True) and qty_sel > 0) else 0
+            descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
+            nota = (li.get("nota") or "").strip()[:300] or None
+            upsert_rows.append((
+                rid, doc_id, sku, descripcion,
+                cantidad_doc, qty_sel,
+                peso_unit, peso_vol_unit, vol_unit_m3,
+                peso_unit * qty_sel,
+                peso_vol_unit * qty_sel,
+                vol_unit_m3 * qty_sel,
+                incluida, nota,
+            ))
+        if not upsert_rows:
+            return 0
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO pickup_doc_lineas
+                     (request_id, doc_id, sku, descripcion, cantidad_doc,
+                      cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                      vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                      incluida, nota_linea)
+                   VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
+                   ON DUPLICATE KEY UPDATE
+                     descripcion=VALUES(descripcion),
+                     cantidad_doc=VALUES(cantidad_doc),
+                     cantidad_seleccionada=VALUES(cantidad_seleccionada),
+                     peso_unit_kg=VALUES(peso_unit_kg),
+                     peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
+                     vol_unit_m3=VALUES(vol_unit_m3),
+                     peso_total_kg=VALUES(peso_total_kg),
+                     peso_vol_total_kg=VALUES(peso_vol_total_kg),
+                     vol_total_m3=VALUES(vol_total_m3),
+                     incluida=VALUES(incluida),
+                     nota_linea=VALUES(nota_linea),
+                     updated_at=NOW()""",
+                upsert_rows
+            )
+            cur.execute(
+                "UPDATE pickup_request_docs SET has_seleccion_lineas=1 WHERE id=%s",
+                (doc_id,)
+            )
+        conn.commit()
+        return len(upsert_rows)
+
     def _doc_already_used_by_other_request(tipo, numero, exclude_rid):
         """Devuelve {request_id, code} si OTRO retiro ya usa este doc, o None."""
         row = mysql_fetchone(
@@ -3451,23 +3533,66 @@ def register_pickup_routes(app, ctx):
         numero = (body.get("document_number") or "").strip()
         if not tipo or not numero:
             return jsonify({"ok": False, "error": "Falta document_type o document_number"}), 400
+
+        # ⚡ PERF Daniel 2026-05-24 (8s → <1.5s):
+        # Aceptamos OPCIONALMENTE las líneas seleccionadas en el mismo POST.
+        # Antes el frontend hacía 2 POSTs secuenciales (agregar doc + guardar
+        # líneas). Ahora 1 sólo: combinamos INSERT del doc + UPSERT de líneas
+        # + has_seleccion_lineas=1 en la MISMA transacción. Beneficios:
+        #   - 1 round-trip de red menos (~80-200ms)
+        #   - 1 recalc_totales menos (~50-100ms, antes se llamaba 2 veces)
+        #   - menos overhead Flask (validación + auth + middleware × 1)
+        # El endpoint /docs/<id>/lineas se mantiene para EDITAR selección
+        # posteriormente (no rompe nada existente).
+        lineas_sel_in = body.get("lineas") or []
+        if not isinstance(lineas_sel_in, list):
+            lineas_sel_in = []
         _lap("validacion_input")
 
         # Idempotente: si ya está en este retiro, devolver 409 amistoso
+        # PERO si vienen `lineas` en el body, aplicar la selección igual
+        # (re-asociar con nueva selección, no error duro).
         dup = mysql_fetchone(
             "SELECT id FROM pickup_request_docs "
             "WHERE request_id=%s AND document_type=%s AND document_number=%s",
             (rid, tipo, numero)
         )
         if dup:
-            totales = _pickup_recalc_totales(rid)
-            return jsonify({
-                "ok": False,
-                "error": f"El documento {tipo} {numero} ya está asociado a este retiro.",
-                "code": "DUPLICATE",
-                "doc_id": dup["id"],
-                "totales": totales,
-            }), 409
+            # Si NO vienen líneas, comportamiento histórico (409). Si vienen,
+            # actualizamos la selección y devolvemos OK con flag dup.
+            if not lineas_sel_in:
+                totales = _pickup_recalc_totales(rid)
+                return jsonify({
+                    "ok": False,
+                    "error": f"El documento {tipo} {numero} ya está asociado a este retiro.",
+                    "code": "DUPLICATE",
+                    "doc_id": dup["id"],
+                    "totales": totales,
+                }), 409
+            # Caso DUPLICATE con líneas → aplicar selección al doc existente
+            # sin re-llamar al ERP (los snapshots ya están guardados).
+            try:
+                _apply_lineas_seleccion_inline(rid, dup["id"], lineas_sel_in)
+                totales = _pickup_recalc_totales(rid)
+                _DOCS_CACHE.pop(rid, None)
+                return jsonify({
+                    "ok": True,
+                    "doc": {"id": dup["id"], "document_type": tipo, "document_number": numero},
+                    "totales": totales,
+                    "duplicate_updated": True,
+                    "lineas_guardadas": len(lineas_sel_in),
+                }), 200
+            except Exception as _exc_dup:
+                print(f"[pickup_doc_agregar] DUPLICATE+lineas falló: {_exc_dup}", flush=True)
+                # cae al flujo normal — devolver 409 estándar
+                totales = _pickup_recalc_totales(rid)
+                return jsonify({
+                    "ok": False,
+                    "error": f"El documento {tipo} {numero} ya está asociado a este retiro.",
+                    "code": "DUPLICATE",
+                    "doc_id": dup["id"],
+                    "totales": totales,
+                }), 409
 
         # Verificar que no esté en OTRO retiro (warning, no bloqueo — Daniel decide)
         otro = _doc_already_used_by_other_request(tipo, numero, rid)
@@ -3683,8 +3808,55 @@ def register_pickup_routes(app, ctx):
         # ⚡ PERF: INSERT + obtener lastrowid en un solo round-trip a BD.
         # Antes hacíamos INSERT (cur cerrado) + SELECT por unique key
         # = 2 round-trips. Ahora 1 round-trip ahorra ~30-80ms.
+        #
+        # ⚡ PERF Daniel 2026-05-24: si vienen `lineas_sel_in`, hacemos también
+        # el UPSERT en pickup_doc_lineas y seteamos has_seleccion_lineas=1
+        # en el MISMO INSERT (no en UPDATE separado). Todo en 1 transacción.
         from app import get_db as _get_db_doc
         new_doc_id = None
+        has_sel_initial = 1 if lineas_sel_in else 0
+
+        # Pre-armar las filas del upsert ANTES de tomar la conexión, para
+        # minimizar tiempo de lock. Si el cálculo crashea, no afecta al INSERT.
+        upsert_rows = []
+        if lineas_sel_in:
+            # snapshot ya está en memoria (la variable `lineas` del ERP fetch)
+            # → no necesitamos parsear erp_snapshot otra vez (a diferencia del
+            # endpoint /docs/<id>/lineas que SÍ lo parsea porque no tiene `lineas`).
+            snap_by_sku = {(ln.get("sku") or "").upper(): ln for ln in (lineas or [])}
+            for li in lineas_sel_in:
+                sku = (li.get("sku") or "").strip()[:80]
+                if not sku:
+                    continue
+                ln_snap = snap_by_sku.get(sku.upper()) or {}
+                cantidad_doc = float(ln_snap.get("cantidad") or 0)
+                peso_unit    = float(ln_snap.get("peso_kg_u") or 0)
+                peso_vol_unit= float(ln_snap.get("peso_vol_u") or 0)
+                vol_unit_cm3 = float(ln_snap.get("vol_u") or 0)
+                vol_unit_m3  = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0
+                try:
+                    qty_sel = float(li.get("cantidad_seleccionada") or 0)
+                except Exception:
+                    qty_sel = 0
+                qty_sel = max(0.0, min(qty_sel, cantidad_doc or qty_sel))
+                # Si li.incluida no viene, asumimos True (semántica: viene en
+                # el array de seleccionadas → el operador la quiere incluir)
+                incluida = 1 if (li.get("incluida", True) and qty_sel > 0) else 0
+                descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
+                nota = (li.get("nota") or "").strip()[:300] or None
+                upsert_rows.append((
+                    rid, sku, descripcion,
+                    cantidad_doc, qty_sel,
+                    peso_unit, peso_vol_unit, vol_unit_m3,
+                    peso_unit * qty_sel,
+                    peso_vol_unit * qty_sel,
+                    vol_unit_m3 * qty_sel,
+                    incluida, nota,
+                ))
+            # Si después del filtrado no quedó nada válido, NO marcamos selección
+            if not upsert_rows:
+                has_sel_initial = 0
+
         try:
             _conn_doc = _get_db_doc()
             with _conn_doc.cursor() as _cur_doc:
@@ -3694,18 +3866,34 @@ def register_pickup_routes(app, ctx):
                           cliente_rut, cliente_nombre, observaciones_erp,
                           peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
                           erp_snapshot, added_by, con_saldo, saldo_zz, saldo_checked_at,
-                          email_cliente_erp)
-                       VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW(), %s)""",
+                          email_cliente_erp, has_seleccion_lineas)
+                       VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW(), %s, %s)""",
                     (rid, tipo, numero,
                      cliente_rut, cliente_nombre, obs,
                      total_kg, total_vol_kg, total_m3, len(lineas or []),
                      snapshot_json, added_by, con_saldo_val, saldo_zz_val,
-                     email_doc or None)
+                     email_doc or None, has_sel_initial)
                 )
                 new_doc_id = _cur_doc.lastrowid
+                # ⚡ UPSERT líneas en la MISMA transacción (si vinieron en body)
+                if upsert_rows and new_doc_id:
+                    # Inyectar doc_id en cada fila (era unknown antes del INSERT)
+                    final_rows = [(r[0], new_doc_id, *r[1:]) for r in upsert_rows]
+                    _cur_doc.executemany(
+                        """INSERT INTO pickup_doc_lineas
+                             (request_id, doc_id, sku, descripcion, cantidad_doc,
+                              cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                              vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                              incluida, nota_linea)
+                           VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)""",
+                        final_rows
+                    )
             _conn_doc.commit()
         except Exception as exc:
-            # Fallback si la columna con_saldo aún no se migró (entornos viejos)
+            # Fallback si la columna con_saldo / has_seleccion_lineas aún no se
+            # migró (entornos viejos). Reintentamos sin esas columnas y, si
+            # había líneas, hacemos el UPSERT + UPDATE has_seleccion_lineas
+            # en pasos separados (cuando la columna SÍ existe).
             try:
                 _conn_doc = _get_db_doc()
                 with _conn_doc.cursor() as _cur_doc:
@@ -3722,11 +3910,33 @@ def register_pickup_routes(app, ctx):
                          snapshot_json, added_by)
                     )
                     new_doc_id = _cur_doc.lastrowid
+                    # Líneas + has_seleccion_lineas en best-effort (puede fallar
+                    # silencioso si la migración aún no corrió)
+                    if upsert_rows and new_doc_id:
+                        try:
+                            final_rows = [(r[0], new_doc_id, *r[1:]) for r in upsert_rows]
+                            _cur_doc.executemany(
+                                """INSERT INTO pickup_doc_lineas
+                                     (request_id, doc_id, sku, descripcion, cantidad_doc,
+                                      cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                                      vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                                      incluida, nota_linea)
+                                   VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)""",
+                                final_rows
+                            )
+                            _cur_doc.execute(
+                                "UPDATE pickup_request_docs SET has_seleccion_lineas=1 WHERE id=%s",
+                                (new_doc_id,)
+                            )
+                        except Exception as _e_lines_fb:
+                            print(f"[pickup_doc_agregar] fallback lineas-upsert falló: {_e_lines_fb}", flush=True)
                 _conn_doc.commit()
             except Exception as exc2:
                 err = str(exc2)[:200]
                 return jsonify({"ok": False, "error": f"Error al guardar: {err}"}), 500
         _lap("insert_doc")
+        if upsert_rows:
+            _lap("upsert_lineas_inline")
 
         # ⚡ PERF: invalidar caches AHORA (antes del thread). Si el operador
         # hace polling enseguida, debe ver el nuevo doc. Costo: <1ms (pops
@@ -3828,6 +4038,8 @@ def register_pickup_routes(app, ctx):
         # ⚡ PERF: construir new_row EN MEMORIA con los datos que YA tenemos.
         # Antes se hacía SELECT extra (1 round-trip = ~30-80ms). Ahora 0.
         from datetime import datetime as _dt_now
+        # Conteo de líneas seleccionadas (solo si vinieron en el body)
+        n_lineas_sel = sum(1 for r in upsert_rows if r[-2]) if upsert_rows else 0
         new_row = {
             "id":                new_doc_id,
             "document_type":     tipo,
@@ -3841,6 +4053,10 @@ def register_pickup_routes(app, ctx):
             "n_lineas":          len(lineas or []),
             "added_by":          added_by,
             "added_at":          _dt_now.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "has_seleccion_lineas":   bool(has_sel_initial),
+            "n_lineas_seleccionadas": n_lineas_sel if upsert_rows else None,
+            "con_saldo":              con_saldo_val,
+            "saldo_zz":               saldo_zz_val,
         }
 
         # Logear timing total — visible en Railway logs para diagnóstico
@@ -3848,8 +4064,9 @@ def register_pickup_routes(app, ctx):
         # de botella, vemos cuál subpaso es el culpable sin adivinar.
         _total_ms = int((_t_perf.time() - _t0) * 1000)
         _laps_str = " | ".join(f"{n}={ms}ms" for n, ms in _laps)
+        _combined_tag = " [COMBINED]" if upsert_rows else ""
         print(f"[pickup_doc_agregar] rid={rid} {tipo} {numero} "
-              f"TOTAL={_total_ms}ms · {_laps_str}", flush=True)
+              f"TOTAL={_total_ms}ms{_combined_tag} · {_laps_str}", flush=True)
 
         resp = {
             "ok": True,
@@ -3857,6 +4074,9 @@ def register_pickup_routes(app, ctx):
             "totales": totales,
             "_perf_ms": _total_ms,  # útil para Daniel inspeccionar desde DevTools
         }
+        if upsert_rows:
+            resp["lineas_guardadas"] = len(upsert_rows)
+            resp["lineas_incluidas"] = n_lineas_sel
         if otro:
             resp["warning_otro_retiro"] = {
                 "request_id": otro["request_id"],

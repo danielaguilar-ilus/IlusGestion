@@ -3855,24 +3855,12 @@ def _invalidate_listing_cache():
         _listing_cache.clear()
 
 
-def get_product_listing(search_query=""):
-    """
-    Devuelve TODOS los productos visibles:
-    - Productos del ERP (con o sin etiqueta en app_products)
-    - Productos creados directamente en la app que NO están en el ERP
+def _product_listing_base_sql(search_query=""):
+    """SQL común para el UNION ALL del listado (sin ORDER ni LIMIT).
 
-    ⚡ PERF (Daniel 2026-05-24): query reescrita para eliminar GROUP BY con
-    múltiples JOINs (que generaba producto cartesiano enorme entre bultos
-    y fotos antes de agrupar). Ahora usamos subqueries correlacionadas en
-    SELECT — MySQL las optimiza usando índices PK y son MUCHO más rápidas
-    que el GROUP BY masivo. Antes ~3000-7000ms cold, ahora ~300-800ms.
+    Devuelve (sql_inner, params). El caller envuelve con ORDER BY + LIMIT
+    o con COUNT(*) según necesite.
     """
-    cache_key = search_query.strip().lower()
-    now = time.time()
-    with _listing_cache_lock:
-        entry = _listing_cache.get(cache_key)
-        if entry and (now - entry[1]) < _LISTING_TTL:
-            return entry[0]
     erp_params = []
     app_params = []
     if search_query:
@@ -3886,10 +3874,7 @@ def get_product_listing(search_query=""):
         erp_where = ""
         app_where = ""
 
-    # ⚡ Sin GROUP BY: subqueries correlacionadas (usan PK index)
-    # Esto evita la explosión cartesiana de filas que tenía la versión
-    # anterior cuando un producto tenía 3 bultos + 5 fotos = 15 filas a agrupar.
-    sql = f"""
+    sql_inner = f"""
         (
           SELECT
               UPPER(TRIM(e.`SKU`))                     AS sku,
@@ -3938,9 +3923,117 @@ def get_product_listing(search_query=""):
           WHERE e.`SKU` IS NULL
           {app_where}
         )
-        ORDER BY nombre, sku
     """
-    result = mysql_fetchall(sql, erp_params + app_params)
+    return sql_inner, erp_params + app_params
+
+
+def get_product_listing_paginated(search_query="", page=1, page_size=100):
+    """Devuelve {rows, total, page, page_size, total_pages, foto0, foto1, foto2}.
+
+    ⚡ PERF MEJORA 2026-05-24 (Daniel): paginación server-side. Antes traíamos
+    TODA la BD (puede ser 5K-15K SKUs) en cada visita a /, ahora solo 100.
+
+    - LIMIT %s OFFSET %s aplicado al UNION ALL ordenado.
+    - COUNT(*) total cacheado aparte (solo cambia al CRUD de productos).
+    - KPI fotos (foto0/foto1/foto2) calculados sobre TODO el universo, no
+      solo la página actual, para que las estadísticas sigan teniendo
+      sentido. Cacheado igual que el total.
+    - Búsqueda (?q=) sigue funcionando en TODA la BD (no en página actual).
+    """
+    # Saneamiento
+    try:
+        page = max(1, int(page))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        page_size = 100
+    if page_size not in (100, 200, 500):
+        page_size = 100  # default seguro
+
+    cache_key = (search_query.strip().lower(), page, page_size)
+    now = time.time()
+    with _listing_cache_lock:
+        entry = _listing_cache.get(cache_key)
+        if entry and (now - entry[1]) < _LISTING_TTL:
+            return entry[0]
+
+    sql_inner, base_params = _product_listing_base_sql(search_query)
+
+    # ── 1) COUNT total (cacheado por search_query separado) ──
+    count_key = ("__count__", search_query.strip().lower())
+    with _listing_cache_lock:
+        c_entry = _listing_cache.get(count_key)
+    if c_entry and (now - c_entry[1]) < _LISTING_TTL:
+        total_count, foto0, foto1, foto2 = c_entry[0]
+    else:
+        # Conteo + KPIs en una sola pasada (usa el mismo UNION ALL)
+        sql_stats = f"""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN total_fotos = 0 THEN 1 ELSE 0 END) AS f0,
+                   SUM(CASE WHEN total_fotos = 1 THEN 1 ELSE 0 END) AS f1,
+                   SUM(CASE WHEN total_fotos >= 2 THEN 1 ELSE 0 END) AS f2
+              FROM ({sql_inner}) AS u
+        """
+        stats_row = mysql_fetchone(sql_stats, base_params) or {}
+        total_count = int(stats_row.get("total") or 0)
+        foto0 = int(stats_row.get("f0") or 0)
+        foto1 = int(stats_row.get("f1") or 0)
+        foto2 = int(stats_row.get("f2") or 0)
+        with _listing_cache_lock:
+            _listing_cache[count_key] = ((total_count, foto0, foto1, foto2), time.time())
+
+    total_pages = max(1, (total_count + page_size - 1) // page_size) if total_count else 1
+    if page > total_pages:
+        page = total_pages
+
+    # ── 2) Página actual (LIMIT + OFFSET) ──
+    offset = (page - 1) * page_size
+    sql_page = f"""
+        SELECT * FROM ({sql_inner}) AS u
+        ORDER BY nombre, sku
+        LIMIT %s OFFSET %s
+    """
+    rows = mysql_fetchall(sql_page, base_params + [page_size, offset])
+
+    result = {
+        "rows": rows,
+        "total": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "foto0": foto0,
+        "foto1": foto1,
+        "foto2": foto2,
+    }
+    with _listing_cache_lock:
+        _listing_cache[cache_key] = (result, time.time())
+    return result
+
+
+def get_product_listing(search_query=""):
+    """Compatibilidad: devuelve TODOS los productos (sin paginar).
+
+    Solo usar para flujos legacy que necesitan toda la lista (export Excel
+    completo, scripts de mantenimiento). Para el listado web usar
+    get_product_listing_paginated().
+
+    ⚡ PERF (Daniel 2026-05-24): query reescrita para eliminar GROUP BY con
+    múltiples JOINs (que generaba producto cartesiano enorme entre bultos
+    y fotos antes de agrupar). Ahora usamos subqueries correlacionadas en
+    SELECT — MySQL las optimiza usando índices PK y son MUCHO más rápidas
+    que el GROUP BY masivo.
+    """
+    cache_key = ("__all__", search_query.strip().lower())
+    now = time.time()
+    with _listing_cache_lock:
+        entry = _listing_cache.get(cache_key)
+        if entry and (now - entry[1]) < _LISTING_TTL:
+            return entry[0]
+    sql_inner, base_params = _product_listing_base_sql(search_query)
+    sql = f"SELECT * FROM ({sql_inner}) AS u ORDER BY nombre, sku"
+    result = mysql_fetchall(sql, base_params)
     with _listing_cache_lock:
         _listing_cache[cache_key] = (result, time.time())
     return result
@@ -6530,17 +6623,33 @@ def index():
         flash(f"SKU {sku_norm} encontrado en ERP pero sin ficha. Usa 'Preparar' para crearlo.", "info")
         return redirect(url_for("index", q=sku_norm))
 
-    products = get_product_listing(q)
+    # ── Paginación server-side (Daniel 2026-05-24) ──
+    # Antes traíamos TODA la BD (puede ser miles de SKUs) y JS ocultaba filas.
+    # Ahora traemos solo la página actual (100 por defecto).
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("size", "100"))
+    except (TypeError, ValueError):
+        page_size = 100
+    if page_size not in (100, 200, 500):
+        page_size = 100
 
-    # Cobertura fotográfica — se calcula en Python para evitar problemas
-    # de tipos (Decimal vs int) al comparar desde MySQL
-    _fotos = [int(p.get("total_fotos") or 0) for p in products]
-    foto0  = sum(1 for f in _fotos if f == 0)
-    foto1  = sum(1 for f in _fotos if f == 1)
-    foto2  = sum(1 for f in _fotos if f >= 2)
+    listing = get_product_listing_paginated(q, page=page, page_size=page_size)
+    products    = listing["rows"]
+    total       = listing["total"]
+    total_pages = listing["total_pages"]
+    page        = listing["page"]   # puede haberse normalizado si page > total_pages
+    foto0       = listing["foto0"]
+    foto1       = listing["foto1"]
+    foto2       = listing["foto2"]
 
     return render_template("index.html", products=products, q=q,
-                           foto0=foto0, foto1=foto1, foto2=foto2)
+                           foto0=foto0, foto1=foto1, foto2=foto2,
+                           total=total, page=page, page_size=page_size,
+                           total_pages=total_pages)
 
 
 @app.route("/products/refresh-cache", methods=["POST"])

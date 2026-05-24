@@ -4860,9 +4860,18 @@ async function rbaAsociarSeleccion(){
   for (const [, info] of docsToAdd){
     const label = `${info.tido} ${info.nudo}`;
     try {
-      // PASO 1: agregar el doc (puede dar 409 si ya está asociado).
-      // El backend SIEMPRE crea con TODAS las líneas; el paso 2 corrige
-      // la selección granular y deja solo las marcadas.
+      // ⚡ PERF Daniel 2026-05-24 (8s → <1.5s): asociar + selección granular
+      // en UN SOLO POST. Antes hacíamos 2 round-trips secuenciales
+      // (agregar doc + guardar líneas). El backend ahora acepta `lineas`
+      // OPCIONAL en el body de /docs/agregar y procesa todo en la misma
+      // transacción + 1 sólo recalc_totales.
+      const lineas_payload = (info.lineas || [])
+        .filter(ln => (ln.qty || 0) > 0)
+        .map(ln => ({
+          sku: ln.sku,
+          incluida: true,
+          cantidad_seleccionada: ln.qty,
+        }));
       const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
         method: 'POST',
         headers: {
@@ -4870,7 +4879,11 @@ async function rbaAsociarSeleccion(){
           'X-Requested-With': 'XMLHttpRequest',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({ document_type: info.tido, document_number: info.nudo })
+        body: JSON.stringify({
+          document_type: info.tido,
+          document_number: info.nudo,
+          lineas: lineas_payload,  // 🆕 selección granular en mismo POST
+        })
       });
       let d;
       try { d = await r.json(); }
@@ -4878,71 +4891,26 @@ async function rbaAsociarSeleccion(){
         errList.push({ label, motivo: `Backend respondió HTML (status ${r.status}). ¿Sesión expirada?` });
         continue;
       }
-      // Doc ya asociado (409) — igual queremos aplicar la nueva selección
-      let docId = null;
       if (r.status === 409 || d.code === 'DUPLICATE'){
-        docId = d.doc_id || null;
+        // Caso DUPLICATE sin líneas → 409 estándar (mantiene compat).
+        // Si vinieron líneas, el backend lo procesa como UPDATE silencioso
+        // y devuelve 200 con duplicate_updated=true (no llega acá).
         dupList.push(label);
-      } else if (!d.ok){
+        continue;
+      }
+      if (!d.ok){
         const motivo = (d.error || `HTTP ${r.status}`).toString().substring(0, 140);
         errList.push({ label, motivo });
         continue;
-      } else {
-        docId = d.doc && d.doc.id;
-        okList.push(label);
-        if (d.warning_otro_retiro){
-          otrosN.push(d.warning_otro_retiro.code);
-        }
       }
-
-      // PASO 2: guardar selección granular de líneas para este doc.
-      // Solo las líneas en info.lineas (las que el operador marcó) van
-      // como incluida=true. El backend marca las restantes con incluida=0
-      // y setea has_seleccion_lineas=1 en el doc.
-      //
-      // FIX Daniel 2026-05-24: antes este try/catch silenciaba el error con
-      // console.warn → si fallaba, la tabla seguía mostrando todas las líneas.
-      // Ahora propagamos al errList para que el operador lo vea con detalle.
-      if (docId && info.lineas && info.lineas.length > 0){
-        const lineas_payload = info.lineas.map(ln => ({
-          sku: ln.sku,
-          incluida: true,
-          cantidad_seleccionada: ln.qty
-        }));
-        console.log(`[rba] POST /docs/${docId}/lineas con`, lineas_payload.length, 'líneas:', lineas_payload);
-        try {
-          const rl = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              'Accept': 'application/json',
-            },
-            body: JSON.stringify({ lineas: lineas_payload })
-          });
-          let dl = null;
-          try { dl = await rl.json(); }
-          catch(_){
-            const txt = await rl.text().catch(()=> '');
-            console.error(`[rba] POST /lineas devolvió no-JSON status=${rl.status} preview=${txt.slice(0,140)}`);
-            errList.push({ label, motivo: `Selección granular: backend devolvió HTML (status ${rl.status}). ¿Sesión expirada?` });
-            continue;
-          }
-          console.log(`[rba] POST /lineas status=${rl.status} ok=${dl.ok} guardadas=${dl.lineas_guardadas}`);
-          if (!dl.ok){
-            // Caso real: la línea agregar funcionó pero la granular no →
-            // el doc quedó asociado SIN selección → tabla mostraría todo.
-            errList.push({ label, motivo: `Selección granular falló: ${dl.error || 'error desconocido'}` });
-            continue;
-          }
-          console.log(`[rba] ✓ has_seleccion_lineas confirmado = 1 para doc ${docId}`);
-        } catch(eg){
-          console.error('[rba] POST /lineas crash de red:', eg);
-          errList.push({ label, motivo: 'Selección granular: error de red — ' + (eg.message || 'desconocido') });
-          continue;
-        }
-      } else if (docId){
-        console.warn(`[rba] doc ${docId} asociado SIN líneas marcadas (info.lineas vacío) → tabla mostrará todas las líneas del snapshot`);
+      okList.push(label);
+      if (d.duplicate_updated){
+        console.log(`[rba] doc ${label} ya estaba asociado → selección actualizada (${d.lineas_guardadas} líneas)`);
+      } else {
+        console.log(`[rba] ✓ doc ${label} asociado (perf=${d._perf_ms || '?'}ms · ${d.lineas_guardadas || 0} líneas)`);
+      }
+      if (d.warning_otro_retiro){
+        otrosN.push(d.warning_otro_retiro.code);
       }
     } catch(e){
       errList.push({ label, motivo: 'Sin conexión: ' + (e.message || 'error de red') });

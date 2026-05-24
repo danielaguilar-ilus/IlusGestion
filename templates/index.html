@@ -20,8 +20,9 @@
 </div>
 
 <div class="px-2 px-md-0">
-  {# ── Stats: Cobertura fotográfica (foto0/foto1/foto2 vienen de Python) ── #}
-  {% set total   = products|length %}
+  {# ── Stats: Cobertura fotográfica (vienen de Python, suman TODA la BD) ── #}
+  {# total/foto0/foto1/foto2 ahora se calculan en backend para todo el universo #}
+  {# de productos, no solo la página visible — así las estadísticas son reales. #}
   {% set cob_pct = ((foto1 + foto2) / total * 100)|round(1) if total > 0 else 0 %}
   {% set p0      = (foto0 / total * 100)|round(1) if total > 0 else 0 %}
   {% set p1      = (foto1 / total * 100)|round(1) if total > 0 else 0 %}
@@ -311,21 +312,10 @@
         </tbody>
       </table>
     </div>
-    {# ── Paginación (debajo de la tabla) ── #}
-    <div class="d-flex align-items-center justify-content-between px-3 py-2"
-         style="border-top:1px solid #2d2d2d;background:#161616;border-radius:0 0 10px 10px">
-      <span class="text-muted small" id="rowCountLabel">{{ products|length }} registro(s)</span>
-      <div class="d-flex align-items-center gap-2">
-        <span style="font-size:.75rem;color:#888">Mostrar:</span>
-        <select id="rowsPerPage" class="form-select form-select-sm"
-                style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px">
-          <option value="100" selected>100 filas</option>
-          <option value="200">200 filas</option>
-          <option value="500">500 filas</option>
-          <option value="all">Todo</option>
-        </select>
-      </div>
-    </div>
+    {# ── Paginación SERVER-SIDE (Daniel 2026-05-24) ── #}
+    {# Antes: la lista TRAÍA TODO y JS ocultaba filas (lento al cargar). #}
+    {# Ahora: el backend devuelve solo 100/200/500 por página → carga rápida. #}
+    {% include "_partials/pagination.html" %}
   </div>
 
   {# ── Cards mobile ── #}
@@ -385,6 +375,9 @@
       </div>
     </div>
     {% endfor %}
+
+    {# Paginación mobile (mismo partial, debajo de las cards) #}
+    {% include "_partials/pagination.html" %}
   </div>
 
   {% else %}
@@ -485,7 +478,12 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 /* ══════════════════════════════════════════
-   PAGINACIÓN + FILTRO KPI (100 / 200 / 500 / Todo)
+   FILTRO KPI CLIENT-SIDE (solo página visible)
+   ══════════════════════════════════════════
+   ⚡ Refactor 2026-05-24 (Daniel): la paginación ahora es SERVER-SIDE.
+   El filtro KPI solo oculta filas dentro de la página visible.
+   Para filtrar TODA la BD por "sin foto" haría falta una query backend
+   con WHERE total_fotos = X (se puede agregar después si Daniel lo pide).
 ══════════════════════════════════════════ */
 var _kpiFilter = null;   // null = todos | 'con_foto' | '0' | '1' | '2'
 
@@ -498,41 +496,17 @@ function _pasaFiltro(fotos) {
 }
 
 function applyTableFilters() {
-  var sel   = document.getElementById('rowsPerPage');
-  var label = document.getElementById('rowCountLabel');
-  var max   = (!sel || sel.value === 'all') ? Infinity : parseInt(sel.value, 10);
-  var shown = 0;
-
   /* ── Desktop: filas de la tabla ── */
   document.querySelectorAll('#productTable tbody tr').forEach(function(row) {
     var fotos = parseInt(row.dataset.fotos || '0', 10);
-    if (_pasaFiltro(fotos) && shown < max) {
-      row.style.display = '';
-      shown++;
-    } else {
-      row.style.display = 'none';
-    }
+    row.style.display = _pasaFiltro(fotos) ? '' : 'none';
   });
 
   /* ── Mobile: cards ── */
-  var mShown = 0;
   document.querySelectorAll('.mobile-product-card').forEach(function(card) {
     var fotos = parseInt(card.dataset.fotos || '0', 10);
-    if (_pasaFiltro(fotos) && mShown < max) {
-      card.style.display = '';
-      mShown++;
-    } else {
-      card.style.display = 'none';
-    }
+    card.style.display = _pasaFiltro(fotos) ? '' : 'none';
   });
-
-  /* Usa el conteo del viewport activo */
-  var visibles = window.innerWidth >= 768 ? shown : mShown;
-  if (label) {
-    label.textContent = (_kpiFilter
-      ? visibles + ' filtrados de {{ products|length }} registro(s)'
-      : visibles + ' de {{ products|length }} registro(s)');
-  }
 }
 
 /* KPI cards cliqueables */
@@ -552,7 +526,8 @@ document.querySelectorAll('.kpi-card').forEach(function(card) {
       card.style.boxShadow  = '0 0 0 4px rgba(204,0,0,.15)';
       /* Banner de filtro activo */
       var labels = { 'con_foto':'Con foto (≥1)', '0':'Sin foto', '1':'1 foto', '2':'2 fotos (mismo SKU)' };
-      document.getElementById('kpiFilterLabel').textContent = 'Filtro activo: ' + (labels[f] || f);
+      document.getElementById('kpiFilterLabel').textContent =
+        'Filtro activo (solo en esta pagina): ' + (labels[f] || f);
       document.getElementById('kpiFilterBanner').style.display = '';
       applyTableFilters();
     }
@@ -568,13 +543,6 @@ function clearKpiFilter() {
   document.getElementById('kpiFilterBanner').style.display = 'none';
   applyTableFilters();
 }
-
-/* Selector de filas */
-(function(){
-  var sel = document.getElementById('rowsPerPage');
-  if (sel) sel.addEventListener('change', applyTableFilters);
-  applyTableFilters();   // aplicar al cargar (100 por defecto)
-})();
 
 /* ══════════════════════════════════════════
    ESCÁNER FÍSICO DE CÓDIGO DE BARRAS

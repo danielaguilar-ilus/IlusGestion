@@ -1,0 +1,101 @@
+{# ══════════════════════════════════════════════════════════════════════
+   PARTIAL · Paginación server-side ILUS premium
+   ══════════════════════════════════════════════════════════════════════
+   Requiere variables en el contexto:
+     - total        : total de registros (toda la BD, no la página)
+     - page         : página actual (1-indexed)
+     - page_size    : tamaño de página (100/200/500)
+     - total_pages  : total de páginas
+     - q            : (opcional) string de búsqueda actual, se preserva
+   Uso:
+     {% include "_partials/pagination.html" %}
+   ══════════════════════════════════════════════════════════════════════ #}
+
+{% set _pg_q  = q if q is defined else '' %}
+{% set _pg_p  = page if page is defined else 1 %}
+{% set _pg_sz = page_size if page_size is defined else 100 %}
+{% set _pg_tp = total_pages if total_pages is defined else 1 %}
+{% set _pg_t  = total if total is defined else (products|length if products is defined else 0) %}
+{% set _pg_first = ((_pg_p - 1) * _pg_sz) + 1 if _pg_t > 0 else 0 %}
+{% set _pg_last  = (_pg_first + (products|length) - 1) if _pg_t > 0 else 0 %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2"
+     style="border-top:1px solid #2d2d2d;background:#161616;border-radius:0 0 10px 10px">
+
+  {# ── Contador ── #}
+  <div class="d-flex align-items-center gap-2" style="font-size:.78rem;color:#bbb">
+    <i class="bi bi-collection" style="color:var(--ilus-red,#dc2626)"></i>
+    {% if _pg_t > 0 %}
+      Mostrando <strong style="color:#fff">{{ _pg_first }}–{{ _pg_last }}</strong>
+      de <strong style="color:#fff">{{ _pg_t }}</strong>
+      {% if _pg_q %}<span class="text-muted">· busqueda "<strong>{{ _pg_q }}</strong>"</span>{% endif %}
+    {% else %}
+      <span class="text-muted">Sin resultados</span>
+    {% endif %}
+  </div>
+
+  {# ── Controles ── #}
+  <div class="d-flex align-items-center gap-2">
+
+    {# Selector de tamaño (recarga al cambiar) #}
+    <select class="form-select form-select-sm pagination-size-select"
+            data-q="{{ _pg_q }}"
+            style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px;
+                   background:#1a1a1a;color:#fff;border:1px solid #2d2d2d">
+      <option value="100" {% if _pg_sz == 100 %}selected{% endif %}>100 por pagina</option>
+      <option value="200" {% if _pg_sz == 200 %}selected{% endif %}>200 por pagina</option>
+      <option value="500" {% if _pg_sz == 500 %}selected{% endif %}>500 por pagina</option>
+    </select>
+
+    {# Botón anterior #}
+    {% if _pg_p > 1 %}
+      <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}"
+         class="btn btn-sm btn-outline-secondary fw-bold" style="font-size:.78rem">
+        <i class="bi bi-chevron-left"></i> Anterior
+      </a>
+    {% else %}
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+              style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
+        <i class="bi bi-chevron-left"></i> Anterior
+      </button>
+    {% endif %}
+
+    {# Indicador página actual #}
+    <span class="badge"
+          style="background:var(--ilus-red,#dc2626);color:#fff;font-size:.78rem;
+                 padding:6px 10px;border-radius:6px;font-weight:700">
+      Pagina {{ _pg_p }} de {{ _pg_tp }}
+    </span>
+
+    {# Botón siguiente #}
+    {% if _pg_p < _pg_tp %}
+      <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}"
+         class="btn btn-sm btn-ilus fw-bold" style="font-size:.78rem">
+        Siguiente <i class="bi bi-chevron-right"></i>
+      </a>
+    {% else %}
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+              style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
+        Siguiente <i class="bi bi-chevron-right"></i>
+      </button>
+    {% endif %}
+
+  </div>
+</div>
+
+<script>
+/* ── Handler del selector de tamaño (se ejecuta solo una vez) ── */
+(function(){
+  if (window.__ilusPaginationInit) return;
+  window.__ilusPaginationInit = true;
+  document.addEventListener('change', function(e){
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('pagination-size-select')) return;
+    var sz = encodeURIComponent(t.value);
+    var q  = encodeURIComponent(t.dataset.q || '');
+    // Reset a página 1 al cambiar tamaño (más predecible)
+    var url = '?page=1&size=' + sz + (q ? ('&q=' + q) : '');
+    window.location.href = url;
+  });
+})();
+</script>
