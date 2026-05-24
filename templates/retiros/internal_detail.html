@@ -2848,14 +2848,29 @@ function rbaOpen(){
   _RBA.selDoc.clear();
   _RBA.selCli.clear();
   rbaUpdateCounter();
-  // Focus input según tab activo
+  // Focus input según tab activo + pre-poblar RUT sin DV
+  // FIX Daniel 2026-05-23: el RUT del cliente actual (ej. "25.547.065-5")
+  // se pre-pobla en el tab "Por RUT/nombre" SIN dígito verificador ni puntos
+  // (ej. "25547065"), editable, para arrancar la búsqueda más rápido.
   setTimeout(()=>{
     if (_RBA.tab === 'doc'){
       const i = document.getElementById('rbaDocNudo');
       if (i) i.focus();
     } else {
       const i = document.getElementById('rbaCliQ');
-      if (i) i.focus();
+      if (i){
+        // Pre-poblar SOLO si está vacío (no sobrescribir si el operador ya escribió)
+        if (!i.value && _RUT_CLI){
+          const clean = String(_RUT_CLI).replace(/[.\-\s]/g, '');
+          // Si >= 8 chars asumimos que el último es DV y lo quitamos
+          const rutBase = clean.length >= 8 ? clean.slice(0, -1) : clean;
+          i.value = rutBase;
+          // Auto-buscar al abrir (sin esperar Enter)
+          setTimeout(()=> rbaBuscarPorCliente(), 100);
+        }
+        i.focus();
+        i.select();
+      }
     }
   }, 350);
 }
@@ -3346,27 +3361,57 @@ async function rbaAsociarSeleccion(){
   const btn = document.getElementById('rbaAssocBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Asociando…</span>';
-  let okN = 0, dupN = 0, errN = 0, otrosN = [];
+
+  // FIX Daniel 2026-05-23: capturar la causa específica de cada error
+  // (antes el toast genérico "2 error(es)" no decía POR QUÉ fallaba).
+  const okList = [];     // docs asociados OK
+  const dupList = [];    // docs ya asociados (409 DUPLICATE)
+  const errList = [];    // docs con error real (con detalle)
+  const otrosN = [];
   for (const [, info] of docsToAdd){
+    const label = `${info.tido} ${info.nudo}`;
     try {
       const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ document_type: info.tido, document_number: info.nudo })
       });
-      if (r.status === 409){ dupN++; continue; }
-      const d = await r.json();
-      if (!d.ok){ errN++; continue; }
-      okN++;
+      // Parse defensivo: si backend devuelve HTML (sesión expirada, etc.)
+      // no rompemos con "Unexpected token <".
+      let d;
+      try { d = await r.json(); }
+      catch(parseErr) {
+        errList.push({ label, motivo: `Backend respondió HTML (status ${r.status}). ¿Sesión expirada?` });
+        continue;
+      }
+      if (r.status === 409 || d.code === 'DUPLICATE'){
+        dupList.push(label);
+        continue;
+      }
+      if (!d.ok){
+        const motivo = (d.error || `HTTP ${r.status}`).toString().substring(0, 140);
+        errList.push({ label, motivo });
+        continue;
+      }
+      okList.push(label);
       if (d.warning_otro_retiro){
         otrosN.push(d.warning_otro_retiro.code);
       }
     } catch(e){
-      errN++;
+      errList.push({ label, motivo: 'Sin conexión: ' + (e.message || 'error de red') });
     }
   }
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-box-arrow-in-down"></i><span>Asociar al retiro</span>';
+
+  const okN = okList.length;
+  const dupN = dupList.length;
+  const errN = errList.length;
+
   if (okN){
     let msg = `✓ ${okN} documento${okN===1?'':'s'} asociado${okN===1?'':'s'}`;
     if (dupN) msg += ` · ${dupN} ya estaban`;
@@ -3375,13 +3420,34 @@ async function rbaAsociarSeleccion(){
     if (otrosN.length){
       ilusToast(`⚠ Algunos figuran en otros retiros: ${otrosN.join(', ')}`, { type:'warning', duration:6000 });
     }
+    // Si hubo errores parciales, los mostramos también con detalle
+    if (errN){
+      const detalle = errList.map(e => `${e.label}: ${e.motivo}`).join('\n');
+      ilusAlert({
+        type: 'warning',
+        title: `${errN} no se pudieron asociar`,
+        message: 'Algunos productos sí se asociaron, otros fallaron:',
+        sub: detalle,
+        subHtml: false,
+      });
+    }
     await refrescarDocsAsociados(_RID);
     cargarSaldoCliente(_RID);
     rbaClose();
   } else if (dupN && !errN){
-    ilusToast(`Los ${dupN} documento(s) ya estaban asociados`, { type:'warning' });
+    ilusToast(`Los ${dupN} documento${dupN===1?'':'s'} ya estaban asociado${dupN===1?'':'s'}: ${dupList.join(', ')}`, {
+      type:'warning', duration: 6000
+    });
   } else {
-    ilusToast(`No se pudo asociar — ${errN} error(es)`, { type:'error' });
+    // 100% error — mostrar TODOS los motivos
+    const detalle = errList.map(e => `${e.label}: ${e.motivo}`).join('\n');
+    ilusAlert({
+      type: 'error',
+      title: `No se pudo asociar (${errN} error${errN===1?'':'es'})`,
+      message: 'Estos son los motivos exactos:',
+      sub: detalle,
+      subHtml: false,
+    });
   }
 }
 
