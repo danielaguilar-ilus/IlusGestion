@@ -1,244 +1,654 @@
 {% extends "base.html" %}
-{% block title %}Calendario operativo — Retiros — ILUS{% endblock %}
+{% block title %}Agenda interna — Retiros — ILUS{% endblock %}
 {% block content %}
+{# ════════════════════════════════════════════════════════════════════════
+   ILUS · Retiros — AGENDA INTERNA DEL OPERADOR (rediseño 2027 premium)
+   Daniel 2026-05-24:
+   - Cada slot ocupado muestra CÓDIGO + CLIENTE + estado coloreado
+   - Distingue visualmente fecha SOLICITADA / PROPUESTA / CONFIRMADA / DISPUTA
+   - Click → drawer lateral con botones Llamar / Email / Reagendar / Ficha
+   - DRAG-AND-DROP entre slots (desktop) → modal de confirmación → propuesta
+   - Mobile: vista LISTA agrupada por día + drawer inferior + tap "Mover"
+   - Polling 30s para refrescar slots ocupados sin recargar
+   - Indicador ⚠ cuando el ERP trae email/teléfono distinto al declarado
+   ════════════════════════════════════════════════════════════════════════ #}
 <style>
-:root{--rad:12px;--ilus-red:#cc0000;--ink:#0f172a;}
-.cal-hero{
-  background:linear-gradient(135deg,#0f172a 0%,#1a1a2e 60%,#1e293b 100%);
-  border-radius:14px;padding:22px 26px;color:#fff;margin-bottom:16px;
-  position:relative;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.15);
+:root{
+  --ilus-red:#dc2626;
+  --ilus-red-d:#991b1b;
+  --ilus-ink:#0a0a0a;
+  --ilus-ink-soft:#0f172a;
+  --ilus-bg:#fafbfc;
+  --ilus-line:#eaecf0;
+  --ilus-muted:#6b7280;
+  --ilus-muted-soft:#9ca3af;
+
+  /* Estados de la fecha — los 4 tipos críticos */
+  --kd-req:#3b82f6;   /* SOLICITADA por el cliente — azul */
+  --kd-req-bg:#eff6ff;
+  --kd-prop:#f59e0b;  /* PROPUESTA por ILUS — ámbar */
+  --kd-prop-bg:#fff8e6;
+  --kd-conf:#16a34a;  /* CONFIRMADA — verde */
+  --kd-conf-bg:#f0fdf4;
+  --kd-disp:#dc2626;  /* DISPUTA — rojo */
+  --kd-disp-bg:#fef2f2;
 }
-.cal-hero::before{
-  content:'';position:absolute;top:-50px;right:-50px;width:240px;height:240px;
-  border-radius:50%;background:rgba(204,0,0,.10);pointer-events:none;
+
+/* ── Hero ───────────────────────────────────────────────────────────── */
+.agi-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 60%,#0f172a 100%);
+  border-radius:16px;padding:22px 26px;color:#fff;margin-bottom:14px;
+  position:relative;overflow:hidden;
+  box-shadow:0 8px 24px -8px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.06);
 }
-.cal-hero-row{display:flex;gap:18px;flex-wrap:wrap;align-items:center;position:relative;z-index:1;}
-.cal-hero-title{font-size:1.2rem;font-weight:900;letter-spacing:.3px;}
-.cal-hero-sub{font-size:.82rem;color:#94a3b8;margin-top:3px;}
+.agi-hero::before{
+  content:'';position:absolute;top:-60px;right:-60px;width:260px;height:260px;
+  border-radius:50%;background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 70%);
+  pointer-events:none;
+}
+.agi-hero-row{display:flex;gap:18px;flex-wrap:wrap;align-items:center;position:relative;z-index:1;}
+.agi-hero-badge{
+  width:54px;height:54px;border-radius:14px;
+  background:linear-gradient(135deg,var(--ilus-red),var(--ilus-red-d));
+  display:flex;align-items:center;justify-content:center;font-size:1.6rem;flex-shrink:0;
+  box-shadow:0 8px 18px -4px rgba(220,38,38,.45),inset 0 1px 0 rgba(255,255,255,.18);
+}
+.agi-hero-title{font-size:1.25rem;font-weight:900;letter-spacing:.3px;}
+.agi-hero-sub{font-size:.82rem;color:#94a3b8;margin-top:3px;}
+.agi-live-dot{
+  display:inline-block;width:7px;height:7px;border-radius:50%;
+  background:#16a34a;box-shadow:0 0 0 0 rgba(22,163,74,.6);
+  animation:agiLive 1.8s ease-out infinite;margin-right:4px;
+}
+@keyframes agiLive{
+  0%{box-shadow:0 0 0 0 rgba(22,163,74,.6);}
+  100%{box-shadow:0 0 0 10px rgba(22,163,74,0);}
+}
 
-.cal-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
-             background:#fff;border:1px solid #eaecf0;border-radius:12px;
-             padding:12px 16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.04);}
-.cal-nav-btn{padding:6px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;
-             cursor:pointer;font-size:.82rem;color:#374151;font-weight:600;
-             display:inline-flex;align-items:center;gap:6px;transition:all .15s;}
-.cal-nav-btn:hover{background:#fafbfc;border-color:#cbd5e1;}
-.cal-vista-tabs{display:flex;gap:0;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;}
-.cal-vista-btn{padding:6px 14px;border:none;background:#fff;font-size:.8rem;font-weight:600;
-               color:#6b7280;cursor:pointer;}
-.cal-vista-btn.active{background:#0f172a;color:#fff;}
+/* ── Stats strip ────────────────────────────────────────────────────── */
+.agi-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:14px;}
+.agi-stat{
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;padding:11px 14px;
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.04),inset 0 1px 0 rgba(255,255,255,.6);
+  transition:transform .15s,box-shadow .15s;
+}
+.agi-stat:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.08);}
+.agi-stat-icon{
+  width:36px;height:36px;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;font-size:1rem;flex-shrink:0;
+}
+.agi-stat-num{font-size:1.18rem;font-weight:900;color:var(--ilus-ink);line-height:1;}
+.agi-stat-lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--ilus-muted-soft);margin-top:3px;}
 
-.cal-stats-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
-.cal-stat{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:11px 14px;
-          display:flex;align-items:center;gap:10px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
-.cal-stat-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
-               justify-content:center;font-size:.95rem;flex-shrink:0;}
-.cal-stat-num{font-size:1.15rem;font-weight:900;color:#0f172a;line-height:1;}
-.cal-stat-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;margin-top:2px;}
+/* ── Toolbar ────────────────────────────────────────────────────────── */
+.agi-toolbar{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;
+  padding:10px 14px;margin-bottom:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.agi-nav-btn{
+  padding:7px 12px;border:1px solid #e5e7eb;border-radius:9px;background:#fff;
+  cursor:pointer;font-size:.82rem;color:#374151;font-weight:700;
+  display:inline-flex;align-items:center;gap:6px;transition:all .15s;
+  min-height:38px;
+}
+.agi-nav-btn:hover{background:#fafbfc;border-color:#cbd5e1;transform:translateY(-1px);}
+.agi-nav-btn:active{transform:scale(.97);}
+.agi-vista-tabs{display:flex;gap:0;border:1px solid #e5e7eb;border-radius:9px;overflow:hidden;}
+.agi-vista-btn{
+  padding:7px 14px;border:none;background:#fff;font-size:.8rem;font-weight:700;
+  color:#6b7280;cursor:pointer;transition:all .15s;min-height:38px;
+}
+.agi-vista-btn.active{background:var(--ilus-ink);color:#fff;}
+.agi-range-label{font-weight:800;color:var(--ilus-ink);font-size:.95rem;margin-left:6px;}
 
-/* Vista semanal: 7 columnas */
-.cal-week{display:grid;grid-template-columns:90px repeat(7, minmax(0, 1fr));gap:1px;
-          background:#eaecf0;border:1px solid #eaecf0;border-radius:12px;overflow:hidden;
-          box-shadow:0 2px 12px rgba(0,0,0,.06);}
-.cal-week-head{background:#fafbfc;padding:10px 8px;text-align:center;
-               font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;
-               color:#6b7280;border-bottom:2px solid #eaecf0;}
-.cal-week-head.today{background:linear-gradient(135deg,#fee2e2,#fef2f2);color:#991b1b;}
-.cal-week-head .cw-day{font-size:1.05rem;font-weight:900;color:#0f172a;line-height:1;margin:3px 0;}
-.cal-week-head.today .cw-day{color:#cc0000;}
-.cal-week-head .cw-bar{margin-top:6px;height:3px;background:#e5e7eb;border-radius:2px;overflow:hidden;}
-.cal-week-head .cw-bar-fill{height:100%;background:#16a34a;transition:width .4s;}
+/* ── LEYENDA de colores (clave para el operador) ───────────────────── */
+.agi-legend{
+  display:flex;gap:10px;flex-wrap:wrap;background:#fff;
+  border:1px solid var(--ilus-line);border-radius:12px;padding:9px 14px;
+  margin-bottom:12px;align-items:center;font-size:.74rem;
+}
+.agi-legend-title{font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+  color:var(--ilus-muted-soft);font-size:.65rem;margin-right:4px;}
+.agi-legend-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:3px 9px;border-radius:50px;font-weight:700;font-size:.7rem;
+}
+.agi-legend-chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
 
-.cal-time-col{background:#fafbfc;padding:8px 6px;text-align:right;
-              font-size:.68rem;color:#6b7280;font-family:monospace;font-weight:700;
-              border-right:2px solid #eaecf0;}
-.cal-slot{background:#fff;min-height:80px;padding:5px;position:relative;
-          transition:background .1s;}
-.cal-slot:hover{background:#fafbfc;}
-.cal-slot.full{background:#fef2f2;}
-.cal-slot.high{background:linear-gradient(0deg,#fef9c3,#fff);}
-.cal-slot-cap{position:absolute;top:2px;right:4px;font-size:.6rem;color:#9ca3af;font-weight:700;}
+/* ── Calendario semanal ─────────────────────────────────────────────── */
+.agi-week{
+  display:grid;grid-template-columns:78px repeat(7, minmax(0, 1fr));gap:1px;
+  background:var(--ilus-line);border:1px solid var(--ilus-line);
+  border-radius:12px;overflow:hidden;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+}
+.agi-week-head{
+  background:#fafbfc;padding:9px 6px;text-align:center;
+  font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;
+  color:var(--ilus-muted);border-bottom:2px solid var(--ilus-line);
+}
+.agi-week-head.today{background:linear-gradient(135deg,#fee2e2,#fef2f2);color:#991b1b;}
+.agi-week-head .agi-day{font-size:1.05rem;font-weight:900;color:var(--ilus-ink);line-height:1;margin:3px 0;}
+.agi-week-head.today .agi-day{color:var(--ilus-red);}
+.agi-week-head .agi-bar{margin-top:5px;height:3px;background:#e5e7eb;border-radius:2px;overflow:hidden;}
+.agi-week-head .agi-bar-fill{height:100%;background:#16a34a;transition:width .4s;}
 
-.cal-pick{background:#fff;border-left:3px solid #6b7280;border-radius:5px;
-          padding:5px 7px;margin-bottom:3px;cursor:pointer;
-          font-size:.7rem;line-height:1.25;
-          box-shadow:0 1px 2px rgba(0,0,0,.06);transition:all .15s;}
-.cal-pick:hover{transform:translateX(2px);box-shadow:0 3px 8px rgba(0,0,0,.1);}
-.cal-pick-status-solicitud_recibida{border-left-color:#2563eb;}
-.cal-pick-status-en_revision{border-left-color:#06b6d4;}
-.cal-pick-status-informacion_incompleta{border-left-color:#f59e0b;}
-.cal-pick-status-propuesta_enviada{border-left-color:#a855f7;}
-.cal-pick-status-esperando_cliente{border-left-color:#94a3b8;}
-.cal-pick-status-agenda_confirmada{border-left-color:#16a34a;background:#f0fdf4;}
-.cal-pick-status-reagendada{border-left-color:#f59e0b;}
-.cal-pick-status-rechazada{border-left-color:#dc2626;opacity:.55;text-decoration:line-through;}
-.cal-pick-status-en_preparacion{border-left-color:#0f172a;background:#f1f5f9;}
-.cal-pick-status-retirada{border-left-color:#16a34a;background:#dcfce7;}
-.cal-pick-status-fallida{border-left-color:#dc2626;background:#fee2e2;}
-.cal-pick-status-cerrada{border-left-color:#6b7280;opacity:.6;}
-.cal-pick-code{font-weight:800;color:#0f172a;font-family:monospace;font-size:.66rem;}
-.cal-pick-cliente{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cal-pick-meta{color:#6b7280;font-size:.62rem;display:flex;justify-content:space-between;}
+.agi-time-col{
+  background:#fafbfc;padding:7px 5px;text-align:right;
+  font-size:.68rem;color:var(--ilus-muted);font-family:'JetBrains Mono',monospace;font-weight:700;
+  border-right:2px solid var(--ilus-line);
+}
+.agi-slot{
+  background:#fff;min-height:78px;padding:4px;position:relative;
+  transition:background .12s,box-shadow .12s;
+}
+.agi-slot.full{background:linear-gradient(180deg,#fee2e2 0%,#fef2f2 100%);}
+.agi-slot.high{background:linear-gradient(180deg,#fef9c3 0%,#fff 100%);}
+.agi-slot.drag-over{
+  background:linear-gradient(135deg,#dcfce7,#bbf7d0);
+  box-shadow:inset 0 0 0 2px var(--kd-conf);
+}
+.agi-slot.drag-over-invalid{
+  background:linear-gradient(135deg,#fee2e2,#fecaca);
+  box-shadow:inset 0 0 0 2px var(--ilus-red);
+}
+.agi-slot-cap{
+  position:absolute;top:2px;right:4px;font-size:.6rem;color:var(--ilus-muted-soft);
+  font-weight:800;font-family:'JetBrains Mono',monospace;
+}
 
-/* Drawer ficha completa */
-.fc-drawer{position:fixed;top:0;right:-100%;width:520px;max-width:100%;height:100vh;background:#fff;
-           border-left:1px solid #eaecf0;box-shadow:-8px 0 24px rgba(0,0,0,.12);
-           transition:right .3s ease;z-index:1050;display:flex;flex-direction:column;}
-.fc-drawer.open{right:0;}
-.fc-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.4);
-             opacity:0;pointer-events:none;transition:opacity .25s;z-index:1049;}
-.fc-backdrop.open{opacity:1;pointer-events:all;}
-.fc-header{padding:18px 24px;background:#0f172a;color:#fff;border-bottom:3px solid #cc0000;
-           display:flex;align-items:flex-start;gap:12px;flex-shrink:0;}
-.fc-header .fc-code{font-family:monospace;font-size:1.05rem;font-weight:900;}
-.fc-header .fc-cliente{font-size:.85rem;color:#cbd5e1;margin-top:2px;}
-.fc-header .fc-status{font-size:.62rem;padding:3px 10px;border-radius:50px;font-weight:800;
-                      text-transform:uppercase;letter-spacing:.4px;display:inline-block;margin-top:6px;}
-.fc-body{flex:1;overflow-y:auto;padding:0;}
-.fc-section{padding:14px 24px;border-bottom:1px solid #f3f4f6;}
-.fc-section h6{font-size:.66rem;font-weight:800;text-transform:uppercase;
-               letter-spacing:.5px;color:#9ca3af;margin-bottom:9px;}
-.fc-row{display:flex;justify-content:space-between;font-size:.82rem;padding:5px 0;
-        border-bottom:1px dashed #f3f4f6;}
-.fc-row:last-child{border-bottom:none;}
-.fc-row-lbl{color:#6b7280;font-weight:600;font-size:.74rem;}
-.fc-row-val{color:#0f172a;font-weight:600;text-align:right;}
-.fc-actions{padding:14px 24px;background:#fafbfc;border-top:1px solid #eaecf0;display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;}
-.fc-empty{padding:36px 18px;text-align:center;color:#9ca3af;font-size:.86rem;}
+/* ── Tarjeta de retiro (la pieza clave para Daniel) ────────────────── */
+.agi-pick{
+  background:#fff;border:1px solid #e5e7eb;border-left:3px solid #6b7280;
+  border-radius:7px;padding:5px 7px;margin-bottom:3px;cursor:grab;
+  font-size:.7rem;line-height:1.25;
+  box-shadow:0 1px 2px rgba(0,0,0,.06);
+  transition:all .18s cubic-bezier(.34,1.56,.64,1);
+  position:relative;
+}
+.agi-pick:hover{
+  transform:translateX(2px) scale(1.02);
+  box-shadow:0 5px 14px rgba(0,0,0,.14);
+  z-index:5;
+}
+.agi-pick:active{cursor:grabbing;transform:scale(.98);}
+.agi-pick.dragging{opacity:.35;transform:scale(.95);}
 
-.fc-pkg-card{background:#fafbfc;border:1px solid #eaecf0;border-radius:8px;padding:10px 12px;margin-bottom:6px;}
-.fc-pkg-meta{font-size:.7rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 12px;margin-top:3px;}
+/* Pintamos por TIPO DE FECHA (la jerarquía visual que pidió Daniel) */
+.agi-pick.kd-requested{
+  border-left-color:var(--kd-req);background:var(--kd-req-bg);
+}
+.agi-pick.kd-proposed{
+  border-left-color:var(--kd-prop);background:var(--kd-prop-bg);
+}
+.agi-pick.kd-confirmed{
+  border-left-color:var(--kd-conf);background:var(--kd-conf-bg);
+}
+.agi-pick.kd-disputed{
+  border-left-color:var(--kd-disp);background:var(--kd-disp-bg);
+  animation:agiDisputed 2.2s ease-in-out infinite;
+}
+@keyframes agiDisputed{
+  0%,100%{box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 0 rgba(220,38,38,.45);}
+  50%{box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 4px rgba(220,38,38,0);}
+}
 
-.fc-erp{background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;}
-.fc-erp-line{display:grid;grid-template-columns:auto 1fr auto;gap:8px;font-size:.76rem;padding:5px 0;border-bottom:1px dashed rgba(0,0,0,.06);}
-.fc-erp-line:last-child{border-bottom:none;}
-.fc-erp-sku{font-family:monospace;color:#1e40af;font-weight:700;font-size:.7rem;}
-.fc-erp-qty{font-weight:700;color:#0f172a;}
+.agi-pick-top{
+  display:flex;align-items:center;gap:5px;margin-bottom:2px;
+}
+.agi-pick-code{
+  font-weight:900;font-family:'JetBrains Mono',monospace;font-size:.62rem;
+  color:var(--ilus-ink);background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px;
+  letter-spacing:.3px;
+}
+.agi-pick-kd{
+  font-size:.55rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;
+  padding:1px 5px;border-radius:50px;color:#fff;
+}
+.agi-pick-kd.kd-requested{background:var(--kd-req);}
+.agi-pick-kd.kd-proposed{background:var(--kd-prop);}
+.agi-pick-kd.kd-confirmed{background:var(--kd-conf);}
+.agi-pick-kd.kd-disputed{background:var(--kd-disp);}
+.agi-pick-warn{
+  margin-left:auto;color:#f59e0b;font-size:.78rem;cursor:help;
+  filter:drop-shadow(0 0 2px rgba(245,158,11,.5));
+}
+.agi-pick-cliente{
+  font-weight:700;color:var(--ilus-ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:.72rem;
+}
+.agi-pick-meta{
+  color:var(--ilus-muted);font-size:.6rem;display:flex;justify-content:space-between;
+  margin-top:2px;
+}
 
-.fc-prep-box{background:linear-gradient(135deg,#fef9c3,#fff);border:1px solid #fde68a;border-radius:10px;padding:11px 14px;}
-.fc-prep-box .fc-prep-lbl{font-size:.62rem;font-weight:800;text-transform:uppercase;color:#92400e;letter-spacing:.4px;}
-.fc-prep-box .fc-prep-val{font-size:.84rem;font-weight:700;color:#7c2d12;margin-top:3px;}
+/* ── Vista LISTA mobile (cuando <768px) ────────────────────────────── */
+.agi-list{display:none;}
+.agi-list-day{
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;
+  margin-bottom:12px;overflow:hidden;
+}
+.agi-list-day-head{
+  background:linear-gradient(135deg,#0a0a0a,#1a1a1a);color:#fff;
+  padding:12px 16px;display:flex;align-items:center;gap:10px;
+  font-weight:800;
+}
+.agi-list-day-head.today{background:linear-gradient(135deg,var(--ilus-red),var(--ilus-red-d));}
+.agi-list-day-name{font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;
+  color:rgba(255,255,255,.7);font-weight:700;}
+.agi-list-day-num{font-size:1.3rem;font-weight:900;line-height:1;}
+.agi-list-day-stats{margin-left:auto;font-size:.7rem;color:rgba(255,255,255,.85);text-align:right;}
+.agi-list-day-body{padding:8px 12px;}
+.agi-list-pick{
+  border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;
+  margin-bottom:8px;cursor:pointer;
+  display:flex;flex-direction:column;gap:4px;
+  transition:all .18s;
+}
+.agi-list-pick:active{transform:scale(.98);}
+.agi-list-pick.kd-requested{border-left:4px solid var(--kd-req);background:var(--kd-req-bg);}
+.agi-list-pick.kd-proposed{border-left:4px solid var(--kd-prop);background:var(--kd-prop-bg);}
+.agi-list-pick.kd-confirmed{border-left:4px solid var(--kd-conf);background:var(--kd-conf-bg);}
+.agi-list-pick.kd-disputed{border-left:4px solid var(--kd-disp);background:var(--kd-disp-bg);}
+.agi-list-pick-top{display:flex;align-items:center;gap:8px;}
+.agi-list-pick-time{font-family:'JetBrains Mono',monospace;font-weight:900;
+  color:var(--ilus-ink);font-size:.85rem;}
+.agi-list-pick-name{font-weight:700;color:var(--ilus-ink);font-size:.88rem;line-height:1.2;}
+.agi-list-pick-meta{font-size:.7rem;color:var(--ilus-muted);}
+.agi-list-empty-day{
+  padding:16px;text-align:center;color:var(--ilus-muted-soft);
+  font-size:.85rem;font-style:italic;
+}
 
-.fc-log-item{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid #f9fafb;font-size:.74rem;}
-.fc-log-item:last-child{border-bottom:none;}
-.fc-log-icon{width:24px;height:24px;border-radius:6px;background:#f3f4f6;color:#6b7280;
-             display:flex;align-items:center;justify-content:center;font-size:.7rem;flex-shrink:0;}
-.fc-log-time{color:#9ca3af;font-size:.66rem;font-family:monospace;flex-shrink:0;}
+/* ── Drawer ficha rápida (lateral en desktop, inferior en mobile) ─── */
+.agi-backdrop{
+  position:fixed;inset:0;background:rgba(10,10,10,.45);
+  backdrop-filter:blur(4px);
+  opacity:0;pointer-events:none;transition:opacity .25s;z-index:1049;
+}
+.agi-backdrop.open{opacity:1;pointer-events:all;}
 
-/* Modal proponer */
-.prop-form input,.prop-form select,.prop-form textarea{font-size:.84rem;}
+.agi-drawer{
+  position:fixed;top:0;right:-100%;width:480px;max-width:100%;height:100vh;
+  background:#fff;border-left:1px solid var(--ilus-line);
+  box-shadow:-10px 0 32px rgba(0,0,0,.18);
+  transition:right .3s cubic-bezier(.34,1.56,.64,1);
+  z-index:1050;display:flex;flex-direction:column;
+}
+.agi-drawer.open{right:0;}
+
+.agi-drawer-head{
+  padding:18px 22px;background:linear-gradient(135deg,#0a0a0a,#1a1a2e);
+  color:#fff;border-bottom:3px solid var(--ilus-red);
+  display:flex;align-items:flex-start;gap:12px;flex-shrink:0;
+  position:relative;overflow:hidden;
+}
+.agi-drawer-head::after{
+  content:'';position:absolute;bottom:-30px;right:-30px;width:120px;height:120px;
+  border-radius:50%;background:radial-gradient(circle,rgba(220,38,38,.3),transparent 70%);
+  pointer-events:none;
+}
+.agi-drawer-code{
+  font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:900;
+  letter-spacing:.5px;
+}
+.agi-drawer-cliente{font-size:.86rem;color:#cbd5e1;margin-top:3px;font-weight:600;}
+.agi-drawer-status{
+  font-size:.62rem;padding:3px 10px;border-radius:50px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.4px;display:inline-block;margin-top:7px;
+}
+.agi-drawer-close{
+  color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+  width:36px;height:36px;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0;
+}
+.agi-drawer-close:hover{background:rgba(255,255,255,.16);transform:rotate(90deg);}
+.agi-drawer-body{flex:1;overflow-y:auto;padding:0;}
+.agi-drawer-actions{
+  padding:14px 18px;background:#fafbfc;border-top:1px solid var(--ilus-line);
+  display:grid;grid-template-columns:1fr 1fr;gap:8px;flex-shrink:0;
+}
+
+/* Acciones principales (botones grandes touch-friendly 44px) */
+.agi-act-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:11px 12px;border-radius:10px;font-weight:800;font-size:.85rem;
+  text-decoration:none;cursor:pointer;border:none;
+  transition:all .15s;min-height:46px;
+}
+.agi-act-btn:active{transform:scale(.96);}
+.agi-act-call{background:#16a34a;color:#fff;}
+.agi-act-call:hover{background:#15803d;color:#fff;}
+.agi-act-mail{background:#3b82f6;color:#fff;}
+.agi-act-mail:hover{background:#2563eb;color:#fff;}
+.agi-act-move{background:var(--ilus-red);color:#fff;grid-column:span 2;}
+.agi-act-move:hover{background:var(--ilus-red-d);color:#fff;}
+.agi-act-ficha{background:#fff;color:var(--ilus-ink);border:1px solid #cbd5e1;grid-column:span 2;}
+.agi-act-ficha:hover{background:#f9fafb;color:var(--ilus-ink);}
+
+.agi-sect{padding:14px 22px;border-bottom:1px solid #f3f4f6;}
+.agi-sect h6{
+  font-size:.66rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--ilus-muted-soft);margin-bottom:9px;
+  display:flex;align-items:center;gap:6px;
+}
+.agi-row{
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:.84rem;padding:6px 0;border-bottom:1px dashed #f3f4f6;gap:8px;
+}
+.agi-row:last-child{border-bottom:none;}
+.agi-row-lbl{color:var(--ilus-muted);font-weight:600;font-size:.74rem;flex-shrink:0;}
+.agi-row-val{color:var(--ilus-ink);font-weight:700;text-align:right;
+  word-break:break-word;flex:1;}
+.agi-row-val a{color:var(--ilus-ink);text-decoration:none;border-bottom:1px dotted #cbd5e1;}
+.agi-row-val a:hover{color:var(--ilus-red);border-bottom-color:var(--ilus-red);}
+
+.agi-warn-box{
+  background:linear-gradient(135deg,#fff8e6,#fff);
+  border:1px solid #fde68a;border-left:3px solid #f59e0b;
+  border-radius:10px;padding:12px 14px;margin-top:8px;
+}
+.agi-warn-box-title{
+  font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;
+  color:#92400e;margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.agi-warn-item{
+  display:flex;align-items:center;gap:8px;padding:5px 0;font-size:.8rem;
+  border-bottom:1px dashed rgba(245,158,11,.25);
+}
+.agi-warn-item:last-child{border-bottom:none;}
+.agi-warn-add-btn{
+  margin-left:auto;background:var(--ilus-red);color:#fff;border:none;
+  padding:5px 10px;border-radius:7px;font-size:.7rem;font-weight:800;
+  cursor:pointer;transition:all .15s;
+}
+.agi-warn-add-btn:hover{background:var(--ilus-red-d);}
+.agi-warn-add-btn:active{transform:scale(.94);}
+.agi-warn-add-btn.added{background:#16a34a;cursor:default;}
+
+.agi-emails-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;}
+.agi-email-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;
+  padding:3px 9px;border-radius:50px;font-size:.74rem;font-weight:700;
+  cursor:pointer;transition:all .15s;text-decoration:none;
+}
+.agi-email-chip:hover{background:#dbeafe;color:#1e40af;}
+.agi-email-chip.primary{background:#dcfce7;border-color:#bbf7d0;color:#166534;}
+
+.agi-fechas-box{
+  background:#fff;border:1px solid var(--ilus-line);border-radius:10px;padding:10px 12px;
+}
+.agi-fechas-line{
+  display:flex;justify-content:space-between;align-items:center;padding:6px 0;
+  border-bottom:1px dashed #f3f4f6;font-size:.82rem;
+}
+.agi-fechas-line:last-child{border-bottom:none;}
+.agi-fechas-tag{
+  font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;
+  padding:2px 7px;border-radius:50px;color:#fff;
+}
+.agi-fechas-val{font-family:'JetBrains Mono',monospace;font-weight:800;font-size:.78rem;}
+
+.agi-empty{
+  padding:36px 18px;text-align:center;color:var(--ilus-muted-soft);
+  font-size:.86rem;
+}
+
+/* ── Modal mover/reagendar ──────────────────────────────────────────── */
+.agi-mover-msg{
+  background:linear-gradient(135deg,#fff8e6,#fff);border:1px solid #fde68a;
+  border-radius:8px;padding:10px 12px;font-size:.82rem;color:#92400e;margin-bottom:12px;
+}
+.agi-mover-msg b{color:#7c2d12;}
+
+/* ── Helper para skeleton loader ────────────────────────────────────── */
+.agi-skel-row{
+  display:grid;grid-template-columns:78px repeat(7,1fr);gap:1px;
+  background:var(--ilus-line);border:1px solid var(--ilus-line);
+  border-radius:12px;overflow:hidden;
+}
+.agi-skel-cell{background:#fff;min-height:78px;
+  background-image:linear-gradient(90deg,transparent,rgba(0,0,0,.04),transparent);
+  background-size:200% 100%;animation:agiShim 1.5s linear infinite;
+}
+@keyframes agiShim{
+  0%{background-position:200% 0;}
+  100%{background-position:-200% 0;}
+}
+
+/* ── RESPONSIVE: mobile-first (<768px) ─────────────────────────────── */
+@media (max-width: 767.98px){
+  .agi-week{display:none !important;}
+  .agi-list{display:block;}
+  .agi-drawer{
+    top:auto;bottom:-100%;right:0;width:100%;
+    height:90vh;max-height:90vh;border-left:none;border-top:1px solid var(--ilus-line);
+    border-radius:18px 18px 0 0;
+    transition:bottom .35s cubic-bezier(.34,1.56,.64,1);
+  }
+  .agi-drawer.open{bottom:0;right:0;}
+  .agi-drawer-head{padding:14px 18px;}
+  .agi-drawer-code{font-size:1rem;}
+  .agi-hero{padding:18px 18px;border-radius:14px;}
+  .agi-hero-title{font-size:1.05rem;}
+  .agi-hero-badge{width:46px;height:46px;font-size:1.3rem;}
+  .agi-stats{grid-template-columns:repeat(2,1fr);gap:8px;}
+  .agi-stat-num{font-size:1.05rem;}
+  .agi-stat-lbl{font-size:.55rem;}
+  .agi-toolbar{padding:9px 12px;}
+  .agi-nav-btn{padding:8px 10px;font-size:.78rem;}
+}
+
+/* Tablet (768-991px): grid pero más compacto */
+@media (min-width: 768px) and (max-width: 991.98px){
+  .agi-week{grid-template-columns:64px repeat(7,minmax(0,1fr));}
+  .agi-time-col{font-size:.62rem;padding:6px 3px;}
+}
+
+/* iOS safe-area */
+@supports(padding:max(0px)){
+  .agi-drawer{padding-bottom:env(safe-area-inset-bottom);}
+}
 </style>
 
 {# ── Hero ── #}
-<div class="cal-hero">
-  <div class="cal-hero-row">
-    <div style="width:54px;height:54px;border-radius:12px;background:linear-gradient(135deg,#cc0000,#990000);
-                display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0;
-                box-shadow:0 4px 14px rgba(204,0,0,.3)">
-      <i class="bi bi-calendar2-week"></i>
+<div class="agi-hero">
+  <div class="agi-hero-row">
+    <div class="agi-hero-badge">
+      <i class="bi bi-calendar2-week-fill"></i>
     </div>
     <div style="flex:1;min-width:240px">
-      <div class="cal-hero-title">Calendario operativo de retiros</div>
-      <div class="cal-hero-sub">Visualiza solicitudes en vivo · capacidad por franja · agenda inteligente</div>
+      <div class="agi-hero-title">Agenda interna de retiros</div>
+      <div class="agi-hero-sub">
+        <span class="agi-live-dot"></span>
+        Actualización en vivo cada 30s · arrastra para mover · click para datos rápidos
+      </div>
     </div>
-    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm" style="background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15)">
+    <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm"
+       style="background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.18);font-weight:700">
       <i class="bi bi-list-ul me-1"></i>Lista clásica
     </a>
   </div>
 </div>
 
-{# ── Stats globales (semana actual) ── #}
-<div class="cal-stats-strip" id="calStats">
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-calendar-event"></i></div>
-    <div><div class="cal-stat-num" id="cs-total">—</div><div class="cal-stat-lbl">Retiros (rango)</div></div>
+{# ── Stats globales ── #}
+<div class="agi-stats" id="agiStats">
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-calendar-event"></i></div>
+    <div><div class="agi-stat-num" id="ag-total">—</div><div class="agi-stat-lbl">Retiros</div></div>
   </div>
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#fef9c3;color:#92400e"><i class="bi bi-clock-history"></i></div>
-    <div><div class="cal-stat-num" id="cs-pendientes">—</div><div class="cal-stat-lbl">Por confirmar</div></div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#fff8e6;color:#92400e"><i class="bi bi-clock-history"></i></div>
+    <div><div class="agi-stat-num" id="ag-pendientes">—</div><div class="agi-stat-lbl">Por confirmar</div></div>
   </div>
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
-    <div><div class="cal-stat-num" id="cs-confirmadas">—</div><div class="cal-stat-lbl">Confirmadas</div></div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#dcfce7;color:#166534"><i class="bi bi-check-circle-fill"></i></div>
+    <div><div class="agi-stat-num" id="ag-confirmadas">—</div><div class="agi-stat-lbl">Confirmadas</div></div>
   </div>
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#ede9fe;color:#5b21b6"><i class="bi bi-box-seam"></i></div>
-    <div><div class="cal-stat-num" id="cs-bultos">—</div><div class="cal-stat-lbl">Bultos totales</div></div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#ede9fe;color:#5b21b6"><i class="bi bi-box-seam"></i></div>
+    <div><div class="agi-stat-num" id="ag-bultos">—</div><div class="agi-stat-lbl">Bultos</div></div>
   </div>
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-truck"></i></div>
-    <div><div class="cal-stat-num" id="cs-kg">—</div><div class="cal-stat-lbl">Peso (kg)</div></div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-truck"></i></div>
+    <div><div class="agi-stat-num" id="ag-kg">—</div><div class="agi-stat-lbl">Peso (kg)</div></div>
   </div>
-  <div class="cal-stat">
-    <div class="cal-stat-icon" style="background:#cffafe;color:#0e7490"><i class="bi bi-bounding-box"></i></div>
-    <div><div class="cal-stat-num" id="cs-m3">—</div><div class="cal-stat-lbl">Volumen (m³)</div></div>
+  <div class="agi-stat">
+    <div class="agi-stat-icon" style="background:#cffafe;color:#0e7490"><i class="bi bi-bounding-box"></i></div>
+    <div><div class="agi-stat-num" id="ag-m3">—</div><div class="agi-stat-lbl">Volumen (m³)</div></div>
   </div>
 </div>
 
 {# ── Toolbar navegación ── #}
-<div class="cal-toolbar">
-  <button class="cal-nav-btn" onclick="calPrev()"><i class="bi bi-chevron-left"></i> Anterior</button>
-  <button class="cal-nav-btn" onclick="calToday()"><i class="bi bi-calendar2-check me-1"></i>Hoy</button>
-  <button class="cal-nav-btn" onclick="calNext()">Siguiente <i class="bi bi-chevron-right"></i></button>
-  <span id="calRangeLabel" style="font-weight:700;color:#0f172a;font-size:.92rem;margin-left:8px"></span>
-  <div class="ms-auto d-flex gap-2 align-items-center">
-    <span style="font-size:.74rem;color:#9ca3af">Capacidad por franja:</span>
-    <span class="badge bg-light text-dark" style="font-size:.7rem" id="cap-badge">—</span>
-    <a href="{{ url_for('pickup_dashboard') }}#settings" class="btn-sm btn btn-outline-dark" style="font-size:.74rem;padding:4px 10px"><i class="bi bi-sliders me-1"></i>Configurar</a>
+<div class="agi-toolbar">
+  <button class="agi-nav-btn" onclick="agiPrev()" title="Semana anterior">
+    <i class="bi bi-chevron-left"></i>
+  </button>
+  <button class="agi-nav-btn" onclick="agiToday()" title="Volver a hoy">
+    <i class="bi bi-calendar2-check me-1"></i>Hoy
+  </button>
+  <button class="agi-nav-btn" onclick="agiNext()" title="Semana siguiente">
+    <i class="bi bi-chevron-right"></i>
+  </button>
+  <span class="agi-range-label" id="agiRangeLabel"></span>
+  <div class="ms-auto d-flex gap-2 align-items-center flex-wrap">
+    <span style="font-size:.74rem;color:var(--ilus-muted-soft)">Capacidad por franja:</span>
+    <span class="badge bg-light text-dark" style="font-size:.7rem" id="agi-cap-badge">—</span>
+    <a href="{{ url_for('pickup_dashboard') }}#settings"
+       class="btn-sm btn btn-outline-dark"
+       style="font-size:.74rem;padding:5px 10px;font-weight:700">
+      <i class="bi bi-sliders me-1"></i>Configurar
+    </a>
   </div>
 </div>
 
-{# ── Calendario semanal (grid 7 días + columna horario) ── #}
-<div id="calLoader" class="text-center py-5 text-muted">
-  <div class="spinner-border text-danger"></div>
-  <div class="mt-2" style="font-size:.84rem">Cargando calendario…</div>
+{# ── LEYENDA de colores ── #}
+<div class="agi-legend">
+  <span class="agi-legend-title">Leyenda:</span>
+  <span class="agi-legend-chip" style="background:var(--kd-req-bg);color:var(--kd-req)">
+    <span class="dot" style="background:var(--kd-req)"></span> Solicitado por el cliente
+  </span>
+  <span class="agi-legend-chip" style="background:var(--kd-prop-bg);color:#92400e">
+    <span class="dot" style="background:var(--kd-prop)"></span> Propuesto por ILUS
+  </span>
+  <span class="agi-legend-chip" style="background:var(--kd-conf-bg);color:#166534">
+    <span class="dot" style="background:var(--kd-conf)"></span> Confirmado por ambos
+  </span>
+  <span class="agi-legend-chip" style="background:var(--kd-disp-bg);color:#991b1b">
+    <span class="dot" style="background:var(--kd-disp)"></span> En disputa
+  </span>
 </div>
-<div class="cal-week" id="calWeek" style="display:none"></div>
 
-{# ── Drawer ficha completa ── #}
-<div class="fc-backdrop" id="fcBackdrop" onclick="cerrarDrawer()"></div>
-<div class="fc-drawer" id="fcDrawer">
-  <div class="fc-header">
-    <div style="flex:1;min-width:0">
-      <div class="fc-code" id="fc-code">—</div>
-      <div class="fc-cliente" id="fc-cliente">Cargando…</div>
-      <span class="fc-status" id="fc-status" style="background:#374151;color:#fff">—</span>
+{# ── Loader (skeleton) ── #}
+<div id="agiLoader" style="display:none">
+  <div class="agi-skel-row">
+    {% for _ in range(8) %}<div class="agi-skel-cell"></div>{% endfor %}
+  </div>
+</div>
+
+{# ── Calendario semanal (desktop) ── #}
+<div class="agi-week" id="agiWeek" style="display:none"></div>
+
+{# ── Lista vertical (mobile) ── #}
+<div class="agi-list" id="agiList"></div>
+
+{# ── Drawer ficha rápida ── #}
+<div class="agi-backdrop" id="agiBackdrop" onclick="agiCerrarDrawer()"></div>
+<aside class="agi-drawer" id="agiDrawer" aria-hidden="true">
+  <header class="agi-drawer-head">
+    <div style="flex:1;min-width:0;position:relative;z-index:1">
+      <div class="agi-drawer-code" id="agi-d-code">—</div>
+      <div class="agi-drawer-cliente" id="agi-d-cliente">Cargando…</div>
+      <span class="agi-drawer-status" id="agi-d-status" style="background:#374151;color:#fff">—</span>
     </div>
-    <button class="btn btn-sm" onclick="cerrarDrawer()" style="color:#fff;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15)">
+    <button class="agi-drawer-close" onclick="agiCerrarDrawer()" aria-label="Cerrar">
       <i class="bi bi-x-lg"></i>
     </button>
+  </header>
+  <div class="agi-drawer-body" id="agi-d-body">
+    <div class="agi-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>
   </div>
-  <div class="fc-body" id="fc-body">
-    <div class="fc-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>
-  </div>
-  <div class="fc-actions" id="fc-actions"></div>
-</div>
+  <div class="agi-drawer-actions" id="agi-d-actions"></div>
+</aside>
 
-{# ── Modal proponer fecha alternativa ── #}
-<div class="modal fade" id="modalProponer" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header" style="background:#a855f7;color:#fff">
-        <h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Proponer fecha alternativa</h5>
+{# ── Modal MOVER (drag-drop o tap mobile) ── #}
+<div class="modal fade" id="agiModalMover" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border:none;border-radius:14px;overflow:hidden;box-shadow:0 20px 60px -10px rgba(0,0,0,.3)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border:none">
+        <h5 class="modal-title" style="font-weight:900">
+          <i class="bi bi-arrow-left-right me-2"></i>Mover retiro
+        </h5>
         <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body prop-form">
-        <input type="hidden" id="prop_rid">
-        <div class="row g-3">
-          <div class="col-12"><label class="form-label small fw-semibold">Nueva fecha</label>
-            <input type="date" id="prop_date" class="form-control"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Desde</label>
-            <input type="time" id="prop_tf" class="form-control"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Hasta</label>
-            <input type="time" id="prop_tt" class="form-control"></div>
-          <div class="col-12"><label class="form-label small fw-semibold">Mensaje al cliente</label>
-            <textarea id="prop_msg" class="form-control" rows="3" placeholder="Hola, te proponemos esta nueva fecha por…"></textarea></div>
+      <div class="modal-body" id="agi-mover-body">
+        <input type="hidden" id="agi-mover-rid">
+        <input type="hidden" id="agi-mover-fecha">
+        <input type="hidden" id="agi-mover-tf">
+        <input type="hidden" id="agi-mover-tt">
+        <div class="agi-mover-msg" id="agi-mover-resumen"></div>
+        <label class="form-label small fw-bold mb-1">Mensaje al cliente (opcional)</label>
+        <textarea id="agi-mover-msg" class="form-control" rows="3"
+          placeholder="Hola, te proponemos esta nueva fecha porque…"
+          style="font-size:.88rem"></textarea>
+        <div class="form-text mt-2" style="font-size:.74rem">
+          <i class="bi bi-info-circle me-1 text-primary"></i>
+          Se enviará una propuesta al cliente. Él puede aceptarla o contraproponer otra fecha
+          desde el link de seguimiento. Mientras tanto, el retiro queda como
+          <b style="color:#92400e">"propuesto - esperando cliente"</b>.
         </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6">
+        <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-sm" style="background:var(--ilus-red);color:#fff;font-weight:800;padding:8px 16px"
+          onclick="agiConfirmarMover()">
+          <i class="bi bi-send-fill me-1"></i>Enviar propuesta al cliente
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal selector de fecha (mobile-only para reagendar sin DnD) ── #}
+<div class="modal fade" id="agiModalPickerMobile" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border:none;border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:var(--ilus-ink);color:#fff;border:none">
+        <h5 class="modal-title" style="font-weight:900">
+          <i class="bi bi-calendar-plus me-2"></i>Reagendar
+        </h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="agi-pm-rid">
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Nueva fecha</label>
+          <input type="date" id="agi-pm-date" class="form-control" style="font-size:16px">
+        </div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small fw-bold">Desde</label>
+            <input type="time" id="agi-pm-tf" class="form-control" style="font-size:16px">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-bold">Hasta</label>
+            <input type="time" id="agi-pm-tt" class="form-control" style="font-size:16px">
+          </div>
+        </div>
+        <label class="form-label small fw-bold mt-2">Mensaje al cliente (opcional)</label>
+        <textarea id="agi-pm-msg" class="form-control" rows="3"
+          style="font-size:.88rem"></textarea>
       </div>
       <div class="modal-footer">
         <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-sm" style="background:#a855f7;color:#fff" onclick="enviarPropuesta()">
-          <i class="bi bi-send me-1"></i>Enviar al cliente
+        <button class="btn btn-sm" style="background:var(--ilus-red);color:#fff;font-weight:800"
+          onclick="agiConfirmarMoverMobile()">
+          <i class="bi bi-send-fill me-1"></i>Enviar propuesta
         </button>
       </div>
     </div>
@@ -246,374 +656,833 @@
 </div>
 
 <script>
-let _calData = null;
-let _rangeFrom = null, _rangeTo = null;
+/* ══════════════════════════════════════════════════════════════════════
+   AGENDA INTERNA — Lógica JS
+   ══════════════════════════════════════════════════════════════════════ */
+let _agiData = null;          // payload del endpoint
+let _agiRangeFrom = null;     // Date inicio semana
+let _agiRangeTo = null;       // Date fin semana
+let _agiCurrentDetail = null; // último retiro mostrado en drawer
+let _agiPollTimer = null;     // polling 30s
+const AGI_POLL_MS = 30000;
+const _AGI_IS_MOBILE = () => window.matchMedia('(max-width: 767.98px)').matches;
 
-function calFmtDate(d) {
-  return d.toISOString().slice(0,10);
-}
-function calStartOfWeek(d) {
+// ── Helpers ───────────────────────────────────────────────────────────
+function agiFmt(d){ return d.toISOString().slice(0,10); }
+function agiSOW(d){
+  // Start of week (lunes)
   const x = new Date(d);
-  const dow = (x.getDay() + 6) % 7;  // L=0, D=6
+  const dow = (x.getDay() + 6) % 7;
   x.setDate(x.getDate() - dow);
   x.setHours(0,0,0,0);
   return x;
 }
-function calToday() {
+function agiEsc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function agiToday(){
   const today = new Date();
-  _rangeFrom = calStartOfWeek(today);
-  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
-  cargarCalendario();
+  _agiRangeFrom = agiSOW(today);
+  _agiRangeTo = new Date(_agiRangeFrom);
+  _agiRangeTo.setDate(_agiRangeTo.getDate() + 6);
+  agiCargar();
 }
-function calPrev() {
-  _rangeFrom.setDate(_rangeFrom.getDate() - 7);
-  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
-  cargarCalendario();
+function agiPrev(){
+  _agiRangeFrom.setDate(_agiRangeFrom.getDate() - 7);
+  _agiRangeTo = new Date(_agiRangeFrom);
+  _agiRangeTo.setDate(_agiRangeTo.getDate() + 6);
+  agiCargar();
 }
-function calNext() {
-  _rangeFrom.setDate(_rangeFrom.getDate() + 7);
-  _rangeTo = new Date(_rangeFrom); _rangeTo.setDate(_rangeTo.getDate() + 6);
-  cargarCalendario();
+function agiNext(){
+  _agiRangeFrom.setDate(_agiRangeFrom.getDate() + 7);
+  _agiRangeTo = new Date(_agiRangeFrom);
+  _agiRangeTo.setDate(_agiRangeTo.getDate() + 6);
+  agiCargar();
 }
 
-async function cargarCalendario() {
-  document.getElementById('calLoader').style.display = '';
-  document.getElementById('calWeek').style.display = 'none';
-  const url = `/retiros/api/calendario?from=${calFmtDate(_rangeFrom)}&to=${calFmtDate(_rangeTo)}`;
+// ── Carga del endpoint ────────────────────────────────────────────────
+async function agiCargar(silent){
+  if (!silent){
+    document.getElementById('agiLoader').style.display = '';
+    document.getElementById('agiWeek').style.display = 'none';
+    document.getElementById('agiList').innerHTML = '';
+  }
+  const url = `/retiros/api/calendario?from=${agiFmt(_agiRangeFrom)}&to=${agiFmt(_agiRangeTo)}`;
   try {
-    const r = await fetch(url);
-    _calData = await r.json();
-    renderSemana();
-    renderStats();
+    const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _agiData = await r.json();
+    agiRenderWeek();
+    agiRenderList();
+    agiRenderStats();
+    document.getElementById('agiLoader').style.display = 'none';
   } catch (e) {
-    document.getElementById('calLoader').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    document.getElementById('agiLoader').innerHTML =
+      `<div class="alert alert-danger">No pude cargar la agenda: ${agiEsc(e.message)}</div>`;
   }
 }
 
-function renderSemana() {
-  const cont = document.getElementById('calWeek');
-  const cfg = _calData.settings;
-  document.getElementById('cap-badge').textContent =
-    `${cfg.max_picks_slot} retiros · ${cfg.max_kg_slot} kg · ${cfg.max_m3_slot} m³`;
-
-  // Etiqueta rango
-  const fmt = d => d.toLocaleDateString('es-CL',{day:'numeric',month:'short'});
-  document.getElementById('calRangeLabel').textContent =
-    `${fmt(_rangeFrom)} → ${fmt(_rangeTo)} ${_rangeFrom.getFullYear()}`;
-
-  // Generar headers
-  const today = calFmtDate(new Date());
-  const dayNames = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
-  let html = '<div class="cal-week-head" style="grid-column:1"><div style="font-size:.68rem;color:#9ca3af">HORA</div></div>';
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(_rangeFrom); d.setDate(d.getDate() + i);
-    const fecha = calFmtDate(d);
-    const dia = _calData.dias[fecha] || {total_picks:0, ocupacion_pct:0};
-    const isToday = fecha === today;
-    html += `<div class="cal-week-head${isToday?' today':''}">
-      <div style="font-size:.65rem">${dayNames[i]}</div>
-      <div class="cw-day">${d.getDate()}</div>
-      <div style="font-size:.62rem;color:#9ca3af;font-weight:600">${dia.total_picks} retiros</div>
-      <div class="cw-bar"><div class="cw-bar-fill" style="width:${dia.ocupacion_pct}%;background:${dia.ocupacion_pct>=80?'#dc2626':dia.ocupacion_pct>=50?'#f59e0b':'#16a34a'}"></div></div>
-    </div>`;
-  }
-
-  // Generar slots horarios (v3, Daniel 2026-05-24: bloques de 30 min ESTRICTOS
-  // — el horario único es 09:00-12:30 + 14:00-16:30 sin excepción).
-  const [oH,oM] = cfg.open_time.split(':').map(Number);
-  const [cH,cM] = cfg.close_time.split(':').map(Number);
-  let totalMin = (cH*60+cM) - (oH*60+oM);
-  const slotMin = cfg.slot_minutes || 30;
-  const slots = [];
-  for (let m = 0; m < totalMin; m += slotMin) {
-    const t = oH*60+oM + m;
-    slots.push(`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`);
-  }
-
-  for (const slot of slots) {
-    html += `<div class="cal-time-col">${slot}</div>`;
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(_rangeFrom); d.setDate(d.getDate() + i);
-      const fecha = calFmtDate(d);
-      const dia = _calData.dias[fecha];
-      const slotData = dia && dia.slots[slot];
-      let cellClass = 'cal-slot';
-      let capInfo = '';
-      let picksHtml = '';
-      if (slotData) {
-        const pct = slotData.pct;
-        if (pct >= 100) cellClass += ' full';
-        else if (pct >= 70) cellClass += ' high';
-        capInfo = `<div class="cal-slot-cap" title="Ocupación ${pct}%">${slotData.ocupados}/${slotData.max_picks}</div>`;
-        picksHtml = slotData.picks.map(p => `
-          <div class="cal-pick cal-pick-status-${p.status}" onclick="abrirDrawer(${p.id})">
-            <div class="cal-pick-cliente">${p.customer_name||'—'}</div>
-            <div class="cal-pick-meta">
-              <span>${p.code||''}</span>
-              <span>${p.total_packages?p.total_packages+'b':''} ${p.total_weight_kg?Math.round(p.total_weight_kg)+'kg':''}</span>
-            </div>
-          </div>`).join('');
-      }
-      html += `<div class="${cellClass}">${capInfo}${picksHtml}</div>`;
-    }
-  }
-
-  cont.innerHTML = html;
-  document.getElementById('calLoader').style.display = 'none';
-  cont.style.display = '';
-}
-
-function renderStats() {
+// ── Render: Stats globales ───────────────────────────────────────────
+function agiRenderStats(){
   let total = 0, conf = 0, pend = 0, bultos = 0, kg = 0, m3 = 0;
-  for (const fecha in _calData.dias) {
-    const d = _calData.dias[fecha];
+  for (const fecha in _agiData.dias){
+    const d = _agiData.dias[fecha];
     total += d.total_picks;
     bultos += d.picks.reduce((a,p)=>a + (p.total_packages||0), 0);
-    kg     += d.total_kg;
-    m3     += d.total_m3;
-    for (const p of d.picks) {
+    kg += d.total_kg;
+    m3 += d.total_m3;
+    for (const p of d.picks){
       if (p.is_confirmed || p.status === 'agenda_confirmada' || p.status === 'retirada') conf++;
       else if (['solicitud_recibida','en_revision','propuesta_enviada','esperando_cliente','informacion_incompleta'].includes(p.status)) pend++;
     }
   }
   const f = n => new Intl.NumberFormat('es-CL').format(Math.round(n*100)/100);
-  document.getElementById('cs-total').textContent = total;
-  document.getElementById('cs-pendientes').textContent = pend;
-  document.getElementById('cs-confirmadas').textContent = conf;
-  document.getElementById('cs-bultos').textContent = bultos;
-  document.getElementById('cs-kg').textContent = f(kg);
-  document.getElementById('cs-m3').textContent = f(m3);
+  document.getElementById('ag-total').textContent = total;
+  document.getElementById('ag-pendientes').textContent = pend;
+  document.getElementById('ag-confirmadas').textContent = conf;
+  document.getElementById('ag-bultos').textContent = bultos;
+  document.getElementById('ag-kg').textContent = f(kg);
+  document.getElementById('ag-m3').textContent = f(m3);
 }
 
-// ── Drawer ficha completa ────────────────────────────────────────
-async function abrirDrawer(rid) {
-  document.getElementById('fcBackdrop').classList.add('open');
-  document.getElementById('fcDrawer').classList.add('open');
-  document.getElementById('fc-body').innerHTML = '<div class="fc-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>';
-  document.getElementById('fc-actions').innerHTML = '';
+// ── Render: VISTA SEMANAL (desktop) ──────────────────────────────────
+function agiRenderWeek(){
+  const cont = document.getElementById('agiWeek');
+  const cfg = _agiData.settings;
+  document.getElementById('agi-cap-badge').textContent =
+    `${cfg.max_picks_slot} retiros · ${cfg.max_kg_slot} kg · ${cfg.max_m3_slot} m³`;
+
+  // Etiqueta rango
+  const fmt = d => d.toLocaleDateString('es-CL', { day:'numeric', month:'short' });
+  document.getElementById('agiRangeLabel').textContent =
+    `${fmt(_agiRangeFrom)} → ${fmt(_agiRangeTo)} ${_agiRangeFrom.getFullYear()}`;
+
+  // Headers
+  const today = agiFmt(new Date());
+  const dayNames = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  let html = '<div class="agi-week-head" style="grid-column:1"><div style="font-size:.66rem;color:var(--ilus-muted-soft)">HORA</div></div>';
+  for (let i = 0; i < 7; i++){
+    const d = new Date(_agiRangeFrom); d.setDate(d.getDate() + i);
+    const fecha = agiFmt(d);
+    const dia = _agiData.dias[fecha] || { total_picks:0, ocupacion_pct:0 };
+    const isToday = fecha === today;
+    const barColor = dia.ocupacion_pct >= 80 ? '#dc2626' : dia.ocupacion_pct >= 50 ? '#f59e0b' : '#16a34a';
+    html += `<div class="agi-week-head${isToday?' today':''}" data-fecha="${fecha}">
+      <div style="font-size:.65rem">${dayNames[i]}</div>
+      <div class="agi-day">${d.getDate()}</div>
+      <div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} retiros</div>
+      <div class="agi-bar"><div class="agi-bar-fill" style="width:${dia.ocupacion_pct}%;background:${barColor}"></div></div>
+    </div>`;
+  }
+
+  // Slots horarios (bloques 30 min, 09:00-12:30 + 14:00-16:30)
+  const [oH, oM] = cfg.open_time.split(':').map(Number);
+  const [cH, cM] = cfg.close_time.split(':').map(Number);
+  const totalMin = (cH*60 + cM) - (oH*60 + oM);
+  const slotMin = cfg.slot_minutes || 30;
+  const slots = [];
+  for (let m = 0; m < totalMin; m += slotMin){
+    const t = oH*60 + oM + m;
+    slots.push(`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`);
+  }
+
+  for (const slot of slots){
+    html += `<div class="agi-time-col">${slot}</div>`;
+    for (let i = 0; i < 7; i++){
+      const d = new Date(_agiRangeFrom); d.setDate(d.getDate() + i);
+      const fecha = agiFmt(d);
+      const dia = _agiData.dias[fecha];
+      const slotData = dia && dia.slots[slot];
+      let cellClass = 'agi-slot';
+      let capInfo = '';
+      let picksHtml = '';
+      if (slotData){
+        const pct = slotData.pct;
+        if (pct >= 100) cellClass += ' full';
+        else if (pct >= 70) cellClass += ' high';
+        capInfo = `<div class="agi-slot-cap" title="Ocupación ${pct}%">${slotData.ocupados}/${slotData.max_picks}</div>`;
+        picksHtml = slotData.picks.map(p => agiPickCardHtml(p)).join('');
+      }
+      html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"
+                ondragover="agiDragOver(event)" ondragleave="agiDragLeave(event)"
+                ondrop="agiDrop(event)">${capInfo}${picksHtml}</div>`;
+    }
+  }
+
+  cont.innerHTML = html;
+  cont.style.display = '';
+
+  // Bind drag-and-drop
+  cont.querySelectorAll('.agi-pick').forEach(el => {
+    el.addEventListener('dragstart', agiDragStart);
+    el.addEventListener('dragend', agiDragEnd);
+    el.addEventListener('click', () => agiAbrirDrawer(parseInt(el.dataset.pickId, 10)));
+  });
+}
+
+// ── HTML de una tarjeta de retiro ────────────────────────────────────
+function agiPickCardHtml(p){
+  const kd = p.is_disputed ? 'disputed' : (p.kind_date || 'requested');
+  const kdLbl = {
+    'requested': 'Solic.',
+    'proposed':  'Prop.',
+    'confirmed': 'Conf.',
+    'disputed':  'Disputa',
+  }[kd] || '—';
+  const warnIcon = p.has_data_mismatch
+    ? `<span class="agi-pick-warn" title="El documento ERP trae otros datos de contacto. Revisa la ficha y agrégalos a CC si corresponde.">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+      </span>` : '';
+  const bultos = p.total_packages ? `${p.total_packages}b` : '';
+  const peso = p.total_weight_kg ? `${Math.round(p.total_weight_kg)}kg` : '';
+  return `<div class="agi-pick kd-${kd}"
+             data-pick-id="${p.id}"
+             data-fecha="${agiEsc(p.fecha)}"
+             data-tf="${agiEsc(p.time_from)}"
+             data-tt="${agiEsc(p.time_to)}"
+             data-code="${agiEsc(p.code||'')}"
+             data-cliente="${agiEsc(p.customer_name||'')}"
+             draggable="true">
+    <div class="agi-pick-top">
+      <span class="agi-pick-code">${agiEsc(p.code||'')}</span>
+      <span class="agi-pick-kd kd-${kd}">${kdLbl}</span>
+      ${warnIcon}
+    </div>
+    <div class="agi-pick-cliente">${agiEsc(p.customer_name||'—')}</div>
+    <div class="agi-pick-meta">
+      <span>${agiEsc(p.time_from||'')}–${agiEsc(p.time_to||'')}</span>
+      <span>${bultos} ${peso}</span>
+    </div>
+  </div>`;
+}
+
+// ── Render: LISTA mobile ─────────────────────────────────────────────
+function agiRenderList(){
+  const cont = document.getElementById('agiList');
+  const today = agiFmt(new Date());
+  const dayNames = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  let html = '';
+
+  for (let i = 0; i < 7; i++){
+    const d = new Date(_agiRangeFrom); d.setDate(d.getDate() + i);
+    const fecha = agiFmt(d);
+    const dia = _agiData.dias[fecha];
+    const isToday = fecha === today;
+    const dayIdx = d.getDay();
+    const total = dia ? dia.total_picks : 0;
+
+    html += `<div class="agi-list-day">
+      <div class="agi-list-day-head${isToday?' today':''}">
+        <div>
+          <div class="agi-list-day-name">${dayNames[dayIdx]}${isToday?' · HOY':''}</div>
+          <div class="agi-list-day-num">${d.getDate()} ${d.toLocaleDateString('es-CL',{month:'short'})}</div>
+        </div>
+        <div class="agi-list-day-stats">
+          <div><b>${total}</b> retiro${total!==1?'s':''}</div>
+          ${dia ? `<div style="opacity:.7">${Math.round(dia.total_kg)} kg · ${dia.total_m3.toFixed(1)} m³</div>` : ''}
+        </div>
+      </div>
+      <div class="agi-list-day-body">`;
+
+    if (!dia || total === 0){
+      html += `<div class="agi-list-empty-day"><i class="bi bi-moon-stars me-1"></i>Sin retiros agendados</div>`;
+    } else {
+      // Ordenar picks por hora
+      const picksOrden = dia.picks.slice().sort((a,b) =>
+        (a.time_from||'').localeCompare(b.time_from||''));
+      for (const p of picksOrden){
+        const kd = p.is_disputed ? 'disputed' : (p.kind_date || 'requested');
+        const kdLbl = {
+          'requested': 'Cliente solicitó',
+          'proposed':  'Propuesto por ILUS',
+          'confirmed': 'Confirmado',
+          'disputed':  'En disputa',
+        }[kd];
+        const warnIcon = p.has_data_mismatch
+          ? `<i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b" title="Datos de ERP diferentes"></i>` : '';
+        html += `<div class="agi-list-pick kd-${kd}" onclick="agiAbrirDrawer(${p.id})">
+          <div class="agi-list-pick-top">
+            <span class="agi-list-pick-time">${agiEsc(p.time_from||'')}</span>
+            <span class="agi-pick-kd kd-${kd}">${kdLbl}</span>
+            ${warnIcon}
+          </div>
+          <div class="agi-list-pick-name">${agiEsc(p.customer_name||'—')}</div>
+          <div class="agi-list-pick-meta">
+            <b>${agiEsc(p.code||'')}</b>
+            ${p.total_packages ? ` · ${p.total_packages} bulto${p.total_packages!==1?'s':''}` : ''}
+            ${p.total_weight_kg ? ` · ${Math.round(p.total_weight_kg)} kg` : ''}
+          </div>
+        </div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+  cont.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  DRAG-AND-DROP (desktop)
+// ══════════════════════════════════════════════════════════════════════
+let _agiDragData = null;  // {rid, fechaOrig, tfOrig, ttOrig, code, cliente}
+
+function agiDragStart(ev){
+  if (_AGI_IS_MOBILE()){ ev.preventDefault(); return; }
+  const el = ev.currentTarget;
+  _agiDragData = {
+    rid: parseInt(el.dataset.pickId, 10),
+    fechaOrig: el.dataset.fecha,
+    tfOrig: el.dataset.tf,
+    ttOrig: el.dataset.tt,
+    code: el.dataset.code,
+    cliente: el.dataset.cliente,
+  };
+  el.classList.add('dragging');
+  try { ev.dataTransfer.effectAllowed = 'move'; } catch(_){}
+}
+function agiDragEnd(ev){
+  ev.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.agi-slot.drag-over,.agi-slot.drag-over-invalid')
+    .forEach(s => s.classList.remove('drag-over','drag-over-invalid'));
+}
+function agiDragOver(ev){
+  if (!_agiDragData) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  const slot = ev.currentTarget;
+  // Validar: mismo slot origen = no marcar
+  if (slot.dataset.fecha === _agiDragData.fechaOrig &&
+      slot.dataset.slot === _agiDragData.tfOrig){
+    return;
+  }
+  // Si el slot ya está lleno (full), marcar inválido
+  if (slot.classList.contains('full')) slot.classList.add('drag-over-invalid');
+  else slot.classList.add('drag-over');
+}
+function agiDragLeave(ev){
+  ev.currentTarget.classList.remove('drag-over','drag-over-invalid');
+}
+function agiDrop(ev){
+  ev.preventDefault();
+  const slot = ev.currentTarget;
+  slot.classList.remove('drag-over','drag-over-invalid');
+  if (!_agiDragData) return;
+  const fechaDest = slot.dataset.fecha;
+  const slotDest = slot.dataset.slot;
+  if (!fechaDest || !slotDest) return;
+  // Mismo slot → no hacer nada
+  if (fechaDest === _agiDragData.fechaOrig && slotDest === _agiDragData.tfOrig) return;
+  if (slot.classList.contains('full')){
+    ilusToast('Ese bloque está lleno, elige otro.', { type: 'warning' });
+    return;
+  }
+  // Calcular fin del slot (30 min)
+  const [h, m] = slotDest.split(':').map(Number);
+  const endMin = h*60 + m + 30;
+  const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
+  // Lanzar modal de confirmación
+  agiAbrirMover({
+    rid: _agiDragData.rid,
+    code: _agiDragData.code,
+    cliente: _agiDragData.cliente,
+    fechaOrig: _agiDragData.fechaOrig,
+    tfOrig: _agiDragData.tfOrig,
+    ttOrig: _agiDragData.ttOrig,
+    fechaDest: fechaDest,
+    tfDest: slotDest,
+    ttDest: endStr,
+  });
+}
+
+// ── Modal MOVER (drag-drop desktop) ───────────────────────────────────
+function agiAbrirMover(payload){
+  document.getElementById('agi-mover-rid').value = payload.rid;
+  document.getElementById('agi-mover-fecha').value = payload.fechaDest;
+  document.getElementById('agi-mover-tf').value = payload.tfDest;
+  document.getElementById('agi-mover-tt').value = payload.ttDest;
+  document.getElementById('agi-mover-msg').value =
+    `Hola! Te proponemos reagendar tu retiro para el ${agiFormatDateBonita(payload.fechaDest)} entre las ${payload.tfDest} y ${payload.ttDest}. ¿Te acomoda?`;
+  document.getElementById('agi-mover-resumen').innerHTML =
+    `<b>${agiEsc(payload.code)} · ${agiEsc(payload.cliente)}</b>
+     <div style="margin-top:6px;font-size:.85rem">
+       <i class="bi bi-arrow-right me-1"></i>
+       De <b>${agiEsc(payload.fechaOrig)} ${agiEsc(payload.tfOrig)}–${agiEsc(payload.ttOrig)}</b>
+       a <b style="color:#16a34a">${agiEsc(payload.fechaDest)} ${agiEsc(payload.tfDest)}–${agiEsc(payload.ttDest)}</b>
+     </div>`;
+  new bootstrap.Modal(document.getElementById('agiModalMover')).show();
+}
+
+function agiFormatDateBonita(yyyy_mm_dd){
   try {
-    const r = await fetch(`/retiros/api/${rid}/full`);
-    const d = await r.json();
-    if (d.error) { document.getElementById('fc-body').innerHTML = `<div class="fc-empty">${d.error}</div>`; return; }
-    renderDrawer(d);
-  } catch(e) {
-    document.getElementById('fc-body').innerHTML = `<div class="fc-empty">Error: ${e.message}</div>`;
+    const d = new Date(yyyy_mm_dd + 'T00:00:00');
+    return d.toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'long' });
+  } catch(_){ return yyyy_mm_dd; }
+}
+
+async function agiConfirmarMover(){
+  const rid = document.getElementById('agi-mover-rid').value;
+  const fecha = document.getElementById('agi-mover-fecha').value;
+  const tf = document.getElementById('agi-mover-tf').value;
+  const tt = document.getElementById('agi-mover-tt').value;
+  const msg = document.getElementById('agi-mover-msg').value;
+  if (!rid || !fecha || !tf || !tt){
+    ilusToast('Datos incompletos', { type:'error' }); return;
+  }
+  try {
+    const r = await fetch(`/retiros/${rid}/proposal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: `date=${encodeURIComponent(fecha)}&time_from=${encodeURIComponent(tf)}&time_to=${encodeURIComponent(tt)}&message=${encodeURIComponent(msg)}`,
+    });
+    let d = {};
+    try { d = await r.json(); } catch(_){}
+    if (r.ok && d.ok){
+      bootstrap.Modal.getInstance(document.getElementById('agiModalMover')).hide();
+      agiCerrarDrawer();
+      ilusToast('✓ Propuesta enviada al cliente', { type:'success' });
+      agiCargar(true);  // refrescar sin parpadear
+    } else {
+      ilusToast(d.error || 'No se pudo enviar la propuesta', { type:'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
   }
 }
 
-function cerrarDrawer() {
-  document.getElementById('fcBackdrop').classList.remove('open');
-  document.getElementById('fcDrawer').classList.remove('open');
+// ── Modal PICKER mobile (sin DnD) ─────────────────────────────────────
+function agiAbrirPickerMobile(rid, currentDate){
+  document.getElementById('agi-pm-rid').value = rid;
+  document.getElementById('agi-pm-date').value = currentDate || '';
+  document.getElementById('agi-pm-tf').value = '09:00';
+  document.getElementById('agi-pm-tt').value = '09:30';
+  document.getElementById('agi-pm-msg').value = '';
+  new bootstrap.Modal(document.getElementById('agiModalPickerMobile')).show();
+}
+async function agiConfirmarMoverMobile(){
+  const rid = document.getElementById('agi-pm-rid').value;
+  const fecha = document.getElementById('agi-pm-date').value;
+  const tf = document.getElementById('agi-pm-tf').value;
+  const tt = document.getElementById('agi-pm-tt').value;
+  const msg = document.getElementById('agi-pm-msg').value;
+  if (!rid || !fecha || !tf || !tt){
+    ilusToast('Completa fecha y horario', { type:'warning' }); return;
+  }
+  try {
+    const r = await fetch(`/retiros/${rid}/proposal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: `date=${encodeURIComponent(fecha)}&time_from=${encodeURIComponent(tf)}&time_to=${encodeURIComponent(tt)}&message=${encodeURIComponent(msg)}`,
+    });
+    let d = {};
+    try { d = await r.json(); } catch(_){}
+    if (r.ok && d.ok){
+      bootstrap.Modal.getInstance(document.getElementById('agiModalPickerMobile')).hide();
+      agiCerrarDrawer();
+      ilusToast('✓ Propuesta enviada al cliente', { type:'success' });
+      agiCargar(true);
+    } else {
+      ilusToast(d.error || 'No se pudo enviar la propuesta', { type:'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+  }
 }
 
-function renderDrawer(d) {
-  document.getElementById('fc-code').innerHTML = `${d.code||'—'} <small style="font-weight:400;color:#94a3b8;font-size:.72rem">· ${d.document_type||''} ${d.document_number||''}</small>`;
-  document.getElementById('fc-cliente').textContent = `${d.customer_name||'—'}${d.customer_rut?' · '+d.customer_rut:''}`;
-  const stCol = {success:'#16a34a',warning:'#f59e0b',primary:'#2563eb',danger:'#dc2626',info:'#06b6d4',secondary:'#6b7280',dark:'#0f172a'}[d.status_color] || '#6b7280';
-  const stEl = document.getElementById('fc-status');
-  stEl.style.background = stCol; stEl.textContent = d.status_label || d.status;
+// ══════════════════════════════════════════════════════════════════════
+//  DRAWER ficha rápida del operador
+// ══════════════════════════════════════════════════════════════════════
+async function agiAbrirDrawer(rid){
+  document.getElementById('agiBackdrop').classList.add('open');
+  const drw = document.getElementById('agiDrawer');
+  drw.classList.add('open');
+  drw.setAttribute('aria-hidden', 'false');
+  document.getElementById('agi-d-body').innerHTML =
+    '<div class="agi-empty"><div class="spinner-border spinner-border-sm me-2"></div>Cargando ficha…</div>';
+  document.getElementById('agi-d-actions').innerHTML = '';
 
-  // Cuerpo
+  // Pre-cargar lo que ya sabemos del calendario para feedback inmediato
+  const pickFromCal = agiFindPickInCalendar(rid);
+  if (pickFromCal){
+    document.getElementById('agi-d-code').textContent = pickFromCal.code || '—';
+    document.getElementById('agi-d-cliente').textContent = pickFromCal.customer_name || '—';
+  }
+
+  try {
+    const r = await fetch(`/retiros/api/${rid}/full`, { credentials:'same-origin', cache:'no-store' });
+    const d = await r.json();
+    if (d.error){
+      document.getElementById('agi-d-body').innerHTML = `<div class="agi-empty">${agiEsc(d.error)}</div>`;
+      return;
+    }
+    // Merge con datos del calendario (para tener has_data_mismatch, erp_emails_suggested)
+    if (pickFromCal){
+      d._calMeta = pickFromCal;
+    }
+    _agiCurrentDetail = d;
+    agiRenderDrawer(d);
+  } catch(e){
+    document.getElementById('agi-d-body').innerHTML =
+      `<div class="agi-empty">Error: ${agiEsc(e.message)}</div>`;
+  }
+}
+
+function agiCerrarDrawer(){
+  document.getElementById('agiBackdrop').classList.remove('open');
+  const drw = document.getElementById('agiDrawer');
+  drw.classList.remove('open');
+  drw.setAttribute('aria-hidden', 'true');
+  _agiCurrentDetail = null;
+}
+
+function agiFindPickInCalendar(rid){
+  if (!_agiData) return null;
+  for (const fecha in _agiData.dias){
+    for (const p of _agiData.dias[fecha].picks){
+      if (parseInt(p.id) === parseInt(rid)) return p;
+    }
+  }
+  return null;
+}
+
+function agiRenderDrawer(d){
+  // Header
+  document.getElementById('agi-d-code').innerHTML =
+    `${agiEsc(d.code||'—')}
+     <small style="font-weight:400;color:#94a3b8;font-size:.72rem">
+       · ${agiEsc(d.document_type||'')} ${agiEsc(d.document_number||'')}
+     </small>`;
+  document.getElementById('agi-d-cliente').textContent =
+    `${d.customer_name||'—'}${d.customer_rut?' · '+d.customer_rut:''}`;
+  const stCol = {
+    success:'#16a34a', warning:'#f59e0b', primary:'#2563eb',
+    danger:'#dc2626', info:'#06b6d4', secondary:'#6b7280', dark:'#0a0a0a',
+  }[d.status_color] || '#6b7280';
+  const stEl = document.getElementById('agi-d-status');
+  stEl.style.background = stCol;
+  stEl.textContent = d.status_label || d.status || '—';
+
+  // Datos del calendario (para warnings)
+  const calMeta = d._calMeta || {};
+
+  // Construir body
   let html = '';
 
-  // ── PEDIDO + PREPARACIÓN
-  html += '<div class="fc-section">';
-  html += '<h6><i class="bi bi-box-seam me-1"></i>Pedido y preparación</h6>';
-  html += '<div class="fc-prep-box">';
-  html += `<div class="fc-prep-lbl">¿Qué pedido es?</div>`;
-  html += `<div class="fc-prep-val">${(d.document_type||'').toUpperCase()} ${d.document_number||''} — ${d.customer_name||''}</div>`;
-  if (d.total_packages) {
-    html += `<div class="fc-prep-lbl mt-2">Carga estimada</div>`;
-    html += `<div class="fc-prep-val">${d.total_packages} bulto${d.total_packages!=1?'s':''} · ${d.total_weight_kg||0} kg · ${d.total_volume_m3||0} m³</div>`;
+  // ── FECHAS (la jerarquía visual) ───────────────────────────────
+  html += '<div class="agi-sect">';
+  html += '<h6><i class="bi bi-calendar-check"></i>Fechas del retiro</h6>';
+  html += '<div class="agi-fechas-box">';
+  if (d.requested_date){
+    html += `<div class="agi-fechas-line">
+      <span class="agi-fechas-tag" style="background:var(--kd-req)">Solicitado</span>
+      <span class="agi-fechas-val">${agiEsc(d.requested_date)} · ${agiEsc(d.requested_time_from||'')}–${agiEsc(d.requested_time_to||'')}</span>
+    </div>`;
+  }
+  if (d.proposed_date){
+    html += `<div class="agi-fechas-line">
+      <span class="agi-fechas-tag" style="background:var(--kd-prop)">Propuesto ILUS</span>
+      <span class="agi-fechas-val">${agiEsc(d.proposed_date)} · ${agiEsc(d.proposed_time_from||'')}–${agiEsc(d.proposed_time_to||'')}</span>
+    </div>`;
+  }
+  if (d.confirmed_date){
+    html += `<div class="agi-fechas-line">
+      <span class="agi-fechas-tag" style="background:var(--kd-conf)">Confirmado</span>
+      <span class="agi-fechas-val" style="color:#166534">${agiEsc(d.confirmed_date)} · ${agiEsc(d.confirmed_time_from||'')}–${agiEsc(d.confirmed_time_to||'')}</span>
+    </div>`;
   }
   html += '</div></div>';
 
-  // ── ERP ENRIQUECIDO (productos)
-  if (d.erp && !d.erp.error && d.erp.lineas && d.erp.lineas.length) {
-    html += '<div class="fc-section">';
-    html += '<h6><i class="bi bi-list-stars me-1"></i>Productos del documento (ERP)</h6>';
-    html += '<div class="fc-erp">';
-    if (d.erp.direccion) html += `<div style="font-size:.72rem;color:#1e40af;margin-bottom:6px"><i class="bi bi-geo-alt me-1"></i>${d.erp.direccion}</div>`;
-    for (const ln of d.erp.lineas) {
-      html += `<div class="fc-erp-line">
-        <span class="fc-erp-sku">${ln.sku||'—'}</span>
-        <span>${ln.nombre||'—'}</span>
-        <span class="fc-erp-qty">${ln.cantidad||0} ${ln.unidad||''}</span>
-      </div>`;
-    }
-    html += '</div></div>';
-  } else if (d.erp && d.erp.error) {
-    html += '<div class="fc-section"><h6><i class="bi bi-exclamation-circle me-1"></i>ERP</h6>';
-    html += `<div class="alert alert-warning py-2 mb-0" style="font-size:.78rem">No se pudo enriquecer desde ERP: ${d.erp.error}</div></div>`;
-  }
-
-  // ── BULTOS (si los detalló)
-  if (d.packages && d.packages.length) {
-    html += '<div class="fc-section">';
-    html += '<h6><i class="bi bi-boxes me-1"></i>Bultos detallados</h6>';
-    for (const p of d.packages) {
-      html += `<div class="fc-pkg-card">
-        <strong>Bulto ${p.package_number}</strong>
-        <div class="fc-pkg-meta">
-          <span>${p.length_cm}×${p.width_cm}×${p.height_cm} cm</span>
-          <span>${p.weight_kg} kg real</span>
-          <span>${p.volumetric_weight} kg vol.</span>
-          <span>${p.volume_m3} m³</span>
+  // ── CONTACTO (con warning de mismatch) ────────────────────────
+  html += '<div class="agi-sect">';
+  html += '<h6><i class="bi bi-person-vcard"></i>Contacto del cliente</h6>';
+  html += `<div class="agi-row">
+    <span class="agi-row-lbl">Contacto</span>
+    <span class="agi-row-val">${agiEsc(d.contact_name||'—')}</span>
+  </div>`;
+  html += `<div class="agi-row">
+    <span class="agi-row-lbl">Teléfono</span>
+    <span class="agi-row-val">${d.contact_phone ? `<a href="tel:${agiEsc(d.contact_phone)}">${agiEsc(d.contact_phone)}</a>` : '—'}</span>
+  </div>`;
+  html += `<div class="agi-row">
+    <span class="agi-row-lbl">Email principal</span>
+    <span class="agi-row-val">${d.contact_email ? `<a href="mailto:${agiEsc(d.contact_email)}">${agiEsc(d.contact_email)}</a>` : '—'}</span>
+  </div>`;
+  // Chips de extra_emails actuales (en CC)
+  if (calMeta.extra_emails && calMeta.extra_emails.length){
+    html += `<div class="agi-row">
+      <span class="agi-row-lbl">Extras en CC</span>
+      <span class="agi-row-val">
+        <div class="agi-emails-chips">
+          ${calMeta.extra_emails.map(e =>
+            `<a class="agi-email-chip" href="mailto:${agiEsc(e)}"><i class="bi bi-envelope"></i> ${agiEsc(e)}</a>`).join('')}
         </div>
+      </span>
+    </div>`;
+  }
+  // ⚠ WARNINGS de datos ERP distintos
+  if (calMeta.has_data_mismatch){
+    html += `<div class="agi-warn-box">
+      <div class="agi-warn-box-title">
+        <i class="bi bi-exclamation-triangle-fill"></i>El documento ERP trae datos distintos
+      </div>`;
+    if (calMeta.erp_emails_suggested && calMeta.erp_emails_suggested.length){
+      for (const em of calMeta.erp_emails_suggested){
+        html += `<div class="agi-warn-item">
+          <i class="bi bi-envelope-plus" style="color:#f59e0b"></i>
+          <span style="font-size:.78rem"><b>${agiEsc(em)}</b></span>
+          <button class="agi-warn-add-btn" onclick="agiAddExtraEmail(${d.id}, '${agiEsc(em)}', this)">
+            <i class="bi bi-plus-lg"></i> CC
+          </button>
+        </div>`;
+      }
+    }
+    if (calMeta.erp_phones_suggested && calMeta.erp_phones_suggested.length){
+      for (const ph of calMeta.erp_phones_suggested){
+        html += `<div class="agi-warn-item">
+          <i class="bi bi-telephone-plus" style="color:#f59e0b"></i>
+          <span style="font-size:.78rem"><b>${agiEsc(ph)}</b> <span style="color:#6b7280">(en ERP)</span></span>
+        </div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  html += '</div>';
+
+  // ── PERSONA QUE RETIRA ────────────────────────────────────────
+  html += '<div class="agi-sect">';
+  html += '<h6><i class="bi bi-person-walking"></i>Persona que retira</h6>';
+  html += `<div class="agi-row">
+    <span class="agi-row-lbl">Nombre</span>
+    <span class="agi-row-val">${agiEsc(d.pickup_person_name||'—')}
+      <small class="text-muted">(${agiEsc(d.pickup_person_relation||'—')})</small></span>
+  </div>`;
+  if (d.pickup_person_phone){
+    html += `<div class="agi-row">
+      <span class="agi-row-lbl">Tel. de quien retira</span>
+      <span class="agi-row-val"><a href="tel:${agiEsc(d.pickup_person_phone)}">${agiEsc(d.pickup_person_phone)}</a></span>
+    </div>`;
+  }
+  html += '</div>';
+
+  // ── DOCUMENTO / CARGA ─────────────────────────────────────────
+  html += '<div class="agi-sect">';
+  html += '<h6><i class="bi bi-box-seam"></i>Carga estimada</h6>';
+  html += `<div class="agi-row">
+    <span class="agi-row-lbl">Documento</span>
+    <span class="agi-row-val">${agiEsc((d.document_type||'').toUpperCase())} ${agiEsc(d.document_number||'')}</span>
+  </div>`;
+  if (d.total_packages){
+    html += `<div class="agi-row">
+      <span class="agi-row-lbl">Bultos / Peso / Vol</span>
+      <span class="agi-row-val">${d.total_packages}b · ${d.total_weight_kg||0} kg · ${d.total_volume_m3||0} m³</span>
+    </div>`;
+  }
+  if (d.observations){
+    html += `<div class="agi-row">
+      <span class="agi-row-lbl">Observaciones</span>
+      <span class="agi-row-val text-end" style="max-width:65%">${agiEsc(d.observations)}</span>
+    </div>`;
+  }
+  html += '</div>';
+
+  // ── PROPUESTAS PREVIAS (si hay) ───────────────────────────────
+  if (d.proposals && d.proposals.length){
+    html += '<div class="agi-sect">';
+    html += '<h6><i class="bi bi-arrow-left-right"></i>Historial de propuestas</h6>';
+    for (const p of d.proposals.slice(0, 4)){
+      const colorBg = p.status === 'accepted' ? '#f0fdf4' : p.status === 'declined' ? '#fef2f2' : '#fff8e6';
+      const proposedBy = p.proposed_by === 'internal' || p.proposed_by === 'operacion' ? 'ILUS →' : 'Cliente →';
+      html += `<div style="background:${colorBg};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:.78rem">
+        <b>${proposedBy}</b>
+        <span style="float:right;text-transform:uppercase;font-weight:800;font-size:.65rem;color:#6b7280">${agiEsc(p.status)}</span>
+        <div style="margin-top:3px">${agiEsc(p.date)} · ${agiEsc(p.time_from)}–${agiEsc(p.time_to)}</div>
+        ${p.message ? `<div style="font-size:.74rem;color:#374151;margin-top:3px;font-style:italic">${agiEsc(p.message)}</div>` : ''}
       </div>`;
     }
     html += '</div>';
   }
 
-  // ── HORARIO
-  html += '<div class="fc-section">';
-  html += '<h6><i class="bi bi-calendar-check me-1"></i>Horario</h6>';
-  if (d.confirmed_date) {
-    html += `<div class="fc-row"><span class="fc-row-lbl">Confirmado</span><span class="fc-row-val" style="color:#16a34a">${d.confirmed_date} · ${d.confirmed_time_from}–${d.confirmed_time_to}</span></div>`;
-  } else if (d.proposed_date) {
-    html += `<div class="fc-row"><span class="fc-row-lbl">Propuesto por nosotros</span><span class="fc-row-val" style="color:#a855f7">${d.proposed_date} · ${d.proposed_time_from}–${d.proposed_time_to}</span></div>`;
+  document.getElementById('agi-d-body').innerHTML = html;
+
+  // ── ACTIONS: botones principales (grandes, touch-friendly) ────
+  const phonePref = d.contact_phone || d.pickup_person_phone || '';
+  const emailPref = d.contact_email || '';
+  const moverFn = _AGI_IS_MOBILE()
+    ? `agiAbrirPickerMobile(${d.id}, '${agiEsc(d.confirmed_date || d.proposed_date || d.requested_date || '')}')`
+    : `agiAbrirMoverDesdeDrawer(${d.id})`;
+
+  let actHtml = '';
+  if (phonePref){
+    actHtml += `<a href="tel:${agiEsc(phonePref)}" class="agi-act-btn agi-act-call">
+      <i class="bi bi-telephone-fill"></i>Llamar
+    </a>`;
+  } else {
+    actHtml += `<button class="agi-act-btn agi-act-call" disabled style="opacity:.4;cursor:not-allowed">
+      <i class="bi bi-telephone-x"></i>Sin teléfono
+    </button>`;
   }
-  html += `<div class="fc-row"><span class="fc-row-lbl">Solicitado</span><span class="fc-row-val">${d.requested_date} · ${d.requested_time_from}–${d.requested_time_to}</span></div>`;
-  html += '</div>';
+  if (emailPref){
+    const subj = encodeURIComponent(`Retiro ${d.code || ''}`);
+    actHtml += `<a href="mailto:${agiEsc(emailPref)}?subject=${subj}" class="agi-act-btn agi-act-mail">
+      <i class="bi bi-envelope-fill"></i>Email
+    </a>`;
+  } else {
+    actHtml += `<button class="agi-act-btn agi-act-mail" disabled style="opacity:.4;cursor:not-allowed">
+      <i class="bi bi-envelope-x"></i>Sin email
+    </button>`;
+  }
+  // Botón mover/reagendar — solo si no está cerrada/retirada
+  if (d.status !== 'cerrada' && d.status !== 'retirada' && d.status !== 'rechazada'){
+    actHtml += `<button class="agi-act-btn agi-act-move" onclick="${moverFn}">
+      <i class="bi bi-calendar-plus"></i>Reagendar / Proponer otra fecha
+    </button>`;
+  }
+  actHtml += `<a href="/retiros/${d.id}" class="agi-act-btn agi-act-ficha">
+    <i class="bi bi-arrow-up-right-square"></i>Ver ficha completa
+  </a>`;
+  document.getElementById('agi-d-actions').innerHTML = actHtml;
+}
 
-  // ── CONTACTO
-  html += '<div class="fc-section">';
-  html += '<h6><i class="bi bi-person-vcard me-1"></i>Contacto y persona que retira</h6>';
-  html += `<div class="fc-row"><span class="fc-row-lbl">Contacto</span><span class="fc-row-val">${d.contact_name||'—'}</span></div>`;
-  html += `<div class="fc-row"><span class="fc-row-lbl">Teléfono</span><span class="fc-row-val"><a href="tel:${d.contact_phone}" class="text-decoration-none">${d.contact_phone||'—'}</a></span></div>`;
-  html += `<div class="fc-row"><span class="fc-row-lbl">Email</span><span class="fc-row-val"><a href="mailto:${d.contact_email}" class="text-decoration-none">${d.contact_email||'—'}</a></span></div>`;
-  html += `<div class="fc-row"><span class="fc-row-lbl">Retira</span><span class="fc-row-val">${d.pickup_person_name||'—'} <small class="text-muted">(${d.pickup_person_relation||''})</small></span></div>`;
-  html += `<div class="fc-row"><span class="fc-row-lbl">Tel. retira</span><span class="fc-row-val">${d.pickup_person_phone||'—'}</span></div>`;
-  html += '</div>';
+// Abrir mover desde el drawer (desktop): rellena el modal con datos actuales
+function agiAbrirMoverDesdeDrawer(rid){
+  if (!_agiCurrentDetail || _agiCurrentDetail.id !== rid) return;
+  const d = _agiCurrentDetail;
+  const fechaActual = d.confirmed_date || d.proposed_date || d.requested_date || '';
+  const tfActual = d.confirmed_time_from || d.proposed_time_from || d.requested_time_from || '09:00';
+  const ttActual = d.confirmed_time_to || d.proposed_time_to || d.requested_time_to || '09:30';
+  // En el modal de mover NORMAL ponemos los inputs editables manualmente
+  // (no es drag-drop, así que dejamos al operador editar fecha/hora libremente)
+  agiAbrirMover({
+    rid: d.id,
+    code: d.code,
+    cliente: d.customer_name,
+    fechaOrig: fechaActual,
+    tfOrig: tfActual,
+    ttOrig: ttActual,
+    fechaDest: fechaActual,
+    tfDest: tfActual,
+    ttDest: ttActual,
+  });
+  // Inyectar inputs editables en lugar de hidden para que el operador
+  // pueda cambiar la fecha si quiere
+  const body = document.getElementById('agi-mover-body');
+  const resumen = document.getElementById('agi-mover-resumen');
+  // Agregar campos editables debajo del resumen
+  const extraHtml = `
+    <div class="row g-2 mt-2 mb-3" id="agi-mover-editor">
+      <div class="col-12">
+        <label class="form-label small fw-bold">Nueva fecha</label>
+        <input type="date" id="agi-mover-date-editor" class="form-control"
+          value="${agiEsc(fechaActual)}" style="font-size:16px">
+      </div>
+      <div class="col-6">
+        <label class="form-label small fw-bold">Desde</label>
+        <input type="time" id="agi-mover-tf-editor" class="form-control"
+          value="${agiEsc(tfActual)}" style="font-size:16px">
+      </div>
+      <div class="col-6">
+        <label class="form-label small fw-bold">Hasta</label>
+        <input type="time" id="agi-mover-tt-editor" class="form-control"
+          value="${agiEsc(ttActual)}" style="font-size:16px">
+      </div>
+    </div>`;
+  // Insertar después del resumen si no existe ya
+  if (!document.getElementById('agi-mover-editor')){
+    resumen.insertAdjacentHTML('afterend', extraHtml);
+    // Sincronizar inputs editor → hidden
+    ['date','tf','tt'].forEach(suf => {
+      const ed = document.getElementById(`agi-mover-${suf}-editor`);
+      const hidden = document.getElementById(`agi-mover-${suf === 'date' ? 'fecha' : suf}`);
+      if (ed && hidden){
+        ed.addEventListener('change', () => { hidden.value = ed.value; });
+      }
+    });
+  }
+}
 
-  // ── CALIDAD
-  html += '<div class="fc-section">';
-  html += '<h6><i class="bi bi-shield-check me-1"></i>Calidad de información</h6>';
-  html += `<div class="fc-row"><span class="fc-row-lbl">Quality score</span><span class="fc-row-val" style="color:${d.information_quality_score>=80?'#16a34a':d.information_quality_score>=60?'#f59e0b':'#dc2626'}">${d.information_quality_score||0}%</span></div>`;
-  html += `<div class="fc-row"><span class="fc-row-lbl">Risk score</span><span class="fc-row-val" style="color:${d.risk_score>=50?'#dc2626':d.risk_score>=25?'#f59e0b':'#16a34a'}">${d.risk_score||0}%</span></div>`;
-  if (d.observations) html += `<div class="fc-row"><span class="fc-row-lbl">Observación cliente</span><span class="fc-row-val text-end" style="max-width:60%">${d.observations}</span></div>`;
-  if (d.internal_notes) html += `<div class="fc-row"><span class="fc-row-lbl">Notas internas</span><span class="fc-row-val text-end" style="max-width:60%">${d.internal_notes}</span></div>`;
-  html += '</div>';
-
-  // ── PROPUESTAS
-  if (d.proposals && d.proposals.length) {
-    html += '<div class="fc-section">';
-    html += '<h6><i class="bi bi-arrow-left-right me-1"></i>Propuestas previas</h6>';
-    for (const p of d.proposals) {
-      html += `<div class="fc-pkg-card" style="background:${p.status==='accepted'?'#f0fdf4':p.status==='declined'?'#fef2f2':'#fef9c3'}">
-        <strong>${p.proposed_by==='operacion'?'Operación →':'Cliente →'}</strong>
-        <div class="fc-pkg-meta">
-          <span>${p.date} · ${p.time_from}–${p.time_to}</span>
-          <span style="text-transform:uppercase;font-weight:700;color:#6b7280">${p.status}</span>
-        </div>
-        ${p.message?`<div style="font-size:.74rem;margin-top:4px;color:#374151">${p.message}</div>`:''}
-      </div>`;
+// ── Agregar email del ERP a extra_emails ─────────────────────────────
+async function agiAddExtraEmail(rid, email, btnEl){
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:.85em;height:.85em"></span>';
+  try {
+    // Cargar emails actuales + agregar el nuevo
+    const info = await fetch(`/retiros/${rid}/emails-info`, { credentials:'same-origin' });
+    const infoData = await info.json();
+    if (!infoData.ok){
+      ilusToast('No pude leer los emails actuales', { type:'error' });
+      btnEl.disabled = false;
+      btnEl.innerHTML = '<i class="bi bi-plus-lg"></i> CC';
+      return;
     }
-    html += '</div>';
-  }
-
-  // ── HISTORIAL
-  if (d.logs && d.logs.length) {
-    html += '<div class="fc-section">';
-    html += '<h6><i class="bi bi-clock-history me-1"></i>Historial</h6>';
-    for (const lg of d.logs.slice(0,15)) {
-      html += `<div class="fc-log-item">
-        <div class="fc-log-icon"><i class="bi bi-circle-fill" style="font-size:.55rem"></i></div>
-        <div style="flex:1;min-width:0">
-          <div style="color:#0f172a;font-weight:600">${lg.action||''}</div>
-          ${lg.notes?`<div style="color:#6b7280;font-size:.7rem">${lg.notes}</div>`:''}
-        </div>
-        <span class="fc-log-time">${lg.created_at||''}</span>
-      </div>`;
+    const nuevosExtras = Array.from(new Set([...(infoData.extra||[]), email.toLowerCase()])).filter(Boolean);
+    // PATCH inline al campo extra_emails
+    const r = await fetch(`/retiros/${rid}/field`, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body: JSON.stringify({ field:'extra_emails', value: nuevosExtras.join(', ') }),
+    });
+    let d = {};
+    try { d = await r.json(); } catch(_){}
+    if (r.ok && d.ok){
+      btnEl.classList.add('added');
+      btnEl.innerHTML = '<i class="bi bi-check-lg"></i> Agregado';
+      ilusToast(`✓ ${email} agregado a CC`, { type:'success' });
+      // Refrescar drawer + calendario
+      setTimeout(() => agiAbrirDrawer(rid), 600);
+      agiCargar(true);
+    } else {
+      ilusToast(d.error || 'No se pudo agregar', { type:'error' });
+      btnEl.disabled = false;
+      btnEl.innerHTML = '<i class="bi bi-plus-lg"></i> CC';
     }
-    html += '</div>';
+  } catch(e){
+    ilusToast('Error: ' + e.message, { type:'error' });
+    btnEl.disabled = false;
+    btnEl.innerHTML = '<i class="bi bi-plus-lg"></i> CC';
   }
+}
 
-  document.getElementById('fc-body').innerHTML = html;
+// ══════════════════════════════════════════════════════════════════════
+//  POLLING 30s — refresco silencioso (sin parpadeo, sin perder drawer)
+// ══════════════════════════════════════════════════════════════════════
+function agiStartPoll(){
+  if (_agiPollTimer) clearInterval(_agiPollTimer);
+  _agiPollTimer = setInterval(() => {
+    // Si el drawer está abierto no refrescamos el render del drawer
+    // pero sí el calendario (silencioso)
+    if (document.visibilityState === 'visible'){
+      agiCargar(true);
+    }
+  }, AGI_POLL_MS);
+}
+function agiStopPoll(){
+  if (_agiPollTimer){ clearInterval(_agiPollTimer); _agiPollTimer = null; }
+}
 
-  // Acciones según estado
-  const actions = document.getElementById('fc-actions');
-  let acHtml = `<a href="${d.public_url}" target="_blank" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye me-1"></i>Vista cliente</a>`;
-  // Confirmar
-  if (!d.confirmed_date && d.status !== 'rechazada' && d.status !== 'cerrada') {
-    acHtml += `<button class="btn btn-sm btn-success" onclick="confirmarRetiro(${d.id})"><i class="bi bi-check-circle-fill me-1"></i>Confirmar</button>`;
+// Pausar polling cuando tab no visible (ahorrar batería en mobile)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') agiStopPoll();
+  else { agiCargar(true); agiStartPoll(); }
+});
+
+// Cerrar drawer con ESC (UX desktop)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('agiDrawer').classList.contains('open')){
+    agiCerrarDrawer();
   }
-  // Proponer
-  if (d.status !== 'cerrada' && d.status !== 'retirada' && d.status !== 'rechazada') {
-    acHtml += `<button class="btn btn-sm" style="background:#a855f7;color:#fff" onclick="abrirProponer(${d.id}, '${d.requested_date}')"><i class="bi bi-calendar-plus me-1"></i>Proponer</button>`;
-  }
-  // Rechazar
-  if (d.status !== 'rechazada' && d.status !== 'cerrada') {
-    acHtml += `<button class="btn btn-sm btn-outline-danger" onclick="rechazarRetiro(${d.id})"><i class="bi bi-x-octagon me-1"></i>Rechazar</button>`;
-  }
-  acHtml += `<a href="/retiros/${d.id}" class="btn btn-sm btn-outline-dark ms-auto"><i class="bi bi-arrow-up-right-square me-1"></i>Ficha completa</a>`;
-  actions.innerHTML = acHtml;
-}
-
-async function confirmarRetiro(rid) {
-  const ok = await ilusConfirm({
-    title: 'Confirmar retiro',
-    message: '¿Confirmar este retiro?',
-    sub: 'Se notificará al cliente por email.',
-    okLabel: 'Sí, confirmar',
-  });
-  if (!ok) return;
-  const r = await fetch(`/retiros/${rid}/status`, {
-    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:`status=agenda_confirmada&notes=Confirmado desde calendario operativo`
-  });
-  if (r.ok) { cerrarDrawer(); cargarCalendario(); ilusToast('Retiro confirmado', { type:'success' }); }
-  else ilusToast('Error confirmando', { type:'error' });
-}
-
-async function rechazarRetiro(rid) {
-  const motivo = await ilusPrompt({
-    title: 'Rechazar retiro',
-    message: 'Motivo del rechazo:',
-    sub: 'Se incluirá en la notificación al cliente.',
-    placeholder: 'Ej: no podemos atender ese horario',
-    okLabel: 'Rechazar',
-    multiline: true,
-    type: 'danger',
-  });
-  if (!motivo) return;
-  const r = await fetch(`/retiros/${rid}/status`, {
-    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:`status=rechazada&notes=${encodeURIComponent(motivo)}`
-  });
-  if (r.ok) { cerrarDrawer(); cargarCalendario(); ilusToast('Retiro rechazado', { type:'warning' }); }
-  else ilusToast('Error rechazando', { type:'error' });
-}
-
-function abrirProponer(rid, defaultDate) {
-  document.getElementById('prop_rid').value = rid;
-  document.getElementById('prop_date').value = defaultDate || '';
-  document.getElementById('prop_tf').value = '09:00';
-  document.getElementById('prop_tt').value = '12:00';
-  document.getElementById('prop_msg').value = '';
-  new bootstrap.Modal(document.getElementById('modalProponer')).show();
-}
-
-async function enviarPropuesta() {
-  const rid  = document.getElementById('prop_rid').value;
-  const date = document.getElementById('prop_date').value;
-  const tf   = document.getElementById('prop_tf').value;
-  const tt   = document.getElementById('prop_tt').value;
-  const msg  = document.getElementById('prop_msg').value;
-  if (!date || !tf || !tt) { ilusToast('Completa fecha y horario', { type:'warning' }); return; }
-  const r = await fetch(`/retiros/${rid}/proposal`, {
-    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body: `date=${date}&time_from=${tf}&time_to=${tt}&message=${encodeURIComponent(msg)}`
-  });
-  if (r.ok) {
-    bootstrap.Modal.getInstance(document.getElementById('modalProponer')).hide();
-    cerrarDrawer();
-    cargarCalendario();
-    ilusToast('Propuesta enviada al cliente', { type:'success' });
-  } else ilusToast('Error enviando propuesta', { type:'error' });
-}
+});
 
 // Iniciar
-document.addEventListener('DOMContentLoaded', calToday);
+document.addEventListener('DOMContentLoaded', () => {
+  agiToday();
+  agiStartPoll();
+});
 </script>
 {% endblock %}

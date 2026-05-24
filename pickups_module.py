@@ -5673,14 +5673,14 @@ def register_pickup_routes(app, ctx):
 
         rows = mysql_fetchall(
             f"""SELECT id, code, status, customer_name, customer_rut, contact_name,
-                       contact_phone, contact_email, document_type, document_number,
+                       contact_phone, contact_email, extra_emails, document_type, document_number,
                        requested_date, requested_time_from, requested_time_to,
                        proposed_date, proposed_time_from, proposed_time_to,
                        confirmed_date, confirmed_time_from, confirmed_time_to,
                        total_packages, total_weight_kg, total_volumetric_weight, total_volume_m3,
                        pickup_person_name, pickup_person_phone, pickup_person_relation,
                        information_quality_score, risk_score, observations, internal_notes,
-                       created_at
+                       public_token, created_at
                 FROM `{REQ}`
                 WHERE (requested_date BETWEEN %s AND %s
                        OR confirmed_date BETWEEN %s AND %s
@@ -5688,6 +5688,35 @@ def register_pickup_routes(app, ctx):
                 ORDER BY requested_date ASC, requested_time_from ASC""",
             (d_from, d_to, d_from, d_to, d_from, d_to)
         )
+
+        # Daniel 2026-05-24 — agenda interna inteligente:
+        # Cargamos emails/teléfonos detectados en docs ERP para cada retiro,
+        # para que el operador vea ⚠ cuando hay diferencia con lo declarado
+        # por el cliente y pueda agregarlos a CC con un click.
+        erp_contacts_map = {}  # rid -> {emails:[str], phones:[str]}
+        if rows:
+            try:
+                rids = [int(r["id"]) for r in rows]
+                if rids:
+                    in_clause = ",".join(["%s"] * len(rids))
+                    doc_rows = mysql_fetchall(
+                        f"""SELECT request_id, email_cliente_erp, telefono_cliente_erp
+                            FROM pickup_request_docs
+                            WHERE request_id IN ({in_clause})""",
+                        tuple(rids)
+                    ) or []
+                    for dr in doc_rows:
+                        rid_k = int(dr.get("request_id") or 0)
+                        bucket = erp_contacts_map.setdefault(rid_k, {"emails": set(), "phones": set()})
+                        em = (dr.get("email_cliente_erp") or "").strip().lower()
+                        if em and "@" in em:
+                            bucket["emails"].add(em)
+                        ph = re.sub(r"[^0-9+]", "", str(dr.get("telefono_cliente_erp") or ""))
+                        if ph and len(ph) >= 8:
+                            bucket["phones"].add(ph)
+            except Exception:
+                # Si la tabla/columnas no existen aún en este entorno, seguimos sin enriquecer
+                erp_contacts_map = {}
 
         # Capacidades
         max_picks_slot = int(cfg.get("max_picks_per_slot") or 5)
@@ -5735,6 +5764,37 @@ def register_pickup_routes(app, ctx):
             s["total_kg"] += kg
             s["total_m3"] += m3
 
+            # Daniel 2026-05-24 — qué tipo de fecha estamos pintando:
+            #   "confirmed" = ambos acordaron (verde)
+            #   "proposed"  = ILUS propuso, esperando cliente (ámbar)
+            #   "requested" = lo que pidió el cliente (azul)
+            # Esto le permite al operador distinguir VISUALMENTE en la agenda
+            # sin tener que abrir cada tarjeta.
+            if r.get("confirmed_date"):
+                kind_date = "confirmed"
+            elif r.get("proposed_date"):
+                kind_date = "proposed"
+            else:
+                kind_date = "requested"
+
+            # ¿El cliente RECHAZÓ una propuesta nuestra? (disputa)
+            # Lo detectamos por status: si está en `reagendada` o `informacion_incompleta`
+            # con propuesta pendiente, lo marcamos como en disputa.
+            is_disputed = r.get("status") in ("reagendada", "informacion_incompleta")
+
+            # Enriquecer con contactos del ERP detectados en los docs asociados
+            erp_info = erp_contacts_map.get(int(r["id"]), {"emails": set(), "phones": set()})
+            declared_email = (r.get("contact_email") or "").strip().lower()
+            declared_phone = re.sub(r"[^0-9+]", "", str(r.get("contact_phone") or ""))
+            extras_raw = (r.get("extra_emails") or "").strip()
+            extras_list = [e.strip().lower() for e in re.split(r"[,;\s]+", extras_raw) if e.strip()]
+            erp_emails_sorted = sorted(erp_info["emails"])
+            erp_phones_sorted = sorted(erp_info["phones"])
+            # Sugerencias = los que están en ERP pero NO en (declarado + extras)
+            erp_email_sugeridos = [e for e in erp_emails_sorted
+                                    if e != declared_email and e not in extras_list]
+            erp_phone_sugeridos = [p for p in erp_phones_sorted if p != declared_phone]
+
             pick = {
                 "id":               r["id"],
                 "code":             r.get("code"),
@@ -5746,19 +5806,28 @@ def register_pickup_routes(app, ctx):
                 "contact_name":     r.get("contact_name"),
                 "contact_phone":    r.get("contact_phone"),
                 "contact_email":    r.get("contact_email"),
+                "extra_emails":     extras_list,
                 "document_type":    r.get("document_type"),
                 "document_number":  r.get("document_number"),
                 "fecha":            fecha_str,
                 "time_from":        _slot_label(tf),
                 "time_to":          _slot_label(tt),
+                "kind_date":        kind_date,
+                "is_disputed":      is_disputed,
                 "is_proposed":      bool(r.get("proposed_date") and not r.get("confirmed_date")),
                 "is_confirmed":     bool(r.get("confirmed_date")),
                 "total_packages":   int(r.get("total_packages") or 0),
                 "total_weight_kg":  kg,
                 "total_volume_m3":  m3,
                 "pickup_person":    r.get("pickup_person_name"),
+                "pickup_person_phone": r.get("pickup_person_phone"),
                 "quality_score":    int(r.get("information_quality_score") or 0),
                 "risk_score":       int(r.get("risk_score") or 0),
+                "public_token":     r.get("public_token"),
+                # ⚠ Indicadores de "diferencia de datos" cliente vs ERP
+                "erp_emails_suggested": erp_email_sugeridos,
+                "erp_phones_suggested": erp_phone_sugeridos,
+                "has_data_mismatch":    bool(erp_email_sugeridos or erp_phone_sugeridos),
             }
             s["picks"].append(pick)
             d["picks"].append(pick)
