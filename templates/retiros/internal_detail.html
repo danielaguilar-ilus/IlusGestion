@@ -1345,6 +1345,59 @@ let _erpLineas = [];
 
 function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ════════════════════════════════════════════════════════════════════
+   _fetchJsonSafe(url, opts)
+   ────────────────────────────────────────────────────────────────────
+   Fix Daniel 2026-05-23 (CRÍTICO): cuando el backend devuelve HTML
+   (sesión expirada → login, 500 sin handler, breaker 503 con HTML, etc.),
+   `r.json()` crashea con "Unexpected token '<', '<!doctype...".
+   Este helper:
+     1. Marca request como AJAX (header X-Requested-With) para que el
+        backend devuelva JSON 401/403 en lugar de redirect HTML.
+     2. Solicita Accept: application/json explícito.
+     3. Si el response NO es JSON, devuelve un objeto sintético
+        {ok:false, error:'...', _http_status:N, _not_json:true}
+        con mensaje legible según el status.
+   Uso:
+     const d = await _fetchJsonSafe('/foo', {method:'POST', body:...});
+     if (!d.ok) { mostrar(d.error); return; }
+   ════════════════════════════════════════════════════════════════════ */
+async function _fetchJsonSafe(url, opts){
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  // Garantizar AJAX/JSON detection en el backend
+  if (!opts.headers['X-Requested-With'] && !(opts.headers instanceof Headers)){
+    opts.headers['X-Requested-With'] = 'XMLHttpRequest';
+  }
+  if (!opts.headers['Accept'] && !(opts.headers instanceof Headers)){
+    opts.headers['Accept'] = 'application/json';
+  }
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch(netErr){
+    return { ok:false, error:'Sin conexión: ' + (netErr.message||'error de red'),
+             _not_json:true, _http_status:0 };
+  }
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  if (ct.includes('application/json') || ct.includes('+json')){
+    try { const d = await r.json(); d._http_status = r.status; return d; }
+    catch(je){ /* fallthrough */ }
+  }
+  // Respuesta NO JSON — derivar mensaje según status
+  let msg;
+  if (r.status === 401)      msg = 'Tu sesión expiró. Recarga la página e inicia sesión nuevamente.';
+  else if (r.status === 403) msg = 'No tienes permiso para esta acción. Pide al admin que active el permiso.';
+  else if (r.status === 404) msg = 'Recurso no encontrado en el servidor.';
+  else if (r.status === 502 || r.status === 503 || r.status === 504)
+    msg = 'El servidor está sobrecargado o el ERP no responde. Reintenta en 30 segundos.';
+  else if (r.status >= 500)  msg = 'Error interno del servidor. Reintenta o contacta soporte.';
+  else                       msg = 'Respuesta inesperada del servidor (HTTP ' + r.status + ').';
+  // Log discreto para diagnóstico
+  try { console.warn('[_fetchJsonSafe] Non-JSON response from', url, '→', r.status, ct); } catch(_e){}
+  return { ok:false, error: msg, _not_json:true, _http_status: r.status };
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  SUGERENCIAS — Documentos con saldo del cliente (solo_con_saldo=1)
 // ════════════════════════════════════════════════════════════════════

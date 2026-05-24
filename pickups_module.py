@@ -2855,7 +2855,29 @@ def register_pickup_routes(app, ctx):
 
         Body JSON: {document_type, document_number}
         Response:  {ok:true, doc:{...}, totales:{...}}  o 4xx/5xx con error.
+
+        🔒 GARANTIZA respuesta JSON SIEMPRE — fix Daniel 2026-05-23:
+        El frontend reportaba "Unexpected token '<', '<!doctype..."
+        que indica que en algún branch este endpoint devolvía HTML
+        (página de error 500 default de Flask). Cualquier excepción
+        no atrapada se convierte en JSON 500 con error legible.
         """
+        # Wrapper anti-HTML: cualquier crash se convierte en JSON 500
+        try:
+            return _pickup_doc_agregar_impl(rid)
+        except Exception as _exc:
+            import traceback as _tb
+            print(f"[pickup_doc_agregar] CRASH rid={rid}: {_exc}\n{_tb.format_exc()}", flush=True)
+            return jsonify({
+                "ok": False,
+                "error": "Error interno al asociar documento. Reintenta o contacta soporte.",
+                "error_codigo": "INTERNAL_CRASH",
+                "detalle": str(_exc)[:200],
+            }), 500
+
+    def _pickup_doc_agregar_impl(rid):
+        """Implementación real de pickup_doc_agregar. Separada para que el
+        wrapper pueda atrapar cualquier excepción y devolver JSON."""
         req = mysql_fetchone(f"SELECT id, code FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return jsonify({"ok": False, "error": "Retiro no existe"}), 404
