@@ -1,0 +1,6362 @@
+{
+ "005502BBC": {
+  "bultos": 1.0,
+  "peso": 38.0,
+  "peso_vol": 49.35
+ },
+ "005506BBC": {
+  "bultos": 1.0,
+  "peso": 38.0,
+  "peso_vol": 49.35
+ },
+ "005602BBC": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 84.81
+ },
+ "1042100557": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.93
+ },
+ "1111100118": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 10.72
+ },
+ "1111100119": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 10.72
+ },
+ "1111100120": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 10.72
+ },
+ "1111100121": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 10.72
+ },
+ "1111100122": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 10.72
+ },
+ "1111100123": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 10.72
+ },
+ "1111100124": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 10.72
+ },
+ "1111100125": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 10.72
+ },
+ "ACSBA041S0400": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA041S0500": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA041S0600": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA041S0700": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA041S0800": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA041S1000": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 6.1
+ },
+ "ACSBA041S1200": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 6.1
+ },
+ "ACSBA041S1500": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 6.1
+ },
+ "ACSBA041S1800": {
+  "bultos": 1.0,
+  "peso": 19.0,
+  "peso_vol": 6.1
+ },
+ "ACSBA041S2000": {
+  "bultos": 1.0,
+  "peso": 21.0,
+  "peso_vol": 6.1
+ },
+ "111110PMB03": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 12.66
+ },
+ "111110PMB05": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 12.66
+ },
+ "111110PMB06": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 12.66
+ },
+ "111110PMB08": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 12.66
+ },
+ "111110PMB10": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 12.66
+ },
+ "111110PMB12": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 12.66
+ },
+ "1113100111": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 39.98
+ },
+ "1113100112": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100113": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100114": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100192": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100215": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 37.99
+ },
+ "1113100238": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100273": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 2.43
+ },
+ "1113100295": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100317": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100341": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100342": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100360": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 5.88
+ },
+ "1113100434": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100437": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100438": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 4.07
+ },
+ "1113100439": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 4.07
+ },
+ "1113100440": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100441": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100442": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100443": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100547": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.94
+ },
+ "1113100559": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1118100006": {
+  "bultos": 8.0,
+  "peso": 154.0,
+  "peso_vol": 32.79
+ },
+ "1118100137": {
+  "bultos": 8.0,
+  "peso": 154.0,
+  "peso_vol": 28.55
+ },
+ "1118100138": {
+  "bultos": 6.0,
+  "peso": 103.0,
+  "peso_vol": 20.09
+ },
+ "FZABU028S0100": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 2.65
+ },
+ "FZABU028S0200": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 3.97
+ },
+ "1118100308": {
+  "bultos": 9.0,
+  "peso": 114.0,
+  "peso_vol": 17.33
+ },
+ "1118100352": {
+  "bultos": 8.0,
+  "peso": 154.0,
+  "peso_vol": 28.55
+ },
+ "1118100353": {
+  "bultos": 8.0,
+  "peso": 154.0,
+  "peso_vol": 28.55
+ },
+ "1118100374": {
+  "bultos": 8.0,
+  "peso": 158.0,
+  "peso_vol": 21.69
+ },
+ "FZADI071S0300": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 0.84
+ },
+ "FZADI071S0400": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 1.1
+ },
+ "FZADI071S0500": {
+  "bultos": 2.0,
+  "peso": 31.5,
+  "peso_vol": 3.98
+ },
+ "FZADI071S0600": {
+  "bultos": 2.0,
+  "peso": 41.5,
+  "peso_vol": 4.49
+ },
+ "FZADI071S0700": {
+  "bultos": 2.0,
+  "peso": 51.5,
+  "peso_vol": 5.76
+ },
+ "1118100541": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 3.91
+ },
+ "1118100543": {
+  "bultos": 1.0,
+  "peso": 11.5,
+  "peso_vol": 5.32
+ },
+ "1118100544": {
+  "bultos": 8.0,
+  "peso": 144.0,
+  "peso_vol": 16.4
+ },
+ "1120100026": {
+  "bultos": 17.0,
+  "peso": 324.5,
+  "peso_vol": 65.91
+ },
+ "1120100037": {
+  "bultos": 2.0,
+  "peso": 34.0,
+  "peso_vol": 32.14
+ },
+ "1120100039": {
+  "bultos": 2.0,
+  "peso": 17.0,
+  "peso_vol": 3.82
+ },
+ "1120100270": {
+  "bultos": 3.0,
+  "peso": 92.0,
+  "peso_vol": 77.15
+ },
+ "1120100290": {
+  "bultos": 2.0,
+  "peso": 61.0,
+  "peso_vol": 51.46
+ },
+ "1120100291": {
+  "bultos": 2.0,
+  "peso": 84.0,
+  "peso_vol": 66.02
+ },
+ "1120100292": {
+  "bultos": 1.0,
+  "peso": 18.0,
+  "peso_vol": 40.95
+ },
+ "1120100314": {
+  "bultos": 2.0,
+  "peso": 76.0,
+  "peso_vol": 23.08
+ },
+ "1120100351": {
+  "bultos": 2.0,
+  "peso": 44.0,
+  "peso_vol": 17.94
+ },
+ "FZAMC036S0200": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0300": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0400": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0500": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0600": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0700": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0800": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S0900": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S1000": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 4.5
+ },
+ "FZAMC036S1100": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.5
+ },
+ "1120100405": {
+  "bultos": 6.0,
+  "peso": 82.28,
+  "peso_vol": 44.36
+ },
+ "1120100527": {
+  "bultos": 2.0,
+  "peso": 76.0,
+  "peso_vol": 23.08
+ },
+ "FZAMC037S0200": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 0.9
+ },
+ "FZAMC037S0300": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 1.83
+ },
+ "FZAMC037S0400": {
+  "bultos": 1.0,
+  "peso": 15.5,
+  "peso_vol": 2.31
+ },
+ "FZAMC037S0500": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 2.96
+ },
+ "FZAMC037S0600": {
+  "bultos": 1.0,
+  "peso": 25.5,
+  "peso_vol": 3.35
+ },
+ "FZAMC037S0700": {
+  "bultos": 2.0,
+  "peso": 31.5,
+  "peso_vol": 3.9
+ },
+ "FZAMC037S0800": {
+  "bultos": 2.0,
+  "peso": 36.0,
+  "peso_vol": 4.31
+ },
+ "FZAMC037S0900": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 5.04
+ },
+ "FZAMC037S1000": {
+  "bultos": 2.0,
+  "peso": 46.0,
+  "peso_vol": 5.66
+ },
+ "FZAMC037S1100": {
+  "bultos": 2.0,
+  "peso": 52.0,
+  "peso_vol": 5.82
+ },
+ "FZAMC037S1200": {
+  "bultos": 2.0,
+  "peso": 56.0,
+  "peso_vol": 6.14
+ },
+ "FZAMC037S1300": {
+  "bultos": 2.0,
+  "peso": 61.0,
+  "peso_vol": 6.46
+ },
+ "FZAMC037S1400": {
+  "bultos": 2.0,
+  "peso": 66.0,
+  "peso_vol": 6.82
+ },
+ "FZAMC037S1500": {
+  "bultos": 2.0,
+  "peso": 71.0,
+  "peso_vol": 7.38
+ },
+ "FZAMC037S1600": {
+  "bultos": 2.0,
+  "peso": 76.0,
+  "peso_vol": 7.38
+ },
+ "FZAMC037S1700": {
+  "bultos": 2.0,
+  "peso": 81.0,
+  "peso_vol": 7.38
+ },
+ "FZAMC037S1800": {
+  "bultos": 2.0,
+  "peso": 86.0,
+  "peso_vol": 7.98
+ },
+ "FZAMC037S1900": {
+  "bultos": 2.0,
+  "peso": 90.0,
+  "peso_vol": 8.18
+ },
+ "FZAMC037S2000": {
+  "bultos": 2.0,
+  "peso": 96.0,
+  "peso_vol": 8.36
+ },
+ "FZAMC037S2100": {
+  "bultos": 2.0,
+  "peso": 100.0,
+  "peso_vol": 9.46
+ },
+ "FZAMC037S2200": {
+  "bultos": 2.0,
+  "peso": 111.0,
+  "peso_vol": 9.46
+ },
+ "FZAMC037S2300": {
+  "bultos": 2.0,
+  "peso": 121.0,
+  "peso_vol": 9.92
+ },
+ "112011BCGCNS2": {
+  "bultos": 8.0,
+  "peso": 152.4,
+  "peso_vol": 23.75
+ },
+ "1121100253": {
+  "bultos": 1.0,
+  "peso": 67.0,
+  "peso_vol": 114.94
+ },
+ "1121100300": {
+  "bultos": 1.0,
+  "peso": 38.0,
+  "peso_vol": 59.85
+ },
+ "1121100321": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 63.75
+ },
+ "1121100401": {
+  "bultos": 1.0,
+  "peso": 140.0,
+  "peso_vol": 156.94
+ },
+ "1121100426": {
+  "bultos": 1.0,
+  "peso": 70.0,
+  "peso_vol": 161.7
+ },
+ "1121100430": {
+  "bultos": 1.0,
+  "peso": 95.0,
+  "peso_vol": 300.44
+ },
+ "1121100445": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 442.89
+ },
+ "1121100446": {
+  "bultos": 1.0,
+  "peso": 300.0,
+  "peso_vol": 508.48
+ },
+ "1121100447": {
+  "bultos": 1.0,
+  "peso": 236.0,
+  "peso_vol": 456.1
+ },
+ "1121100448": {
+  "bultos": 1.0,
+  "peso": 65.0,
+  "peso_vol": 114.84
+ },
+ "1121100449": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 89.9
+ },
+ "1121100450": {
+  "bultos": 1.0,
+  "peso": 113.0,
+  "peso_vol": 185.63
+ },
+ "1121100495": {
+  "bultos": 1.0,
+  "peso": 79.0,
+  "peso_vol": 117.35
+ },
+ "1121100500": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 280.5
+ },
+ "1121100503": {
+  "bultos": 5.0,
+  "peso": 270.0,
+  "peso_vol": 464.405
+ },
+ "1121100506": {
+  "bultos": 5.0,
+  "peso": 273.2,
+  "peso_vol": 382.37
+ },
+ "1121100507": {
+  "bultos": 5.0,
+  "peso": 262.5,
+  "peso_vol": 275.84
+ },
+ "1121100509": {
+  "bultos": 5.0,
+  "peso": 264.0,
+  "peso_vol": 262.09
+ },
+ "1121100511": {
+  "bultos": 1.0,
+  "peso": 265.0,
+  "peso_vol": 405.8
+ },
+ "1121100512": {
+  "bultos": 2.0,
+  "peso": 281.9,
+  "peso_vol": 439.79
+ },
+ "1121100515": {
+  "bultos": 2.0,
+  "peso": 48.9,
+  "peso_vol": 79.25
+ },
+ "1121100516": {
+  "bultos": 3.0,
+  "peso": 105.4,
+  "peso_vol": 276.02
+ },
+ "1121100517": {
+  "bultos": 2.0,
+  "peso": 53.8,
+  "peso_vol": 56.13
+ },
+ "1121100522": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 75.58
+ },
+ "1121100528": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 112.86
+ },
+ "1121100529": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 251.56
+ },
+ "1121100530": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 267.3
+ },
+ "1121100531": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 267.3
+ },
+ "1121100532": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 281.33
+ },
+ "1121100533": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 293.37
+ },
+ "1121100534": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 234.0
+ },
+ "ACSCR013S0001": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 6.9
+ },
+ "ACSCR013S0002": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 6.9
+ },
+ "ACSCR013S0006": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 6.9
+ },
+ "ACSCR013S0007": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 6.9
+ },
+ "1124100323": {
+  "bultos": 1.0,
+  "peso": 175.0,
+  "peso_vol": 110.67
+ },
+ "1124100346": {
+  "bultos": 6.0,
+  "peso": 188.0,
+  "peso_vol": 110.46
+ },
+ "1124100347": {
+  "bultos": 2.0,
+  "peso": 79.0,
+  "peso_vol": 47.84
+ },
+ "1124100194": {
+  "bultos": 1.0,
+  "peso": 36.0,
+  "peso_vol": 18.98
+ },
+ "1124100444": {
+  "bultos": 3.0,
+  "peso": 74.0,
+  "peso_vol": 32.28
+ },
+ "1129100318": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 67.53
+ },
+ "1129100320": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 103.18
+ },
+ "1129100329": {
+  "bultos": 1.0,
+  "peso": 92.0,
+  "peso_vol": 86.06
+ },
+ "1129100330": {
+  "bultos": 1.0,
+  "peso": 95.0,
+  "peso_vol": 185.63
+ },
+ "1129100335": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 242.78
+ },
+ "1129100461": {
+  "bultos": 1.0,
+  "peso": 18.0,
+  "peso_vol": 9.18
+ },
+ "1129100519": {
+  "bultos": 2.0,
+  "peso": 46.0,
+  "peso_vol": 115.32
+ },
+ "1129100520": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 83.87
+ },
+ "1129100523": {
+  "bultos": 2.0,
+  "peso": 85.0,
+  "peso_vol": 77.46
+ },
+ "1129100524": {
+  "bultos": 2.0,
+  "peso": 88.0,
+  "peso_vol": 76.51
+ },
+ "1129100525": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 23.28
+ },
+ "1129100526": {
+  "bultos": 1.0,
+  "peso": 41.5,
+  "peso_vol": 79.66
+ },
+ "1129100551": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 63.97
+ },
+ "1129100552": {
+  "bultos": 1.0,
+  "peso": 58.0,
+  "peso_vol": 58.31
+ },
+ "1129100553": {
+  "bultos": 1.0,
+  "peso": 58.0,
+  "peso_vol": 58.31
+ },
+ "1129100571": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 63.97
+ },
+ "FZAKB061S0100": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 0.85
+ },
+ "FZAKB061S0200": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 1.0
+ },
+ "FZAKB061S0300": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 1.18
+ },
+ "FZAKB061S0400": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 1.26
+ },
+ "FZAKB061S0500": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 1.31
+ },
+ "FZAKB061S0600": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 1.73
+ },
+ "FZAKB061S0700": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 1.97
+ },
+ "FZAKB061S0800": {
+  "bultos": 1.0,
+  "peso": 21.0,
+  "peso_vol": 2.43
+ },
+ "FZAKB061S0900": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 28.0
+ },
+ "FZAKB061S1000": {
+  "bultos": 1.0,
+  "peso": 29.0,
+  "peso_vol": 3.3
+ },
+ "FZAKB061S1100": {
+  "bultos": 1.0,
+  "peso": 33.0,
+  "peso_vol": 3.64
+ },
+ "FZAKB061S1200": {
+  "bultos": 1.0,
+  "peso": 36.3,
+  "peso_vol": 4.23
+ },
+ "FZAKB061S1300": {
+  "bultos": 1.0,
+  "peso": 40.34,
+  "peso_vol": 4.23
+ },
+ "FZAKB061S1400": {
+  "bultos": 1.0,
+  "peso": 52.5,
+  "peso_vol": 5.92
+ },
+ "FZAKB061S1500": {
+  "bultos": 1.0,
+  "peso": 60.3,
+  "peso_vol": 6.08
+ },
+ "1131100409": {
+  "bultos": 7.0,
+  "peso": 91.28,
+  "peso_vol": 51.2
+ },
+ "1132100406": {
+  "bultos": 2.0,
+  "peso": 39.0,
+  "peso_vol": 86.37
+ },
+ "1132100408": {
+  "bultos": 8.0,
+  "peso": 120.28,
+  "peso_vol": 92.57
+ },
+ "1132100672": {
+  "bultos": 11.0,
+  "peso": 191.4,
+  "peso_vol": 100.21
+ },
+ "1134100394": {
+  "bultos": 2.0,
+  "peso": 2.0,
+  "peso_vol": 34.19
+ },
+ "1138100489": {
+  "bultos": 1.0,
+  "peso": 37.0,
+  "peso_vol": 16.56
+ },
+ "1210100145": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 6.92
+ },
+ "1210100313": {
+  "bultos": 2.0,
+  "peso": 18.0,
+  "peso_vol": 33.93
+ },
+ "1210100373": {
+  "bultos": 2.0,
+  "peso": 18.0,
+  "peso_vol": 33.93
+ },
+ "1210100432": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 3.78
+ },
+ "1210100433": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 3.78
+ },
+ "1210100458": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 3.42
+ },
+ "1210100459": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 3.42
+ },
+ "1210100467": {
+  "bultos": 1.0,
+  "peso": 0.5,
+  "peso_vol": 0.37
+ },
+ "1211100130": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.75
+ },
+ "1211100296": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.75
+ },
+ "1211100297": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.75
+ },
+ "1211100410": {
+  "bultos": 1.0,
+  "peso": 1.2,
+  "peso_vol": 0.75
+ },
+ "1212100057": {
+  "bultos": 1.0,
+  "peso": 0.7,
+  "peso_vol": 0.11
+ },
+ "1212100058": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.08
+ },
+ "1212100059": {
+  "bultos": 1.0,
+  "peso": 0.5,
+  "peso_vol": 0.08
+ },
+ "1212100109": {
+  "bultos": 1.0,
+  "peso": 2.3,
+  "peso_vol": 1.18
+ },
+ "1212100149": {
+  "bultos": 1.0,
+  "peso": 0.1,
+  "peso_vol": 0.11
+ },
+ "1212100150": {
+  "bultos": 1.0,
+  "peso": 0.1,
+  "peso_vol": 0.17
+ },
+ "1212100151": {
+  "bultos": 1.0,
+  "peso": 0.1,
+  "peso_vol": 0.28
+ },
+ "1212100152": {
+  "bultos": 1.0,
+  "peso": 0.1,
+  "peso_vol": 0.22
+ },
+ "1212100153": {
+  "bultos": 1.0,
+  "peso": 0.2,
+  "peso_vol": 0.45
+ },
+ "1212100183": {
+  "bultos": 1.0,
+  "peso": 0.3,
+  "peso_vol": 0.09
+ },
+ "1212100358": {
+  "bultos": 1.0,
+  "peso": 0.4,
+  "peso_vol": 0.34
+ },
+ "1212100359": {
+  "bultos": 1.0,
+  "peso": 0.4,
+  "peso_vol": 0.34
+ },
+ "1212100466": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.17
+ },
+ "1213100205": {
+  "bultos": 1.0,
+  "peso": 0.4,
+  "peso_vol": 1.13
+ },
+ "1213100206": {
+  "bultos": 1.0,
+  "peso": 0.4,
+  "peso_vol": 1.13
+ },
+ "1213100550": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 9.6
+ },
+ "1214100107": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 14.0
+ },
+ "1214100108": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 10.4
+ },
+ "1214100210": {
+  "bultos": 1.0,
+  "peso": 1.5,
+  "peso_vol": 0.77
+ },
+ "1214100375": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 9.6
+ },
+ "1214100494": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 10.4
+ },
+ "1216100103": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.4
+ },
+ "1216100104": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.4
+ },
+ "1216100293": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.4
+ },
+ "1216100294": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.4
+ },
+ "1216100549": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 2.3
+ },
+ "1217100135": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.11
+ },
+ "1219100126": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 2.08
+ },
+ "1220100315": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 15.33
+ },
+ "1221100110": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 6.9
+ },
+ "1221100127": {
+  "bultos": 2.0,
+  "peso": 17.0,
+  "peso_vol": 25.84
+ },
+ "1222100209": {
+  "bultos": 3.0,
+  "peso": 82.9,
+  "peso_vol": 41.4
+ },
+ "1222100388": {
+  "bultos": 1.0,
+  "peso": 6.3,
+  "peso_vol": 1.88
+ },
+ "1222100563": {
+  "bultos": 1.0,
+  "peso": 6.2,
+  "peso_vol": 7.5
+ },
+ "1223100211": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 62.06
+ },
+ "1223100274": {
+  "bultos": 5.0,
+  "peso": 29.3,
+  "peso_vol": 293.99
+ },
+ "1224100356": {
+  "bultos": 1.0,
+  "peso": 32.0,
+  "peso_vol": 66.0
+ },
+ "1224100414": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 1.8
+ },
+ "1224100427": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 15.88
+ },
+ "1225100106": {
+  "bultos": 1.0,
+  "peso": 0.5,
+  "peso_vol": 0.14
+ },
+ "1226100129": {
+  "bultos": 1.0,
+  "peso": 0.3,
+  "peso_vol": 0.07
+ },
+ "1226100208": {
+  "bultos": 2.0,
+  "peso": 0.4,
+  "peso_vol": 0.18
+ },
+ "1226100302": {
+  "bultos": 1.0,
+  "peso": 0.2,
+  "peso_vol": 0.17
+ },
+ "1228100131": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 2.6
+ },
+ "1235100599": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.69
+ },
+ "1228100619": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.51
+ },
+ "1228100454": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 5.76
+ },
+ "1229100198": {
+  "bultos": 1.0,
+  "peso": 31.0,
+  "peso_vol": 28.56
+ },
+ "1229100570": {
+  "bultos": 1.0,
+  "peso": 7.5,
+  "peso_vol": 6.14
+ },
+ "1230100239": {
+  "bultos": 2.0,
+  "peso": 55.0,
+  "peso_vol": 32.18
+ },
+ "1232100368": {
+  "bultos": 1.0,
+  "peso": 730.0,
+  "peso_vol": 375.82
+ },
+ "1235100412": {
+  "bultos": 1.0,
+  "peso": 0.4,
+  "peso_vol": 1.87
+ },
+ "1235100455": {
+  "bultos": 1.0,
+  "peso": 25.5,
+  "peso_vol": 30.07
+ },
+ "1236100453": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 1.0
+ },
+ "1237100462": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 1.0
+ },
+ "1237100463": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 1.0
+ },
+ "1237100539": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1237100540": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 1.0
+ },
+ "1241100545": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 3.98
+ },
+ "1339100491": {
+  "bultos": 1.0,
+  "peso": 0.3,
+  "peso_vol": 10.09
+ },
+ "1340100492": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 1.13
+ },
+ "1340100493": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 1.13
+ },
+ "504-00114-01": {
+  "bultos": 2.0,
+  "peso": 46.0,
+  "peso_vol": 16.08
+ },
+ "600-00140-00": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 6.84
+ },
+ "1132100704": {
+  "bultos": 11.0,
+  "peso": 125.28,
+  "peso_vol": 276.2
+ },
+ "1132100703": {
+  "bultos": 13.0,
+  "peso": 164.28,
+  "peso_vol": 362.57
+ },
+ "620-00153-00": {
+  "bultos": 1.0,
+  "peso": 29.0,
+  "peso_vol": 41.37
+ },
+ "780": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.55
+ },
+ "BBP": {
+  "bultos": 1.0,
+  "peso": 230.0,
+  "peso_vol": 227.7
+ },
+ "FMRIP19": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 2.39
+ },
+ "FZABU024S0100": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 2.74
+ },
+ "FZABU024S0200": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.92
+ },
+ "FZABU024S0300": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 6.62
+ },
+ "FZABU024S0400": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 43.9
+ },
+ "FZABU024S0500": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 8.8
+ },
+ "FZABU025S0100": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 3.11
+ },
+ "FZABU025S0200": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 3.04
+ },
+ "FZABU025S0300": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.81
+ },
+ "FZABU025S0400": {
+  "bultos": 2.0,
+  "peso": 32.0,
+  "peso_vol": 7.08
+ },
+ "FZABU025S0500": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 7.08
+ },
+ "FZABU025S0600": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 8.8
+ },
+ "FZABU030S0100": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 2.38
+ },
+ "FZABU030S0200": {
+  "bultos": 1.0,
+  "peso": 21.0,
+  "peso_vol": 3.97
+ },
+ "FZABU030S0300": {
+  "bultos": 2.0,
+  "peso": 32.0,
+  "peso_vol": 4.76
+ },
+ "FZABU030S0400": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 4.76
+ },
+ "FZABU030S0500": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 5.82
+ },
+ "FZADI026S0100": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 2.92
+ },
+ "FZADI026S0200": {
+  "bultos": 1.0,
+  "peso": 6.4,
+  "peso_vol": 2.6
+ },
+ "FZADI026S0300": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 2.32
+ },
+ "FZADI026S0400": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 2.08
+ },
+ "FZADI026S0500": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 3.0
+ },
+ "FZADI026S0600": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 4.52
+ },
+ "FZADI026S0700": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 5.06
+ },
+ "FZADI027S0100": {
+  "bultos": 1.0,
+  "peso": 2.5,
+  "peso_vol": 0.5383
+ },
+ "FZADI027S0200": {
+  "bultos": 1.0,
+  "peso": 5.5,
+  "peso_vol": 0.91
+ },
+ "FZADI027S0300": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 1.86
+ },
+ "FZADI027S0400": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 1.63
+ },
+ "FZADI027S0500": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 4.54
+ },
+ "FZADI027S0600": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 5.76
+ },
+ "G424-12": {
+  "bultos": 3.0,
+  "peso": 440.4,
+  "peso_vol": 228.84
+ },
+ "VMTL29818": {
+  "bultos": 1.0,
+  "peso": 196.6,
+  "peso_vol": 294.79
+ },
+ "1042100558": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 15.63
+ },
+ "1042100560": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 11.34
+ },
+ "1042100562": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 2.25
+ },
+ "1112100594": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.96
+ },
+ "1113100548": {
+  "bultos": 1.0,
+  "peso": 26.0,
+  "peso_vol": 19.1
+ },
+ "1113100561": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 13.42
+ },
+ "1113100598": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 22.28
+ },
+ "1121100579": {
+  "bultos": 5.0,
+  "peso": 254.0,
+  "peso_vol": 252.94
+ },
+ "1121100580": {
+  "bultos": 5.0,
+  "peso": 307.5,
+  "peso_vol": 317.74
+ },
+ "1121100581": {
+  "bultos": 5.0,
+  "peso": 252.0,
+  "peso_vol": 334.41
+ },
+ "1121100582": {
+  "bultos": 5.0,
+  "peso": 271.0,
+  "peso_vol": 290.03
+ },
+ "1121100583": {
+  "bultos": 5.0,
+  "peso": 279.0,
+  "peso_vol": 282.69
+ },
+ "1121100584": {
+  "bultos": 3.0,
+  "peso": 242.0,
+  "peso_vol": 157.82
+ },
+ "1121100585": {
+  "bultos": 5.0,
+  "peso": 272.5,
+  "peso_vol": 314.94
+ },
+ "1121100586": {
+  "bultos": 5.0,
+  "peso": 290.0,
+  "peso_vol": 507.69
+ },
+ "1121100587": {
+  "bultos": 5.0,
+  "peso": 270.0,
+  "peso_vol": 331.92
+ },
+ "1121100588": {
+  "bultos": 5.0,
+  "peso": 391.0,
+  "peso_vol": 481.01
+ },
+ "1121100589": {
+  "bultos": 1.0,
+  "peso": 220.0,
+  "peso_vol": 66.6
+ },
+ "1121100590": {
+  "bultos": 1.0,
+  "peso": 192.0,
+  "peso_vol": 464.04
+ },
+ "1121100591": {
+  "bultos": 6.0,
+  "peso": 315.0,
+  "peso_vol": 201.52
+ },
+ "1121100592": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 68.62
+ },
+ "1121100679": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 372.6
+ },
+ "1121100680": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 332.64
+ },
+ "1121100681": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 110.25
+ },
+ "1121100682": {
+  "bultos": 1.0,
+  "peso": 168.0,
+  "peso_vol": 145.63
+ },
+ "1121100683": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 24.86
+ },
+ "1124100564": {
+  "bultos": 8.0,
+  "peso": 251.0,
+  "peso_vol": 151.49
+ },
+ "1132100575": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 0.68
+ },
+ "1132100576": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 0.85
+ },
+ "1132100577": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 1.3
+ },
+ "1132100578": {
+  "bultos": 3.0,
+  "peso": 30.0,
+  "peso_vol": 2.68
+ },
+ "1210100546": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.27
+ },
+ "1211100602": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 10.57
+ },
+ "1219100555": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 1.8
+ },
+ "1219100556": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 2.4
+ },
+ "1230100240": {
+  "bultos": 12.0,
+  "peso": 225.0,
+  "peso_vol": 39.67
+ },
+ "FZABU029S0100": {
+  "bultos": 1.0,
+  "peso": 10.3,
+  "peso_vol": 2.08
+ },
+ "FZABU029S0200": {
+  "bultos": 1.0,
+  "peso": 20.3,
+  "peso_vol": 3.67
+ },
+ "FZABU029S0300": {
+  "bultos": 2.0,
+  "peso": 30.6,
+  "peso_vol": 4.96
+ },
+ "FZABU029S0400": {
+  "bultos": 2.0,
+  "peso": 40.6,
+  "peso_vol": 6.0
+ },
+ "FZABU029S0500": {
+  "bultos": 2.0,
+  "peso": 50.6,
+  "peso_vol": 7.04
+ },
+ "FZABU070S0100": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 3.7
+ },
+ "FZABU070S0200": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 4.76
+ },
+ "FZABU070S0300": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 6.88
+ },
+ "FZABU070S0400": {
+  "bultos": 2.0,
+  "peso": 32.0,
+  "peso_vol": 8.23
+ },
+ "FZABU070S0500": {
+  "bultos": 2.0,
+  "peso": 48.0,
+  "peso_vol": 10.29
+ },
+ "SPT2164641": {
+  "bultos": 1.0,
+  "peso": 135.0,
+  "peso_vol": 234.45
+ },
+ "1113100237": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1113100332": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "1113100460": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 4.56
+ },
+ "1118100012": {
+  "bultos": 8.0,
+  "peso": 154.0,
+  "peso_vol": 28.55
+ },
+ "1118100018": {
+  "bultos": 11.0,
+  "peso": 168.5,
+  "peso_vol": 25.03
+ },
+ "1118100178": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 3.7
+ },
+ "1118100179": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.23
+ },
+ "1118100180": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 5.82
+ },
+ "1118100181": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 6.34
+ },
+ "1118100182": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 8.46
+ },
+ "FZABU039S0100": {
+  "bultos": 1.0,
+  "peso": 10.3,
+  "peso_vol": 2.08
+ },
+ "FZABU039S0200": {
+  "bultos": 1.0,
+  "peso": 20.3,
+  "peso_vol": 3.67
+ },
+ "FZABU039S0300": {
+  "bultos": 2.0,
+  "peso": 168.0,
+  "peso_vol": 250.0
+ },
+ "FZABU039S0400": {
+  "bultos": 2.0,
+  "peso": 40.3,
+  "peso_vol": 6.0
+ },
+ "FZABU039S0500": {
+  "bultos": 2.0,
+  "peso": 50.3,
+  "peso_vol": 7.52
+ },
+ "1118100279": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 3.7
+ },
+ "1118100280": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.23
+ },
+ "1118100281": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 5.82
+ },
+ "1118100282": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 6.34
+ },
+ "1118100283": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 8.46
+ },
+ "1121100411": {
+  "bultos": 1.0,
+  "peso": 326.0,
+  "peso_vol": 322.56
+ },
+ "1121100428": {
+  "bultos": 1.0,
+  "peso": 270.0,
+  "peso_vol": 384.56
+ },
+ "1121100429": {
+  "bultos": 1.0,
+  "peso": 302.0,
+  "peso_vol": 250.43
+ },
+ "1121100431": {
+  "bultos": 1.0,
+  "peso": 236.0,
+  "peso_vol": 456.1
+ },
+ "1121100501": {
+  "bultos": 5.0,
+  "peso": 281.0,
+  "peso_vol": 454.84
+ },
+ "1121100502": {
+  "bultos": 5.0,
+  "peso": 261.5,
+  "peso_vol": 223.35
+ },
+ "1121100504": {
+  "bultos": 5.0,
+  "peso": 247.5,
+  "peso_vol": 31.11
+ },
+ "1121100513": {
+  "bultos": 5.0,
+  "peso": 307.5,
+  "peso_vol": 317.74
+ },
+ "1121100514": {
+  "bultos": 3.0,
+  "peso": 332.0,
+  "peso_vol": 127.55
+ },
+ "1121100535": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 266.57
+ },
+ "1121100536": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 253.46
+ },
+ "1124100361": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 98.86
+ },
+ "1129100319": {
+  "bultos": 1.0,
+  "peso": 65.0,
+  "peso_vol": 114.84
+ },
+ "1129100334": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 89.9
+ },
+ "1212100219": {
+  "bultos": 1.0,
+  "peso": 0.6,
+  "peso_vol": 0.17
+ },
+ "1221100086": {
+  "bultos": 2.0,
+  "peso": 52.0,
+  "peso_vol": 56.92
+ },
+ "1222100128": {
+  "bultos": 1.0,
+  "peso": 6.3,
+  "peso_vol": 1.88
+ },
+ "1222100252": {
+  "bultos": 2.0,
+  "peso": 39.53,
+  "peso_vol": 34.09
+ },
+ "1222100386": {
+  "bultos": 1.0,
+  "peso": 6.3,
+  "peso_vol": 1.88
+ },
+ "1224100357": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 42.16
+ },
+ "1229100087": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 47.5875
+ },
+ "1229100251": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 48.05
+ },
+ "1229100402": {
+  "bultos": 2.0,
+  "peso": 84.0,
+  "peso_vol": 65.66
+ },
+ "BBSTATION1": {
+  "bultos": 4.0,
+  "peso": 101.0,
+  "peso_vol": 63.27
+ },
+ "G624-03": {
+  "bultos": 1.0,
+  "peso": 680.0,
+  "peso_vol": 1068.93
+ },
+ "ACSBA057S0200": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 1.9
+ },
+ "ACSBA057S0300": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 2.72
+ },
+ "ACSBA057S0400": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 2.72
+ },
+ "ACSBA057S0500": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 3.53
+ },
+ "ACSBA057S0600": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 3.46
+ },
+ "ACSBA057S0700": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 5.95
+ },
+ "ACSBA057S0800": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 5.95
+ },
+ "ACSBA057S0900": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 5.95
+ },
+ "ACSBA057S1000": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 5.95
+ },
+ "ACSBA057S1200": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 5.95
+ },
+ "1124100613": {
+  "bultos": 1.0,
+  "peso": 16.7,
+  "peso_vol": 23.73
+ },
+ "1124100614": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 7.19
+ },
+ "1124100615": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 29.51
+ },
+ "1121100685": {
+  "bultos": 2.0,
+  "peso": 158.0,
+  "peso_vol": 138.1
+ },
+ "1121100691": {
+  "bultos": 2.0,
+  "peso": 250.0,
+  "peso_vol": 347.38
+ },
+ "1127100697": {
+  "bultos": 1.0,
+  "peso": 265.0,
+  "peso_vol": 405.85
+ },
+ "1121100689": {
+  "bultos": 2.0,
+  "peso": 290.0,
+  "peso_vol": 316.96
+ },
+ "EF204": {
+  "bultos": 2.0,
+  "peso": 42.1,
+  "peso_vol": 80.94
+ },
+ "FMTK70920K230": {
+  "bultos": 1.0,
+  "peso": 270.0,
+  "peso_vol": 431.2
+ },
+ "EF201": {
+  "bultos": 2.0,
+  "peso": 27.1,
+  "peso_vol": 115.1
+ },
+ "1121100508": {
+  "bultos": 5.0,
+  "peso": 247.0,
+  "peso_vol": 260.14
+ },
+ "1121100505": {
+  "bultos": 5.0,
+  "peso": 275.5,
+  "peso_vol": 145.64
+ },
+ "P-105": {
+  "bultos": 1.0,
+  "peso": 141.0,
+  "peso_vol": 578.13
+ },
+ "001022B": {
+  "bultos": 1.0,
+  "peso": 93.0,
+  "peso_vol": 40.62
+ },
+ "003020BP": {
+  "bultos": 1.0,
+  "peso": 54.0,
+  "peso_vol": 65.88
+ },
+ "990838": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 353.0
+ },
+ "715-00130-00": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 2.1
+ },
+ "340-00129-00": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 7.81
+ },
+ "715-00131-00": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 2.1
+ },
+ "785-00155-00": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 19.4
+ },
+ "785-00156-00": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 11.2
+ },
+ "TWMA2164636": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 270.18
+ },
+ "TWF203-06": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 119.25
+ },
+ "TWF501-BLK": {
+  "bultos": 1.0,
+  "peso": 178.0,
+  "peso_vol": 1151.29
+ },
+ "1110352": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 649.35
+ },
+ "1124100702": {
+  "bultos": 1.0,
+  "peso": 1.5,
+  "peso_vol": 2.47
+ },
+ "1118100705": {
+  "bultos": 7.0,
+  "peso": 108.0,
+  "peso_vol": 29.09
+ },
+ "1121100694": {
+  "bultos": 2.0,
+  "peso": 351.0,
+  "peso_vol": 347.87
+ },
+ "1121100687": {
+  "bultos": 2.0,
+  "peso": 266.0,
+  "peso_vol": 314.64
+ },
+ "1121100690": {
+  "bultos": 2.0,
+  "peso": 271.0,
+  "peso_vol": 354.68
+ },
+ "1129100748": {
+  "bultos": 2.0,
+  "peso": 74.0,
+  "peso_vol": 93.02
+ },
+ "1129100693": {
+  "bultos": 2.0,
+  "peso": 55.0,
+  "peso_vol": 114.62
+ },
+ "1129100696": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 50.75
+ },
+ "1129100695": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 37.51
+ },
+ "1121100518": {
+  "bultos": 2.0,
+  "peso": 81.0,
+  "peso_vol": 111.59
+ },
+ "1129100700": {
+  "bultos": 5.0,
+  "peso": 181.0,
+  "peso_vol": 407.7
+ },
+ "1129100686": {
+  "bultos": 3.0,
+  "peso": 134.0,
+  "peso_vol": 147.21
+ },
+ "1121100692": {
+  "bultos": 3.0,
+  "peso": 865.0,
+  "peso_vol": 579.23
+ },
+ "1224100521": {
+  "bultos": 1.0,
+  "peso": 27.1,
+  "peso_vol": 48.05
+ },
+ "1129100701": {
+  "bultos": 5.0,
+  "peso": 234.0,
+  "peso_vol": 337.65
+ },
+ "1124100698": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 565.55
+ },
+ "1124100620": {
+  "bultos": 3.0,
+  "peso": 79.0,
+  "peso_vol": 64.3
+ },
+ "1124100661": {
+  "bultos": 1.0,
+  "peso": 38.0,
+  "peso_vol": 59.42
+ },
+ "FZAMC069S0200": {
+  "bultos": 1.0,
+  "peso": 2.5,
+  "peso_vol": 1.61
+ },
+ "FZAMC069S0300": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 1.76
+ },
+ "FZAMC069S0400": {
+  "bultos": 1.0,
+  "peso": 8.5,
+  "peso_vol": 1.91
+ },
+ "FZAMC069S0500": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 2.02
+ },
+ "FZAMC069S0600": {
+  "bultos": 1.0,
+  "peso": 13.5,
+  "peso_vol": 2.81
+ },
+ "FZAMC069S0700": {
+  "bultos": 1.0,
+  "peso": 15.5,
+  "peso_vol": 1.9
+ },
+ "FZAMC069S0800": {
+  "bultos": 2.0,
+  "peso": 37.0,
+  "peso_vol": 6.96
+ },
+ "FZAMC069S0900": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "FZAMC069S1000": {
+  "bultos": 2.0,
+  "peso": 47.0,
+  "peso_vol": 7.59
+ },
+ "FZAMC069S1100": {
+  "bultos": 2.0,
+  "peso": 52.0,
+  "peso_vol": 7.85
+ },
+ "FZAMC069S1200": {
+  "bultos": 2.0,
+  "peso": 58.0,
+  "peso_vol": 8.1
+ },
+ "FZAMC069S1300": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 0.36
+ },
+ "FZAMC069S1400": {
+  "bultos": 2.0,
+  "peso": 66.0,
+  "peso_vol": 5.12
+ },
+ "FZAMC069S1500": {
+  "bultos": 2.0,
+  "peso": 72.0,
+  "peso_vol": 8.86
+ },
+ "FZAMC069S1600": {
+  "bultos": 2.0,
+  "peso": 375.0,
+  "peso_vol": 2.66
+ },
+ "FZAMC069S1700": {
+  "bultos": 2.0,
+  "peso": 82.0,
+  "peso_vol": 9.5
+ },
+ "FZAMC069S1800": {
+  "bultos": 2.0,
+  "peso": 84.5,
+  "peso_vol": 9.62
+ },
+ "FZAMC069S1900": {
+  "bultos": 2.0,
+  "peso": 92.0,
+  "peso_vol": 9.88
+ },
+ "FZAMC069S2000": {
+  "bultos": 2.0,
+  "peso": 98.0,
+  "peso_vol": 10.3
+ },
+ "FZAMC069S2100": {
+  "bultos": 2.0,
+  "peso": 102.0,
+  "peso_vol": 10.64
+ },
+ "1113100651": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 295.86
+ },
+ "1113100652": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 295.86
+ },
+ "1113100653": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 295.86
+ },
+ "1113100654": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 295.86
+ },
+ "1113100655": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 295.86
+ },
+ "1113100656": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 295.86
+ },
+ "1113100657": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 295.86
+ },
+ "1113100658": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 295.86
+ },
+ "1113100659": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 295.86
+ },
+ "1113100660": {
+  "bultos": 1.0,
+  "peso": 55.0,
+  "peso_vol": 295.86
+ },
+ "1113100641": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 295.86
+ },
+ "1113100642": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 295.86
+ },
+ "1113100643": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 295.86
+ },
+ "1113100644": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 295.86
+ },
+ "1113100645": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 295.86
+ },
+ "1113100646": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 295.86
+ },
+ "1113100647": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 295.86
+ },
+ "1113100648": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 27.82
+ },
+ "1113100649": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 295.86
+ },
+ "1113100650": {
+  "bultos": 1.0,
+  "peso": 55.0,
+  "peso_vol": 295.86
+ },
+ "1118100469": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.37
+ },
+ "1118100470": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 0.58
+ },
+ "1118100471": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 0.72
+ },
+ "1118100472": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 1.0
+ },
+ "1118100473": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 1.21
+ },
+ "1222100746": {
+  "bultos": 1.0,
+  "peso": 6.3,
+  "peso_vol": 1.88
+ },
+ "TWMA102": {
+  "bultos": 1.0,
+  "peso": 202.0,
+  "peso_vol": 472.5
+ },
+ "EF217": {
+  "bultos": 2.0,
+  "peso": 190.0,
+  "peso_vol": 386.84
+ },
+ "ES801": {
+  "bultos": 2.0,
+  "peso": 187.0,
+  "peso_vol": 374.48
+ },
+ "ES809": {
+  "bultos": 2.0,
+  "peso": 215.0,
+  "peso_vol": 397.35
+ },
+ "VMEX822018": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 147.26
+ },
+ "ES814": {
+  "bultos": 2.0,
+  "peso": 182.0,
+  "peso_vol": 270.05
+ },
+ "ES817": {
+  "bultos": 2.0,
+  "peso": 175.0,
+  "peso_vol": 88.13
+ },
+ "1121100684": {
+  "bultos": 1.0,
+  "peso": 110.0,
+  "peso_vol": 102.0
+ },
+ "1124100770": {
+  "bultos": 1.0,
+  "peso": 180.0,
+  "peso_vol": 121.5
+ },
+ "1121100769": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 200.0
+ },
+ "1121100775": {
+  "bultos": 3.0,
+  "peso": 233.0,
+  "peso_vol": 504.13
+ },
+ "1121100688": {
+  "bultos": 2.0,
+  "peso": 160.0,
+  "peso_vol": 271.21
+ },
+ "1210100737": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 2.74
+ },
+ "1241100719": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.02
+ },
+ "1228100735": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 9.61
+ },
+ "1118100772": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 2.32
+ },
+ "1124100768": {
+  "bultos": 1.0,
+  "peso": 290.0,
+  "peso_vol": 237.6
+ },
+ "KH-86": {
+  "bultos": 1.0,
+  "peso": 90.0,
+  "peso_vol": 111.8
+ },
+ "1129100538": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 23.28
+ },
+ "1015100753": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 90.0
+ },
+ "1121100747": {
+  "bultos": 1.0,
+  "peso": 120.0,
+  "peso_vol": 300.0
+ },
+ "1236100714": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 2.03
+ },
+ "1236100715": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 3.17
+ },
+ "1129100745": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 31.09
+ },
+ "1244100732": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 24.26
+ },
+ "1211100738": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 9.0
+ },
+ "1211100739": {
+  "bultos": 1.0,
+  "peso": 14.0,
+  "peso_vol": 22.8
+ },
+ "1210100743": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 1.86
+ },
+ "1210100713": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 0.06
+ },
+ "1113100731": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 22.77
+ },
+ "1235100761": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.14
+ },
+ "1224100716": {
+  "bultos": 2.0,
+  "peso": 36.0,
+  "peso_vol": 40.5338
+ },
+ "1210100744": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 4.88
+ },
+ "1219100718": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 1.2
+ },
+ "1210100736": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.01
+ },
+ "1221100249": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 4.88
+ },
+ "1124100115": {
+  "bultos": 2.0,
+  "peso": 80.0,
+  "peso_vol": 47.84
+ },
+ "1222100136": {
+  "bultos": 1.0,
+  "peso": 9.36,
+  "peso_vol": 22.05
+ },
+ "FZADI027S0700": {
+  "bultos": 2.0,
+  "peso": 52.0,
+  "peso_vol": 6.34
+ },
+ "1129100763": {
+  "bultos": 1.0,
+  "peso": 147.0,
+  "peso_vol": 69.75
+ },
+ "1124100764": {
+  "bultos": 1.0,
+  "peso": 110.0,
+  "peso_vol": 54.25
+ },
+ "1223100765": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 39.6
+ },
+ "1129100766": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1235100767": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.62
+ },
+ "1121100791": {
+  "bultos": 5.0,
+  "peso": 334.0,
+  "peso_vol": 399.96
+ },
+ "TSHIRT02R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT02R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT02R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "GD505": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "HOODIE02R0200": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "HOODIE01R0400": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1124100740": {
+  "bultos": 5.0,
+  "peso": 149.0,
+  "peso_vol": 106.82
+ },
+ "1224100717": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 39.08
+ },
+ "1127100787": {
+  "bultos": 4.0,
+  "peso": 121.0,
+  "peso_vol": 300.39
+ },
+ "1127100786": {
+  "bultos": 3.0,
+  "peso": 92.0,
+  "peso_vol": 161.41
+ },
+ "SH001": {
+  "bultos": 1.0,
+  "peso": 147.0,
+  "peso_vol": 201.47
+ },
+ "SH003": {
+  "bultos": 1.0,
+  "peso": 143.0,
+  "peso_vol": 145.15
+ },
+ "SH017": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 144.0
+ },
+ "SH019": {
+  "bultos": 2.0,
+  "peso": 250.0,
+  "peso_vol": 204.5
+ },
+ "SH029B": {
+  "bultos": 2.0,
+  "peso": 178.0,
+  "peso_vol": 281.21
+ },
+ "SH033": {
+  "bultos": 3.0,
+  "peso": 243.0,
+  "peso_vol": 347.14
+ },
+ "DH032": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "DR003": {
+  "bultos": 3.0,
+  "peso": 179.0,
+  "peso_vol": 158.0
+ },
+ "DR004B": {
+  "bultos": 1.0,
+  "peso": 84.0,
+  "peso_vol": 110.05
+ },
+ "DR010B": {
+  "bultos": 1.0,
+  "peso": 47.0,
+  "peso_vol": 72.62
+ },
+ "BS008": {
+  "bultos": 6.0,
+  "peso": 225.0,
+  "peso_vol": 180.23
+ },
+ "BS009": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "BS010": {
+  "bultos": 2.0,
+  "peso": 154.0,
+  "peso_vol": 184.79
+ },
+ "BS016": {
+  "bultos": 2.0,
+  "peso": 123.0,
+  "peso_vol": 194.77
+ },
+ "BS017": {
+  "bultos": 8.0,
+  "peso": 316.0,
+  "peso_vol": 208.94
+ },
+ "DA021": {
+  "bultos": 10.0,
+  "peso": 406.0,
+  "peso_vol": 307.46
+ },
+ "DA026E": {
+  "bultos": 6.0,
+  "peso": 239.0,
+  "peso_vol": 294.36
+ },
+ "DA036D": {
+  "bultos": 2.0,
+  "peso": 152.0,
+  "peso_vol": 246.06
+ },
+ "DA037E": {
+  "bultos": 2.0,
+  "peso": 170.0,
+  "peso_vol": 209.16
+ },
+ "SA021": {
+  "bultos": 2.0,
+  "peso": 208.0,
+  "peso_vol": 281.29
+ },
+ "SA037E": {
+  "bultos": 2.0,
+  "peso": 186.0,
+  "peso_vol": 209.16
+ },
+ "SA036D": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "SA031D": {
+  "bultos": 2.0,
+  "peso": 144.0,
+  "peso_vol": 179.29
+ },
+ "SA014F": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "RE8005": {
+  "bultos": 2.0,
+  "peso": 149.0,
+  "peso_vol": 275.97
+ },
+ "RE8011": {
+  "bultos": 2.0,
+  "peso": 135.0,
+  "peso_vol": 282.89
+ },
+ "RE8014": {
+  "bultos": 2.0,
+  "peso": 158.0,
+  "peso_vol": 212.77
+ },
+ "RE8015": {
+  "bultos": 2.0,
+  "peso": 157.0,
+  "peso_vol": 205.51
+ },
+ "RE8016B": {
+  "bultos": 3.0,
+  "peso": 274.0,
+  "peso_vol": 414.85
+ },
+ "RE8026": {
+  "bultos": 2.0,
+  "peso": 174.0,
+  "peso_vol": 262.06
+ },
+ "RE8025": {
+  "bultos": 2.0,
+  "peso": 186.0,
+  "peso_vol": 301.45
+ },
+ "RE6004": {
+  "bultos": 1.0,
+  "peso": 77.0,
+  "peso_vol": 96.67
+ },
+ "RE6010": {
+  "bultos": 1.0,
+  "peso": 42.0,
+  "peso_vol": 80.17
+ },
+ "RE6016": {
+  "bultos": 1.0,
+  "peso": 49.0,
+  "peso_vol": 53.39
+ },
+ "SS6000B": {
+  "bultos": 1.0,
+  "peso": 66.0,
+  "peso_vol": 87.09
+ },
+ "C5-WX80KGS": {
+  "bultos": 3.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "SH036": {
+  "bultos": 3.0,
+  "peso": 290.0,
+  "peso_vol": 387.91
+ },
+ "BBBSM": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 100.9
+ },
+ "BBSAM": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 129.6
+ },
+ "1027100792": {
+  "bultos": 2.0,
+  "peso": 304.0,
+  "peso_vol": 480.172
+ },
+ "1027100793": {
+  "bultos": 2.0,
+  "peso": 299.0,
+  "peso_vol": 480.17
+ },
+ "1121100809": {
+  "bultos": 2.0,
+  "peso": 101.0,
+  "peso_vol": 293.58
+ },
+ "1121100810": {
+  "bultos": 2.0,
+  "peso": 115.0,
+  "peso_vol": 739.31
+ },
+ "1121100814": {
+  "bultos": 2.0,
+  "peso": 113.0,
+  "peso_vol": 410.34
+ },
+ "1121100832": {
+  "bultos": 2.0,
+  "peso": 22.0,
+  "peso_vol": 38.81
+ },
+ "003112B": {
+  "bultos": 1.0,
+  "peso": 237.0,
+  "peso_vol": 426.6
+ },
+ "310820B": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "310860B": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "001531BP": {
+  "bultos": 1.0,
+  "peso": 202.0,
+  "peso_vol": 529.42
+ },
+ "FZABU028S0300": {
+  "bultos": 2.0,
+  "peso": 32.0,
+  "peso_vol": 4.76
+ },
+ "FZABU028S0400": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 4.76
+ },
+ "FZABU028S0500": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 5.82
+ },
+ "1121100779": {
+  "bultos": 5.0,
+  "peso": 239.0,
+  "peso_vol": 424.72
+ },
+ "1127100789": {
+  "bultos": 2.0,
+  "peso": 63.0,
+  "peso_vol": 118.02
+ },
+ "1127100790": {
+  "bultos": 2.0,
+  "peso": 72.0,
+  "peso_vol": 78.12
+ },
+ "1127100788": {
+  "bultos": 2.0,
+  "peso": 126.0,
+  "peso_vol": 75.46
+ },
+ "1118100771": {
+  "bultos": 2.0,
+  "peso": 10.0,
+  "peso_vol": 6.43
+ },
+ "1021100826": {
+  "bultos": 1.0,
+  "peso": 136.0,
+  "peso_vol": 246.07
+ },
+ "PC1001C": {
+  "bultos": 1.0,
+  "peso": 29.0,
+  "peso_vol": 33.2
+ },
+ "1021100825": {
+  "bultos": 1.0,
+  "peso": 265.0,
+  "peso_vol": 408.77
+ },
+ "003107B": {
+  "bultos": 1.0,
+  "peso": 140.0,
+  "peso_vol": 368.0
+ },
+ "1235100824": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.87
+ },
+ "1113100597": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 3.2
+ },
+ "1243100730": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "1222100782": {
+  "bultos": 1.0,
+  "peso": 80.0,
+  "peso_vol": 125.0
+ },
+ "NR25SXA": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 400.13
+ },
+ "TOWEL00R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.1
+ },
+ "TSHIRT01R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "TSHIRT03R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.23
+ },
+ "1118100254": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1118100255": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1118100256": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 5.29
+ },
+ "1118100257": {
+  "bultos": 2.0,
+  "peso": 40.0,
+  "peso_vol": 8.464
+ },
+ "1118100258": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1226100618": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.09
+ },
+ "1211100820": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 10.192
+ },
+ "1113100617": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 4.07
+ },
+ "1120100780": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 54.74
+ },
+ "IT-008A": {
+  "bultos": 1.0,
+  "peso": 8.64,
+  "peso_vol": 2.0
+ },
+ "G624-IU-03": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 802.9765
+ },
+ "BBV80": {
+  "bultos": 1.0,
+  "peso": 460.0,
+  "peso_vol": 432.56
+ },
+ "RT-015": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 3.6
+ },
+ "RT-020A": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 4.802
+ },
+ "BBSHM": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 103.66
+ },
+ "BBHSM": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 573.75
+ },
+ "BBLBE": {
+  "bultos": 1.0,
+  "peso": 340.0,
+  "peso_vol": 590.304
+ },
+ "RB-051": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 2.38875
+ },
+ "IT-006A": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 15.0
+ },
+ "IT-23B-G": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 2.4
+ },
+ "1222100849": {
+  "bultos": 1.0,
+  "peso": 6.2,
+  "peso_vol": 1.88
+ },
+ "IT-23B-B": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 2.4
+ },
+ "IT-23B": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 2.4
+ },
+ "G624-IU-12": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 802.9765
+ },
+ "1222100784": {
+  "bultos": 1.0,
+  "peso": 80.0,
+  "peso_vol": 125.0
+ },
+ "005510BBC": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 56.25
+ },
+ "005600BBC": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 93.41
+ },
+ "1124100842": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100720": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100721": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100722": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100723": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100724": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100725": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1113100848": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 39.984
+ },
+ "1113100246": {
+  "bultos": 1.0,
+  "peso": 25.0,
+  "peso_vol": 39.98
+ },
+ "1120100726": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100727": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100728": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1120100729": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "FZABU072S0100": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 4.76
+ },
+ "FZABU072S0200": {
+  "bultos": 1.0,
+  "peso": 14.0,
+  "peso_vol": 4.76
+ },
+ "FZABU072S0300": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 3.7
+ },
+ "FZABU072S0400": {
+  "bultos": 2.0,
+  "peso": 32.0,
+  "peso_vol": 7.4
+ },
+ "FZABU072S0500": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 9.52
+ },
+ "116": {
+  "bultos": 1.0,
+  "peso": 74.0,
+  "peso_vol": 96.04
+ },
+ "144": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "146": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "155": {
+  "bultos": 1.0,
+  "peso": 43.0,
+  "peso_vol": 27.41
+ },
+ "211": {
+  "bultos": 1.0,
+  "peso": 168.0,
+  "peso_vol": 367.54
+ },
+ "214": {
+  "bultos": 1.0,
+  "peso": 169.0,
+  "peso_vol": 1341.9
+ },
+ "243": {
+  "bultos": 1.0,
+  "peso": 161.5,
+  "peso_vol": 765.18
+ },
+ "244": {
+  "bultos": 1.0,
+  "peso": 137.5,
+  "peso_vol": 565.5
+ },
+ "281": {
+  "bultos": 1.0,
+  "peso": 227.0,
+  "peso_vol": 291.6
+ },
+ "340R": {
+  "bultos": 1.0,
+  "peso": 213.0,
+  "peso_vol": 380.9
+ },
+ "343": {
+  "bultos": 1.0,
+  "peso": 316.0,
+  "peso_vol": 1038.26
+ },
+ "349": {
+  "bultos": 1.0,
+  "peso": 224.0,
+  "peso_vol": 463.94
+ },
+ "360": {
+  "bultos": 1.0,
+  "peso": 187.0,
+  "peso_vol": 219.3
+ },
+ "692": {
+  "bultos": 1.0,
+  "peso": 28.0,
+  "peso_vol": 72.5
+ },
+ "892": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "GT-01A": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 0.25
+ },
+ "GT-03A": {
+  "bultos": 4.0,
+  "peso": 400.0,
+  "peso_vol": 125.25
+ },
+ "GT-01": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 62.5
+ },
+ "GT-03B": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 0.25
+ },
+ "1113100760": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 5.75
+ },
+ "NR30XA": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 386.65
+ },
+ "SPT1000C": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 216.9
+ },
+ "NR25XA": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 387.75
+ },
+ "GOFLEX": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 403.7
+ },
+ "RB-051SET": {
+  "bultos": 1.0,
+  "peso": 55.0,
+  "peso_vol": 6.16
+ },
+ "TBU9000": {
+  "bultos": 1.0,
+  "peso": 80.0,
+  "peso_vol": 158.22
+ },
+ "FMTL70718": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 386.4
+ },
+ "DSC6A": {
+  "bultos": 1.0,
+  "peso": 210.0,
+  "peso_vol": 546.3
+ },
+ "1113100709": {
+  "bultos": 2.0,
+  "peso": 400.0,
+  "peso_vol": 256.22
+ },
+ "1132100711": {
+  "bultos": 2.0,
+  "peso": 53.0,
+  "peso_vol": 1.98
+ },
+ "1121100845": {
+  "bultos": 2.0,
+  "peso": 74.0,
+  "peso_vol": 51.87
+ },
+ "1228100846": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 1.7
+ },
+ "TWMA302": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWMA305-140": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 517.5
+ },
+ "TWMA301": {
+  "bultos": 1.0,
+  "peso": 220.0,
+  "peso_vol": 616.59
+ },
+ "TWMA107": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWMA102-140": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "GD504": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "FMTK74819K230": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 474.08
+ },
+ "FMTL70920K230": {
+  "bultos": 1.0,
+  "peso": 270.0,
+  "peso_vol": 431.2
+ },
+ "G424-03": {
+  "bultos": 1.0,
+  "peso": 480.0,
+  "peso_vol": 330.48
+ },
+ "FMEX84821": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "GD500": {
+  "bultos": 2.0,
+  "peso": 360.0,
+  "peso_vol": 621.28
+ },
+ "1110354": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "1111261": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "1111262": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "PPHR-102": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 569.25
+ },
+ "PPLR-104": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "PPRP-101": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "PPSP-106": {
+  "bultos": 1.0,
+  "peso": 110.0,
+  "peso_vol": 249.9
+ },
+ "PPVS-107": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF203": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF206": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF211": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF22164648": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF305": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF32164638": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF32164644": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWF701": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 236.78
+ },
+ "TWMA101": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "TWMA101-140": {
+  "bultos": 1.0,
+  "peso": 240.0,
+  "peso_vol": 450.0
+ },
+ "TWMA103-140": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1021100827": {
+  "bultos": 1.0,
+  "peso": 136.0,
+  "peso_vol": 227.71
+ },
+ "1021100828": {
+  "bultos": 1.0,
+  "peso": 136.0,
+  "peso_vol": 224.97
+ },
+ "1210100822": {
+  "bultos": 1.0,
+  "peso": 3.5,
+  "peso_vol": 4.7
+ },
+ "TWMA103": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 473.34
+ },
+ "TWMA303-140": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 295.75
+ },
+ "PW319": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 408.38
+ },
+ "P441": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 450.0
+ },
+ "NM200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "PW212": {
+  "bultos": 1.0,
+  "peso": 410.0,
+  "peso_vol": 592.88
+ },
+ "P143": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 1456.88
+ },
+ "PW419": {
+  "bultos": 1.0,
+  "peso": 190.0,
+  "peso_vol": 1104.0
+ },
+ "MS2A": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "C403": {
+  "bultos": 1.0,
+  "peso": 400.0,
+  "peso_vol": 1320.0
+ },
+ "PW322": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "PW702": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.00025
+ },
+ "C401": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 748.0
+ },
+ "FSTB-600CL-E": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 150.0
+ },
+ "MS13": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "D828F": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1134100391": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 10.26
+ },
+ "RF-ME2MM": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "RF-ME3MM": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 2.78
+ },
+ "LKL0002": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 0.75
+ },
+ "FZAMC038S0200": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 1.79
+ },
+ "FZAMC038S0300": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 2.03
+ },
+ "FZAMC038S0400": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 2.55
+ },
+ "FZAMC038S0500": {
+  "bultos": 1.0,
+  "peso": 21.0,
+  "peso_vol": 2.84
+ },
+ "FZAMC038S0600": {
+  "bultos": 1.0,
+  "peso": 13.5,
+  "peso_vol": 2.02
+ },
+ "FZAMC038S0700": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 4.48
+ },
+ "FZAMC038S0800": {
+  "bultos": 2.0,
+  "peso": 37.0,
+  "peso_vol": 5.34
+ },
+ "FZAMC038S0900": {
+  "bultos": 2.0,
+  "peso": 42.0,
+  "peso_vol": 5.96
+ },
+ "FZAMC038S1000": {
+  "bultos": 2.0,
+  "peso": 47.0,
+  "peso_vol": 6.18
+ },
+ "FZAMC038S1100": {
+  "bultos": 2.0,
+  "peso": 52.0,
+  "peso_vol": 6.4
+ },
+ "FZAMC038S1200": {
+  "bultos": 2.0,
+  "peso": 57.0,
+  "peso_vol": 8.46
+ },
+ "FZAMC038S1300": {
+  "bultos": 2.0,
+  "peso": 61.0,
+  "peso_vol": 8.46
+ },
+ "FZAMC038S1400": {
+  "bultos": 2.0,
+  "peso": 66.0,
+  "peso_vol": 8.72
+ },
+ "FZAMC038S1500": {
+  "bultos": 2.0,
+  "peso": 71.0,
+  "peso_vol": 8.82
+ },
+ "FZAMC038S1600": {
+  "bultos": 2.0,
+  "peso": 76.0,
+  "peso_vol": 9.26
+ },
+ "FZAMC038S1700": {
+  "bultos": 2.0,
+  "peso": 81.0,
+  "peso_vol": 6.62
+ },
+ "FZAMC038S1800": {
+  "bultos": 2.0,
+  "peso": 86.0,
+  "peso_vol": 6.84
+ },
+ "FZAMC038S1900": {
+  "bultos": 2.0,
+  "peso": 91.0,
+  "peso_vol": 7.82
+ },
+ "FZAMC038S2000": {
+  "bultos": 2.0,
+  "peso": 96.0,
+  "peso_vol": 8.0
+ },
+ "FZAMC038S2100": {
+  "bultos": 2.0,
+  "peso": 101.0,
+  "peso_vol": 322.56
+ },
+ "1118100759": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 1.13
+ },
+ "MS12": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "TWMA301-140": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 360.0
+ },
+ "003107174BK": {
+  "bultos": 1.0,
+  "peso": 330.0,
+  "peso_vol": 444.68
+ },
+ "003174B": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 25.0
+ },
+ "1121100812": {
+  "bultos": 2.0,
+  "peso": 2.0,
+  "peso_vol": 50.0
+ },
+ "1121100811": {
+  "bultos": 2.0,
+  "peso": 2.0,
+  "peso_vol": 50.0
+ },
+ "AR2BA": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 7.08
+ },
+ "1124100778": {
+  "bultos": 11.0,
+  "peso": 594.0,
+  "peso_vol": 388.71
+ },
+ "E-105": {
+  "bultos": 1.0,
+  "peso": 240.0,
+  "peso_vol": 468.5625
+ },
+ "E-128": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 768.6
+ },
+ "1204229": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1204230": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1207806": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "H-102": {
+  "bultos": 1.0,
+  "peso": 370.0,
+  "peso_vol": 697.5
+ },
+ "H-105": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 562.5
+ },
+ "H-114": {
+  "bultos": 1.0,
+  "peso": 690.0,
+  "peso_vol": 761.4375
+ },
+ "H-115": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 470.25
+ },
+ "H-124": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 513.0
+ },
+ "H-129": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 399.0
+ },
+ "P-101_KAZ": {
+  "bultos": 1.0,
+  "peso": 180.0,
+  "peso_vol": 354.34
+ },
+ "P-121": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 513.0
+ },
+ "XP-104": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 1020.1
+ },
+ "1202742BLK": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "FT-123": {
+  "bultos": 1.0,
+  "peso": 460.0,
+  "peso_vol": 799.0
+ },
+ "DR-4": {
+  "bultos": 1.0,
+  "peso": 300.0,
+  "peso_vol": 327.75
+ },
+ "PS-AFB": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 67.5
+ },
+ "1205967": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1205966": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1203165": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "P-101": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 429.0
+ },
+ "FZABU046S0100": {
+  "bultos": 10.0,
+  "peso": 10.0,
+  "peso_vol": 3.21
+ },
+ "FZABU046S0200": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 4.23
+ },
+ "FZABU046S0300": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 5.46
+ },
+ "FZABU046S0400": {
+  "bultos": 2.0,
+  "peso": 40.0,
+  "peso_vol": 6.54
+ },
+ "FZABU046S0500": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 6.62
+ },
+ "1118100876": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.42
+ },
+ "1124100877": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 153.4
+ },
+ "1124100878": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 153.4
+ },
+ "1216100879": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 34.0
+ },
+ "1111100667": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 1.0
+ },
+ "FZABU041S0100": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 3.04
+ },
+ "FZABU041S0200": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.05
+ },
+ "FZABU041S0300": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 6.08
+ },
+ "FZABU041S0400": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 7.08
+ },
+ "FZABU040S0100": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 3.03
+ },
+ "FZABU040S0200": {
+  "bultos": 1.0,
+  "peso": 20.5,
+  "peso_vol": 4.05
+ },
+ "FZABU040S0300": {
+  "bultos": 2.0,
+  "peso": 31.0,
+  "peso_vol": 6.08
+ },
+ "FZABU040S0400": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 7.08
+ },
+ "FZABU040S0500": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 8.8
+ },
+ "FZABU041S0500": {
+  "bultos": 2.0,
+  "peso": 51.0,
+  "peso_vol": 8.8
+ },
+ "1113100844": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 0.29
+ },
+ "1113100840": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 0.29
+ },
+ "1113100839": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 0.29
+ },
+ "NR20XA": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 403.7
+ },
+ "SPT1000BC": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 216.9
+ },
+ "DSC6": {
+  "bultos": 1.0,
+  "peso": 210.0,
+  "peso_vol": 546.3
+ },
+ "1120100707": {
+  "bultos": 1.0,
+  "peso": 700.0,
+  "peso_vol": 228.0
+ },
+ "PPFR-103": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 459.9
+ },
+ "TWMA310": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TWMA109": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TWMA108": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "PPHS-109": {
+  "bultos": 1.0,
+  "peso": 190.0,
+  "peso_vol": 513.0
+ },
+ "TWMA1030": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 180.0
+ },
+ "TWMA311": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 392.93
+ },
+ "RE8029": {
+  "bultos": 2.0,
+  "peso": 169.0,
+  "peso_vol": 320.71
+ },
+ "RE8001": {
+  "bultos": 2.0,
+  "peso": 153.0,
+  "peso_vol": 236.4
+ },
+ "RE8003B": {
+  "bultos": 2.0,
+  "peso": 173.0,
+  "peso_vol": 261.73
+ },
+ "RE8004": {
+  "bultos": 2.0,
+  "peso": 179.0,
+  "peso_vol": 262.48
+ },
+ "RE8006B": {
+  "bultos": 1.0,
+  "peso": 95.0,
+  "peso_vol": 96.0
+ },
+ "RE8020B": {
+  "bultos": 2.0,
+  "peso": 159.0,
+  "peso_vol": 265.88
+ },
+ "RE8034B": {
+  "bultos": 3.0,
+  "peso": 221.0,
+  "peso_vol": 336.28
+ },
+ "DR005B": {
+  "bultos": 1.0,
+  "peso": 114.0,
+  "peso_vol": 133.65
+ },
+ "1113100616": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "DR021": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 50.9
+ },
+ "DR027B": {
+  "bultos": 2.0,
+  "peso": 89.0,
+  "peso_vol": 118.44
+ },
+ "SH018": {
+  "bultos": 1.0,
+  "peso": 114.0,
+  "peso_vol": 146.83
+ },
+ "SH015": {
+  "bultos": 1.0,
+  "peso": 70.0,
+  "peso_vol": 79.24
+ },
+ "RE6014": {
+  "bultos": 1.0,
+  "peso": 27.0,
+  "peso_vol": 43.69
+ },
+ "RE6008": {
+  "bultos": 1.0,
+  "peso": 124.0,
+  "peso_vol": 197.6
+ },
+ "RE8021": {
+  "bultos": 3.0,
+  "peso": 277.0,
+  "peso_vol": 596.47
+ },
+ "SH002": {
+  "bultos": 1.0,
+  "peso": 146.0,
+  "peso_vol": 178.26
+ },
+ "BS019": {
+  "bultos": 1.0,
+  "peso": 88.0,
+  "peso_vol": 151.87
+ },
+ "1129100883": {
+  "bultos": 1.0,
+  "peso": 23.28,
+  "peso_vol": 23.28
+ },
+ "PPCP-105": {
+  "bultos": 1.0,
+  "peso": 135.0,
+  "peso_vol": 667.89
+ },
+ "1113100708": {
+  "bultos": 2.0,
+  "peso": 400.0,
+  "peso_vol": 256.22
+ },
+ "HOODIE10R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "HOODIE10R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "HOODIE10R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 8.66
+ },
+ "HOODIE10R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT10R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT10R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT10R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT10R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT11R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT11R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT11R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "TSHIRT11R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "BBS20": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 115.0
+ },
+ "IT-015D": {
+  "bultos": 1.0,
+  "peso": 14.0,
+  "peso_vol": 3.75
+ },
+ "011": {
+  "bultos": 1.0,
+  "peso": 136.0,
+  "peso_vol": 807.14
+ },
+ "021": {
+  "bultos": 1.0,
+  "peso": 101.0,
+  "peso_vol": 641.16
+ },
+ "043": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 793.26
+ },
+ "310": {
+  "bultos": 1.0,
+  "peso": 227.0,
+  "peso_vol": 291.6
+ },
+ "321": {
+  "bultos": 1.0,
+  "peso": 224.0,
+  "peso_vol": 709.35
+ },
+ "340": {
+  "bultos": 1.0,
+  "peso": 202.0,
+  "peso_vol": 380.9
+ },
+ "351": {
+  "bultos": 1.0,
+  "peso": 182.0,
+  "peso_vol": 273.0
+ },
+ "364": {
+  "bultos": 1.0,
+  "peso": 192.0,
+  "peso_vol": 382.92
+ },
+ "350": {
+  "bultos": 1.0,
+  "peso": 153.0,
+  "peso_vol": 363.38
+ },
+ "GT03GW": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "GT03BW": {
+  "bultos": 1.0,
+  "peso": 60.0,
+  "peso_vol": 80.0
+ },
+ "GT03PBW": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "GT03PGW": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1124100762": {
+  "bultos": 1.0,
+  "peso": 205.0,
+  "peso_vol": 153.77
+ },
+ "1124100882": {
+  "bultos": 1.0,
+  "peso": 36.0,
+  "peso_vol": 18.98
+ },
+ "1240100881": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "JOCKEY00R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "JOCKEY00R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1248100882": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "011534B4": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 540.0
+ },
+ "6070": {
+  "bultos": 1.0,
+  "peso": 215.0,
+  "peso_vol": 295.31
+ },
+ "002531B4": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 369.18
+ },
+ "005509BC": {
+  "bultos": 1.0,
+  "peso": 48.0,
+  "peso_vol": 44.64
+ },
+ "001026": {
+  "bultos": 1.0,
+  "peso": 37.0,
+  "peso_vol": 23.76
+ },
+ "605400": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 2.58
+ },
+ "1120100888": {
+  "bultos": 1.0,
+  "peso": 18.0,
+  "peso_vol": 1.59
+ },
+ "1124100891": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 169.12
+ },
+ "SH0330": {
+  "bultos": 3.0,
+  "peso": 243.0,
+  "peso_vol": 347.14
+ },
+ "1210100773": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.18
+ },
+ "PW412": {
+  "bultos": 1.0,
+  "peso": 430.0,
+  "peso_vol": 1029.0
+ },
+ "C105": {
+  "bultos": 1.0,
+  "peso": 280.0,
+  "peso_vol": 556.2
+ },
+ "E352": {
+  "bultos": 1.0,
+  "peso": 195.0,
+  "peso_vol": 434.13
+ },
+ "D438": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 731.64
+ },
+ "D337": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 363.09
+ },
+ "DA023": {
+  "bultos": 1.0,
+  "peso": 380.0,
+  "peso_vol": 288.96
+ },
+ "1212100144": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.7
+ },
+ "1124100819": {
+  "bultos": 3.0,
+  "peso": 85.0,
+  "peso_vol": 72.72
+ },
+ "1113100841": {
+  "bultos": 1.0,
+  "peso": 22.0,
+  "peso_vol": 4.56
+ },
+ "226": {
+  "bultos": 1.0,
+  "peso": 279.0,
+  "peso_vol": 662.74
+ },
+ "255": {
+  "bultos": 1.0,
+  "peso": 145.0,
+  "peso_vol": 518.4
+ },
+ "324": {
+  "bultos": 1.0,
+  "peso": 190.0,
+  "peso_vol": 547.26
+ },
+ "334": {
+  "bultos": 1.0,
+  "peso": 190.0,
+  "peso_vol": 383.43
+ },
+ "335": {
+  "bultos": 1.0,
+  "peso": 224.0,
+  "peso_vol": 952.78
+ },
+ "342": {
+  "bultos": 2.0,
+  "peso": 173.0,
+  "peso_vol": 614.25
+ },
+ "010": {
+  "bultos": 1.0,
+  "peso": 69.0,
+  "peso_vol": 323.44
+ },
+ "1127100792": {
+  "bultos": 2.0,
+  "peso": 109.0,
+  "peso_vol": 70.32
+ },
+ "1127100793": {
+  "bultos": 2.0,
+  "peso": 55.0,
+  "peso_vol": 135.42
+ },
+ "1127100794": {
+  "bultos": 2.0,
+  "peso": 70.0,
+  "peso_vol": 186.58
+ },
+ "TWMA402": {
+  "bultos": 1.0,
+  "peso": 165.0,
+  "peso_vol": 759.0
+ },
+ "HOODIE05R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.45
+ },
+ "HOODIE04R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.45
+ },
+ "FZABU045S0700": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 7.08
+ },
+ "FZABU045S0600": {
+  "bultos": 2.0,
+  "peso": 40.0,
+  "peso_vol": 7.08
+ },
+ "1120100706": {
+  "bultos": 1.0,
+  "peso": 390.0,
+  "peso_vol": 267.68
+ },
+ "1042100821": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.47
+ },
+ "1213100490": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1120100100": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 7.38
+ },
+ "1223100829": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 37.38
+ },
+ "R141N": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "050": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 200.0
+ },
+ "060": {
+  "bultos": 1.0,
+  "peso": 180.0,
+  "peso_vol": 435.0
+ },
+ "1118100752": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "042": {
+  "bultos": 1.0,
+  "peso": 84.0,
+  "peso_vol": 345.38
+ },
+ "1122100776": {
+  "bultos": 4.0,
+  "peso": 198.0,
+  "peso_vol": 141.46
+ },
+ "FZABU045S0400": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 3.2
+ },
+ "1120100875": {
+  "bultos": 1.0,
+  "peso": 820.0,
+  "peso_vol": 148.8
+ },
+ "FZABU043S0100": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 0.16
+ },
+ "FZABU043S0200": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 0.32
+ },
+ "1120100874": {
+  "bultos": 1.0,
+  "peso": 300.0,
+  "peso_vol": 91.65
+ },
+ "DA031D": {
+  "bultos": 2.0,
+  "peso": 118.0,
+  "peso_vol": 210.26
+ },
+ "DA029E": {
+  "bultos": 2.0,
+  "peso": 180.0,
+  "peso_vol": 255.71
+ },
+ "SH003B": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "RE8O25": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "DA006E": {
+  "bultos": 2.0,
+  "peso": 148.0,
+  "peso_vol": 241.31
+ },
+ "DA016E": {
+  "bultos": 2.0,
+  "peso": 180.0,
+  "peso_vol": 299.13
+ },
+ "DA004E": {
+  "bultos": 2.0,
+  "peso": 145.0,
+  "peso_vol": 211.22
+ },
+ "DA014F": {
+  "bultos": 2.0,
+  "peso": 163.0,
+  "peso_vol": 225.72
+ },
+ "DA015E": {
+  "bultos": 2.0,
+  "peso": 163.0,
+  "peso_vol": 220.83
+ },
+ "DA017E": {
+  "bultos": 2.0,
+  "peso": 143.0,
+  "peso_vol": 264.32
+ },
+ "DA019E": {
+  "bultos": 2.0,
+  "peso": 137.0,
+  "peso_vol": 222.12
+ },
+ "DA032E": {
+  "bultos": 2.0,
+  "peso": 137.0,
+  "peso_vol": 189.85
+ },
+ "DA027E": {
+  "bultos": 2.0,
+  "peso": 173.0,
+  "peso_vol": 212.44
+ },
+ "1211100823": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 10.57
+ },
+ "1120100886": {
+  "bultos": 1.0,
+  "peso": 280.0,
+  "peso_vol": 207.9
+ },
+ "1120100887": {
+  "bultos": 1.0,
+  "peso": 280.0,
+  "peso_vol": 207.9
+ },
+ "TSHIRT02R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.23
+ },
+ "045": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 856.16
+ },
+ "TSHIRT03R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.23
+ },
+ "1120100884": {
+  "bultos": 2.0,
+  "peso": 290.0,
+  "peso_vol": 133.75
+ },
+ "SH0360": {
+  "bultos": 3.0,
+  "peso": 234.0,
+  "peso_vol": 358.55
+ },
+ "S45HEUS074": {
+  "bultos": 3.0,
+  "peso": 207.0,
+  "peso_vol": 244.36
+ },
+ "DLUS074": {
+  "bultos": 3.0,
+  "peso": 218.0,
+  "peso_vol": 303.09
+ },
+ "HTUS074": {
+  "bultos": 3.0,
+  "peso": 252.0,
+  "peso_vol": 214.66
+ },
+ "ABDUS074": {
+  "bultos": 3.0,
+  "peso": 149.0,
+  "peso_vol": 269.94
+ },
+ "KBEUS074": {
+  "bultos": 3.0,
+  "peso": 199.0,
+  "peso_vol": 200.34
+ },
+ "PKBUS074": {
+  "bultos": 3.0,
+  "peso": 183.0,
+  "peso_vol": 293.18
+ },
+ "1124100847": {
+  "bultos": 1.0,
+  "peso": 160.0,
+  "peso_vol": 422.32
+ },
+ "1124100893": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 207.0
+ },
+ "FMEL84420": {
+  "bultos": 1.0,
+  "peso": 140.0,
+  "peso_vol": 302.74
+ },
+ "FMEX82520": {
+  "bultos": 1.0,
+  "peso": 130.0,
+  "peso_vol": 152.95
+ },
+ "TWMA131": {
+  "bultos": 1.0,
+  "peso": 290.0,
+  "peso_vol": 451.0
+ },
+ "TWMA331": {
+  "bultos": 1.0,
+  "peso": 270.0,
+  "peso_vol": 852.1
+ },
+ "NRED25X": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 386.65
+ },
+ "193V": {
+  "bultos": 1.0,
+  "peso": 50.0,
+  "peso_vol": 33.26
+ },
+ "ES800": {
+  "bultos": 2.0,
+  "peso": 335.0,
+  "peso_vol": 412.96
+ },
+ "ES803": {
+  "bultos": 2.0,
+  "peso": 315.0,
+  "peso_vol": 421.23
+ },
+ "ES806": {
+  "bultos": 2.0,
+  "peso": 308.0,
+  "peso_vol": 501.33
+ },
+ "ES807": {
+  "bultos": 2.0,
+  "peso": 330.0,
+  "peso_vol": 452.6
+ },
+ "ES812": {
+  "bultos": 1.0,
+  "peso": 400.0,
+  "peso_vol": 583.68
+ },
+ "ES820": {
+  "bultos": 2.0,
+  "peso": 301.0,
+  "peso_vol": 425.16
+ },
+ "EF211": {
+  "bultos": 3.0,
+  "peso": 380.0,
+  "peso_vol": 298.04
+ },
+ "1121100909": {
+  "bultos": 12.0,
+  "peso": 421.0,
+  "peso_vol": 188.75
+ },
+ "1121100910": {
+  "bultos": 1.0,
+  "peso": 28.0,
+  "peso_vol": 40.25
+ },
+ "1121100911": {
+  "bultos": 5.0,
+  "peso": 226.0,
+  "peso_vol": 309.7
+ },
+ "1121100912": {
+  "bultos": 7.0,
+  "peso": 369.0,
+  "peso_vol": 453.45
+ },
+ "1121100913": {
+  "bultos": 2.0,
+  "peso": 100.0,
+  "peso_vol": 142.28
+ },
+ "1121100959": {
+  "bultos": 11.0,
+  "peso": 423.0,
+  "peso_vol": 224.82
+ },
+ "1237100949": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.38
+ },
+ "1233100920": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.28
+ },
+ "1210100924": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.07
+ },
+ "1210100925": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.12
+ },
+ "1210100926": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.18
+ },
+ "1015100917": {
+  "bultos": 1.0,
+  "peso": 62.0,
+  "peso_vol": 79.3
+ },
+ "1121100958": {
+  "bultos": 5.0,
+  "peso": 226.0,
+  "peso_vol": 114.81
+ },
+ "1224100948": {
+  "bultos": 2.0,
+  "peso": 18.0,
+  "peso_vol": 19.11
+ },
+ "FZABU042S0300": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "HTE": {
+  "bultos": 3.0,
+  "peso": 254.0,
+  "peso_vol": 254.87
+ },
+ "KGI": {
+  "bultos": 3.0,
+  "peso": 201.0,
+  "peso_vol": 227.25
+ },
+ "005503BBC": {
+  "bultos": 1.0,
+  "peso": 48.0,
+  "peso_vol": 44.64
+ },
+ "1049100899": {
+  "bultos": 1.0,
+  "peso": 34.0,
+  "peso_vol": 75.53
+ },
+ "1027100900": {
+  "bultos": 1.0,
+  "peso": 143.0,
+  "peso_vol": 173.71
+ },
+ "1210100956": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 11.91
+ },
+ "1210100957": {
+  "bultos": 3.0,
+  "peso": 105.0,
+  "peso_vol": 54.85
+ },
+ "1124100954": {
+  "bultos": 8.0,
+  "peso": 131.0,
+  "peso_vol": 81.3
+ },
+ "1129100952": {
+  "bultos": 2.0,
+  "peso": 35.0,
+  "peso_vol": 45.05
+ },
+ "1129100953": {
+  "bultos": 2.0,
+  "peso": 44.0,
+  "peso_vol": 45.05
+ },
+ "1210100955": {
+  "bultos": 1.0,
+  "peso": 27.0,
+  "peso_vol": 15.3
+ },
+ "1121100951": {
+  "bultos": 2.0,
+  "peso": 78.0,
+  "peso_vol": 68.32
+ },
+ "R140L-125": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.33
+ },
+ "R482": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.4
+ },
+ "1027100905": {
+  "bultos": 1.0,
+  "peso": 270.0,
+  "peso_vol": 365.98
+ },
+ "1134100400": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 29.93
+ },
+ "1127100791": {
+  "bultos": 2.0,
+  "peso": 41.0,
+  "peso_vol": 115.16
+ },
+ "1129100896": {
+  "bultos": 2.0,
+  "peso": 55.0,
+  "peso_vol": 72.82
+ },
+ "FL1801": {
+  "bultos": 1.0,
+  "peso": 420.0,
+  "peso_vol": 363.83
+ },
+ "GR274": {
+  "bultos": 2.0,
+  "peso": 183.0,
+  "peso_vol": 344.08
+ },
+ "GRD1639": {
+  "bultos": 2.0,
+  "peso": 169.0,
+  "peso_vol": 239.02
+ },
+ "082": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 227.39
+ },
+ "023": {
+  "bultos": 1.0,
+  "peso": 100.0,
+  "peso_vol": 591.02
+ },
+ "1224100946": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 61.72
+ },
+ "1224100918": {
+  "bultos": 1.0,
+  "peso": 28.0,
+  "peso_vol": 14.43
+ },
+ "1236100916": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 15.89
+ },
+ "1121100904": {
+  "bultos": 5.0,
+  "peso": 240.0,
+  "peso_vol": 247.49
+ },
+ "NRE25XA": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1129100963": {
+  "bultos": 2.0,
+  "peso": 33.0,
+  "peso_vol": 38.34
+ },
+ "1251100915": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 5.85
+ },
+ "1251100914": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 2.55
+ },
+ "RF-BW-20": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 5.0
+ },
+ "RF-GB-20": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 5.0
+ },
+ "TPT-12": {
+  "bultos": 1.0,
+  "peso": 13.0,
+  "peso_vol": 8.1
+ },
+ "TRDG-10": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 62.5
+ },
+ "RFR-BW-20": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.375
+ },
+ "RFR-GB-20": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.375
+ },
+ "RFCR-BW-20": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.1125
+ },
+ "RFCR-GB-20": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.11
+ },
+ "1120100975": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 54.74
+ },
+ "1121100903": {
+  "bultos": 5.0,
+  "peso": 208.0,
+  "peso_vol": 291.61
+ },
+ "1010089701": {
+  "bultos": 1.0,
+  "peso": 310.0,
+  "peso_vol": 653.31
+ },
+ "11201100292": {
+  "bultos": 4.0,
+  "peso": 153.0,
+  "peso_vol": 103.86
+ },
+ "11201100294": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 8.18
+ },
+ "11201100295": {
+  "bultos": 2.0,
+  "peso": 65.0,
+  "peso_vol": 24.29
+ },
+ "11201100296": {
+  "bultos": 3.0,
+  "peso": 78.0,
+  "peso_vol": 31.3
+ },
+ "11201100299": {
+  "bultos": 1.0,
+  "peso": 34.0,
+  "peso_vol": 18.98
+ },
+ "11201100298": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 11.84
+ },
+ "DA013": {
+  "bultos": 2.0,
+  "peso": 169.0,
+  "peso_vol": 221.62
+ },
+ "1243100969": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1212100971": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1248100968": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.32
+ },
+ "1242100967": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.2
+ },
+ "1129100966": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 45.35
+ },
+ "11201100293": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 2.47
+ },
+ "11201100297": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 3.14
+ },
+ "1252100900100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100900200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100900300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100900500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100900800": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100901000": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100901200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100901400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100901500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "1252100900700": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "DA003E": {
+  "bultos": 2.0,
+  "peso": 145.0,
+  "peso_vol": 264.76
+ },
+ "HOODIE11R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE11R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE11R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE11R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE11R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE12R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE12R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE12R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE12R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE12R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE13R0100": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE13R0200": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE13R0300": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE13R0400": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "HOODIE13R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.49
+ },
+ "111112PWB03": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 10.72
+ },
+ "030": {
+  "bultos": 1.0,
+  "peso": 111.0,
+  "peso_vol": 552.05
+ },
+ "TOPES01R00200": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.11
+ },
+ "TOPES01R00300": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 0.12
+ },
+ "TOPES01R00400": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 0.14
+ },
+ "TOPES01R00500": {
+  "bultos": 1.0,
+  "peso": 5.0,
+  "peso_vol": 0.14
+ },
+ "1251100972": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.05
+ },
+ "1236100973": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.88
+ },
+ "1213100929": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 7.04
+ },
+ "11201100300": {
+  "bultos": 1.0,
+  "peso": 18.0,
+  "peso_vol": 16.47
+ },
+ "11201100301": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1240100965": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 5.69
+ },
+ "1050100907": {
+  "bultos": 1.0,
+  "peso": 184.0,
+  "peso_vol": 594.59
+ },
+ "TWMA303": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 588.0
+ },
+ "TWMA305": {
+  "bultos": 1.0,
+  "peso": 240.0,
+  "peso_vol": 644.1
+ },
+ "1226100945": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.02
+ },
+ "PPHR102": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "1049100908": {
+  "bultos": 1.0,
+  "peso": 93.0,
+  "peso_vol": 285.71
+ },
+ "11201100302": {
+  "bultos": 1.0,
+  "peso": 17.0,
+  "peso_vol": 19.03
+ },
+ "1210100601": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.07
+ },
+ "TSHIRT03R0400": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "HOODIE02R0500": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.68
+ },
+ "1129100554": {
+  "bultos": 1.0,
+  "peso": 40.0,
+  "peso_vol": 15.94
+ },
+ "E252": {
+  "bultos": 1.0,
+  "peso": 300.0,
+  "peso_vol": 443.25
+ },
+ "C212": {
+  "bultos": 1.0,
+  "peso": 290.0,
+  "peso_vol": 497.25
+ },
+ "C412": {
+  "bultos": 1.0,
+  "peso": 360.0,
+  "peso_vol": 630.48
+ },
+ "C106": {
+  "bultos": 1.0,
+  "peso": 260.0,
+  "peso_vol": 551.25
+ },
+ "DE6": {
+  "bultos": 1.0,
+  "peso": 150.0,
+  "peso_vol": 368.5
+ },
+ "1129100699": {
+  "bultos": 5.0,
+  "peso": 314.0,
+  "peso_vol": 359.31
+ },
+ "504-00115-01": {
+  "bultos": 1.0,
+  "peso": 19.0,
+  "peso_vol": 7.66
+ },
+ "504-00116-01": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 8.28
+ },
+ "027": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 350.0
+ },
+ "TWMA102-ADJ": {
+  "bultos": 1.0,
+  "peso": 202.0,
+  "peso_vol": 472.5
+ },
+ "1118100901901": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 0.6
+ },
+ "1118100901902": {
+  "bultos": 1.0,
+  "peso": 5.5,
+  "peso_vol": 0.86
+ },
+ "1118100901903": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 1.91
+ },
+ "1118100901904": {
+  "bultos": 1.0,
+  "peso": 10.5,
+  "peso_vol": 2.59
+ },
+ "1118100901905": {
+  "bultos": 2.0,
+  "peso": 15.5,
+  "peso_vol": 2.52
+ },
+ "1118100901906": {
+  "bultos": 2.0,
+  "peso": 20.5,
+  "peso_vol": 3.17
+ },
+ "1118100901907": {
+  "bultos": 2.0,
+  "peso": 25.5,
+  "peso_vol": 3.17
+ },
+ "1050100906": {
+  "bultos": 1.0,
+  "peso": 157.0,
+  "peso_vol": 241.36
+ },
+ "111112PWB10": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 10.72
+ },
+ "111112PWB12": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 10.72
+ },
+ "111112PWB09": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 10.72
+ },
+ "111112PWB08": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 10.72
+ },
+ "111112PWB07": {
+  "bultos": 1.0,
+  "peso": 7.0,
+  "peso_vol": 10.72
+ },
+ "111112PWB06": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 10.72
+ },
+ "001023B": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 58.78
+ },
+ "001531B4": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 608.0
+ },
+ "479": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.03
+ },
+ "1121100962": {
+  "bultos": 1.0,
+  "peso": 28.0,
+  "peso_vol": 33.2
+ },
+ "1120100708": {
+  "bultos": 1.0,
+  "peso": 380.0,
+  "peso_vol": 178.5
+ },
+ "BBBLACK": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.11
+ },
+ "3PLATINUM3": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.81
+ },
+ "55": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "70": {
+  "bultos": 1.0,
+  "peso": 120.0,
+  "peso_vol": 577.5
+ },
+ "145": {
+  "bultos": 1.0,
+  "peso": 545.0,
+  "peso_vol": 577.5
+ },
+ "215": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "017": {
+  "bultos": 1.0,
+  "peso": 144.0,
+  "peso_vol": 863.26
+ },
+ "320": {
+  "bultos": 1.0,
+  "peso": 218.0,
+  "peso_vol": 823.13
+ },
+ "326": {
+  "bultos": 1.0,
+  "peso": 200.0,
+  "peso_vol": 669.06
+ },
+ "047": {
+  "bultos": 1.0,
+  "peso": 30.0,
+  "peso_vol": 45.7
+ },
+ "151": {
+  "bultos": 1.0,
+  "peso": 35.0,
+  "peso_vol": 31.52
+ },
+ "IT-008AF": {
+  "bultos": 1.0,
+  "peso": 9.0,
+  "peso_vol": 2.5
+ },
+ "FL1826": {
+  "bultos": 1.0,
+  "peso": 448.0,
+  "peso_vol": 386.12
+ },
+ "FL1820": {
+  "bultos": 1.0,
+  "peso": 335.0,
+  "peso_vol": 396.15
+ },
+ "1121100901800": {
+  "bultos": 3.0,
+  "peso": 250.0,
+  "peso_vol": 1261.54
+ },
+ "1121100901700": {
+  "bultos": 4.0,
+  "peso": 376.0,
+  "peso_vol": 441.25
+ },
+ "1121100901600": {
+  "bultos": 4.0,
+  "peso": 392.0,
+  "peso_vol": 291.71
+ },
+ "1113100994": {
+  "bultos": 1.0,
+  "peso": 15.0,
+  "peso_vol": 1.29
+ },
+ "1210100927": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.1
+ },
+ "ILUSCJLL30": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.07
+ },
+ "ILUSPSMIN10": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.2
+ },
+ "ILUSLLCOL8": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.0
+ },
+ "ILUSPSMIN5": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.2
+ },
+ "ILUSMDURBF": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.13
+ },
+ "ILUSCRIRON": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.1
+ },
+ "1121100827": {
+  "bultos": 3.0,
+  "peso": 205.0,
+  "peso_vol": 207.57
+ },
+ "BA001": {
+  "bultos": 6.0,
+  "peso": 216.0,
+  "peso_vol": 180.55
+ },
+ "BA003": {
+  "bultos": 6.0,
+  "peso": 245.0,
+  "peso_vol": 258.23
+ },
+ "BA004": {
+  "bultos": 6.0,
+  "peso": 245.0,
+  "peso_vol": 203.02
+ },
+ "BA005": {
+  "bultos": 6.0,
+  "peso": 217.0,
+  "peso_vol": 195.8
+ },
+ "BA012": {
+  "bultos": 6.0,
+  "peso": 116.0,
+  "peso_vol": 178.46
+ },
+ "BA014": {
+  "bultos": 6.0,
+  "peso": 263.0,
+  "peso_vol": 224.37
+ },
+ "BA015": {
+  "bultos": 6.0,
+  "peso": 262.0,
+  "peso_vol": 206.85
+ },
+ "BA016": {
+  "bultos": 6.0,
+  "peso": 280.0,
+  "peso_vol": 277.5
+ },
+ "BA020": {
+  "bultos": 6.0,
+  "peso": 249.0,
+  "peso_vol": 226.76
+ },
+ "BA029": {
+  "bultos": 6.0,
+  "peso": 280.0,
+  "peso_vol": 251.07
+ },
+ "BA023": {
+  "bultos": 21.0,
+  "peso": 686.0,
+  "peso_vol": 385.8
+ },
+ "NRED20X": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 386.65
+ },
+ "1121100981": {
+  "bultos": 5.0,
+  "peso": 226.0,
+  "peso_vol": 213.15
+ },
+ "1121100984": {
+  "bultos": 5.0,
+  "peso": 263.0,
+  "peso_vol": 165.85
+ },
+ "1121100986": {
+  "bultos": 5.0,
+  "peso": 239.0,
+  "peso_vol": 175.15
+ },
+ "1121100980": {
+  "bultos": 5.0,
+  "peso": 271.0,
+  "peso_vol": 252.43
+ },
+ "1121101001": {
+  "bultos": 6.0,
+  "peso": 316.0,
+  "peso_vol": 224.4
+ },
+ "1121100985": {
+  "bultos": 5.0,
+  "peso": 229.0,
+  "peso_vol": 148.3
+ },
+ "1121100982": {
+  "bultos": 5.0,
+  "peso": 271.0,
+  "peso_vol": 291.41
+ },
+ "1121100983": {
+  "bultos": 5.0,
+  "peso": 244.0,
+  "peso_vol": 302.35
+ },
+ "1231100970": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 2.14
+ },
+ "1121100976": {
+  "bultos": 10.0,
+  "peso": 390.0,
+  "peso_vol": 176.6
+ },
+ "215DK": {
+  "bultos": 2.0,
+  "peso": 1090.0,
+  "peso_vol": 2276.18
+ },
+ "C201": {
+  "bultos": 1.0,
+  "peso": 170.0,
+  "peso_vol": 481.0
+ },
+ "T163": {
+  "bultos": 1.0,
+  "peso": 290.0,
+  "peso_vol": 716.38
+ },
+ "PW739": {
+  "bultos": 1.0,
+  "peso": 250.0,
+  "peso_vol": 1123.75
+ },
+ "PW437": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "P443": {
+  "bultos": 1.0,
+  "peso": 190.0,
+  "peso_vol": 292.5
+ },
+ "P140": {
+  "bultos": 1.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "D125": {
+  "bultos": 1.0,
+  "peso": 120.0,
+  "peso_vol": 409.5
+ },
+ "BBCB3": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.86
+ },
+ "BBSSU": {
+  "bultos": 1.0,
+  "peso": 420.0,
+  "peso_vol": 735.01
+ },
+ "1121101003": {
+  "bultos": 2.0,
+  "peso": 202.0,
+  "peso_vol": 304.18
+ },
+ "1049100998": {
+  "bultos": 1.0,
+  "peso": 32.0,
+  "peso_vol": 78.65
+ },
+ "1050100999": {
+  "bultos": 2.0,
+  "peso": 46.0,
+  "peso_vol": 101.99
+ },
+ "1015101000": {
+  "bultos": 1.0,
+  "peso": 70.0,
+  "peso_vol": 108.22
+ },
+ "1121100993": {
+  "bultos": 5.0,
+  "peso": 175.0,
+  "peso_vol": 156.69
+ },
+ "112110098": {
+  "bultos": 5.0,
+  "peso": 271.0,
+  "peso_vol": 207.85
+ },
+ "1121100988": {
+  "bultos": 5.0,
+  "peso": 257.0,
+  "peso_vol": 294.38
+ },
+ "FZAMC039S0800": {
+  "bultos": 1.0,
+  "peso": 16.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0900": {
+  "bultos": 1.0,
+  "peso": 18.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0200": {
+  "bultos": 1.0,
+  "peso": 4.0,
+  "peso_vol": 1.2
+ },
+ "FZAMC039S0300": {
+  "bultos": 1.0,
+  "peso": 6.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0400": {
+  "bultos": 1.0,
+  "peso": 8.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0500": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0600": {
+  "bultos": 1.0,
+  "peso": 12.0,
+  "peso_vol": 1.25
+ },
+ "FZAMC039S0700": {
+  "bultos": 1.0,
+  "peso": 14.0,
+  "peso_vol": 1.25
+ },
+ "11201100303": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "893": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 6.67
+ },
+ "TRU-002-0300": {
+  "bultos": 1.0,
+  "peso": 0.3,
+  "peso_vol": 0.2
+ },
+ "TRU-001-0150": {
+  "bultos": 1.0,
+  "peso": 0.15,
+  "peso_vol": 0.2
+ },
+ "1015100996": {
+  "bultos": 1.0,
+  "peso": 45.0,
+  "peso_vol": 64.9
+ },
+ "1027100997": {
+  "bultos": 1.0,
+  "peso": 145.0,
+  "peso_vol": 167.21
+ },
+ "1121100901": {
+  "bultos": 5.0,
+  "peso": 241.0,
+  "peso_vol": 244.17
+ },
+ "BA026": {
+  "bultos": 6.0,
+  "peso": 244.0,
+  "peso_vol": 295.26
+ },
+ "1027100901": {
+  "bultos": 1.0,
+  "peso": 152.0,
+  "peso_vol": 209.45
+ },
+ "FZABU031S0100": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 2.65
+ },
+ "FZABU031S0200": {
+  "bultos": 1.0,
+  "peso": 20.0,
+  "peso_vol": 2.65
+ },
+ "FZABU031S0300": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 5.3
+ },
+ "FZABU031S0400": {
+  "bultos": 2.0,
+  "peso": 40.0,
+  "peso_vol": 5.3
+ },
+ "FZABU031S0500": {
+  "bultos": 2.0,
+  "peso": 50.0,
+  "peso_vol": 5.3
+ },
+ "BA013": {
+  "bultos": 6.0,
+  "peso": 264.0,
+  "peso_vol": 221.32
+ },
+ "1121100992": {
+  "bultos": 6.0,
+  "peso": 212.0,
+  "peso_vol": 147.89
+ },
+ "1121100991": {
+  "bultos": 6.0,
+  "peso": 235.0,
+  "peso_vol": 137.9
+ },
+ "BA008": {
+  "bultos": 6.0,
+  "peso": 235.0,
+  "peso_vol": 289.3507
+ },
+ "BA019": {
+  "bultos": 6.0,
+  "peso": 232.0,
+  "peso_vol": 186.09
+ },
+ "DR006B": {
+  "bultos": 1.0,
+  "peso": 91.0,
+  "peso_vol": 1199.77
+ },
+ "BA027": {
+  "bultos": 2.0,
+  "peso": 173.0,
+  "peso_vol": 193.43
+ },
+ "1129100974": {
+  "bultos": 2.0,
+  "peso": 0.0,
+  "peso_vol": 0.0
+ },
+ "GT-03E": {
+  "bultos": 1.0,
+  "peso": 87.0,
+  "peso_vol": 177.19
+ },
+ "1228101052": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 9.46
+ },
+ "1214101041": {
+  "bultos": 1.0,
+  "peso": 11.0,
+  "peso_vol": 0.25
+ },
+ "1124101050": {
+  "bultos": 1.0,
+  "peso": 27.0,
+  "peso_vol": 56.06
+ },
+ "1212101051": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 2.55
+ },
+ "1225101004": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.09
+ },
+ "1225101005": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.09
+ },
+ "1210101008": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.08
+ },
+ "1228101013": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.44
+ },
+ "1140100010": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.5
+ },
+ "1140100030": {
+  "bultos": 1.0,
+  "peso": 3.0,
+  "peso_vol": 1.5
+ },
+ "1217101022": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.09
+ },
+ "1221101048": {
+  "bultos": 2.0,
+  "peso": 12.0,
+  "peso_vol": 25.96
+ },
+ "BA025": {
+  "bultos": 6.0,
+  "peso": 254.0,
+  "peso_vol": 183.3
+ },
+ "BA028": {
+  "bultos": 6.0,
+  "peso": 230.0,
+  "peso_vol": 243.95
+ },
+ "1138101014": {
+  "bultos": 1.0,
+  "peso": 53.0,
+  "peso_vol": 28.92
+ },
+ "1237101029": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.3
+ },
+ "1237101031": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.22
+ },
+ "1228101025": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 22.01
+ },
+ "1223101018": {
+  "bultos": 1.0,
+  "peso": 23.0,
+  "peso_vol": 15.31
+ },
+ "1140100020": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 1.5
+ },
+ "1237101026": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.25
+ },
+ "1237101027": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.275
+ },
+ "1237101028": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.3
+ },
+ "1237101030": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.22
+ },
+ "1237101032": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.22
+ },
+ "1237101033": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.22
+ },
+ "1237101034": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.28
+ },
+ "1121100990": {
+  "bultos": 5.0,
+  "peso": 247.0,
+  "peso_vol": 179.4
+ },
+ "1223101049": {
+  "bultos": 5.0,
+  "peso": 83.0,
+  "peso_vol": 293.99
+ },
+ "1237101024": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.47
+ },
+ "1233101035": {
+  "bultos": 1.0,
+  "peso": 47.0,
+  "peso_vol": 43.56
+ },
+ "1124101010": {
+  "bultos": 1.0,
+  "peso": 21.0,
+  "peso_vol": 63.58
+ },
+ "1226101020": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.02
+ },
+ "1226101021": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.02
+ },
+ "1235101047": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 5.9
+ },
+ "1233101045": {
+  "bultos": 1.0,
+  "peso": 32.0,
+  "peso_vol": 27.39
+ },
+ "1241101036": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 2.21
+ },
+ "1212100035": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.88
+ },
+ "1212100045": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.88
+ },
+ "1212100055": {
+  "bultos": 1.0,
+  "peso": 2.0,
+  "peso_vol": 0.88
+ },
+ "1121100989": {
+  "bultos": 5.0,
+  "peso": 234.0,
+  "peso_vol": 194.3
+ },
+ "1121100987": {
+  "bultos": 5.0,
+  "peso": 229.0,
+  "peso_vol": 321.38
+ },
+ "FZABU045S0300": {
+  "bultos": 1.0,
+  "peso": 10.0,
+  "peso_vol": 1.125
+ },
+ "FZABU045S0500": {
+  "bultos": 2.0,
+  "peso": 30.0,
+  "peso_vol": 2.25
+ },
+ "1242101044": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 1.254
+ },
+ "1226101023": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.0075
+ },
+ "1210100928": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.18
+ },
+ "1233101019": {
+  "bultos": 1.0,
+  "peso": 1.0,
+  "peso_vol": 0.2835
+ },
+ "1214101042": {
+  "bultos": 1.0,
+  "peso": 8.7,
+  "peso_vol": 7.0476
+ }
+}

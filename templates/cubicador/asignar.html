@@ -689,17 +689,17 @@
                     onclick="setVistaPrecio('venta')"
                     style="background:#dc2626;color:#fff;border:none;border-radius:6px;
                            padding:5px 12px;font-size:.74rem;font-weight:700;cursor:pointer">
-              💰 Precio venta
+              💰 Con seguro
             </button>
             <button type="button" class="seg-btn" data-vista="costo"
                     onclick="setVistaPrecio('costo')"
                     style="background:transparent;color:#6b7280;border:none;border-radius:6px;
                            padding:5px 12px;font-size:.74rem;font-weight:700;cursor:pointer">
-              📊 Costo ILUS
+              📦 Sin seguro
             </button>
           </div>
           <span id="vistaPrecioHint" style="font-size:.66rem;color:#9ca3af;margin-left:10px">
-            Lo que paga el cliente (costo + margen + IVA)
+            Precio de tabla SPHS. "Con seguro" suma el 1,2% del valor declarado.
           </span>
         </div>
 
@@ -2085,8 +2085,8 @@ function setVistaPrecio(modo){
   const hint = document.getElementById('vistaPrecioHint');
   if(hint){
     hint.textContent = modo === 'costo'
-      ? 'Lo que ILUS paga al courier (sin margen ni IVA)'
-      : 'Lo que paga el cliente (costo + margen + IVA)';
+      ? 'Precio de tabla SPHS, sin seguro.'
+      : 'Precio de tabla SPHS + seguro 1,2% del valor declarado.';
   }
   renderCouriers();
 }

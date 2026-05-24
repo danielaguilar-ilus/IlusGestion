@@ -47,6 +47,7 @@ except ImportError:
 
 # ── Motor ERP unificado (cubicador, asignar, retiros, mantenciones, etc.) ──
 import erp_engine
+import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
     token=ERP_CONFIG.get("api_token", ""),
@@ -14457,6 +14458,49 @@ def api_asignar_cotizar_couriers():
             "advertencias": advs,
         }
 
+    # Helper: arma la cotización con el modelo NUEVO (tabla macro, sin margen/IVA).
+    # 'precio' = base de tabla + seguro 1,2% (igual que la macro de SPHS).
+    _ETD_MACRO = {'felca': '2-4 días', 'milling': '2-4 días',
+                  'clickex': '24-48 h', 'fedex_directo': '1-2 días'}
+
+    def _macro_cotizacion_dict(cid, nombre, logo, slug, r):
+        base, seguro, precio = r["base"], r["seguro"], r["precio"]
+        desglose = {
+            "precio_costo": base, "precio_venta": precio,
+            "margen_pct": 0, "margen_clp": 0, "iva_pct": 0, "iva_clp": 0,
+            "seguro_clp": seguro,
+        }
+        formula = f"Tabla SPHS: {r['tramo']} → ${base:,}".replace(",", ".")
+        if seguro:
+            formula += f" + seguro 1,2% ${seguro:,}".replace(",", ".")
+        formula += f" = ${precio:,}".replace(",", ".")
+        return {
+            "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+            "tiene_cobertura": True, "fuente": "tabla",
+            "precio": precio, "precio_costo": base, "moneda": "CLP",
+            "tiempo_transito": _ETD_MACRO.get(slug, "—"), "servicio": "Standard",
+            "subtotal": precio, "desglose": desglose, "mensaje": None,
+            "trace": {
+                "bracket": r["tramo"], "bracket_upper": None, "formula": formula,
+                "fuente": "tabla_macro", "validado": True, "advertencias": [],
+                "json_brackets_disponibles": [], "peso_usado": peso_fact,
+                "comuna_db": r["comuna_tabla"], "desglose": desglose,
+            },
+        }
+
+    def _no_cobertura_dict(cid, nombre, logo):
+        return {
+            "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+            "tiene_cobertura": False, "fuente": "no_cobertura",
+            "mensaje": f"Sin cobertura para {comuna}",
+            "trace": {"bracket": None, "bracket_upper": None,
+                      "formula": f"Sin tarifa en tabla para {comuna}",
+                      "fuente": "no_cobertura", "validado": False,
+                      "advertencias": [f"Sin cobertura para {comuna}"],
+                      "json_brackets_disponibles": [], "peso_usado": peso_fact,
+                      "comuna_db": None},
+        }
+
     # 2) Función worker que cotiza UN courier
     # FedEx hace I/O (API HTTP) → necesita su propio app_context para el token cache.
     # Otros couriers leen del tarifa_map pre-cargado → puro CPU, no necesitan MySQL.
@@ -14465,6 +14509,18 @@ def api_asignar_cotizar_couriers():
         nombre    = c['nombre'] or ''
         is_fedex  = (nombre.strip().lower() == 'fedex')
         logo      = c.get('logo_url') or c.get('logo_square_url')
+        slug      = _ttar.slug_para_courier(nombre)
+
+        # ── Couriers con tabla del macro (Felca, Milling, Clickex): modelo nuevo ──
+        if not is_fedex and slug in ('felca', 'milling', 'clickex'):
+            r = _ttar.cotizar(slug, comuna, peso_fact, valor_neto)
+            return _macro_cotizacion_dict(cid, nombre, logo, slug, r) if r \
+                else _no_cobertura_dict(cid, nombre, logo)
+
+        # ── Resto (Starken, Blue, Envíame, etc.): por ahora NO se muestran.
+        #    Daniel: solo fedex / felca / milling / clickex (Envíame vendrá pronto).
+        if not is_fedex:
+            return None
 
         try:
             if is_fedex:
@@ -14629,6 +14685,22 @@ def api_asignar_cotizar_couriers():
                         "fuente": "timeout",
                         "mensaje": "Tiempo de cotización excedido",
                     })
+
+    # Filtrar couriers excluidos (None) y agregar FedEx Directo (tabla) junto a la API.
+    # Daniel quiere ver AMBAS para FedEx (API en vivo + tabla del macro).
+    cotizaciones = [c for c in cotizaciones if c]
+    try:
+        fedex_c = next((cc for cc in couriers
+                        if (cc.get('nombre') or '').strip().lower() == 'fedex'), None)
+        if fedex_c:
+            rt = _ttar.cotizar('fedex_directo', comuna, peso_fact, valor_neto)
+            if rt:
+                cotizaciones.append(_macro_cotizacion_dict(
+                    fedex_c['id'], 'FedEx Directo (tabla)',
+                    fedex_c.get('logo_url') or fedex_c.get('logo_square_url'),
+                    'fedex_directo', rt))
+    except Exception as _ex_fxd:
+        print(f"[cotizar] fedex tabla error: {_ex_fxd}", flush=True)
 
     # 4) Ordenar (con cobertura primero, sin cobertura al final) y elegir recomendado
     con_cobertura = [c for c in cotizaciones if c.get('tiene_cobertura')]
