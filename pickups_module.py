@@ -3376,6 +3376,13 @@ def register_pickup_routes(app, ctx):
 
         Body JSON: {q: "<string>"}
         Response: {ok, modo, documentos: [...], count, query}
+
+        FIX Daniel 2026-05-23: reescrito para usar el MISMO patrón 2-pasos
+        que mant_buscar_erp_sql (que sí funciona en producción):
+          1) Query mínima a MAEEDO sin JOINs (rápida, sin duplicados).
+          2) Enriquecimiento del NOMBRE/saldo en una 2ª query a MAEEN/MAEDDO.
+        Eliminado el LEFT JOIN MAEEN con CASE/CHARINDEX que multiplicaba filas
+        cuando un RUT tenía múltiples sucursales en MAEEN.
         """
         d = request.get_json(silent=True) or {}
         q = (d.get("q") or "").strip()
@@ -3396,12 +3403,17 @@ def register_pickup_routes(app, ctx):
         # Normalizar query
         q_clean   = q.replace(".", "").replace(" ", "").replace("-", "").upper()
         is_digits = q_clean.isdigit()
+        # TIDOs aceptados (ventas que pueden requerir retiro)
         tidos_in  = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
 
         docs = []
         modo = ""
         try:
             # ── Modo RUT (7-9 dígitos) ─────────────────────────────
+            #
+            # ENDO en MAEEDO viene como "65206047-K" (RUT + DV separados con guión).
+            # Buscamos por prefijo del RUT base (sin DV) para tolerar variaciones.
+            # Si len >= 8, asumimos que el último char es el DV y lo quitamos.
             if is_digits and 7 <= len(q_clean) <= 9:
                 modo = "rut"
                 rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
@@ -3411,28 +3423,10 @@ def register_pickup_routes(app, ctx):
                         LTRIM(RTRIM(e.TIDO)) AS TIDO,
                         LTRIM(RTRIM(e.NUDO)) AS NUDO,
                         LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
                         e.FEEMDO, e.VANEDO, e.VABRDO,
-                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
-                        LTRIM(RTRIM(COALESCE(
-                            NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
-                            NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
-                            NULLIF(LTRIM(RTRIM(e.SUENDO)),     ''),
-                            'Consumidor final'
-                        ))) AS NOMBRE,
-                        (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
-                                                  THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
-                                                  ELSE 0 END), 0)
-                           FROM MAEDDO d
-                          WHERE d.IDMAEEDO = e.IDMAEEDO
-                            AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
-                        (SELECT COUNT(*) FROM MAEDDO d2
-                          WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
                     FROM MAEEDO e
-                    LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
-                          CASE WHEN CHARINDEX('-', e.ENDO) > 0
-                               THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
-                               ELSE LTRIM(RTRIM(COALESCE(e.ENDO,'')))
-                          END
                     WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
                       AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
                       AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
@@ -3442,6 +3436,7 @@ def register_pickup_routes(app, ctx):
             # ── Modo Número documento (1-7 dígitos) ────────────────
             if not docs and is_digits and 1 <= len(q_clean) <= 7:
                 modo = "numero"
+                # NUDO en MAEEDO viene padded a 10 chars o con prefijo VD/WEB
                 nudo_padded = q_clean.zfill(10)
                 nudo_vd     = f"VD{q_clean.zfill(8)}"
                 nudo_web    = f"WEB{q_clean.zfill(7)}"
@@ -3451,28 +3446,10 @@ def register_pickup_routes(app, ctx):
                         LTRIM(RTRIM(e.TIDO)) AS TIDO,
                         LTRIM(RTRIM(e.NUDO)) AS NUDO,
                         LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
                         e.FEEMDO, e.VANEDO, e.VABRDO,
-                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
-                        LTRIM(RTRIM(COALESCE(
-                            NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
-                            NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
-                            NULLIF(LTRIM(RTRIM(e.SUENDO)),     ''),
-                            'Consumidor final'
-                        ))) AS NOMBRE,
-                        (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
-                                                  THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
-                                                  ELSE 0 END), 0)
-                           FROM MAEDDO d
-                          WHERE d.IDMAEEDO = e.IDMAEEDO
-                            AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
-                        (SELECT COUNT(*) FROM MAEDDO d2
-                          WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
                     FROM MAEEDO e
-                    LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
-                          CASE WHEN CHARINDEX('-', e.ENDO) > 0
-                               THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
-                               ELSE LTRIM(RTRIM(COALESCE(e.ENDO,'')))
-                          END
                     WHERE e.NUDO IN (%s, %s, %s)
                       AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
                       AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
@@ -3481,77 +3458,173 @@ def register_pickup_routes(app, ctx):
 
             # ── Modo Razón social (texto) ──────────────────────────
             # Estrategia 2-pasos:
-            #   3a) RUTs candidatos en MAEEN por nombre
-            #   3b) Docs cuyo ENDO matchea esos RUTs
+            #   3a) RUTs candidatos en MAEEN por nombre (índice por NOKOEN)
+            #   3b) Docs cuyo ENDO matchea esos RUTs (índice por ENDO)
             if not docs and not is_digits:
                 modo = "nombre"
                 q_like = f"%{q.upper()}%"
                 ruts = _random_sql_query("""
                     SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut,
-                                  LTRIM(RTRIM(NOKOEN)) AS razon
+                                  LTRIM(RTRIM(COALESCE(NOKOENAMP, NOKOEN, ''))) AS razon
                       FROM MAEEN
-                     WHERE UPPER(NOKOEN) LIKE %s
+                     WHERE (UPPER(NOKOEN) LIKE %s OR UPPER(COALESCE(NOKOENAMP,'')) LIKE %s)
                        AND TIEN IN ('C','A')
-                """, (q_like,)) or []
+                """, (q_like, q_like)) or []
                 if ruts:
                     rut_map = {r['rut']: r['razon'] for r in ruts if r.get('rut')}
                     if rut_map:
                         like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(rut_map))
                         params = tuple(f"{rk}%" for rk in rut_map.keys())
-                        docs_raw = _random_sql_query(f"""
+                        docs = _random_sql_query(f"""
                             SELECT TOP 60
                                 e.IDMAEEDO,
                                 LTRIM(RTRIM(e.TIDO)) AS TIDO,
                                 LTRIM(RTRIM(e.NUDO)) AS NUDO,
                                 LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                                LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
                                 e.FEEMDO, e.VANEDO, e.VABRDO,
-                                LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
-                                (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
-                                                          THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
-                                                          ELSE 0 END), 0)
-                                   FROM MAEDDO d
-                                  WHERE d.IDMAEEDO = e.IDMAEEDO
-                                    AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
-                                (SELECT COUNT(*) FROM MAEDDO d2
-                                  WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                                LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
                             FROM MAEEDO e
                             WHERE ({like_clauses})
                               AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
                               AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
                             ORDER BY e.FEEMDO DESC
                         """, params, max_rows=60) or []
-                        for r in docs_raw:
-                            endo = (r.get("ENDO") or "").strip()
-                            rut_clean = endo.split("-")[0] if "-" in endo else endo
-                            r["NOMBRE"] = rut_map.get(rut_clean, "")
-                        docs = docs_raw
+
+            # ── Deduplicar por IDMAEEDO (defensa por si quedó duplicado) ──
+            seen_ids = set()
+            unique_docs = []
+            for r in docs:
+                idm = r.get("IDMAEEDO")
+                if idm in seen_ids:
+                    continue
+                seen_ids.add(idm)
+                unique_docs.append(r)
+            docs = unique_docs
+
+            # ── Paso 2: enriquecer cada doc con NOMBRE + saldo_zz + n_lineas ──
+            # Esto evita el LEFT JOIN problemático del SELECT principal:
+            #   • MAEEN puede tener N entidades con el mismo RTEN (multiplica)
+            #   • Subqueries SCALAR en SELECT son costosas y propensas a timeout
+            #
+            # Acá hacemos 1 query agregada para TODOS los IDMAEEDO de una vez.
+            if docs:
+                idmaeedos = [r.get("IDMAEEDO") for r in docs if r.get("IDMAEEDO") is not None]
+                if idmaeedos:
+                    placeholders = ",".join(["%s"] * len(idmaeedos))
+                    # Saldo ZZ + n_lineas por doc (1 query agregada)
+                    try:
+                        saldo_rows = _random_sql_query(f"""
+                            SELECT d.IDMAEEDO,
+                                   COALESCE(SUM(CASE
+                                       WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%'
+                                            AND (d.CAPRCO1 - COALESCE(d.CAPRAD1,0)) > 0
+                                       THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
+                                       ELSE 0
+                                   END), 0) AS saldo_zz,
+                                   COUNT(*) AS n_lineas
+                              FROM MAEDDO d
+                             WHERE d.IDMAEEDO IN ({placeholders})
+                             GROUP BY d.IDMAEEDO
+                        """, tuple(idmaeedos), max_rows=len(idmaeedos)) or []
+                        sm = {s.get("IDMAEEDO"): s for s in saldo_rows}
+                    except Exception as e:
+                        print(f"[pickup-buscar-erp] saldo lookup falló: {e}", flush=True)
+                        sm = {}
+                    for r in docs:
+                        s = sm.get(r.get("IDMAEEDO")) or {}
+                        r["saldo_zz"] = s.get("saldo_zz") or 0
+                        r["n_lineas"] = s.get("n_lineas") or 0
+
+                # Enriquecer NOMBRE por RUT desde MAEEN (1 query batch)
+                # Modo nombre ya tiene rut_map en scope, pero RUT/numero NO.
+                # Extraemos los RUTs únicos de los ENDO encontrados.
+                ruts_needed = set()
+                for r in docs:
+                    endo = (r.get("ENDO") or "").strip()
+                    if not endo:
+                        continue
+                    rut_clean = endo.split("-")[0] if "-" in endo else endo
+                    if rut_clean and len(rut_clean) >= 4:
+                        ruts_needed.add(rut_clean)
+                ruts_needed.discard("")
+
+                nombre_map = {}
+                if ruts_needed:
+                    rph = ",".join(["%s"] * len(ruts_needed))
+                    try:
+                        nm_rows = _random_sql_query(f"""
+                            SELECT LTRIM(RTRIM(RTEN)) AS rut,
+                                   LTRIM(RTRIM(COALESCE(
+                                       NULLIF(LTRIM(RTRIM(NOKOENAMP)),''),
+                                       NOKOEN, ''
+                                   ))) AS razon
+                              FROM MAEEN
+                             WHERE LTRIM(RTRIM(RTEN)) IN ({rph})
+                        """, tuple(ruts_needed), max_rows=len(ruts_needed) * 4) or []
+                        # Si hay duplicados, conservar el último no vacío
+                        for nm in nm_rows:
+                            rut = (nm.get("rut") or "").strip()
+                            razon = (nm.get("razon") or "").strip()
+                            if rut and razon and not nombre_map.get(rut):
+                                nombre_map[rut] = razon
+                    except Exception as e:
+                        print(f"[pickup-buscar-erp] nombre lookup falló: {e}", flush=True)
+
+                for r in docs:
+                    endo = (r.get("ENDO") or "").strip()
+                    rut_clean = endo.split("-")[0] if "-" in endo else endo
+                    nombre = nombre_map.get(rut_clean, "") or (r.get("SUENDO") or "").strip()
+                    if not nombre:
+                        nombre = "Consumidor final"
+                    r["NOMBRE"] = nombre
 
         except PermissionError as pe:
             return jsonify({"ok": False,
                             "error": f"Bloqueado por seguridad: {pe}",
                             "documentos": []}), 403
         except Exception as exc:
-            print(f"[pickup-buscar-erp] error: {exc}", flush=True)
+            import traceback
+            print(f"[pickup-buscar-erp] error inesperado: {exc}", flush=True)
+            traceback.print_exc()
             return jsonify({"ok": False,
                             "error": f"Error consultando ERP: {str(exc)[:200]}",
                             "documentos": []})
 
         # ── Identificar docs ya asociados a algún retiro (para mostrar candado) ──
+        # FIX 2026-05-23: pickup_request_docs guarda document_number en formato
+        # display (sin padding de ceros del ERP), no el NUDO raw. Antes
+        # comparábamos NUDO padded (`0000000123`) con document_number (`123`)
+        # → NUNCA matcheaba y la marca de candado no aparecía.
+        # Calculamos el display IGUAL que la sección de formateo de abajo.
         ya_asociados = set()
         try:
-            nudos_raw = [str(r.get("NUDO") or "").strip() for r in docs if r.get("NUDO")]
-            if nudos_raw:
-                placeholders = ",".join(["%s"] * len(nudos_raw))
+            nudos_display = []
+            for r in docs:
+                nudo_raw = (r.get("NUDO") or "").strip()
+                tido_raw = (r.get("TIDO") or "").strip()
+                if not nudo_raw:
+                    continue
+                if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+                    nd = nudo_raw[2:].lstrip("0") or "0"
+                elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+                    nd = nudo_raw[3:].lstrip("0") or "0"
+                else:
+                    nd = nudo_raw.lstrip("0") or "0"
+                if nd:
+                    nudos_display.append(nd)
+            if nudos_display:
+                placeholders = ",".join(["%s"] * len(nudos_display))
                 rows_prd = mysql_fetchall(
                     f"SELECT DISTINCT document_type, document_number "
                     f"FROM pickup_request_docs WHERE document_number IN ({placeholders})",
-                    tuple(nudos_raw)
+                    tuple(nudos_display)
                 ) or []
                 for r in rows_prd:
                     ya_asociados.add(f"{(r.get('document_type') or '').upper()}|"
-                                     f"{r.get('document_number') or ''}")
-        except Exception:
-            pass
+                                     f"{(r.get('document_number') or '').strip()}")
+        except Exception as e:
+            print(f"[pickup-buscar-erp] ya_asociados fallback: {e}", flush=True)
 
         # ── Formatear respuesta ────────────────────────────────────
         out = []
