@@ -2063,7 +2063,7 @@
         grid.innerHTML = '<div class="text-center text-muted small py-3">Sin bloques disponibles</div>';
         return;
       }
-      const lunchStart = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) ? _cntDisponibilidad.lunch_start : '13:00';
+      const lunchStart = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) ? _cntDisponibilidad.lunch_start : '12:30';
       const lunchStartMin = _hmToMin(lunchStart);
 
       const slotHtml = (s, i) => {
@@ -2156,7 +2156,7 @@
       if (!s) return;
       const estado = _estadoDeSlot(s);
       if (estado === 'colacion'){
-        const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '13:00';
+        const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '12:30';
         const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
         _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
         return;
@@ -2179,7 +2179,7 @@
           if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
         }
         if (invalido === 'colacion'){
-          const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '13:00';
+          const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '12:30';
           const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
           _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
           _cntStartIdx = _cntEndIdx = i;

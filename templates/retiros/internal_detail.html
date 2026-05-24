@@ -355,6 +355,187 @@
   .doc-aso .da-quitar:hover{background:#dc2626;color:#fff;border-color:#dc2626}
 
   /* ════════════════════════════════════════════════════════════════
+     BOTÓN PRINCIPAL — ASOCIAR DOCUMENTOS (Daniel 2026-05-24)
+     Reemplaza al buscador manual + lo "¿No aparece la factura?".
+     Punto de entrada ÚNICO al modal con 2 motores (rbaOpen).
+     ════════════════════════════════════════════════════════════════ */
+  .btn-asociar-docs{
+    width:100%;background:linear-gradient(135deg,#dc2626 0%, #b91c1c 100%);
+    color:#fff;border:none;border-radius:14px;padding:18px 22px;margin-top:18px;
+    display:flex;align-items:center;gap:16px;cursor:pointer;
+    box-shadow:0 4px 14px rgba(220,38,38,.32), inset 0 1px 0 rgba(255,255,255,.18);
+    transition:transform .15s cubic-bezier(.34,1.56,.64,1), box-shadow .15s;
+    text-align:left;
+  }
+  .btn-asociar-docs:hover{
+    transform:translateY(-2px);
+    box-shadow:0 8px 22px rgba(220,38,38,.42), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+  .btn-asociar-docs:active{transform:translateY(0) scale(.98)}
+  .btn-asociar-docs .ba-icon{
+    width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,.22);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    font-size:1.4rem;
+  }
+  .btn-asociar-docs .ba-text{flex:1;display:flex;flex-direction:column;gap:2px;line-height:1.2}
+  .btn-asociar-docs .ba-text strong{font-size:1rem;font-weight:800;letter-spacing:.01em}
+  .btn-asociar-docs .ba-text small{font-size:.78rem;opacity:.92;font-weight:500}
+  .btn-asociar-docs .ba-cta{
+    width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    font-size:1.1rem;transition:transform .2s;
+  }
+  .btn-asociar-docs:hover .ba-cta{transform:translateX(3px);background:rgba(255,255,255,.28)}
+
+  /* ════════════════════════════════════════════════════════════════
+     TABLAS ILUS — Daniel 2026-05-24
+     Sistema reutilizable de tablas para documentos y productos.
+     Mobile-first: colapsa a cards verticales en <768px.
+     ════════════════════════════════════════════════════════════════ */
+  .ilus-tabla-wrap{
+    background:#fff;border:1.5px solid var(--gray-2);border-radius:14px;
+    overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  .ilus-tabla-head{
+    background:#0a0a0a;color:#fff;padding:12px 16px;
+    display:flex;align-items:center;gap:10px;
+    font-size:.86rem;font-weight:700;letter-spacing:.02em;
+  }
+  .ilus-tabla-head i{color:#fff;font-size:1.05rem}
+  .ilus-tabla-head strong{flex:1}
+  .ilus-tabla-badge{
+    background:var(--ilus-red);color:#fff;border-radius:50px;
+    padding:2px 11px;font-size:.74rem;font-weight:800;min-width:26px;text-align:center;
+  }
+  .ilus-tabla-refresh{
+    background:transparent;border:1px solid rgba(255,255,255,.25);color:#fff;
+    width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .15s;
+  }
+  .ilus-tabla-refresh:hover{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.5)}
+  .ilus-tabla-refresh.is-loading i{animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ilus-tabla-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .ilus-tabla{
+    width:100%;border-collapse:collapse;font-size:.85rem;
+    background:#fff;
+  }
+  .ilus-tabla thead th{
+    background:#fafafa;color:#0a0a0a;font-size:.7rem;font-weight:800;
+    text-transform:uppercase;letter-spacing:.05em;
+    padding:10px 12px;text-align:left;border-bottom:1.5px solid var(--gray-2);
+    white-space:nowrap;
+  }
+  .ilus-tabla thead th.num{text-align:right}
+  .ilus-tabla thead th.acciones{text-align:right;width:1%;white-space:nowrap}
+  .ilus-tabla tbody td{
+    padding:11px 12px;border-bottom:1px solid #f3f4f6;color:#0f172a;
+    vertical-align:middle;
+  }
+  .ilus-tabla tbody td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .ilus-tabla tbody td.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700}
+  .ilus-tabla tbody td.acciones{text-align:right;white-space:nowrap}
+  .ilus-tabla tbody tr:hover td{background:#fafafa}
+  .ilus-tabla tbody tr:last-child td{border-bottom:none}
+  .td-cli{display:flex;flex-direction:column;gap:2px;line-height:1.2}
+  .td-cli strong{font-size:.86rem;font-weight:700;color:#0a0a0a}
+  .td-cli small{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#6b7280;font-size:.74rem}
+  .td-pill{
+    display:inline-flex;align-items:center;gap:4px;
+    background:#f3f4f6;color:#374151;border:1px solid var(--gray-2);
+    border-radius:50px;padding:3px 10px;font-size:.7rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;
+  }
+  .td-pill-dark{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .td-pill-ok{background:#dcfce7;color:#166534;border-color:#86efac}
+  .td-pill-warn{background:#fef3c7;color:#92400e;border-color:#fde68a}
+  .td-pill-red{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+  .td-btn{
+    display:inline-flex;align-items:center;gap:5px;
+    background:#fff;color:#0a0a0a;border:1.5px solid var(--gray-2);
+    border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:700;
+    cursor:pointer;transition:all .15s;margin-left:6px;
+  }
+  .td-btn:first-child{margin-left:0}
+  .td-btn:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.08)}
+  .td-btn-prods{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .td-btn-prods i{color:var(--ilus-red)}
+  .td-btn-prods:hover{background:#1c1c1c;border-color:#1c1c1c}
+  .td-btn-quitar{color:#dc2626;border-color:#fca5a5}
+  .td-btn-quitar:hover{background:#dc2626;color:#fff;border-color:#dc2626}
+  .td-doc-origen{
+    display:inline-flex;align-items:center;gap:5px;background:#f8f9fa;
+    border:1px solid var(--gray-2);border-radius:6px;padding:3px 8px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.74rem;
+    font-weight:700;color:#0a0a0a;
+  }
+  .td-doc-origen .tdo-tipo{color:var(--ilus-red);font-weight:900}
+  .td-prod-desc{font-weight:600;color:#0f172a;line-height:1.3}
+  .td-prod-desc small{display:block;color:#6b7280;font-weight:400;font-size:.72rem;margin-top:1px}
+
+  .ilus-tabla-empty-row td{background:#fafafa !important;padding:0 !important}
+  .ilus-tabla-empty{
+    padding:30px 18px;text-align:center;display:flex;flex-direction:column;
+    align-items:center;gap:8px;color:#6b7280;
+  }
+  .ilus-tabla-empty i{font-size:2.2rem;color:#9ca3af}
+  .ilus-tabla-empty strong{font-size:.95rem;color:#0a0a0a;font-weight:700}
+  .ilus-tabla-empty small{font-size:.8rem;max-width:340px;line-height:1.4}
+
+  .ilus-tabla-foot td{
+    background:#0a0a0a !important;color:#fff !important;
+    padding:13px 12px;font-size:.92rem;border-bottom:none !important;
+    font-variant-numeric:tabular-nums;
+  }
+  .ilus-tabla-foot td strong{color:#fff;font-weight:800}
+  .ilus-tabla-foot-sub td{
+    background:#1c1c1c !important;color:#cbd5e1 !important;
+    padding:8px 12px;font-size:.75rem;text-align:center;border-bottom:none !important;
+  }
+
+  /* ─────────────────────── MOBILE: tablas → cards verticales ─────────────────────── */
+  @media (max-width: 768px){
+    .ilus-tabla thead{display:none}
+    .ilus-tabla, .ilus-tabla tbody, .ilus-tabla tr, .ilus-tabla td{display:block;width:100%}
+    .ilus-tabla tbody tr{
+      background:#fff;border:1.5px solid var(--gray-2);border-radius:12px;
+      margin:10px;padding:10px 12px;box-shadow:0 1px 3px rgba(0,0,0,.04);
+    }
+    .ilus-tabla tbody tr:hover td{background:transparent}
+    .ilus-tabla tbody td{
+      border-bottom:1px dashed #f3f4f6 !important;padding:8px 0 !important;
+      display:flex;justify-content:space-between;align-items:center;gap:10px;
+      text-align:right;
+    }
+    .ilus-tabla tbody td:last-child{border-bottom:none !important}
+    .ilus-tabla tbody td.num,
+    .ilus-tabla tbody td.acciones{text-align:right}
+    .ilus-tabla tbody td::before{
+      content:attr(data-label);
+      font-size:.66rem;font-weight:800;color:#6b7280;
+      text-transform:uppercase;letter-spacing:.05em;
+      flex-shrink:0;text-align:left;
+    }
+    .ilus-tabla tbody td.acciones{flex-wrap:wrap;justify-content:flex-end;gap:6px}
+    .ilus-tabla tbody td .td-cli,
+    .ilus-tabla tbody td .td-prod-desc{align-items:flex-end;text-align:right}
+    .ilus-tabla-empty-row td{padding:0 !important;text-align:center !important}
+    .ilus-tabla-empty-row td::before{content:none !important}
+    .ilus-tabla-empty-row{border:none !important;background:transparent !important;padding:0 !important;box-shadow:none !important}
+    .ilus-tabla tfoot{display:block;background:#0a0a0a;border-radius:12px;margin:10px;padding:6px}
+    .ilus-tabla tfoot tr{background:transparent !important;border:none !important;margin:0;padding:0;box-shadow:none}
+    .ilus-tabla-foot td,
+    .ilus-tabla-foot-sub td{background:transparent !important;border:none !important}
+    .ilus-tabla-foot td::before{color:#9ca3af}
+    .ilus-tabla-foot-sub td{justify-content:center !important}
+    .ilus-tabla-foot-sub td::before{content:none !important}
+    .btn-asociar-docs{padding:14px 16px;gap:12px;border-radius:12px}
+    .btn-asociar-docs .ba-icon{width:38px;height:38px;font-size:1.2rem}
+    .btn-asociar-docs .ba-text strong{font-size:.94rem}
+    .btn-asociar-docs .ba-text small{font-size:.72rem}
+  }
+
+  /* ════════════════════════════════════════════════════════════════
      CARGA TOTAL — chip negro con stats grandes
      ════════════════════════════════════════════════════════════════ */
   .carga-strip{
@@ -1622,30 +1803,157 @@
           <div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando documentos del cliente...</div>
         </div>
 
-        {# Buscador manual + modal de búsqueda avanzada #}
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:18px 0 8px">
-          <div style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a">
-            <i class="bi bi-search me-1"></i>¿No aparece la factura? Búscala
-          </div>
-          <button type="button" class="rba-open-btn btn-2027" onclick="rbaOpen()" title="Modal con 2 motores: por documento y por RUT/nombre">
-            <i class="bi bi-stars"></i><span>Búsqueda avanzada</span>
-          </button>
-        </div>
-        <div class="doc-search-bar">
-          <select id="val_tido" title="Tipo de documento">
-            <option value="FCV"{% if (req.document_type|upper) in ['FCV','FACTURA'] %} selected{% endif %}>FCV · Factura</option>
-            <option value="BLV"{% if (req.document_type|upper) in ['BLV','BOLETA'] %} selected{% endif %}>BLV · Boleta</option>
-            <option value="VD" {% if (req.document_type|upper) in ['VD'] %} selected{% endif %}>VD · N. Venta</option>
-            <option value="WEB"{% if (req.document_type|upper) in ['WEB'] %} selected{% endif %}>WEB · N. Venta Web</option>
-            <option value="NVI">NVI · N. Venta Int.</option>
-            <option value="GDV">GDV · Guía despacho</option>
-          </select>
-          <input id="val_nudo" type="text" placeholder="N° del documento" value="{{ req.document_number }}">
-          <button type="button" onclick="buscarYAgregarERP({{ req.id }})" id="btnBuscarManual" class="btn-2027">
-            <i class="bi bi-plus-circle"></i><span>Buscar y agregar</span>
-          </button>
-        </div>
+        {# ═════════════════════════════════════════════════════════════
+           BOTÓN PRINCIPAL — ASOCIAR DOCUMENTOS (único motor: avanzado)
+           Daniel 2026-05-24: el buscador manual era confuso. Ahora hay
+           UN solo punto de entrada — abre el modal con 2 motores
+           (por documento y por RUT/nombre).
+           ═════════════════════════════════════════════════════════════ #}
+        <button type="button" class="btn-asociar-docs" onclick="rbaOpen()"
+                title="Abrir buscador con 2 motores: por documento y por RUT/nombre">
+          <span class="ba-icon"><i class="bi bi-plus-lg"></i></span>
+          <span class="ba-text">
+            <strong>Asociar documentos del retiro</strong>
+            <small>Busca por número de factura/boleta o por RUT del cliente</small>
+          </span>
+          <span class="ba-cta"><i class="bi bi-arrow-right"></i></span>
+        </button>
         <div id="erpResult" style="margin-top:8px"></div>
+
+        {# ═════════════════════════════════════════════════════════════
+           TABLA 1 — FACTURAS / DOCUMENTOS ASOCIADOS AL RETIRO
+           Daniel 2026-05-24: vista tipo "carrito" para que el operador
+           vea de un vistazo qué documentos están dentro.
+           ═════════════════════════════════════════════════════════════ #}
+        <div class="ilus-tabla-wrap" style="margin-top:22px">
+          <div class="ilus-tabla-head">
+            <i class="bi bi-files"></i>
+            <strong>Facturas y documentos asociados</strong>
+            <span class="ilus-tabla-badge" id="tabDocsBadge">{{ _n_docs_inicial }}</span>
+          </div>
+          <div class="ilus-tabla-scroll">
+            <table class="ilus-tabla" id="tabDocsAsociados">
+              <thead>
+                <tr>
+                  <th style="width:36px">#</th>
+                  <th>Tipo</th>
+                  <th>Nº doc</th>
+                  <th>Cliente (del doc)</th>
+                  <th class="num">Líneas sel.</th>
+                  <th class="num">Total peso</th>
+                  <th>Saldo</th>
+                  <th class="acciones">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tabDocsAsociadosBody">
+                {% if docs_asociados %}
+                  {% for d in docs_asociados %}
+                  <tr data-doc-id="{{ d.id }}">
+                    <td data-label="#">{{ loop.index }}</td>
+                    <td data-label="Tipo"><span class="td-pill td-pill-dark">{{ d.document_type|upper }}</span></td>
+                    <td data-label="Nº" class="mono">{{ d.document_number }}</td>
+                    <td data-label="Cliente">
+                      <div class="td-cli">
+                        <strong>{{ d.cliente_nombre or '—' }}</strong>
+                        <small class="mono">{{ d.cliente_rut or '—' }}</small>
+                      </div>
+                    </td>
+                    <td data-label="Líneas" class="num"><strong>{{ d.n_lineas or 0 }}</strong></td>
+                    <td data-label="Peso" class="num">{{ "%.1f"|format(d.peso_real_kg|float) }} kg</td>
+                    <td data-label="Saldo">
+                      {% if d.con_saldo == 1 %}
+                        <span class="td-pill td-pill-ok"><i class="bi bi-check-circle"></i>Con saldo</span>
+                      {% elif d.con_saldo == 0 %}
+                        <span class="td-pill td-pill-warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>
+                      {% else %}
+                        <span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>
+                      {% endif %}
+                    </td>
+                    <td data-label="Acciones" class="acciones">
+                      <button type="button" class="td-btn td-btn-prods"
+                              onclick="abrirSeleccionProductos({{ d.id }}, '{{ d.document_type|upper }}', '{{ d.document_number }}')"
+                              title="Ver y elegir qué productos retirar de esta factura">
+                        <i class="bi bi-list-check"></i><span>Productos</span>
+                      </button>
+                      <button type="button" class="td-btn td-btn-quitar"
+                              onclick="quitarDoc({{ req.id }}, {{ d.id }}, '{{ d.document_type|upper }} {{ d.document_number }}')"
+                              title="Quitar del retiro (no afecta al ERP)">
+                        <i class="bi bi-x-lg"></i><span>Quitar</span>
+                      </button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr class="ilus-tabla-empty-row" id="rowDocsVacio">
+                    <td colspan="8">
+                      <div class="ilus-tabla-empty">
+                        <i class="bi bi-inbox"></i>
+                        <strong>Aún no hay documentos asociados</strong>
+                        <small>Haz click en el botón rojo de arriba para buscar y agregar facturas/boletas.</small>
+                      </div>
+                    </td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {# ═════════════════════════════════════════════════════════════
+           TABLA 2 — PRODUCTOS A RETIRAR (suma todas las líneas incluidas)
+           Daniel 2026-05-24: "necesito tener una tabla donde vea los
+           productos ubicados". Vista consolidada con SKU, descripción,
+           doc origen, cantidades y totales.
+           ═════════════════════════════════════════════════════════════ #}
+        <div class="ilus-tabla-wrap" style="margin-top:22px">
+          <div class="ilus-tabla-head">
+            <i class="bi bi-box-seam" style="color:var(--ilus-red)"></i>
+            <strong>Productos a retirar</strong>
+            <span class="ilus-tabla-badge" id="tabProdsBadge">0</span>
+            <button type="button" class="ilus-tabla-refresh" onclick="refrescarTablaProductos()"
+                    title="Refrescar tabla de productos">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div class="ilus-tabla-scroll">
+            <table class="ilus-tabla" id="tabProductos">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Descripción</th>
+                  <th>Doc origen</th>
+                  <th class="num">Cantidad</th>
+                  <th class="num">Peso un.</th>
+                  <th class="num">Vol. un.</th>
+                  <th class="num">Total kg</th>
+                  <th class="num">Total m³</th>
+                </tr>
+              </thead>
+              <tbody id="tabProductosBody">
+                <tr class="ilus-tabla-empty-row">
+                  <td colspan="8">
+                    <div class="ilus-tabla-empty">
+                      <i class="bi bi-hourglass-split"></i>
+                      <strong>Cargando productos...</strong>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot id="tabProductosFoot" style="display:none">
+                <tr class="ilus-tabla-foot">
+                  <td colspan="6" class="num"><strong>Totales</strong></td>
+                  <td class="num"><strong id="tabProdsTotKg">0.0 kg</strong></td>
+                  <td class="num"><strong id="tabProdsTotM3">0.000 m³</strong></td>
+                </tr>
+                <tr class="ilus-tabla-foot-sub">
+                  <td colspan="8">
+                    <small><span id="tabProdsTotLineas">0</span> producto(s) incluido(s) en total · listo para revisar carga en el Paso 3.</small>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
 
         {# Cuando se actualiza desde el ERP, podemos auto-marcar validación.
            El form de validación legacy queda oculto pero funcional (compat). #}
@@ -2511,9 +2819,12 @@ async function cargarSaldoCliente(rid){
     window._erpSugDocs = d.docs;
 
     // Auto-cargar TODAS las líneas en paralelo (Daniel: ver todo al instante).
-    // Limitamos a 6 concurrentes para no saturar el ERP (Promise.all en chunks).
+    // ⚡ PERF (Daniel 2026-05-24): bajamos de 6 → 3 concurrentes para evitar
+    // contention sobre la pool de pymssql (~5 conns). Con 3 el ERP responde
+    // con baja latencia consistente; con 6 hay queue que aumenta p95.
+    // El cache server-side de /api/erp/documento (5min) hace el resto.
     (async () => {
-      const CHUNK = 6;
+      const CHUNK = 3;
       for (let i = 0; i < d.docs.length; i += CHUNK){
         const chunk = d.docs.slice(i, i + CHUNK);
         await Promise.all(chunk.map((_, j) => _loadErpDocLines(i + j)));
@@ -2526,19 +2837,44 @@ async function cargarSaldoCliente(rid){
 
 // Carga las líneas de un doc específico (lazy o eager — mismo código).
 // Extraído de toggleErpDoc para poder llamarlo desde render inicial.
+// ⚡ PERF (Daniel 2026-05-24): memoización por (tido, nudo) para que si el
+// operador colapsa/expande no haga otro fetch — el resultado vive en window.
+window._erpDocCache = window._erpDocCache || new Map();
+window._erpDocInflight = window._erpDocInflight || new Map();
+
 async function _loadErpDocLines(idx){
   const body = document.getElementById('erpDocBody-' + idx);
   if (!body || body.dataset.loaded === '1') return;
   const doc = (window._erpSugDocs || [])[idx];
   if (!doc) return;
+  const cacheKey = (doc.tido_display || '') + '|' + (doc.nudo_display || '');
   try {
-    const r = await fetch('/api/erp/documento', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
-    });
-    const dd = await r.json();
-    if (!r.ok || dd.error){
+    let dd;
+    // Hit cache cliente
+    if (window._erpDocCache.has(cacheKey)){
+      dd = window._erpDocCache.get(cacheKey);
+    } else {
+      // De-duplicación: si ya hay una request en vuelo para este doc, esperamos
+      let p = window._erpDocInflight.get(cacheKey);
+      if (!p){
+        p = fetch('/api/erp/documento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+        }).then(async (r) => {
+          const ddJson = await r.json();
+          if (r.ok && !ddJson.error){
+            window._erpDocCache.set(cacheKey, ddJson);
+          }
+          return ddJson;
+        }).finally(() => {
+          window._erpDocInflight.delete(cacheKey);
+        });
+        window._erpDocInflight.set(cacheKey, p);
+      }
+      dd = await p;
+    }
+    if (dd.error){
       body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_esc(dd.error || 'Error consultando ERP')}</div>`;
       return;
     }
@@ -2713,6 +3049,144 @@ async function quitarDoc(rid, docId, labelDoc){
   } catch(e){
     ilusToast('Error de red: ' + e.message, { type:'error' });
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  TABLAS ILUS — Daniel 2026-05-24
+//  Tabla 1: documentos asociados al retiro (vista tipo "carrito")
+//  Tabla 2: productos consolidados (líneas incluidas de todos los docs)
+// ════════════════════════════════════════════════════════════════════
+function _renderTablaDocsAsociados(docs){
+  const body  = document.getElementById('tabDocsAsociadosBody');
+  const badge = document.getElementById('tabDocsBadge');
+  if (!body) return;
+  if (badge) badge.textContent = docs.length;
+  if (!docs.length){
+    body.innerHTML = `<tr class="ilus-tabla-empty-row" id="rowDocsVacio">
+      <td colspan="8">
+        <div class="ilus-tabla-empty">
+          <i class="bi bi-inbox"></i>
+          <strong>Aún no hay documentos asociados</strong>
+          <small>Haz click en el botón rojo de arriba para buscar y agregar facturas/boletas.</small>
+        </div>
+      </td>
+    </tr>`;
+    return;
+  }
+  body.innerHTML = docs.map((d, idx) => {
+    let saldoPill;
+    if (d.con_saldo === 1) saldoPill = '<span class="td-pill td-pill-ok"><i class="bi bi-check-circle"></i>Con saldo</span>';
+    else if (d.con_saldo === 0) saldoPill = '<span class="td-pill td-pill-warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
+    else saldoPill = '<span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>';
+    const tipoUp = String(d.document_type || '').toUpperCase();
+    const numero = d.document_number || '';
+    return `<tr data-doc-id="${d.id}">
+      <td data-label="#">${idx + 1}</td>
+      <td data-label="Tipo"><span class="td-pill td-pill-dark">${_esc(tipoUp)}</span></td>
+      <td data-label="Nº" class="mono">${_esc(numero)}</td>
+      <td data-label="Cliente">
+        <div class="td-cli">
+          <strong>${_esc(d.cliente_nombre || '—')}</strong>
+          <small class="mono">${_esc(d.cliente_rut || '—')}</small>
+        </div>
+      </td>
+      <td data-label="Líneas" class="num"><strong>${d.n_lineas || 0}</strong></td>
+      <td data-label="Peso" class="num">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</td>
+      <td data-label="Saldo">${saldoPill}</td>
+      <td data-label="Acciones" class="acciones">
+        <button type="button" class="td-btn td-btn-prods"
+                onclick="abrirSeleccionProductos(${d.id}, '${_esc(tipoUp)}', '${_esc(numero)}')"
+                title="Ver y elegir qué productos retirar de esta factura">
+          <i class="bi bi-list-check"></i><span>Productos</span>
+        </button>
+        <button type="button" class="td-btn td-btn-quitar"
+                onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(tipoUp)} ${_esc(numero)}')"
+                title="Quitar del retiro (no afecta al ERP)">
+          <i class="bi bi-x-lg"></i><span>Quitar</span>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function refrescarTablaProductos(){
+  const body   = document.getElementById('tabProductosBody');
+  const foot   = document.getElementById('tabProductosFoot');
+  const badge  = document.getElementById('tabProdsBadge');
+  const btnRef = document.querySelector('.ilus-tabla-refresh');
+  if (!body) return;
+  if (btnRef) btnRef.classList.add('is-loading');
+  try {
+    const d = await _fetchJsonSafe(`/retiros/${_RID}/lineas-resumen`);
+    if (!d.ok){
+      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+        <div class="ilus-tabla-empty">
+          <i class="bi bi-exclamation-triangle" style="color:#dc2626"></i>
+          <strong>No se pudo cargar la lista de productos</strong>
+          <small>${_esc(d.error || 'Error desconocido')}</small>
+        </div></td></tr>`;
+      if (foot) foot.style.display = 'none';
+      if (badge) badge.textContent = '0';
+      return;
+    }
+    const lineas = d.lineas || [];
+    const tot = d.totales || { n_lineas: 0, peso_total_kg: 0, vol_total_m3: 0 };
+    if (badge) badge.textContent = tot.n_lineas || lineas.length;
+    if (!lineas.length){
+      body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+        <div class="ilus-tabla-empty">
+          <i class="bi bi-box"></i>
+          <strong>Aún no hay productos seleccionados</strong>
+          <small>Asocia una factura/boleta arriba y luego haz click en <strong>"Productos"</strong> en cada fila para elegir qué se va a retirar. Si no eliges nada, se incluye todo lo del documento.</small>
+        </div></td></tr>`;
+      if (foot) foot.style.display = 'none';
+      return;
+    }
+    body.innerHTML = lineas.map(ln => {
+      const docTipo = String(ln.doc_tipo || '').toUpperCase();
+      return `<tr>
+        <td data-label="SKU" class="mono">${_esc(ln.sku || '—')}</td>
+        <td data-label="Descripción">
+          <div class="td-prod-desc">${_esc(ln.descripcion || '(sin descripción)')}</div>
+        </td>
+        <td data-label="Doc origen">
+          <span class="td-doc-origen">
+            <span class="tdo-tipo">${_esc(docTipo)}</span>
+            <span>${_esc(ln.doc_numero || '')}</span>
+          </span>
+        </td>
+        <td data-label="Cantidad" class="num"><strong>${_fmtNum(ln.cantidad, 2)}</strong></td>
+        <td data-label="Peso un." class="num">${_fmtNum(ln.peso_unit_kg, 2)} kg</td>
+        <td data-label="Vol. un." class="num">${_fmtNum(ln.vol_unit_m3, 3)} m³</td>
+        <td data-label="Total kg" class="num"><strong>${_fmtNum(ln.peso_total, 1)} kg</strong></td>
+        <td data-label="Total m³" class="num"><strong>${_fmtNum(ln.vol_total, 3)} m³</strong></td>
+      </tr>`;
+    }).join('');
+    if (foot){
+      foot.style.display = '';
+      const totKg = document.getElementById('tabProdsTotKg');
+      const totM3 = document.getElementById('tabProdsTotM3');
+      const totLn = document.getElementById('tabProdsTotLineas');
+      if (totKg) totKg.textContent = _fmtNum(tot.peso_total_kg, 1) + ' kg';
+      if (totM3) totM3.textContent = _fmtNum(tot.vol_total_m3, 3) + ' m³';
+      if (totLn) totLn.textContent = tot.n_lineas || lineas.length;
+    }
+  } catch(e){
+    body.innerHTML = `<tr class="ilus-tabla-empty-row"><td colspan="8">
+      <div class="ilus-tabla-empty">
+        <i class="bi bi-wifi-off" style="color:#dc2626"></i>
+        <strong>Error de red</strong>
+        <small>${_esc(e.message || 'No se pudo contactar al servidor')}</small>
+      </div></td></tr>`;
+  } finally {
+    if (btnRef) btnRef.classList.remove('is-loading');
+  }
+}
+
+function _fmtNum(n, dec){
+  const v = parseFloat(n || 0);
+  if (!isFinite(v)) return '0';
+  return v.toFixed(dec == null ? 2 : dec);
 }
 
 function _renderDocAsoCard(d){
@@ -2916,6 +3390,7 @@ async function guardarSeleccionProductos(){
     ilusToast(`✓ ${d.lineas_guardadas} líneas guardadas — totales actualizados`, { type:'success' });
     cerrarSeleccionProductos();
     await refrescarDocsAsociados(_RID);
+    // refrescarDocsAsociados ya dispara refrescarTablaProductos() internamente.
   } catch(e){
     ilusAlert({ type:'error', title:'Sin conexión', message: e.message });
   } finally {
@@ -2939,6 +3414,9 @@ async function refrescarDocsAsociados(rid){
     } else {
       lista.innerHTML = d.docs.map(doc => _renderDocAsoCard(doc)).join('');
     }
+    // Daniel 2026-05-24: refrescar tabla 1 (docs asociados) + tabla 2 (productos)
+    _renderTablaDocsAsociados(d.docs || []);
+    refrescarTablaProductos();
     // Refrescar Paso 3 — carga total
     const t = d.totales || {};
     const $1 = document.getElementById('cargaNDocs'); if ($1) $1.textContent = ndocs;
@@ -4236,6 +4714,8 @@ async function agregarEmailSugerencia(email){
 document.addEventListener('DOMContentLoaded', function(){
   cargarSaldoCliente(_RID);
   cargarSugerenciasEmail();
+  // Daniel 2026-05-24: cargar tabla de productos al inicio (Paso 1)
+  refrescarTablaProductos();
   // Si la carga inicial > 100kg, mostrar hint
   const pesoInicial = {{ (req.peso_real_kg or 0)|float }};
   if (pesoInicial > 100){

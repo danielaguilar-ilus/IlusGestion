@@ -318,11 +318,12 @@ function renderSemana() {
     </div>`;
   }
 
-  // Generar slots horarios (de open_time a close_time, cada slot_minutes)
+  // Generar slots horarios (v3, Daniel 2026-05-24: bloques de 30 min ESTRICTOS
+  // — el horario único es 09:00-12:30 + 14:00-16:30 sin excepción).
   const [oH,oM] = cfg.open_time.split(':').map(Number);
   const [cH,cM] = cfg.close_time.split(':').map(Number);
   let totalMin = (cH*60+cM) - (oH*60+oM);
-  const slotMin = cfg.slot_minutes || 60;
+  const slotMin = cfg.slot_minutes || 30;
   const slots = [];
   for (let m = 0; m < totalMin; m += slotMin) {
     const t = oH*60+oM + m;

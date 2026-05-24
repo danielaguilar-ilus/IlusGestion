@@ -91,7 +91,8 @@
       onLoadFail: null,
       // Permitir endpoint custom si alguna vista quisiera variantes
       apiUrl: '/retiros/api/disponibilidad-publica',
-      lunchStartFallback: '13:00',
+      // Fallbacks v3 (Daniel 2026-05-24): horario único 09:00-12:30 + 14:00-16:30
+      lunchStartFallback: '12:30',
       lunchEndFallback: '14:00',
       slotMinFallback: 30,
     }, opts || {});
