@@ -1116,6 +1116,17 @@
   }
   .inline-edit-indicator i{margin-right:3px}
   @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+  /* Chip de email sugerido desde ERP */
+  .sug-email-chip{
+    display:inline-flex;align-items:center;gap:4px;
+    background:#ecfdf5;border:1px solid #86efac;
+    color:#065f46;padding:3px 9px;border-radius:50px;
+    font-size:.74rem;font-weight:600;cursor:pointer;
+    margin:2px 4px 2px 0;transition:all .15s;
+  }
+  .sug-email-chip:hover{background:#d1fae5;border-color:#22c55e;transform:translateY(-1px)}
+  .sug-email-chip i{font-size:.85rem}
 </style>
 
 {# ──────────────────────────────────────────────────────────────
@@ -1190,6 +1201,16 @@
         <i class="bi bi-telephone"></i>
         <span data-inline-edit="contact_phone" data-placeholder="Sin teléfono">{{ req.contact_phone or '' }}</span>
       </div>
+      {# Daniel 2026-05-23: extra_emails — CC del envío de notificaciones #}
+      <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
+        <i class="bi bi-people"></i>
+        <span style="font-size:.74rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em">Emails CC adicionales</span>
+      </div>
+      <div data-inline-edit="extra_emails"
+           data-placeholder="Click para agregar emails separados por coma…"
+           title="Estos emails recibirán TAMBIÉN las notificaciones (propuesta, confirmación, recordatorio). Separa con coma."
+           style="font-size:.82rem;color:#0a0a0a;line-height:1.5;padding:4px 6px;background:#fafafa;border:1px solid #f1f5f9;border-radius:6px;min-height:24px;word-break:break-all">{{ req.extra_emails or '' }}</div>
+      <div id="emailErpSug" style="margin-top:6px"></div>
     </div>
 
     <div class="ficha-card">
@@ -3884,10 +3905,54 @@ function setupInlineEdit(root){
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  EMAIL MULTI-DESTINO — sugerencias de docs ERP
+//  Daniel 2026-05-23: si un doc ERP trae email del cliente, sugerimos
+//  agregarlo a extra_emails con un click. Mientras más correos, mejor cobertura.
+// ════════════════════════════════════════════════════════════════════
+async function cargarSugerenciasEmail(){
+  const cont = document.getElementById('emailErpSug');
+  if (!cont) return;
+  try {
+    const r = await fetch(`/retiros/${_RID}/emails-info`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.ok || !d.sugerencias || !d.sugerencias.length){
+      // Si no hay sugerencias pero hay total, mostramos resumen
+      if (d.count > 1){
+        cont.innerHTML = `<div style="font-size:.74rem;color:#16a34a;margin-top:4px">
+          <i class="bi bi-check-circle-fill"></i> ${d.count} destinatarios configurados</div>`;
+      }
+      return;
+    }
+    cont.innerHTML = '<div style="font-size:.72rem;color:#64748b;margin:6px 0 4px"><i class="bi bi-lightbulb"></i> Detectados en ERP — click para agregar:</div>' +
+      d.sugerencias.map(em => `<button type="button" class="sug-email-chip" onclick="agregarEmailSugerencia('${_esc(em).replace(/'/g, "\\'")}')">
+        <i class="bi bi-plus-circle"></i> ${_esc(em)}
+      </button>`).join('');
+  } catch(e){ /* silencioso */ }
+}
+
+async function agregarEmailSugerencia(email){
+  const field = document.querySelector('[data-inline-edit="extra_emails"]');
+  if (!field) return;
+  const current = (field.textContent || '').trim();
+  const nuevos = current ? `${current}, ${email}` : email;
+  // Actualizar visualmente y disparar guardado
+  field.textContent = nuevos;
+  field.dataset.inlineDirty = '1';
+  field.dataset.inlineOriginal = current;  // para que detecte cambio
+  // Trigger save via blur (debounce normal)
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.dispatchEvent(new Event('blur', { bubbles: true }));
+  // Refrescar sugerencias después
+  setTimeout(()=> cargarSugerenciasEmail(), 1200);
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', function(){
   cargarSaldoCliente(_RID);
+  cargarSugerenciasEmail();
   // Si la carga inicial > 100kg, mostrar hint
   const pesoInicial = {{ (req.peso_real_kg or 0)|float }};
   if (pesoInicial > 100){

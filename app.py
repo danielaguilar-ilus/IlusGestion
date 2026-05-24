@@ -2582,6 +2582,12 @@ def init_pickup_tables():
                 f"COMMENT 'Peso volumétrico total calculado desde catálogo'",
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL "
                 f"COMMENT 'Tiempo estimado de retiro en minutos (basado en bultos)'",
+                # Daniel 2026-05-23: emails adicionales para envío (cliente declarado + email del doc ERP + manualmente agregados)
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN extra_emails VARCHAR(800) NULL "
+                f"COMMENT 'Emails adicionales separados por coma para enviar notificaciones (además del contact_email)'",
+                # Email capturado desde el doc ERP al asociarlo (para luego sugerir como extra_email)
+                "ALTER TABLE pickup_request_docs ADD COLUMN email_cliente_erp VARCHAR(180) NULL "
+                "COMMENT 'Email del cliente del doc capturado desde ERP al asociar'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass

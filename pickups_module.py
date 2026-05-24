@@ -727,7 +727,12 @@ def register_pickup_routes(app, ctx):
                         ("", "Dirección", variables["warehouse_addr"]),
                     ],
                 )
-                sent_mail = _send_ilus_email(req["contact_email"], f"ILUS — {asunto}", html)
+                # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
+                _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html)
+                sent_mail = len(_multi["sent"]) > 0
+                if _multi["sent"]:
+                    print(f"[pickup-email] {asunto} → {_multi['total']} dest: "
+                          f"{_multi['sent']} (failed: {_multi['failed']})", flush=True)
             else:
                 # Fallback: plantilla hardcoded original
                 titles = {
@@ -778,7 +783,9 @@ def register_pickup_routes(app, ctx):
                         ("", "Horario solicitado", variables["horario"]),
                     ],
                 )
-                sent_mail = _send_ilus_email(req["contact_email"], f"ILUS - {title} {req['code']}", html)
+                # Multi-email (Daniel 2026-05-23)
+                _multi = _send_pickup_email_multi(req, f"ILUS - {title} {req['code']}", html)
+                sent_mail = len(_multi["sent"]) > 0
         except Exception as exc:
             try:
                 print(f"[ILUS][PICKUP EMAIL] {str(exc).encode('ascii', 'ignore').decode('ascii')}")
@@ -3081,6 +3088,12 @@ def register_pickup_routes(app, ctx):
         cliente_rut = (hdr.get("cliente_rut") or hdr.get("rut") or "").strip()[:30]
         cliente_nombre = (hdr.get("cliente_nombre") or hdr.get("razon_social") or "").strip()[:200]
         obs = (hdr.get("observaciones") or hdr.get("obs") or "").strip()[:5000]
+        # Email del cliente del doc — para sugerir como destinatario adicional.
+        # Daniel 2026-05-23: "si el documento trae un correo, se puede enviar
+        # tanto al correo del cliente que declaró como al del documento".
+        email_doc = (hdr.get("email") or hdr.get("email_cliente") or "").strip().lower()[:180]
+        if email_doc and "@" not in email_doc:
+            email_doc = ""  # no es email válido
         added_by = g.user["nombre"] if getattr(g, "user", None) else "interno"
 
         # ── Calcular saldo ZZ del documento (Daniel 2026-05-23 wizard) ──
@@ -3126,12 +3139,14 @@ def register_pickup_routes(app, ctx):
                      (request_id, document_type, document_number,
                       cliente_rut, cliente_nombre, observaciones_erp,
                       peso_real_kg, peso_vol_kg, volumen_m3, n_lineas,
-                      erp_snapshot, added_by, con_saldo, saldo_zz, saldo_checked_at)
-                   VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW())""",
+                      erp_snapshot, added_by, con_saldo, saldo_zz, saldo_checked_at,
+                      email_cliente_erp)
+                   VALUES (%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s, %s,%s,NOW(), %s)""",
                 (rid, tipo, numero,
                  cliente_rut, cliente_nombre, obs,
                  total_kg, total_vol_kg, total_m3, len(lineas or []),
-                 snapshot_json, added_by, con_saldo_val, saldo_zz_val)
+                 snapshot_json, added_by, con_saldo_val, saldo_zz_val,
+                 email_doc or None)
             )
         except Exception as exc:
             # Fallback si la columna con_saldo aún no se migró (entornos viejos):
@@ -4030,7 +4045,136 @@ def register_pickup_routes(app, ctx):
         "pickup_person_relation":(40,  "Relación persona que retira"),
         "observations":          (10000, "Observaciones del cliente"),
         "internal_notes":        (10000, "Notas internas operador"),
+        # Daniel 2026-05-23: emails extra separados por coma (CC del envío)
+        "extra_emails":          (800, "Emails adicionales (CC)"),
     }
+
+    # Helper compartido: junta TODOS los emails de envío para un retiro.
+    # Daniel 2026-05-23: "si el documento trae un correo, se puede enviar
+    # tanto al correo del cliente que declaró como al del documento.
+    # Mientras más se vayan agregando correo, mejor."
+    #
+    # Devuelve lista de emails únicos en MAYÚSCULAS deduplicadas:
+    #   1) req["contact_email"] (cliente declarado)
+    #   2) parseados de req["extra_emails"] (coma-separados, agregados manualmente)
+    #   3) emails de cada doc asociado (pickup_request_docs.email_cliente_erp)
+    def _get_pickup_all_emails(rid_or_req):
+        """Devuelve lista única de emails de envío para un retiro.
+
+        Args: rid (int) o req (dict ya cargado).
+        Returns: [str] lista de emails únicos en minúsculas.
+        """
+        if isinstance(rid_or_req, dict):
+            req = rid_or_req
+            rid = req.get("id")
+        else:
+            rid = int(rid_or_req)
+            req = mysql_fetchone(
+                f"SELECT id, contact_email, extra_emails FROM `{REQ}` WHERE id=%s",
+                (rid,)
+            ) or {}
+
+        emails = set()
+
+        def _add(e):
+            if not e: return
+            e = str(e).strip().lower()
+            if "@" in e and len(e) >= 6 and len(e) <= 180:
+                emails.add(e)
+
+        # 1) Email principal del contacto declarado
+        _add(req.get("contact_email"))
+
+        # 2) extra_emails — separados por coma/espacio/punto-coma
+        extras = req.get("extra_emails") or ""
+        import re as _re_emails
+        for e in _re_emails.split(r"[,;\s]+", extras):
+            _add(e)
+
+        # 3) Emails capturados desde el ERP por doc asociado
+        try:
+            doc_emails = mysql_fetchall(
+                "SELECT DISTINCT email_cliente_erp FROM pickup_request_docs "
+                "WHERE request_id=%s AND email_cliente_erp IS NOT NULL "
+                "AND email_cliente_erp <> ''",
+                (rid,)
+            ) or []
+            for d in doc_emails:
+                _add(d.get("email_cliente_erp"))
+        except Exception:
+            pass  # columna puede no existir aún (migration pendiente)
+
+        return sorted(emails)
+
+    # Endpoint para que la UI sepa qué emails están activos + sugerencias
+    @app.route("/retiros/<int:rid>/emails-info", methods=["GET"])
+    @require_permission("view")
+    def pickup_emails_info(rid):
+        """Devuelve estado de emails de un retiro:
+        - principal: contact_email del cliente declarado
+        - extra: lista parseada de extra_emails (CC)
+        - sugerencias: emails de docs ERP asociados aún NO incluidos
+        - total_efectivo: lista única de TODOS los que recibirán email
+        """
+        req = mysql_fetchone(
+            f"SELECT id, contact_email, extra_emails FROM `{REQ}` WHERE id=%s",
+            (rid,)
+        )
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado"}), 404
+
+        principal = (req.get("contact_email") or "").strip().lower()
+        extras_raw = req.get("extra_emails") or ""
+        import re as _re_em
+        extras_list = [e.strip().lower() for e in _re_em.split(r"[,;\s]+", extras_raw) if e.strip()]
+        extras_list = sorted(set(extras_list))
+
+        # Emails desde docs ERP
+        sugerencias_set = set()
+        try:
+            docs_emails = mysql_fetchall(
+                "SELECT DISTINCT email_cliente_erp, document_type, document_number "
+                "FROM pickup_request_docs "
+                "WHERE request_id=%s AND email_cliente_erp IS NOT NULL "
+                "  AND email_cliente_erp <> ''",
+                (rid,)
+            ) or []
+            for d in docs_emails:
+                em = (d.get("email_cliente_erp") or "").strip().lower()
+                if em and "@" in em and em != principal and em not in extras_list:
+                    sugerencias_set.add(em)
+        except Exception:
+            pass
+
+        total_efectivo = _get_pickup_all_emails(req)
+
+        return jsonify({
+            "ok": True,
+            "principal":     principal,
+            "extra":         extras_list,
+            "sugerencias":   sorted(sugerencias_set),
+            "total_efectivo": total_efectivo,
+            "count":         len(total_efectivo),
+        })
+
+    # Wrapper de envío que multiplica el mensaje a todos los destinos
+    def _send_pickup_email_multi(rid_or_req, subject, html):
+        """Envía email a TODOS los destinatarios del retiro (multi-email).
+        Devuelve dict {sent: [emails], failed: [emails]}.
+        """
+        emails = _get_pickup_all_emails(rid_or_req)
+        sent, failed = [], []
+        for e in emails:
+            try:
+                ok = _send_ilus_email(e, subject, html)
+                if ok:
+                    sent.append(e)
+                else:
+                    failed.append(e)
+            except Exception as exc:
+                print(f"[pickup-multi-email] fallo {e}: {exc}", flush=True)
+                failed.append(e)
+        return {"sent": sent, "failed": failed, "total": len(emails)}
 
     @app.route("/retiros/<int:rid>/field", methods=["PATCH", "POST"])
     @require_permission("edit")
