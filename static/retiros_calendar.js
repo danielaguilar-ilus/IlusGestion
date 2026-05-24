@@ -148,26 +148,43 @@
         let ownersLine = '';
         const estado = _estadoDeSlot(s);
         const owners = Array.isArray(s.owners) ? s.owners : [];
+        // Daniel 2026-05-24: para vista PÚBLICA (sin owners) el cliente solo
+        // ve "libre" o "no disponible" con candado, SIN número de cupos ni
+        // razón. La vista INTERNA (operador con includeOwners=true) sigue
+        // mostrando el detalle 1/2 + capacidad parcial clickeable.
+        const internalView = !!cfg.includeOwners;
 
         if (estado === 'colacion'){
           cls.push('is-lunch', 'is-disabled');
-          title = 'Horario de colación (no agendable)';
+          title = internalView ? 'Horario de colación (no agendable)' : 'Hora no disponible';
         } else if (estado === 'completo'){
           cls.push('is-full', 'is-disabled');
-          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
-          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
-          title = `Cupo lleno (${oc}/${mx})`;
+          if (internalView){
+            const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
+            const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+            title = `Cupo lleno (${oc}/${mx})`;
+          } else {
+            title = 'Hora no disponible';
+          }
         } else if (estado === 'bloqueado'){
           cls.push('is-blocked', 'is-disabled');
-          title = s.razon || 'Franja bloqueada';
+          title = internalView ? (s.razon || 'Franja bloqueada') : 'Hora no disponible';
         } else if (estado === 'ocupado'){
-          cls.push('is-busy');
-          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 1);
-          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
-          badge = `<span class="ilus-cal-badge">${oc}/${mx}</span>`;
-          title = `Parcial (${oc}/${mx}) — aún puedes agendar`;
+          if (internalView){
+            cls.push('is-busy');
+            const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 1);
+            const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
+            badge = `<span class="ilus-cal-badge">${oc}/${mx}</span>`;
+            title = `Parcial (${oc}/${mx}) — aún puedes agendar`;
+          } else {
+            // Vista PÚBLICA: ocupado se ve igual que completo (no clickeable).
+            cls.push('is-full', 'is-disabled');
+            title = 'Hora no disponible';
+          }
         } else {
-          title = `Disponible (${s.time_from || s.hora || ''} – ${s.time_to || ''})`;
+          title = internalView
+            ? `Disponible (${s.time_from || s.hora || ''} – ${s.time_to || ''})`
+            : 'Disponible';
         }
 
         // Solo modo INTERNO: mostrar dueños del slot bajo la hora
@@ -233,14 +250,28 @@
       const s = state.slots[i];
       if (!s) return;
       const estado = _estadoDeSlot(s);
-      if (estado === 'colacion'){
-        const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
-        const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
-        _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
-        return;
+      const internalView = !!cfg.includeOwners;
+
+      // Vista PÚBLICA (cliente externo): cualquier slot no plenamente
+      // libre se rechaza con mensaje genérico.
+      if (!internalView){
+        if (estado === 'colacion' || estado === 'completo' ||
+            estado === 'ocupado' || estado === 'bloqueado'){
+          _toast('Esa hora no está disponible. Elige otro bloque.', 'warning');
+          return;
+        }
+      } else {
+        // Vista INTERNA (operador): mensajes detallados como antes,
+        // y 'ocupado' (1/2) sigue siendo clickeable (puede compartir slot).
+        if (estado === 'colacion'){
+          const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
+          const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
+          _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
+          return;
+        }
+        if (estado === 'completo'){ _toast('Ese bloque está lleno. Elige otro horario.', 'warning'); return; }
+        if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
       }
-      if (estado === 'completo'){ _toast('Ese bloque está lleno. Elige otro horario.', 'warning'); return; }
-      if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
 
       if (state.startIdx === null){
         state.startIdx = state.endIdx = i;
@@ -255,17 +286,27 @@
           if (ek === 'colacion'){ invalido = 'colacion'; break; }
           if (ek === 'completo'){ invalido = 'completo'; break; }
           if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
+          // En vista pública, 'ocupado' tambien invalida el rango.
+          if (!internalView && ek === 'ocupado'){ invalido = 'completo'; break; }
         }
         if (invalido === 'colacion'){
-          const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
-          const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
-          _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
+          if (internalView){
+            const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
+            const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
+            _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
+          } else {
+            _toast('El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
+          }
           state.startIdx = state.endIdx = i;
         } else if (invalido === 'completo'){
-          _toast('El rango cruza un bloque lleno. Acórtalo o elige otra hora.', 'warning');
+          _toast(internalView
+            ? 'El rango cruza un bloque lleno. Acórtalo o elige otra hora.'
+            : 'El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
           state.startIdx = state.endIdx = i;
         } else if (invalido === 'bloqueado'){
-          _toast('El rango cruza una franja bloqueada.', 'warning');
+          _toast(internalView
+            ? 'El rango cruza una franja bloqueada.'
+            : 'El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
           state.startIdx = state.endIdx = i;
         } else {
           state.startIdx = from; state.endIdx = to;
@@ -279,11 +320,16 @@
       if (!hours || hours <= 0){ clearSelection(); return; }
       const slotMin = (state.payload && state.payload.slot_minutes) || cfg.slotMinFallback;
       const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
+      const internalView = !!cfg.includeOwners;
       let foundStart = -1, foundEnd = -1;
       for (let i = 0; i < state.slots.length; i++){
         const s0 = state.slots[i];
-        const puedeIni = (s0.puede_iniciar !== undefined) ? s0.puede_iniciar
-                          : (s0.disponible && !s0.lunch);
+        // En vista pública exigir slot plenamente libre; en interna basta
+        // con que pueda iniciar (compatible con compartir capacidad 1/2).
+        const ocup0 = (s0.ocupados || 0);
+        const puedeIni = internalView
+          ? ((s0.puede_iniciar !== undefined) ? s0.puede_iniciar : (s0.disponible && !s0.lunch))
+          : (s0.disponible && !s0.lunch && ocup0 === 0);
         if (!puedeIni) continue;
         const endIdx = i + slotsNeeded - 1;
         if (endIdx >= state.slots.length) continue;
@@ -291,6 +337,7 @@
         for (let k = i; k <= endIdx; k++){
           const ek = _estadoDeSlot(state.slots[k]);
           if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado'){ ok = false; break; }
+          if (!internalView && ek === 'ocupado'){ ok = false; break; }
         }
         if (ok){ foundStart = i; foundEnd = endIdx; break; }
       }

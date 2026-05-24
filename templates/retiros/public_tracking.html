@@ -570,16 +570,33 @@
     }
     .cnt-slot-item.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa;cursor:not-allowed;opacity:.6}
     .cnt-slot-item.is-lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem;opacity:.85}
-    .cnt-slot-item.is-busy{background:#fff7ed;color:#c2410c;border-color:#fdba74}
-    .cnt-slot-item.is-busy:hover{background:#ffedd5;border-color:#fb923c}
-    .cnt-slot-item .cnt-slot-badge{
-      position:absolute;top:-7px;right:-3px;background:#f97316;color:#fff;
-      font-size:.55rem;padding:1px 5px;border-radius:50px;font-weight:800;
-      box-shadow:0 2px 4px rgba(0,0,0,.15);
+    /* Daniel 2026-05-24: NO disponible (lleno/ocupado) → rojo + candado centrado, sin numero */
+    .cnt-slot-item.is-full{
+      background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);
+      color:rgba(255,255,255,0); border-color:#991b1b;
+      cursor:not-allowed; opacity:1;
+      box-shadow:0 4px 12px rgba(220,38,38,.32), inset 0 1px 0 rgba(255,255,255,.16);
+      animation:cntSlotFullPulse 2.6s ease-in-out infinite;
     }
-    .cnt-slot-item.is-full{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;cursor:not-allowed;opacity:.78}
-    .cnt-slot-item.is-full::after{content:'🔒';position:absolute;top:2px;right:4px;font-size:.65rem}
-    .cnt-slot-item.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;cursor:not-allowed;opacity:.6;text-decoration:line-through}
+    .cnt-slot-item.is-full::after{
+      content:'🔒';position:absolute;top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      font-size:1.15rem;color:#fff;
+      filter:drop-shadow(0 2px 3px rgba(0,0,0,.4));
+    }
+    .cnt-slot-item.is-full:hover{transform:none;background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);border-color:#991b1b}
+    @keyframes cntSlotFullPulse{
+      0%,100%{box-shadow:0 4px 12px rgba(220,38,38,.32), inset 0 1px 0 rgba(255,255,255,.16)}
+      50%   {box-shadow:0 4px 16px rgba(220,38,38,.55), inset 0 1px 0 rgba(255,255,255,.16)}
+    }
+    .cnt-slot-item.is-blocked{
+      background:#f3f4f6;color:rgba(0,0,0,0);border-color:#d1d5db;
+      cursor:not-allowed;opacity:1;position:relative;
+    }
+    .cnt-slot-item.is-blocked::after{
+      content:'🔒';position:absolute;top:50%;left:50%;
+      transform:translate(-50%,-50%);font-size:1.05rem;opacity:.65;
+    }
     .cnt-slot-item.is-disabled{cursor:not-allowed;opacity:.4;background:#f9fafb}
     .cnt-slot-item.is-selected{
       background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
@@ -1702,9 +1719,7 @@
                 <div class="cnt-slot-legend">
                   <span><span class="ldot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
                   <span><span class="ldot" style="background:#dc2626"></span>Tu selección</span>
-                  <span><span class="ldot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
-                  <span><span class="ldot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
-                  <span><span class="ldot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
+                  <span><span class="ldot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>No disponible 🔒</span>
                 </div>
               </div>
               <div id="cnt_slot_grid">
@@ -2078,25 +2093,20 @@
           else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) estado = 'ocupado';
           else estado = 'disponible';
         }
+        // Daniel 2026-05-24: vista cliente unificada — cualquier slot no
+        // plenamente libre se ve como candado, sin info extra (ni cupos
+        // numéricos ni razón). El cliente solo elige entre libre / no libre.
         if (estado === 'colacion'){
           cls.push('is-lunch', 'is-disabled');
-          title = 'Horario de colación (no agendable)';
-        } else if (estado === 'completo'){
+          title = 'Hora no disponible';
+        } else if (estado === 'completo' || estado === 'ocupado'){
           cls.push('is-full', 'is-disabled');
-          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
-          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
-          title = `Cupo lleno (${oc}/${mx})`;
+          title = 'Hora no disponible';
         } else if (estado === 'bloqueado'){
           cls.push('is-blocked', 'is-disabled');
-          title = s.razon || 'Franja bloqueada';
-        } else if (estado === 'ocupado'){
-          cls.push('is-busy');
-          const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 1);
-          const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
-          badge = `<span class="cnt-slot-badge">${oc}/${mx}</span>`;
-          title = `Parcial (${oc}/${mx}) — aún puedes agendar`;
+          title = 'Hora no disponible';
         } else {
-          title = `Disponible (${s.time_from || s.hora || ''} – ${s.time_to || ''})`;
+          title = 'Disponible';
         }
         if (_cntStartIdx !== null && _cntEndIdx !== null){
           if (i === _cntStartIdx && i === _cntEndIdx){
@@ -2146,6 +2156,7 @@
         if (s.lunch) e = 'colacion';
         else if (s.razon && !s.disponible) e = 'bloqueado';
         else if (!s.disponible) e = 'completo';
+        else if ((s.ocupados || 0) > 0 && (s.ocupados || 0) < (s.max || 2)) e = 'ocupado';
         else e = 'disponible';
       }
       return e;
@@ -2155,14 +2166,12 @@
       const s = _cntSlotsDelDia[i];
       if (!s) return;
       const estado = _estadoDeSlot(s);
-      if (estado === 'colacion'){
-        const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '12:30';
-        const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
-        _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
+      // Daniel 2026-05-24: mensaje genérico, sin detalle interno.
+      if (estado === 'colacion' || estado === 'completo' ||
+          estado === 'ocupado' || estado === 'bloqueado'){
+        _toast('Esa hora no está disponible. Elige otro bloque.', 'warning');
         return;
       }
-      if (estado === 'completo'){ _toast('Ese bloque está lleno. Elige otro horario.', 'warning'); return; }
-      if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
 
       if (_cntStartIdx === null){
         _cntStartIdx = _cntEndIdx = i;
@@ -2171,23 +2180,16 @@
       } else {
         const from = Math.min(_cntStartIdx, i);
         const to   = Math.max(_cntStartIdx, i);
-        let invalido = null;
+        let invalido = false;
         for (let k = from; k <= to; k++){
           const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
-          if (ek === 'colacion'){ invalido = 'colacion'; break; }
-          if (ek === 'completo'){ invalido = 'completo'; break; }
-          if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
+          if (ek === 'colacion' || ek === 'completo' ||
+              ek === 'ocupado' || ek === 'bloqueado'){
+            invalido = true; break;
+          }
         }
-        if (invalido === 'colacion'){
-          const ls = (_cntDisponibilidad && _cntDisponibilidad.lunch_start) || '12:30';
-          const le = (_cntDisponibilidad && _cntDisponibilidad.lunch_end) || '14:00';
-          _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
-          _cntStartIdx = _cntEndIdx = i;
-        } else if (invalido === 'completo'){
-          _toast('El rango cruza un bloque lleno. Acórtalo o elige otro horario.', 'warning');
-          _cntStartIdx = _cntEndIdx = i;
-        } else if (invalido === 'bloqueado'){
-          _toast('El rango cruza una franja bloqueada.', 'warning');
+        if (invalido){
+          _toast('El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
           _cntStartIdx = _cntEndIdx = i;
         } else {
           _cntStartIdx = from; _cntEndIdx = to;
@@ -2204,15 +2206,17 @@
       let foundStart = -1, foundEnd = -1;
       for (let i = 0; i < _cntSlotsDelDia.length; i++){
         const s0 = _cntSlotsDelDia[i];
-        const puedeIni = (s0.puede_iniciar !== undefined) ? s0.puede_iniciar
-          : (s0.disponible && !s0.lunch);
+        // Solo aceptar slots PLENAMENTE libres (sin ocupación).
+        const ocup0 = (s0.ocupados || 0);
+        const puedeIni = s0.disponible && !s0.lunch && ocup0 === 0;
         if (!puedeIni) continue;
         const endIdx = i + slotsNeeded - 1;
         if (endIdx >= _cntSlotsDelDia.length) continue;
         let ok = true;
         for (let k = i; k <= endIdx; k++){
           const ek = _estadoDeSlot(_cntSlotsDelDia[k]);
-          if (ek === 'colacion' || ek === 'completo' || ek === 'bloqueado'){ ok = false; break; }
+          if (ek === 'colacion' || ek === 'completo' ||
+              ek === 'ocupado' || ek === 'bloqueado'){ ok = false; break; }
         }
         if (ok){ foundStart = i; foundEnd = endIdx; break; }
       }

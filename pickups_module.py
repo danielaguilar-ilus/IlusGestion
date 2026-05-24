@@ -2712,111 +2712,63 @@ def register_pickup_routes(app, ctx):
             except Exception:
                 pass
 
-            # ⚡ PERF: ejecutar 6 queries restantes en PARALELO con threads.
-            # Antes eran SERIALES → ~6 × 40ms = 240ms. Ahora paralelas →
-            # max(query) ~60ms. Cada query es independiente del rid.
-            import threading as _t_detail
-            packages = []
-            proposals = []
-            logs = []
-            attachments = []
-            tpl_rows = []
-            docs_asociados = []
-            errors_par = []
+            # ⚠️ FIX CRÍTICO (Daniel 2026-05-24 mañana):
+            # El threading paralelo INTRODUCÍA un bug: get_db() de Flask retorna
+            # UNA SOLA conexión por request (cacheada en `g._db`). pymysql NO es
+            # thread-safe — al ejecutar 6 queries en paralelo sobre la MISMA
+            # conexión se generaban packet sequence errors / lost connection,
+            # haciendo que TODA la ficha del retiro fallara con 500.
+            #
+            # Volvemos a queries SERIALES — son ~240ms en total (medido), lo
+            # cual es perfectamente aceptable y, sobre todo, FUNCIONA. La perf
+            # real percibida la ganamos del SELECT explícito de arriba (sin
+            # doc_erp_data MEDIUMTEXT) y del cache de saldo/sugerencias.
+            packages = mysql_fetchall(
+                f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number",
+                (rid,)
+            ) or []
+            proposals = mysql_fetchall(
+                f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC",
+                (rid,)
+            ) or []
+            logs = mysql_fetchall(
+                f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80",
+                (rid,)
+            ) or []
+            attachments = mysql_fetchall(
+                f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC",
+                (rid,)
+            ) or []
+            tpl_rows = mysql_fetchall(
+                f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title"
+            ) or []
 
-            def _q_packages():
-                nonlocal packages
-                try:
-                    packages = mysql_fetchall(
-                        f"SELECT * FROM `{PKG}` WHERE request_id=%s ORDER BY package_number",
-                        (rid,)
-                    ) or []
-                except Exception as e:
-                    errors_par.append(("packages", str(e)[:200]))
-
-            def _q_proposals():
-                nonlocal proposals
-                try:
-                    proposals = mysql_fetchall(
-                        f"SELECT * FROM `{PROP}` WHERE request_id=%s ORDER BY id DESC",
-                        (rid,)
-                    ) or []
-                except Exception as e:
-                    errors_par.append(("proposals", str(e)[:200]))
-
-            def _q_logs():
-                nonlocal logs
-                try:
-                    logs = mysql_fetchall(
-                        f"SELECT * FROM `{LOG}` WHERE request_id=%s ORDER BY id DESC LIMIT 80",
-                        (rid,)
-                    ) or []
-                except Exception as e:
-                    errors_par.append(("logs", str(e)[:200]))
-
-            def _q_attachments():
-                nonlocal attachments
-                try:
-                    attachments = mysql_fetchall(
-                        f"SELECT * FROM `{ATT}` WHERE request_id=%s ORDER BY id DESC",
-                        (rid,)
-                    ) or []
-                except Exception as e:
-                    errors_par.append(("attachments", str(e)[:200]))
-
-            def _q_tpl():
-                nonlocal tpl_rows
-                try:
-                    tpl_rows = mysql_fetchall(
-                        f"SELECT * FROM `{TPL}` WHERE active=1 ORDER BY title"
-                    ) or []
-                except Exception as e:
-                    errors_par.append(("tpl", str(e)[:200]))
-
-            def _q_docs():
-                """Multi-documento (Daniel 2026-05-22). Try/except
-                anidado por compat con entornos sin migración aplicada."""
-                nonlocal docs_asociados
+            # Multi-documento (Daniel 2026-05-22). Try/except anidado por
+            # compat con entornos sin migración aplicada.
+            try:
+                docs_asociados = mysql_fetchall(
+                    """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                              observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                         FROM pickup_request_docs
+                        WHERE request_id=%s
+                        ORDER BY id ASC""",
+                    (rid,)
+                ) or []
+            except Exception:
                 try:
                     docs_asociados = mysql_fetchall(
                         """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                                   observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                                  n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                                  n_lineas, added_by, added_at
                              FROM pickup_request_docs
                             WHERE request_id=%s
                             ORDER BY id ASC""",
                         (rid,)
                     ) or []
-                except Exception:
-                    try:
-                        docs_asociados = mysql_fetchall(
-                            """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
-                                      observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                                      n_lineas, added_by, added_at
-                                 FROM pickup_request_docs
-                                WHERE request_id=%s
-                                ORDER BY id ASC""",
-                            (rid,)
-                        ) or []
-                    except Exception as _e_docs2:
-                        print(f"[pickup_detail] docs_asociados skip: {_e_docs2}", flush=True)
-                        docs_asociados = []
-
-            threads_par = [
-                _t_detail.Thread(target=_q_packages, daemon=True),
-                _t_detail.Thread(target=_q_proposals, daemon=True),
-                _t_detail.Thread(target=_q_logs, daemon=True),
-                _t_detail.Thread(target=_q_attachments, daemon=True),
-                _t_detail.Thread(target=_q_tpl, daemon=True),
-                _t_detail.Thread(target=_q_docs, daemon=True),
-            ]
-            for _th in threads_par:
-                _th.start()
-            for _th in threads_par:
-                _th.join(timeout=8.0)  # safety net
-
-            if errors_par:
-                print(f"[pickup_detail][PARALLEL_ERRORS] rid={rid}: {errors_par}", flush=True)
+                except Exception as _e_docs2:
+                    print(f"[pickup_detail] docs_asociados skip: {_e_docs2}", flush=True)
+                    docs_asociados = []
 
             return render_template(
                 "retiros/internal_detail.html",
