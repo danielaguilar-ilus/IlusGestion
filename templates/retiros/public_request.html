@@ -123,9 +123,41 @@
     .step-icon{width:42px;height:42px;border-radius:10px;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.15rem;margin-bottom:14px}
 
     /* ════════════════════════════════════════════════════════════
+       ✦✦ ESTÉTICA 2027 — glassmorphism + spring + micro-int. ✦✦
+       ════════════════════════════════════════════════════════════ */
+    :root{
+      --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+      --ease-out:    cubic-bezier(.4, 0, .2, 1);
+    }
+    .btn-2027{transition:transform .18s var(--ease-out)}
+    .btn-2027:active{transform:scale(.96)}
+    @media(prefers-reduced-motion:reduce){.btn-2027{transition:none}.btn-2027:active{transform:none}}
+
+    /* Step cards con spring */
+    .step-card{
+      position:relative;background:rgba(255,255,255,.96);
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      border:1px solid var(--gray-2);border-radius:14px;padding:22px 20px;
+      transition:transform .25s var(--ease-spring), box-shadow .25s var(--ease-out), border-color .2s var(--ease-out);
+      box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(15,23,42,.04), 0 8px 24px -8px rgba(15,23,42,.06);
+    }
+    .step-card:hover{transform:translateY(-3px);box-shadow:0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(15,23,42,.06), 0 24px 56px -12px rgba(15,23,42,.18);border-color:var(--ink)}
+    @media(prefers-reduced-motion:reduce){.step-card{transition:none}.step-card:hover{transform:none}}
+
+    /* ════════════════════════════════════════════════════════════
        FORM CARD — premium, mismo nivel Linear/Stripe
        ════════════════════════════════════════════════════════════ */
-    .form-card{background:#fff;border:1px solid var(--gray-2);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.08), 0 4px 12px rgba(0,0,0,.04);overflow:hidden}
+    .form-card{
+      background:rgba(255,255,255,.94);
+      backdrop-filter:blur(20px) saturate(1.4);
+      -webkit-backdrop-filter:blur(20px) saturate(1.4);
+      border:1px solid var(--gray-2);border-radius:18px;
+      box-shadow:
+        0 1px 0 rgba(255,255,255,.7) inset,
+        0 1px 3px rgba(15,23,42,.06),
+        0 24px 60px -12px rgba(15,23,42,.18);
+      overflow:hidden
+    }
     .form-head{
       background:linear-gradient(135deg,#0a0a0a 0%, #1c1c1c 100%);
       color:#fff;padding:32px 36px 28px;border-bottom:4px solid var(--ilus-red);

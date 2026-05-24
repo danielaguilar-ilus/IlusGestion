@@ -159,11 +159,24 @@
       .hero-help{text-align:left;margin-top:8px;max-width:none}
     }
 
+    /* ✦ Curvas/sombras 2027 */
+    :root{
+      --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+      --ease-out:    cubic-bezier(.4, 0, .2, 1);
+      --shadow-soft-3: 0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(15,23,42,.06), 0 24px 56px -12px rgba(15,23,42,.16);
+    }
+    .btn-2027{transition:transform .18s var(--ease-out)}
+    .btn-2027:active{transform:scale(.96)}
+    @media(prefers-reduced-motion:reduce){.btn-2027{transition:none}.btn-2027:active{transform:none}}
+
     /* ─── PROGRESO ANIMADO (estado en pasos) ────────────────────── */
     .progress-card{
-      background:#fff;border:1px solid var(--ilus-border);border-radius:18px;
+      background:rgba(255,255,255,.94);
+      backdrop-filter:blur(16px) saturate(1.4);
+      -webkit-backdrop-filter:blur(16px) saturate(1.4);
+      border:1px solid var(--ilus-border);border-radius:20px;
       padding:28px 26px 22px;margin-top:18px;
-      box-shadow:0 8px 22px rgba(15,23,42,.06);
+      box-shadow:var(--shadow-soft-3);
     }
     .progress-card h6{
       font-weight:900;font-size:.74rem;text-transform:uppercase;letter-spacing:.12em;

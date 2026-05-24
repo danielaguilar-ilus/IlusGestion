@@ -51,9 +51,51 @@
   .id-kpi .lbl{color:#cbd5e1;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
 
   /* ════════════════════════════════════════════════════════════════
+     ✦✦ ESTÉTICA 2027 — Linear/Vercel/Stripe/Framer premium ✦✦
+     ════════════════════════════════════════════════════════════════
+     Glassmorphism sutil + sombras soft-3D capa-múltiple + spring
+     animations + skeleton loaders premium + micro-interactions.
+     Daniel: "cierre del orgullo · estética típica 2027".
+     ════════════════════════════════════════════════════════════════ */
+
+  /* Curvas de animación reutilizables */
+  :root{
+    --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+    --ease-out:    cubic-bezier(.4, 0, .2, 1);
+    --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+    --shadow-soft-1: 0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(15,23,42,.04), 0 8px 24px -8px rgba(15,23,42,.06);
+    --shadow-soft-2: 0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(15,23,42,.05), 0 12px 32px -10px rgba(15,23,42,.10);
+    --shadow-soft-3: 0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(15,23,42,.06), 0 24px 56px -12px rgba(15,23,42,.16);
+    --shadow-ilus-glow: 0 0 0 1px rgba(220,38,38,.08), 0 1px 2px rgba(220,38,38,.04), 0 14px 28px -10px rgba(220,38,38,.25);
+  }
+
+  /* Shimmer keyframe global para skeletons */
+  @keyframes ilus2027Shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+  .skel-shimmer{
+    background:linear-gradient(90deg, #f0f0f0 25%, #fafafa 50%, #f0f0f0 75%);
+    background-size:200% 100%;
+    animation:ilus2027Shimmer 1.5s linear infinite;
+    border-radius:8px;
+  }
+  @media(prefers-reduced-motion:reduce){.skel-shimmer{animation:none;background:#f3f4f6}}
+
+  /* Micro-interaction: cualquier botón .btn-2027 hace scale táctil al click */
+  .btn-2027{transition:transform .18s var(--ease-out), box-shadow .25s var(--ease-out), background .18s var(--ease-out)}
+  .btn-2027:active{transform:scale(.96)}
+  @media(prefers-reduced-motion:reduce){.btn-2027{transition:none}.btn-2027:active{transform:none}}
+
+  /* ════════════════════════════════════════════════════════════════
      FORM CARD GRANDE — estilo público (Stripe/Linear premium)
      ════════════════════════════════════════════════════════════════ */
-  .form-card{background:#fff;border:1px solid var(--gray-2);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.08), 0 4px 12px rgba(0,0,0,.04);overflow:hidden;margin-bottom:16px}
+  .form-card{
+    background:rgba(255,255,255,.92);
+    backdrop-filter:blur(20px) saturate(1.5);
+    -webkit-backdrop-filter:blur(20px) saturate(1.5);
+    border:1px solid var(--gray-2);
+    border-radius:18px;
+    box-shadow:var(--shadow-soft-3);
+    overflow:hidden;margin-bottom:16px;
+  }
   .form-head{
     background:linear-gradient(135deg,#0a0a0a 0%, #1c1c1c 100%);
     color:#fff;padding:32px 36px 28px;border-bottom:4px solid var(--ilus-red);
@@ -80,16 +122,34 @@
 
   /* ── Cada paso: número rojo + título + subtítulo + contenido ── */
   .step-section{
-    margin:0 0 28px;padding:24px 26px;background:#fff;
-    border:1.5px solid var(--gray-2);border-radius:14px;
-    transition:opacity .35s cubic-bezier(.4,0,.2,1), transform .35s cubic-bezier(.4,0,.2,1), border-color .25s, background .25s;
+    margin:0 0 28px;padding:26px 28px;
+    background:rgba(255,255,255,.96);
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    border:1.5px solid var(--gray-2);border-radius:16px;
+    box-shadow:var(--shadow-soft-1);
+    transition:
+      opacity .55s var(--ease-spring),
+      transform .55s var(--ease-spring),
+      border-color .25s var(--ease-out),
+      background .25s var(--ease-out),
+      box-shadow .25s var(--ease-out);
     will-change:transform,opacity;
   }
-  body.js-reveal .step-section{opacity:0;transform:translateY(12px)}
+  .step-section:hover{box-shadow:var(--shadow-soft-2)}
+  body.js-reveal .step-section{opacity:0;transform:translateY(20px) scale(.98)}
   body.js-reveal .step-section.in-view{opacity:1;transform:none}
-  .step-section.is-complete{border-color:#16a34a;background:linear-gradient(180deg,#f0fdf4 0%, #fff 50%)}
+  .step-section.is-complete{
+    border-color:#86efac;
+    background:linear-gradient(180deg,#f0fdf4 0%, rgba(255,255,255,.96) 50%);
+    box-shadow:0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(22,163,74,.08), 0 14px 32px -12px rgba(22,163,74,.18);
+  }
   .step-section.is-blocked{opacity:.6;background:#fafafa;border-style:dashed}
   .step-section.is-blocked .step-content{pointer-events:none}
+  @media(prefers-reduced-motion:reduce){
+    .step-section{transition:opacity .25s ease, background .25s ease, border-color .25s ease}
+    body.js-reveal .step-section{transform:none}
+  }
   .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px}
   .step-circle{
     width:46px;height:46px;border-radius:50%;background:var(--ilus-red);color:#fff;
@@ -476,21 +536,61 @@
   .icd-slot-grid-inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
   @media(max-width:600px){.icd-slot-grid-inner{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}}
   .icd-slot{
-    background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;
+    background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;
     padding:10px 6px;text-align:center;font-size:.82rem;font-weight:800;color:#0a0a0a;
-    position:relative;min-height:54px;
+    position:relative;min-height:56px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-    transition:transform .15s, box-shadow .15s, border-color .15s, background .15s;
+    transition:
+      transform .25s var(--ease-spring),
+      box-shadow .25s var(--ease-out),
+      border-color .15s var(--ease-out),
+      background .15s var(--ease-out);
   }
   .icd-slot.has-owners{cursor:pointer}
-  .icd-slot.has-owners:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.10);border-color:#9ca3af}
+  .icd-slot.has-owners:hover{transform:translateY(-2px) scale(1.02);box-shadow:var(--shadow-soft-2);border-color:#9ca3af}
+  .icd-slot.has-owners:active{transform:translateY(-1px) scale(.99)}
   .icd-slot .icd-slot-hora{font-variant-numeric:tabular-nums;font-size:.86rem;font-weight:900;letter-spacing:.02em}
   .icd-slot .icd-slot-meta{font-size:.62rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}
   .icd-slot .icd-slot-owners{font-size:.6rem;font-weight:700;color:#0a0a0a;line-height:1.15;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
-  .icd-slot.is-lunch{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
-  .icd-slot.is-lunch::after{content:'☕';position:absolute;top:2px;right:4px;font-size:.7rem;opacity:.85}
-  .icd-slot.is-full{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5}
-  .icd-slot.is-busy{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+  .icd-slot.is-lunch{background:linear-gradient(180deg,#fff7ed 0%, #fffbf4 100%);color:#9a3412;border-color:#fed7aa}
+  .icd-slot.is-lunch::after{content:'☕';position:absolute;top:3px;right:5px;font-size:.78rem;opacity:.85}
+  .icd-slot.is-busy{
+    background:linear-gradient(180deg,#fff7ed 0%, #fff 100%);color:#c2410c;border-color:#fdba74;
+    box-shadow:inset 0 0 0 1px rgba(251,146,60,.10);
+  }
+  .icd-slot.is-busy::after{
+    content:'';position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;
+    background:#f97316;box-shadow:0 0 8px rgba(249,115,22,.6);
+    animation:icdSlotBusyPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes icdSlotBusyPulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:1;transform:scale(1.25)}}
+  /* ✦✦ Slot LLENO: rojo brillante + candado + opacidad reducida (NO clickeable) ✦✦ */
+  .icd-slot.is-full{
+    background:linear-gradient(180deg,#fef2f2 0%, #fee2e2 100%);
+    color:#7f1d1d;border-color:#dc2626;
+    box-shadow:
+      inset 0 0 0 1px rgba(220,38,38,.15),
+      inset 0 -8px 16px -8px rgba(220,38,38,.20),
+      0 1px 2px rgba(220,38,38,.10),
+      0 0 0 0 rgba(220,38,38,.40);
+    opacity:.95;cursor:not-allowed;
+    position:relative;
+    animation:icdSlotFullPulse 2.6s var(--ease-in-out) infinite;
+  }
+  @keyframes icdSlotFullPulse{
+    0%,100%{box-shadow:inset 0 0 0 1px rgba(220,38,38,.15), inset 0 -8px 16px -8px rgba(220,38,38,.20), 0 1px 2px rgba(220,38,38,.10), 0 0 0 0 rgba(220,38,38,.40)}
+    50%   {box-shadow:inset 0 0 0 1px rgba(220,38,38,.30), inset 0 -8px 16px -8px rgba(220,38,38,.35), 0 1px 2px rgba(220,38,38,.18), 0 0 0 6px rgba(220,38,38,.06)}
+  }
+  .icd-slot.is-full::before{
+    content:'🔒';position:absolute;top:3px;right:5px;font-size:.86rem;
+    filter:drop-shadow(0 1px 2px rgba(220,38,38,.4));
+  }
+  .icd-slot.is-full .icd-slot-meta{color:#dc2626;font-weight:900}
+  .icd-slot.is-full:hover{transform:none}
+  @media(prefers-reduced-motion:reduce){
+    .icd-slot.is-full{animation:none}
+    .icd-slot.is-busy::after{animation:none}
+  }
   .icd-slot.is-blocked{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;text-decoration:line-through}
   .icd-slot.is-current{outline:3px solid var(--ilus-red,#dc2626);outline-offset:2px;box-shadow:0 4px 12px rgba(220,38,38,.20)}
   .icd-slot.is-current::before{
@@ -501,9 +601,20 @@
   }
   .icd-cal-empty{padding:32px 14px;text-align:center;color:#9ca3af;font-size:.85rem}
   .icd-cal-empty i{font-size:1.6rem;display:block;margin-bottom:6px;opacity:.6}
-  .icd-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
-  .icd-cal-skel div{height:54px;background:linear-gradient(90deg,#f3f4f6 0%,#e5e7eb 50%,#f3f4f6 100%);background-size:200% 100%;animation:icdSkel 1.2s linear infinite;border-radius:8px}
+  .icd-cal-skel{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;perspective:1000px}
+  .icd-cal-skel div{
+    height:56px;border-radius:10px;
+    background:linear-gradient(90deg,#f3f4f6 0%,#fafafa 50%,#f3f4f6 100%);
+    background-size:200% 100%;
+    animation:icdSkel 1.5s var(--ease-out) infinite;
+    box-shadow:var(--shadow-soft-1);
+    transform-origin:center;
+  }
+  .icd-cal-skel div:nth-child(odd) {animation-delay:.08s}
+  .icd-cal-skel div:nth-child(3n)  {animation-delay:.16s}
+  .icd-cal-skel div:nth-child(5n)  {animation-delay:.24s}
   @keyframes icdSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  @media(prefers-reduced-motion:reduce){.icd-cal-skel div{animation:none}}
   .icd-owners-modal .modal-content{border-radius:14px;overflow:hidden}
   .icd-owners-modal .modal-header{background:#0a0a0a;color:#fff;padding:14px 18px;border:0}
   .icd-owners-modal .modal-header .btn-close{filter:invert(1)}
@@ -546,6 +657,435 @@
     transition:all .15s;
   }
   .ilus-help-cta:hover{background:#a60000;color:#fff;transform:translateY(-1px)}
+
+  /* ════════════════════════════════════════════════════════════════
+     ✦✦ MODAL BÚSQUEDA AVANZADA — 2 MOTORES (Daniel 2026-05-23) ✦✦
+     ════════════════════════════════════════════════════════════════
+     Estilo "command palette" Linear/Arc Browser:
+       - Backdrop con blur 24px (glassmorphism profundo)
+       - 2 tabs: Por documento (TIDO+NUDO) / Por cliente (RUT/nombre)
+       - Cards expandibles con saldo por producto
+       - Checkboxes custom + animación de selección
+       - Sticky footer con contador en vivo
+     ════════════════════════════════════════════════════════════════ */
+  .rba-backdrop{
+    position:fixed;inset:0;z-index:1085;
+    background:rgba(15,23,42,.55);
+    backdrop-filter:blur(8px) saturate(1.2);
+    -webkit-backdrop-filter:blur(8px) saturate(1.2);
+    opacity:0;pointer-events:none;
+    transition:opacity .35s var(--ease-out);
+  }
+  .rba-backdrop.is-open{opacity:1;pointer-events:auto}
+  .rba-modal{
+    position:fixed;z-index:1086;
+    inset:auto 0 0 0;
+    width:100%;max-width:980px;margin:0 auto;
+    background:rgba(255,255,255,.98);
+    backdrop-filter:blur(24px) saturate(1.5);
+    -webkit-backdrop-filter:blur(24px) saturate(1.5);
+    border-radius:24px 24px 0 0;
+    box-shadow:
+      0 -2px 0 rgba(255,255,255,.7) inset,
+      0 -1px 4px rgba(15,23,42,.06),
+      0 -32px 80px -16px rgba(15,23,42,.40);
+    transform:translateY(100%);opacity:0;
+    transition:transform .5s var(--ease-spring), opacity .35s var(--ease-out);
+    max-height:92vh;overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+  @media(min-width:768px){
+    .rba-modal{
+      inset:50% 0 auto 0;top:50%;
+      transform:translateY(calc(-50% + 40px));
+      border-radius:20px;
+      max-height:88vh;
+    }
+  }
+  .rba-modal.is-open{transform:translateY(0);opacity:1}
+  @media(min-width:768px){
+    .rba-modal.is-open{transform:translateY(-50%)}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .rba-modal,.rba-backdrop{transition:opacity .2s ease}
+    .rba-modal{transform:none}
+  }
+
+  /* Handle bar (estilo iOS) en mobile */
+  .rba-handle{
+    width:42px;height:5px;border-radius:50px;background:#cbd5e1;
+    margin:10px auto 0;flex-shrink:0;
+  }
+  @media(min-width:768px){.rba-handle{display:none}}
+
+  .rba-head{
+    padding:14px 24px 12px;
+    border-bottom:1px solid var(--gray-2);
+    display:flex;align-items:center;justify-content:space-between;gap:14px;flex-shrink:0;
+    position:relative;
+  }
+  .rba-head h4{
+    margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;
+    color:#0a0a0a;letter-spacing:.01em;line-height:1;
+    display:flex;align-items:center;gap:10px;
+  }
+  .rba-head h4::before{
+    content:'';width:4px;height:22px;background:var(--ilus-red);border-radius:50px;
+    box-shadow:0 0 12px rgba(220,38,38,.45);
+  }
+  .rba-close{
+    width:36px;height:36px;border-radius:10px;background:#f3f4f6;border:none;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    font-size:1.2rem;color:#6b7280;
+    transition:all .18s var(--ease-out);
+  }
+  .rba-close:hover{background:#dc2626;color:#fff;transform:scale(1.05)}
+  .rba-close:active{transform:scale(.92)}
+
+  .rba-tabs{
+    display:flex;border-bottom:1px solid var(--gray-2);
+    background:#fafafa;flex-shrink:0;
+  }
+  .rba-tab{
+    flex:1;padding:14px 18px;background:transparent;border:none;
+    font-size:.86rem;font-weight:800;color:#6b7280;cursor:pointer;
+    border-bottom:3px solid transparent;
+    transition:all .2s var(--ease-out);
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    position:relative;letter-spacing:.01em;
+  }
+  .rba-tab:hover{color:#0a0a0a;background:#fff}
+  .rba-tab.is-active{
+    color:var(--ilus-red);background:#fff;border-bottom-color:var(--ilus-red);
+  }
+  .rba-tab.is-active::after{
+    content:'';position:absolute;left:50%;bottom:-3px;width:24px;height:3px;
+    background:var(--ilus-red);border-radius:50px;
+    transform:translateX(-50%);
+    box-shadow:0 0 10px rgba(220,38,38,.6);
+  }
+
+  .rba-body{
+    padding:18px 24px;overflow-y:auto;flex:1;
+    scroll-behavior:smooth;
+    -webkit-overflow-scrolling:touch;
+  }
+  .rba-body::-webkit-scrollbar{width:8px;height:8px}
+  .rba-body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:50px}
+  .rba-body::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+
+  .rba-search-row{
+    display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;
+  }
+  .rba-search-row select, .rba-search-row input{
+    border:1.5px solid var(--gray-2);border-radius:10px;padding:11px 14px;
+    font-size:.92rem;font-weight:600;background:#fff;
+    transition:border-color .2s var(--ease-out), box-shadow .2s var(--ease-out);
+  }
+  .rba-search-row select:focus, .rba-search-row input:focus{
+    outline:none;border-color:var(--ilus-red);
+    box-shadow:0 0 0 3px rgba(220,38,38,.15);
+  }
+  .rba-search-row input[type="search"], .rba-search-row input[type="text"]{
+    flex:1;min-width:200px;font-family:'Inter','Segoe UI',sans-serif;
+  }
+  .rba-search-row .rba-btn-search{
+    background:linear-gradient(180deg,#0a0a0a 0%, #1c1c1c 100%);color:#fff;border:none;
+    padding:11px 22px;border-radius:10px;font-size:.88rem;font-weight:800;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;
+    box-shadow:var(--shadow-soft-1);
+    transition:all .2s var(--ease-out);
+  }
+  .rba-search-row .rba-btn-search:hover{
+    background:linear-gradient(180deg,var(--ilus-red) 0%, #a60000 100%);
+    transform:translateY(-1px);box-shadow:var(--shadow-ilus-glow);
+  }
+  .rba-search-row .rba-btn-search:active{transform:translateY(0) scale(.97)}
+  .rba-search-row .rba-btn-search:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+  /* Resultados — cards de docs (lista plana o expandibles con líneas) */
+  .rba-results{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .rba-doc-card{
+    background:#fff;border:1.5px solid var(--gray-2);border-radius:12px;
+    overflow:hidden;
+    transition:border-color .2s var(--ease-out), box-shadow .2s var(--ease-out), transform .2s var(--ease-out);
+    opacity:0;transform:translateY(8px);
+    animation:rbaDocIn .4s var(--ease-spring) forwards;
+  }
+  @keyframes rbaDocIn{to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.rba-doc-card{animation:none;opacity:1;transform:none}}
+  .rba-doc-card:hover{border-color:#9ca3af;box-shadow:var(--shadow-soft-2)}
+  .rba-doc-card.is-already{opacity:.55;background:#f9fafb}
+  .rba-doc-card.is-no-saldo{border-color:#fdba74;background:linear-gradient(180deg,#fff8e1 0%, #fff 80%)}
+  .rba-doc-head{
+    padding:14px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+    cursor:pointer;user-select:none;
+  }
+  .rba-doc-num{
+    font-family:monospace;font-weight:900;color:var(--ilus-red);font-size:1rem;
+    flex-shrink:0;min-width:140px;
+    display:flex;align-items:center;gap:6px;
+  }
+  .rba-doc-num .badge-tipo{
+    background:#0a0a0a;color:#fff;border-radius:50px;padding:2px 9px;
+    font-size:.62rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  }
+  .rba-doc-info{flex:1;min-width:180px;display:flex;flex-direction:column;gap:3px}
+  .rba-doc-info .rd-cli{font-size:.88rem;font-weight:700;color:#0a0a0a;line-height:1.2}
+  .rba-doc-info .rd-meta{font-size:.74rem;color:#6b7280;display:flex;gap:10px;flex-wrap:wrap}
+  .rba-doc-info .rd-meta .rd-rut{font-family:monospace;font-weight:600}
+  .rba-doc-totals{display:flex;gap:6px;flex-wrap:wrap;font-size:.7rem}
+  .rba-doc-totals .badge-pill{
+    background:#f3f4f6;color:#374151;border:1px solid var(--gray-2);
+    border-radius:50px;padding:4px 10px;font-weight:700;font-size:.68rem;
+    text-transform:uppercase;letter-spacing:.04em;display:inline-flex;align-items:center;gap:4px;
+  }
+  .rba-doc-totals .badge-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
+  .rba-doc-totals .badge-pill.warn{background:#fef3c7;color:#92400e;border-color:#fde68a}
+  .rba-doc-totals .badge-pill.lock{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+
+  .rba-doc-actions{display:flex;gap:6px;flex-shrink:0;align-items:center}
+  .rba-doc-add-btn{
+    background:#16a34a;color:#fff;border:none;border-radius:9px;padding:9px 14px;
+    font-size:.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    letter-spacing:.02em;
+    transition:all .2s var(--ease-out);
+    box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 4px 10px -2px rgba(22,163,74,.30);
+  }
+  .rba-doc-add-btn:hover{background:#15803d;transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 8px 16px -4px rgba(22,163,74,.40)}
+  .rba-doc-add-btn:active{transform:translateY(0) scale(.96)}
+  .rba-doc-add-btn:disabled{background:#9ca3af;cursor:not-allowed;transform:none;box-shadow:none}
+  .rba-doc-add-btn.is-done{background:#6b7280;cursor:default}
+  .rba-doc-toggle{
+    background:transparent;border:1px solid var(--gray-2);color:#6b7280;cursor:pointer;
+    width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    transition:all .2s var(--ease-out);font-size:1.1rem;
+  }
+  .rba-doc-toggle:hover{background:#f3f4f6;color:#0a0a0a;border-color:#9ca3af}
+  .rba-doc-card.is-open .rba-doc-toggle{transform:rotate(180deg);background:var(--ilus-red);color:#fff;border-color:var(--ilus-red)}
+
+  .rba-doc-body{
+    border-top:1px solid var(--gray-2);background:#fafafa;padding:14px 16px;
+    display:none;
+    animation:rbaBodyIn .35s var(--ease-out);
+  }
+  @keyframes rbaBodyIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .rba-doc-card.is-open .rba-doc-body{display:block}
+
+  /* Lineas con checkbox custom + saldo */
+  .rba-line{
+    display:grid;grid-template-columns:32px 110px 1fr 110px 80px;
+    gap:10px;align-items:center;
+    padding:10px 12px;background:#fff;border:1px solid var(--gray-2);border-radius:10px;
+    margin-bottom:6px;font-size:.84rem;
+    transition:all .2s var(--ease-out);
+  }
+  .rba-line:hover{border-color:#9ca3af;background:#fdfdfd}
+  .rba-line.is-zero{opacity:.5;background:#fafafa}
+  .rba-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
+  @media(max-width:600px){
+    .rba-line{grid-template-columns:32px 1fr;gap:8px}
+    .rba-line .ln-sku,.rba-line .ln-qty,.rba-line .ln-qty-input{grid-column:2}
+  }
+  .rba-line .ln-sku{font-family:monospace;font-size:.72rem;color:#6b7280;font-weight:600}
+  .rba-line .ln-desc{color:#0f172a;font-weight:600;line-height:1.3}
+  .rba-line .ln-qty{
+    text-align:center;font-weight:800;color:#0a0a0a;
+    font-variant-numeric:tabular-nums;font-size:.82rem;
+    display:flex;flex-direction:column;gap:1px;align-items:center;
+  }
+  .rba-line .ln-qty .ln-qty-saldo{color:#16a34a;font-size:.76rem}
+  .rba-line .ln-qty .ln-qty-saldo-zero{color:#9ca3af;font-size:.7rem;text-decoration:line-through}
+  .rba-line .ln-qty-input{
+    border:1.5px solid var(--gray-2);border-radius:8px;padding:6px 8px;
+    font-size:.82rem;font-weight:700;text-align:center;
+    font-variant-numeric:tabular-nums;
+    width:100%;max-width:78px;
+  }
+  .rba-line .ln-qty-input:focus{outline:none;border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+  .rba-line .ln-qty-input:disabled{background:#f3f4f6;color:#9ca3af;cursor:not-allowed}
+
+  /* Checkbox custom premium */
+  .rba-chk{
+    width:22px;height:22px;border-radius:6px;border:2px solid #cbd5e1;
+    background:#fff;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    transition:all .2s var(--ease-out);
+    flex-shrink:0;position:relative;
+  }
+  .rba-chk:hover{border-color:#9ca3af}
+  .rba-chk input{
+    position:absolute;opacity:0;width:100%;height:100%;cursor:pointer;
+    top:0;left:0;margin:0;
+  }
+  .rba-chk input:disabled{cursor:not-allowed}
+  .rba-chk input:disabled + .rba-chk-mark{opacity:.35}
+  .rba-chk.is-checked{
+    background:var(--ilus-red);border-color:var(--ilus-red);
+    box-shadow:0 4px 10px -2px rgba(220,38,38,.40);
+  }
+  .rba-chk-mark{
+    color:#fff;font-size:.94rem;font-weight:900;line-height:1;
+    transform:scale(0);transition:transform .25s var(--ease-spring);
+  }
+  .rba-chk.is-checked .rba-chk-mark{transform:scale(1)}
+  @media(prefers-reduced-motion:reduce){.rba-chk-mark{transition:none}}
+
+  /* Empty state premium */
+  .rba-empty{
+    text-align:center;padding:46px 20px;color:#6b7280;
+  }
+  .rba-empty .rba-empty-icon{
+    font-size:3rem;opacity:.35;display:block;margin-bottom:10px;
+    animation:rbaEmptyFloat 3s var(--ease-in-out) infinite;
+  }
+  @keyframes rbaEmptyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  @media(prefers-reduced-motion:reduce){.rba-empty .rba-empty-icon{animation:none}}
+  .rba-empty h6{font-size:1rem;font-weight:800;color:#0a0a0a;margin:0 0 4px}
+  .rba-empty p{font-size:.84rem;margin:0;line-height:1.5}
+
+  /* Skeleton premium para resultados */
+  .rba-skel{display:flex;flex-direction:column;gap:10px;padding:6px 0}
+  .rba-skel-row{
+    height:64px;border-radius:12px;
+    background:linear-gradient(90deg,#f3f4f6 25%,#fafafa 50%,#f3f4f6 75%);
+    background-size:200% 100%;
+    animation:ilus2027Shimmer 1.5s var(--ease-out) infinite;
+    box-shadow:var(--shadow-soft-1);
+  }
+  .rba-skel-row:nth-child(2){animation-delay:.1s;opacity:.85}
+  .rba-skel-row:nth-child(3){animation-delay:.2s;opacity:.7}
+  .rba-skel-row:nth-child(4){animation-delay:.3s;opacity:.55}
+  @media(prefers-reduced-motion:reduce){.rba-skel-row{animation:none}}
+
+  /* Loading text cambiante */
+  .rba-loading-text{
+    font-size:.84rem;font-weight:600;color:#6b7280;text-align:center;
+    padding:8px;letter-spacing:.02em;
+  }
+  .rba-loading-text .dot1, .rba-loading-text .dot2, .rba-loading-text .dot3{
+    display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ilus-red);
+    margin:0 2px;animation:rbaLoadDot 1.4s var(--ease-in-out) infinite;
+  }
+  .rba-loading-text .dot2{animation-delay:.16s}
+  .rba-loading-text .dot3{animation-delay:.32s}
+  @keyframes rbaLoadDot{0%,80%,100%{transform:scale(.7);opacity:.5}40%{transform:scale(1);opacity:1}}
+
+  /* Sticky footer con contador */
+  .rba-foot{
+    flex-shrink:0;padding:14px 24px;
+    background:rgba(255,255,255,.96);
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    border-top:1px solid var(--gray-2);
+    display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    box-shadow:0 -8px 24px -16px rgba(15,23,42,.16);
+  }
+  .rba-counter{
+    font-size:.8rem;color:#6b7280;font-weight:600;line-height:1.3;
+  }
+  .rba-counter strong{color:#0a0a0a;font-weight:900;font-size:.92rem}
+  .rba-counter .rba-counter-pill{
+    display:inline-block;background:var(--ilus-red);color:#fff;
+    padding:2px 9px;border-radius:50px;font-weight:900;font-size:.74rem;
+    margin-right:6px;letter-spacing:.02em;
+    transition:transform .25s var(--ease-spring);
+  }
+  .rba-counter .rba-counter-pill.is-bump{animation:rbaBump .5s var(--ease-spring)}
+  @keyframes rbaBump{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+  .rba-btn-assoc{
+    background:linear-gradient(180deg,var(--ilus-red) 0%, #c10000 100%);
+    color:#fff;border:none;border-radius:11px;padding:12px 22px;
+    font-size:.92rem;font-weight:900;cursor:pointer;
+    display:inline-flex;align-items:center;gap:8px;
+    letter-spacing:.02em;
+    box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 8px 18px -4px rgba(220,38,38,.40);
+    transition:all .2s var(--ease-out);
+    position:relative;overflow:hidden;
+  }
+  .rba-btn-assoc:hover{
+    background:linear-gradient(180deg,#a60000 0%, #8b0000 100%);
+    transform:translateY(-2px);
+    box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 14px 28px -6px rgba(220,38,38,.50);
+  }
+  .rba-btn-assoc:active{transform:translateY(-1px) scale(.97)}
+  .rba-btn-assoc:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
+  /* Botón abrir modal — flotante premium */
+  .rba-open-btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:10px 18px;border-radius:10px;
+    background:linear-gradient(180deg,#1e293b 0%, #0f172a 100%);color:#fff;
+    border:none;cursor:pointer;font-size:.84rem;font-weight:800;letter-spacing:.02em;
+    box-shadow:0 1px 0 rgba(255,255,255,.1) inset, 0 6px 16px -4px rgba(15,23,42,.30);
+    transition:all .2s var(--ease-out);
+  }
+  .rba-open-btn:hover{
+    background:linear-gradient(180deg,var(--ilus-red) 0%, #a60000 100%);
+    transform:translateY(-2px);
+    box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 14px 28px -6px rgba(220,38,38,.45);
+  }
+  .rba-open-btn:active{transform:translateY(0) scale(.97)}
+  .rba-open-btn i{font-size:1rem}
+
+  /* Hint dentro del modal */
+  .rba-mod-hint{
+    background:linear-gradient(135deg,#dbeafe 0%, #e0e7ff 100%);
+    border:1px solid #93c5fd;border-radius:10px;
+    padding:10px 14px;margin-bottom:14px;
+    font-size:.82rem;color:#1e3a8a;
+    display:flex;align-items:center;gap:10px;
+  }
+  .rba-mod-hint i{color:#1d4ed8;font-size:1.1rem;flex-shrink:0}
+
+  /* Tab switcher overlay para selección "todas con saldo" */
+  .rba-master-bar{
+    display:flex;align-items:center;justify-content:space-between;
+    background:#fafafa;border:1.5px solid var(--gray-2);border-radius:10px;
+    padding:9px 14px;margin-bottom:10px;font-size:.84rem;
+    gap:10px;flex-wrap:wrap;
+  }
+  .rba-master-bar label{
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    font-weight:700;color:#0a0a0a;
+  }
+  .rba-master-bar .rba-master-info{color:#6b7280;font-size:.78rem}
+
+  /* Cliente editable Paso 1 */
+  .pa1-editable-wrap{
+    background:linear-gradient(180deg,#fafafa 0%, rgba(255,255,255,.96) 100%);
+    border:1px solid var(--gray-2);border-radius:12px;padding:14px 16px;
+    transition:all .2s var(--ease-out);
+  }
+  .pa1-editable-wrap:hover{border-color:#cbd5e1}
+  .pa1-edit-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .pa1-edit-row > div:first-child{flex:1}
+  .pa1-edit-btn{
+    background:transparent;border:1px solid var(--gray-2);color:#6b7280;
+    border-radius:8px;padding:6px 10px;font-size:.72rem;font-weight:700;
+    cursor:pointer;display:inline-flex;align-items:center;gap:4px;
+    transition:all .2s var(--ease-out);flex-shrink:0;
+  }
+  .pa1-edit-btn:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .pa1-edit-btn:active{transform:scale(.96)}
+  .pa1-edit-input{
+    border:1.5px solid var(--ilus-red);border-radius:8px;padding:8px 10px;
+    width:100%;font-size:1rem;font-weight:800;color:#0a0a0a;
+    box-shadow:0 0 0 3px rgba(220,38,38,.10);
+    transition:all .2s var(--ease-out);
+  }
+  .pa1-edit-input:focus{outline:none;box-shadow:0 0 0 4px rgba(220,38,38,.18)}
+  .pa1-contact-chk{
+    display:flex;align-items:flex-start;gap:10px;
+    background:linear-gradient(135deg,#dbeafe 0%, #e0e7ff 100%);
+    border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;
+    margin-top:10px;font-size:.82rem;color:#1e3a8a;cursor:pointer;
+    transition:all .2s var(--ease-out);user-select:none;
+  }
+  .pa1-contact-chk:hover{background:linear-gradient(135deg,#c7d6fa 0%, #d4dffc 100%)}
+  .pa1-contact-chk input{margin-top:2px;width:18px;height:18px;cursor:pointer;accent-color:var(--ilus-red)}
+  .pa1-contact-chk strong{color:#1e3a8a}
+  .pa1-contact-chk small{display:block;color:#3b5380;margin-top:2px;font-size:.76rem}
 </style>
 
 {# ──────────────────────────────────────────────────────────────
@@ -683,26 +1223,56 @@
       <div class="step-content">
         <div class="row g-3">
           <div class="col-md-7">
-            <div style="background:#fafafa;border:1px solid var(--gray-2);border-radius:10px;padding:12px 16px">
-              <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:4px">Razón social</div>
-              <div style="font-size:1.02rem;font-weight:800;color:#0a0a0a">{{ req.customer_name }}</div>
-              <div style="margin-top:8px;font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:4px">RUT del documento</div>
+            <div class="pa1-editable-wrap">
+              <div class="pa1-edit-row">
+                <div>
+                  <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:4px">
+                    Razón social
+                    <span class="text-muted" style="font-weight:500;text-transform:none;letter-spacing:0;font-size:.7rem;margin-left:4px">(editable)</span>
+                  </div>
+                  <div id="pa1NombreDisplay" style="font-size:1.05rem;font-weight:800;color:#0a0a0a;line-height:1.25">{{ req.customer_name }}</div>
+                  <input id="pa1NombreInput" class="pa1-edit-input" type="text" value="{{ req.customer_name }}" maxlength="200" style="display:none">
+                </div>
+                <button type="button" class="pa1-edit-btn btn-2027" id="pa1EditBtn" onclick="pa1EditNombre()" title="Editar razón social">
+                  <i class="bi bi-pencil"></i><span>Editar</span>
+                </button>
+                <button type="button" class="pa1-edit-btn btn-2027" id="pa1SaveBtn" onclick="pa1GuardarNombre()" style="display:none;background:#16a34a;color:#fff;border-color:#16a34a">
+                  <i class="bi bi-check-lg"></i><span>Guardar</span>
+                </button>
+                <button type="button" class="pa1-edit-btn btn-2027" id="pa1CancelBtn" onclick="pa1CancelarEdicion()" style="display:none">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
+              <div style="margin-top:10px;font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:4px">RUT del documento</div>
               <div style="font-family:monospace;font-size:.95rem;font-weight:700">{{ req.customer_rut }}</div>
+
+              {# Checkbox: usar datos del cliente como contacto de retiro #}
+              {% set _cli_rut_pa1 = (req.customer_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+              {% set _ret_rut_pa1 = (req.pickup_person_rut or '')|replace('.','')|replace('-','')|replace(' ','')|upper %}
+              {% if _cli_rut_pa1 != _ret_rut_pa1 %}
+              <label class="pa1-contact-chk btn-2027" for="pa1UsarComoContacto">
+                <input type="checkbox" id="pa1UsarComoContacto" onchange="pa1UsarClienteComoContacto(this.checked)">
+                <div>
+                  <strong><i class="bi bi-arrow-down-up me-1"></i>Usar datos del cliente como contacto de retiro</strong>
+                  <small>Si lo marcas, copiamos al cliente (<strong>{{ req.customer_name }}</strong>) como persona que retira, dejando el dueño del documento como contacto oficial.</small>
+                </div>
+              </label>
+              {% endif %}
             </div>
           </div>
           <div class="col-md-5">
-            <div style="background:#fafafa;border:1px solid var(--gray-2);border-radius:10px;padding:12px 16px">
+            <div style="background:linear-gradient(180deg,#fafafa 0%, rgba(255,255,255,.96) 100%);border:1px solid var(--gray-2);border-radius:12px;padding:14px 16px;height:100%">
               <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:4px"><i class="bi bi-person-badge me-1"></i>Quien retira</div>
-              <div style="font-size:.95rem;font-weight:800;color:#0a0a0a">{{ req.pickup_person_name }}</div>
-              <div style="font-family:monospace;font-size:.82rem;color:#6b7280;margin-top:2px">{{ req.pickup_person_rut }} · {{ req.pickup_person_phone }}</div>
+              <div id="pa1RetiraNombre" style="font-size:1.02rem;font-weight:800;color:#0a0a0a;line-height:1.25">{{ req.pickup_person_name }}</div>
+              <div id="pa1RetiraRut" style="font-family:monospace;font-size:.82rem;color:#6b7280;margin-top:2px">{{ req.pickup_person_rut }} · {{ req.pickup_person_phone }}</div>
               <div style="font-size:.74rem;color:#6b7280;margin-top:4px;text-transform:capitalize">{{ req.pickup_person_relation }}</div>
             </div>
           </div>
         </div>
         <div class="d-flex gap-2 flex-wrap mt-3" style="font-size:.78rem">
-          <a class="btn btn-sm btn-outline-dark" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>{{ req.contact_email }}</a>
-          {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>{{ req.contact_phone }}</a>{% endif %}
-          <button type="button" class="btn btn-sm btn-outline-dark" onclick="cambiarTabInfo('comunicacion'); document.getElementById('infoTabs').scrollIntoView({behavior:'smooth',block:'start'})"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
+          <a class="btn btn-sm btn-outline-dark btn-2027" href="mailto:{{ req.contact_email }}"><i class="bi bi-envelope me-1"></i>{{ req.contact_email }}</a>
+          {% if req.contact_phone %}<a class="btn btn-sm btn-outline-success btn-2027" href="tel:{{ req.contact_phone }}"><i class="bi bi-telephone me-1"></i>{{ req.contact_phone }}</a>{% endif %}
+          <button type="button" class="btn btn-sm btn-outline-dark btn-2027" onclick="cambiarTabInfo('comunicacion'); document.getElementById('infoTabs').scrollIntoView({behavior:'smooth',block:'start'})"><i class="bi bi-chat-dots me-1"></i>Enviarle mensaje</button>
         </div>
       </div>
     </section>
@@ -783,9 +1353,14 @@
           <div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando documentos del cliente...</div>
         </div>
 
-        {# Buscador manual de documento (si no apareció en sugerencias) #}
-        <div style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a;margin:18px 0 8px">
-          <i class="bi bi-search me-1"></i>¿No aparece la factura? Búscala manualmente
+        {# Buscador manual + modal de búsqueda avanzada #}
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:18px 0 8px">
+          <div style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a">
+            <i class="bi bi-search me-1"></i>¿No aparece la factura? Búscala
+          </div>
+          <button type="button" class="rba-open-btn btn-2027" onclick="rbaOpen()" title="Modal con 2 motores: por documento y por RUT/nombre">
+            <i class="bi bi-stars"></i><span>Búsqueda avanzada</span>
+          </button>
         </div>
         <div class="doc-search-bar">
           <select id="val_tido" title="Tipo de documento">
@@ -797,7 +1372,7 @@
             <option value="GDV">GDV · Guía despacho</option>
           </select>
           <input id="val_nudo" type="text" placeholder="N° del documento" value="{{ req.document_number }}">
-          <button type="button" onclick="buscarYAgregarERP({{ req.id }})" id="btnBuscarManual">
+          <button type="button" onclick="buscarYAgregarERP({{ req.id }})" id="btnBuscarManual" class="btn-2027">
             <i class="bi bi-plus-circle"></i><span>Buscar y agregar</span>
           </button>
         </div>
@@ -1060,6 +1635,98 @@
       </div>
     </section>
 
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   ✦✦✦ MODAL BÚSQUEDA AVANZADA — 2 motores estilo mantenciones ✦✦✦
+   ────────────────────────────────────────────────────────────────────
+   Daniel 2026-05-23: "me gustaría que se viera como en mantenciones un
+   modal y dos motores de búsqueda. uno que busca por cada documento y
+   llenando una lista de productos del cual se van a ir publicando. Y
+   otro con un motor de búsqueda que va a traer la totalidad de los
+   productos. Trabaja con el mismo motor de búsqueda de mantenciones."
+   Lazy-render: el modal solo aparece cuando el operador hace click —
+   no agrega peso al render inicial.
+══════════════════════════════════════════════════════════════════════ #}
+<div class="rba-backdrop" id="rbaBackdrop" onclick="rbaClose()" aria-hidden="true"></div>
+<div class="rba-modal" id="rbaModal" role="dialog" aria-modal="true" aria-labelledby="rbaTitle" aria-hidden="true">
+  <div class="rba-handle"></div>
+  <div class="rba-head">
+    <h4 id="rbaTitle"><i class="bi bi-stars" style="color:var(--ilus-red);font-size:1.1rem"></i>Búsqueda avanzada de productos</h4>
+    <button type="button" class="rba-close btn-2027" onclick="rbaClose()" aria-label="Cerrar">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="rba-tabs" role="tablist">
+    <button type="button" class="rba-tab is-active" role="tab" id="rbaTabDoc" onclick="rbaSetTab('doc')">
+      <i class="bi bi-receipt"></i><span>Por documento</span>
+    </button>
+    <button type="button" class="rba-tab" role="tab" id="rbaTabCli" onclick="rbaSetTab('cli')">
+      <i class="bi bi-person-vcard"></i><span>Por RUT / nombre</span>
+    </button>
+  </div>
+  <div class="rba-body" id="rbaBody">
+    {# Panel A — Por documento (TIDO + NUDO) #}
+    <div id="rbaPanelDoc" class="rba-panel">
+      <div class="rba-mod-hint">
+        <i class="bi bi-info-circle"></i>
+        <div>Ingresa <strong>tipo + número</strong> del documento (factura, boleta, guía…). Te mostraremos sus productos con saldo pendiente para que selecciones cuáles van en este retiro.</div>
+      </div>
+      <div class="rba-search-row">
+        <select id="rbaDocTido" title="Tipo de documento">
+          <option value="FCV">FCV · Factura</option>
+          <option value="BLV">BLV · Boleta</option>
+          <option value="VD">VD · N. Venta</option>
+          <option value="WEB">WEB · N. Venta Web</option>
+          <option value="NVI">NVI · N. Venta Int.</option>
+          <option value="GDV">GDV · Guía despacho</option>
+        </select>
+        <input id="rbaDocNudo" type="text" placeholder="N° del documento (ej: 12345)" inputmode="numeric">
+        <button type="button" class="rba-btn-search btn-2027" id="rbaDocBtn" onclick="rbaBuscarPorDoc()">
+          <i class="bi bi-search"></i><span>Buscar líneas</span>
+        </button>
+      </div>
+      <div id="rbaDocResult">
+        <div class="rba-empty">
+          <i class="bi bi-receipt rba-empty-icon"></i>
+          <h6>Buscar productos de un documento</h6>
+          <p>Ingresa tipo + número arriba y te mostramos sus líneas con saldo disponible.</p>
+        </div>
+      </div>
+    </div>
+    {# Panel B — Por RUT / nombre #}
+    <div id="rbaPanelCli" class="rba-panel" style="display:none">
+      <div class="rba-mod-hint">
+        <i class="bi bi-lightbulb"></i>
+        <div>Ingresa <strong>RUT</strong> (con o sin puntos) o <strong>nombre del cliente</strong>. Te traemos todos sus documentos del ERP con su estado de saldo. Expande cada uno para ver y seleccionar productos específicos.</div>
+      </div>
+      <div class="rba-search-row">
+        <input id="rbaCliQ" type="search" placeholder="RUT o razón social… (ej: 76123456 o Sportlife)" autocomplete="off">
+        <button type="button" class="rba-btn-search btn-2027" id="rbaCliBtn" onclick="rbaBuscarPorCliente()">
+          <i class="bi bi-search"></i><span>Buscar cliente</span>
+        </button>
+      </div>
+      <div id="rbaCliResult">
+        <div class="rba-empty">
+          <i class="bi bi-person-vcard rba-empty-icon"></i>
+          <h6>Buscar todos los documentos de un cliente</h6>
+          <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="rba-foot">
+    <div class="rba-counter" id="rbaCounter">
+      <span class="rba-counter-pill" id="rbaCounterPill">0</span>
+      productos seleccionados · <strong id="rbaCounterKg">0 kg</strong> · <strong id="rbaCounterM3">0 m³</strong>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="pa1-edit-btn btn-2027" onclick="rbaClose()">Cancelar</button>
+      <button type="button" class="rba-btn-assoc btn-2027" id="rbaAssocBtn" onclick="rbaAsociarSeleccion()" disabled>
+        <i class="bi bi-box-arrow-in-down"></i><span>Asociar al retiro</span>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -2047,6 +2714,685 @@ async function enviarPropuestaWizard(){
     btn.innerHTML = _orig;
   }
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  PASO 1 — EDICIÓN DE NOMBRE CLIENTE + USAR COMO CONTACTO
+//  Daniel 2026-05-23: "el nombre del cliente o la razón social cambie
+//  con la asignación del producto. Entonces, no te dejes llevar mucho
+//  por bloquear lo que dice el cliente"
+// ════════════════════════════════════════════════════════════════════
+function pa1EditNombre(){
+  document.getElementById('pa1NombreDisplay').style.display = 'none';
+  document.getElementById('pa1NombreInput').style.display   = '';
+  document.getElementById('pa1EditBtn').style.display       = 'none';
+  document.getElementById('pa1SaveBtn').style.display       = '';
+  document.getElementById('pa1CancelBtn').style.display     = '';
+  setTimeout(()=>{document.getElementById('pa1NombreInput').focus()}, 50);
+}
+function pa1CancelarEdicion(){
+  const orig = document.getElementById('pa1NombreDisplay').textContent.trim();
+  document.getElementById('pa1NombreInput').value = orig;
+  document.getElementById('pa1NombreDisplay').style.display = '';
+  document.getElementById('pa1NombreInput').style.display   = 'none';
+  document.getElementById('pa1EditBtn').style.display       = '';
+  document.getElementById('pa1SaveBtn').style.display       = 'none';
+  document.getElementById('pa1CancelBtn').style.display     = 'none';
+}
+async function pa1GuardarNombre(){
+  const inp = document.getElementById('pa1NombreInput');
+  const nuevo = (inp.value || '').trim();
+  if (!nuevo){
+    ilusToast('El nombre no puede quedar vacío', { type:'warning' });
+    return;
+  }
+  const orig = document.getElementById('pa1NombreDisplay').textContent.trim();
+  if (nuevo === orig){
+    pa1CancelarEdicion();
+    return;
+  }
+  const btn = document.getElementById('pa1SaveBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const d = await _fetchJsonSafe(`/retiros/${_RID}/customer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_name: nuevo }),
+    });
+    if (!d.ok){
+      ilusToast('Error: ' + (d.error || 'No se pudo guardar'), { type:'error' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg"></i><span>Guardar</span>';
+      return;
+    }
+    // Actualizar display + esconder inputs
+    document.getElementById('pa1NombreDisplay').textContent = d.customer_name || nuevo;
+    document.getElementById('pa1NombreDisplay').style.display = '';
+    document.getElementById('pa1NombreInput').style.display   = 'none';
+    document.getElementById('pa1EditBtn').style.display       = '';
+    btn.style.display = 'none';
+    document.getElementById('pa1CancelBtn').style.display = 'none';
+    ilusToast('Razón social actualizada', { type:'success' });
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-lg"></i><span>Guardar</span>';
+  }
+}
+async function pa1UsarClienteComoContacto(checked){
+  if (!checked) return;
+  const ok = await ilusConfirm({
+    title: 'Usar datos del cliente como contacto',
+    message: '¿Reemplazar la persona que retira con los datos del cliente?',
+    sub: 'El dueño del documento queda como contacto oficial. Esto se registra en el historial.',
+    okLabel: 'Sí, copiar', cancelLabel: 'No, cancelar',
+  });
+  if (!ok){
+    document.getElementById('pa1UsarComoContacto').checked = false;
+    return;
+  }
+  try {
+    const d = await _fetchJsonSafe(`/retiros/${_RID}/customer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usar_cliente_como_contacto: true }),
+    });
+    if (!d.ok){
+      ilusToast('Error: ' + (d.error || 'No se pudo actualizar'), { type:'error' });
+      document.getElementById('pa1UsarComoContacto').checked = false;
+      return;
+    }
+    // Refrescar UI con los nuevos datos del contacto
+    const nm = document.getElementById('pa1RetiraNombre');
+    const rr = document.getElementById('pa1RetiraRut');
+    if (nm) nm.textContent = d.pickup_person_name || '';
+    if (rr){
+      const oldText = rr.textContent || '';
+      const phoneMatch = oldText.split('·')[1] || '';
+      rr.textContent = (d.pickup_person_rut || '') + ' · ' + (phoneMatch.trim());
+    }
+    ilusToast('Datos del cliente aplicados como contacto', { type:'success' });
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+    document.getElementById('pa1UsarComoContacto').checked = false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ✦✦ MODAL BÚSQUEDA AVANZADA — 2 motores estilo mantenciones ✦✦
+//  Daniel 2026-05-23
+//  Reusa el endpoint /retiros/api/buscar-erp que detecta auto el modo
+//  (RUT, número doc, nombre). Para "Por documento" usamos /api/erp/documento
+//  para traer las líneas del header.
+// ════════════════════════════════════════════════════════════════════
+const _RBA = {
+  open: false,
+  tab:  'doc',          // 'doc' | 'cli'
+  selDoc: new Map(),    // sku -> {sku, nombre, qty, saldo, doc_tido, doc_nudo}
+  selCli: new Map(),    // key=`${tipo}|${nudo}` -> {tido, nudo, sku, nombre, qty, saldo}
+  loaded: { docHeader: null, cliQuery: null },
+  _liveTimer: null,
+};
+
+function rbaOpen(){
+  _RBA.open = true;
+  const bd = document.getElementById('rbaBackdrop');
+  const md = document.getElementById('rbaModal');
+  bd.classList.add('is-open');
+  md.classList.add('is-open');
+  bd.setAttribute('aria-hidden', 'false');
+  md.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  // Reset selecciones cuando se abre fresco
+  _RBA.selDoc.clear();
+  _RBA.selCli.clear();
+  rbaUpdateCounter();
+  // Focus input según tab activo
+  setTimeout(()=>{
+    if (_RBA.tab === 'doc'){
+      const i = document.getElementById('rbaDocNudo');
+      if (i) i.focus();
+    } else {
+      const i = document.getElementById('rbaCliQ');
+      if (i) i.focus();
+    }
+  }, 350);
+}
+function rbaClose(){
+  _RBA.open = false;
+  document.getElementById('rbaBackdrop').classList.remove('is-open');
+  document.getElementById('rbaModal').classList.remove('is-open');
+  document.getElementById('rbaBackdrop').setAttribute('aria-hidden', 'true');
+  document.getElementById('rbaModal').setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+// ESC para cerrar
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && _RBA.open) rbaClose();
+});
+
+function rbaSetTab(tab){
+  _RBA.tab = tab;
+  document.getElementById('rbaTabDoc').classList.toggle('is-active', tab === 'doc');
+  document.getElementById('rbaTabCli').classList.toggle('is-active', tab === 'cli');
+  document.getElementById('rbaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
+  document.getElementById('rbaPanelCli').style.display = tab === 'cli' ? '' : 'none';
+}
+
+// Skeleton premium para resultados
+function _rbaSkel(){
+  return `<div class="rba-skel">
+    <div class="rba-skel-row"></div>
+    <div class="rba-skel-row"></div>
+    <div class="rba-skel-row"></div>
+    <div class="rba-skel-row"></div>
+  </div>`;
+}
+// Loading text con texto cambiante (3 fases)
+function _rbaLoadingText(){
+  return `<div class="rba-loading-text">
+    <span id="rbaLoadingMsg">Consultando ERP Random</span>
+    <span class="dot1"></span><span class="dot2"></span><span class="dot3"></span>
+  </div>`;
+}
+function _rbaCycleLoadingMsg(){
+  const msgs = ['Consultando ERP Random', 'Calculando saldos por línea', 'Verificando documentos ya asociados'];
+  let i = 0;
+  if (_RBA._liveTimer) clearInterval(_RBA._liveTimer);
+  _RBA._liveTimer = setInterval(()=>{
+    const el = document.getElementById('rbaLoadingMsg');
+    if (!el || !_RBA.open){
+      clearInterval(_RBA._liveTimer);
+      _RBA._liveTimer = null;
+      return;
+    }
+    i = (i + 1) % msgs.length;
+    el.style.opacity = 0;
+    setTimeout(()=>{
+      if (el) {el.textContent = msgs[i]; el.style.opacity = 1;}
+    }, 200);
+  }, 1400);
+}
+function _rbaStopLoadingMsg(){
+  if (_RBA._liveTimer){clearInterval(_RBA._liveTimer); _RBA._liveTimer = null;}
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "POR DOCUMENTO": busca líneas de un TIDO+NUDO específico
+// ──────────────────────────────────────────────────────────────
+async function rbaBuscarPorDoc(){
+  const tido = (document.getElementById('rbaDocTido').value || '').toUpperCase();
+  const nudo = (document.getElementById('rbaDocNudo').value || '').trim();
+  if (!tido || !nudo){
+    ilusToast('Ingresa tipo y número', { type:'warning' });
+    return;
+  }
+  const cont = document.getElementById('rbaDocResult');
+  const btn  = document.getElementById('rbaDocBtn');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Buscando…</span>'; }
+  cont.innerHTML = _rbaSkel() + _rbaLoadingText();
+  _rbaCycleLoadingMsg();
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido, nudo })
+    });
+    const d = await r.json();
+    if (!r.ok || d.error){
+      cont.innerHTML = `<div class="rba-empty">
+        <i class="bi bi-exclamation-triangle rba-empty-icon" style="color:#f59e0b"></i>
+        <h6>${_esc(d.error || 'No se encontró el documento')}</h6>
+        <p>Verifica que el tipo y número sean correctos.</p>
+      </div>`;
+      return;
+    }
+    const lineas = (d.lineas || []).filter(l => !l.es_zz);
+    if (!lineas.length){
+      cont.innerHTML = `<div class="rba-empty">
+        <i class="bi bi-info-circle rba-empty-icon"></i>
+        <h6>Documento sin productos</h6>
+        <p>El documento solo tiene servicios o fletes — no hay líneas físicas que retirar.</p>
+      </div>`;
+      return;
+    }
+    _RBA.loaded.docHeader = {
+      tido: d.tido || tido,
+      nudo: d.nudo || nudo,
+      cliente: d.cliente || d.razon_social || '',
+      rut: d.rut || '',
+      fecha: d.fecha || ''
+    };
+    const t1 = Math.round(performance.now() - t0);
+    rbaRenderDocLineas(lineas, t1);
+  } catch(e){
+    cont.innerHTML = `<div class="rba-empty">
+      <i class="bi bi-x-circle rba-empty-icon" style="color:#dc2626"></i>
+      <h6>Error de red</h6>
+      <p>${_esc(e.message)}</p>
+    </div>`;
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-search"></i><span>Buscar líneas</span>'; }
+    _rbaStopLoadingMsg();
+  }
+}
+function rbaRenderDocLineas(lineas, fetchMs){
+  const cont = document.getElementById('rbaDocResult');
+  const h = _RBA.loaded.docHeader || {};
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:.82rem">
+    <div>
+      <strong style="font-family:monospace;color:var(--ilus-red)">${_esc(h.tido)} ${_esc(h.nudo)}</strong>
+      <span style="color:#6b7280;margin-left:8px">${_esc(h.cliente || '—')}</span>
+      <span style="color:#9ca3af;margin-left:6px;font-size:.78rem">${_esc(h.fecha || '')}</span>
+    </div>
+    <span style="color:#9ca3af;font-size:.72rem">${lineas.length} línea${lineas.length===1?'':'s'} · ${fetchMs} ms</span>
+  </div>`;
+  // Master selector
+  html += `<div class="rba-master-bar">
+    <label>
+      <span class="rba-chk" id="rbaMasterChkDoc"><input type="checkbox" onchange="rbaToggleAllDoc(this.checked)"><span class="rba-chk-mark">✓</span></span>
+      Seleccionar todas las líneas con saldo
+    </label>
+    <span class="rba-master-info">${lineas.filter(l => (parseFloat(l.cantidad)||0) > 0).length} con saldo · ${lineas.filter(l => (parseFloat(l.cantidad)||0) === 0).length} sin saldo</span>
+  </div>`;
+  html += '<div>';
+  lineas.forEach((l, i) => {
+    const sku = (l.sku || '').toUpperCase();
+    const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+    const qty = parseFloat(l.cantidad) || 0;
+    const saldo = qty;   // simplificación: cantidad = saldo (mismo criterio que ya usa la UI)
+    const isZero = saldo <= 0;
+    const lineKey = `DOC|${sku}|${i}`;
+    html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
+      <label class="rba-chk" data-sku="${_esc(sku)}" data-saldo="${saldo}">
+        <input type="checkbox" ${isZero?'disabled':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" onchange="rbaToggleLineaDoc(this)">
+        <span class="rba-chk-mark">✓</span>
+      </label>
+      <div class="ln-sku">${_esc(sku) || '—'}</div>
+      <div class="ln-desc">${_esc(nom)}</div>
+      <div class="ln-qty">
+        <span>${qty} u.</span>
+        <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+      </div>
+      <input class="ln-qty-input" type="number" min="0" max="${saldo}" value="${saldo}" data-line-key="${_esc(lineKey)}" onchange="rbaCambiarQtyDoc(this)" ${isZero?'disabled':''}>
+    </div>`;
+  });
+  html += '</div>';
+  cont.innerHTML = html;
+}
+function rbaToggleAllDoc(checked){
+  const inputs = document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]');
+  inputs.forEach(inp => {
+    if (inp.disabled) return;
+    inp.checked = checked;
+    rbaToggleLineaDoc(inp);
+  });
+}
+function rbaToggleLineaDoc(inp){
+  const chkBox = inp.closest('.rba-chk');
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  const row = inp.closest('.rba-line');
+  if (row) row.classList.toggle('is-selected', inp.checked);
+  const key = inp.dataset.lineKey;
+  const sku = inp.dataset.sku;
+  const nombre = inp.dataset.nombre;
+  const qtyInp = document.querySelector(`#rbaDocResult input.ln-qty-input[data-line-key="${key}"]`);
+  const qty = parseFloat((qtyInp ? qtyInp.value : inp.dataset.qty) || 0) || 0;
+  const h = _RBA.loaded.docHeader || {};
+  if (inp.checked){
+    _RBA.selDoc.set(key, {
+      sku, nombre, qty,
+      saldo: parseFloat(inp.dataset.qty) || qty,
+      doc_tido: h.tido, doc_nudo: h.nudo
+    });
+  } else {
+    _RBA.selDoc.delete(key);
+  }
+  rbaUpdateCounter();
+}
+function rbaCambiarQtyDoc(inp){
+  const key = inp.dataset.lineKey;
+  const item = _RBA.selDoc.get(key);
+  if (!item) return;
+  let v = parseFloat(inp.value || 0) || 0;
+  if (v < 0) v = 0;
+  if (v > item.saldo) v = item.saldo;
+  inp.value = v;
+  item.qty = v;
+  _RBA.selDoc.set(key, item);
+  rbaUpdateCounter();
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "POR CLIENTE": busca docs por RUT/nombre/número
+// ──────────────────────────────────────────────────────────────
+async function rbaBuscarPorCliente(){
+  const q = (document.getElementById('rbaCliQ').value || '').trim();
+  if (q.length < 3){
+    ilusToast('Mínimo 3 caracteres', { type:'warning' });
+    return;
+  }
+  const cont = document.getElementById('rbaCliResult');
+  const btn  = document.getElementById('rbaCliBtn');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Buscando…</span>'; }
+  cont.innerHTML = _rbaSkel() + _rbaLoadingText();
+  _rbaCycleLoadingMsg();
+  const t0 = performance.now();
+  try {
+    const d = await _fetchJsonSafe('/retiros/api/buscar-erp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q })
+    });
+    if (d.sin_conexion){
+      cont.innerHTML = `<div class="rba-empty">
+        <i class="bi bi-plug rba-empty-icon" style="color:#f59e0b"></i>
+        <h6>ERP no conectado</h6>
+        <p>${_esc(d.error || 'Pídele al admin que setee RANDOM_SQL_* en Railway.')}</p>
+      </div>`;
+      return;
+    }
+    if (!d.ok || (d._not_json)){
+      cont.innerHTML = `<div class="rba-empty">
+        <i class="bi bi-x-circle rba-empty-icon" style="color:#dc2626"></i>
+        <h6>Error de búsqueda</h6>
+        <p>${_esc(d.error || 'No se pudo consultar el ERP')}</p>
+      </div>`;
+      return;
+    }
+    const docs = d.documentos || [];
+    if (!docs.length){
+      cont.innerHTML = `<div class="rba-empty">
+        <i class="bi bi-search rba-empty-icon"></i>
+        <h6>Sin resultados para "${_esc(q)}"</h6>
+        <p>Prueba con un RUT distinto o un fragmento del nombre del cliente.</p>
+      </div>`;
+      return;
+    }
+    _RBA.loaded.cliQuery = { q, modo: d.modo, docs };
+    const t1 = Math.round(performance.now() - t0);
+    rbaRenderCliDocs(docs, d.modo, t1);
+  } catch(e){
+    cont.innerHTML = `<div class="rba-empty">
+      <i class="bi bi-x-circle rba-empty-icon" style="color:#dc2626"></i>
+      <h6>Error de red</h6>
+      <p>${_esc(e.message)}</p>
+    </div>`;
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-search"></i><span>Buscar cliente</span>'; }
+    _rbaStopLoadingMsg();
+  }
+}
+function rbaRenderCliDocs(docs, modo, fetchMs){
+  const cont = document.getElementById('rbaCliResult');
+  const modoTxt = { rut: 'RUT', numero: 'N° doc', nombre: 'Nombre' }[modo] || modo;
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:.82rem">
+    <div><strong>${docs.length}</strong> documento${docs.length===1?'':'s'} por <strong>${_esc(modoTxt)}</strong></div>
+    <span style="color:#9ca3af;font-size:.72rem">${fetchMs} ms</span>
+  </div>`;
+  html += '<div class="rba-results">';
+  docs.forEach((doc, i) => {
+    const clsArr = [];
+    if (doc.ya_tiene_retiro) clsArr.push('is-already');
+    if (!doc.tiene_saldo) clsArr.push('is-no-saldo');
+    const fecha = doc.fecha || '';
+    const total = doc.valor_total ? '$' + Math.round(doc.valor_total).toLocaleString('es-CL') : '—';
+    const saldoBadge = doc.tiene_saldo
+      ? '<span class="badge-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>'
+      : '<span class="badge-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
+    const alreadyBadge = doc.ya_tiene_retiro
+      ? '<span class="badge-pill lock"><i class="bi bi-shield-lock"></i>En otro retiro</span>'
+      : '';
+    html += `<div class="rba-doc-card ${clsArr.join(' ')}" data-cli-idx="${i}" style="animation-delay:${i*40}ms">
+      <div class="rba-doc-head" onclick="rbaToggleDocCli(${i})">
+        <div class="rba-doc-num">
+          <span class="badge-tipo">${_esc(doc.tido_display)}</span>${_esc(doc.nudo_display)}
+        </div>
+        <div class="rba-doc-info">
+          <div class="rd-cli">${_esc(doc.razon_social || '—')}</div>
+          <div class="rd-meta">
+            <span class="rd-rut">${_esc(doc.rut || '—')}</span>
+            ${fecha ? `<span><i class="bi bi-calendar3 me-1"></i>${_esc(fecha)}</span>` : ''}
+          </div>
+        </div>
+        <div class="rba-doc-totals">
+          ${saldoBadge}
+          ${alreadyBadge}
+          <span class="badge-pill">${doc.n_lineas || 0} líneas</span>
+          <span class="badge-pill" title="Total bruto">${total}</span>
+        </div>
+        <div class="rba-doc-actions">
+          <button class="rba-doc-toggle btn-2027" onclick="event.stopPropagation();rbaToggleDocCli(${i})" aria-label="Ver productos">
+            <i class="bi bi-chevron-down"></i>
+          </button>
+        </div>
+      </div>
+      <div class="rba-doc-body" id="rbaCliBody-${i}">
+        <div class="rba-loading-text">Cargando líneas <span class="dot1"></span><span class="dot2"></span><span class="dot3"></span></div>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  cont.innerHTML = html;
+}
+async function rbaToggleDocCli(idx){
+  const card = document.querySelector(`#rbaCliResult .rba-doc-card[data-cli-idx="${idx}"]`);
+  if (!card) return;
+  const isOpen = card.classList.toggle('is-open');
+  if (!isOpen) return;
+  const body = document.getElementById('rbaCliBody-' + idx);
+  if (body.dataset.loaded === '1') return;
+  const doc = ((_RBA.loaded.cliQuery && _RBA.loaded.cliQuery.docs) || [])[idx];
+  if (!doc){ body.innerHTML = '<div class="text-muted small">No se encontró el documento.</div>'; return; }
+  body.innerHTML = _rbaSkel();
+  try {
+    const r = await fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    });
+    const dd = await r.json();
+    if (!r.ok || dd.error){
+      body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_esc(dd.error || 'Error consultando ERP')}</div>`;
+      return;
+    }
+    const lineas = (dd.lineas || []).filter(l => !l.es_zz);
+    if (!lineas.length){
+      body.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>Sin productos (solo servicios).</div>';
+      body.dataset.loaded = '1';
+      return;
+    }
+    // Botón para asociar el DOC ENTERO directo (atajo)
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280">
+      <span>${lineas.length} producto${lineas.length===1?'':'s'} disponibles · selecciona los que vienen a retirar</span>
+      ${doc.ya_tiene_retiro
+        ? '<span class="badge-pill lock"><i class="bi bi-shield-lock me-1"></i>Doc en otro retiro</span>'
+        : `<button class="rba-doc-add-btn btn-2027" onclick="rbaAsociarDocCompleto(${idx})">
+            <i class="bi bi-plus-lg"></i>Asociar doc completo
+          </button>`}
+    </div>`;
+    lineas.forEach((l, j) => {
+      const sku = (l.sku || '').toUpperCase();
+      const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+      const qty = parseFloat(l.cantidad) || 0;
+      const saldo = qty;   // mismo criterio
+      const isZero = saldo <= 0;
+      const lineKey = `CLI|${idx}|${sku}|${j}`;
+      html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}">
+        <label class="rba-chk">
+          <input type="checkbox" ${isZero?'disabled':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" onchange="rbaToggleLineaCli(this)">
+          <span class="rba-chk-mark">✓</span>
+        </label>
+        <div class="ln-sku">${_esc(sku) || '—'}</div>
+        <div class="ln-desc">${_esc(nom)}</div>
+        <div class="ln-qty">
+          <span>${qty} u.</span>
+          <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+        </div>
+        <input class="ln-qty-input" type="number" min="0" max="${saldo}" value="${saldo}" data-line-key="${_esc(lineKey)}" onchange="rbaCambiarQtyCli(this)" ${isZero?'disabled':''}>
+      </div>`;
+    });
+    body.innerHTML = html;
+    body.dataset.loaded = '1';
+  } catch(e){
+    body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_esc(e.message)}</div>`;
+  }
+}
+function rbaToggleLineaCli(inp){
+  const chkBox = inp.closest('.rba-chk');
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  const row = inp.closest('.rba-line');
+  if (row) row.classList.toggle('is-selected', inp.checked);
+  const key = inp.dataset.lineKey;
+  if (inp.checked){
+    _RBA.selCli.set(key, {
+      tido:   inp.dataset.docTido,
+      nudo:   inp.dataset.docNudo,
+      sku:    inp.dataset.sku,
+      nombre: inp.dataset.nombre,
+      qty:    parseFloat(inp.dataset.qty) || 0,
+      saldo:  parseFloat(inp.dataset.qty) || 0,
+    });
+  } else {
+    _RBA.selCli.delete(key);
+  }
+  rbaUpdateCounter();
+}
+function rbaCambiarQtyCli(inp){
+  const key = inp.dataset.lineKey;
+  const item = _RBA.selCli.get(key);
+  if (!item) return;
+  let v = parseFloat(inp.value || 0) || 0;
+  if (v < 0) v = 0;
+  if (v > item.saldo) v = item.saldo;
+  inp.value = v;
+  item.qty = v;
+  _RBA.selCli.set(key, item);
+  rbaUpdateCounter();
+}
+async function rbaAsociarDocCompleto(idx){
+  const doc = ((_RBA.loaded.cliQuery && _RBA.loaded.cliQuery.docs) || [])[idx];
+  if (!doc) return;
+  // Atajo: usar el endpoint existente que asocia el doc entero
+  try {
+    const d = await _fetchJsonSafe(`/retiros/${_RID}/docs/agregar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document_type: doc.tido_display, document_number: doc.nudo_display })
+    });
+    if (d._http_status === 409){
+      ilusToast(`Ya estaba en este retiro`, { type:'warning' });
+      return;
+    }
+    if (!d.ok){
+      ilusToast('Error: ' + (d.error || 'No se pudo agregar'), { type:'error' });
+      return;
+    }
+    ilusToast(`✓ ${doc.tido_display} ${doc.nudo_display} agregado`, { type:'success' });
+    await refrescarDocsAsociados(_RID);
+    // Refrescar también sugerencias para mostrar nuevo estado
+    cargarSaldoCliente(_RID);
+  } catch(e){
+    ilusToast('Error: ' + e.message, { type:'error' });
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Contador en vivo + bump animation
+// ──────────────────────────────────────────────────────────────
+function rbaUpdateCounter(){
+  const n = _RBA.selDoc.size + _RBA.selCli.size;
+  const pill = document.getElementById('rbaCounterPill');
+  if (pill){
+    pill.textContent = n;
+    pill.classList.remove('is-bump');
+    void pill.offsetWidth;       // reflow para reiniciar animación
+    pill.classList.add('is-bump');
+  }
+  // Aproximación kg/m³ (no tenemos densidad por línea sin más datos)
+  const totalUnits = [..._RBA.selDoc.values(), ..._RBA.selCli.values()]
+    .reduce((s, it) => s + (it.qty || 0), 0);
+  const kg = document.getElementById('rbaCounterKg');
+  const m3 = document.getElementById('rbaCounterM3');
+  if (kg) kg.textContent = `${totalUnits.toFixed(0)} u.`;
+  if (m3) m3.textContent = `${n} líneas`;
+  document.getElementById('rbaAssocBtn').disabled = n === 0;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Asociar selección al retiro: agrupa por (tido, nudo) y agrega cada doc
+// ──────────────────────────────────────────────────────────────
+async function rbaAsociarSeleccion(){
+  const docsToAdd = new Map();   // key=`${tido}|${nudo}` → {tido, nudo}
+  // selDoc: viene del header _RBA.loaded.docHeader
+  if (_RBA.selDoc.size > 0 && _RBA.loaded.docHeader){
+    const h = _RBA.loaded.docHeader;
+    docsToAdd.set(`${h.tido}|${h.nudo}`, { tido: h.tido, nudo: h.nudo });
+  }
+  // selCli: tido y nudo vienen en cada item
+  _RBA.selCli.forEach(it => {
+    if (it.tido && it.nudo){
+      docsToAdd.set(`${it.tido}|${it.nudo}`, { tido: it.tido, nudo: it.nudo });
+    }
+  });
+
+  if (docsToAdd.size === 0){
+    ilusToast('Selecciona al menos un producto', { type:'warning' });
+    return;
+  }
+
+  const btn = document.getElementById('rbaAssocBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Asociando…</span>';
+  let okN = 0, dupN = 0, errN = 0, otrosN = [];
+  for (const [, info] of docsToAdd){
+    try {
+      const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_type: info.tido, document_number: info.nudo })
+      });
+      if (r.status === 409){ dupN++; continue; }
+      const d = await r.json();
+      if (!d.ok){ errN++; continue; }
+      okN++;
+      if (d.warning_otro_retiro){
+        otrosN.push(d.warning_otro_retiro.code);
+      }
+    } catch(e){
+      errN++;
+    }
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-box-arrow-in-down"></i><span>Asociar al retiro</span>';
+  if (okN){
+    let msg = `✓ ${okN} documento${okN===1?'':'s'} asociado${okN===1?'':'s'}`;
+    if (dupN) msg += ` · ${dupN} ya estaban`;
+    if (errN) msg += ` · ${errN} con error`;
+    ilusToast(msg, { type: 'success', duration: 5000 });
+    if (otrosN.length){
+      ilusToast(`⚠ Algunos figuran en otros retiros: ${otrosN.join(', ')}`, { type:'warning', duration:6000 });
+    }
+    await refrescarDocsAsociados(_RID);
+    cargarSaldoCliente(_RID);
+    rbaClose();
+  } else if (dupN && !errN){
+    ilusToast(`Los ${dupN} documento(s) ya estaban asociados`, { type:'warning' });
+  } else {
+    ilusToast(`No se pudo asociar — ${errN} error(es)`, { type:'error' });
+  }
+}
+
+// Enter en inputs del modal dispara búsqueda
+document.addEventListener('keydown', e => {
+  if (!_RBA.open) return;
+  if (e.key === 'Enter'){
+    if (document.activeElement && document.activeElement.id === 'rbaDocNudo') rbaBuscarPorDoc();
+    if (document.activeElement && document.activeElement.id === 'rbaCliQ')    rbaBuscarPorCliente();
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════
 //  INIT

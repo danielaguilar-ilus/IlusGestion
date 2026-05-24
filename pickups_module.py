@@ -3346,6 +3346,352 @@ def register_pickup_routes(app, ctx):
         })
 
     # ══════════════════════════════════════════════════════════════════
+    #  BÚSQUEDA AVANZADA ERP — modal estilo mantenciones (Daniel 2026-05-23)
+    #  Daniel: "me gustaría que se viera como en mantenciones un modal y
+    #  dos motores de búsqueda. uno que busca por cada documento y llenando
+    #  una lista de productos. Y otro con un motor de búsqueda que va a
+    #  traer la totalidad de los productos. Trabaja con el mismo motor de
+    #  búsqueda de mantenciones."
+    #
+    #  Endpoint UNIFICADO que detecta automáticamente el tipo de búsqueda:
+    #    • 7-9 dígitos        → RUT (todos los docs del cliente)
+    #    • 1-7 dígitos        → Número de documento
+    #    • Texto              → Razón social
+    #
+    #  Reusa el patrón SQL Server directo (_random_sql_query) — el mismo
+    #  motor que mantenciones/buscar-erp-sql, sin duplicar lógica.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/api/buscar-erp", methods=["POST"])
+    @require_permission("view")
+    def pickup_buscar_erp():
+        """Búsqueda inteligente en ERP Random (RUT / nombre / número).
+
+        Detecta automáticamente:
+          • 7-9 dígitos puros  → RUT
+          • 1-7 dígitos        → Número doc
+          • Texto              → Razón social
+
+        Para cada documento devuelve metadata + saldo ZZ disponible (para
+        que el frontend marque docs ya despachados con candado).
+
+        Body JSON: {q: "<string>"}
+        Response: {ok, modo, documentos: [...], count, query}
+        """
+        d = request.get_json(silent=True) or {}
+        q = (d.get("q") or "").strip()
+        if len(q) < 3:
+            return jsonify({"ok": False, "error": "Mínimo 3 caracteres", "documentos": []}), 400
+
+        try:
+            from app import _random_sql_query, _random_sql_pool
+        except ImportError:
+            return jsonify({"ok": True, "documentos": [],
+                            "error": "Motor ERP no disponible", "sin_conexion": True})
+
+        pool = _random_sql_pool()
+        if pool is None:
+            return jsonify({"ok": True, "documentos": [], "sin_conexion": True,
+                            "error": "ERP Random no configurado en este entorno."})
+
+        # Normalizar query
+        q_clean   = q.replace(".", "").replace(" ", "").replace("-", "").upper()
+        is_digits = q_clean.isdigit()
+        tidos_in  = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
+
+        docs = []
+        modo = ""
+        try:
+            # ── Modo RUT (7-9 dígitos) ─────────────────────────────
+            if is_digits and 7 <= len(q_clean) <= 9:
+                modo = "rut"
+                rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
+                docs = _random_sql_query(f"""
+                    SELECT TOP 80
+                        e.IDMAEEDO,
+                        LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                        LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                        LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        e.FEEMDO, e.VANEDO, e.VABRDO,
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
+                        LTRIM(RTRIM(COALESCE(
+                            NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
+                            NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
+                            NULLIF(LTRIM(RTRIM(e.SUENDO)),     ''),
+                            'Consumidor final'
+                        ))) AS NOMBRE,
+                        (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
+                                                  THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
+                                                  ELSE 0 END), 0)
+                           FROM MAEDDO d
+                          WHERE d.IDMAEEDO = e.IDMAEEDO
+                            AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
+                        (SELECT COUNT(*) FROM MAEDDO d2
+                          WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                    FROM MAEEDO e
+                    LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                          CASE WHEN CHARINDEX('-', e.ENDO) > 0
+                               THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
+                               ELSE LTRIM(RTRIM(COALESCE(e.ENDO,'')))
+                          END
+                    WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+                      AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                      AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                    ORDER BY e.FEEMDO DESC
+                """, (f"{rut_base}%", f"%{q_clean}%"), max_rows=80) or []
+
+            # ── Modo Número documento (1-7 dígitos) ────────────────
+            if not docs and is_digits and 1 <= len(q_clean) <= 7:
+                modo = "numero"
+                nudo_padded = q_clean.zfill(10)
+                nudo_vd     = f"VD{q_clean.zfill(8)}"
+                nudo_web    = f"WEB{q_clean.zfill(7)}"
+                docs = _random_sql_query(f"""
+                    SELECT TOP 30
+                        e.IDMAEEDO,
+                        LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                        LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                        LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        e.FEEMDO, e.VANEDO, e.VABRDO,
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
+                        LTRIM(RTRIM(COALESCE(
+                            NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
+                            NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
+                            NULLIF(LTRIM(RTRIM(e.SUENDO)),     ''),
+                            'Consumidor final'
+                        ))) AS NOMBRE,
+                        (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
+                                                  THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
+                                                  ELSE 0 END), 0)
+                           FROM MAEDDO d
+                          WHERE d.IDMAEEDO = e.IDMAEEDO
+                            AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
+                        (SELECT COUNT(*) FROM MAEDDO d2
+                          WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                    FROM MAEEDO e
+                    LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
+                          CASE WHEN CHARINDEX('-', e.ENDO) > 0
+                               THEN LTRIM(RTRIM(SUBSTRING(e.ENDO, 1, CHARINDEX('-', e.ENDO) - 1)))
+                               ELSE LTRIM(RTRIM(COALESCE(e.ENDO,'')))
+                          END
+                    WHERE e.NUDO IN (%s, %s, %s)
+                      AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                      AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                    ORDER BY e.FEEMDO DESC
+                """, (nudo_padded, nudo_vd, nudo_web), max_rows=30) or []
+
+            # ── Modo Razón social (texto) ──────────────────────────
+            # Estrategia 2-pasos:
+            #   3a) RUTs candidatos en MAEEN por nombre
+            #   3b) Docs cuyo ENDO matchea esos RUTs
+            if not docs and not is_digits:
+                modo = "nombre"
+                q_like = f"%{q.upper()}%"
+                ruts = _random_sql_query("""
+                    SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut,
+                                  LTRIM(RTRIM(NOKOEN)) AS razon
+                      FROM MAEEN
+                     WHERE UPPER(NOKOEN) LIKE %s
+                       AND TIEN IN ('C','A')
+                """, (q_like,)) or []
+                if ruts:
+                    rut_map = {r['rut']: r['razon'] for r in ruts if r.get('rut')}
+                    if rut_map:
+                        like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(rut_map))
+                        params = tuple(f"{rk}%" for rk in rut_map.keys())
+                        docs_raw = _random_sql_query(f"""
+                            SELECT TOP 60
+                                e.IDMAEEDO,
+                                LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                                LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                                LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                                e.FEEMDO, e.VANEDO, e.VABRDO,
+                                LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO,
+                                (SELECT COALESCE(SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0) > 0
+                                                          THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
+                                                          ELSE 0 END), 0)
+                                   FROM MAEDDO d
+                                  WHERE d.IDMAEEDO = e.IDMAEEDO
+                                    AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
+                                (SELECT COUNT(*) FROM MAEDDO d2
+                                  WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
+                            FROM MAEEDO e
+                            WHERE ({like_clauses})
+                              AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                              AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                            ORDER BY e.FEEMDO DESC
+                        """, params, max_rows=60) or []
+                        for r in docs_raw:
+                            endo = (r.get("ENDO") or "").strip()
+                            rut_clean = endo.split("-")[0] if "-" in endo else endo
+                            r["NOMBRE"] = rut_map.get(rut_clean, "")
+                        docs = docs_raw
+
+        except PermissionError as pe:
+            return jsonify({"ok": False,
+                            "error": f"Bloqueado por seguridad: {pe}",
+                            "documentos": []}), 403
+        except Exception as exc:
+            print(f"[pickup-buscar-erp] error: {exc}", flush=True)
+            return jsonify({"ok": False,
+                            "error": f"Error consultando ERP: {str(exc)[:200]}",
+                            "documentos": []})
+
+        # ── Identificar docs ya asociados a algún retiro (para mostrar candado) ──
+        ya_asociados = set()
+        try:
+            nudos_raw = [str(r.get("NUDO") or "").strip() for r in docs if r.get("NUDO")]
+            if nudos_raw:
+                placeholders = ",".join(["%s"] * len(nudos_raw))
+                rows_prd = mysql_fetchall(
+                    f"SELECT DISTINCT document_type, document_number "
+                    f"FROM pickup_request_docs WHERE document_number IN ({placeholders})",
+                    tuple(nudos_raw)
+                ) or []
+                for r in rows_prd:
+                    ya_asociados.add(f"{(r.get('document_type') or '').upper()}|"
+                                     f"{r.get('document_number') or ''}")
+        except Exception:
+            pass
+
+        # ── Formatear respuesta ────────────────────────────────────
+        out = []
+        for r in docs:
+            nudo_raw = (r.get("NUDO") or "").strip()
+            tido_raw = (r.get("TIDO") or "").strip()
+            # Detectar prefijo VD/WEB en NUDO
+            tido_display = tido_raw
+            if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+                tido_display = "VD"
+                nudo_display = nudo_raw[2:].lstrip("0") or "0"
+            elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+                tido_display = "WEB"
+                nudo_display = nudo_raw[3:].lstrip("0") or "0"
+            else:
+                nudo_display = nudo_raw.lstrip("0") or "0"
+
+            fe = r.get("FEEMDO")
+            saldo_zz = float(r.get("saldo_zz") or 0)
+            endo = (r.get("ENDO") or "").strip()
+            rut_clean = endo.split("-")[0] if "-" in endo else endo
+            key = f"{tido_display}|{nudo_display}"
+
+            out.append({
+                "idmaeedo":     r.get("IDMAEEDO"),
+                "tido":         tido_raw,
+                "nudo":         nudo_raw,
+                "tido_display": tido_display,
+                "nudo_display": nudo_display,
+                "rut":          rut_clean,
+                "razon_social": (r.get("NOMBRE") or "").strip().title(),
+                "fecha":        fe.strftime("%d/%m/%Y") if fe else "",
+                "fecha_iso":    fe.strftime("%Y-%m-%d") if fe else "",
+                "valor_neto":   float(r.get("VANEDO") or 0),
+                "valor_total":  float(r.get("VABRDO") or 0),
+                "estado_pago":  (r.get("ESPGDO") or "").strip(),
+                "saldo_zz":     saldo_zz,
+                "tiene_saldo":  saldo_zz > 0,
+                "n_lineas":     int(r.get("n_lineas") or 0),
+                "ya_tiene_retiro": key in ya_asociados,
+            })
+
+        return jsonify({
+            "ok":         True,
+            "modo":       modo,
+            "documentos": out,
+            "count":      len(out),
+            "query":      q,
+        })
+
+    # ══════════════════════════════════════════════════════════════════
+    #  ACTUALIZAR DATOS CLIENTE/CONTACTO DEL RETIRO (Daniel 2026-05-23)
+    #  Daniel: "el nombre del cliente o la razón social cambie con la
+    #  asignación del producto. Entonces, no te dejes llevar mucho por
+    #  bloquear lo que dice el cliente"
+    #  Y también: "es posible que me consulte si los datos que declaró
+    #  el cliente se podrán asignar como contacto de retiro y dejar como
+    #  oficial el dueño del documento"
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/<int:rid>/customer", methods=["POST"])
+    @require_permission("edit")
+    def pickup_actualizar_cliente(rid):
+        """Actualiza nombre/RUT del cliente y, opcionalmente, copia los
+        datos actuales del cliente como persona-que-retira (oficial = dueño
+        del doc, contacto/retira = quien lo declaró originalmente).
+
+        Body JSON:
+          customer_name:               nuevo nombre oficial (opcional)
+          customer_rut:                nuevo RUT oficial (opcional)
+          usar_cliente_como_contacto:  bool — si True copia
+                                        customer_name → pickup_person_name
+                                        customer_rut  → pickup_person_rut
+        """
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no existe"}), 404
+
+        body = request.get_json(silent=True) or {}
+        new_name = (body.get("customer_name") or "").strip()[:200]
+        new_rut  = (body.get("customer_rut")  or "").strip()[:30]
+        usar_como_contacto = bool(body.get("usar_cliente_como_contacto"))
+
+        sets, params = [], []
+        old_name = (req.get("customer_name") or "").strip()
+        old_rut  = (req.get("customer_rut")  or "").strip()
+
+        if new_name and new_name != old_name:
+            sets.append("customer_name=%s"); params.append(new_name)
+        if new_rut and new_rut != old_rut:
+            sets.append("customer_rut=%s"); params.append(new_rut)
+
+        if usar_como_contacto:
+            # Copiar datos cliente → persona-retira (pero solo si tenemos algo)
+            target_name = new_name or old_name
+            target_rut  = new_rut  or old_rut
+            if target_name:
+                sets.append("pickup_person_name=%s"); params.append(target_name)
+            if target_rut:
+                sets.append("pickup_person_rut=%s");  params.append(target_rut)
+
+        if not sets:
+            return jsonify({"ok": True, "no_changes": True})
+
+        params.append(rid)
+        try:
+            mysql_execute(
+                f"UPDATE `{REQ}` SET {', '.join(sets)} WHERE id=%s",
+                tuple(params)
+            )
+        except Exception as exc:
+            return jsonify({"ok": False,
+                            "error": f"Error al actualizar: {str(exc)[:200]}"}), 500
+
+        detalle_parts = []
+        if new_name and new_name != old_name:
+            detalle_parts.append(f"nombre: {old_name} → {new_name}")
+        if new_rut and new_rut != old_rut:
+            detalle_parts.append(f"RUT: {old_rut} → {new_rut}")
+        if usar_como_contacto:
+            detalle_parts.append("datos cliente copiados a persona-retira")
+        log_event(rid, "cliente_actualizado", None, None,
+                  " · ".join(detalle_parts) or "sin cambios",
+                  "interno")
+
+        # Re-leer para devolver al frontend
+        updated = mysql_fetchone(
+            f"SELECT customer_name, customer_rut, "
+            f"       pickup_person_name, pickup_person_rut "
+            f"FROM `{REQ}` WHERE id=%s",
+            (rid,)
+        ) or {}
+        return jsonify({
+            "ok": True,
+            "customer_name":      updated.get("customer_name") or "",
+            "customer_rut":       updated.get("customer_rut")  or "",
+            "pickup_person_name": updated.get("pickup_person_name") or "",
+            "pickup_person_rut":  updated.get("pickup_person_rut")  or "",
+        })
+
+    # ══════════════════════════════════════════════════════════════════
     #  INFORME MENSUAL XLSX — Daniel pidió 22/05/2026
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/informe-mes.xlsx", methods=["GET"])
