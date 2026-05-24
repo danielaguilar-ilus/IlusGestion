@@ -12313,17 +12313,30 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     # si en el futuro queremos paralelizarlo con más cosas. Por ahora simple.
     lineas_raw = []
     try:
-        # Daniel 2026-05-24: AGREGADO CAPRAD1 (cantidad despachada via guía).
-        # Antes faltaba → saldo siempre = CAPRCO1 → modal mostraba "saldo 1"
-        # en líneas YA despachadas. Ahora saldo = CAPRCO1 - CAPRAD1 correcto.
-        # Ej: BLV 20828 → kettlebells 16kg y 12kg ya fueron despachadas via
-        # GDV 30570 (CAPRAD1=1), solo 8kg queda pendiente (CAPRAD1=0).
+        # Daniel 2026-05-24: FÓRMULA COMPLETA DEL SALDO según diccionario
+        # oficial Random (TABLAS BD Random — tabla MAEDDO).
+        #
+        # Saldo línea = CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1
+        #   · CAPRCO1: cantidad primaria contable (la original del docto)
+        #   · CAPRAD1: cantidad primaria autodocumentada (despachada via GUÍA)
+        #   · CAPREX1: cantidad primaria externa (despachada externamente)
+        #   · CAPRNC1: cantidad primaria por NOTAS DE CRÉDITO (devolución)
+        # También leemos ESLIDO (estado de despacho de la línea) por si
+        # Random lo marca explícito como totalmente despachado.
+        #
+        # Ej: BLV 20828
+        #   · Kettlebell 16kg → CAPRCO1=1, CAPRAD1=1 → saldo=0 (despachada via GDV 30570)
+        #   · Kettlebell 12kg → CAPRCO1=1, CAPRAD1=1 → saldo=0 (despachada)
+        #   · Kettlebell  8kg → CAPRCO1=1, CAPRAD1=0 → saldo=1 (PENDIENTE de retiro)
         lineas_rows = _random_sql_query(
             "SELECT NULIDO, "
             "       LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT, "
             "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
             "       COALESCE(CAPRCO1, 0) AS CAPRCO1, "
             "       COALESCE(CAPRAD1, 0) AS CAPRAD1, "
+            "       COALESCE(CAPREX1, 0) AS CAPREX1, "
+            "       COALESCE(CAPRNC1, 0) AS CAPRNC1, "
+            "       LTRIM(RTRIM(COALESCE(ESLIDO, ''))) AS ESLIDO, "
             "       COALESCE(PPPRNE,  0) AS PPPRNE, "
             "       COALESCE(VANELI,  0) AS VANELI, "
             "       COALESCE(VABRLI,  0) AS VABRLI "
@@ -12783,7 +12796,15 @@ def _cubicador_fetch(tido, nudo):
             descripcion = (sku_data_map[sku].get("nombre_app") or "").strip()
         qty          = float(l.get("CAPRCO1") or 0)
         qty_desp     = float(l.get("CAPRAD1") or 0)
-        saldo_linea  = max(qty - qty_desp, 0)
+        qty_ext      = float(l.get("CAPREX1") or 0)
+        qty_nc       = float(l.get("CAPRNC1") or 0)
+        # Daniel 2026-05-24: fórmula oficial Random (diccionario MAEDDO):
+        # saldo = contable - autodocumentada(GUÍA) - externa - notas de crédito.
+        # Si Random marca ESLIDO como cerrado/totalmente despachado, forzar saldo=0.
+        saldo_linea  = max(qty - qty_desp - qty_ext - qty_nc, 0)
+        eslido       = (l.get("ESLIDO") or "").strip().upper()
+        if eslido in ("C", "T", "TOTAL", "CERRADO", "DESPACHADO"):
+            saldo_linea = 0
         es_zz        = sku in ZZ_CODES
 
         if not sku:
