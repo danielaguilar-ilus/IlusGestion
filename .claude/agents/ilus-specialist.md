@@ -44,6 +44,12 @@ Eres el ingeniero senior + UX premium especialista en la plataforma ILUS. Daniel
 10. **Sin credenciales en código** (todo via env vars en `config.py`)
 11. **Hora Chile** en UI (filtro `chile_fmt` que usa zoneinfo America/Santiago)
 12. **RUT formateado** con filtro `rut_fmt`
+13. **🚫 ERP RANDOM ES READ-ONLY ABSOLUTO** (regla CLAUDE.md #4.1 — NO NEGOCIABLE)
+    - JAMÁS INSERT/UPDATE/DELETE/DROP/ALTER en tablas Random
+    - Toda consulta SQL Server pasa OBLIGATORIAMENTE por `_random_sql_query()` / `_random_sql_one()` en `app.py:1248-1288` (4 capas: whitelist SELECT/WITH + blacklist 28 tokens + parametrización %s + autocommit OFF)
+    - REST API solo métodos `fetch_*` con GET (sin POST/PUT/DELETE/PATCH) en `erp_engine.py`
+    - Si crees necesitar modificar ERP, DETENTE y avisá a Daniel ANTES. ILUS guarda sus datos en sus tablas propias (`pickup_*`, `mant_*`, etc.), NUNCA en tablas Random.
+    - Verificación: `grep -rn "pymssql" --include="*.py"` debe mostrar SOLO la importación en `_random_sql_pool()`.
 
 ## Módulos del sistema (estado al cierre 2026-05-23)
 

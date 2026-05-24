@@ -143,6 +143,60 @@ aplica las correcciones móviles globalmente. Respetar:
 
 ---
 
+## 🚫 REGLA #4.1 — ERP Random es **READ-ONLY ABSOLUTO** (no negociable)
+
+**El ERP Random (cloud.random.cl:8058 SQL Server + REST API) es la
+fuente de verdad de la empresa. ILUS Sport & Health JAMÁS modifica
+sus tablas. Solo consulta.**
+
+Esta regla NO admite excepciones de ningún tipo. Ni siquiera "para
+arreglar un dato malo". Ni siquiera "es solo un test rápido". Ni
+siquiera "vamos a poner un autocommit y hacerlo solo esta vez".
+
+### Cómo está garantizado en el código (4 capas)
+
+Toda consulta al ERP DEBE pasar por `_random_sql_query()` /
+`_random_sql_one()` en `app.py` (líneas 1150-1288). Estas funciones
+implementan:
+
+| Capa | Mecanismo | Qué bloquea |
+|------|-----------|-------------|
+| 1 | WHITELIST | Solo `SELECT` o `WITH` (CTE) como primer token |
+| 2 | BLACKLIST | 28+ tokens prohibidos: `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`, `EXEC`, `EXECUTE`, `MERGE`, `GRANT`, `REVOKE`, `CREATE`, `BACKUP`, `RESTORE`, `SHUTDOWN`, `OPENROWSET`, `OPENQUERY`, `BULK`, `DBCC`, `KILL`, `RECONFIGURE`, `INTO `, `; `, `/*`, `*/`, `XP_CMDSHELL`, `SP_CONFIGURE`, `SP_EXECUTESQL` |
+| 3 | PARAMETRIZACIÓN | `pymssql` con `%s` (nunca f-strings). SQL injection imposible. |
+| 4 | AUTOCOMMIT OFF | `autocommit=False` en el pool. **`conn.commit()` NUNCA se llama** en `_random_sql_query`. Cualquier escritura que se cuele se descarta al cerrar la conexión. |
+
+### REST API (motor `erp_engine.py`)
+
+- Solo métodos `fetch_*` (`fetch_document`, `fetch_entity`, etc.).
+- HTTP único método: **GET** (`urllib.request.Request` sin method).
+- No existen métodos POST/PUT/DELETE/PATCH ni intentos de los mismos.
+
+### Qué hacer si crees necesitar modificar el ERP
+
+**No lo hagas.** En su lugar:
+1. Detente y avisa a Daniel ANTES de tocar nada.
+2. Si el dato realmente está mal en el ERP, eso se corrige desde
+   Random (Joaquín / Raúl), no desde ILUS.
+3. ILUS guarda sus PROPIAS tablas (`pickup_*`, `mant_*`, `transp_*`,
+   etc.) en MySQL Clever Cloud. Esas SÍ se modifican. El ERP NO.
+
+### Cómo verificar que no se viola
+
+```bash
+# Solo debe aparecer una importación de pymssql, dentro de _random_sql_pool()
+grep -rn "pymssql" --include="*.py"
+
+# Solo debe haber GET hacia la REST API de Random
+grep -rn "requests\.(post|put|delete|patch)" --include="*.py"
+```
+
+Si algún día agregás código que toca el ERP Random fuera de
+`_random_sql_query`/`_random_sql_one`/`erp_engine.fetch_*`, lo estás
+haciendo MAL. Revertí y usá los helpers.
+
+---
+
 ## 🗄 REGLA #5 — Base de datos
 
 - **Antes de SELECT de columnas nuevas, verificar el `CREATE TABLE`**
