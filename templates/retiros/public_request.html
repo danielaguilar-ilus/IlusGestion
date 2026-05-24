@@ -318,13 +318,31 @@
       box-shadow:0 2px 4px rgba(0,0,0,.15);
     }
 
-    /* Estado: completo (2/2) — rojo, NO clickeable */
+    /* Estado: completo (2/2) — ROJO BRILLANTE, NO clickeable
+       Daniel mayo 2026: "ver en rojo si el horario está ocupado esa es la magia" */
     .slot-item.is-full{
-      background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;
-      cursor:not-allowed;opacity:.78;
+      background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);
+      color:#fff;border-color:#991b1b;
+      cursor:not-allowed;opacity:1;
+      box-shadow:0 4px 12px rgba(220,38,38,.35), inset 0 1px 0 rgba(255,255,255,.18);
+      text-shadow:0 1px 2px rgba(0,0,0,.25);
+      font-weight:800;
+      animation:slotFullPulse 2.6s ease-in-out infinite;
     }
-    .slot-item.is-full::after{content:'🔒';position:absolute;top:3px;right:5px;font-size:.7rem}
-    .slot-item.is-full:hover{transform:none;box-shadow:none;background:#fee2e2;border-color:#fca5a5}
+    .slot-item.is-full::after{
+      content:'🔒';position:absolute;top:3px;right:5px;font-size:.78rem;
+      filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));
+    }
+    .slot-item.is-full:hover{
+      transform:none;
+      background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);
+      border-color:#991b1b;
+      box-shadow:0 4px 12px rgba(220,38,38,.45);
+    }
+    @keyframes slotFullPulse{
+      0%,100%{box-shadow:0 4px 12px rgba(220,38,38,.35), inset 0 1px 0 rgba(255,255,255,.18)}
+      50%   {box-shadow:0 4px 18px rgba(220,38,38,.6),  inset 0 1px 0 rgba(255,255,255,.18)}
+    }
 
     /* Estado: bloqueado manual */
     .slot-item.is-blocked{
@@ -415,15 +433,24 @@
     }
     .submit-btn:hover::before{transform:translateX(100%)}
     .submit-btn:active{transform:translateY(0);box-shadow:0 8px 18px rgba(230,0,0,.3)}
-    .submit-btn.is-loading{pointer-events:none;opacity:.85}
-    .submit-btn.is-loading::after{
-      content:'';width:18px;height:18px;border-radius:50%;
-      border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;
-      animation:spinBtn .7s linear infinite;
-    }
+    .submit-btn.is-loading{pointer-events:none;opacity:.95}
     .submit-btn.is-loading i.bi-send-check{display:none}
-    @keyframes spinBtn{to{transform:rotate(360deg)}}
-    .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    .submit-btn:disabled{opacity:.7;cursor:not-allowed;transform:none}
+
+    /* ── Loading dots premium (3 dots en stagger) — reemplaza spinner aburrido ── */
+    .submit-dots{display:none;align-items:center;gap:6px;margin-left:8px}
+    .submit-btn.is-loading .submit-dots{display:inline-flex}
+    .submit-dots span{
+      width:7px;height:7px;border-radius:50%;background:#fff;
+      animation:dotPulse 1.2s ease-in-out infinite;
+      will-change:transform,opacity;
+    }
+    .submit-dots span:nth-child(2){animation-delay:.2s}
+    .submit-dots span:nth-child(3){animation-delay:.4s}
+    @keyframes dotPulse{
+      0%,80%,100%{transform:scale(.45);opacity:.4}
+      40%{transform:scale(1);opacity:1}
+    }
 
     /* Pulse animation al hacer click en el submit */
     @keyframes submitPulse{
@@ -431,6 +458,225 @@
       100%{box-shadow:0 0 0 24px rgba(230,0,0,0)}
     }
     .submit-btn.pulse{animation:submitPulse .7s ease-out}
+
+    /* ════════════════════════════════════════════════════════════
+       OVERLAY ENVÍO PREMIUM — Espartano 3D + barra progreso + partículas
+       Daniel mayo 2026: "el toque del 2027 — tecnología espectacular en 3D"
+       100% CSS, GPU-accelerated (transform + opacity), mobile-first.
+       ════════════════════════════════════════════════════════════ */
+    .spartan-overlay{
+      position:fixed;inset:0;z-index:10000;
+      background:radial-gradient(ellipse at center, rgba(20,0,0,.85) 0%, rgba(0,0,0,.96) 70%);
+      -webkit-backdrop-filter:blur(20px) saturate(1.4);
+      backdrop-filter:blur(20px) saturate(1.4);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:24px;opacity:0;pointer-events:none;
+      transition:opacity .35s cubic-bezier(.4,0,.2,1);
+      contain:layout style;
+    }
+    .spartan-overlay[hidden]{display:none}
+    .spartan-overlay.active{opacity:1;pointer-events:auto}
+
+    /* Stage 3D del espartano */
+    .spartan-stage{
+      position:relative;width:200px;height:200px;
+      perspective:1200px;perspective-origin:50% 40%;
+      display:flex;align-items:center;justify-content:center;
+      margin-bottom:36px;
+    }
+    .spartan-glow{
+      position:absolute;inset:-30%;border-radius:50%;
+      background:radial-gradient(circle, rgba(220,38,38,.55) 0%, rgba(220,38,38,.15) 40%, transparent 72%);
+      animation:spartanGlow 2.4s ease-in-out infinite;
+      will-change:transform,opacity;pointer-events:none;
+      filter:blur(8px);
+    }
+    .spartan-ring{
+      position:absolute;inset:-12%;border-radius:50%;
+      border:2px solid rgba(220,38,38,.35);
+      animation:spartanRing 3s linear infinite;
+      pointer-events:none;
+    }
+    .spartan-ring.r2{
+      inset:0%;border-color:rgba(255,255,255,.12);
+      animation-duration:4.5s;animation-direction:reverse;
+    }
+    .spartan-logo{
+      width:140px;height:auto;display:block;position:relative;z-index:2;
+      transform-style:preserve-3d;
+      animation:spartanRotate 4.5s ease-in-out infinite, spartanPop .8s cubic-bezier(.34,1.56,.64,1) both;
+      filter:drop-shadow(0 14px 28px rgba(220,38,38,.55));
+      will-change:transform;
+    }
+    @keyframes spartanRotate{
+      0%,100%{transform:rotateY(-14deg) rotateX(2deg)}
+      50%    {transform:rotateY( 14deg) rotateX(-2deg)}
+    }
+    @keyframes spartanPop{
+      0%  {opacity:0;transform:scale(.4) rotateY(-20deg)}
+      60% {opacity:1;transform:scale(1.08) rotateY(8deg)}
+      100%{opacity:1;transform:scale(1) rotateY(0)}
+    }
+    @keyframes spartanGlow{
+      0%,100%{opacity:.55;transform:scale(1)}
+      50%    {opacity:1;transform:scale(1.18)}
+    }
+    @keyframes spartanRing{
+      from{transform:rotate(0deg) scale(1)}
+      to  {transform:rotate(360deg) scale(1)}
+    }
+
+    /* Partículas alrededor del espartano */
+    .spartan-particles{position:absolute;inset:0;pointer-events:none}
+    .spartan-particles span{
+      position:absolute;width:5px;height:5px;border-radius:50%;
+      background:radial-gradient(circle, #fff 0%, var(--ilus-red) 70%);
+      box-shadow:0 0 8px rgba(220,38,38,.8), 0 0 14px rgba(255,255,255,.4);
+      opacity:0;
+      animation:particleFly 2.6s ease-in-out infinite;
+      will-change:transform,opacity;
+    }
+    .spartan-particles span:nth-child(1){top:50%;left:50%;--tx:80px; --ty:-90px;animation-delay:0s}
+    .spartan-particles span:nth-child(2){top:50%;left:50%;--tx:-95px;--ty:-60px;animation-delay:.35s}
+    .spartan-particles span:nth-child(3){top:50%;left:50%;--tx:100px;--ty: 70px;animation-delay:.7s}
+    .spartan-particles span:nth-child(4){top:50%;left:50%;--tx:-70px;--ty: 95px;animation-delay:1.05s}
+    .spartan-particles span:nth-child(5){top:50%;left:50%;--tx: 20px;--ty:-110px;animation-delay:1.4s}
+    .spartan-particles span:nth-child(6){top:50%;left:50%;--tx:-30px;--ty:105px;animation-delay:1.75s}
+    @keyframes particleFly{
+      0%  {opacity:0;transform:translate(0,0) scale(.3)}
+      30% {opacity:1;transform:translate(calc(var(--tx)*.5), calc(var(--ty)*.5)) scale(1)}
+      80% {opacity:.5;transform:translate(var(--tx), var(--ty)) scale(.6)}
+      100%{opacity:0;transform:translate(calc(var(--tx)*1.15), calc(var(--ty)*1.15)) scale(.2)}
+    }
+
+    /* Progreso premium */
+    .spartan-progress{
+      width:100%;max-width:420px;
+      display:flex;flex-direction:column;gap:14px;
+    }
+    .sp-bar{
+      height:6px;width:100%;background:rgba(255,255,255,.08);
+      border-radius:50px;overflow:hidden;position:relative;
+      box-shadow:inset 0 1px 2px rgba(0,0,0,.4);
+    }
+    .sp-fill{
+      height:100%;width:0%;
+      background:linear-gradient(90deg, #dc2626 0%, #f97316 50%, #fbbf24 100%);
+      background-size:200% 100%;
+      border-radius:50px;
+      transition:width .8s cubic-bezier(.4,0,.2,1);
+      box-shadow:0 0 14px rgba(220,38,38,.6), 0 0 4px rgba(251,191,36,.4);
+      animation:spFillShimmer 1.4s linear infinite;
+      will-change:width,background-position;
+    }
+    @keyframes spFillShimmer{
+      0%  {background-position:0% 0}
+      100%{background-position:-200% 0}
+    }
+    .sp-steps{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+      font-size:.74rem;font-weight:700;letter-spacing:.02em;
+    }
+    .sp-step{
+      color:rgba(255,255,255,.35);text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:6px;
+      transition:color .35s ease;line-height:1.2;
+    }
+    .sp-step::before{
+      content:'';width:8px;height:8px;border-radius:50%;
+      background:rgba(255,255,255,.18);
+      transition:all .35s cubic-bezier(.4,0,.2,1);
+    }
+    .sp-step.active{color:#fff}
+    .sp-step.active::before{
+      background:var(--ilus-red);
+      box-shadow:0 0 12px rgba(220,38,38,.9);
+      transform:scale(1.4);
+    }
+    .sp-step.done{color:#16a34a}
+    .sp-step.done::before{
+      content:'✓';width:auto;height:auto;background:transparent;
+      color:#16a34a;font-size:.95rem;font-weight:900;
+      text-shadow:0 0 8px rgba(22,163,74,.6);
+      box-shadow:none;transform:none;
+    }
+
+    /* Texto dinámico debajo */
+    .spartan-text{
+      margin-top:22px;color:#fff;font-size:1.05rem;font-weight:700;
+      letter-spacing:.01em;text-align:center;
+      min-height:1.6em;
+      animation:textFade .35s ease both;
+      max-width:340px;
+      text-shadow:0 2px 8px rgba(0,0,0,.5);
+    }
+    .spartan-text.changing{animation:textSwap .35s ease both}
+    @keyframes textFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+    @keyframes textSwap{
+      0%  {opacity:0;transform:translateY(8px)}
+      100%{opacity:1;transform:none}
+    }
+    .spartan-sub{
+      color:rgba(255,255,255,.55);font-size:.8rem;font-weight:500;
+      margin-top:6px;text-align:center;
+    }
+
+    /* Estado final — check verde gigante con bounce */
+    .spartan-overlay.done .spartan-logo,
+    .spartan-overlay.done .spartan-glow,
+    .spartan-overlay.done .spartan-ring,
+    .spartan-overlay.done .spartan-particles{
+      animation:fadeOutQuick .3s ease both;
+    }
+    .spartan-overlay.done .spartan-check{
+      display:flex;animation:checkPop .7s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    .spartan-check{
+      display:none;position:absolute;
+      width:140px;height:140px;border-radius:50%;
+      background:linear-gradient(135deg,#16a34a 0%,#15803d 100%);
+      box-shadow:0 18px 40px rgba(22,163,74,.6), 0 0 0 12px rgba(22,163,74,.18);
+      align-items:center;justify-content:center;
+      color:#fff;font-size:5rem;
+    }
+    .spartan-check::after{
+      content:'';position:absolute;inset:-18px;border-radius:50%;
+      border:3px solid rgba(22,163,74,.4);
+      animation:checkRing 1.4s ease-out infinite;
+    }
+    @keyframes checkPop{
+      0%  {opacity:0;transform:scale(.3) rotate(-12deg)}
+      55% {opacity:1;transform:scale(1.15) rotate(4deg)}
+      100%{opacity:1;transform:scale(1) rotate(0)}
+    }
+    @keyframes checkRing{
+      0%  {transform:scale(1);opacity:.8}
+      100%{transform:scale(1.5);opacity:0}
+    }
+    @keyframes fadeOutQuick{to{opacity:0;transform:scale(.85)}}
+
+    /* Responsive — mobile-first <400px */
+    @media(max-width:480px){
+      .spartan-stage{width:160px;height:160px;margin-bottom:28px}
+      .spartan-logo{width:108px}
+      .spartan-check{width:108px;height:108px;font-size:3.8rem}
+      .sp-steps{font-size:.66rem;gap:6px}
+      .spartan-text{font-size:.96rem}
+    }
+    @media(max-width:360px){
+      .spartan-stage{width:140px;height:140px;margin-bottom:22px}
+      .spartan-logo{width:96px}
+      .sp-steps{font-size:.62rem}
+    }
+
+    /* Accesibilidad — reduced motion: sin partículas/rotación, solo fade */
+    @media (prefers-reduced-motion: reduce){
+      .spartan-logo{animation:spartanPop .4s ease both}
+      .spartan-glow,.spartan-ring,.spartan-particles span,.sp-fill{animation:none}
+      .sp-fill{background:var(--ilus-red)}
+      .spartan-check{animation:fadeInQuick .3s ease both}
+      @keyframes fadeInQuick{from{opacity:0}to{opacity:1}}
+    }
 
     /* Declaración de responsabilidad — card atractiva */
     .declaracion-box{
@@ -1016,7 +1262,7 @@
                     <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Disponible</span>
                     <span><span class="dot" style="background:var(--ilus-red)"></span>Tu selección</span>
                     <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial 1/2</span>
-                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                    <span><span class="dot" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:1.5px solid #991b1b"></span>Lleno 🔒</span>
                     <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fed7aa"></span>Colación</span>
                   </div>
                 </div>
@@ -1085,6 +1331,7 @@
         </div>
         <button class="submit-btn" id="submitBtn" type="submit">
           <i class="bi bi-send-check"></i><span class="submit-btn-text">Enviar solicitud de retiro</span>
+          <span class="submit-dots" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="text-center mt-3 small text-muted" style="display:flex;align-items:center;justify-content:center;gap:6px">
           <i class="bi bi-shield-lock"></i>
@@ -1103,6 +1350,36 @@
       </a>
     </section>
   </main>
+
+  {# ════════════════════════════════════════════════════════
+     OVERLAY PREMIUM — Espartano 3D + barra progreso (envío de formulario)
+     Daniel mayo 2026: "tecnología espectacular en 3D del 2027"
+     ════════════════════════════════════════════════════════ #}
+  <div id="spartanOverlay" class="spartan-overlay" role="alert" aria-live="polite" aria-busy="true" hidden>
+    <div class="spartan-stage">
+      <div class="spartan-glow"></div>
+      <div class="spartan-ring"></div>
+      <div class="spartan-ring r2"></div>
+      <div class="spartan-particles">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <picture>
+        <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+        <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="spartan-logo" alt="ILUS" decoding="async">
+      </picture>
+      <div class="spartan-check" aria-hidden="true"><i class="bi bi-check-lg"></i></div>
+    </div>
+    <div class="spartan-progress">
+      <div class="sp-bar"><div class="sp-fill" id="spFill"></div></div>
+      <div class="sp-steps">
+        <div class="sp-step active" data-step="1">Validando datos</div>
+        <div class="sp-step" data-step="2">Reservando bodega</div>
+        <div class="sp-step" data-step="3">Notificando equipo</div>
+      </div>
+    </div>
+    <div class="spartan-text" id="spartanText">Procesando tu solicitud…</div>
+    <div class="spartan-sub" id="spartanSub">No cierres esta ventana</div>
+  </div>
 
   <footer class="footer">
     <picture>
@@ -1477,7 +1754,7 @@ function renderSlotGrid(){
       cls.push('is-full', 'is-disabled');
       const oc = s.ocupacion_actual != null ? s.ocupacion_actual : (s.ocupados || 0);
       const mx = s.capacidad_max != null ? s.capacidad_max : (s.max || 2);
-      title = `Cupo lleno (${oc}/${mx})`;
+      title = `Este horario ya está ocupado por otro retiro (${oc}/${mx}). Elige otro bloque.`;
     } else if (estado === 'bloqueado'){
       cls.push('is-blocked', 'is-disabled');
       title = s.razon || 'Franja bloqueada';
@@ -1974,18 +2251,65 @@ function _wireStepWatchers(){
   if (at) at.addEventListener('click', () => { setTimeout(_refreshStepStates, 80); });
 }
 
-// Submit: loading state + pulse + previene doble click.
-// El listener de validación más arriba se ejecuta ANTES (orden de adición).
-// Si la validación pasa, este listener entra en loading.
+// ════════════════════════════════════════════════════════
+//  SUBMIT — OVERLAY 3D ESPARTANO + BARRA PROGRESO PREMIUM
+//  Daniel mayo 2026: "tecnología del 2027, transición espectacular"
+//  - Loading dots elegantes en el botón
+//  - Overlay full-screen con espartano rotando en 3D
+//  - 3 steps animados (Validar → Reservar → Notificar)
+//  - El submit real continúa en background (form HTTP normal)
+// ════════════════════════════════════════════════════════
+function spartanShowStep(n, text){
+  const steps = document.querySelectorAll('.sp-step');
+  steps.forEach((el, i) => {
+    el.classList.toggle('active', i === (n-1));
+    el.classList.toggle('done',   i <  (n-1));
+  });
+  const fill = document.getElementById('spFill');
+  if (fill) fill.style.width = (n/3*100) + '%';
+  const t = document.getElementById('spartanText');
+  if (t && text){
+    t.classList.remove('changing');
+    void t.offsetWidth; // reflow para reiniciar animación
+    t.textContent = text;
+    t.classList.add('changing');
+  }
+}
+
 document.getElementById('form-solicitud').addEventListener('submit', function(e){
   if (e.defaultPrevented) return; // Validación falló — no entrar en loading
+
   const btn = document.getElementById('submitBtn');
-  if (!btn) return;
-  btn.classList.add('is-loading', 'pulse');
-  const txt = btn.querySelector('.submit-btn-text');
-  if (txt) txt.textContent = 'Enviando…';
-  btn.disabled = true;
-  setTimeout(() => btn.classList.remove('pulse'), 700);
+  if (btn){
+    btn.classList.add('is-loading', 'pulse');
+    const txt = btn.querySelector('.submit-btn-text');
+    if (txt) txt.textContent = 'Procesando';
+    btn.disabled = true;
+    setTimeout(() => btn.classList.remove('pulse'), 700);
+  }
+
+  // Overlay 3D — mostrar
+  const overlay = document.getElementById('spartanOverlay');
+  if (overlay){
+    overlay.hidden = false;
+    // Force reflow para que la transición de opacity funcione desde 0
+    void overlay.offsetWidth;
+    requestAnimationFrame(() => overlay.classList.add('active'));
+
+    // Bloquear scroll del body mientras carga
+    document.body.style.overflow = 'hidden';
+
+    // Animar steps con stagger — sincronizado con tiempo típico de POST (~1.5-2.5s)
+    spartanShowStep(1, 'Validando tus datos…');
+    setTimeout(() => spartanShowStep(2, 'Reservando bodega…'), 850);
+    setTimeout(() => spartanShowStep(3, 'Notificando al equipo…'), 1700);
+
+    // Failsafe: si el POST tarda más de 12s, mensaje calmante
+    setTimeout(() => {
+      const sub = document.getElementById('spartanSub');
+      if (sub) sub.textContent = 'Casi listo, tardando un poco más de lo normal…';
+    }, 12000);
+  }
 });
 
 document.addEventListener('DOMContentLoaded', () => {
