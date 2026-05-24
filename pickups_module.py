@@ -694,9 +694,9 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-        # 2) Solape con colación (v3: 12:30 – 14:00 BLOQUEADA)
-        lunch_s_str = str(cfg.get("lunch_start") or "12:30")[:5]
-        lunch_e_str = str(cfg.get("lunch_end") or "14:00")[:5]
+        # 2) Solape con colación (v4: 13:00 – 14:00 BLOQUEADA, Daniel 2026-05-24)
+        lunch_s_str = "13:00"
+        lunch_e_str = "14:00"
         try:
             lh, lm = [int(x) for x in lunch_s_str.split(":")]
             leh, lem = [int(x) for x in lunch_e_str.split(":")]
@@ -5885,21 +5885,24 @@ def register_pickup_routes(app, ctx):
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
 
-        # Daniel 2026-05-24: FUERZA ABSOLUTA. La BD en producción tenía
-        # slot_minutes=60 → calendario mostraba bloques de 1 hora. Acá
-        # IGNORAMOS la BD para esta variable: SIEMPRE 30 min, sin excepción.
-        # Igual con close_time, lunch_start, lunch_end — Daniel los pidió
-        # explícitos varias veces. Si la BD tiene otros valores, los
-        # ignoramos para garantizar consistencia visual.
-        slot_dur  = 30   # ⚡ HARDCODED: bloques de 30 min SIEMPRE
+        # Daniel 2026-05-24: FUERZA ABSOLUTA — todo HARDCODED.
+        # La BD puede tener valores legacy. Para clientes el horario es FIJO:
+        #
+        #   Mañana: bloques cada 30 min desde 09:00 hasta 13:00.
+        #           Últimos inicios admitidos: ..., 12:00, 12:30
+        #           (último bloque 12:30-13:00).
+        #   Colación BLOQUEADA: 13:00 a 14:00 (1 hora).
+        #   Tarde:  bloques cada 30 min desde 14:00 hasta 17:00.
+        #           Últimos inicios admitidos: ..., 16:00, 16:30
+        #           (último bloque 16:30-17:00).
+        #
+        # Total: 8 bloques mañana + 6 bloques tarde = 14 bloques agendables.
+        slot_dur  = 30
         slot_step = 30
-        buffer_cierre_min = 0   # último bloque 16:00-16:30 SÍ es admitido
+        buffer_cierre_min = 0
 
-        # Colación v3 HARDCODED: 12:30 – 14:00 (el cliente NUNCA debe ver
-        # esos slots como agendables — pero el texto en UI dice "no
-        # disponible", no menciona "colación" para ser más sutil).
-        lunch_s_str = "12:30"
-        lunch_e_str = "14:00"
+        lunch_s_str = "13:00"   # colación arranca a las 13:00 (no 12:30)
+        lunch_e_str = "14:00"   # colación termina a las 14:00
         try:
             lH,lM = [int(x) for x in lunch_s_str.split(":")]
             leH,leM = [int(x) for x in lunch_e_str.split(":")]
@@ -5912,10 +5915,10 @@ def register_pickup_routes(app, ctx):
         work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays  = {h.strip() for h in (cfg.get("holidays") or "").replace(";",",").split(",") if h.strip()}
 
-        # Daniel 2026-05-24: HARDCODED también el horario. La BD puede tener
-        # legacy 17:30 o lo que sea — para el cliente SIEMPRE 09:00 a 16:30.
-        oH,oM = 9, 0    # 09:00 apertura para clientes
-        cH,cM = 16, 30  # 16:30 último FIN admitido
+        # Daniel 2026-05-24: HARDCODED el horario para clientes.
+        # Apertura 09:00 — cierre 17:00 (último bloque 16:30 → 17:00).
+        oH,oM = 9, 0
+        cH,cM = 17, 0
         open_min  = oH*60 + oM
         close_min = cH*60 + cM
         # ultimo_fin_admitido = close_min - buffer_cierre (v3: buffer=0 → 16:30)
