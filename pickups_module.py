@@ -355,6 +355,13 @@ def register_pickup_routes(app, ctx):
             f"ALTER TABLE `{REQ}` ADD INDEX idx_req_docnum (document_number, status)",
             # pickup_doc_lineas por (request_id, incluida) — selección granular
             "ALTER TABLE pickup_doc_lineas ADD INDEX idx_pdl_req_incl (request_id, incluida)",
+            # 🆕 Daniel 2026-05-24: columna marcada_sin_saldo.
+            # El operador puede marcar una línea SIN SALDO en el ERP (ya entregada
+            # según Random) si físicamente el cliente la viene a retirar igual.
+            # Esta flag deja constancia para mostrar badge ámbar "ya rebajado en
+            # ERP" en la tabla externa de productos. NO bloquea la asociación.
+            "ALTER TABLE pickup_doc_lineas ADD COLUMN marcada_sin_saldo TINYINT(1) NOT NULL DEFAULT 0 "
+            "COMMENT 'Operador marcó esta línea aunque ERP la reporte sin saldo (ya entregada)'",
         ]:
             try: mysql_execute(idx_sql)
             except Exception: pass
@@ -3148,6 +3155,9 @@ def register_pickup_routes(app, ctx):
             incluida = 1 if (li.get("incluida", True) and qty_sel > 0) else 0
             descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
             nota = (li.get("nota") or "").strip()[:300] or None
+            # 🆕 Daniel 2026-05-24: ver pickup_doc_agregar — la flag persiste
+            # el aviso "ya rebajado en ERP" en la tabla externa de productos.
+            marcada_sin_saldo = 1 if li.get("marcada_sin_saldo") else 0
             upsert_rows.append((
                 rid, doc_id, sku, descripcion,
                 cantidad_doc, qty_sel,
@@ -3156,33 +3166,62 @@ def register_pickup_routes(app, ctx):
                 peso_vol_unit * qty_sel,
                 vol_unit_m3 * qty_sel,
                 incluida, nota,
+                marcada_sin_saldo,
             ))
         if not upsert_rows:
             return 0
         conn = get_db()
         with conn.cursor() as cur:
-            cur.executemany(
-                """INSERT INTO pickup_doc_lineas
-                     (request_id, doc_id, sku, descripcion, cantidad_doc,
-                      cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
-                      vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
-                      incluida, nota_linea)
-                   VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
-                   ON DUPLICATE KEY UPDATE
-                     descripcion=VALUES(descripcion),
-                     cantidad_doc=VALUES(cantidad_doc),
-                     cantidad_seleccionada=VALUES(cantidad_seleccionada),
-                     peso_unit_kg=VALUES(peso_unit_kg),
-                     peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
-                     vol_unit_m3=VALUES(vol_unit_m3),
-                     peso_total_kg=VALUES(peso_total_kg),
-                     peso_vol_total_kg=VALUES(peso_vol_total_kg),
-                     vol_total_m3=VALUES(vol_total_m3),
-                     incluida=VALUES(incluida),
-                     nota_linea=VALUES(nota_linea),
-                     updated_at=NOW()""",
-                upsert_rows
-            )
+            try:
+                cur.executemany(
+                    """INSERT INTO pickup_doc_lineas
+                         (request_id, doc_id, sku, descripcion, cantidad_doc,
+                          cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                          vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                          incluida, nota_linea, marcada_sin_saldo)
+                       VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s,%s)
+                       ON DUPLICATE KEY UPDATE
+                         descripcion=VALUES(descripcion),
+                         cantidad_doc=VALUES(cantidad_doc),
+                         cantidad_seleccionada=VALUES(cantidad_seleccionada),
+                         peso_unit_kg=VALUES(peso_unit_kg),
+                         peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
+                         vol_unit_m3=VALUES(vol_unit_m3),
+                         peso_total_kg=VALUES(peso_total_kg),
+                         peso_vol_total_kg=VALUES(peso_vol_total_kg),
+                         vol_total_m3=VALUES(vol_total_m3),
+                         incluida=VALUES(incluida),
+                         nota_linea=VALUES(nota_linea),
+                         marcada_sin_saldo=VALUES(marcada_sin_saldo),
+                         updated_at=NOW()""",
+                    upsert_rows
+                )
+            except Exception as _e_msm2:
+                # Compat: si la columna marcada_sin_saldo aún no migró
+                print(f"[_apply_lineas_seleccion_inline] sin col marcada_sin_saldo, retry: {_e_msm2}", flush=True)
+                legacy_rows = [r[:-1] for r in upsert_rows]
+                cur.executemany(
+                    """INSERT INTO pickup_doc_lineas
+                         (request_id, doc_id, sku, descripcion, cantidad_doc,
+                          cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                          vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                          incluida, nota_linea)
+                       VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
+                       ON DUPLICATE KEY UPDATE
+                         descripcion=VALUES(descripcion),
+                         cantidad_doc=VALUES(cantidad_doc),
+                         cantidad_seleccionada=VALUES(cantidad_seleccionada),
+                         peso_unit_kg=VALUES(peso_unit_kg),
+                         peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
+                         vol_unit_m3=VALUES(vol_unit_m3),
+                         peso_total_kg=VALUES(peso_total_kg),
+                         peso_vol_total_kg=VALUES(peso_vol_total_kg),
+                         vol_total_m3=VALUES(vol_total_m3),
+                         incluida=VALUES(incluida),
+                         nota_linea=VALUES(nota_linea),
+                         updated_at=NOW()""",
+                    legacy_rows
+                )
             cur.execute(
                 "UPDATE pickup_request_docs SET has_seleccion_lineas=1 WHERE id=%s",
                 (doc_id,)
@@ -3844,6 +3883,11 @@ def register_pickup_routes(app, ctx):
                 incluida = 1 if (li.get("incluida", True) and qty_sel > 0) else 0
                 descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
                 nota = (li.get("nota") or "").strip()[:300] or None
+                # 🆕 Daniel 2026-05-24: el frontend manda marcada_sin_saldo=true
+                # cuando el operador eligió una línea que el ERP reporta como
+                # ya entregada (saldo=0). Se guarda para mostrar badge en la
+                # tabla externa, pero NO bloquea la asociación.
+                marcada_sin_saldo = 1 if li.get("marcada_sin_saldo") else 0
                 upsert_rows.append((
                     rid, sku, descripcion,
                     cantidad_doc, qty_sel,
@@ -3852,6 +3896,7 @@ def register_pickup_routes(app, ctx):
                     peso_vol_unit * qty_sel,
                     vol_unit_m3 * qty_sel,
                     incluida, nota,
+                    marcada_sin_saldo,
                 ))
             # Si después del filtrado no quedó nada válido, NO marcamos selección
             if not upsert_rows:
@@ -3879,15 +3924,30 @@ def register_pickup_routes(app, ctx):
                 if upsert_rows and new_doc_id:
                     # Inyectar doc_id en cada fila (era unknown antes del INSERT)
                     final_rows = [(r[0], new_doc_id, *r[1:]) for r in upsert_rows]
-                    _cur_doc.executemany(
-                        """INSERT INTO pickup_doc_lineas
-                             (request_id, doc_id, sku, descripcion, cantidad_doc,
-                              cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
-                              vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
-                              incluida, nota_linea)
-                           VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)""",
-                        final_rows
-                    )
+                    try:
+                        _cur_doc.executemany(
+                            """INSERT INTO pickup_doc_lineas
+                                 (request_id, doc_id, sku, descripcion, cantidad_doc,
+                                  cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                                  vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                                  incluida, nota_linea, marcada_sin_saldo)
+                               VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s,%s)""",
+                            final_rows
+                        )
+                    except Exception as _e_msm:
+                        # Compat: si la columna marcada_sin_saldo aún no migró
+                        # (entorno viejo), insertamos sin esa columna.
+                        print(f"[pickup_doc_agregar] sin col marcada_sin_saldo, retry: {_e_msm}", flush=True)
+                        legacy_rows = [r[:-1] for r in final_rows]  # quita la última columna
+                        _cur_doc.executemany(
+                            """INSERT INTO pickup_doc_lineas
+                                 (request_id, doc_id, sku, descripcion, cantidad_doc,
+                                  cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                                  vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                                  incluida, nota_linea)
+                               VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)""",
+                            legacy_rows
+                        )
             _conn_doc.commit()
         except Exception as exc:
             # Fallback si la columna con_saldo / has_seleccion_lineas aún no se
@@ -3915,6 +3975,9 @@ def register_pickup_routes(app, ctx):
                     if upsert_rows and new_doc_id:
                         try:
                             final_rows = [(r[0], new_doc_id, *r[1:]) for r in upsert_rows]
+                            # En fallback, asumimos que la migración nueva tampoco corrió,
+                            # así que insertamos SIN marcada_sin_saldo (compat máxima).
+                            legacy_rows_fb = [r[:-1] for r in final_rows]
                             _cur_doc.executemany(
                                 """INSERT INTO pickup_doc_lineas
                                      (request_id, doc_id, sku, descripcion, cantidad_doc,
@@ -3922,7 +3985,7 @@ def register_pickup_routes(app, ctx):
                                       vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
                                       incluida, nota_linea)
                                    VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)""",
-                                final_rows
+                                legacy_rows_fb
                             )
                             _cur_doc.execute(
                                 "UPDATE pickup_request_docs SET has_seleccion_lineas=1 WHERE id=%s",
@@ -4303,19 +4366,36 @@ def register_pickup_routes(app, ctx):
 
             if has_sel:
                 # Selección granular guardada — solo líneas incluidas=1
+                # 🆕 Daniel 2026-05-24: traemos marcada_sin_saldo para que
+                # el frontend muestre badge ámbar "ya rebajado en ERP" en
+                # cada línea de la tabla externa de productos.
                 try:
                     sel_rows = mysql_fetchall(
                         """SELECT sku, descripcion, cantidad_seleccionada,
                                   peso_unit_kg, vol_unit_m3,
-                                  peso_total_kg, vol_total_m3
+                                  peso_total_kg, vol_total_m3,
+                                  marcada_sin_saldo
                              FROM pickup_doc_lineas
                             WHERE doc_id=%s AND incluida=1
                             ORDER BY sku ASC""",
                         (doc_id,)
                     ) or []
                 except Exception as _e:
-                    print(f"[lineas_resumen] doc {doc_id} sel error: {_e}", flush=True)
-                    sel_rows = []
+                    # Fallback: columna marcada_sin_saldo aún no migró
+                    print(f"[lineas_resumen] doc {doc_id} sin col marcada_sin_saldo, retry: {_e}", flush=True)
+                    try:
+                        sel_rows = mysql_fetchall(
+                            """SELECT sku, descripcion, cantidad_seleccionada,
+                                      peso_unit_kg, vol_unit_m3,
+                                      peso_total_kg, vol_total_m3
+                                 FROM pickup_doc_lineas
+                                WHERE doc_id=%s AND incluida=1
+                                ORDER BY sku ASC""",
+                            (doc_id,)
+                        ) or []
+                    except Exception as _e2:
+                        print(f"[lineas_resumen] doc {doc_id} sel error: {_e2}", flush=True)
+                        sel_rows = []
                 for r in sel_rows:
                     qty       = float(r.get("cantidad_seleccionada") or 0)
                     peso_unit = float(r.get("peso_unit_kg") or 0)
@@ -4323,16 +4403,17 @@ def register_pickup_routes(app, ctx):
                     peso_tot  = float(r.get("peso_total_kg") or (peso_unit * qty))
                     vol_tot   = float(r.get("vol_total_m3") or (vol_unit * qty))
                     lineas_out.append({
-                        "sku":          (r.get("sku") or "").strip(),
-                        "descripcion":  (r.get("descripcion") or "").strip(),
-                        "doc_tipo":     doc_tipo,
-                        "doc_numero":   doc_numero,
-                        "doc_id":       doc_id,
-                        "cantidad":     qty,
-                        "peso_unit_kg": peso_unit,
-                        "vol_unit_m3":  vol_unit,
-                        "peso_total":   peso_tot,
-                        "vol_total":    vol_tot,
+                        "sku":               (r.get("sku") or "").strip(),
+                        "descripcion":       (r.get("descripcion") or "").strip(),
+                        "doc_tipo":          doc_tipo,
+                        "doc_numero":        doc_numero,
+                        "doc_id":            doc_id,
+                        "cantidad":          qty,
+                        "peso_unit_kg":      peso_unit,
+                        "vol_unit_m3":       vol_unit,
+                        "peso_total":        peso_tot,
+                        "vol_total":         vol_tot,
+                        "marcada_sin_saldo": bool(r.get("marcada_sin_saldo")),
                     })
                     peso_total_acum += peso_tot
                     vol_total_acum  += vol_tot
@@ -4358,16 +4439,17 @@ def register_pickup_routes(app, ctx):
                     peso_tot = peso_unit * qty
                     vol_tot  = vol_unit_m3 * qty
                     lineas_out.append({
-                        "sku":          sku,
-                        "descripcion":  desc,
-                        "doc_tipo":     doc_tipo,
-                        "doc_numero":   doc_numero,
-                        "doc_id":       doc_id,
-                        "cantidad":     qty,
-                        "peso_unit_kg": peso_unit,
-                        "vol_unit_m3":  vol_unit_m3,
-                        "peso_total":   peso_tot,
-                        "vol_total":    vol_tot,
+                        "sku":               sku,
+                        "descripcion":       desc,
+                        "doc_tipo":          doc_tipo,
+                        "doc_numero":        doc_numero,
+                        "doc_id":            doc_id,
+                        "cantidad":          qty,
+                        "peso_unit_kg":      peso_unit,
+                        "vol_unit_m3":       vol_unit_m3,
+                        "peso_total":        peso_tot,
+                        "vol_total":         vol_tot,
+                        "marcada_sin_saldo": False,  # snapshot completo = ERP en orden
                     })
                     peso_total_acum += peso_tot
                     vol_total_acum  += vol_tot
