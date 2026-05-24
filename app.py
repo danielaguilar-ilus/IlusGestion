@@ -623,6 +623,15 @@ def fvol_filter(value):
     except Exception:
         return '—'
 
+@app.template_filter('fm3')
+def fm3_filter(value):
+    """Formato volumen en m³ estilo chileno (entra cm³): 5673482 → '5,673' (3 decimales, coma)."""
+    try:
+        m3 = float(value) / 1_000_000.0
+        return f"{m3:.3f}".replace(".", ",")
+    except Exception:
+        return '—'
+
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
 
 # ══════════════════════════════════════════════════════════════════════

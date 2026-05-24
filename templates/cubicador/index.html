@@ -502,7 +502,7 @@
           <th class="text-center">Bultos</th>
           <th class="text-end">Kg/u</th>
           <th class="text-end">PV/u</th>
-          <th class="text-end">Vol cm³/u</th>
+          <th class="text-end">Vol m³/u</th>
           <th class="text-end">Predom/u</th>
           <th class="text-end" style="color:var(--ilus-red)">Total Predom</th>
           <th class="text-center no-print" style="width:90px">Acciones</th>
@@ -573,7 +573,7 @@
             {% if l.tiene_bultos %}{{ l.peso_vol_u|fkg }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="text-end">
-            {% if l.tiene_bultos %}{{ l.vol_u|fvol }}{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if l.tiene_bultos %}{{ l.vol_u|fm3 }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
 
           <td class="text-end fw-semibold">
@@ -618,7 +618,7 @@
           <td class="text-center" style="color:#fff" data-foot="bultos">{{ ns.tot_bultos }}</td>
           <td class="text-end" style="color:#fff" data-foot="kg">{{ ns.tot_kg|fkg }}</td>
           <td class="text-end" style="color:#fff" data-foot="pv">{{ ns.tot_pv|fkg }}</td>
-          <td class="text-end" style="color:#fff" data-foot="vol">{{ ns.tot_vol|fvol }}</td>
+          <td class="text-end" style="color:#fff" data-foot="vol">{{ ns.tot_vol|fm3 }}</td>
           <td class="text-end" style="color:#888">—</td>
           <td class="text-end" style="color:var(--ilus-red);font-size:.95rem" data-foot="pred">{{ ns.tot_pred|fkg }}</td>
           <td class="no-print"></td>
@@ -658,8 +658,8 @@
         </div>
 
         <div class="text-center px-3 py-3 flex-fill" style="border-right:1px solid #eee">
-          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Vol cm³</div>
-          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="vol">{{ ns.tot_vol|fvol }}</div>
+          <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600">Vol m³</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1a1a1a" data-foot-d="vol">{{ ns.tot_vol|fm3 }}</div>
         </div>
 
         <div class="text-center px-4 py-3 flex-fill" style="background:#1a1a1a;border-radius:0 0 8px 0">
@@ -730,8 +730,8 @@
           <div class="fw-bold">{% if l.tiene_bultos %}{{ l.peso_vol_tot|fkg }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
-          <div style="color:#888">Vol cm³</div>
-          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.vol_tot|fvol }}{% else %}—{% endif %}</div>
+          <div style="color:#888">Vol m³</div>
+          <div class="fw-bold">{% if l.tiene_bultos %}{{ l.vol_tot|fm3 }}{% else %}—{% endif %}</div>
         </div>
         <div class="col-3">
           <div style="color:var(--ilus-red);font-weight:700">Pred</div>
@@ -774,8 +774,8 @@
           <div class="fw-bold text-white" data-foot-m="pv">{{ ns.tot_pv|fkg }}</div>
         </div>
         <div class="col-6">
-          <div style="color:#888;font-size:.7rem">Vol cm³</div>
-          <div class="fw-bold text-white" data-foot-m="vol">{{ ns.tot_vol|fvol }}</div>
+          <div style="color:#888;font-size:.7rem">Vol m³</div>
+          <div class="fw-bold text-white" data-foot-m="vol">{{ ns.tot_vol|fm3 }}</div>
         </div>
         <div class="col-6">
           <div style="color:var(--ilus-red);font-weight:700;font-size:.7rem">Predom total</div>
@@ -1072,16 +1072,10 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     }
     return (neg ? '-' : '') + withSep + (decPart ? (',' + decPart) : '');
   }
-  function fvol(n){
-    var num = Math.round(Number(n) || 0);
-    var neg = num < 0;
-    var s = String(Math.abs(num));
-    var withSep = '';
-    for (var i = 0, l = s.length; i < l; i++){
-      if (i > 0 && (l - i) % 3 === 0) withSep += '.';
-      withSep += s.charAt(i);
-    }
-    return (neg ? '-' : '') + withSep;
+  /* Volumen en m³ (entra cm³): 5673482 → '5,673' (3 decimales, coma chilena) */
+  function fm3(n){
+    var m3 = (Number(n) || 0) / 1000000;
+    return m3.toFixed(3).replace('.', ',');
   }
 
   /* ── Selección de filas activas (no .removing) en desktop + mobile ── */
@@ -1147,7 +1141,7 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     document.querySelectorAll('[data-foot="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
     document.querySelectorAll('[data-foot="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
     document.querySelectorAll('[data-foot="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
-    document.querySelectorAll('[data-foot="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot="vol"]').forEach(function(el){    el.textContent = fm3(totals.vol); });
     document.querySelectorAll('[data-foot="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
 
     // Tarjeta totales desktop
@@ -1155,7 +1149,7 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     document.querySelectorAll('[data-foot-d="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
     document.querySelectorAll('[data-foot-d="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
     document.querySelectorAll('[data-foot-d="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
-    document.querySelectorAll('[data-foot-d="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot-d="vol"]').forEach(function(el){    el.textContent = fm3(totals.vol); });
     document.querySelectorAll('[data-foot-d="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
 
     // Tarjeta totales mobile
@@ -1163,7 +1157,7 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     document.querySelectorAll('[data-foot-m="bultos"]').forEach(function(el){ el.textContent = Math.round(totals.bultos); });
     document.querySelectorAll('[data-foot-m="kg"]').forEach(function(el){     el.textContent = fkg(totals.kg); });
     document.querySelectorAll('[data-foot-m="pv"]').forEach(function(el){     el.textContent = fkg(totals.pv); });
-    document.querySelectorAll('[data-foot-m="vol"]').forEach(function(el){    el.textContent = fvol(totals.vol); });
+    document.querySelectorAll('[data-foot-m="vol"]').forEach(function(el){    el.textContent = fm3(totals.vol); });
     document.querySelectorAll('[data-foot-m="pred"]').forEach(function(el){   el.textContent = fkg(totals.pred); });
 
     // Contador SKUs

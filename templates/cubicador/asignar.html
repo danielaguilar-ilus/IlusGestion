@@ -550,7 +550,7 @@
               <th class="tc">Bultos/u</th>
               <th class="tr">KG Real/u</th>
               <th class="tr">KG Vol/u</th>
-              <th class="tr" style="font-size:.6rem">Vol. cm³/u</th>
+              <th class="tr" style="font-size:.6rem">Vol. m³/u</th>
               <th class="tr">Predom./u</th>
               <th class="tr">Total Predom.</th>
               <th class="tc">Tipo</th>
@@ -579,7 +579,7 @@
           <div class="tot-val" id="tot-pv">—</div>
         </div>
         <div class="tot-cell">
-          <div class="tot-lbl">Vol. cm³</div>
+          <div class="tot-lbl">Vol. m³</div>
           <div class="tot-val" style="font-size:.92rem" id="tot-vol">—</div>
         </div>
         <div class="tot-cell">
@@ -804,13 +804,8 @@ function fCl(n, dec=1){
 }
 function fVol(n){
   if(n==null||isNaN(n)) return '—';
-  const v=Math.round(parseFloat(n));
-  let s='', abs=Math.abs(v).toString();
-  for(let i=0;i<abs.length;i++){
-    if(i>0&&(abs.length-i)%3===0) s+='.';
-    s+=abs[i];
-  }
-  return (v<0?'-':'')+s;
+  // Volumen en m³ (entra cm³): 5673482 → '5,673'
+  return (parseFloat(n)/1000000).toFixed(3).replace('.', ',');
 }
 function fClp(n){
   if(n==null||isNaN(n)) return '—';
