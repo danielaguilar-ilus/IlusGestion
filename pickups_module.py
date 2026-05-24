@@ -4223,39 +4223,46 @@ def register_pickup_routes(app, ctx):
         if not upsert_rows:
             return jsonify({"ok": False, "error": "Sin líneas válidas"}), 400
 
-        # UPSERT batch — INSERT ... ON DUPLICATE KEY UPDATE (uq_doc_sku)
+        # Daniel 2026-05-24 FIX CRÍTICO: el agente anterior usó
+        # `get_mysql_conn()` que NO existe en el proyecto. La función real
+        # es `get_mysql()` (definida en app.py:1010). Por eso el POST
+        # /docs/<id>/lineas crasheaba con "name 'get_mysql_conn' is not
+        # defined" y has_seleccion_lineas quedaba en 0 → tabla externa
+        # mostraba TODAS las líneas en vez de solo las marcadas.
+        #
+        # Además, usar get_db() (cacheado por request) es más eficiente
+        # que crear nueva conexión.
         try:
-            conn = get_mysql_conn()
-            cur = conn.cursor()
-            cur.executemany(
-                """INSERT INTO pickup_doc_lineas
-                     (request_id, doc_id, sku, descripcion, cantidad_doc,
-                      cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
-                      vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
-                      incluida, nota_linea)
-                   VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
-                   ON DUPLICATE KEY UPDATE
-                     descripcion=VALUES(descripcion),
-                     cantidad_doc=VALUES(cantidad_doc),
-                     cantidad_seleccionada=VALUES(cantidad_seleccionada),
-                     peso_unit_kg=VALUES(peso_unit_kg),
-                     peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
-                     vol_unit_m3=VALUES(vol_unit_m3),
-                     peso_total_kg=VALUES(peso_total_kg),
-                     peso_vol_total_kg=VALUES(peso_vol_total_kg),
-                     vol_total_m3=VALUES(vol_total_m3),
-                     incluida=VALUES(incluida),
-                     nota_linea=VALUES(nota_linea),
-                     updated_at=NOW()""",
-                upsert_rows
-            )
-            mysql_execute(
-                "UPDATE pickup_request_docs "
-                "SET has_seleccion_lineas=1 WHERE id=%s",
-                (doc_id,)
-            )
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO pickup_doc_lineas
+                         (request_id, doc_id, sku, descripcion, cantidad_doc,
+                          cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                          vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                          incluida, nota_linea)
+                       VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
+                       ON DUPLICATE KEY UPDATE
+                         descripcion=VALUES(descripcion),
+                         cantidad_doc=VALUES(cantidad_doc),
+                         cantidad_seleccionada=VALUES(cantidad_seleccionada),
+                         peso_unit_kg=VALUES(peso_unit_kg),
+                         peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
+                         vol_unit_m3=VALUES(vol_unit_m3),
+                         peso_total_kg=VALUES(peso_total_kg),
+                         peso_vol_total_kg=VALUES(peso_vol_total_kg),
+                         vol_total_m3=VALUES(vol_total_m3),
+                         incluida=VALUES(incluida),
+                         nota_linea=VALUES(nota_linea),
+                         updated_at=NOW()""",
+                    upsert_rows
+                )
+                cur.execute(
+                    "UPDATE pickup_request_docs "
+                    "SET has_seleccion_lineas=1 WHERE id=%s",
+                    (doc_id,)
+                )
             conn.commit()
-            cur.close(); conn.close()
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Error al guardar: {str(exc)[:200]}"}), 500
 
