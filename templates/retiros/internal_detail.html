@@ -1063,8 +1063,21 @@
     transition:all .2s var(--ease-out);
   }
   .rba-line:hover{border-color:#9ca3af;background:#fdfdfd}
-  .rba-line.is-zero{opacity:.5;background:#fafafa}
+  /* Daniel 2026-05-24: línea sin saldo (ya despachada) — visible pero
+     visualmente atenuada. No la bloqueamos; el operador puede marcarla
+     manualmente con aviso si necesita asociarla. */
+  .rba-line.is-zero{opacity:.6;background:#fafafa}
+  .rba-line.is-zero .rba-chk{opacity:.65}
+  .rba-line.is-zero:hover{opacity:1;background:#fef3c7}
   .rba-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
+  .rba-line-tag-zero{
+    display:inline-flex;align-items:center;gap:3px;
+    font-size:.66rem;font-weight:700;color:#16a34a;
+    background:#dcfce7;border:1px solid #86efac;
+    padding:1px 7px;border-radius:50px;margin-left:6px;
+    letter-spacing:.02em;text-transform:uppercase;cursor:help;
+  }
+  .rba-line-tag-zero i{font-size:.78rem}
   @media(max-width:600px){
     .rba-line{grid-template-columns:32px 1fr;gap:8px}
     .rba-line .ln-sku,.rba-line .ln-qty,.rba-line .ln-qty-input{grid-column:2}
@@ -4100,29 +4113,43 @@ function rbaRenderDocLineas(lineas, fetchMs){
     const sku = (l.sku || '').toUpperCase();
     const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
     const qty = parseFloat(l.cantidad) || 0;
-    // Daniel 2026-05-24 FIX: usar el saldo REAL del backend (CAPRCO1-CAPRAD1).
-    // Antes asumíamos saldo = cantidad → mostraba "saldo 1" en líneas ya
-    // despachadas vía guía (BLV 20828 ej: kettlebells 16kg y 12kg estaban
-    // entregadas pero el modal decía "saldo 1" en todas).
     const saldo = _rbaSaldoLinea(l);
     const isZero = saldo <= 0;
     const lineKey = `DOC|${sku}|${i}`;
-    html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
-      <label class="rba-chk" data-sku="${_esc(sku)}" data-saldo="${saldo}">
-        <input type="checkbox" ${isZero?'disabled':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" onchange="rbaToggleLineaDoc(this)">
+    // Daniel 2026-05-24: PRE-MARCAR las líneas con saldo automáticamente
+    // + permitir marcar manualmente las sin saldo (con aviso amable).
+    // El checkbox ya NO está disabled — el modal de aviso se dispara
+    // en el toggle handler si el saldo es cero.
+    const initialMax = isZero ? qty : saldo;   // permitir cantidad histórica si no hay saldo
+    const initialQty = isZero ? 0 : saldo;     // por default no llevarse nada de las sin saldo
+    const preChecked = !isZero;                // marcadas: solo las con saldo
+    html += `<div class="rba-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
+      <label class="rba-chk ${preChecked?'is-checked':''}" data-sku="${_esc(sku)}" data-saldo="${saldo}">
+        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="rbaToggleLineaDoc(this)">
         <span class="rba-chk-mark">✓</span>
       </label>
       <div class="ln-sku">${_esc(sku) || '—'}</div>
-      <div class="ln-desc">${_esc(nom)}</div>
+      <div class="ln-desc">
+        ${_esc(nom)}
+        ${isZero ? '<span class="rba-line-tag-zero" title="Esta línea ya fue rebajada del sistema (ya entregada). Puedes marcarla igualmente si necesitas, pero por defecto no se asocia."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+      </div>
       <div class="ln-qty">
         <span>${qty} u.</span>
         <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
       </div>
-      <input class="ln-qty-input" type="number" min="0" max="${saldo}" value="${saldo}" data-line-key="${_esc(lineKey)}" onchange="rbaCambiarQtyDoc(this)" ${isZero?'disabled':''}>
+      <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_esc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="rbaCambiarQtyDoc(this)">
     </div>`;
   });
   html += '</div>';
   cont.innerHTML = html;
+  // Daniel 2026-05-24: auto-poblar _RBA.selDoc con las líneas pre-marcadas
+  // (las que tienen saldo) para que el contador y "Asociar al retiro"
+  // funcionen sin requerir click manual del operador.
+  setTimeout(() => {
+    document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]:checked').forEach(cb => {
+      rbaToggleLineaDoc(cb);
+    });
+  }, 50);
 }
 
 // Helper: extrae el saldo REAL de una línea del ERP.
@@ -4149,13 +4176,24 @@ function rbaToggleAllDoc(checked){
 }
 function rbaToggleLineaDoc(inp){
   const chkBox = inp.closest('.rba-chk');
-  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
   const row = inp.closest('.rba-line');
-  if (row) row.classList.toggle('is-selected', inp.checked);
   const key = inp.dataset.lineKey;
   const sku = inp.dataset.sku;
   const nombre = inp.dataset.nombre;
+  const isZero = inp.dataset.isZero === '1';
   const qtyInp = document.querySelector(`#rbaDocResult input.ln-qty-input[data-line-key="${key}"]`);
+  // Daniel 2026-05-24: si la línea NO tiene saldo y el operador la marca,
+  // mostrar aviso amable y dejar marcado (no bloquear).
+  if (inp.checked && isZero){
+    ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
+      type: 'info', duration: 4500
+    });
+    if (qtyInp && parseFloat(qtyInp.value || 0) === 0){
+      qtyInp.value = 1;
+    }
+  }
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  if (row) row.classList.toggle('is-selected', inp.checked);
   const qty = parseFloat((qtyInp ? qtyInp.value : inp.dataset.qty) || 0) || 0;
   const h = _RBA.loaded.docHeader || {};
   if (inp.checked){
@@ -4334,26 +4372,39 @@ async function rbaToggleDocCli(idx){
       const sku = (l.sku || '').toUpperCase();
       const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
       const qty = parseFloat(l.cantidad) || 0;
-      // Daniel 2026-05-24 FIX: usar saldo REAL del backend (no asumir = cantidad)
       const saldo = _rbaSaldoLinea(l);
       const isZero = saldo <= 0;
       const lineKey = `CLI|${idx}|${sku}|${j}`;
-      html += `<div class="rba-line ${isZero?'is-zero':''}" data-key="${_esc(lineKey)}">
-        <label class="rba-chk">
-          <input type="checkbox" ${isZero?'disabled':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" onchange="rbaToggleLineaCli(this)">
+      // Daniel 2026-05-24: pre-marcar las que tienen saldo, permitir
+      // marcar las sin saldo (con aviso amable).
+      const initialMax = isZero ? qty : saldo;
+      const initialQty = isZero ? 0 : saldo;
+      const preChecked = !isZero;
+      html += `<div class="rba-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}">
+        <label class="rba-chk ${preChecked?'is-checked':''}">
+          <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="rbaToggleLineaCli(this)">
           <span class="rba-chk-mark">✓</span>
         </label>
         <div class="ln-sku">${_esc(sku) || '—'}</div>
-        <div class="ln-desc">${_esc(nom)}</div>
+        <div class="ln-desc">
+          ${_esc(nom)}
+          ${isZero ? '<span class="rba-line-tag-zero" title="Esta línea ya fue rebajada del sistema (entregada). Puedes marcarla igualmente si necesitas."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+        </div>
         <div class="ln-qty">
           <span>${qty} u.</span>
           <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
         </div>
-        <input class="ln-qty-input" type="number" min="0" max="${saldo}" value="${saldo}" data-line-key="${_esc(lineKey)}" onchange="rbaCambiarQtyCli(this)" ${isZero?'disabled':''}>
+        <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_esc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="rbaCambiarQtyCli(this)">
       </div>`;
     });
     body.innerHTML = html;
     body.dataset.loaded = '1';
+    // Auto-poblar _RBA.selCli con las líneas pre-marcadas
+    setTimeout(() => {
+      body.querySelectorAll('input[type="checkbox"][data-line-key]:checked').forEach(cb => {
+        rbaToggleLineaCli(cb);
+      });
+    }, 50);
   } catch(e){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_esc(e.message)}</div>`;
   }
@@ -4364,14 +4415,27 @@ function rbaToggleLineaCli(inp){
   const row = inp.closest('.rba-line');
   if (row) row.classList.toggle('is-selected', inp.checked);
   const key = inp.dataset.lineKey;
+  const isZero = inp.dataset.isZero === '1';
+  const nombre = inp.dataset.nombre;
+  // Daniel 2026-05-24: aviso amable si marca una línea sin saldo (entregada)
+  if (inp.checked && isZero){
+    ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
+      type: 'info', duration: 4500
+    });
+    const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
+    if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
+  }
+  // qty actual: tomar del input si existe (puede haberse editado)
+  const qtyInp = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
+  const qtyEff = qtyInp ? (parseFloat(qtyInp.value || 0) || 0) : (parseFloat(inp.dataset.qty) || 0);
   if (inp.checked){
     _RBA.selCli.set(key, {
       tido:   inp.dataset.docTido,
       nudo:   inp.dataset.docNudo,
       sku:    inp.dataset.sku,
-      nombre: inp.dataset.nombre,
-      qty:    parseFloat(inp.dataset.qty) || 0,
-      saldo:  parseFloat(inp.dataset.qty) || 0,
+      nombre: nombre,
+      qty:    qtyEff,
+      saldo:  parseFloat(inp.dataset.qty) || qtyEff,
     });
   } else {
     _RBA.selCli.delete(key);
@@ -4443,17 +4507,33 @@ function rbaUpdateCounter(){
 // Asociar selección al retiro: agrupa por (tido, nudo) y agrega cada doc
 // ──────────────────────────────────────────────────────────────
 async function rbaAsociarSeleccion(){
-  const docsToAdd = new Map();   // key=`${tido}|${nudo}` → {tido, nudo}
-  // selDoc: viene del header _RBA.loaded.docHeader
+  // Daniel 2026-05-24 — REWRITE PARA RESPETAR LÍNEAS SELECCIONADAS:
+  // Antes: solo agregaba el documento entero (sin importar qué líneas marcó).
+  // Ahora: agrupa por doc + posta líneas granulares vía /docs/<id>/lineas.
+  //
+  // Estructura: docsToAdd[key] = {tido, nudo, lineas: [{sku, qty, nombre}]}
+
+  const docsToAdd = new Map();
+
+  // Tab "Por documento": una sola key (el doc header buscado)
   if (_RBA.selDoc.size > 0 && _RBA.loaded.docHeader){
     const h = _RBA.loaded.docHeader;
-    docsToAdd.set(`${h.tido}|${h.nudo}`, { tido: h.tido, nudo: h.nudo });
+    const key = `${h.tido}|${h.nudo}`;
+    const lineas = [];
+    _RBA.selDoc.forEach(it => {
+      lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
+    });
+    docsToAdd.set(key, { tido: h.tido, nudo: h.nudo, lineas });
   }
-  // selCli: tido y nudo vienen en cada item
+
+  // Tab "Por cliente": múltiples docs posibles, cada línea sabe a qué doc va
   _RBA.selCli.forEach(it => {
-    if (it.tido && it.nudo){
-      docsToAdd.set(`${it.tido}|${it.nudo}`, { tido: it.tido, nudo: it.nudo });
+    if (!it.tido || !it.nudo) return;
+    const key = `${it.tido}|${it.nudo}`;
+    if (!docsToAdd.has(key)){
+      docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
     }
+    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
   });
 
   if (docsToAdd.size === 0){
@@ -4465,15 +4545,17 @@ async function rbaAsociarSeleccion(){
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Asociando…</span>';
 
-  // FIX Daniel 2026-05-23: capturar la causa específica de cada error
-  // (antes el toast genérico "2 error(es)" no decía POR QUÉ fallaba).
   const okList = [];     // docs asociados OK
   const dupList = [];    // docs ya asociados (409 DUPLICATE)
   const errList = [];    // docs con error real (con detalle)
   const otrosN = [];
+
   for (const [, info] of docsToAdd){
     const label = `${info.tido} ${info.nudo}`;
     try {
+      // PASO 1: agregar el doc (puede dar 409 si ya está asociado).
+      // El backend SIEMPRE crea con TODAS las líneas; el paso 2 corrige
+      // la selección granular y deja solo las marcadas.
       const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
         method: 'POST',
         headers: {
@@ -4483,26 +4565,57 @@ async function rbaAsociarSeleccion(){
         },
         body: JSON.stringify({ document_type: info.tido, document_number: info.nudo })
       });
-      // Parse defensivo: si backend devuelve HTML (sesión expirada, etc.)
-      // no rompemos con "Unexpected token <".
       let d;
       try { d = await r.json(); }
-      catch(parseErr) {
+      catch(_){
         errList.push({ label, motivo: `Backend respondió HTML (status ${r.status}). ¿Sesión expirada?` });
         continue;
       }
+      // Doc ya asociado (409) — igual queremos aplicar la nueva selección
+      let docId = null;
       if (r.status === 409 || d.code === 'DUPLICATE'){
+        docId = d.doc_id || null;
         dupList.push(label);
-        continue;
-      }
-      if (!d.ok){
+      } else if (!d.ok){
         const motivo = (d.error || `HTTP ${r.status}`).toString().substring(0, 140);
         errList.push({ label, motivo });
         continue;
+      } else {
+        docId = d.doc && d.doc.id;
+        okList.push(label);
+        if (d.warning_otro_retiro){
+          otrosN.push(d.warning_otro_retiro.code);
+        }
       }
-      okList.push(label);
-      if (d.warning_otro_retiro){
-        otrosN.push(d.warning_otro_retiro.code);
+
+      // PASO 2: guardar selección granular de líneas para este doc.
+      // Solo las líneas en info.lineas (las que el operador marcó) van
+      // como incluida=true. El resto se mete como incluida=false.
+      if (docId && info.lineas && info.lineas.length > 0){
+        try {
+          // Backend solo necesita {sku, incluida:true, cantidad_seleccionada}
+          // Las líneas NO listadas quedan con incluida=0 por default.
+          const lineas_payload = info.lineas.map(ln => ({
+            sku: ln.sku,
+            incluida: true,
+            cantidad_seleccionada: ln.qty
+          }));
+          const rl = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify({ lineas: lineas_payload })
+          });
+          const dl = await rl.json();
+          if (!dl.ok){
+            console.warn('[rbaAsociar] selección granular falló:', dl.error);
+          }
+        } catch(eg){
+          console.warn('[rbaAsociar] error red selección:', eg);
+        }
       }
     } catch(e){
       errList.push({ label, motivo: 'Sin conexión: ' + (e.message || 'error de red') });
