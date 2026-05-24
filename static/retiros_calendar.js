@@ -101,6 +101,16 @@
       // las activa el wizard interno; el cliente público las deja false.
       allowToday: false,
       allowCrossLunch: false,
+      // Daniel 2026-05-24: el operador interno necesita ver QUÉ slot
+      // corresponde al retiro QUE ESTÁ EDITANDO (marca azul "🔵 Solicitud
+      // del cliente"). El widget no busca solo: la vista padre le dice
+      // qué ID y qué rango (fecha + hora) pidió el cliente.
+      currentRequestId: null,           // int — el RET-XXXXXX actual
+      requestedRange: null,             // {date, time_from, time_to} (opcional)
+      // Daniel 2026-05-24: drag selection para que el operador pueda
+      // "estirar" su selección con click+arrastre. Si false, sigue
+      // funcionando con click-1 = inicio, click-2 = fin.
+      enableDragSelect: false,
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -147,11 +157,26 @@
       const lunchStart = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
       const lunchStartMin = _hmToMin(lunchStart);
 
+      // Daniel 2026-05-24: ¿este slot coincide con la hora pedida por el
+      // cliente? Calculamos UNA vez por render, no por cada slot.
+      const reqRange = cfg.requestedRange;
+      const isInRequestedRange = (slot) => {
+        if (!reqRange || !reqRange.date || !reqRange.time_from) return false;
+        if (state.currentDate !== reqRange.date) return false;
+        const sM = _hmToMin(slot.time_from || slot.hora || '00:00');
+        const eM = _hmToMin(slot.time_to || slot.hora || '00:00');
+        const reqStart = _hmToMin(reqRange.time_from);
+        const reqEnd   = reqRange.time_to ? _hmToMin(reqRange.time_to) : reqStart + 30;
+        // Solape: el slot toca el rango pedido por el cliente
+        return !(eM <= reqStart || sM >= reqEnd);
+      };
+
       const slotHtml = (s, i) => {
         const cls = ['ilus-cal-slot'];
         let badge = '';
         let title = '';
         let ownersLine = '';
+        let flagLine = '';
         const estado = _estadoDeSlot(s);
         const owners = Array.isArray(s.owners) ? s.owners : [];
         // Daniel 2026-05-24: para vista PÚBLICA (sin owners) el cliente solo
@@ -160,9 +185,35 @@
         // mostrando el detalle 1/2 + capacidad parcial clickeable.
         const internalView = !!cfg.includeOwners;
 
+        // ¿es slot del CURRENT request? (oro)
+        const isCurrentOwner = internalView && cfg.currentRequestId &&
+              owners.some(o => Number(o.request_id) === Number(cfg.currentRequestId));
+        // ¿es el rango que pidió el cliente? (azul)
+        const isRequestedByClient = isInRequestedRange(s);
+
+        // Tooltip enriquecido (operador): cliente + estado + capacidad
+        const buildRichTitle = () => {
+          const parts = [];
+          const hm = `${s.time_from || s.hora || ''}${s.time_to ? ' – ' + s.time_to : ''}`;
+          parts.push(hm);
+          if (estado === 'colacion') parts.push('Colación');
+          else if (estado === 'completo') parts.push('Cupo lleno');
+          else if (estado === 'bloqueado') parts.push(s.razon || 'Bloqueado');
+          else if (estado === 'ocupado') parts.push(`Parcial (${(s.ocupacion_actual || s.ocupados || 1)}/${(s.capacidad_max || s.max || 2)})`);
+          else parts.push('Disponible');
+          if (owners.length > 0){
+            owners.forEach(o => {
+              parts.push(`${o.code} · ${o.customer_name}${o.status_label ? ' (' + o.status_label + ')' : ''}`);
+            });
+          }
+          if (isRequestedByClient) parts.push('★ Hora pedida por el cliente');
+          return parts.join('\n');
+        };
+
         if (estado === 'colacion'){
-          cls.push('is-lunch', 'is-disabled');
-          title = internalView ? 'Horario de colación (no agendable)' : 'Hora no disponible';
+          cls.push('is-lunch');
+          if (cfg.allowCrossLunch) cls.push('is-lunch-crossable'); else cls.push('is-disabled');
+          title = internalView ? 'Horario de colación' + (cfg.allowCrossLunch ? ' (cruzable con aviso)' : ' (no agendable)') : 'Hora no disponible';
         } else if (estado === 'completo'){
           cls.push('is-full', 'is-disabled');
           if (internalView){
@@ -193,14 +244,27 @@
             : 'Disponible';
         }
 
+        // Banderas visuales prioritarias (orden: current owner gana sobre solicitado)
+        if (isCurrentOwner){
+          cls.push('is-current-request');
+          flagLine = `<span class="ilus-cal-flag is-current" title="Este retiro está aquí">★ ESTE</span>`;
+        } else if (isRequestedByClient){
+          cls.push('is-requested-by-client');
+          flagLine = `<span class="ilus-cal-flag is-requested" title="Hora pedida por el cliente">🔵 Pedido</span>`;
+        }
+
         // Solo modo INTERNO: mostrar dueños del slot bajo la hora
         if (cfg.includeOwners && owners.length > 0){
           if (owners.length === 1){
-            ownersLine = `<span class="ilus-cal-owner-line" title="${_esc(owners[0].code)} · ${_esc(owners[0].customer_name)}">${_esc(owners[0].code)}</span>`;
+            const o = owners[0];
+            ownersLine = `<span class="ilus-cal-owner-line" title="${_esc(o.code)} · ${_esc(o.customer_name)}">${_esc(o.code)}</span>`;
           } else {
             ownersLine = `<span class="ilus-cal-owner-line">${owners.length} retiros</span>`;
           }
         }
+
+        // Sobrescribe título plano con versión enriquecida (operador)
+        if (internalView) title = buildRichTitle();
 
         if (state.startIdx !== null && state.endIdx !== null){
           if (i === state.startIdx && i === state.endIdx){
@@ -215,7 +279,7 @@
         }
         const hora = s.time_from || s.hora || '';
         const safeTitle = _esc(title);
-        return `<div class="${cls.join(' ')}" data-ilus-cal-idx="${i}" title="${safeTitle}" role="button" tabindex="${cls.indexOf('is-disabled') === -1 ? 0 : -1}">${badge}<span class="ilus-cal-hora">${_esc(hora)}</span>${ownersLine}</div>`;
+        return `<div class="${cls.join(' ')}" data-ilus-cal-idx="${i}" title="${safeTitle}" role="button" tabindex="${cls.indexOf('is-disabled') === -1 ? 0 : -1}">${flagLine}${badge}<span class="ilus-cal-hora">${_esc(hora)}</span>${ownersLine}</div>`;
       };
 
       // Buscar primer slot post-colación (frontera Mañana / Tarde)
@@ -240,9 +304,25 @@
       }
       grid.innerHTML = html;
 
-      // Bind eventos
+      // Bind eventos — click simple + shift+click. Drag se enlaza UNA
+      // sola vez a nivel de grid (los handlers globales se mantienen
+      // estables entre renderGrid para evitar fugas).
       grid.querySelectorAll('[data-ilus-cal-idx]').forEach(el => {
-        el.addEventListener('click', () => onSlotClick(parseInt(el.dataset.ilusCalIdx, 10)));
+        // Click (con soporte para shift+click = rango)
+        el.addEventListener('click', (ev) => {
+          if (_dragState && _dragState.suppressedClick){
+            _dragState.suppressedClick = false;
+            _dragState = null;
+            return;
+          }
+          const i = parseInt(el.dataset.ilusCalIdx, 10);
+          // Shift+click → seleccionar rango desde startIdx actual hasta i
+          if (ev.shiftKey && state.startIdx !== null){
+            tryExtendSelection(state.startIdx, i);
+          } else {
+            onSlotClick(i);
+          }
+        });
         el.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' '){
             e.preventDefault();
@@ -250,6 +330,102 @@
           }
         });
       });
+    }
+
+    // Drag selection (mouse). Solo si lo activan explícitamente.
+    // Importante: los listeners globales se enlazan UNA SOLA VEZ por
+    // instancia, no por cada renderGrid (que se llama muchas veces).
+    let _dragState = null;
+    const _isDraggableSlot = (el) => {
+      if (!el) return false;
+      if (el.classList.contains('is-disabled')) return false;
+      if (el.classList.contains('is-full') || el.classList.contains('is-blocked')) return false;
+      return true;
+    };
+    function _bindDragOnce(){
+      if (!cfg.enableDragSelect) return;
+      grid.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        const el = ev.target && ev.target.closest && ev.target.closest('[data-ilus-cal-idx]');
+        if (!el || !_isDraggableSlot(el)) return;
+        const i = parseInt(el.dataset.ilusCalIdx, 10);
+        _dragState = { startIdx: i, currentIdx: i, moved: false, suppressedClick: false };
+      });
+      document.addEventListener('mousemove', (ev) => {
+        if (!_dragState) return;
+        const target = document.elementFromPoint(ev.clientX, ev.clientY);
+        if (!target) return;
+        const slotEl = target.closest && target.closest('[data-ilus-cal-idx]');
+        if (!slotEl || !grid.contains(slotEl)) return;
+        const i = parseInt(slotEl.dataset.ilusCalIdx, 10);
+        if (i !== _dragState.currentIdx){
+          _dragState.currentIdx = i;
+          _dragState.moved = true;
+          tryExtendSelection(_dragState.startIdx, i, /*silent=*/true);
+        }
+      });
+      document.addEventListener('mouseup', (ev) => {
+        if (!_dragState) return;
+        const moved = _dragState.moved;
+        if (moved){
+          // Re-validar final con toast si hubo error
+          const target = document.elementFromPoint(ev.clientX, ev.clientY);
+          const slotEl = target && target.closest && target.closest('[data-ilus-cal-idx]');
+          let finalIdx = _dragState.currentIdx;
+          if (slotEl && grid.contains(slotEl)){
+            finalIdx = parseInt(slotEl.dataset.ilusCalIdx, 10);
+          }
+          tryExtendSelection(_dragState.startIdx, finalIdx, /*silent=*/false);
+          _dragState.suppressedClick = true;
+          // No nullificar aún — esperamos al click event que viene
+        } else {
+          _dragState = null;
+        }
+      });
+    }
+    _bindDragOnce();
+
+    // Extiende selección desde idxA a idxB validando estados intermedios.
+    // Reutiliza la misma lógica que onSlotClick para mantener un único path.
+    function tryExtendSelection(idxA, idxB, silent){
+      const from = Math.min(idxA, idxB);
+      const to   = Math.max(idxA, idxB);
+      const internalView = !!cfg.includeOwners;
+      let invalido = null;
+      let cruzaColacion = false;
+      for (let k = from; k <= to; k++){
+        const ek = _estadoDeSlot(state.slots[k]);
+        if (ek === 'colacion'){
+          if (cfg.allowCrossLunch){ cruzaColacion = true; }
+          else { invalido = 'colacion'; break; }
+        }
+        if (ek === 'completo'){ invalido = 'completo'; break; }
+        if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
+        if (!internalView && ek === 'ocupado'){ invalido = 'completo'; break; }
+      }
+      if (invalido){
+        if (silent) return;  // drag-live: no romper, esperar al mouseup
+        if (invalido === 'colacion'){
+          const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
+          const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
+          _toast(`No puede cruzar colación (${ls}-${le}). Acórtalo.`, 'warning');
+        } else if (invalido === 'completo'){
+          _toast('El rango cruza un bloque lleno. Acórtalo.', 'warning');
+        } else {
+          _toast('El rango cruza una franja bloqueada.', 'warning');
+        }
+        // Recortamos al inicio (operador puede volver a elegir)
+        state.startIdx = state.endIdx = idxB;
+      } else {
+        state.startIdx = from; state.endIdx = to;
+        if (cruzaColacion && cfg.allowCrossLunch && !silent){
+          const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
+          const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
+          _toast(`Cruza la colación del equipo (${ls}-${le}). Confirma con bodega.`, 'warning');
+        }
+      }
+      updateSummary();
+      renderGrid();
     }
 
     function onSlotClick(i){

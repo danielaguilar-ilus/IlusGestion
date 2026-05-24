@@ -295,6 +295,190 @@
   .iw-suggest-chip:hover .iw-suggest-libres{background:#fff;color:var(--ilus-red)}
 
   /* ════════════════════════════════════════════════════════════════
+     PASO 4 PREMIUM — Daniel 2026-05-24
+     ─────────────────────────────────────────────────────────────────
+     Horario potente para operador. Card "Solicitud del cliente" con
+     CTA aceptar/modificar, banderas visuales en slots del calendario
+     (★ ESTE para el retiro actual, 🔵 Pedido para hora del cliente),
+     dropdown de plantillas mensaje + preview, chip de tiempo estimado
+     según peso/volumen calculado.
+     ════════════════════════════════════════════════════════════════ */
+  /* Card AMARILLO — pedido del cliente (siempre arriba del calendario) */
+  .iw-client-card{
+    background:linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%);
+    border:1.5px solid #fcd34d;border-radius:14px;
+    padding:14px 16px;margin-bottom:14px;
+    display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+    box-shadow:0 2px 8px rgba(245,158,11,.18), inset 0 1px 0 rgba(255,255,255,.6);
+    position:relative;overflow:hidden;
+  }
+  .iw-client-card::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+    background:linear-gradient(180deg,#f59e0b 0%,#dc2626 100%);
+  }
+  .iw-client-card-ico{
+    font-size:1.6rem;color:#b45309;flex-shrink:0;
+    background:#fff;border-radius:50%;width:44px;height:44px;
+    display:inline-flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 6px rgba(180,83,9,.20);
+  }
+  .iw-client-card-body{flex:1;min-width:200px}
+  .iw-client-card-label{
+    font-size:.7rem;font-weight:800;color:#92400e;
+    letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px;
+  }
+  .iw-client-card-time{
+    font-size:1.15rem;font-weight:900;color:#0a0a0a;line-height:1.15;
+  }
+  .iw-client-card-time strong{color:#b91c1c}
+  .iw-client-card-sub{font-size:.78rem;color:#78350f;margin-top:2px}
+  .iw-client-card-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
+  .iw-client-card .btn-accept-req{
+    background:#16a34a;color:#fff;border:none;border-radius:10px;
+    font-weight:800;padding:9px 16px;font-size:.85rem;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;
+    box-shadow:0 3px 8px rgba(22,163,74,.30);
+    transition:all .15s cubic-bezier(.34,1.56,.64,1);
+    min-height:38px;
+  }
+  .iw-client-card .btn-accept-req:hover{background:#15803d;transform:translateY(-1px);box-shadow:0 5px 12px rgba(22,163,74,.42)}
+  .iw-client-card .btn-accept-req:active{transform:translateY(0);scale:.96}
+  .iw-client-card .btn-modify-req{
+    background:#fff;color:#92400e;border:1.5px solid #fcd34d;
+    border-radius:10px;font-weight:700;padding:9px 14px;
+    font-size:.82rem;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;
+    transition:all .15s ease;min-height:38px;
+  }
+  .iw-client-card .btn-modify-req:hover{background:#fef3c7;border-color:#f59e0b}
+
+  /* SLOT del calendario: bandera ★ ESTE (oro) */
+  .ilus-cal-slot.is-current-request{
+    border:2px solid #f59e0b !important;
+    background:linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%) !important;
+    box-shadow:0 0 0 3px rgba(245,158,11,.18), 0 4px 12px rgba(245,158,11,.30) !important;
+    color:#7c2d12;
+    animation:iwCurrentPulse 2.4s ease-in-out infinite;
+  }
+  .ilus-cal-slot.is-current-request .ilus-cal-hora{color:#7c2d12;font-weight:900}
+  @keyframes iwCurrentPulse{
+    0%,100%{box-shadow:0 0 0 3px rgba(245,158,11,.18), 0 4px 12px rgba(245,158,11,.30)}
+    50%{box-shadow:0 0 0 6px rgba(245,158,11,.10), 0 6px 18px rgba(245,158,11,.40)}
+  }
+  /* SLOT del calendario: bandera 🔵 Pedido por cliente */
+  .ilus-cal-slot.is-requested-by-client:not(.is-disabled):not(.is-current-request){
+    border:2px dashed #3b82f6 !important;
+    background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%) !important;
+  }
+  .ilus-cal-slot.is-requested-by-client .ilus-cal-hora{color:#1e40af;font-weight:900}
+  /* La bandera flotante en sí (esquina superior-izq) */
+  .ilus-cal-flag{
+    position:absolute;top:-8px;left:50%;transform:translateX(-50%);
+    background:#0a0a0a;color:#fff;font-size:.5rem;
+    padding:2px 7px;border-radius:50px;letter-spacing:.06em;font-weight:800;
+    box-shadow:0 2px 4px rgba(0,0,0,.20);white-space:nowrap;z-index:3;
+    text-transform:uppercase;
+  }
+  .ilus-cal-flag.is-current{
+    background:linear-gradient(135deg,#f59e0b 0%,#b45309 100%);
+    box-shadow:0 2px 6px rgba(245,158,11,.40);
+  }
+  .ilus-cal-flag.is-requested{
+    background:linear-gradient(135deg,#3b82f6 0%,#1e40af 100%);
+    box-shadow:0 2px 6px rgba(59,130,246,.40);
+  }
+  /* Si el slot está seleccionado y además es el current → la bandera se mantiene visible */
+  .ilus-cal-slot.is-selected.is-current-request{
+    background:linear-gradient(135deg,#f59e0b 0%,#dc2626 100%) !important;
+    color:#fff !important;
+  }
+  .ilus-cal-slot.is-selected.is-current-request .ilus-cal-hora{color:#fff}
+  /* Slot de colación CRUZABLE (operador interno): cursor permitido, hover cambia */
+  .ilus-cal-slot.is-lunch.is-lunch-crossable{
+    cursor:pointer;opacity:.85;
+  }
+  .ilus-cal-slot.is-lunch.is-lunch-crossable:hover{
+    background:linear-gradient(135deg,#fed7aa 0%,#fdba74 100%);
+    border-color:#fb923c;transform:translateY(-1px);
+    box-shadow:0 4px 10px rgba(251,146,60,.30);
+  }
+
+  /* PLANTILLAS de mensaje — dropdown elegante */
+  .iw-msg-wrap{position:relative;margin-bottom:8px}
+  .iw-msg-tools{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:6px;flex-wrap:wrap;gap:6px;
+  }
+  .iw-msg-tools label{margin:0;font-size:.82rem;font-weight:800;color:#0a0a0a}
+  .iw-msg-templates{
+    display:flex;gap:6px;flex-wrap:wrap;
+  }
+  .iw-msg-template-chip{
+    display:inline-flex;align-items:center;gap:5px;
+    background:#fff;color:#374151;border:1.5px solid #e5e7eb;
+    border-radius:50px;padding:5px 11px;font-size:.74rem;font-weight:700;
+    cursor:pointer;transition:all .15s ease;
+    min-height:30px;
+  }
+  .iw-msg-template-chip:hover{
+    background:#fef2f2;border-color:#fca5a5;color:#b91c1c;transform:translateY(-1px);
+  }
+  .iw-msg-template-chip.is-active{
+    background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
+    box-shadow:0 2px 6px rgba(220,38,38,.30);
+  }
+  .iw-msg-template-chip i{font-size:.78rem}
+  /* PREVIEW del mensaje (cómo lo verá el cliente) */
+  .iw-msg-preview{
+    margin-top:8px;background:#f8fafc;border:1px dashed #cbd5e1;
+    border-radius:10px;padding:10px 12px;font-size:.82rem;color:#334155;
+    line-height:1.5;position:relative;
+  }
+  .iw-msg-preview::before{
+    content:'Así lo verá el cliente';position:absolute;top:-8px;left:10px;
+    background:#fff;padding:0 6px;font-size:.65rem;font-weight:800;
+    color:#64748b;text-transform:uppercase;letter-spacing:.06em;
+  }
+  .iw-msg-preview-name{color:#dc2626;font-weight:800}
+  .iw-msg-preview-time{color:#0a0a0a;font-weight:800}
+
+  /* Chip "tiempo estimado" auto-calculado en el header del calendario */
+  .iw-est-chip{
+    display:inline-flex;align-items:center;gap:5px;
+    background:#0a0a0a;color:#fff;border-radius:50px;
+    padding:3px 10px;font-size:.7rem;font-weight:800;
+    letter-spacing:.04em;margin-left:8px;
+  }
+  .iw-est-chip i{color:#fcd34d}
+
+  /* DROPZONE para foto adjunta (bonus) */
+  .iw-photo-drop{
+    margin-top:8px;border:2px dashed #cbd5e1;border-radius:10px;
+    padding:14px;text-align:center;cursor:pointer;
+    background:#f8fafc;transition:all .15s ease;
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+  }
+  .iw-photo-drop:hover{background:#fef2f2;border-color:#fca5a5}
+  .iw-photo-drop.is-loaded{background:#dcfce7;border-color:#16a34a;border-style:solid}
+  .iw-photo-drop i{font-size:1.4rem;color:#64748b}
+  .iw-photo-drop.is-loaded i{color:#16a34a}
+  .iw-photo-drop-label{font-size:.82rem;font-weight:700;color:#0a0a0a}
+  .iw-photo-drop-thumb{
+    max-width:100%;max-height:120px;border-radius:8px;
+    box-shadow:0 2px 6px rgba(0,0,0,.10);
+  }
+
+  @media (max-width: 480px){
+    .iw-client-card{padding:12px 14px;gap:10px}
+    .iw-client-card-ico{width:38px;height:38px;font-size:1.3rem}
+    .iw-client-card-time{font-size:1rem}
+    .iw-client-card-actions{width:100%}
+    .iw-client-card .btn-accept-req,
+    .iw-client-card .btn-modify-req{flex:1;justify-content:center}
+    .iw-msg-templates{width:100%}
+  }
+
+  /* ════════════════════════════════════════════════════════════════
      DOC PICKER — Cards de factura con líneas expandibles
      ════════════════════════════════════════════════════════════════ */
   .doc-search-bar{
@@ -535,6 +719,27 @@
   .td-doc-origen .tdo-tipo{color:var(--ilus-red);font-weight:900}
   .td-prod-desc{font-weight:600;color:#0f172a;line-height:1.3}
   .td-prod-desc small{display:block;color:#6b7280;font-weight:400;font-size:.72rem;margin-top:1px}
+
+  /* 🆕 Daniel 2026-05-24: badge para líneas marcadas SIN saldo en ERP.
+     Visual ámbar (advertencia, no error) — operador marcó manualmente
+     una línea que Random reporta como ya entregada. */
+  .td-sin-saldo-badge{
+    display:inline-flex;align-items:center;gap:5px;
+    margin-top:6px;padding:3px 9px;
+    background:linear-gradient(180deg,#fff8e1 0%,#fef3c7 100%);
+    border:1px solid #fcd34d;border-radius:50px;
+    font-size:.7rem;font-weight:800;color:#92400e;
+    line-height:1.1;letter-spacing:.01em;
+    box-shadow:0 1px 2px rgba(245,158,11,.18);
+    white-space:nowrap;
+  }
+  .td-sin-saldo-badge i{font-size:.78rem;color:#d97706}
+  .td-row-sin-saldo td{
+    background:linear-gradient(180deg,#fffbeb 0%,#fff 60%) !important;
+  }
+  @media (max-width: 768px){
+    .td-sin-saldo-badge{margin-top:4px;font-size:.68rem}
+  }
 
   .ilus-tabla-empty-row td{background:#fafafa !important;padding:0 !important}
   .ilus-tabla-empty{
@@ -936,9 +1141,17 @@
       0 -1px 4px rgba(15,23,42,.06),
       0 -32px 80px -16px rgba(15,23,42,.40);
     transform:translateY(100%);opacity:0;
-    transition:transform .5s var(--ease-spring), opacity .35s var(--ease-out);
+    transition:transform .5s var(--ease-spring), opacity .35s var(--ease-out), visibility 0s linear .5s;
     max-height:92vh;overflow:hidden;
     display:flex;flex-direction:column;
+    /* 🔧 BUG FIX Daniel 2026-05-24: modal cerrado debe ser INVISIBLE y NO clickeable.
+       Antes solo tenía opacity:0 + transform off-screen → el <select> nativo del browser
+       seguía clickeable en su posición original. Al hacer click en cualquier parte de
+       la página que coincidiera con la zona donde antes estaba el <select> de tipo de
+       documento (FCV/BLV/...), se abría el dropdown nativo del navegador FLOTANDO sobre
+       toda la pantalla. Solución: pointer-events:none + visibility:hidden cuando cerrado. */
+    pointer-events:none;
+    visibility:hidden;
   }
   @media(min-width:768px){
     .rba-modal{
@@ -948,7 +1161,11 @@
       max-height:88vh;
     }
   }
-  .rba-modal.is-open{transform:translateY(0);opacity:1}
+  .rba-modal.is-open{
+    transform:translateY(0);opacity:1;
+    pointer-events:auto;visibility:visible;
+    transition:transform .5s var(--ease-spring), opacity .35s var(--ease-out), visibility 0s linear 0s;
+  }
   @media(min-width:768px){
     .rba-modal.is-open{transform:translateY(-50%)}
   }
@@ -2164,11 +2381,53 @@
         <div id="iwProposeForm" {% if _step4_done or _n_docs_inicial == 0 %}style="display:none"{% endif %}>
           <form id="iwProposeFormEl" novalidate>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            {# ════════════════════════════════════════════════════════════
+               CARD — "EL CLIENTE PIDIÓ" (Daniel 2026-05-24)
+               ─────────────────────────────────────────────────────────
+               Muestra arriba del calendario la fecha+hora que pidió el
+               cliente. Botón verde "Aceptar como propuesta" → pre-llena
+               selección (si está disponible). Botón "Modificar" cierra
+               la card y deja al operador elegir libremente.
+               Solo aparece si hay requested_date — si el cliente NO eligió
+               hora (raro), se omite directamente.
+               ════════════════════════════════════════════════════════ #}
+            {% if req.requested_date %}
+            {% set _req_date_iso = (req.requested_date|string)[:10] %}
+            {% set _req_tf = req.requested_time_from|hm %}
+            {% set _req_tt = req.requested_time_to|hm %}
+            <div id="iwClientCard" class="iw-client-card"
+                 data-req-date="{{ _req_date_iso }}"
+                 data-req-tf="{{ _req_tf }}"
+                 data-req-tt="{{ _req_tt }}">
+              <div class="iw-client-card-ico"><i class="bi bi-person-raised-hand"></i></div>
+              <div class="iw-client-card-body">
+                <div class="iw-client-card-label">El cliente pidió</div>
+                <div class="iw-client-card-time">
+                  <strong>{{ req.requested_date | chile_fmt('%A %d/%m') }}</strong>
+                  entre <strong>{{ _req_tf }}</strong> y <strong>{{ _req_tt }}</strong>
+                </div>
+                <div class="iw-client-card-sub">
+                  Cliente: <strong>{{ req.customer_name or req.contact_name }}</strong>
+                  · puedes aceptar tal cual, o ajustar abajo
+                </div>
+              </div>
+              <div class="iw-client-card-actions">
+                <button type="button" class="btn-accept-req" id="iwBtnAcceptClient">
+                  <i class="bi bi-check-circle-fill"></i><span>Aceptar como propuesta</span>
+                </button>
+                <button type="button" class="btn-modify-req" id="iwBtnModifyClient">
+                  <i class="bi bi-pencil"></i><span>Modificar</span>
+                </button>
+              </div>
+            </div>
+            {% endif %}
+
             <div class="row g-2 mb-3">
               <div class="col-md-6">
                 <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
                 <input type="date" id="iwProposeDate" class="form-control form-control-sm" required>
-                <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (12:30–14:00) para facturas grandes.</small>
+                <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.</small>
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-bold mb-1" style="font-size:.92rem">Motivo (opcional)</label>
@@ -2198,13 +2457,30 @@
 
             <div class="ilus-cal-wrap mb-2">
               <div class="ilus-cal-head">
-                <strong style="font-size:.92rem">Bloque horario</strong>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                  <strong style="font-size:.92rem">Bloque horario</strong>
+                  {% if req.tiempo_estimado_min %}
+                  <span class="iw-est-chip" title="Calculado por peso/volumen del retiro">
+                    <i class="bi bi-stopwatch-fill"></i>~{{ req.tiempo_estimado_min }} min
+                  </span>
+                  {% endif %}
+                  <span class="iw-est-chip" style="background:#3b82f6" title="Puedes seleccionar varios bloques contiguos">
+                    <i class="bi bi-arrows-collapse"></i>Estirable
+                  </span>
+                </div>
                 <div class="legend" style="font-size:.78rem">
                   <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
-                  <span><span class="dot" style="background:var(--ilus-red)"></span>Propuesto</span>
-                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
+                  <span><span class="dot" style="background:var(--ilus-red)"></span>Seleccionado</span>
+                  <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
                   <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  {% if req.requested_date %}
+                  <span><span class="dot" style="background:#dbeafe;border:1.5px dashed #3b82f6"></span>Pedido por cliente</span>
+                  {% endif %}
                 </div>
+              </div>
+              <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
+                <span><strong>Tip:</strong> click en un bloque marca el inicio; <strong>shift+click</strong> en otro slot define el fin. O simplemente arrastra para seleccionar varios.</span>
               </div>
               <div id="iwProposeGrid">
                 <div class="ilus-cal-skel" aria-hidden="true">
@@ -2227,8 +2503,35 @@
             <input type="hidden" name="time_from" id="iwProposeHidTf">
             <input type="hidden" name="time_to" id="iwProposeHidTt">
 
-            <label class="form-label small fw-bold mb-1 mt-2">Mensaje para el cliente (opcional)</label>
-            <textarea id="iwProposeMessage" class="form-control form-control-sm mb-2" rows="2" placeholder="Ej: Te confirmamos disponibilidad para mañana. Trae tu vehículo a la bodega de Quilicura."></textarea>
+            {# ════════════════════════════════════════════════════════════
+               MENSAJE PARA EL CLIENTE — Daniel 2026-05-24
+               ─────────────────────────────────────────────────────────
+               Plantillas predefinidas con auto-relleno de {nombre},
+               {fecha}, {hora_inicio} y {hora_fin}. Preview en vivo de
+               cómo lo verá el cliente. Foto adjunta opcional (placeholder
+               visual — el upload real al cloudinary queda BONUS).
+               ════════════════════════════════════════════════════════ #}
+            <div class="iw-msg-wrap">
+              <div class="iw-msg-tools">
+                <label>Mensaje para el cliente <span class="text-muted" style="font-weight:600">(opcional)</span></label>
+                <div class="iw-msg-templates" role="group" aria-label="Plantillas">
+                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="amistoso" title="Confirmación amistosa">
+                    <i class="bi bi-emoji-smile"></i>Amistoso
+                  </button>
+                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="reagendado" title="Aviso de reagendamiento">
+                    <i class="bi bi-arrow-repeat"></i>Reagendado
+                  </button>
+                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="formal" title="Confirmación formal">
+                    <i class="bi bi-briefcase"></i>Formal
+                  </button>
+                  <button type="button" class="iw-msg-template-chip" data-iw-tpl="" title="Limpiar (escribir desde cero)">
+                    <i class="bi bi-pencil"></i>Vacío
+                  </button>
+                </div>
+              </div>
+              <textarea id="iwProposeMessage" class="form-control form-control-sm" rows="3" placeholder="Ej: Te confirmamos disponibilidad para mañana. Trae tu vehículo a la bodega de Quilicura."></textarea>
+              <div class="iw-msg-preview" id="iwMsgPreview" style="display:none"></div>
+            </div>
 
             <div id="iwProposeFeedback" class="small mb-2"></div>
 
@@ -3280,10 +3583,21 @@ async function refrescarTablaProductos(){
     }
     body.innerHTML = lineas.map(ln => {
       const docTipo = String(ln.doc_tipo || '').toUpperCase();
-      return `<tr>
+      // 🆕 Daniel 2026-05-24: badge ámbar para líneas marcadas SIN saldo en ERP
+      // (el operador las incluyó manualmente aunque Random las reporte como ya
+      // entregadas). Da aviso visual sin bloquear la operación.
+      const sinSaldoBadge = ln.marcada_sin_saldo
+        ? '<span class="td-sin-saldo-badge" title="Esta línea ya estaba rebajada en el ERP Random (figura como entregada). El operador la incluyó igualmente porque el cliente viene a retirarla.">'
+          + '<i class="bi bi-exclamation-triangle-fill"></i>'
+          + '<span>Ya rebajado en ERP</span>'
+          + '</span>'
+        : '';
+      const rowCls = ln.marcada_sin_saldo ? ' class="td-row-sin-saldo"' : '';
+      return `<tr${rowCls}>
         <td data-label="SKU" class="mono">${_esc(ln.sku || '—')}</td>
         <td data-label="Descripción">
           <div class="td-prod-desc">${_esc(ln.descripcion || '(sin descripción)')}</div>
+          ${sinSaldoBadge}
         </td>
         <td data-label="Doc origen">
           <span class="td-doc-origen">
@@ -3921,11 +4235,26 @@ function _mountProposeCalendar(){
   if (window._proposeCalInstance) return;
   if (typeof window.IlusRetirosCalendar === 'undefined') return;
   const dateInp = document.getElementById('iwProposeDate');
+  // Daniel 2026-05-24: por default arrancamos en LA FECHA QUE PIDIÓ EL
+  // CLIENTE (si tiene). Así el operador ve sus banderas 🔵 al instante.
+  // Si no, hoy mismo.
+  const cardEl = document.getElementById('iwClientCard');
+  const cardData = cardEl ? cardEl.dataset : null;
   if (dateInp && !dateInp.value){
-    // Daniel 2026-05-24: operador puede agendar HOY. Default = hoy.
-    const today = new Date();
-    dateInp.value = today.toISOString().slice(0,10);
+    if (cardData && cardData.reqDate){
+      dateInp.value = cardData.reqDate;
+    } else {
+      const today = new Date();
+      dateInp.value = today.toISOString().slice(0,10);
+    }
   }
+  // Detectamos rango pedido por cliente (si la card está renderizada)
+  const requestedRange = cardData ? {
+    date: cardData.reqDate || '',
+    time_from: cardData.reqTf || '',
+    time_to: cardData.reqTt || '',
+  } : null;
+
   window._proposeCalInstance = window.IlusRetirosCalendar.mount({
     container:      '#iwProposeGrid',
     dateInput:      '#iwProposeDate',
@@ -3940,6 +4269,15 @@ function _mountProposeCalendar(){
     // pasa estas flags (mantiene su 24h y bloque de colación).
     allowToday:      true,
     allowCrossLunch: true,
+    // Daniel 2026-05-24: bandera ★ en el slot del CURRENT request +
+    // 🔵 en el rango que pidió el cliente + drag para estirar.
+    currentRequestId: {{ req.id|int }},
+    requestedRange:   requestedRange,
+    enableDragSelect: true,
+    // Sugerencia inicial: tiempo estimado según peso/volumen.
+    // Daniel 2026-05-24 quote: "está sobredimensionado en horas y pidió
+    // media hora, se ven que necesitamos cuatro". Por eso si el cálculo
+    // por peso da MÁS de lo que pidió el cliente, sugerimos lo nuestro.
     suggestedDurationMin: {{ (req.tiempo_estimado_min or 30)|int }},
     onChange: (sel) => {
       const quick = document.getElementById('iwProposeQuick');
@@ -3954,9 +4292,186 @@ function _mountProposeCalendar(){
       }
       // Daniel 2026-05-24: chequear sugerencias de días con cupos
       _refreshSuggestedDays();
+      // Refrescar preview del mensaje (interpola fecha y hora)
+      if (typeof _iwRefreshPreview === 'function') _iwRefreshPreview();
     },
   });
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  PASO 4 — Card "El cliente pidió" + plantillas mensaje + preview
+//  Daniel 2026-05-24: el operador acepta tal cual o modifica.
+// ════════════════════════════════════════════════════════════════════
+const _IW_TPLS = {
+  amistoso: 'Hola {nombre}, te confirmamos disponibilidad para tu retiro el {fecha} entre {hora_inicio} y {hora_fin}. Por favor confirma tocando el botón en el email. ¡Te esperamos!',
+  reagendado: 'Hola {nombre}, te proponemos REAGENDAR tu retiro al {fecha} entre {hora_inicio} y {hora_fin}. Por favor confirma con un click — si no calza, contraprópone otra hora.',
+  formal: 'Estimado/a {nombre}, le informamos que su retiro queda agendado para el {fecha}, entre {hora_inicio} y {hora_fin} horas. Le solicitamos confirmar disponibilidad. Saludos cordiales.',
+};
+const _IW_CUSTOMER_NAME = {{ (req.contact_name or req.customer_name or 'cliente') | tojson }};
+
+function _fmtFechaCorta(iso){
+  // 2026-05-25 → "lunes 25 de mayo" en español
+  if (!iso) return '';
+  try {
+    const d = new Date(iso + 'T12:00:00');
+    const dia = d.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+    return dia;
+  } catch(_){ return iso; }
+}
+function _iwInterpolate(tpl){
+  const fIn = document.getElementById('iwProposeHidDate');
+  const tfIn = document.getElementById('iwProposeHidTf');
+  const ttIn = document.getElementById('iwProposeHidTt');
+  const fecha = fIn && fIn.value ? _fmtFechaCorta(fIn.value) : 'el día acordado';
+  const hf = tfIn && tfIn.value ? tfIn.value : '—';
+  const ht = ttIn && ttIn.value ? ttIn.value : '—';
+  return String(tpl || '')
+    .replace(/\{nombre\}/g, _IW_CUSTOMER_NAME)
+    .replace(/\{fecha\}/g, fecha)
+    .replace(/\{hora_inicio\}/g, hf)
+    .replace(/\{hora_fin\}/g, ht);
+}
+function _iwRefreshPreview(){
+  const ta = document.getElementById('iwProposeMessage');
+  const pv = document.getElementById('iwMsgPreview');
+  if (!ta || !pv) return;
+  const raw = ta.value || '';
+  if (!raw.trim()){
+    pv.style.display = 'none';
+    return;
+  }
+  const interp = _iwInterpolate(raw);
+  // Escape básico para HTML (defensa simple)
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+  // Resaltar nombre y hora con clases
+  let html = esc(interp);
+  if (_IW_CUSTOMER_NAME){
+    const escName = esc(_IW_CUSTOMER_NAME);
+    html = html.split(escName).join(`<span class="iw-msg-preview-name">${escName}</span>`);
+  }
+  const tfIn = document.getElementById('iwProposeHidTf');
+  const ttIn = document.getElementById('iwProposeHidTt');
+  if (tfIn && tfIn.value && ttIn && ttIn.value){
+    const t1 = esc(tfIn.value);
+    const t2 = esc(ttIn.value);
+    html = html.split(t1).join(`<span class="iw-msg-preview-time">${t1}</span>`);
+    html = html.split(t2).join(`<span class="iw-msg-preview-time">${t2}</span>`);
+  }
+  pv.innerHTML = html;
+  pv.style.display = 'block';
+}
+// Binds para plantillas y textarea
+(function(){
+  const ta = document.getElementById('iwProposeMessage');
+  if (ta){
+    ta.addEventListener('input', _iwRefreshPreview);
+  }
+  document.querySelectorAll('.iw-msg-template-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const key = chip.dataset.iwTpl || '';
+      // Marcar activo (visual)
+      document.querySelectorAll('.iw-msg-template-chip').forEach(c => c.classList.remove('is-active'));
+      chip.classList.add('is-active');
+      const tpl = _IW_TPLS[key] || '';
+      if (ta){
+        ta.value = tpl;
+        _iwRefreshPreview();
+      }
+    });
+  });
+  // Cambio de fecha → refrescar preview (interpolación de {fecha})
+  const dateInp = document.getElementById('iwProposeDate');
+  if (dateInp){
+    dateInp.addEventListener('change', () => { try { _iwRefreshPreview(); } catch(_){} });
+  }
+})();
+
+// Binds para card "El cliente pidió"
+(function(){
+  const card = document.getElementById('iwClientCard');
+  if (!card) return;
+  const btnAccept = document.getElementById('iwBtnAcceptClient');
+  const btnModify = document.getElementById('iwBtnModifyClient');
+  if (btnAccept){
+    btnAccept.addEventListener('click', () => {
+      const inst = window._proposeCalInstance;
+      if (!inst){
+        if (typeof ilusToast === 'function') ilusToast('Espera a que cargue el calendario.', { type:'warning' });
+        return;
+      }
+      const reqDate = card.dataset.reqDate || '';
+      const reqTf = card.dataset.reqTf || '';
+      const reqTt = card.dataset.reqTt || '';
+      if (!reqDate || !reqTf || !reqTt){
+        if (typeof ilusToast === 'function') ilusToast('El cliente no envió hora exacta.', { type:'warning' });
+        return;
+      }
+      // Setear fecha y dejar que el cálculo de slots se haga al cargar
+      const dateInp = document.getElementById('iwProposeDate');
+      if (dateInp){
+        dateInp.value = reqDate;
+        dateInp.dispatchEvent(new Event('change'));
+      }
+      // Intentar pre-seleccionar el rango. setQuickRange busca el primer
+      // hueco compatible — necesitamos forzar al rango exacto del cliente.
+      // Como el widget no expone setRange por hora directa, usamos un
+      // pequeño retraso para esperar el render de slots y luego clickeamos
+      // los índices correspondientes.
+      setTimeout(() => {
+        try {
+          const st = inst._state ? inst._state() : null;
+          if (!st || !st.slots) return;
+          const idxStart = st.slots.findIndex(s => (s.time_from || s.hora || '').slice(0,5) === reqTf);
+          const idxEnd = st.slots.findIndex(s => {
+            const tt = s.time_to || '';
+            return tt.slice(0,5) === reqTt;
+          });
+          if (idxStart < 0){
+            if (typeof ilusToast === 'function') ilusToast('La hora pedida no tiene un bloque exacto. Selecciónala manualmente.', { type:'warning' });
+            return;
+          }
+          // Pre-verificamos disponibilidad: si el slot inicial está LLENO,
+          // BLOQUEADO o (sin allowCrossLunch) en COLACIÓN, no podemos
+          // aceptar y avisamos al operador para que elija manualmente.
+          const sStart = st.slots[idxStart];
+          const eStart = sStart.estado || '';
+          if (eStart === 'completo' || eStart === 'bloqueado'){
+            if (typeof ilusToast === 'function'){
+              ilusToast(`La hora pedida (${reqTf}) ya está ${eStart === 'completo' ? 'llena' : 'bloqueada'}. Sugiere otra al cliente.`, { type:'warning' });
+            }
+            return;
+          }
+          // El widget no expone método público para set por índice. Lo
+          // hacemos vía 2 clicks simulados: click idxStart, shift+click idxEnd.
+          const grid = document.getElementById('iwProposeGrid');
+          if (!grid) return;
+          const slotStart = grid.querySelector(`[data-ilus-cal-idx="${idxStart}"]`);
+          if (slotStart) slotStart.click();
+          if (idxEnd >= 0 && idxEnd !== idxStart){
+            const slotEnd = grid.querySelector(`[data-ilus-cal-idx="${idxEnd}"]`);
+            if (slotEnd){
+              const fakeEv = new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true });
+              slotEnd.dispatchEvent(fakeEv);
+            }
+          }
+          if (typeof ilusToast === 'function') ilusToast('Hora del cliente aceptada. Revisa y envía la propuesta.', { type:'success' });
+        } catch(e){ console.warn('aceptar pedido cliente', e); }
+      }, 380);
+    });
+  }
+  if (btnModify){
+    btnModify.addEventListener('click', () => {
+      // No la cerramos del todo — el operador puede querer verla de
+      // referencia. Solo le bajamos opacidad y desactivamos botón aceptar.
+      card.style.opacity = '.55';
+      card.style.borderStyle = 'dashed';
+      if (btnAccept) btnAccept.disabled = true;
+      if (typeof ilusToast === 'function') ilusToast('Listo, elige libremente abajo. La referencia del cliente sigue arriba.', { type:'info' });
+    });
+  }
+})();
 
 // Inicial: mount si el form está visible y aún no se propuso.
 // Daniel 2026-05-24: ahora basta con tener al menos UN doc asociado
@@ -4166,7 +4681,73 @@ const _RBA = {
   _liveTimer: null,
 };
 
+// 🔧 BUG FIX Daniel 2026-05-24: helper que deja el modal en estado LIMPIO.
+// Se llama tanto al abrir (rbaOpen) como al cerrar (rbaClose). Antes el
+// modal heredaba la data del documento anterior: número de doc tipeado,
+// selección de cliente, cards expandidas, contador desactualizado, etc.
+// Ahora cada apertura es 100% fresca.
+function _rbaResetEstado(){
+  // 1. Estado interno
+  _RBA.selDoc.clear();
+  _RBA.selCli.clear();
+  _RBA.loaded.docHeader = null;
+  _RBA.loaded.cliQuery = null;
+  _RBA.tab = 'doc';  // siempre arrancar en tab "Por documento"
+
+  // 2. Inputs
+  const inpNudo = document.getElementById('rbaDocNudo');
+  if (inpNudo) inpNudo.value = '';
+  const inpCli  = document.getElementById('rbaCliQ');
+  if (inpCli)   inpCli.value = '';
+  // Reset al primer tipo de doc (FCV por default)
+  const selTido = document.getElementById('rbaDocTido');
+  if (selTido)  selTido.selectedIndex = 0;
+
+  // 3. Resultados — empty states por default
+  const docRes = document.getElementById('rbaDocResult');
+  if (docRes){
+    docRes.innerHTML = `<div class="rba-empty">
+      <i class="bi bi-receipt rba-empty-icon"></i>
+      <h6>Buscar productos de un documento</h6>
+      <p>Ingresa tipo + número arriba y te mostramos sus líneas con saldo disponible.</p>
+    </div>`;
+  }
+  const cliRes = document.getElementById('rbaCliResult');
+  if (cliRes){
+    cliRes.innerHTML = `<div class="rba-empty">
+      <i class="bi bi-person-vcard rba-empty-icon"></i>
+      <h6>Buscar todos los documentos de un cliente</h6>
+      <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
+    </div>`;
+  }
+
+  // 4. Tabs: forzar volver al tab "doc" visualmente
+  const tabDoc = document.getElementById('rbaTabDoc');
+  const tabCli = document.getElementById('rbaTabCli');
+  const panelDoc = document.getElementById('rbaPanelDoc');
+  const panelCli = document.getElementById('rbaPanelCli');
+  if (tabDoc)   tabDoc.classList.add('is-active');
+  if (tabCli)   tabCli.classList.remove('is-active');
+  if (panelDoc) panelDoc.style.display = '';
+  if (panelCli) panelCli.style.display = 'none';
+
+  // 5. Cancelar timer de loading text si quedó andando
+  if (_RBA._liveTimer){
+    clearInterval(_RBA._liveTimer);
+    _RBA._liveTimer = null;
+  }
+
+  // 6. Contador + botón asociar
+  try { rbaUpdateCounter(); } catch(_){}
+}
+
 function rbaOpen(){
+  // 🔧 BUG FIX Daniel 2026-05-24: SIEMPRE resetear estado ANTES de abrir.
+  // Antes el segundo "abrir" mostraba: número del doc anterior, selección
+  // anterior persistente, cards expandidas del cliente anterior, etc.
+  // Daniel: "lo abro, uso un documento y lo vuelvo a abrir y está sucio".
+  _rbaResetEstado();
+
   _RBA.open = true;
   const bd = document.getElementById('rbaBackdrop');
   const md = document.getElementById('rbaModal');
@@ -4175,10 +4756,7 @@ function rbaOpen(){
   bd.setAttribute('aria-hidden', 'false');
   md.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
-  // Reset selecciones cuando se abre fresco
-  _RBA.selDoc.clear();
-  _RBA.selCli.clear();
-  rbaUpdateCounter();
+
   // Focus input según tab activo + pre-poblar RUT sin DV
   // FIX Daniel 2026-05-23: el RUT del cliente actual (ej. "25.547.065-5")
   // se pre-pobla en el tab "Por RUT/nombre" SIN dígito verificador ni puntos
@@ -4207,11 +4785,25 @@ function rbaOpen(){
 }
 function rbaClose(){
   _RBA.open = false;
+  // 🔧 BUG FIX Daniel 2026-05-24: forzar blur del elemento activo ANTES de
+  // ocultar el modal. Si el operador tenía abierto el <select> nativo de
+  // tipo de doc (FCV/BLV/...) y cierra con backdrop, el menú nativo del
+  // navegador podía quedar "huérfano" flotando sobre el resto de la página.
+  try {
+    if (document.activeElement && typeof document.activeElement.blur === 'function'){
+      document.activeElement.blur();
+    }
+  } catch(_){}
   document.getElementById('rbaBackdrop').classList.remove('is-open');
   document.getElementById('rbaModal').classList.remove('is-open');
   document.getElementById('rbaBackdrop').setAttribute('aria-hidden', 'true');
   document.getElementById('rbaModal').setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
+  // Limpiar timer de loading text si quedó andando (defensa)
+  if (_RBA._liveTimer){
+    clearInterval(_RBA._liveTimer);
+    _RBA._liveTimer = null;
+  }
 }
 // ESC para cerrar
 document.addEventListener('keydown', e => {
@@ -4455,9 +5047,12 @@ function rbaToggleLineaDoc(inp, silent){
     _RBA.selDoc.set(key, {
       sku, nombre, qty,
       saldo: parseFloat(inp.dataset.qty) || qty,
-      doc_tido: h.tido, doc_nudo: h.nudo
+      doc_tido: h.tido, doc_nudo: h.nudo,
+      // 🆕 Daniel 2026-05-24: persistir "ya rebajado en ERP" para badge
+      // ámbar en tabla externa después de asociar.
+      marcada_sin_saldo: isZero,
     });
-    if (!silent) console.log('[rba] línea marcada: SKU=', sku, 'qty=', qty);
+    if (!silent) console.log('[rba] línea marcada: SKU=', sku, 'qty=', qty, isZero?'(sin saldo ERP)':'');
   } else {
     _RBA.selDoc.delete(key);
     if (!silent) console.log('[rba] línea desmarcada: SKU=', sku);
@@ -4728,6 +5323,9 @@ function rbaToggleLineaCli(inp, silent){
       nombre: nombre,
       qty:    qtyEff,
       saldo:  parseFloat(inp.dataset.qty) || qtyEff,
+      // 🆕 Daniel 2026-05-24: persistir "ya rebajado en ERP" para badge
+      // ámbar en tabla externa después de asociar.
+      marcada_sin_saldo: isZero,
     });
   } else {
     _RBA.selCli.delete(key);
@@ -4821,7 +5419,10 @@ async function rbaAsociarSeleccion(){
     _RBA.selDoc.forEach(it => {
       // Solo agregar líneas con qty > 0 (defensivo)
       if ((it.qty || 0) > 0){
-        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
+        lineas.push({
+          sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo,
+          marcada_sin_saldo: !!it.marcada_sin_saldo,
+        });
       }
     });
     if (lineas.length > 0){
@@ -4837,7 +5438,10 @@ async function rbaAsociarSeleccion(){
     if (!docsToAdd.has(key)){
       docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
     }
-    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
+    docsToAdd.get(key).lineas.push({
+      sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo,
+      marcada_sin_saldo: !!it.marcada_sin_saldo,
+    });
   });
 
   console.log('[rba] asociando', docsToAdd.size, 'doc(s) — total líneas seleccionadas:',
@@ -4871,6 +5475,9 @@ async function rbaAsociarSeleccion(){
           sku: ln.sku,
           incluida: true,
           cantidad_seleccionada: ln.qty,
+          // 🆕 Daniel 2026-05-24: el backend guarda esta flag por línea para
+          // mostrar badge ámbar "ya rebajado en ERP" en la tabla externa.
+          marcada_sin_saldo: !!ln.marcada_sin_saldo,
         }));
       const r = await fetch(`/retiros/${_RID}/docs/agregar`, {
         method: 'POST',

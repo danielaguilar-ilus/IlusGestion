@@ -58,32 +58,57 @@ Eres el ingeniero senior + UX premium especialista en la plataforma ILUS. Daniel
     - Si crees necesitar modificar ERP, DETENTE y avisá a Daniel ANTES. ILUS guarda sus datos en sus tablas propias (`pickup_*`, `mant_*`, etc.), NUNCA en tablas Random.
     - Verificación: `grep -rn "pymssql" --include="*.py"` debe mostrar SOLO la importación en `_random_sql_pool()`.
 
-## Módulos del sistema (estado al cierre 2026-05-23)
+## Módulos del sistema (estado al cierre 2026-05-25)
 
-### 🟢 Retiros — PRODUCTION READY (Premium 2027)
+### 🟢 Retiros — PRODUCTION READY (Premium 2027) — Estado AL CIERRE 25/05/2026
 **Templates**: `templates/retiros/{public_request, public_tracking, internal_detail, internal_dashboard, calendario}.html`
-**Backend**: `pickups_module.py` (~2300 líneas) registrado vía `register_pickup_routes(app, ctx)`
-**Estado**:
-- Formulario público con hero "AGENDAR TU RETIRO" + 5 pasos numerados + overlay espartano 3D al enviar
-- Tracking público premium con stepper 4 nodos + marketing + Excel descargable
-- Wizard interno con 5 pasos guiados + modal búsqueda 2 motores (estilo mantenciones)
-- Calendario único multi-rol (público: solo disponibilidad; interno: con `owners` por slot)
-- Horario: Mañana 09:00–12:30 / Tarde 14:00–16:30, colación bloqueada, bloques 30min
-- Capacidad paralela 2 retiros por slot, slot lleno ROJO BRILLANTE con candado 🔒
-- Multi-doc + saldo ERP + productos parciales
-- 9 plantillas email premium + recordatorio 24h
-- Validación RUT/email/teléfono con feedback visual
-- Declaración tercero auditable
-- Código RET aleatorio no predecible (RET-XXXXXX alfanumérico)
-- Glassmorphism + spring animations + skeleton premium
-- Bug JSON corregido con `_fetchJsonSafe` helper + wrapper anti-HTML en endpoints
+**Backend**: `pickups_module.py` (~4500 líneas) registrado vía `register_pickup_routes(app, ctx)`
 
-**Tablas BD relevantes**: `pickup_requests`, `pickup_proposals`, `pickup_packages`, `pickup_signatures`, `pickup_blocks`, `pickup_settings`, `pickup_templates`, `pickup_logs`, `pickup_request_docs`, `pickup_attachments`
+**HORARIO DEFINITIVO** (Daniel ratificó 2026-05-25):
+- Mañana: 09:00–12:30 (último bloque agendable 12:00→12:30) = 7 bloques
+- Buffer interno bodega: 12:30–13:00 (atender desordenados, no se ofrece)
+- Colación: 13:00–14:00 (no se ofrece)
+- Tarde: 14:00–17:00 (último bloque agendable 16:30→17:00) = 6 bloques
+- Total: 13 bloques agendables/día
+- Bloques de 30 min ESTRICTOS, HARDCODED en backend (no leer de BD)
+- Capacidad paralela: 2 retiros por bloque (parallel_capacity)
 
-**Pendientes mencionados** (NO bloqueantes):
-- Botón superadmin para borrar solicitudes (en backlog)
-- Botón PDF descargable público (placeholder existe)
-- Mejora overlay espartano para mobile (Daniel reportó que en celular no se ve igual)
+**SALDO POR LÍNEA** (fórmula oficial Random, MAEDDO):
+- saldo = CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1
+- También respetar ESLIDO si está en ('C','T','TOTAL','CERRADO','DESPACHADO')
+- Frontend: helper `_rbaSaldoLinea(l)` lee `l.saldo` con fallback
+- Líneas sin saldo: visibles + chip verde "entregado" + opcional para asociar (no bloqueante)
+- NO bloquear propuesta si todos los docs están sin saldo — solo log warning
+
+**FLUJO ASOCIAR DOC** (commit 0833eed):
+- 1 SOLO POST a /retiros/<rid>/docs/agregar con `{document_type, document_number, lineas: [{sku, qty, incluida, marcada_sin_saldo}]}`
+- Backend: INSERT doc + executemany líneas + SET has_seleccion_lineas=1 + recalc_totales — TODO en 1 transacción
+- Caso DUPLICATE con líneas: helper `_apply_lineas_seleccion_inline` aplica selección sin re-llamar ERP
+- Endpoint legacy /docs/<id>/lineas se mantiene para edición posterior (idempotencia)
+- Performance: 8s → <2s cold, <400ms warm
+
+**HORARIO POTENTE** (paso 4 wizard interno):
+- Card amarillo arriba: "El cliente pidió X" con botón "Aceptar como propuesta" / "Modificar"
+- Drag-select bloques contiguos + shift+click
+- Slots con info completa: código RET + cliente + estado al hover/click
+- Plantillas mensaje cliente con placeholders {nombre}/{fecha}/{hora_inicio}/{hora_fin} + preview en vivo
+- Operador puede CRUZAR bloque mañana-tarde (12:30-14:00) con warning amarillo no bloqueante
+- Sugerencia días alternativos si día seleccionado está lleno
+
+**MODAL BÚSQUEDA AVANZADA** (limpio entre aperturas):
+- _rbaResetEstado() al inicio de rbaOpen() limpia inputs, selDoc/selCli, resultados, tab activo
+- Pre-marca solo las líneas con saldo (las sin saldo desmarcadas con chip "entregado")
+- Cantidad editable (max=cantidad_doc original)
+- Footer "X productos seleccionados · Y u. · Z líneas"
+- Asociar funciona en 1 POST (no 2)
+
+**Tablas BD relevantes**: `pickup_requests`, `pickup_proposals`, `pickup_packages`, `pickup_signatures`, `pickup_blocks`, `pickup_settings`, `pickup_templates`, `pickup_logs`, `pickup_request_docs` (con `has_seleccion_lineas`, `marcada_sin_saldo`), `pickup_doc_lineas`, `pickup_attachments`
+
+**Pendientes RETIROS** (NO bloqueantes — para próximas iteraciones):
+- Adjuntar foto del producto preparado al mensaje cliente (CSS dropzone listo en paso 4, falta endpoint backend + JS multipart)
+- Confirmación mutua ping-pong tipo email con botón 1-click "Aceptar fecha"
+- Checkbox quitar producto individual + quitar doc cascade en tabla productos asociados
+- Calendario con teoría de colas mostrando cupos en vivo
 
 ### ❄️ Mantenciones — FROZEN 2026-05-22
 **NO MODIFICAR sin autorización explícita de Daniel en chat**
@@ -102,13 +127,32 @@ Procedimiento normado:
 - `superadmin` (Daniel): todo
 - Borrar productos (`mant_maquinas`): SOLO superadmin
 
-### 🟡 Transporte / Cubicador / Couriers — PRODUCTION
+### 🟡 Transporte / Cubicador / Couriers — PRODUCTION (próxima sesión a TRABAJAR)
+**ESTE ES EL ENFOQUE DE LA SIGUIENTE SESIÓN CON DANIEL** (acordado 2026-05-25).
+
+Estado actual:
 - Sistema de cotización auditable con audit log (`courier_tariff_audit`)
 - Cascada: TomTom/HERE/Google fallback (sin tarjeta de crédito)
 - Margen 30% + IVA 19% configurable
 - Multi-courier paralelo (cold 2.5s, warm 1.2s)
 - Export Excel del audit log
 - Test FCV 10644 validado para Lo Barnechea
+
+**Cuando Daniel diga "vamos con transporte"**:
+1. Cargar contexto del módulo: `app.py` zona transporte (busca por `transp_`, `transport_`, `_transporte_scheduler_loop`)
+2. Tablas: `transp_*`, `transport_commitments` (ver columnas cobertura_pct/cant_total_zz/cant_despachada_zz)
+3. Archivos templates en `templates/transporte/`
+4. Cron daemon: `_transporte_scheduler_loop` (app.py ~14600)
+5. Patrón optimizado de batch SQL: 38× más rápido que el legacy (referencia para retiros también)
+6. Preguntar a Daniel qué quiere mejorar (UX, performance, features nuevas) antes de tocar nada — el módulo está en PRODUCTION
+
+**Reglas que aplican igualmente**:
+- ERP Random READ-ONLY ABSOLUTO
+- Mantenciones FROZEN (no tocar aunque parezca relacionado)
+- Helpers ilus*, paleta ILUS, mobile-first
+- Validar Python + Jinja antes de commit
+- NO inventar nombres de funciones (usar `get_db`, `mysql_*`, `_random_sql_query`)
+- NO inventar nombres de personas (si aparece "Brandon", eliminar — es alucinación de "Random" ERP)
 
 ### 🟡 Productos / Etiquetas / IA — PRODUCTION
 - Módulo original. Generación etiquetas CODE128 + PDF + Excel masivo
