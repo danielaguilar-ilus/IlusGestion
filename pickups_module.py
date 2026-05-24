@@ -3864,6 +3864,128 @@ def register_pickup_routes(app, ctx):
         })
 
     # ══════════════════════════════════════════════════════════════════
+    #  INLINE EDIT — Auto-save de campos de la ficha (Daniel 2026-05-23)
+    #  Objetivo: la ficha debe ser modificable "a medida que se agrega
+    #  información" (palabras de Daniel). En vez de un form gigante con
+    #  botón "Guardar", cada campo se autoguarda con debounce 800ms.
+    #
+    #  Cliente envía: PATCH /retiros/<rid>/field {field: "X", value: "Y"}
+    #  Server valida whitelist + max_length, normaliza, persiste, loga.
+    # ══════════════════════════════════════════════════════════════════
+    def _pickup_now_chile_hms():
+        """Helper: hora actual Chile como HH:MM:SS — para feedback "Guardado a las HH:MM:SS"."""
+        try:
+            from zoneinfo import ZoneInfo as _ZI_local
+            return datetime.now(_ZI_local("America/Santiago")).strftime("%H:%M:%S")
+        except Exception:
+            return datetime.now().strftime("%H:%M:%S")
+
+    # Whitelist de campos editables inline desde la ficha.
+    # tuple: (max_length, label_humano para logs)
+    # Solo se permiten columnas que EXISTEN en pickup_requests
+    # (verificado contra el CREATE TABLE en app.py línea ~2252).
+    _PICKUP_INLINE_FIELDS = {
+        "customer_name":         (200, "Razón social cliente"),
+        "customer_rut":          (30,  "RUT cliente"),
+        "contact_name":          (160, "Nombre contacto"),
+        "contact_email":         (180, "Email contacto"),
+        "contact_phone":         (60,  "Teléfono contacto"),
+        "pickup_person_name":    (160, "Persona que retira"),
+        "pickup_person_rut":     (30,  "RUT persona que retira"),
+        "pickup_person_phone":   (60,  "Teléfono persona que retira"),
+        "pickup_person_relation":(40,  "Relación persona que retira"),
+        "observations":          (10000, "Observaciones del cliente"),
+        "internal_notes":        (10000, "Notas internas operador"),
+    }
+
+    @app.route("/retiros/<int:rid>/field", methods=["PATCH", "POST"])
+    @require_permission("edit")
+    def pickup_inline_field(rid):
+        """Auto-save inline de un campo de la ficha.
+
+        Body JSON: {field: "contact_email", value: "nuevo@cliente.cl"}
+
+        Valida:
+        - field está en whitelist _PICKUP_INLINE_FIELDS
+        - len(value) ≤ max_length del campo
+        - el retiro existe
+
+        Devuelve: {ok:True, field, value, changed:bool, saved_at}
+        """
+        body = request.get_json(silent=True) or {}
+        field = (body.get("field") or "").strip()
+        value = body.get("value")
+
+        # Validar field en whitelist
+        if field not in _PICKUP_INLINE_FIELDS:
+            return jsonify({
+                "ok": False,
+                "error": f"Campo '{field}' no permitido para edición inline.",
+                "error_codigo": "CAMPO_NO_PERMITIDO",
+            }), 400
+
+        max_len, label = _PICKUP_INLINE_FIELDS[field]
+
+        # Normalizar valor: None/empty → NULL, trim, max_len
+        if value is None:
+            value_norm = None
+        else:
+            value_norm = str(value).strip()
+            if len(value_norm) > max_len:
+                value_norm = value_norm[:max_len]
+            if value_norm == "":
+                value_norm = None
+
+        # Verificar que existe + obtener old value
+        req = mysql_fetchone(
+            f"SELECT id, code, `{field}` AS current_value FROM `{REQ}` WHERE id=%s",
+            (rid,)
+        )
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado"}), 404
+
+        old_value = req.get("current_value")
+        # Normalizar old para comparar (None/empty equiv)
+        old_norm = (str(old_value).strip() if old_value is not None else None) or None
+        new_norm = value_norm or None
+
+        if old_norm == new_norm:
+            return jsonify({
+                "ok": True,
+                "field": field,
+                "value": new_norm or "",
+                "changed": False,
+                "saved_at": _pickup_now_chile_hms(),
+            })
+
+        try:
+            # Backtick-quote field name (whitelist garantiza que es seguro)
+            mysql_execute(
+                f"UPDATE `{REQ}` SET `{field}`=%s WHERE id=%s",
+                (value_norm, rid)
+            )
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "error": f"Error al guardar: {str(exc)[:200]}",
+            }), 500
+
+        # Audit log — corto, no expone PII completo
+        log_event(
+            rid, "ficha_inline_edit", None, None,
+            f"{label}: '{(old_norm or '')[:40]}' → '{(new_norm or '')[:40]}'",
+            "interno"
+        )
+
+        return jsonify({
+            "ok": True,
+            "field": field,
+            "value": new_norm or "",
+            "changed": True,
+            "saved_at": _now_chile_str(),
+        })
+
+    # ══════════════════════════════════════════════════════════════════
     #  INFORME MENSUAL XLSX — Daniel pidió 22/05/2026
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/informe-mes.xlsx", methods=["GET"])
