@@ -23,6 +23,9 @@
     <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#estadoManModal">
       <i class="bi bi-toggle-on me-1"></i>Estado
     </button>
+    <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
+      <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
+    </a>
     <button class="btn btn-sm btn-ilus" onclick="window.print()">
       <i class="bi bi-printer me-1"></i>Imprimir
     </button>
@@ -44,6 +47,21 @@
   <span class="text-muted small ms-2">{{ manifiesto.notas }}</span>
   {% endif %}
 </div>
+
+{# ── Alerta datos de contacto faltantes (solo alertar, no bloquea export) ── #}
+{% set sin_tel   = items|rejectattr('telefono')|list|length %}
+{% set sin_email = items|rejectattr('email')|list|length %}
+{% if items and (sin_tel or sin_email) %}
+<div class="alert alert-warning d-flex align-items-start gap-2 no-print py-2" role="alert" style="font-size:.85rem">
+  <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+  <div>
+    <strong>Hay destinatarios sin datos de contacto.</strong>
+    {% if sin_tel %}<span class="badge bg-danger ms-1">{{ sin_tel }} sin teléfono</span>{% endif %}
+    {% if sin_email %}<span class="badge bg-danger ms-1">{{ sin_email }} sin email</span>{% endif %}
+    <div class="text-muted">Sin estos datos el cliente no recibe información de seguimiento. Edita cada ítem para completarlos. El export igual se genera (resaltados en rojo).</div>
+  </div>
+</div>
+{% endif %}
 
 {# ── Resumen rápido ── #}
 {% set total_entregados = items|selectattr('estado_entrega','eq','Entregado')|list|length %}
@@ -92,6 +110,7 @@
           <th>Documento</th>
           <th>Cliente</th>
           <th>Dirección</th>
+          <th>Contacto</th>
           <th>Tipo</th>
           <th class="text-end">Valor</th>
           <th class="text-end">Envío $</th>
@@ -109,6 +128,19 @@
           'Entrega fallida':'danger',
           'Devolución':'secondary'
         }.get(item.estado_entrega, 'secondary') %}
+        {% set item_json = {
+          'id': item.commitment_id,
+          'cliente': item.cliente_nombre or '',
+          'telefono': item.telefono or '',
+          'email': item.email or '',
+          'direccion': item.direccion or '',
+          'comuna': item.comuna or '',
+          'region': item.region or '',
+          'cod_postal': item.cod_postal or '',
+          'peso': (item.peso_export or 0)|float,
+          'bultos': (item.n_bultos or 1)|int,
+          'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
+        } | tojson %}
         <tr id="row-{{ item.id }}">
           <td class="text-muted">{{ loop.index }}</td>
           <td class="font-monospace fw-bold">{{ item.tido }} {{ item.nudo }}</td>
@@ -117,6 +149,18 @@
             <div class="small text-muted">{{ item.comuna or '' }}</div>
           </td>
           <td class="small text-muted" style="max-width:180px">{{ (item.direccion or '—')[:60] }}</td>
+          <td class="small">
+            {% if item.telefono %}
+              <span class="d-block"><i class="bi bi-telephone text-success me-1"></i>{{ item.telefono }}</span>
+            {% else %}
+              <span class="d-block text-danger"><i class="bi bi-telephone-x me-1"></i>Sin teléfono</span>
+            {% endif %}
+            {% if item.email %}
+              <span class="d-block text-truncate" style="max-width:160px"><i class="bi bi-envelope text-success me-1"></i>{{ item.email }}</span>
+            {% else %}
+              <span class="d-block text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>
+            {% endif %}
+          </td>
           <td>
             {% if item.clasificacion == 'retiro' %}
             <span class="badge bg-info text-dark"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
@@ -141,7 +185,11 @@
               {% endfor %}
             </select>
           </td>
-          <td class="no-print">
+          <td class="no-print text-nowrap">
+            <button class="btn btn-sm btn-outline-secondary" title="Editar contacto y medidas"
+                    onclick='abrirEditar({{ item_json }})'>
+              <i class="bi bi-pencil-square"></i>
+            </button>
             <button class="btn btn-sm btn-outline-danger" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
               <i class="bi bi-trash3"></i>
@@ -150,7 +198,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="9" class="text-center py-4 text-muted">
+          <td colspan="10" class="text-center py-4 text-muted">
             <i class="bi bi-box me-2"></i>Sin ítems en este manifiesto
           </td>
         </tr>
@@ -170,15 +218,37 @@
       'Entrega fallida':'danger',
       'Devolución':'secondary'
     }.get(item.estado_entrega, 'secondary') %}
+    {% set item_json = {
+      'id': item.commitment_id,
+      'cliente': item.cliente_nombre or '',
+      'telefono': item.telefono or '',
+      'email': item.email or '',
+      'direccion': item.direccion or '',
+      'comuna': item.comuna or '',
+      'region': item.region or '',
+      'cod_postal': item.cod_postal or '',
+      'peso': (item.peso_export or 0)|float,
+      'bultos': (item.n_bultos or 1)|int,
+      'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
+    } | tojson %}
     <div class="p-3 border-bottom" id="card-{{ item.id }}">
       <div class="d-flex justify-content-between align-items-start mb-1">
         <div class="font-monospace fw-bold" style="font-size:.88rem">{{ item.tido }} {{ item.nudo }}</div>
-        <button class="btn btn-sm btn-outline-danger ms-2 no-print" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
-          <i class="bi bi-trash3"></i>
-        </button>
+        <div class="d-flex gap-1 no-print">
+          <button class="btn btn-sm btn-outline-secondary" onclick='abrirEditar({{ item_json }})'>
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </div>
       </div>
       <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
       <div class="small text-muted">{{ item.comuna or '' }} · {{ (item.direccion or '')[:50] }}</div>
+      <div class="small mt-1">
+        {% if item.telefono %}<span class="text-success me-2"><i class="bi bi-telephone me-1"></i>{{ item.telefono }}</span>{% else %}<span class="text-danger me-2"><i class="bi bi-telephone-x me-1"></i>Sin tel</span>{% endif %}
+        {% if item.email %}<span class="text-success"><i class="bi bi-envelope me-1"></i>ok</span>{% else %}<span class="text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>{% endif %}
+      </div>
       <div class="mt-2">
         {% if item.costo_zz %}
         <span class="small fw-semibold" style="color:var(--ilus-red)">
@@ -242,6 +312,72 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="guardarEstadoManifiesto()">
           Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal editar contacto + medidas del documento ── #}
+<div class="modal fade" id="editarItemModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Editar envío <span id="edDoc" class="font-monospace small ms-1 opacity-75"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edCid">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Cliente / destinatario</label>
+          <input type="text" id="edCliente" class="form-control form-control-sm" readonly>
+        </div>
+        <div class="row g-2">
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Teléfono</label>
+            <input type="text" id="edTelefono" class="form-control form-control-sm" placeholder="Ej: 56912345678">
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Email</label>
+            <input type="email" id="edEmail" class="form-control form-control-sm" placeholder="cliente@correo.cl">
+          </div>
+        </div>
+        <div class="mb-2 mt-2">
+          <label class="form-label small fw-semibold mb-1">Dirección</label>
+          <input type="text" id="edDireccion" class="form-control form-control-sm">
+        </div>
+        <div class="row g-2">
+          <div class="col-12 col-sm-4">
+            <label class="form-label small fw-semibold mb-1">Comuna</label>
+            <input type="text" id="edComuna" class="form-control form-control-sm">
+          </div>
+          <div class="col-12 col-sm-5">
+            <label class="form-label small fw-semibold mb-1">Región</label>
+            <input type="text" id="edRegion" class="form-control form-control-sm">
+          </div>
+          <div class="col-12 col-sm-3">
+            <label class="form-label small fw-semibold mb-1">Cód. postal</label>
+            <input type="text" id="edCodPostal" class="form-control form-control-sm">
+          </div>
+        </div>
+        <hr class="my-3">
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small fw-semibold mb-1">Peso total (kg)</label>
+            <input type="number" step="0.01" min="0" id="edPeso" class="form-control form-control-sm">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold mb-1">Nº de bultos</label>
+            <input type="number" step="1" min="1" id="edBultos" class="form-control form-control-sm">
+          </div>
+        </div>
+        <div class="form-text">Estos datos alimentan el Excel de carga masiva (FedEx / SimplyRoute).</div>
+        <div id="edMsg" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="edGuardarBtn" onclick="guardarEdicion()">
+          <i class="bi bi-check-lg me-1"></i>Guardar
         </button>
       </div>
     </div>
@@ -346,6 +482,64 @@ function guardarEstadoManifiesto() {
     } else {
       msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
     }
+  });
+}
+
+// ── Editar contacto + medidas de un ítem (alimenta el export de carga masiva) ──
+var _edModal = null;
+function abrirEditar(data) {
+  data = data || {};
+  document.getElementById('edCid').value        = data.id || '';
+  document.getElementById('edDoc').textContent  = data.doc || '';
+  document.getElementById('edCliente').value    = data.cliente || '';
+  document.getElementById('edTelefono').value   = data.telefono || '';
+  document.getElementById('edEmail').value      = data.email || '';
+  document.getElementById('edDireccion').value  = data.direccion || '';
+  document.getElementById('edComuna').value     = data.comuna || '';
+  document.getElementById('edRegion').value     = data.region || '';
+  document.getElementById('edCodPostal').value  = data.cod_postal || '';
+  document.getElementById('edPeso').value       = data.peso || '';
+  document.getElementById('edBultos').value     = data.bultos || 1;
+  document.getElementById('edMsg').innerHTML    = '';
+  if (!_edModal) _edModal = new bootstrap.Modal(document.getElementById('editarItemModal'));
+  _edModal.show();
+}
+
+function guardarEdicion() {
+  var cid = document.getElementById('edCid').value;
+  if (!cid) return;
+  var btn = document.getElementById('edGuardarBtn');
+  var msg = document.getElementById('edMsg');
+  btn.disabled = true;
+  var payload = {
+    telefono:    document.getElementById('edTelefono').value.trim(),
+    email:       document.getElementById('edEmail').value.trim(),
+    direccion:   document.getElementById('edDireccion').value.trim(),
+    comuna:      document.getElementById('edComuna').value.trim(),
+    region:      document.getElementById('edRegion').value.trim(),
+    cod_postal:  document.getElementById('edCodPostal').value.trim(),
+    peso_export: parseFloat(document.getElementById('edPeso').value) || 0,
+    n_bultos:    parseInt(document.getElementById('edBultos').value, 10) || 1
+  };
+  fetch('/transporte/api/compromisos/' + cid, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    btn.disabled = false;
+    if (d.ok) {
+      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+      if (window.ilusToast) ilusToast('✓ Datos actualizados', { type: 'success' });
+      setTimeout(function(){ location.reload(); }, 500);
+    } else {
+      msg.innerHTML = '<span class="text-danger">' + (d.error || 'No se pudo guardar') + '</span>';
+    }
+  })
+  .catch(function(){
+    btn.disabled = false;
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
   });
 }
 </script>

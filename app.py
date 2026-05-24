@@ -1670,6 +1670,12 @@ def init_transporte_tables():
                 "ALTER TABLE transport_commitments ADD COLUMN cant_despachada_zz DECIMAL(12,3) DEFAULT 0 COMMENT 'Total CAPRAD1 de líneas ZZ'",
                 "ALTER TABLE transport_commitments ADD COLUMN observaciones TEXT NULL COMMENT 'OBDO crudo del ERP (incluye direccion/tel/email/notas)'",
                 "ALTER TABLE transport_commitments ADD COLUMN zz_skus VARCHAR(120) NULL COMMENT 'Lista compacta de SKUs ZZ del doc, ej: ZZENVIO,ZZRETIRO'",
+                # MIGRACIÓN 2026-05-24: campos de carga masiva (manifiesto → Excel FedEx/SimplyRoute).
+                # Editables desde el modal del manifiesto cuando el documento viene con problemas.
+                "ALTER TABLE transport_commitments ADD COLUMN region VARCHAR(80) NULL COMMENT 'Región destino (recipientCity FedEx / Habilidades SimplyRoute)'",
+                "ALTER TABLE transport_commitments ADD COLUMN cod_postal VARCHAR(20) NULL COMMENT 'Código postal destino (recipientPostcode FedEx)'",
+                "ALTER TABLE transport_commitments ADD COLUMN peso_export DECIMAL(10,3) DEFAULT 0 COMMENT 'Peso total kg para carga masiva (editable en manifiesto)'",
+                "ALTER TABLE transport_commitments ADD COLUMN n_bultos INT DEFAULT 1 COMMENT 'Nº de bultos/paquetes para carga masiva'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -1882,6 +1888,9 @@ def init_transporte_tables():
                 "ALTER TABLE transport_couriers ADD COLUMN giro VARCHAR(150)",
                 "ALTER TABLE transport_couriers ADD COLUMN contacto_cargo VARCHAR(120)",
                 "ALTER TABLE transport_couriers ADD COLUMN renovacion_automatica TINYINT(1) DEFAULT 0",
+                # MIGRACIÓN 2026-05-24: formato de carga masiva que usa cada courier al exportar
+                # un manifiesto. Valores: 'fedex' | 'simplyroute' | 'generic'.
+                "ALTER TABLE transport_couriers ADD COLUMN formato_export VARCHAR(20) DEFAULT 'generic' COMMENT 'Plantilla de carga masiva: fedex | simplyroute | generic'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -1918,6 +1927,26 @@ def init_transporte_tables():
                             "INSERT INTO transport_couriers (nombre, tipo, activo) VALUES (%s, %s, 1)",
                             (_nom, _tipo)
                         )
+                except Exception:
+                    pass
+
+            # ── FORMATO DE EXPORT por courier (idempotente) ──────────────────
+            # Solo setea couriers que siguen en 'generic' (no pisa cambios manuales).
+            #   FedEx              → plantilla carga masiva FedEx
+            #   Felca + Milling    → plantilla SimplyRoute ("Felca y Milling")
+            for _patron, _fmt in [
+                ('%fedex%',   'fedex'),
+                ('%felca%',   'simplyroute'),
+                ('%milling%', 'simplyroute'),
+                ('%melling%', 'simplyroute'),  # alias legacy
+            ]:
+                try:
+                    cur.execute(
+                        "UPDATE transport_couriers SET formato_export=%s "
+                        "WHERE LOWER(nombre) LIKE %s "
+                        "AND (formato_export IS NULL OR formato_export='generic')",
+                        (_fmt, _patron)
+                    )
                 except Exception:
                     pass
 
@@ -17242,6 +17271,20 @@ def tr_update_compromiso(cid):
         campos["notas"] = data["notas"]
     if "fecha_agenda" in data:
         campos["fecha_agenda"] = data["fecha_agenda"] or None
+    # ── Datos de contacto y carga masiva (editables desde el modal del manifiesto) ──
+    for _campo, _maxlen in (("telefono", 50), ("email", 150),
+                            ("direccion", 300), ("comuna", 100),
+                            ("region", 80), ("cod_postal", 20)):
+        if _campo in data:
+            campos[_campo] = (str(data[_campo] or "").strip() or None)
+            if campos[_campo] and _maxlen:
+                campos[_campo] = campos[_campo][:_maxlen]
+    if "peso_export" in data:
+        try: campos["peso_export"] = max(0.0, float(data["peso_export"] or 0))
+        except: pass
+    if "n_bultos" in data:
+        try: campos["n_bultos"] = max(1, int(float(data["n_bultos"] or 1)))
+        except: pass
     if not campos:
         return jsonify({"error": "sin campos válidos"}), 400
 
@@ -17253,7 +17296,12 @@ def tr_update_compromiso(cid):
         cur.execute(f"UPDATE transport_commitments SET {sets} WHERE id=%s", vals)
     conn.commit()
 
-    detalle = "; ".join(f"{k}={v}" for k, v in data.items() if k != "notas")
+    # REGLA #4: no loguear valores PII (tel/email/dirección) en el audit.
+    _PII = {"notas", "telefono", "email", "direccion"}
+    detalle = "; ".join(f"{k}={v}" for k, v in data.items() if k not in _PII)
+    _pii_cambiados = [k for k in ("telefono", "email", "direccion") if k in campos]
+    if _pii_cambiados:
+        detalle = (detalle + "; " if detalle else "") + "actualizó " + ",".join(_pii_cambiados)
     _tr_log("commitment", cid, "actualizado", detalle)
     return jsonify({"ok": True})
 
@@ -17452,7 +17500,10 @@ def tr_manifiesto_detalle(mid):
 
     items = mysql_fetchall("""
         SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
-               c.direccion, c.valor_bruto, c.costo_zz, c.clasificacion
+               c.direccion, c.telefono, c.email, c.region, c.cod_postal,
+               COALESCE(c.peso_export, 0) AS peso_export,
+               COALESCE(c.n_bultos, 1) AS n_bultos,
+               c.valor_bruto, c.costo_zz, c.clasificacion
         FROM transport_manifest_items mi
         JOIN transport_commitments c ON c.id = mi.commitment_id
         WHERE mi.manifest_id=%s
@@ -17553,6 +17604,201 @@ def tr_estado_manifiesto(mid):
     conn.commit()
     _tr_log("manifest", mid, "estado cambiado", estado)
     return jsonify({"ok": True})
+
+
+# ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
+
+def _tr_sender_cfg():
+    """Datos FIJOS del remitente para la carga masiva (origen = bodega ILUS).
+
+    Configurables por variable de entorno (REGLA #4: sin hardcode rígido);
+    defaults = bodega Quilicura tal como en la plantilla maestra de Daniel.
+    El teléfono trae el valor actualizado (+56 9 7640 8650).
+    """
+    import os as _os
+    g = _os.environ.get
+    return {
+        "name":     g("ILUS_SHIP_SENDER_NAME",     "Alison Mellado"),
+        "company":  g("ILUS_SHIP_SENDER_COMPANY",  "Sport and Healt Solutions"),
+        "phone":    g("ILUS_SHIP_SENDER_PHONE",    "+56 9 7640 8650"),
+        "email":    g("ILUS_SHIP_SENDER_EMAIL",    "alison.mellado@sphs.cl"),
+        "line1":    g("ILUS_SHIP_SENDER_LINE1",    "Av. Pdte. Eduardo Frei Montalva"),
+        "line2":    g("ILUS_SHIP_SENDER_LINE2",    "9770, Bod 30, Quilicura"),
+        "postcode": g("ILUS_SHIP_SENDER_POSTCODE", "8700000"),
+        "state":    g("ILUS_SHIP_SENDER_STATE",    "CL"),
+        "city":     g("ILUS_SHIP_SENDER_CITY",     "Quilicura"),
+        "country":  g("ILUS_SHIP_SENDER_COUNTRY",  "CL"),
+    }
+
+
+def _tr_manifiesto_items_export(mid):
+    """Carga los items del manifiesto con todos los campos de contacto + carga.
+
+    peso_kg = peso_export del modal si está; si no, fallback a SUM(peso_unitario*
+    cantidad) de las líneas (suele ser 0 hasta que se cubica). NO toca el ERP.
+    """
+    return mysql_fetchall("""
+        SELECT c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
+               c.comuna, c.direccion, c.telefono, c.email,
+               c.region, c.cod_postal, c.notas,
+               COALESCE(NULLIF(c.peso_export, 0),
+                        (SELECT COALESCE(SUM(l.peso_unitario * l.cantidad), 0)
+                           FROM transport_commitment_lines l
+                          WHERE l.commitment_id = c.id)) AS peso_kg,
+               COALESCE(c.n_bultos, 1) AS n_bultos
+          FROM transport_manifest_items mi
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+         WHERE mi.manifest_id = %s
+         ORDER BY mi.orden, mi.id
+    """, (mid,)) or []
+
+
+@app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
+@_tr_required
+def tr_manifiesto_export(mid):
+    """Exporta el manifiesto como Excel de carga masiva según el courier:
+      - fedex       → plantilla bulk FedEx (36 columnas)
+      - simplyroute → plantilla SimplyRoute ("Felca y Milling")
+      - generic     → planilla básica de respaldo
+
+    Remitente FIJO (_tr_sender_cfg). Decisión de Daniel: tel/email faltantes
+    NO bloquean el export — solo se resaltan en rojo (solo alertar).
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except Exception:
+        flash("openpyxl no está instalado en el servidor.", "danger")
+        return redirect(url_for("tr_manifiesto_detalle", mid=mid))
+    from io import BytesIO
+    from flask import send_file
+
+    man = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not man:
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("tr_manifiestos"))
+
+    items = _tr_manifiesto_items_export(mid)
+
+    fmt_row = mysql_fetchone(
+        "SELECT formato_export FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",
+        (man.get("courier") or "",)
+    )
+    formato = ((fmt_row or {}).get("formato_export") or "generic").strip().lower()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    HDR_FILL  = PatternFill("solid", fgColor="0A0A0A")
+    HDR_FONT  = Font(color="FFFFFF", bold=True)
+    MISS_FILL = PatternFill("solid", fgColor="FEE2E2")  # rojo claro = dato faltante
+
+    def _hdr(headers):
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(1, ci, h)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    def _falta(v):
+        return not str(v or "").strip()
+
+    if formato == "fedex":
+        ws.title = "FedEx"
+        s = _tr_sender_cfg()
+        _hdr([
+            "reference", "senderContactName", "senderCompany", "senderContactNumber",
+            "senderEmail", "senderLine1", "senderLine2", "senderPostcode", "senderState",
+            "senderCity", "senderCountry", "recipientContactName", "recipientCompany",
+            "recipientContactNumber", "recipientEmail", "recipientLine1", "recipientLine2",
+            "recipientLine3", "recipientPostcode", "recipientState", "recipientCity",
+            "recipientCountry", "packageType", "numberOfPackages", "packageWeight",
+            "weightUnits", "length", "width", "height", "serviceType", "currencyType",
+            "recipientDeliveryNotification", "recipientExceptionNotification",
+            "recipientShipAlertNotification", "recipientNotificationLanguageCode",
+            "senderExceptionNotification",
+        ])
+        for ri, it in enumerate(items, 2):
+            nbult = max(1, int(it.get("n_bultos") or 1))
+            peso  = float(it.get("peso_kg") or 0)
+            ppp   = round(peso / nbult, 3) if nbult else peso
+            row = [
+                it.get("nudo") or "",
+                s["name"], s["company"], s["phone"], s["email"], s["line1"], s["line2"],
+                s["postcode"], s["state"], s["city"], s["country"],
+                it.get("cliente_nombre") or "", "",
+                it.get("telefono") or "", it.get("email") or "",
+                it.get("direccion") or "", "", "",
+                it.get("cod_postal") or "", "CL",
+                it.get("region") or it.get("comuna") or "", "CL",
+                "YOUR_PACKAGING", nbult, ppp, "KGS", 1, 1, 1,
+                "FEDEX_PRIORITY", "CLP", "Y", "Y", "Y", "ES", "Y",
+            ]
+            for ci, v in enumerate(row, 1):
+                ws.cell(ri, ci, v)
+            if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
+            if _falta(it.get("email")):    ws.cell(ri, 15).fill = MISS_FILL
+
+    elif formato == "simplyroute":
+        ws.title = "Felca y Milling"
+        _hdr([
+            "Título*   Requerido", "Dirección completa*   Requerido", "Carga",
+            "Hora inicial", "Hora final", "Tiempo de servicio", "Notas", "Latitud",
+            "Longitud", "Id de referencia", "Habilidades requeridas", "Habilidades KILOS",
+            "Persona de contacto", "Teléfono de contacto", "Hora inicial 2", "Hora final 2",
+            "Carga 2", "Carga 3", "Prioridad", "SMS", "Correo electrónico de contacto",
+            "Carga pick", "Carga pick 2", "Carga pick 3", "Fecha programada", "Tipo de visita",
+        ])
+        for ri, it in enumerate(items, 2):
+            nombre = (it.get("cliente_nombre") or "").strip()
+            nudo   = it.get("nudo") or ""
+            comuna = (it.get("comuna") or "").strip()
+            dirc   = (it.get("direccion") or "").strip()
+            peso   = round(float(it.get("peso_kg") or 0), 2)
+            titulo = (f"{nudo} - {nombre}").strip(" -")
+            row = [
+                titulo, (f"{dirc} ,{comuna}").strip(" ,"),
+                max(1, int(it.get("n_bultos") or 1)),
+                "09:00:00", "23:59:00", 3, (it.get("notas") or ""), "", "",
+                nudo, comuna, peso, nombre, it.get("telefono") or "",
+                "", "", "", "", "", "", it.get("email") or "",
+                "", "", "", "", "",
+            ]
+            for ci, v in enumerate(row, 1):
+                ws.cell(ri, ci, v)
+            if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
+            if _falta(it.get("email")):    ws.cell(ri, 21).fill = MISS_FILL
+
+    else:  # generic
+        ws.title = "Manifiesto"
+        _hdr(["Documento", "Cliente", "Comuna", "Dirección", "Teléfono", "Email",
+              "Peso (kg)", "Bultos"])
+        for ri, it in enumerate(items, 2):
+            row = [
+                (f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
+                it.get("cliente_nombre") or "", it.get("comuna") or "",
+                it.get("direccion") or "", it.get("telefono") or "",
+                it.get("email") or "", round(float(it.get("peso_kg") or 0), 2),
+                max(1, int(it.get("n_bultos") or 1)),
+            ]
+            for ci, v in enumerate(row, 1):
+                ws.cell(ri, ci, v)
+            if _falta(it.get("telefono")): ws.cell(ri, 5).fill = MISS_FILL
+            if _falta(it.get("email")):    ws.cell(ri, 6).fill = MISS_FILL
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    try:
+        _tr_log("manifest", mid, "exportado", f"formato={formato} items={len(items)}")
+    except Exception:
+        pass
+    safe_corr = (man.get("correlativo") or f"MAN{mid}").replace("/", "-")
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"{safe_corr}_{formato}.xlsx",
+    )
 
 
 # ── MANIFIESTOS: asignar compromiso desde drag-drop ──────────────────────────
