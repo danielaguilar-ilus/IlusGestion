@@ -727,10 +727,12 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-        # 2) Solape con colación (v4: 13:00 – 14:00 BLOQUEADA, Daniel 2026-05-24)
+        # 2) Solape con bloque mañana-tarde (Daniel 2026-05-25: 12:30 – 14:00)
+        # 12:30-13:00 = buffer interno bodega (atender desordenados).
+        # 13:00-14:00 = colación. Para el cliente público AMBOS están bloqueados.
         # bypass_lunch=True: operador puede pasarse de largo (factura grande).
         if not bypass_lunch:
-            lunch_s_str = "13:00"
+            lunch_s_str = "12:30"
             lunch_e_str = "14:00"
             try:
                 lh, lm = [int(x) for x in lunch_s_str.split(":")]
@@ -5898,20 +5900,24 @@ def register_pickup_routes(app, ctx):
                     WHERE request_id=%s""",
                 (rid,)
             ) or {}
+            # Daniel 2026-05-24: YA NO BLOQUEAMOS por saldo.
+            # Quote: "si no tiene saldo, que no pase más allá de una
+            # notificación, porque a lo mejor abonen perfecto, se están
+            # cuadrando, no sé, puede pasar que ya hayan hecho la guía,
+            # como son desordenados, nosotros lo vamos a encargar
+            # solamente de llevar las métricas. Vamos a poder filtrar
+            # por documentos que no tengan saldo y se estén agendando
+            # para retiro. Es un buen indicador, no un bloqueante."
+            # → Solo log para métricas, NO return error.
             n_total     = int(saldo_row.get("total")     or 0)
             n_con_saldo = int(saldo_row.get("con_saldo") or 0)
             n_sin_saldo = int(saldo_row.get("sin_saldo") or 0)
-            # Solo bloqueamos si HAY docs y NINGUNO tiene saldo confirmado.
-            # Si están todos como NULL (no verificados), permitimos seguir
-            # con warning — operador asume responsabilidad.
             if n_total > 0 and n_con_saldo == 0 and n_sin_saldo > 0:
-                return _resp_err(
-                    "No puedes proponer fecha: todos los documentos asociados "
-                    "están sin saldo (ya fueron despachados vía guía). "
-                    "Asocia al menos un documento con saldo disponible."
-                )
+                print(f"[pickup-propose][SIN-SALDO-WARN] rid={rid} "
+                      f"todos los {n_total} docs sin saldo verificado. "
+                      f"Avanzando igualmente — operador asume responsabilidad.",
+                      flush=True)
         except Exception:
-            # Columna con_saldo no existe → no bloqueamos
             pass
 
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
@@ -6557,24 +6563,31 @@ def register_pickup_routes(app, ctx):
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
 
-        # Daniel 2026-05-24: FUERZA ABSOLUTA — todo HARDCODED.
-        # La BD puede tener valores legacy. Para clientes el horario es FIJO:
+        # Daniel 2026-05-25: HORARIO DEFINITIVO según la operación real.
+        # "Cuando marqué hasta las doce y treinta, es hasta las doce y
+        # treinta. No inventes, que es hasta la una, porque yo lo tengo
+        # bloqueado, esa media hora la quiero tener en margen para mí,
+        # para ordenar, para ver si llegó alguien desordenado."
         #
-        #   Mañana: bloques cada 30 min desde 09:00 hasta 13:00.
-        #           Últimos inicios admitidos: ..., 12:00, 12:30
-        #           (último bloque 12:30-13:00).
-        #   Colación BLOQUEADA: 13:00 a 14:00 (1 hora).
+        #   Mañana: bloques cada 30 min desde 09:00 hasta 12:30.
+        #           Últimos inicios admitidos: ..., 11:30, 12:00
+        #           (último bloque 12:00-12:30).
+        #   Buffer interno: 12:30-13:00 (la bodega usa este rato para
+        #           atender desordenados que no se agendaron).
+        #   Colación: 13:00 a 14:00 (no se ofrece para retiros).
         #   Tarde:  bloques cada 30 min desde 14:00 hasta 17:00.
         #           Últimos inicios admitidos: ..., 16:00, 16:30
         #           (último bloque 16:30-17:00).
         #
-        # Total: 8 bloques mañana + 6 bloques tarde = 14 bloques agendables.
+        # Total: 7 bloques mañana + 6 bloques tarde = 13 bloques agendables.
         slot_dur  = 30
         slot_step = 30
         buffer_cierre_min = 0
 
-        lunch_s_str = "13:00"   # colación arranca a las 13:00 (no 12:30)
-        lunch_e_str = "14:00"   # colación termina a las 14:00
+        # 12:30 marca el INICIO del bloqueado (buffer + colación).
+        # Esto saca del calendario los slots 12:30, 13:00, 13:30.
+        lunch_s_str = "12:30"
+        lunch_e_str = "14:00"
         try:
             lH,lM = [int(x) for x in lunch_s_str.split(":")]
             leH,leM = [int(x) for x in lunch_e_str.split(":")]
