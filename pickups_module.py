@@ -3117,6 +3117,105 @@ def register_pickup_routes(app, ctx):
         return jsonify({"ok": True, "totales": totales})
 
     # ══════════════════════════════════════════════════════════════════
+    #  BORRADO TOTAL DE SOLICITUD — SOLO SUPERADMIN
+    #  Daniel 2026-05-23: necesita poder limpiar solicitudes de prueba o
+    #  duplicadas sin pedir SQL al desarrollador. Se restringe a superadmin
+    #  porque borra cascade (request → docs, packages, proposals, logs,
+    #  attachments, signatures vía FK ON DELETE CASCADE).
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/<int:rid>", methods=["DELETE", "POST"])
+    @require_permission("retiros")
+    def pickup_delete(rid):
+        """SOLO SUPERADMIN — borrado físico de una solicitud de retiro completa.
+
+        Cascade automático (ON DELETE CASCADE en schema):
+        - pickup_packages, pickup_proposals, pickup_logs,
+          pickup_attachments, pickup_signatures, pickup_request_docs.
+
+        Requiere:
+        - Rol superadmin (admin/retiros/edit → 403).
+        - Confirmación 'BORRAR' (header X-Confirm-Delete o body confirm)
+          para evitar borrados accidentales (fat-finger).
+        - Acepta DELETE o POST con _method=DELETE.
+
+        Respuesta:
+        - 200 {ok:True, deleted:{...}} con datos del registro borrado.
+        - 403 si el usuario no es superadmin.
+        - 400 si falta confirmación.
+        - 404 si el retiro no existe.
+        """
+        # Gate superadmin (require_permission ya permite superadmin pasar,
+        # pero verificamos explícito para que cualquier otro rol con
+        # permiso 'retiros' NO pueda borrar — solo ver/editar).
+        if not (g.user and g.permissions.get("superadmin")):
+            return jsonify({
+                "ok": False,
+                "error": "Solo el superadministrador puede eliminar solicitudes de retiro.",
+                "error_codigo": "SOLO_SUPERADMIN",
+            }), 403
+
+        # Método DELETE o POST con _method=DELETE
+        if request.method == "POST":
+            method_override = (request.form.get("_method") or
+                               (request.get_json(silent=True) or {}).get("_method") or
+                               "").upper()
+            if method_override != "DELETE":
+                return jsonify({"ok": False,
+                                "error": "Método inválido. Usa DELETE o _method=DELETE."}), 405
+
+        # Confirmación anti-fat-finger (header o body)
+        body = request.get_json(silent=True) or {}
+        confirm = (request.headers.get("X-Confirm-Delete", "") or
+                   request.form.get("confirm", "") or
+                   body.get("confirm", "") or "").strip().upper()
+        if confirm != "BORRAR":
+            return jsonify({
+                "ok": False,
+                "error": "Confirmación requerida. Envía 'BORRAR' como confirmación.",
+                "error_codigo": "FALTA_CONFIRMACION",
+            }), 400
+
+        # Verificar que existe + obtener datos para log y respuesta
+        req = mysql_fetchone(
+            f"SELECT id, code, status, customer_name, customer_rut, "
+            f"       contact_email, contact_phone, created_at "
+            f"FROM `{REQ}` WHERE id=%s LIMIT 1",
+            (rid,)
+        )
+        if not req:
+            return jsonify({"ok": False, "error": "Solicitud no encontrada"}), 404
+
+        # Audit log permanente — en consola (los logs DB se borran por cascade,
+        # así que dejamos huella en stdout que Railway captura).
+        actor_email = (g.user.get("email") or g.user.get("nombre") or "?")
+        print(f"[ILUS][SUPERADMIN][DELETE] retiro id={rid} "
+              f"code={req.get('code')} status={req.get('status')} "
+              f"cliente='{req.get('customer_name')}' rut={req.get('customer_rut')} "
+              f"por={actor_email}")
+
+        try:
+            # Cascade automático borra todas las tablas relacionadas
+            mysql_execute(f"DELETE FROM `{REQ}` WHERE id=%s", (rid,))
+        except Exception as exc:
+            print(f"[ILUS][SUPERADMIN][DELETE-ERR] id={rid} err={str(exc)[:200]}")
+            return jsonify({
+                "ok": False,
+                "error": f"Error al borrar: {str(exc)[:200]}",
+            }), 500
+
+        return jsonify({
+            "ok": True,
+            "deleted": {
+                "id": rid,
+                "code": req.get("code"),
+                "status": req.get("status"),
+                "customer_name": req.get("customer_name"),
+                "customer_rut": req.get("customer_rut"),
+            },
+            "message": f"Solicitud {req.get('code')} eliminada permanentemente.",
+        })
+
+    # ══════════════════════════════════════════════════════════════════
     #  SALDO ERP — Documentos pendientes de despacho del cliente
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/cliente/<rut>/saldo-pendiente", methods=["GET"])

@@ -1107,6 +1107,15 @@
     <button type="button" class="btn btn-sm btn-outline-light" onclick="document.getElementById('infoTabs').scrollIntoView({behavior:'smooth',block:'start'})" title="Ver mensajes, adjuntos, propuestas e historial">
       <i class="bi bi-chat-square-text me-1"></i>Mensajes/Adjuntos
     </button>
+    {# Daniel 2026-05-23: borrar solicitud completa — SOLO superadmin #}
+    {% if current_user and current_user.role == 'superadmin' %}
+    <button type="button" class="btn btn-sm" id="btnSuperadminEliminar"
+            onclick="superadminEliminarSolicitud()"
+            style="background:rgba(220,38,38,.18);color:#fff;border:1px solid rgba(220,38,38,.5);font-weight:700"
+            title="SOLO SUPERADMIN — Elimina la solicitud y todos sus datos (docs, fotos, logs, propuestas). No se puede deshacer.">
+      <i class="bi bi-trash3 me-1"></i>Eliminar solicitud
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -1956,6 +1965,97 @@ async function abrirDescargaInforme(rutCliente){
   let url = `/retiros/api/informe-mes.xlsx?mes=${encodeURIComponent(mes)}`;
   if (soloCliente && rutCliente) url += `&cliente_rut=${encodeURIComponent(rutCliente)}`;
   window.location.href = url;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  BORRADO TOTAL DE LA SOLICITUD — SOLO SUPERADMIN
+//  Daniel 2026-05-23: doble confirmación (ilusConfirm + ilusPrompt con
+//  texto literal "BORRAR") para evitar fat-finger en celular.
+// ════════════════════════════════════════════════════════════════════
+async function superadminEliminarSolicitud(){
+  const code = '{{ req.code }}';
+  const cliente = '{{ req.customer_name|e }}';
+
+  // 1) Confirmación general
+  const sigue = await ilusConfirm({
+    title: 'Eliminar solicitud completa',
+    message: `¿Seguro que quieres eliminar la solicitud ${code}?`,
+    sub: `Cliente: <strong>${cliente}</strong><br>` +
+         'Esto borra <strong>permanentemente</strong>: docs asociados, fotos, ' +
+         'firmas, propuestas, mensajes y todo el historial.<br>' +
+         '<strong style="color:#dc2626">Esta acción no se puede deshacer.</strong>',
+    subHtml: true,
+    okLabel: 'Continuar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!sigue) return;
+
+  // 2) Confirmación con texto literal — bloquea fat-finger
+  const conf = await ilusPrompt({
+    title: 'Confirmación final',
+    message: 'Para confirmar, escribe en mayúsculas:',
+    sub: '<strong style="color:#dc2626;font-size:1.1rem">BORRAR</strong>',
+    subHtml: true,
+    placeholder: 'BORRAR',
+    required: true,
+  });
+  if (!conf) return;
+  if (conf.trim().toUpperCase() !== 'BORRAR'){
+    ilusToast('Confirmación incorrecta — debes escribir BORRAR', { type:'warning' });
+    return;
+  }
+
+  // 3) Llamar endpoint con feedback visual
+  const btn = document.getElementById('btnSuperadminEliminar');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando…';
+
+  try {
+    const r = await fetch(`/retiros/{{ req.id }}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Confirm-Delete': 'BORRAR',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ confirm: 'BORRAR' }),
+    });
+    let d;
+    try { d = await r.json(); }
+    catch(parseErr){
+      btn.disabled = false;
+      btn.innerHTML = original;
+      ilusAlert({
+        type: 'error',
+        title: 'Error inesperado',
+        message: `El servidor respondió HTML en lugar de JSON (status ${r.status}). ¿Sesión expirada?`,
+      });
+      return;
+    }
+    if (!d.ok){
+      btn.disabled = false;
+      btn.innerHTML = original;
+      ilusAlert({
+        type: 'error',
+        title: 'No se pudo eliminar',
+        message: d.error || `Error HTTP ${r.status}`,
+      });
+      return;
+    }
+    // Éxito → toast + redirect al dashboard
+    ilusToast(`✓ ${d.message || 'Solicitud eliminada'}`, { type:'success', duration:3000 });
+    setTimeout(()=> { window.location.href = '{{ url_for("pickup_dashboard") }}'; }, 800);
+  } catch(e){
+    btn.disabled = false;
+    btn.innerHTML = original;
+    ilusAlert({
+      type: 'error',
+      title: 'Sin conexión',
+      message: 'No se pudo contactar al servidor: ' + (e.message || 'error de red'),
+    });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
