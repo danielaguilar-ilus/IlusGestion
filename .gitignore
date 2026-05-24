@@ -65,3 +65,6 @@ start.bat
 # Backups locales (no subir a producción)
 .backups/
 *.bak
+
+# Scratch de extracción de tarifas del macro (los datos finales viven en tarifas/)
+_macro_extract/
