@@ -447,13 +447,14 @@
   /* ════════════════════════════════════════════════════════════════
      PIPELINE 6 PASOS (mantener visual del actual)
      ════════════════════════════════════════════════════════════════ */
-  .pipe-wrap{padding:18px 22px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);border-radius:14px;margin-bottom:16px;color:#fff;border-bottom:4px solid var(--ilus-red,#e60000)}
-  .pipe-wrap-title{font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:14px}
+  /* Pipeline COMPACTA — Daniel 2026-05-23: "está muy grande la pipeline, no me gusta" */
+  .pipe-wrap{padding:10px 14px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);border-radius:10px;margin-bottom:12px;color:#fff;border-bottom:2px solid var(--ilus-red,#e60000)}
+  .pipe-wrap-title{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px}
   .pipe-row{
-    --pipe-circle-size:54px;
-    --pipe-num-row:18px;
-    --pipe-pad-top:6px;
-    --pipe-line-top:calc(var(--pipe-pad-top) + var(--pipe-num-row) + (var(--pipe-circle-size) / 2) - 2px);
+    --pipe-circle-size:34px;
+    --pipe-num-row:12px;
+    --pipe-pad-top:4px;
+    --pipe-line-top:calc(var(--pipe-pad-top) + var(--pipe-num-row) + (var(--pipe-circle-size) / 2) - 1px);
     display:grid;grid-template-columns:repeat(6,1fr);gap:0;
     align-items:flex-start;position:relative;
   }
@@ -475,24 +476,24 @@
     position:relative;z-index:2;
     width:var(--pipe-circle-size);height:var(--pipe-circle-size);
     border-radius:50%;background:#1c1c1c;
-    border:3px solid rgba(255,255,255,.15);color:#9ca3af;
+    border:2px solid rgba(255,255,255,.15);color:#9ca3af;
     display:flex;align-items:center;justify-content:center;
-    font-size:1.45rem;font-weight:900;margin:0 auto 8px;
+    font-size:.95rem;font-weight:900;margin:0 auto 4px;
     transition:all .25s;font-family:'Bebas Neue',sans-serif;letter-spacing:0;
-    box-shadow:0 0 0 4px #0a0a0a;
+    box-shadow:0 0 0 3px #0a0a0a;
   }
   .pipe-step.done .pipe-circle{background:#22c55e;border-color:#22c55e;color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(34,197,94,.30)}
   .pipe-step.active .pipe-circle{background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18);animation:pipe-pulse 2s ease-in-out infinite}
   .pipe-step.fail .pipe-circle{background:#dc2626;border-color:#dc2626;color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(220,38,38,.30)}
   @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 4px #0a0a0a, 0 0 0 14px rgba(230,0,0,.04)}}
-  .pipe-step-num{display:block;font-size:.58rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:6px;text-transform:uppercase;line-height:1}
+  .pipe-step-num{display:block;font-size:.52rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:3px;text-transform:uppercase;line-height:1}
   .pipe-step.done .pipe-step-num{color:#22c55e}
   .pipe-step.active .pipe-step-num{color:var(--ilus-red,#e60000)}
-  .pipe-label{font-size:.74rem;font-weight:800;color:#cbd5e1;line-height:1.2;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+  .pipe-label{font-size:.62rem;font-weight:800;color:#cbd5e1;line-height:1.15;text-transform:uppercase;letter-spacing:.03em;margin-top:1px}
   .pipe-step.done .pipe-label{color:#86efac}
-  .pipe-step.active .pipe-label{color:#fff;font-size:.78rem}
+  .pipe-step.active .pipe-label{color:#fff;font-size:.66rem}
   .pipe-step.fail .pipe-label{color:#fca5a5}
-  .pipe-sub{font-size:.65rem;color:#9ca3af;margin-top:2px;font-weight:500}
+  .pipe-sub{font-size:.58rem;color:#9ca3af;margin-top:1px;font-weight:500;line-height:1.1}
   @media(max-width:768px){
     .pipe-row{grid-template-columns:1fr;gap:8px;--pipe-line-top:0px}
     .pipe-step{display:grid;grid-template-columns:60px 1fr;gap:12px;text-align:left;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;position:relative}
@@ -2356,11 +2357,13 @@ async function cargarSaldoCliente(rid){
       return;
     }
 
-    // Render cards expandibles
+    // Render cards SIEMPRE ABIERTAS por default (Daniel 2026-05-23: "déjala
+    // siempre abierta todo el rato posible, todo lo que pueda a través del
+    // cliente"). Cargamos las líneas EN PARALELO al render.
     cont.innerHTML = d.docs.map((doc, idx) => {
       const yaAso = doc.ya_tiene_retiro;
       const fecha = doc.fecha || doc.fecha_iso || '';
-      return `<div class="erp-doc-card ${yaAso ? 'is-already' : ''}" data-tido="${_esc(doc.tido_display)}" data-nudo="${_esc(doc.nudo_display)}" data-idx="${idx}">
+      return `<div class="erp-doc-card is-open ${yaAso ? 'is-already' : ''}" data-tido="${_esc(doc.tido_display)}" data-nudo="${_esc(doc.nudo_display)}" data-idx="${idx}">
         <div class="erp-doc-card-head" onclick="toggleErpDoc(${idx})">
           <div class="erp-doc-num">${_esc(doc.tido_display)} ${_esc(doc.nudo_display)}</div>
           <div class="erp-doc-meta">
@@ -2375,7 +2378,7 @@ async function cargarSaldoCliente(rid){
           ${yaAso
             ? '<button class="erp-doc-add-btn is-done" disabled><i class="bi bi-check"></i>Ya en este retiro</button>'
             : `<button class="erp-doc-add-btn" onclick="event.stopPropagation();agregarDocDirecto(${idx})"><i class="bi bi-plus-lg"></i>Agregar al retiro</button>`}
-          <button class="erp-doc-toggle" onclick="event.stopPropagation();toggleErpDoc(${idx})" title="Ver líneas"><i class="bi bi-chevron-down"></i></button>
+          <button class="erp-doc-toggle" onclick="event.stopPropagation();toggleErpDoc(${idx})" title="Colapsar / expandir"><i class="bi bi-chevron-up"></i></button>
         </div>
         <div class="erp-doc-body" id="erpDocBody-${idx}">
           <div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando líneas del documento...</div>
@@ -2385,22 +2388,28 @@ async function cargarSaldoCliente(rid){
 
     // Guardar el array para uso posterior
     window._erpSugDocs = d.docs;
+
+    // Auto-cargar TODAS las líneas en paralelo (Daniel: ver todo al instante).
+    // Limitamos a 6 concurrentes para no saturar el ERP (Promise.all en chunks).
+    (async () => {
+      const CHUNK = 6;
+      for (let i = 0; i < d.docs.length; i += CHUNK){
+        const chunk = d.docs.slice(i, i + CHUNK);
+        await Promise.all(chunk.map((_, j) => _loadErpDocLines(i + j)));
+      }
+    })();
   } catch(e){
     cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>No se pudo consultar el ERP: ${_esc(e.message)}</div>`;
   }
 }
 
-// Toggle expandir/colapsar doc + lazy-load líneas
-async function toggleErpDoc(idx){
-  const card = document.querySelector(`.erp-doc-card[data-idx="${idx}"]`);
-  if (!card) return;
-  const isOpen = card.classList.toggle('is-open');
-  if (!isOpen) return;
+// Carga las líneas de un doc específico (lazy o eager — mismo código).
+// Extraído de toggleErpDoc para poder llamarlo desde render inicial.
+async function _loadErpDocLines(idx){
   const body = document.getElementById('erpDocBody-' + idx);
-  if (body.dataset.loaded === '1') return;
+  if (!body || body.dataset.loaded === '1') return;
   const doc = (window._erpSugDocs || [])[idx];
   if (!doc) return;
-  body.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-hourglass-split me-1"></i>Cargando líneas del documento...</div>';
   try {
     const r = await fetch('/api/erp/documento', {
       method: 'POST',
@@ -2421,7 +2430,7 @@ async function toggleErpDoc(idx){
     body.innerHTML = `<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a;margin-bottom:6px">Productos pendientes (${lineas.length})</div>` +
       lineas.map(l => {
         const qty = parseFloat(l.cantidad || 0);
-        const saldoQty = qty;  // simplificación: mostrar cantidad como saldo
+        const saldoQty = qty;
         return `<div class="erp-line">
           <span class="ln-sku">${_esc(l.sku || '')}</span>
           <span class="ln-desc">${_esc(l.descripcion_erp || l.nombre_app || '')}</span>
@@ -2432,6 +2441,19 @@ async function toggleErpDoc(idx){
   } catch(e){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error de red: ${_esc(e.message)}</div>`;
   }
+}
+
+// Toggle expandir/colapsar doc. Las líneas se cargan via _loadErpDocLines (en
+// render inicial Y aquí si por alguna razón faltó).
+async function toggleErpDoc(idx){
+  const card = document.querySelector(`.erp-doc-card[data-idx="${idx}"]`);
+  if (!card) return;
+  const isOpen = card.classList.toggle('is-open');
+  // Cambiar icono del chevron
+  const chev = card.querySelector('.erp-doc-toggle i');
+  if (chev) chev.className = isOpen ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+  if (!isOpen) return;
+  await _loadErpDocLines(idx);
 }
 
 // Agregar un doc al retiro desde las sugerencias
@@ -2486,23 +2508,55 @@ async function buscarYAgregarERP(rid){
   try {
     const r = await fetch(`/retiros/${rid}/docs/agregar`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json',
+      },
       body: JSON.stringify({ document_type: tido, document_number: nudo }),
     });
-    const d = await r.json();
+    // FIX Daniel 2026-05-23: parse defensivo del JSON. Si el backend devuelve
+    // HTML (error 500 default de Flask), no rompemos con "Unexpected token <".
+    let d;
+    try { d = await r.json(); }
+    catch(parseErr){
+      resDiv.innerHTML = `<div class="smart-hint is-danger" style="margin:0">
+        <i class="bi bi-x-circle"></i>
+        <div><strong>Backend respondió HTML (status ${r.status}).</strong><br>
+          <small>Probable sesión expirada. Recarga la página y vuelve a iniciar sesión.</small>
+        </div></div>`;
+      return;
+    }
     if (r.status === 409){
       resDiv.innerHTML = `<div class="smart-hint is-warn" style="margin:0"><i class="bi bi-exclamation-triangle-fill"></i><div>El documento ${_esc(tido)} ${_esc(nudo)} ya está asociado a este retiro.</div></div>`;
       return;
     }
     if (!d.ok){
-      resDiv.innerHTML = `<div class="smart-hint is-danger" style="margin:0"><i class="bi bi-x-circle"></i><div>${_esc(d.error || 'No se pudo agregar')}</div></div>`;
+      // FIX Daniel 2026-05-23: mostrar detalle REAL del backend, no genérico.
+      // El backend ahora devuelve {error, detalle, tipo_error, trace?} con
+      // info útil para diagnóstico inmediato.
+      const errMain = d.error || 'No se pudo agregar';
+      const tipoErr = d.tipo_error ? `<span style="opacity:.7">[${_esc(d.tipo_error)}]</span> ` : '';
+      const traceHtml = d.trace ?
+        `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:#475569">Ver traceback técnico</summary>
+          <pre style="background:#1e293b;color:#e2e8f0;padding:8px;border-radius:6px;font-size:.7rem;overflow:auto;max-height:200px;margin:6px 0 0">${_esc(d.trace)}</pre>
+        </details>` : '';
+      resDiv.innerHTML = `<div class="smart-hint is-danger" style="margin:0">
+        <i class="bi bi-x-circle"></i>
+        <div>${tipoErr}${_esc(errMain)}${traceHtml}</div>
+      </div>`;
       return;
     }
     let warnHtml = '';
     if (d.warning_otro_retiro){
       warnHtml = `<div class="smart-hint is-warn" style="margin:8px 0 0"><i class="bi bi-exclamation-triangle-fill"></i><div>También figura en otro retiro: <strong>${_esc(d.warning_otro_retiro.code)}</strong>. Verifica que no esté duplicado.</div></div>`;
     }
-    resDiv.innerHTML = `<div class="smart-hint is-success" style="margin:0"><i class="bi bi-check-circle"></i><div>Documento <strong>${_esc(tido)} ${_esc(nudo)}</strong> agregado al retiro.</div></div>${warnHtml}`;
+    // Si fue fallback minimal (sin enrichment), aviso al operador
+    let minHtml = '';
+    if (d.doc && d.doc.minimal_source){
+      minHtml = `<div class="smart-hint is-info" style="margin:8px 0 0"><i class="bi bi-info-circle"></i><div>Doc asociado con info mínima (el motor de enrichment no respondió). Peso/volumen se calcularán al hacer click en "Revisar carga".</div></div>`;
+    }
+    resDiv.innerHTML = `<div class="smart-hint is-success" style="margin:0"><i class="bi bi-check-circle"></i><div>Documento <strong>${_esc(tido)} ${_esc(nudo)}</strong> agregado al retiro.</div></div>${warnHtml}${minHtml}`;
     ilusToast(`✓ ${tido} ${nudo} agregado`, { type:'success' });
     await refrescarDocsAsociados(rid);
   } catch(e){

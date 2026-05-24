@@ -2847,6 +2847,94 @@ def register_pickup_routes(app, ctx):
             },
         })
 
+    def _pickup_fetch_doc_minimal_via_sql(tipo, numero):
+        """Fallback: busca un documento en MAEEDO directamente, sin enrichment.
+        Mismo motor que /retiros/api/buscar-erp (búsqueda avanzada).
+
+        Devuelve un dict con la forma mínima que necesita
+        _pickup_doc_agregar_impl, o None si no encontró el doc.
+
+        Daniel 2026-05-23: "no estamos usando el mismo motor" — esto
+        garantiza que SIEMPRE se pueda asociar un doc que existe en MAEEDO,
+        aunque _cubicador_fetch crashee o REST/SQL Server del motor unificado
+        falle. El enrichment (peso/vol/líneas) puede hacerse después.
+        """
+        try:
+            from app import _random_sql_query, _random_sql_pool
+        except ImportError:
+            return None
+        if _random_sql_pool() is None:
+            return None
+
+        tipo_up = (tipo or "").strip().upper()
+        nudo_clean = str(numero or "").strip().lstrip("0") or "0"
+        # NUDO en MAEEDO viene padded a 10 chars con prefijos posibles (VD/WEB)
+        nudo_padded = nudo_clean.zfill(10)
+        nudo_vd     = f"VD{nudo_clean.zfill(8)}"
+        nudo_web    = f"WEB{nudo_clean.zfill(7)}"
+
+        # TIDOs aceptados — alias VD/WEB → NVV en MAEEDO
+        tido_query_list = [tipo_up]
+        if tipo_up in ("VD", "WEB"):
+            tido_query_list = ["NVV"]
+        elif tipo_up == "NVV":
+            tido_query_list = ["NVV"]
+
+        tidos_in = "','".join(tido_query_list)
+
+        try:
+            row = None
+            for nudo_try in (nudo_padded, nudo_vd, nudo_web):
+                rows = _random_sql_query(f"""
+                    SELECT TOP 1
+                        e.IDMAEEDO,
+                        LTRIM(RTRIM(e.TIDO))                AS TIDO,
+                        LTRIM(RTRIM(e.NUDO))                AS NUDO,
+                        LTRIM(RTRIM(COALESCE(e.ENDO,'')))   AS ENDO,
+                        LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                        e.FEEMDO,
+                        COALESCE(e.VANEDO, 0)               AS VANEDO,
+                        COALESCE(e.VABRDO, 0)               AS VABRDO
+                    FROM MAEEDO e
+                    WHERE e.NUDO = %s
+                      AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                      AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                """, (nudo_try,), max_rows=1)
+                if rows:
+                    row = rows[0]
+                    break
+            if not row:
+                return None
+
+            # Enrichment opcional: razón social del cliente
+            endo = (row.get("ENDO") or "").strip()
+            rut_base = endo.split("-")[0] if "-" in endo else endo
+            cliente_nombre = ""
+            try:
+                cli_rows = _random_sql_query("""
+                    SELECT TOP 1 LTRIM(RTRIM(COALESCE(NOKOENAMP, NOKOEN, ''))) AS razon
+                      FROM MAEEN
+                     WHERE RTEN = %s
+                """, (endo,), max_rows=1)
+                if cli_rows:
+                    cliente_nombre = (cli_rows[0].get("razon") or "").strip().title()
+            except Exception:
+                pass
+
+            return {
+                "cliente_rut":      rut_base,
+                "rut":              rut_base,
+                "cliente_nombre":   cliente_nombre,
+                "razon_social":     cliente_nombre,
+                "observaciones":    "",
+                "obs":              "",
+                "_fallback_source": "maeedo_direct_sql",
+                "_minimal":         True,
+            }
+        except Exception as e:
+            print(f"[_pickup_fetch_doc_minimal_via_sql] error: {e}", flush=True)
+            return None
+
     @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
     @require_permission("edit")
     def pickup_doc_agregar(rid):
@@ -2863,17 +2951,32 @@ def register_pickup_routes(app, ctx):
         no atrapada se convierte en JSON 500 con error legible.
         """
         # Wrapper anti-HTML: cualquier crash se convierte en JSON 500
+        # Daniel 2026-05-23: el mensaje genérico no servía para diagnóstico.
+        # Ahora el detalle real va EN el error (visible al operador), no
+        # escondido en "detalle". Si es un superadmin, mostramos full
+        # traceback en el campo trace para debugging rápido.
         try:
             return _pickup_doc_agregar_impl(rid)
         except Exception as _exc:
             import traceback as _tb
-            print(f"[pickup_doc_agregar] CRASH rid={rid}: {_exc}\n{_tb.format_exc()}", flush=True)
-            return jsonify({
+            tb_str = _tb.format_exc()
+            err_type = type(_exc).__name__
+            err_msg = str(_exc)[:300]
+            print(f"[pickup_doc_agregar] CRASH rid={rid} type={err_type}: {_exc}\n{tb_str}",
+                  flush=True)
+            # Mensaje detallado AL OPERADOR (ya no genérico)
+            user_msg = f"[{err_type}] {err_msg}"
+            payload = {
                 "ok": False,
-                "error": "Error interno al asociar documento. Reintenta o contacta soporte.",
+                "error": user_msg,
                 "error_codigo": "INTERNAL_CRASH",
-                "detalle": str(_exc)[:200],
-            }), 500
+                "detalle": err_msg,
+                "tipo_error": err_type,
+            }
+            # Solo superadmin ve el traceback completo (privacidad)
+            if g.user and g.permissions.get("superadmin"):
+                payload["trace"] = tb_str[-1500:]
+            return jsonify(payload), 500
 
     def _pickup_doc_agregar_impl(rid):
         """Implementación real de pickup_doc_agregar. Separada para que el
@@ -2906,7 +3009,14 @@ def register_pickup_routes(app, ctx):
         # Verificar que no esté en OTRO retiro (warning, no bloqueo — Daniel decide)
         otro = _doc_already_used_by_other_request(tipo, numero, rid)
 
-        # Buscar en ERP
+        # Buscar en ERP — primero motor unificado (_cubicador_fetch).
+        # Si falla, fallback a query SQL directa contra MAEEDO (mismo motor
+        # que la búsqueda avanzada — Daniel 2026-05-23: "no estamos usando
+        # el mismo motor"). Así garantizamos que SIEMPRE se pueda asociar
+        # un doc que existe en MAEEDO, aunque el cubicador no lo procese.
+        hdr = None
+        lineas = []
+        fetch_err = None
         try:
             from app import _cubicador_fetch
         except ImportError:
@@ -2914,10 +3024,34 @@ def register_pickup_routes(app, ctx):
         try:
             hdr, lineas = _cubicador_fetch(tipo, numero)
         except Exception as exc:
-            err = str(exc)[:200]
-            return jsonify({"ok": False, "error": f"Error consultando ERP: {err}"}), 502
+            fetch_err = str(exc)[:200]
+            print(f"[pickup_doc_agregar] _cubicador_fetch falló para {tipo}/{numero}: {exc}",
+                  flush=True)
+
+        # ⚡ FALLBACK robusto: si _cubicador_fetch no encontró nada O crasheó,
+        # intentamos la MISMA query SQL directa que usa la búsqueda avanzada
+        # (consulta a MAEEDO sin enrichment). Si el doc EXISTE allí, lo
+        # asociamos con info mínima — luego se enriquece en background.
         if not hdr:
-            return jsonify({"ok": False, "error": f"Documento {tipo} {numero} no encontrado en ERP"}), 404
+            try:
+                hdr_min = _pickup_fetch_doc_minimal_via_sql(tipo, numero)
+                if hdr_min:
+                    print(f"[pickup_doc_agregar] FALLBACK SQL recuperó {tipo}/{numero} "
+                          f"sin enrichment — guardando info mínima", flush=True)
+                    hdr = hdr_min
+                    lineas = []  # sin líneas porque no hicimos enrichment
+            except Exception as sql_exc:
+                print(f"[pickup_doc_agregar] FALLBACK SQL también falló: {sql_exc}",
+                      flush=True)
+
+        if not hdr:
+            # Ni cubicador ni fallback SQL lo encontraron
+            err_extra = f" (motor: {fetch_err})" if fetch_err else ""
+            return jsonify({
+                "ok": False,
+                "error": f"Documento {tipo} {numero} no encontrado en ERP{err_extra}",
+                "error_codigo": "DOC_NOT_FOUND",
+            }), 404
 
         # Calcular peso/vol/m³ desde las líneas (mismo criterio que el JS frontend)
         total_kg = 0.0

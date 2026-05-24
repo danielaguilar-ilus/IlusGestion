@@ -33,29 +33,32 @@
     .mini-bar a:hover{color:var(--ilus-red);text-decoration:none}
 
     /* ════════════════════════════════════════════════════════════
-       HERO MARKETING — animado, moderno, con copy de impacto
+       HERO MARKETING — fondo limpio oscuro estilo referencia premium
+       Daniel 2026-05-23: "el rojo del hero sacalo y la imagen de
+       marketing se debe difuminar como en la foto" — Removemos los
+       glows rojos prominentes. Solo queda un MUY leve tinte rojo
+       difuminado en una esquina como acento sutil, no como protagonista.
        ════════════════════════════════════════════════════════════ */
-    /* Difuminado: en lugar de un borde rojo sólido (cuadrado), un glow que se disipa
-       orgánicamente hacia el contenido siguiente — efecto premium 2027 */
     .hero-wrap{
-      position:relative;background:#0a0a0a;color:#fff;overflow:hidden;
-      box-shadow: inset 0 -100px 140px -60px rgba(220,38,38,.40);
+      position:relative;color:#fff;overflow:hidden;
+      /* Gradiente diagonal dark→dark con leve tinte rojo SOLO en bottom-left,
+         apenas perceptible — el "rojo del hero" ya no es protagonista. */
+      background:
+        radial-gradient(ellipse 80% 60% at 10% 110%, rgba(120,15,15,.25) 0%, transparent 60%),
+        linear-gradient(135deg, #0a0a0a 0%, #111 50%, #0a0a0a 100%);
     }
     .hero-wrap::before{
-      content:'';position:absolute;inset:0;
-      background:
-        radial-gradient(circle at 20% 30%, rgba(230,0,0,.18) 0%, transparent 45%),
-        radial-gradient(circle at 80% 60%, rgba(230,0,0,.10) 0%, transparent 45%);
-      pointer-events:none;
+      content:'';position:absolute;inset:0;pointer-events:none;
+      /* Sutil noise/vignette para profundidad — sin rojo */
+      background: radial-gradient(ellipse 60% 50% at 50% 100%, transparent 0%, rgba(0,0,0,.5) 100%);
     }
-    /* Glow rojo inferior difuminado — reemplaza el border-bottom duro */
+    /* Transición SUAVE oscuro→oscuro al pasar al siguiente bloque.
+       Ya no es un glow rojo, solo una sombra inferior negra que ayuda
+       a separar visualmente sin línea dura. */
     .hero-wrap::after{
-      content:'';position:absolute;left:0;right:0;bottom:-1px;
-      height:140px;pointer-events:none;z-index:1;
-      background:
-        radial-gradient(ellipse 70% 100% at 50% 100%, rgba(220,38,38,.55) 0%, rgba(220,38,38,.18) 40%, transparent 75%),
-        linear-gradient(180deg, transparent 0%, rgba(220,38,38,.08) 100%);
-      filter: blur(2px);
+      content:'';position:absolute;left:0;right:0;bottom:0;
+      height:100px;pointer-events:none;z-index:1;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,.45) 100%);
     }
     .hero-grid{
       max-width:1280px;margin:0 auto;padding:50px 22px 60px;
@@ -98,11 +101,28 @@
     .hero-bullet i{color:var(--ilus-red);font-size:1.1rem;margin-top:2px;flex-shrink:0}
     .hero-bullet strong{color:#fff;display:block;font-size:.95rem;margin-bottom:2px}
 
-    /* Hero slideshow lateral */
-    .hero-slides{position:relative;height:520px;border-radius:14px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06)}
-    .hero-slide{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;transition:opacity 1.2s ease-in-out;filter:contrast(1.04) saturate(1.05)}
+    /* Hero slideshow lateral — Daniel 2026-05-23: difuminar la imagen
+       con el fondo oscuro del hero (como en la referencia premium).
+       Usamos mask-image radial para que los bordes (izquierdo, arriba,
+       abajo) se desvanezcan suavemente hacia transparente, fusionándose
+       con el bg oscuro del hero en vez de tener un borde duro. */
+    .hero-slides{
+      position:relative;height:520px;
+      /* Sin bordes ni shadow caja — la imagen flota fundida con el bg */
+      border-radius:0;overflow:hidden;
+      -webkit-mask-image: radial-gradient(ellipse 100% 95% at 70% 50%, #000 30%, rgba(0,0,0,.85) 55%, rgba(0,0,0,.45) 75%, transparent 100%);
+              mask-image: radial-gradient(ellipse 100% 95% at 70% 50%, #000 30%, rgba(0,0,0,.85) 55%, rgba(0,0,0,.45) 75%, transparent 100%);
+    }
+    .hero-slide{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;transition:opacity 1.2s ease-in-out;filter:contrast(1.08) saturate(1.05) brightness(1.05)}
     .hero-slide.active{opacity:1}
-    .hero-slide::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(10,10,10,.55) 0%,rgba(10,10,10,.15) 50%,transparent 100%)}
+    /* Doble overlay para sumarse al mask: gradiente dark→transparente
+       hacia la izquierda + sutil vignette inferior */
+    .hero-slide::after{
+      content:'';position:absolute;inset:0;
+      background:
+        linear-gradient(90deg, #0a0a0a 0%, rgba(10,10,10,.65) 18%, transparent 45%),
+        linear-gradient(180deg, transparent 60%, rgba(10,10,10,.55) 100%);
+    }
     .hero-slide-tag{position:absolute;bottom:24px;left:24px;right:24px;color:#fff;z-index:2}
     .hero-slide-tag .stag-label{display:inline-block;background:var(--ilus-red);font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;border-radius:4px;margin-bottom:8px}
     .hero-slide-tag h4{font-family:'Bebas Neue';font-size:1.85rem;line-height:1;margin:0;letter-spacing:.01em}

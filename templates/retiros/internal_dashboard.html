@@ -368,11 +368,11 @@ async function abrirDescargaInformeDash(){
 <div class="ilus-card">
   <div class="table-responsive">
     <table class="table ilus-table mb-0 align-middle">
-      <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th></tr></thead>
+      <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th><th class="text-end" style="width:60px">Acción</th></tr></thead>
       <tbody>
         {% for r in rows %}
         {% set b = status_badge(r.status) %}
-        <tr onclick="location.href='{{ url_for('pickup_detail', rid=r.id) }}'" style="cursor:pointer">
+        <tr data-href="{{ url_for('pickup_detail', rid=r.id) }}" class="row-clickable" style="cursor:pointer">
           <td class="fw-bold font-monospace">{{ r.code }}</td>
           <td>{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
           <td>{{ r.document_type|upper }} {{ r.document_number }}</td>
@@ -383,14 +383,95 @@ async function abrirDescargaInformeDash(){
             <small>{{ r.information_quality_score }}%</small>
           </td>
           <td class="text-end">{{ r.total_packages }} bultos<br><small class="text-muted">{{ r.total_weight_kg }} kg · PV {{ r.total_volumetric_weight }}</small></td>
+          {# Daniel 2026-05-23: columna acción flotante con dropdown #}
+          <td class="text-end" onclick="event.stopPropagation()">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Acciones">
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                <li><a class="dropdown-item" href="{{ url_for('pickup_detail', rid=r.id) }}">
+                  <i class="bi bi-eye me-1 text-primary"></i>Ver ficha
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('pickup_public_tracking', token=r.public_token) }}" target="_blank">
+                  <i class="bi bi-link-45deg me-1 text-success"></i>Link cliente
+                </a></li>
+                {% if current_user and current_user.role == 'superadmin' %}
+                <li><hr class="dropdown-divider"></li>
+                <li><button type="button" class="dropdown-item text-danger" onclick="eliminarSolicitudDesdeMonitor({{ r.id }}, '{{ r.code }}', '{{ r.customer_name|e }}')">
+                  <i class="bi bi-trash3 me-1"></i>Eliminar (superadmin)
+                </button></li>
+                {% endif %}
+              </ul>
+            </div>
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
+        <tr><td colspan="8" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+{# Daniel 2026-05-23: handler unificado para click en fila (excepto en la columna de acción) #}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('tr.row-clickable').forEach(tr => {
+    tr.addEventListener('click', e => {
+      // Si el click fue sobre un botón/dropdown, no navegar
+      if (e.target.closest('button') || e.target.closest('.dropdown-menu') || e.target.closest('a')) return;
+      const href = tr.dataset.href;
+      if (href) window.location.href = href;
+    });
+  });
+});
+
+// Eliminar solicitud desde monitor — solo superadmin
+async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
+  const sigue = await ilusConfirm({
+    title: 'Eliminar solicitud',
+    message: `¿Eliminar la solicitud <strong>${code}</strong>?`,
+    sub: `Cliente: <strong>${cliente}</strong><br>` +
+         'Borra docs, fotos, firmas, propuestas, mensajes y todo el historial.<br>' +
+         '<strong style="color:#dc2626">No se puede deshacer.</strong>',
+    subHtml: true,
+    okLabel: 'Continuar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!sigue) return;
+  const conf = await ilusPrompt({
+    title: 'Confirmación final',
+    message: 'Para confirmar, escribe en mayúsculas:',
+    sub: '<strong style="color:#dc2626;font-size:1.1rem">BORRAR</strong>',
+    subHtml: true,
+    placeholder: 'BORRAR',
+    required: true,
+  });
+  if (!conf || conf.trim().toUpperCase() !== 'BORRAR'){
+    ilusToast('Confirmación incorrecta — debes escribir BORRAR', { type:'warning' });
+    return;
+  }
+  try {
+    const r = await fetch(`/retiros/${rid}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json',
+                 'X-Confirm-Delete': 'BORRAR',
+                 'Accept': 'application/json' },
+      body: JSON.stringify({ confirm: 'BORRAR' }),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusAlert({ type:'error', title:'No se pudo eliminar', message: d.error || `HTTP ${r.status}` });
+      return;
+    }
+    ilusToast(`✓ ${d.message || 'Solicitud eliminada'}`, { type:'success' });
+    setTimeout(()=> window.location.reload(), 700);
+  } catch(e){
+    ilusAlert({ type:'error', title:'Sin conexión', message: e.message || 'error de red' });
+  }
+}
+</script>
 {% endif %}
 
 {% if permissions.admin %}
