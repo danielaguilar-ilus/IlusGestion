@@ -3155,6 +3155,23 @@ def register_pickup_routes(app, ctx):
                     (rid,)
                 ) or []
         out = []
+        # 🔧 FIX Daniel 2026-05-24: para docs con selección granular, contar
+        # cuántas líneas el operador realmente marcó (incluida=1). Antes el
+        # card mostraba "10 líneas" aunque solo se hubieran asociado 2 → se
+        # entendía como "está asociado todo". Ahora se ve "2 / 10".
+        sel_counts = {}
+        try:
+            doc_ids_sel = [r.get("id") for r in rows if r.get("has_seleccion_lineas")]
+            if doc_ids_sel:
+                ph = ",".join(["%s"] * len(doc_ids_sel))
+                rows_sc = mysql_fetchall(
+                    f"SELECT doc_id, COUNT(*) AS n FROM pickup_doc_lineas "
+                    f"WHERE doc_id IN ({ph}) AND incluida=1 GROUP BY doc_id",
+                    tuple(doc_ids_sel)
+                ) or []
+                sel_counts = {r2.get("doc_id"): int(r2.get("n") or 0) for r2 in rows_sc}
+        except Exception as _ce:
+            print(f"[pickup-docs] sel_counts skip: {_ce}", flush=True)
         for r in rows:
             d = dict(r)
             for k in ("peso_real_kg", "peso_vol_kg", "volumen_m3", "saldo_zz"):
@@ -3166,6 +3183,8 @@ def register_pickup_routes(app, ctx):
             if d.get("saldo_checked_at"):
                 d["saldo_checked_at"] = str(d["saldo_checked_at"])[:19]
             d["has_seleccion_lineas"] = bool(d.get("has_seleccion_lineas"))
+            # Líneas realmente incluidas (solo si hay selección granular)
+            d["n_lineas_seleccionadas"] = sel_counts.get(d.get("id"))
             out.append(d)
         totales = _pickup_recalc_totales(rid)
         # Conteo de docs con saldo (para habilitar el paso 4 del wizard)
@@ -3446,12 +3465,37 @@ def register_pickup_routes(app, ctx):
             from app import _cubicador_fetch
         except ImportError:
             return jsonify({"ok": False, "error": "Motor ERP no disponible"}), 503
+
+        # ⚡ PERF Daniel 2026-05-24: cache hit del modal RUT. Cuando el
+        # operador EXPANDE un doc en el modal de búsqueda, ya se ejecuta
+        # /api/erp/documento (cacheado 5min en _ERP_DOC_CACHE). Al hacer
+        # click "Asociar" volvemos a pegar al ERP otra vez (~800-1500ms)
+        # → recuperamos el cache para evitar la segunda llamada.
+        # Beneficio típico: ~1200ms → ~5ms en docs ya expandidos.
         try:
-            hdr, lineas = _cubicador_fetch(tipo, numero)
-        except Exception as exc:
-            fetch_err = str(exc)[:200]
-            print(f"[pickup_doc_agregar] _cubicador_fetch falló para {tipo}/{numero}: {exc}",
-                  flush=True)
+            import app as _app_mod
+            _ec = getattr(_app_mod, "_ERP_DOC_CACHE", None) or {}
+            _ck = f"{tipo.upper()}|{numero}"
+            _hit = _ec.get(_ck)
+            if _hit and (time.time() - _hit[1]) < 300:
+                _cached = _hit[0] or {}
+                _h = _cached.get("hdr") or {}
+                _l = _cached.get("lineas") or []
+                if _h and _l:
+                    # Reusar el snapshot tal cual — ya pasó por _cubicador_fetch
+                    hdr = _h
+                    lineas = _l
+                    print(f"[pickup_doc_agregar] CACHE HIT {tipo}/{numero} (skip _cubicador_fetch)", flush=True)
+        except Exception as _ce:
+            print(f"[pickup_doc_agregar] cache lookup skip: {_ce}", flush=True)
+
+        if not hdr:
+            try:
+                hdr, lineas = _cubicador_fetch(tipo, numero)
+            except Exception as exc:
+                fetch_err = str(exc)[:200]
+                print(f"[pickup_doc_agregar] _cubicador_fetch falló para {tipo}/{numero}: {exc}",
+                      flush=True)
         _lap("cubicador_fetch")
 
         # ⚡ FALLBACK robusto: si _cubicador_fetch no encontró nada O crasheó,
@@ -3897,8 +3941,18 @@ def register_pickup_routes(app, ctx):
                 incluida = bool(sel.get("incluida"))
                 qty_sel = float(sel.get("cantidad_seleccionada") or 0)
                 nota = sel.get("nota_linea") or ""
+            elif bool(doc.get("has_seleccion_lineas")):
+                # 🔧 FIX Daniel 2026-05-24: si el doc YA tiene selección
+                # granular y esta línea NO está en pickup_doc_lineas, significa
+                # que el operador eligió NO incluirla (al asociar desde RUT
+                # solo se mandan las marcadas). Default = NO seleccionada.
+                # Antes default=True hacía que al re-abrir el modal aparecieran
+                # todas marcadas → confusión + posibles re-adds accidentales.
+                incluida = False
+                qty_sel = 0
+                nota = ""
             else:
-                # Default: TODA la línea seleccionada
+                # Sin selección previa: default = TODA la línea seleccionada
                 incluida = True
                 qty_sel = cantidad_doc
                 nota = ""
@@ -4397,6 +4451,18 @@ def register_pickup_routes(app, ctx):
                    FROM MAEDDO d
                   WHERE d.IDMAEEDO = e.IDMAEEDO
                     AND UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%') AS saldo_zz,
+                /* 🔧 FIX Daniel 2026-05-24: saldo REAL de productos (no ZZ)
+                   con fórmula oficial Random. Antes solo se miraba el saldo
+                   de servicios ZZ → docs aparecían "con saldo" aunque todos
+                   los productos estuvieran ya despachados (incoherente). */
+                (SELECT COALESCE(SUM(
+                           CASE WHEN UPPER(LTRIM(RTRIM(COALESCE(d3.ESLIDO,'')))) NOT IN ('C','T','TOTAL','CERRADO','DESPACHADO')
+                                 AND (d3.CAPRCO1 - COALESCE(d3.CAPRAD1,0) - COALESCE(d3.CAPREX1,0) - COALESCE(d3.CAPRNC1,0)) > 0
+                                THEN d3.CAPRCO1 - COALESCE(d3.CAPRAD1,0) - COALESCE(d3.CAPREX1,0) - COALESCE(d3.CAPRNC1,0)
+                                ELSE 0 END), 0)
+                   FROM MAEDDO d3
+                  WHERE d3.IDMAEEDO = e.IDMAEEDO
+                    AND UPPER(LTRIM(RTRIM(d3.KOPRCT))) NOT LIKE 'ZZ%%') AS saldo_real_unidades,
                 (SELECT COUNT(*) FROM MAEDDO d2
                   WHERE d2.IDMAEEDO = e.IDMAEEDO) AS n_lineas
             FROM MAEEDO e
@@ -4468,14 +4534,14 @@ def register_pickup_routes(app, ctx):
 
             fe = r.get("FEEMDO")
             saldo_zz = float(r.get("saldo_zz") or 0)
-            # Considerar "pendiente" si saldo_zz > 0 OR ESDO no marca cerrado.
-            # En la práctica si saldo_zz=0 y ya hay ZZ, doc cerrado. Si NO hay
-            # ZZ, no podemos saber con certeza → asumimos pendiente.
+            saldo_real_unidades = float(r.get("saldo_real_unidades") or 0)
+            # 🔧 FIX Daniel 2026-05-24: "tiene_saldo" basado en productos
+            # reales pendientes (líneas no-ZZ con saldo > 0), no en servicios.
             n_lineas = int(r.get("n_lineas") or 0)
             key = f"{tido_display}|{nudo_display}"
             ya_tiene_retiro = key in ya_asociados
 
-            tiene_saldo = saldo_zz > 0
+            tiene_saldo = saldo_real_unidades > 0
             if tiene_saldo: n_con_saldo += 1
             else:           n_sin_saldo += 1
 
@@ -4495,11 +4561,12 @@ def register_pickup_routes(app, ctx):
                 "rut":            rut_clean,
                 "total":          float(r.get("VABRDO") or 0),
                 "neto":           float(r.get("VANEDO") or 0),
-                "saldo_zz":       saldo_zz,
-                "tiene_saldo":    tiene_saldo,
-                "estado_pago":    (r.get("ESPGDO") or "").strip(),
-                "n_lineas":       n_lineas,
-                "ya_tiene_retiro": ya_tiene_retiro,
+                "saldo_zz":              saldo_zz,
+                "saldo_real_unidades":   saldo_real_unidades,
+                "tiene_saldo":           tiene_saldo,
+                "estado_pago":           (r.get("ESPGDO") or "").strip(),
+                "n_lineas":              n_lineas,
+                "ya_tiene_retiro":       ya_tiene_retiro,
             })
 
         # Hint inteligente para el operador (Daniel: "tiene que enseñar")
@@ -4702,17 +4769,28 @@ def register_pickup_routes(app, ctx):
                 unique_docs.append(r)
             docs = unique_docs
 
-            # ── Paso 2: enriquecer cada doc con NOMBRE + saldo_zz + n_lineas ──
+            # ── Paso 2: enriquecer cada doc con NOMBRE + saldos + n_lineas ──
             # Esto evita el LEFT JOIN problemático del SELECT principal:
             #   • MAEEN puede tener N entidades con el mismo RTEN (multiplica)
             #   • Subqueries SCALAR en SELECT son costosas y propensas a timeout
             #
             # Acá hacemos 1 query agregada para TODOS los IDMAEEDO de una vez.
+            #
+            # 🔧 FIX Daniel 2026-05-24 (BUG GRAVE): el listado decía "CON SALDO"
+            # pero al expandir TODAS las líneas aparecían "sin saldo". Causa:
+            # antes solo sumábamos saldo de líneas ZZ (servicios de despacho),
+            # NO de los productos reales. Ahora calculamos el SALDO REAL DE
+            # PRODUCTOS (líneas no-ZZ) usando la fórmula oficial Random:
+            #     saldo = CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1
+            # Si saldo_real > 0 → "CON SALDO" (hay productos por retirar).
+            # Si saldo_real = 0 y todas las líneas no-ZZ están despachadas
+            # → "SIN SALDO" (gris, doc cerrado).
+            # Mantenemos `saldo_zz` por compat (lo usaba el frontend para info).
             if docs:
                 idmaeedos = [r.get("IDMAEEDO") for r in docs if r.get("IDMAEEDO") is not None]
                 if idmaeedos:
                     placeholders = ",".join(["%s"] * len(idmaeedos))
-                    # Saldo ZZ + n_lineas por doc (1 query agregada)
+                    # Saldo ZZ + saldo REAL de productos + n_lineas por doc
                     try:
                         saldo_rows = _random_sql_query(f"""
                             SELECT d.IDMAEEDO,
@@ -4722,6 +4800,13 @@ def register_pickup_routes(app, ctx):
                                        THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
                                        ELSE 0
                                    END), 0) AS saldo_zz,
+                                   COALESCE(SUM(CASE
+                                       WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) NOT LIKE 'ZZ%%'
+                                            AND UPPER(LTRIM(RTRIM(COALESCE(d.ESLIDO,'')))) NOT IN ('C','T','TOTAL','CERRADO','DESPACHADO')
+                                            AND (d.CAPRCO1 - COALESCE(d.CAPRAD1,0) - COALESCE(d.CAPREX1,0) - COALESCE(d.CAPRNC1,0)) > 0
+                                       THEN (d.CAPRCO1 - COALESCE(d.CAPRAD1,0) - COALESCE(d.CAPREX1,0) - COALESCE(d.CAPRNC1,0))
+                                       ELSE 0
+                                   END), 0) AS saldo_real_unidades,
                                    COUNT(*) AS n_lineas
                               FROM MAEDDO d
                              WHERE d.IDMAEEDO IN ({placeholders})
@@ -4734,6 +4819,7 @@ def register_pickup_routes(app, ctx):
                     for r in docs:
                         s = sm.get(r.get("IDMAEEDO")) or {}
                         r["saldo_zz"] = s.get("saldo_zz") or 0
+                        r["saldo_real_unidades"] = s.get("saldo_real_unidades") or 0
                         r["n_lineas"] = s.get("n_lineas") or 0
 
                 # Enriquecer NOMBRE por RUT desde MAEEN (1 query batch)
@@ -4844,9 +4930,17 @@ def register_pickup_routes(app, ctx):
 
             fe = r.get("FEEMDO")
             saldo_zz = float(r.get("saldo_zz") or 0)
+            saldo_real_unidades = float(r.get("saldo_real_unidades") or 0)
             endo = (r.get("ENDO") or "").strip()
             rut_clean = endo.split("-")[0] if "-" in endo else endo
             key = f"{tido_display}|{nudo_display}"
+
+            # 🔧 FIX Daniel 2026-05-24: "CON SALDO" cuando hay productos
+            # reales pendientes (líneas no-ZZ con saldo > 0). El listado
+            # ahora coincide con el detalle expandido — antes daba "CON
+            # SALDO" por servicios ZZ pero todas las líneas mostraban
+            # "sin saldo" → inconsistencia que confundía al operador.
+            tiene_saldo_real = saldo_real_unidades > 0
 
             out.append({
                 "idmaeedo":     r.get("IDMAEEDO"),
@@ -4861,10 +4955,11 @@ def register_pickup_routes(app, ctx):
                 "valor_neto":   float(r.get("VANEDO") or 0),
                 "valor_total":  float(r.get("VABRDO") or 0),
                 "estado_pago":  (r.get("ESPGDO") or "").strip(),
-                "saldo_zz":     saldo_zz,
-                "tiene_saldo":  saldo_zz > 0,
-                "n_lineas":     int(r.get("n_lineas") or 0),
-                "ya_tiene_retiro": key in ya_asociados,
+                "saldo_zz":             saldo_zz,
+                "saldo_real_unidades":  saldo_real_unidades,
+                "tiene_saldo":          tiene_saldo_real,
+                "n_lineas":             int(r.get("n_lineas") or 0),
+                "ya_tiene_retiro":      key in ya_asociados,
             })
 
         return jsonify({

@@ -150,61 +150,87 @@
     .step-section{transition:opacity .25s ease, background .25s ease, border-color .25s ease}
     body.js-reveal .step-section{transform:none}
   }
-  .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px}
+  .step-header{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+
+  /* ════════════════════════════════════════════════════════════════
+     CÍRCULOS DE PASO — Accesibles (Daniel 2026-05-24: "más grandes
+     para personas más ciegas"). Wrapper con etiqueta "PASO X" arriba
+     del círculo para que SIEMPRE se sepa en qué paso estamos.
+     ════════════════════════════════════════════════════════════════ */
+  .step-circle-wrap{
+    display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0;
+    min-width:64px;
+  }
+  .step-circle-label{
+    font-size:.68rem;font-weight:900;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ilus-red);line-height:1;font-family:'Inter',sans-serif;
+    transition:color .25s ease;
+  }
+  .step-section.is-complete .step-circle-label{color:#16a34a}
+  .step-section.is-blocked .step-circle-label{color:#9ca3af}
+
   .step-circle{
-    width:46px;height:46px;border-radius:50%;background:var(--ilus-red);color:#fff;
+    width:60px;height:60px;border-radius:50%;background:var(--ilus-red);color:#fff;
     display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;
-    font-size:1.5rem;letter-spacing:.02em;flex-shrink:0;
-    box-shadow:0 8px 18px rgba(220,38,38,.32);
+    font-size:2rem;letter-spacing:.02em;
+    box-shadow:0 8px 22px rgba(220,38,38,.38), 0 0 0 4px rgba(220,38,38,.10);
     transition:all .3s cubic-bezier(.4,0,.2,1);
-    position:relative;
+    position:relative;border:3px solid #fff;
   }
   .step-section.is-complete .step-circle{
-    background:#16a34a;box-shadow:0 8px 18px rgba(22,163,74,.32);
+    background:#16a34a;
+    box-shadow:0 8px 22px rgba(22,163,74,.38), 0 0 0 4px rgba(22,163,74,.12);
     transform:scale(1.04);
   }
   .step-section.is-complete .step-circle::after{
-    content:'';position:absolute;inset:-4px;border-radius:50%;
+    content:'';position:absolute;inset:-6px;border-radius:50%;
     border:2px solid #16a34a;opacity:.35;animation:circlePulseGreen 1.6s ease-in-out 1;
   }
   .step-section.is-blocked .step-circle{
-    background:#9ca3af;box-shadow:none;
+    background:#9ca3af;
+    box-shadow:0 4px 10px rgba(0,0,0,.08), 0 0 0 4px rgba(156,163,175,.10);
   }
   @keyframes circlePulseGreen{
     0%{transform:scale(.85);opacity:.7}
     100%{transform:scale(1.25);opacity:0}
   }
-  .step-circle .step-check{display:none;font-family:'Inter',sans-serif;font-size:1.35rem;font-weight:900}
+  .step-circle .step-check{display:none;font-family:'Inter',sans-serif;font-size:1.8rem;font-weight:900}
   .step-section.is-complete .step-circle .step-num-text{display:none}
   .step-section.is-complete .step-circle .step-check{display:block}
-  .step-titles{flex:1;min-width:0}
+  .step-titles{flex:1;min-width:0;padding-top:14px}
   .step-titles h5{
-    margin:0;font-size:1.25rem;font-weight:900;color:#0a0a0a;letter-spacing:-.015em;
+    margin:0;font-size:1.32rem;font-weight:900;color:#0a0a0a;letter-spacing:-.015em;
     line-height:1.2;
   }
   .step-titles .step-sub{
-    margin:4px 0 0;font-size:.86rem;color:#6b7280;line-height:1.45;
+    margin:5px 0 0;font-size:.92rem;color:#4b5563;line-height:1.5;
   }
   .step-section.is-blocked .step-titles h5{color:#6b7280}
   .step-badge-ok{
-    background:#dcfce7;color:#166534;border:1px solid #86efac;
-    border-radius:50px;padding:4px 12px;font-size:.7rem;font-weight:800;
-    letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:4px;
-    flex-shrink:0;align-self:flex-start;margin-top:4px;
+    background:#dcfce7;color:#166534;border:1.5px solid #86efac;
+    border-radius:50px;padding:6px 14px;font-size:.78rem;font-weight:800;
+    letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:5px;
+    flex-shrink:0;align-self:flex-start;margin-top:14px;
   }
   .step-badge-warn{
-    background:#fff7ed;color:#9a3412;border:1px solid #fdba74;
-    border-radius:50px;padding:4px 12px;font-size:.7rem;font-weight:800;
-    letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:4px;
-    flex-shrink:0;align-self:flex-start;margin-top:4px;
+    background:#fff7ed;color:#9a3412;border:1.5px solid #fdba74;
+    border-radius:50px;padding:6px 14px;font-size:.78rem;font-weight:800;
+    letter-spacing:.04em;text-transform:uppercase;display:inline-flex;align-items:center;gap:5px;
+    flex-shrink:0;align-self:flex-start;margin-top:14px;
   }
   .step-content{margin-top:6px}
 
   @media(max-width:768px){
     .step-section{padding:18px 14px;margin-bottom:18px}
-    .step-circle{width:38px;height:38px;font-size:1.2rem}
-    .step-titles h5{font-size:1.05rem}
-    .step-titles .step-sub{font-size:.78rem}
+    .step-header{gap:12px}
+    .step-circle-wrap{min-width:52px;gap:4px}
+    .step-circle-label{font-size:.6rem;letter-spacing:.12em}
+    .step-circle{width:50px;height:50px;font-size:1.7rem;border-width:2.5px}
+    .step-circle .step-check{font-size:1.45rem}
+    .step-titles{padding-top:10px}
+    .step-titles h5{font-size:1.1rem}
+    .step-titles .step-sub{font-size:.84rem}
+    .step-badge-ok,.step-badge-warn{margin-top:10px;font-size:.7rem;padding:5px 11px}
   }
 
   /* ════════════════════════════════════════════════════════════════
@@ -1673,9 +1699,12 @@
     {# ═════════ PASO 1 — Identificar cliente ═════════ #}
     <section class="step-section is-complete" id="paso-1" data-step="1">
       <div class="step-header">
-        <div class="step-circle">
-          <span class="step-num-text">1</span>
-          <span class="step-check"><i class="bi bi-check-lg"></i></span>
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Paso 1</span>
+          <div class="step-circle">
+            <span class="step-num-text">1</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
         </div>
         <div class="step-titles">
           <h5>Identificar cliente</h5>
@@ -1743,9 +1772,12 @@
     {# ═════════ PASO 2 — Cargar facturas/boletas pendientes ═════════ #}
     <section class="step-section {% if _n_docs_inicial > 0 %}is-complete{% endif %}" id="paso-2" data-step="2">
       <div class="step-header">
-        <div class="step-circle">
-          <span class="step-num-text">2</span>
-          <span class="step-check"><i class="bi bi-check-lg"></i></span>
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Paso 2</span>
+          <div class="step-circle">
+            <span class="step-num-text">2</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
         </div>
         <div class="step-titles">
           <h5>Cargar facturas o boletas pendientes</h5>
@@ -1985,9 +2017,12 @@
     {# ═════════ PASO 3 — Revisar carga del retiro ═════════ #}
     <section class="step-section {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3" data-step="3">
       <div class="step-header">
-        <div class="step-circle">
-          <span class="step-num-text">3</span>
-          <span class="step-check"><i class="bi bi-check-lg"></i></span>
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Paso 3</span>
+          <div class="step-circle">
+            <span class="step-num-text">3</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
         </div>
         <div class="step-titles">
           <h5>Revisar carga del retiro</h5>
@@ -2031,12 +2066,23 @@
       </div>
     </section>
 
-    {# ═════════ PASO 4 — Proponer fecha y hora ═════════ #}
-    <section class="step-section {% if _step4_done %}is-complete{% elif _n_docs_con_saldo_inicial == 0 %}is-blocked{% endif %}" id="paso-4" data-step="4">
+    {# ═════════ PASO 4 — Proponer fecha y hora ═════════
+       Daniel 2026-05-24: el bloqueo SOLO aplica cuando NO hay ningún
+       doc asociado. Si hay docs pero el ERP no pudo verificar saldo ZZ
+       (caso común con boletas sin línea ZZ o cuando el ERP tuvo
+       timeout), mostramos warning amarillo NO BLOQUEANTE: Brandon
+       hace marginación manual y el operador igual debe poder agendar.
+       Antes la condición era _n_docs_con_saldo_inicial==0 → bloqueaba
+       todo doc sin saldo verificado (NULL/0) y dejaba el operador
+       atrapado sin poder proponer fecha. #}
+    <section class="step-section {% if _step4_done %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-4" data-step="4">
       <div class="step-header">
-        <div class="step-circle">
-          <span class="step-num-text">4</span>
-          <span class="step-check"><i class="bi bi-check-lg"></i></span>
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Paso 4</span>
+          <div class="step-circle">
+            <span class="step-num-text">4</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
         </div>
         <div class="step-titles">
           <h5>Proponer fecha y hora al cliente</h5>
@@ -2047,12 +2093,21 @@
         {% endif %}
       </div>
       <div class="step-content">
-        {% if _n_docs_con_saldo_inicial == 0 %}
-        <div class="smart-hint is-warn">
+        {# Hints siempre presentes en el DOM — JS controla visibilidad
+           cuando el operador asocia/quita docs dinámicamente. #}
+        <div class="smart-hint is-warn" id="paso4HintBloqueo"
+             {% if _n_docs_inicial > 0 %}style="display:none"{% endif %}>
           <i class="bi bi-shield-exclamation"></i>
-          <div><strong>Bloqueado:</strong> necesitas asociar al menos <strong>1 documento con saldo disponible</strong> antes de proponer fecha.</div>
+          <div><strong>Necesitas asociar al menos 1 documento</strong> en el paso 2 antes de proponer fecha.</div>
         </div>
-        {% endif %}
+        <div class="smart-hint is-warn" id="paso4HintSinSaldo"
+             {% if not (_n_docs_inicial > 0 and _n_docs_con_saldo_inicial == 0 and not _step4_done) %}style="display:none"{% endif %}>
+          <i class="bi bi-info-circle-fill"></i>
+          <div>
+            <strong>Aviso:</strong> los documentos asociados no muestran saldo verificado por ERP.
+            Igual puedes proponer fecha — verifica con bodega antes de retirar.
+          </div>
+        </div>
 
         {% if _step4_done %}
         <div class="smart-hint is-success" id="iwStep4Summary">
@@ -2068,7 +2123,7 @@
         </div>
         {% endif %}
 
-        <div id="iwProposeForm" {% if _step4_done or _n_docs_con_saldo_inicial == 0 %}style="display:none"{% endif %}>
+        <div id="iwProposeForm" {% if _step4_done or _n_docs_inicial == 0 %}style="display:none"{% endif %}>
           <form id="iwProposeFormEl" novalidate>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-2 mb-3">
@@ -2142,9 +2197,12 @@
     #}
     <section class="step-section {% if _step5_done %}is-complete{% endif %}" id="paso-5" data-step="5">
       <div class="step-header">
-        <div class="step-circle">
-          <span class="step-num-text">5</span>
-          <span class="step-check"><i class="bi bi-check-lg"></i></span>
+        <div class="step-circle-wrap">
+          <span class="step-circle-label">Paso 5</span>
+          <div class="step-circle">
+            <span class="step-num-text">5</span>
+            <span class="step-check"><i class="bi bi-check-lg"></i></span>
+          </div>
         </div>
         <div class="step-titles">
           <h5>{% if _step5_done %}Retiro confirmado por el cliente{% elif _step4_done %}Esperar respuesta del cliente{% else %}Enviar propuesta al cliente{% endif %}</h5>
@@ -3093,6 +3151,13 @@ function _renderTablaDocsAsociados(docs){
     else saldoPill = '<span class="td-pill"><i class="bi bi-question-circle"></i>No verif.</span>';
     const tipoUp = String(d.document_type || '').toUpperCase();
     const numero = d.document_number || '';
+    // 🔧 FIX Daniel 2026-05-24: mostrar "X / Y" cuando hay selección parcial
+    // para que el operador vea cuántas líneas REALMENTE se asociaron.
+    const _totalLn = d.n_lineas || 0;
+    const _selLn   = (d.n_lineas_seleccionadas != null) ? d.n_lineas_seleccionadas : null;
+    const _lineasCell = (d.has_seleccion_lineas && _selLn !== null)
+      ? `<strong style="color:#92400e">${_selLn}</strong><small style="color:#9ca3af"> / ${_totalLn}</small>`
+      : `<strong>${_totalLn}</strong>`;
     return `<tr data-doc-id="${d.id}">
       <td data-label="#">${idx + 1}</td>
       <td data-label="Tipo"><span class="td-pill td-pill-dark">${_esc(tipoUp)}</span></td>
@@ -3103,7 +3168,7 @@ function _renderTablaDocsAsociados(docs){
           <small class="mono">${_esc(d.cliente_rut || '—')}</small>
         </div>
       </td>
-      <td data-label="Líneas" class="num"><strong>${d.n_lineas || 0}</strong></td>
+      <td data-label="Líneas" class="num" title="${d.has_seleccion_lineas?'Líneas seleccionadas / total del documento':'Total de líneas'}">${_lineasCell}</td>
       <td data-label="Peso" class="num">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</td>
       <td data-label="Saldo">${saldoPill}</td>
       <td data-label="Acciones" class="acciones">
@@ -3213,6 +3278,14 @@ function _renderDocAsoCard(d){
   }
   // Daniel 2026-05-23: badge si tiene selección granular
   const hasSel = d.has_seleccion_lineas ? `<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a" title="Solo retira líneas seleccionadas"><i class="bi bi-funnel-fill me-1"></i>Selección parcial</span>` : '';
+  // 🔧 FIX Daniel 2026-05-24: mostrar "X / Y líneas" cuando hay selección
+  // granular. Antes mostraba "10 líneas" siempre → el operador creía que
+  // se asociaba el doc completo. Ahora se ve claramente "2 / 10".
+  const _tot = d.n_lineas || 0;
+  const _sel = (d.n_lineas_seleccionadas != null) ? d.n_lineas_seleccionadas : null;
+  const _lineasBadge = (d.has_seleccion_lineas && _sel !== null)
+    ? `<span class="badge-pill" title="Solo se retira la selección marcada" style="background:#fef3c7;color:#92400e;border-color:#fde68a;font-weight:700">${_sel} / ${_tot} líneas</span>`
+    : `<span class="badge-pill" title="Total de líneas del documento">${_tot} líneas</span>`;
   return `<div class="doc-aso ${cls}" data-doc-id="${d.id}">
     <div class="da-num">${_esc(d.document_type)} ${_esc(d.document_number)}</div>
     <div class="da-cli">
@@ -3223,7 +3296,7 @@ function _renderDocAsoCard(d){
       ${badge}
       ${hasSel}
       <span class="badge-pill weight">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</span>
-      <span class="badge-pill">${d.n_lineas || 0} líneas</span>
+      ${_lineasBadge}
     </div>
     <div class="da-actions">
       <button type="button" class="da-prods" onclick="abrirSeleccionProductos(${d.id}, '${_esc(d.document_type)}', '${_esc(d.document_number)}')" title="Seleccionar productos específicos a retirar">
@@ -3463,7 +3536,12 @@ async function refrescarDocsAsociados(rid){
   }
 }
 
-// Estado de pasos (verde/rojo/gris) según docs y propuesta
+// Estado de pasos (verde/rojo/gris) según docs y propuesta.
+// Daniel 2026-05-24: el paso 4 SOLO se bloquea cuando ndocs===0.
+// Antes exigía ncons>0 (docs con saldo verificado por ERP) y dejaba
+// al operador atrapado cuando el ERP no podía verificar el saldo ZZ
+// (boletas sin línea ZZ, timeout, etc.). El warning de "sin saldo
+// verificado" se muestra dentro del paso pero NO bloquea.
 function _refrescarEstadoPasos(ndocs, ncons, requestState){
   const p2 = document.getElementById('paso-2');
   const p3 = document.getElementById('paso-3');
@@ -3475,17 +3553,22 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState){
     p3.classList.toggle('is-complete', ndocs > 0);  // si hay docs, totales se calcularon
   }
   if (p4){
-    p4.classList.toggle('is-blocked', ncons === 0);
+    p4.classList.toggle('is-blocked', ndocs === 0);
     p4.classList.toggle('is-complete', !!requestState.step4_done);
-    // Mostrar/ocultar form
+    // Mostrar/ocultar form: basta con tener al menos UN doc asociado
     const form = document.getElementById('iwProposeForm');
     if (form){
-      form.style.display = (ncons > 0 && !requestState.step4_done) ? '' : 'none';
-      if (ncons > 0 && !requestState.step4_done && !window._calMounted){
+      form.style.display = (ndocs > 0 && !requestState.step4_done) ? '' : 'none';
+      if (ndocs > 0 && !requestState.step4_done && !window._calMounted){
         _mountProposeCalendar();
         window._calMounted = true;
       }
     }
+    // Toggle hints inteligentes en el paso 4
+    const hintBlock = document.getElementById('paso4HintBloqueo');
+    if (hintBlock) hintBlock.style.display = (ndocs === 0) ? '' : 'none';
+    const hintNoSaldo = document.getElementById('paso4HintSinSaldo');
+    if (hintNoSaldo) hintNoSaldo.style.display = (ndocs > 0 && ncons === 0 && !requestState.step4_done) ? '' : 'none';
   }
   if (p5){
     // Paso 5 NUNCA se bloquea: el operador debe poder enviar siempre.
@@ -3725,8 +3808,10 @@ function _mountProposeCalendar(){
   });
 }
 
-// Inicial: mount si el form está visible y aún no se propuso
-{% if not _step4_done and _n_docs_con_saldo_inicial > 0 %}
+// Inicial: mount si el form está visible y aún no se propuso.
+// Daniel 2026-05-24: ahora basta con tener al menos UN doc asociado
+// (no requiere con_saldo verificado por ERP, que a veces falla).
+{% if not _step4_done and _n_docs_inicial > 0 %}
 _mountProposeCalendar();
 window._calMounted = true;
 {% endif %}
@@ -4269,6 +4354,11 @@ async function rbaBuscarPorCliente(){
     _RBA.loaded.cliQuery = { q, modo: d.modo, docs };
     const t1 = Math.round(performance.now() - t0);
     rbaRenderCliDocs(docs, d.modo, t1);
+    // ⚡ PERF Daniel 2026-05-24: pre-warmup paralelo de los TOP 5 docs con
+    // saldo (los más probables de expandir). El backend cachea cada doc
+    // 5min en _ERP_DOC_CACHE → expandir es instantáneo y "Asociar" también.
+    // Sin esto: cada expansión + asociación = 800-1500ms cada una.
+    try { _rbaPrewarmDocs(docs); } catch(_){}
   } catch(e){
     cont.innerHTML = `<div class="rba-empty">
       <i class="bi bi-x-circle rba-empty-icon" style="color:#dc2626"></i>
@@ -4280,6 +4370,30 @@ async function rbaBuscarPorCliente(){
     _rbaStopLoadingMsg();
   }
 }
+// 🔧 PERF Daniel 2026-05-24: pre-warmup paralelo del cache de docs en
+// el backend. Para los TOP 5 docs con saldo, dispara /api/erp/documento
+// en paralelo (fire-and-forget). El backend cachea cada doc 5min → al
+// expandir o asociar, la respuesta es <10ms en vez de ~1200ms.
+//
+// Por qué solo 5: si el RUT tiene 80 docs, prewarmear todos saturaría
+// el ERP de Random. 5 es el promedio razonable de expansión por sesión.
+function _rbaPrewarmDocs(docs){
+  if (!Array.isArray(docs) || docs.length === 0) return;
+  // Priorizar docs con saldo (más probables de expandir y asociar)
+  const top = docs
+    .filter(d => d.tiene_saldo && !d.ya_tiene_retiro)
+    .slice(0, 5);
+  if (!top.length) return;
+  // Concurrent prewarm — fire & forget (no esperamos respuesta)
+  top.forEach(doc => {
+    fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    }).catch(()=>{ /* silencioso — solo prewarm */ });
+  });
+}
+
 function rbaRenderCliDocs(docs, modo, fetchMs){
   const cont = document.getElementById('rbaCliResult');
   const modoTxt = { rut: 'RUT', numero: 'N° doc', nombre: 'Nombre' }[modo] || modo;
