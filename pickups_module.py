@@ -2682,24 +2682,14 @@ def register_pickup_routes(app, ctx):
             # (MEDIUMTEXT que NO se usa en este template — solo se setea en
             # validar_doc). Antes SELECT * traía hasta 60KB inútiles por
             # cada carga de ficha. Ahorra ~150-300ms en cold start.
-            req = mysql_fetchone(
-                f"""SELECT id, code, status, doc_validation_status, doc_validation_notes,
-                           doc_validated_at, doc_validated_by,
-                           customer_name, customer_rut, contact_name, contact_email,
-                           contact_phone, observations, document_type, document_number,
-                           requested_date, requested_time_from, requested_time_to,
-                           proposed_date, proposed_time_from, proposed_time_to,
-                           confirmed_date, confirmed_time_from, confirmed_time_to,
-                           pickup_person_name, pickup_person_rut, pickup_person_phone,
-                           pickup_person_relation, pickup_person_extra_email,
-                           pickup_person_is_third_party, third_party_declaration,
-                           total_packages, total_weight_kg, total_volume_m3,
-                           peso_real_kg, peso_vol_kg, tiempo_estimado_min,
-                           reminder_24h_sent, public_token, internal_notes,
-                           created_at, updated_at, closed_at, ip_address
-                      FROM `{REQ}` WHERE id=%s""",
-                (rid,)
-            )
+            # Daniel 2026-05-24: FIX BUG 1054 — el agente PERF anterior
+            # inventó columnas que NO existen en la BD (pickup_person_extra_email,
+            # pickup_person_is_third_party, third_party_declaration, ip_address).
+            # Volvemos a SELECT * que es ROBUSTO contra cambios de schema y el
+            # template puede leer cualquier columna sin sorpresas. La penalidad
+            # de leer doc_erp_data MEDIUMTEXT se mitiga descartándolo abajo
+            # antes de pasar al template.
+            req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             if not req:
                 flash("Solicitud de retiro no encontrada.", "danger")
                 return redirect(url_for("pickup_dashboard"))
@@ -5895,17 +5885,21 @@ def register_pickup_routes(app, ctx):
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
 
-        # Bloques de 30 min cada uno (v3, Daniel 2026-05-24).
-        slot_dur  = int(cfg.get("slot_minutes") or 30)
-        # En el modelo v3 cada bloque es independiente: step == duración.
-        slot_step = slot_dur
-        # Buffer de cierre (mínimo entre el fin del último bloque y close_time).
-        # v3 = 0: el último slot 16:00-16:30 SÍ es admitido.
-        buffer_cierre_min = int(cfg.get("buffer_cierre_min") or 0)
+        # Daniel 2026-05-24: FUERZA ABSOLUTA. La BD en producción tenía
+        # slot_minutes=60 → calendario mostraba bloques de 1 hora. Acá
+        # IGNORAMOS la BD para esta variable: SIEMPRE 30 min, sin excepción.
+        # Igual con close_time, lunch_start, lunch_end — Daniel los pidió
+        # explícitos varias veces. Si la BD tiene otros valores, los
+        # ignoramos para garantizar consistencia visual.
+        slot_dur  = 30   # ⚡ HARDCODED: bloques de 30 min SIEMPRE
+        slot_step = 30
+        buffer_cierre_min = 0   # último bloque 16:00-16:30 SÍ es admitido
 
-        # Colación v3: 12:30 – 14:00 BLOQUEADA
-        lunch_s_str = str(cfg.get("lunch_start") or "12:30")[:5]
-        lunch_e_str = str(cfg.get("lunch_end")   or "14:00")[:5]
+        # Colación v3 HARDCODED: 12:30 – 14:00 (el cliente NUNCA debe ver
+        # esos slots como agendables — pero el texto en UI dice "no
+        # disponible", no menciona "colación" para ser más sutil).
+        lunch_s_str = "12:30"
+        lunch_e_str = "14:00"
         try:
             lH,lM = [int(x) for x in lunch_s_str.split(":")]
             leH,leM = [int(x) for x in lunch_e_str.split(":")]
@@ -5918,10 +5912,10 @@ def register_pickup_routes(app, ctx):
         work_days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays  = {h.strip() for h in (cfg.get("holidays") or "").replace(";",",").split(",") if h.strip()}
 
-        # Slots horarios: cada bloque cubre [t, t+slot_dur).
-        # El último bloque debe terminar ≤ close_time - buffer_cierre.
-        oH,oM = [int(x) for x in str(cfg.get("open_time") or "09:00:00")[:5].split(":")]
-        cH,cM = [int(x) for x in str(cfg.get("close_time") or "16:30:00")[:5].split(":")]
+        # Daniel 2026-05-24: HARDCODED también el horario. La BD puede tener
+        # legacy 17:30 o lo que sea — para el cliente SIEMPRE 09:00 a 16:30.
+        oH,oM = 9, 0    # 09:00 apertura para clientes
+        cH,cM = 16, 30  # 16:30 último FIN admitido
         open_min  = oH*60 + oM
         close_min = cH*60 + cM
         # ultimo_fin_admitido = close_min - buffer_cierre (v3: buffer=0 → 16:30)
