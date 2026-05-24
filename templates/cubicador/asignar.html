@@ -141,6 +141,19 @@
 .client-input::placeholder{ color:#9ca3af; font-weight:400; font-size:.85rem; }
 .client-input.required-empty{ border-bottom-color:#dc2626 !important; }
 
+/* ══ OBSERVACIONES + NOTAS DE ENTREGA ════════════════════════ */
+.notas-grid{ display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+@media(max-width:640px){ .notas-grid{ grid-template-columns:1fr; gap:16px; } }
+.notas-grid textarea.client-input{
+  border:1px solid var(--c-border); border-radius:9px;
+  padding:10px 12px; background:#fcfcfd; font-weight:500;
+}
+.notas-grid textarea.client-input:focus{ border-color:var(--c-red); background:#fff; }
+.nota-vis{
+  font-size:.6rem; font-weight:700; text-transform:none; letter-spacing:.3px;
+  color:#fff; background:var(--c-green); padding:1px 7px; border-radius:99px;
+}
+
 /* Autocomplete container */
 .autocomplete-wrap{ position:relative; }
 .autocomplete-wrap .ac-dropdown{
@@ -514,18 +527,10 @@
             <div class="client-lbl">ZZ Envío</div>
             <div class="client-val green" id="cli-skus">—</div>
           </div>
-          <div class="client-cell">
+          <div class="client-cell" style="border-bottom:none">
             <div class="client-lbl">Total Bultos <i class="bi bi-pencil editable-ico"></i></div>
             <input class="client-input" type="number" id="cli-bultos" min="1" placeholder="0"
                    oninput="sincronizarBultos(this.value)">
-          </div>
-
-          {# Row 5: Observaciones (span3) #}
-          <div class="client-cell span3" style="border-bottom:none">
-            <div class="client-lbl">Observaciones <i class="bi bi-pencil editable-ico"></i></div>
-            <textarea class="client-input" id="cli-obs" rows="3"
-                      placeholder="Instrucciones de entrega, referencias, etc."
-                      style="resize:vertical;min-height:64px;line-height:1.45"></textarea>
           </div>
 
         </div>
@@ -590,41 +595,24 @@
       </div>
     </div>
 
-    {# ── 5. Flujo Logístico ── #}
-    <div class="ac-card" id="cardFlujo" style="display:none">
+    {# ── Observaciones y Notas de entrega ── #}
+    <div class="ac-card" id="cardNotas" style="display:none">
       <div class="ac-card-hdr">
-        <div class="sec-title"><span class="sec-num">5</span>Flujo Logístico</div>
+        <div class="sec-title"><i class="bi bi-chat-left-text me-2"></i>Observaciones y Notas de entrega</div>
       </div>
       <div class="ac-card-body">
-        <div class="flow-track">
-          <div class="flow-step">
-            <div class="flow-icon active"><i class="bi bi-file-earmark-text"></i></div>
-            <div class="flow-lbl active">Pendiente</div>
+        <div class="notas-grid">
+          <div>
+            <div class="client-lbl">Observaciones <i class="bi bi-pencil editable-ico"></i></div>
+            <textarea class="client-input" id="cli-obs" rows="4"
+                      placeholder="Instrucciones de entrega, información adicional, contacto en destino, referencias…"
+                      style="resize:vertical;min-height:90px;line-height:1.45"></textarea>
           </div>
-          <div class="flow-line"></div>
-          <div class="flow-step">
-            <div class="flow-icon"><i class="bi bi-box-seam"></i></div>
-            <div class="flow-lbl">En preparación</div>
-          </div>
-          <div class="flow-line"></div>
-          <div class="flow-step">
-            <div class="flow-icon"><i class="bi bi-truck"></i></div>
-            <div class="flow-lbl">Asignado a courier</div>
-          </div>
-          <div class="flow-line"></div>
-          <div class="flow-step">
-            <div class="flow-icon"><i class="bi bi-geo-alt"></i></div>
-            <div class="flow-lbl">En ruta</div>
-          </div>
-          <div class="flow-line"></div>
-          <div class="flow-step">
-            <div class="flow-icon"><i class="bi bi-check-circle"></i></div>
-            <div class="flow-lbl">Entregado</div>
-          </div>
-          <div class="flow-line"></div>
-          <div class="flow-step">
-            <div class="flow-icon"><i class="bi bi-x-circle"></i></div>
-            <div class="flow-lbl">Fallido</div>
+          <div>
+            <div class="client-lbl">Notas de entrega <span class="nota-vis">visible para el courier / receptor</span></div>
+            <textarea class="client-input" id="cli-notas" rows="4"
+                      placeholder="Notas visibles para el courier o receptor."
+                      style="resize:vertical;min-height:90px;line-height:1.45"></textarea>
           </div>
         </div>
       </div>
@@ -774,6 +762,46 @@
 
   </div><!-- /right-panel -->
 </div><!-- /ac-wrap -->
+
+{# ── 5. Flujo Logístico — full-width al fondo (como el mockup) ── #}
+<div class="ac-card" id="cardFlujo" style="display:none">
+  <div class="ac-card-hdr">
+    <div class="sec-title"><span class="sec-num">5</span>Flujo Logístico</div>
+  </div>
+  <div class="ac-card-body">
+    <div class="flow-track">
+      <div class="flow-step">
+        <div class="flow-icon active"><i class="bi bi-file-earmark-text"></i></div>
+        <div class="flow-lbl active">Pendiente</div>
+      </div>
+      <div class="flow-line"></div>
+      <div class="flow-step">
+        <div class="flow-icon"><i class="bi bi-box-seam"></i></div>
+        <div class="flow-lbl">En preparación</div>
+      </div>
+      <div class="flow-line"></div>
+      <div class="flow-step">
+        <div class="flow-icon"><i class="bi bi-truck"></i></div>
+        <div class="flow-lbl">Asignado a courier</div>
+      </div>
+      <div class="flow-line"></div>
+      <div class="flow-step">
+        <div class="flow-icon"><i class="bi bi-geo-alt"></i></div>
+        <div class="flow-lbl">En ruta</div>
+      </div>
+      <div class="flow-line"></div>
+      <div class="flow-step">
+        <div class="flow-icon"><i class="bi bi-check-circle"></i></div>
+        <div class="flow-lbl">Entregado</div>
+      </div>
+      <div class="flow-line"></div>
+      <div class="flow-step">
+        <div class="flow-icon"><i class="bi bi-x-circle"></i></div>
+        <div class="flow-lbl">Fallido</div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -1425,6 +1453,7 @@ function renderDoc(d, elapsedMs){
   setInput('cli-tel',   h.telefono  || '');
   setInput('cli-dir',   h.direccion || '');
   setInput('cli-obs',   h.observaciones || '');
+  setInput('cli-notas', '');   // notas de entrega: las escribe el usuario, no vienen del ERP
 
   // Bultos calculados (editable)
   setInput('cli-bultos', tot.total_bultos || 0);
@@ -1482,6 +1511,7 @@ function renderDoc(d, elapsedMs){
   setText('tot-pred', fCl(tot.peso_pred));
 
   show('cardCubaje');
+  show('cardNotas');
   show('totalsBar');
   show('cardFlujo');
 
@@ -2447,6 +2477,7 @@ async function enviarAManifiesto(){
     tido, nudo,
     courier: courierNom,
     costo_cotizado: costo,
+    notas_entrega: (document.getElementById('cli-notas')?.value || '').trim(),
   };
 
   if (modo === 'existente') {

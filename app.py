@@ -17946,6 +17946,18 @@ def tr_cubicador_enviar_manifiesto():
     except Exception as e_cost:
         print(f"[cub_enviar_manif] no se pudo guardar costo: {e_cost}", flush=True)
 
+    # 2b) Persistir notas de entrega (visible para el courier; alimenta la
+    #     columna "Notas" del export SimplyRoute). No es fatal si falla.
+    notas_entrega = (data.get("notas_entrega") or "").strip()
+    if notas_entrega:
+        try:
+            mysql_execute(
+                "UPDATE transport_commitments SET notas=%s WHERE id=%s",
+                (notas_entrega[:2000], comm_id)
+            )
+        except Exception as e_notas:
+            print(f"[cub_enviar_manif] no se pudo guardar notas_entrega: {e_notas}", flush=True)
+
     # 3) Resolver manifest_id (crear si hace falta) y agregar el item.
     conn = get_db()
     correlativo = None
