@@ -17501,6 +17501,7 @@ def tr_manifiesto_detalle(mid):
     items = mysql_fetchall("""
         SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
                c.direccion, c.telefono, c.email, c.region, c.cod_postal,
+               c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
                COALESCE(c.peso_export, 0) AS peso_export,
                COALESCE(c.n_bultos, 1) AS n_bultos,
                c.valor_bruto, c.costo_zz, c.clasificacion

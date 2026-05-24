@@ -48,6 +48,18 @@
   {% endif %}
 </div>
 
+{# ── Alerta: saldo ya consumido en el ERP (factura vieja / ya despachado) ── #}
+{% set sin_saldo_n = items|rejectattr('tiene_saldo')|list|length %}
+{% if items and sin_saldo_n %}
+<div class="alert alert-danger d-flex align-items-start gap-2 no-print py-2 mb-2" role="alert" style="font-size:.85rem">
+  <i class="bi bi-database-exclamation fs-5"></i>
+  <div>
+    <strong>{{ sin_saldo_n }} documento{{ 's' if sin_saldo_n != 1 }} con saldo ya consumido en el ERP.</strong>
+    <div class="text-muted">El ZZ de estos documentos ya fue despachado en Random (factura antigua o entrega previa). Verifica antes de exportar: podrías estar moviendo carga que el ERP ya descontó. Aparecen marcados con <span class="badge bg-danger"><i class="bi bi-database-x"></i> sin saldo</span> abajo.</div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Alerta datos de contacto faltantes (solo alertar, no bloquea export) ── #}
 {% set sin_tel   = items|rejectattr('telefono')|list|length %}
 {% set sin_email = items|rejectattr('email')|list|length %}
@@ -141,9 +153,16 @@
           'bultos': (item.n_bultos or 1)|int,
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
         } | tojson %}
-        <tr id="row-{{ item.id }}">
+        <tr id="row-{{ item.id }}" class="{{ 'table-danger' if not item.tiene_saldo }}">
           <td class="text-muted">{{ loop.index }}</td>
-          <td class="font-monospace fw-bold">{{ item.tido }} {{ item.nudo }}</td>
+          <td class="font-monospace fw-bold">
+            {{ item.tido }} {{ item.nudo }}
+            {% if not item.tiene_saldo %}
+            <span class="badge bg-danger d-inline-flex align-items-center gap-1 mt-1" title="El saldo ZZ de este documento ya fue consumido en el ERP Random">
+              <i class="bi bi-database-x"></i> sin saldo
+            </span>
+            {% endif %}
+          </td>
           <td>
             <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
             <div class="small text-muted">{{ item.comuna or '' }}</div>
@@ -231,9 +250,14 @@
       'bultos': (item.n_bultos or 1)|int,
       'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
     } | tojson %}
-    <div class="p-3 border-bottom" id="card-{{ item.id }}">
+    <div class="p-3 border-bottom {{ 'bg-danger-subtle' if not item.tiene_saldo }}" id="card-{{ item.id }}">
       <div class="d-flex justify-content-between align-items-start mb-1">
-        <div class="font-monospace fw-bold" style="font-size:.88rem">{{ item.tido }} {{ item.nudo }}</div>
+        <div class="font-monospace fw-bold" style="font-size:.88rem">
+          {{ item.tido }} {{ item.nudo }}
+          {% if not item.tiene_saldo %}
+          <span class="badge bg-danger d-inline-flex align-items-center gap-1" title="Saldo ZZ ya consumido en el ERP"><i class="bi bi-database-x"></i> sin saldo</span>
+          {% endif %}
+        </div>
         <div class="d-flex gap-1 no-print">
           <button class="btn btn-sm btn-outline-secondary" onclick='abrirEditar({{ item_json }})'>
             <i class="bi bi-pencil-square"></i>
