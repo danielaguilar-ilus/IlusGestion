@@ -14204,6 +14204,14 @@ def api_asignar_documento():
             "vol_u":           round(l["vol_u"], 1),   # cm³/u
             "pred_u":          round(pred_u,     3),
             "pred_tot":        round(pred_tot,   3),
+            # Saldo por línea (fórmula oficial Random MAEDDO, ya calculado en
+            # _cubicador_fetch: CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1, forzado a 0
+            # si ESLIDO marca despacho total). READ-ONLY: solo lo exponemos al front
+            # para el badge "con saldo / sin saldo". > 0 = con saldo, 0 = entregado.
+            "saldo":               (round(float(l["saldo"]), 3)
+                                    if l.get("saldo") is not None else None),
+            "cantidad_despachada": (round(float(l["cantidad_despachada"]), 3)
+                                    if l.get("cantidad_despachada") is not None else None),
         })
 
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))

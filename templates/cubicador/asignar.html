@@ -173,7 +173,7 @@
 .ac-option mark{ background:none; color:var(--c-red); font-weight:800; }
 
 /* ══ TABLA CUBICAJE ══════════════════════════════════════════ */
-.cube-table{ width:100%; border-collapse:collapse; font-size:.85rem; }
+.cube-table{ width:100%; border-collapse:separate; border-spacing:0; font-size:.85rem; }
 .cube-table thead th{
   background:#f9fafb; color:#6b7280;
   padding:10px 12px; text-align:left;
@@ -181,6 +181,10 @@
   text-transform:uppercase; letter-spacing:.5px;
   border-bottom:2px solid var(--c-border);
   white-space:nowrap;
+  /* Header fijo al hacer scroll vertical dentro del contenedor (#549 overflow-y) */
+  position:sticky; top:0; z-index:5;
+  /* fondo sólido + sombra sutil para que las filas no se transparenten debajo */
+  box-shadow:0 2px 0 0 var(--c-border);
 }
 .cube-table td{
   padding:10px 12px; border-bottom:1px solid #f3f4f6;
@@ -202,6 +206,31 @@
   background:#0f172a; color:#fff;
   display:inline-flex; align-items:center; justify-content:center;
   font-size:.68rem; font-weight:800;
+}
+/* Badge de saldo por línea (verde = con saldo / rojo = sin saldo) */
+.pill-saldo{
+  display:inline-flex; align-items:center; gap:4px;
+  padding:2px 9px; border-radius:50px;
+  font-size:.66rem; font-weight:800; white-space:nowrap;
+}
+.pill-saldo.si{ background:#dcfce7; color:#166534; }
+.pill-saldo.no{ background:#fee2e2; color:#991b1b; }
+.pill-saldo.nd{ background:#f3f4f6; color:#9ca3af; }
+.pill-saldo i{ font-size:.7rem; }
+/* Botón papelera (eliminar producto de la vista/cotización) */
+.btn-cube-del{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:34px; min-height:34px; padding:6px;
+  border:1px solid #fecaca; border-radius:9px;
+  background:#fff; color:var(--c-red);
+  cursor:pointer; transition:background .12s, transform .12s, border-color .12s;
+  font-size:.95rem; line-height:1;
+}
+.btn-cube-del:hover{ background:#fee2e2; border-color:#fca5a5; }
+.btn-cube-del:active{ transform:scale(.92); }
+@media (max-width:640px){
+  /* touch target Apple HIG en mobile */
+  .btn-cube-del{ min-width:44px; min-height:44px; font-size:1.05rem; }
 }
 
 /* ══ BARRA TOTALES ═══════════════════════════════════════════ */
@@ -559,6 +588,8 @@
               <th class="tr">Predom./u</th>
               <th class="tr">Total Predom.</th>
               <th class="tc">Tipo</th>
+              <th class="tc">Saldo</th>
+              <th class="tc">Acción</th>
             </tr>
           </thead>
           <tbody id="tbodyCubaje"></tbody>
@@ -1480,42 +1511,8 @@ function renderDoc(d, elapsedMs){
 
   show('cardDatos');
 
-  // ── Tabla cubicaje
-  const tbody = document.getElementById('tbodyCubaje');
-  let rows = '';
-  for(const l of d.lineas){
-    const sf = !l.tiene_bultos;
-    const tipo = sf
-      ? '<span class="pill-sf">s/f</span>'
-      : l.peso_kg_u >= l.peso_vol_u
-        ? '<span class="pill-kg">REAL</span>'
-        : '<span class="pill-pv">VOL</span>';
-    const bultosCell = sf
-      ? '<span style="color:#2a2a2a">—</span>'
-      : `<span class="bultos-badge">${l.total_bultos}</span>`;
-
-    rows += `<tr>
-      <td class="mono">${l.sku}</td>
-      <td style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
-      <td class="tc">${parseInt(l.cantidad)}</td>
-      <td class="tc">${bultosCell}</td>
-      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
-      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
-      <td class="tr" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
-      <td class="tr pred-u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
-      <td class="tr pred-tot">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
-      <td class="tc">${tipo}</td>
-    </tr>`;
-  }
-  tbody.innerHTML = rows;
-
-  // ── Totales barra
-  setText('tot-qty',  tot.total_qty  ?? '—');
-  setText('tot-bult', tot.total_bultos ?? '—');
-  setText('tot-kg',   fCl(tot.peso_kg));
-  setText('tot-pv',   fCl(tot.peso_pv));
-  setText('tot-vol',  fVol(tot.vol_cm3));
-  setText('tot-pred', fCl(tot.peso_pred));
+  // ── Tabla cubicaje (render + totales centralizados en renderCubaje())
+  renderCubaje();
 
   show('cardCubaje');
   show('cardNotas');
@@ -1534,6 +1531,137 @@ function renderDoc(d, elapsedMs){
   show('badgeCubicado');
   show('cardCouriers');
   show('cardAcciones');
+}
+
+// ════════════════════════════════════════════════════════════
+//  TABLA CUBICAJE — render + totales (reutilizable tras eliminar línea)
+// ════════════════════════════════════════════════════════════
+// Render aislado para poder re-pintar la tabla cuando el operador
+// elimina un producto de la VISTA (no toca ERP ni BD — READ-ONLY abs.).
+// Lee/recalcula desde _docData.lineas y reescribe _docData.totales.
+
+// Badge de saldo por línea. saldo viene del backend (fórmula Random:
+// CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1, ya forzado a 0 si ESLIDO cierra).
+function _saldoBadge(l){
+  const s = l.saldo;
+  if(s === undefined || s === null){
+    return '<span class="pill-saldo nd"><i class="bi bi-dash-circle"></i>s/d</span>';
+  }
+  const v = Number(s);
+  if(v > 0){
+    return '<span class="pill-saldo si"><i class="bi bi-check-circle-fill"></i>con saldo</span>';
+  }
+  return '<span class="pill-saldo no"><i class="bi bi-x-circle-fill"></i>sin saldo</span>';
+}
+
+function renderCubaje(){
+  if(!_docData || !Array.isArray(_docData.lineas)) return;
+  const lineas = _docData.lineas;
+  const tbody = document.getElementById('tbodyCubaje');
+  if(!tbody) return;
+
+  // ── Recalcular totales desde las líneas actuales (en memoria)
+  let tQty=0, tKg=0, tPv=0, tVol=0, tPred=0, tBult=0;
+
+  let rows = '';
+  lineas.forEach((l, idx) => {
+    const qty = parseFloat(l.cantidad) || 0;
+    const sf  = !l.tiene_bultos;
+    const tipo = sf
+      ? '<span class="pill-sf">s/f</span>'
+      : l.peso_kg_u >= l.peso_vol_u
+        ? '<span class="pill-kg">REAL</span>'
+        : '<span class="pill-pv">VOL</span>';
+    const bultosCell = sf
+      ? '<span style="color:#2a2a2a">—</span>'
+      : `<span class="bultos-badge">${l.total_bultos}</span>`;
+
+    // Acumular totales (líneas s/f aportan 0 peso/vol)
+    tQty  += qty;
+    tKg   += (parseFloat(l.peso_kg_u)  || 0) * qty;
+    tPv   += (parseFloat(l.peso_vol_u) || 0) * qty;
+    tVol  += (parseFloat(l.vol_u)      || 0) * qty;
+    tPred += (parseFloat(l.pred_tot)   || 0);
+    tBult += (parseInt(l.bultos_tot)   || 0);
+
+    rows += `<tr>
+      <td class="mono">${l.sku}</td>
+      <td style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
+      <td class="tc">${parseInt(qty)}</td>
+      <td class="tc">${bultosCell}</td>
+      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
+      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
+      <td class="tr" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
+      <td class="tr pred-u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
+      <td class="tr pred-tot">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
+      <td class="tc">${tipo}</td>
+      <td class="tc">${_saldoBadge(l)}</td>
+      <td class="tc">
+        <button type="button" class="btn-cube-del" title="Quitar este producto de la cotización"
+                onclick="eliminarLineaCubaje(${idx})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  });
+
+  if(!rows){
+    rows = `<tr><td colspan="12" style="text-align:center;padding:26px 12px;color:#9ca3af">
+      <div style="font-size:1.4rem">📦</div>
+      <div style="font-weight:700;margin-top:4px">Sin productos en la cotización</div>
+      <div style="font-size:.78rem;margin-top:2px">Busca un documento para cargar su detalle.</div>
+    </td></tr>`;
+  }
+  tbody.innerHTML = rows;
+
+  // ── Persistir totales recalculados (los lee actualizarTarifas / resumen)
+  _docData.totales = _docData.totales || {};
+  _docData.totales.total_qty    = Math.round(tQty);
+  _docData.totales.total_bultos = Math.round(tBult);
+  _docData.totales.peso_kg      = Math.round(tKg   * 1000) / 1000;
+  _docData.totales.peso_pv      = Math.round(tPv   * 1000) / 1000;
+  _docData.totales.vol_cm3      = Math.round(tVol  * 10)   / 10;
+  _docData.totales.peso_pred    = Math.round(tPred * 1000) / 1000;
+
+  const tot = _docData.totales;
+  setText('tot-qty',  tot.total_qty  ?? '—');
+  setText('tot-bult', tot.total_bultos ?? '—');
+  setText('tot-kg',   fCl(tot.peso_kg));
+  setText('tot-pv',   fCl(tot.peso_pv));
+  setText('tot-vol',  fVol(tot.vol_cm3));
+  setText('tot-pred', fCl(tot.peso_pred));
+
+  // Mantener sincronizados los campos del resumen / bultos editable
+  setText('res-bultos', tot.total_bultos ?? '—');
+}
+
+// Elimina un producto SOLO de la vista/cotización (no toca ERP ni BD).
+// Recalcula totales (incl. peso predominante) y re-cotiza couriers.
+async function eliminarLineaCubaje(idx){
+  if(!_docData || !Array.isArray(_docData.lineas)) return;
+  const l = _docData.lineas[idx];
+  if(!l) return;
+
+  const ok = await ilusConfirm({
+    title: 'Quitar producto',
+    message: `¿Quitar este producto de la cotización?`,
+    sub: `<strong style="color:#dc2626">${escHtml(l.sku)}</strong> · ${escHtml(l.descripcion_erp || '')}`,
+    subHtml: true,
+    okLabel: 'Quitar', cancelLabel: 'Cancelar',
+    danger: true,
+    type: 'danger',
+  });
+  if(!ok) return;
+
+  // Quitar de los datos en memoria
+  _docData.lineas.splice(idx, 1);
+
+  // Re-render (recalcula totales incl. predominante) + re-cotizar
+  renderCubaje();
+  // El peso predominante cambió → las tarifas dependen de él
+  actualizarTarifas();
+
+  ilusToast(`✓ Producto ${l.sku} quitado de la cotización`, { type: 'success' });
 }
 
 // ════════════════════════════════════════════════════════════
